@@ -1,12 +1,17 @@
-//! Doctor reads, second set: the request-log statements of `gbrain doctor` checks
-//! (SQL in `src/core/engine-sql/doctor-acc.ts`, docs in `rust/docs/store/cli-reads-doctor-acc.md`).
-//! The other members of that set answer in TypeScript for state this store does not keep.
+//! Doctor reads, second set: the request-log statements of `gbrain doctor` checks and the pages that
+//! name readers (`listReaderPages`, behind the member-access checks) (SQL in
+//! `src/core/engine-sql/doctor-acc.ts`, docs in `rust/docs/store/cli-reads-doctor-acc.md`).
+//! The other members of that set answer in TypeScript from members the store serves.
 //! Each read takes one snapshot and has no keys of its own.
 
 use crate::Store;
+use crate::cli_reads::pg_text::timestamptz_text;
 use crate::error::Result;
+use crate::facts::privacy::access_readers;
 use crate::kv::scan_prefix;
+use crate::pages::{all_pages, versions_of};
 use crate::telemetry::{LogRecord, days_before, log_prefix};
+use serde_json::{Value, json};
 
 const OP_PAST_WINDOW: &str = "hasMcpLogRowsPastWindow";
 
@@ -77,5 +82,50 @@ impl Store {
             Some(e) => Err(e.into()),
             None => Ok(waiting),
         }
+    }
+
+    /// `listReaderPages(updatedWithinDays)`: every live page whose frontmatter has a `readable_by` key (a
+    /// JSON null counts, as `frontmatter->'readable_by' IS NOT NULL` does), in byte order of source then
+    /// slug; `updated_within_days` keeps only the pages written after `now() - days` (`None` keeps all):
+    /// `{ id, source_id, slug, readers, updated_at, updated_us, writer, prior_names_readers }`.
+    /// `readers` is `gbrain_access_readers(frontmatter)` (`["!nobody"]` for a value that names no valid
+    /// reader), `updated_at` is `timestamptz::text`, `writer` is the revision receipt's
+    /// `principal_kind:principal_id` (null without one), and `prior_names_readers` is whether the
+    /// newest stored version (by snapshot time, then id) names `readable_by` (null for a page with no
+    /// version): the three member-access checks of `gbrain doctor` are read from these.
+    pub fn list_reader_pages(&self, updated_within_days: Option<f64>) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let cutoff = updated_within_days
+            .map(|days| self.env.now_micros() - (days * 86_400_000_000.0).round() as i64);
+        let mut pages: Vec<_> = all_pages(&*read)?
+            .into_iter()
+            .filter(|p| p.deleted_at_us.is_none() && cutoff.is_none_or(|c| p.updated_at_us > c))
+            .filter_map(|p| access_readers(&p.frontmatter).map(|readers| (p, readers)))
+            .collect();
+        pages.sort_by(|a, b| (&a.0.source_id, &a.0.slug).cmp(&(&b.0.source_id, &b.0.slug)));
+        let mut rows = Vec::with_capacity(pages.len());
+        for (page, readers) in pages {
+            let newest = versions_of(&*read, page.id)?
+                .into_iter()
+                .max_by_key(|v| (v.snapshot_at_us, v.id));
+            let writer = match (
+                &page.revision_receipt.principal_kind,
+                &page.revision_receipt.principal_id,
+            ) {
+                (Some(kind), Some(id)) => Some(format!("{kind}:{id}")),
+                _ => None,
+            };
+            rows.push(json!({
+                "id": page.id,
+                "source_id": page.source_id,
+                "slug": page.slug,
+                "readers": readers,
+                "updated_at": timestamptz_text(page.updated_at_us),
+                "updated_us": page.updated_at_us,
+                "writer": writer,
+                "prior_names_readers": newest.map(|v| v.frontmatter.contains_key("readable_by")),
+            }));
+        }
+        Ok(rows)
     }
 }

@@ -70,6 +70,7 @@ pub mod chronicle_state;
 pub mod chunk_queries;
 pub mod code_edges;
 pub mod contradictions;
+pub mod cycle_window;
 #[cfg(test)]
 mod derivation_walks;
 pub mod dream;
@@ -106,6 +107,7 @@ pub mod moved_page_reads;
 pub mod ontology;
 pub mod page_body;
 pub mod page_embedding_budget;
+pub mod page_extraction_state;
 pub mod page_mutation_reads;
 pub mod page_ops;
 pub mod page_visibility;

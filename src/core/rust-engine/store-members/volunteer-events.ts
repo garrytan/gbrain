@@ -1,7 +1,7 @@
 /**
- * The volunteered-page log members (BrainEngine insertVolunteerEvents, readVolunteerUsage; SQL in
+ * The volunteered-page log members (BrainEngine insertVolunteerEvents, readVolunteerUsage, deleteVolunteerEventsOlderThan; SQL in
  * engine-sql/volunteer-events.ts), served from the store's event records (rust/crates/gbrain-store/src/volunteer_events.rs,
- * rust/docs/store/volunteer-events.md). The 90-day purge stays raw SQL and refuses on a Rust brain.
+ * rust/docs/store/volunteer-events.md); the 90-day purge (deleteVolunteerEventsOlderThan) is served there too.
  */
 import type { VolunteerEventInsert, VolunteerUsageRow } from '../../engine-sql/volunteer-events.ts';
 import { storeCall, type StoreMember } from './common.ts';
@@ -19,3 +19,6 @@ export const readVolunteerUsage: StoreMember<[sourceIds: readonly string[], days
   // The SQL casts both counts to text.
   return rows.map(r => ({ match_arm: r.match_arm, channel: r.channel, volunteered: String(r.volunteered), used: String(r.used) }));
 };
+
+export const deleteVolunteerEventsOlderThan: StoreMember<[ttlDays: number], number> = async (brain, ttlDays) =>
+  Number(await storeCall({ member: 'deleteVolunteerEventsOlderThan' }, () => brain.deleteVolunteerEventsOlderThan(ttlDays)));

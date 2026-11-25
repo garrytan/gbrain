@@ -135,6 +135,12 @@ export const PAGES_MEMBERS = {
   listPageRefsForSlugs: 'pages',
   markPagesExtractedBatch: 'pages',
   markPagesAttendanceBlocked: 'pages',
+  // the extraction watermark and partial-input receipt (engine-sql/page-extraction-state.ts; rust/docs/store/page_extraction_state.md)
+  readPageExtractionWatermark: 'pages',
+  commitPageExtraction: 'pages',
+  readPageExtractionReceipt: 'pages',
+  clearPageExtractionState: 'pages',
+  writePageExtractionReceipt: 'pages',
   countStaleFrontmatterKeyPages: 'pages',
   listStaleFrontmatterKeyPages: 'pages',
   stripStaleFrontmatterKeys: 'pages',

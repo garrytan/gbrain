@@ -617,6 +617,26 @@ impl Store {
         self.write(|tx| restamp(tx, source_id, after, Some(batch)))
     }
 
+    /// `countAccessFolderDrift(sourceId)`: the pages of the source (a soft-deleted one too) whose kept rule
+    /// ids differ from the folder rules that cover them now
+    /// (`folder_rule_ids IS DISTINCT FROM gbrain_access_folder_rules(source_id, slug)`), which a
+    /// restamp would change. Reads only.
+    pub fn count_access_folder_drift(&self, source_id: &str) -> Result<u64> {
+        let read = self.read()?;
+        let mut drifted = 0;
+        for page in all_pages(&*read)?
+            .into_iter()
+            .filter(|p| p.source_id == source_id)
+        {
+            let now = rule_ids(&*read, source_id, &page.slug)?;
+            let kept: Option<Vec<String>> = get_json(&*read, &stamp_key(source_id, page.id))?;
+            if kept != now {
+                drifted += 1;
+            }
+        }
+        Ok(drifted)
+    }
+
     /// `finishAccessRestamp(sourceId)`: restamps every page of the source that drifted, drops its
     /// pending prefixes and the kept ids of pages that no longer exist, and marks its unapplied
     /// revisions applied, in one write. Returns the pages restamped.

@@ -28,6 +28,32 @@ impl Brain {
         self.run(env, move |s| s.read_atom_provenance_counts())
     }
 
+    /// `listBodyRecheckGroups()`: the unchanged-body recheck's `{ page_id, sh, n }` groups.
+    #[napi]
+    pub fn list_body_recheck_groups<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_body_recheck_groups())
+    }
+
+    /// `readBodyRecheckPage(pageId)`: the page's body storage and body columns, or null.
+    #[napi]
+    pub fn read_body_recheck_page<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_body_recheck_page(page_id))
+    }
+
+    /// `listBodyRecheckVersions(pageId)`: the newest 20 inline versions with a body.
+    #[napi]
+    pub fn list_body_recheck_versions<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_body_recheck_versions(page_id))
+    }
+
     /// `countCredentialProjectionPending(sourceIds?)`: `{ rebuildable, kept }`.
     #[napi]
     pub fn count_credential_projection_pending<'env>(
@@ -74,6 +100,15 @@ impl Brain {
         self.run(env, move |s| {
             s.list_untiled_segmented_page_rows(source_ids.as_deref(), slugs.as_deref(), limit)
         })
+    }
+
+    /// `listAmbiguousExtractionInputs()`: `{ page, grammars, total }` rows.
+    #[napi]
+    pub fn list_ambiguous_extraction_inputs<'env>(
+        &self,
+        env: &'env Env,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_ambiguous_extraction_inputs())
     }
 
     /// `listExtractionInputReceipts()`: `{ pipeline, kind, pages, samples }` rows.

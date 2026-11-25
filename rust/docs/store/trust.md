@@ -398,6 +398,18 @@ because enable refused on this engine before it, so no store could hold a baseli
   unexpired page-less database-only facts (their entity) and of unexpired slot facts with no row (their page), less
   the run's baselined slugs and the skip list, up to the limit. The source row lock `enableBeliefLedger` and
   `disableBeliefLedger` take is `lockSourceRow`, a plain read here: the store runs one write transaction at a time.
+- The drift scan's reads (`trust::belief_coverage`): `listBeliefDriftCandidates` lists the slugs of the source's page rows
+  (live and soft-deleted), of its page-less facts (their entity, by the newest fact) and of the incarnation's open
+  lifetimes, newest first (a page by `updated_at`, a lifetime by `started_at`) and in byte order within a tie.
+  `readNewestBeliefEvent` answers the newest event of a slug in an incarnation other than a coverage event or a
+  backfill (id, state hash, recorded time), or none. The ledger keeps no per-slug event index, so it walks the
+  incarnation's events newest first until one names the slug: a read for the drift scan's sample, not a hot path.
+- `listOrphanLifetimes` (`orphanLifetimes`, belief/coverage-report.ts) answers `{ count, samples }`: the source's open
+  lifetimes of its current incarnation with no page row at their slug (a soft-deleted page is still a row) and, when
+  `deep`, the source's events of any incarnation that name a page lifetime no lifetime record holds (in any source, as the
+  SQL tests it), one finding per distinct slug and lifetime. Findings sort by slug then lifetime bytes; `count` is all of
+  them and `samples` the first `max(1, limit)`. An unknown source has no open lifetimes, but its events still answer the
+  deep read.
 - The state reads (`trust::belief_state`): `readBeliefStateRows` reads each stream of the source (a listed slug, or a
   listed page id in the source): its live or soft-deleted page, the unexpired fence facts it projects and the
   unexpired database-only facts about it, its takes, the links and transitions whose origin, else from, page it is,

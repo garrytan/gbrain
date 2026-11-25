@@ -8,6 +8,7 @@ import type { DecideMembers } from './engine-members/decide.ts';
 import type { JobsMembers } from './engine-members/jobs.ts';
 import type { DoctorMembers } from './engine-members/doctor.ts';
 import type { MentionPassMembers } from './engine-members/mentions.ts';
+import type { CycleReadMembers } from './engine-members/cycle-reads.ts';
 import type { FenceProjectionMembers } from './engine-members/fence-projection.ts';
 import type { SegmentedWriteMembers } from './engine-members/segmented-writes.ts';
 import type { EmbedStaleMembers } from './engine-members/embed-stale.ts';
@@ -56,6 +57,7 @@ import type { FenceFactRow, FenceRowsTarget, GuardedTakeRow, GuardedTakeRowsQuer
 import type { PageBodySizes } from './engine-sql/large-page.ts';
 import type { TrustTable } from './trust/schema.ts';
 import type { NewTrustProposal, PendingContradictionFilter, PendingContradictionRow, TrustProposalFilter, TrustProposalRow, TrustProposalStatus, TrustProposalTransition } from './engine-sql/trust-proposals.ts';
+import type { PageExtractionCommit, PageExtractionPipeline, PageExtractionWatermarkRow } from './engine-sql/page-extraction-state.ts';
 import type { ImportedPageSeal, InlinePageRegionsRow, LivePageBodyRow, OriginClaimRow, PageIndexingState, PageIngestStamp, PageOriginRow, PageOriginTarget, RevivalPageRow } from './engine-sql/write-guards.ts';
 import type { PageEmbeddingBudgetRow, PageEmbeddingReservation, PageEmbeddingReserveInput } from './engine-sql/page-embedding-budget.ts';
 import type { EmbeddingCompletionOpts, EmbeddingCompletionRow } from './engine-sql/embedding-install.ts';
@@ -1088,7 +1090,7 @@ export function clampSearchLimit(limit: number | undefined, defaultLimit = 20, c
   return Math.min(Math.floor(limit), cap);
 }
 
-export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers, PersistenceMembers, LedgerMembers, GovernanceMembers, DecideMembers, JobsMembers, DoctorMembers, MentionPassMembers, EmbedStaleMembers, DoctorTallyMembers, ListReadMembers, FenceProjectionMembers, SurfacedReadMembers, SegmentedWriteMembers, HandoverReadMembers {
+export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers, PersistenceMembers, LedgerMembers, GovernanceMembers, DecideMembers, JobsMembers, DoctorMembers, MentionPassMembers, CycleReadMembers, EmbedStaleMembers, DoctorTallyMembers, ListReadMembers, FenceProjectionMembers, SurfacedReadMembers, SegmentedWriteMembers, HandoverReadMembers {
   /** Discriminator: lets migrations and other consumers branch on engine kind without instanceof + dynamic imports. */
   readonly kind: 'postgres' | 'pglite' | 'rust';
   readonly capabilities: EngineCapabilities; // what this engine can do, by name (engine-capabilities.ts); ask it instead of branching on kind
@@ -4025,6 +4027,16 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   openPageEmbeddingHold(pageId: number): Promise<void>;
   reservePageEmbedding(pageId: number, input: PageEmbeddingReserveInput): Promise<PageEmbeddingReservation>;
   settlePageEmbeddingReservation(pageId: number, settle: { window: string | null; reservedUsd: number; bookedUsd: number; unpricedCalls: number }): Promise<void>;
+  /**
+   * The extraction watermark and partial-input receipt (engine-sql/page-extraction-state.ts; extraction-watermark.ts owns
+   * the policy), one row per page and pipeline: the live page's id with its stored watermark, the commit of a successful
+   * extraction, the receipt read, the row delete and the receipt upsert. A hard page delete and a source delete remove the rows.
+   */
+  readPageExtractionWatermark(sourceId: string, slug: string, pipeline: PageExtractionPipeline): Promise<PageExtractionWatermarkRow | null>;
+  commitPageExtraction(commit: PageExtractionCommit): Promise<void>;
+  readPageExtractionReceipt(pageId: number, pipeline: PageExtractionPipeline): Promise<Record<string, unknown> | null>;
+  clearPageExtractionState(pageId: number, pipeline: PageExtractionPipeline): Promise<void>;
+  writePageExtractionReceipt(pageId: number, pipeline: PageExtractionPipeline, pipelineVersion: number, receipt: Record<string, unknown>): Promise<void>;
   /**
    * The embedding effect's install path (engine-sql/embedding-install.ts): the page's visible chunks and which carry a
    * current vector, the effect claim under its row lock, the embedding switch's share lock and one batch of the install.

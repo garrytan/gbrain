@@ -1,5 +1,6 @@
 //! `insertVolunteerEvents` and `readVolunteerUsage`: the page filter of an insert, the day window, the used count from
-//! the page's retrieval record, and the listing by byte of arm then channel.
+//! the page's retrieval record, and the listing by byte of arm then channel; the retention delete, the slug scrub of a page
+//! purge and the receipt probe's count.
 
 mod memory_env;
 
@@ -129,5 +130,65 @@ fn a_nul_byte_refuses() {
     assert!(
         b.insert_volunteer_events(&rows(json!([row("p", "a\u{0}b", "op")])))
             .is_err()
+    );
+}
+
+#[test]
+fn the_retention_delete_removes_only_the_rows_older_than_its_window() {
+    let b = brain("volunteer-retention");
+    put(&b, "p");
+    b.insert_volunteer_events(&rows(json!([row("p", "old", "op")])))
+        .unwrap();
+    b.clock.advance(100 * DAY);
+    b.insert_volunteer_events(&rows(json!([row("p", "new", "op")])))
+        .unwrap();
+    assert_eq!(b.delete_volunteer_events_older_than(90.0).unwrap(), 1);
+    assert_eq!(b.delete_volunteer_events_older_than(90.0).unwrap(), 0);
+    assert_eq!(
+        b.count_volunteer_events_for_slug("default", "p").unwrap(),
+        1
+    );
+    // A window in the past removes everything volunteered so far.
+    assert_eq!(b.delete_volunteer_events_older_than(-1.0).unwrap(), 1);
+    assert_eq!(
+        b.count_volunteer_events_for_slug("default", "p").unwrap(),
+        0
+    );
+    let err = b.delete_volunteer_events_older_than(f64::NAN).unwrap_err();
+    assert_eq!(err.code, gbrain_store::error::INVALID_ARGUMENT);
+}
+
+#[test]
+fn the_slug_scrub_counts_and_removes_the_rows_of_those_slugs_of_one_source() {
+    let b = brain("volunteer-scrub");
+    put(&b, "p");
+    put(&b, "q");
+    b.insert_volunteer_events(&rows(json!([
+        row("p", "a", "op"),
+        row("p", "a", "hook"),
+        row("q", "a", "op")
+    ])))
+    .unwrap();
+    assert_eq!(
+        b.delete_volunteer_events_for_slugs("default", &[]).unwrap(),
+        0
+    );
+    assert_eq!(
+        b.delete_volunteer_events_for_slugs("other", &ids(&["p"]))
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        b.delete_volunteer_events_for_slugs("default", &ids(&["p", "missing"]))
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        b.count_volunteer_events_for_slug("default", "p").unwrap(),
+        0
+    );
+    assert_eq!(
+        b.count_volunteer_events_for_slug("default", "q").unwrap(),
+        1
     );
 }

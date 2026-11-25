@@ -33,6 +33,7 @@ pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Resul
     crate::raw_files::remove_page_rows(tx, page)?;
     crate::vectors::remove_page_rows(tx, page)?;
     crate::embeddings::remove_page_rows(tx, page)?;
+    crate::page_extraction_state::remove_page_rows(tx, page)?;
     crate::wanted_links::remove_page_rows(tx, page)?;
     crate::link_queries::link_temporal::remove_page_rows(tx, page)?;
     crate::edge_proposals::remove_page_rows(tx, page)?;

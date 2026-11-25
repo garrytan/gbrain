@@ -7,7 +7,8 @@
  * Answered here, without a store call, because the store keeps no such rows:
  * - `deletePurgedFeedbackRows` answers 0 for the retrieval event, link event, rating and weight stores (their keyspaces are reserved
  *   and hold no records) and takes the eval candidate count from the store;
- * - `deletePurgedNameStoreRows` answers 0 for the volunteer log and the gazetteer;
+ * - `deletePurgedNameStoreRows` takes the volunteer log's count from the store (rust/docs/store/volunteer-events.md) and answers 0 for
+ *   the gazetteer;
  * - `clearQueryCache` answers 0: the store keeps no query cache, so the cache is present and empty, and the purge receipt names no
  *   missing cache, as on a brain whose cache holds no row.
  */
@@ -24,6 +25,9 @@ export const deletePurgedFeedbackRows: Member<'deletePurgedFeedbackRows'> = asyn
   'eval_candidates.retrieved_slugs': Number(await storeCall({ member: 'deletePurgedFeedbackRows', sourceId }, () => brain.scrubEvalCandidateSlugs(sourceId, [...slugs]))),
 });
 
-export const deletePurgedNameStoreRows: Member<'deletePurgedNameStoreRows'> = async () => ({ context_volunteer_events: 0, mention_gazetteer_entries: 0 });
+export const deletePurgedNameStoreRows: Member<'deletePurgedNameStoreRows'> = async (brain, sourceId, slugs) => ({
+  context_volunteer_events: slugs.length === 0 ? 0 : Number(await storeCall({ member: 'deletePurgedNameStoreRows', sourceId }, () => brain.deleteVolunteerEventsForSlugs(sourceId, [...slugs]))),
+  mention_gazetteer_entries: 0,
+});
 
 export const clearQueryCache: Member<'clearQueryCache'> = async () => 0;

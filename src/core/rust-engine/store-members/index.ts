@@ -76,6 +76,7 @@ import * as persistence from './persistence.ts';
 import * as syncHoldStore from './sync-hold-store.ts';
 import * as syncStatusReads from './sync-status-reads.ts';
 import * as cliEntities from './cli-entities.ts';
+import * as adminReads from './admin-reads.ts';
 import * as reflexReads from './reflex-reads.ts';
 import * as briefReads from './brief-reads.ts';
 import * as factsDoctor from './facts-doctor.ts';
@@ -138,6 +139,7 @@ import * as ownerScans from './owner-scans.ts';
 import * as effectWorker from './effect-worker.ts';
 import * as noopSettle from './noop-settle.ts';
 import * as pageEmbeddingBudget from './page-embedding-budget.ts';
+import * as pageExtractionState from './page-extraction-state.ts';
 import * as embeddingInstall from './embedding-install.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
 import * as writeMisc from './write-misc.ts';
@@ -200,6 +202,7 @@ import * as sweepReads from './sweep-reads.ts';
 import * as graduationCatalog from './graduation-catalog.ts';
 import * as cliReadsExport from './cli-reads-export.ts';
 import * as beliefLedger from './belief-ledger.ts';
+import * as cycleReads from './cycle-reads.ts';
 import * as repairBookkeeping from './repair-bookkeeping.ts';
 import * as managedSyncOrphans from './managed-sync-orphans.ts';
 import * as repairPageReads from './repair-page-reads.ts';
@@ -240,7 +243,7 @@ export const STORE_MEMBERS = {
   ...cliReadsImport, ...cliReadsOps, ...cliReadsSearchPages, ...sweepReads,
   // The reads gbrain export makes (rust/docs/store/cli-reads-export.md).
   ...cliReadsExport,
-  ...cliEntities, ...reflexReads, ...briefReads,
+  ...cliEntities, ...adminReads, ...reflexReads, ...briefReads,
   // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
   ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...derivedGenerations, ...factsCycle, ...factsPurge, ...purgePlan, ...purgeEffects, ...beliefPurge, ...projectionRebuild, ...factsRepair, ...labelRepairReads, ...factTextRepair, ...lostFenceReads, ...factsTrust, ...derivationTrust, ...factsTrustReads, ...factsTrustOwner, ...factRelinkAttempts,
   ...ontologyRepair, ...factsRecall, ...factsForget, ...factsRemember, ...factsWritePath, ...factsProvenance, ...factsQuoted,
@@ -259,7 +262,7 @@ export const STORE_MEMBERS = {
   // Typed reads of stamped trust tiers (rust/docs/store/trust.md, "Tier reads").
   ...trustTierReads,
   // Belief ledger writes and the append's reads (rust/docs/store/trust.md, "The belief ledger").
-  ...beliefLedger,
+  ...beliefLedger, ...cycleReads,
   // The reads remember and forget make before admission (rust/docs/store/memory_mutation_reads.md).
   ...headBlocker,
   ...checkpointValidation,
@@ -300,7 +303,7 @@ export const STORE_MEMBERS = {
   // The commit notifier's host lease and host source list (rust/docs/store/persistence.md, "Commit notifier").
   ...notifier,
   // The page embedding ledger on the paid path (rust/docs/store/embeddings.md).
-  ...pageEmbeddingBudget,
+  ...pageEmbeddingBudget, ...pageExtractionState,
   ...embeddingInstall,
   ...writeMisc,
   // The write-time chronicle ledger decision (rust/docs/store/chronicle-ledger.md).

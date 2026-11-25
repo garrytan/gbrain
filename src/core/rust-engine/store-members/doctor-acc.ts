@@ -6,9 +6,13 @@
  */
 import type { BrainEngine } from '../../engine.ts';
 import { AVAILABLE_CHRONICLE_LEDGER_STATS } from '../../engine-sql/doctor-acc.ts';
-import { storeCall, type StoreMember } from './common.ts';
 import { withDates } from '../store-codec.ts';
 import { normalizeOauthClientRow } from '../../engine-sql/oauth-clients.ts';
+import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { listOauthClients } from './jobs-oauth-clients.ts';
+import { listOauthGrantAudit } from './jobs-client-grants.ts';
+import { listAllSources } from './sources.ts';
+import { readAccessGroups, readAccessMembers } from './access-members.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
@@ -48,20 +52,64 @@ export const listActiveAccessTokenRows: Member<'listActiveAccessTokenRows'> = as
 export const listActiveOauthClientRows: Member<'listActiveOauthClientRows'> = async (brain) =>
   ((await storeCall({ member: 'listActiveOauthClientRows' }, () => brain.listActiveOauthClientRows())) as Array<Record<string, unknown>>)
     .map(row => normalizeOauthClientRow(row) as unknown as Record<string, unknown>);
-export const listOauthClientAuthShapes: Member<'listOauthClientAuthShapes'> = async () => [];
-export const listDanglingFederatedReads: Member<'listDanglingFederatedReads'> = async () => [];
-export const listPrivilegedDcrClients: Member<'listPrivilegedDcrClients'> = async () => [];
 
-/** A source named `*suffix` with no path, no pages (deleted ones count), no facts and not archived; no client names one. */
+const byteCmp = (a: string, b: string): number => Buffer.compare(Buffer.from(a), Buffer.from(b));
+
+export const listOauthClientAuthShapes: Member<'listOauthClientAuthShapes'> = async (brain) =>
+  (await listOauthClients(brain)).map(c => ({ client_id: c.client_id, method: c.token_endpoint_auth_method ?? null, hash: c.client_secret_hash ?? null }));
+
+/** Federated read grants of live clients that name no source (an archived source is one), by client id then grant id in byte order. */
+export const listDanglingFederatedReads: Member<'listDanglingFederatedReads'> = async (brain) => {
+  const sources = new Set((await listAllSources(brain, { includeArchived: true })).map(s => s.id));
+  return (await listOauthClients(brain)).filter(c => c.deleted_at == null)
+    .flatMap(c => (c.federated_read ?? []).filter(g => !sources.has(g)).map(g => ({ client_id: c.client_id, client_name: c.client_name ?? null, grant_id: g })))
+    .sort((a, b) => byteCmp(a.client_id, b.client_id) || byteCmp(a.grant_id, b.grant_id));
+};
+
+/** The one pattern shape the doctor sends: `(^|[[:space:]])(<scope>|<scope>...)([[:space:]]|$)` (routing-federation.ts). */
+const PRIVILEGED_SCOPE_PATTERN = /^\(\^\|\[\[:space:\]\]\)\(([A-Za-z0-9_:.|-]+)\)\(\[\[:space:\]\]\|\$\)$/;
+/** POSIX `[[:space:]]`: space, tab, newline, vertical tab, form feed, carriage return. */
+const POSIX_SPACE = /[ \t\n\v\f\r]+/;
+
+/**
+ * The scope test the SQL engines run as `scope ~ pattern`, without compiling the caller's text: the pattern must be the
+ * doctor's whitespace-delimited alternation of scope names, and a scope matches when one of its whitespace-separated
+ * tokens is one of those names (what that pattern matches). Any other pattern refuses.
+ */
+function scopeTokenTest(pattern: string): (scope: string) => boolean {
+  const names = PRIVILEGED_SCOPE_PATTERN.exec(pattern)?.[1]?.split('|');
+  if (!names || names.some(n => n === '')) refuseMember('listPrivilegedDcrClients', 'a scope pattern other than the doctor\'s scope-name alternation');
+  const wanted = new Set(names);
+  return (scope) => scope.split(POSIX_SPACE).some(token => wanted.has(token));
+}
+
+/**
+ * Live clients whose scope matches `scopeRegex` with grant revision 0 and no `register` audit row (the anonymous
+ * self-registration signature), by client id in byte order. The store keeps the revision column and the audit, so the
+ * signature can always be evaluated here.
+ */
+export const listPrivilegedDcrClients: Member<'listPrivilegedDcrClients'> = async (brain, scopeRegex) => {
+  const scope = scopeTokenTest(scopeRegex);
+  const found = [];
+  for (const c of (await listOauthClients(brain)).sort((a, b) => byteCmp(a.client_id, b.client_id))) {
+    if (c.deleted_at != null || Number(c.grant_revision ?? 0) !== 0 || !scope(c.scope ?? '')) continue;
+    if ((await listOauthGrantAudit(brain, c.client_id)).some(a => a.action === 'register')) continue;
+    found.push({ client_id: c.client_id, client_name: c.client_name ?? null, scope: c.scope ?? '' });
+  }
+  return found;
+};
+
+/** A source named `*suffix` with no path, no pages (deleted ones count), no facts and not archived, that no live client names (its source or a federated read). */
 export const listOrphanWorkspaceSources: Member<'listOrphanWorkspaceSources'> = async (brain, suffix) => {
   const orphans: Array<{ id: string }> = [];
+  const named = new Set((await listOauthClients(brain)).filter(c => c.deleted_at == null).flatMap(c => [c.source_id, ...(c.federated_read ?? [])]));
   for (const row of await storeCall({ member: 'listSourceRoutingRows' }, () => brain.listSourceRoutingRows()) as Array<{ id: string; local_path: string | null; archived: boolean }>) {
-    if (!row.id.endsWith(suffix) || row.local_path !== null || row.archived) continue;
+    if (!row.id.endsWith(suffix) || row.local_path !== null || row.archived || named.has(row.id)) continue;
     if (Number(await storeCall({ member: 'countSourcePages', sourceId: row.id }, () => brain.countSourcePages(row.id, true))) !== 0) continue;
     const facts = await storeCall({ member: 'getFactsHealth', sourceId: row.id }, () => brain.getFactsHealth(row.id)) as { total_active: number; total_expired: number };
     if (Number(facts.total_active) + Number(facts.total_expired) === 0) orphans.push({ id: row.id });
   }
-  return orphans.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return orphans.sort((a, b) => byteCmp(a.id, b.id));
 };
 
 // Request log: served by the store.
@@ -143,3 +191,59 @@ export const listVolunteerChannels: Member<'listVolunteerChannels'> = async (bra
   const rows = await storeCall({ member: 'listVolunteerChannels' }, () => brain.listVolunteerChannels(sourceIds ? [...sourceIds] : null)) as Array<{ channel: string; n: number; last_fired: string | null }>;
   return rows.map(r => ({ channel: r.channel, n: r.n, last_fired: r.last_fired === null ? null : new Date(r.last_fired) }));
 };
+
+// ---- the pages that name readers (the member-access checks), from the store's page records -------------------------
+
+/** One live page that names readers, as the store lists it (cli_reads/doctor_acc.rs `list_reader_pages`). */
+interface ReaderPage {
+  id: number; source_id: string; slug: string; readers: string[]; updated_at: string; updated_us: number; writer: string | null;
+  prior_names_readers: boolean | null;
+}
+
+const readerPages = (brain: Parameters<Member<'listMalformedReaderPages'>>[0], member: string, withinDays: number | null): Promise<ReaderPage[]> =>
+  storeCall({ member }, () => brain.listReaderPages(withinDays)) as Promise<ReaderPage[]>;
+
+/** Live pages whose `readable_by` normalizes to nobody, by source then slug (the first `limit`), each with the total. */
+export const listMalformedReaderPages: Member<'listMalformedReaderPages'> = async (brain, limit) => {
+  const malformed = (await readerPages(brain, 'listMalformedReaderPages', null)).filter(p => p.readers.length === 1 && p.readers[0] === '!nobody');
+  return malformed.slice(0, limit).map(p => ({ source_id: p.source_id, slug: p.slug, total: malformed.length }));
+};
+
+/**
+ * Readers named by pages that match no live member (`unknown`, or `retired` for a removed one) or no group (`unknown`, or
+ * `empty_group` for one with no member), with the pages naming each and the first of them, by kind then reader in byte order.
+ * A disabled member is a live one. Members and groups come from the store's access members.
+ */
+export const listUnknownReaders: Member<'listUnknownReaders'> = async (brain, limit) => {
+  const pages = await readerPages(brain, 'listUnknownReaders', null);
+  const members = new Map((await readAccessMembers(brain, { includeRemoved: true })).map(m => [m.id, m]));
+  const groups = new Map((await readAccessGroups(brain, null)).map(g => [g.id, g.members.length]));
+  const classify = (reader: string): 'unknown' | 'retired' | 'empty_group' | null => {
+    if (reader.startsWith('member:')) {
+      const member = members.get(reader.slice('member:'.length));
+      return member === undefined ? 'unknown' : member.tombstoned_at != null ? 'retired' : null;
+    }
+    const size = groups.get(reader.slice('group:'.length));
+    return size === undefined ? 'unknown' : size === 0 ? 'empty_group' : null;
+  };
+  const found = new Map<string, { reader: string; kind: 'unknown' | 'retired' | 'empty_group'; pages: number; sample: { source_id: string; slug: string } }>();
+  for (const page of pages) {
+    for (const reader of page.readers) {
+      if (reader === '!nobody') continue;
+      const kind = classify(reader);
+      if (kind === null) continue;
+      const row = found.get(reader);
+      if (row) row.pages += 1;
+      else found.set(reader, { reader, kind, pages: 1, sample: { source_id: page.source_id, slug: page.slug } });
+    }
+  }
+  return [...found.values()].sort((a, b) => byteCmp(a.kind, b.kind) || byteCmp(a.reader, b.reader)).slice(0, limit);
+};
+
+/** Live pages written in the last `days` days that name readers where the newest earlier version named none, newest first (a tie by page id). */
+export const listRecentReaderNarrowings: Member<'listRecentReaderNarrowings'> = async (brain, days, limit) => {
+  const narrowed = (await readerPages(brain, 'listRecentReaderNarrowings', days)).filter(p => p.prior_names_readers === false)
+    .sort((a, b) => b.updated_us - a.updated_us || a.id - b.id);
+  return narrowed.slice(0, limit).map(p => ({ source_id: p.source_id, slug: p.slug, readers: p.readers, writer: p.writer, updated_at: p.updated_at, total: narrowed.length }));
+};
+

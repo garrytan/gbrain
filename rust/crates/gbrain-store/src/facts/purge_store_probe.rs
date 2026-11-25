@@ -6,13 +6,13 @@
 //! Kinds served here, with the store each reads:
 //! - `slug_key`: `pages` (a soft-deleted page counts), `facts` (by `source_markdown_slug`), `take_proposals`, `open_loops`,
 //!   `page_aliases`, `slug_aliases` (by canonical slug), `eval_candidates.retrieved_slugs` (a slug a page of another covered
-//!   source still holds does not count), `files` (detached, naming the slug) and `write_gate_holds`;
+//!   source still holds does not count), `context_volunteer_events` (`volunteer_events.rs`), `files` (detached, naming the slug) and `write_gate_holds`;
 //! - `page_rows`: the page's chunks, versions, takes and timeline entries;
 //! - `fact_refs`: the decide proposals and the review queue and proposals that name a fact id;
 //! - `trust_proposals`, `page_requests`, `page_segment_texts`, `segment_texts` and `effect_payload`;
 //! - `fingerprint` (facts, takes, take proposals) and `claim_text` (pages, content chunks, page versions, journal requests).
 //!
-//! The stores this crate keeps no rows of (`core_edit_notices`, `context_volunteer_events`, `mention_gazetteer_entries`,
+//! The stores this crate keeps no rows of (`core_edit_notices`, `mention_gazetteer_entries`,
 //! `query_cache`, and the retrieval event, link, feedback and weight stores) are answered by the TypeScript member; a probe
 //! of one that reaches this module refuses. `fingerprint` and `claim_text` are the fact purge's probes, served by
 //! `purge_claim_probe.rs` (its `claim_text` serves every store but `core_edit_notices`, which the TypeScript member answers).
@@ -495,6 +495,9 @@ fn slug_key(
         "write_gate_holds" => crate::trust::write_gate::count_for_slug(read, source_id, slug),
         "mention_gazetteer_entries" => {
             crate::mention_state::count_for_target(read, source_id, slug)
+        }
+        "context_volunteer_events" => {
+            crate::volunteer_events::count_for_slug(read, source_id, slug)
         }
         other => Err(invalid(format!("{op}: the {other} rows are not kept"))),
     }

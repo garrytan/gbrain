@@ -44,11 +44,11 @@ async function runUnscopedMultiUserToken(ctx: DoctorContext): Promise<Check[]> {
   };
   const credentials: Array<{ subject: ExposureSubject; grant: PrincipalGrant; member?: string | null }> = [];
   const actsForAudience = (row: Record<string, unknown>) => Array.isArray(row.may_act_for) && row.may_act_for.length > 0;
-  for (const row of await engine.executeRaw<Record<string, unknown>>('SELECT * FROM access_tokens WHERE revoked_at IS NULL ORDER BY created_at, id')) {
+  for (const row of await engine.listActiveAccessTokenRows()) {
     if (actsForAudience(row)) continue;
     credentials.push({ subject: { kind: 'legacy_token', name: String(row.name) }, grant: grantFromTokenRow(row), member: typeof row.member_id === 'string' ? row.member_id : null });
   }
-  for (const row of await engine.executeRaw<Record<string, unknown>>('SELECT * FROM oauth_clients WHERE deleted_at IS NULL ORDER BY client_id COLLATE "C"')) {
+  for (const row of await engine.listActiveOauthClientRows()) {
     if (actsForAudience(row)) continue;
     const grant = grantFromRow(row);
     credentials.push({ subject: { kind: 'oauth_client', id: grant.clientId, name: grant.clientName || undefined }, grant: grantFromClient(grant), member: typeof row.member_id === 'string' ? row.member_id : null });

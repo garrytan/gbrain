@@ -16,7 +16,9 @@
  *  - Why existing coverage misses it: the checks' tests seed keys that sort the same in every locale, and CI's Postgres
  *    runs in C.UTF-8. Every case here mixes `a-z`, `ab`, `a.b`, `a_b` (and an upper-case `B`) in the keys; run it against
  *    an en_US Postgres to see it fail.
- *  - Seam: none. The checks run as shipped over raw-SQL fixtures, so a Rust brain stops on the typed raw_sql refusal.
+ *  - Seam: none. The checks run as shipped; the keys they name are seeded through typed writers (insertOauthClient,
+ *    insertUnifiedToken and writeCredentialBinding, putPage, the harness source fixture and activateGenerationRows /
+ *    recordHeldGenerationRow), and the checks read them through typed members the Rust store serves.
  *  - Not exercised: `held_reason` (generation_held) and the `key` of privacy_label_ignored take values from a closed set
  *    whose members already sort the same by byte and by en_US, so no seed can tell the orders apart there; the first
  *    key of the same ORDER BY does.
@@ -25,7 +27,8 @@ import { describe, expect } from 'bun:test';
 import { join } from 'node:path';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { parityArms, restrictFolder } from './harness.ts';
+import { createSource, parityArms, restrictFolder, type ParityBackend } from './harness.ts';
+import type { OauthClientInsert } from '../../src/core/engine-sql/oauth-clients.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { BYTE_IDS, BYTE_SLUGS, MIXED_IDS, MIXED_SLUGS, byteOrder } from '../helpers/byte-order.ts';
@@ -60,34 +63,49 @@ const ctx = (engine: BrainEngine, extra: Record<string, unknown> = {}) => ({ eng
 type Result = Check & { details?: any };
 const first = async (engine: BrainEngine, entry: { run: (c: DoctorContext) => Promise<unknown> }): Promise<Result> => ((await entry.run(ctx(engine))) as Result[])[0]!;
 
-async function insertSource(engine: BrainEngine, id: string, config: Record<string, unknown> = {}): Promise<void> {
-  await engine.executeRaw('INSERT INTO sources (id, name, config) VALUES ($1, $1, $2::text::jsonb) ON CONFLICT (id) DO NOTHING', [id, JSON.stringify(config)]);
+/** One source row; `config` carries its flags (a guest source). Every arm writes it through the harness fixture. */
+const insertSource = (engine: BrainEngine, backend: ParityBackend, id: string, config: Record<string, unknown> = {}): Promise<void> =>
+  createSource(engine, backend, id, config);
+
+/** One OAuth client row (client id and name are the keys under test), through the typed `insertOauthClient`. */
+async function insertClient(engine: BrainEngine, id: string, name: string, extra: Partial<OauthClientInsert> = {}): Promise<void> {
+  await engine.insertOauthClient({ client_id: id, client_name: name, scope: 'read', source_id: 'default', federated_read: ['default'], ...extra });
 }
 
-/** One OAuth client row (client id and name are the keys under test). */
-async function insertClient(engine: BrainEngine, id: string, name: string, extra: Record<string, unknown> = {}): Promise<void> {
-  const cols: Record<string, unknown> = { client_id: id, client_name: name, scope: 'read', source_id: 'default', federated_read: ['default'], ...extra };
-  const keys = Object.keys(cols);
-  await engine.executeRaw(`INSERT INTO oauth_clients (${keys.join(', ')}) VALUES (${keys.map((_, i) => `$${i + 1}`).join(', ')})`, keys.map(k => cols[k]));
-}
+/** The attest and may_act_for columns a legacy token takes after its insert, written by the typed credential binding. */
+type TokenBinding = { attest_actor?: string; attest_read?: 'scope' | 'person'; may_act_for?: string[] };
 
-/** One legacy token row, named `name`; `set` is applied afterwards as extra column assignments. */
-async function insertToken(engine: BrainEngine, name: string, set: Record<string, unknown> = {}): Promise<void> {
-  await insertUnifiedToken(engine, { name, tokenHash: `hash-${name}`, grant: { sources: { kind: 'default' }, takesHolders: ['world'], allowedOperations: null } });
-  const keys = Object.keys(set);
-  if (keys.length) await engine.executeRaw(`UPDATE access_tokens SET ${keys.map((k, i) => `${k} = $${i + 2}`).join(', ')} WHERE name = $1`, [name, ...keys.map(k => set[k])]);
+/** One legacy token row, named `name`; `set` binds the attest and may_act_for columns afterwards. */
+async function insertToken(engine: BrainEngine, name: string, set: TokenBinding = {}): Promise<void> {
+  const [token] = await insertUnifiedToken(engine, { name, tokenHash: `hash-${name}`, grant: { sources: { kind: 'default' }, takesHolders: ['world'], allowedOperations: null } });
+  if (Object.keys(set).length === 0) return;
+  await engine.transaction(tx => tx.writeCredentialBinding({ kind: 'token', id: token!.id },
+    { member: null, mayActFor: set.may_act_for ?? null, attestActor: set.attest_actor ?? null, attestOps: null, attestSources: null, attestRead: set.attest_read ?? null }));
 }
 
 async function insertPage(engine: BrainEngine, sourceId: string, slug: string, extra: { type?: string; frontmatter?: Record<string, unknown> } = {}): Promise<void> {
-  await engine.executeRaw(
-    `INSERT INTO pages (source_id, slug, type, title, compiled_truth, timeline, frontmatter) VALUES ($1, $2, $3, $2, 'body', '', $4::text::jsonb)`,
-    [sourceId, slug, extra.type ?? 'note', JSON.stringify(extra.frontmatter ?? {})]);
+  await engine.putPage(slug, { type: (extra.type ?? 'note') as 'note', title: slug, compiled_truth: 'body', timeline: '', frontmatter: extra.frontmatter ?? {} }, { sourceId });
+}
+
+/**
+ * One live generation of `kind` under `sourceId` that retired one item, and one held generation of the same key: the
+ * typed ledger writers the generation publish uses (generations/publish.ts `activateGeneration` and `recordHeld`).
+ */
+async function insertGenerations(engine: BrainEngine, sourceId: string, kind: string, n: number): Promise<void> {
+  const key = { sourceId, kind, ownerKey: 'owner' };
+  await engine.transaction(async tx => {
+    await tx.activateGenerationRows(key, null, { generation: 1, runId: null, operationId: `op-live-${n}`, inputPin: null, inputSize: null,
+      completeness: JSON.stringify({ complete: true }), setHash: 'hash', restoreOf: null, activationId: null, locator: null },
+    [{ item_key: 'item', identity_hash: 'identity', action: 'retired', preimage: null, preimage_bytes: null, pending: false }]);
+    await tx.recordHeldGenerationRow(key, { holdId: `op-held-${n}`, runId: null, inputPin: null, inputSize: null, setHash: 'hash', reason: 'shrunk',
+      context: JSON.stringify({}), proposal: null, proposalBytes: 0 });
+  });
 }
 
 describe('access doctor checks list their keys by byte', () => {
   parityTest('attest_read_shared_scope lists the credentials by kind, then by byte name', {
-    methods: ['executeRaw'], requires: 'raw_sql',
-  }, async (engine) => {
+    methods: ['insertOauthClient', 'insertAccessToken', 'writeCredentialBinding', 'transaction', 'listAttestCredentialRows'],
+  }, async (engine, backend) => {
     await insertClient(engine, 'client-scope', 'scope-reader', { attest_actor: 'qm' });
     await insertToken(engine, 'scope-reader-token', { attest_actor: 'qm' });
     for (const [i, name] of MIXED_IDS.entries()) {
@@ -104,8 +122,8 @@ describe('access doctor checks list their keys by byte', () => {
   });
 
   parityTest('access_may_act_for_wildcard lists the wildcard credentials by kind, then by byte name', {
-    methods: ['executeRaw', 'setConfig'], requires: 'raw_sql',
-  }, async (engine) => {
+    methods: ['insertOauthClient', 'insertAccessToken', 'writeCredentialBinding', 'transaction', 'setConfig', 'listActiveAccessTokenRows', 'listActiveOauthClientRows', 'readStoredConfigValue'],
+  }, async (engine, backend) => {
     for (const [i, name] of MIXED_IDS.entries()) {
       await insertClient(engine, `client-${i}`, name, { may_act_for: ['*'] });
       await insertToken(engine, name, { may_act_for: ['*'] });
@@ -120,8 +138,8 @@ describe('access doctor checks list their keys by byte', () => {
   });
 
   parityTest('grant_new_ops_available lists the grants of OAuth clients by byte client id', {
-    methods: ['executeRaw'], requires: 'raw_sql',
-  }, async (engine) => {
+    methods: ['insertOauthClient', 'listActiveOauthClientRows'],
+  }, async (engine, backend) => {
     const profile = resolveGrantProfile({ profile: 'memory-writer', sourceId: 'default' });
     const operations = profile.allowedOperations!.filter(op => op !== 'put_pages');
     for (const id of MIXED_IDS) {
@@ -135,8 +153,8 @@ describe('access doctor checks list their keys by byte', () => {
   });
 
   parityTest('unscoped_multi_user_token lists the flagged OAuth clients by byte client id', {
-    methods: ['executeRaw', 'setConfig'], requires: 'raw_sql',
-  }, async (engine) => {
+    methods: ['insertOauthClient', 'putPage', 'setConfig', 'listActiveOauthClientRows', 'listActiveAccessTokenRows', 'readChatCensusRows'],
+  }, async (engine, backend) => {
     for (const id of MIXED_IDS) await insertClient(engine, id, `reader ${id}`);
     await engine.setConfig('access.serves', 'several');
     for (const channel of ['alpha', 'beta']) await insertPage(engine, 'default', `chats/${channel}`, { type: 'slack', frontmatter: { channel } });
@@ -154,13 +172,13 @@ describe('access doctor checks list their keys by byte', () => {
   });
 
   parityTest('oauth_client_scope_health lists dangling grants, orphaned workspaces and privileged clients by byte', {
-    methods: ['executeRaw'], requires: 'raw_sql',
-  }, async (engine) => {
+    methods: ['insertOauthClient', 'listDanglingFederatedReads', 'listOrphanWorkspaceSources', 'listPrivilegedDcrClients'],
+  }, async (engine, backend) => {
     const privileged = DCR_PRIVILEGED_SCOPES[0]!;
     for (const id of MIXED_IDS) {
       await insertClient(engine, id, `n-${id}`, { scope: `read ${privileged}`, federated_read: [...MIXED_SLUGS] });
     }
-    for (const id of SOURCES) await insertSource(engine, `${id}-workspace`);
+    for (const id of SOURCES) await insertSource(engine, backend, `${id}-workspace`);
     const check = await checkOauthClientScopeHealth(engine);
     const message = check.message;
     expect(check.status).toBe('warn');
@@ -171,10 +189,10 @@ describe('access doctor checks list their keys by byte', () => {
   });
 
   parityTest('access_readers_malformed and access_unknown_readers list pages and readers by byte', {
-    methods: ['executeRaw', 'setConfig'], requires: 'raw_sql',
-  }, async (engine) => {
+    methods: ['putPage', 'setConfig', 'listMalformedReaderPages', 'listUnknownReaders', 'listRecentReaderNarrowings'],
+  }, async (engine, backend) => {
     for (const id of SOURCES) {
-      await insertSource(engine, id);
+      await insertSource(engine, backend, id);
       for (const slug of MIXED_SLUGS) await insertPage(engine, id, slug, { frontmatter: { readable_by: ['!!not valid!!'] } });
     }
     await insertPage(engine, 'default', 'notes/names-readers', { frontmatter: { readable_by: READER_IDS.map(id => `member:${id}`) } });
@@ -189,8 +207,8 @@ describe('access doctor checks list their keys by byte', () => {
     return { samples, readers };
   });
 
-  parityTest('guest_source lists the guest sources by byte id', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
-    for (const id of SOURCES) await insertSource(engine, id, { guest: true });
+  parityTest('guest_source lists the guest sources by byte id', { methods: ['listGuestSourceRows'] }, async (engine, backend) => {
+    for (const id of SOURCES) await insertSource(engine, backend, id, { guest: true });
     const check = await guestSourceCheck(engine);
     const ids = (check.details!.sources as Array<{ source: string }>).map(s => s.source);
     expect(check.status).toBe('fail');
@@ -200,9 +218,9 @@ describe('access doctor checks list their keys by byte', () => {
   });
 
   parityTest('access_policy_pending lists the sources with pending prefixes by byte id', {
-    methods: ['executeRaw'], requires: 'raw_sql',
+    methods: ['countAccessFolderDrift'],
   }, async (engine, backend) => {
-    for (const id of SOURCES) await insertSource(engine, id);
+    for (const id of SOURCES) await insertSource(engine, backend, id);
     for (const id of SOURCES) await restrictFolder(engine, backend, id, 'hr/', 'pending');
     const check = ((await folderAccessEntry.run(ctx(engine))) as Result[]).find(c => c.name === 'access_policy_pending')!;
     const sources = (check.details.sources as Array<{ source: string }>).map(s => s.source);
@@ -213,10 +231,10 @@ describe('access doctor checks list their keys by byte', () => {
   });
 
   parityTest('storage_manifest lists the sources with interim records by byte id', {
-    methods: ['executeRaw'], requires: 'raw_sql',
-  }, async (engine) => {
+    methods: ['putPage'],
+  }, async (engine, backend) => {
     for (const id of SOURCES) {
-      await insertSource(engine, id);
+      await insertSource(engine, backend, id);
       await insertPage(engine, id, 'storage-manifest/dataset-a', { type: 'stored-object' });
     }
     const check = await storageManifestCheck(engine);
@@ -228,23 +246,13 @@ describe('access doctor checks list their keys by byte', () => {
   });
 
   parityTest('generation_retirements and generation_held list sources and kinds by byte', {
-    methods: ['executeRaw'], requires: 'raw_sql',
-  }, async (engine) => {
+    methods: ['transaction', 'activateGenerationRows', 'recordHeldGenerationRow', 'listLiveGenerationRetirements', 'listHeldGenerations'],
+  }, async (engine, backend) => {
     const kinds = ['kb', 'k-z', 'k-x'];
     let n = 0;
     for (const id of SOURCES) {
-      await insertSource(engine, id);
-      for (const kind of kinds) {
-        n += 1;
-        const [live] = await engine.executeRaw<{ id: number }>(
-          `INSERT INTO derived_generations (source_id, kind, owner_key, generation, state, operation_id, item_set_hash)
-           VALUES ($1, $2, 'owner', 1, 'live', $3, 'hash') RETURNING id`, [id, kind, `op-live-${n}`]);
-        await engine.executeRaw(
-          `INSERT INTO derived_generation_items (generation_id, item_key, identity_hash, action) VALUES ($1, 'item', 'identity', 'retired')`, [live!.id]);
-        await engine.executeRaw(
-          `INSERT INTO derived_generations (source_id, kind, owner_key, generation, state, operation_id, item_set_hash, held_reason)
-           VALUES ($1, $2, 'owner', 2, 'held', $3, 'hash', 'shrunk')`, [id, kind, `op-held-${n}`]);
-      }
+      await insertSource(engine, backend, id);
+      for (const kind of kinds) await insertGenerations(engine, id, kind, n += 1);
     }
     const retired = await generationRetirementsCheck(engine, [...SOURCES]);
     const held = await generationHeldCheck(engine, [...SOURCES]);
@@ -259,7 +267,7 @@ describe('access doctor checks list their keys by byte', () => {
     return { retired: keys(retired.details!.by_source as never), held: keys(held.details!.by_reason as never) };
   });
 
-  parityTest('privacy_label_ignored lists the label values by byte', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('privacy_label_ignored lists the label values by byte', { methods: ['putPage'] }, async (engine, backend) => {
     const values = MIXED_SLUGS.map(s => `personal ${s}`);
     for (const [i, value] of values.entries()) await insertPage(engine, 'default', `notes/label-${i}`, { frontmatter: { access: value } });
     const check = await privacyLabelIgnoredCheck(engine);

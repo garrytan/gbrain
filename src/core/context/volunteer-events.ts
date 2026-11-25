@@ -260,16 +260,7 @@ export async function purgeStaleVolunteerEvents(
   ttlDays = VOLUNTEER_EVENTS_TTL_DAYS,
 ): Promise<number> {
   try {
-    const rows = await engine.executeRaw<{ count: string | number }>(
-      `WITH deleted AS (
-         DELETE FROM context_volunteer_events
-         WHERE volunteered_at < now() - ($1 || ' days')::interval
-         RETURNING 1
-       )
-       SELECT count(*)::text AS count FROM deleted`,
-      [String(ttlDays)],
-    );
-    return Number(rows[0]?.count ?? 0);
+    return await engine.deleteVolunteerEventsOlderThan(ttlDays);
   } catch {
     return 0;
   }

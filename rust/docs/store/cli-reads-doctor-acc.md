@@ -24,6 +24,14 @@ is engine-specific.
 `hasMcpLogRowsPastWindow` follows `pruneMcpRequestLogBatch`: the cutoff is `now - days` (the day count read as an `int4`),
 and rows are visited in `created_at` order, so the scan stops at the first row inside the window.
 
+One read of the access checks is served from the page records as well (`crates/gbrain-store/src/cli_reads/doctor_acc.rs`):
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.listReaderPages(updatedWithinDays)` | `[{ id, source_id, slug, readers, updated_at, updated_us, writer, prior_names_readers }]` for every live page whose frontmatter has a `readable_by` key (a JSON null counts), by source then slug in byte order; `updatedWithinDays` (null keeps all) keeps the pages written after `now - days`. `readers` is `gbrain_access_readers(frontmatter)` (`["!nobody"]` when no valid reader), `updated_at` is `timestamptz::text`, `writer` is `principal_kind:principal_id` of the revision receipt (null without one), `prior_names_readers` whether the newest stored version (snapshot time, then id) has a `readable_by` key (null with no version) | the page columns the three statements of `listMalformedReaderPages`, `listUnknownReaders` and `listRecentReaderNarrowings` read |
+
+The members built from it answer in TypeScript: `listMalformedReaderPages` (the pages whose readers are `["!nobody"]`, with the total), `listUnknownReaders` (each named reader that is no member, a removed member, no group or a group with no member, classified as the SQL does, with its page count and first page; members and groups from `readAccessMembers` and `readAccessGroups`) and `listRecentReaderNarrowings` (pages written in the window whose newest earlier version named no readers, newest first).
+
 ## Credential reads
 
 `listActiveAccessTokenRows`, `listActiveOauthClientRows` and `listAttestCredentialRows` read the store's token and
@@ -42,7 +50,9 @@ An answer the store cannot contradict, because it keeps no such state:
 
 | Members | Answer |
 | --- | --- |
-| `listPolicySourceIds`, `listOauthClientAuthShapes`, `listDanglingFederatedReads`, `listPrivilegedDcrClients`, `listBeliefCoveredSources`, `listVolunteerChannels` | no rows: no access state, tokens, OAuth clients, coverage events or volunteer events exist |
+| `listPolicySourceIds`, `listBeliefCoveredSources` | no rows: no access state or coverage events are read from here |
+| `listOauthClientAuthShapes`, `listDanglingFederatedReads`, `listPrivilegedDcrClients` | composed from the OAuth client rows the store serves (`listOauthClients`, `listOauthGrantAudit`, `listAllSources`): every client's auth shape, federated reads naming no source (an archived source is one), clients with grant revision 0 and no `register` audit row whose scope matches the pattern (`[[:space:]]` read as the POSIX space class). All byte order |
+| `listVolunteerChannels` | served by the store from the push-context log ([volunteer-events.md](volunteer-events.md)) |
 | `isAccessStateUnreadable` | false |
 | `readKnowledgeRevisionNotNull` | true: the revision is always set |
 | `readDriftSchema` | `current` |
@@ -51,5 +61,5 @@ An answer the store cannot contradict, because it keeps no such state:
 | `readPendingProposalSummary` | none pending |
 | `readChronicleLedgerStats`, `readChronicleDuplicateEvents` | the available, empty tallies |
 | `readFeedbackStatus` | zero counts |
-| `listOrphanWorkspaceSources(suffix)` | composed from the source rows, page counts and fact health the store serves |
+| `listOrphanWorkspaceSources(suffix)` | composed from the source rows, page counts, fact health and live clients the store serves (a source a live client names as its source or a federated read is no orphan) |
 | `listDriftLiveRows`, `listDriftVersionRows` | served by the store (`cli_reads/doctor_drift.rs`): the live pages of a source in id order (at most 500 after a cursor, or the one page at a slug) and the versions of the given pages. `req` and `kind` are the page's revision receipt (`revision_write_request_id`, `revision_principal_kind`) or the version's archived actor (`archived_write_request_id`, `archived_principal_kind`), and `remote` is `authority->>'remote'` of that journal request (text; null when the request or the key is absent), as the SQL's join answers. An unattributed write answers all three as null. A page scan costs O(pages) per batch |

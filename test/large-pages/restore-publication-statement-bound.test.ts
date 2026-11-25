@@ -44,8 +44,12 @@ const env = { GBRAIN_HOME: home, OPENAI_API_KEY: undefined, VOYAGE_API_KEY: unde
 const logger = { info() {}, warn() {}, error() {} };
 afterAll(() => { rmSync(home, { recursive: true, force: true }); });
 
-/** The two probes the seal decision runs (page-body/ingest.ts occurrencesWithoutChunks, projection.ts STALE_CHUNKS_SQL). */
-const SEAL_PROBES = ['FROM unnest($2::bigint[]) AS o', 'WITH RECURSIVE occ(o)'];
+/**
+ * The two probes the seal decision runs (page-body/ingest.ts occurrencesWithoutChunks, projection.ts hasStaleChunks) and the
+ * retirement that shares the second's statement text. They are typed engine members now (engine-sql/segmented-writes.ts), so
+ * the proxy ends the member call as it once ended the statement.
+ */
+const SEAL_PROBE_MEMBERS = ['listChunkedOccurrences', 'hasStaleSegmentChunks', 'retireStaleSegmentChunks'];
 /** The statement a publication transaction opens with (protocol.ts declareDurablePersistence). */
 const DECLARE_PUBLICATION = "set_config('gbrain.persistence_protocol'";
 
@@ -60,11 +64,14 @@ function statementBound(engine: BrainEngine) {
     return new Proxy(tx, { get(target, prop, receiver) {
       if (prop === 'executeRaw') return (sql: string, params?: unknown[], opts?: unknown) => {
         if (sql.includes(DECLARE_PUBLICATION)) publication = true;
-        if (publication && SEAL_PROBES.some(probe => sql.includes(probe)) && probes.inPublication++ === 0) {
+        return target.executeRaw(sql, params, opts as never);
+      };
+      if (typeof prop === 'string' && SEAL_PROBE_MEMBERS.includes(prop)) return (...args: unknown[]) => {
+        if (publication && probes.inPublication++ === 0) {
           probes.cancelled++;
           return Promise.reject(Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' }));
         }
-        return target.executeRaw(sql, params, opts as never);
+        return (Reflect.get(target, prop, target) as (...a: unknown[]) => Promise<unknown>).apply(target, args);
       };
       if (prop === 'transaction') return (fn: (inner: BrainEngine) => Promise<unknown>, opts?: unknown) => target.transaction(inner => fn(inTx(inner)), opts as never);
       const through = segmentedWriteThrough(prop, receiver);

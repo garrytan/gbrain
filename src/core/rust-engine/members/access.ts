@@ -39,6 +39,7 @@ export const ACCESS_MEMBERS = {
   applyAccessRuleChanges: 'access_control',
   restampAccessWindow: 'access_control',
   finishAccessRestamp: 'access_control',
+  countAccessFolderDrift: 'access_control',
   insertAccessPolicyRevision: 'access_control',
   markAccessRevisionsApplied: 'access_control',
   approveAccessPolicyRevision: 'access_control',

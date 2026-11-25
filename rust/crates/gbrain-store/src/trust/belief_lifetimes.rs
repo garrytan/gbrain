@@ -105,6 +105,14 @@ pub(crate) fn record_key(lifetime: &str) -> Vec<u8> {
     key
 }
 
+/// `t 0x0a 0x01 incarnation \0`: every open lifetime of the incarnation (value: the lifetime id).
+pub(crate) fn open_prefix(incarnation: &str) -> Vec<u8> {
+    let mut key = vec![keys::TRUST, LIFETIMES, OPEN];
+    key.extend_from_slice(incarnation.as_bytes());
+    key.push(0);
+    key
+}
+
 fn open_key(incarnation: &str, slug: &str) -> Vec<u8> {
     let mut key = vec![keys::TRUST, LIFETIMES, OPEN];
     key.extend_from_slice(incarnation.as_bytes());

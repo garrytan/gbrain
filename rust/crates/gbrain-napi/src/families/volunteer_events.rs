@@ -49,4 +49,27 @@ impl Brain {
             s.read_volunteer_usage(&ids, days)
         })
     }
+
+    /// `deleteVolunteerEventsOlderThan(ttlDays)`: how many rows went.
+    #[napi]
+    pub fn delete_volunteer_events_older_than<'env>(
+        &self,
+        env: &'env Env,
+        ttl_days: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.delete_volunteer_events_older_than(ttl_days))
+    }
+
+    /// `deleteVolunteerEventsForSlugs(sourceId, slugs)`: how many rows went.
+    #[napi]
+    pub fn delete_volunteer_events_for_slugs<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slugs: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.delete_volunteer_events_for_slugs(&source_id, &slugs)
+        })
+    }
 }

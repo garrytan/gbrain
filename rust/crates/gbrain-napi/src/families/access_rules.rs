@@ -207,6 +207,16 @@ impl Brain {
         })
     }
 
+    /// `countAccessFolderDrift(sourceId)`: the pages whose kept rule ids differ from the rules now.
+    #[napi]
+    pub fn count_access_folder_drift<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.count_access_folder_drift(&source_id))
+    }
+
     /// `finishAccessRestamp(sourceId)`: the pages restamped.
     #[napi]
     pub fn finish_access_restamp<'env>(

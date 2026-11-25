@@ -135,3 +135,40 @@ describe('doctor reads, second set: seeded PGLite', () => {
     expect(await listPrivilegedDcrClients(raw, 'admin')).toBeNull();
   });
 });
+
+describe('doctor reads, second set: pages that name readers and the chat census', () => {
+  const page = (frontmatter: Record<string, unknown>, type = 'note', title = 'page') => ({ type: type as 'note', title, compiled_truth: 'body', frontmatter });
+
+  test('malformed and unknown readers are listed by page, each with its total and first page', async () => {
+    await engine.putPage('readers/bad', page({ readable_by: ['!! not valid !!'] }));
+    await engine.putPage('readers/ghost-a', page({ readable_by: ['member:ghost'] }));
+    await engine.putPage('readers/ghost-b', page({ readable_by: ['member:ghost', 'group:crew'] }));
+    expect(await engine.listMalformedReaderPages(20)).toEqual([{ source_id: 'default', slug: 'readers/bad', total: 1 }]);
+    expect(await engine.listUnknownReaders(20)).toEqual([
+      { reader: 'group:crew', kind: 'unknown', pages: 1, sample: { source_id: 'default', slug: 'readers/ghost-b' } },
+      { reader: 'member:ghost', kind: 'unknown', pages: 2, sample: { source_id: 'default', slug: 'readers/ghost-a' } },
+    ]);
+    expect(await engine.listUnknownReaders(1)).toHaveLength(1);
+  });
+
+  test('a page that gained readers since its newest earlier version is a recent narrowing', async () => {
+    await engine.putPage('readers/narrowed', page({}));
+    await engine.createVersion('readers/narrowed');
+    await engine.putPage('readers/narrowed', page({ readable_by: ['member:ghost'] }));
+    const rows = await engine.listRecentReaderNarrowings(7, 20);
+    expect(rows.map(r => ({ slug: r.slug, readers: r.readers, total: r.total }))).toEqual([{ slug: 'readers/narrowed', readers: ['member:ghost'], total: 1 }]);
+    expect(await engine.listRecentReaderNarrowings(0, 20)).toEqual([]);
+  });
+
+  test('the chat census counts pages and distinct channels per source', async () => {
+    await engine.putPage('chat/a', page({ channel: 'alpha' }, 'slack'));
+    await engine.putPage('chat/b', page({ channel: 'alpha' }, 'slack'));
+    await engine.putPage('chat/c', page({}, 'slack', '#General'));
+    await engine.putPage('chat/dm1', page({ channel: 'alpha' }, 'dm'));
+    await engine.putPage('chat/hidden', page({ channel: 'secret', visibility: 'private' }, 'slack'));
+    const shape = (rows: Array<{ source_id: string; chat_pages: number | string; channels: number | string }>) =>
+      rows.map(r => ({ source_id: r.source_id, chat_pages: Number(r.chat_pages), channels: Number(r.channels) }));
+    expect(shape(await engine.readChatCensusRows(['default'], ['slack', 'dm'], ['dm'], false))).toEqual([{ source_id: 'default', chat_pages: 5, channels: 4 }]);
+    expect(shape(await engine.readChatCensusRows(['default'], ['slack', 'dm'], ['dm'], true))).toEqual([{ source_id: 'default', chat_pages: 4, channels: 3 }]);
+  });
+});

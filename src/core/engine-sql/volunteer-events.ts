@@ -55,3 +55,17 @@ export async function insertVolunteerEvents(tx: Raw, rows: readonly VolunteerEve
 export function readVolunteerUsage(tx: Raw, sourceIds: readonly string[], days: number): Promise<VolunteerUsageRow[]> {
   return tx.executeRaw<VolunteerUsageRow>(VOLUNTEER_USAGE_SQL, [[...sourceIds], String(days)]);
 }
+
+/** The retention delete the dream cycle's purge phase runs: removes the rows older than `ttlDays` days; how many went. */
+export async function deleteVolunteerEventsOlderThan(tx: Raw, ttlDays: number): Promise<number> {
+  const rows = await tx.executeRaw<{ count: string | number }>(
+    `WITH deleted AS (
+         DELETE FROM context_volunteer_events
+         WHERE volunteered_at < now() - ($1 || ' days')::interval
+         RETURNING 1
+       )
+       SELECT count(*)::text AS count FROM deleted`,
+    [String(ttlDays)],
+  );
+  return Number(rows[0]?.count ?? 0);
+}

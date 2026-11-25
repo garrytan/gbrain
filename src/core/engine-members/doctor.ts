@@ -69,6 +69,12 @@ export interface DoctorMembers {
   listOrphanGenerationCandidates(sourceIds: readonly string[], kind: string | null): Promise<DoctorDerivedSql.OrphanGenerationCandidateRow[]>;
   /** The atom provenance drift counts (none when the aggregate returned no row). */
   readAtomProvenanceCounts(): Promise<DoctorDerivedSql.AtomProvenanceCounts | undefined>;
+  /** The unchanged-body recheck's drifted atom groups of live inline pages, by page id then source hash (at most 200). */
+  listBodyRecheckGroups(): Promise<DoctorDerivedSql.BodyRecheckGroup[]>;
+  /** The body storage and body columns of the page with this id, or null. */
+  readBodyRecheckPage(pageId: number): Promise<DoctorDerivedSql.BodyRecheckPage | null>;
+  /** The newest 20 inline versions of the page that hold a body, newest first. */
+  listBodyRecheckVersions(pageId: number): Promise<DoctorDerivedSql.BodyRecheckVersion[]>;
   /** The 7-day extract rollup per kind; `withExpected: false` is the pre-v141 text. */
   readExtractRollup7d(withExpected: boolean): Promise<DoctorDerivedSql.ExtractRollupRow[]>;
   /** `extract --explain <kind>`: that kind's 7-day extract rollup aggregate (null columns when it has none). */
@@ -250,6 +256,12 @@ export interface DoctorMembers {
   listOrphanWorkspaceSources(suffix: string): Promise<Array<{ id: string }>>;
   /** Live clients that look self-registered with a scope matching `scopeRegex`; null when the grant audit schema is absent. */
   listPrivilegedDcrClients(scopeRegex: string): Promise<DoctorAccSql.PrivilegedDcrClient[] | null>;
+  /** Live pages whose `readable_by` names no valid reader, by source then slug (the first `limit`), each with the total. */
+  listMalformedReaderPages(limit: number): Promise<DoctorAccSql.MalformedReaderPageRow[]>;
+  /** Readers pages name that match no live member or group (or a group with no member), each with its page count and first page. */
+  listUnknownReaders(limit: number): Promise<DoctorAccSql.UnknownReaderRow[]>;
+  /** Live pages written in the last `days` days that gained `readable_by` since their newest earlier version, newest first. */
+  listRecentReaderNarrowings(days: number, limit: number): Promise<DoctorAccSql.ReaderNarrowingRow[]>;
   /** What the MCP request log occupies, in bytes (the engine's own measure). */
   readMcpRequestLogBytes(): Promise<number>;
   /** The MCP request log's row count: an estimate on Postgres, a count bounded to `limit` rows elsewhere. */

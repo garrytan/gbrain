@@ -39,4 +39,15 @@ impl Brain {
             s.has_mcp_log_rows_past_window(days, &keep_operations)
         })
     }
+
+    /// `listReaderPages(updatedWithinDays)`: resolves the live pages that name readers (the member-access checks' read);
+    /// a `null` day count keeps every page, a number only the pages written in that many days.
+    #[napi]
+    pub fn list_reader_pages<'env>(
+        &self,
+        env: &'env Env,
+        updated_within_days: Option<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_reader_pages(updated_within_days))
+    }
 }

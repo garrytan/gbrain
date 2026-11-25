@@ -2848,6 +2848,16 @@ const PINS: Pin[] = [
         ORDER BY e.match_arm COLLATE "C", e.channel COLLATE "C"`],
   },
   {
+    from: 'src/core/context/volunteer-events.ts:287 purgeStaleVolunteerEvents (at 9ddd6ac59a)',
+    case: { method: 'deleteVolunteerEventsOlderThan', variant: 'default', run: e => e.deleteVolunteerEventsOlderThan(90) },
+    texts: [`WITH deleted AS (
+         DELETE FROM context_volunteer_events
+         WHERE volunteered_at < now() - ($1 || ' days')::interval
+         RETURNING 1
+       )
+       SELECT count(*)::text AS count FROM deleted`],
+  },
+  {
     from: 'src/commands/sources-git-gap.ts:153 censusGitGap (at b7b18e5ab3; the source row)',
     case: { method: 'readGitGapSourceRow', variant: 'default', run: e => e.readGitGapSourceRow('work') },
     texts: ['SELECT local_path, incarnation::text AS incarnation FROM sources WHERE id=$1'],

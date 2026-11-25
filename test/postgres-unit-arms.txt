@@ -230,6 +230,7 @@ test/engine-parity/connector-sync-stamp.test.ts
 test/engine-parity/core-page-member-reads.test.ts
 test/engine-parity/credential-grant-writes.test.ts
 test/engine-parity/cycle-locks.test.ts
+test/engine-parity/cycle-reads.test.ts
 test/engine-parity/decide-proposals.test.ts
 test/engine-parity/decide-store.test.ts
 test/engine-parity/delegated-grant.test.ts
@@ -390,6 +391,7 @@ test/engine-parity/owner-recovery-scans.test.ts
 test/engine-parity/owner-write-privacy.test.ts
 test/engine-parity/page-delete-slug-stores.test.ts
 test/engine-parity/page-embedding-budget.test.ts
+test/engine-parity/page-extraction-state.test.ts
 test/engine-parity/page-fence-writes.test.ts
 test/engine-parity/page-lock-anchors.test.ts
 test/engine-parity/page-mutation-reads.test.ts
@@ -585,6 +587,7 @@ test/engine-parity/unrestricted-member-page-reads.test.ts
 test/engine-parity/valid-time-member-reads.test.ts
 test/engine-parity/vector-options.test.ts
 test/engine-parity/versions-raw.test.ts
+test/engine-parity/volunteer-events.test.ts
 test/engine-parity/wanted-links.test.ts
 test/engine-parity/wanted-markers.test.ts
 test/engine-parity/wedged-reservation.test.ts
