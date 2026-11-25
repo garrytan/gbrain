@@ -59,7 +59,7 @@ export const readRowAttribution: StoreMember<[target: RowAttributionTarget], Row
   const member = 'readRowAttribution';
   const wire = target.kind === 'fact'
     ? { kind: 'fact', id: target.id, sourceId: target.sourceId, slug: target.slug, worldOnly: target.worldOnly,
-        excludePrivate: storePrivacyPolicy(member, target.excludePrivate, () => privateFactFilterForReader('facts'), { callerReaders: true }) ?? null }
+        excludePrivate: storePrivacyPolicy(member, target.excludePrivate, () => privateFactFilterForReader('facts'), { callerReaders: true, fragment: 'for_reader' }) ?? null }
     : target.kind === 'take'
       ? { kind: 'take', pageId: target.pageId, rowNum: target.rowNum, holders: target.holders ? [...target.holders] : null,
           ownerOnly: rowOwnerOnly(target.excludePrivate, 'takes') }

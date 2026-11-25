@@ -30,13 +30,13 @@ export const listAllUnarchivedSourceIds: Member<'listAllUnarchivedSourceIds'> = 
 
 export const readLiveFactEntityPage: Member<'readLiveFactEntityPage'> = (brain, sourceId, slug, excludePrivate) => {
   const member = 'readLiveFactEntityPage';
-  const policy = excludePrivate ? storePageTextPolicy(member, () => remoteReadFloorSql('p')) : undefined;
+  const policy = excludePrivate ? storePageTextPolicy(member, () => remoteReadFloorSql('p'), { fragment: 'floor' }) : undefined;
   return storeCall({ member, sourceId }, () => brain.readLiveFactEntityPage({ sourceId, slug, policy }));
 };
 
 export const listContestedProposalPairs: Member<'listContestedProposalPairs'> = async (brain, ids, policy) => {
   const member = 'listContestedProposalPairs';
-  const excludePrivate = storePrivacyPolicy(member, policy.excludePrivate, () => privateFactFilterForCaller('facts'), { callerReaders: true });
+  const excludePrivate = storePrivacyPolicy(member, policy.excludePrivate, () => privateFactFilterForCaller('facts'), { callerReaders: true, fragment: 'for_caller' });
   const rows = await storeCall({ member }, () => brain.listContestedProposalPairs({
     ids, remote: policy.remote, excludePrivate,
     minTrust: policy.eligibility?.floor || null, suppressFlagged: policy.eligibility?.suppressFlagged === true,

@@ -2510,6 +2510,7 @@
     "access_policy_store_mismatch": 1,
     "access_policy_widening_held": 1,
     "access_rule_invalid": 1,
+    "access_self_check_mismatch": 1,
     "access_serves_key_dir_in_git": 1,
     "access_serves_roster_empty": 1,
     "acknowledgment_unavailable": 1,
