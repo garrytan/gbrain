@@ -4,7 +4,8 @@
  * under its original name (tests and external callers import them from
  * doctor.ts) and buildChecks / doctorReportRemote consume them.
  */
-import type { BrainEngine } from '../../../core/engine.ts';
+import type { BrainEngine, SourceRow } from '../../../core/engine.ts';
+import { rethrowCapabilityRefusal } from '../../../core/engine-capability-refusal.ts';
 import { resolveHoursEnv } from '../../../core/env-number.ts';
 import type { Check } from '../../doctor.ts';
 import type { Action } from '../../../core/agent-output.ts';
@@ -153,10 +154,10 @@ export async function checkPoolBudget(_engine: BrainEngine): Promise<Check> {
  *
  * Sibling to `sync_freshness`. Where sync_freshness reads `last_sync_at`
  * (one phase of the cycle), this check reads `sources.config->>'last_full_cycle_at'`
- * which is the canonical "this whole cycle completed" timestamp written
- * by runCycle's exit hook. Autopilot's per-source fan-out gate (the
- * v0.38 fan-out wave) reads the same field — so this check surfaces
- * exactly what autopilot sees when deciding to skip a source.
+ * which runCycle writes after a successful bounded window too. A nonempty
+ * `last_source_cycle_window_slug` means the source walk is still in progress,
+ * even with a recent stamp; report its remaining live pages separately. The
+ * autopilot floor and the success stamps still throttle individual windows.
  *
  * Default thresholds: warn at 6h, fail at 24h. Tighter than sync_freshness
  * because full-cycle staleness compounds (sync stale → extract stale →
@@ -187,15 +188,35 @@ export async function checkCycleFreshness(
     const issues: string[] = [];
     let hasWarnings = false;
     let hasFailures = false;
-    const young = await youngOrEmptySources(engine, sources.map((s) => s.id), now);
+    const { young, remaining } = await cycleSourceCoverage(engine, sources, now);
     const waiting: string[] = [];
     const syncOff: string[] = [];
     let firstStale: string | null = null;
+    const windows: Array<{ source_id: string; cursor_at: string; cursor_slug: string; remaining_pages: number }> = [];
+    const manualWindows: string[] = [];
 
     for (const source of sources) {
       const display = source.name && source.name !== source.id
         ? `'${source.id}' (${source.name})`
         : `'${source.id}'`;
+      // A successful bounded window is not a completed source walk (#8577).
+      // Keep the scheduler's per-window success/cooldown stamps unchanged.
+      const cursorAt = source.config?.last_source_cycle_window_at;
+      const cursorSlug = source.config?.last_source_cycle_window_slug;
+      if (typeof cursorAt === 'string' && cursorAt && typeof cursorSlug === 'string' && cursorSlug) {
+        const pagesRemaining = remaining.get(source.id) ?? 0;
+        windows.push({ source_id: source.id, cursor_at: cursorAt, cursor_slug: cursorSlug, remaining_pages: pagesRemaining });
+        const progress = `Source ${display} walk in progress: ${pagesRemaining} live page(s) after the cursor; a recent window is not a completed walk`;
+        if (isSyncDisabledConfig(source.config)) {
+          syncOff.push(display);
+          manualWindows.push(progress);
+          continue;
+        } else {
+          issues.push(progress);
+          firstStale ??= source.id;
+          hasWarnings = true;
+        }
+      }
       // GST-3337: a source with sync off is never stale or failing here, so nothing that acts on freshness (a dream) picks it.
       if (isSyncDisabledConfig(source.config)) { syncOff.push(display); continue; }
       const raw = source.config?.last_full_cycle_at;
@@ -244,13 +265,16 @@ export async function checkCycleFreshness(
     }
 
     const fix = firstStale ? cycleFix(firstStale, isAvailable('chat') || isAvailable('embedding')) : undefined;
-    const offNote = syncOff.length ? ` Sync off (not checked; only an explicit gbrain sync --source <id> syncs ${syncOff.length > 1 ? 'them' : 'it'}): ${syncOff.join(', ')}.` : '';
+    const offNote = (syncOff.length ? ` Sync off (not checked; only an explicit gbrain sync --source <id> syncs ${syncOff.length > 1 ? 'them' : 'it'}): ${syncOff.join(', ')}.` : '')
+      + (manualWindows.length ? ` ${manualWindows.join('; ')}.` : '');
+    const progressDetails = windows.length ? { details: { source_windows: windows } } : {};
     if (hasFailures) {
       return {
         name: 'cycle_freshness',
         status: 'fail',
         message: `${issues.join('; ')}. Run \`gbrain dream --source <id>\` for each stale source, or start \`gbrain autopilot\`.${offNote}`,
         ...(fix ? { fix } : {}),
+        ...progressDetails,
       };
     }
     if (hasWarnings) {
@@ -259,40 +283,56 @@ export async function checkCycleFreshness(
         status: 'warn',
         message: `${issues.join('; ')}. Run \`gbrain dream --source <id>\` to cycle a source, or start \`gbrain autopilot\`.${offNote}`,
         ...(fix ? { fix } : {}),
+        ...progressDetails,
       };
     }
     const checked = sources.length - syncOff.length;
-    if (checked === 0) return { name: 'cycle_freshness', status: 'ok', message: offNote.trim() };
+    if (checked === 0) return { name: 'cycle_freshness', status: 'ok', message: offNote.trim(), ...progressDetails };
     if (waiting.length === checked) {
-      return infoCheck('cycle_freshness',
-        `No full cycle yet for ${waiting.join(', ')}: ${waiting.length > 1 ? 'they hold' : 'it holds'} no pages or only pages from the last 24h, so there is nothing to consolidate yet.`,
-        'not_applicable');
+      return { ...infoCheck('cycle_freshness',
+        `No full cycle yet for ${waiting.join(', ')}: ${waiting.length > 1 ? 'they hold' : 'it holds'} no pages or only pages from the last 24h, so there is nothing to consolidate yet.${offNote}`,
+        'not_applicable'), ...progressDetails };
     }
     return {
       name: 'cycle_freshness',
       status: 'ok',
       message: `All ${checked} federated source(s) cycled recently${offNote ? `.${offNote}` : ''}`,
+      ...progressDetails,
     };
   } catch (e) {
+    rethrowCapabilityRefusal(e);
     return checkError('cycle_freshness', 'check cycle freshness', e);
   }
 }
 
 /**
- * E2: sources that have never cycled but hold no live pages, or only pages
- * created in the last 24h. Nothing is stale there yet, so doctor reports
- * them as information instead of a warning.
+ * Share the existing age census with source-window coverage. Bind the cursors
+ * from the same source snapshot used by the check, retain database timestamp
+ * precision, and count only live pages in those sources (one read, not N+1).
  */
-async function youngOrEmptySources(engine: BrainEngine, ids: string[], now: number): Promise<Set<string>> {
-  const out = new Set(ids);
-  const rows = await engine.executeRaw<{ source_id: string; oldest: string | Date | null }>(
-    `SELECT source_id, MIN(created_at) AS oldest FROM pages WHERE deleted_at IS NULL GROUP BY source_id`,
+async function cycleSourceCoverage(engine: BrainEngine, sources: SourceRow[], now: number) {
+  const young = new Set(sources.map((s) => s.id));
+  const remaining = new Map<string, number>();
+  const cursors = sources.map((s) => {
+    const at = s.config?.last_source_cycle_window_at;
+    const slug = s.config?.last_source_cycle_window_slug;
+    return typeof at === 'string' && at && typeof slug === 'string' && slug ? [at, slug] : [null, null];
+  });
+  const rows = await engine.executeRaw<{ source_id: string; oldest: string | Date | null; remaining: number | string }>(
+    `SELECT p.source_id, MIN(p.created_at) AS oldest,
+            count(*) FILTER (WHERE (p.updated_at, p.slug) > (c.cursor_at::timestamptz, c.cursor_slug)) AS remaining
+       FROM pages p
+       JOIN unnest($1::text[], $2::text[], $3::text[]) AS c(source_id, cursor_at, cursor_slug)
+         ON c.source_id = p.source_id
+      WHERE p.deleted_at IS NULL GROUP BY p.source_id`,
+    [sources.map((s) => s.id), cursors.map((c) => c[0]), cursors.map((c) => c[1])],
   );
   for (const r of rows) {
     const oldest = r.oldest ? new Date(r.oldest).getTime() : NaN;
-    if (!Number.isFinite(oldest) || now - oldest >= 24 * 60 * 60 * 1000) out.delete(r.source_id);
+    if (!Number.isFinite(oldest) || now - oldest >= 24 * 60 * 60 * 1000) young.delete(r.source_id);
+    remaining.set(r.source_id, Number(r.remaining));
   }
-  return out;
+  return { young, remaining };
 }
 
 /** GBRA-438: a keyless brain has no paid phase to run, so the fix asks no paid consent there. */

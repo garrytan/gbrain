@@ -20,6 +20,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { makeAutopilotCycleHandler } from '../src/core/minions/handlers/autopilot-cycle.ts';
 import { SOURCE_FRESHNESS_PHASES } from '../src/core/cycle/phase-scope.ts';
 import { listSourceChangedPages, sourceCycleWindowStamp, sourceWindow } from '../src/core/cycle/source-window.ts';
+import { checkCycleFreshness } from '../src/commands/doctor.ts';
 import { performSync } from '../src/commands/sync.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -136,13 +137,28 @@ describe('#8573 sync-disabled source cycle window', () => {
         expect(one.scanned).toBe(2);
         expect(one.weight).toMatchObject({ mode: 'incremental', pages_recomputed: 2 });
         expect(await config(engine, id)).toMatchObject({ last_source_cycle_window_slug: 'walk/n-1' });
+        const firstStamp = await config(engine, id);
+        const firstHealth = await checkCycleFreshness(engine);
+        expect(firstHealth.message).toContain('walk in progress');
+        expect(firstHealth.details).toMatchObject({ source_windows: expect.arrayContaining([
+          expect.objectContaining({ source_id: id, cursor_slug: 'walk/n-1', remaining_pages: 3 }),
+        ]) });
+        expect(firstHealth.fix?.argv).not.toEqual(['gbrain', 'dream', '--source', id]);
+        expect(await config(engine, id)).toEqual(firstStamp);
 
         // Edited after the first window passed it: it moves to the end of the walk.
         await engine.putPage('walk/n-0', { title: 'Note 0', type: 'note', compiled_truth: 'Body 0, edited.' }, { sourceId: id });
         expect((await cycle(engine, id, 2)).weight).toMatchObject({ pages_recomputed: 2 });
         expect(await config(engine, id)).toMatchObject({ last_source_cycle_window_slug: 'walk/n-3' });
+        const secondHealth = await checkCycleFreshness(engine);
+        expect(secondHealth.details).toMatchObject({ source_windows: expect.arrayContaining([
+          expect.objectContaining({ source_id: id, cursor_slug: 'walk/n-3', remaining_pages: 2 }),
+        ]) });
         expect((await cycle(engine, id, 3)).weight).toMatchObject({ pages_recomputed: 2 });
         expect(await config(engine, id)).toMatchObject({ last_source_cycle_window_slug: '' });
+        const completedHealth = await checkCycleFreshness(engine);
+        const windows = completedHealth.details?.source_windows as Array<{ source_id: string }> | undefined;
+        expect(windows?.some(w => w.source_id === id) ?? false).toBe(false);
         expect((await cycle(engine, id, 4)).weight).toMatchObject({ mode: 'incremental', pages_recomputed: 0 });
       } finally {
         await disposePersistenceConsumer(engine);

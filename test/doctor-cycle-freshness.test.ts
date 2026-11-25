@@ -72,6 +72,65 @@ describe('doctor checkCycleFreshness', () => {
     expect(result.status).toBe('ok');
   });
 
+  test('a recent partial walk is not whole-source freshness; remaining pages respect the exact source and cursor', async () => {
+    await seed('walking', agoH(0));
+    await seed('sibling', agoH(0));
+    const at = '2026-05-22T11:00:00.123456Z';
+    await engine.updateSourceConfig('walking', { last_source_cycle_window_at: at, last_source_cycle_window_slug: 'walk/b' });
+    for (const [source, slug, stamp, deleted] of [
+      ['walking', 'walk/a', at, false], ['walking', 'walk/b', at, false],
+      ['walking', 'walk/c', at, false], ['walking', 'walk/older', agoH(2), false],
+      ['walking', 'walk/newer', agoH(0), false], ['walking', 'walk/deleted', at, true],
+      ['sibling', 'walk/c', at, false],
+    ] as const) {
+      await engine.executeRaw(`INSERT INTO pages(source_id,slug,type,title,updated_at,deleted_at)
+        VALUES($1,$2,'note',$2,$3::text::timestamptz,CASE WHEN $4::boolean THEN now() ELSE NULL END)`, [source, slug, stamp, deleted]);
+    }
+    const before = (await engine.executeRaw('SELECT config FROM sources WHERE id=$1', ['walking']))[0];
+    const result = await checkCycleFreshness(engine, { nowMs: NOW });
+    expect(result.status).toBe('warn');
+    expect(result.message).toContain('walk in progress');
+    expect(result.message).toContain('2 live page(s) after the cursor');
+    expect(result.details).toMatchObject({ source_windows: [{ source_id: 'walking', cursor_at: at, cursor_slug: 'walk/b', remaining_pages: 2 }] });
+    expect(result.fix?.argv).toEqual(['gbrain', 'dream', '--source', 'walking']);
+    expect((await engine.executeRaw('SELECT config FROM sources WHERE id=$1', ['walking']))[0]).toEqual(before);
+    await engine.updateSourceConfig('walking', { last_full_cycle_at: agoH(72) });
+    expect((await checkCycleFreshness(engine, { nowMs: NOW })).status).toBe('fail');
+    await engine.updateSourceConfig('walking', { last_full_cycle_at: agoH(0) });
+    await engine.updateSourceConfig('walking', { last_source_cycle_window_slug: '' });
+    const complete = await checkCycleFreshness(engine, { nowMs: NOW });
+    expect(complete.status).toBe('ok');
+    expect(complete.message).not.toContain('walk in progress');
+  });
+
+  test('an unfinished sync-disabled walk is visible without making automatic sync stale or prescribing a dream', async () => {
+    await seed('manual-walk', agoH(0), { syncEnabled: false });
+    await engine.updateSourceConfig('manual-walk', { last_source_cycle_window_at: agoH(1), last_source_cycle_window_slug: 'walk/last' });
+    const result = await checkCycleFreshness(engine, { nowMs: NOW });
+    expect(result.status).toBe('ok');
+    expect(result.message).toContain('walk in progress');
+    expect(result.details).toMatchObject({ source_windows: [{ source_id: 'manual-walk', remaining_pages: 0 }] });
+    expect(result.fix).toBeUndefined();
+  });
+
+  test('incomplete cursor pairs are not walks, but an active walk outranks young-source information', async () => {
+    await seed('young-walk', undefined, { pageAgeH: 1 });
+    for (const [at, slug] of [[null, 'walk/a'], ['not-a-date', ''], [agoH(1), null], [123, 'walk/a']]) {
+      await engine.updateSourceConfig('young-walk', { last_source_cycle_window_at: at, last_source_cycle_window_slug: slug });
+      const ignored = await checkCycleFreshness(engine, { nowMs: NOW });
+      expect(ignored.status).toBe('ok');
+      expect(ignored.details?.source_windows).toBeUndefined();
+    }
+    await engine.updateSourceConfig('young-walk', { last_source_cycle_window_at: agoH(1), last_source_cycle_window_slug: 'walk/a' });
+    const active = await checkCycleFreshness(engine, { nowMs: NOW });
+    expect(active.status).toBe('warn');
+    expect(active.message).toContain('walk in progress');
+    await engine.updateSourceConfig('young-walk', { last_source_cycle_window_at: 'not-a-date' });
+    const unknown = await checkCycleFreshness(engine, { nowMs: NOW });
+    expect(unknown.status).not.toBe('ok');
+    expect(unknown.message).toMatch(/Could not check cycle freshness/);
+  });
+
   test('source with last_full_cycle_at 10h ago returns warn (>6h, <24h)', async () => {
     await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
     await seed('warned', agoH(10));
