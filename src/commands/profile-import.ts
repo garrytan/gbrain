@@ -3,7 +3,7 @@
  * preview, and show or resume its progress receipt. Parsing runs here, on the client; the facts are saved through the
  * caller's own remember batches, so they land on the caller's own profile and nowhere else.
  */
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { IMPORT_FORMATS, planImport, previewHash, type ImportFormat, type ImportTarget } from '../core/profile/import.ts';
 import { newReceipt, runImport, summarize, type ImportCall, type ImportReceipt } from '../core/profile/import-run.ts';
@@ -55,17 +55,20 @@ export function loadReceipt(path: string): ImportReceipt {
   return r;
 }
 
+/** Writes the receipt whole or not at all (a temporary file renamed over it), readable only by the owner. */
 export function saveReceipt(path: string, r: ImportReceipt): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  writeFileSync(path, JSON.stringify(r, null, 2) + '\n', { mode: 0o600 });
-  chmodSync(path, 0o600);
+  const tmp = `${path}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(r, null, 2) + '\n', { mode: 0o600 });
+  chmodSync(tmp, 0o600);
+  renameSync(tmp, path);
 }
 
 export const receiptPath = (dir: string, hash: string) => join(dir, 'profile-imports', `${hash}.json`);
 
-async function report(r: ImportReceipt, path: string, json: boolean): Promise<void> {
+async function report(r: ImportReceipt, path: string, json: boolean, global: string[]): Promise<void> {
   const s = summarize(r);
-  const resume = ['gbrain', 'profile', 'import', '--resume', path];
+  const resume = ['gbrain', ...global, 'profile', 'import', '--resume', path];
   if (json) {
     await writeJsonDocument(JSON.stringify({ receipt: path, preview: r.preview, profile: r.target.profile, ...s,
       ...(r.batches.some(b => b.state === 'failed') ? { batch_errors: r.batches.filter(b => b.error).map(b => ({ batch: b.index, ...b.error })) } : {}),
@@ -80,13 +83,16 @@ async function report(r: ImportReceipt, path: string, json: boolean): Promise<vo
   if (!s.complete) console.log(`Finish it with: ${resume.join(' ')}`);
 }
 
-/** Runs the import subcommand with `call` reaching the brain and `target` naming the caller and its profile. */
-export async function runProfileImport(args: string[], call: ImportCall, target: () => Promise<ImportTarget>, homeDir: string): Promise<void> {
+/**
+ * Runs the import subcommand with `call` reaching the brain and `target` naming the caller and its profile; `global` are the
+ * global flags (`--brain <id>`) the printed apply and resume commands repeat.
+ */
+export async function runProfileImport(args: string[], call: ImportCall, target: () => Promise<ImportTarget>, homeDir: string, global: string[] = []): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) { console.log(IMPORT_HELP); return; }
   const { opError } = await import('../core/ops/contract.ts');
   const f = parseImportArgs(args);
   if ('error' in f) throw opError('invalid_params', f.error, 'gbrain profile import --help lists the forms.');
-  if (f.status) { await report(loadReceipt(f.status), f.status, f.json); return; }
+  if (f.status) { await report(loadReceipt(f.status), f.status, f.json, global); return; }
   const prior = f.resume ? loadReceipt(f.resume) : null;
   const file = prior ? prior.file : resolve(f.file!);
   const plan = planImport(readFileSync(file, 'utf8'), prior ? prior.format : f.format);
@@ -99,7 +105,7 @@ export async function runProfileImport(args: string[], call: ImportCall, target:
   if (!prior && !f.yes) {
     const byFacet: Record<string, number> = {};
     for (const i of plan.items) byFacet[i.facet] = (byFacet[i.facet] ?? 0) + 1;
-    const apply = ['gbrain', 'profile', 'import', file, '--format', plan.format, '--yes', '--preview', hash];
+    const apply = ['gbrain', ...global, 'profile', 'import', file, '--format', plan.format, '--yes', '--preview', hash];
     if (f.json) { await writeJsonDocument(JSON.stringify({ preview: hash, format: plan.format, profile: who.profile, items: plan.items.length, by_facet: byFacet, facts: plan.items, dropped: plan.dropped, apply_argv: apply }, null, 2)); return; }
     console.log(`Preview ${hash}: ${plan.items.length} fact(s) from ${basename(file)} (${plan.format}) onto ${who.profile}, saved private and inferred.`);
     for (const i of plan.items) console.log(`  line ${i.line} [${i.facet}] ${i.fact.length > 100 ? i.fact.slice(0, 99) + '…' : i.fact}`);
@@ -113,10 +119,10 @@ export async function runProfileImport(args: string[], call: ImportCall, target:
   }
   const path = f.resume ?? receiptPath(homeDir, hash);
   let receipt: ImportReceipt;
-  try { receipt = loadReceipt(path); } catch { receipt = newReceipt(plan, hash, file, who, `imported from ${basename(file)} (${plan.format}) on ${new Date().toISOString().slice(0, 10)}`); }
+  try { receipt = loadReceipt(path); } catch { receipt = newReceipt(plan, hash, file, who, `imported from ${basename(file)} (${plan.format}), preview ${hash}`); }
   saveReceipt(path, receipt);
   await runImport(plan, receipt, call, r => saveReceipt(path, r));
-  await report(receipt, path, f.json);
+  await report(receipt, path, f.json, global);
   const s = summarize(receipt);
   if (receipt.batches.some(b => b.state === 'pending')) setCliExitVerdict(10);
   else if (!s.complete || s.failed.length) setCliExitVerdict(1);

@@ -35,7 +35,11 @@ export function newReceipt(plan: ImportPlan, hash: string, file: string, target:
     batches: batches(plan).map((_, index) => ({ index, request_id: batchRequestId(hash, index), state: 'not_started', items: [] })) };
 }
 
-const errorOf = (e: unknown) => ({ code: String((e as { code?: unknown })?.code ?? 'error'), message: String((e as Error)?.message ?? e).slice(0, 500) });
+/** A refusal's code: top-level on a local op error, under `detail` on a thin client's RemoteMcpError. */
+const errorOf = (e: unknown) => {
+  const err = e as { code?: unknown; detail?: { code?: unknown } } | null;
+  return { code: String(err?.code ?? err?.detail?.code ?? 'error'), message: String((e as Error)?.message ?? e).slice(0, 500) };
+};
 
 function batchState(items: ImportItemReceipt[]): ImportBatchReceipt['state'] {
   if (items.some(i => i.status === 'pending')) return 'pending';

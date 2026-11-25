@@ -57,23 +57,36 @@ export function renderProfile(block: ProfileBlock): string {
   return out.join('\n');
 }
 
-export async function runProfile(engine: BrainEngine | null, args: string[]): Promise<void> {
+type MakeContext = (engine: BrainEngine, params: Record<string, unknown>) => Promise<OperationContext>;
+
+/** The brain a local import writes: its id, a digest of its database target (never the target itself) and the source. */
+export async function localPrincipal(ctx: OperationContext): Promise<string> {
+  const { createHash } = await import('node:crypto');
+  const cfg = ctx.config as { database_url?: string; database_path?: string };
+  const db = createHash('sha256').update(String(cfg.database_url ?? cfg.database_path ?? ctx.engine.kind)).digest('hex').slice(0, 12);
+  return `local:${ctx.brainId ?? 'host'}:${db}#${ctx.sourceId}`;
+}
+
+export async function runProfile(engine: BrainEngine | null, args: string[], makeContext?: MakeContext): Promise<void> {
   if (args[0] !== 'import' && (args.includes('--help') || args.includes('-h'))) { console.log(HELP); return; }
   const { loadConfig, isThinClient, configDir } = await import('../core/config.ts');
   const cfg = loadConfig();
   let call: (tool: string, params: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  let ctx: OperationContext | null = null;
   if (isThinClient(cfg)) {
     const { callRemoteTool, unpackToolResult } = await import('../core/mcp-client.ts');
     call = async (tool, params) => unpackToolResult(await callRemoteTool(cfg!, tool, params, { timeoutMs: 30_000 }));
   } else if (args[0] !== 'import' || !(args.includes('--help') || args.includes('-h'))) {
-    const [{ operationsByName }, { resolveSourceId }] = await Promise.all([import('../core/operations.ts'), import('../core/source-resolver.ts')]);
-    const ctx = { engine: engine!, config: cfg ?? { engine: engine!.kind }, logger: { info() {}, warn: console.error, error: console.error }, dryRun: false,
-      remote: false, sourceId: await resolveSourceId(engine!, null) } as unknown as OperationContext;
-    call = async (tool, params) => await operationsByName[tool]!.handler(ctx, params) as Record<string, unknown>;
+    const { operationsByName } = await import('../core/operations.ts');
+    ctx = makeContext ? await makeContext(engine!, {}) : await fallbackContext(engine!, cfg);
+    const local = ctx;
+    call = async (tool, params) => await operationsByName[tool]!.handler(local, params) as Record<string, unknown>;
   } else call = async () => ({});
   if (args[0] === 'import') {
     const { runProfileImport } = await import('./profile-import.ts');
-    const principal = isThinClient(cfg) ? `remote:${cfg!.remote_mcp!.mcp_url}#${cfg!.remote_mcp!.oauth_client_id}` : `local:${configDir()}`;
+    const principal = isThinClient(cfg) || !ctx ? `remote:${cfg?.remote_mcp?.mcp_url}#${cfg?.remote_mcp?.oauth_client_id}` : await localPrincipal(ctx);
+    const { getCliOptions } = await import('../core/cli-options.ts');
+    const brain = getCliOptions().brain;
     const target = async () => {
       const entity = ((await call('context_pack', { profile: true, budget_tokens: 1 })).profile as ProfileBlock | undefined)?.entity;
       if (!entity) {
@@ -83,7 +96,7 @@ export async function runProfile(engine: BrainEngine | null, args: string[]): Pr
       }
       return { principal, profile: entity.slug ?? `unreadable:${entity.basis}` };
     };
-    await runProfileImport(args.slice(1), call, target, configDir());
+    await runProfileImport(args.slice(1), call, target, configDir(), brain ? ['--brain', brain] : []);
     return;
   }
   const flags = parseProfileArgs(args);
@@ -98,4 +111,11 @@ export async function runProfile(engine: BrainEngine | null, args: string[]): Pr
   if (!flags.json) { console.log(renderProfile(block)); return; }
   const { writeJsonDocument } = await import('../core/cli-force-exit.ts');
   await writeJsonDocument(JSON.stringify(block, null, 2));
+}
+
+/** The trusted-local context when no CLI dispatcher supplied one (tests): the user's own interactive writes. */
+async function fallbackContext(engine: BrainEngine, cfg: unknown): Promise<OperationContext> {
+  const { resolveSourceId } = await import('../core/source-resolver.ts');
+  return { engine, config: cfg ?? { engine: engine.kind }, logger: { info() {}, warn: console.error, error: console.error }, dryRun: false,
+    remote: false, admissionOrigin: 'interactive', sourceId: await resolveSourceId(engine, null) } as unknown as OperationContext;
 }

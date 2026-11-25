@@ -11,9 +11,9 @@
  * 3. Real seams: operation handlers for the local CLI, OAuth client-credentials tokens through MCP dispatch for a
  *    member, and the real CLI in a subprocess with no TTY.
  */
-import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, setSystemTime, spyOn, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -29,7 +29,11 @@ import { setOwner } from '../src/core/access/owner.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { facetHint, planImport, previewHash, sniffFormat, IMPORT_BATCH } from '../src/core/profile/import.ts';
 import { newReceipt, runImport, summarize, type ImportCall } from '../src/core/profile/import-run.ts';
-import { loadReceipt, parseImportArgs, runProfileImport } from '../src/commands/profile-import.ts';
+import { loadReceipt, parseImportArgs, runProfileImport, saveReceipt } from '../src/commands/profile-import.ts';
+import { localPrincipal } from '../src/commands/profile.ts';
+import { run as runProfileCli } from '../src/cli/commands/profile.ts';
+import { makeContext } from '../src/cli/main.ts';
+import { RemoteMcpError } from '../src/core/remote-mcp-error.ts';
 import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 import { runCli } from './helpers/cli-spawn.ts';
 
@@ -109,6 +113,14 @@ describe('parsers', () => {
     expect(planImport(summary, 'auto').items.map(i => [i.fact, i.facet])).toEqual([['Leads a small team', 'other'], ['Allergic to latex', 'allergy']]);
     const prose = JSON.stringify([{ conversations_memory: '**Work context**\nRuns a small design studio.\n\n**Food**\nCooks vegetarian most nights.' }]);
     expect(planImport(prose, 'auto').items.map(i => [i.fact, i.facet])).toEqual([['Runs a small design studio.', 'other'], ['Cooks vegetarian most nights.', 'diet']]);
+  });
+  test('claude-memories: a compact array of strings is detected; a JSON shape with no memories is named, not imported as empty', () => {
+    const compact = '["Likes tea","Allergic to latex"]';
+    expect(sniffFormat(compact)).toBe('claude-memories');
+    expect(planImport(compact, 'auto').items.map(i => [i.line, i.fact, i.facet])).toEqual([[1, 'Likes tea', 'other'], [2, 'Allergic to latex', 'allergy']]);
+    const other = planImport('{"settings":{"theme":"dark"}}', 'auto');
+    expect(other.items).toEqual([]);
+    expect(other.dropped).toEqual([{ line: 1, reason: expect.stringMatching(/^no memories found/) }]);
   });
   test('facet hints and sniffing', () => {
     expect(facetHint('Dietary notes', 'No pork')).toBe('diet');
@@ -246,6 +258,24 @@ describe('local import on a single-user keyless brain', () => {
     expect(await rows(engine, 'canaryresume')).toHaveLength(lines.length);
   }, 180_000);
 
+  test('applying the same preview again on a later day, with its receipt gone, replays instead of being refused', async () => {
+    const file = join(home, 'later.md');
+    writeFileSync(file, '- Keeps a sourdough starter canarylater\n- Plays chess on Sundays canarylater');
+    const hash = JSON.parse((await cli([file, '--json'], localCall(engine), 'memory/owner', home)).out).preview;
+    const first = JSON.parse((await cli([file, '--yes', '--preview', hash, '--json'], localCall(engine), 'memory/owner', home)).out);
+    expect(first.complete).toBe(true);
+    expect(loadReceipt(first.receipt).provenance).toBe(`imported from later.md (muse-memory), preview ${hash}`);
+    rmSync(first.receipt);
+    const before = await count(engine);
+    setSystemTime(new Date(Date.now() + 3 * 86_400_000));
+    try {
+      const again = await cli([file, '--yes', '--preview', hash, '--json'], localCall(engine), 'memory/owner', home);
+      expect(again.code).toBe(0);
+      expect(JSON.parse(again.out)).toMatchObject({ complete: true, failed: [] });
+    } finally { setSystemTime(); }
+    expect(await count(engine)).toBe(before);
+  }, 60_000);
+
   test('an import never supersedes a fact the user said', async () => {
     const said = await localCall(engine)('remember', { fact: 'Eats pescatarian canarysaid', facet: 'diet', provenance: 'told me 2026-11-25', content_origin: 'user_said' });
     const file = join(home, 'said.md');
@@ -257,6 +287,62 @@ describe('local import on a single-user keyless brain', () => {
     expect(kept).toMatchObject({ origin: 'user_said', expired_at: null, superseded_by: null });
     expect((await rows(engine, 'canarysaidimport'))[0]).toMatchObject({ origin: 'inferred', expired_at: null });
   }, 60_000);
+});
+
+describe('the local CLI binds the brain it writes and writes as the user', () => {
+  let a: BrainEngine;
+  let b: BrainEngine;
+  beforeAll(async () => {
+    a = new PGLiteEngine(); await a.connect({ engine: 'pglite' } as never); await a.initSchema();
+    b = new PGLiteEngine(); await b.connect({ engine: 'pglite' } as never); await b.initSchema();
+  }, 120_000);
+  afterAll(async () => { await a.disconnect(); await b.disconnect(); });
+  const ctxFor = (target: string) => async (engine: BrainEngine, params: Record<string, unknown>) =>
+    ({ ...(await makeContext(engine, params)), config: { engine: 'pglite', database_path: target } } as OperationContext);
+  const out = async (fn: () => Promise<void>) => {
+    const lines: string[] = [];
+    const log = spyOn(console, 'log').mockImplementation((...x: unknown[]) => { lines.push(x.join(' ')); });
+    _resetCliExitVerdictForTests();
+    try { await fn(); return lines.join('\n'); } finally { log.mockRestore(); _resetCliExitVerdictForTests(); process.exitCode = 0; }
+  };
+
+  test('the principal names the brain, a digest of its database and the source, never the database itself', async () => {
+    const base = localCtx(a);
+    const url = 'postgres://user-example:hunter2-example@db.example:5432/brain';
+    const p = await localPrincipal({ ...base, brainId: 'host', config: { engine: 'postgres', database_url: url } as never });
+    expect(p).toMatch(/^local:host:[0-9a-f]{12}#default$/);
+    expect(p).not.toContain('hunter2');
+    for (const other of [
+      { ...base, brainId: 'host', config: { engine: 'postgres', database_url: url.replace('/brain', '/brain2') } as never },
+      { ...base, brainId: 'work-example', config: { engine: 'postgres', database_url: url } as never },
+      { ...base, brainId: 'host', sourceId: 'notes-example', config: { engine: 'postgres', database_url: url } as never },
+    ]) expect(await localPrincipal(other as OperationContext)).not.toBe(p);
+  });
+
+  test('a preview from one brain cannot apply to another; the apply is admitted as the user\'s interactive write', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-profile-import-brains-'));
+    try {
+      const file = join(home, 'Memory.md');
+      writeFileSync(file, '- Grows tomatoes canarybrains');
+      const pa = JSON.parse(await out(() => runProfileCli(a, ['import', file, '--json'], { makeContext: ctxFor('/brains/a.pglite') } as never)));
+      const pb = JSON.parse(await out(() => runProfileCli(b, ['import', file, '--json'], { makeContext: ctxFor('/brains/b.pglite') } as never)));
+      expect(pa.preview).not.toBe(pb.preview);
+      const wrong = await refusal(() => out(() => runProfileCli(b, ['import', file, '--yes', '--preview', pa.preview], { makeContext: ctxFor('/brains/b.pglite') } as never)));
+      expect(wrong.code).toBe('preview_changed');
+      expect(await rows(b, 'canarybrains')).toHaveLength(0);
+      const origins: unknown[] = [];
+      const remember = operationsByName.remember!;
+      const handler = remember.handler;
+      const spy = spyOn(remember, 'handler').mockImplementation(async (ctx, p) => { origins.push(ctx.admissionOrigin); return handler(ctx, p); });
+      try {
+        const applied = JSON.parse(await out(() => runProfileCli(a, ['import', file, '--yes', '--preview', pa.preview, '--json'], { makeContext: ctxFor('/brains/a.pglite') } as never)));
+        expect(applied.complete).toBe(true);
+      } finally { spy.mockRestore(); }
+      expect(origins.length).toBeGreaterThan(0);
+      expect(new Set(origins)).toEqual(new Set(['interactive']));
+      expect(await rows(a, 'canarybrains')).toHaveLength(1);
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  }, 120_000);
 });
 
 describe('progress receipt', () => {
@@ -330,6 +416,35 @@ describe('progress receipt', () => {
     expect(receipt.batches[0]).toMatchObject({ state: 'failed', error: { code: 'invalid_params' } });
     await runImport(plan, receipt, fake, () => {});
     expect(receipt.batches[0]!.state).toBe('committed');
+  });
+  test('a thin client\'s line-level refusal (RemoteMcpError detail.code) records the lines and moves on', async () => {
+    const plan = planImport(Array.from({ length: IMPORT_BATCH + 1 }, (_, i) => `- Fact ${i}`).join('\n'), 'muse-memory');
+    const target = { principal: 'remote:https://brain.example/mcp#c1', profile: 'memory/members/alice-example' };
+    const receipt = newReceipt(plan, previewHash(plan, target), '/tmp/x.md', target, 'imported');
+    let n = 0;
+    const remote: ImportCall = async () => {
+      if (++n === 1) throw new RemoteMcpError('tool_error', 'items[4].fact is empty', { code: 'invalid_params' });
+      return { items: [{ index: 0, request_id: 'c20', status: 'inserted', id: '9' }] };
+    };
+    await runImport(plan, receipt, remote, () => {});
+    expect(receipt.batches.map(b => b.state)).toEqual(['partial', 'committed']);
+    expect(receipt.batches[0]!.items[0]!.error).toEqual({ code: 'invalid_params', message: 'items[4].fact is empty' });
+  });
+  test('a receipt is replaced whole, never rewritten in place', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-receipt-'));
+    try {
+      const plan = planImport('- Fact one', 'muse-memory');
+      const target = { principal: 'local:test', profile: 'memory/owner' };
+      const path = join(dir, 'profile-imports', 'r.json');
+      const first = newReceipt(plan, previewHash(plan, target), '/tmp/x.md', target, 'imported');
+      saveReceipt(path, first);
+      linkSync(path, join(dir, 'before.json'));
+      saveReceipt(path, { ...first, batches: first.batches.map(b => ({ ...b, state: 'committed' as const })) });
+      expect(loadReceipt(join(dir, 'before.json')).batches[0]!.state).toBe('not_started');
+      expect(loadReceipt(path).batches[0]!.state).toBe('committed');
+      expect(statSync(path).mode & 0o777).toBe(0o600);
+      expect(readdirSync(join(dir, 'profile-imports'))).toEqual(['r.json']);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
   test('a file that is not a receipt is refused', () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-receipt-'));

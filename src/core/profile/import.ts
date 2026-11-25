@@ -92,13 +92,14 @@ function claudeMemories(text: string): Raw[] {
   };
   if (Array.isArray(list)) list.forEach((v, i) => take(v, i + 1));
   else if (doc && typeof doc === 'object') take(doc, 1);
+  if (out.length === 0) out.push({ line: 1, skip: 'no memories found: expected a list of memories, {"memories": [...]}, or memory objects with content, memory, text or conversations_memory' });
   return out;
 }
 
 /** --format auto: JSON is claude-memories, a "[YYYY-MM-DD] - " list is memory-text, anything else is muse-memory. */
 export function sniffFormat(text: string): ImportFormat {
   const t = text.trimStart();
-  if (t.startsWith('{') || t.startsWith('[{') || t.startsWith('[\n') || t.startsWith('[ ')) { try { JSON.parse(text); return 'claude-memories'; } catch { /* not JSON */ } }
+  if (t.startsWith('{') || t.startsWith('[')) { try { JSON.parse(text); return 'claude-memories'; } catch { /* not JSON */ } }
   return /^\s*\[\d{4}-\d{2}-\d{2}\]\s*[-\u2013\u2014:]/m.test(text) ? 'memory-text' : 'muse-memory';
 }
 

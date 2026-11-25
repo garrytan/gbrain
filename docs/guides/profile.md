@@ -113,12 +113,12 @@ The preview saves nothing. It lists each fact with its line and facet, and names
 that looks like a password, key or token is never saved or printed, a line over 2,000 characters is skipped, and so is
 a line that is not a list item (in `memory-text`, not a dated memory or a list item). A date that is not a real
 calendar date is left off its fact. In `claude-memories`, a plain sentence under a heading is a fact too. The hash covers the file,
-how it was parsed, your profile and the credential doing the import, so the apply refuses with `preview_changed` if any
+how it was parsed, your profile, the credential doing the import and, locally, the brain and source it writes to, so the apply refuses with `preview_changed` if any
 of them changed since the preview; preview again and apply the new hash. Scripts and agents pass `--yes --preview
-<hash>`; nothing prompts.
+<hash>`; nothing prompts. The printed apply and resume commands repeat `--brain` when you passed it.
 
 Every imported fact is saved through `remember`, 20 at a time, as `content_origin: inferred` and `visibility: private`,
-with provenance `imported from <file> (<format>) on <date>`. It lands on your own profile: the owner's page for the
+with provenance `imported from <file> (<format>), preview <hash>`. It lands on your own profile: the owner's page for the
 owner, your member page for a member credential. A member can never import onto the owner's profile. An import never
 replaces a fact you stated yourself (`user_said`); a line that repeats a saved fact comes back as a duplicate.
 
