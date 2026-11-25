@@ -168,7 +168,7 @@ listAllSources	pages	yes	26	no	yes	yes	serves
 updateSourceConfig	pages	yes	22	no	yes	yes	serves
 renameSource	pages	yes	1	no	yes	yes	serves
 readFederationExposedPages	pages	yes	1	no	yes	yes	serves
-getSource	pages	yes	43	no	yes	yes	serves
+getSource	pages	yes	44	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
 countRepoBoundSources	pages	yes	2	no	yes	yes	serves
 listNotifierHostSourceRows	pages	yes	3	no	yes	yes	serves
