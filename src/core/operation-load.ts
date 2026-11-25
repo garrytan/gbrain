@@ -125,7 +125,7 @@ const OP_AREAS: Record<string, string> = {
   // agent policy (advisory rules for outside actions)
   policy_check: 'agent-policy', agent_policy: 'agent-policy',
   // first-session suggestion (onboarding PR 2)
-  onboarding_status: 'onboarding', onboarding_off: 'onboarding',
+  onboarding_status: 'onboarding', onboarding_off: 'onboarding', propose_jobs: 'onboarding', propose_decide: 'onboarding',
 };
 
 const finalized = new WeakSet<Operation>();

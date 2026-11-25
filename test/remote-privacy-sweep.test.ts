@@ -309,6 +309,8 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   policy_check: 'ok',
   onboarding_status: 'ok',
   onboarding_off: 'error', // onboarding_owner_only: the sweep's remote caller is not the install's owner
+  propose_jobs: 'error', // propose_owner_only: the sweep's remote caller is not the install's owner
+  propose_decide: 'error', // propose_owner_only, as above
   agent_policy: 'ok',
   capabilities: 'ok',
   sources_list: 'ok',

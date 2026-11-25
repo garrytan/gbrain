@@ -317,7 +317,11 @@ export async function firstSessionSectionFor(engine: BrainEngine, opts: { source
   const receipt = await readInstallReceipt(engine);
   const pointers = await firstSessionPointers(engine, opts.sourceId);
   const job = await firstSessionJobFor(engine, opts.now);
-  return { text: renderFirstSessionSection({ harness: opts.harness, ordinal: reserved.ordinal, receipt, pointers, job }), token: reserved.token };
+  const base = { harness: opts.harness, ordinal: reserved.ordinal, receipt, pointers };
+  const withJob = renderFirstSessionSection({ ...base, job });
+  const { SESSION_START_SECTIONS_MAX_BYTES } = await import('../context/session-start-sections.ts');
+  const text = job && Buffer.byteLength(withJob, 'utf8') > SESSION_START_SECTIONS_MAX_BYTES ? renderFirstSessionSection(base) : withJob;
+  return { text, token: reserved.token };
 }
 
 /**

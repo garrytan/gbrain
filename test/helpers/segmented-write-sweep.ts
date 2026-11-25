@@ -157,7 +157,7 @@ export const NO_PAGE_TARGET: Record<string, string> = {
   purge_fact: 'admin purge of fact rows; a segmented fence read is pinned by the withdrawal suites',
   unpurge_page: 'clears a purge tombstone; the page no longer exists',
   memory_write: 'writes only to the caller\'s member page or memory/scope; the segmented scope page is pinned in remember-segmented-entity-9213',
-  set_memory_writeback: 'config', memory_conversation_mode: 'config', mute_notice: 'config', onboarding_off: 'config',
+  set_memory_writeback: 'config', memory_conversation_mode: 'config', mute_notice: 'config', onboarding_off: 'config', propose_decide: 'config',
   code_traversal_cache_clear: 'cache', migrate_embeddings: 'embeddings', schema_apply_mutations: 'schema pack',
   run_onboard: 'onboarding job', run_skillopt: 'skill optimizer',
   loops_close: 'open-loop rows', loops_mute: 'open-loop rows', loops_unmute: 'open-loop rows',

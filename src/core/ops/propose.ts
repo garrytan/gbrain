@@ -40,10 +40,10 @@ const propose_jobs: Operation = {
   cliHints: { name: 'propose-jobs', hidden: true },
   handler: async (ctx, p) => {
     await requireOwner(ctx, 'read');
-    const { sourceScopeOpts } = await import('./context.ts');
-    const scope = sourceScopeOpts(ctx);
+    const { federatedSearchScope } = await import('./context.ts');
+    const scope = federatedSearchScope(ctx);
     const { proposeJobs } = await import('../onboard/propose.ts');
-    return proposeJobs(ctx.engine, { days: p.days as number | undefined, sourceIds: scope.sourceIds ?? (scope.sourceId ? [scope.sourceId] : null) });
+    return proposeJobs(ctx.engine, { days: p.days as number | undefined, sourceIds: scope.sourceIds ?? (scope.sourceId ? [scope.sourceId] : null), forCaller: ctx.remote !== false });
   },
 };
 

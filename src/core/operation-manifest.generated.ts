@@ -8651,7 +8651,8 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "cliHints": {
       "name": "propose-jobs",
       "hidden": true
-    }
+    },
+    "area": "onboarding"
   },
   {
     "name": "propose_decide",
@@ -8689,6 +8690,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "cliHints": {
       "name": "propose-decide",
       "hidden": true
-    }
+    },
+    "area": "onboarding"
   }
 ];

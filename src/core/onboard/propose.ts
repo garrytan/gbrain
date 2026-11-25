@@ -19,6 +19,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { BULK_CATEGORY_LABELS } from '../google/gmail-categories.ts';
 import { boundedBodyPrefixSql } from '../page-window/bounded-lead.ts';
+import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
 import { decideProposal, firstSessionStatus, proposalDecisions, readProposalCache, writeProposalCache, type ProposalDecision, type ProposalState, type StoppedBy } from './first-session.ts';
 
 export const PROPOSE_SIGNALS = ['waiting_on_you', 'owe_reply', 'meeting_prep', 'repeat_question', 'bulk_senders'] as const;
@@ -84,19 +85,24 @@ export interface ProposeResult {
 
 interface Found { count: number; cites: Cite[] }
 type Scope = string[] | null;
+/** The page read filter: everything for the owner's local lanes, the caller's own read policy for a remote call. */
+type Vis = ((alias: string) => string) | null;
+const visSql = (vis: Vis, alias: string) => (vis ? vis(alias) : 'TRUE');
 
-const srcSql = (alias: string, n: number) => `($${n}::text IS NULL OR ${alias}.source_id = ANY(string_to_array($${n}::text, ',')))`;
+const srcSql = (alias: string, n: number) => `($${n}::text IS NULL OR ${alias}.source_id = ANY(string_to_array($${n}::text, ',')))
+  AND NOT EXISTS (SELECT 1 FROM sources sa WHERE sa.id = ${alias}.source_id AND sa.archived IS TRUE)`;
 const srcParam = (s: Scope) => (s && s.length ? s.join(',') : null);
 
 function addCite(cites: Cite[], c: Cite) {
   if (cites.length < PROPOSE_MAX_CITES && !cites.some(x => x.slug === c.slug && x.source_id === c.source_id)) cites.push(c);
 }
 
-async function loopSignal(engine: BrainEngine, scope: Scope, since: Date, types: string[], key: (r: LoopRow) => string): Promise<Found> {
+async function loopSignal(engine: BrainEngine, scope: Scope, vis: Vis, since: Date, types: string[], key: (r: LoopRow) => string): Promise<Found> {
+  const gate = vis ? `EXISTS (SELECT 1 FROM pages vp WHERE vp.source_id = l.source_id AND vp.slug = l.page_slug AND vp.deleted_at IS NULL AND ${vis('vp')})` : 'TRUE';
   const rows = await engine.executeRaw<LoopRow>(
     `SELECT l.source_id, l.loop_type, l.counterparty_email, l.counterparty_slug, l.thread_id, l.page_slug, l.id
        FROM open_loops l
-      WHERE l.status = 'open' AND l.loop_type = ANY(string_to_array($2::text, ',')) AND l.last_activity_at >= $3::timestamptz AND ${srcSql('l', 1)}
+      WHERE l.status = 'open' AND l.loop_type = ANY(string_to_array($2::text, ',')) AND l.last_activity_at >= $3::timestamptz AND ${srcSql('l', 1)} AND ${gate}
       ORDER BY l.last_activity_at DESC, l.id LIMIT ${ROW_CAP}`, [srcParam(scope), types.join(','), since.toISOString()]);
   const keys = new Set<string>();
   const cites: Cite[] = [];
@@ -111,13 +117,13 @@ interface LoopRow { source_id: string; loop_type: string; counterparty_email: st
 const normTitle = (t: string) => t.toLowerCase().replace(/\s+/g, ' ').trim();
 const likeEscape = (s: string) => s.replace(/[\\%_]/g, m => '\\' + m);
 
-async function meetingPrep(engine: BrainEngine, scope: Scope, now: Date, days: number): Promise<Found> {
+async function meetingPrep(engine: BrainEngine, scope: Scope, vis: Vis, now: Date, days: number): Promise<Found> {
   const from = new Date(now.getTime() - 4 * days * 86_400_000);
   const to = new Date(now.getTime() + days * 86_400_000);
   const rows = await engine.executeRaw<{ source_id: string; slug: string; title: string; start: string | null }>(
     `SELECT p.source_id, p.slug, p.title, p.frontmatter->>'start' AS start
        FROM pages p
-      WHERE p.type = 'meeting' AND p.deleted_at IS NULL AND ${srcSql('p', 1)}
+      WHERE p.type = 'meeting' AND p.deleted_at IS NULL AND ${srcSql('p', 1)} AND ${visSql(vis, 'p')}
         AND p.frontmatter->>'start' >= $2 AND p.frontmatter->>'start' <= $3
       ORDER BY p.frontmatter->>'start' DESC, p.slug LIMIT ${ROW_CAP}`,
     [srcParam(scope), new Date(from.getTime() - 86_400_000).toISOString().slice(0, 10), new Date(to.getTime() + 86_400_000).toISOString().slice(0, 10) + 'T~']);
@@ -154,11 +160,11 @@ const asList = (v: unknown): string[] => {
   return Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string').map(x => x.toLowerCase().trim()) : [];
 };
 
-async function bulkSenders(engine: BrainEngine, scope: Scope, since: Date): Promise<Found> {
+async function bulkSenders(engine: BrainEngine, scope: Scope, vis: Vis, since: Date): Promise<Found> {
   const mail = await engine.executeRaw<{ source_id: string; slug: string; senders: unknown; labels: unknown; account: string | null }>(
     `SELECT p.source_id, p.slug, p.frontmatter->'senders' AS senders, p.frontmatter->'labels' AS labels, p.frontmatter->>'account' AS account
        FROM pages p
-      WHERE p.type = 'email' AND p.deleted_at IS NULL AND ${srcSql('p', 1)} AND p.frontmatter->>'date' >= $2
+      WHERE p.type = 'email' AND p.deleted_at IS NULL AND ${srcSql('p', 1)} AND ${visSql(vis, 'p')} AND p.frontmatter->>'date' >= $2
       ORDER BY p.frontmatter->>'date' DESC, p.slug LIMIT ${ROW_CAP}`, [srcParam(scope), since.toISOString()]);
   const bulkLabels = new Set(BULK_CATEGORY_LABELS);
   const senders = new Map<string, { threads: number; bulk: boolean; cite: Cite }>();
@@ -206,12 +212,12 @@ export function questionKeys(body: string, ownerLabel: string | null): string[] 
   return [...keys];
 }
 
-async function repeatQuestions(engine: BrainEngine, scope: Scope, since: Date): Promise<Found> {
+async function repeatQuestions(engine: BrainEngine, scope: Scope, vis: Vis, since: Date): Promise<Found> {
   const rows = await engine.executeRaw<{ source_id: string; slug: string; harness: string | null; owner_label: string | null; body: string }>(
     `SELECT p.source_id, p.slug, p.frontmatter->'transcript_archive'->>'harness' AS harness,
             p.frontmatter->'speaker_owner'->>'label' AS owner_label, ${boundedBodyPrefixSql('p')} AS body
        FROM pages p
-      WHERE p.type = 'conversation' AND p.deleted_at IS NULL AND ${srcSql('p', 1)}
+      WHERE p.type = 'conversation' AND p.deleted_at IS NULL AND ${srcSql('p', 1)} AND ${visSql(vis, 'p')}
         AND p.frontmatter->'transcript_archive'->>'day' >= $2
       ORDER BY p.frontmatter->'transcript_archive'->>'day' DESC, p.slug LIMIT ${CONVERSATION_CAP}`, [srcParam(scope), since.toISOString().slice(0, 10)]);
   const asked = new Map<string, { harnesses: Set<string>; pages: Cite[] }>();
@@ -231,14 +237,14 @@ async function repeatQuestions(engine: BrainEngine, scope: Scope, since: Date): 
 }
 
 /** One detector, by signal. `scope` null reads every source (the owner's own lanes); else the caller's sources. */
-async function detect(engine: BrainEngine, signal: ProposeSignal, scope: Scope, now: Date, days: number): Promise<Found> {
+async function detect(engine: BrainEngine, signal: ProposeSignal, scope: Scope, now: Date, days: number, vis: Vis = null): Promise<Found> {
   const since = new Date(now.getTime() - days * 86_400_000);
   switch (signal) {
-    case 'waiting_on_you': return loopSignal(engine, scope, since, ['commitment_owed_by_me', 'decision_pending'], r => r.counterparty_email ?? r.counterparty_slug ?? `loop:${r.id}`);
-    case 'owe_reply': return loopSignal(engine, scope, since, ['unanswered_inbound'], r => r.thread_id ?? r.page_slug ?? `loop:${r.id}`);
-    case 'meeting_prep': return meetingPrep(engine, scope, now, days);
-    case 'repeat_question': return repeatQuestions(engine, scope, since);
-    case 'bulk_senders': return bulkSenders(engine, scope, since);
+    case 'waiting_on_you': return loopSignal(engine, scope, vis, since, ['commitment_owed_by_me', 'decision_pending'], r => r.counterparty_email ?? r.counterparty_slug ?? `loop:${r.id}`);
+    case 'owe_reply': return loopSignal(engine, scope, vis, since, ['unanswered_inbound'], r => r.thread_id ?? r.page_slug ?? `loop:${r.id}`);
+    case 'meeting_prep': return meetingPrep(engine, scope, vis, now, days);
+    case 'repeat_question': return repeatQuestions(engine, scope, vis, since);
+    case 'bulk_senders': return bulkSenders(engine, scope, vis, since);
   }
 }
 
@@ -258,12 +264,13 @@ async function skillFor(signal: ProposeSignal, opts: ResolverOpts): Promise<{ sk
 }
 
 /** Every job with something to propose, in signal order, plus the signals that found nothing. */
-export async function proposeJobs(engine: BrainEngine, opts: { days?: number; now?: Date; sourceIds?: string[] | null; resolver?: ResolverOpts } = {}): Promise<ProposeResult> {
+export async function proposeJobs(engine: BrainEngine, opts: { days?: number; now?: Date; sourceIds?: string[] | null; resolver?: ResolverOpts; forCaller?: boolean } = {}): Promise<ProposeResult> {
   const now = opts.now ?? new Date();
   const days = clampDays(opts.days ?? PROPOSE_DEFAULT_DAYS);
   const scope = opts.sourceIds ?? null;
   const decisions = await proposalDecisions(engine);
-  const found = await Promise.all(PROPOSE_SIGNALS.map(s => detect(engine, s, scope, now, days)));
+  const vis: Vis = opts.forCaller ? privatePagesFilterForCaller : null;
+  const found = await Promise.all(PROPOSE_SIGNALS.map(s => detect(engine, s, scope, now, days, vis)));
   const jobs: ProposedJob[] = [];
   const quiet: ProposeSignal[] = [];
   let resolverError: string | undefined;

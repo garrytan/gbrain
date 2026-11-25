@@ -25,7 +25,7 @@ import { importFromContent } from '../src/core/import-file.ts';
 import { upsertOpenLoop } from '../src/core/loops/loops-store.ts';
 import { INSTALL_RECEIPT_KEY, type InstallReceipt } from '../src/core/onboard/setup-history.ts';
 import { FIRST_SESSION_KEY, firstSessionSectionFor } from '../src/core/onboard/first-session.ts';
-import { PROPOSAL_CACHE_MAX_AGE_MS, PROPOSE_SIGNALS, SIGNAL_LABEL, proposeJobs, refreshProposalCache, setProposalDecision } from '../src/core/onboard/propose.ts';
+import { PROPOSAL_CACHE_MAX_AGE_MS, PROPOSE_SIGNALS, SIGNAL_LABEL, proposeJobs, refreshProposalCache, setProposalDecision, type ProposeResult } from '../src/core/onboard/propose.ts';
 import { proposeOperations } from '../src/core/ops/propose.ts';
 import { __setEmbedTransportForTests } from '../src/core/skills/resolver/embed-http.ts';
 import { __setPickerTransportForTests } from '../src/core/skills/resolver/router-http.ts';
@@ -185,6 +185,31 @@ describe('gbrain propose (repo-less PGLite)', () => {
     });
   });
 
+  test('a remote owner call counts and cites only pages the caller can read; the local CLI reads them all', async () => {
+    const jobs = proposeOperations.find(o => o.name === 'propose_jobs')!;
+    await page(engine, 'email/restricted-1', { type: 'email', title: 'Subject restricted', account: 'me@example.com', date: day(-1), senders: ['hidden@acme-example.com'],
+      participants: ['hidden@acme-example.com', 'me@example.com'], labels: ['INBOX', 'CATEGORY_PROMOTIONS'], readable_by: ['member:carol-example'] }, '# Mail', 'mail');
+    try {
+      const local = (await proposeJobs(engine, { days: 7, now: NOW, resolver: { home } })).jobs.find(j => j.signal === 'bulk_senders')!;
+      expect(local.count).toBe(3);
+      expect(local.cites.map(c => c.slug)).toContain('email/restricted-1');
+      const remote = (await jobs.handler({ engine, remote: true, transport: 'stdio' } as never, { days: 7 }) as ProposeResult).jobs.find(j => j.signal === 'bulk_senders')!;
+      expect(remote.count).toBe(2);
+      expect(remote.cites.map(c => c.slug)).not.toContain('email/restricted-1');
+    } finally {
+      await engine.executeRaw(`DELETE FROM pages WHERE slug = 'email/restricted-1'`, []);
+    }
+  });
+
+  test('an archived source feeds no job', async () => {
+    await engine.executeRaw(`UPDATE sources SET archived = true WHERE id = 'mail'`, []);
+    try {
+      expect((await proposeJobs(engine, { days: 7, now: NOW, resolver: { home } })).jobs.map(j => j.signal)).toEqual(['repeat_question']);
+    } finally {
+      await engine.executeRaw(`UPDATE sources SET archived = false WHERE id = 'mail'`, []);
+    }
+  });
+
   test('every signal takes accept and decline, stored in the first-session record and shown by propose', async () => {
     const decide = proposeOperations.find(o => o.name === 'propose_decide')!;
     for (const signal of PROPOSE_SIGNALS) for (const decision of ['accepted', 'declined'] as const) {
@@ -233,7 +258,7 @@ describe('gbrain propose (repo-less PGLite)', () => {
       try {
         expect(await section('s-cache')).toContain('people are waiting on you');
       } finally {
-        (engine as { executeRaw: unknown }).executeRaw = raw;
+        delete (engine as { executeRaw?: unknown }).executeRaw;
       }
       expect(seen.some(s => /open_loops|type = 'email'|type = 'meeting'|type = 'conversation'/.test(s))).toBe(false);
     });
@@ -268,6 +293,22 @@ describe('gbrain propose (repo-less PGLite)', () => {
 
       const r = await proposeJobs(engine, { days: 7, now: NOW, resolver: { home } });
       expect(r.jobs.find(j => j.signal === 'waiting_on_you')!.decision).toBe('declined');
+    });
+
+    test('a job line that would push the section past its byte budget is left out, and the section still shows', async () => {
+      await freshInstall();
+      await engine.executeRaw(`UPDATE sources SET last_sync_at = now() WHERE id = 'mail'`, []);
+      await refreshProposalCache(engine, { now: NOW });
+      const slugs = [0, 1, 2].map(i => `notes/${'x'.repeat(52)}-${i}`);
+      for (const [i, s] of slugs.entries()) await page(engine, s, { type: 'note', title: '漢字'.repeat(40) + i }, '# Note');
+      try {
+        const text = await section('s-multibyte');
+        expect(text).toContain('Recent pages in the brain');
+        expect(text).not.toContain('propose_decide');
+        expect(Buffer.byteLength(text, 'utf8')).toBeLessThanOrEqual(2048);
+      } finally {
+        for (const s of slugs) await engine.executeRaw('DELETE FROM pages WHERE slug = $1', [s]);
+      }
     });
 
     test('the off switch stops the job line with the section', async () => {

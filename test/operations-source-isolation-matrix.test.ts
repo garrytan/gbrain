@@ -163,6 +163,7 @@ const MATRIX: Row[] = [
   { name: 'entity_identity_list', mode: 'isolated', args: {} },
   { name: 'list_pages', mode: 'isolated', args: { limit: 100 } },
   { name: 'onboarding_status', mode: 'skip', reason: 'reads only the install receipt and the first-session record (state, counts, a reason code), never a page or a source; test/first-session-suggestion.test.ts pins its states' },
+  { name: 'propose_jobs', mode: 'skip', reason: 'answers only the install owner (propose_owner_only for every token this matrix mints); its source scope is federatedSearchScope and test/propose-jobs.test.ts pins the owner gate and the caller read filter' },
   { name: 'household_due', mode: 'skip', reason: 'reads only type household pages, which this fixture does not seed; test/household-remote.test.ts pins its source posture (a token granted another source reads no record, an out-of-grant source_id is refused) and member scoping' },
   { name: 'find_pages', mode: 'isolated', args: { pattern: '*', limit: 100 } },
   { name: 'search', mode: 'isolated', args: { query: 'BETAMARKER', limit: 20 } },
