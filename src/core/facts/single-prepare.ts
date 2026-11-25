@@ -12,6 +12,7 @@ import { folderAccessForAll } from '../access/caller.ts';
 import { memberIdentity } from '../access/members.ts';
 import { ownerMemberId } from '../access/owner.ts';
 import { MEMBER_PAGE_PREFIX } from '../access/principals.ts';
+import { pageNotVisibleError } from '../persistence/page-visibility.ts';
 import { slugUnderBoundPrefixes } from '../ops/context.ts';
 import { ownedPageWithdrawalSubject } from '../access/member-facts.ts';
 import { isHoldingSlug } from '../facts-fence.ts';
@@ -55,8 +56,7 @@ export async function prepareFactEmbedding(fact: string, signal?: AbortSignal, d
 }
 /**
  * `excludePrivate`: the caller cannot read private pages. A withdrawal whose withdrawn rows all sit on pages it
- * cannot read is refused exactly as a withdrawal of rows it can read, or of no rows, is (factWithdrawnRefusal), so the
- * refusal never tells a hidden withdrawal from a visible one.
+ * cannot read is refused exactly as a page it may not see is, so the refusal never confirms a claim it cannot see.
  * `remote`: GST-2346, a remote save onto a member page meets only memberPageWithdrawal's withdrawals.
  */
 export async function assertFactNotWithdrawn(engine: BrainEngine, sourceId: string, input: SingleFactIntent, opts: { excludePrivate?: boolean; remote?: boolean } = {}): Promise<void> {
@@ -99,15 +99,11 @@ async function memberPageWithdrawal(engine: BrainEngine, sourceId: string, input
  * (or that no row backs). It covers the exact normalized claim only.
  */
 export async function factWithdrawnRefusal(engine: BrainEngine, sourceId: string, input: SingleFactIntent, opts: { excludePrivate?: boolean } = {}): Promise<OperationError> {
-  const query = {
+  const met = await engine.readClaimWithdrawal({
     sourceId, visibility: input.visibility, fact: input.fact, entitySlug: input.entity_slug,
-    ownPage: ownedPageWithdrawalSubject(input.page_slug),
-  };
-  const met = await engine.readClaimWithdrawal({ ...query, excludePrivate: opts.excludePrivate === true });
-  if (!met.hidden) return withdrawnRefusal(met.row ?? undefined);
-  // Every withdrawn row is one the caller may not see: answer as the same withdrawal answers a caller that sees them,
-  // so a hidden withdrawal reads exactly as a visible one or one with no rows.
-  return withdrawnRefusal((await engine.readClaimWithdrawal({ ...query, excludePrivate: false })).row ?? undefined);
+    ownPage: ownedPageWithdrawalSubject(input.page_slug), excludePrivate: opts.excludePrivate === true,
+  });
+  return met.hidden ? pageNotVisibleError() : withdrawnRefusal(met.row ?? undefined);
 }
 export const CANDIDATE_FUSION_KEY = 'facts.candidate_fusion';
 export type CandidateFusion = 'rrf_free' | 'interleave';

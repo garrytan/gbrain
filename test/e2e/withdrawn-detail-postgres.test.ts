@@ -8,7 +8,7 @@ import { hasDatabase } from './helpers.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
-import { detailOnEverySurface, hiddenBackingReadsAsVisible, mostSpecificSubjectFirst, receiptKeepsDetail,
+import { detailOnEverySurface, hiddenBackingOmitsDetail, mostSpecificSubjectFirst, receiptKeepsDetail,
   singleWriterSameRule } from '../helpers/withdrawn-detail-scenarios.ts';
 
 const d = hasDatabase() ? describe : describe.skip;
@@ -24,7 +24,7 @@ d('fact_withdrawn refusals carry the withdrawal (Postgres)', () => {
 
   test('one identical object on stdio, HTTP, local and batch refusals', () => detailOnEverySurface(engine), 60_000);
   test('the most specific subject first, then the newest', () => mostSpecificSubjectFirst(engine), 60_000);
-  test('the same object when the caller cannot read the withdrawn rows', () => hiddenBackingReadsAsVisible(engine), 60_000);
+  test('no object when the caller cannot read the withdrawn rows', () => hiddenBackingOmitsDetail(engine), 60_000);
   test('a failed receipt keeps the object for get_write_request and replay', () => receiptKeepsDetail(engine), 60_000);
   test('the single-fact writer applies the same rule; a purge supplies no object', () => singleWriterSameRule(engine), 60_000);
 });
