@@ -108,7 +108,7 @@ const factLine = (f: ApprovedFact) => `Fact ${f.id}: ${f.action === 'replace' ? 
 function authorOf(ctx: OperationContext): CorrectReceipt['author'] {
   const local = ctx.remote === false;
   const owner = local || callerIsOwner();
-  const client = local ? 'gbrain CLI' : (ctx.auth?.clientName || callerMember() || 'an agent').slice(0, 60);
+  const client = local ? 'gbrain CLI' : oneLine(ctx.auth?.clientName || callerMember() || 'an agent').slice(0, 60);
   return { owner, member: local ? null : callerMember(), client };
 }
 

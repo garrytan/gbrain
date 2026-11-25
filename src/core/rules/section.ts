@@ -59,7 +59,8 @@ export async function loadStandingRules(engine: BrainEngine, opts: { remote: boo
 
 function line(r: StandingRule): string {
   const who = r.scope === 'me' ? 'you told your agent this' : 'team rule';
-  return `- [${r.scope}] ${r.text.replace(/\s+/g, ' ')} (${who}${r.attribution ? `; ${r.attribution}` : ''})`;
+  const flat = (s: string) => s.replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').replace(/\s+/g, ' ').trim();
+  return `- [${r.scope}] ${flat(r.text)} (${who}${r.attribution ? `; ${flat(r.attribution)}` : ''})`;
 }
 
 export function renderRulesSection(rules: StandingRule[], now = Date.now()): RulesSection | null {
