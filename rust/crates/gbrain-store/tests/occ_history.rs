@@ -31,10 +31,10 @@
 
 use gbrain_sim::seed::seeds;
 use gbrain_sim::{CrashMode, FaultPlan, SimDisk, SimFile, SimRng};
+use gbrain_store::commit_log::{self, CommitPosition, LogOp, LogSettings};
 use gbrain_store::error::{STORE_IO, WRITE_CONFLICT};
 use gbrain_store::occ_kv::OccKv;
 use gbrain_store::redb_kv::RedbKv;
-use gbrain_store::commit_log::{self, CommitPosition, LogOp, LogSettings};
 use gbrain_store::{FileBackend, Kv, StoreError};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -106,7 +106,10 @@ fn check_log(kv: &dyn Kv) -> Result<(), String> {
     let mut last_time = None;
     for record in &page.records {
         if last_time.is_some_and(|t| record.commit_time <= t) {
-            return Err(format!("commit time goes back at {}", record.position.token()));
+            return Err(format!(
+                "commit time goes back at {}",
+                record.position.token()
+            ));
         }
         last_time = Some(record.commit_time);
         for (key, op) in &record.ops {
@@ -153,7 +156,9 @@ fn check_log(kv: &dyn Kv) -> Result<(), String> {
     if let Some(t) = last_time {
         let durable = kv.last_commit_time().map_err(|e| e.to_string())?;
         if durable != Some(t) {
-            return Err(format!("the newest record's time is {t}, the durable time {durable:?}"));
+            return Err(format!(
+                "the newest record's time is {t}, the durable time {durable:?}"
+            ));
         }
     }
     if let Some(last) = last
@@ -821,13 +826,21 @@ fn logged_a_crash_at_every_io_of_one_group_commit_keeps_it_whole() {
     );
     check_log(&*kv).unwrap();
     drop(kv);
-    let modes = [CrashMode::DropUnsynced, CrashMode::TearLast, CrashMode::Subset];
+    let modes = [
+        CrashMode::DropUnsynced,
+        CrashMode::TearLast,
+        CrashMode::Subset,
+    ];
     let (mut whole, mut none) = (0, 0);
     // One more point than the batch has I/O calls: the crash then comes after its last fsync.
     for k in 0..=(after_ops - before_ops) {
         let disk = SimDisk::new(seed, FaultPlan::none());
         let kv = start(&disk);
-        assert_eq!(disk.stats().io_ops, before_ops, "the setup is not deterministic");
+        assert_eq!(
+            disk.stats().io_ops,
+            before_ops,
+            "the setup is not deterministic"
+        );
         disk.set_plan(FaultPlan {
             fsync_error_pm: 0,
             fsync_lie_pm: 0,
@@ -843,7 +856,11 @@ fn logged_a_crash_at_every_io_of_one_group_commit_keeps_it_whole() {
         check_log(&kv).unwrap_or_else(|e| panic!("crash at I/O {k}: {e}"));
         let data = all_data(&kv);
         if data == after_data {
-            assert_eq!(kv.version().unwrap(), before_version + 1, "crash at I/O {k}");
+            assert_eq!(
+                kv.version().unwrap(),
+                before_version + 1,
+                "crash at I/O {k}"
+            );
             whole += 1;
         } else {
             assert_eq!(data, before_data, "crash at I/O {k}: the batch is torn");
@@ -852,8 +869,14 @@ fn logged_a_crash_at_every_io_of_one_group_commit_keeps_it_whole() {
         }
     }
     eprintln!("group commit crash sweep: {whole} whole, {none} absent");
-    assert!(none > 0, "no crash point dropped the batch: the sweep did not reach its commit");
-    assert!(whole > 0, "no crash point kept the batch: the sweep never got past its fsync");
+    assert!(
+        none > 0,
+        "no crash point dropped the batch: the sweep did not reach its commit"
+    );
+    assert!(
+        whole > 0,
+        "no crash point kept the batch: the sweep never got past its fsync"
+    );
 }
 
 /// The log check must catch what it claims to catch: a record without its data and data without
@@ -867,7 +890,10 @@ fn the_log_check_catches_a_record_without_data_and_data_without_a_record() {
     tx.commit().unwrap();
     assert!(check_log(&kv).is_ok());
     // Data with no record: written around the log by a store that does not log.
-    let base = RedbKv::open_backend(Box::new(SimBackend(SimDisk::new(2, FaultPlan::none()).open(FILE)))).unwrap();
+    let base = RedbKv::open_backend(Box::new(SimBackend(
+        SimDisk::new(2, FaultPlan::none()).open(FILE),
+    )))
+    .unwrap();
     let unlogged = OccKv::new(base).unwrap();
     let mut tx = unlogged.begin_write().unwrap();
     let since = CommitPosition::new(unlogged.version().unwrap() + 1, 0);

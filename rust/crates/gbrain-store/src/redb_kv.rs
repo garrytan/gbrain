@@ -4,22 +4,22 @@
 //! kept under key `M\0seq` and is bumped inside every write transaction, so it commits atomically
 //! with the records it counts.
 
-use crate::error::{
-    READ_ONLY_TRANSACTION, Result, STORE_CLOSED, STORE_CORRUPT, STORE_IO, STORE_LOCKED, StoreError,
-};
 use crate::commit_log::{
     AcceptHook, CommitClock, CommitMeta, CommitPosition, LogOpRef, LogSettings, LogState,
 };
+use crate::error::{
+    READ_ONLY_TRANSACTION, Result, STORE_CLOSED, STORE_CORRUPT, STORE_IO, STORE_LOCKED, StoreError,
+};
 use crate::kv::{FileBackend, Kv, KvRead, KvWrite};
-use std::collections::BTreeMap;
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
 use redb::{
     Database, Durability, ReadOnlyDatabase, ReadTransaction, ReadableDatabase, ReadableTable,
     StorageBackend, TableDefinition, WriteTransaction,
 };
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 const TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("kv");
 /// The commit sequence. It sorts just before the store's id counters (`M` + `next_...`), which
@@ -40,9 +40,11 @@ pub const COMMIT_TIME_KEY: &[u8] = b"M\0ctime";
 pub fn read_commit_time(read: &dyn KvRead) -> Result<Option<i64>> {
     match read.get(COMMIT_TIME_KEY)? {
         None => Ok(None),
-        Some(bytes) => Ok(Some(i64::from_be_bytes(bytes.as_slice().try_into().map_err(
-            |_| StoreError::new(STORE_CORRUPT, "the commit time record is malformed"),
-        )?))),
+        Some(bytes) => Ok(Some(i64::from_be_bytes(
+            bytes.as_slice().try_into().map_err(|_| {
+                StoreError::new(STORE_CORRUPT, "the commit time record is malformed")
+            })?,
+        ))),
     }
 }
 
@@ -451,7 +453,9 @@ impl KvWrite for Writer {
         let logged = self.logged.take();
         if clock.is_none() && logged.is_none() {
             // Multi-user mode off: the commit as it always was.
-            return self.bump_and_commit().map(|next| CommitPosition::new(next, 0));
+            return self
+                .bump_and_commit()
+                .map(|next| CommitPosition::new(next, 0));
         }
         // The commit's time, its record, the file commit and the bookkeeping after it happen under
         // one lock: redb releases its write lock when the file commit returns, so without this the
@@ -467,7 +471,12 @@ impl KvWrite for Writer {
         // With the log on: the record of this commit, its trims and the meta record go into the
         // same redb transaction as the records (`commit_log.rs`).
         let mut log = None;
-        if let Some(Logged { log: shared, ops, meta }) = logged {
+        if let Some(Logged {
+            log: shared,
+            ops,
+            meta,
+        }) = logged
+        {
             let Some(commit_time) = self.commit_time else {
                 return Err(StoreError::new(
                     STORE_CORRUPT,
@@ -611,7 +620,13 @@ impl Kv for RedbKv {
     }
 
     fn enable_commit_log(&self, settings: LogSettings) -> Result<()> {
-        if self.log.clock.lock().unwrap_or_else(|p| p.into_inner()).is_none() {
+        if self
+            .log
+            .clock
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .is_none()
+        {
             return Err(StoreError::new(
                 crate::error::INVALID_STATE,
                 "the commit log needs the commit clock (`Kv::set_commit_clock`) first",

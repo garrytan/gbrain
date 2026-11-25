@@ -585,7 +585,11 @@ fn admit_in(
         &record.principal_id,
         admission.origin.as_ref(),
     );
-    crate::commit_log::scope::note(&record.request_id, &record.principal_kind, &record.principal_id);
+    crate::commit_log::scope::note(
+        &record.request_id,
+        &record.principal_kind,
+        &record.principal_id,
+    );
     write_request(tx, &record)?;
     tx.put(
         &keys::request_by_principal(&record.principal_kind, &record.principal_id, &request_id),
