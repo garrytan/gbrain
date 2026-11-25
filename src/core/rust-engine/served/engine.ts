@@ -50,6 +50,25 @@ export function servedTargetFor(config: EngineConfig & { rust_server?: RustServe
 type EngineRecord = Record<string, unknown>;
 
 /**
+ * Members that return a store object whose methods run on the engine (or the transaction) they came from. Over the
+ * wire the object is a proxy: each method call crosses as `<member>.<method>`, inside the transaction when the handle
+ * is one, else as the whole operation `servedStoreCall` (owner-ops.ts).
+ */
+export const STORE_RETURNING_MEMBERS: ReadonlySet<string> = new Set(['worktreeClaimStore', 'writerAdminStore']);
+export const SERVED_STORE_CALL = 'servedStoreCall';
+
+function storeProxy(connection: ServedConnection, member: string, ref: string | undefined): object {
+  return new Proxy({}, {
+    get: (_target, prop) => {
+      if (typeof prop !== 'string' || prop === 'then') return undefined;
+      return (...args: unknown[]) => ref
+        ? connection.request('call', `${member}.${prop}`, args, { txn: ref })
+        : connection.request('fn', SERVED_STORE_CALL, [member, prop, args]);
+    },
+  });
+}
+
+/**
  * The engine-shaped handle of a transaction the server holds: every forwarded member runs inside it, and a nested
  * `transaction(fn)` opens a savepoint there. `own` is true for a transaction this client opened (it commits it);
  * a handle the server lent to a callback is ended by the server.
@@ -63,12 +82,18 @@ function transactionHandle(engine: object, connection: ServedConnection, ref: st
       ? () => Promise.reject(capabilityMissing(missing, member))
       : member === 'transaction' || member === 'transactionDirect'
         ? (fn: (tx: BrainEngine) => Promise<unknown>, opts?: TransactionOptions) => runTransaction(engine, connection, fn, opts, ref)
+        : STORE_RETURNING_MEMBERS.has(member)
+          ? async () => storeProxy(connection, member, ref)
         : route === 'refuse'
           ? () => Promise.reject(ownerIpcRefusal(member, 'reserved connections and engine callbacks do not cross the connection to the brain server'))
           : (...args: unknown[]) => connection.request('call', member, args, { txn: ref });
     Object.defineProperty(handle, member, { value, writable: true, configurable: true, enumerable: false });
   }
   Object.defineProperty(handle, '__servedTxRef', { value: ref, enumerable: false });
+  // The page keys the transaction holds live on the server's transaction; this marks the handle as one that holds
+  // them, as a local transaction handle is marked (persistence/origin-guard.ts reads it), and lockPageKeys on it
+  // takes them there.
+  Object.defineProperty(handle, '_heldPageKeys', { value: Object.freeze({ served: true }), enumerable: false });
   return handle as unknown as BrainEngine;
 }
 
@@ -97,6 +122,10 @@ export async function connectServedEngine(engine: object, target: ServedTarget):
   const capabilities = record.capabilities as Set<string> | undefined;
   capabilities?.add('served');
   connection.txProxy = ref => transactionHandle(engine, connection, ref);
+  for (const member of STORE_RETURNING_MEMBERS) {
+    if (missingOnRustOwner(connection.hello, member) !== null) continue;
+    Object.defineProperty(record, member, { value: async () => storeProxy(connection, member, undefined), writable: true, configurable: true, enumerable: false });
+  }
   if (connection.caps.has('txn')) {
     for (const member of ['transaction', 'transactionDirect'] as const) {
       Object.defineProperty(record, member, {
@@ -105,5 +134,5 @@ export async function connectServedEngine(engine: object, target: ServedTarget):
       });
     }
   }
-  return () => { for (const member of ['transaction', 'transactionDirect']) delete record[member]; undo(); };
+  return () => { for (const member of ['transaction', 'transactionDirect', ...STORE_RETURNING_MEMBERS]) delete record[member]; undo(); };
 }

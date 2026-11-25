@@ -66,7 +66,7 @@ import { encodeLengthFrame } from '../served/framing.ts';
 import { IMPORT_CLIENT_FILE } from '../served/client-files.ts';
 
 /** Whole operations only a protocol v3 session sends. */
-const V3_ONLY_OPERATIONS: ReadonlySet<string> = new Set([IMPORT_CLIENT_FILE]);
+const V3_ONLY_OPERATIONS: ReadonlySet<string> = new Set([IMPORT_CLIENT_FILE, 'servedStoreCall']);
 
 /** A whole operation the owner runs for a client in one request (whole-op.ts); it may open its own transaction. */
 export type OwnerWholeOperation = (engine: BrainEngine, ...args: unknown[]) => Promise<unknown>;

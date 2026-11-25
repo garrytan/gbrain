@@ -18,6 +18,8 @@ import { servedCallbackTimeout, servedProtocol, servedTransactionDeadline } from
 import { restoreTail } from './framing.ts';
 import type { ServedCall, ServedServerOptions, ServedServerSide } from './session.ts';
 
+const STORE_MEMBERS_RETURNING: ReadonlySet<string> = new Set(['worktreeClaimStore', 'writerAdminStore']);
+
 /** True for a transaction-bound engine handle (or any BrainEngine-shaped object) the server holds. */
 function isEngineHandle(value: object): value is BrainEngine {
   try {
@@ -109,7 +111,16 @@ export function sessionCalls(ctx: SessionCallsContext) {
     const open = txns.get(ref);
     if (!open) { replyDirect(id, member, ownerIpcRefusal(member, 'its transaction is not open on this connection')); return; }
     let method: unknown;
-    try { method = (open.engine as unknown as Record<string, unknown>)[member]; } catch (error) { replyDirect(id, member, error); return; }
+    let self: unknown = open.engine;
+    try {
+      // `<member>.<method>`: a method of the store a member returns (served/engine.ts STORE_RETURNING_MEMBERS).
+      const dot = member.indexOf('.');
+      if (dot > 0 && STORE_MEMBERS_RETURNING.has(member.slice(0, dot))) {
+        self = await (open.engine as unknown as Record<string, () => Promise<Record<string, unknown>>>)[member.slice(0, dot)]!();
+        const name = member.slice(dot + 1);
+        method = Object.hasOwn(self as object, name) ? (self as Record<string, unknown>)[name] : undefined;
+      } else method = (open.engine as unknown as Record<string, unknown>)[member];
+    } catch (error) { replyDirect(id, member, error); return; }
     if (typeof method !== 'function') { replyDirect(id, member, ownerIpcRefusal(member, 'it is not a member of the transaction handle')); return; }
     const fake: ServedCall = { id, member, write: !ownerMemberOnlyReads(member), done: false, reply: f => { fake.done = true; writeFrame(f, member); } };
     let decoded: unknown;
@@ -117,7 +128,7 @@ export function sessionCalls(ctx: SessionCallsContext) {
       decoded = decodeValue(args, { onFunction: wire => rebuildFunction(wire, fake), onTxRef: wire => txns.get(String(wire.id))?.engine });
     } catch (error) { replyDirect(id, member, error); return; }
     if (!Array.isArray(decoded)) { replyDirect(id, member, servedProtocol('frame_malformed', 'reason=args')); return; }
-    const run = () => (method as (...a: unknown[]) => Promise<unknown>).apply(open.engine, decoded as unknown[]);
+    const run = () => (method as (...a: unknown[]) => Promise<unknown>).apply(self, decoded as unknown[]);
     try {
       const value = await (remote ? withRemoteCaller(true, run) : run());
       writeFrame({ t: 'result', id, ok: true, value: encodeValue(value) }, member);

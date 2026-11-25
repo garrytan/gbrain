@@ -65,5 +65,13 @@ export function ownerWholeOperations(opts: { config?: GBrainConfig } = {}): Read
     // Protocol v3 only: a network client's file import, sent as bytes (served/client-files.ts). The owner dispatcher
     // refuses it on v2 as any operation it does not run (owner-ipc/server.ts V3_ONLY_OPERATIONS).
     [IMPORT_CLIENT_FILE]: (engine: BrainEngine, ...args: unknown[]) => importClientFile(engine, args[0], args[1], args[2], args[3], args[4]),
+    // Protocol v3 only: one method of a store a member returns (served/engine.ts STORE_RETURNING_MEMBERS).
+    servedStoreCall: async (engine: BrainEngine, member: unknown, method: unknown, args: unknown) => {
+      if (member !== 'worktreeClaimStore' && member !== 'writerAdminStore') throw ownerIpcRefusal(String(member), 'it does not return a store');
+      const store = await (engine as unknown as Record<string, () => Promise<Record<string, unknown>>>)[member]();
+      const fn = typeof method === 'string' && Object.hasOwn(store, method) ? store[method] : undefined;
+      if (typeof fn !== 'function') throw ownerIpcRefusal(`${member}.${String(method)}`, 'its store has no such method');
+      return (fn as (...a: unknown[]) => Promise<unknown>).apply(store, Array.isArray(args) ? args : []);
+    },
   };
 }
