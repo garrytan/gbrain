@@ -26,7 +26,7 @@ export interface InternalConfigState {
 export const INTERNAL_CONFIG_STATE: readonly InternalConfigState[] = [
   { key: 'dedupe.exa_spent_usd', reason: 'the running total gbrain dedupe --exa has paid Exa (entities/evidence/exa.ts); the total cap dedupe.exa_total_cap_usd is checked against it' },
   { key: 'dedupe.exa_cache.', prefix: true, reason: 'one cached Exa answer per query hash (entities/evidence/exa.ts), so a query is never paid for twice' },
-  { key: 'dedupe.auto.', prefix: true, reason: 'the per-class switch gbrain dedupe auto --off/--on writes (entities/evidence/auto.ts, dedupe.auto.c2); planAutoLinks reads it' },
+  { key: 'dedupe.auto.', prefix: true, reason: 'the per-class switch gbrain dedupe auto --off/--on writes (entities/evidence/auto.ts, dedupe.auto.c2 and dedupe.auto.c7); planAutoLinks reads it' },
   { key: 'version', reason: 'schema version stamp written by migrate.ts' },
   { key: 'transcripts.archive.pinned_timezone.', prefix: true, reason: 'the timezone the conversation archive pinned for a source on its first run (transcripts/archive.ts); a hand edit would re-slice every archived day' },
   { key: 'transcripts.archive.audience.', prefix: true, reason: 'the audience (personal or shared) the conversation archive last ran under per source (transcripts/archive.ts); it decides when earlier pages are kept to the owner' },
