@@ -137,6 +137,7 @@ const MATRIX: Row[] = [
   { name: 'policy_check', mode: 'brainwide', args: { verb: 'send' }, rationale: 'derived decision from the owner-approved agent policy (rule id, revision, state); no page data from any source' },
   { name: 'agent_policy', mode: 'brainwide', args: {}, rationale: 'the owner-approved agent policy rules (brain-wide by design, company-only for member credentials); no page data from any source' },
   { name: 'capabilities', mode: 'brainwide', args: {}, rationale: 'per-op served/listed/callable flags for this connection; no page data' },
+  { name: 'ledger', mode: 'brainwide', args: {}, rationale: 'derived totals over the agent_action pages the caller can read (default source; a member reads its own, a guest none); no page text' },
   { name: 'get_memory_settings', mode: 'brainwide', args: {}, rationale: 'brain-wide memory writeback config and its rule text; no page data' },
   { name: 'sources_list', mode: 'brainwide', args: {}, rationale: 'listing sources is its purpose; exposes ids/names only' },
   { name: 'request_tools', mode: 'brainwide', args: { tools: ['get_page'] }, rationale: 'tool registry surface, no page data' },

@@ -626,7 +626,7 @@ async function hookSessionStart(io: HookIo): Promise<number> {
     const sections = res === DEADLINE && !pack6.outcome && !pack6.firstSession ? [] : [...pack6.sections];
     const { text, quiet, emitted, first } = composeSessionStartWithSections(coreBox.core?.text ?? '', sections, out.filter(Boolean), new Set(coaching.keys()));
     if (text) {
-      write(io, text + '\n');
+      write(io, io.harness === 'codex' ? `${JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: text.toWellFormed() } })}\n` : text + '\n');
       const records = [...deferredRecords, ...(quiet ? [] : [...coaching.values()])];
       for (const record of records) {
         try {

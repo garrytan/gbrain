@@ -523,6 +523,7 @@ src/core/init-embed-check.ts	process_env	1	W6: settings plane out of the core
 src/core/interaction.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/interaction.ts	process_env	4	W6: settings plane out of the core; +1 GST-3824 L1: ownerWriteAgentMarker default env
 src/core/last-retrieved.ts	module_collection	2	W6: per-engine state, or mark as a constant table
+src/core/ledger/store.ts	module_collection	1	W6: per-engine state (GST-3824 L2: one in-process reservation queue per engine, so concurrent policy_reserve calls in one process wait for the ledger lock instead of failing it)
 src/core/link-extraction.ts	process_env	2	W6: settings plane out of the core
 src/core/link-validity.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/maintenance/run.ts	fs_import	1	GBRA-438: unattended upkeep checks that a source checkout still exists before running filesystem phases there (a vanished checkout runs the database-only phases instead of failing each run); moves with the W7 filesystem boundary

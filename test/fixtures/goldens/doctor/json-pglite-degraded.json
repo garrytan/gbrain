@@ -4447,7 +4447,7 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "Active pack gbrain-base-v2@1.7.0+bd981792 is current (no successor declared)",
+          "message": "Active pack gbrain-base-v2@1.7.0+b64f249b is current (no successor declared)",
           "name": "pack_upgrade_available",
           "status": "ok"
         },

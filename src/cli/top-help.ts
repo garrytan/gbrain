@@ -133,6 +133,7 @@ TOOLS
   apple-contacts <write|status>      Change Apple Contacts through GBrain Helper; writes off by default
   memory-proposals list|show|approve|deny  QM's proposed timeline entries and links awaiting your decision
   policy init|show|allow|ask|deny|edit|accept|check  When agents may send, spend, delete or sign up for you (advisory)
+  ledger [add|confirm|digest]        What your agents did outside the brain, with evidence and totals
   facts relink [--dry-run]           Link facts saved without an entity to the entity they name
   check-resolvable [--json] [--fix]  Validate skill tree (reachability/MECE/DRY)
   report --type <name> --content ... Save timestamped report to brain/reports/
