@@ -41,12 +41,12 @@ test/engine-parity/cli-reads-import.test.ts	20	0
 test/engine-parity/cli-reads-ops.test.ts	22	2
 test/engine-parity/code-eval-salience.test.ts	13	0
 test/engine-parity/collate-aggregated-lists.test.ts	5	0
-test/engine-parity/collate-belief-cycle-walks.test.ts	0	6
+test/engine-parity/collate-belief-cycle-walks.test.ts	6	0
 test/engine-parity/collate-command-listings.test.ts	2	4
 test/engine-parity/collate-core-page-lists.test.ts	16	1
-test/engine-parity/collate-doctor-access.test.ts	0	11
+test/engine-parity/collate-doctor-access.test.ts	11	0
 test/engine-parity/collate-doctor-persistence.test.ts	9	7
-test/engine-parity/collate-doctor.test.ts	0	10
+test/engine-parity/collate-doctor.test.ts	9	1
 test/engine-parity/collate-engine-sql.test.ts	29	6
 test/engine-parity/collate-facts-home.test.ts	1	0
 test/engine-parity/collate-ontology-config.test.ts	4	1
@@ -57,7 +57,7 @@ test/engine-parity/collate-referrer-ties.test.ts	3	0
 test/engine-parity/collate-repair-scans.test.ts	0	4
 test/engine-parity/collate-schema-pack-samples.test.ts	4	0
 test/engine-parity/collate-slug-sources.test.ts	7	1
-test/engine-parity/collate-store-listings.test.ts	3	18
+test/engine-parity/collate-store-listings.test.ts	4	17
 test/engine-parity/collate-ties.test.ts	2	0
 test/engine-parity/concept-rebuild.test.ts	0	3
 test/engine-parity/config-ingest.test.ts	9	0
@@ -101,7 +101,7 @@ test/engine-parity/entity-card-timeline.test.ts	2	0
 test/engine-parity/entity-fuzzy.test.ts	3	0
 test/engine-parity/entity-identities.test.ts	9	4
 test/engine-parity/entity-names-siblings.test.ts	1	0
-test/engine-parity/entity-reads.test.ts	13	1
+test/engine-parity/entity-reads.test.ts	14	0
 test/engine-parity/export-bytes.test.ts	2	0
 test/engine-parity/extract-bookkeeping.test.ts	2	0
 test/engine-parity/extract-takes-reads.test.ts	9	0
@@ -137,7 +137,7 @@ test/engine-parity/facts-trust-owner.test.ts	6	0
 test/engine-parity/facts-trust.test.ts	13	0
 test/engine-parity/facts-unique-violation.test.ts	3	0
 test/engine-parity/facts.test.ts	37	0
-test/engine-parity/family-tail-sites.test.ts	8	4
+test/engine-parity/family-tail-sites.test.ts	12	0
 test/engine-parity/fence-overlay.test.ts	2	0
 test/engine-parity/fence-row-trust.test.ts	4	0
 test/engine-parity/fenced-import-purge.test.ts	1	0
@@ -276,7 +276,7 @@ test/engine-parity/remember-members.test.ts	9	0
 test/engine-parity/remember-meta.test.ts	3	0
 test/engine-parity/remember-supersede.test.ts	3	0
 test/engine-parity/remember-whole.test.ts	1	0
-test/engine-parity/remote-links.test.ts	7	0
+test/engine-parity/remote-links.test.ts	8	0
 test/engine-parity/remote-policy.test.ts	2	0
 test/engine-parity/repair-aliases.test.ts	1	0
 test/engine-parity/repair-bookkeeping.test.ts	7	1
@@ -369,7 +369,7 @@ test/engine-parity/take-vector-search.test.ts	3	0
 test/engine-parity/takes.test.ts	32	0
 test/engine-parity/telemetry.test.ts	10	0
 test/engine-parity/think-gather-takes.test.ts	1	0
-test/engine-parity/tie-break-stale-orphan-edge-downgrade.test.ts	0	4
+test/engine-parity/tie-break-stale-orphan-edge-downgrade.test.ts	4	0
 test/engine-parity/tie-purge-files-links-facts.test.ts	1	4
 test/engine-parity/timeline-add.test.ts	6	0
 test/engine-parity/timeline-held-rows.test.ts	2	0
