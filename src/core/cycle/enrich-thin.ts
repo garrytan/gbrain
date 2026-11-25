@@ -423,11 +423,12 @@ export async function runPhaseEnrichThin(
     }
   }
 
-  const totals = { enriched: 0, skipped_insufficient: 0, sources_processed: 0 };
+  const totals = { enriched: 0, skipped_insufficient: 0, skipped_evidence_narrowed: 0, sources_processed: 0 };
   for (const r of Object.values(perSourceResults)) {
     if (!r.error) totals.sources_processed++;
     totals.enriched += r.pages_enriched;
     totals.skipped_insufficient += r.pages_skipped_insufficient;
+    totals.skipped_evidence_narrowed += r.pages_skipped_evidence_narrowed ?? 0;
   }
 
   const anyError = Object.values(perSourceResults).some((r) => r.error);
@@ -444,6 +445,7 @@ export async function runPhaseEnrichThin(
       sources_processed: totals.sources_processed,
       pages_enriched: totals.enriched,
       pages_skipped_insufficient: totals.skipped_insufficient,
+      pages_skipped_evidence_narrowed: totals.skipped_evidence_narrowed,
       spent_usd: totalSpent,
       skipped_by_brain_wide_walltime: skippedByBrainWideWalltime,
       // #2504 — Infinity would JSON-serialize to null; report the 'off'

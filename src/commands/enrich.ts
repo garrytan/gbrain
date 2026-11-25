@@ -44,7 +44,10 @@ import { CapFlagError, mergeCapFlag, parseCapFlag, type CapFlag } from '../core/
 import { ERROR_CATALOGUE } from '../core/error-catalogue.ts';
 import { hybridSearch } from '../core/search/hybrid.ts';
 import { INTERNAL_BREADTH_SEARCH_OPTS } from '../core/search/internal-breadth.ts';
-import { pageReadsToReadersOfSql } from '../core/search/private-visibility.ts';
+import { pageAdmitsLabelledOnlySql, pageReadsToReadersOfSql } from '../core/search/private-visibility.ts';
+import { projectionEligibleSql } from '../core/eligibility/sql.ts';
+import { quarantineFilterFragment } from '../core/quarantine.ts';
+import { isSegmentedPage } from '../core/page-body/page-shape.ts';
 import { factReadsToReadersOfSql } from '../core/access/member-facts.ts';
 import { serializeMarkdown } from '../core/markdown.ts';
 import { listSources } from '../core/sources-ops.ts';
@@ -78,7 +81,7 @@ import {
 import { restoreNeutralized } from '../core/think/sanitize.ts';
 import { sanitizeRemoteBody } from '../core/remote-body.ts';
 import { withEngineScope } from '../core/engine-scope.ts';
-import { heldRowsForCaller, storedEdge, worldLinkContexts } from '../core/eligibility/fence-overlay.ts';
+import { heldRowsForCaller, storedEdge, worldFenceRows, worldLinkContexts } from '../core/eligibility/fence-overlay.ts';
 
 // ---------------------------------------------------------------------------
 // Tunables (exported for tests).
@@ -283,26 +286,42 @@ export function assembleEvidence(parts: {
 }
 
 /**
- * GST-3815: which of `slugs` (every page row in `sourceId` with the slug, and a live one) and of the facts `factIds`
- * about page `slug` read to everyone who reads that page. Retrieval filters by it, and publication asks again so
- * evidence narrowed during the model call is never published.
+ * GST-3815: which of `slugs` (every page row in `sourceId` with the slug, and a live one, none quarantined) and of the
+ * facts `factIds` about page `slug` read to everyone who reads that page. A fact must also be one normal fact reads
+ * show (projectionEligibleSql: no deleted or quarantined holding page, nothing awaiting re-derivation). When the page
+ * admits labelled-only members, who read a fact only as a row of a page body labelled for them, the fact must also be
+ * an active world row its holding page's body shows remote readers (held rows omitted). Retrieval filters by it, and
+ * publication asks again so evidence narrowed during the model call is never published.
  */
 async function readableEvidence(engine: BrainEngine, sourceId: string, slug: string, slugs: string[], factIds: number[]): Promise<{ pages: Set<string>; facts: Set<number> }> {
   const wanted = [...new Set(slugs.filter(Boolean))];
   if (!wanted.length && !factIds.length) return { pages: new Set(), facts: new Set() };
-  const rows = await engine.executeRaw<{ kind: 'page' | 'fact'; key: string }>(
-    `SELECT 'page' AS kind, p.slug AS key FROM pages p JOIN pages t ON t.source_id = p.source_id AND t.slug = $2 AND t.deleted_at IS NULL
+  const rows = await engine.executeRaw<{ kind: 'page' | 'fact'; key: string; fact: string | null; context: string | null; holding: string | null; labelled: boolean | null }>(
+    `SELECT 'page' AS kind, p.slug AS key, NULL AS fact, NULL AS context, NULL AS holding, NULL::boolean AS labelled
+      FROM pages p JOIN pages t ON t.source_id = p.source_id AND t.slug = $2 AND t.deleted_at IS NULL
       WHERE p.source_id = $1 AND p.slug = ANY($3::text[])
-      GROUP BY p.slug HAVING bool_or(p.deleted_at IS NULL) AND bool_and(${pageReadsToReadersOfSql('p', 't')})
+      GROUP BY p.slug HAVING bool_or(p.deleted_at IS NULL) AND bool_and(${pageReadsToReadersOfSql('p', 't')} AND ${quarantineFilterFragment('p')})
     UNION ALL
-    SELECT 'fact' AS kind, f.id::text AS key FROM facts f JOIN pages t ON t.source_id = f.source_id AND t.slug = f.entity_slug AND t.deleted_at IS NULL
+    SELECT 'fact' AS kind, f.id::text AS key, f.fact, f.context, f.source_markdown_slug AS holding, ${pageAdmitsLabelledOnlySql('t')} AS labelled
+      FROM facts f JOIN pages t ON t.source_id = f.source_id AND t.slug = f.entity_slug AND t.deleted_at IS NULL
       WHERE f.source_id = $1 AND f.entity_slug = $2 AND f.id = ANY($4::bigint[]) AND f.expired_at IS NULL
-        AND (f.valid_until IS NULL OR f.valid_until > now()) AND ${factReadsToReadersOfSql('f', 't')}`,
+        AND (f.valid_until IS NULL OR f.valid_until > now()) AND ${factReadsToReadersOfSql('f', 't')}
+        AND ${projectionEligibleSql('facts', 'f', undefined)}`,
     [sourceId, slug, wanted, factIds],
   );
+  const facts = rows.filter((r) => r.kind === 'fact');
+  const shown = new Map<string, { claim: string; context: string }[]>();
+  for (const holding of new Set(facts.filter((r) => r.labelled && r.holding).map((r) => r.holding as string))) {
+    const page = await engine.getPage(holding, { sourceId });
+    if (!page || isSegmentedPage(page)) continue;
+    const held = await heldRowsForCaller(engine, true, { sourceId, slug: holding, compiled_truth: page.compiled_truth ?? '', timeline: page.timeline });
+    shown.set(holding, worldFenceRows(page.compiled_truth).filter((row) => row.active && !held?.has(row.rowNum)).map((row) => ({ claim: row.claim, context: row.context ?? '' })));
+  }
+  const visible = (r: (typeof facts)[number]) => !r.labelled
+    || (shown.get(r.holding ?? '') ?? []).some((row) => row.claim === r.fact && (!r.context || row.context === r.context));
   return {
     pages: new Set(rows.filter((r) => r.kind === 'page').map((r) => r.key)),
-    facts: new Set(rows.filter((r) => r.kind === 'fact').map((r) => Number(r.key))),
+    facts: new Set(facts.filter(visible).map((r) => Number(r.key))),
   };
 }
 
@@ -335,13 +354,16 @@ async function retrieveEvidence(
         LIMIT $3`,
       [sourceId, slug, FACT_LIMIT],
     );
+    const readable = (await readableEvidence(engine, sourceId, slug, [], rows.map((r) => Number(r.id)))).facts;
     for (const r of rows) {
+      if (!readable.has(Number(r.id))) continue;
       const text = r.context ? `${r.fact} (${r.context})` : r.fact;
       facts.push({ source_slug: slug, text });
       factIds.push(Number(r.id));
     }
-  } catch {
-    // Pre-facts brains / column drift → no facts evidence.
+  } catch (err) {
+    // Pre-facts brains / column drift → no facts evidence; fails closed, but say so.
+    process.stderr.write(`[enrich] WARN: fact evidence for ${slug} unavailable: ${(err as Error).message}\n`);
   }
 
   // 2. Inbound-link context — how OTHER pages describe this entity, from pages every reader of this one reads.
@@ -363,8 +385,8 @@ async function retrieveEvidence(
       pages.push(l.from_slug, ...(l.origin_slug ? [l.origin_slug] : []));
       n++;
     }
-  } catch {
-    // ignore
+  } catch (err) {
+    process.stderr.write(`[enrich] WARN: link evidence for ${slug} unavailable: ${(err as Error).message}\n`);
   }
 
   // 3. Hybrid search on the entity name — pages that mention it, among those every reader of this one reads.
@@ -980,6 +1002,7 @@ function emptyAgg(): EnrichResult {
     pages_skipped_disappeared: 0,
     pages_failed: 0,
     would_enrich: 0,
+    pages_skipped_evidence_narrowed: 0,
   };
 }
 
@@ -994,6 +1017,7 @@ function addInto(agg: EnrichResult, r: EnrichResult): void {
   agg.pages_skipped_disappeared += r.pages_skipped_disappeared;
   agg.pages_failed += r.pages_failed;
   agg.would_enrich = (agg.would_enrich ?? 0) + (r.would_enrich ?? 0);
+  agg.pages_skipped_evidence_narrowed = (agg.pages_skipped_evidence_narrowed ?? 0) + (r.pages_skipped_evidence_narrowed ?? 0);
   if (r.budget_exhausted) agg.budget_exhausted = true;
   // #4032: no_pricing is the actionable reason — it wins over cost when
   // per-source runs disagree; otherwise first reason seen sticks.
@@ -1189,7 +1213,7 @@ export async function runEnrich(engine: BrainEngine, args: string[]): Promise<vo
     console.log(
       `\nDone: enriched ${aggregate.pages_enriched} page(s) ` +
       `(${aggregate.pages_skipped_insufficient} skipped insufficient, ` +
-      `${aggregate.pages_skipped_lock} lock-busy, ${aggregate.pages_failed} failed) ` +
+      `${aggregate.pages_skipped_lock} lock-busy, ${aggregate.pages_skipped_evidence_narrowed ?? 0} evidence narrowed, ${aggregate.pages_failed} failed) ` +
       `across ${sourceIds.length} source(s). Spent ~$${totalSpent.toFixed(4)}.`,
     );
     if (anyBudgetExhausted) {

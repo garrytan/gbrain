@@ -948,6 +948,11 @@ function ownerOnlyWithinSql(rowSql: (alias: string, form: OwnerOnlyForm) => stri
   return form === 'closed' ? `NOT ${rowSql(alias, form)}` : `(NOT ${rowSql(alias, form)} OR ${ownerOnlyPageSql(t, form)})`;
 }
 
+/** GST-3815: page row `t` names readers or sits under a folder rule, so labelled-only members may read it, as SQL. */
+export function pageAdmitsLabelledOnlySql(t: string): string {
+  return `(${t}.page_readers IS NOT NULL OR ${namesReadersSql(t)} OR ${t}.folder_rule_ids IS NOT NULL)`;
+}
+
 /**
  * GST-3815: fact row `f` is owner-only only when page row `t` is, and when `t` admits labelled-only members (it names
  * readers or sits under a folder rule) the fact is held on a page they can be judged on, as SQL. A labelled-only member
@@ -955,8 +960,7 @@ function ownerOnlyWithinSql(rowSql: (alias: string, form: OwnerOnlyForm) => stri
  * `t`. The holding page itself is judged by pageReadsToReadersOfSql.
  */
 export function factWithinPageReadersSql(f: string, t: string): string {
-  const labelled = `(${t}.page_readers IS NOT NULL OR ${namesReadersSql(t)} OR ${t}.folder_rule_ids IS NOT NULL)`;
-  return `(${ownerOnlyWithinSql(ownerOnlyFactSql, f, t)} AND (NOT ${labelled} OR EXISTS (SELECT 1 FROM pages held_page
+  return `(${ownerOnlyWithinSql(ownerOnlyFactSql, f, t)} AND (NOT ${pageAdmitsLabelledOnlySql(t)} OR EXISTS (SELECT 1 FROM pages held_page
     WHERE held_page.source_id = ${f}.source_id AND held_page.slug = ${f}.source_markdown_slug AND held_page.deleted_at IS NULL)))`;
 }
 

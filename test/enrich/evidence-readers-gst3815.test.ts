@@ -47,6 +47,13 @@ async function seedFact(fact: string, visibility: 'world' | 'private', holding: 
   );
 }
 
+/** A facts fence with one world row per claim, as a page body holds it. */
+const worldFence = (claims: string[]) => ['<!--- gbrain:facts:begin -->',
+  '| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |',
+  '|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|',
+  ...claims.map((claim, i) => `| ${i + 1} | ${claim} | fact | 1.0 | world | medium | 2026-01-01 |  | test |  |`),
+  '<!--- gbrain:facts:end -->'].join('\n');
+
 async function enrichPrompt(thinThreshold = 400): Promise<string> {
   let captured = '';
   const synth: SynthesizeFn = async ({ user }) => {
@@ -91,23 +98,38 @@ describe('enrich evidence stays within the page readers (GST-3815)', () => {
   }, 30000);
 
   test('a page that names readers gets facts from pages that name all of its readers, and nothing a labelled-only member could not read', async () => {
-    await seedPage(TARGET, 'person', { readable_by: ['group:team-a'] }, 'Stub page.');
+    const wider = 'wider-fact-marker: Alice Example mentors the design guild';
+    const ownPage = 'own-page-fact-marker: Alice Example joined Acme Example in 2025';
+    await seedPage(TARGET, 'person', { readable_by: ['group:team-a'] }, `Stub page.\n\n${worldFence([ownPage])}`);
     await seedPage('meetings/open-m1', 'note', {});
-    await seedPage('notes/team-a-and-b', 'note', { readable_by: ['group:team-a', 'group:team-b'] });
+    const held = 'held-wider-fact-marker: Alice Example medical leave';
+    await seedPage('notes/team-a-and-b', 'note', { readable_by: ['group:team-a', 'group:team-b'] }, `Team notes.\n\n${worldFence([wider, held])}`);
     await seedPage('notes/team-b-only', 'note', { readable_by: ['group:team-b'] });
     await seedPage('notes/private-note', 'note', { visibility: 'private' });
 
     await seedFact('open-fact-marker: Alice Example leads design at Acme Example', 'world', 'meetings/open-m1');
-    await seedFact('wider-fact-marker: Alice Example mentors the design guild', 'world', 'notes/team-a-and-b');
+    await seedFact(wider, 'world', 'notes/team-a-and-b');
+    // A labelled-only member reads a fact only as a row of a page body labelled for it, so a fact no body shows stays out.
+    await seedFact('bodyless-fact-marker: Alice Example review score', 'world', 'notes/team-a-and-b');
+    await seedFact('bodyless-own-fact-marker: Alice Example badge number', 'world', TARGET);
+    // Fence row 2 shows world in the body while its stored row is private: remote readers never see it, so its world copy stays out.
+    await engine.executeRaw(
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source, source_markdown_slug, row_num, valid_from)
+       VALUES ('default', $1, $2, 'fact', 'private', 'test', 'notes/team-a-and-b', 2, now()), ('default', $1, $2, 'fact', 'world', 'test', 'notes/team-a-and-b', 3, now())`,
+      [TARGET, held],
+    );
     await seedFact('other-team-fact-marker: Alice Example review outcome', 'world', 'notes/team-b-only');
     await seedFact('private-page-fact-marker: Alice Example health note', 'world', 'notes/private-note');
     await seedFact('private-fact-marker: Alice Example is changing jobs', 'private', TARGET);
 
-    await seedFact('own-page-fact-marker: Alice Example joined Acme Example in 2025', 'world', TARGET);
+    await seedFact(ownPage, 'world', TARGET);
     await seedFact('unpaged-fact-marker: Alice Example speaks at the design summit', 'world', null);
 
-    const prompt = await enrichPrompt();
+    const prompt = await enrichPrompt(1200);
     expect(prompt).toContain('wider-fact-marker');
+    expect(prompt).not.toContain('held-wider-fact-marker');
+    expect(prompt).not.toContain('bodyless-fact-marker');
+    expect(prompt).not.toContain('bodyless-own-fact-marker');
     expect(prompt).toContain('own-page-fact-marker');
     // A labelled-only member of team-a reads the page but not an unlabelled page or a fact with no page.
     expect(prompt).not.toContain('open-fact-marker');
@@ -166,7 +188,7 @@ describe('enrich evidence stays within the page readers (GST-3815)', () => {
     await resetPgliteState(engine);
     await rule('people/');
     await seedPage(TARGET, 'person', {}, 'Stub page.');
-    await seedPage('people/ruled-note', 'note', {});
+    await seedPage('people/ruled-note', 'note', {}, `Ruled notes.\n\n${worldFence(['ruled-fact-marker: Alice Example board seat'])}`);
     await seedFact('ruled-fact-marker: Alice Example board seat', 'world', 'people/ruled-note');
     await seedFact('open-fact-marker: Alice Example leads design at Acme Example', 'world', null);
     expect(await enrichPrompt()).toContain('ruled-fact-marker');
@@ -263,5 +285,21 @@ describe('enrich evidence stays within the page readers (GST-3815)', () => {
     });
     expect(r.pages_enriched).toBe(0);
     expect(r.pages_skipped_evidence_narrowed).toBe(1);
+  }, 30000);
+
+  test('a fact normal reads hide (its holding page quarantined or deleted) never fills a page', async () => {
+    await seedPage(TARGET, 'person', {}, 'Stub page.');
+    await seedPage('meetings/open-m1', 'note', {});
+    await seedPage('notes/quarantined-note', 'note', { quarantine: { reason: 'test' } });
+    await seedPage('notes/deleted-note', 'note', {});
+    await seedFact('open-fact-marker: Alice Example leads design at Acme Example', 'world', 'meetings/open-m1');
+    await seedFact('quarantined-fact-marker: Alice Example home address', 'world', 'notes/quarantined-note');
+    await seedFact('deleted-fact-marker: Alice Example old phone', 'world', 'notes/deleted-note');
+    await engine.executeRaw(`UPDATE pages SET deleted_at = now() WHERE slug = 'notes/deleted-note'`);
+
+    const prompt = await enrichPrompt();
+    expect(prompt).toContain('open-fact-marker');
+    expect(prompt).not.toContain('quarantined-fact-marker');
+    expect(prompt).not.toContain('deleted-fact-marker');
   }, 30000);
 });
