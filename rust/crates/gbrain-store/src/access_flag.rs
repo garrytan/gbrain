@@ -397,8 +397,8 @@ mod tests {
         //   serialized rollback writes its counters forward on that same handle; an optimistic one
         //   that did not commit raises them in one write of `raise_counter` operations only
         //   (`raise_forward`), which writes no page record;
-        // - `transactions/optimistic_tests.rs`, a whole file under `#[cfg(test)]` that holds retry
-        //   keys directly on the store's `Kv`;
+        // - `transactions/optimistic_tests.rs` and `transactions/review_tests.rs`, whole files under
+        //   `#[cfg(test)]` that hold retry keys directly on the store's `Kv`;
         // - this module's open-time scan, the keyword index
         //   repair (`keyword/index_build.rs`, postings only) and the open-time repair of the
         //   derivation sweep records' source index (`page_body/purge_record.rs`, index keys only);
@@ -423,6 +423,7 @@ mod tests {
             ("test_support.rs", 4),
             ("transactions.rs", 4),
             ("transactions/optimistic_tests.rs", 4),
+            ("transactions/review_tests.rs", 1),
         ];
         let opens = |c: &str| {
             [
