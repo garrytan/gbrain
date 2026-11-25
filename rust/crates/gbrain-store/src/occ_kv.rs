@@ -495,6 +495,13 @@ impl Pipeline {
             // With the log on: one record per accepted transaction, from its own buffered writes,
             // at (sequence, place in the batch), in this same record-file commit.
             if let Some(state) = log.as_ref() {
+                if times.len() != accepted.len() {
+                    // The log never records a made-up time: a logged commit needs the clock.
+                    return Err(StoreError::new(
+                        STORE_CORRUPT,
+                        "the commit log is on but the commit has no commit time",
+                    ));
+                }
                 let records: Vec<(CommitPosition, Vec<u8>)> = accepted
                     .iter()
                     .enumerate()
@@ -502,7 +509,7 @@ impl Pipeline {
                         let origin = state.origin_for(&req.meta);
                         let value = crate::commit_log::encode_record(
                             &origin,
-                            times.get(i).copied().unwrap_or(0),
+                            times[i],
                             &req.meta.write_ids,
                             req.writes.iter().map(|(k, op)| (k.as_slice(), log_op(op))),
                         );

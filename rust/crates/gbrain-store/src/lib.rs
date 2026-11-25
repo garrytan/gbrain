@@ -536,10 +536,6 @@ impl Store {
             // Before any write: an origin without its machine is refused, never stamped empty.
             return Err(StoreError::invalid(HOST_ID_REQUIRED));
         }
-        if !read_only && !multiuser_on {
-            // An adapter reused from an open with the mode on keeps no commit clock into this one.
-            kv.clear_commit_clock();
-        }
         // This open's origin: minted only in multi-user mode, so an open with the mode off draws
         // nothing from `env` it did not draw before.
         let origin = (!read_only && multiuser.any()).then(|| {
@@ -564,10 +560,23 @@ impl Store {
         let snapshot = kv.snapshot()?;
         let stored: Option<StoredFormat> = get_json(&*snapshot, &keys::meta("format"))?;
         drop(snapshot);
+        // A log brain opened for writing with the mode or the log off is refused here, before this
+        // open changes anything about the adapter: a store already open on it keeps its clock.
+        if !read_only
+            && !multiuser.commit_log
+            && stored.as_ref().is_some_and(|f| f.format_version == LOG_FORMAT_VERSION)
+        {
+            return Err(log_required());
+        }
         // Multi-user mode: every accepted transaction gets a strictly increasing commit time, kept
-        // durable with its data, from this open on (its own upkeep writes included).
-        if multiuser_on && !read_only {
-            kv.set_commit_clock(env.clone(), None)?;
+        // durable with its data, from this open on (its own upkeep writes included). An adapter reused
+        // from an open with the mode on keeps no commit clock into one with it off.
+        if !read_only {
+            if multiuser_on {
+                kv.set_commit_clock(env.clone(), None)?;
+            } else {
+                kv.clear_commit_clock();
+            }
         }
         let mut log_enabled = false;
         let (stored, created) = match stored {
