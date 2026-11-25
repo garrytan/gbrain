@@ -345,12 +345,22 @@ interface ScannedToken {
   length: number;     // original length (for span tracking)
 }
 
-/** Whether `cp` is in CJK_SLUG_CHARS: the bounds pre-filter, then the shared character class. */
+/** CJK_SLUG_CHARS as code-point ranges (it is a list of `a-b` pairs, as CJK_BOUNDS relies on). */
+const CJK_RANGES = ((): Array<[number, number]> => {
+  const chars = [...CJK_SLUG_CHARS];
+  const ranges: Array<[number, number]> = [];
+  for (let k = 0; k < chars.length; k += 3) ranges.push([chars[k]!.codePointAt(0)!, chars[k + 2]!.codePointAt(0)!]);
+  return ranges;
+})();
 function isCJKCodePoint(cp: number): boolean {
-  return cp >= CJK_BOUNDS.min && cp <= CJK_BOUNDS.max && CJK_CHAR_RE.test(String.fromCodePoint(cp));
+  if (cp < CJK_BOUNDS.min || cp > CJK_BOUNDS.max) return false;
+  for (const [lo, hi] of CJK_RANGES) if (cp >= lo && cp <= hi) return true;
+  return false;
 }
-const LETTER_RE = /^\p{L}$/u;
-const LETTER_OR_MARK_RE = /^[\p{L}\p{M}]$/u;
+/** TOKEN_RE anchored at lastIndex (sticky): one regex call per non-ASCII word. */
+const WORD_AT_RE = new RegExp(TOKEN_RE.source, 'uy');
+/** The rest of a word run after its ASCII prefix: TOKEN_RE's continuation, sticky. */
+const WORD_TAIL_RE = new RegExp(`(?:(?![${CJK_SLUG_CHARS}])[\\p{L}\\p{M}0-9])*`, 'uy');
 const isAsciiAlnum = (c: number) => (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
 
 /**
@@ -375,43 +385,40 @@ const isAsciiAlnum = (c: number) => (c >= 48 && c <= 57) || (c >= 65 && c <= 90)
  */
 export function tokenizeForScan(text: string): ScannedToken[] {
   // One forward pass that emits exactly what TOKEN_RE's word runs plus the
-  // per-character CJK walk would: a word starts at an ASCII letter or digit
-  // or a non-CJK \p{L}, continues through ASCII letters and digits and
-  // non-CJK \p{L}/\p{M}; a CJK character is its own token; anything else
-  // advances one code unit.
+  // per-character CJK walk would. ASCII words are read by char code; a word
+  // with any non-ASCII character is read by one sticky TOKEN_RE match (so
+  // Thai, Cyrillic or Arabic text costs one regex call per word); a CJK
+  // character is its own token; anything else advances one code unit.
   const out: ScannedToken[] = [];
   const n = text.length;
   let i = 0;
   while (i < n) {
     const c = text.charCodeAt(i);
+    let start = i;
     if (c < 128) {
       if (!isAsciiAlnum(c)) { i++; continue; }
-    } else {
-      const cp = text.codePointAt(i)!;
-      const width = cp > 0xffff ? 2 : 1;
-      if (isCJKCodePoint(cp)) {
-        out.push({ text: normalizeToken(text.slice(i, i + width)), offset: i, length: width });
-        i += width;
+      while (i < n && isAsciiAlnum(text.charCodeAt(i))) i++;
+      if (i >= n || text.charCodeAt(i) < 128) {
+        out.push({ text: text.slice(start, i).toLowerCase(), offset: start, length: i - start });
         continue;
       }
-      if (!LETTER_RE.test(String.fromCodePoint(cp))) { i++; continue; }
-    }
-    const start = i;
-    let ascii = true;
-    while (i < n) {
-      const d = text.charCodeAt(i);
-      if (d < 128) {
-        if (!isAsciiAlnum(d)) break;
+      WORD_TAIL_RE.lastIndex = i;
+      i += WORD_TAIL_RE.exec(text)![0].length;
+    } else {
+      const cp = text.codePointAt(i)!;
+      if (isCJKCodePoint(cp)) {
+        out.push({ text: normalizeToken(text[i]!), offset: i, length: 1 });
         i++;
         continue;
       }
-      const cp = text.codePointAt(i)!;
-      if (isCJKCodePoint(cp) || !LETTER_OR_MARK_RE.test(String.fromCodePoint(cp))) break;
-      ascii = false;
-      i += cp > 0xffff ? 2 : 1;
+      WORD_AT_RE.lastIndex = i;
+      const m = WORD_AT_RE.exec(text);
+      if (!m) { i++; continue; }
+      start = i;
+      i += m[0].length;
     }
     const token = text.slice(start, i);
-    out.push({ text: ascii ? token.toLowerCase() : normalizeToken(token), offset: start, length: i - start });
+    out.push({ text: normalizeToken(token), offset: start, length: i - start });
   }
   return out;
 }
