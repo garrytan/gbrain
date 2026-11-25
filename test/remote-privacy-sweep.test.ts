@@ -167,6 +167,7 @@ const PARAM_FACTORY: Record<string, Record<string, unknown>> = {
   query: { query: 'WORLDSWEEP' },
   assemble_evidence: { hits: [{ source_id: 'default', slug: WORLD_FENCE_SLUG, chunk_id: 0 }], return_unit: 'page' },
   recall: { entity: WORLD_PAGE_SLUG },
+  check_claims: { text: 'We have 3 widgets.' },
   memory_recall: { query: WORLD.fact },
   memory_write: { facts: [{ fact: 'fresh sweep fact', provenance: 'sweep' }], idempotency_key: 'sweep-key' },
   memory_propose: { kind: 'timeline', target: WORLD_PAGE_SLUG, date: '2026-01-01', summary: 'sweep proposal', idempotency_key: 'sweep-propose-key' },
@@ -282,6 +283,8 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   query: 'data',
   assemble_evidence: 'data',
   recall: 'data',
+  // C3: the sweep corpus holds no allowed-claims page, so the check answers not_found.
+  check_claims: 'ok',
   memory_recall: 'data',
   entity: 'data',
   delta: 'data',
