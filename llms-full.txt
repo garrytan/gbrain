@@ -6022,7 +6022,6 @@ gbrain engine shadow reconcile [--full] [--json]   # compare the whole brain wit
 gbrain engine shadow status [--json]
 gbrain engine shadow report [--json]               # prints the report; writes reports/provisional.{json,md} only once the shadow directory exists
 gbrain engine shadow stop [--delete]               # turn it off; --delete removes the shadow directory
-gbrain engine shadow drill [--backup] [--evals] [--json]   # restore drill on the shadow store and eval-gates fetch (swap criterion 10); both without a flag
 ```
 
 - **Fail-open.** Mirroring never fails a primary call; a sampled read pays only the bounded copy described below. The queue is bounded (`--queue-bound`, default 256)
@@ -6279,21 +6278,7 @@ gbrain engine shadow drill [--backup] [--evals] [--json]   # restore drill on th
   `ranking_differences`, `privacy_checks_unsettled_7d` and the counting rules). A count with no evidence is left out, never zero, and the swap reads it as `NOT READY`. The follower and evidence
   fields are read from one epoch; if the epoch keeps changing while the document is built, `epoch_id` is `null`, the
   evidence fields are left out and `evidence_epoch_unstable` is `true`. `gbrain engine swap --plan` reads this same document.
-- **Drill (swap criterion 10).** `gbrain engine shadow drill` runs on the shadow's host and never pauses the shadow.
-  `--backup` asks the shadow's owner for one copy of the Rust store at one committed generation under
-  `drills/scratch-<id>/` (the shadow keeps following), checks the copy without opening it normally, opens it once, runs
-  a keyword search on a word the copy stores (up to 24 words are tried until one gets a hit), deletes the copy and writes
-  `drills/backup.json` and `history.jsonl`. It verifies and opens the copy with the addon whose SHA-256 equals the epoch's `rust_addon_sha256` (`addon_mismatch`
-  otherwise). A copy that has pages passes only after a keyword search ran on it, and while the copy's keyword index is
-  complete that search must get a hit (`no_probe_term` otherwise); the probe drops the engine's stop words before it
-  counts its 24 tries and leaves out pages under search-excluded slug prefixes. A shadow deleted or replaced during
-  the drill is `shadow_gone` and nothing is written. `--evals` downloads the release's `gbrain-eval-gates.pin.json` and the eval-gates
-  file it names into `drills/` (the only network use of the command; `status` and the swap never fetch). With neither
-  flag both run, and the exit code is 1 unless every half that ran passed. `status --json` carries them as `drills`:
-  `backup_restore_passed` is true only for a record of the current evidence epoch whose scratch space was seen deleted,
-  `eval_gates_e1_e3` is decided again on every read from the cached files, and `backup_state`, `backup_reason`,
-  `eval_gates_reason` and `eval_gates_last_fetch` say why a half is not a pass. The drill's refusals are the error code
-  `shadow_drill_failed`; `docs/guides/engine-swap.md` (criterion 10) has the swap's side.
+- **Drill:** [engine-shadow-drill](guides/engine-shadow-drill.md)
 - **Fingerprint probe.** Withdrawals and purge tombstones key on the fact fingerprint, so a primary whose `lower()` or
   `[[:space:]]` answers differ from PGLite's (and Rust's) for some code point would fingerprint a claim holding it
   differently, and a withdrawn fact would not match on Rust. At follower start and on each full pass the probe reads, in
