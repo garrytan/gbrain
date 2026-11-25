@@ -51,7 +51,6 @@ function rustRefreshStore(brain: StoreBrain): RefreshStore {
     membersPastStart: (sourceIds, barrierSequence) => rows('members_past_start', { sourceIds: [...sourceIds], barrierSequence }),
     sourceCommits: sourceIds => rows('source_commits', { sourceIds: [...sourceIds] }),
     memberCommits: sourceIds => rows('member_commits', { sourceIds: [...sourceIds] }),
-    ownerActivity: worktreeIds => rows('owner_activity', { ids: [...worktreeIds] }),
     async memberIds(worktreeId) { return (await call(() => brain.topologyRows({ kind: 'worktree_members', worktreeId })) as Array<{ source_id: string }>).map(row => row.source_id); },
     async hostLocalPath(worktreeId, hostId) { return (await call(() => brain.topologyRows({ kind: 'host_binding', worktreeId, hostId })) as { local_path: string } | null)?.local_path ?? null; },
     async sourceLastCommit(sourceId) { return (await call(() => brain.getSource(sourceId)) as { last_commit?: string | null } | null)?.last_commit ?? null; },

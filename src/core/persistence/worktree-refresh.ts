@@ -55,6 +55,7 @@ import { ledgerLocation, readLedger } from '../git/commit-ledger.ts';
 import { upstreamBeforeFetch, upstreamRewriteReason } from '../git/upstream-history.ts';
 import { gitDurabilityPolicy } from './git-durability-policy.ts';
 import { sqlRefreshStore, type RefreshRow } from '../engine-sql/refresh-store.ts';
+import { managesWorktrees, requireRawSql } from '../rust-engine/errors.ts';
 
 export type WorktreeRefreshRow = RefreshRow;
 export type RefreshBoundary = 'drained' | 'fenced' | 'merged' | 'syncing' | 'synced';
@@ -794,6 +795,8 @@ function finished(row: WorktreeRefreshRow, sync: { synced: RefreshMemberSync[]; 
  * host only; refusals throw catalogue errors (`code`, cause, literal fix, docs). Callers omit `run`, the record of one run (GST-3107).
  */
 export async function refreshWorktree(engine: BrainEngine, sourceId: string, opts: RefreshOptions = {}, run?: RefreshRun): Promise<WorktreeRefreshResult> {
+  // An engine that serves neither raw SQL nor managed worktrees (a user's Rust brain, while the hold is on) refuses by name, before any step.
+  if (!managesWorktrees(engine)) requireRawSql(engine, 'the refresh writer (persistence/worktree-refresh.ts): gbrain sources refresh writes no refresh row here');
   if (!run) return withRefreshRun(engine, { beforeDrain: opts.hooks?.backlog, redact }, next => refreshWorktree(engine, sourceId, opts, next));
   let result: WorktreeRefreshResult;
   try { result = await runRefresh(engine, sourceId, opts, run); }

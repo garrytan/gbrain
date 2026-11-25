@@ -61,7 +61,6 @@ pub enum RefreshRead {
     ActiveRows { source_id: Option<String> },
     Resumable { host_id: String, budget_ms: f64 },
     Stuck { minutes: f64 },
-    OwnerActivity { ids: Vec<String> },
     DeferredBacklog {},
     DeferredWaiting {
         source_id: String,
@@ -443,52 +442,6 @@ pub(crate) fn refresh_rows_in(read: &dyn KvRead, env: &dyn Env, what: &RefreshRe
                     .map(|f| json!({ "id": f.id, "state": f.state, "source_ids": f.source_ids, "updated_at": iso(f.updated_at_us) }))
                     .collect(),
             ))
-        }
-        RefreshRead::OwnerActivity { ids } => {
-            let all = all_requests(read)?;
-            let mut out = Vec::new();
-            let mut seen = std::collections::HashSet::new();
-            for id in ids {
-                if !crate::env::is_uuid(id) || !seen.insert(id.to_lowercase()) {
-                    continue;
-                }
-                let w = id.to_lowercase();
-                let Some(worktree) = read_worktree_record(read, &w)? else { continue };
-                let Some(owner) = worktree.owner_host_id.clone() else { continue };
-                let on: Vec<&RequestRecord> = requests_on(&all, &w).collect();
-                // The newest committed foreground receipt (ordered by sequence) and each live source's newest sync receipt.
-                let foreground = on
-                    .iter()
-                    .filter(|r| r.state == "committed" && !sync_kind(&r.intent))
-                    .max_by_key(|r| r.sequence)
-                    .and_then(|r| {
-                        r.extra
-                            .get("published_at")
-                            .and_then(Value::as_str)
-                            .and_then(parse_iso)
-                            .or(r.completed_at_us)
-                    });
-                let mut sync: Option<i64> = None;
-                for r in on.iter().filter(|r| r.state == "committed" && sync_kind(&r.intent)) {
-                    let current = read_source(read, &r.source_id)?
-                        .map(|s| s.incarnation)
-                        .is_some_and(|i| same(&i, &r.source_incarnation));
-                    if current {
-                        sync = sync.max(r.completed_at_us);
-                    }
-                }
-                // `persistence_consumers` stays empty, so no consumer heartbeat counts and none is live.
-                let last_active = [worktree.heartbeat_at_us, foreground, sync].into_iter().flatten().max();
-                let open = on
-                    .iter()
-                    .filter(|r| matches!(r.state.as_str(), "queued" | "deferred" | "running" | "recovering"))
-                    .map(|r| r.created_at_us)
-                    .min();
-                out.push(json!({ "worktree_id": w, "owner_host_id": owner.to_lowercase(), "live": false,
-                    "last_active": last_active.map(iso), "oldest_open": open.map(iso), "db_now": iso(now) }));
-            }
-            out.sort_by(|a, b| a["worktree_id"].as_str().cmp(&b["worktree_id"].as_str()));
-            Ok(Value::Array(out))
         }
         RefreshRead::DeferredBacklog {} => {
             let held: Vec<RequestRecord> = all_requests(read)?

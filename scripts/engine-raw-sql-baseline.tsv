@@ -371,7 +371,7 @@ src/core/persistence/diagnostics.ts	execute_raw	1
 src/core/persistence/drift-conflicts.ts	execute_raw	4
 src/core/persistence/effect-journal.ts	execute_raw	5
 src/core/persistence/effect-recovery.ts	execute_raw	16
-src/core/persistence/effect-retry.ts	execute_raw	10
+src/core/persistence/effect-retry.ts	execute_raw	9
 src/core/persistence/effect-settle.ts	execute_raw	7
 src/core/persistence/effect-targets.ts	execute_raw	7
 src/core/persistence/effects.ts	execute_raw	9
@@ -385,7 +385,6 @@ src/core/persistence/forget-prepare.ts	execute_raw	1	GBRA-574 F #9674 (opened be
 src/core/persistence/git-conversion.ts	execute_raw	16
 src/core/persistence/git-declared.ts	execute_raw	7
 src/core/persistence/git-door.ts	execute_raw	1
-src/core/persistence/git-durability-administration.ts	execute_raw	2
 src/core/persistence/git-gap.ts	execute_raw	5
 src/core/persistence/graduation-copy.ts	execute_raw	36
 src/core/persistence/graduation-digest.ts	execute_raw	5	sync 13b: master (R2) splits the digest read into readKeysetRows, which the shadow seed shares; the trunk side counted 4
@@ -419,7 +418,6 @@ src/core/persistence/page-mutations.ts	execute_raw	2
 src/core/persistence/page-prepare.ts	execute_raw	6
 src/core/persistence/page-upload.ts	execute_raw	15
 src/core/persistence/page-visibility.ts	execute_raw	5
-src/core/persistence/physical-root.ts	execute_raw	8
 src/core/persistence/plain-directory-drift.ts	execute_raw	2	#8079: reads and records whether a page revision was written with its file in step (journal receipt join plus agreement checkpoint); persistence protocol state, no typed checkpoint methods yet.
 src/core/persistence/preadmit-cache.ts	execute_raw	3
 src/core/persistence/preparation-budget.ts	execute_raw	1
@@ -483,8 +481,6 @@ src/core/persistence/sync-tail-record.ts	execute_raw	3
 src/core/persistence/sync-tail.ts	execute_raw	2
 src/core/persistence/sync-waivers.ts	execute_raw	8
 src/core/persistence/sync-window.ts	execute_raw	2
-src/core/persistence/topology-clone.ts	execute_raw	19
-src/core/persistence/topology-recovery.ts	execute_raw	16
 src/core/persistence/transient-retry.ts	execute_raw	1
 src/core/persistence/unbound-source.ts	execute_raw	4
 src/core/persistence/unimported-file.ts	execute_raw	1
@@ -519,6 +515,7 @@ src/core/repair/segmented-tiling.ts	execute_raw	6
 src/core/repair/slug-autoheal.ts	execute_raw	1
 src/core/repair/unwithdrawn-facts.ts	execute_raw	2
 src/core/repair/visibility.ts	execute_raw	3
+src/core/rust-engine/store-members/managed-hold.ts	execute_raw	1	the managed_persistence hold: a held managed store answers with the Rust engine's own executeRaw refusal (it runs no SQL), so a user's Rust brain refuses exactly as before lane LM typed these statements
 src/core/schema-migrations/helpers.ts	execute_raw	12
 src/core/schema-migrations/v039-multimodal-dual-column-v0-27-1.ts	execute_raw	1
 src/core/schema-migrations/v045-facts-hot-memory-v0-31.ts	execute_raw	2
