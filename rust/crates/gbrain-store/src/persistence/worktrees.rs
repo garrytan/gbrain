@@ -198,6 +198,14 @@ pub(super) fn read_worktree_record(read: &dyn KvRead, id: &str) -> Result<Option
     get_json(read, &worktree_key(id))
 }
 
+/// The host that owns worktree `id` (its `owner_host_id`, lower-case); `None` when the worktree is missing or has no
+/// owner. For reads outside this module that judge a request by the host of its worktree.
+pub(crate) fn worktree_owner_host(read: &dyn KvRead, id: &str) -> Result<Option<String>> {
+    Ok(read_worktree_record(read, &id.to_lowercase())?
+        .and_then(|w| w.owner_host_id)
+        .map(|h| h.to_lowercase()))
+}
+
 pub(super) fn read_host_record(
     read: &dyn KvRead,
     worktree_id: &str,

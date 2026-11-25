@@ -26,9 +26,10 @@
  *    brain was never attempted and never reported.
  *  - Why existing coverage misses it: a managed worktree's rows cannot be built through the raw-SQL fixtures those files
  *    avoid (D18); here the real `writer_claim` administration builds them on every arm.
- *  - Known stop on Rust: the topology attempt takes its locks through executeRaw (topology-locks.ts withTopologyLocks,
- *    held under managed_persistence until lane 8 bound-write-rust types it), so on Rust that case checks the pass reached
- *    the change and ends on the named raw_sql refusal; the harness counts it stopped.
+ *  - Known stop on a user's Rust brain: while the managed hold is on (no managed_persistence, no raw_sql) the topology
+ *    attempt refuses `source_topology_recovery` by name (topology-stop.ts) before it attempts any change, and the harness
+ *    counts the case stopped. With the hold lifted (GBRAIN_TEST_RUST_MANAGED=1) the attempt runs on the typed topology
+ *    store and the case is equal to the SQL arms.
  *  - Seam: none. Real engines, the real administration path and typed members only. Ids that differ per arm (worktree,
  *    journal and effect ids) are compared by role, never printed.
  */
@@ -199,8 +200,8 @@ describe('engine parity: the journal on a claimed worktree', () => {
       recoveryBytes: 12, intentBytes: 34, terminalBytes: 4096, outcome: null });
     const attempts: Array<{ self: boolean; recovered: boolean }> = [];
     const pass = () => recoverSourceTopologies(engine, { hostId: host, limit: 2, onAttempt: (rowId, recovered) => attempts.push({ self: rowId === change.id, recovered }) });
-    if (backend === 'rust') {
-      // Known stop on Rust: the pass names the raw-SQL need before it attempts any change (topology-stop.ts
+    if (backend === 'rust' && !engine.capabilities.has('managed_persistence')) {
+      // Known stop on a user's Rust brain (the managed hold is on): the pass names the raw-SQL need before it attempts any change (topology-stop.ts
       // requireTopologyRawSql: the attempt takes its topology locks through executeRaw, which a Rust brain does not run), so
       // it refuses `source_topology_recovery` with no change attempted.
       const refusal = await pass().then(() => null, (error: unknown) => error);

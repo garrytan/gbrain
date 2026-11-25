@@ -27,6 +27,9 @@ function rustGitDurabilityStore(brain: StoreBrain): GitDurabilityStore {
     planCatchUp: key => rows('plan_catch_up', { ...key }),
     requeueCatchUp: (key, ids) => write('requeue_catch_up', { worktreeId: key.worktreeId, sourceIncarnation: key.sourceIncarnation, reason: key.reason, ids: [...ids] }),
     setHostBindingDurability: (worktreeId, hostId, setting) => write('set_host_binding', { worktreeId, hostId, setting }),
+    parkedPushRequests: (worktreeId, codes) => rows('parked_push_requests', { worktreeId, codes: [...codes] }),
+    formerWorktreeHolds: (sourceId, worktreeId, codes) => rows('former_worktree_holds', { sourceId, worktreeId, codes: [...codes] }),
+    requeueParkedEffect: (id, data, errorCode) => write('requeue_parked_effect', { id, data, errorCode }),
   };
 }
 

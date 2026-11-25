@@ -25,10 +25,11 @@ const RECOVERING = { id: randomUUID(), principal_id: randomUUID(), request_id: r
   source_id: 'work', source_incarnation: randomUUID(), worktree_ids: [], state: 'recovering', recovery: { worktreeId: randomUUID() },
   recovery_bytes: 0, intent_bytes: 0, terminal_bytes: 0, outcome: null };
 
-/** The real engine; `rustShape` drops raw_sql and answers one recovering change; `scanError` makes the list throw it. */
+/** The real engine; `rustShape` drops raw_sql and managed_persistence and answers one recovering change; `scanError` makes the list throw it. */
 function shaped(engine: BrainEngine, opts: { rustShape: boolean; scanError?: Error }) {
   const scans: unknown[][] = [];
-  const capabilities = new Set([...engine.capabilities].filter(c => !opts.rustShape || c !== 'raw_sql'));
+  // The held Rust shape serves neither raw SQL nor managed worktrees.
+  const capabilities = new Set([...engine.capabilities].filter(c => !opts.rustShape || (c !== 'raw_sql' && c !== 'managed_persistence')));
   const proxy = new Proxy(engine, {
     get(target, key) {
       if (key === 'capabilities') return capabilities;
