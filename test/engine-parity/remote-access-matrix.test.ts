@@ -101,7 +101,9 @@ let unservedRefusals: Array<Record<string, unknown>> = [];
 /** An unserved owner cell: refused, and nothing of any page or fact in the answer. */
 function expectUnserved(who: Caller, what: string, cell: Cell): void {
   const message = String((cell.body as { message?: unknown } | null)?.message ?? '');
-  expect({ who, what, error: cell.error, named: message.includes(OWNER_REFUSAL), pages: cell.pages, facts: cell.facts })
+  // recall answers in the memory-verb envelope, whose code for a refused read is `unavailable`; its message names the refusal.
+  const code = cell.error === 'unavailable' && what.startsWith('recall') ? 'engine_capability_missing' : cell.error;
+  expect({ who, what, error: code, named: message.includes(OWNER_REFUSAL), pages: cell.pages, facts: cell.facts })
     .toEqual({ who, what, error: 'engine_capability_missing', named: true, pages: [], facts: [] });
   if (cell.error === 'engine_capability_missing') unservedRefusals.push(cell.body as Record<string, unknown>);
 }
