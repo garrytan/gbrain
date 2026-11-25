@@ -30,6 +30,67 @@ export function rustArmRequested(env: Record<string, string | undefined> = proce
   return env[RUST_ARM_FLAG] === '1';
 }
 
+/**
+ * `GBRAIN_TEST_RUST_MU_ARM` runs the Rust arm as the `rust-mu` view: the same arm (backend `rust`) with multi-user mode on,
+ * by one of the two routes the store resolves at open (interface I-0.v2). It implies the Rust arm.
+ *  - `env` (and `1`, an alias): the harness sets `GBRAIN_RUST_MULTIUSER=1` inside the test process before the arm opens (the
+ *    operator-env preload strips GBRAIN_* variables, so the switch cannot come from the caller's environment).
+ *  - `config`: the environment variable stays unset, and on every fresh Rust brain the arm opens (the first open and each
+ *    reset) the harness writes the brain's own config row `engine.rust.multiuser` = `true` through the typed `setConfig`, then
+ *    disconnects and reconnects so the store resolves it at open.
+ * With the flag unset nothing here or in the harness changes.
+ */
+export const RUST_MU_ARM_FLAG = 'GBRAIN_TEST_RUST_MU_ARM';
+export type RustMuRoute = 'env' | 'config';
+
+/** The route the flag names, or null when the view is off. An unknown value is an error: an arm that was asked for never silently runs as something else. */
+export function rustMuRoute(env: Record<string, string | undefined> = process.env): RustMuRoute | null {
+  const value = env[RUST_MU_ARM_FLAG];
+  if (value === undefined || value === '' || value === '0') return null;
+  if (value === '1' || value === 'env') return 'env';
+  if (value === 'config') return 'config';
+  throw new Error(`${RUST_MU_ARM_FLAG}=${value} is not a route; use env (or 1) or config`);
+}
+
+export function rustMuArmRequested(env: Record<string, string | undefined> = process.env): boolean {
+  return rustMuRoute(env) !== null;
+}
+
+/** The brain's own config row of the multi-user switch (`gbrain_store::MULTIUSER_CONFIG_KEY`). */
+export const RUST_MULTIUSER_CONFIG_KEY = 'engine.rust.multiuser';
+
+/** Printed once per file, and recorded in the ledger detail, when the build cannot report what the store resolved. */
+export const MU_NOT_RESOLVED_NOTICE = 'this build does not resolve the multi-user switch; rust-mu runs as rust';
+
+/**
+ * What the store resolved for an open engine: true or false when the build exposes it (`RustStore.multiuser`, the open info's
+ * `multiuser`), undefined when it does not (a build before I-0.v2), or when no store is open here (a client engine).
+ */
+export function resolvedMultiuser(engine: unknown): boolean | undefined {
+  const store = (engine as RustEngine).openStoreIfOpen?.('multiuserSwitch') as { multiuser?: unknown } | null | undefined;
+  return typeof store?.multiuser === 'boolean' ? store.multiuser : undefined;
+}
+
+let muResolutionExposed: boolean | undefined;
+
+/** Whether the build exposed the resolved switch on the last rust-mu brain the arm opened (undefined before one opened). */
+export function muResolutionIsExposed(): boolean | undefined {
+  return muResolutionExposed;
+}
+
+/**
+ * Check an engine opened for the `rust-mu` view: when the build exposes the resolved switch it must be true, else the arm
+ * fails; when it does not expose it, remember that (the file prints one notice, the ledger records it) and carry on.
+ */
+export function checkMuResolved(engine: unknown, route: RustMuRoute): boolean {
+  const resolved = resolvedMultiuser(engine);
+  if (resolved === false) {
+    throw new Error(`[rust-mu-${route}] the store did not resolve multi-user mode although the arm turned it on by the ${route === 'env' ? `environment variable GBRAIN_RUST_MULTIUSER=1` : `config row ${RUST_MULTIUSER_CONFIG_KEY}`}`);
+  }
+  muResolutionExposed = resolved === true;
+  return resolved === true;
+}
+
 /** The capability a member needs (its row in the member table), or null for a lifecycle member or an unknown name. */
 export function rustMemberCapability(method: string): string | null {
   const cls = (RUST_ENGINE_MEMBERS as Record<string, string>)[method];
@@ -69,12 +130,35 @@ export function newRustBrain(): RustBrainDir {
   return { engine, dir: engine.databasePath };
 }
 
-/** A Rust engine on a new brain directory, connected. */
-export async function openRustBrain(): Promise<RustBrainDir> {
+/**
+ * A Rust engine on a new brain directory, connected. With a `route` (the `rust-mu` view) multi-user mode is checked on it: by
+ * the `config` route the brain's own config row is written first and the engine reconnected so the store resolves it at open.
+ */
+export async function openRustBrain(route?: RustMuRoute): Promise<RustBrainDir> {
   await loadRustArmAddon();
   const brain = newRustBrain();
-  await brain.engine.connect({ engine: 'pglite', database_path: brain.dir } as never);
+  const config = { engine: 'pglite', database_path: brain.dir } as never;
+  await brain.engine.connect(config);
+  if (route === 'config') {
+    await brain.engine.setConfig(RUST_MULTIUSER_CONFIG_KEY, 'true');
+    await brain.engine.disconnect();
+    await brain.engine.connect(config);
+  }
+  if (route !== undefined) checkMuResolved(brain.engine, route);
   return brain;
+}
+
+/**
+ * A second connected Rust engine on an existing brain directory. While the directory's first engine is open, connect
+ * elects the first as the owner and this one becomes its client over the owner socket (test/rust-engine-store.test.ts,
+ * "a second engine on an open brain directory becomes a client of the first"). The caller disconnects it and never removes
+ * the directory.
+ */
+export async function openRustBrainAt(dir: string): Promise<RustEngine> {
+  const loaded = await loadRustArmAddon();
+  const engine = openRustEngine({ addon: loaded, databasePath: dir });
+  await engine.connect({ engine: 'pglite', database_path: dir } as never);
+  return engine;
 }
 
 export function removeBrainDir(dir: string): void {

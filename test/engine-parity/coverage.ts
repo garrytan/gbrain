@@ -24,13 +24,17 @@
  * test/rust-expected-divergence/ names), `refuses:<capability>` (the arm must throw the typed
  * `engine_capability_missing` refusal) or `n/a:<why>` (the method does not
  * exist on that arm). They come from each case's `requires` declaration and
- * test/engine-parity/arm-capabilities.ts.
+ * test/engine-parity/arm-capabilities.ts. A case declared with `mwCase: 'Cnn'` has no `requires`: its row in
+ * multi-writer-cases.ts decides per arm (PGLite and Postgres show `yes` where the row `runs`, else `n/a:multi_writer` or
+ * `pending:<owner>`), and the list's header comments render the matrix, one line per case (none while the matrix is empty).
  */
 import ts from 'typescript';
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { PARITY_ARMS, armHas, missingCapability, type EngineCapability, type ParityArmName } from './arm-capabilities.ts';
 import { rustRefusal } from './rust-arm.ts';
+import { MW_ARMS, MW_CASES, MW_CASE_IDS, type MwCell } from './multi-writer-cases.ts';
+import { ENTRY_ID, mwEntries, mwEntry } from './multi-writer-entries.ts';
 
 const REPO = join(import.meta.dir, '..', '..');
 const PARITY_DIR = import.meta.dir;
@@ -561,7 +565,7 @@ export function interfaceMethods(): string[] {
   return names;
 }
 
-export interface ParityDeclaration { file: string; name: string; methods: string[]; requires?: EngineCapability }
+export interface ParityDeclaration { file: string; name: string; methods: string[]; requires?: EngineCapability; mwCase?: string }
 
 function stringValue(node: ts.Node): string | null {
   return ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) ? node.text : null;
@@ -597,7 +601,17 @@ export function parityDeclarations(dir = PARITY_DIR): ParityDeclaration[] {
           missingCapability(value as EngineCapability); // throws on an unknown capability
           requires = value as EngineCapability;
         }
-        out.push({ file: relative(REPO, path), name: (nameArg && stringValue(nameArg)) ?? '<dynamic>', methods, ...(requires && { requires }) });
+        const mwProp = (optsArg as ts.ObjectLiteralExpression).properties
+          .find((p) => p.name && ts.isIdentifier(p.name) && p.name.text === 'mwCase');
+        let mwCase: string | undefined;
+        if (mwProp) {
+          const value = ts.isPropertyAssignment(mwProp) ? stringValue(mwProp.initializer) : null;
+          if (value === null) throw new Error(`${where}: parityTest mwCase must be a string literal`);
+          if (!ENTRY_ID.test(value) || !(MW_CASE_IDS as readonly string[]).includes(value.split('.')[0]!)) throw new Error(`${where}: parityTest mwCase ${value} is not a case id (${MW_CASE_IDS[0]}..${MW_CASE_IDS[MW_CASE_IDS.length - 1]}) or a variant id (C06.name)`);
+          if (requires !== undefined) throw new Error(`${where}: an mwCase case takes no requires; its matrix row decides where it runs`);
+          mwCase = value;
+        }
+        out.push({ file: relative(REPO, path), name: (nameArg && stringValue(nameArg)) ?? '<dynamic>', methods, ...(requires && { requires }), ...(mwCase && { mwCase }) });
       }
       ts.forEachChild(node, visit);
     };
@@ -617,6 +631,20 @@ export function legacyMethods(methods: readonly string[]): Set<string> {
   return called;
 }
 
+function cellText(cell: MwCell): string {
+  return cell.status === 'runs' ? 'runs' : cell.status === 'n/a' ? 'n/a' : `pending(${cell.owner})`;
+}
+
+/** The multi-writer support matrix as header comments of the list, one line per case; empty while the matrix has no rows. */
+function matrixLines(): string[] {
+  if (MW_CASES.length === 0) return [];
+  return [
+    `# multi-writer cases: ${MW_CASES.length}/${MW_CASE_IDS.length}`,
+    // A variant (C06.partition) is a case of its own: its own line, its own cells.
+    ...mwEntries().map((c) => `# multi-writer ${c.id} [${c.reference}${c.needs ? `, needs ${c.needs}` : ''}]: ${MW_ARMS.map((arm) => `${arm}=${cellText(c.cells[arm])}`).join(' ')}`),
+  ];
+}
+
 export interface CoverageReport { methods: string[]; covered: string[]; text: string }
 
 export function buildCoverage(): CoverageReport {
@@ -634,12 +662,12 @@ export function buildCoverage(): CoverageReport {
     throw new Error(`engine-parity coverage: FAMILIES out of date. Unassigned: ${unassigned.join(', ') || '-'}; not in BrainEngine: ${stale.join(', ') || '-'}`);
   }
   const cases = new Map<string, number>();
-  const requirements = new Map<string, Array<EngineCapability | undefined>>();
+  const requirements = new Map<string, Array<{ requires?: EngineCapability; mwCase?: string }>>();
   for (const decl of parityDeclarations()) {
     for (const m of decl.methods) {
       if (!family.has(m)) throw new Error(`${decl.file} "${decl.name}": ${m} is not a BrainEngine method`);
       cases.set(m, (cases.get(m) ?? 0) + 1);
-      requirements.set(m, [...(requirements.get(m) ?? []), decl.requires]);
+      requirements.set(m, [...(requirements.get(m) ?? []), { ...(decl.requires && { requires: decl.requires }), ...(decl.mwCase && { mwCase: decl.mwCase }) }]);
     }
   }
   /** What `arm` must do for `m`: it runs when any covering case runs there, else the first missing capability's label. */
@@ -651,8 +679,13 @@ export function buildCoverage(): CoverageReport {
       const refusal = rustRefusal(m);
       return refusal === null ? 'serves' : `refuses:${refusal}`;
     }
-    if (reqs.some((r) => armHas(arm, r))) return 'yes';
-    return missingCapability(reqs.find((r) => r !== undefined)!).label;
+    // A multi-writer case runs on the arm where its matrix cell says `runs`; every other case by `requires`.
+    const runsOn = (r: { requires?: EngineCapability; mwCase?: string }) => (r.mwCase === undefined ? armHas(arm, r.requires) : mwEntry(r.mwCase).cells[arm].status === 'runs');
+    if (reqs.some(runsOn)) return 'yes';
+    const plain = reqs.find((r) => r.mwCase === undefined && r.requires !== undefined);
+    if (plain) return missingCapability(plain.requires!).label;
+    const cell = mwEntry(reqs.find((r) => r.mwCase !== undefined)!.mwCase!).cells[arm];
+    return cell.status === 'pending' ? `pending:${cell.owner}` : missingCapability('multi_writer').label;
   };
   const legacy = legacyMethods(methods);
   const covered = methods.filter((m) => cases.has(m));
@@ -674,6 +707,7 @@ export function buildCoverage(): CoverageReport {
     '#   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).',
     `# covered: ${covered.length}/${methods.length}`,
     ...perFamily,
+    ...matrixLines(),
     ['method', 'family', 'covered', 'parity_cases', 'legacy_e2e', ...PARITY_ARMS].join('\t'),
     ...rows.map((m) => [m, family.get(m), cases.has(m) ? 'yes' : 'no', cases.get(m) ?? 0, legacy.has(m) ? 'yes' : 'no',
       ...PARITY_ARMS.map((arm) => armCell(m, arm))].join('\t')),

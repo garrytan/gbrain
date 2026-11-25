@@ -370,6 +370,7 @@ test/engine-parity/memory-proposal-reads.test.ts
 test/engine-parity/mention-coverage.test.ts
 test/engine-parity/mention-pass.test.ts
 test/engine-parity/migrate-engine-source.test.ts
+test/engine-parity/multi-writer-conformance.test.ts
 test/engine-parity/notifier-freshness.test.ts
 test/engine-parity/notifier-resident.test.ts
 test/engine-parity/notifier.test.ts
@@ -909,6 +910,7 @@ test/migration-persistence-request-slug-index.test.ts
 test/mirror-keep-deleted.test.ts
 test/mirror-readonly-write-through-7098.test.ts
 test/moved-pages-gst2584.test.ts
+test/multi-writer-harness.test.ts
 test/n3-sql-move-parity.test.ts
 test/notifier-passed-freshness-marker-7941.test.ts
 test/notifier-retry-unwatched-gst2515.test.ts
