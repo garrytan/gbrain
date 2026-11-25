@@ -1461,7 +1461,7 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   // Import-path guard, attribution and config reads: SQL in engine-sql (persistence-state, transaction-settings, belief, config, access-control, sources).
-  getSource(sourceId: string) { return sourcesImpl.getSource(unscopedExecutor(this.engineSql, 'sources: single-row read ran unscoped through executeRaw'), sourceId); }
+  getSource(sourceId: string, _opts?: { timeoutMs?: number }) { return sourcesImpl.getSource(unscopedExecutor(this.engineSql, 'sources: single-row read ran unscoped through executeRaw'), sourceId); } // PGLite has no statement deadline: it ignores the bound
   getConfigValues(keys: readonly string[]) { return configImpl.getConfigValues(unscopedExecutor(this.engineSql, 'config: keyed read ran unscoped through executeRaw'), keys); }
   readManagedModeRows() { return persistenceStateImpl.readManagedModeRows(unscopedExecutor(this.engineSql, 'persistence: managed-mode read ran unscoped through executeRaw')); }
 

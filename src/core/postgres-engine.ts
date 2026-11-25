@@ -1117,7 +1117,9 @@ export class PostgresEngine implements BrainEngine {
   }
 
   // Import-path guard, attribution and config reads: SQL in engine-sql (persistence-state, transaction-settings, belief, config, access-control, sources).
-  getSource(sourceId: string) { return this.preparationRead(exec => sourcesImpl.getSource(refuseAborted(unscopedExecutor(exec, 'sources: single-row read ran unscoped through executeRaw')), sourceId)); }
+  getSource(sourceId: string, opts?: { timeoutMs?: number }) {
+    if (opts?.timeoutMs) return sourcesImpl.getSource({ executeRaw: (sql, params) => this.executeRaw(sql, params, { timeoutMs: opts.timeoutMs }) }, sourceId);
+    return this.preparationRead(exec => sourcesImpl.getSource(refuseAborted(unscopedExecutor(exec, 'sources: single-row read ran unscoped through executeRaw')), sourceId)); }
   getConfigValues(keys: readonly string[]) { return this.preparationRead(exec => configImpl.getConfigValues(refuseAborted(unscopedExecutor(exec, 'config: keyed read ran unscoped through executeRaw')), keys)); }
   readManagedModeRows() { return this.preparationRead(exec => persistenceStateImpl.readManagedModeRows(unscopedExecutor(exec, 'persistence: managed-mode read ran unscoped through executeRaw'))); }
   listExportPageKeys(q: exportReadsImpl.ExportPageKeyQuery) { return exportReadsImpl.listExportPageKeys(this, q); }
