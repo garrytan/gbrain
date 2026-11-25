@@ -24,6 +24,10 @@ export type UsageByRule = ReadonlyMap<string, WindowUsage | null>;
 
 const RANK: Record<PolicyDecision, number> = { deny: 3, ask: 2, allow: 1 };
 
+/** Money is compared in millionths of a unit, so decimal amounts add exactly (0.10 + 0.20 fits a 0.30 budget). */
+export const MICROS = 1_000_000;
+export const toMicros = (n: number): number => Math.round(n * MICROS);
+
 interface Match { rule: PolicyRule; decision: PolicyDecision; reason: string; provisional?: boolean }
 
 function strictest(matches: Match[]): PolicyVerdict | null {
@@ -39,8 +43,8 @@ function limitOutcome(rule: PolicyRule, q: PolicyQuery, usage?: UsageByRule): Om
   if (rule.window && rule.window !== 'per_action') {
     const used = usage?.get(rule.id);
     if (!used) return { decision: 'ask', provisional: true, reason: `the ${rule.window} budget could not be read from the action ledger, so the agent asks` };
-    const total = used.spent + used.held;
-    return total + q.amount.amount <= rule.limit.amount
+    const total = (toMicros(used.spent) + toMicros(used.held)) / MICROS;
+    return toMicros(used.spent) + toMicros(used.held) + toMicros(q.amount.amount) <= toMicros(rule.limit.amount)
       ? { decision: rule.decision, reason: `within the ${rule.limit.amount} ${rule.limit.currency} ${rule.window} budget (${Math.round(total * 100) / 100} used)` } : null;
   }
   return q.amount.amount <= rule.limit.amount ? { decision: rule.decision, reason: `within the ${rule.limit.amount} ${rule.limit.currency} limit` } : null;
