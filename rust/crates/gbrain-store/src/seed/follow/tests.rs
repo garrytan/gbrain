@@ -1315,6 +1315,45 @@ fn fixtures() -> Vec<(&'static str, Vec<SeedRow>)> {
                 timestamp_nullable
             }],
         ),
+        (
+            "pinned_questions",
+            vec![row(&[
+                ("id", "31"),
+                ("source_id", "default"),
+                ("slug", "questions/who-leads"),
+                ("question", "Who leads acme-example?"),
+                ("scope_slug_prefix", "projects/"),
+                ("state", "active"),
+                ("publish_mode", "publish"),
+                ("cooldown_days", "0.1"),
+                ("origin", "pin"),
+                ("created_by", "cli"),
+                ("revision", "3"),
+                ("answer_revision", "1"),
+                (
+                    "answer",
+                    r#"[{"id":"s1","text":"Alice.","origin":"model"}]"#,
+                ),
+                ("spend_usd", "0.25"),
+                ("created_at", "2026-03-01 00:00:00+00"),
+                ("updated_at", "2026-03-02 00:00:00+00"),
+            ])],
+        ),
+        (
+            "question_evidence",
+            vec![row(&[
+                ("id", "41"),
+                ("question_id", "31"),
+                ("answer_revision", "1"),
+                ("sentence_id", "s1"),
+                ("kind", "page"),
+                ("source_id", "default"),
+                ("page_id", "7"),
+                ("page_slug", "projects/acme-example"),
+                ("page_generation", "4"),
+                ("created_at", "2026-03-02 00:00:00+00"),
+            ])],
+        ),
     ]
 }
 

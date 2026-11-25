@@ -505,7 +505,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'deleteRekeyLosers', 'restoreOntologyFact',
   'listVisiblePageSlugs', 'readPagesForVersionHistory',
   // `gbrain schema detect` page-shape reads (engine-sql/schema-detect.ts; test/engine-parity/schema-detect.test.ts)
-  'pageTypeTotals', 'listQuestionCandidatePages', 'listPublishedQuestionAnswers', 'listQuestionEvidenceFacts', 'listQuestionEvidenceTimeline', 'listQuestionEvidenceTakes', 'readQuestionEvidenceClock', 'readQuestionPageRow', 'listQuestionEvidenceJoin', 'hasNewQuestionPages', 'hasNewQuestionFacts', 'lockQuestionEvidenceRows', 'pagePrefixSamples', 'countPagesByTypeForSource',
+  'pageTypeTotals', 'listQuestionCandidatePages', 'listPublishedQuestionAnswers', 'listQuestionEvidenceFacts', 'listQuestionEvidenceTimeline', 'listQuestionEvidenceTakes', 'readQuestionEvidenceClock', 'readQuestionPageRow', 'listQuestionEvidenceJoin', 'hasNewQuestionPages', 'hasNewQuestionFacts', 'lockQuestionEvidenceRows', 'readPinRow', 'listPinRows', 'insertPinRow', 'updatePinRowState', 'acquirePinLease', 'releasePinLease', 'addPinSpend', 'recordPinBlocked', 'lockPinRowForPublish', 'publishPinAnswer', 'deleteQuestionEvidence', 'insertQuestionEvidence', 'pagePrefixSamples', 'countPagesByTypeForSource',
   // Takes
   'addTakesBatch', 'listTakes', 'searchTakes', 'searchTakesVector', 'getTakeEmbeddings',
   'countStaleTakes', 'listStaleTakes', 'updateTake', 'supersedeTake', 'resolveTake',

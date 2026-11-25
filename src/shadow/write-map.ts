@@ -187,6 +187,20 @@ export const WRITE_MAP: Record<string, WriteSpec> = {
   transitionDecideReviewProposal: { tables: ['decide_review_proposals'] },
   applyDecideReviewQueue: { tables: ['decide_review_queue'] },
   applyDecideSweepDeferred: { tables: ['decide_sweep_deferred'] },
+  // The pinned-question records (engine-sql/question-store.ts): pins by (source_id, slug) or id, evidence by question_id.
+  // lockPinRowForPublish, readPinRow and listPinRows only read.
+  insertPinRow: { tables: ['pinned_questions'], plan: (a) => [{ relation: 'pinned_questions', sel: { source_id: a[0]?.sourceId, slug: a[0]?.slug } }] },
+  updatePinRowState: { tables: ['pinned_questions'], plan: (a) => [{ relation: 'pinned_questions', sel: { id: id(a[0]) } }] },
+  acquirePinLease: { tables: ['pinned_questions'], plan: (a) => [{ relation: 'pinned_questions', sel: { id: id(a[0]) } }] },
+  releasePinLease: { tables: ['pinned_questions'], plan: (a) => [{ relation: 'pinned_questions', sel: { id: id(a[0]) } }] },
+  addPinSpend: { tables: ['pinned_questions'], plan: (a) => [{ relation: 'pinned_questions', sel: { id: id(a[0]) } }] },
+  recordPinBlocked: { tables: ['pinned_questions'], plan: (a) => [{ relation: 'pinned_questions', sel: { id: id(a[0]) } }] },
+  publishPinAnswer: { tables: ['pinned_questions'], plan: (a) => [{ relation: 'pinned_questions', sel: { id: id(a[0]) } }] },
+  deleteQuestionEvidence: { tables: ['question_evidence'], plan: (a) => [{ relation: 'question_evidence', sel: { question_id: id(a[0]) }, del: true }] },
+  insertQuestionEvidence: {
+    tables: ['question_evidence'],
+    plan: (a) => each<{ questionId: unknown }>(a[0], (row) => [{ relation: 'question_evidence', sel: { question_id: id(row.questionId) } }]),
+  },
 };
 
 /** A schema change: the copied tables may no longer match what the follower expects. */
@@ -262,7 +276,7 @@ export const READ_ONLY_MEMBERS: ReadonlySet<string> = new Set([
   'selectClaimableEffect', 'selectClaimableWrite', 'selectProjectionWindowJobs', 'sourceIdExists',
   'staleLinkRelationshipKeys', 'wordLexemes',
   // The pinned-question publication's FOR SHARE rereads (engine-sql/question-reads.ts), SELECTs only.
-  'lockQuestionEvidenceRows',
+  'lockQuestionEvidenceRows', 'lockPinRowForPublish',
   // Lane 15 reads whose names carry no read prefix: the schema-pack retype probe and the explain-target probe.
   'probeRetypeRows', 'probeTargetRows',
   // Batch 12: row-lock and existence reads (SELECTs only) of the persistence, repair and secret-store lanes.

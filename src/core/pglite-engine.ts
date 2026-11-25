@@ -392,6 +392,7 @@ import * as fenceCensusImpl from './engine-sql/fence-census.ts';
 import * as doctorSourcesImpl from './engine-sql/doctor-sources.ts';
 import * as schemaDetectImpl from './engine-sql/schema-detect.ts';
 import * as questionReadsImpl from './engine-sql/question-reads.ts';
+import * as questionStoreImpl from './engine-sql/question-store.ts';
 import * as sweepReadsImpl from './engine-sql/sweep-reads.ts';
 import * as sessionStateImpl from './engine-sql/session-state.ts';
 import type { DrainLeaseHolderRecord } from './engine-sql/cycle-locks.ts';
@@ -4897,6 +4898,19 @@ export class PGLiteEngine implements BrainEngine {
   hasNewQuestionPages(sourceId: string, generation: number, prefix: string | null) { return questionReadsImpl.hasNewQuestionPages(this.rawRead, sourceId, generation, prefix); }
   hasNewQuestionFacts(sourceId: string, factId: number, entitySlug: string | null) { return questionReadsImpl.hasNewQuestionFacts(this.rawRead, sourceId, factId, entitySlug); }
   lockQuestionEvidenceRows(kind: questionReadsImpl.QuestionEvidenceLockKind, ids: readonly number[]) { return questionReadsImpl.lockQuestionEvidenceRows(this.rawRead, kind, ids); }
+  // The pinned-question records (engine-sql/question-store.ts).
+  readPinRow(sourceId: string, slug: string, forUpdate: boolean) { return questionStoreImpl.readPinRow(this.rawRead, sourceId, slug, forUpdate); }
+  listPinRows(filter: questionStoreImpl.PinRecordFilter) { return questionStoreImpl.listPinRows(this.rawRead, filter); }
+  insertPinRow(pin: questionStoreImpl.PinRecordInsert) { return questionStoreImpl.insertPinRow(this.rawRead, pin); }
+  updatePinRowState(id: number, patch: questionStoreImpl.PinStatePatch) { return questionStoreImpl.updatePinRowState(this.rawRead, id, patch); }
+  acquirePinLease(id: number, token: string, owner: string, ttlMs: number) { return questionStoreImpl.acquirePinLease(this.rawRead, id, token, owner, ttlMs); }
+  releasePinLease(id: number, token: string, error: string | null, spendUsd: number) { return questionStoreImpl.releasePinLease(this.rawRead, id, token, error, spendUsd); }
+  addPinSpend(id: number, usd: number) { return questionStoreImpl.addPinSpend(this.rawRead, id, usd); }
+  recordPinBlocked(id: number, code: string) { return questionStoreImpl.recordPinBlocked(this.rawRead, id, code); }
+  lockPinRowForPublish(id: number) { return questionStoreImpl.lockPinRowForPublish(this.rawRead, id); }
+  publishPinAnswer(id: number, publish: questionStoreImpl.PinAnswerPublish) { return questionStoreImpl.publishPinAnswer(this.rawRead, id, publish); }
+  deleteQuestionEvidence(questionId: number) { return questionStoreImpl.deleteQuestionEvidence(this.rawRead, questionId); }
+  insertQuestionEvidence(rows: readonly questionStoreImpl.QuestionEvidenceInsert[]) { return questionStoreImpl.insertQuestionEvidence(this.rawRead, rows); }
   // The `gbrain schema detect` page-shape reads (engine-sql/schema-detect.ts).
   pageTypeTotals(sourceId: string) { return schemaDetectImpl.pageTypeTotals(this.rawRead, sourceId); }
   pagePrefixSamples(sourceId: string, minPages: number, limit: number) { return schemaDetectImpl.pagePrefixSamples(this.rawRead, sourceId, minPages, limit); }

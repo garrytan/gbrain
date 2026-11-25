@@ -93,6 +93,7 @@ import * as factsRecall from './facts-recall.ts';
 import * as factsQuoted from './facts-quoted.ts';
 import * as schemaDetect from './schema-detect.ts';
 import * as questionReads from './question-reads.ts';
+import * as questionStore from './question-store.ts';
 import * as edgeProposals from './edge-proposals.ts';
 import * as factsWritePath from './facts-write-path.ts';
 import * as factsRemember from './facts-remember.ts';
@@ -231,6 +232,8 @@ export const STORE_MEMBERS = {
   ...schemaDetect,
   // The pinned-question reads that read no page generation and no pin record (rust/docs/store/question-reads.md).
   ...questionReads,
+  // The pinned-question records and the two reads that join them (rust/docs/store/questions.md).
+  ...questionStore,
   // The edge-contradictions dream phase and its proposal ledger (rust/docs/store/edge_proposals.md).
   ...edgeProposals,
   // The Life Chronicle event statements (rust/crates/gbrain-store/src/generations/chronicle_events.rs).

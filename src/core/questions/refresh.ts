@@ -35,7 +35,6 @@ import { ownerClaims, readQuestionPage } from './pages.ts';
 import { neutralizeForPrompt } from '../think/sanitize.ts';
 import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { acquireLease, getPin, pinId, releaseLease, type AnswerSentence, type PinRow } from './store.ts';
-import { refusePinStore } from '../rust-engine/question-stops.ts';
 
 export type BlockedReason = 'no_model_key' | 'budget_exhausted' | 'no_worker' | 'refresh_failed' | 'answer_too_long' | 'awaiting_consent';
 
@@ -136,10 +135,7 @@ function costUsd(model: string, usage: QuestionChatResponse['usage']): number {
 }
 
 async function recordBlocked(engine: BrainEngine, id: number, code: string): Promise<void> {
-  refusePinStore(engine, 'recordBlocked');
-  await engine.executeRaw(
-    `UPDATE pinned_questions SET last_attempt_at = now(), last_error = $2, updated_at = now()
-     WHERE id = $1 AND (lease_token IS NULL OR lease_expires_at < now())`, [id, code]);
+  await engine.recordPinBlocked(id, code);
 }
 
 interface PublishedAnswer { answer: string | null; published_at: Date | string | null; cited: number[] | string | null }
@@ -422,29 +418,23 @@ export async function refreshPin(engine: BrainEngine, sourceId: string, slug: st
     stage = 'publish';
     await opts.hooks?.beforeCommit?.();
     opts.signal?.throwIfAborted();
-    refusePinStore(engine, 'publishAnswer');
     const conflict = await engine.transaction(async (tx) => {
-      const [row] = await tx.executeRaw<{ revision: string | number; lease_token: string | null; state: string }>(
-        'SELECT revision, lease_token, state FROM pinned_questions WHERE id = $1 FOR UPDATE', [pin.id]);
+      const row = await tx.lockPinRowForPublish(pin.id);
       if (!row || row.lease_token !== token) return 'the refresh lease was lost';
-      if (Number(row.revision) !== leased.revision || row.state !== 'active') return 'the pin changed during refresh';
+      if (row.revision !== leased.revision || row.state !== 'active') return 'the pin changed during refresh';
       const mismatch = await revalidate(tx, evidence);
       if (mismatch) return mismatch;
-      await tx.executeRaw(
-        `UPDATE pinned_questions SET answer = $2, answer_revision = answer_revision + 1, revision = revision + 1, answer_model = $3,
-           last_refresh_at = now(), last_error = NULL, watermark_generation = $4, watermark_fact_id = $5, watermark_at = now(),
-           lease_token = NULL, lease_owner = NULL, lease_expires_at = NULL, spend_usd = spend_usd + $6, updated_at = now()
-         WHERE id = $1`,
-        [pin.id, JSON.stringify([...ownerSentences, ...modelSentences]), response.model || model, clock.generation, clock.fact_id, spend]);
+      await tx.publishPinAnswer(pin.id, {
+        answer: JSON.stringify([...ownerSentences, ...modelSentences]), answerModel: response.model || model,
+        watermarkGeneration: clock.generation, watermarkFactId: clock.fact_id, spendUsd: spend,
+      });
       await opts.hooks?.betweenPublicationStages?.();
-      await tx.executeRaw('DELETE FROM question_evidence WHERE question_id = $1', [pin.id]);
+      await tx.deleteQuestionEvidence(pin.id);
       const revision = leased.answer_revision + 1;
-      for (const e of evidence) {
-        await tx.executeRaw(
-          `INSERT INTO question_evidence (question_id, answer_revision, sentence_id, kind, source_id, page_id, page_slug, page_generation, page_revision, item_id, content_hash)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-          [pin.id, revision, e.sentence_id, e.kind, e.source_id, e.page_id, e.page_slug, e.page_generation, e.page_revision, e.item_id, e.content_hash]);
-      }
+      await tx.insertQuestionEvidence(evidence.map(e => ({
+        questionId: pin.id, answerRevision: revision, sentenceId: e.sentence_id, kind: e.kind, sourceId: e.source_id, pageId: e.page_id,
+        pageSlug: e.page_slug, pageGeneration: e.page_generation, pageRevision: e.page_revision, itemId: e.item_id, contentHash: e.content_hash,
+      })));
       return null;
     });
     if (conflict) {

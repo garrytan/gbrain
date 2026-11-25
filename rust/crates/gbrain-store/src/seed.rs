@@ -24,6 +24,7 @@ mod format_5;
 mod history;
 mod not_copied;
 mod privacy;
+mod questions;
 mod spend;
 #[cfg(test)]
 mod tests;
@@ -65,6 +66,7 @@ const GROUPS: &[&[(&str, &Relation)]] = &[
     spend::RELATIONS,
     decide::RELATIONS,
     wake::RELATIONS,
+    questions::RELATIONS,
 ];
 
 /// One relation of the seed plan.

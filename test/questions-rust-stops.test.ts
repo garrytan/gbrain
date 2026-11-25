@@ -81,7 +81,7 @@ describe('pinned-question stops on the Rust engine', () => {
     } as unknown as BrainEngine;
     expect((await getPin(engine, 'default', 'questions/x', { forUpdate: true }))?.id).toBe(3);
     expect((await listPins(engine, { sourceIds: ['default'] })).length).toBe(1);
-    expect((await insertPin(engine, { sourceId: 'default', slug: 'questions/x', question: 'Q?', scope: {}, state: 'active', inactiveReason: null, publishMode: 'publish', createdBy: 'cli' })).created).toBe(true);
+    expect((await insertPin(engine, { sourceId: 'default', slug: 'questions/x', question: 'Q?', scope: { source: 'default' }, state: 'active', inactiveReason: null, publishMode: 'publish', createdBy: 'cli' })).created).toBe(true);
     await updatePinState(engine, 3, { state: 'archived' });
     await acquireLease(engine, 3, 't', 'o', 1000);
     await releaseLease(engine, 3, 't', { error: null, spendUsd: 0.5 });

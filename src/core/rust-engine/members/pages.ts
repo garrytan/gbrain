@@ -474,4 +474,17 @@ export const PAGES_MEMBERS = {
   hasNewQuestionPages: 'pages',
   hasNewQuestionFacts: 'facts',
   lockQuestionEvidenceRows: 'pages',
+  // The pinned-question records (engine-sql/question-store.ts; the Rust `~q` family, rust/docs/store/questions.md).
+  readPinRow: 'pages',
+  listPinRows: 'pages',
+  insertPinRow: 'pages',
+  updatePinRowState: 'pages',
+  acquirePinLease: 'pages',
+  releasePinLease: 'pages',
+  addPinSpend: 'pages',
+  recordPinBlocked: 'pages',
+  lockPinRowForPublish: 'pages',
+  publishPinAnswer: 'pages',
+  deleteQuestionEvidence: 'pages',
+  insertQuestionEvidence: 'pages',
 } as const satisfies Partial<Record<keyof BrainEngine, MemberClass>>;

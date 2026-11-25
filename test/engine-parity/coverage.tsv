@@ -6,9 +6,9 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2294/2308
+# covered: 2306/2320
 # lifecycle: 12/12
-# pages: 135/136
+# pages: 147/148
 # search: 8/8
 # search_reads: 9/9
 # link_reads: 15/15
@@ -257,16 +257,28 @@ readTakeHorizonRows	pages	yes	1	no	yes	yes	serves
 readLatestTakeGrades	pages	yes	2	no	yes	yes	serves
 readBeliefCoverageEvents	pages	yes	2	no	yes	yes	serves
 listQuestionCandidatePages	pages	yes	1	no	yes	yes	refuses:pages
-listPublishedQuestionAnswers	pages	yes	1	no	yes	yes	refuses:pages
+listPublishedQuestionAnswers	pages	yes	2	no	yes	yes	serves
 listQuestionEvidenceFacts	pages	yes	1	no	yes	yes	serves
 listQuestionEvidenceTimeline	pages	yes	1	no	yes	yes	refuses:timeline
 listQuestionEvidenceTakes	pages	yes	1	no	yes	yes	refuses:takes
 readQuestionEvidenceClock	pages	yes	1	no	yes	yes	refuses:pages
 readQuestionPageRow	pages	yes	1	no	yes	yes	refuses:pages
-listQuestionEvidenceJoin	pages	yes	1	no	yes	yes	refuses:pages
+listQuestionEvidenceJoin	pages	yes	4	no	yes	yes	serves
 hasNewQuestionPages	pages	yes	1	no	yes	yes	refuses:pages
 hasNewQuestionFacts	pages	yes	1	no	yes	yes	serves
 lockQuestionEvidenceRows	pages	yes	1	no	yes	yes	refuses:pages
+readPinRow	pages	yes	7	no	yes	yes	serves
+listPinRows	pages	yes	1	no	yes	yes	serves
+insertPinRow	pages	yes	9	no	yes	yes	serves
+updatePinRowState	pages	yes	3	no	yes	yes	serves
+acquirePinLease	pages	yes	7	no	yes	yes	serves
+releasePinLease	pages	yes	2	no	yes	yes	serves
+addPinSpend	pages	yes	1	no	yes	yes	serves
+recordPinBlocked	pages	yes	1	no	yes	yes	serves
+lockPinRowForPublish	pages	yes	3	no	yes	yes	serves
+publishPinAnswer	pages	yes	3	no	yes	yes	serves
+deleteQuestionEvidence	pages	yes	3	no	yes	yes	serves
+insertQuestionEvidence	pages	yes	3	no	yes	yes	serves
 searchKeyword	search	yes	52	yes	yes	yes	serves
 countKeywordPages	search	yes	13	no	yes	yes	serves
 searchKeywordPages	search	yes	18	no	yes	yes	serves

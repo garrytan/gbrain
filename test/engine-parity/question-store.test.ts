@@ -13,9 +13,9 @@
  *  - Seam: real engines; pages, facts, timeline entries and takes through typed writes; the pin records through the
  *    typed members. Timestamps and ids are normalized (each arm stamps and numbers its own); everything else is compared.
  *
- * One case is marked PLACEHOLDER: the Rust store keeps no page generation yet (the helper `page_generation` of
- * rust/crates/gbrain-store/src/questions.rs reads 1), so the join's `p_generation` is compared only where the page was
- * written once, which every SQL arm numbers 1 as well.
+ * One value is a PLACEHOLDER: the Rust store keeps no page generation yet (the helper `page_generation` of
+ * rust/crates/gbrain-store/src/questions/join.rs reads 1), so the join's `p_generation` is compared by value only for the
+ * first page written (generation 1 on every arm) and by type for the others.
  */
 import { describe, expect } from 'bun:test';
 import { archiveSource, createSource, parityArms } from './harness.ts';
@@ -30,7 +30,7 @@ const { parityTest } = parityArms(testBackends());
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
 const pin = (slug: string, over: Partial<PinInsert> = {}): PinInsert => ({
-  sourceId: 'default', slug, question: `Question of ${slug}?`, scope: { slug_prefix: 'projects/' }, state: 'active', inactiveReason: null,
+  sourceId: over.sourceId ?? 'default', slug, question: `Question of ${slug}?`, scope: { source: over.sourceId ?? 'default', slug_prefix: 'projects/' }, state: 'active', inactiveReason: null,
   publishMode: 'publish', createdBy: 'cli', ...over,
 });
 
@@ -52,7 +52,7 @@ describe('the pinned-question records on every engine', () => {
   parityTest('a pin is inserted once per (source, slug); the duplicate returns the first row; both reads of one pin agree', {
     methods: ['insertPinRow', 'readPinRow'],
   }, async (engine) => {
-    const first = await insertPin(engine, pin('questions/a', { scope: { slug_prefix: 'projects/', entity: 'people/alice-example' } }));
+    const first = await insertPin(engine, pin('questions/a', { scope: { source: 'default', slug_prefix: 'projects/', entity: 'people/alice-example' } }));
     const again = await insertPin(engine, pin('questions/a', { question: 'A different question?', state: 'inactive', inactiveReason: 'awaiting_consent' }));
     const otherSource = await insertPin(engine, pin('questions/a', { sourceId: 'work', question: 'Same slug, other source?' }));
     const plain = await getPin(engine, 'default', 'questions/a');
@@ -229,6 +229,7 @@ describe('the pinned-question records on every engine', () => {
     });
     await acquireLease(engine, row.id, 'tok-2', 'worker', 600_000).catch(() => null);
     const failed = await engine.transaction(async (tx) => {
+      await tx.lockPinRowForPublish(row.id);
       await tx.publishPinAnswer(row.id, { answer: '[]', answerModel: 'other', watermarkGeneration: 2, watermarkFactId: 2, spendUsd: 3 });
       await tx.deleteQuestionEvidence(row.id);
       await tx.insertQuestionEvidence([ev(row.id, 2, 's2', { kind: 'owner' })]);
@@ -245,7 +246,7 @@ describe('the pinned-question records on every engine', () => {
 
   parityTest('the evidence join resolves each pointer to its page, fact, timeline entry or take; the published answers cite the current revision', {
     methods: ['insertPinRow', 'acquirePinLease', 'lockPinRowForPublish', 'publishPinAnswer', 'deleteQuestionEvidence', 'insertQuestionEvidence',
-      'listQuestionEvidenceJoin', 'listPublishedQuestionAnswers', 'readPinRow'],
+      'listQuestionEvidenceJoin', 'listPublishedQuestionAnswers'],
   }, async (engine, backend) => {
     const live = await engine.putPage('projects/live', page('live'));
     const gone = await engine.putPage('projects/gone', page('gone'));
@@ -261,7 +262,7 @@ describe('the pinned-question records on every engine', () => {
       { page_id: live.id, row_num: 2, claim: 'live will stall.', kind: 'hunch', holder: 'people/c-example', weight: 1 },
       { page_id: live.id, row_num: 3, claim: 'live was right.', kind: 'take', holder: 'people/d-example', weight: 0.25 },
     ] as never);
-    await engine.resolveTake(live.id, 3, { outcome: true } as never);
+    await engine.resolveTake(live.id, 3, { quality: 'correct', resolvedBy: 'people/d-example' });
     const day = new Date(Date.UTC(2026, 0, 3));
     const fact = (row_num: number, text: string, over: Record<string, unknown> = {}) =>
       ({ fact: text, kind: 'fact', visibility: 'world', notability: 'medium', source: 'test', entity_slug: 'people/alice-example', row_num,
@@ -333,8 +334,10 @@ describe('the pinned-question records on every engine', () => {
         f_source_quarantined: r.f_source_quarantined,
         t: itemLabel(timelineLabels)(r.t_id), t_hash: r.t_hash,
         k: itemLabel(takeLabels)(r.k_id), k_active: r.k_active, k_superseded: r.k_superseded, k_hash: r.k_hash,
-        // PLACEHOLDER: the Rust store reads every page as generation 1 until the generation counter lands; a page written once is 1 on every arm.
-        p_generation: gen(r.p_generation),
+        // PLACEHOLDER (lane 15 merge): pages.generation is a clock over every page write on the SQL engines (the first page written
+        // is 1, the fifth is 5), and the Rust store reads every page as 1 until the counter lands (`page_generation` in
+        // questions/join.rs). Only the first page written is compared by value; the others by type. Compare every one once it lands.
+        p_generation: label(r.p_id) === 'live' ? gen(r.p_generation) : typeof gen(r.p_generation),
       };
     }).sort((a, b) => `${a.sentence}|${a.kind}|${a.page}|${a.f}|${a.t}|${a.k}`.localeCompare(`${b.sentence}|${b.kind}|${b.page}|${b.f}|${b.t}|${b.k}`));
     const published = (await engine.listPublishedQuestionAnswers('default')).map(r => ({

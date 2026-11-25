@@ -18,6 +18,7 @@ due 5 PM PST Nov 29):
   `readQuestionEvidenceClock`, `hasNewQuestionPages` and `lockQuestionEvidenceRows` return or compare
   `pages.generation`, the per-page counter of the SQL engines' trigger. The store keeps no such counter (it reads every
   page as generation 1, `seed.md`), so no answer would equal the SQL engines'.
-- `listQuestionEvidenceJoin` and `listPublishedQuestionAnswers` read the `pinned_questions` and `question_evidence`
-  records, which the store does not keep. The pin store functions of src/core/questions/store.ts and the refresh's
-  ledger writes refuse the same way (`refusePinStore`), so no pin can exist on this engine.
+
+The pin records (`pinned_questions`, `question_evidence`), the pin store functions of src/core/questions/store.ts, the
+refresh's ledger writes and the two reads that join the records (`listQuestionEvidenceJoin`,
+`listPublishedQuestionAnswers`) are served: `questions.md`.

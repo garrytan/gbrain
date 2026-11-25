@@ -17,6 +17,9 @@ import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
+import { openRustEngine } from '../src/core/rust-engine.ts';
+import { acquireLease, getPin, insertPin, listPins, updatePinState } from '../src/core/questions/store.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { loadRustAddon, type RustAddon } from '../src/core/rust-engine/addon-loader.ts';
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
@@ -82,6 +85,47 @@ describe('shadow seed from PGLite', () => {
     // pages.generation is a cache clock (the second page holds 2); the store recomputes it, so it is named, not kept.
     expect(record.relations.pages?.unmapped_columns).toEqual(['generation']);
     await expectSeedReadParity(primary, addon!, storePath);
+  });
+
+  withAddon('pinned questions and their evidence are copied with their ids, answers, leases, spend and times, and read the same', async () => {
+    await fill();
+    const scope = { source: 'default', slug_prefix: 'projects/' };
+    const base = { sourceId: 'default', scope, state: 'active' as const, inactiveReason: null, publishMode: 'publish' as const, createdBy: 'cli' };
+    const a = await insertPin(primary, { ...base, slug: 'questions/a', question: 'Who leads acme-example?' });
+    const b = await insertPin(primary, { ...base, slug: 'questions/b', question: 'What ships next?', state: 'inactive', inactiveReason: 'awaiting_consent' });
+    await acquireLease(primary, a.row.id, 'tok-a', 'worker', 600_000);
+    await primary.transaction(async (tx) => {
+      await tx.publishPinAnswer(a.row.id, { answer: JSON.stringify([{ id: 's1', text: 'Alice.', origin: 'model' }]), answerModel: 'm', watermarkGeneration: 4, watermarkFactId: 9, spendUsd: 0.125 });
+      await tx.insertQuestionEvidence([{ questionId: a.row.id, answerRevision: 1, sentenceId: 's1', kind: 'fact', sourceId: 'default', pageId: null, pageSlug: null,
+        pageGeneration: null, pageRevision: null, itemId: 9, contentHash: 'abc' }]);
+    });
+    await acquireLease(primary, b.row.id, 'tok-b', 'worker-b', 600_000);
+    await updatePinState(primary, b.row.id, { state: 'archived' });
+    await primary.executeRaw('UPDATE pinned_questions SET cooldown_days = 0.1 WHERE id = $1', [a.row.id]);
+    const { record, storePath } = await seedHere(tempDir());
+    expect(record.relations.pinned_questions?.imported).toBe(2);
+    expect(record.relations.question_evidence?.imported).toBe(1);
+    expect(record.relations.pinned_questions?.unmapped_columns ?? []).toEqual([]);
+    expect(record.unseeded_gap_rows).not.toHaveProperty('pinned_questions');
+    expect(record.unseeded_gap_rows).not.toHaveProperty('question_evidence');
+    const rust = openRustEngine({ addon: addon!, databasePath: storePath });
+    await rust.connect({ engine: 'pglite', database_path: storePath } as never);
+    try {
+      const engine = rust as unknown as BrainEngine;
+      const rows = async (e: BrainEngine) => (await listPins(e, { includeArchived: true })).map(p => ({ ...p, id: Number(p.id) }));
+      expect(await rows(engine)).toEqual(await rows(primary));
+      expect(await getPin(engine, 'default', 'questions/a')).toEqual(await getPin(primary, 'default', 'questions/a'));
+      expect((await getPin(engine, 'default', 'questions/a'))?.cooldown_days).toBe(0.1);
+      const cited = async (e: BrainEngine) => (await e.listQuestionEvidenceJoin(a.row.id, 1)).map(r => ({ sentence: r.sentence_id, kind: r.kind, hash: r.content_hash, f: r.f_id }));
+      expect(await cited(engine)).toEqual(await cited(primary));
+      expect((await engine.listPublishedQuestionAnswers('default')).map(r => r.answer)).toEqual((await primary.listPublishedQuestionAnswers('default')).map(r => r.answer));
+      // The next pin the Rust brain makes takes the next id, and a retry of an existing slug finds the copied pin.
+      const next = await insertPin(engine, { ...base, slug: 'questions/c', question: 'A third?' });
+      expect(next.row.id).toBeGreaterThan(Math.max(Number(a.row.id), Number(b.row.id)));
+      expect((await insertPin(engine, { ...base, slug: 'questions/a', question: 'Again?' })).created).toBe(false);
+    } finally {
+      await rust.disconnect();
+    }
   });
 
   withAddon('the seed never writes to the primary', async () => {

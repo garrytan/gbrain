@@ -32,7 +32,7 @@
  * readLiveStoredBody, readNoopEmbeddingCandidates, readOAuthClientWriteGrant, readPairFactRow, readReplacementTarget,
  * readSourceMembership, readSourceState, readWorktreeAdmission, readWriterAdminState, selectClaimableEffect,
  * selectClaimableWrite, listSecretHoldingPages (the batch 6c secret store), the credential, source and shared-skill row-lock reads the batch 10 lanes added
- * (the list below), and lockEffectRow.
+ * (the list below), lockEffectRow, and the pinned-question row locks (lockPinRowForPublish, lockQuestionEvidenceRows, readPinRow).
  *
  * A constant that maps names to statements (`CREDENTIAL_SQL = { token_list: '...', client_token_ttl: '...' }`) is read per
  * statement: a function that names `CREDENTIAL_SQL.token_list` is charged with that statement, not with its siblings.
@@ -66,6 +66,8 @@ const LOCK_ONLY_READS: readonly string[] = [
   'lockEffectRow',
   // attest-rights-rust: the client attest read, whose `lock` form reads the row FOR UPDATE for the grant-write path.
   'readOauthClientAttest',
+  // The pinned-question reads that row-lock what they read and change no row (engine-sql/question-reads.ts FOR SHARE, question-store.ts FOR UPDATE).
+  'lockPinRowForPublish', 'lockQuestionEvidenceRows', 'readPinRow',
 ];
 
 /**

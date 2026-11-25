@@ -526,8 +526,6 @@ src/core/planner-stats.ts	execute_raw	14
 src/core/post-upgrade-reembed.ts	execute_raw	1
 src/core/quarantine-override.ts	execute_raw	1
 src/core/questions/auto-think-migration.ts	execute_raw	1
-src/core/questions/refresh.ts	execute_raw	5
-src/core/questions/store.ts	execute_raw	7
 src/core/reindex-consent.ts	execute_raw	1
 src/core/repair/attribution-backfill.ts	execute_raw	5
 src/core/repair/consolidate-ties.ts	execute_raw	1
