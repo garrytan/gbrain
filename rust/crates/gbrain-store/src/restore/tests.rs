@@ -1109,6 +1109,34 @@ fn repeated_format_write_failures_never_discard_the_id_format_still_names() {
     );
 }
 
+/// A restore on a read-only handle is refused before anything is repaired: FORMAT stays byte for byte as it was,
+/// even when an interrupted restore left it one rotation behind the record.
+#[test]
+fn a_refused_read_only_restore_leaves_format_byte_for_byte_the_same() {
+    let (store, dir) = on_disk("read-only-format");
+    let blocker = dir.join("FORMAT.tmp");
+    std::fs::create_dir(&blocker).unwrap();
+    assert!(
+        store.restore_quarantine(&default_only()).is_err(),
+        "FORMAT cannot be written"
+    );
+    std::fs::remove_dir(&blocker).unwrap();
+    drop(store);
+    let stale = std::fs::read(dir.join("FORMAT")).unwrap();
+    let read_only = Store::open_dir_read_only(&dir).unwrap();
+    let mut retry = default_only();
+    retry.restore_id = "read-only".into();
+    assert_eq!(
+        read_only.restore_quarantine(&retry).unwrap_err().code,
+        "read_only_transaction"
+    );
+    assert_eq!(
+        std::fs::read(dir.join("FORMAT")).unwrap(),
+        stale,
+        "a refused restore rewrote FORMAT"
+    );
+}
+
 /// A brain on a real directory (`FORMAT` and `records.redb`), reopened by path.
 fn on_disk(name: &str) -> (Store, std::path::PathBuf) {
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))

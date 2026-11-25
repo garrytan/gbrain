@@ -621,6 +621,9 @@ impl Store {
                 "a restore changes the brain's identity and cannot run inside a transaction",
             ));
         }
+        // A handle that cannot write refuses here, before `FORMAT` is repaired or anything else is touched:
+        // the probe begins a write and drops it, which commits nothing.
+        drop(self.kv.begin_write()?);
         // One restore at a time: a second one rotating the id while the first has not yet written `FORMAT`
         // could leave `FORMAT` behind the record by more than one rotation, which an open refuses.
         let _one_at_a_time = RESTORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
