@@ -245,3 +245,26 @@ describe('engine parity: raw data + files', () => {
     },
   );
 });
+
+describe('engine parity: attachments follow a renamed page', () => {
+  parityTest(
+    'updateSlug moves the page\'s attachments by page id and by an unambiguous old slug; another page\'s stays',
+    { methods: ['putPage', 'upsertFile', 'updateSlug', 'getFile', 'getPage'] },
+    async (engine) => {
+      await engine.putPage('notes/move-me', { type: 'note', title: 'Move me', compiled_truth: 'x', timeline: '' });
+      await engine.putPage('notes/other', { type: 'note', title: 'Other', compiled_truth: 'y', timeline: '' });
+      const moved = (await engine.getPage('notes/move-me'))!.id;
+      const other = (await engine.getPage('notes/other'))!.id;
+      const file = (storage_path: string, page_id: number | null) => engine.upsertFile({
+        source_id: 'default', page_slug: 'notes/move-me', page_id, filename: storage_path.split('/').pop()!, storage_path,
+        mime_type: 'image/png', size_bytes: 1, content_hash: 'h', metadata: {},
+      });
+      await file('a/bound.png', moved);
+      await file('a/loose.png', null);
+      await file('a/foreign.png', other);
+      expect(await engine.updateSlug('notes/move-me', 'notes/moved', { sourceId: 'default' })).toBe(1);
+      const slugOf = async (path: string) => (await engine.getFile('default', path))?.page_slug ?? null;
+      return { bound: await slugOf('a/bound.png'), loose: await slugOf('a/loose.png'), foreign: await slugOf('a/foreign.png') };
+    },
+  );
+});

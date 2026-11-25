@@ -908,4 +908,21 @@ mod tests {
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0]["storage_path"], "f/a.png");
     }
+
+    #[test]
+    fn a_renamed_page_takes_its_files_and_an_unambiguous_slug_only_row() {
+        let store = store();
+        let moved = put(&store, "notes/move-me");
+        let other = put(&store, "notes/other");
+        for (path, page_id) in [("bound.png", Some(moved)), ("loose.png", None), ("foreign.png", Some(other))] {
+            let mut spec = file(path, page_id);
+            spec.page_slug = Some("notes/move-me".into());
+            store.upsert_file(&spec).unwrap();
+        }
+        assert_eq!(store.update_slug("notes/move-me", "notes/moved", None).unwrap(), 1);
+        let slug = |path: &str| read_file(&*store.read().unwrap(), path).unwrap().unwrap().page_slug;
+        assert_eq!(slug("bound.png").as_deref(), Some("notes/moved"));
+        assert_eq!(slug("loose.png").as_deref(), Some("notes/moved"));
+        assert_eq!(slug("foreign.png").as_deref(), Some("notes/move-me"));
+    }
 }
