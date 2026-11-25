@@ -122,7 +122,7 @@ describe('enrich evidence stays within the page readers (GST-3815)', () => {
     await importPage('meetings/open-m1', '', 'Alice Example presented the open-chunk-marker design system.');
     await importPage('notes/team-a-only', 'readable_by: [group:team-a]\n', 'Alice Example narrow-chunk-marker compensation notes.');
     await importPage('notes/private-note', 'visibility: private\n', 'Alice Example private-chunk-marker health notes.');
-    await engine.addLink('meetings/open-m1', TARGET, 'open-link-marker: Alice Example ran the summit session.');
+    await engine.addLink('meetings/open-m1', TARGET, 'open-link-marker: Alice Example ran the summit session.', 'mentions', 'manual');
     await engine.addLink('notes/team-a-only', TARGET, 'narrow-link-marker: Alice Example compensation review.');
     await engine.addLink('notes/private-note', TARGET, 'private-link-marker: Alice Example medical leave.');
 
@@ -139,7 +139,7 @@ describe('enrich evidence stays within the page readers (GST-3815)', () => {
     await seedPage(TARGET, 'person', {}, 'Stub page.');
     await seedPage('meetings/open-m1', 'note', {});
     await seedPage('notes/team-a-only', 'note', { readable_by: ['group:team-a'] });
-    await engine.addLink('meetings/open-m1', TARGET, 'open-link-marker: Alice Example ran the summit session.');
+    await engine.addLink('meetings/open-m1', TARGET, 'open-link-marker: Alice Example ran the summit session.', 'mentions', 'manual');
     await engine.addLink('meetings/open-m1', TARGET, 'origin-link-marker: Alice Example compensation review.', 'mentions', 'frontmatter', 'notes/team-a-only', 'attendees');
 
     const prompt = await enrichPrompt();
@@ -231,5 +231,37 @@ describe('enrich evidence stays within the page readers (GST-3815)', () => {
     const prompt = await enrichPrompt();
     expect(prompt).toContain('open-fact-marker');
     expect(prompt).not.toContain('owner-only-fact-marker');
+  }, 30000);
+
+  test('a link context cut next to a private fence row loses that row', async () => {
+    await seedPage(TARGET, 'person', {}, 'Stub page.');
+    const fence = ['<!--- gbrain:facts:begin -->',
+      '| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |',
+      '|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|',
+      '| 1 | private-row-marker Alice Example is changing jobs | fact | 1.0 | private | medium | 2026-01-01 |  | chat |  |',
+      '<!--- gbrain:facts:end -->'].join('\n');
+    await importFromContent(engine, 'meetings/open-m1', `---\ntype: note\ntitle: m1\n---\nMet [Alice Example](people/alice-example).\n\n${fence}\n`, { sourceId: 'default' });
+    await engine.addLink('meetings/open-m1', TARGET, `Met Alice Example. ${fence.split('\n')[3]}`, 'mentions', 'markdown');
+    await seedPage('meetings/open-m2', 'note', {});
+    await engine.addLink('meetings/open-m2', TARGET, 'open-link-marker: Alice Example ran the summit session.', 'mentions', 'manual');
+
+    const prompt = await enrichPrompt();
+    expect(prompt).toContain('open-link-marker');
+    expect(prompt).not.toContain('private-row-marker');
+  }, 30000);
+
+  test('a fact that turns private while the model runs is not published', async () => {
+    await seedPage(TARGET, 'person', {}, 'Stub page.');
+    await seedPage('meetings/open-m1', 'note', {});
+    await seedFact('open-fact-marker: Alice Example leads design at Acme Example', 'world', 'meetings/open-m1');
+    const r = await runEnrichCore(engine, {
+      sourceId: 'default', types: ['person'] as never[], order: 'inbound-links', thinThreshold: 400, model: 'test:model', workers: 1, minContextChars: 20,
+      synthesizeFn: async () => {
+        await engine.executeRaw(`UPDATE facts SET visibility = 'private' WHERE fact LIKE 'open-fact-marker%'`);
+        return '## Overview\nAlice Example leads design at Acme Example. [Source: meetings/open-m1]';
+      },
+    });
+    expect(r.pages_enriched).toBe(0);
+    expect(r.pages_skipped_evidence_narrowed).toBe(1);
   }, 30000);
 });

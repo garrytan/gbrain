@@ -78,6 +78,7 @@ import {
 import { restoreNeutralized } from '../core/think/sanitize.ts';
 import { sanitizeRemoteBody } from '../core/remote-body.ts';
 import { withEngineScope } from '../core/engine-scope.ts';
+import { heldRowsForCaller, storedEdge, worldLinkContexts } from '../core/eligibility/fence-overlay.ts';
 
 // ---------------------------------------------------------------------------
 // Tunables (exported for tests).
@@ -345,7 +346,8 @@ async function retrieveEvidence(
 
   // 2. Inbound-link context — how OTHER pages describe this entity, from pages every reader of this one reads.
   try {
-    const rows = await engine.getBacklinks(slug, { sourceId });
+    // Contexts as a remote reader reads them: an excerpt next to a facts or takes fence loses its private and held rows.
+    const rows = await worldLinkContexts(engine, true, await engine.getBacklinks(slug, { sourceId }), storedEdge);
     const readable = (await readableEvidence(engine, sourceId, slug, rows.flatMap((l) => [l.from_slug, l.origin_slug ?? '']), [])).pages;
     let n = 0;
     for (const l of rows) {
@@ -448,7 +450,8 @@ async function enrichOneLocked(ctx: EnrichOneCtx, candidate: EnrichCandidate): P
   const retrieved = await retrieveEvidence(engine, sourceId, slug, page.title || slug);
   const evidence = retrieved.evidence;
   // GST-3815: the stub as every reader of the page reads it, so no private fence row or take reaches the prose.
-  const stub = sanitizeRemoteBody(page.compiled_truth ?? '');
+  const omitRows = await heldRowsForCaller(engine, true, { sourceId, slug, compiled_truth: page.compiled_truth ?? '', timeline: page.timeline });
+  const stub = sanitizeRemoteBody(page.compiled_truth ?? '', { omitRows });
   const rendered = renderEvidence(evidence);
   const grounding = assessGrounding(rendered, ctx.minContextChars);
 
