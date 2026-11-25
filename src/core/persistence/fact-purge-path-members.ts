@@ -37,7 +37,8 @@
  *   (page_body/derivation_sweep.rs): no stop is left for it;
  * - the receipt's ledger reads and the generation-ledger scrub keep the owners and dates the page purge list names;
  * - the segmented-page branches (a page stored as segments, a staged upload and the write that would publish it) add raw sites,
- *   each with the owner and date Ember ruled: the segmented rewrite statements (trunk, Nov 23), the segmented purge writes (the
+ *   each with the owner and date Ember ruled: the segmented rewrite statements (trunk, Nov 23; lifted: segment-pending-stamp serves
+ *   them as typed members), the segmented purge writes (the
  *   flip, the segmented version insert and prune, the derivation delete, the inline version insert and the version-body read:
  *   lane 1, Nov 25) and the cancellation of a staged write with its terminal compaction (lane 5, Nov 25).
  *   No stop is left without an owner and a date (test/fact-purge-path-members.test.ts).
@@ -92,8 +93,9 @@ export const FACT_PURGE_PATH: readonly FactPurgeEntry[] = [
   tx('deletePurgeTakeProposals', 'the delete of the take proposals that carry the claim is not served'),
   // rewritePageBodies: the pages that held the claim lose its fence rows. A segmented page publishes a new generation
   // (rewriteLiveSegmentedFences, then a version of the old revision); an inline page is versioned first, then rewritten.
-  { site: 'rewriteLiveSegmentedFences (page-body/segment-rewrite.ts)', owner: segmentedRewrite, due: nov23, entry: 'purge',
-    stop: 'rewriting a segmented page\'s live fences reads the page and restores its deleted_at through raw SQL (segment-rewrite.ts:174, :194); typed and served on Rust by segmented-staging-2' },
+  // The rewrite's page read (and the deleted_at restore of a soft-deleted page) are typed members the Rust store serves
+  // (the segmented-write lane, engine-members/segmented-writes.ts).
+  ...served(segmentedRewrite, 'readSegmentedRewritePage', 'restorePageDeletedAt'),
   // The segmented body's chunk reads the rewrite makes are typed members the Rust store serves (repair-rust b6b, segmented-writes.ts).
   ...served(segmentedRewrite, 'listChunkedOccurrences', 'readRetiredChunkVectors', 'hasStaleSegmentChunks'),
   ...served(ours, 'normalizeFenceLines'),
@@ -101,8 +103,9 @@ export const FACT_PURGE_PATH: readonly FactPurgeEntry[] = [
   tx('redactVersionChangeReasons', 'the redaction of change reasons that quote the claim is not served'),
   tx('setPurgeVersionBody', 'the rewrite of a saved version body is not served'),
   tx('listSegmentedVersionsForPurge', 'the read of the segmented versions to rewrite is not served'),
-  { site: 'rewriteSegmentedGeneration (page-body/segment-rewrite.ts)', owner: segmentedRewrite, due: nov23, entry: 'purge',
-    stop: 'rebuilding a retained generation of a segmented page locks the page and rewrites its manifest through raw SQL (segment-rewrite.ts:216-244); typed and served on Rust by segmented-staging-2' },
+  // Rebuilding a retained generation: the page lock, the manifest split and publish and the version hash are typed members the
+  // Rust store serves (the segmented-write lane).
+  ...served(segmentedRewrite, 'lockSegmentedGenerationPage', 'splitManifestGeneration', 'publishRebuiltGeneration', 'setSegmentedVersionHash'),
   // purgeSegmentStorage: the writes that would publish a staged body are cancelled, the stagings aborted, the texts deleted.
   tx('abortPurgedStagings', 'aborting the uncommitted stagings that hold the claim is not served'),
   tx('deletePurgedStagingParts', 'the delete of those stagings\' upload parts is not served'),
