@@ -18,8 +18,7 @@ import { hostOnlyError } from '../ops/op-fix.ts';
 import { ACCESS_ID_RE } from './principals.ts';
 import { assertAccessId, boundCredentials, existingMember, getMember, type MemberRecord } from './members.ts';
 import { labelledOnlyOwnerError, ownerMemberId } from './owner.ts';
-import { OWNER_MEMBER_KEY } from '../search/private-visibility.ts';
-import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
+import { isEngineCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 /**
  * Marks a member labelled-only or clears it. Only the trusted local operator may (remote strictly false), and never on the
@@ -54,7 +53,7 @@ export async function labelledOnlyMembers(engine: BrainEngine): Promise<Array<{ 
 }
 
 /** Whether any member carries the grant: the one cheap test a write runs before resolving its writer. Unreadable counts as yes. */
-export async function anyLabelledOnlyMember(engine: Pick<BrainEngine, 'hasLabelledOnlyMember' | 'readAccessMembers'>): Promise<boolean> {
+export async function anyLabelledOnlyMember(engine: Pick<BrainEngine, 'hasLabelledOnlyMember'>): Promise<boolean> {
   try {
     return await engine.hasLabelledOnlyMember();
   } catch {
@@ -67,20 +66,14 @@ export async function anyLabelledOnlyMember(engine: Pick<BrainEngine, 'hasLabell
  * cannot be read counts as yes (fail closed: it only narrows). Identities without a member (unbound, a group, a guest)
  * are never labelled-only, and neither is the configured owner (access.owner_member), whichever door the call came in by.
  */
-export async function labelledOnlyFor(engine: Pick<BrainEngine, 'readAccessMembers' | 'getConfig'>, identities: readonly (readonly string[])[]): Promise<boolean> {
+export async function labelledOnlyFor(engine: Pick<BrainEngine, 'hasLabelledOnlyMemberAmong'>, identities: readonly (readonly string[])[]): Promise<boolean> {
   const members = [...new Set(identities.flat().filter(p => p.startsWith('member:')).map(p => p.slice('member:'.length)).filter(id => ACCESS_ID_RE.test(id)))];
   if (!members.length) return false;
   try {
-    // The typed reads every engine serves: the member row by id (any status, as the grant applies to disabled and
-    // removed members too) and the configured owner, compared trimmed.
-    const owner = (await engine.getConfig(OWNER_MEMBER_KEY))?.trim() ?? null;
-    for (const id of members) {
-      if ((await engine.readAccessMembers({ id })).some(row => row.labelled_only === true && row.id !== owner)) return true;
-    }
-    return false;
-  } catch (error) {
-    // A refusal says this engine cannot answer, so it surfaces; any other failed read counts as yes (fail closed).
-    rethrowCapabilityRefusal(error);
+    return await engine.hasLabelledOnlyMemberAmong(members);
+  } catch (e) {
+    // An engine that refuses the read is reported, never read as labelled-only for every member.
+    if (isEngineCapabilityRefusal(e)) throw e;
     return true;
   }
 }

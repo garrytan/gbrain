@@ -13,10 +13,10 @@
  *    than on PGLite and Rust brains.
  *  - Why existing coverage misses it: the cases used keys that sort the same in every locale, and CI's Postgres
  *    runs in C.UTF-8. Every case here mixes `a-z`, `a/z` and `ab`; run it against an en_US Postgres to see it fail.
- *  - Seam: none. Raw inserts only seed rows the engine has no write for (credentials, hold records).
+ *  - Seam: none. Raw SQL only stamps times no engine writer sets (updated_at, deleted_at, first_due_at).
  */
 import { describe, expect } from 'bun:test';
-import { createSource, parityArms } from './harness.ts';
+import { createSource, parityArms, recordFenceRetirement } from './harness.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { BYTE_SLUGS, MIXED_SLUGS, byteOrder } from '../helpers/byte-order.ts';
@@ -46,14 +46,14 @@ const putAll = async (engine: BrainEngine, slugs: readonly string[], sourceId?: 
 };
 
 describe('credential, config, alias, tag, take and file reads sort text keys by byte', () => {
-  // The Rust store keeps no tokens or clients, so the raw insert stops on the typed raw_sql refusal there.
   parityTest('a member\'s bound credentials list by byte token name and client id', {
-    methods: ['executeRaw', 'readAccessCredentials'], requires: 'raw_sql',
+    methods: ['insertAccessToken', 'insertOauthClient', 'readAccessCredentials'],
   }, async (engine) => {
-    const tokens = TEXT.map((name, i) => `('00000000-0000-4000-8000-00000000000${i + 1}', '${name}', 'h${i}', 'alice-example')`);
-    await engine.executeRaw(`INSERT INTO access_tokens (id, name, token_hash, member_id) VALUES ${tokens.join(', ')}`);
-    const clients = TEXT.map((id) => `('c-${id}', 'app ${id}', 'alice-example')`);
-    await engine.executeRaw(`INSERT INTO oauth_clients (client_id, client_name, member_id) VALUES ${clients.join(', ')}`);
+    for (const [i, name] of TEXT.entries()) {
+      await engine.insertAccessToken({ name, token_hash: `h${i}`, scopes: null, permissions: {}, source_grant: null, source_id: null, federated_read: null,
+        allowed_operations: null, takes_holders: null, member_id: 'alice-example' });
+    }
+    for (const id of TEXT) await engine.insertOauthClient({ client_id: `c-${id}`, client_name: `app ${id}`, member_id: 'alice-example' });
     const out = (await engine.readAccessCredentials({ memberId: 'alice-example' })).map((c) => `${c.kind}:${c.name}`);
     expect(out).toEqual([...BYTES.map((n) => `token:${n}`), ...BYTES.map((n) => `client:app ${n}`)]);
     return out;
@@ -544,7 +544,7 @@ describe('hold, notifier and withdrawal reads sort by byte', () => {
   });
 
   parityTest('readGitHoldRecords and readHeldPageRows list hold rows by byte source id then fingerprint', {
-    methods: ['putPage', 'getPage', 'executeRaw', 'readGitHoldRecords', 'readHeldPageRows'], requires: 'raw_sql',
+    methods: ['putPage', 'getPage', 'readSourceState', 'writeGitHoldRow', 'readGitHoldRecords', 'readHeldPageRows'],
   }, async (engine, backend) => {
     for (const source of SOURCES) await createSource(engine, backend, source);
     const pageIds: string[] = [];
@@ -552,10 +552,11 @@ describe('hold, notifier and withdrawal reads sort by byte', () => {
       await engine.putPage('h/page', note('held'), { sourceId: source });
       const page = (await engine.getPage('h/page', { sourceId: source }))!;
       pageIds.push(String(page.id));
-      const [{ incarnation }] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id = $1', [source]);
+      const { incarnation } = (await engine.readSourceState(source))!;
+      // The hold's fingerprint is source:incarnation:path, so within one source the path orders the rows.
       for (const fp of TEXT) {
         const record = { source_id: source, incarnation, page_id: String(page.id), run_id: 'run-1', tag: `${source}|${fp}` };
-        await engine.executeRaw(`INSERT INTO op_checkpoints (op, fingerprint, completed_keys) VALUES ('sync-hold', $1, $2::text::jsonb)`, [`${source}|${fp}`, JSON.stringify([record])]);
+        await engine.writeGitHoldRow(source, incarnation, fp, record);
       }
     }
     const records = (await engine.readGitHoldRecords<{ tag: string }>({ sourceIds: SOURCES })).map((r) => r.record.tag);
@@ -566,7 +567,7 @@ describe('hold, notifier and withdrawal reads sort by byte', () => {
   });
 
   parityTest('listUnwithdrawnFacts lists retired facts by byte source id then page slug', {
-    methods: ['putPage', 'insertFact', 'expireFact', 'executeRaw', 'listUnwithdrawnFacts'], requires: 'raw_sql',
+    methods: ['putPage', 'insertFact', 'expireFact', 'transaction', 'readLiveGenerationRow', 'activateGenerationRows', 'listUnwithdrawnFacts'],
   }, async (engine, backend) => {
     for (const source of SOURCES) await createSource(engine, backend, source);
     for (const source of SOURCES) {
@@ -576,13 +577,7 @@ describe('hold, notifier and withdrawal reads sort by byte', () => {
         const fact = `retired in ${source} ${k}`;
         const out = await engine.insertFact({ fact, entity_slug: null, visibility: 'private', source: 'fence', embedding: null } as NewFact, { source_id: source });
         expect(await engine.expireFact(Number(out.id))).toBe(true);
-        const [{ id }] = await engine.executeRaw<{ id: number | string }>(
-          `INSERT INTO derived_generations (source_id, kind, owner_key, generation, state, operation_id, item_set_hash)
-           VALUES ($1, 'fact_fence', $2, 1, 'live', $3, 'h') RETURNING id`, [source, `page:${slug}`, `op-${source}-${k}`]);
-        const preimage = { id: Number(out.id), row_num: 1, fact, visibility: 'private' };
-        await engine.executeRaw(
-          `INSERT INTO derived_generation_items (generation_id, item_key, identity_hash, action, preimage) VALUES ($1, $2, 'i', 'retired', $3::text::jsonb)`,
-          [id, `fact:${out.id}`, JSON.stringify(preimage)]);
+        await recordFenceRetirement(engine, source, slug, Number(out.id), { fact, visibility: 'private' });
       }
     }
     const rows = await engine.listUnwithdrawnFacts(SOURCES, null, 'fact_fence');

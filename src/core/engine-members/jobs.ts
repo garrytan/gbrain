@@ -12,7 +12,7 @@ import type { ExpireSpendScope, JobSpendTreeSpec, LeasePressureFilter, LeasePres
 import type { JobInsightRows, JobInsightSpec } from '../engine-sql/jobs-insight.ts';
 import type * as JobsWake from '../engine-sql/jobs-wake.ts';
 import type { OauthClientPatch, OauthClientPatchGuard, OauthClientPatched, OauthClientRow } from '../engine-sql/oauth-clients.ts';
-import type { PrivateQueueHealthRow, QueueDivergence, QueueDivergenceSpec, QueueHealthSignals, QueueHealthSpec, QueueWedgeRow, QueueWedgeSignals, WaitingByQueueRow } from '../engine-sql/jobs-health.ts';
+import type { PrivateQueueHealthRow, QueueDivergence, QueueDivergenceSpec, QueueHealthSignals, QueueHealthSpec, QueueWedgeRow, QueueWedgeSignals, UntakenWaitingJobs, WaitingByQueueRow } from '../engine-sql/jobs-health.ts';
 import type { SubagentFailureFallback, SubagentMessageInsert, SubagentMessageRow, SubagentOneshotLedgerRow, SubagentRetainedPutPage, SubagentToolInsert, SubagentToolOrder, SubagentToolRow, SubagentToolStart, SubagentToolTarget, SubagentWriteOutcome } from '../engine-sql/jobs-subagent.ts';
 import type { AccessTokenScopeRow } from '../engine-sql/access-tokens.ts';
 import type { EngineMigrationHistory, ManualLinkTransition, MigrationPageColumns, MigrationRows, MigrationTable } from '../engine-sql/engine-migration.ts';
@@ -186,8 +186,12 @@ export interface JobsMembers {
   readWedgeSignals(queue: string, handlerNames: readonly string[], opts?: { signal?: AbortSignal }): Promise<QueueWedgeSignals>;
   /** The age in whole seconds of the oldest waiting job in a queue, or null with none. */
   readOldestWaitingAge(queue: string, opts?: { signal?: AbortSignal }): Promise<number | null>;
+  /** The queue whose waiting `name` jobs no worker takes (waited past `thresholdHours`, no live or recent job there), or null. */
+  readUntakenWaitingJobs(name: string, thresholdHours: number): Promise<UntakenWaitingJobs | null>;
   /** How many jobs wait; `excludeFactsAbsorb` leaves out the `facts-absorb` jobs PGLite's facts drain owns. */
   countWaitingJobs(excludeFactsAbsorb: boolean): Promise<number>;
+  /** How many jobs of `queue` wait under one of `names` (the minion worker's stall count); none for an empty list. */
+  countWaitingJobsForNames(queue: string, names: readonly string[]): Promise<number>;
   /** Active jobs whose lock lapsed or whose stalled counter reached two, per name. */
   listStuckActiveJobsByName(): Promise<Array<{ name: string; n: number }>>;
 
@@ -241,6 +245,7 @@ export interface JobsMembers {
   readGlobalMaintenanceDeaths(spec: { deaths: number }): Promise<GlobalMaintenanceDeaths>;
   /** The newest brain-wide maintenance job that ended without completing after `since` (a timestamp text, or null for all), with the count and earliest finish of them all. */
   readLastFailedGlobalMaintenanceJob(since: string | null): Promise<LastFailedGlobalMaintenanceJob | null>;
+  /** The stored config rows of `keys` and the finish (UTC, to the second) of the last completed brain-wide maintenance job, or null (fence-repair/hold-fix.ts readFenceAutoRepair). */
   /** Facts-absorb jobs dead or failed inside `hours` that no later job for the same page completed: the total and the newest `limit` (the `facts_extraction_health` check). */
   listFactsAbsorbJobsStillDead(spec: { hours: number; limit: number }): Promise<FactsAbsorbStillDead>;
   /** The claim gate's population and the terminal keyed rows with SQL NULL authority (the `legacy_job_authority` check). */
@@ -293,6 +298,8 @@ export interface JobsMembers {
   readOauthClient(clientId: string): Promise<OauthClientRow | null>;
   /** Every client's whole row, by name then id in byte order (`gbrain auth clients`). */
   listOauthClients(): Promise<OauthClientRow[]>;
+  /** The inspection columns of every client, deleted ones included, newest first, then by byte order of client id (the admin clients list). */
+  listAdminClientRows(): Promise<Array<Record<string, unknown>>>;
   patchOauthClient(clientId: string, patch: OauthClientPatch, guard?: OauthClientPatchGuard): Promise<OauthClientPatched | null>;
   /** One `access_tokens` row at grant revision 1; its generated id. A repeated token hash is a constraint error (23505). */
   insertAccessToken(row: AccessTokenInsert): Promise<{ id: string }>;

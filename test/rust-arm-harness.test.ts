@@ -289,3 +289,61 @@ describe('the Rust arm check', () => {
     }
   });
 });
+
+describe('the Rust arm check: a rustStop pin', () => {
+  const PIN = 'Rust stop: a grant this base does not serve. Owner: another lane. Unpin at the join.';
+  const STOP = { code: 'permission_denied', pin: PIN };
+  const stopped = (message = `put_page refused permission_denied: ${PIN}`, code = 'permission_denied') =>
+    Object.assign(new Error(message), { code });
+  const pinned = <T>(over: Partial<RustCase<T>> & { run: () => Promise<T> }) =>
+    rustCase<T>({ opts: { methods: [SERVED] as never, rustStop: STOP }, ...over });
+
+  test('the named stop passes and is counted refused', async () => {
+    const t = tally();
+    await checkRustArm(pinned({ run: async () => { throw stopped(); } }), t);
+    expect(t).toEqual({ compared: 0, refused: 1, diverged: 0 });
+  });
+
+  test('a different code fails', async () => {
+    const t = tally();
+    await expect(checkRustArm(pinned({ run: async () => { throw stopped(undefined, 'storage_error'); } }), t)).rejects.toThrow('rustStop pin (permission_denied)');
+    expect(t).toEqual({ compared: 0, refused: 0, diverged: 0 });
+  });
+
+  test('a message without the pin fails', async () => {
+    await expect(checkRustArm(pinned({ run: async () => { throw stopped('put_page refused permission_denied'); } }), tally())).rejects.toThrow('ended on another error');
+  });
+
+  test('a thrown object that is not an Error fails, even with the code and the pin', async () => {
+    await expect(checkRustArm(pinned({ run: async () => { throw { code: 'permission_denied', message: PIN }; } }), tally())).rejects.toThrow('ended on another error');
+  });
+
+  test('a member in methods that was not called fails', async () => {
+    await expect(checkRustArm(pinned({ calls: new Set(), run: async () => { throw stopped(); } }), tally())).rejects.toThrow();
+  });
+
+  test('an empty pin fails', async () => {
+    await expect(checkRustArm(rustCase({ opts: { methods: [SERVED] as never, rustStop: { code: 'permission_denied', pin: '  ' } },
+      run: async () => { throw stopped(); } }), tally())).rejects.toThrow('needs a pin');
+  });
+
+  test('a pin on the capability refusal code fails: that stop takes the in-test pin', async () => {
+    await expect(checkRustArm(rustCase({ opts: { methods: [SERVED] as never, rustStop: { code: 'engine_capability_missing', pin: PIN } },
+      run: async () => { throw stopped(undefined, 'engine_capability_missing'); } }), tally())).rejects.toThrow('in-test pin');
+  });
+
+  test('STALE: a pinned case that now returns fails, even when the value equals the reference', async () => {
+    const t = tally();
+    await expect(checkRustArm(pinned({ run: async () => ({ a: 1 }), reference: { backend: 'pglite', value: { a: 1 } } }), t))
+      .rejects.toThrow('has a rustStop pin (permission_denied) but now returns; remove the pin and expect equal');
+    expect(t).toEqual({ compared: 0, refused: 0, diverged: 0 });
+  });
+
+  test('a pinned case that ends on a capability refusal fails', async () => {
+    const capability = rustMemberCapability(REFUSED)!;
+    const t = tally();
+    await expect(checkRustArm(pinned({ opts: { methods: [REFUSED] as never, rustStop: STOP }, calls: new Set([REFUSED]),
+      run: async () => { throw refusal(capability); } }), t)).rejects.toThrow('ended on a typed capability refusal');
+    expect(t).toEqual({ compared: 0, refused: 0, diverged: 0 });
+  });
+});

@@ -8,7 +8,7 @@
  *    marked every bound member labelled-only without saying why.
  *  - Why existing coverage misses it: the parity case (test/engine-parity/labelled-only-for.test.ts) checks answers, not
  *    a refusal.
- *  - Seam: the refusal is injected at the typed member the check calls (readAccessMembers), never at statement text.
+ *  - Seam: the refusal is injected at the typed member the check calls (hasLabelledOnlyMemberAmong), never at statement text.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -26,11 +26,11 @@ beforeAll(async () => {
 }, 120_000);
 afterAll(async () => { await engine.disconnect(); });
 
-/** The engine with `readAccessMembers` refused as an engine without access members would refuse it. */
+/** The engine with `hasLabelledOnlyMemberAmong` refused as an engine without access members would refuse it. */
 function refusingMembers(base: BrainEngine): BrainEngine {
   return new Proxy(base, {
     get(target, key, receiver) {
-      if (key === 'readAccessMembers') return async () => { throw capabilityMissing('access_control', 'readAccessMembers'); };
+      if (key === 'hasLabelledOnlyMemberAmong') return async () => { throw capabilityMissing('access_control', 'hasLabelledOnlyMemberAmong'); };
       const value = Reflect.get(target, key, receiver);
       return typeof value === 'function' ? value.bind(target) : value;
     },
@@ -41,7 +41,7 @@ describe('labelledOnlyFor and a refused member read', () => {
   test('the refusal surfaces; it is never read as labelled-only or as not labelled-only', async () => {
     const error = await labelledOnlyFor(refusingMembers(engine), [['member:bob-example']]).then(() => null, (e: unknown) => e);
     expect((error as { code?: string } | null)?.code).toBe('engine_capability_missing');
-    expect(String((error as Error).message)).toContain('readAccessMembers');
+    expect(String((error as Error).message)).toContain('hasLabelledOnlyMemberAmong');
   });
 
   test('a caller with no member reads nothing and is not labelled-only', async () => {

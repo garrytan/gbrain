@@ -65,6 +65,7 @@ use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
+mod binding_reads;
 mod checkpoint_rows;
 mod checkpoint_validation;
 mod connector_attempts;
@@ -76,6 +77,7 @@ mod effect_scans;
 mod effect_worker;
 pub(crate) mod effects;
 mod embedding_candidates;
+mod freshness;
 mod git_holds;
 mod head_blocker;
 mod housekeeping;
@@ -116,8 +118,8 @@ pub use checkpoint_validation::{IncompleteSyncReceiptSpec, OpenPassWorkSpec};
 pub use connector_orphans::OrphanBounds;
 pub use diagnostic_checkpoints::HeldHitQuery;
 pub use effect_worker::{EffectClaim, EffectSettle, LinksRearm, Settle};
-pub(crate) use effects::all_effects;
 pub use effects::{PublicationEffectsSpec, QueuedEffect, WithdrawalEffectsSpec};
+pub(crate) use effects::{all_effects, request_effects};
 pub use head_blocker::HeadBlockerSpec;
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn, TrueUpReservation};
 pub(crate) use housekeeping::{HousekeepingRow, turn_key};
@@ -130,6 +132,7 @@ pub(crate) use notifier::remove_source_rows as remove_notifier_source_rows;
 pub use notifier::{
     NotifierCoverage, NotifierLeaseClaim, NotifierStateError, NotifierStatePatch, WantedMarkerInput,
 };
+pub use op_checkpoint::AtomGenerationBump;
 mod trust_scan_cursor;
 
 pub(crate) use op_checkpoint::{

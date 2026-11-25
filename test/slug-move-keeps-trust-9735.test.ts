@@ -49,6 +49,7 @@ const UPDATE_SLUG_CALLERS = [
   'src/core/persistence/sync-streamed.ts',
   'src/core/repair/frontmatter.ts',
   'src/core/repair/rename-identity.ts',
+  'src/core/repair/slug-spelling.ts',
   'src/core/schema-migrations/v002-slugify-existing-pages.ts',
 ];
 

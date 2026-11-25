@@ -1,8 +1,8 @@
 //! Captured eval candidates and capture failures: the `eval_candidates` and
 //! `eval_capture_failures` tables of the PGLite engine.
 //!
-//! Members: logEvalCandidate, listEvalCandidates, deleteEvalCandidatesBefore,
-//! logEvalCaptureFailure, listEvalCaptureFailures. The decide proposal tables share this key tag:
+//! Members: logEvalCandidate, listEvalCandidates, listEvalCandidateQueries,
+//! deleteEvalCandidatesBefore, logEvalCaptureFailure, listEvalCaptureFailures. The decide proposal tables share this key tag:
 //! `decide_proposals.rs` (rust/docs/store/decide-proposals.md).
 //!
 //! Keys (every record starts with `keys::EVAL_CAPTURE`, `Z`):
@@ -568,6 +568,18 @@ impl Store {
         rows.sort_by_key(|r| std::cmp::Reverse((r.created_at_us, r.id)));
         rows.truncate(limit);
         Ok(rows.iter().map(CandidateRecord::to_json).collect())
+    }
+
+    /// `listEvalCandidateQueries(limit)`: the `query` of the newest rows by id, at most `limit`
+    /// (`ORDER BY id DESC LIMIT $1`; every stored row has a query). A negative limit is refused, as
+    /// Postgres refuses it.
+    pub fn list_eval_candidate_queries(&self, limit: i64) -> Result<Vec<String>> {
+        let limit = usize::try_from(limit)
+            .map_err(|_| StoreError::invalid("LIMIT must not be negative"))?;
+        let read = self.read()?;
+        let mut rows: Vec<CandidateRecord> = read_all(&*read, CANDIDATE)?;
+        rows.sort_by_key(|r| std::cmp::Reverse(r.id));
+        Ok(rows.into_iter().take(limit).map(|r| r.query).collect())
     }
 
     /// `deleteEvalCandidatesBefore(date)`: deletes rows with `created_at < date`; returns how many.

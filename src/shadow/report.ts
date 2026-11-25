@@ -12,6 +12,7 @@ import { readFaults, readShadowSummary, type ShadowFault, type ShadowSummary } f
 import { storageLine, storageReport, type StorageReport } from './managed-gate.ts';
 import type { ShadowState } from './state.ts';
 import { readSeedRecord, type SeedRecord } from './seed.ts';
+import { SLUG_NOT_NORMAL_GAP } from './seed-gaps.ts';
 
 export const PROVISIONAL_VERDICT = 'NOT READY' as const;
 
@@ -76,6 +77,7 @@ function whyNotReady(seed: ReportSeed | null): string[] {
     if (seed.unseeded_gap_rows_total > 0) {
       why.push(`${seed.unseeded_gap_rows_total} rows of the brain have no Rust home yet (unseeded gap rows); reads that touch them can differ, and a swap is refused while any remain.`);
     }
+    if ((seed.unseeded_gap_rows[SLUG_NOT_NORMAL_GAP] ?? 0) > 0) why.push('Some pages or slug aliases are stored under a slug that is not in normal form: run the slug-spelling repair (PR 10168) first.');
   }
   why.push('Writes are not compared yet, and readiness rules arrive with the full report in S4.');
   return why;

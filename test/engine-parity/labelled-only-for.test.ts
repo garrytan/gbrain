@@ -21,7 +21,7 @@ const { parityTest } = parityArms(testBackends());
 
 describe('engine parity: labelledOnlyFor', () => {
   parityTest('a member is labelled-only exactly when its row carries the grant', {
-    methods: ['readAccessMembers'],
+    methods: ['hasLabelledOnlyMemberAmong'],
   }, async (engine) => {
     for (const id of ['bot-example', 'bob-example']) await addMember(engine, id, { remote: false });
     expect(await setMemberLabelledOnly(engine, 'bot-example', true, { remote: false })).toMatchObject({ changed: true });

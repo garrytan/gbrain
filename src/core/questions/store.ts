@@ -101,19 +101,20 @@ export function pinScope(row: Pick<PinRow, 'source_id' | 'scope_slug_prefix' | '
 }
 
 export async function getPin(engine: BrainEngine, sourceId: string, slug: string, opts: { forUpdate?: boolean } = {}): Promise<PinRow | null> {
+  if (!opts.forUpdate) {
+    const row = await engine.readPinnedQuestion(sourceId, slug);
+    return row ? toPinRow(row) : null;
+  }
   const rows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT ${COLUMNS} FROM pinned_questions WHERE source_id = $1 AND slug = $2${opts.forUpdate ? ' FOR UPDATE' : ''}`, [sourceId, slug]);
+    `SELECT ${COLUMNS} FROM pinned_questions WHERE source_id = $1 AND slug = $2 FOR UPDATE`, [sourceId, slug]);
   return rows[0] ? toPinRow(rows[0]) : null;
 }
 
 export async function listPins(engine: BrainEngine, opts: { sourceIds?: string[]; includeArchived?: boolean; states?: PinState[] } = {}): Promise<PinRow[]> {
-  const params: unknown[] = [];
-  const where: string[] = [];
-  if (opts.sourceIds) { params.push(opts.sourceIds); where.push(`source_id = ANY($${params.length}::text[])`); }
-  if (opts.states) { params.push(opts.states); where.push(`state = ANY($${params.length}::text[])`); }
-  else if (!opts.includeArchived) where.push(`state <> 'archived'`);
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT ${COLUMNS} FROM pinned_questions ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY source_id COLLATE "C", created_at, id`, params);
+  // One constant statement per filter combination (engine-sql/pinned-questions.ts PINNED_QUESTION_SQL).
+  const rows = await engine.listPinnedQuestions({
+    ...(opts.sourceIds ? { sourceIds: opts.sourceIds } : {}), ...(opts.states ? { states: opts.states } : {}), includeArchived: opts.includeArchived === true,
+  });
   return rows.map(toPinRow);
 }
 
@@ -130,12 +131,11 @@ export interface PinInsert {
 
 /** Idempotent insert keyed on (source_id, slug). Returns the row and whether it was created. */
 export async function insertPin(engine: BrainEngine, p: PinInsert): Promise<{ row: PinRow; created: boolean }> {
-  const inserted = await engine.executeRaw<Record<string, unknown>>(
-    `INSERT INTO pinned_questions (source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-     ON CONFLICT (source_id, slug) DO NOTHING RETURNING ${COLUMNS}`,
-    [p.sourceId, p.slug, p.question, p.scope.slug_prefix ?? null, p.scope.entity ?? null, p.state, p.inactiveReason, p.publishMode, p.createdBy]);
-  if (inserted[0]) return { row: toPinRow(inserted[0]), created: true };
+  const inserted = await engine.insertPinnedQuestion({
+    sourceId: p.sourceId, slug: p.slug, question: p.question, scopeSlugPrefix: p.scope.slug_prefix ?? null, scopeEntity: p.scope.entity ?? null,
+    state: p.state, inactiveReason: p.inactiveReason, publishMode: p.publishMode, createdBy: p.createdBy,
+  });
+  if (inserted) return { row: toPinRow(inserted), created: true };
   return { row: (await getPin(engine, p.sourceId, p.slug))!, created: false };
 }
 

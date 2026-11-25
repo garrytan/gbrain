@@ -55,6 +55,18 @@ export async function callerFilters(engine: BrainEngine, ctx: OperationContext):
 }
 
 const iso = (col: string) => `to_char(${col} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
+
+/**
+ * A default window's start: `days` before now, or the brain's creation when the brain is younger, so the view never
+ * names a date before the brain existed. The brain's creation is its earliest source row (initSchema seeds the default
+ * source when the brain is created); no ledger row can be older than it.
+ */
+export async function defaultWindowStart(engine: BrainEngine, now: Date, days: number): Promise<Date> {
+  const windowStart = new Date(now.getTime() - days * 86_400_000);
+  const created = (await engine.getSource('default'))?.created_at;
+  const brainStart = created ? new Date(created) : null;
+  return brainStart && brainStart > windowStart && brainStart <= now ? brainStart : windowStart;
+}
 const ITEM_COLUMNS = `li.id, li.kind, li.state, li.source_id, li.subject_slug, li.prior_revision, ${iso('li.created_at')} AS created_at, ${iso('li.shown_at')} AS shown_at`;
 
 function liveFactSql(a: string, f: CallerFilters): string {
@@ -64,15 +76,15 @@ function liveFactSql(a: string, f: CallerFilters): string {
     AND ${projectionEligibleSql('facts', a, undefined)}`;
 }
 
-/** Window: $1 source ids (null: every source), $2 start, $3 unseen pending only, $4 row cap. */
+/** Window: $1 source ids (null: every source), $2 start, $3 unseen pending only, $4 row cap, $5 item ids (null: any). */
 const WINDOW_SQL = `($1::text[] IS NULL OR li.source_id = ANY($1::text[])) AND li.created_at >= $2::timestamptz
-  AND ($3::boolean = false OR (li.state = 'pending' AND li.shown_at IS NULL))`;
+  AND ($3::boolean = false OR (li.state = 'pending' AND li.shown_at IS NULL)) AND ($5::bigint[] IS NULL OR li.id = ANY($5::bigint[]))`;
 
 /**
  * Duplicate questions hold one of the five open slots until they are answered, so the default note keeps showing a
  * pending one whether or not it was shown or is older than the window; `since` still bounds them by date.
  */
-const QUESTION_WINDOW_SQL = `($1::text[] IS NULL OR li.source_id = ANY($1::text[]))
+const QUESTION_WINDOW_SQL = `($1::text[] IS NULL OR li.source_id = ANY($1::text[])) AND ($5::bigint[] IS NULL OR li.id = ANY($5::bigint[]))
   AND (CASE WHEN $3::boolean THEN li.state = 'pending' ELSE li.created_at >= $2::timestamptz END)`;
 
 /**
@@ -143,8 +155,8 @@ const read = (slug: unknown) => (typeof slug === 'string' && slug ? ['gbrain', '
 
 /** The pointers in the window whose live target the caller can read, rendered, best first. */
 export async function liveItems(engine: BrainEngine, ctx: OperationContext, f: CallerFilters,
-  window: { sourceIds: string[] | null; since: Date; unseenOnly: boolean; limit: number }): Promise<LearnedItem[]> {
-  const params = [window.sourceIds, window.since.toISOString(), window.unseenOnly, window.limit];
+  window: { sourceIds: string[] | null; since: Date; unseenOnly: boolean; limit: number; ids?: number[] }): Promise<LearnedItem[]> {
+  const params = [window.sourceIds, window.since.toISOString(), window.unseenOnly, window.limit, window.ids ?? null];
   const rows = await withLiveDuplicates(engine, f, window.sourceIds, ctx.remote !== false, (await Promise.all(queries(f).map(q => engine.executeRaw<Row>(q.sql, params)))).flat());
   const facts = rows.filter(r => r.kind === 'fact_added' || r.kind === 'you_wrote').map(r => ({ id: Number(r.fact_id), fact: String(r.fact), source: r.source as string | null }));
   const conflictFacts = rows.filter(r => r.kind === 'conflict_found').flatMap(r => [
@@ -225,7 +237,7 @@ async function thinContactsLine(engine: BrainEngine, now: Date): Promise<ThinCon
 export async function readLearned(engine: BrainEngine, ctx: OperationContext,
   opts: { sourceIds: string[] | null; since?: Date; limit: number; now?: Date }): Promise<LearnedView> {
   const now = opts.now ?? new Date();
-  const since = opts.since ?? new Date(now.getTime() - LEARNED_WINDOW_DAYS * 86_400_000);
+  const since = opts.since ?? await defaultWindowStart(engine, now, LEARNED_WINDOW_DAYS);
   const f = await callerFilters(engine, ctx);
   const items = await liveItems(engine, ctx, f, { sourceIds: opts.sourceIds, since, unseenOnly: opts.since === undefined, limit: opts.limit });
   const singleUserPipe = ctx.transport === 'stdio' && !ctx.auth && currentCallerAccess().identity.length === 0 && !(await ownerMemberId(engine));
