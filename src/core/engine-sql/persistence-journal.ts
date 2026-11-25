@@ -14,11 +14,10 @@ import { COVERAGE_COUNT_CAP } from '../search/retrieval-coverage.ts';
 import type { SqlExecutor, QueryOpts } from './executor.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import { JOURNAL_LIMITS_SQL } from '../persistence/limits.ts';
-import { MANAGED_SYNC_PASS_OP } from '../persistence/sync-pass-row.ts';
 import { COMPACTED_RECEIPT_BYTES_SQL, EFFECT_BYTES_SQL } from '../persistence/receipt-bytes.ts';
 import { TOKEN_GRANT_ROW_COLUMNS, type TokenGrantRow } from '../grants/model.ts';
 import { sqlFragment, trustedSql } from './fragment.ts';
-import { GIT_HOLD_SUMMARY_OP } from './sync-hold-op.ts';
+import { GIT_HOLD_SUMMARY_OP, MANAGED_SYNC_PASS_OP } from './sync-hold-op.ts';
 
 /** The op of a held file's checkpoint row (sync-holds.ts re-exports it). */
 export const GIT_HOLD_OP = 'sync-hold';
