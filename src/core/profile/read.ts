@@ -77,7 +77,10 @@ export async function readProfile(ctx: OperationContext, readable: string[], eli
   const hidden: FactRow[] = [];
   let scanned = 0;
   let partial = sources.length === 0;
-  const targets: Array<[string, string]> = [...sources.map((s): [string, string] => [s, self.slug]), ...(self.homes ?? []).flatMap(h => readable.map((s): [string, string] => [s, h]))];
+  // A home is read in the owner page's source too: a bound owner's private profile fact is held on its member page there,
+  // and a rebuild from that page's fence files it under the member page.
+  const homeSources = [...new Set([...sources, ...readable])];
+  const targets: Array<[string, string]> = [...sources.map((s): [string, string] => [s, self.slug]), ...(self.homes ?? []).flatMap(h => homeSources.map((s): [string, string] => [s, h]))];
   for (const [src, home] of targets) {
     const slugs = await factEntitySlugs(ctx.engine, src, home, { excludePrivate: ctx.remote !== false }).catch(() => { partial = true; return [home]; });
     for (const slug of slugs) {

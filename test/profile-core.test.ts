@@ -38,6 +38,7 @@ import { packProfile, PROFILE_HEADER } from '../src/core/profile/read.ts';
 import { estimateTokens } from '../src/core/search/token-budget.ts';
 import { codeEntry } from '../src/core/error-catalogue.ts';
 import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
+import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type R = Record<string, any>;
@@ -322,6 +323,44 @@ describe('profile core with the owner found by a person page in another source (
     expect(profile.entity).toEqual({ slug: null, basis: 'identifier_page' });
     expect(profile.partial).toBe(true);
     expect(out.content.map(c => c.text).join('\n') + JSON.stringify(out.structuredContent ?? {})).not.toContain('people/alice-example');
+  }, 60_000);
+});
+
+describe('a bound owner\'s private profile fact survives a facts rebuild from its member page fence (repo-less)', () => {
+  let engine: BrainEngine;
+  let token = '';
+  const provider = () => new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
+  const remote = async (op: string, params: R) => dispatchToolCall(engine, op, params,
+    { remote: true, transport: 'http', sourceId: 'people-src', auth: await provider().verifyAccessToken(token) as unknown as AuthInfo });
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({ engine: 'pglite' } as never);
+    await engine.initSchema();
+    __resetPrivateVisibilityCacheForTests();
+    await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('people-src', 'people-src') ON CONFLICT (id) DO NOTHING");
+    await addMember(engine, 'owner-example', { email: 'owner@example.com' });
+    await setOwner(engine, 'owner-example');
+    await engine.putPage('people/owner-example', { type: 'person', title: 'Owner Example', compiled_truth: 'Owner Example is a person.', frontmatter: { email: 'owner@example.com' } }, { sourceId: 'people-src' });
+    const c = await provider().registerClientManual('p1-rebuild-' + randomUUID().slice(0, 8), ['client_credentials'], 'read write', [], 'people-src');
+    await bindCredential(engine, { kind: 'client', id: c.clientId }, { member: 'owner-example' });
+    token = (await provider().exchangeClientCredentials(c.clientId, c.clientSecret ?? '')).access_token;
+  }, 120_000);
+  afterAll(async () => { await engine.disconnect(); });
+
+  test('the allergy is in the local and remote profile after its row is rebuilt from the member page fence', async () => {
+    const saved = await remote('remember', { fact: 'Allergic to kiwi canaryrebuild', facet: 'allergy', provenance: 'told me 2026-11-25' });
+    expect(saved.isError).not.toBe(true);
+    expect(await factRow(engine, 'canaryrebuild')).toMatchObject({ entity_slug: 'people/owner-example', claim_metric: 'profile.allergy', visibility: 'private',
+      source_markdown_slug: 'memory/members/owner-example' });
+    await engine.executeRaw("DELETE FROM facts WHERE fact LIKE '%canaryrebuild%'");
+    const rebuilt = await runExtractFacts(engine, { sourceId: 'people-src', deferEmbedding: true });
+    expect(rebuilt.factsInserted).toBe(1);
+    expect(await factRow(engine, 'canaryrebuild')).toMatchObject({ claim_metric: 'profile.allergy', visibility: 'private' });
+    const local = (await run(engine, 'context_pack', { profile: true })).profile;
+    expect(local.entity).toEqual({ slug: 'people/owner-example', basis: 'identifier_page' });
+    expect(local.constraints.map((f: R) => f.claim)).toEqual(['Allergic to kiwi canaryrebuild']);
+    const read = JSON.parse((await remote('context_pack', { profile: true })).content[0]!.text).profile;
+    expect(read.constraints.map((f: R) => f.claim)).toEqual(['Allergic to kiwi canaryrebuild']);
   }, 60_000);
 });
 
