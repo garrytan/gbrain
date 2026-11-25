@@ -91,6 +91,12 @@ describe('a facts-fence row carries a profile metric only on its profile home', 
     expect(metric('memory/owner', 'notes/memory/unattributed')).toBeNull();
     expect(metric(undefined, 'notes/memory/unattributed')).toBeNull();
   });
+  test('dropped from a holding page for an entity that is no profile home', () => {
+    expect(metric('companies/acme-example', 'memory/unattributed')).toBeNull();
+    expect(metric('acme-example', 'memory/unattributed')).toBeNull();
+    expect(metric('companies/acme-example', 'companies/memory/unattributed')).toBeNull();
+    expect(metric('memory/members/alice-example', 'memory/unattributed')).toBe('profile.allergy');
+  });
 });
 
 describe('reservation and engine guards', () => {

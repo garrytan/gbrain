@@ -35,8 +35,8 @@ A `remember` without `facet` works exactly as before: it is never moved onto you
 The facet becomes the fact's typed claim metric, `profile.<facet>`. That prefix is reserved: a hand-written
 `claim_metric: "profile.diet"` is refused (`profile_metric_reserved`, with the same call using `facet` as the fix),
 an unknown facet is refused with the list (`profile_facet_unknown`), and facts extracted from conversations never get
-one. A facts-fence row keeps a `profile.<facet>` metric only on the profile's own page or the holding page `remember`
-would put it on; anywhere else the row is kept without a metric. Profile facts are not metrics, so `find_trajectory`, `gbrain eval trajectory` and the founder scorecard skip
+one. A facts-fence row keeps a `profile.<facet>` metric only on the profile's own page or, for `memory/owner` or a
+member page, the holding page `remember` would put it on; anywhere else the row is kept without a metric. Profile facts are not metrics, so `find_trajectory`, `gbrain eval trajectory` and the founder scorecard skip
 them.
 
 ## Who a profile belongs to
