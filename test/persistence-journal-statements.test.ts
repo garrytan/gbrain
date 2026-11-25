@@ -58,13 +58,15 @@ import { COMPACTED_RECEIPT_BYTES_SQL } from '../src/core/persistence/receipt-byt
 import { CLAIMABLE_EFFECT_SQL } from '../src/core/engine-sql/persistence-effect-scans.ts';
 import { CLAIM_COALESCED_GIT_EFFECTS_SQL } from '../src/core/engine-sql/persistence-effect-worker.ts';
 import { TOPOLOGY_STORE_STATEMENTS } from '../src/core/engine-sql/topology-store.ts';
+import { REFRESH_STORE_STATEMENTS } from '../src/core/engine-sql/refresh-store.ts';
 import { MANUAL_LINK_STATEMENTS } from '../src/core/engine-sql/manual-links.ts';
 import { LINKS_FENCE_ORIGIN_FIELD } from '../src/core/links-fence.ts';
 import { EXPIRED_ARCHIVE_SQL } from '../src/core/engine-sql/sources.ts';
-import { ACTIVE_REFRESH_STATES_SQL } from '../src/core/persistence/worktree-refresh-schema.ts';
+import { ACTIVE_REFRESH_STATES_SQL, CHECKOUT_EFFECT_KINDS_SQL, RELEASED_DEFERRED } from '../src/core/persistence/worktree-refresh-schema.ts';
+import { PERSISTENCE_PROTOCOL_PREDICATE } from '../src/core/persistence/protocol.ts';
 import { requireSynchronousCommit, SYNCHRONOUS_COMMIT_SQL } from '../src/core/engine-sql/persistence-declaration.ts';
 import { claimHeadStatement, claimHeadText } from '../src/core/engine-sql/persistence-claims.ts';
-import { CLAIM_ORDER, FOREGROUND_WAITING_ON } from '../src/core/persistence/journal.ts';
+import { CLAIM_ORDER, FOREGROUND_WAITING_ON, REFRESH_BARRIER_CLAIM_PREDICATE, SYNC_KIND } from '../src/core/persistence/journal.ts';
 import { DEAD_OWNER_EFFECT_SQL } from '../src/core/persistence/effect-journal.ts';
 import { refreshFenceClear } from '../src/core/persistence/worktree-refresh-schema.ts';
 import { quoteIdentifier } from '../src/core/search/embedding-column.ts';
@@ -590,6 +592,28 @@ describe('the topology store sends the statements the lifecycle built, fragments
     WHERE worktree_id=ANY($1::uuid[]) AND state IN ${ACTIVE_REFRESH_STATES_SQL} AND ($2::uuid IS NULL OR id<>$2::uuid) LIMIT 1`);
     expect(TOPOLOGY_STORE_STATEMENTS.RETIRE_STATE_EXPIRED_SQL).toBe(`SELECT incarnation,archived,${EXPIRED_ARCHIVE_SQL} AS due FROM sources WHERE id=$1`);
     expect(TOPOLOGY_STORE_STATEMENTS.EXPIRED_ARCHIVE_ROW_SQL).toBe(`SELECT id FROM sources WHERE id=$1 AND ${EXPIRED_ARCHIVE_SQL}`);
+  });
+});
+
+describe('the refresh store sends the statements the refresh writer and the barrier built, fragments written out', () => {
+  const flat = (sql: string) => sql.replace(/\s+/g, ' ').trim();
+  test('the drain count carries the released-deferred and checkout-effect fragments', () => {
+    expect(flat(REFRESH_STORE_STATEMENTS.DRAIN_COUNTS_SQL)).toBe(flat(`SELECT
+    (SELECT count(*) FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND (r.state IN ('queued','running','recovering') OR ${RELEASED_DEFERRED('r')}))::int AS requests,
+    (SELECT count(*) FROM persistence_effects WHERE worktree_id=$1::uuid AND kind IN ${CHECKOUT_EFFECT_KINDS_SQL} AND state IN ('queued','running'))::int AS effects,
+    ((SELECT count(*) FROM persistence_requests WHERE worktree_id=$1::uuid AND recovery IS NOT NULL)
+      +(SELECT count(*) FROM persistence_effects WHERE worktree_id=$1::uuid AND recovery IS NOT NULL))::int AS recovery`));
+  });
+  test('the import hold carries the protocol and refresh-barrier claim predicates', () => {
+    expect(flat(REFRESH_STORE_STATEMENTS.HOLD_FOR_IMPORT_SQL)).toBe(flat(`UPDATE persistence_requests SET state='deferred',deferred_import_from=$3,deferred_refresh_id=NULL,execution_token=NULL,
+    claim_expires_at=NULL,blocked_reason=NULL,claim_phase=NULL,updated_at=now()
+    WHERE id=$1::uuid AND execution_token=$2::uuid AND state='running' AND recovery IS NULL AND publication_started=false
+      AND ${PERSISTENCE_PROTOCOL_PREDICATE} AND ${REFRESH_BARRIER_CLAIM_PREDICATE} RETURNING *`));
+  });
+  test('the later-write read carries the managed-sync row fragment', () => {
+    expect(flat(REFRESH_STORE_STATEMENTS.LATER_WRITE_SQL)).toBe(flat(`SELECT r.request_id::text AS request_id FROM persistence_requests r
+    WHERE r.source_id=$1 AND r.slug=$2 AND r.sequence>$3 AND r.state='committed' AND NOT (r.operation='submit_job'
+      AND (${SYNC_KIND('r')} OR (r.intent IS NULL AND COALESCE(r.outcome->>'imported_file','')='true' AND NOT (r.outcome ? 'connector_database')))) ORDER BY r.sequence LIMIT 1`));
   });
 });
 

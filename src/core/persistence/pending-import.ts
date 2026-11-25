@@ -80,7 +80,7 @@ function gitBytes(root: string, args: string[], signal?: AbortSignal): Promise<B
  * rejects with its reason instead of answering, so the preparation stops.
  */
 export async function committedPendingImport(engine: BrainEngine, sourceId: string, root: string, path: string, signal?: AbortSignal): Promise<boolean> {
-  const [source] = await engine.executeRaw<{ last_commit: string | null }>('SELECT last_commit FROM sources WHERE id=$1', [sourceId]);
+  const [source] = await engine.listSourceLastCommits([sourceId]);
   const rel = `./${relative(root, path).split(sep).join('/')}`;
   try {
     const head = await committedBlob(root, path, signal);

@@ -12,12 +12,11 @@
 import { relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { PreparedMutation } from './coordinator.ts';
-import { completeWrite, deferralRoom, IMPORT_HOLD_CAPABILITY, publicationGroupKey, REFRESH_BARRIER_CLAIM_PREDICATE } from './journal.ts';
+import { completeWrite, deferralRoom, IMPORT_HOLD_CAPABILITY, publicationGroupKey } from './journal.ts';
 import { deferredReplayRefusal } from './refresh-barrier.ts';
 import type { WriteRequest } from './model.ts';
 import { fileAtCommit, landedCommit } from './pending-import.ts';
 import { sha256 } from './digest.ts';
-import { PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import { writeSwitchOn } from './switches.ts';
 
 const IMPORT_HELD_OPERATIONS = ['put_page', 'capture', 'remember', 'add_timeline_entry'];
@@ -45,11 +44,7 @@ export async function holdForImport(engine: BrainEngine, row: WriteRequest, erro
     const refusal = await deferredReplayRefusal(engine, row, [file]);
     if (refusal) return engine.transaction(tx => completeWrite(tx, row, refusal.state, {}, refusal.failure));
   }
-  const [held] = await engine.executeRaw<WriteRequest>(`UPDATE persistence_requests SET state='deferred',deferred_import_from=$3,deferred_refresh_id=NULL,execution_token=NULL,
-    claim_expires_at=NULL,blocked_reason=NULL,claim_phase=NULL,updated_at=now()
-    WHERE id=$1::uuid AND execution_token=$2::uuid AND state='running' AND recovery IS NULL AND publication_started=false
-      AND ${PERSISTENCE_PROTOCOL_PREDICATE} AND ${REFRESH_BARRIER_CLAIM_PREDICATE} RETURNING *`, [row.id, row.execution_token, from]);
-  return held ?? null;
+  return (await engine.refreshStore()).holdForImport(row.id, row.execution_token!, from);
 }
 
 /** The trailer value a superseding write commits with: `<path>: revision <revision> from <commit>`. */

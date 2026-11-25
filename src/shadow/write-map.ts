@@ -360,7 +360,7 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'recordDerivationEdges', 'recordDreamBreakerReset', 'recordEdgeProposal', 'recordGenerationActivation',
   'recordHeldGenerationRow', 'recordNotifierSyncerHost', 'recordPageEmbeddingHold', 'recordSearchTelemetry',
   'recordSubagentToolExecutions', 'recordTokenSetupReads', 'recordWakeCronRun', 'recordWakeTermsAcceptance',
-  'recountMentionIndexStatus', 'redactVersionChangeReasons', 'refreshConsolidatedTakeSource', 'refreshDrainLeaseHolder',
+  'recountMentionIndexStatus', 'redactVersionChangeReasons', 'refreshConsolidatedTakeSource', 'refreshDrainLeaseHolder', 'refreshStore',
   'registerFileRow', 'registerPurgeRedaction', 'rehomeEntityFacts', 'rejectOpenEdgeProposal', 'rekeyProjectionJob',
   'releaseBeliefRedactions', 'releaseDeferredReplacementClaim', 'releaseDrainLeaseHolder', 'releaseNotifierLease',
   'releasePageEmbeddingLease', 'releasePurgeRedactionsForField', 'releaseSegmentedProjectionClaim',

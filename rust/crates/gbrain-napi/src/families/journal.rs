@@ -1060,15 +1060,16 @@ impl Brain {
         })
     }
 
-    /// `listResumableRefreshes(hostId, budgetMs)`: the interrupted refreshes; `[]` (no refresh row
-    /// here). The sync budget only marks rows stale, so it is not sent.
+    /// `listResumableRefreshes(hostId, budgetMs)`: the interrupted refreshes of the host's worktrees;
+    /// the sync budget marks a row stale once it has not moved for that long.
     #[napi]
     pub fn list_resumable_refreshes<'env>(
         &self,
         env: &'env Env,
         host_id: String,
+        budget_ms: f64,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.list_resumable_refreshes(&host_id))
+        self.run(env, move |s| s.list_resumable_refreshes(&host_id, budget_ms))
     }
 
     #[napi]

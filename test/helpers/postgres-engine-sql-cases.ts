@@ -1791,7 +1791,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'writerAdminStore': OOS.writerAdmin,
   'writerReleaseStore': OOS.writerRelease,
   'addPersistenceCounters': OOS.writerRelease,
-  'publicationJournalStore': OOS.publicationJournal, 'gitDurabilityStore': OOS.managedOnRust, 'gitEffectStore': OOS.managedOnRust, 'topologyStore': OOS.managedOnRust, 'manualLinkStore': OOS.managedOnRust,
+  'publicationJournalStore': OOS.publicationJournal, 'gitDurabilityStore': OOS.managedOnRust, 'gitEffectStore': OOS.managedOnRust, 'topologyStore': OOS.managedOnRust, 'manualLinkStore': OOS.managedOnRust, 'refreshStore': OOS.managedOnRust,
   'persistenceUpkeepStore': OOS.callerRawSql,
   'readWorktreeManifest': OOS.writerAdmin,
   'readWriterDiagnosticRows': OOS.writerStatus,

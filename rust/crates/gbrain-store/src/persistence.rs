@@ -108,6 +108,7 @@ mod publication;
 mod purge_effects;
 mod receipt_compaction;
 mod receipt_list;
+mod refresh_store;
 mod retained_sources;
 mod sync_conversions;
 mod sync_orphan_reads;
@@ -171,6 +172,7 @@ pub use purge_effects::{
     GitEffectsCarryingArgs, PageGitEffectsArgs, PurgeEffectDataArgs, PurgeGitEffectRow,
 };
 pub use receipt_list::{IncarnationRequestFilter, WriteRequestListFilter};
+pub use refresh_store::{RefreshRead, RefreshWrite};
 pub use sync_pass_pages::{SyncImportPageQuery, SyncImportPageWindow};
 pub use sync_run_reads::SyncAdmissionEffectsQuery;
 pub use topology::TopologyChangeInsert;
@@ -983,8 +985,8 @@ pub(crate) fn guard_deferred_transition(old: &str, new: &str) -> Result<()> {
     Err(violation(DEFERRED_CLAIM_REFUSED))
 }
 
-/// `CLAIM_STAMP_SQL`: running, the token, the lease and the first phase. `passed_sync` is false:
-/// it asks for an earlier queued sync row on the same worktree, and every worktree here is null.
+/// `CLAIM_STAMP_SQL`: running, the token, the lease and the first phase. `passed_sync` asks for an
+/// earlier queued sync row on the same worktree (a request on no worktree has none).
 /// `seen_sequence` is the newest sequence for a sync row: requests are never deleted on this
 /// engine, so `max(sequence)` is the last sequence handed out.
 pub(crate) fn stamp_write_claim_in(
@@ -1003,6 +1005,17 @@ pub(crate) fn stamp_write_claim_in(
         return Err(violation(DEFERRED_CLAIM_REFUSED));
     }
     let now = env.now_micros();
+    // `EXISTS (SELECT 1 FROM persistence_requests earlier WHERE earlier.worktree_id=r.worktree_id AND earlier.sequence<r.sequence
+    //   AND earlier.state='queued' AND COALESCE(earlier.intent->>'kind','') LIKE 'managed_sync_%')`.
+    let passed_sync = match write_claim_terms::worktree_of(&record) {
+        Some(worktree) => all_requests(&*tx)?.iter().any(|earlier| {
+            write_claim_terms::worktree_of(earlier).as_deref() == Some(worktree.as_str())
+                && earlier.sequence < record.sequence
+                && earlier.state == "queued"
+                && sync_kind(&earlier.intent)
+        }),
+        None => false,
+    };
     record.state = "running".into();
     record.updated_at_us = now;
     record.blocked_reason = None;
@@ -1016,7 +1029,7 @@ pub(crate) fn stamp_write_claim_in(
         .insert("claim_phase".into(), phase.unwrap_or(Value::Null));
     write_request(tx, &record)?;
     let mut row = record.to_row();
-    row["passed_sync"] = json!(false);
+    row["passed_sync"] = json!(passed_sync);
     row["seen_sequence"] = if sync_kind(&record.intent) {
         json!(max_sequence(&*tx)?.to_string())
     } else {

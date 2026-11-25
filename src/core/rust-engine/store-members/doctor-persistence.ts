@@ -144,7 +144,8 @@ export const listStaleEmbeddingEffects: Member<'listStaleEmbeddingEffects'> = (b
 export const listSourceBindingsForMovement: Member<'listSourceBindingsForMovement'> = async (brain, sourceIds) =>
   await storeCall({ member: 'listSourceBindingsForMovement' }, () => brain.movementBindingRows(sourceIds)) as Awaited<ReturnType<BrainEngine['listSourceBindingsForMovement']>>;
 export const listConsumerOwners: Member<'listConsumerOwners'> = async () => [];
-export const listStuckWorktreeRefreshes: Member<'listStuckWorktreeRefreshes'> = async () => [];
+export const listStuckWorktreeRefreshes: Member<'listStuckWorktreeRefreshes'> = (brain, minutes) =>
+  storeCall({ member: 'listStuckWorktreeRefreshes' }, () => brain.refreshRows({ kind: 'stuck', minutes })) as ReturnType<Member<'listStuckWorktreeRefreshes'>>;
 /**
  * The request ids of the page and fact purges the store's `page_purges` (`F 0x0C`) and `fact_purges` (`F 0x0F`) ledgers
  * hold. The store keeps no `take_purges` row, so that arm adds nothing.

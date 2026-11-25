@@ -3,17 +3,17 @@
 //!
 //! K1, the refresh keyspace: `d 0x10 <refresh id>` holds one `persistence_worktree_refreshes` row
 //! (`RefreshRecord`), JSON. `0x08` is the notifier's on the sync branches, so this family starts at `0x10`.
-//! No caller on this engine writes a refresh yet (`gbrain sources refresh` stays a named refusal), so on a
-//! served brain the keyspace is empty and every member answers as Postgres answers with no refresh row.
+//! `refresh_store.rs` writes the rows (`gbrain sources refresh`); a brain that never refreshed has an empty keyspace,
+//! and every member answers as Postgres answers with no refresh row.
 //!
 //! `readWorktreeAdmission` reads the worktree row and the source binding through `worktree_rows.rs`.
 //!
 //! What this engine does not keep, and how each member answers for it:
-//! - `persistence_consumers`: no consumer row exists (the owner runs no resident consumer), so
-//!   `hasDeferralRoom` finds no incapable live consumer and answers true, as the Postgres EXISTS does on an
-//!   empty join.
-//! - `sources.last_commit`: not stored (`sources.rs`), so every source reads it as null. A refresh's target head
-//!   is never null, so `completeSyncedRefresh` completes a refresh only when none of its sources exists.
+//! - `persistence_consumers` stays empty (`renewConsumerRow` writes nothing here, `housekeeping.rs`), so
+//!   `hasDeferralRoom` stays true until a consumer row exists.
+//! - `sources.last_commit` is stored (`sources.rs`): `completeSyncedRefresh` completes a refresh when every
+//!   member source that exists is at its target head, and an import hold lands when the source's last commit differs
+//!   from the commit the write was held at.
 
 use super::worktree_rows::{read_source_binding, read_worktree_row};
 use super::{all_requests, uuid_param};
@@ -27,7 +27,7 @@ use serde_json::{Map, Value, json};
 /// The byte after `keys::PERSISTENCE` of a refresh row (K1).
 const REFRESH: u8 = 0x10;
 /// `ACTIVE_REFRESH_STATES` (worktree-refresh-schema.ts), the partial unique index's states.
-const ACTIVE_REFRESH_STATES: [&str; 5] = [
+pub(super) const ACTIVE_REFRESH_STATES: [&str; 5] = [
     "draining",
     "fenced",
     "merged",
@@ -68,7 +68,6 @@ pub(super) fn read_refresh(read: &dyn KvRead, id: &str) -> Result<Option<Refresh
     get_json(read, &refresh_key(id))
 }
 
-#[cfg(test)]
 pub(crate) fn put_refresh(tx: &mut dyn KvWrite, record: &RefreshRecord) -> Result<()> {
     put_json(tx, &refresh_key(&record.id), record)
 }
@@ -155,8 +154,7 @@ pub(crate) fn read_worktree_admission_in(
 }
 
 /// `completeSyncedRefresh`: a `syncing` refresh none of whose sources has a `last_commit` other than its target
-/// head becomes `completed`. Every stored source reads `last_commit` as null, so only a source that does not
-/// exist passes.
+/// head becomes `completed`; a member source that does not exist passes.
 pub(crate) fn complete_synced_refresh_in(
     tx: &mut dyn KvWrite,
     now_us: i64,
@@ -169,13 +167,16 @@ pub(crate) fn complete_synced_refresh_in(
     if refresh.state != "syncing" {
         return Ok(false);
     }
+    // `NOT EXISTS (SELECT 1 FROM sources s WHERE s.id=ANY(f.source_ids) AND s.last_commit IS DISTINCT FROM f.target_head)`.
     for source_id in &refresh.source_ids {
-        if read_source(&*tx, source_id)?.is_some() {
+        if read_source(&*tx, source_id)?.is_some_and(|s| s.last_commit.as_deref() != Some(refresh.target_head.as_str())) {
             return Ok(false);
         }
     }
     refresh.state = "completed".into();
     refresh.completed_at_us = Some(now_us);
+    // `gbrain_release_refresh_barrier`: the first move into a terminal state releases the barrier.
+    refresh.released_at_us.get_or_insert(now_us);
     refresh.updated_at_us = now_us;
     put_json(tx, &refresh_key(&id), &refresh)?;
     Ok(true)
@@ -265,7 +266,7 @@ pub(crate) fn refresh_unreleased(read: &dyn KvRead, id: &str) -> Result<bool> {
 
 /// `RELEASED_DEFERRED(r)` (worktree-refresh-schema.ts): `r` is `deferred`, holds a refresh or an import, and
 /// every hold it has is released. `refresh` is the row `r.deferred_refresh_id` names, when it has one. The
-/// import hold reads `COALESCE(last_commit,'')<>deferred_import_from`, and `last_commit` is null here.
+/// import hold reads `COALESCE(last_commit,'')<>deferred_import_from` of the stored source.
 pub(crate) fn released_deferred(
     read: &dyn KvRead,
     r: &crate::journal::RequestRecord,
@@ -287,7 +288,8 @@ pub(crate) fn released_deferred(
     }
     Ok(match &import_from {
         None => true,
-        Some(from) => read_source(read, &r.source_id)?.is_some() && !from.is_empty(),
+        Some(from) => read_source(read, &r.source_id)?
+            .is_some_and(|s| s.last_commit.as_deref().unwrap_or("") != from.as_str()),
     })
 }
 

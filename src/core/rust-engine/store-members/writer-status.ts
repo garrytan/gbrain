@@ -47,7 +47,7 @@ export const listBlockingEffectRows = async function listBlockingEffectRows(brai
   return rows.map(row => ({ ...row, next_attempt_at: at(row.next_attempt_at) }));
 };
 
-/** `listActiveWorktreeRefreshRows(sourceId)`: no worktree refresh runs on this engine, so none is active. */
-export const listActiveWorktreeRefreshRows = async function listActiveWorktreeRefreshRows(_brain: StoreBrain, _sourceId: string | null): Promise<ActiveWorktreeRefreshRow[]> {
-  return [];
+/** `listActiveWorktreeRefreshRows(sourceId)`: the active refresh rows (of the source's worktree, or all), oldest first, with each worktree's owner and its deferred writes. */
+export const listActiveWorktreeRefreshRows = async function listActiveWorktreeRefreshRows(brain: StoreBrain, sourceId: string | null): Promise<ActiveWorktreeRefreshRow[]> {
+  return storeCall<ActiveWorktreeRefreshRow[]>({ member: 'listActiveWorktreeRefreshRows' }, () => brain.refreshRows({ kind: 'active_rows', sourceId }));
 };

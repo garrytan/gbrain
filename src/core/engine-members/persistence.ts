@@ -10,6 +10,7 @@ import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerPr
 import type { GitDurabilityStore } from '../engine-sql/git-durability.ts';
 import type { GitEffectStore } from '../engine-sql/git-effects.ts';
 import type { TopologyStore } from '../engine-sql/topology-store.ts';
+import type { RefreshStore } from '../engine-sql/refresh-store.ts';
 import type { ManualLinkStore } from '../engine-sql/manual-links.ts';
 import type { CoalescedGitClaim, EffectClaim, EffectClaimRef, EffectWorktreeOwner, MirrorGateRow } from '../engine-sql/persistence-effect-worker.ts';
 import type { FenceHoldFileRow, FenceHoldKey, FenceHoldRow } from '../engine-sql/fence-holds.ts';
@@ -541,6 +542,8 @@ export interface PersistenceMembers {
    * writes, and the moved-checkout reads. Called on a transaction engine, every store call runs in that transaction.
    */
   topologyStore(): Promise<TopologyStore>;
+  /** The worktree refresh rows and the writes held behind a refresh or an import (engine-sql/refresh-store.ts). */
+  refreshStore(): Promise<RefreshStore>;
   /**
    * The managed link-edit and links-fence projection statements (engine-sql/manual-links.ts). Called on a transaction
    * engine, every store call runs in that transaction.
