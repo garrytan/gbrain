@@ -295,7 +295,7 @@ async function claimDecision(engine: BrainEngine, id: string, now: Date): Promis
   return claim!;
 }
 
-interface Seen { sessions: Map<string, string>; messages: number; stopped: boolean }
+interface Seen { sessions: Map<string, string>; days: Map<string, string[]>; parsed: Set<string>; messages: number; stopped: boolean }
 
 /** One reader per harness over exactly the admitted files, bounded by the deadline and the message bound. */
 function boundedReaders(files: HistoryFileRef[], deadlineAtMs: number, seen: Seen): ArchiveReader[] {
@@ -321,8 +321,10 @@ function boundedReaders(files: HistoryFileRef[], deadlineAtMs: number, seen: See
             if (!s.newest || m.timestamp > s.newest) s.newest = m.timestamp;
           }
         }
+        if (!seen.stopped) seen.parsed.add(path);
       }
       for (const s of found.values()) {
+        seen.days.set(harness + SEP + s.sessionId, [...s.dayIds.keys()]);
         yield {
           harness: harness as TranscriptFormat, conversationKey: s.sessionId, sessionId: s.sessionId, via: 'file',
           days: [...s.dayIds.keys()], dayIds: Object.fromEntries([...s.dayIds].map(([d, ids]) => [d, [...ids]])), ...(s.newest ? { newest: s.newest } : {}),
@@ -369,6 +371,27 @@ export async function runSetupHistory(engine: BrainEngine, opts: RunHistoryOpts)
     files = preview.files;
     window = { from: preview.from, to: preview.to, preview_id: preview.preview_id, days: preview.days };
   }
+  try {
+    return await importStage(engine, opts, { stage, files, window, decisionId, sourceId, started, now });
+  } catch (err) {
+    if (decisionId) await releaseDecision(engine, decisionId).catch(() => { throw err; });
+    throw err;
+  }
+}
+
+/** A failed import hands its decision back, so answering it again imports; a decision with a stage record stays used. */
+async function releaseDecision(engine: BrainEngine, id: string): Promise<void> {
+  await updateReceipt(engine, r => {
+    if (r.pending?.id !== id || !r.pending.consumed_at || Object.values(r.stages).some(rec => rec?.decision_id === id)) return r;
+    const { consumed_at: _released, ...pending } = r.pending;
+    return { ...r, pending };
+  });
+}
+
+async function importStage(engine: BrainEngine, opts: RunHistoryOpts, s: {
+  stage: HistoryStage; files: HistoryFileRef[]; window: { from: string; to: string; preview_id: string; days: number }; decisionId?: string; sourceId: string; started: number; now: Date;
+}): Promise<StageResult> {
+  const { stage, files, window, decisionId, sourceId, started, now } = s;
   const base: StageResult = {
     version: 1, stage, status: 'nothing_found', exit: 0, source_id: sourceId, from: window.from, to: window.to, preview_id: window.preview_id,
     ...(decisionId ? { decision_id: decisionId } : {}), sessions_admitted: files.length, sessions_imported: 0, days_written: 0, days_unchanged: 0,
@@ -380,7 +403,7 @@ export async function runSetupHistory(engine: BrainEngine, opts: RunHistoryOpts)
     await recordStage(engine, base, {});
     return base;
   }
-  const seen: Seen = { sessions: new Map<string, string>(), messages: 0, stopped: false };
+  const seen: Seen = { sessions: new Map<string, string>(), days: new Map<string, string[]>(), parsed: new Set<string>(), messages: 0, stopped: false };
   let run: ArchiveRunResult;
   const attempt = () => runTranscriptArchive(engine, {
     mode: 'backfill', from: window.from, to: window.to, now, readers: boundedReaders(files, opts.deadlineAtMs, seen), deadlineAtMs: opts.deadlineAtMs,
@@ -401,12 +424,24 @@ export async function runSetupHistory(engine: BrainEngine, opts: RunHistoryOpts)
     if (d.status === 'held') base.held.push({ harness: d.harness, day: d.day, code: d.code ?? 'held' });
   }
   base.write_mode = run.write_mode;
-  base.sessions_imported = imported.size;
   base.days_written = run.written;
   base.days_unchanged = run.unchanged;
   base.days_accepted = run.accepted;
   base.errors = run.errors.map(e => ({ code: e.code, harness: e.harness, ...(e.day ? { day: e.day } : {}) }));
-  base.deferred_sessions = Math.max(0, files.length - [...seen.sessions.keys()].map(conversationKey).filter(k => imported.has(k)).length);
+  const withRow = new Set(run.days.filter(d => d.harness !== 'index').map(d => d.harness + SEP + d.conversation_key_hash));
+  const deferredDays = new Set(run.deferred_days);
+  const ledger = new Map((await readArchiveLedger(engine, run.source_id)).map(e => [e.harness + SEP + e.conversation_key_hash + SEP + e.day, e]));
+  let deferred = files.filter(f => !seen.parsed.has(f.path)).length;
+  for (const [k, days] of seen.days) {
+    const key = conversationKey(k);
+    const inWindow = days.filter(d => d >= run.from && d <= run.to);
+    if (!inWindow.length || withRow.has(key)) continue;
+    const archived = !inWindow.some(d => deferredDays.has(d)) && inWindow.every(d => { const e = ledger.get(key + SEP + d); return !!e?.hash && e.complete && !e.held; });
+    if (archived) imported.add(key);
+    else deferred++;
+  }
+  base.sessions_imported = imported.size;
+  base.deferred_sessions = deferred;
   base.budget.stopped_at_deadline = run.stopped_at_deadline === true || seen.stopped;
   if (imported.size === 0 && run.errors.length) {
     throw opError('setup_history_failed', 'The setup history import wrote nothing: ' + run.errors.map(e => e.code + ' (' + e.harness + ')').slice(0, 5).join(', ') + '.',
@@ -414,13 +449,13 @@ export async function runSetupHistory(engine: BrainEngine, opts: RunHistoryOpts)
   }
   if (run.accepted) {
     const accepted = new Set(run.days.filter(d => d.status === 'accepted').map(d => d.harness + SEP + d.conversation_key_hash + SEP + d.day));
-    base.receipts = [...new Set((await readArchiveLedger(engine, run.source_id)).filter(e => e.pending && accepted.has(e.harness + SEP + e.conversation_key_hash + SEP + e.day)).flatMap(e => e.pending!.requests))];
+    base.receipts = [...new Set([...ledger.values()].filter(e => e.pending && accepted.has(e.harness + SEP + e.conversation_key_hash + SEP + e.day)).flatMap(e => e.pending!.requests))];
   }
   base.links = await linksEffect(engine, run, opts, base);
   base.status = run.accepted ? 'accepted' : base.budget.stopped_at_deadline || base.deferred_sessions > 0 || run.errors.length ? 'partial' : 'imported';
   base.exit = run.accepted ? 10 : 0;
   if (base.status === 'partial') {
-    base.resume = { argv: ['gbrain', 'setup', opts.harness, '--history', stage === 'latest' ? 'latest' : String(window.days)], consent: [], actor: 'agent', requires_exclusive: false,
+    base.resume = { argv: ['gbrain', 'setup', opts.harness, '--history', stage === 'latest' ? 'latest' : String(window.days), ...(opts.dir ? ['--history-dir', opts.dir] : []), ...(opts.noExtract ? ['--no-extract'] : [])], consent: [], actor: 'agent', requires_exclusive: false,
       why: 'Runs the same import again: days already written stay unchanged, and the sessions this run did not reach are read.' } as Action;
   }
   base.budget.used_ms = Date.now() - started;

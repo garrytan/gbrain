@@ -16,7 +16,7 @@
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -259,7 +259,7 @@ if (pgliteOnly) describe('setup history import: bounds, holds and the lock (pgli
       const wall = Date.now() - started;
       expect(result).toMatchObject({ status: 'partial', exit: 0, budget: { stopped_at_deadline: true } });
       expect(result.deferred_sessions).toBeGreaterThan(0);
-      expect(result.resume?.argv).toEqual(['gbrain', 'setup', 'codex', '--history', '30']);
+      expect(result.resume?.argv).toEqual(['gbrain', 'setup', 'codex', '--history', '30', '--history-dir', dir]);
       expect(wall).toBeLessThan(300 + 5_000);
     } finally { await close(); }
   }, 180_000);
@@ -301,6 +301,54 @@ if (pgliteOnly) describe('setup history import: bounds, holds and the lock (pgli
       expect(await archivedPages(engine)).toEqual([]);
     } finally { release(); await holder; await close(); }
   }, 120_000);
+
+  test('an answered decision whose import fails stays answerable, and the retry imports', async () => {
+    const { engine, close, dir } = await freshInstall('pglite');
+    let release!: () => void;
+    const held = new Promise<void>(r => { release = r; });
+    const holder = withRefreshingLock(engine, 'transcripts-archive:conversations', () => held);
+    try {
+      const preview = await inHome(() => previewHistory(engine, { stage: 'latest', dir, now: NOW }));
+      const decision = await inHome(() => offerHistoryDecision(engine, preview, NOW));
+      await new Promise(r => setTimeout(r, 100));
+      expect(await code(inHome(() => runSetupHistory(engine, { harness: 'claude-code', decisionId: decision.id, deadlineAtMs: soon(), now: NOW })))).toMatchObject({ code: 'archive_run_busy' });
+      release();
+      await holder;
+      const retry = await inHome(() => runSetupHistory(engine, { harness: 'claude-code', decisionId: decision.id, deadlineAtMs: soon(), now: NOW }));
+      expect(retry).toMatchObject({ status: 'imported', sessions_imported: 1, decision_id: decision.id });
+      expect((await archivedPages(engine)).map(p => p.body).join('\n')).toContain('regression test for the login bug');
+    } finally { release(); await holder; await close(); }
+  }, 120_000);
+
+  test('an expired or replaced range decision imports nothing', async () => {
+    const { engine, close, dir } = await freshInstall('pglite');
+    try {
+      const preview = await inHome(() => previewHistory(engine, { stage: 'range', days: 30, dir, now: NOW }));
+      const old = await inHome(() => offerHistoryDecision(engine, preview, new Date(NOW.getTime() - 2 * 86_400_000)));
+      expect(await code(inHome(() => runSetupHistory(engine, { harness: 'claude-code', decisionId: old.id, deadlineAtMs: soon(), now: NOW })))).toMatchObject({ code: 'setup_history_decision_expired' });
+      await inHome(() => offerHistoryDecision(engine, preview, NOW));
+      expect(await code(inHome(() => runSetupHistory(engine, { harness: 'claude-code', decisionId: old.id, deadlineAtMs: soon(), now: NOW })))).toMatchObject({ code: 'setup_history_decision_unavailable' });
+      expect(await archivedPages(engine)).toEqual([]);
+    } finally { await close(); }
+  }, 120_000);
+
+  test('running the same range again reports imported, and a session with no dated message is not counted as deferred', async () => {
+    const { engine, close, dir } = await freshInstall('pglite');
+    try {
+      const folder = join(dir, 'claude-code', '-home-alice-example-code-acme-example-web');
+      mkdirSync(folder, { recursive: true });
+      const summaryOnly = join(folder, 'sess-summary-only.jsonl');
+      writeFileSync(summaryOnly, JSON.stringify({ type: 'summary', summary: 'Login bug notes', leafUuid: 'sess-summary-only-u0' }) + '\n');
+      const t = new Date(daysAgo(NOW, 3));
+      utimesSync(summaryOnly, t, t);
+      const first = await inHome(() => runSetupHistory(engine, { harness: 'claude-code', stage: 'range', days: 30, dir, deadlineAtMs: soon(), now: NOW }));
+      expect(first).toMatchObject({ status: 'imported', sessions_imported: 10, deferred_sessions: 0 });
+      expect(first.resume).toBeUndefined();
+      const again = await inHome(() => runSetupHistory(engine, { harness: 'claude-code', stage: 'range', days: 30, dir, deadlineAtMs: soon(), now: NOW }));
+      expect(again).toMatchObject({ status: 'imported', sessions_imported: 10, deferred_sessions: 0, days_written: 0 });
+      expect((await readInstallReceipt(engine))!.stages.range).toMatchObject({ status: 'imported', sessions_imported: 10 });
+    } finally { await close(); }
+  }, 180_000);
 
   test('a git-backed archive source: the import commits through gbrain git commit-push, syncs, then links derive from the synced pages', async () => {
     const dir = tmp('setup-history-repo-');

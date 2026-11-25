@@ -114,6 +114,7 @@ export async function historyFor(ctx: { harness: string; launcher: string; flags
   const run = (args: string[]): Child => {
     const r = child(ctx.launcher, 'run', [...args, ...dirArgs, '--harness', harness, ...(flags.noExtract ? ['--no-extract'] : [])], deadline);
     if (!r.ok) return r;
+    if (r.doc.resume) r.doc.resume.argv = [...ctx.setupArgv, ...r.doc.resume.argv.slice(3)];
     o.stages.push(summary(r.doc));
     o.sessions_imported += r.doc.sessions_imported ?? 0;
     o.status = r.doc.status;
@@ -125,7 +126,7 @@ export async function historyFor(ctx: { harness: string; launcher: string; flags
   const offer = (stage: 'latest' | 'range'): Child => child(ctx.launcher, 'preview', ['--stage', stage, '--offer', ...dirArgs], deadline);
   const decide = (p: Record<string, any>) => {
     const d = p.decision;
-    o.decision = { id: d.id, stage: d.stage, sessions: p.sessions, expires_at: d.expires_at, accept_argv: [...ctx.setupArgv, '--history-decision', d.id, ...(flags.historyDir ? ['--history-dir', flags.historyDir] : [])], decline_argv: [...ctx.setupArgv, '--history', 'decline'] };
+    o.decision = { id: d.id, stage: d.stage, sessions: p.sessions, expires_at: d.expires_at, accept_argv: [...ctx.setupArgv, '--history-decision', d.id, ...(flags.historyDir ? ['--history-dir', flags.historyDir] : []), ...(flags.noExtract ? ['--no-extract'] : [])], decline_argv: [...ctx.setupArgv, '--history', 'decline'] };
     o.lines.push((d.stage === 'latest' ? 'To import the newest session' : 'To import ' + p.sessions + ' session(s) since ' + p.from) + ': ' + o.decision.accept_argv.join(' '));
   };
   const ask = async (p: Record<string, any>, stage: 'latest' | 'range'): Promise<'yes' | 'no' | 'unanswered'> => {
