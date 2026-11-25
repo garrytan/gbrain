@@ -147,6 +147,9 @@ import * as worktreeClaim from './worktree-claim.ts';
 import * as writerAdmin from './writer-admin.ts';
 import * as writerRelease from './writer-release.ts';
 import * as publicationJournal from './publication-journal.ts';
+import * as gitDurability from './git-durability.ts';
+import * as gitEffects from './git-effects.ts';
+import * as topologyStore from './topology-store.ts';
 import * as writerStatus from './writer-status.ts';
 import * as collateStoreReads from './collate-store-reads.ts';
 import * as writeAttribution from './write-attribution.ts';
@@ -316,6 +319,9 @@ export const STORE_MEMBERS = {
   ...writerReleaseMembers,
   // A bound publication's request-row reads and writes around its files (same doc, "Publication journal").
   ...publicationJournal,
+  ...gitDurability,
+  ...gitEffects,
+  ...topologyStore,
   ...writerStatus,
   // Reads callers once ran through executeRaw: feedback, pins, credentials (rust/docs/store).
   ...collateStoreReads,

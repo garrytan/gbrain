@@ -26,20 +26,12 @@ export interface PhysicalRootFacts {
   hostBinding(worktreeId: string, hostId: string): Promise<{ local_path: string; coordination_path: string } | null>;
 }
 function sqlPhysicalRootFacts(tx: SqlEngine): PhysicalRootFacts {
+  // The facts come from the topology store (engine-sql/topology-store.ts), so a Rust brain answers them from its records.
+  const store = () => (tx as unknown as Pick<BrainEngine, 'topologyStore'>).topologyStore();
   return {
-    async brainId() {
-      const [brain] = await tx.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
-      return brain?.brain_id ?? null;
-    },
-    async worktree(id) {
-      const [row] = await tx.executeRaw<{ owner_host_id: string | null; state: string }>('SELECT owner_host_id,state FROM persistence_worktrees WHERE id=$1::uuid', [id]);
-      return row ?? null;
-    },
-    async hostBinding(worktreeId, hostId) {
-      const [row] = await tx.executeRaw<{ local_path: string; coordination_path: string }>(
-        'SELECT local_path,coordination_path FROM persistence_host_bindings WHERE worktree_id=$1::uuid AND host_id=$2::uuid', [worktreeId, hostId]);
-      return row ?? null;
-    },
+    brainId: async () => (await store()).brainId(),
+    worktree: async id => (await store()).worktreeOwner(id),
+    hostBinding: async (worktreeId, hostId) => (await store()).hostBinding(worktreeId, hostId),
   };
 }
 async function brainIdentity(facts: Pick<PhysicalRootFacts, 'brainId'>): Promise<string> {
@@ -79,13 +71,10 @@ export async function movedPhysicalRoot(tx: SqlEngine, path: string, hostId: str
   const moved = describeMovedPhysicalRoot(canonicalFilesystemPath(path));
   if (!moved || !hostId) return null;
   requireManagedPersistence(tx, 'movedPhysicalRoot', 'it reads the managed worktree and source bindings a moved checkout belongs to');
-  const [row] = await tx.executeRaw<{ brain_id: string; owner_host_id: string | null; local_path: string | null }>(`SELECT brain_id::text AS brain_id,
-    (SELECT owner_host_id::text FROM persistence_worktrees WHERE id=$1::uuid) AS owner_host_id,
-    (SELECT local_path FROM persistence_host_bindings WHERE worktree_id=$1::uuid AND host_id=$2::uuid) AS local_path
-    FROM persistence_brain WHERE singleton=1`, [moved.worktreeId, hostId]);
+  const store = await (tx as unknown as Pick<BrainEngine, 'topologyStore'>).topologyStore();
+  const row = await store.movedRootRow(moved.worktreeId, hostId);
   if (row?.brain_id !== moved.brainId || row.owner_host_id !== hostId || row.local_path !== moved.recorded) return null;
-  const members = await tx.executeRaw<{ source_id: string; relative_path: string }>(
-    'SELECT source_id,relative_path FROM persistence_source_bindings WHERE worktree_id=$1::uuid ORDER BY source_id COLLATE "C"', [moved.worktreeId]);
+  const members = await store.worktreeMembers(moved.worktreeId);
   return { ...moved, members: members.map(member => ({ sourceId: member.source_id, relativePath: member.relative_path })) };
 }
 /** #8625: the full moved-checkout refusal for a trusted local caller (paths, worktree, exit); null when `root` is no moved checkout of this host, or not of `recorded`. */

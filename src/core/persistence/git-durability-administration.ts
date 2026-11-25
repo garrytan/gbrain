@@ -353,10 +353,10 @@ export async function runGitDurabilityAdministration(engine: BrainEngine, params
         verify: { argv: ['gbrain', 'sources', 'writer', 'status', input.sourceId, '--json'] } } };
   }
   const queued = await engine.transaction(async tx => {
-    await tx.executeRaw("SELECT set_config('lock_timeout','2000ms',true),set_config('synchronous_commit','on',true)");
+    const store = await tx.gitDurabilityStore();
+    await store.bound();
     await assertWriterAdminState(tx, expectedState);
-    const [updated] = await tx.executeRaw<{ git_durability: GitDurabilitySetting }>(`UPDATE persistence_host_bindings SET git_durability=$3
-      WHERE worktree_id=$1::uuid AND host_id=$2::uuid RETURNING git_durability`, [binding.worktree_id, binding.owner_host_id, target]);
+    const updated = await store.setHostBindingDurability(binding.worktree_id, binding.owner_host_id!, target);
     if (!updated) throw opError('source_changed', 'The host binding disappeared while the setting was being recorded.',
       `Source ${input.sourceId}'s host binding was removed by another topology change, so nothing was recorded. Inspect writer status before trying again.`, { fix: statusFix(input.sourceId) });
     return target === 'enabled' ? await requeueGitDurabilityCatchUp(tx, binding, plan.map(effect => effect.id)) : [];

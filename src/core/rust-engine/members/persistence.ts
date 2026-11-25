@@ -291,6 +291,7 @@ export const PERSISTENCE_MEMBERS = {
   listResumableRefreshes: 'persistence_journal',
   listSourceLastCommits: 'persistence_journal',
   stampEffectClaim: 'persistence_journal',
+  claimCoalescedGitEffects: 'persistence_journal',
   renewEffectClaim: 'persistence_journal',
   advanceEffectRow: 'persistence_journal',
   completeEffectRow: 'persistence_journal',

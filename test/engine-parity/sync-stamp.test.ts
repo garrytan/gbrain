@@ -98,7 +98,8 @@ describe('engine parity: a managed sync stamps its source fresh', () => {
           // With the hold lifted on this test engine (GBRAIN_TEST_RUST_MANAGED=1, rust-managed.ts) the sync runs for real;
           // a step it still meets that the Rust store does not serve ends the case as stopped, never as equal (LM slice 2).
           const lifted = backend === 'rust' && engine.capabilities?.has('managed_persistence') === true;
-          if (lifted && (first as { error?: { code?: string } }).error?.code === 'engine_capability_missing') throw (first as { error: unknown }).error;
+          const firstError = (first as { error?: { code?: string } }).error;
+          if (lifted && firstError?.code === 'engine_capability_missing') throw firstError;
           if (backend === 'rust' && !lifted) {
             // Named stop, by design (Garry, B2, Nov 22): managed_persistence refused by design on Rust (B2) until the
             // Rust engine carries managed mode. The brain activates, and its first managed sync refuses by name at

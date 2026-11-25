@@ -232,25 +232,10 @@ export async function claimCoalescedGitEffects(engine: BrainEngine, hostId: stri
   if (limit <= 0) return [];
   const rows = await engine.transactionDirect(async tx => {
     await declarePersistenceProtocol(tx);
-    // The worktree-wide conditions (owner, refresh fence, recovery blocks) are one
-    // InitPlan, so the claim walks persistence_effects_pending in order and stops at
-    // $3 rows instead of probing every ready effect of the worktree.
-    return tx.executeRaw<PersistenceEffect>(`WITH ready AS (SELECT e.id,gen_random_uuid() AS token FROM persistence_effects e
-      WHERE EXISTS (SELECT 1 FROM persistence_worktrees w WHERE w.id=$2::uuid AND w.owner_host_id=$1::uuid
-        AND ${refreshFenceClear('w', 'id')}
-        AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked WHERE blocked.worktree_id=w.id AND blocked.recovery IS NOT NULL)
-        AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked WHERE blocked.worktree_id=w.id AND blocked.recovery IS NOT NULL))
-      AND e.worktree_id=$2::uuid AND e.kind='git' AND e.data ? 'relative_path'
-      AND NOT (e.data ? 'targets') AND NOT (e.data ? 'source_scan') AND NOT (e.data ? 'version')
-      AND (e.state='queued' OR e.state='running' AND e.claim_expires_at<now() OR ${DEAD_OWNER_EFFECT_SQL('e', '$4')}) AND e.next_attempt_at<=now()
-      AND e.recovery IS NULL
-      AND NOT EXISTS (SELECT 1 FROM persistence_effects mirror
-        WHERE mirror.request_id=e.request_id AND mirror.kind='withdrawal-mirror' AND mirror.state IN ('queued','running'))
-      ORDER BY e.next_attempt_at,e.id LIMIT $3 FOR UPDATE OF e SKIP LOCKED)
-      UPDATE persistence_effects p SET state='running',execution_token=ready.token,
-      claim_owner=jsonb_build_object('token',ready.token::text,'owner',$5::text::jsonb),
-      claim_expires_at=now()+interval '2 minutes',attempts=attempts+1,updated_at=now()
-      FROM ready WHERE p.id=ready.id RETURNING p.*`, [hostId, worktreeId, limit, [...deadOwners], JSON.stringify(claimOwner())]);
+    // One statement (engine-sql/persistence-effect-worker.ts CLAIM_COALESCED_GIT_EFFECTS_SQL): the worktree-wide
+    // conditions (owner, refresh fence, recovery blocks) are one InitPlan, so the claim walks persistence_effects_pending
+    // in order and stops at `limit` rows instead of probing every ready effect of the worktree.
+    return tx.claimCoalescedGitEffects<PersistenceEffect>({ hostId, worktreeId, limit, deadOwners, ownerJson: JSON.stringify(claimOwner()) });
   }, { pipelineFirst: isPersistenceDeclaration });
   return rows.sort((a, b) => Number(a.id) - Number(b.id));
 }

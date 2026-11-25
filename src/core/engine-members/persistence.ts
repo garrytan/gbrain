@@ -7,7 +7,7 @@ import type { AtomOriginInputRow, AtomWriteReceiptRow, GenerationVersionProducer
 import type { CapacityForecastInputs, HousekeepingTurnClaim, PendingSegmentedProjection, ProjectionJobRef, ProjectionPageRef, ProjectionWindowRow, ReceiptBudget, SegmentedProjectionClaimOutcome, SegmentedProjectionFilter, TrueUpReservation } from '../engine-sql/persistence-housekeeping.ts';
 import type * as ChronicleEventsSql from '../engine-sql/chronicle-events.ts';
 import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from '../engine-sql/persistence-claims.ts';
-import type { EffectClaim, EffectClaimRef, EffectWorktreeOwner, MirrorGateRow } from '../engine-sql/persistence-effect-worker.ts';
+import type { CoalescedGitClaim, EffectClaim, EffectClaimRef, EffectWorktreeOwner, MirrorGateRow } from '../engine-sql/persistence-effect-worker.ts';
 import type { FenceHoldFileRow, FenceHoldKey, FenceHoldRow } from '../engine-sql/fence-holds.ts';
 import type { FenceVersionBodyRow } from '../engine-sql/generation-fence-evidence.ts';
 import type { GatedMirrorRequest, RequestEffectState } from '../engine-sql/persistence-effect-scans.ts';
@@ -510,6 +510,11 @@ export interface PersistenceMembers {
   // `token` (a null token matches none), so a claim that moved changes nothing.
   /** Claims effect `id` under `token` (running, a 2-minute lease, one more attempt): the claimed row, or null when no effect has the id. */
   stampEffectClaim<R = Record<string, unknown>>(claim: EffectClaim): Promise<R | null>;
+  /**
+   * Claims up to `limit` more ready single-file Git effects of one worktree for its owner host, each under a fresh
+   * token, under `selectClaimableEffect`'s rules (#5530): the claimed rows. A non-uuid host or worktree id refuses.
+   */
+  claimCoalescedGitEffects<R = Record<string, unknown>>(input: CoalescedGitClaim): Promise<R[]>;
   /**
    * Extends an effect claim's lease by 2 minutes; true while it is running under the token with no recovery. `direct`
    * runs it on the Postgres direct lane (`executeRawDirect`), outside any pooled transaction.

@@ -12,6 +12,11 @@ mod archive;
 pub use archive::{
     ArchivedSource, ArchivedSourceListRow, ExpiredArchivedSource, SourceDeleteImpact,
 };
+pub(crate) use archive::{
+    delete_page_batch_in, delete_source_incarnation_in, remove_sync_cursors,
+    rescrub_removed_source_in, source_expired, source_page_count_in,
+    source_pages as all_source_pages,
+};
 
 pub const DEFAULT_SOURCE: &str = "default";
 

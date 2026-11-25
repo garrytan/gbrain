@@ -21,25 +21,25 @@ const TOPOLOGY_STATES: &[&str] = &["recovering", "committed", "failed"];
 
 /// One stored topology change.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct TopologyChangeRecord {
-    id: String,
-    principal_id: String,
-    request_id: String,
-    digest: String,
-    operation: String,
-    source_id: String,
-    source_incarnation: Option<String>,
-    worktree_ids: Vec<String>,
-    state: String,
+pub(crate) struct TopologyChangeRecord {
+    pub(crate) id: String,
+    pub(crate) principal_id: String,
+    pub(crate) request_id: String,
+    pub(crate) digest: String,
+    pub(crate) operation: String,
+    pub(crate) source_id: String,
+    pub(crate) source_incarnation: Option<String>,
+    pub(crate) worktree_ids: Vec<String>,
+    pub(crate) state: String,
     #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
-    recovery: Option<Value>,
-    recovery_bytes: i64,
-    intent_bytes: i64,
-    terminal_bytes: i64,
+    pub(crate) recovery: Option<Value>,
+    pub(crate) recovery_bytes: i64,
+    pub(crate) intent_bytes: i64,
+    pub(crate) terminal_bytes: i64,
     #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
-    outcome: Option<Value>,
-    created_at_us: i64,
-    updated_at_us: i64,
+    pub(crate) outcome: Option<Value>,
+    pub(crate) created_at_us: i64,
+    pub(crate) updated_at_us: i64,
 }
 
 /// `insertTopologyChange(input)`.
@@ -67,7 +67,7 @@ pub struct TopologyChangeInsert {
     pub outcome: Option<Value>,
 }
 
-fn change_key(principal_id: &str, request_id: &str) -> Vec<u8> {
+pub(crate) fn change_key(principal_id: &str, request_id: &str) -> Vec<u8> {
     let mut key = vec![keys::PERSISTENCE, super::TOPOLOGY];
     key.extend_from_slice(principal_id.as_bytes());
     key.push(0);
@@ -83,7 +83,7 @@ fn principal_prefix(principal_id: &str) -> Vec<u8> {
 }
 
 /// The row as `SELECT *` returns it (times as ISO text; the TypeScript member makes them Dates).
-fn to_row(r: &TopologyChangeRecord) -> Value {
+pub(crate) fn to_row(r: &TopologyChangeRecord) -> Value {
     json!({
         "id": r.id,
         "principal_id": r.principal_id,
@@ -102,6 +102,35 @@ fn to_row(r: &TopologyChangeRecord) -> Value {
         "created_at": iso(r.created_at_us),
         "updated_at": iso(r.updated_at_us),
     })
+}
+
+/// Every topology change record, in key order.
+pub(crate) fn all_change_records(read: &dyn KvRead) -> Result<Vec<TopologyChangeRecord>> {
+    let mut rows = Vec::new();
+    let mut bad = false;
+    scan_prefix(
+        read,
+        &[keys::PERSISTENCE, super::TOPOLOGY],
+        false,
+        &mut |_, v| {
+            match serde_json::from_slice::<TopologyChangeRecord>(v) {
+                Ok(r) => rows.push(r),
+                Err(_) => bad = true,
+            }
+            !bad
+        },
+    )?;
+    if bad {
+        return Err(StoreError::invalid(
+            "a topology change record is not readable",
+        ));
+    }
+    Ok(rows)
+}
+
+/// Writes one topology change record back under its key.
+pub(crate) fn put_change_record(tx: &mut dyn KvWrite, r: &TopologyChangeRecord) -> Result<()> {
+    put_json(tx, &change_key(&r.principal_id, &r.request_id), r)
 }
 
 /// The stopped retire requests writer status lists (`readWriterStatusRows`,
