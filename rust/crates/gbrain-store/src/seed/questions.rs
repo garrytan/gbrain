@@ -1,12 +1,14 @@
-//! Pinned questions: `pinned_questions` and `question_evidence` (rust/docs/store/questions.md). The auto-think import
+//! Pinned questions: `pinned_questions` (into main's records, `m 0x2F` / `m 0x30`, `jobs/pinned_questions.rs`) and
+//! `question_evidence` (`~q 0x03`; rust/docs/store/questions.md). The auto-think import
 //! that fills `pinned_questions` runs inside a SQL schema migration (`src/core/questions/auto-think-migration.ts`), so
 //! the seed copies whatever the primary holds.
 
 use super::decode::Row;
 use super::{Column::Kept, Losses, Outcome, Relation, duplicate, raise_counter};
 use crate::error::{Result, StoreError};
+use crate::jobs::{PinRecord, raise_seq, seed_pinned_question};
 use crate::kv::KvWrite;
-use crate::questions::{EvidenceRecord, NEXT_EVIDENCE_ID, NEXT_PIN_ID, PinRecord};
+use crate::questions::{EvidenceRecord, NEXT_EVIDENCE_ID};
 
 /// In import order.
 pub(super) const RELATIONS: &[(&str, &Relation)] = &[
@@ -67,10 +69,14 @@ static PINS: Relation = Relation {
 };
 
 /// The row with the table's defaults for a NULL (`state 'active'`, `publish_mode 'publish'`, `origin 'pin'`, revision 1);
-/// raises the id counter past the copied id.
+/// raises the `pinned_questions` sequence past the copied id.
 fn import_pin(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Result<Outcome> {
-    let id = row.req_id("id")?;
-    let created_at_us = row.req_ts("created_at")?;
+    let id = need(row, "id", row.i64("id")?)?;
+    let created_at = row.req_ts("created_at")?;
+    // A REAL is kept as the shortest decimal that names the f32, as both SQL engines print it.
+    let cooldown_days = row
+        .f32("cooldown_days")?
+        .map(|x| format!("{x}").parse::<f64>().unwrap_or(f64::from(x)));
     let pin = PinRecord {
         id,
         source_id: row.req("source_id")?,
@@ -82,36 +88,35 @@ fn import_pin(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Result<Outcome
         inactive_reason: row.text("inactive_reason"),
         publish_mode: row.text_or("publish_mode", "publish"),
         model: row.text("model"),
-        cooldown_bits: row.f32("cooldown_days")?.map(f32::to_bits),
+        cooldown_days,
         origin: row.text_or("origin", "pin"),
         created_by: row.req("created_by")?,
         revision: row.i64("revision")?.unwrap_or(1),
         answer_revision: row.i32("answer_revision")?.unwrap_or(0),
         answer: row.text("answer"),
         answer_model: row.text("answer_model"),
-        last_refresh_at_us: row.ts("last_refresh_at")?,
-        last_attempt_at_us: row.ts("last_attempt_at")?,
+        last_refresh_at: row.ts("last_refresh_at")?,
+        last_attempt_at: row.ts("last_attempt_at")?,
         last_error: row.text("last_error"),
         watermark_generation: row.i64("watermark_generation")?,
         watermark_fact_id: row.i64("watermark_fact_id")?,
-        watermark_at_us: row.ts("watermark_at")?,
+        watermark_at: row.ts("watermark_at")?,
         lease_token: row.text("lease_token"),
         lease_owner: row.text("lease_owner"),
-        lease_expires_at_us: row.ts("lease_expires_at")?,
+        lease_expires_at: row.ts("lease_expires_at")?,
         refresh_attempts: row.i32("refresh_attempts")?.unwrap_or(0),
-        spend_bits: row.f64("spend_usd")?.unwrap_or(0.0).to_bits(),
-        created_at_us,
-        updated_at_us: row.ts("updated_at")?.unwrap_or(created_at_us),
-        archived_at_us: row.ts("archived_at")?,
+        spend_usd: row.f64("spend_usd")?.unwrap_or(0.0),
+        created_at,
+        archived_at: row.ts("archived_at")?,
     };
-    let stored = crate::questions::seed_pin(tx, &pin).map_err(|e| {
+    let stored = seed_pinned_question(tx, &pin).map_err(|e| {
         if e.code == crate::error::CONSTRAINT_VIOLATION {
             duplicate("pinned_questions_source_slug_key (source_id, slug)")
         } else {
             e
         }
     })?;
-    raise_counter(tx, NEXT_PIN_ID, id)?;
+    raise_seq(tx, "pinned_questions", id)?;
     Ok(outcome(stored))
 }
 

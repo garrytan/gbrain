@@ -188,7 +188,7 @@ fn remove_rollup(tx: &mut dyn KvWrite, id: &Identity, _: Mode) -> Result<bool> {
 }
 
 fn remove_pin(tx: &mut dyn KvWrite, id: &Identity, _: Mode) -> Result<bool> {
-    crate::questions::remove_pin(tx, need!(id, "id", u64))
+    crate::jobs::remove_pinned_question(tx, need!(id, "id", i64))
 }
 
 fn remove_evidence(tx: &mut dyn KvWrite, id: &Identity, _: Mode) -> Result<bool> {

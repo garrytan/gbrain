@@ -1,5 +1,7 @@
-//! The pinned-question records (gbrain-store `questions`): the pins and their evidence, and the two reads that join
-//! them (src/core/rust-engine/store-members/question-store.ts, rust/docs/store/questions.md).
+//! The pinned-question members beyond main's insert, read and listing: the locked read, the state change, the refresh lease,
+//! spend, the blocked record and the answer publish (on the pin records of gbrain-store `jobs/pinned_questions.rs`), and the
+//! evidence rows with the two reads that join them (gbrain-store `questions`)
+//! (src/core/rust-engine/store-members/question-store.ts, rust/docs/store/questions.md).
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
 
@@ -12,34 +14,16 @@ use crate::store_binding::{Brain, required};
 
 #[napi]
 impl Brain {
-    /// `readPinRow(sourceId, slug, forUpdate)`: resolves the pin's row or null.
+    /// `readPinnedQuestionForUpdate(sourceId, slug)`: resolves the pin's row or null.
     #[napi]
-    pub fn read_pin_row<'env>(
+    pub fn read_pinned_question_for_update<'env>(
         &self,
         env: &'env Env,
         source_id: String,
         slug: String,
-        for_update: bool,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.read_pin_row(&source_id, &slug, for_update))
-    }
-
-    /// `listPinRows(filter)`: resolves the rows by source id, creation time and id.
-    #[napi]
-    pub fn list_pin_rows<'env>(&self, env: &'env Env, filter: Value) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            let filter: gbrain_store::questions::PinFilter =
-                required(filter, "listPinRows filter")?;
-            s.list_pin_rows(&filter)
-        })
-    }
-
-    /// `insertPinRow(pin)`: resolves the new row, or null when the pin exists.
-    #[napi]
-    pub fn insert_pin_row<'env>(&self, env: &'env Env, pin: Value) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let pin: gbrain_store::questions::PinInsert = required(pin, "insertPinRow pin")?;
-            s.insert_pin_row(&pin)
+            s.read_pinned_question_for_update(&source_id, &slug)
         })
     }
 

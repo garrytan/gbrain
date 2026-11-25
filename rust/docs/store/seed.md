@@ -107,7 +107,7 @@ keyset batches in key order. The relations come in groups, each in its own file 
 | `dream_synthesis_completions` | the completion and its time | |
 | `wake_crons`, `wake_cron_runs`, `wake_forgets`, `wake_terms_acceptances` | the row with its id and time, and the pending forget index | a second pending forget of one user is `constraint_violation` |
 | `mcp_request_log_rollup` | the lifetime tally per token | a null token name is the key `''`, as the family keys it |
-| `pinned_questions`, `question_evidence` | the pin with its id, answer, lease, spend and times and its `(source_id, slug)` index; the evidence row under its pin (`questions.md`) | a second pin on a taken `(source_id, slug)` is `constraint_violation`; no source or page is needed (neither table has a foreign key) |
+| `pinned_questions`, `question_evidence` | the pin with its id, answer, lease, spend and times and its `(source_id, slug)` index, in main's records (`m 0x2F` / `m 0x30`); the evidence row under its pin (`~q 0x03`; `questions.md`) | a second pin on a taken `(source_id, slug)` is `constraint_violation`; no source or page is needed (neither table has a foreign key) |
 
 Every id counter and sequence of these families is raised past the highest id copied. A row whose source or page is
 missing is `source_not_found` or `page_not_found`.
@@ -209,7 +209,7 @@ Its Rust family must reach master first. "Branch" is the newest branch with a re
 | `take_purges` | 0 / 1 / 0 | `facts/take_purges.rs` | `rust-engine/page-purge-rust` 4bcab3a4f1 | no |
 | `take_horizons` | 0 / 1 / 0 | `takes/horizons.rs` | `rust-engine/page-purge-rust` 4bcab3a4f1 | no |
 | `guest_sources` | 0 / 1 / 0 | `guest_sources.rs` | `rust-engine/collate-equal` 3a2532707c | no |
-| `pinned_questions` | 0 / 1 / 0 | `questions.rs` (seeded by `seed/questions.rs`) | `rust-engine/refresh-evidence-reads` (no longer a gap there; `question_evidence` is copied with it, no measured brain held a row) | no |
+| `pinned_questions` | 0 / 1 / 0 | `jobs/pinned_questions.rs` (seeded by `seed/questions.rs`) | `rust-engine/refresh-evidence-reads` (no longer a gap there; `question_evidence` is copied with it, no measured brain held a row) | no |
 | `context_volunteer_events` | 0 / 1 / 0 | `volunteer_events.rs` | `rust-engine/collate-equal` 3a2532707c | no |
 
 `page_generation_clock` (1 row on every brain) was a gap in this measurement and is now left behind on purpose (a

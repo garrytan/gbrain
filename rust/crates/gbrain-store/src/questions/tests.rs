@@ -3,8 +3,9 @@
 //! (and its rollback), and the two joined reads over main's pin records and pages.
 
 use super::*;
-use crate::env::Env;
+use crate::env::{Env, iso};
 use crate::error::INVALID_ARGUMENT;
+use crate::jobs::PinInsert;
 use crate::kv::collect_prefix;
 use crate::pages::{PageInput, PutPageOptions, read_page};
 use crate::test_support::store_with_env;
@@ -372,4 +373,3 @@ fn the_join_reads_each_cited_page_and_the_published_answers_cite_the_current_rev
             .is_empty()
     );
 }
-

@@ -1,15 +1,16 @@
 //! The two reads of the pin records: the evidence join of one answer revision (`listQuestionEvidenceJoin`) and the
 //! published answers of a source with the pages each cites (`listPublishedQuestionAnswers`). Both are the statements of
-//! `src/core/engine-sql/question-reads.ts`, read over the store's own records.
+//! `src/core/engine-sql/question-reads.ts`, read over main's pin records (`jobs/pinned_questions.rs`) and the evidence.
 //!
 //! The join reads the generation of each cited page through [`page_generation`], the one place the store's page
 //! generation counter enters.
 
-use super::{PinRecord, all_pins, evidence_of};
+use super::evidence_of;
 use crate::Store;
 use crate::env::iso;
 use crate::error::Result;
 use crate::facts::{FactRecord, float4_out, md5_hex, read_fact};
+use crate::jobs::answered_pins;
 use crate::keys;
 use crate::kv::{KvRead, scan_prefix};
 use crate::pages::{PageRecord, read_page, read_page_by_id};
@@ -241,20 +242,16 @@ impl Store {
     /// answer revision cites.
     pub fn list_published_question_answers(&self, source_id: &str) -> Result<Value> {
         let read = self.read()?;
-        let pins: Vec<PinRecord> = all_pins(&*read)?
-            .into_iter()
-            .filter(|p| p.source_id == source_id && p.answer.is_some())
-            .collect();
         let mut rows = Vec::new();
-        for pin in pins {
-            let cited: Vec<i64> = evidence_of(&*read, pin.id)?
+        for pin in answered_pins(&*read, source_id)? {
+            let cited: Vec<i64> = evidence_of(&*read, pin.id as u64)?
                 .into_iter()
                 .filter(|e| e.answer_revision == pin.answer_revision)
                 .filter_map(|e| e.page_id)
                 .collect();
             rows.push(json!({
                 "answer": pin.answer,
-                "published_at": pin.last_refresh_at_us.map(iso),
+                "published_at": pin.last_refresh_at.map(iso),
                 "cited": cited,
             }));
         }

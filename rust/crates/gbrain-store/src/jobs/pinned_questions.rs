@@ -2,21 +2,28 @@
 //! (rust/docs/store/pinned-questions.md): the idempotent pin insert, the read of one pin and the listing the question
 //! refresh cycle walks.
 //!
-//! Members: insertPinnedQuestion, readPinnedQuestion, listPinnedQuestions.
+//! Members: insertPinnedQuestion, readPinnedQuestion, listPinnedQuestions, and the pin writes of
+//! `src/core/engine-sql/question-store.ts`: readPinnedQuestionForUpdate, lockPinRowForPublish, updatePinRowState,
+//! acquirePinLease, releasePinLease, addPinSpend, recordPinBlocked, publishPinAnswer. The evidence rows
+//! (`question_evidence`) and the two reads that join them to these pins are `questions.rs` (`~q 0x03`).
 //!
 //! Keys, all under `keys::JOBS` (`m`), sub-tags 0x2F and 0x30 (this file only):
 //! - `m 0x2F id -> PinRecord`: one pin, the whole row (30 columns, with the defaults the table gives them), the id the
 //!   `BIGSERIAL` of the `pinned_questions_id` sequence (`m 0x00 pinned_questions`).
 //! - `m 0x30 source_id \0 slug -> id`: the unique `(source_id, slug)` index (`pinned_questions_source_slug_key`).
 //!
-//! Kept: every column the TypeScript row reads. Not kept: `updated_at` (no member reads it) and the secondary index
-//! `pinned_questions_state_idx` (a listing scans the table). The pin's state changes, its refresh lease and its answer
-//! publish stay on the SQL engines (`src/core/questions/store.ts`, `refresh.ts`): a Rust brain serves the insert and the
-//! two reads, so a pin made here is listed here, and the lease and answer writes refuse as raw SQL.
+//! `~q 0x01` and `~q 0x02` (the `questions` family) are reserved and unused: the pin rows live here.
+//!
+//! Kept: every column the TypeScript row reads. Not kept: `updated_at` (no member reads it, so the writes that set it have
+//! nothing to store) and the secondary index `pinned_questions_state_idx` (a listing scans the table). `spend_usd` is a
+//! `DOUBLE PRECISION`: a finite value is stored as the JSON number it always was, NaN and the infinities as their Postgres
+//! text (`float8`), and a record that holds null reads as NaN. `now()` is the store clock at the write; inside a
+//! transaction it is the transaction's clock (`transactions.rs`, "Time").
 
 use super::*;
 use crate::env::iso;
 use crate::links::no_nul;
+use crate::questions::{Float8, PinAnswerPublish, PinStatePatch};
 
 const PIN: u8 = 0x2F;
 const PIN_SLUG: u8 = 0x30;
@@ -39,42 +46,98 @@ fn slug_key(source_id: &str, slug: &str) -> Vec<u8> {
 
 /// One `pinned_questions` row. Times are microseconds.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct PinRecord {
-    id: i64,
-    source_id: String,
-    slug: String,
-    question: String,
-    scope_slug_prefix: Option<String>,
-    scope_entity: Option<String>,
-    state: String,
-    inactive_reason: Option<String>,
-    publish_mode: String,
-    model: Option<String>,
-    cooldown_days: Option<f64>,
-    origin: String,
-    created_by: String,
-    revision: i64,
-    answer_revision: i32,
-    answer: Option<String>,
-    answer_model: Option<String>,
-    last_refresh_at: Option<i64>,
-    last_attempt_at: Option<i64>,
-    last_error: Option<String>,
-    watermark_generation: Option<i64>,
-    watermark_fact_id: Option<i64>,
-    watermark_at: Option<i64>,
-    lease_token: Option<String>,
-    lease_owner: Option<String>,
-    lease_expires_at: Option<i64>,
-    refresh_attempts: i32,
-    spend_usd: f64,
-    created_at: i64,
-    archived_at: Option<i64>,
+pub(crate) struct PinRecord {
+    pub(crate) id: i64,
+    pub(crate) source_id: String,
+    pub(crate) slug: String,
+    pub(crate) question: String,
+    pub(crate) scope_slug_prefix: Option<String>,
+    pub(crate) scope_entity: Option<String>,
+    pub(crate) state: String,
+    pub(crate) inactive_reason: Option<String>,
+    pub(crate) publish_mode: String,
+    pub(crate) model: Option<String>,
+    pub(crate) cooldown_days: Option<f64>,
+    pub(crate) origin: String,
+    pub(crate) created_by: String,
+    pub(crate) revision: i64,
+    pub(crate) answer_revision: i32,
+    pub(crate) answer: Option<String>,
+    pub(crate) answer_model: Option<String>,
+    pub(crate) last_refresh_at: Option<i64>,
+    pub(crate) last_attempt_at: Option<i64>,
+    pub(crate) last_error: Option<String>,
+    pub(crate) watermark_generation: Option<i64>,
+    pub(crate) watermark_fact_id: Option<i64>,
+    pub(crate) watermark_at: Option<i64>,
+    pub(crate) lease_token: Option<String>,
+    pub(crate) lease_owner: Option<String>,
+    pub(crate) lease_expires_at: Option<i64>,
+    pub(crate) refresh_attempts: i32,
+    #[serde(with = "float8")]
+    pub(crate) spend_usd: f64,
+    pub(crate) created_at: i64,
+    pub(crate) archived_at: Option<i64>,
+}
+
+/// `DOUBLE PRECISION` as a JSON value: a finite number is a number (as every record already holds it), NaN and the
+/// infinities their Postgres text; null (a non-finite value an older build wrote as a number) reads as NaN.
+mod float8 {
+    use serde::{Deserialize, Deserializer, Serializer};
+    use serde_json::Value;
+
+    pub fn serialize<S: Serializer>(x: &f64, s: S) -> Result<S::Ok, S::Error> {
+        if x.is_finite() {
+            s.serialize_f64(*x)
+        } else {
+            s.serialize_str(super::non_finite(*x))
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
+        match Value::deserialize(d)? {
+            Value::Number(n) => n
+                .as_f64()
+                .ok_or_else(|| serde::de::Error::custom("a number outside the double range")),
+            Value::Null => Ok(f64::NAN),
+            Value::String(t) => match t.as_str() {
+                "NaN" => Ok(f64::NAN),
+                "Infinity" => Ok(f64::INFINITY),
+                "-Infinity" => Ok(f64::NEG_INFINITY),
+                other => Err(serde::de::Error::custom(format!(
+                    "expected a number, got the text {other:?}"
+                ))),
+            },
+            other => Err(serde::de::Error::custom(format!(
+                "expected a number, got {other}"
+            ))),
+        }
+    }
+}
+
+/// The Postgres text of a non-finite double.
+fn non_finite(x: f64) -> &'static str {
+    if x.is_nan() {
+        "NaN"
+    } else if x > 0.0 {
+        "Infinity"
+    } else {
+        "-Infinity"
+    }
+}
+
+/// A `DOUBLE PRECISION` as a JSON number, or as its Postgres text when it is not finite (a JSON number cannot hold it).
+fn float8_out(x: f64) -> Value {
+    if x.is_finite() {
+        json!(x)
+    } else {
+        json!(non_finite(x))
+    }
 }
 
 impl PinRecord {
     /// The row as `SELECT <columns>` returns it on the SQL engines: times as ISO text.
-    fn to_row(&self) -> Value {
+    pub(crate) fn to_row(&self) -> Value {
         let t = |m: Option<i64>| m.map(iso);
         json!({
             "id": self.id,
@@ -104,7 +167,7 @@ impl PinRecord {
             "lease_owner": self.lease_owner,
             "lease_expires_at": t(self.lease_expires_at),
             "refresh_attempts": self.refresh_attempts,
-            "spend_usd": self.spend_usd,
+            "spend_usd": float8_out(self.spend_usd),
             "created_at": iso(self.created_at),
             "archived_at": t(self.archived_at),
         })
@@ -151,7 +214,7 @@ fn not_null(column: &str) -> StoreError {
     )
 }
 
-fn all_pins(read: &dyn KvRead) -> Result<Vec<PinRecord>> {
+pub(crate) fn all_pins(read: &dyn KvRead) -> Result<Vec<PinRecord>> {
     let mut rows = Vec::new();
     let mut bad = None;
     scan_prefix(read, &prefix(PIN), false, &mut |_, v| {
@@ -280,6 +343,265 @@ impl Store {
         });
         Ok(Value::Array(pins.iter().map(PinRecord::to_row).collect()))
     }
+}
+
+/// The pin `id` names, or `None` for an id that holds no pin.
+fn pin_by_id(read: &dyn KvRead, id: i64) -> Result<Option<PinRecord>> {
+    get_json::<PinRecord>(read, &pin_key(id))
+}
+
+fn put_pin(tx: &mut dyn KvWrite, pin: &PinRecord) -> Result<()> {
+    put_json(tx, &pin_key(pin.id), pin)
+}
+
+/// `now() + ttl * interval '1 millisecond'` in microseconds: the interval rounds to the microsecond, halves to even.
+fn lease_micros(now: i64, ttl_ms: f64) -> Result<i64> {
+    let span = (ttl_ms * 1000.0).round_ties_even();
+    if !span.is_finite() || span.abs() >= 9.0e18 {
+        return Err(StoreError::invalid(
+            "acquirePinLease: ttlMs is outside the interval range",
+        ));
+    }
+    now.checked_add(span as i64)
+        .ok_or_else(|| StoreError::invalid("acquirePinLease: the lease expiry is out of range"))
+}
+
+impl Store {
+    /// `readPinnedQuestionForUpdate(sourceId, slug)`: the row of the pin, or None. The row lock of `SELECT ... FOR UPDATE`
+    /// is the store's one writer, which the caller's transaction already holds, so it reads the same row.
+    pub fn read_pinned_question_for_update(
+        &self,
+        source_id: &str,
+        slug: &str,
+    ) -> Result<Option<Value>> {
+        self.read_pinned_question(source_id, slug)
+    }
+
+    /// `lockPinRowForPublish(id)`: `{ revision, lease_token, state }` of the pin, or None.
+    pub fn lock_pin_row_for_publish(&self, id: i64) -> Result<Option<Value>> {
+        let read = self.read()?;
+        Ok(pin_by_id(&*read, id)?.map(
+            |p| json!({ "revision": p.revision, "lease_token": p.lease_token, "state": p.state }),
+        ))
+    }
+
+    /// `updatePinRowState(id, patch)`: the changed row, or None for an unknown id. Each null field is kept; the revision
+    /// goes up by one; archiving stamps `archived_at` once (`COALESCE(archived_at, now())`) and drops the lease token and
+    /// expiry (the owner stays), any other state clears `archived_at`.
+    pub fn update_pin_row_state(&self, id: i64, patch: &PinStatePatch) -> Result<Option<Value>> {
+        let texts: Vec<(&str, &str)> = [
+            ("state", &patch.state),
+            ("inactive_reason", &patch.inactive_reason),
+            ("publish_mode", &patch.publish_mode),
+        ]
+        .into_iter()
+        .filter_map(|(n, v)| v.as_deref().map(|v| (n, v)))
+        .collect();
+        no_nul("updatePinRowState", &texts)?;
+        let now = self.env.now_micros();
+        self.write(|tx| {
+            let Some(mut pin) = pin_by_id(&*tx, id)? else {
+                return Ok(None);
+            };
+            if let Some(state) = &patch.state {
+                pin.state.clone_from(state);
+            }
+            if patch.set_inactive_reason {
+                pin.inactive_reason.clone_from(&patch.inactive_reason);
+            }
+            if let Some(mode) = &patch.publish_mode {
+                pin.publish_mode.clone_from(mode);
+            }
+            if pin.state == "archived" {
+                pin.archived_at = Some(pin.archived_at.unwrap_or(now));
+                pin.lease_token = None;
+                pin.lease_expires_at = None;
+            } else {
+                pin.archived_at = None;
+            }
+            pin.revision += 1;
+            put_pin(tx, &pin)?;
+            Ok(Some(pin.to_row()))
+        })
+    }
+
+    /// `acquirePinLease(id, token, owner, ttlMs)`: the leased row when the pin is not archived and has no live lease (no
+    /// token, no expiry, or an expiry before now), else None. Sets the token, owner and expiry, stamps `last_attempt_at`
+    /// and counts the attempt.
+    pub fn acquire_pin_lease(
+        &self,
+        id: i64,
+        token: &str,
+        owner: &str,
+        ttl_ms: Float8,
+    ) -> Result<Option<Value>> {
+        no_nul("acquirePinLease", &[("token", token), ("owner", owner)])?;
+        let now = self.env.now_micros();
+        let expires = lease_micros(now, ttl_ms.0)?;
+        self.write(|tx| {
+            let Some(mut pin) = pin_by_id(&*tx, id)? else {
+                return Ok(None);
+            };
+            let free = pin.lease_token.is_none() || pin.lease_expires_at.is_none_or(|e| e < now);
+            if pin.state == "archived" || !free {
+                return Ok(None);
+            }
+            pin.lease_token = Some(token.to_string());
+            pin.lease_owner = Some(owner.to_string());
+            pin.lease_expires_at = Some(expires);
+            pin.last_attempt_at = Some(now);
+            pin.refresh_attempts += 1;
+            put_pin(tx, &pin)?;
+            Ok(Some(pin.to_row()))
+        })
+    }
+
+    /// `releasePinLease(id, token, error, spendUsd)`: drops the lease the token holds, records `error` and adds the spend;
+    /// nothing when another lease (or none) holds the pin.
+    pub fn release_pin_lease(
+        &self,
+        id: i64,
+        token: &str,
+        error: Option<String>,
+        spend_usd: Float8,
+    ) -> Result<()> {
+        no_nul("releasePinLease", &[("token", token)])?;
+        if let Some(e) = error.as_deref() {
+            no_nul("releasePinLease", &[("error", e)])?;
+        }
+        self.write(|tx| {
+            let Some(mut pin) = pin_by_id(&*tx, id)? else {
+                return Ok(());
+            };
+            if pin.lease_token.as_deref() != Some(token) {
+                return Ok(());
+            }
+            pin.lease_token = None;
+            pin.lease_owner = None;
+            pin.lease_expires_at = None;
+            pin.last_error.clone_from(&error);
+            pin.spend_usd += spend_usd.0;
+            put_pin(tx, &pin)
+        })
+    }
+
+    /// `addPinSpend(id, usd)`: adds `usd` to the spend (`double` arithmetic); an unknown pin changes nothing.
+    pub fn add_pin_spend(&self, id: i64, usd: Float8) -> Result<()> {
+        self.write(|tx| {
+            let Some(mut pin) = pin_by_id(&*tx, id)? else {
+                return Ok(());
+            };
+            pin.spend_usd += usd.0;
+            put_pin(tx, &pin)
+        })
+    }
+
+    /// `recordPinBlocked(id, code)`: stamps `last_attempt_at` and `last_error` unless a live lease holds the pin. A token
+    /// with no expiry holds it here (`lease_expires_at < now()` is NULL, not true), unlike the lease statement.
+    pub fn record_pin_blocked(&self, id: i64, code: &str) -> Result<()> {
+        no_nul("recordPinBlocked", &[("code", code)])?;
+        let now = self.env.now_micros();
+        self.write(|tx| {
+            let Some(mut pin) = pin_by_id(&*tx, id)? else {
+                return Ok(());
+            };
+            if pin.lease_token.is_some() && !pin.lease_expires_at.is_some_and(|e| e < now) {
+                return Ok(());
+            }
+            pin.last_attempt_at = Some(now);
+            pin.last_error = Some(code.to_string());
+            put_pin(tx, &pin)
+        })
+    }
+
+    /// `publishPinAnswer(id, publish)`: the answer text, the next answer revision, `last_refresh_at` and `watermark_at`
+    /// now, the watermark, the spend added, the lease dropped and `last_error` cleared.
+    pub fn publish_pin_answer(&self, id: i64, publish: &PinAnswerPublish) -> Result<()> {
+        no_nul(
+            "publishPinAnswer",
+            &[
+                ("answer", &publish.answer),
+                ("answerModel", &publish.answer_model),
+            ],
+        )?;
+        let now = self.env.now_micros();
+        self.write(|tx| {
+            let Some(mut pin) = pin_by_id(&*tx, id)? else {
+                return Ok(());
+            };
+            pin.answer = Some(publish.answer.clone());
+            pin.answer_revision += 1;
+            pin.revision += 1;
+            pin.answer_model = Some(publish.answer_model.clone());
+            pin.last_refresh_at = Some(now);
+            pin.last_error = None;
+            pin.watermark_generation = Some(publish.watermark_generation);
+            pin.watermark_fact_id = Some(publish.watermark_fact_id);
+            pin.watermark_at = Some(now);
+            pin.lease_token = None;
+            pin.lease_owner = None;
+            pin.lease_expires_at = None;
+            pin.spend_usd += publish.spend_usd.0;
+            put_pin(tx, &pin)
+        })
+    }
+}
+
+/// The shadow seed: stores a pin copied from another engine with its own id and times. `false` when the id already holds
+/// a row; a different pin on the same `(source_id, slug)` is the unique-index error. The caller raises the sequence.
+pub(crate) fn seed_pin(tx: &mut dyn KvWrite, pin: &PinRecord) -> Result<bool> {
+    if pin_by_id(&*tx, pin.id)?.is_some() {
+        return Ok(false);
+    }
+    if tx.get(&slug_key(&pin.source_id, &pin.slug))?.is_some() {
+        return Err(StoreError::new(
+            CONSTRAINT_VIOLATION,
+            "duplicate key value violates unique constraint \"pinned_questions_source_slug_key\"",
+        ));
+    }
+    put_pin(tx, pin)?;
+    put_json(tx, &slug_key(&pin.source_id, &pin.slug), &pin.id)?;
+    Ok(true)
+}
+
+/// The shadow follow: removes pin `id` and its `(source_id, slug)` key (when that key still names it). The evidence rows
+/// stay: `question_evidence` has no foreign key, and the follow removes them as their own relation. `false` when there
+/// is no such pin.
+pub(crate) fn remove_pin(tx: &mut dyn KvWrite, id: i64) -> Result<bool> {
+    let Some(old) = pin_by_id(&*tx, id)? else {
+        return Ok(false);
+    };
+    let slug = slug_key(&old.source_id, &old.slug);
+    if get_json::<i64>(&*tx, &slug)? == Some(id) {
+        tx.delete(&slug)?;
+    }
+    tx.delete(&pin_key(id))?;
+    Ok(true)
+}
+
+/// A pin of `source_id` that holds an answer, as `listPublishedQuestionAnswers` reads it: the pin id, its answer revision,
+/// the answer text and when it was last refreshed (microseconds).
+pub(crate) struct AnsweredPin {
+    pub(crate) id: i64,
+    pub(crate) answer_revision: i32,
+    pub(crate) answer: String,
+    pub(crate) last_refresh_at: Option<i64>,
+}
+
+/// The pins of `source_id` that hold an answer, by id.
+pub(crate) fn answered_pins(read: &dyn KvRead, source_id: &str) -> Result<Vec<AnsweredPin>> {
+    Ok(all_pins(read)?
+        .into_iter()
+        .filter(|p| p.source_id == source_id)
+        .filter_map(|p| {
+            Some(AnsweredPin {
+                id: p.id,
+                answer_revision: p.answer_revision,
+                answer: p.answer?,
+                last_refresh_at: p.last_refresh_at,
+            })
+        })
+        .collect())
 }
 
 /// The `pinned_questions` rows a purge probe searches (`countPurgeProbe`, src/core/deletion-inventory.ts): every text

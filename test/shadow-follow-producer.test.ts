@@ -308,7 +308,7 @@ describe('raw SQL write targets', () => {
 describe('the pinned-question writes name their rows', () => {
   const plan = (member: string, args: unknown[]) => WRITE_MAP[member]!.plan!(args);
   test('pins by id or (source_id, slug), evidence by question_id, the delete marked', () => {
-    expect(plan('insertPinRow', [{ sourceId: 'default', slug: 'questions/a' }])).toEqual([{ relation: 'pinned_questions', sel: { source_id: 'default', slug: 'questions/a' } }]);
+    expect(plan('insertPinnedQuestion', [{ sourceId: 'default', slug: 'questions/a' }])).toEqual([{ relation: 'pinned_questions', sel: { source_id: 'default', slug: 'questions/a' } }]);
     for (const member of ['updatePinRowState', 'acquirePinLease', 'releasePinLease', 'addPinSpend', 'recordPinBlocked', 'publishPinAnswer']) {
       expect(plan(member, [7])).toEqual([{ relation: 'pinned_questions', sel: { id: '7' } }]);
     }
@@ -316,7 +316,7 @@ describe('the pinned-question writes name their rows', () => {
     expect(plan('insertQuestionEvidence', [[{ questionId: 7 }, { questionId: 7 }]]))
       .toEqual(Array(2).fill({ relation: 'question_evidence', sel: { question_id: '7' } }));
     expect(memberKind('lockPinRowForPublish')).toBe('read_name');
-    expect(['readPinRow', 'listPinRows'].map(memberKind)).toEqual(['read_name', 'read_name']);
+    expect(['readPinnedQuestion', 'readPinnedQuestionForUpdate', 'listPinnedQuestions'].map(memberKind)).toEqual(['read_name', 'read_name', 'read_name']);
   });
 });
 

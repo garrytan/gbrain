@@ -68,7 +68,7 @@ fn pins_keep_their_ids_columns_and_the_defaults_of_a_null() {
     assert_eq!((r.imported, r.skipped, r.dropped), (2, 0, 0));
     assert!(r.losses.is_empty() && r.unmapped_columns.is_empty());
     let a = s
-        .read_pin_row("default", "questions/a", false)
+        .read_pinned_question("default", "questions/a")
         .unwrap()
         .unwrap();
     assert_eq!(a["id"], 31);
@@ -89,7 +89,7 @@ fn pins_keep_their_ids_columns_and_the_defaults_of_a_null() {
     assert_eq!(a["lease_token"], "tok");
     assert_eq!(a["archived_at"], "2026-03-04T00:00:00.000000Z");
     let w = s
-        .read_pin_row("work", "questions/a", false)
+        .read_pinned_question("work", "questions/a")
         .unwrap()
         .unwrap();
     assert_eq!(
@@ -116,8 +116,12 @@ fn pins_keep_their_ids_columns_and_the_defaults_of_a_null() {
         vec![pin("31", "default", "questions/a")],
     );
     assert_eq!((again.imported, again.skipped), (0, 1));
-    assert_eq!(crate::jobs::read_seq(&*s.read().unwrap(), "pinned_questions").unwrap(), 32);
-    let pins = crate::kv::collect_prefix(&*s.read().unwrap(), &[keys::JOBS, 0x2F], false, 10).unwrap();
+    assert_eq!(
+        crate::jobs::read_seq(&*s.read().unwrap(), "pinned_questions").unwrap(),
+        32
+    );
+    let pins =
+        crate::kv::collect_prefix(&*s.read().unwrap(), &[keys::JOBS, 0x2F], false, 10).unwrap();
     assert_eq!(pins.len(), 2, "the pins are main's records");
     let next = s
         .insert_pinned_question(&crate::jobs::PinInsert {
