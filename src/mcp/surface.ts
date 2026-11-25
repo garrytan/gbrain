@@ -285,6 +285,7 @@ export const STARTER_CALLABLE_PARAMS: Readonly<Record<string, Readonly<Record<st
     visibility: 'Already accepted per item in items, which starter lists; the segmented-entity refusal and the connection check pass it.',
     infer_entity: 'false only turns entity inference off; the segmented-entity refusal\'s retry names it.',
     valid_from: 'Already accepted per item in items; it only dates the fact being written, to the same source under the same grant, and reads nothing.',
+    facet: 'The brain-ops skill and docs/guides/profile.md name it; it only labels a fact for the caller\'s own profile, and the profile checks refuse any other page.',
   },
   recall: {
     grep: 'A substring filter that only narrows the facts returned; gbrain\'s connection check passes it.',
@@ -304,7 +305,10 @@ export const STARTER_CALLABLE_PARAMS: Readonly<Record<string, Readonly<Record<st
     allowed_slug_prefixes: 'Only narrows the grant\'s delegated write fence: a prefix outside delegated_slug_prefixes, or any override of a job namespace, is refused.',
   },
   entity: { source_id: THIN_SOURCE, prefer_source_id: THIN_SOURCE },
-  context_pack: { source_id: THIN_SOURCE, prefer_source_id: THIN_SOURCE },
+  context_pack: {
+    source_id: THIN_SOURCE, prefer_source_id: THIN_SOURCE,
+    profile: 'The brain-ops skill names it and gbrain profile on a thin client sends it; it adds only the caller\'s own profile, read at the caller\'s scope.',
+  },
   list_skills: { schema_version: SKILL, cursor: SKILL, source_id: SKILL },
   get_skill: { schema_version: SKILL, qualified_id: SKILL, expected_brain_id: SKILL, source_incarnation: SKILL, pack_id: SKILL, revision: SKILL },
   get_skill_asset: { source_incarnation: SKILL, pack_id: SKILL, qualified_id: SKILL, expected_brain_id: SKILL },
