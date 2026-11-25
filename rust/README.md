@@ -127,7 +127,7 @@ Rules for every method:
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
 | `new Brain(pool)` | the handle, closed | `PGLiteEngine` constructor |
-| `brain.open(path, options?)` | `{ brain_id, format_version, schema_version, created }` | `connect` and `initSchema` |
+| `brain.open(path, options?)` | `{ brain_id, format_version, schema_version, created, serialized_transactions }` | `connect` and `initSchema` |
 | `brain.close()` | `undefined`; a closed handle is a no-op | `disconnect` |
 | `brain.info()` | the same record as `open` | `readBrainIdentity` (`persistence/identity.ts`) |
 | `brain.isOpen` | `boolean` (a getter, not a promise) | none |
@@ -135,12 +135,13 @@ Rules for every method:
 
 `options` is `{ schemaVersion?: number, createdBy?: string, concurrentWrites?: boolean,
 embeddingModel?: string, embeddingDimensions?: number, chunkStrategy?: string,
-writeGateDetectorVersion?: number }`. `schemaVersion` is what a fresh brain stores as config
+writeGateDetectorVersion?: number, withholdSerializedTransactions?: boolean }`. `schemaVersion` is what a fresh brain stores as config
 `version`; pass `LATEST_SCHEMA_VERSION`. `embeddingModel`, `embeddingDimensions` and `chunkStrategy`
 are config entries a fresh brain records ([docs/store/config.md](docs/store/config.md));
 `writeGateDetectorVersion` is the detector version of the write gate's scan baseline;
 `concurrentWrites` lets many write transactions run at once (off unless true or
-`GBRAIN_RUST_CONCURRENT_WRITES=1`). `close` waits for calls already running, then gives up the lock.
+`GBRAIN_RUST_CONCURRENT_WRITES=1`). `withholdSerializedTransactions` is a test seam: the store opens without promising
+`serialized_transactions`, so every lock skip refuses (off unless true). `close` waits for calls already running, then gives up the lock.
 
 ### Methods by family
 
