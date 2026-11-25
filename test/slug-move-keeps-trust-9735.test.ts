@@ -50,10 +50,6 @@ const UPDATE_SLUG_CALLERS = [
   'src/core/repair/frontmatter.ts',
   'src/core/repair/rename-identity.ts',
   'src/core/repair/slug-spelling.ts',
-  // The Rust engine's own updateSlug member, which calls the native store. The Rust store keeps no trust tier yet
-  // (rust/crates/gbrain-store/src/trust.rs is unbuilt), so its move cannot change one; when it gains tiers, its move
-  // must keep them the way engine-sql/pages.ts does.
-  'src/core/rust-engine/store-members/aliases.ts',
   'src/core/schema-migrations/v002-slugify-existing-pages.ts',
 ];
 
