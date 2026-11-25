@@ -513,16 +513,23 @@ impl Store {
         let fence = spec.fence.as_ref();
         self.write(|tx| {
             fence::begin(self, tx, fence, "settle_effect")?;
-            let id = effect_id(&spec.id)?.to_string();
             let no_recovery = !matches!(action, Settle::Retry | Settle::RetryBusy);
-            if fence.is_some()
+            // The id and the token are cast after the payload, as Postgres binds them and as this member always has
+            // (a malformed id with a missing payload says the payload is missing). So the fence's claim check runs
+            // only on an id and token that parse; any other call goes on to `settle_effect_in`, which refuses them
+            // in its own order. With no fence nothing here reads the id before `settle_effect_in` does.
+            if let Some(fence) = fence
+                && let Ok(id) = effect_id(&spec.id)
+                && spec.token.as_deref().is_none_or(|t| pg_uuid(t).is_ok())
                 && claimed(&*tx, &spec.id, spec.token.as_deref(), no_recovery)?.is_some()
             {
-                fence::claim_held(tx, CLAIM_EFFECT, &id, fence)?;
+                fence::claim_held(tx, CLAIM_EFFECT, &id.to_string(), Some(fence))?;
             }
             let settled = settle_effect_in(tx, &*self.env, action, spec)?;
-            // Every settle but a renewal ends the claim (it releases the execution token).
+            // Every settle but a renewal ends the claim (it releases the execution token). A settle that matched
+            // a claim parsed its id.
             if settled && action != Settle::Renew {
+                let id = effect_id(&spec.id)?.to_string();
                 fence::claim_ended(self, tx, CLAIM_EFFECT, &id, fence)?;
             }
             Ok(settled)
