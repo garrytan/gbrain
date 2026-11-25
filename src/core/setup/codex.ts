@@ -165,11 +165,11 @@ const writeReceipt = (path: string, receipt: CodexSetupReceipt) => atomicWriteTe
 function graceOwnedElsewhere(receiptPath: string): boolean {
   const dir = dirname(receiptPath);
   let names: string[];
-  try { names = readdirSync(dir); } catch { return false; }
+  try { names = readdirSync(dir); } catch { return false; } // silent-read-ok: no readable receipt dir means no sibling install can claim the key
   return names.some((f) => {
     if (!f.startsWith('.gbrain-connection-codex-') || !f.endsWith('.json') || join(dir, f) === receiptPath) return false;
     try { const r = JSON.parse(readFileSync(join(dir, f), 'utf8')) as Partial<CodexSetupReceipt>; return r.startup_grace === 'written' && r.status !== 'removed'; }
-    catch { return false; }
+    catch { return false; } // silent-read-ok: an unreadable or malformed sibling receipt records no claim on the key
   });
 }
 
