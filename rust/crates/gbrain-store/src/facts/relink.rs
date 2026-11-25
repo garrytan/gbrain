@@ -222,7 +222,8 @@ impl<'a> Memos<'a> {
 
     /// `conversationTriedSql`: the row's attempt has outcome `conversation_unresolved`, and it is
     /// not the case that its reason is a re-armed one and a live page of the source was created
-    /// after the attempt. A NULL reason makes `reason IN (...)` NULL, so a newer page leaves the
+    /// at or after the attempt (`>=`: a page in the attempt's clock tick re-arms it, as on the SQL
+    /// engines). A NULL reason makes `reason IN (...)` NULL, so a newer page leaves the
     /// `NOT (...)` NULL (not tried) and no newer page leaves it true (tried).
     pub(super) fn tried(&mut self, row: &FactRecord) -> Result<bool> {
         let Some(a) = self.attempt(row)? else {
@@ -233,7 +234,7 @@ impl<'a> Memos<'a> {
         }
         let newer = self
             .newest_live_page(&row.source_id)?
-            .is_some_and(|at| at > a.attempted_at_us);
+            .is_some_and(|at| at >= a.attempted_at_us);
         let rearmed = a.reason.as_deref().map(|r| self.rearmed.contains(r));
         Ok(!(newer && rearmed != Some(false)))
     }
