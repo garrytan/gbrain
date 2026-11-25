@@ -14,7 +14,7 @@ import { ShadowFollower } from './follower.ts';
 import { openReadSource, type ReadSource } from './read-pool.ts';
 import { Reconciler } from './reconcile.ts';
 import { createLsnWatch, makeAskHandler, type LsnWatch } from './checks.ts';
-import { epochWatch } from './evidence-epoch.ts';
+import { epochWatch, readEpoch } from './evidence-epoch.ts';
 import { hasCapability } from '../core/engine-capabilities.ts';
 import { readSeedRecord } from './seed.ts';
 import { MirrorQueue, zeroUsage } from './mirror.ts';
@@ -24,6 +24,7 @@ import { ShadowSupervisor, type ShadowSupervisorOptions } from './supervisor.ts'
 import { appendUsage } from './usage.ts';
 import { wrapShadowEngine } from './wrapper.ts';
 import { createWriteSampler } from './write-capture.ts';
+import { WriteTally } from './write-compare.ts';
 import { WriterObserver, type WriterIdentity } from './writer-observations.ts';
 import { ensureWriterHooks, primaryTakesWriterHooks } from './writer-hooks.ts';
 import { claimOwner } from '../core/persistence/claim-phase.ts';
@@ -131,7 +132,9 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
       if (supervisor.active() && supervisor.childPid !== null) queue.flushStats();
       // Let the follower finish reading what was just committed; a slow read is shed rather than waited on.
       if (follower) await Promise.race([follower.settle(), new Promise((resolve) => { setTimeout(resolve, 2_000).unref?.(); })]);
+      await writes?.settle(2_000); // a read-back still running then is counted uncomparable (`readback_abandoned`), not lost
     } finally {
+      lostSamples?.save(); // a count the tally could not take earlier is tried once more
       clearInterval(usageTimer);
       flushUsage();
       reconciler?.stop();
@@ -144,7 +147,9 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
   const onCommittedWrite = () => observer.note();
   // Write comparisons need the seeded store's epoch to count under (a brain that was never seeded samples no writes), a recorder for their outcomes (the child's locked tally) and a read the
   // serving process can bound: Postgres stops it with a server-side statement timeout; PGLite has one connection and a running statement cannot be cancelled, so a PGLite brain samples no writes.
-  const writes = reads && deps.recordsWriteComparisons && hasCapability(engine, 'postgres_admin') ? createWriteSampler({ rate: writeSampleRate(state), random: deps.random, send: (line) => supervisor.send(line), generation: () => follower?.published, active: () => supervisor.active() }) : undefined;
+  // A sample the pipe refuses, or a read-back left running at disconnect, never reaches the child, so this process counts it itself: `uncomparable`, straight into the tally (the same locked delta update the child uses), under the epoch current at that moment.
+  const lostSamples = reads && deps.recordsWriteComparisons && hasCapability(engine, 'postgres_admin') ? new WriteTally(dir, () => readEpoch(dir)?.epoch_id ?? null) : undefined;
+  const writes = lostSamples ? createWriteSampler({ rate: writeSampleRate(state), random: deps.random, send: (line) => supervisor.send(line), generation: () => follower?.published, active: () => supervisor.active(), lost: (reason) => lostSamples.note('uncomparable', reason) }) : undefined;
   return { engine: wrapShadowEngine(engine, sink, { sampleRate: state.sample_rate, random: deps.random, follow, onCommittedWrite, writes }), queue, supervisor, follower, reconciler, observer, lsnWatch: watch };
 }
 

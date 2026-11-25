@@ -83,11 +83,11 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
   const primary = ctx.primary;
   const addonOf = (): RustAddon => ctx.addon!();
   /** The primary behind the write sampler at rate 1; `inbox` holds what a serving process would send the child. */
-  function rig(opts: { send?: (line: string) => boolean; preimageTimeoutMs?: number } = {}) {
+  function rig(opts: { send?: (line: string) => boolean; preimageTimeoutMs?: number; lost?: (reason: string) => void } = {}) {
     const inbox: WriteEvent[] = [];
-    const sampler = createWriteSampler({ rate: 1, send: opts.send ?? ((line) => { inbox.push(JSON.parse(line)); return true; }), active: () => true, preimageTimeoutMs: opts.preimageTimeoutMs });
+    const sampler = createWriteSampler({ rate: 1, send: opts.send ?? ((line) => { inbox.push(JSON.parse(line)); return true; }), active: () => true, preimageTimeoutMs: opts.preimageTimeoutMs, lost: opts.lost });
     const sink = { counters: newMirrorCounters(), offer: () => {}, active: () => true };
-    return { inbox, wrapped: wrapShadowEngine(primary(), sink, { sampleRate: 0, writes: sampler }) };
+    return { inbox, sampler, wrapped: wrapShadowEngine(primary(), sink, { sampleRate: 0, writes: sampler }) };
   }
   const tallyOf = async (events: WriteEvent[], over?: Parameters<typeof fakeComparer>[1]) => {
     const comparer = fakeComparer(ctx.tempDir(), over);
@@ -301,6 +301,43 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       const events = lines.map((l) => JSON.parse(l) as WriteEvent);
       expect(events[0]!.dropped).toBe(2);
       expect(await tallyOf(events.map((e) => ({ ...e, outcome: 'uncomparable', reason: 'x' })))).toMatchObject({ comparable: 0, uncomparable: 3, uncomparable_by_reason: { send_shed: 2, x: 1 } });
+    }, 60_000);
+  });
+
+  describe('a sample that cannot reach the child is counted by the serving process (never lost)', () => {
+    test('a refused send is reported as send_shed once, and the next line carries no dropped count (it would count twice)', async () => {
+      let refuse = 1;
+      const lost: string[] = []; const lines: string[] = [];
+      const { wrapped } = rig({ send: (line) => { if (refuse-- > 0) return false; lines.push(line); return true; }, lost: (reason) => lost.push(reason) });
+      await ctx.reset();
+      await wrapped.putPage('people/one-example', page('One Example'));
+      await wrapped.putPage('people/two-example', page('Two Example'));
+      await until(() => lines.length >= 1);
+      expect(lost).toEqual(['send_shed']);
+      expect(JSON.parse(lines[0]!).dropped).toBeUndefined();
+    }, 60_000);
+
+    test('a read-back still running at disconnect is counted readback_abandoned once, and sends nothing when it ends late', async () => {
+      if (ctx.kind !== 'postgres') return; // PGLite samples no write
+      const lost: string[] = []; const lines: string[] = [];
+      const { wrapped, sampler } = rig({ send: (line) => { lines.push(line); return true; }, lost: (reason) => lost.push(reason) });
+      await ctx.reset();
+      const real = primary().transaction.bind(primary()) as (fn: unknown, opts?: unknown) => Promise<unknown>;
+      let calls = 0; let armed = false; let release = (): void => {};
+      const stuck = new Promise<void>((resolve) => { release = resolve; });
+      // Once the write itself is done, the data fence after the read-back (a transaction) waits until released.
+      const spy = spyOn(primary(), 'transaction').mockImplementation(((fn: unknown, opts?: unknown) => (armed ? (calls++, stuck.then(() => real(fn, opts))) : real(fn, opts))) as never);
+      try {
+        await wrapped.putPage('people/abandon-example', page('Abandon Example'));
+        armed = true;
+        await until(() => calls >= 1);
+        await sampler.settle(100);
+        expect(lost).toEqual(['readback_abandoned']);
+        release();
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        expect(lines).toHaveLength(0); // counted once, here: never also sent
+        expect(lost).toEqual(['readback_abandoned']);
+      } finally { release(); spy.mockRestore(); }
     }, 60_000);
   });
 

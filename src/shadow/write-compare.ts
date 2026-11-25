@@ -212,6 +212,8 @@ export class WriteTally {
   begin(): boolean { return this.update((file) => { if (!file.in_flight.includes(this.pid)) file.in_flight.push(this.pid); }); }
   /** At child start: counts the marks of dead processes (and of an earlier process with this pid), and saves any verdict still unsaved. */
   recover(): void { this.update(undefined, true); }
+  /** One more try to save batches an earlier save could not take (true when nothing is left unsaved). */
+  save(): boolean { return this.update(); }
   /** Counts one outcome; `ends` is a replay's own verdict, which removes its mark. */
   note(outcome: WriteOutcome, key?: string, n = 1, ends = false): void {
     const epoch = this.epoch();

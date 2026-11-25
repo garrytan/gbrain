@@ -27,10 +27,16 @@ export interface WriteSamplerOptions {
   /** The serving process's write count (follower.published): a move beyond the sampled write's own marks the sample `moved`. */
   generation?: () => number | undefined;
   active: () => boolean;
+  /** Counts a sample that will never reach the child (`send_shed`, `readback_abandoned`) as uncomparable, straight into the tally. Without it the count rides on the next accepted line. */
+  lost?: (reason: string) => void;
   /** How long the preimage read may hold a write; default PREIMAGE_TIMEOUT_MS (a seam for tests). */
   preimageTimeoutMs?: number;
 }
-export interface WriteSampler { wrap(name: string, fn: Function, ctx: { engine: any; inTransaction: boolean; mayWrite: (name: string, args: unknown[]) => boolean }): Function }
+export interface WriteSampler {
+  wrap(name: string, fn: Function, ctx: { engine: any; inTransaction: boolean; mayWrite: (name: string, args: unknown[]) => boolean }): Function;
+  /** At disconnect: waits up to `ms` for the read-backs still running; any left are counted `readback_abandoned` and send nothing later. */
+  settle(ms: number): Promise<void>;
+}
 
 type Row = Record<string, string | null>;
 const strings = (rows: Row[], key: string): string[] => [...new Set(rows.map((r) => r[key]).filter((v): v is string => typeof v === 'string'))];
@@ -102,11 +108,21 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
     try {
       let line = JSON.stringify({ ...event, ...(dropped ? { dropped } : {}) }) + '\n';
       if (Buffer.byteLength(line) > MAX_SAMPLE_BYTES) line = JSON.stringify({ t: 'write', op: event.op, outcome: 'uncomparable', reason: 'sample_too_large', ...(dropped ? { dropped } : {}) }) + '\n';
-      if (o.send(line)) dropped = 0; else dropped++;
+      if (o.send(line)) dropped = 0; else if (o.lost) o.lost('send_shed'); else dropped++;
     } catch { /* the shadow never fails a write */ }
   };
   const uncomparable = (op: string, reason: string): void => send({ t: 'write', op, outcome: 'uncomparable', reason });
+  /** Read-backs still running; `abandoned` is set when settle() has counted one, so it sends nothing later (a sample is counted once). */
+  const reading = new Set<{ abandoned: boolean; done: Promise<void> }>();
   return {
+    async settle(ms) {
+      const idle = Promise.all([...reading].map((r) => r.done));
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([idle, new Promise((resolve) => { timer = setTimeout(resolve, ms); })]);
+      clearTimeout(timer);
+      for (const r of reading) { r.abandoned = true; try { o.lost?.('readback_abandoned'); } catch { /* the shadow never fails a write */ } }
+      reading.clear();
+    },
     wrap(name, fn, ctx) {
       const kind = memberKind(name);
       if (kind !== 'mapped' && kind !== 'unmapped' && kind !== 'raw') return fn;
@@ -134,16 +150,18 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
           let result: unknown;
           try { result = await run(); } catch (error) { uncomparable(name, 'primary_write_failed'); throw error; }
           // Off the request path, and nothing in it may escape: an encode that throws (a segmented page's body getters) is one more uncomparable sample.
-          void (async () => {
+          const sample = { abandoned: false, done: Promise.resolve() };
+          sample.done = (async () => {
             try {
               const back = await readBack(ctx.engine, targets, pageSet(targets, pre));
               const after = o.generation?.();
               let moved = before !== undefined && after !== undefined && after - before > 1;
               // A brain other processes can write (not PGLite, whose single-writer file lock rules them out) needs the data fence (write-compare.ts).
               if (!moved && hasCapability(ctx.engine, 'postgres_admin')) moved = await fenced(ctx.engine, name, args, targets, pre, result, back);
-              send({ t: 'write', op: name, args: encoded, pre, post: encodeValue(back), moved });
-            } catch { uncomparable(name, 'readback_failed'); }
+              if (!sample.abandoned) send({ t: 'write', op: name, args: encoded, pre, post: encodeValue(back), moved });
+            } catch { if (!sample.abandoned) uncomparable(name, 'readback_failed'); }
           })();
+          reading.add(sample); void sample.done.finally(() => reading.delete(sample));
           return result;
         })();
       };
