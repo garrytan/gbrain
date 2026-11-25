@@ -169,6 +169,71 @@ describe('managed mode on a Rust brain, hold kept for users', () => {
     return out;
   }));
 
+  parityTest('a coalesced Git claim takes only ready single-file effects of its worktree, oldest first, up to its limit, once', {
+    methods: ['worktreeClaimStore', 'insertWriteRequest', 'insertPublicationEffects', 'claimCoalescedGitEffects'],
+    timeout: 120_000,
+  }, async (engine, backend) => withManagedCheckout(engine, backend, {}, async () => {
+    const host = hostIdFor(engine);
+    const binding = (await engine.getWorktreeBinding('work', host))!;
+    const source = (await engine.readSourceMembership('work'))!;
+    const KEYS = ['brain'];
+    // One journal row per effect batch; the consumer is never started, so nothing else claims them.
+    const request = async (n: number) => {
+      await engine.lockPersistenceCounters(KEYS);
+      const { id } = await engine.insertWriteRequest({ principalKind: 'local_cli', principalId: 'parity-writer', requestId: `d0000000-0000-4000-8000-00000000000${n}`,
+        operation: 'put_page', sourceId: 'work', sourceIncarnation: source.incarnation, pageId: null, slug: `notes/n${n}`, worktreeId: binding.worktree_id,
+        topologyGeneration: null, digest: String(n).repeat(64), intent: { kind: 'put_page' }, authority: { scopes: ['write'] }, intentBytes: 10,
+        terminalReservation: 4096, targetKind: 'page', protocolVersion: 1, admitterVersion: 'parity', admitterHostId: host, counterKeys: KEYS,
+        clientRequestId: null, state: 'queued', deferredRefreshId: null });
+      return id;
+    };
+    const effect = (path: string, extra: Record<string, unknown> = {}) => ({ kind: 'git', data: { relative_path: path, slug: path.replace(/\.md$/, ''), ...extra } });
+    const seeded = [] as string[];
+    for (const [n, effects] of [[1, [effect('notes/a.md')]], [2, [effect('notes/b.md')]], [3, [effect('notes/c.md', { source_scan: true })]],
+      [4, [effect('notes/d.md', { version: 2 })]], [5, [effect('notes/e.md')]]] as const) {
+      seeded.push(...await engine.insertPublicationEffects({ requestId: await request(n), revision: null, sourceId: 'work', sourceIncarnation: source.incarnation,
+        worktreeId: binding.worktree_id, effects }));
+    }
+    const owner = JSON.stringify({ pid: 1, nonce: 'parity', start: 'parity' });
+    const shape = (rows: Record<string, unknown>[]) => rows.map(row => ({ path: (row.data as { relative_path: string }).relative_path, state: row.state,
+      attempts: Number(row.attempts), token: typeof row.execution_token === 'string', owner: (row.claim_owner as { owner?: unknown } | null)?.owner ?? null,
+      stamped: (row.claim_owner as { token?: unknown } | null)?.token === row.execution_token, lease: row.claim_expires_at != null }))
+      .sort((a, b) => a.path < b.path ? -1 : 1);
+    const first = await engine.claimCoalescedGitEffects<Record<string, unknown>>({ hostId: host, worktreeId: binding.worktree_id, limit: 2, deadOwners: [], ownerJson: owner });
+    const second = await engine.claimCoalescedGitEffects<Record<string, unknown>>({ hostId: host, worktreeId: binding.worktree_id, limit: 5, deadOwners: [], ownerJson: owner });
+    const third = await engine.claimCoalescedGitEffects<Record<string, unknown>>({ hostId: host, worktreeId: binding.worktree_id, limit: 5, deadOwners: [], ownerJson: owner });
+    const otherHost = await engine.claimCoalescedGitEffects<Record<string, unknown>>({ hostId: 'e0000000-0000-4000-8000-0000000000e9', worktreeId: binding.worktree_id,
+      limit: 5, deadOwners: [], ownerJson: owner });
+    const tokens = [...first, ...second].map(row => row.execution_token);
+    const out = { seeded: seeded.length, first: shape(first), second: shape(second), third: third.length, otherHost: otherHost.length,
+      distinctTokens: new Set(tokens).size === tokens.length };
+    const claimed = (path: string) => ({ path, state: 'running', attempts: 1, token: true, owner: { pid: 1, nonce: 'parity', start: 'parity' }, stamped: true, lease: true });
+    expect(out).toEqual({ seeded: 5, first: [claimed('notes/a.md'), claimed('notes/b.md')], second: [claimed('notes/e.md')], third: 0, otherHost: 0, distinctTokens: true });
+    return out;
+  }));
+
+  parityTest('a lifecycle change waits for a publication in flight on its worktree: write_pending, nothing changed', {
+    methods: ['worktreeClaimStore', 'insertWriteRequest', 'stampWriteClaim', 'readSourceMembership'],
+    timeout: 120_000,
+  }, async (engine, backend) => withManagedCheckout(engine, backend, { activate: true }, async () => {
+    const host = hostIdFor(engine);
+    const binding = (await engine.getWorktreeBinding('work', host))!;
+    const source = (await engine.readSourceMembership('work'))!;
+    await engine.lockPersistenceCounters(['brain']);
+    const { id: inFlight } = await engine.insertWriteRequest({ principalKind: 'local_cli', principalId: 'parity-writer', requestId: 'd0000000-0000-4000-8000-0000000000f1',
+      operation: 'put_page', sourceId: 'work', sourceIncarnation: source.incarnation, pageId: null, slug: 'notes/in-flight', worktreeId: binding.worktree_id,
+      topologyGeneration: null, digest: 'f'.repeat(64), intent: { kind: 'put_page' }, authority: { scopes: ['write'] }, intentBytes: 10,
+      terminalReservation: 4096, targetKind: 'page', protocolVersion: 1, admitterVersion: 'parity', admitterHostId: host, counterKeys: ['brain'],
+      clientRequestId: null, state: 'queued', deferredRefreshId: null });
+    // A claimed request is a publication in flight (running under a live claim).
+    expect((await engine.stampWriteClaim(inFlight, 'c0000000-0000-4000-8000-0000000000c9', 60_000, JSON.stringify({ phase: 'parity' })))?.state).toBe('running');
+    const archive = await codeOf(() => runManagedSourceLifecycle(engine, { operation: 'archive', sourceId: 'work' }));
+    const after = await engine.readSourceMembership('work');
+    const out = { archive, archived: after?.archived ?? null, incarnation: after?.incarnation === source.incarnation };
+    expect(out).toEqual({ archive: 'write_pending', archived: false, incarnation: true });
+    return out;
+  }));
+
   parityTest('a refusal at publication ends the bound write failed through recovery: no page, no file', {
     methods: ['worktreeClaimStore', 'readWriteRequest', 'getPage'],
     timeout: 120_000,
@@ -278,13 +343,4 @@ describe('managed mode on a Rust brain, hold kept for users', () => {
     return out;
   }));
 
-  parityTest('a lifecycle change of the claimed source itself refuses while managed writes are pending, by code', {
-    methods: ['worktreeClaimStore'],
-    timeout: 120_000,
-  }, async (engine, backend) => withManagedCheckout(engine, backend, { activate: true }, async () => {
-    // The default source can never be removed: a refusal that needs no topology lock, the same on every engine.
-    const out = { removeDefault: await codeOf(() => runManagedSourceLifecycle(engine, { operation: 'remove', sourceId: 'default', confirmDestructive: true })) };
-    expect(out).toEqual({ removeDefault: 'invalid_params' });
-    return out;
-  }));
 });
