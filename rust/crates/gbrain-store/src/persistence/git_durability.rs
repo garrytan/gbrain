@@ -9,7 +9,7 @@
 
 use super::effect_worker::pg_uuid;
 use super::effects::{EffectRecord, all_effects, write_effect};
-use super::json_text;
+use super::{json_text, request_by_id};
 use super::worktrees::{host_binding_key, read_host_record};
 use crate::env::Env;
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
@@ -40,6 +40,20 @@ pub enum GitDurabilityRead {
         source_incarnation: String,
         reason: String,
     },
+    /// `PARKED_PUSH_REQUESTS_SQL`: the requests of a worktree whose failed Git effect is held on one of
+    /// `codes`; distinct `{ source_id, id, request_id, slug }` rows in byte order of source, request id
+    /// and journal id.
+    ParkedPushRequests {
+        worktree_id: String,
+        codes: Vec<String>,
+    },
+    /// `FORMER_WORKTREE_HOLDS_SQL`: the one aggregate row over a source's held failed Git effects bound
+    /// to another worktree than `worktree_id`.
+    FormerWorktreeHolds {
+        source_id: String,
+        worktree_id: String,
+        codes: Vec<String>,
+    },
 }
 
 /// One write of `gitDurabilityStore()`, named by `kind`.
@@ -65,6 +79,13 @@ pub enum GitDurabilityWrite {
         worktree_id: String,
         host_id: String,
         setting: Option<String>,
+    },
+    /// `REQUEUE_PARKED_EFFECT_SQL`: queues a failed effect again with `data`, when it is still failed on
+    /// `error_code`, unclaimed and without a recovery; `{ state: "queued" }`, or null when it was not.
+    RequeueParkedEffect {
+        id: String,
+        data: Value,
+        error_code: Option<String>,
     },
 }
 
@@ -221,6 +242,170 @@ fn set_host_binding_in(
     Ok(json!({ "git_durability": binding.git_durability }))
 }
 
+/// `e.error_code=ANY($codes) OR e.error_code='targets_parked' AND EXISTS (SELECT 1 FROM
+/// jsonb_array_elements(COALESCE(e.data->'parked','[]')) p WHERE p->>'error_code'=ANY($codes))`: the code
+/// that holds the effect, if any. `holding_codes` lists every parked target's code among `codes`.
+fn held_codes(e: &EffectRecord, codes: &[String]) -> Result<Vec<String>> {
+    let mut held = Vec::new();
+    if let Some(code) = e.error_code.as_deref()
+        && codes.iter().any(|c| c == code)
+    {
+        held.push(code.to_string());
+    }
+    if e.error_code.as_deref() == Some("targets_parked") {
+        match e.data.get("parked") {
+            None | Some(Value::Null) => {}
+            Some(Value::Array(items)) => {
+                for item in items {
+                    if let Some(code) = json_text(item.get("error_code"))
+                        && codes.contains(&code)
+                    {
+                        held.push(code);
+                    }
+                }
+            }
+            Some(Value::Object(_)) => {
+                return Err(StoreError::invalid(
+                    "cannot extract elements from an object".to_string(),
+                ));
+            }
+            Some(_) => {
+                return Err(StoreError::invalid(
+                    "cannot extract elements from a scalar".to_string(),
+                ));
+            }
+        }
+    }
+    Ok(held)
+}
+
+/// The predicates both parked-push reads share: a failed, unsettled Git effect.
+fn failed_git(e: &EffectRecord) -> bool {
+    e.kind == "git" && e.state == "failed" && e.data.as_object().is_none_or(|m| !m.contains_key("settled"))
+}
+
+fn parked_push_requests_in(read: &dyn KvRead, worktree: &str, codes: &[String]) -> Result<Value> {
+    let worktree = pg_uuid(worktree)?;
+    let mut rows: Vec<(String, String, String, String)> = Vec::new();
+    for e in all_effects(read)? {
+        if e.worktree_id.as_deref().map(str::to_lowercase).as_deref() != Some(worktree.as_str())
+            || !failed_git(&e)
+            || e.recovery.is_some()
+            || held_codes(&e, codes)?.is_empty()
+        {
+            continue;
+        }
+        let Some(request) = request_by_id(read, &e.request_id)? else {
+            continue;
+        };
+        let row = (
+            e.source_id.clone().unwrap_or_default(),
+            request.request_id.to_lowercase(),
+            request.id.to_lowercase(),
+            request.slug.clone(),
+        );
+        if !rows.contains(&row) {
+            rows.push(row);
+        }
+    }
+    rows.sort_by(|a, b| {
+        (a.0.as_bytes(), a.1.as_bytes(), a.2.as_bytes()).cmp(&(b.0.as_bytes(), b.1.as_bytes(), b.2.as_bytes()))
+    });
+    Ok(Value::Array(
+        rows.into_iter()
+            .map(|(source_id, request_id, id, slug)| {
+                json!({ "source_id": source_id, "id": id, "request_id": request_id, "slug": slug })
+            })
+            .collect(),
+    ))
+}
+
+fn former_worktree_holds_in(
+    read: &dyn KvRead,
+    source: &str,
+    worktree: &str,
+    codes: &[String],
+) -> Result<Value> {
+    let worktree = pg_uuid(worktree)?;
+    let mut effects = 0i64;
+    let mut code: Option<String> = None;
+    let mut worktrees: Vec<Option<String>> = Vec::new();
+    let mut requests: Vec<String> = Vec::new();
+    for e in all_effects(read)? {
+        let own = e.worktree_id.as_deref().map(str::to_lowercase);
+        if e.source_id.as_deref() != Some(source)
+            || own.as_deref() == Some(worktree.as_str())
+            || !failed_git(&e)
+        {
+            continue;
+        }
+        let held = held_codes(&e, codes)?;
+        if held.is_empty() {
+            continue;
+        }
+        let Some(request) = request_by_id(read, &e.request_id)? else {
+            continue;
+        };
+        effects += 1;
+        // `CASE WHEN e.error_code=ANY($2) THEN e.error_code ELSE min(parked code) END`, then `min` over all.
+        let own_code = match e.error_code.as_deref() {
+            Some(c) if codes.iter().any(|x| x == c) => Some(c.to_string()),
+            _ => held.iter().min().cloned(),
+        };
+        if let Some(c) = own_code
+            && code.as_ref().is_none_or(|best| c < *best)
+        {
+            code = Some(c);
+        }
+        if !worktrees.contains(&own) {
+            worktrees.push(own);
+        }
+        let public = request.request_id.to_lowercase();
+        if !requests.contains(&public) {
+            requests.push(public);
+        }
+    }
+    if effects == 0 {
+        return Ok(json!({ "effects": 0, "code": null, "worktree_ids": null, "requests": null }));
+    }
+    // `array_agg(DISTINCT x)` sorts, nulls last.
+    worktrees.sort_by(|a, b| match (a, b) {
+        (Some(x), Some(y)) => x.as_bytes().cmp(y.as_bytes()),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
+    requests.sort();
+    requests.truncate(5);
+    Ok(json!({ "effects": effects, "code": code, "worktree_ids": worktrees, "requests": requests }))
+}
+
+fn requeue_parked_effect_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    id: &str,
+    data: &Value,
+    error_code: Option<&str>,
+) -> Result<Value> {
+    let wanted = pg_bigint(id)?;
+    let now = env.now_micros();
+    let Some(mut e) = all_effects(&*tx)?.into_iter().find(|e| e.id == wanted) else {
+        return Ok(Value::Null);
+    };
+    if e.state != "failed" || e.error_code.as_deref() != error_code || e.execution_token.is_some() || e.recovery.is_some() {
+        return Ok(Value::Null);
+    }
+    e.state = "queued".into();
+    e.data = data.clone();
+    e.error_code = None;
+    e.next_attempt_at_us = now;
+    e.claim_expires_at_us = None;
+    e.claim_owner = None;
+    e.updated_at_us = now;
+    write_effect(tx, &e)?;
+    Ok(json!({ "state": "queued" }))
+}
+
 pub(crate) fn git_durability_rows_in(read: &dyn KvRead, what: &GitDurabilityRead) -> Result<Value> {
     match what {
         GitDurabilityRead::PlanCatchUp {
@@ -229,6 +414,14 @@ pub(crate) fn git_durability_rows_in(read: &dyn KvRead, what: &GitDurabilityRead
             source_incarnation,
             reason,
         } => plan_catch_up_in(read, worktree_id, source_id, source_incarnation, reason),
+        GitDurabilityRead::ParkedPushRequests { worktree_id, codes } => {
+            parked_push_requests_in(read, worktree_id, codes)
+        }
+        GitDurabilityRead::FormerWorktreeHolds {
+            source_id,
+            worktree_id,
+            codes,
+        } => former_worktree_holds_in(read, source_id, worktree_id, codes),
     }
 }
 
@@ -249,6 +442,11 @@ pub(crate) fn git_durability_write_in(
             host_id,
             setting,
         } => set_host_binding_in(tx, worktree_id, host_id, setting.as_deref()),
+        GitDurabilityWrite::RequeueParkedEffect {
+            id,
+            data,
+            error_code,
+        } => requeue_parked_effect_in(tx, env, id, data, error_code.as_deref()),
     }
 }
 

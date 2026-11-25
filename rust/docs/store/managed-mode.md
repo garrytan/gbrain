@@ -40,7 +40,11 @@ takes none of them and adds no lock of its own (no file lock, no process-wide mu
 - Git durability: the newest skipped Git effect per file of a worktree's current incarnation (the
   catch-up plan), its re-queue under the plan's predicates (`data.durability_catch_up` + 1), and the
   host binding's `git_durability` (null when no binding matches; another value is the CHECK's
-  `constraint_violation`).
+  `constraint_violation`). The parked-push retry reads the requests of a worktree whose failed,
+  unsettled Git effect is held on a push code (its own, or a parked target's under `targets_parked`;
+  byte order of source, request id and journal id) and the aggregate over a source's holds on a former
+  worktree (count, lowest code in byte order, worktrees, five request ids), and re-queues a failed
+  effect still failed on its code, unclaimed and with no recovery.
 - Git effects: whether a worktree has a queued or running request, the `bool_and` over its requests
   that hold a recovery record (null when none does), whether any request holds one, the yield of a
   claimed group to queued publications (`publication_pending`, due after the delay), and the plain
@@ -53,7 +57,13 @@ takes none of them and adds no lock of its own (no file lock, no process-wide mu
   `constraint_violation`), retire admissions, the lifecycle's source writes (archive keeps an
   earlier archive time and sets a 72-hour window), the incarnation delete with its scrub
   (`sources/archive.rs` `delete_source_incarnation_in`), page batches in page id order, and the
-  moved-checkout reads.
+  moved-checkout reads. The managed clone and its recovery add the worktree manifest and its owner,
+  the recovering changes of a worktree, the change by id, the recovering worktree insert and state
+  writes, the clone's source binding (no relative path, generation 1), a change's recovery record,
+  its close (`COALESCE(outcome,'{}')||outcome`, recovery cleared) and commit (a null outcome stays
+  null), and the source's sync reset. The owner facts (`ownerActivity`) are the heartbeat, the newest
+  committed non-sync request and the newest managed-sync completion of each source's current
+  incarnation; this engine keeps no consumer row, so `live` is false (as on PGLite).
 - Manual links: the page's fenced edges by target slug, type and source in byte order, its manual
   dated statements, the relationship's database-only and fenced edges (a null link source is
   database-only only when no producer is managed), the fence projection's link and transition

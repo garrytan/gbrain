@@ -122,6 +122,7 @@ mod worktree_admission;
 mod worktree_claim_tests;
 mod worktree_rows;
 mod worktrees;
+pub(crate) use worktrees::worktree_owner_host;
 mod write_claim_terms;
 mod writer_status;
 mod writer_status_queue;

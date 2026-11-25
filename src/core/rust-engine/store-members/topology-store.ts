@@ -92,6 +92,22 @@ function rustTopologyStore(brain: StoreBrain): TopologyStore {
     worktreeMembers: worktreeId => rows('worktree_members', { worktreeId }),
     brainId: () => rows('brain_id', {}),
     worktreeOwner: id => rows('worktree_owner', { id }),
+    worktreeManifest: id => rows('worktree_manifest', { id }),
+    lockWorktreeManifest: id => rows('worktree_manifest_owner', { id }),
+    readChange: id => change(rows('change', { id })),
+    lockRecoveringChanges: worktreeId => rows('recovering_changes_of', { worktreeId }),
+    async insertRecoveringWorktree(id, hostId) { await write('insert_recovering_worktree', { id, hostId }); },
+    async markWorktreeRecovering(id) { await write('set_worktree_state', { id, state: 'recovering' }); },
+    async markWorktreeActive(id) { await write('set_worktree_state', { id, state: 'active' }); },
+    async recoverWorktreeWithManifest(id, manifest) { await write('recover_worktree_with_manifest', { id, manifest }); },
+    async insertCloneBinding(sourceId, incarnation, worktreeId) { await write('insert_clone_binding', { sourceId, incarnation, worktreeId }); },
+    async setChangeRecovery(id, recovery) { await write('set_change_recovery', { id, recovery, onlyRecovering: true }); },
+    async restampChangeRecovery(id, recovery) { await write('set_change_recovery', { id, recovery, onlyRecovering: false }); },
+    async closeChange(id, state, outcome) { await write('close_change', { id, state, outcome }); },
+    async commitChange(id, outcome) { await write('commit_change', { id, outcome }); },
+    async resetSourceSync(id, incarnation) { await write('reset_source_sync', { id, incarnation }); },
+    // This engine keeps no consumer row, so `live` is false and the heartbeat of a consumer adds no evidence, as on PGLite.
+    ownerActivity: (ids) => rows('owner_activity', { ids: [...ids] }),
   };
 }
 

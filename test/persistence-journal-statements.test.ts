@@ -617,6 +617,39 @@ describe('the refresh store sends the statements the refresh writer and the barr
   });
 });
 
+describe('the parked-push reads and the effect requeue carry the fragment git-durability-administration.ts composed them from', () => {
+  // The fragment those statements shared before they moved (engine-sql/git-durability.ts).
+  const HELD_ON_CODES = `e.error_code=ANY($2::text[]) OR e.error_code='targets_parked'
+  AND EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(e.data->'parked','[]'::jsonb)) p WHERE p->>'error_code'=ANY($2::text[]))`;
+  test('the parked-push request list and the former-worktree aggregate', async () => {
+    const { PARKED_PUSH_REQUESTS_SQL, FORMER_WORKTREE_HOLDS_SQL, REQUEUE_PARKED_EFFECT_SQL } = await import('../src/core/engine-sql/git-durability.ts');
+    expect(PARKED_PUSH_REQUESTS_SQL).toBe(`
+    SELECT * FROM (SELECT DISTINCT e.source_id,r.id::text AS id,r.request_id::text AS request_id,r.slug FROM persistence_effects e
+      JOIN persistence_requests r ON r.id=e.request_id
+     WHERE e.worktree_id=$1::uuid AND e.kind='git' AND e.state='failed' AND e.recovery IS NULL AND NOT (e.data ? 'settled') AND (${HELD_ON_CODES})) d
+     ORDER BY source_id COLLATE "C",request_id COLLATE "C",id COLLATE "C"`);
+    expect(FORMER_WORKTREE_HOLDS_SQL).toBe(`SELECT count(*)::int AS effects,
+      min(CASE WHEN e.error_code=ANY($2::text[]) THEN e.error_code ELSE (SELECT min(p->>'error_code') FROM jsonb_array_elements(e.data->'parked') p
+        WHERE p->>'error_code'=ANY($2::text[])) END) AS code,
+      array_agg(DISTINCT e.worktree_id::text) AS worktree_ids, (array_agg(DISTINCT r.request_id::text))[1:5] AS requests
+    FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id WHERE e.source_id=$1 AND e.worktree_id IS DISTINCT FROM $3::uuid AND e.kind='git' AND e.state='failed'
+      AND NOT (e.data ? 'settled') AND (${HELD_ON_CODES})`);
+    expect(REQUEUE_PARKED_EFFECT_SQL).toBe(`UPDATE persistence_effects SET state='queued',data=$2::text::jsonb,error_code=NULL,
+        next_attempt_at=now(),claim_expires_at=NULL,claim_owner=NULL,updated_at=now() WHERE id=$1 AND state='failed' AND error_code IS NOT DISTINCT FROM $3
+        AND execution_token IS NULL AND recovery IS NULL RETURNING state`);
+  });
+});
+
+describe('the topology store sends the clone, recovery and restamp statements as the lifecycle sent them', () => {
+  test('the locked reads and the change updates keep their text', () => {
+    expect(TOPOLOGY_STORE_STATEMENTS.LOCK_WORKTREE_MANIFEST_SQL).toBe('SELECT owner_host_id,manifest FROM persistence_worktrees WHERE id=$1::uuid FOR UPDATE');
+    expect(TOPOLOGY_STORE_STATEMENTS.LOCK_RECOVERING_CHANGES_SQL).toBe("SELECT id,recovery FROM persistence_topology_changes WHERE state='recovering' AND $1::uuid=ANY(worktree_ids) FOR UPDATE");
+    expect(TOPOLOGY_STORE_STATEMENTS.CLOSE_CHANGE_SQL).toBe(`UPDATE persistence_topology_changes SET state=$2,recovery=NULL,recovery_bytes=0,updated_at=now(),
+    outcome=COALESCE(outcome,'{}'::jsonb)||$3::text::jsonb WHERE id=$1::uuid`);
+    expect(TOPOLOGY_STORE_STATEMENTS.COMMIT_CHANGE_SQL).toBe("UPDATE persistence_topology_changes SET state='committed',outcome=outcome||$2::text::jsonb,updated_at=now() WHERE id=$1::uuid");
+  });
+});
+
 describe('the manual link store sends the statements manual-links.ts built, fragments written out', () => {
   // The fragments persistence/manual-links.ts composed its statements from before they moved (engine-sql/manual-links.ts).
   const RELATIONSHIP = `l.from_page_id=$1 AND l.to_page_id=t.id AND t.source_id=$2 AND t.slug=$3

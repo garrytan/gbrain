@@ -1894,11 +1894,14 @@ runs on PGLite alone without the flag.
 
 ### Topology recovery on the Rust engine
 
-A managed clone (`sources add --url`, `sources reclone`) and the recovery of an interrupted source lifecycle change need
-raw SQL, which the Rust engine never serves. It refuses them by name (`member=managed_source_clone` or
-`member=source_topology_recovery`, `written=nothing`) before any lock, row or directory is touched. Doctor warns
-`topology_recovery_stopped`; `sources writer status --json` lists `topology_recoveries`. Finish the change from a
-pglite or postgres engine.
+A managed clone (`sources add --url`, `sources reclone`) and the recovery of an interrupted source lifecycle change run
+on the typed topology store (`engine-sql/topology-store.ts`), so the Rust engine serves them like PGLite and Postgres
+once it holds managed worktrees (`managed_persistence`, which a user's Rust brain still withholds). No step refuses by
+name any more: the owner's recovery scan finishes or rolls back each recovering change, doctor
+`topology_recovery_stopped` counts the changes and reports them as converging, and `sources writer status --json`
+lists `topology_recoveries` with `stop: null`. The parked-push retry of `writer git-durability --pat-file` and the
+owner facts a pending write reads (`owner-activity.ts`) are typed the same way.
+
 ## Rust engine shadow mode
 
 Shadow mode checks the Rust engine against your real reads before you switch to it. It is off by default and changes

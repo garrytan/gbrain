@@ -136,8 +136,12 @@ impl Brain {
 
     /// `listRunningClaimOwners(hostId)`.
     #[napi]
-    pub fn list_running_claim_owners<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
-        self.run(env, |s| s.list_running_claim_owners())
+    pub fn list_running_claim_owners<'env>(
+        &self,
+        env: &'env Env,
+        host_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_running_claim_owners(&host_id))
     }
 
     /// `listLocalEditAdoptions()`.

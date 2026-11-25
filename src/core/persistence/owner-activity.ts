@@ -42,7 +42,8 @@ export async function ownerActivity(engine: BrainEngine, worktreeIds: readonly s
   const result = new Map<string, OwnerActivity>();
   const ids = [...new Set(worktreeIds)].filter(Boolean);
   if (!ids.length) return result;
-  const rows = await (await engine.refreshStore()).ownerActivity(ids, CONSUMER_LAPSED_MS, { signal: engine.kind === 'postgres' ? opts.signal : undefined });
+  // The facts come from the topology store (engine-sql/topology-store.ts), so a Rust brain answers them from its records.
+  const rows = await (await engine.topologyStore()).ownerActivity(ids, CONSUMER_LAPSED_MS, { signal: engine.kind === 'postgres' ? opts.signal : undefined });
   const local = existingHostIdFor(engine);
   for (const row of rows) {
     const lastActive = row.last_active === null ? null : new Date(row.last_active).toISOString();

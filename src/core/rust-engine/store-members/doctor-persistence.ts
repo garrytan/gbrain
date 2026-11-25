@@ -58,9 +58,9 @@ export const readCounterDrift: Member<'readCounterDrift'> = async (brain, clampe
 export const readPublicationRefusals: Member<'readPublicationRefusals'> = async brain =>
   await storeCall({ member: 'readPublicationRefusals' }, () => brain.readPublicationRefusals()) as Awaited<ReturnType<BrainEngine['readPublicationRefusals']>>;
 
-/** The store records no worktree, so a running claim on one has no owning host; `hostId` selects nothing more. */
-export const listRunningClaimOwners: Member<'listRunningClaimOwners'> = async brain =>
-  await storeCall({ member: 'listRunningClaimOwners' }, () => brain.listRunningClaimOwners()) as Awaited<ReturnType<BrainEngine['listRunningClaimOwners']>>;
+/** A running claim on a worktree is judged by the host that owns the worktree (its record); a claim on none is every host's. */
+export const listRunningClaimOwners: Member<'listRunningClaimOwners'> = async (brain, hostId) =>
+  await storeCall({ member: 'listRunningClaimOwners' }, () => brain.listRunningClaimOwners(hostId)) as Awaited<ReturnType<BrainEngine['listRunningClaimOwners']>>;
 
 export const listLocalEditAdoptions: Member<'listLocalEditAdoptions'> = async brain =>
   await storeCall({ member: 'listLocalEditAdoptions' }, () => brain.listLocalEditAdoptions()) as Awaited<ReturnType<BrainEngine['listLocalEditAdoptions']>>;
