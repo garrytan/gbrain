@@ -67,23 +67,30 @@ for (const kind of testBackends()) {
         attempt: row.execution_token! }, 2 * BEFORE.length);
       return { row, lock };
     }
-    /** The consumer's engine, recording each row any statement returns for `id` with a payload column in it. */
+    /**
+     * The consumer's engine, recording each row any statement or engine member returns for `id` with a payload column in it.
+     * The recovery scan and the by-id read run through typed members (listOwnerRecoveryHeads, getWriteRequestById) on the
+     * engine's own executor, so a member's result is inspected like a statement's.
+     */
     function observed(id: string) {
       const payloads: string[][] = [];
       let named = 0;
+      const inspect = (value: unknown) => {
+        for (const result of Array.isArray(value) ? value : value && typeof value === 'object' ? [value] : []) {
+          if ((result as Record<string, unknown> | null)?.id !== id) continue;
+          named++;
+          const columns = ['intent', 'recovery'].filter(column => (result as Record<string, unknown>)[column] != null);
+          if (columns.length) payloads.push(columns);
+        }
+        return value;
+      };
       const proxy = new Proxy(engine, { get(target, key) {
-        if (key === 'executeRaw' || key === 'executeRawDirect') return async (...args: unknown[]) => {
-          const rows = await (target[key] as (...a: unknown[]) => Promise<Record<string, unknown>[]>)(...args);
-          for (const result of rows) {
-            if (result.id !== id) continue;
-            named++;
-            const columns = ['intent', 'recovery'].filter(column => result[column] != null);
-            if (columns.length) payloads.push(columns);
-          }
-          return rows;
-        };
         const value = Reflect.get(target, key);
-        return typeof value === 'function' ? value.bind(target) : value;
+        if (typeof value !== 'function' || key === 'transaction') return typeof value === 'function' ? value.bind(target) : value;
+        return (...args: unknown[]) => {
+          const result = (value as (...a: unknown[]) => unknown).apply(target, args);
+          return result instanceof Promise ? result.then(inspect) : result;
+        };
       } });
       return { proxy, payloads, named: () => named };
     }

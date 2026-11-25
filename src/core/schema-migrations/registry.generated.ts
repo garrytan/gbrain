@@ -335,6 +335,7 @@ import { v331 } from './v331-access-read-log.ts';
 import { v332 } from './v332-engine-writer-observations.ts';
 import { v333 } from './v333-hold-page-id.ts';
 import { v334 } from './v334-learning-items.ts';
+import { v335 } from './v335-pages-spelling-key-index.ts';
 import { v336 } from './v336-byte-order-slug-indexes.ts';
 import { v337 } from './v337-projection-jobs-byte-order-index.ts';
 import { v338 } from './v338-pages-projection-waiting-haystack-trgm.ts';
@@ -671,6 +672,7 @@ export const MIGRATIONS: Migration[] = [
   v332,
   v333,
   v334,
+  v335,
   v336,
   v337,
   v338,

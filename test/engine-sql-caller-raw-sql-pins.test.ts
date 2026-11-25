@@ -3665,6 +3665,38 @@ const PINS: Pin[] = [
     texts: ['SELECT p.id FROM pages p WHERE p.id = ANY($1::bigint[]) AND (p.frontmatter @> $2::text::jsonb OR p.frontmatter @> $3::text::jsonb)'
       + ' AND (p.frontmatter @> $4::text::jsonb OR p.frontmatter @> $5::text::jsonb OR p.frontmatter @> $6::text::jsonb OR p.frontmatter @> $7::text::jsonb)'],
   },
+  // The chronicle-backfill page batch (engine-sql/chronicle-reads.ts), carried from 6f801f6d17's pins of 3ac6224f3b;
+  // the builder at 68c48d9824 sends the same texts.
+  {
+    from: 'src/core/chronicle/backfill.ts:139 runChronicleBackfill (no scope, no since; the literals 5 and 500 spelled in), at 3ac6224f3b',
+    case: { method: 'readChronicleBackfillBatch', variant: 'default', run: e => e.readChronicleBackfillBatch({ types: ['meeting'], slugPatterns: ['meetings/%'], extractorVersion: 2, afterId: 0 }) },
+    texts: [`SELECT p.id, p.source_id, p.slug, p.type, coalesce(p.compiled_truth, p.truth_lead) AS compiled_truth, p.frontmatter, p.effective_date, p.effective_date_source, p.content_hash,
+              EXISTS (SELECT 1 FROM chronicle_page_state c WHERE c.page_id=p.id AND c.content_hash=p.content_hash
+                AND c.extractor_version=$3 AND (c.state='extracted' OR (c.state IN ('pending','failed') AND c.trigger='backfill' AND c.attempts < 5))) AS done
+         FROM pages p
+        WHERE p.deleted_at IS NULL AND (p.type = ANY($1::text[]) OR p.slug LIKE ANY($2::text[])) AND p.id > $4
+        ORDER BY p.id LIMIT 500`],
+  },
+  {
+    from: 'src/core/chronicle/backfill.ts:139 runChronicleBackfill (a source list and since), at 3ac6224f3b',
+    case: { method: 'readChronicleBackfillBatch', variant: 'sources-since', run: e => e.readChronicleBackfillBatch({ types: ['meeting'], slugPatterns: ['meetings/%'], extractorVersion: 2, sourceIds: ['default'], since: '2026-01-01', afterId: 0 }) },
+    texts: [`SELECT p.id, p.source_id, p.slug, p.type, coalesce(p.compiled_truth, p.truth_lead) AS compiled_truth, p.frontmatter, p.effective_date, p.effective_date_source, p.content_hash,
+              EXISTS (SELECT 1 FROM chronicle_page_state c WHERE c.page_id=p.id AND c.content_hash=p.content_hash
+                AND c.extractor_version=$3 AND (c.state='extracted' OR (c.state IN ('pending','failed') AND c.trigger='backfill' AND c.attempts < 5))) AS done
+         FROM pages p
+        WHERE p.deleted_at IS NULL AND (p.type = ANY($1::text[]) OR p.slug LIKE ANY($2::text[])) AND p.source_id = ANY($4::text[]) AND p.updated_at >= $5::date AND p.id > $6
+        ORDER BY p.id LIMIT 500`],
+  },
+  {
+    from: 'src/core/chronicle/backfill.ts:139 runChronicleBackfill (one source), at 3ac6224f3b',
+    case: { method: 'readChronicleBackfillBatch', variant: 'source', run: e => e.readChronicleBackfillBatch({ types: ['meeting'], slugPatterns: ['meetings/%'], extractorVersion: 2, sourceId: 'default', afterId: 0 }) },
+    texts: [`SELECT p.id, p.source_id, p.slug, p.type, coalesce(p.compiled_truth, p.truth_lead) AS compiled_truth, p.frontmatter, p.effective_date, p.effective_date_source, p.content_hash,
+              EXISTS (SELECT 1 FROM chronicle_page_state c WHERE c.page_id=p.id AND c.content_hash=p.content_hash
+                AND c.extractor_version=$3 AND (c.state='extracted' OR (c.state IN ('pending','failed') AND c.trigger='backfill' AND c.attempts < 5))) AS done
+         FROM pages p
+        WHERE p.deleted_at IS NULL AND (p.type = ANY($1::text[]) OR p.slug LIKE ANY($2::text[])) AND p.source_id = $4 AND p.id > $5
+        ORDER BY p.id LIMIT 500`],
+  },
 ];
 
 type PinPrivacy = 'none' | 'caller' | 'floor';
