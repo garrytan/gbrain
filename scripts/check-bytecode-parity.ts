@@ -42,18 +42,61 @@ export function releaseCompileArgs(workflow: string, outfile: string, commit: st
   return out;
 }
 
-/** Masks only text that differs between two runs of the SAME binary (clock, ids, ports, pids). */
-export function NORMALIZE(text: string, port: number): string {
-  if (process.env.BYTECODE_PARITY_RAW === '1') return text;
-  return text
+/** A number with 7 or more decimals: a score or factor computed from the clock (recency decays between the two runs). */
+const LONG_DECIMAL = /\d+\.\d{7,}/g;
+
+/**
+ * Masks only text that differs between two runs of the SAME binary (clock, ids, ports, pids), and lifts out the long decimals,
+ * which recency moves in the 7th decimal as the clock moves between runs. Truncating them to a fixed number of decimals is not
+ * enough: a value that crosses a rounding boundary between the runs (0.98611999 then 0.98612001) would differ. `sameOutput`
+ * compares the lifted values by size instead.
+ */
+function mask(text: string, port: number): { text: string; decimals: number[] } {
+  if (process.env.BYTECODE_PARITY_RAW === '1') return { text, decimals: [] };
+  const decimals: number[] = [];
+  const masked = text
     .replaceAll(`127.0.0.1:${port}`, '127.0.0.1:<port>')
     .replace(/\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?/g, '<time>')
     .replace(/\b\d{4}-\d{2}-\d{2}\b/g, '<date>')
     .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, '<uuid>')
     .replace(/("(?:[a-z_]*_ms|duration[a-z_]*|elapsed[a-z_]*|took[a-z_]*|latency[a-z_]*|pid|inode|dev|ino|age_seconds|table_bytes)"\s*:\s*)-?\d+(\.\d+)?/gi, '$1<n>')
     .replace(/\b\d+(\.\d+)?\s?(ms|s)\b/g, '<dur>')
-    // Recency-weighted scores move in the 7th decimal as the clock moves between runs.
-    .replace(/(\d+\.\d{5})\d{2,}/g, '$1~');
+    .replace(LONG_DECIMAL, (d) => { decimals.push(Number(d)); return '<decimal>'; });
+  return { text: masked, decimals };
+}
+
+export function NORMALIZE(text: string, port: number): string {
+  return mask(text, port).text;
+}
+
+const close = (v: number, w: number | undefined): boolean => w !== undefined && Math.abs(v - w) <= 1e-5;
+
+/** The same text once masked, and every long decimal within 1e-5 of its twin: the whole part and 5 decimals the check always held. */
+export function sameOutput(a: string, b: string, port: number): boolean {
+  const [x, y] = [mask(a, port), mask(b, port)];
+  return x.text === y.text && x.decimals.every((v, i) => close(v, y.decimals[i]));
+}
+
+/**
+ * A unified diff of the two masked outputs, at most `maxLines` lines of at most 300 characters, so a CI log shows what differed.
+ * Each long decimal is written back: the plain build's value on both sides when the two agree within the tolerance, its own otherwise.
+ */
+export function boundedDiff(a: string, b: string, port: number, maxLines = 60): string {
+  const [x, y] = [mask(a, port), mask(b, port)];
+  const unmask = (m: { text: string; decimals: number[] }): string => {
+    let i = 0;
+    return m.text.replace(/<decimal>/g, () => { const own = m.decimals[i]!, v = x.decimals[i]!; return String(close(v, y.decimals[i++]) ? v : own); });
+  };
+  const dir = mkdtempSync(join(tmpdir(), 'gbrain-parity-diff-'));
+  try {
+    writeFileSync(join(dir, 'plain'), unmask(x));
+    writeFileSync(join(dir, 'bytecode'), unmask(y));
+    const r = spawnSync('diff', ['-u', '-L', 'plain', '-L', 'bytecode', 'plain', 'bytecode'], { cwd: dir, encoding: 'utf8' });
+    const lines = (r.stdout || r.stderr || '(no diff output)').split('\n').filter(l => l !== '');
+    const shown = lines.slice(0, maxLines).map(l => (l.length > 300 ? `${l.slice(0, 300)}…` : l));
+    if (lines.length > maxLines) shown.push(`… ${lines.length - maxLines} more diff lines`);
+    return shown.join('\n');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 
 function startEmbeddingStub(): Promise<{ port: number; close: () => void }> {
@@ -125,7 +168,7 @@ export function stepProblems(step: Step, a: Outcome, b: Outcome, port: number): 
   const want = step.exit ?? 0, problems: string[] = [];
   if (a.status !== want || b.status !== want) problems.push(`exit plain=${a.status} bytecode=${b.status}, expected ${want}`);
   if (step.shows !== undefined && !(a.stdout.includes(step.shows) && b.stdout.includes(step.shows))) problems.push(`stdout lacks ${step.shows} (the step did not run its path)`);
-  for (const k of ['stdout', 'stderr'] as const) if (NORMALIZE(a[k], port) !== NORMALIZE(b[k], port)) problems.push(`${k} differs`);
+  for (const k of ['stdout', 'stderr'] as const) if (!sameOutput(a[k], b[k], port)) problems.push(`${k} differs`);
   return problems;
 }
 
@@ -227,6 +270,7 @@ async function main(): Promise<number> {
       failed++;
       console.log(`FAIL ${step.name}: ${problems.join('; ')} (${size})`);
       console.log(`  outputs: ${join(work, 'out-plain', step.name)}.* ${join(work, 'out-bytecode', step.name)}.*`);
+      for (const k of ['stdout', 'stderr'] as const) if (!sameOutput(a[k], b[k], stub.port)) console.log(`  ${k} diff (masked):\n${boundedDiff(a[k], b[k], stub.port).replace(/^/gm, '    ')}`);
     }
     if (failed) { console.error(`FAIL: ${failed} of ${STEPS.length} commands failed or differ between the plain and the bytecode build`); return 1; }
     console.log(`PASS: ${STEPS.length} commands give the same stdout, stderr and exit code from the plain and the bytecode build (clock, ids and timings masked)`);

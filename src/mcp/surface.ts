@@ -113,6 +113,8 @@ export const STARTER_OPS: ReadonlySet<string> = new Set([
   'mute_notice',
   // GBRA-219: the per-conversation memory switch rides next to remember.
   'memory_conversation_mode',
+  // Agent platform H1: "what's at risk at home" is a daily-driver read (a direct literal, so subagents gain nothing).
+  'household_due',
 ]);
 
 /**

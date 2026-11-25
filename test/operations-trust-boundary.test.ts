@@ -241,6 +241,8 @@ describe('mcpOperations filter — localOnly ops are excluded from the HTTP-expo
       'file_verify',
       'get_recent_transcripts',
       'get_skill_retention',
+      // GST-3825 H1: recomputes household readers on the brain host only (gbrain household replace).
+      'household_replace',
       'import_skill_proposal',
       'migrate_embeddings',
       'prune_skill_revisions',
