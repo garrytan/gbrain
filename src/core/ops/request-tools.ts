@@ -384,7 +384,7 @@ const request_tools: Operation = {
           const parts = [
             fresh.length ? `${tick(fresh)} ${fresh.length === 1 ? 'is' : 'are'} now listed by this server (tools/list_changed was sent).` : '',
             already.length ? `${tick(already)} ${already.length === 1 ? 'is' : 'are'} already in your tool list; call ${already.length === 1 ? 'it' : 'them'} directly.` : '',
-            outside.length ? `${outside.join(', ')} ${outside.length === 1 ? 'is' : 'are'} outside this session's '${ceiling}' surface, so ${outside.length === 1 ? 'it is' : 'they are'} not listed.` : '',
+            outside.length ? `${outside.join(', ')} ${outside.length === 1 ? 'is' : 'are'} outside this session's '${ceiling}' surface, so ${outside.length === 1 ? 'it is' : 'they are'} not listed; request_tools {"surface":"full"} adds ${outside.length === 1 ? 'it' : 'them'} to this session.` : '',
             fresh.length || outside.length ? reload : '',
           ];
           return { tools: buildToolDefs(picked, { strictParams }), listed: !outside.length, note: parts.filter(Boolean).join(' ') };

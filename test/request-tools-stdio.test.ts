@@ -164,6 +164,7 @@ describe('request_tools {surface} on stdio', () => {
       expect(mixed.note).toContain('`get_health`');
       expect(mixed.note).not.toContain('then call them by name');
       expect(mixed.note).not.toContain('get_page');
+      expect(mixed.note).toContain('request_tools {"surface":"full"} adds it to this session');
     } finally {
       await s.close();
     }
