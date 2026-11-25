@@ -288,7 +288,7 @@ describe('gbrain setup openclaw: names the line that moves a starter entry to fu
   }, 120_000);
 
   test('an entry holding other values gets only the flags to change and no runnable line, and none of its values is printed', async () => {
-    for (const [extraArgs, env2] of [[[], { DATABASE_URL: 'postgresql://db.example.test/brain-secret-example' }], [[], { GBRAIN_DATABASE_URL: 'postgresql://u:secret-example@db.example.test/b' }], [['--token', 'secret-example'], {}]] as const) {
+    for (const [extraArgs, env2] of [[[], { DATABASE_URL: 'postgresql://db.example.test/brain-secret-example' }], [[], { GBRAIN_DATABASE_URL: 'postgresql://db.example.test:5432/b-secret-example' }], [['--token', 'secret-example'], {}]] as const) {
       const b = box();
       const dir = join(b.home, '.openclaw');
       mkdirSync(dir, { recursive: true });
