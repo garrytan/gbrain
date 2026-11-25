@@ -137,3 +137,79 @@ export async function readOwnerOnlySourceConfig(exec: OwnerOnlyRead, sourceId: s
   const rows = await exec.executeRaw<{ config: unknown }>('SELECT config FROM sources WHERE id = $1', [sourceId]);
   return rows[0] ?? null;
 }
+
+export async function listLocalPathSources(exec: LegacyUnscopedRead): Promise<LocalPathSourceRow[]> {
+  return exec.executeRaw<LocalPathSourceRow>(`SELECT id, local_path, archived FROM sources WHERE local_path IS NOT NULL`);
+}
+
+/**
+ * Every source row ordered by id, each carrying whether `default` holds a live page, in one statement (the request
+ * config snapshot's `sources` read, #7147). Unscoped on master.
+ */
+export async function listSourceRoutingRows(exec: LegacyUnscopedRead): Promise<SourceRoutingRow[]> {
+  return exec.executeRaw<SourceRoutingRow>(
+    `SELECT id, local_path, archived, config, EXISTS (SELECT 1 FROM pages WHERE source_id = 'default' AND deleted_at IS NULL) AS default_has_pages FROM sources ORDER BY id COLLATE "C"`,
+  );
+}
+
+/**
+ * Live pages in `default`, live pages elsewhere, and the number of non-default sources holding a live page (the
+ * default-write guard). Soft-deleted pages are left out. Unscoped on master.
+ */
+export async function countDefaultSourceSplit(exec: LegacyUnscopedRead): Promise<DefaultSourceSplit> {
+  const rows = await exec.executeRaw<{
+    default_pages: number | string | bigint | null;
+    non_default_pages: number | string | bigint | null;
+    non_default_sources: number | string | bigint | null;
+  }>(
+    `SELECT
+       COALESCE(SUM(CASE WHEN source_id = 'default' THEN 1 ELSE 0 END), 0) AS default_pages,
+       COALESCE(SUM(CASE WHEN source_id <> 'default' THEN 1 ELSE 0 END), 0) AS non_default_pages,
+       COUNT(DISTINCT source_id) FILTER (WHERE source_id <> 'default') AS non_default_sources
+     FROM pages
+     WHERE deleted_at IS NULL`,
+  );
+  const r = rows[0];
+  return {
+    defaultPages: Number(r?.default_pages) || 0,
+    nonDefaultPages: Number(r?.non_default_pages) || 0,
+    nonDefaultSources: Number(r?.non_default_sources) || 0,
+  };
+}
+
+/**
+ * Sets the source's last sync time to the database clock (`now()`): the stamp a clean `gbrain import` of a folder
+ * source makes (#1691), a no-change sync's heartbeat and a connector's clean run. With `incarnation`, only a source
+ * still of that incarnation is stamped. Returns whether a source was stamped; an unknown source (or another
+ * incarnation) changes nothing.
+ */
+export async function markSourceSynced(exec: SqlExecutor, sourceId: string, opts: SourceSyncStampOptions = {}): Promise<boolean> {
+  const newest = opts.newestContentAt;
+  let rows: Array<{ id: string }>;
+  if (newest === undefined) {
+    rows = opts.incarnation === undefined
+      ? await exec.executeRaw<{ id: string }>('UPDATE sources SET last_sync_at = now() WHERE id = $1 RETURNING id', [sourceId])
+      : await exec.executeRaw<{ id: string }>('UPDATE sources SET last_sync_at = now() WHERE id = $1 AND incarnation = $2::uuid RETURNING id', [sourceId, opts.incarnation]);
+  } else {
+    rows = opts.incarnation === undefined
+      ? await exec.executeRaw<{ id: string }>('UPDATE sources SET last_sync_at = now(), newest_content_at = COALESCE($2::timestamptz, newest_content_at) WHERE id = $1 RETURNING id', [sourceId, newest])
+      : await exec.executeRaw<{ id: string }>('UPDATE sources SET last_sync_at = now(), newest_content_at = COALESCE($3::timestamptz, newest_content_at) WHERE id = $1 AND incarnation = $2::uuid RETURNING id', [sourceId, opts.incarnation, newest]);
+  }
+  return rows.length > 0;
+}
+
+/**
+ * `markSourceSynced` options. `incarnation` stamps only while the source is still that incarnation (a managed sync
+ * run's guard). `newestContentAt` (a timestamptz text) also sets `newest_content_at`; null keeps the stored value
+ * (`COALESCE`), as a connector run that saw nothing newer does.
+ */
+export interface SourceSyncStampOptions { incarnation?: string; newestContentAt?: string | null }
+
+/** A source with a local path and its archived flag (`listLocalPathSources`). */
+export interface LocalPathSourceRow { id: string; local_path: string; archived: boolean }
+
+/** One source row for request-scoped source resolution, with the brain-wide `default` emptiness flag (`listSourceRoutingRows`). */
+export interface SourceRoutingRow { id: string; local_path: string | null; archived: boolean; config: unknown; default_has_pages: boolean }
+
+/** Live page counts of `default` against every other source (`countDefaultSourceSplit`). */
+export interface DefaultSourceSplit { defaultPages: number; nonDefaultPages: number; nonDefaultSources: number }

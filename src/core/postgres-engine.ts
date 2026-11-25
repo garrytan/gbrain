@@ -224,6 +224,11 @@ import { writerStamp } from './persistence/writer-versions.ts';
 import { wellFormedJson } from './text-safe.ts';
 import { ENGINE_ROOT } from './engine-root.ts';
 import { insertEvalCandidate } from './feedback/store.ts';
+import * as cliReadsImpl from './engine-sql/cli-reads-import.ts';
+import * as writerAdminImpl from './engine-sql/writer-admin.ts';
+import type { WriterAdminStateOptions } from './engine-sql/writer-admin.ts';
+import * as persistenceJournalImpl from './engine-sql/persistence-journal.ts';
+import * as entityReadsImpl from './engine-sql/entity-reads.ts';
 
 function escapeSqlStringLiteral(value: string): string {
   return value.replace(/'/g, "''");
@@ -1131,6 +1136,7 @@ export class PostgresEngine implements BrainEngine {
   readPersistenceBrainId() { return this.preparationRead(exec => persistenceStateImpl.readPersistenceBrainId(unscopedExecutor(exec, 'persistence: brain identity read ran unscoped through executeRaw'))); }
   readLocalWriterRow(id: string, opts?: { lock?: boolean }) { return this.preparationRead(exec => persistenceStateImpl.readLocalWriterRow(unscopedExecutor(exec, 'persistence: local writer read ran unscoped through executeRaw'), id, opts), opts?.lock); }
   insertLocalWriterRow(row: persistenceStateImpl.LocalWriterInsert) { return persistenceStateImpl.insertLocalWriterRow(this.autocommitSql, row); }
+  ownsSchemaTables() { return this.preparationRead(exec => persistenceJournalImpl.ownsSchemaTables(unscopedExecutor(exec, 'persistence: schema owner read ran unscoped through executeRaw'))); }
   readTransactionSettings(names: readonly string[]) { return transactionSettingsImpl.readTransactionSettings(unscopedExecutor(this.engineSql, 'transaction settings: read ran through the transaction executeRaw'), names); }
   applyTransactionSettings(names: readonly string[], values: readonly string[]) { return transactionSettingsImpl.applyTransactionSettings(this.autocommitSql, names, values); }
   // Group A (decide store). The reads a doctor check reaches run bounded: they honour a read deadline as the typed preparation reads do (statement-deadline.ts BOUNDED_TYPED_READS).
@@ -1160,9 +1166,20 @@ export class PostgresEngine implements BrainEngine {
   countSearchVectorRows() { return searchVectorImpl.countSearchVectorRows(this); }
   listCoveredSources(subjectKey: string) { return this.engineRead(exec => beliefImpl.listCoveredSources(exec, subjectKey)); }
   isFolderRestricted(sourceId: string, slug: string) { return this.preparationRead(exec => accessControlImpl.isFolderRestricted(unscopedExecutor(exec, 'access: folder rule read ran unscoped through executeRaw'), sourceId, slug)); }
+  readIgnoredPrivacyLabelPages(sourceId: string, scope: { slugs: readonly string[] } | { since: string }, opts?: { limit?: number; timeoutMs?: number }) { return entityReadsImpl.readIgnoredPrivacyLabelPages(this, sourceId, scope, opts); }
+  readLivePageFrontmatter(sourceId: string, slug: string, opts?: { timeoutMs?: number }) { return entityReadsImpl.readLivePageFrontmatter(this, sourceId, slug, opts); }
+  listLocalPathSources() { return sourcesImpl.listLocalPathSources(unscopedExecutor(this.engineSql, 'sources: source resolution read it unscoped through executeRaw')); }
+  listSourceRoutingRows() { return sourcesImpl.listSourceRoutingRows(unscopedExecutor(this.engineSql, 'sources: source resolution read it unscoped through executeRaw')); }
+  countDefaultSourceSplit() { return sourcesImpl.countDefaultSourceSplit(unscopedExecutor(this.engineSql, 'sources: the default-write guard read it unscoped through executeRaw')); }
+  readSourceRow(sourceId: string) { return sourcesImpl.readSourceRow(unscopedExecutor(this.engineSql, 'sources: source checks read it unscoped through executeRaw'), sourceId); }
+  markSourceSynced(sourceId: string, opts?: sourcesImpl.SourceSyncStampOptions) { return sourcesImpl.markSourceSynced(this.autocommitSql, sourceId, opts); } // autocommitSql: keeps executeRaw's read-only-default retry (#7183)
   async listSourceLocalPaths(): Promise<string[]> {
     return this.preparationRead(exec => sourcesImpl.listSourceLocalPaths(unscopedExecutor(exec, 'sources: unscoped on master (the filesystem lock read it through executeRaw)')));
   }
+  listSourceRecords() { return this.engineRead(exec => cliReadsImpl.listSourceRecords(exec)); }
+  readSourceIncarnation(sourceId: string) { return this.engineRead(exec => cliReadsImpl.readSourceIncarnation(exec, sourceId)); }
+  hasCompanyBrainReceipt(sourceId: string) { return this.engineRead(exec => cliReadsImpl.hasCompanyBrainReceipt(exec, sourceId)); }
+  readGuestSourceRow(sourceId: string) { return this.engineRead(exec => cliReadsImpl.readGuestSourceRow(exec, sourceId)); }
 
   /** Page-write reads (engine-sql/write-misc.ts); a preparation read ends at its deadline, a locked read runs in the caller's transaction. */
   private get writeMiscReads() { return refuseAborted(unscopedExecutor(this.engineSql, 'write misc: page writes ran these unscoped through executeRaw')); }
@@ -1176,6 +1193,7 @@ export class PostgresEngine implements BrainEngine {
   sharedSkillPackTablePresent() { return this.writeMiscRead(exec => writeMiscImpl.sharedSkillPackTablePresent(exec)); }
   listSharedSkillPackRoots(hostId: string) { return this.writeMiscRead(exec => writeMiscImpl.listSharedSkillPackRoots(exec, hostId)); }
   getWorktreeBinding(sourceId: string, hostId: string | null) { return this.writeMiscRead(exec => writeMiscImpl.getWorktreeBinding(exec, sourceId, hostId)); }
+  readWriterAdminState(opts?: WriterAdminStateOptions): Promise<string> { return writerAdminImpl.readWriterAdminState(this, opts); }
   hasExtractedEvents(sourceId: string, pageId: number) { return whenNotAborted(() => writeMiscImpl.hasExtractedEvents(this.writeMiscReads, sourceId, pageId)); }
   listActiveAccessMembers() { return whenNotAborted(() => writeMiscImpl.listActiveAccessMembers(this.writeMiscReads)); }
   hasLabelledOnlyMember() { return whenNotAborted(() => writeMiscImpl.hasLabelledOnlyMember(this.writeMiscReads)); }

@@ -11,6 +11,8 @@
  */
 /** Forwarded members that only read but are not open to remote callers. */
 export const OWNER_IPC_LOCAL_ONLY_READS: ReadonlySet<string> = new Set([
+  // The import path's source, resolver, guest, privacy-label and writer-state reads: SELECTs only.
+  'listLocalPathSources', 'listSourceRoutingRows', 'countDefaultSourceSplit', 'listSourceRecords', 'readSourceIncarnation', 'hasCompanyBrainReceipt', 'readGuestSourceRow', 'ownsSchemaTables', 'readIgnoredPrivacyLabelPages', 'readLivePageFrontmatter', 'readWriterAdminState', 'readSourceRow',
   'readStoredBodyBytes', 'readPageBodySizes', 'readFieldUsageSamples', 'listFiles', 'getCodeTraversalCache',
   'listSegmentedPages', 'hasWithdrawnFenceClaim',
   // N3: the alias, export, body-manifest, trust-tier, withdrawal-discovery, belief-coverage, search-vector and queue-health reads:
@@ -54,6 +56,7 @@ const decideKey = 'readDecideState for that key';
 const calibration = 'getDecideCalibration for that id';
 
 export const OWNER_IPC_CONFIRMING_READS: Readonly<Record<string, string>> = {
+  markSourceSynced: 'getSource for that source id',
   executeRaw: 'a SELECT of the rows the statement changes', executeRawDirect: 'a SELECT of the rows the statement changes',
   runMigration: 'the brain schema version (gbrain doctor --json)', initSchema: 'the brain schema version (gbrain doctor --json)',
   ownerOnlyMarkTriggers: 'the trigger state in gbrain doctor --json',

@@ -484,6 +484,9 @@ import type { DecideMembers } from './engine-members/decide.ts';
 import type { JobsMembers } from './engine-members/jobs.ts';
 import type { DoctorMembers } from './engine-members/doctor.ts';
 import type { MentionPassMembers } from './engine-members/mentions.ts';
+import type { DefaultSourceSplit, LocalPathSourceRow, SourceCheckRow, SourceRoutingRow, SourceSyncStampOptions } from './engine-sql/sources.ts';
+import type { IgnoredLabelPageRow } from './engine-sql/entity-reads.ts';
+import type { WriterAdminStateOptions } from './engine-sql/writer-admin.ts';
 export type { StaleTakeOpts, StaleTakeRow, TakeEmbeddingInput } from './takes-row-types.ts';
 
 /** Resolution metadata for resolveTake. */
@@ -931,6 +934,63 @@ export function clampSearchLimit(limit: number | undefined, defaultLimit = 20, c
   return Math.min(Math.floor(limit), cap);
 }
 
+/** A source's config and incarnation (`readSourceIncarnation`). */
+export interface SourceIncarnationRow { config: unknown; incarnation: string }
+/** The source row a memory write admits against (`readSourceWriteRow`): `kind` and `role` are `config->>'kind'` and `config->>'role'`. */
+export interface SourceWriteRow { incarnation: string; archived: boolean; local_path: string | null; kind: string | null; role: string | null }
+/** `factReadableUnder`: one fact, read with any visibility (the owner) or the caller's world rule, under a read eligibility. */
+export interface FactReadableSpec {
+  id: number; sourceId: string; anyVisibility: boolean;
+  eligibility: import('./eligibility/policy.ts').ReadEligibility | undefined; excludePrivate: boolean;
+}
+/**
+ * `readForgetTarget`: the fact a forget names. `ownPage` (a member's own member page) reads only a private fact on that
+ * page while the live page names the member; otherwise `worldOnly` keeps world facts and `remoteFloor` adds the remote
+ * provenance floor. `lock` takes the row FOR UPDATE.
+ */
+export interface ForgetTargetSpec { id: number; sourceId: string; worldOnly: boolean; remoteFloor: boolean; lock: boolean; ownPage: string | null }
+/** The fact row `readForgetTarget` answers. */
+export interface ForgetTargetRow { id: number; entity_slug: string | null; source_markdown_slug: string | null; row_num: number | null; expired_at: Date | null; trust_tier: string | null }
+/** `readLinkedFactCopies`: the copies of fact `id`'s claim on other entities; `worldOnly` keeps world ones, `remoteFloor` adds the remote provenance floor. */
+export interface LinkedFactCopiesSpec { id: number; sourceId: string; worldOnly: boolean; remoteFloor: boolean }
+/** One copy `readLinkedFactCopies` answers. */
+export interface LinkedFactCopy { id: number; entity_slug: string }
+/**
+ * `readFactWithdrawalClaim`: the fact a withdrawal admits, never an extraction outcome marker. `worldOnly` keeps world
+ * facts and a private fact on `memberPage` (a member's own page, checked by the caller); `remoteFloor` adds the remote
+ * provenance floor. `lock` reads the row FOR UPDATE inside the caller's transaction (the withdrawal itself); the Rust
+ * store serializes its writes, so it takes no row lock there.
+ */
+export interface FactWithdrawalClaimSpec { id: number; sourceId: string; worldOnly: boolean; memberPage: string | null; remoteFloor: boolean; lock?: boolean }
+/** The claim `readFactWithdrawalClaim` answers: its visibility, text, fingerprint, withdrawal subject and whether it expired. */
+export interface FactWithdrawalClaim { visibility: 'private' | 'world'; fact: string; fact_hash: string; subject: string; expired: boolean }
+/** `ownerReachesFact`: the owner's member identity and the folder rules it satisfies. */
+export interface OwnerReachSpec { id: number; sourceId: string; identity: readonly string[]; satisfied: readonly string[] }
+/** `readGuestSourceRow`: the source's guest_sources row (null fields without one) and whether row-level security hides guest_sources. */
+export interface GuestSourceLookupRow { hidden: boolean; source_id: string | null; writers: string[] | null; trust_ceiling: string | null }
+/** `readPageTrustRows` input: page ids, and (source_id, slug) keys read live unless `includeDeleted`. */
+export interface PageTrustLookup { ids?: readonly number[]; keys?: ReadonlyArray<{ source_id: string; slug: string }>; includeDeleted?: boolean }
+/** One page's trust fields; `byId` marks a row found by id, `flagged` an activation-suppressed page, `guest` a page in a guest source. */
+export interface PageTrustRow { id: number; source_id: string; slug: string; trust_tier: string; write_origin: unknown; flagged: boolean; guest: boolean; byId: boolean }
+/** `readRowTrustRows` input: a row table and the row ids to read. */
+export interface RowTrustLookup { table: 'facts' | 'takes' | 'timeline_entries'; ids: readonly number[] }
+/** One fact, take or timeline row's trust fields; `flagged` marks an activation-suppressed row, `contested` its first pending supersede proposal (`tp<id>:challenger|challenged`, never set on a timeline row). */
+export interface RowTrustRow { id: number; trust_tier: string; write_origin: unknown; flagged: boolean; contested: string | null }
+/** A live page with its frontmatter aliases and knowledge revision (`listLinkPageMetadata`). */
+export interface LinkPageMetadataRow { slug: string; source_id: string; type: string; title: string; aliases?: unknown; knowledge_revision: string }
+/** One stored non-event timeline row (`listStoredTimelineRows`); `date` is `YYYY-MM-DD`. */
+export interface StoredTimelineRow { id: number; date: string; source: string; summary: string; detail: string | null }
+/** A page and the knowledge revision `filterPagesAtRevision` checks it is still at. */
+export interface PageAtRevisionRef { source_id: string; slug: string; revision: string }
+
+/** One `sources` row as `listSourceRecords` returns it; `archived` and `newest_content_at` are absent on a schema that lacks them. */
+export interface SourceRecordRow {
+  id: string; name: string; local_path: string | null; last_commit: string | null; last_sync_at: Date | null;
+  /** Postgres returns an object; PGLite may return JSON text. */
+  config: Record<string, unknown> | string;
+  created_at: Date; archived?: boolean; newest_content_at?: Date | null;
+}
+
 export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers, PersistenceMembers, LedgerMembers, GovernanceMembers, DecideMembers, JobsMembers, DoctorMembers, MentionPassMembers {
   /** Discriminator: lets migrations and other consumers branch on engine kind without instanceof + dynamic imports. */
   readonly kind: 'postgres' | 'pglite' | 'rust';
@@ -1286,6 +1346,32 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
    * (`withSourceFilesystemLock`) canonicalizes each to pick the outermost worktree root an import locks.
    */
   listSourceLocalPaths(): Promise<string[]>;
+  /** Source resolution reads (SQL and contracts in engine-sql/sources.ts): sources with a local path and `archived`; every source row with `default`'s emptiness flag; the default-write guard's page split. */
+  listLocalPathSources(): Promise<LocalPathSourceRow[]>;
+  listSourceRoutingRows(): Promise<SourceRoutingRow[]>;
+  countDefaultSourceSplit(): Promise<DefaultSourceSplit>;
+  /** One source's id, local_path, raw config and archived flag, or null; `lockSourceRow` reads it FOR UPDATE (engine-sql/sources.ts). */
+  readSourceRow(sourceId: string): Promise<SourceCheckRow | null>;
+  /** Sets the source's last sync time to now; false for an unknown source, which changes nothing (engine-sql/sources.ts). */
+  markSourceSynced(sourceId: string, opts?: SourceSyncStampOptions): Promise<boolean>;
+  /** Every source with the columns `loadAllSources` reads, `default` first then by id; a schema without `archived`/`newest_content_at` omits them. */
+  listSourceRecords(): Promise<SourceRecordRow[]>;
+  /** A source's config and incarnation, or null for an unknown id. */
+  readSourceIncarnation(sourceId: string): Promise<SourceIncarnationRow | null>;
+  /**
+   * Live pages of one source, by slug or updated since a database timestamp, that carry a privacy label gbrain does not
+   * recognize and no visibility key (`ignoredPrivacyLabelSql`), at most `limit` (default 100,000), in no set order.
+   */
+  readIgnoredPrivacyLabelPages(sourceId: string, scope: { slugs: readonly string[] } | { since: string },
+    opts?: { limit?: number; timeoutMs?: number }): Promise<IgnoredLabelPageRow[]>;
+  /** The type and frontmatter of the live page at `slug` in the source, or null; `timeoutMs` bounds Postgres (default 1 s). */
+  readLivePageFrontmatter(sourceId: string, slug: string, opts?: { timeoutMs?: number }): Promise<IgnoredLabelPageRow | null>;
+  /** Whether this connection's role owns the gbrain tables (so it can apply migrations); false only when it provably does not. */
+  ownsSchemaTables(): Promise<boolean>;
+  /** Whether the source's current incarnation has a company-brain ingestion receipt. */
+  hasCompanyBrainReceipt(sourceId: string): Promise<boolean>;
+  /** The source's guest_sources row and whether row-level security hides guest_sources; throws the missing-table error on an old schema. */
+  readGuestSourceRow(sourceId: string): Promise<GuestSourceLookupRow>;
 
   /**
    * Page-write reads and upkeep that belong to no other domain (SQL and contracts in engine-sql/write-misc.ts). A Rust
@@ -1297,6 +1383,11 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   listSharedSkillPackRoots(hostId: string): Promise<SharedSkillPackRoot[]>;
   /** The source's writer binding with host `hostId`'s paths (null host columns for a null or unbound host); null when unbound. */
   getWorktreeBinding(sourceId: string, hostId: string | null): Promise<WorktreeBinding | null>;
+  /**
+   * The writer topology a reviewed `--expected-state` binds to, as jsonb text (engine-sql/writer-admin.ts); the digest
+   * is its SHA-256 (persistence/admin-intent.ts). `lock` holds the topology until the transaction commits.
+   */
+  readWriterAdminState(opts?: WriterAdminStateOptions): Promise<string>;
   hasExtractedEvents(sourceId: string, pageId: number): Promise<boolean>;
   listActiveAccessMembers(): Promise<string[]>;
   /** Whether any access member, live or not, carries the labelled-only grant; a failed read throws (engine-sql/write-misc.ts). */

@@ -1,6 +1,8 @@
 
 import type { StoredWorktreeManifest } from '../persistence/worktree-manifest.ts';
 import type { HostBindingInsert } from './worktree-claim.ts';
+import { PAGE_EMBEDDING_LEASE_PREFIX } from '../page-embedding-lease.ts';
+import type { BrainEngine } from '../engine.ts';
 
 export interface WriterAdminStateOptions {
   /**
@@ -72,3 +74,15 @@ const WRITER_ADMIN_STATE_SQL = `SELECT jsonb_build_object(
     'legacy_locks', (SELECT jsonb_agg(jsonb_build_array(id,holder_pid,holder_host,acquisition_token,acquired_at) ORDER BY id COLLATE "C") FROM gbrain_cycle_locks
       WHERE NOT starts_with(id, $1))
   )::text AS state`;
+
+/** The writer topology as jsonb text. A page embedding lease is per-page vector work, not writer topology, so it is left out. */
+export async function readWriterAdminState(engine: RawSql, opts: WriterAdminStateOptions = {}): Promise<string> {
+  if (opts.lock) {
+    await engine.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR UPDATE');
+    await engine.executeRaw('LOCK TABLE sources, config, persistence_worktrees, persistence_source_bindings, persistence_host_bindings, gbrain_cycle_locks IN SHARE ROW EXCLUSIVE MODE');
+  }
+  const [row] = await engine.executeRaw<{ state: string }>(WRITER_ADMIN_STATE_SQL, [PAGE_EMBEDDING_LEASE_PREFIX]);
+  return row.state;
+}
+
+type RawSql = Pick<BrainEngine, 'executeRaw'>;

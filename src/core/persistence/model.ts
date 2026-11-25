@@ -209,6 +209,8 @@ export const DEFAULT_JOURNAL_LIMITS: Readonly<JournalLimits> = Object.freeze({
   brainRecoveryBytes: 1024 ** 3, worktreeRecoveryBytes: 256 * 1024 ** 2,
 });
 export type SqlEngine = Pick<BrainEngine, 'executeRaw'>;
+/** A bare statement runner, for the helpers that only run their own SQL and are handed executeRaw-only views. */
+export type RawSqlEngine = Pick<BrainEngine, 'executeRaw'>;
 export function principalKey(p: Principal): string { return `principal:${p.kind}:${p.id}`; }
 export function requestPrincipal(r: WriteRequest): Principal { return { kind: r.principal_kind, id: r.principal_id }; }
 export function isTerminal(r: Pick<WriteRequest, 'state'>): boolean { return TERMINAL_STATES.has(r.state); }
