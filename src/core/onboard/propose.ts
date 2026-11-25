@@ -141,11 +141,11 @@ async function meetingPrep(engine: BrainEngine, scope: Scope, vis: Vis, now: Dat
   for (const s of [...series.values()].filter(s => s.pages.length >= 2).slice(0, MEETING_SERIES_CAP)) {
     const prep = await engine.executeRaw<{ one: number }>(
       `SELECT 1 AS one FROM pages q
-        WHERE q.deleted_at IS NULL AND q.type NOT IN ('meeting', 'email', 'conversation') AND ${srcSql('q', 1)}
+        WHERE q.deleted_at IS NULL AND q.type NOT IN ('meeting', 'email', 'conversation') AND ${srcSql('q', 1)} AND ${visSql(vis, 'q')}
           AND lower(q.title) LIKE '%' || $2 || '%' ESCAPE '\\'
        UNION ALL
        SELECT 1 AS one FROM links k JOIN pages f ON f.id = k.from_page_id JOIN pages t ON t.id = k.to_page_id
-        WHERE f.deleted_at IS NULL AND t.deleted_at IS NULL AND f.type NOT IN ('meeting', 'email', 'conversation') AND ${srcSql('f', 1)}
+        WHERE f.deleted_at IS NULL AND t.deleted_at IS NULL AND f.type NOT IN ('meeting', 'email', 'conversation') AND ${srcSql('f', 1)} AND ${visSql(vis, 'f')}
           AND (t.source_id || '/' || t.slug) = ANY(string_to_array($3::text, ','))
        LIMIT 1`, [srcParam(scope), likeEscape(s.title), s.pages.map(p => `${p.source_id}/${p.slug}`).join(',')]);
     if (prep.length) continue;
@@ -185,7 +185,7 @@ async function bulkSenders(engine: BrainEngine, scope: Scope, vis: Vis, since: D
   const wrote = candidates.length ? await engine.executeRaw<{ addr: string }>(
     `SELECT c.addr FROM unnest(string_to_array($2::text, ',')) AS c(addr)
       WHERE EXISTS (SELECT 1 FROM pages p, jsonb_array_elements_text(CASE WHEN jsonb_typeof(p.frontmatter->'participants') = 'array' THEN p.frontmatter->'participants' ELSE '[]'::jsonb END) AS e(v)
-                     WHERE p.type = 'email' AND p.deleted_at IS NULL AND ${srcSql('p', 1)} AND (p.frontmatter->'labels') @> '["SENT"]'::jsonb
+                     WHERE p.type = 'email' AND p.deleted_at IS NULL AND ${srcSql('p', 1)} AND ${visSql(vis, 'p')} AND (p.frontmatter->'labels') @> '["SENT"]'::jsonb
                        AND lower(trim(e.v)) = c.addr)`, [srcParam(scope), candidates.map(([a]) => a).join(',')]) : [];
   const writtenTo = new Set(wrote.map(r => r.addr));
   const hits = candidates.filter(([a]) => !writtenTo.has(a)).map(([, s]) => s);

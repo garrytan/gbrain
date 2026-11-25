@@ -201,6 +201,25 @@ describe('gbrain propose (repo-less PGLite)', () => {
     }
   });
 
+  test('pages the remote caller cannot read never suppress a job: a hidden prep note or a hidden sent thread', async () => {
+    const jobs = proposeOperations.find(o => o.name === 'propose_jobs')!;
+    const remote = async () => Object.fromEntries((await jobs.handler({ engine, remote: true, transport: 'stdio' } as never, { days: 7 }) as ProposeResult).jobs.map(j => [j.signal, j.count]));
+    const before = await remote();
+    await page(engine, 'notes/weekly-sync-with-acme-example-prep', { type: 'note', title: 'Weekly sync with Acme Example prep', readable_by: ['member:carol-example'] }, '# Prep');
+    await page(engine, 'email/to-news', { type: 'email', title: 'Subject to-news', account: 'me@example.com', date: day(-20), senders: ['me@example.com'],
+      participants: ['me@example.com', 'news@acme-example.com'], labels: ['SENT'], readable_by: ['member:carol-example'] }, '# Mail', 'mail');
+    try {
+      const local = Object.fromEntries((await proposeJobs(engine, { days: 7, now: NOW, resolver: { home } })).jobs.map(j => [j.signal, j.count]));
+      expect(local.meeting_prep ?? 0).toBe(0);
+      expect(local.bulk_senders).toBe(before.bulk_senders! - 1);
+      const after = await remote();
+      expect(after.meeting_prep).toBe(before.meeting_prep);
+      expect(after.bulk_senders).toBe(before.bulk_senders);
+    } finally {
+      for (const s of ['notes/weekly-sync-with-acme-example-prep', 'email/to-news']) await engine.executeRaw('DELETE FROM pages WHERE slug = $1', [s]);
+    }
+  });
+
   test('an archived source feeds no job', async () => {
     await engine.executeRaw(`UPDATE sources SET archived = true WHERE id = 'mail'`, []);
     try {
