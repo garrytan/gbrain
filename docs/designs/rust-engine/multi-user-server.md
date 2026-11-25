@@ -242,10 +242,33 @@ and send its bytes (`importClientFile`); the server imports a private copy at th
 `importManagedFiles` refuses (`managed_persistence`), and `snapshotStore`, which names a path on the server host,
 refuses with `engine_capability_missing` reason `served`: run it on the server.
 
+### Stores a member returns, and the publication store calls
+
+Members that return a store object (`worktreeClaimStore`, `writerAdminStore`, `writerReleaseStore`,
+`publicationJournalStore`, `chronicleStore`) are proxies on a served client: each method crosses as
+`<member>.<method>` inside a transaction, or as the v3-only whole operation `servedStoreCall`. The shared-skill
+publication path, which calls a few store methods directly (`shared-skills/rust-publication.ts`), reaches them as
+`brain.<method>` or `servedBrainCall`, limited to the methods `served/store-returning.ts` lists. A transaction handle
+records the page keys its `lockPageKeys` took on the server, so held-key checks answer as in process. A plain member
+called on a transaction must be one the owner forwards; the call keeps the frame's caller access record and deadline.
+
+### Client file limits
+
+The client opens the file once without following a final symlink, refuses anything that is not a regular file, and
+reads at most the import's own size limit (24 MiB for Markdown, 5 MB for code, 20 MiB for images); a larger file is
+not sent, and the server answers the importer's own size skip. The server refuses bytes over the limit before writing
+anything, and passes only data options (`noEmbed`, `inferFrontmatter`, `sourceId`, `forceRechunk`) with one
+normalised relative path. Segmented storage of a Markdown file over 24 MiB is not available to a network client.
+
+### Capability
+
+`served` is in `MULTIUSER_CAPABILITIES` (I-8.v2), not `ENGINE_CAPABILITIES`, so with the switch off every
+capability set and the error catalogue's list of capabilities stay as they were.
+
 ### Network bounds
 
 Before its hello is authenticated a connection may send one frame of at most 64 KiB within 5 s (TLS handshake
-included); at most 32 connections wait for a hello at once; partly received frames of every connection share one
+included), and nothing more until the hello is answered; at most 32 connections wait for a hello at once; partly received frames of every connection share one
 512 MiB budget, checked before bytes are held. Past any bound the connection is closed and nothing ran.
 
 ### Errors added

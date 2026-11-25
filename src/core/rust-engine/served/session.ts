@@ -138,6 +138,22 @@ function stateOf(opts: ServedServerOptions, engine: BrainEngine): ServerState {
   return state;
 }
 
+/** Scope objects for one session, one per schema version, each keyed to itself (ENGINE_ROOT). */
+function scopeCache(): (sv: unknown) => object {
+  const scopes = new Map<number | null, object>();
+  return (sv: unknown): object => {
+    const version = typeof sv === 'number' && Number.isInteger(sv) ? sv : null;
+    let scope = scopes.get(version);
+    if (!scope) {
+      scope = {};
+      Object.defineProperty(scope, ENGINE_ROOT, { value: scope });
+      if (version !== null) noteSchemaVersion(scope, version);
+      scopes.set(version, scope);
+    }
+    return scope;
+  };
+}
+
 export function servedSession(side: ServedServerSide, opts: ServedServerOptions, ctx: SessionContext): ServedSession {
   const state = stateOf(opts, side.engine);
   const { socket, calls, transport } = ctx;
@@ -260,18 +276,7 @@ export function servedSession(side: ServedServerSide, opts: ServedServerOptions,
   // A call made in its engine's scope on the client runs in a scope here that answers what that one did: the schema
   // version the client's engine recorded. One scope object per version and session, keyed to itself (ENGINE_ROOT), so
   // what a client recorded never changes the owner engine's own record.
-  const scopes = new Map<number | null, object>();
-  const scopeFor = (sv: unknown): object => {
-    const version = typeof sv === 'number' && Number.isInteger(sv) ? sv : null;
-    let scope = scopes.get(version);
-    if (!scope) {
-      scope = {};
-      Object.defineProperty(scope, ENGINE_ROOT, { value: scope });
-      if (version !== null) noteSchemaVersion(scope, version);
-      scopes.set(version, scope);
-    }
-    return scope;
-  };
+  const scopeFor = scopeCache();
 
   // ---- one call ----
   const replyDirect = (id: number, member: string, error: unknown) => writeFrame({ t: 'result', id, ok: false, error: encodeErr(error) }, member);
