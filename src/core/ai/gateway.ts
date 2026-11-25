@@ -3577,7 +3577,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   refuseUnscoped();
   await discoverBeforeOpenAICall(opts.model ?? gw().config?.chat_model);
   const fallbackChain = opts.allowFallback === false ? undefined : gw().config?.chat_fallback_chain;
-  if (fallbackChain?.length) return chatWithFallback(opts, opts.model ?? getChatModel(), fallbackChain, chat, { onRefusal: gw().config?.chat_fallback_on_refusal !== false });
+  if (fallbackChain?.length) return chatWithFallback(opts, opts.model ?? getChatModel(), fallbackChain, chat, { onRefusal: gw().config?.chat_fallback_on_refusal === true });
   const tracker = __budgetStore.getStore() ?? null;
   const modelStrEarly = opts.model ?? getChatModel();
 

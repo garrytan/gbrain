@@ -9,7 +9,9 @@ by hand. Both only read: nothing is linked, edited or removed.
 
 A pair is two person pages with the same or a close name, a shared email address or phone number, or a shared account
 id (LinkedIn, GitHub or an id your schema declares). Pairs you already linked, pairs you marked as different people
-with `gbrain dedupe reject`, and names shared by more than 10 pages are left out and counted.
+with `gbrain dedupe reject` or `gbrain dedupe decide`, and names shared by more than 10 pages are left out and counted.
+Google Contacts that match two or more people are decided one by one with `gbrain dedupe decide`
+([Google connect](google-connect.md#decide-the-contacts-that-wait)).
 
 ## The classes
 
@@ -47,6 +49,11 @@ Email evidence comes from the email pages already in your brain (`type: email`, 
 `conversations/` folder (WhatsApp and the other layouts gbrain's conversation parser reads). Both are read on your
 machine and sent nowhere. A brain with no email or chat pages works the same, with fewer signals. gbrain has no Signal
 reader, so Signal chats add nothing. A role or team address turns email evidence off for that pair.
+
+A large chat page stored in segments (one over 1 MiB) is read whole up to 24 MiB. A bigger one, or one that can't be
+read as one body, is set aside: its chat adds no evidence, the run carries on, and the output lists it on its own line
+(`messaging.segmented_page` in `--json`, with `read`, `set_aside` and the `pages`). Reading only part of a chat could
+hide speakers and make a group chat look one-to-one, so a part is never used.
 
 ## Web search (Exa)
 

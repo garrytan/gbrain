@@ -8067,7 +8067,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "mutating": false,
     "idempotent": true,
     "outputRedaction": "retrieval",
-    "description": "What the brain learned since you last looked: new facts its extractors saved, facts that disagree (which one is right?), promises people made to you, thin pages it filled in, and rows you typed into Facts fences (shown, never counted). Default: the items you have not been shown yet from the last 7 days; with since, every item since that date. Grouped by kind, questions first, 15 by default; each item carries a stable id and evidence links (the page or loop it came from). Reading stamps the items as shown. With stats: per-night counts (a night ends at 06:00 in brain.timezone) of items shown, kept, undone and expired, and the share of nights with at least 5 counted items.",
+    "description": "What the brain learned since you last looked: new facts its extractors saved, facts that disagree (which one is right?), promises people made to you, people who may be the same person (with the gbrain dedupe confirm and reject commands, run on the brain host), thin pages it filled in, and rows you typed into Facts fences (shown, never counted). Default: the items you have not been shown yet from the last 7 days; with since, every item since that date. Grouped by kind, questions first, 15 by default; each item carries a stable id and evidence links (the page or loop it came from). Reading stamps the items as shown. With stats: per-night counts (a night ends at 06:00 in brain.timezone) of items shown, kept, undone and expired, and the share of nights with at least 5 counted items.",
     "params": {
       "since": {
         "type": "string",
@@ -8088,6 +8088,61 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     },
     "cliHints": {
       "name": "learned"
+    },
+    "area": "insights"
+  },
+  {
+    "name": "learned_keep",
+    "mutating": true,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Keep items from the learned note: mark what the brain learned as right. Writes only the note's own record (no page or fact changes). Takes item ids from learned (comma separated), or all for every pending change you can read from the last 7 days (up to 100). Questions (facts that disagree, possible duplicate people) are answered, not kept.",
+    "params": {
+      "ids": {
+        "type": "string",
+        "required": true,
+        "description": "Item ids from learned, comma separated (e.g. 12,15), or all."
+      }
+    },
+    "scope": "write",
+    "annotations": {
+      "idempotentHint": true
+    },
+    "cliHints": {
+      "name": "learned-keep",
+      "positional": [
+        "ids"
+      ]
+    },
+    "area": "insights"
+  },
+  {
+    "name": "learned_undo",
+    "mutating": true,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Undo items from the learned note through the operation that owns each change: a new fact is forgotten (withdrawn; history kept), a promise is dropped, a filled-in page is reverted to the version before it was filled (refused when the page was edited since, with the commands to choose a version). For facts that disagree it rejects the newer fact on the brain host; for possible duplicate people it returns the gbrain dedupe reject command for the brain host. Each result says what happened.",
+    "params": {
+      "ids": {
+        "type": "string",
+        "required": true,
+        "description": "Item ids from learned, comma separated (e.g. 12,15)."
+      },
+      "reason": {
+        "type": "string",
+        "description": "Why it was wrong; recorded on the reversal (forget reason, loop note or revert reason)."
+      }
+    },
+    "scope": "write",
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": true
+    },
+    "cliHints": {
+      "name": "learned-undo",
+      "positional": [
+        "ids"
+      ]
     },
     "area": "insights"
   }

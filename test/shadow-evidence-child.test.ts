@@ -17,7 +17,10 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { attachShadowParts } from '../src/shadow/attach.ts';
 import { encodeValue } from '../src/shadow/codec.ts';
 import { runShadowChild, type ShadowChildDeps } from '../src/shadow/child.ts';
-import { epochWatch } from '../src/shadow/evidence-epoch.ts';
+import { createWaiter } from '../src/shadow/child-checks.ts';
+import { SHADOW_COMPARATOR_VERSION } from '../src/shadow/exactness.ts';
+import { ensureEpoch, epochWatch } from '../src/shadow/evidence-epoch.ts';
+import { appendRecall, readEpochRecall } from '../src/shadow/recall.ts';
 import { buildEvidenceStatus } from '../src/shadow/evidence.ts';
 import { MirrorQueue, newMirrorCounters, UsageMeter, zeroUsage } from '../src/shadow/mirror.ts';
 import { appendUsage } from '../src/shadow/usage.ts';
@@ -49,7 +52,10 @@ async function runChild(dir: string, lines: string[], deps: Partial<ShadowChildD
 
 const ledgerRows = (dir: string): Array<Record<string, unknown>> => {
   try {
-    return readdirSync(join(dir, 'ledger')).sort().flatMap((n) => readFileSync(join(dir, 'ledger', n), 'utf8').trim().split('\n').map((l) => JSON.parse(l)));
+    const all = readdirSync(join(dir, 'ledger')).sort().flatMap((n) => readFileSync(join(dir, 'ledger', n), 'utf8').trim().split('\n').map((l) => JSON.parse(l)));
+    // An unresolved row is written before its rerun starts and is settled by a completion row with the same sample id (evidence.ts).
+    const done = new Set(all.filter((r) => r.sid && r.rerun !== 'pending').map((r) => r.sid));
+    return all.filter((r) => !(r.rerun === 'pending' && done.has(r.sid)));
   } catch { return []; }
 };
 const faults = (dir: string): Array<Record<string, unknown>> => {
@@ -216,7 +222,7 @@ describe('stale and inconclusive mismatches', () => {
     });
     const files = readdirSync(join(dir, 'ledger')).sort();
     expect(files).toEqual(['2026-11-22.jsonl', '2026-11-23.jsonl']);
-    const ops = (f: string) => readFileSync(join(dir, 'ledger', f), 'utf8').trim().split('\n').map((l) => `${JSON.parse(l).op}:${JSON.parse(l).ts.slice(11, 19)}`);
+    const ops = (f: string) => readFileSync(join(dir, 'ledger', f), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((r) => r.rerun !== 'pending').map((r) => `${r.op}:${r.ts.slice(11, 19)}`); // the unresolved rows are settled by these completion rows
     expect(ops(files[0]!)).toEqual(['getTags:23:59:30']);
     expect(ops(files[1]!)).toEqual(['getPage:00:00:30', 'getPage:00:00:40']); // arrival order within a day
   });
@@ -329,9 +335,28 @@ describe('evidence epoch in the child', () => {
     await runChild(dir, [read('getPage', ['a'], { slug: 'a' })], { openEngine: () => engine() as never, addonSha256: () => 'b'.repeat(64) });
     const second = manifest(dir);
     expect(second.epoch_id).not.toBe(first.epoch_id);
-    expect(second.inputs).toMatchObject({ seed_id: 'seed-1', rust_addon_sha256: 'b'.repeat(64), comparator_version: 1, readiness_policy_hash: 'p1' });
+    // pregate-literal: SHADOW_COMPARATOR_VERSION=1 the 1 on this line is the end of the seed id and of the policy hash, not a comparator version
+    expect(second.inputs).toMatchObject({ seed_id: 'seed-1', rust_addon_sha256: 'b'.repeat(64), comparator_version: SHADOW_COMPARATOR_VERSION, readiness_policy_hash: 'p1' });
     expect(ledgerRows(dir).map((r) => r.epoch_id)).toEqual([first.epoch_id, first.epoch_id, second.epoch_id]);
     expect(JSON.parse(readFileSync(join(dir, 'evidence', 'epochs.jsonl'), 'utf8').trim()).epoch_id).toBe(first.epoch_id);
+  });
+
+  test('records an epoch of comparator version 2 collected stay out of the epoch the current comparator opens: their recall and clearance do not count', async () => {
+    expect(SHADOW_COMPARATOR_VERSION).toBeGreaterThanOrEqual(3); // the privacy, rerun and recall rules changed what a record means
+    const engine = () => ({ async connect() {}, async disconnect() {}, getPage: async () => ({ slug: 'a' }) }) as never;
+    const probe = seeded();
+    await runChild(probe, [], { openEngine: engine });
+    const inputs = manifest(probe).inputs; // what this child's epoch is made of, but for the comparator
+    const dir = seeded();
+    const old = ensureEpoch(dir, { ...inputs, comparator_version: 2 } as never, Date.parse('2026-11-24T00:00:00Z'));
+    for (let i = 0; i < 30; i++) appendRecall(dir, { ts: new Date().toISOString(), epoch_id: old.epoch_id, vector: 1, primary: 1, overlap: 1, ref_size: 10 }); // thirty perfect scores of the old rule
+    await runChild(dir, [], { openEngine: engine }); // the shadow restarts on the new build
+    const now = manifest(dir);
+    expect(now.epoch_id).not.toBe(old.epoch_id);
+    expect(now.inputs.comparator_version).toBe(SHADOW_COMPARATOR_VERSION);
+    expect(readEpochRecall(dir, now.epoch_id)).toEqual([]); // none of them counts in the new epoch
+    expect(readEpochRecall(dir, old.epoch_id)).toHaveLength(30); // and they are still on disk, as the first epoch's
+    expect(buildEvidenceStatus({ dir }).evidence?.recall_samples ?? 0).toBe(0);
   });
 
   test('the build (commit, version, addon target) is recorded when the epoch starts and survives a TS update that changes nothing relevant', async () => {
@@ -447,5 +472,59 @@ describe('owner identity, timeouts, adapter and follower evidence', () => {
     expect(follower()).toMatchObject({ probe: { state: 'pass' }, fingerprints: { checked_rows: 7 } });
     await runChild(dir, [], { openEngine: () => engineOf({}) as never, addonSha256: () => 'c'.repeat(64) }); // a new epoch
     expect(follower()).toMatchObject({ probe: { state: 'not_run' }, fingerprints: { checked_rows: 0 } });
+  });
+});
+
+describe('a rerun waiting for a quiet window', () => {
+  test('the end of input cuts the wait short: the sample ends as skipped (child_closing), not after the full wait', async () => {
+    const dir = seeded();
+    const input = new PassThrough();
+    let asked = 0;
+    const done = runShadowChild(dir, { input, writeControl: (l) => {
+      const m = JSON.parse(l) as { t?: string; id?: number; session?: string; kind?: string };
+      if (m.t === 'ask' && m.kind === 'rerun' && ++asked === 1) input.write(JSON.stringify({ t: 'answer', id: m.id, session: m.session ?? '', ok: false, error: { code: 'moved' } }) + '\n'); // the position moved: the next run waits 0.5 s
+    }, ...BASE, random: () => 0.5, openEngine: () => ({ async connect() {}, async disconnect() {}, async getPage() { return { slug: 'other' }; } }) as never });
+    const started = Date.now();
+    input.write(read('getPage', ['a'], { slug: 'a' }));
+    while (asked < 1) await tick();
+    await new Promise((r) => setTimeout(r, 100)); // now inside the wait
+    input.end();
+    await done;
+    expect(Date.now() - started).toBeLessThan(450); // the full wait is 500 ms
+    expect(ledgerRows(dir).at(-1)).toMatchObject({ op: 'getPage', rerun: 'skipped:child_closing' });
+  });
+});
+
+describe('a rerun wait that starts after the end of input', () => {
+  test('a privacy answer that says moved, followed at once by the end of input: shutdown does not wait for the back-off', async () => {
+    const dir = seeded();
+    const input = new PassThrough();
+    let asked = 0;
+    const page = { page_id: 1, source_id: 's', slug: 'a' };
+    const line = JSON.stringify({ t: 'read', id: 1, sid: 's1', at: Date.parse('2026-11-23T00:00:00Z'), op: 'listPages', primary_ms: 2, args: encodeValue([{ excludePrivate: true }]), result: encodeValue([page]) }) + '\n';
+    const done = runShadowChild(dir, { input, writeControl: (l) => {
+      const m = JSON.parse(l) as { t?: string; id?: number; session?: string; kind?: string };
+      if (m.t === 'ask' && m.kind === 'privacy' && ++asked === 1) {
+        input.write(JSON.stringify({ t: 'answer', id: m.id, session: m.session ?? '', ok: true, value: { verdict: 'privacy_check_moved', complete: false } }) + '\n'); // the position moved: the rerun would wait 0.5 s first
+        input.end(); // and the input ends in the same breath, before that wait can start
+      }
+    }, ...BASE, random: () => 0.5, openEngine: () => ({ async connect() {}, async disconnect() {}, async listPages() { return [page, { page_id: 2, source_id: 's', slug: 'extra' }]; } }) as never });
+    const started = Date.now();
+    input.write(line);
+    await done;
+    expect(asked).toBe(1); // the privacy question was asked, so the wait is the one that follows its moved answer
+    expect(Date.now() - started).toBeLessThan(450); // the full wait is 500 ms
+    expect(ledgerRows(dir).at(-1)).toMatchObject({ op: 'listPages', reason: 'privacy_check_moved', rerun: expect.stringMatching(/^skipped:/) });
+  });
+});
+
+describe('the rerun waiter', () => {
+  test('a pause asked for after close() returns at once and starts no timer', async () => {
+    const waiter = createWaiter();
+    waiter.close();
+    const started = Date.now();
+    await waiter.pause(5_000);
+    expect(Date.now() - started).toBeLessThan(100);
+    expect(waiter.closed()).toBe(true);
   });
 });

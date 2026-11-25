@@ -301,6 +301,8 @@ const entity: Operation = {
     }
     const name = typeof p.name === 'string' ? p.name.trim() : '';
     if (!name) {
+      const slug = typeof p.slug === 'string' ? p.slug.trim() : '';
+      if (slug) throw verbError('invalid_params', 'entity takes name, not slug.', `Pass the slug as name: entity {name: ${JSON.stringify(slug)}}.`);
       throw verbError(
         'invalid_params',
         'name must be a non-empty string.',

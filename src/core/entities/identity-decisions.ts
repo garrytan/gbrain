@@ -24,7 +24,7 @@ import { isOwnerOnlySourceConfig } from '../access/owner-only.ts';
 import { withEngineScope } from '../engine-scope.ts';
 import { DEFAULT_SOURCE_ID } from '../sync-failure-ledger.ts';
 import { closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { dump, JSON_SCHEMA } from 'js-yaml';
 import { loadBoundedYaml } from '../data-frontmatter.ts';
 import type { BrainEngine } from '../engine.ts';
@@ -85,7 +85,7 @@ export function parseDecisionFile(text: string, id: string): (DecisionInput & { 
   if (verdict !== 'same' && verdict !== 'different') return null;
   if (!Array.isArray(f.members) || !f.members.every(isRef)) return null;
   const members = sortMembers(f.members as IdentityMemberRef[]);
-  if (members.length < 2 || decisionId(members) !== id) return null;
+  if (members.length < (verdict === 'different' ? 1 : 2) || decisionId(members) !== id) return null;
   const entityId = typeof f.entity_id === 'string' ? f.entity_id : null;
   if (verdict === 'same' && !entityId) return null;
   const canonical = isRef(f.canonical) && members.some(x => memberKey(x) === memberKey(f.canonical as IdentityMemberRef)) ? f.canonical as IdentityMemberRef : null;
@@ -186,27 +186,35 @@ export async function applyIdentityProjection(engine: BrainEngine, plan: Identit
 
 export interface DecisionCommitReceipt { outcome: string; commit: string | null; paths: string[]; note?: string }
 
-/** Writes the decision files under the checkout's commit lock and commits them through the door; a failed commit restores them. */
-function commitDecisionFiles(root: string, decisions: Array<DecisionInput & { decided_at: string }>, message: string): DecisionCommitReceipt {
-  const files = decisions.map(d => ({ path: decisionPath(decisionId(d.members)), text: serializeDecision(d) }));
+/**
+ * Writes the decision files (text) and removes others (null) under the checkout's commit lock and commits them through the
+ * door; a failed commit restores them.
+ */
+function commitDecisionFiles(root: string, files: Array<{ path: string; text: string | null; create?: true }>, message: string): DecisionCommitReceipt {
   const attempt = (): DecisionCommitReceipt => {
     const lock = acquireCommitLock(checkoutRoot(root));
     const prior = process.env[COMMIT_LOCK_ENV];
     process.env[COMMIT_LOCK_ENV] = lock.lockPath;
     const before = new Map<string, string | null>();
     try {
-      for (const rel of ['.gbrain', IDENTITY_DIR, ...files.map(f => f.path)]) {
+      for (const rel of new Set(['.gbrain', IDENTITY_DIR, ...files.map(f => dirname(f.path)), ...files.map(f => f.path)])) {
         const st = lstatSync(join(root, rel), { throwIfNoEntry: false });
         if (st && !(rel.endsWith('.md') ? st.isFile() : st.isDirectory())) {
           throw opError('commit_paths_invalid', `gbrain dedupe: ${rel} in ${root} is a symlink or not a regular ${rel.endsWith('.md') ? 'file' : 'folder'}, so no decision file is written through it; nothing was written.`,
             'Replace it with a regular file or folder in the checkout, then run the command again.');
         }
       }
-      mkdirSync(join(root, IDENTITY_DIR), { recursive: true });
+      const taken = files.find(f => f.create && lstatSync(join(root, f.path), { throwIfNoEntry: false }));
+      if (taken) {
+        throw opError('commit_paths_invalid', `gbrain dedupe: ${taken.path} already exists in ${root}, so the new page is not written over it; nothing was written.`,
+          'Run the command again: it picks the next free name.');
+      }
+      for (const dir of new Set([IDENTITY_DIR, ...files.map(f => dirname(f.path))])) mkdirSync(join(root, dir), { recursive: true });
       for (const f of files) {
         const abs = join(root, f.path);
         before.set(abs, existsSync(abs) ? readFileSync(abs, 'utf8') : null);
-        const fd = openSync(abs, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW, 0o644);
+        if (f.text === null) { rmSync(abs, { force: true }); continue; }
+        const fd = openSync(abs, constants.O_WRONLY | constants.O_CREAT | (f.create ? constants.O_EXCL : constants.O_TRUNC) | constants.O_NOFOLLOW, 0o644);
         try { writeSync(fd, f.text); } finally { closeSync(fd); }
       }
       try {
@@ -236,18 +244,18 @@ function commitDecisionFiles(root: string, decisions: Array<DecisionInput & { de
   }
 }
 
-/** Whether HEAD holds every file as written: true, false, or null when git could not be read (then nothing is restored). */
-function committedAll(root: string, files: Array<{ path: string; text: string }>): boolean | null {
+/** Whether HEAD holds every file as written (a removed one absent): true, false, or null when git could not be read (then nothing is restored). */
+function committedAll(root: string, files: Array<{ path: string; text: string | null }>): boolean | null {
   for (const f of files) {
     const r = spawnSync('git', ['-C', root, 'show', `HEAD:./${f.path}`], { encoding: 'utf8', env: gitChildEnv() });
     if (r.status === 0) { if (r.stdout !== f.text) return false; continue; }
-    if (r.status === 128 && /does not exist in|exists on disk, but not in|invalid object name 'HEAD'/.test(String(r.stderr))) return false;
+    if (r.status === 128 && /does not exist in|exists on disk, but not in|invalid object name 'HEAD'/.test(String(r.stderr))) { if (f.text !== null) return false; continue; }
     return null;
   }
   return true;
 }
 
-function storeMismatch(rows: IdentityDecision[]): OperationError {
+export function storeMismatch(rows: IdentityDecision[]): OperationError {
   const sourceId = rows.find(d => d.origin === 'git')?.home_source_id ?? 'default';
   return opError('dedupe_decision_store_mismatch',
     `This brain's duplicate decisions are kept in git in source ${sourceId}, but this host sees no git work tree for it, so nothing was written.`,
@@ -282,8 +290,12 @@ export async function unpublishableMembers(engine: BrainEngine, homeSourceId: st
 
 export interface RecordResult { store: 'git' | 'database'; home: IdentityHome | null; receipt?: DecisionCommitReceipt; projection?: ProjectionResult; applied?: ApplyIdentityDecisionsResult }
 
-/** Records decisions: on a brain with a home repository, the files first and then their projection; otherwise the rows. */
-export async function recordDecisions(engine: BrainEngine, decisions: DecisionInput[], message: string): Promise<RecordResult> {
+/**
+ * Records decisions: on a brain with a home repository, the files first and then their projection; otherwise the rows.
+ * pageFiles: on a brain with a home repository, new page files (repository-relative; refused if one exists) written and committed in the same
+ * commit as the decisions, such as a person page a decision links; ignored on a brain without one.
+ */
+export async function recordDecisions(engine: BrainEngine, decisions: DecisionInput[], message: string, pageFiles: Array<{ path: string; text: string }> = []): Promise<RecordResult> {
   const read = await engine.listIdentityDecisions();
   const home = await identityHome(engine);
   const decidedAt = new Date().toISOString();
@@ -302,9 +314,37 @@ export async function recordDecisions(engine: BrainEngine, decisions: DecisionIn
       'Leave such a group undecided on a brain whose default source has a repository.',
       { reason, fix: { argv: ['gbrain', 'dedupe', 'confirm'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Prints the confirm list with a hint line per entry; changes nothing.' } });
   }
-  const receipt = commitDecisionFiles(home.root, full, message);
+  const receipt = commitDecisionFiles(home.root, [...pageFiles.map(f => ({ ...f, create: true as const })), ...full.map(d => ({ path: decisionPath(decisionId(d.members)), text: serializeDecision(d) }))], message);
   const projection = await projectIdentityDecisions(engine, home);
   return { store: 'git', home, receipt, projection };
+}
+
+/**
+ * Removes decisions by id (gbrain dedupe undo): on a brain with a home repository the files are removed in one commit and
+ * the committed decisions re-read (a row the database held alone is removed with them); otherwise the rows. A removed
+ * "same" decision unlinks the pages it linked. Refuses an id that is not recorded, writing nothing.
+ */
+export async function forgetDecisions(engine: BrainEngine, ids: string[], message: string): Promise<RecordResult & { removed: string[] }> {
+  const read = await engine.listIdentityDecisions();
+  const known = new Map(read.decisions.map(d => [d.decision_id, d]));
+  const removed = [...new Set(ids)];
+  const unknown = removed.filter(id => !known.has(id));
+  if (unknown.length) {
+    throw opError('dedupe_decision_unknown', `gbrain dedupe undo: no decision ${unknown.join(', ')} is recorded; nothing was removed.`,
+      'Pass the decision ids gbrain dedupe decide printed (16 hex characters each).',
+      { fix: { argv: ['gbrain', 'entity-identity-list', '--json'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Lists identity groups and their members; changes nothing.' } });
+  }
+  const home = await identityHome(engine);
+  if (!home) {
+    if (read.decisions.some(d => d.origin === 'git')) throw storeMismatch(read.decisions);
+    return { store: 'database', home: null, applied: await engine.applyIdentityDecisions({ remove: removed }), removed };
+  }
+  const inGit = removed.filter(id => known.get(id)!.origin === 'git');
+  const receipt = inGit.length ? commitDecisionFiles(home.root, inGit.map(id => ({ path: decisionPath(id), text: null })), message) : undefined;
+  const alone = removed.filter(id => known.get(id)!.origin !== 'git');
+  if (alone.length) await engine.applyIdentityDecisions({ remove: alone });
+  const projection = await projectIdentityDecisions(engine, home);
+  return { store: 'git', home, ...(receipt ? { receipt } : {}), projection, removed };
 }
 
 export interface ReconcileResult { store: 'git' | 'database'; written: number; git_kept?: string[]; receipt?: DecisionCommitReceipt; projection?: ProjectionResult; applied?: ApplyIdentityDecisionsResult; pending: PendingIdentityMember[] }
@@ -332,7 +372,7 @@ export async function reconcileDecisions(engine: BrainEngine): Promise<Reconcile
     const parsed = parseDecisionFile(await git(home.root, ['cat-file', 'blob', file.blob]), file.id);
     if (!parsed || parsed.verdict !== d.verdict || parsed.entity_id !== d.entity_id) gitKept.push(d.decision_id);
   }
-  const receipt = dbOnly.length ? commitDecisionFiles(home.root, dbOnly, `dedupe: record ${dbOnly.length} duplicate decision(s) kept only in the database`) : undefined;
+  const receipt = dbOnly.length ? commitDecisionFiles(home.root, dbOnly.map(d => ({ path: decisionPath(decisionId(d.members)), text: serializeDecision(d) })), `dedupe: record ${dbOnly.length} duplicate decision(s) kept only in the database`) : undefined;
   const projection = await projectIdentityDecisions(engine, home);
   return { store: 'git', written: dbOnly.length, git_kept: gitKept, ...(receipt ? { receipt } : {}), projection, pending: (await engine.listIdentityDecisions()).pending };
 }

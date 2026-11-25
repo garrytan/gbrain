@@ -1,3 +1,4 @@
+import * as opCheckpointImpl from './engine-sql/op-checkpoint.ts';
 import { tryAcquirePoolLongHold, PoolCapacityError } from './pool-budget.ts';
 import { capabilitiesForEngineKind, type EngineCapabilities } from './engine-capabilities.ts';
 import { noteRequestConfigWrite, requestConfigRows, requestConfigValue } from './config-snapshot.ts';
@@ -3483,6 +3484,9 @@ export class PostgresEngine implements BrainEngine {
   upsertOpenLoop(loop: OpenLoopUpsertInput) { return whenNotAborted(() => openLoopsImpl.upsertOpenLoop(refuseAborted(this.autocommitSql), loop)); }
   closeOpenLoop(sourceId: string | null, id: number, status: Exclude<OpenLoopStatus, 'open'>, closedBy: string) { return whenNotAborted(() => openLoopsImpl.closeOpenLoop(refuseAborted(this.autocommitSql), sourceId, id, status, closedBy)); }
   listOpenLoops(opts?: OpenLoopListOpts) { return whenNotAborted(() => openLoopsImpl.listOpenLoops(refuseAborted(unscopedExecutor(this.engineSql, 'open loops: the list read ran through executeRaw unscoped')), opts)); }
+  countOpenLoopsByCounterpartyEmail(sourceId: string, emails: readonly string[], loopType: string) { return whenNotAborted(() => openLoopsImpl.countOpenLoopsByCounterpartyEmail(refuseAborted(unscopedExecutor(this.engineSql, 'open loops: the withheld-noise count ran through executeRaw unscoped')), sourceId, emails, loopType)); }
+  async listPendingCoreEditNotices(sourceIds: readonly string[] | null) { return trustTierReads.listPendingCoreEditNotices(this, sourceIds); }
+  purgeStaleAppliedCaptures(ttlDays: number) { return opCheckpointImpl.purgeStaleAppliedCaptures(this, ttlDays); }
   readEntityOpenLoops(slug: string, sourceId: string, limit: number) { return whenNotAborted(() => openLoopsImpl.readEntityOpenLoops(refuseAborted(unscopedExecutor(this.engineSql, 'open loops: the entity card read ran through executeRaw unscoped')), slug, sourceId, limit)); }
   // Decide proposals (group C; engine-sql/decide-proposals.ts).
   async insertDecideProposal(p: decideProposals.NewProposal) { return decideProposals.insertDecideProposal(this, p); }

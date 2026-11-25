@@ -689,7 +689,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     let ctx: Awaited<ReturnType<typeof makeContext>>;
     try {
       ctx = await withTimeout(
-        timeCliPhase('context', () => (configSnapshot ? configSnapshot.run(() => makeContext(engine, params, op)) : makeContext(engine, params, op)).then(c => asPreview.context(c))),
+        timeCliPhase('context', () => (configSnapshot ? configSnapshot.run(() => makeContext(engine, params, op)) : makeContext(engine, params, op)).then(c => asPreview.context(c, params))),
         wallclockMs,
         `gbrain ${command}: context`,
       );
@@ -1618,6 +1618,8 @@ export function formatResult(
       return tags.length > 0 ? tags.join(', ') + '\n' : 'No tags.\n';
     }
     case 'find_pages': return formatFindPages(result);
+    case 'learned_keep':
+    case 'learned_undo': return require('../core/learning/decide.ts').formatDecisions(result);
     case 'learned': return (result as { stats?: unknown }).stats ? require('../core/learning/stats.ts').formatLearnedStats((result as { stats: unknown }).stats) : require('../core/learning/read.ts').formatLearned(result);
     case 'get_stats': {
       const s = result as any;
@@ -2376,10 +2378,8 @@ async function prepareConnectedDispatch(command: string, args: string[]): Promis
   if (command === 'sync' && !syncOperator && args[0] !== 'trigger') {
     const cfgSync = loadConfig();
     if (await (await import('../commands/sync-persistence-delegate.ts')).maybeDelegateSyncToPersistence(cfgSync, args)) return null;
-    if (cfgSync?.engine === 'pglite' && cfgSync.database_path && !cfgSync.database_url) {
-      const { maybeDelegateSyncToServe } = await import('../commands/sync-delegate.ts');
-      if (await maybeDelegateSyncToServe(cfgSync.database_path, args)) return null;
-    }
+    const syncEngine = (await import('../core/persistence/resident-owner.ts')).localBrainEngine(cfgSync);
+    if (syncEngine && await (await import('../commands/sync-delegate.ts')).maybeDelegateSyncToServe(cfgSync!.database_path!, args, syncEngine)) return null;
   }
 
   if (command === 'sources' && args[0] === 'refresh' && !hasHelpFlag(args) && await (await import('../commands/sources-refresh-delegate.ts')).maybeDelegateSourcesRefresh(loadConfig(), args.slice(1))) return null;
@@ -2399,10 +2399,8 @@ async function prepareConnectedDispatch(command: string, args: string[]): Promis
   // IPC socket instead (commands/sweep-delegate.ts).
   if (command === 'sweep') {
     const cfgSweep = loadConfig();
-    if (cfgSweep?.engine === 'pglite' && cfgSweep.database_path && !cfgSweep.database_url) {
-      const { maybeDelegateSweepToServe } = await import('../commands/sweep-delegate.ts');
-      if (await maybeDelegateSweepToServe(cfgSweep.database_path, args)) return null;
-    }
+    const sweepEngine = (await import('../core/persistence/resident-owner.ts')).localBrainEngine(cfgSweep);
+    if (sweepEngine && await (await import('../commands/sweep-delegate.ts')).maybeDelegateSweepToServe(cfgSweep!.database_path!, args, sweepEngine)) return null;
   }
 
   // Thin-client `jobs` dispatch: `list` and `get` route over MCP (v0.32

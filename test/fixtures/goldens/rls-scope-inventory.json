@@ -1990,6 +1990,28 @@
         ],
         "flagOnScopes": []
       },
+      "listEnrichCandidates#owner-contact": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listEnrichCandidates#owner-contact-no-owner": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listEnrichCandidates#sourceId": {
         "flagOffLanes": [
           "pool"
@@ -3946,6 +3968,7 @@
         "countChunklessPagesWithContent": "direct",
         "countKeywordPages": "direct",
         "countOnboardSignal": "none",
+        "countOpenLoopsByCounterpartyEmail": "none",
         "countPagesBy": "direct",
         "countSearchVectorRows": "none",
         "countSegmentedTimelinePages": "none",
@@ -4116,6 +4139,7 @@
         "listOwnerProposalRows": "none",
         "listPageTypesByIds": "none",
         "listPages": "direct",
+        "listPendingCoreEditNotices": "none",
         "listPrefixSampledPages": "direct",
         "listPrivateQueueHealth": "none",
         "listQueueWedgeCounts": "none",
@@ -4161,6 +4185,7 @@
         "pruneFrontmatterTags": "none",
         "purgeDeletedPages": "none",
         "purgeMemoryProposals": "none",
+        "purgeStaleAppliedCaptures": "none",
         "putCodeTraversalCache": "none",
         "putContradictionCacheEntry": "none",
         "putDreamVerdict": "none",

@@ -208,6 +208,9 @@ export const IGNORED_MEMBERS: ReadonlySet<string> = new Set([
   // The memory proposal queue: the Rust store does not serve memory_proposals yet (rust/docs/store/seed.md lists it under "Gaps: not served by the Rust store"),
   // so the seed does not copy it, nothing follows it, and a row in it blocks a swap.
   'expireMemoryProposals', 'purgeMemoryProposals',
+  // The applied-capture records (ingest_applied_captures): bookkeeping the seed does not copy (rust/docs/store/seed.md), so
+  // the stale purge changes nothing the shadow follows.
+  'purgeStaleAppliedCaptures',
 ]);
 
 /**

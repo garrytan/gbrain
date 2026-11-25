@@ -271,4 +271,6 @@ export const OPERATION_LOADERS: Record<string, readonly [() => Promise<Record<st
   "questions_unpin": [load_questions, "questionsOperations"],
   "mute_notice": [load_notices, "noticesOperations"],
   "learned": [load_learned, "learnedOperations"],
+  "learned_keep": [load_learned, "learnedOperations"],
+  "learned_undo": [load_learned, "learnedOperations"],
 };

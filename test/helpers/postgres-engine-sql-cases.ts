@@ -140,6 +140,9 @@ export const DOMAIN_OF: Record<string, string> = {
   'closeOpenLoop': OOS.openLoops,
   'listOpenLoops': OOS.openLoops,
   'readEntityOpenLoops': OOS.openLoops,
+  'countOpenLoopsByCounterpartyEmail': OOS.openLoops,
+  'listPendingCoreEditNotices': OOS.trustTierReads,
+  'purgeStaleAppliedCaptures': OOS.writeMisc,
   'upsertOpenLoop': OOS.openLoops,
   'countSegmentedTimelinePages': OOS.timelineReads,
   'countTimelineCommentMarkupRows': OOS.timelineReads,
@@ -941,6 +944,8 @@ export const SQL_CASES: SqlCase[] = [
     ['default', (e) => e.listEnrichCandidates({ types: ['person'], thinThreshold: 200, order: 'inbound-links' })],
     ['sourceIds+reenrich', (e) => e.listEnrichCandidates({ types: ['person'], thinThreshold: 200, order: 'inbound-links', sourceIds: SRCS, reenrichAfterMs: 86400000 })],
     ['sourceId', (e) => e.listEnrichCandidates({ types: ['person'], thinThreshold: 200, order: 'inbound-links', sourceId: SRC })],
+    ['owner-contact', (e) => e.listEnrichCandidates({ types: ['person'], thinThreshold: 200, order: 'owner-contact', sourceId: SRC, ownerSlug: 'memory/owner', ownerSourceId: SRC })],
+    ['owner-contact-no-owner', (e) => e.listEnrichCandidates({ types: ['person'], thinThreshold: 200, order: 'owner-contact', sourceIds: SRCS, reenrichAfterMs: 86400000 })],
   ]),
   ...variants('findAnomalies', [
     ['default', (e) => e.findAnomalies({ since: '2026-01-02' })],

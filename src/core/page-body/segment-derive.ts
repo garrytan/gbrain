@@ -396,7 +396,11 @@ export function derivationBatchRows(): number { return sweepLimits.batchRows; }
 /** A derivation row's primary key, the cursor a batched walk resumes after. */
 export type DerivationKey = [pageId: number, pipeline: string, occurrenceId: string];
 
-/** SQL predicate: row `d` comes after the cursor in the int, text and bigint parameters `at` (all null: the first batch). */
+/**
+ * SQL predicate: row `d` comes after the cursor in the int, text and bigint parameters `at` (all null: the first batch).
+ * The walks that use it order by (page_id, pipeline, occurrence_id) with the same database collation as this test, so
+ * no row is skipped on any locale; the walk order is not output, so pipeline needs no COLLATE "C".
+ */
 export function derivationAfterSql(d: string, at: [string, string, string]): string {
   return `(${at[0]}::int IS NULL OR (${d}.page_id, ${d}.pipeline, ${d}.occurrence_id) > (${at[0]}::int, ${at[1]}::text, ${at[2]}::bigint))`;
 }

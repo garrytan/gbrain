@@ -19,6 +19,7 @@ export const AGENT_FIELDS = ['ask', 'why', 'risk', 'consent', 'actor', 'next', '
 export type AgentField = (typeof AGENT_FIELDS)[number];
 
 const MAX_FIELD = 1_000;
+const MAX_SHOW_USER = 4_000;
 
 /** `[AGENT]` block, fields in vocabulary order, empty ones skipped; the relay text is fenced inside it. */
 export function agentBlock(fields: Partial<Record<AgentField, string>>, opts: { showUser?: string; decisions?: readonly Decision[] } = {}): string {
@@ -32,7 +33,7 @@ export function agentBlock(fields: Partial<Record<AgentField, string>>, opts: { 
     for (const o of d.options) lines.push(`   - ${optionText(o)}`);
     lines.push(`   default: ${inertText(d.default, 80)} — ${inertText(d.default_reason, MAX_FIELD)}`);
   });
-  if (opts.showUser) lines.push('[SHOW USER]', inertText(opts.showUser, MAX_FIELD), '[/SHOW USER]');
+  if (opts.showUser) lines.push('[SHOW USER]', inertText(opts.showUser, MAX_SHOW_USER), '[/SHOW USER]');
   lines.push('[/AGENT]');
   return `${lines.join('\n')}\n`;
 }
