@@ -26,7 +26,9 @@
 //! Keys: the two-byte family `~L` (`keys::LEASES`). The byte after the tag names the record:
 //! - `0x01 <name>`: a lease record (JSON [`LeaseRecord`]); it stays after a release so the epoch never goes back;
 //! - `0x02`: the consumer heartbeat rows (`persistence` consumer members in multi-user mode);
-//! - `0x03`: per-entity fact sequences; `0x04`: the clock high-water mark;
+//! - `0x03 <kind> ...`: per-entity fact sequences (`facts/entity_order.rs` lists the kinds: `01 source 00 entity` the
+//!   counter, `02 source 00 entity 00 seq` the index of fact ids), written only on a multi-user store;
+//! - `0x04`: the clock high-water mark;
 //! - `0x05 <family byte> <claim id>`: the lease name and epoch a claim was taken under.
 //!
 //! Nothing writes under `~L` until a caller takes a lease, so a brain that never does keeps every byte.
