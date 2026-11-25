@@ -45,7 +45,6 @@ const SCAN_BATCH = 500;
 export const MAX_SINCE_DAYS = 3660;
 const RESERVE_LOCK_ID = 'gbrain-ledger-reserve';
 const RESERVE_WAIT_MS = 10_000;
-const LEDGER_WRITE_STALE_S = 120;
 
 export type LedgerReader = { kind: 'brain' } | { kind: 'member'; identities: readonly (readonly string[])[] } | { kind: 'none' };
 
@@ -105,7 +104,7 @@ function writeRequestId(actor: string, requestId: string): string {
 async function readStored(engine: BrainEngine, slug: string): Promise<{ record: ActionRecord; revision: string; frontmatter: Record<string, unknown> } | null> {
   const page = await withoutCallerAccess(() => engine.getPage(slug, { sourceId: ACTION_SOURCE }));
   if (!page || page.type !== AGENT_ACTION_TYPE) return null;
-  const checked = validateActionFrontmatter(page.frontmatter ?? {}, { read: true });
+  const checked = validateActionFrontmatter(page.frontmatter ?? {});
   return checked.ok ? { record: checked.record, revision: String(page.knowledge_revision ?? ''), frontmatter: page.frontmatter } : null;
 }
 
@@ -241,6 +240,11 @@ function requestHash(kind: string, input: object): string {
   return createHash('sha256').update(JSON.stringify([kind, canonical(input)])).digest('hex');
 }
 
+/** The fingerprint of the call that created an action; an action from before request_hash keeps its creator's last_request. */
+function creatorHash(record: ActionRecord): string | undefined {
+  return record.request_hash ?? (record.last_request && record.last_request.id === record.request_id ? record.last_request.hash : undefined);
+}
+
 function replayConflict(requestId: string, slug: string): OperationError {
   return opError('idempotency_conflict', `request_id ${requestId} was already used for a different call on ${slug}, so this call was not applied.`,
     'Use a new request_id for each new call; reuse one only to retry the exact same call.');
@@ -248,15 +252,15 @@ function replayConflict(requestId: string, slug: string): OperationError {
 
 /**
  * Any ledger write still publishing; a reserve waits for them, so a hold that was accepted always counts. Only action
- * pages of the source's current incarnation count, and a write whose claim expired or that has not moved for
- * LEDGER_WRITE_STALE_S is left to recovery, so one stuck write never blocks every reserve.
+ * pages of the source's current incarnation count, and a running write whose claim expired is left to recovery, so a
+ * crashed writer never blocks every reserve. A queued write always counts: it may still commit.
  */
 export async function settleLedgerWrites(engine: BrainEngine, deadline: number): Promise<void> {
   for (;;) {
     const pending = await engine.executeRaw<{ n: number }>(
       `SELECT 1 AS n FROM persistence_requests r JOIN sources s ON s.id = r.source_id AND s.incarnation = r.source_incarnation
         WHERE r.source_id = $1 AND r.slug LIKE 'actions/____/__/%' AND r.state IN ('queued', 'deferred', 'running', 'recovering')
-          AND (r.claim_expires_at IS NULL OR r.claim_expires_at > now()) AND r.updated_at > now() - make_interval(secs => $2::int) LIMIT 1`, [ACTION_SOURCE, LEDGER_WRITE_STALE_S]);
+          AND NOT (r.state IN ('running', 'recovering') AND r.claim_expires_at IS NOT NULL AND r.claim_expires_at <= now()) LIMIT 1`, [ACTION_SOURCE]);
     if (!pending.length) return;
     if (Date.now() >= deadline) throw opError('ledger_busy', 'An earlier action is still being written, so this reservation was not checked or held.', 'Retry in a few seconds with the same request_id.', { retryable: true });
     await new Promise(r => setTimeout(r, 50));
@@ -299,7 +303,7 @@ export async function logAction(ctx: OperationContext, input: LogActionInput, no
       throw opError('idempotency_conflict', `request_id ${requestId} already ${stored.record.request_id === requestId ? 'created' : 'moved'} ${replay}, so this different call was not applied.`,
         'Use a new request_id for each new call; settle a reservation with its action_id and a request_id of its own.');
     }
-    const first = stored?.record.request_id === requestId ? stored.record.request_hash : undefined;
+    const first = stored?.record.request_id === requestId ? creatorHash(stored.record) : undefined;
     const latest = stored?.record.last_request?.id === requestId ? stored.record.last_request.hash : undefined;
     if ((first ?? latest) !== undefined && (first ?? latest) !== hash) throw replayConflict(requestId, replay);
     if (stored) return { action_id: replay, status: stored.record.action.status, claim_basis: stored.record.claim_basis, evidence: (stored.record.evidence ?? []).map(e => ({ ref: e.ref, resolved: stored.record.claim_basis === 'evidenced' })), replayed: true };
@@ -354,7 +358,7 @@ export async function logAction(ctx: OperationContext, input: LogActionInput, no
     claim_basis: claim,
     ...(keepHold ? { hold: prior!.hold } : {}),
     request_id: prior?.request_id ?? requestId,
-    ...(prior ? (prior.request_hash ? { request_hash: prior.request_hash } : {}) : { request_hash: hash }),
+    ...(prior ? creatorHash(prior) ? { request_hash: creatorHash(prior) } : {} : { request_hash: hash }),
     last_request: { id: requestId, hash },
   };
   const checked = validateActionFrontmatter(fm);
@@ -405,7 +409,7 @@ export async function policyReserve(ctx: OperationContext, input: ReserveInput, 
     const replay = await priorWrite(ctx, writeRequestId(actor, requestId));
     const stored = replay ? await readStored(ctx.engine, replay) : null;
     if (stored && stored.record.request_id === requestId) {
-      const created = stored.record.request_hash ?? (stored.record.last_request?.id === requestId ? stored.record.last_request.hash : undefined);
+      const created = creatorHash(stored.record);
       if (created !== undefined && created !== hash) throw replayConflict(requestId, replay!);
       const answer = await checkPolicy(ctx.engine, { verb: input.verb, amount: input.amount, merchant: input.merchant, to: input.to }, callerScopes(remote),
         { usage: usageLookup(ctx.engine, reader, now, replay!) });

@@ -305,7 +305,7 @@ for (const kind of testBackends()) describe(`action ledger (L2, ${kind}, repo-le
     expect((await reserve).reservation).toBeTruthy();
   });
 
-  test('a reserve waits only for a live ledger write: one whose claim expired, or that stopped moving, is left to recovery', async () => {
+  test('a reserve waits for a queued or live ledger write; a running write whose claim expired is left to recovery', async () => {
     const stuck = await logAction(ctxFor(engine, false), { verb: 'send', summary: 'Sent a card', estimated: true });
     const set = (sql: string) => engine.executeRaw(`UPDATE persistence_requests SET ${sql} WHERE slug=$1`, [stuck.action_id]);
     try {
@@ -314,7 +314,7 @@ for (const kind of testBackends()) describe(`action ledger (L2, ${kind}, repo-le
       await set("state='running', claim_expires_at=now() - interval '1 hour'");
       await settleLedgerWrites(engine, Date.now() + 200);
       await set("state='queued', claim_expires_at=NULL, updated_at=now() - interval '1 hour'");
-      await settleLedgerWrites(engine, Date.now() + 200);
+      expect((await caught(() => settleLedgerWrites(engine, Date.now() + 200)) as { code: string }).code).toBe('ledger_busy');
     } finally {
       await set("state='committed'");
     }
@@ -329,6 +329,10 @@ for (const kind of testBackends()) describe(`action ledger (L2, ${kind}, repo-le
     if (report.state !== 'complete') throw new Error('partial');
     expect(report.totals.spent.estimated).toEqual({ USD: 80 });
     expect(validateActionFrontmatter({ future_field: 1 }).ok).toBe(false);
+    const held = await policyReserve(ctx, { verb: 'send', amount: { amount: 2, currency: 'USD' }, summary: 'Courier' });
+    await engine.executeRaw(`UPDATE pages SET frontmatter = frontmatter || '{"future_field": 1}'::jsonb WHERE slug=$1`, [held.reservation!.action_id]);
+    const moved = await caught(() => logAction(ctx, { verb: 'send', action_id: held.reservation!.action_id, status: 'cancelled' }));
+    expect((moved as { code: string }).code).toBe('action_not_found');
   });
 
   test('a retry with the same request_id but a changed call is refused, a reserve replay keeps its first answer, and a failed write replays its failure', async () => {
@@ -351,6 +355,12 @@ for (const kind of testBackends()) describe(`action ledger (L2, ${kind}, repo-le
     await logAction(ctx, move);
     const changedAfterCancel = await caught(() => policyReserve(ctx, { ...input, amount: { amount: 30, currency: 'USD' } }));
     expect((changedAfterCancel as { code: string }).code).toBe('idempotency_conflict');
+    const oldRid = randomUUID();
+    const old = await policyReserve(ctx, { ...input, request_id: oldRid });
+    await engine.executeRaw("UPDATE pages SET frontmatter = frontmatter - 'request_hash' WHERE slug=$1", [old.reservation!.action_id]);
+    await logAction(ctx, { verb: 'spend', action_id: old.reservation!.action_id, status: 'cancelled', request_id: randomUUID() });
+    const oldChanged = await caught(() => policyReserve(ctx, { ...input, request_id: oldRid, amount: { amount: 30, currency: 'USD' } }));
+    expect((oldChanged as { code: string }).code).toBe('idempotency_conflict');
     await engine.executeRaw("UPDATE persistence_requests SET state='failed', error_code='storage_error', error_message='disk full' WHERE id = (SELECT id FROM persistence_requests WHERE slug=$1 ORDER BY created_at DESC LIMIT 1)", [res.reservation!.action_id]);
     const failed = await caught(() => logAction(ctx, move));
     expect((failed as { code: string }).code).toBe('storage_error');
