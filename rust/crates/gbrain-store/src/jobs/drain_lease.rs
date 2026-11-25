@@ -6,7 +6,7 @@
 //! the row is written when the lease is taken, renewed with it and deleted on release.
 
 use super::*;
-use crate::leases::{CLAIM_DRAIN_LEASE, LeaseToken};
+use crate::leases::{CLAIM_DRAIN_LEASE, LeaseToken, LostReason, check_claim_epoch, lease_lost};
 
 /// `holder.lock_until = now + ttl minutes`, in microseconds.
 fn lease_until(now: i64, ttl_minutes: f64) -> i64 {
@@ -76,6 +76,23 @@ impl Store {
         self.write(|tx| {
             fence::begin(self, tx, fence, "write_drain_lease_holder")?;
             let now = self.env.now_micros();
+            // The beacon belongs to the holder of the source's cycle lock: a write from a holder whose lock lapsed
+            // (another took the source since) must not replace the successor's beacon. The lock is read in this same
+            // write, so it is still held, by this token under this fence's epoch, when the beacon lands.
+            if let (true, Some(fence)) = (self.multiuser(), fence) {
+                let lock_id = format!("gbrain-sync:{source_id}");
+                let held = get_json::<LockRecord>(tx, &lock_key(&lock_id))?
+                    .filter(|l| l.acquisition_token == lock_token.to_lowercase());
+                match held {
+                    None => {
+                        return Err(lease_lost(LostReason::NotFound, &lock_id, fence.epoch, None));
+                    }
+                    Some(l) if l.ttl_expires_at <= now => {
+                        return Err(lease_lost(LostReason::Expired, &lock_id, fence.epoch, None));
+                    }
+                    Some(_) => check_claim_epoch(tx, CLAIM_CYCLE_LOCK, &lock_id, fence)?,
+                }
+            }
             let gone: Vec<JobRecord> = all_rows(tx)?
                 .into_iter()
                 .filter(|r| {

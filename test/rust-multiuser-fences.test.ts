@@ -24,6 +24,8 @@ import { openRustEngine, type RustEngine } from '../src/core/rust-engine.ts';
 import { rustLeases, type LeaseToken, type WriteOrigin } from '../src/core/rust-engine/store-members/leases.ts';
 import { clearHostRegistration, fenceOpts, hostRegistrationOf, setHostRegistration } from '../src/core/persistence/host-fence.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
+import { tryAcquireDbLock } from '../src/core/db-lock.ts';
+import { withDrainLease } from '../src/core/persistence/sync-lease.ts';
 import { startWorkerFence } from '../src/core/minions/worker-fence.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -47,7 +49,7 @@ async function open(): Promise<RustEngine> {
   dirs.push(path);
   const engine = openRustEngine({ addon, databasePath: path });
   engines.push(engine);
-  await engine.connect({ engine: 'pglite', database_path: path } as never);
+  await engine.connect({ engine: 'pglite', database_path: path } );
   return engine;
 }
 
@@ -183,8 +185,8 @@ describe('the job worker\'s own registration', () => {
       while (hostRegistrationOf(engine) === first && Date.now() < deadline) await new Promise(r => setTimeout(r, 20));
       const second = hostRegistrationOf(engine)!;
       expect(second.fence.epoch).toBe(first.fence.epoch + 1);
-      // The claim taken under the old epoch cannot be finished with the new one.
-      expect(await refusal(() => queue.completeJob(job.id, 'w:1'))).toEqual({ code: 'lease_lost', reason: 'claim_epoch_mismatch' });
+      // The claim is bound to the registration it was taken under (the old epoch, which is gone), never to the new one.
+      expect(await refusal(() => queue.completeJob(job.id, 'w:1'))).toEqual({ code: 'lease_lost', reason: 'epoch_moved' });
       await fence!.stop();
       expect(hostRegistrationOf(engine)).toBeNull();
       expect((await leases.read(second.fence.name))?.live).toBe(false);
@@ -192,12 +194,176 @@ describe('the job worker\'s own registration', () => {
     });
   });
 
-  withAddon('a worker in a process that already has a registration uses it', async () => {
+  withAddon('a worker in a process that already has a registration takes its own lease and never borrows the other\'s (review G11)', async () => {
+    await withEnv({ GBRAIN_RUST_MULTIUSER: '1' }, async () => {
+      const engine = await open();
+      const leases = rustLeases(engine);
+      const a = (await leases.acquire('consumer:h', holder('a'), 60_000))!;
+      register(engine, a);
+      const fence = await startWorkerFence(engine, 'worker-1');
+      expect(fence).not.toBeNull();
+      const own = fence!.fence();
+      expect(own?.name).toMatch(/^jobs:/);
+      expect((await leases.read(own!.name))?.live).toBe(true);
+      // Stopping the worker releases its own lease only: the consumer's registration is untouched.
+      await fence!.stop();
+      expect((await leases.read(own!.name))?.live).toBe(false);
+      expect((await leases.read('consumer:h'))?.live).toBe(true);
+    });
+  });
+});
+
+describe('review G1, G3, G7, G11: the queue and the lock handle bind each claim to the fence it was taken under', () => {
+  withAddon('G1: progress, token accounting and inbox reads carry the fence and are refused after the host lost its lease', async () => {
+    await withEnv({ GBRAIN_RUST_MULTIUSER: '1' }, async () => {
+      const engine = await open();
+      const leases = rustLeases(engine);
+      const queue = new MinionQueue(engine);
+      const a = (await leases.acquire('consumer:h', holder('a'), 60_000))!;
+      register(engine, a);
+      const job = await queue.add('work', {});
+      expect((await queue.claim('w:1', 30_000, 'default', ['work']))?.id).toBe(job.id);
+      expect(await queue.updateProgress(job.id, 'w:1', { n: 1 })).toBe(true);
+      expect(await queue.updateTokens(job.id, 'w:1', { input: 3, output: 1 })).toBe(true);
+      await queue.sendMessage(job.id, { type: 'note' }, 'admin');
+      expect(await queue.readInbox(job.id, 'w:1')).toHaveLength(1);
+      await queue.sendMessage(job.id, { type: 'note', n: 2 }, 'admin');
+      const before = await engine.getJob(job.id);
+      // The host's lease is taken over: the progress, token and inbox writes are refused and change nothing.
+      await leases.release(a);
+      await leases.acquire('consumer:h', holder('b'), 60_000);
+      const stale = { code: 'lease_lost', reason: 'epoch_moved' };
+      expect(await refusal(() => queue.updateProgress(job.id, 'w:1', { n: 2 }))).toEqual(stale);
+      expect(await refusal(() => queue.updateTokens(job.id, 'w:1', { input: 100 }))).toEqual(stale);
+      expect(await refusal(() => queue.readInbox(job.id, 'w:1'))).toEqual(stale);
+      expect(await engine.getJob(job.id)).toEqual(before);
+    });
+  });
+
+  withAddon('G11: a claim stays bound to the registration it was taken under, whatever registration is current at call time', async () => {
+    await withEnv({ GBRAIN_RUST_MULTIUSER: '1' }, async () => {
+      const engine = await open();
+      const leases = rustLeases(engine);
+      const queue = new MinionQueue(engine);
+      const a = (await leases.acquire('consumer:h', holder('a'), 60_000))!;
+      const first = register(engine, a);
+      const job = await queue.add('work', {});
+      expect((await queue.claim('w:1', 30_000, 'default', ['work']))?.id).toBe(job.id);
+      const before = await engine.getJob(job.id);
+      // The host registers again under a new epoch and the engine now shows the new registration.
+      await leases.release(a);
+      const b = (await leases.acquire('consumer:h', holder('b'), 60_000))!;
+      clearHostRegistration(engine, first);
+      register(engine, b, 'b');
+      expect(await refusal(() => queue.renewLock(job.id, 'w:1', 30_000))).toEqual({ code: 'lease_lost', reason: 'epoch_moved' });
+      expect(await refusal(() => queue.completeJob(job.id, 'w:1'))).toEqual({ code: 'lease_lost', reason: 'epoch_moved' });
+      expect(await engine.getJob(job.id)).toEqual(before);
+    });
+  });
+
+  withAddon('G7: the worker timeout sweeps carry the fence: a live host ends the job and its claim epoch, a host that lost its lease ends nothing', async () => {
+    await withEnv({ GBRAIN_RUST_MULTIUSER: '1' }, async () => {
+      const engine = await open();
+      const leases = rustLeases(engine);
+      const queue = new MinionQueue(engine);
+      const a = (await leases.acquire('consumer:h', holder('a'), 60_000))!;
+      register(engine, a);
+      const job = await queue.add('work', {}, { timeout_ms: 20 });
+      expect((await queue.claim('w:1', 30_000, 'default', ['work']))?.id).toBe(job.id);
+      await new Promise(r => setTimeout(r, 80));
+      // A sweep from a host that lost its lease: refused, the job stays active.
+      await leases.release(a);
+      await leases.acquire('consumer:h', holder('b'), 60_000);
+      expect(await refusal(() => queue.handleTimeouts())).toEqual({ code: 'lease_lost', reason: 'epoch_moved' });
+      expect(await refusal(() => queue.handleWallClockTimeouts(30_000))).toEqual({ code: 'lease_lost', reason: 'epoch_moved' });
+      expect((await engine.getJob(job.id))?.status).toBe('active');
+    });
+  });
+
+  withAddon('G7: a live host\'s timeout sweep ends the job', async () => {
+    await withEnv({ GBRAIN_RUST_MULTIUSER: '1' }, async () => {
+      const engine = await open();
+      const queue = new MinionQueue(engine);
+      const a = (await rustLeases(engine).acquire('consumer:h', holder('a'), 60_000))!;
+      register(engine, a);
+      const job = await queue.add('work', {}, { timeout_ms: 20 });
+      expect((await queue.claim('w:1', 30_000, 'default', ['work']))?.id).toBe(job.id);
+      await new Promise(r => setTimeout(r, 80));
+      const dead = await queue.handleTimeouts();
+      expect(dead.map(j => j.id)).toEqual([job.id]);
+      expect((await engine.getJob(job.id))?.status).toBe('dead');
+    });
+  });
+
+  withAddon('G3: a cycle-lock handle keeps the fence it was acquired under: after the host registers again it neither refreshes nor releases', async () => {
+    await withEnv({ GBRAIN_RUST_MULTIUSER: '1' }, async () => {
+      const engine = await open();
+      const leases = rustLeases(engine);
+      const a = (await leases.acquire('consumer:h', holder('a'), 60_000))!;
+      const first = register(engine, a);
+      const handle = await tryAcquireDbLock(engine, 'gbrain-sync:default', 30);
+      expect(handle).not.toBeNull();
+      // The host registers again under a new epoch; the engine now shows the new registration.
+      await leases.release(a);
+      const b = (await leases.acquire('consumer:h', holder('b'), 60_000))!;
+      clearHostRegistration(engine, first);
+      register(engine, b, 'b');
+      const held = () => engine.readCycleLocks({ by: 'id', lockId: 'gbrain-sync:default' });
+      expect(await held()).toHaveLength(1);
+      expect(await refusal(() => handle!.refresh())).toEqual({ code: 'lease_lost', reason: 'epoch_moved' });
+      // Release is quiet (the lock is no longer this handle's to give up) and deletes nothing.
+      await handle!.release();
+      expect(await held()).toHaveLength(1);
+      // The operator's stale delete is a different entry point: it takes the row the snapshot showed.
+      const [row] = await held();
+      const { deleteLockRowExact } = await import('../src/core/db-lock.ts');
+      expect((await deleteLockRowExact(engine, 'gbrain-sync:default', row!.holder_pid, row!.acquisition_token)).deleted).toBe(true);
+      expect(await held()).toHaveLength(0);
+    });
+  });
+
+  withAddon('G3: a handle taken and released under one live registration works as it did', async () => {
     await withEnv({ GBRAIN_RUST_MULTIUSER: '1' }, async () => {
       const engine = await open();
       const a = (await rustLeases(engine).acquire('consumer:h', holder('a'), 60_000))!;
       register(engine, a);
-      expect(await startWorkerFence(engine, 'worker-1')).toBeNull();
+      const handle = await tryAcquireDbLock(engine, 'gbrain-sync:default', 30);
+      expect(await handle!.refresh()).toBe(true);
+      await handle!.release();
+      expect(await engine.readCycleLocks({ by: 'id', lockId: 'gbrain-sync:default' })).toHaveLength(0);
+    });
+  });
+
+  withAddon('G5: the drain lease writes, renews and deletes its beacon under the cycle lock\'s own fence', async () => {
+    await withEnv({ GBRAIN_RUST_MULTIUSER: '1' }, async () => {
+      const engine = await open();
+      const leases = rustLeases(engine);
+      const a = (await leases.acquire('consumer:h', holder('a'), 60_000))!;
+      register(engine, a);
+      let token = '';
+      const result = await withDrainLease(engine, 'default', { holder: { kind: 'cli' } }, async () => {
+        const [row] = await engine.readCycleLocks({ by: 'id', lockId: 'gbrain-sync:default' });
+        token = row!.acquisition_token;
+        expect(await engine.readDrainLeaseBeacon(token)).not.toBeNull();
+        return { status: 'synced' } as never;
+      });
+      expect((result as { status: string }).status).toBe('synced');
+      expect(await engine.readDrainLeaseBeacon(token)).toBeNull();
+    });
+  });
+
+  withAddon('G13 (evidence): on a Rust brain a managed sync refuses managed_persistence before any statement runs, so assertDrainLease\'s raw SQL is never reached', async () => {
+    await withEnv({ GBRAIN_RUST_MULTIUSER: '1' }, async () => {
+      const engine = await open();
+      const a = (await rustLeases(engine).acquire('consumer:h', holder('a'), 60_000))!;
+      register(engine, a);
+      const raw: string[] = [];
+      const executeRaw = engine.executeRaw.bind(engine);
+      (engine as { executeRaw: unknown }).executeRaw = (sql: string, ...rest: unknown[]) => { raw.push(sql); return (executeRaw as (...args: unknown[]) => unknown)(sql, ...rest); };
+      const { performManagedSync } = await import('../src/core/persistence/sync-run.ts');
+      const failure = await refusal(() => performManagedSync(engine, { sourceId: 'default' } as never));
+      expect(failure.code).toBe('engine_capability_missing');
+      expect(raw).toEqual([]);
     });
   });
 });
