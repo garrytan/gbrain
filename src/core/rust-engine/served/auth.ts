@@ -73,6 +73,8 @@ export function ownerTokenRestriction(info: AuthInfo): string | null {
 export interface VerifyDeps {
   /** The bearer check; default: the HTTP server's (`GBrainOAuthProvider.verifyAccessToken`) on `engine`. */
   verify?: (engine: BrainEngine, token: string) => Promise<AuthInfo>;
+  /** The owner token ids (default: the brain config key); tests that must not write the brain inject them. */
+  ownerIds?: (engine: BrainEngine) => Promise<Set<string>>;
   now?: () => number;
 }
 
@@ -92,7 +94,7 @@ export async function authenticateToken(engine: BrainEngine, token: unknown, dep
   try { info = await (deps.verify ?? defaultVerify)(engine, token); } catch { throw servedAuthRefused('token_invalid', null); }
   const principal = info.principal;
   if (!principal || principal.kind !== 'legacy_token' || typeof principal.id !== 'string') throw servedAuthRefused('token_not_owner', null);
-  const owners = await ownerTokenIds(engine);
+  const owners = await (deps.ownerIds ?? ownerTokenIds)(engine);
   if (!owners.has(principal.id)) throw servedAuthRefused('token_not_owner', null);
   if (ownerTokenRestriction(info) !== null) throw servedAuthRefused('token_not_owner', null);
   const expiresAt = typeof info.expiresAt === 'number' ? info.expiresAt * 1000 : undefined;

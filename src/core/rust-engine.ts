@@ -35,6 +35,7 @@ import { callEndCheck, installOwnerClient, untilCallEnds } from './rust-engine/o
 import { ownerWholeOperations } from './rust-engine/owner-ipc/owner-ops.ts';
 import type { OwnerEngineServer, OwnerServerStats } from './rust-engine/owner-ipc/server.ts';
 import { servedServerOptionsFor } from './rust-engine/served/serve-listen.ts';
+import type { ServedServerOptions } from './rust-engine/served/session.ts';
 import { connectServedEngine, type ServedTarget } from './rust-engine/served/engine.ts';
 
 /**
@@ -90,6 +91,8 @@ export interface OpenRustEngineOptions {
   ownerWaitMs?: number;
   /** Multi-user Rust: the brain server this engine is a client of; it then never opens a store (rust-engine/served/). */
   served?: ServedTarget;
+  /** Multi-user Rust, as an owner: protocol v3 options merged over the defaults (tests inject the bearer check). */
+  servedOptions?: Partial<ServedServerOptions>;
 }
 
 /**
@@ -164,6 +167,7 @@ export class RustEngine implements BrainEngine {
   get disconnecting(): boolean { return this._disconnecting > 0; }
   private readonly _ownerWaitMs: number | undefined;
   private readonly _served: ServedTarget | undefined;
+  private readonly _servedOptions: Partial<ServedServerOptions> | undefined;
   private _owner: OwnerRole | null = null;
   private _leaveOwner: (() => void) | null = null;
   /** Set on a transaction-bound clone (store-members/transactions.ts); null on the engine itself. */
@@ -180,6 +184,7 @@ export class RustEngine implements BrainEngine {
     this.databasePath = opts.databasePath;
     this._ownerWaitMs = opts.ownerWaitMs;
     this._served = opts.served;
+    this._servedOptions = opts.servedOptions;
   }
 
   /** True between `connect()` and `disconnect()`. */
@@ -279,7 +284,7 @@ export class RustEngine implements BrainEngine {
             opened = store;
             this._store = store;
             const served = servedServerOptionsFor(this, store);
-            if (served) electOpts.served = served;
+            if (served) electOpts.served = { ...served, ...this._servedOptions };
           } catch (error) {
             storeFailure = { error };
             throw error;

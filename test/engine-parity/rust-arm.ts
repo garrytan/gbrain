@@ -15,9 +15,7 @@
  *    every member in `methods`; it counts as stopped. Returning, or ending on a capability refusal, fails (harness.ts).
  */
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
-import type { BrainEngine } from '../../src/core/engine.ts';
 import { listenServed } from '../../src/core/rust-engine/served/listener.ts';
-import { mintOwnerServerToken } from '../../src/core/rust-engine/served/owner-token.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
@@ -81,7 +79,7 @@ export async function openRustBrain(): Promise<RustBrainDir> {
     process.env.GBRAIN_RUST_MULTIUSER = '1';
     if (process.env.GBRAIN_TEST_RUST_SERVED_SERIAL_TXN === '1') process.env.GBRAIN_RUST_SERVED_SERIAL_TXN = '1';
   }
-  const brain = newRustBrain();
+  const brain = rustServedRequested() ? newServedOwnerBrain() : newRustBrain();
   await brain.engine.connect({ engine: 'pglite', database_path: brain.dir } as never);
   if (rustServedRequested()) return serveRustBrain(brain);
   return brain;
@@ -103,6 +101,26 @@ export function rustServedRequested(env: Record<string, string | undefined> = pr
 
 let servedTls: { cert: Buffer; key: Buffer } | undefined;
 
+/**
+ * The arm's owner server token. The served arm must not write a token row or a config row into the brain each case
+ * reads (token and config listings would then differ from PGLite), so the owner checks this one token through the
+ * served/auth.ts `verify` and `ownerIds` seams, shaped as the real bearer check answers for an owner server token
+ * (test/rust-served-cli.serial.test.ts and test/rust-served-wire.test.ts cover the real token path).
+ */
+const SERVED_ARM_TOKEN = `gbrain_served_arm_${process.pid}`;
+const SERVED_ARM_OWNER = { principal: { kind: 'legacy_token', id: 'served-arm' }, scopes: ['read', 'write', 'admin'], sourceId: 'default', hasSourceGrant: false, member: null, mayActFor: null, attest: null };
+
+function newServedOwnerBrain(): RustBrainDir {
+  if (!addon) throw new Error('loadRustArmAddon has not run');
+  const engine = openRustEngine({ addon, databasePath: mkdtempSync(join(tmpdir(), 'gbrain-rust-arm-')), servedOptions: {
+    verify: {
+      verify: async (_engine, token) => { if (token !== SERVED_ARM_TOKEN) throw new Error('Invalid token'); return { ...SERVED_ARM_OWNER }; },
+      ownerIds: async () => new Set(['served-arm']),
+    },
+  } });
+  return { engine, dir: engine.databasePath };
+}
+
 /** A self-signed certificate for `localhost`, made once per process with openssl (test-only, never kept). */
 function servedArmTls(): { cert: Buffer; key: Buffer } {
   if (servedTls) return servedTls;
@@ -121,7 +139,7 @@ async function serveRustBrain(owned: RustBrainDir): Promise<RustBrainDir> {
   const server = owner.ownerServer();
   if (!server?.attachServed) throw new Error('served arm: the Rust owner did not start with protocol v3');
   const tls = servedArmTls();
-  const { token } = await mintOwnerServerToken(owner as unknown as BrainEngine, 'served-arm');
+  const token = SERVED_ARM_TOKEN;
   const listener = await listenServed(server, { host: '127.0.0.1', port: 0, tls });
   const client = openRustEngine({ addon: addon!, databasePath: owned.dir, served: { url: `gbrain+tls://localhost:${listener.port}`, token, ca: tls.cert } });
   await client.connect({ engine: 'rust', database_path: owned.dir } as never);
