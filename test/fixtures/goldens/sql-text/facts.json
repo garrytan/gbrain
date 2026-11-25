@@ -835,6 +835,29 @@
             "textSha256": "0fa43bea9cb63eff28077cd4c1bb3d40eb9b6daed0563f67cbf69eb025862b5f"
           }
         ]
+      },
+      "readFactDateEvidence": {
+        "matching-original": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "WITH cohort AS ( SELECT * FROM jsonb_to_recordset($1::text::jsonb) AS d(source_id text, day date) ) SELECT j.ord::int, to_char(d.day,'YYYY-MM-DD') AS day, encode(sha256(convert_to(f.fact, 'UTF8')), 'hex') AS claim_sha256 FROM jsonb_array_elements($2::text::jsonb) WITH ORDINALITY j(input,ord) CROSS JOIN LATERAL jsonb_to_record(j.input) AS a(source_id text, fact_id bigint, entity_slug text, valid_from timestamptz) JOIN facts f ON f.source_id=a.source_id AND f.id=a.fact_id AND f.valid_from=a.valid_from AND f.expired_at IS NULL AND f.entity_slug IS NOT DISTINCT FROM a.entity_slug JOIN cohort d ON d.source_id=f.source_id AND d.day=(f.valid_from AT TIME ZONE 'UTC')::date ORDER BY j.ord",
+            "textSha256": "528575bb86acd9339cda8ddc7ea9ea1bfc2f9c088895b6c1b3fbe81508bbcd1c"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "number",
+              "number"
+            ],
+            "sql": "WITH requested AS ( SELECT DISTINCT * FROM jsonb_to_recordset($1::text::jsonb) AS r(source_id text, original_page_id bigint, original_revision uuid) ), matched AS ( SELECT a.*, orig.body FROM requested a JOIN pages p ON p.source_id=a.source_id AND p.id=a.original_page_id AND p.deleted_at IS NULL CROSS JOIN LATERAL ( SELECT CASE WHEN count(*)=1 THEN min(b.body) END AS body FROM ( SELECT p.compiled_truth AS body WHERE p.knowledge_revision=a.original_revision AND p.body_storage='inline' UNION ALL SELECT v.compiled_truth FROM page_versions v WHERE v.page_id=p.id AND v.knowledge_revision=a.original_revision AND v.is_deleted IS NOT TRUE AND v.body_storage='inline' AND p.knowledge_revision IS DISTINCT FROM a.original_revision ) b ) orig WHERE octet_length(orig.body)<=$2::integer ), bounded AS ( SELECT *,sum(octet_length(body)) OVER (ORDER BY source_id,original_page_id,original_revision) AS covered_bytes FROM matched ) SELECT source_id,original_page_id,original_revision::text,body FROM bounded WHERE covered_bytes<=$3::integer ORDER BY source_id,original_page_id,original_revision",
+            "textSha256": "ea9f7c9f9b9d3310e5818002fa2ec54f0a2e3bd5a5a92cd1eb3766a72572d5ce"
+          }
+        ]
       }
     }
   },

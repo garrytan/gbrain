@@ -8,6 +8,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 import { factBulkDatesCheck } from '../src/commands/doctor/checks/fact-bulk-dates.ts';
+import { withFactDateEvidenceSnapshot } from '../src/core/engine-sql/fact-date-evidence.ts';
 import type { Check } from '../src/commands/doctor.ts';
 import { runWaveChecks } from '../src/commands/doctor/wave-checks.ts';
 
@@ -88,6 +89,14 @@ for (const backend of testBackends()) {
           verified_same_day: 0, verified_different_day: 0, unknown: 200,
         });
       }
+    });
+
+    test('evidence snapshot is read-only with repeatable reads', async () => {
+      const [settings] = await withFactDateEvidenceSnapshot(engine, (tx) =>
+        tx.executeRaw<{ read_only: string; isolation: string }>(
+          "SELECT current_setting('transaction_read_only') AS read_only, current_setting('transaction_isolation') AS isolation",
+        ));
+      expect(settings).toEqual({ read_only: 'on', isolation: 'repeatable read' });
     });
 
     test('remote wave checks never consume a host evidence manifest', async () => {

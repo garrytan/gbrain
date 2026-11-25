@@ -124,7 +124,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // Facts (hot memory)
   'insertFact', 'insertFacts', 'deleteFactsForPage', 'expireFact', 'listFactsByEntity',
   'listFactsSince', 'listFactsKeyset', 'listFactsBySession', 'listSupersessions', 'countUnconsolidatedFacts',
-  'findCandidateDuplicates', 'consolidateFact', 'findTrajectory', 'getFactsHealth',
+  'findCandidateDuplicates', 'consolidateFact', 'findTrajectory', 'getFactsHealth', 'readFactDateEvidence',
   // Versions
   'createVersion', 'getVersions', 'revertToVersion',
   // Stats + health + ingest log

@@ -299,7 +299,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'insertFact': 'facts', 'expireFact': 'facts', 'insertFacts': 'facts', 'deleteFactsForPage': 'facts',
   'listFactsByEntity': 'facts', 'listFactsSince': 'facts', 'listFactsKeyset': 'facts', 'listFactsBySession': 'facts', 'listSupersessions': 'facts',
   'countUnconsolidatedFacts': 'facts', 'findCandidateDuplicates': 'facts', 'consolidateFact': 'facts',
-  'findTrajectory': 'facts', 'getFactsHealth': 'facts', 'migrateFactsToCanonical': 'facts',
+  'findTrajectory': 'facts', 'getFactsHealth': 'facts', 'readFactDateEvidence': 'facts', 'migrateFactsToCanonical': 'facts',
   'mergeOntologyFact': 'facts', 'getOntology': 'facts', 'discoverOntologyDimensions': 'facts', 'findOntologyConflicts': 'facts',
   // takes (incl. contradictions + synthesis evidence, peeled in postgres-engine/takes.ts)
   'addTakesBatch': 'takes', 'listActiveTakesForPages': 'takes', 'writeContradictionsRun': 'takes',
@@ -853,6 +853,12 @@ export const SQL_CASES: SqlCase[] = [
     ['event', (e) => e.findTrajectory({ entitySlug: SLUG, kind: 'event' })],
   ]),
   ...variants('getFactsHealth', [['default', (e) => e.getFactsHealth(SRC)]]),
+  ...variants('readFactDateEvidence', [
+    ['matching-original', (e) => e.readFactDateEvidence([{ source_id: SRC, day: '2025-04-10' }], [{
+      source_id: SRC, fact_id: 7, entity_slug: SLUG, valid_from: '2025-04-10T12:00:00Z',
+      claim_sha256: 'a'.repeat(64), original_page_id: 17, original_revision: '10000000-0000-4000-8000-000000000001',
+    }]), [[/WITH cohort AS/, [{ ord: 1, day: '2025-04-10', claim_sha256: 'a'.repeat(64) }]]]],
+  ]),
   ...variants('migrateFactsToCanonical', [['default', (e) => e.migrateFactsToCanonical('people/alice', SLUG, SRC)]]),
   ...variants('mergeOntologyFact', [
     ['insert', (e) => e.mergeOntologyFact({ entitySlug: SLUG, dimension: 'role', value: 'founder', source: SLUG }), [[/INSERT INTO facts/, [{ id: 7 }]]]],
