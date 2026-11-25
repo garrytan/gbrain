@@ -49,6 +49,7 @@ import { __resetPrivateVisibilityCacheForTests } from '../../src/core/search/pri
 import { addMember, bindCredential } from '../../src/core/access/members.ts';
 import { setOwner } from '../../src/core/access/owner.ts';
 import { drainProjections } from '../../src/core/page-state/projections.ts';
+import { flushAccessReadLog } from '../../src/core/access/read-log.ts';
 import { proposeRevision } from '../../src/core/access/policy.ts';
 import type { AuthInfo } from '../../src/core/ops/contract.ts';
 
@@ -296,6 +297,8 @@ describe('engine parity: remote read-access matrix over MCP', () => {
       }
       out[who] = mine;
     }
+    // The access read log writes on a timer: flush it, so a refused write lands in the case whose reads it logs.
+    await flushAccessReadLog();
     if (ownerUnserved(group, backend)) stopOnUnserved();
     return out;
   });
@@ -351,6 +354,8 @@ describe('engine parity: remote read-access matrix over MCP', () => {
       }
       out[who] = mine;
     }
+    // The access read log writes on a timer: flush it, so a refused write lands in the case whose reads it logs.
+    await flushAccessReadLog();
     if (ownerUnserved(group, backend)) stopOnUnserved();
     return out;
   });
@@ -378,6 +383,8 @@ describe('engine parity: remote read-access matrix over MCP', () => {
       }
       out[who] = mine;
     }
+    // The access read log writes on a timer: flush it, so a refused write lands in the case whose reads it logs.
+    await flushAccessReadLog();
     if (ownerUnserved(group, backend)) stopOnUnserved();
     return out;
   });
