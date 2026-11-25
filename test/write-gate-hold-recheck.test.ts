@@ -122,6 +122,20 @@ for (const backend of backends) {
       expect((result.details.held_write_rechecks as { deleted: number }).deleted).toBeGreaterThanOrEqual(1);
     });
 
+    // The page purge sweep shared by `gbrain purge` (the delete_page purge door) and the restore replay notes the same way.
+    test('the page purge sweep notes a held write it keeps for another page', async () => {
+      const sourceId = await h.source();
+      const late = await h.reachedByTwoPages(sourceId);
+      const pageId = Number((await engine().executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, 'notes/first']))[0]!.id);
+      const { sweepPurgedPage } = await import('../src/core/persistence/page-purge.ts');
+      await engine().transaction(async (tx: BrainEngine) => {
+        await sweepPurgedPage(tx, { sourceId, slug: 'notes/first', pageId, requestId: randomUUID(), factIds: [], takeIds: [], needles: [], reasons: [],
+          census: async () => ({ targets: [], complete: true }), present: new Set(['write_gate_holds', 'write_gate_hold_rechecks', 'write_gate_receipts']) });
+      });
+      expect((await h.holds(sourceId)).map(x => x.id)).toEqual([late]);
+      expect((await h.notes(sourceId)).map(n => n.hold)).toEqual([late]);
+    });
+
     test('a held write saved before its page exists is never noted and never removed', async () => {
       const sourceId = await h.source();
       const waiting = await holdFenceRow(engine(), { sourceId, slug: 'notes/future', claim: HELD, rowNum: 1 });
@@ -131,6 +145,16 @@ for (const backend of backends) {
       expect((await h.holds(sourceId)).map(x => [x.id, x.status])).toEqual([[waiting, 'held']]);
       expect(await h.receipts(waiting)).toBe(1);
       expect(await h.notes(sourceId)).toEqual([]);
+    });
+
+    test('doctor lists a noted held write and says the next maintenance run removes it', async () => {
+      const sourceId = await h.source();
+      const late = await h.leftover(sourceId);
+      const { writeGateHoldsStrandedEntry } = await import('../src/commands/doctor/checks/write-gate-holds-stranded.ts');
+      const [check] = await writeGateHoldsStrandedEntry.run({ engine: engine(), sourceIds: [sourceId] } as never) as Array<{ details: Record<string, unknown>; message: string }>;
+      expect(check!.details).toMatchObject({ complete: true, stranded: { no_page: 1 }, awaiting_sweep: 1 });
+      expect(check!.message).toContain('next maintenance run (bookkeeping_gc)');
+      expect(JSON.stringify(check!.details.items)).toContain(`h${late}`);
     });
 
     // Gate d1: the purge's note carries the version it saw; the same content arriving again after the purges re-opens the

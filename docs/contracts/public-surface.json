@@ -2482,6 +2482,7 @@
     "wanted_pages.remote",
     "write_gate.agent_mode",
     "write_gate.external_mode",
+    "write_gate.orphan_sweep",
     "writer.lint_on_put_page"
   ],
   "exit-code": {

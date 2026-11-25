@@ -93,6 +93,7 @@ src/commands/doctor/checks/image-embedding-coverage.ts	execute_raw	2
 src/commands/doctor/checks/keyword-plan.ts	execute_raw	3
 src/commands/doctor/checks/knowledge-health.ts	execute_raw	7
 src/commands/doctor/checks/landing-gaps.ts	execute_raw	1
+src/commands/doctor/checks/learning-note.ts	execute_raw	3	nightly learning PR 4: the learning_items ledger (v334) has no typed engine methods yet; doctor learning_note reads the newest run, its items by kind and the 30-day kept and undone shares
 src/commands/doctor/checks/legacy-job-authority.ts	execute_raw	5
 src/commands/doctor/checks/legacy-token-grants.ts	execute_raw	1
 src/commands/doctor/checks/local-audits.ts	execute_raw	2
@@ -159,7 +160,7 @@ src/commands/doctor/checks/vector-coverage.ts	execute_raw	2
 src/commands/doctor/checks/vector-plan.ts	execute_raw	4
 src/commands/doctor/checks/wakeshift.ts	execute_raw	3
 src/commands/doctor/checks/write-gate-hold-ambiguous.ts	execute_raw	1	lists held writes the v333 upgrade left unbound with candidate pages; doctor checks read raw SQL (same shape as trust-release-unpreviewed.ts)
-src/commands/doctor/checks/write-gate-holds-stranded.ts	execute_raw	3	read-only doctor check: a row-security visibility preflight, one keyset read of held rows and one per-batch page and rename lookup; all stay raw SQL until holds have a typed engine method (a raw-SQL refusal on the Rust engine is reported as a named unknown)
+src/commands/doctor/checks/write-gate-holds-stranded.ts	execute_raw	5	read-only doctor check: a row-security visibility preflight, one keyset read of held rows, one per-batch page and rename lookup and, when something is listed, the count of listed holds noted for the maintenance sweep with its privilege and row-security preflight (raised from 3); all stay raw SQL until holds have a typed engine method (a raw-SQL refusal on the Rust engine is reported as a named unknown)
 src/commands/doctor/checks/writer-version.ts	execute_raw	1
 src/commands/doctor/last-known.ts	execute_raw	2
 src/commands/doctor/registry.ts	execute_raw	1
@@ -515,8 +516,8 @@ src/core/facts/unfenced-facts.ts	execute_raw	9	GST-3490 #10005: the sweep's unfe
 src/core/facts/withdrawal-discovery.ts	execute_raw	4
 src/core/facts/withdrawal.ts	execute_raw	17
 src/core/facts/write-single.ts	execute_raw	3
-src/core/facts/writeback-settings.ts	execute_raw	2
 src/core/facts/writeback-audience.ts	execute_raw	1	reads access_tokens.member_id and oauth_clients.member_id to count people, not credentials, for the brain audience (GST-3180); no typed engine method exists yet
+src/core/facts/writeback-settings.ts	execute_raw	2
 src/core/feedback/store.ts	execute_raw	19
 src/core/fence-repair/attempts.ts	execute_raw	3
 src/core/fence-repair/census-store.ts	execute_raw	9
@@ -587,12 +588,11 @@ src/core/import-file.ts	execute_raw	1
 src/core/import-identity.ts	execute_raw	1
 src/core/ingestion/applied-captures.ts	execute_raw	5
 src/core/last-retrieved.ts	execute_raw	1
-src/commands/doctor/checks/learning-note.ts	execute_raw	3	nightly learning PR 4: the learning_items ledger (v334) has no typed engine methods yet; doctor learning_note reads the newest run, its items by kind and the 30-day kept and undone shares
 src/core/learning/decide.ts	execute_raw	3	nightly learning PR 2: the learning_items ledger (v334) has no typed engine methods yet; keep and undo read item states, mark decided items and list the page versions after an enrich write
 src/core/learning/derive.ts	execute_raw	6	nightly learning PR 1: the learning_items ledger (v334) is a new table with no typed engine methods yet; the derive pass records ledger pointers with INSERT ... SELECT per kind, prunes pointers whose target is gone and reads the watermark window; PR 2 expires unseen pointers after 7 days and closes answered conflict questions
+src/core/learning/duplicates.ts	execute_raw	3	nightly learning PR 3: the learning_items ledger (v334) has no typed engine methods yet; the duplicate step records the top person groups' anchor pages (and counts them on a dry run); PR 2 closes duplicate questions the preview no longer offers
 src/core/learning/kinds.ts	execute_raw	1	nightly learning PR 1: the learning_items ledger (v334) is a new table with no typed engine methods yet; learningTablePresent probes to_regclass so a brain behind the migration skips cleanly
 src/core/learning/push.ts	execute_raw	1	nightly learning PR 2: the learning_items ledger (v334) has no typed engine methods yet; the session-start line counts unseen pending items
-src/core/learning/duplicates.ts	execute_raw	3	nightly learning PR 3: the learning_items ledger (v334) has no typed engine methods yet; the duplicate step records the top person groups' anchor pages (and counts them on a dry run); PR 2 closes duplicate questions the preview no longer offers
 src/core/learning/read.ts	execute_raw	4	nightly learning PR 1: the learning_items ledger (v334) is a new table with no typed engine methods yet; the learned read joins each pointer to its live target under the caller filters and stamps shown_at; PR 3 adds one page read-policy probe over duplicate members
 src/core/learning/stats.ts	execute_raw	1	nightly learning PR 1: the learning_items ledger (v334) is a new table with no typed engine methods yet; learned --stats reads ledger rows by night
 src/core/line-grammar-config.ts	execute_raw	2
@@ -687,7 +687,6 @@ src/core/ops/links.ts	execute_raw	1
 src/core/ops/loops.ts	execute_raw	6
 src/core/ops/page-upload.ts	execute_raw	3
 src/core/ops/pages.ts	execute_raw	1
-src/core/ops/slug-params.ts	execute_raw	1	one bounded read for stored spellings of a slug that normalize to the asked one (slug_reads_normal_form); an engine without raw reads skips it; moves behind a typed engine member with the key migration
 src/core/ops/persistence.ts	execute_raw	4
 src/core/ops/put-page-revision-source.ts	execute_raw	1
 src/core/ops/qm-memory.ts	execute_raw	2
@@ -696,6 +695,7 @@ src/core/ops/search-exact.ts	execute_raw	2	came from master #9574 (held private 
 src/core/ops/search-type-filter.ts	execute_raw	1
 src/core/ops/search.ts	execute_raw	2
 src/core/ops/skills-catalog.ts	execute_raw	2
+src/core/ops/slug-params.ts	execute_raw	1	one bounded read for stored spellings of a slug that normalize to the asked one (slug_reads_normal_form); an engine without raw reads skips it; moves behind a typed engine member with the key migration
 src/core/ops/storage-manifest.ts	execute_raw	2
 src/core/ops/tags.ts	execute_raw	1
 src/core/ops/takes.ts	execute_raw	1
@@ -762,6 +762,7 @@ src/core/persistence/concept-rebuild.ts	execute_raw	11	#9653: the held-concept r
 src/core/persistence/config-snapshot.ts	execute_raw	2
 src/core/persistence/connector-account-mismatch.ts	execute_raw	2
 src/core/persistence/connector-checkpoint-migration.ts	execute_raw	13
+src/core/persistence/connector-fact-retirement.ts	execute_raw	3	GST-3256, modeled on loop-fact-retirement.ts: reads (FOR UPDATE under publication) the facts rows a connector wrote, expires them, and reads the source row at admission; no typed engine method exists yet
 src/core/persistence/connector-google-receipts.ts	execute_raw	1
 src/core/persistence/connector-path.ts	execute_raw	3
 src/core/persistence/connector-reset.ts	execute_raw	1
@@ -841,7 +842,6 @@ src/core/persistence/links-extraction-holds.ts	execute_raw	2
 src/core/persistence/links-preparation.ts	execute_raw	4
 src/core/persistence/local-edit-adoption.ts	execute_raw	6
 src/core/persistence/loop-fact-retirement.ts	execute_raw	7
-src/core/persistence/connector-fact-retirement.ts	execute_raw	3	GST-3256, modeled on loop-fact-retirement.ts: reads (FOR UPDATE under publication) the facts rows a connector wrote, expires them, and reads the source row at admission; no typed engine method exists yet
 src/core/persistence/maintenance.ts	execute_raw	3
 src/core/persistence/managed-mode.ts	execute_raw	3
 src/core/persistence/managed-sources.ts	execute_raw	1
@@ -1249,6 +1249,7 @@ src/core/wakeshift/spool.ts	execute_raw	3
 src/core/wakeshift/terms.ts	execute_raw	2
 src/core/wanted-links-store.ts	execute_raw	6
 src/core/write-gate-binding.ts	execute_raw	6	the identity carry of holds (merge identical twins, move, mark differing twins, repoint candidates) and the purge's removal of a purged page from candidate-marked holds (update, then delete the emptied ones), one statement each; the held-write page binding (v333): the holds follow their page by id; no typed engine member is added (no new BrainEngine member in this change), the Rust engine's own hold store and rename paths take the contract in the PR description
+src/core/write-gate-recheck.ts	execute_raw	8	the maintenance sweep of held writes a purge kept for another page: the notes-table and row-security preflights, one bounded read of notes, and per held write a locked read, a page-and-rename lookup and the deletes of the hold, its receipts and its notes; raw SQL like the other hold sweeps (write-gate-binding.ts, purge-slug-stores.ts) until holds have a typed engine method (on the Rust engine it reports skipped, engine_capability_missing)
 src/core/write-gate-scan.ts	execute_raw	2
 src/core/write-gate-store.ts	execute_raw	9	the hold writer now runs up to three statements (bind by the producer's page id, bind by the page at the slug, unbound); the held-write page binding (v333): the holds follow their page by id; no typed engine member is added (no new BrainEngine member in this change), the Rust engine's own hold store and rename paths take the contract in the PR description
 src/core/write-through.ts	execute_raw	2

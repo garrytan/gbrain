@@ -1478,14 +1478,14 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "1410 column(s) verified against live schema",
+            "message": "1415 column(s) verified against live schema",
             "name": "schema_columns",
             "status": "ok"
           },
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 196 table(s) the applied migrations create exist.",
+            "message": "All 197 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -7133,14 +7133,14 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "1410 column(s) verified against live schema",
+            "message": "1415 column(s) verified against live schema",
             "name": "schema_columns",
             "status": "ok"
           },
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 196 table(s) the applied migrations create exist.",
+            "message": "All 197 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
