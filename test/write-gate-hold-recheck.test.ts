@@ -153,7 +153,9 @@ for (const backend of backends) {
       const { writeGateHoldsStrandedEntry } = await import('../src/commands/doctor/checks/write-gate-holds-stranded.ts');
       const [check] = await writeGateHoldsStrandedEntry.run({ engine: engine(), sourceIds: [sourceId] } as never) as Array<{ details: Record<string, unknown>; message: string }>;
       expect(check!.details).toMatchObject({ complete: true, stranded: { no_page: 1 }, awaiting_sweep: 1 });
-      expect(check!.message).toContain('next maintenance run (bookkeeping_gc)');
+      // It names the recheck without promising a delete (a re-opened held write stays).
+      expect(check!.message).toContain('noted for a recheck by the next maintenance run (bookkeeping_gc)');
+      expect(check!.message).not.toContain('removes');
       expect(JSON.stringify(check!.details.items)).toContain(`h${late}`);
     });
 
@@ -249,8 +251,42 @@ for (const backend of backends) {
       await expect(orphanSweepEnabled(failing)).rejects.toThrow('permission denied');
       const result = await runPhaseBookkeepingGc(failing, false);
       expect(result.details.held_write_rechecks).toMatchObject({ status: 'fail' });
+      // Review finding (outside voice, pass 1): a failed sweep is not a successful phase.
+      expect(result.status).toBe('warn');
       expect((await h.holds(sourceId)).map(x => x.id)).toEqual([late]);
       expect((await h.notes(sourceId)).map(n => n.hold)).toEqual([late]);
+    });
+
+    // Review finding (outside voice, pass 1): a purge scrubs the rename records that lead to the purged name, which can cut the
+    // route from a held write to the page it is kept for, so the note keeps the surviving page ids the purge saw. Renames
+    // keep the record flat (every old name leads straight to the current one), so the chain is written here directly, as
+    // history recorded before that rule can hold it.
+    test('a held write kept for a page reached through a chain of rename records stays after the middle name is purged', async () => {
+      const sourceId = await h.source();
+      const late = await holdFenceRow(engine(), { sourceId, slug: 'notes/a', claim: HELD, rowNum: 1 });
+      await h.putPage(sourceId, 'notes/c');
+      await h.putPage(sourceId, 'notes/b');
+      await engine().executeRaw('INSERT INTO slug_rename_history (source_id, old_slug, new_slug) VALUES ($1, $2, $3), ($1, $3, $4)', [sourceId, 'notes/a', 'notes/b', 'notes/c']);
+      expect(await engine().deletePages(['notes/b'], { sourceId })).toEqual(['notes/b']);
+      expect((await h.notes(sourceId)).map(n => n.hold)).toEqual([late]);
+      await h.gc();
+      expect((await h.holds(sourceId)).map(x => x.id)).toEqual([late]);
+      expect(await h.receipts(late)).toBe(1);
+      expect(await h.notes(sourceId)).toEqual([]);
+    });
+
+    // Review finding (outside voice, pass 1): a hold id past 2^53 is kept as text, never rounded.
+    test('a held write whose id is past 2^53 is checked by its exact id', async () => {
+      const sourceId = await h.source();
+      const late = await h.leftover(sourceId);
+      const big = '9007199254740993';
+      await engine().executeRaw('UPDATE write_gate_holds SET id = $2::bigint WHERE id = $1', [late, big]);
+      await engine().executeRaw("UPDATE write_gate_receipts SET target_id = $2 WHERE target_table='write_gate_holds' AND target_id = $1", [String(late), big]);
+      await engine().executeRaw('UPDATE write_gate_hold_rechecks SET hold_id = $2::bigint WHERE hold_id = $1', [late, big]);
+      await h.gc();
+      expect(await engine().executeRaw('SELECT 1 FROM write_gate_holds WHERE id = $1::bigint', [big])).toEqual([]);
+      expect(await engine().executeRaw("SELECT 1 FROM write_gate_receipts WHERE target_table='write_gate_holds' AND target_id = $1", [big])).toEqual([]);
+      expect(await h.notes(sourceId)).toEqual([]);
     });
 
     test('one run checks at most its limit of notes, oldest first; the rest wait for the next run', async () => {
@@ -269,6 +305,17 @@ for (const backend of backends) {
     });
   });
 }
+
+// Review finding (outside voice, pass 1): a brain whose v337 migration has not run yet still purges pages.
+describe('a purge on a schema without the notes table (pglite)', () => {
+  let own: PGLiteEngine;
+  beforeAll(async () => { own = new PGLiteEngine(); await own.connect({}); await own.initSchema(); await own.executeRaw('DROP TABLE write_gate_hold_rechecks'); }, 60_000);
+  afterAll(async () => { await own.disconnect(); });
+  test('still deletes its page', async () => {
+    await own.putPage('notes/plain', { type: 'note', title: 'plain', compiled_truth: bareBody(ROWS), timeline: '' });
+    expect(await own.deletePages(['notes/plain'], { sourceId: 'default' })).toEqual(['notes/plain']);
+  });
+});
 
 // Real interleavings on Postgres: two connections.
 const pgOnly = backends.includes('postgres') ? describe : describe.skip;
@@ -349,25 +396,25 @@ pgOnly('held writes a purge kept are checked again by maintenance: concurrent co
     expect(await h.holds(sourceId)).toEqual([]);
   });
 
-  // Gate d4: notes appended while a sweep checks a held write are not consumed by that sweep.
-  test('d4: two purges noting a held write while maintenance keeps it: their notes survive and the next run deletes it', async () => {
+  // Gate d4: notes appended while a sweep checks a held write are not consumed by that sweep. A purge that names the held
+  // write waits for the sweep's page-key locks, so the note is appended here on another connection, as a purge path that
+  // takes no page-key lock would; the two purges then run after the sweep, and the next run deletes the held write.
+  test('d4: a note appended while maintenance keeps a held write survives, and the next run after two purges deletes it', async () => {
     const sourceId = await h.source();
     const late = await h.reachedByTwoPages(sourceId);
-    // An earlier note, from a purge that kept the held write for a page that still lives.
     await engine().executeRaw('INSERT INTO write_gate_hold_rechecks (source_id, hold_id, observed_version) VALUES ($1, $2, $3)', [sourceId, late, 'stale']);
     const { sweepHoldRechecks } = await import('../src/core/write-gate-recheck.ts');
-    const run = sweepHoldRechecks(engine(), {
+    const run = await bounded('the sweep', sweepHoldRechecks(engine(), {
       sourceIds: [sourceId],
       afterCheck: async () => {
-        // The page check found both pages; now both are purged side by side and commit before this sweep consumes its notes.
-        const first = await parked(async t => { expect(await t.deletePages(['notes/first'], { sourceId })).toEqual(['notes/first']); });
-        await beside(first, async t => { expect(await t.deletePages(['notes/moved'], { sourceId })).toEqual(['notes/moved']); });
+        await bounded('the concurrent note', engine().executeRaw('INSERT INTO write_gate_hold_rechecks (source_id, hold_id, observed_version) VALUES ($1, $2, $3)', [sourceId, late, 'appended']));
       },
-    });
-    await bounded('the sweep', run);
+    }));
+    expect(run).toMatchObject({ checked: 1, deleted: 0, notes_consumed: 1 });
     expect((await h.holds(sourceId)).map(x => x.id)).toEqual([late]);
-    const left = await h.notes(sourceId);
-    expect(left.length).toBeGreaterThanOrEqual(1);
+    expect((await h.notes(sourceId)).map(n => n.hold)).toEqual([late]);
+    const first = await parked(async t => { expect(await t.deletePages(['notes/first'], { sourceId })).toEqual(['notes/first']); });
+    await beside(first, async t => { expect(await t.deletePages(['notes/moved'], { sourceId })).toEqual(['notes/moved']); });
     await h.gc();
     expect(await h.holds(sourceId)).toEqual([]);
     expect(await h.notes(sourceId)).toEqual([]);
@@ -391,6 +438,68 @@ pgOnly('held writes a purge kept are checked again by maintenance: concurrent co
     expect(await h.holds(sourceId)).toEqual([]);
     expect(await h.receipts(late)).toBe(0);
     expect(await h.notes(sourceId)).toEqual([]);
+  });
+
+  // Review finding (outside voice, pass 1): a rename onto the held write's slug during the sweep's check either waits for the
+  // sweep (which takes the page-key locks of every slug it checks) or, once committed first, keeps the held write.
+  test('a rename onto the held write\'s name during the check never loses the held write after the page arrived', async () => {
+    const sourceId = await h.source();
+    const late = await h.leftover(sourceId);
+    await h.putPage(sourceId, 'notes/elsewhere');
+    let renamedDuringCheck = false;
+    let rename: Promise<void> | undefined;
+    const { sweepHoldRechecks } = await import('../src/core/write-gate-recheck.ts');
+    await bounded('the sweep', sweepHoldRechecks(engine(), {
+      sourceIds: [sourceId],
+      afterCheck: async () => {
+        // Every rename path (sync renames, repair rename-identity, repair slug-spelling) locks both page keys first.
+        rename = engine().transaction(async (t: BrainEngine) => {
+          await t.lockPageKeys([{ sourceId, slug: 'notes/elsewhere' }, { sourceId, slug: 'notes/first' }]);
+          expect(await t.updateSlug('notes/elsewhere', 'notes/first', { sourceId })).toBe(1);
+        })
+          .then(() => { renamedDuringCheck = true; });
+        await bounded('the rename to finish or wait for a lock', (async () => {
+          for (;;) { if (renamedDuringCheck || await lockWaiters() > 0) return; await new Promise(r => setTimeout(r, 25)); }
+        })());
+      },
+    }));
+    const renamedBeforeSweepCommitted = renamedDuringCheck;
+    await bounded('the rename', rename!);
+    // The rename waited for the sweep's page-key lock, so the held write was deleted before the page arrived.
+    expect(renamedBeforeSweepCommitted).toBe(false);
+    expect(await h.holds(sourceId)).toEqual([]);
+    expect((await engine().executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id=$1 ORDER BY slug', [sourceId])).map(r => r.slug)).toEqual(['notes/first']);
+  });
+
+  // Review finding (outside voice, pass 1): row security that applies after the run's preflight still stops the delete. The
+  // preflight runs as the owner; the role row security limits is taken inside the held write's own transaction.
+  test('row security that applies after the preflight stops the delete inside the held write\'s transaction', async () => {
+    const sourceId = await h.source();
+    const late = await h.leftover(sourceId);
+    const ROLE = `gbrain_recheck_${randomUUID().replace(/-/g, '').slice(0, 8)}`;
+    const owner = engine();
+    const schema = (await owner.executeRaw<{ s: string }>('SELECT current_schema() AS s'))[0]!.s;
+    await owner.executeRaw(`CREATE ROLE ${ROLE} NOLOGIN NOSUPERUSER NOBYPASSRLS`);
+    const wasSecured = (await owner.executeRaw<{ on: boolean }>("SELECT relrowsecurity AS on FROM pg_class WHERE oid = 'pages'::regclass"))[0]!.on;
+    let threw: unknown;
+    try {
+      await owner.executeRaw(`GRANT USAGE ON SCHEMA ${schema} TO ${ROLE}`);
+      await owner.executeRaw(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ${schema} TO ${ROLE}`);
+      await owner.executeRaw('ALTER TABLE pages ENABLE ROW LEVEL SECURITY');
+      const { sweepHoldRechecks } = await import('../src/core/write-gate-recheck.ts');
+      try {
+        await owner.transaction(async (t: BrainEngine) => sweepHoldRechecks(t, {
+          sourceIds: [sourceId],
+          beforeHold: async () => { await t.executeRaw(`SET LOCAL ROLE ${ROLE}`); },
+        }));
+      } catch (e) { threw = e; }
+    } finally {
+      if (!wasSecured) await owner.executeRaw('ALTER TABLE pages DISABLE ROW LEVEL SECURITY');
+      await owner.executeRaw(`DROP OWNED BY ${ROLE}`);
+      await owner.executeRaw(`DROP ROLE ${ROLE}`);
+    }
+    expect(String(threw)).toContain('row-level security');
+    expect((await h.holds(sourceId)).map(x => x.id)).toEqual([late]);
   });
 
   // Gate d2: with row security active for the running role on an evidence table, the sweep deletes nothing and names them.
