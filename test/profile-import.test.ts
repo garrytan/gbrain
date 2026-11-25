@@ -120,6 +120,23 @@ describe('parsers', () => {
     expect(sniffFormat('- a bullet')).toBe('muse-memory');
     expect(sniffFormat('[not json')).toBe('muse-memory');
   });
+  test('a credential split across lines is dropped whole in every format and never printed', () => {
+    const value = 'Qz7#vLp2!rTx9wKm' + 'Hd4%';
+    const claude = planImport(JSON.stringify({ memories: [{ conversations_memory: `Work notes\nVPN password:\n${value}` }, { content: 'Likes tea' }] }), 'claude-memories');
+    expect(claude.items.map(i => i.fact)).toEqual(['Likes tea']);
+    expect(claude.dropped).toEqual([{ line: 1, reason: expect.stringMatching(/^credential-shaped/) }]);
+    const pemBody = Array.from({ length: 4 }, (_, i) => 'MIIEv' + String(i).repeat(3) + 'QIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7' + i).join('\n');
+    const pem = `- Keeps notes\n-----BEGIN ${'PRIVATE'} KEY-----\n${pemBody}\n-----END ${'PRIVATE'} KEY-----\n- Likes tea`;
+    for (const fmt of ['muse-memory', 'memory-text'] as const) {
+      const plan = planImport(pem, fmt);
+      expect(plan.items.map(i => i.fact)).toEqual(['Keeps notes', 'Likes tea']);
+      expect(JSON.stringify(plan)).not.toContain('QIBADANBgkqhkiG9w0');
+    }
+    const labelled = planImport(`- VPN password:\n- ${value}\n- Likes tea`, 'muse-memory');
+    expect(labelled.items.map(i => i.fact)).toEqual(['VPN password:', 'Likes tea']);
+    expect(labelled.dropped).toEqual([{ line: 2, reason: 'credential-shaped (labeled_credential)' }]);
+    expect(JSON.stringify(labelled)).not.toContain(value);
+  });
   test('an oversized line is dropped by line', () => {
     const plan = planImport('- ' + 'x'.repeat(2001) + '\n- short canaryshort', 'muse-memory');
     expect(plan.items.map(i => i.line)).toEqual([2]);
@@ -299,6 +316,20 @@ describe('progress receipt', () => {
     expect(receipt.batches[0]!.items[0]).toMatchObject({ status: 'failed', error: { code: 'invalid_params' } });
     await runImport(plan, receipt, fake, () => {});
     expect(sent).toHaveLength(2);
+  });
+  test('a batch-level refusal that names no line stays failed and is sent again on resume', async () => {
+    const plan = planImport('- Fact one', 'muse-memory');
+    const target = { principal: 'local:test', profile: 'memory/owner' };
+    const receipt = newReceipt(plan, previewHash(plan, target), '/tmp/x.md', target, 'imported');
+    let n = 0;
+    const fake: ImportCall = async () => {
+      if (++n === 1) throw Object.assign(new Error('visibility is not supported'), { code: 'invalid_params' });
+      return { items: [{ index: 0, request_id: 'c0', status: 'inserted', id: '1' }] };
+    };
+    await runImport(plan, receipt, fake, () => {});
+    expect(receipt.batches[0]).toMatchObject({ state: 'failed', error: { code: 'invalid_params' } });
+    await runImport(plan, receipt, fake, () => {});
+    expect(receipt.batches[0]!.state).toBe('committed');
   });
   test('a file that is not a receipt is refused', () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-receipt-'));

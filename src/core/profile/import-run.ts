@@ -62,8 +62,8 @@ async function poll(call: ImportCall, item: ImportItemReceipt): Promise<ImportIt
 /**
  * Brings the receipt forward: polls pending items, then sends each batch never sent, saving the receipt after every
  * step. Stops at the first batch the brain refuses as a whole (its error is on the batch; later batches stay
- * not_started for a resume); a batch refused for its items (invalid_params) records each item as failed, and the
- * import moves on. Returns the receipt.
+ * not_started for a resume); a batch refused for one of its items (invalid_params naming items[N]) records its
+ * lines as failed, and the import moves on. Returns the receipt.
  */
 export async function runImport(plan: ImportPlan, receipt: ImportReceipt, call: ImportCall, save: (r: ImportReceipt) => void): Promise<ImportReceipt> {
   const groups = batches(plan);
@@ -91,7 +91,7 @@ export async function runImport(plan: ImportPlan, receipt: ImportReceipt, call: 
       save(receipt);
     } catch (e) {
       const error = errorOf(e);
-      if (error.code === 'invalid_params') {
+      if (error.code === 'invalid_params' && /\bitems\[\d+\]/.test(error.message)) {
         batch.items = items.map(it => ({ line: it.line, request_id: '', status: 'failed', error }));
         batch.state = 'partial';
         save(receipt);

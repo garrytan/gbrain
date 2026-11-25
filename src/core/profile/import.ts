@@ -7,7 +7,7 @@
  * apply or a resume writes exactly what was previewed, to the same profile, as the same caller.
  */
 import { createHash } from 'node:crypto';
-import { scanText, TRANSCRIPT_LANE_SCAN_OPTS } from '../secret-scan.ts';
+import { scanText, scanTextSpans, TRANSCRIPT_LANE_SCAN_OPTS } from '../secret-scan.ts';
 import { isStrictIsoDateTime } from '../utils.ts';
 import { canonicalFacet } from './facets.ts';
 
@@ -78,12 +78,16 @@ function claudeMemories(text: string): Raw[] {
   const list = Array.isArray(doc) ? doc : (doc as { memories?: unknown }).memories;
   const out: Raw[] = [];
   const take = (v: unknown, n: number) => {
+    const secret = typeof v === 'string' ? scanText(v, TRANSCRIPT_LANE_SCAN_OPTS)[0] : undefined;
+    if (secret) { out.push({ line: n, skip: `credential-shaped (${secret.pattern})` }); return; }
     if (typeof v === 'string') { out.push(...bullets(v, true).map(b => ({ ...b, line: n }))); return; }
     if (!v || typeof v !== 'object') return;
     const o = v as Record<string, unknown>;
     const fact = [o.content, o.memory, o.text].find(x => typeof x === 'string') as string | undefined;
     const date = realDate(([o.created_at, o.updated_at].find(x => typeof x === 'string') as string | undefined)?.slice(0, 10));
-    if (fact) out.push({ line: n, fact, heading: typeof o.category === 'string' ? o.category : null, ...(date ? { valid_from: date } : {}) });
+    const factSecret = fact ? scanText(fact, TRANSCRIPT_LANE_SCAN_OPTS)[0] : undefined;
+    if (factSecret) out.push({ line: n, skip: `credential-shaped (${factSecret.pattern})` });
+    else if (fact) out.push({ line: n, fact, heading: typeof o.category === 'string' ? o.category : null, ...(date ? { valid_from: date } : {}) });
     else if (typeof o.conversations_memory === 'string') take(o.conversations_memory, n);
   };
   if (Array.isArray(list)) list.forEach((v, i) => take(v, i + 1));
@@ -98,10 +102,30 @@ export function sniffFormat(text: string): ImportFormat {
   return /^\s*\[\d{4}-\d{2}-\d{2}\]\s*[-\u2013\u2014:]/m.test(text) ? 'memory-text' : 'muse-memory';
 }
 
+/** The 1-based lines of `text` a credential spans: a label on one line with its value on the next, or a key block. */
+function credentialLines(text: string): Map<number, string> {
+  const lineAt = (offset: number) => text.slice(0, offset).split('\n').length;
+  const out = new Map<number, string>();
+  for (const span of scanTextSpans(text, TRANSCRIPT_LANE_SCAN_OPTS)) {
+    if (!span.finding) continue;
+    for (let l = lineAt(Math.min(span.from, span.start)); l <= lineAt(span.end); l++) out.set(l, span.finding.pattern);
+  }
+  return out;
+}
+
+const credential = (pattern: string): Raw => ({ line: 0, skip: `credential-shaped (${pattern})` });
+
 /** Parses, drops credential-shaped and oversized rows, dedupes and assigns each item its facet. */
 export function planImport(text: string, format: ImportFormat | 'auto'): ImportPlan {
   const fmt = format === 'auto' ? sniffFormat(text) : format;
-  const raw = fmt === 'claude-memories' ? claudeMemories(text) : fmt === 'memory-text' ? memoryText(text) : bullets(text);
+  const parsed = fmt === 'claude-memories' ? claudeMemories(text) : fmt === 'memory-text' ? memoryText(text) : bullets(text);
+  const inFile = fmt === 'claude-memories' ? new Map<number, string>() : credentialLines(text);
+  const facts = parsed.filter(r => !('skip' in r)) as Array<Extract<Raw, { fact: string }>>;
+  const acrossFacts = credentialLines(facts.map(f => f.fact.replace(/\s+/g, ' ')).join('\n'));
+  const raw = parsed.map((r): Raw => {
+    const pattern = inFile.get(r.line) ?? ('skip' in r ? undefined : acrossFacts.get(facts.indexOf(r) + 1));
+    return pattern ? { ...credential(pattern), line: r.line } : r;
+  });
   const items: ImportItem[] = [];
   const dropped: ImportDrop[] = [];
   const seen = new Set<string>();
