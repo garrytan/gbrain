@@ -7,12 +7,12 @@
  * a write from another family is counted anywhere but `capability_missing`, an uncomparable or unreadable write is ever `comparable`,
  * criterion 5 leaves `missing` with no comparison behind it, the pilot changes a primary write, or a shadow that is off or unseeded
  * reads anything. (3) Nothing else compares writes. (4) The real scratch replay needs the built addon and skips without it
- * (GBRAIN_TEST_RUST_ADDON_REQUIRED=1 makes that an error); everything else uses fake engines or no engine.
+ * (GBRAIN_TEST_REQUIRE_RUST_ADDON=1 or GBRAIN_TEST_RUST_ADDON_REQUIRED=1 makes that an error; the Rust engine workflow runs it that way through its rust-store receipt lane); everything else uses fake engines or no engine.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { WRITE_COVERAGE_LIMIT, type ShadowStatus } from '../src/core/engine-swap/readiness.ts';
 import { createEngine } from '../src/core/engine-factory.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -20,7 +20,8 @@ import { loadRustAddon, type RustAddon } from '../src/core/rust-engine/addon-loa
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
 import { ensureEpoch } from '../src/shadow/evidence-epoch.ts';
 import { buildFollowStatus } from '../src/shadow/follow-status.ts';
-import { readWriteTally, WriteTally } from '../src/shadow/write-compare.ts';
+import { encodeArgs } from '../src/shadow/codec.ts';
+import { pageRefs, readWriteTally, writeTallyPath, WriteTally, type WriteEvent } from '../src/shadow/write-compare.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { defineWriteCompareScenarios, fakeComparer, page, row5, settle, watchPreimage } from './helpers/shadow-write-compare-scenarios.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -28,7 +29,7 @@ import { withEnv } from './helpers/with-env.ts';
 const TARGET = detectAddonTarget();
 const BUILT = join(import.meta.dir, '..', 'rust', 'target', 'addon', `gbrain_engine.${TARGET ?? 'unsupported'}.node`);
 const HAVE_ADDON = TARGET !== null && existsSync(BUILT);
-if (!HAVE_ADDON && process.env.GBRAIN_TEST_RUST_ADDON_REQUIRED === '1') throw new Error(`GBRAIN_TEST_RUST_ADDON_REQUIRED=1 but ${BUILT} does not exist; run bun run rust:build`);
+if (!HAVE_ADDON && (process.env.GBRAIN_TEST_RUST_ADDON_REQUIRED === '1' || process.env.GBRAIN_TEST_REQUIRE_RUST_ADDON === '1')) throw new Error(`GBRAIN_TEST_RUST_ADDON_REQUIRED=1 or GBRAIN_TEST_REQUIRE_RUST_ADDON=1 but ${BUILT} does not exist; run bun run rust:build`);
 
 const NOW = new Date('2026-12-01T00:00:00Z');
 const dirs: string[] = [];
@@ -75,6 +76,73 @@ describe('write comparison counts', () => {
     tally.note('comparable');
     expect(buildFollowStatus(dir, { sample_rate: 0.1 } as never, NOW).write_comparisons.state).toBe('measured');
     expect(readWriteTally(dir, 'another-epoch')).toBeNull();
+  });
+});
+
+describe('write comparison rules (review findings)', () => {
+  const sample = (over: Partial<WriteEvent> = {}): WriteEvent => ({
+    t: 'write', op: 'putPage', args: encodeArgs(['people/pat-example', { type: 'person', title: 'Pat', compiled_truth: 'Pat.', timeline: '' }]) as unknown[],
+    pre: { sources: [], pages: [], links: [] }, post: { pages: [null], links: [] }, ...over,
+  });
+
+  test('putPage takes its source from its options (third argument), and a link origin with no source is the default source', () => {
+    const page = { type: 'person', title: 'Pat', compiled_truth: 'Pat.', timeline: '' };
+    expect(pageRefs('putPage', ['people/pat-example', page, { sourceId: 'team-example' }])).toEqual([{ source: 'team-example', slug: 'people/pat-example' }]);
+    expect(pageRefs('putPage', ['people/pat-example', { ...page, sourceId: 'not-an-option' }])).toEqual([{ source: 'default', slug: 'people/pat-example' }]);
+    expect(pageRefs('deletePage', ['people/pat-example', { sourceId: 'team-example' }])).toEqual([{ source: 'team-example', slug: 'people/pat-example' }]);
+    const link = pageRefs('addLink', ['a/x', 'a/y', 'c', 'knows', 'markdown', 'a/origin', 'f', { fromSourceId: 'team-example', toSourceId: 'team-example' }]);
+    expect(link).toEqual([{ source: 'team-example', slug: 'a/x' }, { source: 'team-example', slug: 'a/y' }, { source: 'default', slug: 'a/origin' }]);
+    const batch = pageRefs('addLinksBatch', [[{ from_slug: 'a/x', to_slug: 'a/y', from_source_id: 'team-example', to_source_id: 'team-example', origin_slug: 'a/origin' }]]);
+    expect(batch.map((r) => r.source)).toEqual(['team-example', 'team-example', 'default']);
+  });
+
+  test('a sample that is known to have had another write land is uncomparable even when the rows match', async () => {
+    const dir = tmp();
+    await settle(fakeComparer(dir), [sample({ moved: true }), sample()]);
+    expect(readWriteTally(dir, 'e1')).toMatchObject({ comparable: 1, unexplained_difference: 0, uncomparable: 1, uncomparable_by_reason: { moved: 1 } });
+  });
+
+  test('a verdict that could not be written never leaves a passing count behind, and is counted when the next one is written', () => {
+    const dir = tmp();
+    const tally = new WriteTally(dir, () => 'e1');
+    tally.note('comparable'); tally.note('comparable');
+    mkdirSync(`${writeTallyPath(dir)}.${process.pid}.tmp`); // the write fails (a directory is in its way)
+    tally.note('unexplained_difference');
+    expect(readWriteTally(dir, 'e1')).toBeNull(); // the two comparable writes no longer stand as evidence without the mismatch
+    rmSync(`${writeTallyPath(dir)}.${process.pid}.tmp`, { recursive: true });
+    tally.note('comparable');
+    expect(readWriteTally(dir, 'e1')).toMatchObject({ comparable: 1, unexplained_difference: 1 });
+    expect(row5({ write_comparisons: { state: 'measured', comparable: 5000, unexplained_difference: readWriteTally(dir, 'e1')!.unexplained_difference } }).state).toBe('fail');
+  });
+
+  test('a second child never deletes the store a first one is using, and a dead process\'s leftover store is removed', async () => {
+    const dir = tmp(); const scratch = tmp();
+    let opened = ''; let release = (): void => {}; let entered = (): void => {};
+    const inside = new Promise<void>((r) => { entered = r; });
+    const first = fakeComparer(dir, { scratchRoot: scratch, connect: async (path) => { opened = path; entered(); await new Promise<void>((r) => { release = r; }); } });
+    first.handle(sample());
+    await inside;
+    mkdirSync(join(scratch, 'gbrain-write-compare-2147483646-leftover')); // a pid that is not running
+    fakeComparer(dir, { scratchRoot: scratch }); // another child starts in the same temp directory
+    expect(existsSync(dirname(opened))).toBe(true);
+    expect(existsSync(join(scratch, 'gbrain-write-compare-2147483646-leftover'))).toBe(false);
+    release(); await first.idle();
+    expect(readdirSync(scratch)).toEqual([]);
+  });
+
+  test('a replay that is still opening when stop --delete removes the shadow directory does not bring it back', async () => {
+    const dir = tmp(); const scratch = tmp();
+    let release = (): void => {}; let entered = (): void => {};
+    const inside = new Promise<void>((r) => { entered = r; });
+    const comparer = fakeComparer(dir, { scratchRoot: scratch, alive: () => existsSync(dir), connect: async (path) => {
+      entered(); await new Promise<void>((r) => { release = r; });
+      mkdirSync(path, { recursive: true }); // what the owner election does to the ancestors of a store it opens
+    } });
+    comparer.handle(sample());
+    await inside;
+    rmSync(dir, { recursive: true, force: true }); // stop --delete
+    release(); await comparer.idle();
+    expect(existsSync(dir)).toBe(false);
   });
 });
 

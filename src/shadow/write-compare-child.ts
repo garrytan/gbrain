@@ -5,7 +5,8 @@
  * what the shadow already uses is involved. One sample runs at a time; a sample that finds the queue full, or a scratch run that
  * hangs, is counted `uncomparable`, never `comparable`.
  */
-import { mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { RustEngineAddonLoad } from '../core/rust-engine/addon-loader.ts';
 import { openRustEngine, type RustEngineAddonHandle } from '../core/rust-engine.ts';
@@ -25,12 +26,23 @@ export interface WriteComparerDeps {
   openEngine?: (addon: RustEngineAddonHandle, path: string) => Record<string, any>;
   onError?: (where: string, error: unknown) => void;
   timeoutMs?: number;
+  /** Where scratch stores are made; default the system temp directory (a seam for tests). */
+  scratchRoot?: string;
 }
 type Verdict = [WriteOutcome, string?];
 
 export function createWriteComparer(d: WriteComparerDeps): { handle(event: WriteEvent): void; idle(): Promise<void> } {
-  const scratchRoot = join(d.dir, 'scratch');
-  try { rmSync(scratchRoot, { recursive: true, force: true }); } catch { /* a leftover from a killed child */ }
+  // Scratch stores live outside the shadow directory, each in a private directory named for this process: `stop --delete` cannot be undone by a store
+  // that is still opening, and another child never deletes this one's. Directories of processes that no longer exist are removed here.
+  const scratchRoot = d.scratchRoot ?? tmpdir();
+  const prefix = `gbrain-write-compare-${process.pid}-`;
+  try {
+    for (const name of readdirSync(scratchRoot)) {
+      const pid = /^gbrain-write-compare-(\d+)-/.exec(name)?.[1];
+      if (!pid || Number(pid) === process.pid) continue;
+      try { process.kill(Number(pid), 0); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') rmSync(join(scratchRoot, name), { recursive: true, force: true }); }
+    }
+  } catch { /* an unreadable temp directory leaves old stores for the system to clean */ }
   let chain: Promise<void> = Promise.resolve();
   let queued = 0;
   let runs = 0;
@@ -39,14 +51,15 @@ export function createWriteComparer(d: WriteComparerDeps): { handle(event: Write
   async function replay(event: WriteEvent): Promise<Verdict> {
     if (!d.load.ok) return ['uncomparable', 'addon_unavailable'];
     if (!d.alive()) return ['uncomparable', 'shadow_dir_deleted'];
+    if (event.moved) return ['uncomparable', 'moved']; // another write landed in between: neither verdict can be trusted, a match included
     const args = decodeValue(event.args) as unknown[];
     const pre = event.pre!;
     const targets = pageRefs(event.op, args);
     // A delete or a link removal compares nothing when the preimage lacks the page: the copy could not be validated.
     if (event.op === 'deletePage' && !pre.pages.some((p) => p.source_id === targets[0]!.source && p.slug === targets[0]!.slug)) return ['uncomparable', 'target_absent'];
-    const run = join(scratchRoot, `${process.pid}-${++runs}`); // the store, its lock and its socket all live in here and go together
+    runs++;
+    const run = mkdtempSync(join(scratchRoot, prefix)); // the store, its lock and its socket all live in here (mode 0700) and go together
     const dir = join(run, 'store');
-    mkdirSync(run, { recursive: true, mode: 0o700 });
     const engine = (d.openEngine ?? ((addon, path) => openRustEngine({ addon, databasePath: path }) as unknown as Record<string, any>))(d.load.addon as RustEngineAddonHandle, dir);
     try {
       await engine.connect({ database_path: dir });
@@ -60,7 +73,7 @@ export function createWriteComparer(d: WriteComparerDeps): { handle(event: Write
       try { await engine[event.op](...args); } catch (error) { d.onError?.('write', error); return ['uncomparable', `rust_write_failed`]; }
       const theirs = readBackText(encodeValue(await readBack(engine, targets, pageSet(targets, pre))));
       if (theirs === readBackText(event.post)) return ['comparable'];
-      return event.moved ? ['uncomparable', 'moved'] : ['unexplained_difference'];
+      return ['unexplained_difference'];
     } finally {
       await engine.disconnect().catch(() => undefined);
       try { rmSync(run, { recursive: true, force: true }); } catch { /* removed with the shadow directory */ }

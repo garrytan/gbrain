@@ -9,7 +9,7 @@
  *
  * Counts live in `write-comparisons.json`, written by the child under the current evidence epoch; `status` reads them.
  */
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { memberKind, WRITE_MAP } from './write-map.ts';
 
@@ -28,12 +28,15 @@ export interface WriteEvent { t: 'write'; op: string; outcome?: WriteOutcome; re
 const ref = (slug: unknown, source: unknown): PageRef | null =>
   (typeof slug === 'string' && slug ? { source: typeof source === 'string' && source ? source : 'default', slug: slug.toLowerCase() } : null);
 
-/** The pages a pilot write names (both link ends and the origin page of a link), by source and slug. */
+/** Where each pilot write takes its options: `putPage(slug, page, opts)`, `deletePage(slug, opts)`, `addLink(from, to, context, type, source, originSlug, originField, opts)`, `removeLink(from, to, type, source, opts)`. */
+const OPTS_AT: Record<string, number> = { putPage: 2, deletePage: 1, addLink: 7, removeLink: 4 };
+
+/** The pages a pilot write names (both link ends and the origin page of a link), by source and slug. An omitted origin source is `default` on both engines, whatever the from-source. */
 export function pageRefs(op: string, args: any[]): PageRef[] {
-  const o = (args[op === 'addLink' ? 7 : op === 'removeLink' ? 4 : 1] ?? {}) as Record<string, unknown>;
+  const o = (args[OPTS_AT[op] ?? 1] ?? {}) as Record<string, unknown>;
   const all = op === 'addLinksBatch'
-    ? (args[0] as any[]).flatMap((l) => [ref(l.from_slug, l.from_source_id), ref(l.to_slug, l.to_source_id), ref(l.origin_slug, l.origin_source_id ?? l.from_source_id)])
-    : op === 'addLink' ? [ref(args[0], o.fromSourceId), ref(args[1], o.toSourceId), ref(args[5], o.originSourceId ?? o.fromSourceId)]
+    ? (args[0] as any[]).flatMap((l) => [ref(l.from_slug, l.from_source_id), ref(l.to_slug, l.to_source_id), ref(l.origin_slug, l.origin_source_id)])
+    : op === 'addLink' ? [ref(args[0], o.fromSourceId), ref(args[1], o.toSourceId), ref(args[5], o.originSourceId)]
     : op === 'removeLink' ? [ref(args[0], o.fromSourceId), ref(args[1], o.toSourceId)]
     : [ref(args[0], o.sourceId)];
   return [...new Map(all.filter((r): r is PageRef => r !== null).map((r) => [`${r.source}\0${r.slug}`, r])).values()];
@@ -92,22 +95,36 @@ export function readWriteTally(dir: string, epochId: string | null): WriteTallyF
 const MAX_KEYS = 64;
 const bump = (map: Record<string, number>, key: string, count: number): void => { const k = key in map || Object.keys(map).length < MAX_KEYS ? key : 'other'; map[k] = (map[k] ?? 0) + count; };
 
-/** Counts outcomes under the current epoch and writes the file after each one (sampled writes are rare). With no epoch, or no directory, nothing is counted. */
+type Verdict = [outcome: WriteOutcome, key: string | undefined, count: number];
+function applyVerdict(file: WriteTallyFile, [outcome, key, count]: Verdict): void {
+  file[outcome] += count;
+  const name = typeof key === 'string' && /^[A-Za-z][A-Za-z0-9_:]{0,59}$/.test(key) ? key : 'other'; // a name, never text that could hold content
+  if (outcome === 'capability_missing') bump(file.capability_missing_by_family, name, count);
+  if (outcome === 'uncomparable') bump(file.uncomparable_by_reason, name, count);
+}
+
+/**
+ * Counts outcomes under the current epoch and writes the file after each one (sampled writes are rare). With no epoch, or no directory, nothing is counted.
+ * A verdict that could not be written is kept and written with the next one, and the file it could not update is removed, so a count that no longer
+ * includes a verdict never stands as evidence (it reads as no count, never as a pass).
+ */
 export class WriteTally {
+  private unsaved: Verdict[] = [];
   constructor(private readonly dir: string, private readonly epoch: () => string | null, private readonly alive: () => boolean = () => existsSync(dir)) {}
   note(outcome: WriteOutcome, key?: string, count = 1): void {
     const epoch = this.epoch();
     if (epoch === null || !this.alive()) return;
+    this.unsaved.push([outcome, key, count]);
     const file = readWriteTally(this.dir, epoch) ?? { version: 1 as const, epoch_id: epoch, updated_at: '', comparable: 0, unexplained_difference: 0, uncomparable: 0, capability_missing: 0, capability_missing_by_family: {}, uncomparable_by_reason: {} };
-    file[outcome] += count;
-    const name = typeof key === 'string' && /^[A-Za-z][A-Za-z0-9_:]{0,59}$/.test(key) ? key : 'other'; // a name, never text that could hold content
-    if (outcome === 'capability_missing') bump(file.capability_missing_by_family, name, count);
-    if (outcome === 'uncomparable') bump(file.uncomparable_by_reason, name, count);
+    for (const verdict of this.unsaved) applyVerdict(file, verdict);
     file.updated_at = new Date().toISOString();
     try {
       const tmp = `${writeTallyPath(this.dir)}.${process.pid}.tmp`;
       writeFileSync(tmp, JSON.stringify(file) + '\n', { mode: 0o600 });
       renameSync(tmp, writeTallyPath(this.dir));
-    } catch { /* a full disk loses a count, never the child */ }
+      this.unsaved = [];
+    } catch {
+      try { unlinkSync(writeTallyPath(this.dir)); } catch { /* nothing to remove, or it cannot be: the follower's own status stops updating in the same directory */ }
+    }
   }
 }

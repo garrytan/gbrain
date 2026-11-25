@@ -36,13 +36,19 @@ type Row = Record<string, string | null>;
 const strings = (rows: Row[], key: string): string[] => [...new Set(rows.map((r) => r[key]).filter((v): v is string => typeof v === 'string'))];
 
 /** The rows of the pages `targets` name, the links among them (all links touching them, for a delete) and the pages and sources those need. Throws `preimage_too_large`. */
-export async function readPreimage(engine: BrainEngine, op: string, targets: PageRef[]): Promise<PreImage> {
+export async function readPreimage(engine: BrainEngine, op: string, targets: PageRef[], signal: { aborted: boolean } = { aborted: false }): Promise<PreImage> {
+  // The caller's deadline cannot stop a transaction that is queued or running, so each step looks at `signal` first: an abandoned read ends at its next
+  // statement (and releases the connection a primary write waits behind) instead of finishing its work.
+  const live = (): void => { if (signal.aborted) throw new Error('preimage_aborted'); };
+  live();
   return engine.transaction(async (tx) => {
+    live();
     const query = digestQuery(tx);
     await query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ'); // the first statement fixes the snapshot, as in the seed
     await query(DIGEST_SESSION_SETTINGS);
     if (hasCapability(engine, 'postgres_admin')) await query(`SET LOCAL statement_timeout = ${PREIMAGE_TIMEOUT_MS}`); // the wait below only abandons a read: this stops it
     const rowsOf = async (relation: string, where: string, params: unknown[], limit: number): Promise<Row[]> => {
+      live();
       const read = await relationRead(tx, relation, ['id']);
       const rows = await tx.executeRaw<Record<string, string | null>>(`/* shadow write preimage */ ${read.select} WHERE ${where} LIMIT ${limit + 1}`, params);
       if (rows.length > limit) throw new Error('preimage_too_large');
@@ -54,15 +60,15 @@ export async function readPreimage(engine: BrainEngine, op: string, targets: Pag
     const more = strings(links, 'from_page_id').concat(strings(links, 'to_page_id'), strings(links, 'origin_page_id')).filter((id) => !ids.includes(id));
     if (more.length) pages.push(...await rowsOf('pages', 't.id::text = ANY($1::text[])', [[...new Set(more)]], MAX_PRE_PAGES));
     if (pages.length > MAX_PRE_PAGES) throw new Error('preimage_too_large');
-    const named = strings(pages, 'source_id').filter((id) => id !== 'default');
+    const named = [...new Set([...strings(pages, 'source_id'), ...targets.map((t) => t.source)])].filter((id) => id !== 'default'); // a page not there yet still needs its source in the scratch store
     const sources = named.length ? await rowsOf('sources', 't.id::text = ANY($1::text[])', [named], MAX_PRE_PAGES) : [];
     const bare = (rows: Row[]): Row[] => rows.map(({ k0: _key, ...rest }) => rest);
     return { sources: bare(sources), pages: bare(pages), links: bare(links) };
   }, { readOnly: true });
 }
 
-const timeout = <T>(promise: Promise<T>, ms: number): Promise<T> => new Promise((resolve, reject) => {
-  const timer = setTimeout(() => reject(new Error('preimage_timeout')), ms);
+const timeout = <T>(promise: Promise<T>, ms: number, onTimeout: () => void): Promise<T> => new Promise((resolve, reject) => {
+  const timer = setTimeout(() => { onTimeout(); reject(new Error('preimage_timeout')); }, ms);
   promise.then((v) => { clearTimeout(timer); resolve(v); }, (e) => { clearTimeout(timer); reject(e); });
 });
 
@@ -93,10 +99,12 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
         return (async () => {
           let encoded: unknown[]; let pre: PreImage; let targets: PageRef[];
           const before = o.generation?.();
+          const signal = { aborted: false };
           try {
             encoded = encodeArgs(args, { left: CAPTURE_BUDGET_BYTES });
             targets = pageRefs(name, args);
-            pre = await timeout(readPreimage(ctx.engine, name, targets), o.preimageTimeoutMs ?? PREIMAGE_TIMEOUT_MS);
+            if (targets.length > MAX_PRE_PAGES) throw new Error('preimage_too_large'); // refused before any read: the read-back looks at every named page
+            pre = await timeout(readPreimage(ctx.engine, name, targets, signal), o.preimageTimeoutMs ?? PREIMAGE_TIMEOUT_MS, () => { signal.aborted = true; });
           } catch (error) {
             const why = (error as Error)?.message;
             uncomparable(name, why === 'preimage_too_large' || why === 'preimage_timeout' ? why : 'preimage_unreadable');
@@ -104,10 +112,14 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
           }
           let result: unknown;
           try { result = await run(); } catch (error) { uncomparable(name, 'primary_write_failed'); throw error; }
-          void readBack(ctx.engine, targets, pageSet(targets, pre)).then((post) => {
-            const after = o.generation?.();
-            send({ t: 'write', op: name, args: encoded, pre, post: encodeValue(post), moved: before !== undefined && after !== undefined && after - before > 1 });
-          }, () => uncomparable(name, 'readback_failed'));
+          // Off the request path, and nothing in it may escape: an encode that throws (a segmented page's body getters) is one more uncomparable sample.
+          void (async () => {
+            try {
+              const post = encodeValue(await readBack(ctx.engine, targets, pageSet(targets, pre)));
+              const after = o.generation?.();
+              send({ t: 'write', op: name, args: encoded, pre, post, moved: before !== undefined && after !== undefined && after - before > 1 });
+            } catch { uncomparable(name, 'readback_failed'); }
+          })();
           return result;
         })();
       };
