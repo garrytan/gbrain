@@ -388,3 +388,37 @@ describe('with a repository', () => {
     expect(bang).toBe((await h.linkOf(made[1]!, 'default'))?.entity_id);
   });
 });
+
+describe('a decide line that would quietly undo an earlier choice is refused', () => {
+  let home: string;
+  let engine: BrainEngine;
+  beforeAll(async () => {
+    home = mkdtempSync(join(tmpdir(), 'gbrain-contact-decide-guards-'));
+    engine = await connectTemplateBrain(join(home, 'database'));
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+    await engine.executeRaw(`INSERT INTO sources(id,name,config) VALUES('gc','gc','{"kind":"google"}'::jsonb) ON CONFLICT DO NOTHING`);
+    await h.page('people/hana-a', 'Hana Example', { emails: ['hana@example.invalid'] });
+    await h.page('people/hana-b', 'Hana Example', { emails: ['hana@example.invalid'] });
+    await h.contact('c-hana', 'Hana Example', ['hana@example.invalid']);
+  }, 120_000);
+  afterAll(async () => { await engine.disconnect(); rmSync(home, { recursive: true, force: true }); });
+  const h = harness(() => engine, () => home);
+  const pair = decisionId([ref('gc', 'people/c-hana'), ref('default', 'people/hana-a')]);
+
+  test('link to a candidate the owner rejected is refused rejected_pair, and the reject stays recorded', async () => {
+    const rejected = await h.json(['decide', '--source', 'gc', '--file', h.choices([{ contact_slug: 'people/c-hana', action: 'reject', candidate: 'default:people/hana-a' }])]);
+    expect(rejected.lines[0].status).toBe('recorded');
+    const out = await h.json(['decide', '--source', 'gc', '--file', h.choices([{ contact_slug: 'people/c-hana', action: 'link', candidate: 'default:people/hana-a' }])]);
+    expect([out.lines[0].status, out.lines[0].reason]).toEqual(['refused', 'rejected_pair']);
+    expect(out.lines[0].message).toContain(`gbrain dedupe undo ${pair}`);
+    expect((await h.decisions()).map(r => [r.decision_id, r.verdict])).toEqual([[pair, 'different']]);
+    expect(await h.linkOf('people/c-hana', 'gc')).toBeNull();
+  });
+
+  test('reject naming the contact itself is refused invalid_candidate and records nothing', async () => {
+    const before = (await h.decisions()).map(r => r.decision_id);
+    const out = await h.json(['decide', '--source', 'gc', '--file', h.choices([{ contact_slug: 'people/c-hana', action: 'reject', candidate: 'gc:people/c-hana' }])]);
+    expect([out.lines[0].status, out.lines[0].reason]).toEqual(['refused', 'invalid_candidate']);
+    expect((await h.decisions()).map(r => r.decision_id)).toEqual(before);
+  });
+});

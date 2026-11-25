@@ -191,8 +191,11 @@ gbrain dedupe decide --source <id> --file choices.json
 Every line prints its decision ids and the command that undoes it,
 `gbrain dedupe undo <id>...` (plus `gbrain delete <slug> --source default`
 for a page `new` made). A line that can't apply (an unknown contact, a
-missing candidate, a pair you recorded as different) is set aside with its
-reason and the rest are still recorded. The decisions are kept with your other
+missing candidate, a `link` for a pair you recorded as different, or a
+`reject` that names the contact itself) is set aside with its reason and the
+rest are still recorded. A refused `link` names the `gbrain dedupe undo`
+command that clears the earlier choice; to mark a contact as not a person,
+use `ignore`. The decisions are kept with your other
 duplicate decisions: in `.gbrain/identity/` in the brain's repository, in one
 commit with any page `new` made, so a database rebuilt from git keeps them,
 or in the database on a brain with no repository.
