@@ -71,6 +71,9 @@ pub struct BrainOpenOptions {
     /// A fresh brain records the write gate's scan baseline under this detector version (the
     /// TypeScript `WRITE_GATE_DETECTOR_VERSION`).
     pub write_gate_detector_version: Option<u32>,
+    /// Multi-user mode (I-0), resolved by the caller for this brain (`GBRAIN_RUST_MULTIUSER=1` or the brain's config
+    /// `engine.rust.multiuser: true`). It implies concurrent writes. Absent or false: the open is unchanged.
+    pub multiuser: Option<bool>,
 }
 
 #[napi]
@@ -200,6 +203,7 @@ impl Brain {
                         .push(("chunk_strategy".into(), strategy));
                 }
                 opts.write_gate_detector_version = options.write_gate_detector_version;
+                opts.multiuser = options.multiuser.unwrap_or(false);
             }
             // Holding the slot while opening makes a second `open` on this handle wait, then see
             // the brain open.
