@@ -398,7 +398,7 @@ src/core/persistence/managed-sources.ts	execute_raw	1
 src/core/persistence/memory-prepare.ts	execute_raw	1
 src/core/persistence/memory-proposals.ts	execute_raw	9
 src/core/persistence/mirror-read-only.ts	execute_raw	2
-src/core/persistence/noop-kernel.ts	execute_raw	2
+src/core/persistence/noop-kernel.ts	execute_raw	1
 src/core/persistence/origin-index.ts	execute_raw	2
 src/core/persistence/page-advisories.ts	execute_raw	1
 src/core/persistence/page-append.ts	execute_raw	2

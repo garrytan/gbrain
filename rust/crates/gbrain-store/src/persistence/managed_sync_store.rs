@@ -107,7 +107,7 @@ pub(super) fn big(value: &Value) -> Result<i64> {
     }
 }
 
-fn opt_big(p: &[Value], i: usize) -> Result<Option<i64>> {
+pub(super) fn opt_big(p: &[Value], i: usize) -> Result<Option<i64>> {
     match param(p, i)? {
         Value::Null => Ok(None),
         v => big(v).map(Some),
@@ -169,7 +169,7 @@ pub(super) fn put_row(tx: &mut dyn KvWrite, env: &dyn Env, op: &str, fingerprint
 }
 
 /// `to_jsonb(now())` with TimeZone UTC: `2026-01-03T00:00:00.215+00:00`.
-fn jsonb_now(env: &dyn Env) -> String {
+pub(super) fn jsonb_now(env: &dyn Env) -> String {
     jsonb_timestamp(env.now_micros())
 }
 
@@ -220,14 +220,23 @@ impl Store {
         if let Some(rows) = super::managed_sync_status::read(&*read, &*self.env, name, params)? {
             return Ok(rows);
         }
+        // The run, waiver, cursor-key, window, lane, drain and fold statements are answered in managed_sync_run_store.rs.
+        if let Some(rows) = super::managed_sync_run_store::read(&*read, &*self.env, name, params)? {
+            return Ok(rows);
+        }
         run_read(&*read, &*self.env, name, params)
     }
 
     /// One write statement of the managed sync (`syncStoreWrite`); its `RETURNING` rows.
     pub fn sync_store_write(&self, name: &str, params: &[Value]) -> Result<Value> {
-        self.write(|tx| match super::managed_sync_status::write(tx, &*self.env, name, params)? {
-            Some(rows) => Ok(rows),
-            None => run_write(tx, &*self.env, name, params),
+        self.write(|tx| {
+            if let Some(rows) = super::managed_sync_status::write(tx, &*self.env, name, params)? {
+                return Ok(rows);
+            }
+            match super::managed_sync_run_store::write(tx, &*self.env, name, params)? {
+                Some(done) => Ok(done),
+                None => run_write(tx, &*self.env, name, params),
+            }
         })
     }
 }

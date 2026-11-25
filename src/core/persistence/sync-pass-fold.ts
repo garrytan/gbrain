@@ -45,6 +45,7 @@ import { faultPoint } from './fault-points.ts';
 import { supersessionSql } from './terminal-classify.ts';
 import { publishPassStamp, syncGitTopLevel, type FenceTrendPrefix, type SyncIntent } from './sync-prepare.ts';
 import { syncRows } from '../engine-sql/managed-sync-store.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 /** What a folded stamp's proof needs of its round: S1's mark, page count and largest page id, and the round's imports. */
 export interface PassFold {
@@ -132,6 +133,8 @@ async function foldedStamp(tx: BrainEngine, input: { row: WriteRequest; p: SyncI
     });
     return null;
   } catch (error) {
+    // A refusal of the engine (a capability it lacks) is not a stamp that failed: it ends the import, never reads as 'error'.
+    rethrowCapabilityRefusal(error);
     return error instanceof StampSkipped ? error.reason : 'error';
   }
 }
@@ -147,9 +150,7 @@ async function provenStamp(tx: BrainEngine, { row, p, root, trend }: { row: Writ
     () => readConvergedWatermark(tx, scope, row.request_id, OPEN_AT_STAMP_CAP, writeback ? { own: writeback } : undefined),
     () => syncRows(tx, 'source_mode', [row.source_id, row.source_incarnation]),
     () => proveConfirm(tx, { sourceId: row.source_id, incarnation: row.source_incarnation, passId: p.passId!, base: fold.base, postgres, self: row.id }),
-    () => tx.executeRaw(`SELECT 1 FROM persistence_requests r WHERE r.source_id=$1 AND r.slug='__managed_sync_checkpoint__' AND r.intent IS NOT NULL AND NOT r.compacted
-      AND r.operation='submit_job' AND r.intent->>'kind'='managed_sync_checkpoint' AND r.state IN ('failed','conflict','cancelled')
-      AND NOT EXISTS (SELECT 1 FROM persistence_requests c WHERE ${supersessionSql('r', 'c')}) LIMIT 1`, [row.source_id]),
+    () => syncRows(tx, 'refused_checkpoint', [row.source_id]),
   ]) as [unknown[], Awaited<ReturnType<typeof readPassRow>>, string | null, Awaited<ReturnType<typeof readConvergedWatermark>>, Array<{ last_commit: string | null; mode: string | null }>,
     Awaited<ReturnType<typeof proveConfirm>>, unknown[]];
   if (!lease.length || !pass || pass.value.lease_token !== stamp.leaseToken || pass.value.telemetry.pass_id !== p.passId) return 'lease';

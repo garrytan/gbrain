@@ -99,3 +99,40 @@ fn an_unknown_statement_is_refused() {
     assert!(store.sync_store_rows("no_such_statement", &[]).is_err());
     assert!(store.sync_store_write("no_such_statement", &[]).is_err());
 }
+
+#[test]
+fn a_cursor_inserts_once_swaps_on_its_header_and_retires_with_its_unshared_manifest() {
+    let dir = TempDir::new("managed-sync-store");
+    let store = open(&dir);
+    let head = |index: i64, done: bool| json!([{ "sourceId": "work", "runId": "run-a", "index": index, "done": done, "pending": { "requestId": "r1", "intent": { "kind": "k" } } }]).to_string();
+    assert!(write(&store, "cursor_manifest_insert", json!(["managed-sync-manifest", "run-a", "[{\"slug\":\"a\"}]"])).is_empty());
+    assert!(write(&store, "cursor_manifest_insert", json!(["managed-sync-manifest", "run-a", "[{\"slug\":\"zzz\"}]"])).is_empty());
+    assert_eq!(rows(&store, "checkpoint_keys", json!(["managed-sync-manifest", "run-a"]))[0]["completed_keys"], json!([{ "slug": "a" }]));
+    assert_eq!(write(&store, "cursor_insert", json!(["managed-sync", "k1", head(1, false)])).len(), 1);
+    assert!(write(&store, "cursor_insert", json!(["managed-sync", "k1", head(9, false)])).is_empty(), "a second insert changes nothing");
+    assert!(write(&store, "cursor_swap", json!(["managed-sync", "k1", head(7, false), head(3, false)])).is_empty(), "a swap on a stale header loses");
+    assert_eq!(write(&store, "cursor_swap", json!(["managed-sync", "k1", head(1, false), head(3, true)])).len(), 1);
+    let locked = rows(&store, "cursor_head_locked", json!(["k1"]));
+    assert_eq!((locked[0]["run_id"].clone(), locked[0]["index"].clone(), locked[0]["request_id"].clone()), (json!("run-a"), json!(3), json!("r1")));
+    let held = rows(&store, "pending_intent_held", json!(["managed-sync", "k1", "{\"kind\":\"k\"}"]));
+    assert_eq!(held[0]["same"], json!(true));
+    assert!(write(&store, "manifest_delete_unshared", json!(["run-a"])).is_empty());
+    assert_eq!(rows(&store, "checkpoint_keys", json!(["managed-sync-manifest", "run-a"])).len(), 1, "the cursor still names the run");
+    assert_eq!(write(&store, "finished_cursor_delete", json!(["k1"]))[0]["run_id"], json!("run-a"));
+    write(&store, "manifest_delete_unshared", json!(["run-a"]));
+    assert!(rows(&store, "checkpoint_keys", json!(["managed-sync-manifest", "run-a"])).is_empty());
+    write(&store, "cursor_insert", json!(["managed-sync-slice", "w:i:a", "[{}]"]));
+    write(&store, "cursor_insert", json!(["managed-sync-slice", "w:j:a", "[{}]"]));
+    write(&store, "prefix_delete", json!(["managed-sync-slice", "w:i:"]));
+    assert_eq!(rows(&store, "checkpoint_prefix", json!(["managed-sync-slice", "w:"])).len(), 1);
+}
+
+#[test]
+fn an_unfinished_page_request_read_answers_nothing_for_a_store_without_requests() {
+    let dir = TempDir::new("managed-sync-store");
+    let store = open(&dir);
+    let wt = "00000000-0000-4000-8000-000000000001";
+    assert!(rows(&store, "unfinished_page_request", json!([wt, wt, "work", "notes/x", 1, "1", "notes/x.md", "notes/x.md"])).is_empty());
+    assert!(rows(&store, "stale_page_requests", json!([wt, "run-1", "2"])).is_empty());
+    assert!(rows(&store, "refused_checkpoint", json!(["work", ["delete_page", "purge_page"]])).is_empty());
+}
