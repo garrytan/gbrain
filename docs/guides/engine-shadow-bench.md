@@ -1,6 +1,6 @@
 # Engine shadow speed receipt (criterion 8)
 
-How `gbrain engine shadow bench --import` loads an engine-bench speed receipt and how its numbers are counted. This page holds the whole Speed item of [Rust engine shadow mode](../ENGINES.md); it lives here so the engines page and `llms-full.txt` stay under their size cap.
+How `gbrain engine shadow bench --import` loads an engine-bench speed receipt and how its numbers are counted. This page holds the whole Speed item of [Rust engine shadow mode](../ENGINES.md); it lives here so `llms-full.txt`, which inlines the engines page, stays under its size cap.
 
 The command, as it was listed with the other `gbrain engine shadow` commands:
 
