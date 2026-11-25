@@ -345,6 +345,14 @@ interface ScannedToken {
   length: number;     // original length (for span tracking)
 }
 
+/** Whether `cp` is in CJK_SLUG_CHARS: the bounds pre-filter, then the shared character class. */
+function isCJKCodePoint(cp: number): boolean {
+  return cp >= CJK_BOUNDS.min && cp <= CJK_BOUNDS.max && CJK_CHAR_RE.test(String.fromCodePoint(cp));
+}
+const LETTER_RE = /^\p{L}$/u;
+const LETTER_OR_MARK_RE = /^[\p{L}\p{M}]$/u;
+const isAsciiAlnum = (c: number) => (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
+
 /**
  * Body-text tokenizer. Returns `[token, offset]` pairs.
  *
@@ -366,47 +374,44 @@ interface ScannedToken {
  * resolved mention (see tokenizeTitle).
  */
 export function tokenizeForScan(text: string): ScannedToken[] {
+  // One forward pass that emits exactly what TOKEN_RE's word runs plus the
+  // per-character CJK walk would: a word starts at an ASCII letter or digit
+  // or a non-CJK \p{L}, continues through ASCII letters and digits and
+  // non-CJK \p{L}/\p{M}; a CJK character is its own token; anything else
+  // advances one code unit.
   const out: ScannedToken[] = [];
-  TOKEN_RE.lastIndex = 0;
-  let m: RegExpExecArray | null;
-
-  // Collect word-run token spans first.
-  const wordSpans: Array<{ start: number; end: number }> = [];
-  while ((m = TOKEN_RE.exec(text)) !== null) {
-    wordSpans.push({ start: m.index, end: m.index + m[0].length });
-  }
-
-  // Walk character-by-character: emit word-run tokens at their start
-  // positions, then emit individual CJK characters for positions that fall
-  // outside every word-run span.
-  let spanIdx = 0;
-  for (let i = 0; i < text.length;) {
-    // Advance spanIdx past any spans that end before or at i.
-    while (spanIdx < wordSpans.length && wordSpans[spanIdx]!.end <= i) {
-      spanIdx++;
-    }
-
-    // If position i is inside a word-run span, emit the full token and jump
-    // past it.
-    if (spanIdx < wordSpans.length && i >= wordSpans[spanIdx]!.start && i < wordSpans[spanIdx]!.end) {
-      const span = wordSpans[spanIdx]!;
-      const token = text.slice(span.start, span.end);
-      out.push({ text: normalizeToken(token), offset: span.start, length: token.length });
-      i = span.end;
-      spanIdx++;
-      continue;
-    }
-
-    // CJK: emit as individual character token.
-    const cp = text.codePointAt(i) ?? 0;
-    const charLen = cp > 0xffff ? 2 : 1; // surrogate pair
-    const charStr = text.slice(i, i + charLen);
-    if (isCJKChar(charStr)) {
-      out.push({ text: normalizeToken(charStr), offset: i, length: charLen });
-      i += charLen;
+  const n = text.length;
+  let i = 0;
+  while (i < n) {
+    const c = text.charCodeAt(i);
+    if (c < 128) {
+      if (!isAsciiAlnum(c)) { i++; continue; }
     } else {
-      i++;
+      const cp = text.codePointAt(i)!;
+      const width = cp > 0xffff ? 2 : 1;
+      if (isCJKCodePoint(cp)) {
+        out.push({ text: normalizeToken(text.slice(i, i + width)), offset: i, length: width });
+        i += width;
+        continue;
+      }
+      if (!LETTER_RE.test(String.fromCodePoint(cp))) { i++; continue; }
     }
+    const start = i;
+    let ascii = true;
+    while (i < n) {
+      const d = text.charCodeAt(i);
+      if (d < 128) {
+        if (!isAsciiAlnum(d)) break;
+        i++;
+        continue;
+      }
+      const cp = text.codePointAt(i)!;
+      if (isCJKCodePoint(cp) || !LETTER_OR_MARK_RE.test(String.fromCodePoint(cp))) break;
+      ascii = false;
+      i += cp > 0xffff ? 2 : 1;
+    }
+    const token = text.slice(start, i);
+    out.push({ text: ascii ? token.toLowerCase() : normalizeToken(token), offset: start, length: i - start });
   }
   return out;
 }
