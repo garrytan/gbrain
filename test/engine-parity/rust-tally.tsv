@@ -157,7 +157,7 @@ test/engine-parity/floor-folder-rule.test.ts	1	0
 test/engine-parity/forget-commit.test.ts	3	0
 test/engine-parity/forget-fence-path.test.ts	3	0
 test/engine-parity/forget-members.test.ts	3	0
-test/engine-parity/forget-reach-reads.test.ts	4	1
+test/engine-parity/forget-reach-reads.test.ts	5	0
 test/engine-parity/forget-rebuild.test.ts	1	0
 test/engine-parity/forget-remember.test.ts	2	0
 test/engine-parity/forget-whole-cli.test.ts	2	0
