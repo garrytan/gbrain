@@ -107,7 +107,17 @@ two pages fit), the hold stays held for every page it could belong to,
 `gbrain doctor` lists it as `write_gate_hold_ambiguous`, and you decide it in
 `gbrain trust review`: drop it, or remember the fact on the right page
 yourself (a release is refused for such a hold).
-Known limit: if two purges run at the same time on pages that share a reused name, a held write can be left behind. It stays hidden and is never shown. `gbrain trust review` shows it, and the owner can remove it with `gbrain trust drop`. A later maintenance sweep will remove these automatically.
+If two purges run at the same time on pages that share a reused name, each can
+keep a held write for the other page. Each purge notes such a held write, and the
+next maintenance run (the `bookkeeping_gc` phase of `gbrain dream` and autopilot)
+checks it again: when no page is left for it, the held write and its receipts are
+deleted. Until then it stays hidden and is never shown, and `gbrain doctor` lists
+it under `write_gate_holds_stranded`. A held write that was saved before its page
+exists is never noted, so this sweep never removes it. To turn the sweep off, run
+`gbrain config set write_gate.orphan_sweep false`.
+Known limit: a held write left behind this way before the upgrade is not noted
+and stays until it is purged some other way. `gbrain trust drop` marks it dropped
+but keeps its text.
 With suppress, flagged items are still returned by explicit search, recall
 and `get_page`, labeled, but hook context, the context engine,
 `context_pack` and volunteer leave them out until you confirm them in
