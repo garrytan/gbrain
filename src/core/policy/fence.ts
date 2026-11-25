@@ -1,7 +1,7 @@
 /**
  * The `gbrain:policy v1` fence: one rules table in an agent_policy page body. Parsing is strict:
  * an unknown verb, decision, recipient class, window or a malformed limit makes the whole fence
- * malformed, reported with its line and column, and a malformed fence is never authoritative.
+ * malformed, reported with its line and column, and a malformed fence's own rules are never served.
  * The canonical form (renderPolicyFence) is what the approval digest covers.
  */
 import { createHash } from 'node:crypto';

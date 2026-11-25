@@ -24,7 +24,9 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
-import { acceptRevision, applyPolicyChange, resolvePolicy, POLICY_SLUGS } from '../src/core/policy/store.ts';
+import { acceptRevision, applyPolicyChange, readApproval, resolvePolicy, POLICY_SLUGS } from '../src/core/policy/store.ts';
+import { evaluatePolicy } from '../src/core/policy/evaluate.ts';
+import { copyMigrationConfig } from '../src/commands/migrate-engine.ts';
 import { checkPolicy } from '../src/core/policy/check.ts';
 import { ownerSessionProof, terminalAuthorityProblem, withOwnerProof, type TerminalProbe } from '../src/core/policy/authority.ts';
 import { renderPolicyFence, type PolicyRule } from '../src/core/policy/fence.ts';
@@ -56,12 +58,19 @@ const opByName = (name: string) => policyOperations.find(o => o.name === name)!;
 
 for (const kind of testBackends()) describe(`agent policy (L1, ${kind}, repo-less, keyless)`, () => {
   let engine: BrainEngine;
+  let migrateTarget: PGLiteEngine;
   let close: (() => Promise<void>) | null = null;
   beforeAll(async () => {
     if (kind === 'postgres') ({ engine, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!));
     else { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); }
+    migrateTarget = new PGLiteEngine();
+    await migrateTarget.connect({});
+    await migrateTarget.initSchema();
   }, 60_000);
-  afterAll(async () => { if (close) await close(); else if (engine) await engine.disconnect(); }, 60_000);
+  afterAll(async () => {
+    if (migrateTarget) await migrateTarget.disconnect();
+    if (close) await close(); else if (engine) await engine.disconnect();
+  }, 60_000);
   beforeEach(() => _resetCliExitVerdictForTests());
   afterEach(() => { _resetCliExitVerdictForTests(); process.exitCode = 0; });
 
@@ -217,6 +226,36 @@ for (const kind of testBackends()) describe(`agent policy (L1, ${kind}, repo-les
       globalThis.fetch = realFetch;
     }
     expect(calls).toBe(0);
+  });
+
+  test('gbrain migrate --to carries the approved policy to the new engine', async () => {
+    await copyMigrationConfig(engine, migrateTarget);
+    expect(await migrateTarget.getConfig('policy.approved.owner')).toBe(await engine.getConfig('policy.approved.owner'));
+    expect((await readApproval(migrateTarget, 'owner'))?.digest).toBe((await readApproval(engine, 'owner'))!.digest);
+    expect((await checkPolicy(migrateTarget, { verb: 'send', to: 'new' }, ['owner'])).decision).toBe('deny');
+  });
+
+  test('a malformed page with an owner approval keeps serving the approved rules', async () => {
+    const broken = ['---', 'type: agent_policy', 'title: Agent policy', '---', '', '<!--- gbrain:policy:v1:begin -->', '| id | verb | decision |', '|---|---|---|', '| a | fly | allow |', '<!--- gbrain:policy:v1:end -->'].join('\n');
+    const expected_revision = (await resolvePolicy(engine, 'owner')).page_revision!;
+    await submitPageMutation(localCtx(engine), { operation: 'put_page', params: { slug: POLICY_SLUGS.owner, source_id: 'default', content: broken, expected_revision } });
+    const served = await resolvePolicy(engine, 'owner');
+    expect(served.state).toBe('malformed');
+    expect(served.authoritative).toBe(true);
+    expect(served.served_revision).toBe(served.approval!.revision);
+    expect((await checkPolicy(engine, { verb: 'send', to: 'new' }, ['owner'])).decision).toBe('deny');
+    expect((await checkPolicy(engine, { verb: 'send', to: 'new' }, ['owner'])).fix?.why).toContain('agents still get the last approved revision');
+  });
+});
+
+describe('evaluatePolicy', () => {
+  test('leaving out the field a deny or ask rule tests answers ask, never the looser plain rule', () => {
+    expect(evaluatePolicy(spendRules, { verb: 'send' }).decision).toBe('ask');
+    expect(evaluatePolicy(spendRules, { verb: 'send', to: 'known' }).decision).toBe('allow');
+    expect(evaluatePolicy(spendRules, { verb: 'send', to: 'new' }).decision).toBe('deny');
+    expect(evaluatePolicy(spendRules, { verb: 'spend' }).decision).toBe('ask');
+    expect(evaluatePolicy([{ id: 'big', verb: 'spend', decision: 'deny', limit: { amount: 1000, currency: 'USD' } }, { id: 'spend', verb: 'spend', decision: 'allow' }], { verb: 'spend' }))
+      .toMatchObject({ decision: 'ask', rule_id: 'big' });
   });
 });
 

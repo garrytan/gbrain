@@ -2,7 +2,9 @@
  * Evaluate a policy for one outside action. Most specific first: a rule naming the merchant, then
  * a rule with a condition (recipient class or limit), then the verb's plain rule. Within a tier,
  * deny beats ask beats allow. A verb with no rule answers ask. A limit in another currency answers
- * ask (no exchange rates), and an amount over the limit falls through to the next tier.
+ * ask (no exchange rates), and an amount over the limit falls through to the next tier. A deny or
+ * ask rule whose condition the check leaves out (no recipient class, no amount) answers ask, so
+ * leaving a field out never gets a looser answer than the owner set.
  */
 import type { AgentVerb, RecipientClass } from '../agent-verbs.ts';
 import type { PolicyDecision, PolicyLimit, PolicyRule } from './fence.ts';
@@ -36,6 +38,8 @@ export function evaluatePolicy(rules: readonly PolicyRule[], q: PolicyQuery): Po
   ];
   for (const tier of tiers) {
     const matches = tier.flatMap(rule => {
+      const missing = rule.when !== undefined && q.to === undefined ? 'to' : rule.limit && !q.amount ? 'amount' : null;
+      if (missing && rule.decision !== 'allow') return [{ rule, decision: 'ask' as const, reason: `a ${rule.decision} rule depends on ${missing}, and the check did not include it` }];
       if (rule.when !== undefined && rule.when !== q.to) return [];
       const outcome = limitOutcome(rule, q);
       return outcome ? [{ rule, ...outcome }] : [];

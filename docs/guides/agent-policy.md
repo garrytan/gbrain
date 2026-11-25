@@ -75,7 +75,7 @@ A remote caller tried to write, move or retype the policy page. Change it with `
 
 ### policy_malformed
 
-The policy fence does not parse; the message names the line and column. While it is malformed, every verb answers ask. `gbrain policy show --check` shows the problem and `gbrain policy edit` fixes it.
+The policy fence does not parse; the message names the line and column. While it is malformed, agents get the last approved revision, or ask for every verb when nothing was ever approved. `gbrain policy show --check` shows the problem and `gbrain policy edit` fixes it.
 
 ### policy_revision_stale
 

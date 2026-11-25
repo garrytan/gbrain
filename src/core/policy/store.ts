@@ -81,7 +81,9 @@ export async function resolvePolicy(engine: BrainEngine, scope: PolicyScope): Pr
   if (!page && !approval) return { ...base, state: 'none', authoritative: false, rules: [], served_revision: null };
   if (!page) return { ...base, state: 'changed_outside_gbrain', authoritative: true, rules: approval!.rules, served_revision: approval!.revision, foreign: { revision: 'deleted', author: 'unrecorded' } };
   const parsed = parsePolicyFence(page.body);
-  if (!parsed.ok) return { ...base, state: 'malformed', authoritative: false, rules: [], served_revision: null, parse_error: parsed.error };
+  if (!parsed.ok) return approval
+    ? { ...base, state: 'malformed', authoritative: true, rules: approval.rules, served_revision: approval.revision, parse_error: parsed.error }
+    : { ...base, state: 'malformed', authoritative: false, rules: [], served_revision: null, parse_error: parsed.error };
   if (!approval) return { ...base, state: 'unapproved', authoritative: false, rules: [], served_revision: null };
   if (policyDigest(parsed.rules) === approval.digest) return { ...base, state: 'ok', authoritative: true, rules: approval.rules, served_revision: page.revision };
   return { ...base, state: 'changed_outside_gbrain', authoritative: true, rules: approval.rules, served_revision: approval.revision, foreign: { revision: page.revision, author: page.author } };

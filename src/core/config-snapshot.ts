@@ -219,7 +219,8 @@ export function requestSnapshotRead<T>(engine: object, key: string, load: () => 
 /**
  * L1 agent policy: config keys only an owner-confirmed path writes (the policy approvals and the
  * brain-first settings). Both engines' setConfig and unsetConfig refuse them outside
- * withReservedConfigWrite, which only src/core/policy/authority.ts enters, carrying the owner's proof.
+ * withReservedConfigWrite, which src/core/policy/authority.ts enters carrying the owner's proof, and
+ * copyMigrationConfig enters to copy the rows a brain already holds, unchanged, to its new engine.
  */
 export const RESERVED_CONFIG_PREFIXES = ['policy.approved.', 'brain_first.'] as const;
 const reservedWriteScope = new AsyncLocalStorage<true>();

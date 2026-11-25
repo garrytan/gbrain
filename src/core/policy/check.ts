@@ -43,7 +43,7 @@ function scopeView(p: ServedPolicy): ScopeView {
 /** The one next step a non-ok state carries: always a read the agent can run, or the owner's accept. */
 export function stateFix(p: ServedPolicy): Action | null {
   if (p.state === 'malformed') return { argv: ['gbrain', 'policy', 'show', '--check'], consent: [], actor: 'agent', requires_exclusive: false,
-    why: `The ${p.scope} policy page is malformed at line ${p.parse_error?.line}, column ${p.parse_error?.column}, so every outside action answers ask until it is fixed.` };
+    why: `The ${p.scope} policy page is malformed at line ${p.parse_error?.line}, column ${p.parse_error?.column}, so ${p.authoritative ? 'agents still get the last approved revision' : 'every outside action answers ask'} until it is fixed.` };
   if (p.state === 'changed_outside_gbrain' && p.foreign && p.foreign.revision !== 'deleted') return {
     argv: ['gbrain', 'policy', 'accept', p.foreign.revision, ...(p.scope === 'company' ? ['--scope', 'company'] : [])], consent: [], actor: 'user', requires_exclusive: false,
     why: `The ${p.scope} policy page was changed outside gbrain (revision ${p.foreign.revision}, by ${p.foreign.author}); agents still get the last approved revision.`,
