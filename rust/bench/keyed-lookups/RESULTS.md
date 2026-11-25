@@ -45,3 +45,17 @@ sync time grows faster than the bytes is not explained by these numbers, so the 
 
 A format-8 brain of 10,000 pages (14,500 chunks, 33,250 links) upgrades to format 9 on its first open in 169 ms; the
 next open takes 3 ms.
+
+## Store format 12: `listPages` by update time (2026-11-25)
+
+Engine-bench `--dev` at 10,000 pages on the same Linux machine, one run per arm (300 samples per core op), PGLite
+against the Rust engine. Before: 3e149c4d29ec (format 9). After: 378649209d, which has the same `listPages` walk as
+the format-12 head.
+
+| `list_pages` (limit 50) | PGLite | Rust before | Rust after |
+|---|---|---|---|
+| p50 / p95 | 1.7 / 1.9 ms | 34.6 / 37.4 ms | 1.4 / 1.7 ms |
+
+A format-9 brain of 10,000 pages (14,500 chunks, 33,250 links) made by the 3e149c4d29ec build upgrades to format 12
+on its first writable open in 285 ms; the next open takes 3 ms. The 3e149c4d29ec addon then refuses the brain:
+"store format 12, newer than the formats this build opens".

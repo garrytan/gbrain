@@ -4,9 +4,10 @@ Part of the store contract in [rust/README.md](../../README.md) ("The brain stor
 
 A brain's store format is the number in `FORMAT` and in the format record inside `records.redb`
 (`format_version`). A build opens the formats in `FORMAT_VERSIONS` (`addon.formatVersions`), which is
-always `1..=FORMAT_VERSION` (`crates/gbrain-store/src/format.rs`). A brain at an older format is
+every format from 1 to `FORMAT_VERSION` except the `allotted` ones in the registry below (formats 1 to 9 and 12 today;
+`crates/gbrain-store/src/format.rs`). A brain at an older format is
 upgraded to `FORMAT_VERSION` when it opens, every step in one write transaction (`upgrade_format` in
-`crates/gbrain-store/src/lib.rs`); a brain at a newer format is refused.
+`crates/gbrain-store/src/lib.rs`); a brain at a newer format, or at a format the build does not list, is refused.
 
 ## The registry
 
@@ -15,7 +16,7 @@ adds a `reserved` row with the next free number, then turns it into `shipped` in
 `FORMAT_VERSION` to it. Two branches cannot both take a number: the second one's row collides with
 the first one's in review, and `tests/format_registry.rs` fails CI when `FORMAT_VERSION` is not the
 last shipped row, when a number repeats or skips, or when a reserved row is not above it. An `allotted`
-row is a number the trunk holds for another lane's branch: this build neither ships nor opens it.
+row is a number the trunk holds for another lane's branch, and this build neither ships nor opens it.
 
 | Format | Status | Change | Branch and commit | Upgrade from the previous format |
 |---|---|---|---|---|

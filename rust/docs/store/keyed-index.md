@@ -30,8 +30,10 @@ their entries; the members filter them as before.
   before the statement's first write of that key and the entries its last value derives. At the end of the statement
   it deletes and puts only the difference, in the same statement, so the entries commit or roll back with the records.
   A savepoint rollback drops both; an OCC rerun starts a fresh writer.
-- Store format 9's upgrade (`upgrade_format`) builds every entry from the records in the upgrade's one write
-  transaction. A build without the lookups refuses a format-9 brain, as its writes would leave them stale.
+- The upgrade from format 8 or 9 (`upgrade_format`) drops every keyed entry and builds each one from the records in
+  the upgrade's one write transaction; a failed upgrade leaves the brain at its old format with no new entry. A build
+  without the lookups refuses a format-9 brain, and a format-9 build refuses a format-12 brain, as their writes would
+  leave the entries stale.
 - An entry is only a candidate: `hasSupersedeEdges` reads the link record back, the page reads read the page record
   through its id, and each member applies its full test. A stale entry could add no row; a missing one would drop a
   row, which `keyed_index/tests.rs` guards against by checking the entries against what the records derive after every
@@ -40,7 +42,7 @@ their entries; the members filter them as before.
 ## The updated-order walk
 
 `listPages` sorted by `updated_at` orders by updated_at, slug, source, id (`cmp_updated` in `pages.rs`). The `0x09`
-entry's bytes sort the same way: the time is a sign-flipped big-endian integer, and a slug or source never holds NUL,
+entry's bytes sort the same way. The time is a sign-flipped big-endian integer, and a slug or source never holds NUL,
 so the NUL after each one sorts below any byte it could hold. The member walks the entries newest first (or oldest
 first, starting at `updated_after` when one is set), reads each page by id in batches, applies the same filters and
 privacy test as before, and stops once it holds offset + limit rows. With a type, tag or slug filter, or another
