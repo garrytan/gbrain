@@ -18,11 +18,17 @@ describe('agent-contract baselines', () => {
     expect(run.stdout).toContain('check-agent-contract: OK');
   }, 150_000);
 
-  test('stdio-inherit.tsv lists each file once with a positive count', () => {
-    const rows = readFileSync(join(ROOT, 'scripts', 'agent-contract-baselines', 'stdio-inherit.tsv'), 'utf8')
-      .split('\n').filter(line => line && !line.startsWith('#'));
-    const paths = rows.map(row => row.split('\t')[0]);
-    expect(new Set(paths).size).toBe(paths.length);
-    for (const row of rows) expect(Number(row.split('\t')[1])).toBeGreaterThan(0);
-  });
+  for (const baseline of [
+    'scripts/agent-contract-baselines/stdio-inherit.tsv',
+    'scripts/agent-contract-baselines/hand-built-command.tsv',
+    'scripts/agent-contract-baselines/marker-literal.tsv',
+  ]) {
+    test(`${baseline} lists each file once with a positive count`, () => {
+      const rows = readFileSync(join(ROOT, baseline), 'utf8')
+        .split('\n').filter(line => line && !line.startsWith('#'));
+      const paths = rows.map(row => row.split('\t')[0]);
+      expect(new Set(paths).size).toBe(paths.length);
+      for (const row of rows) expect(Number(row.split('\t')[1])).toBeGreaterThan(0);
+    });
+  }
 });
