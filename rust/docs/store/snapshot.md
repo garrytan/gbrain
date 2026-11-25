@@ -1,6 +1,7 @@
 # Store snapshot and copy verification
 
-The primitive the shadow restore drill and `gbrain backup` of a Rust brain are to share; neither calls it yet
+The primitive the shadow restore drill and `gbrain backup` of a Rust brain are to share; the drill
+(`gbrain engine shadow drill --backup`, `src/shadow/drill.ts`) calls it through the owner, `gbrain backup` does not yet
 (`docs/designs/RUST_ENGINE.md`, row 21b: "a Rust snapshot taken under the owner lock at one committed
 generation"). Code: `snapshot.rs`, `verify.rs`, `redb_kv.rs` (`RedbSink`), `seed/follow.rs`
 (`relation_digest_stream`); addon: `gbrain-napi/src/families/snapshot.rs`; owner side:
