@@ -72,6 +72,22 @@ function failing(hit: RegExp, failure: Failure = 'refusal'): BrainEngine {
   }) as unknown as BrainEngine;
 }
 
+/** PGLite, except that the typed member `member` fails: with the Rust refusal, or as a missing table. */
+function failingMember(member: string, failure: Failure = 'refusal'): BrainEngine {
+  return new Proxy(pglite, {
+    get(target, prop) {
+      if (prop === member) {
+        return async () => {
+          if (failure === 'refusal') throw capabilityMissing('raw_sql', member);
+          throw new Error('relation "the_table" does not exist');
+        };
+      }
+      const value = Reflect.get(target, prop, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  }) as unknown as BrainEngine;
+}
+
 const refused = { code: 'engine_capability_missing' };
 
 function opCtx(engine: BrainEngine): OperationContext {
@@ -103,21 +119,28 @@ describe('a refused read that has no typed member refuses instead of answering w
     expect(await calendarPageRelPathByEventId(deps(failing(/'event_id'/, 'missing-table')), 'ev1')).toBeNull();
   });
 
+  test('site 21, synopsis-sweep.ts readLastSynopsisSweep: no "queue unreadable" null', async () => {
+    await expect(readLastSynopsisSweep(failing(/\bminion_jobs\b/))).rejects.toMatchObject(refused);
+    expect(await readLastSynopsisSweep(failing(/\bminion_jobs\b/, 'missing-table'))).toBeNull();
+  });
+});
+
+describe('a site whose read became a typed member in batch 12 still refuses when that member refuses', () => {
+  // Sites 5 and 10 no longer send the raw statement: lane 10 (repair-rust-b9, d2561e37b1) made the ledger release the
+  // typed member releaseBudgetReservation, and lane 15 (page-lists-access-rust, 7ae69944e3) made the explain probe the
+  // typed member probeTargetRows. The Rust engine serves both. The catch around each still lets a refusal through.
   test('site 5, budget/daily-ledger.ts release: no silent false', async () => {
-    await expect(dailyLedger(failing(/\bbudget_ledger\b/), FENCE_REPAIR_LEDGER).release('r1')).rejects.toMatchObject(refused);
-    expect(await dailyLedger(failing(/\bbudget_ledger\b/, 'missing-table'), FENCE_REPAIR_LEDGER).release('r1')).toBe(false);
+    expect(await dailyLedger(failing(/\bbudget_ledger\b/), FENCE_REPAIR_LEDGER).release('r1')).toBe(false);
+    await expect(dailyLedger(failingMember('releaseBudgetReservation'), FENCE_REPAIR_LEDGER).release('r1')).rejects.toMatchObject(refused);
+    expect(await dailyLedger(failingMember('releaseBudgetReservation', 'missing-table'), FENCE_REPAIR_LEDGER).release('r1')).toBe(false);
   });
 
   test('site 10, ops/search.ts prepareExplainTarget: an asked-for explain_target refuses instead of explaining nothing', async () => {
     const run = (engine: BrainEngine) => prepareExplainTarget(opCtx(engine), { explain_target: 'notes/a' }, {}, false, 'search');
-    await expect(run(failing(/AS embedded/))).rejects.toMatchObject(refused);
-    const fallback = await run(failing(/AS embedded/, 'missing-table'));
+    expect(await run(failing(/AS embedded/))).not.toBeNull();
+    await expect(run(failingMember('probeTargetRows'))).rejects.toMatchObject(refused);
+    const fallback = await run(failingMember('probeTargetRows', 'missing-table'));
     expect(fallback?.trace).toBeDefined();
-  });
-
-  test('site 21, synopsis-sweep.ts readLastSynopsisSweep: no "queue unreadable" null', async () => {
-    await expect(readLastSynopsisSweep(failing(/\bminion_jobs\b/))).rejects.toMatchObject(refused);
-    expect(await readLastSynopsisSweep(failing(/\bminion_jobs\b/, 'missing-table'))).toBeNull();
   });
 });
 

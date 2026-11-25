@@ -370,6 +370,19 @@ impl Store {
         )
     }
 
+    /// `readLabelGuardTiers(pageId)`: the tiers the label guard of a write over the page raises to
+    /// (trust/page-write.ts `labelGuardTier`): `owner_set`, the page's label guard tier, or none; `priors`, the prior
+    /// tiers of its `lower_page` proposals since the owner last accepted one (`proposals::lower_page_prior_tiers`).
+    pub fn read_label_guard_tiers(&self, page_id: i64) -> Result<Value> {
+        let read = self.read()?;
+        let owner_set = match u64::try_from(page_id) {
+            Ok(id) => label_guards::read(&*read, id)?.map(|guard| guard.tier),
+            Err(_) => None,
+        };
+        let priors = crate::trust::proposals::lower_page_prior_tiers(&*read, page_id)?;
+        Ok(serde_json::json!({ "owner_set": owner_set, "priors": priors }))
+    }
+
     /// The page's label guard (`SELECT tier, set_at FROM page_label_guards WHERE page_id = $1`), if any.
     pub fn read_page_label_guard(&self, page_id: i64) -> Result<Option<LabelGuardRecord>> {
         let Ok(id) = u64::try_from(page_id) else {

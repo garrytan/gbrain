@@ -158,7 +158,9 @@ test/engine-parity/access-flag.test.ts
 test/engine-parity/access-grants.test.ts
 test/engine-parity/access-member-reads.test.ts
 test/engine-parity/access-members.test.ts
+test/engine-parity/access-migrate.test.ts
 test/engine-parity/access-policy.test.ts
+test/engine-parity/access-serves-rust-refusal.test.ts
 test/engine-parity/access-setup.test.ts
 test/engine-parity/access-sort-order.test.ts
 test/engine-parity/access-tokens.test.ts
@@ -180,6 +182,8 @@ test/engine-parity/budget-ledger-writes.test.ts
 test/engine-parity/calibration-profiles.test.ts
 test/engine-parity/caller-typed-reads.test.ts
 test/engine-parity/checkpoint-validation.test.ts
+test/engine-parity/chronicle-backfill-done.test.ts
+test/engine-parity/chronicle-backfill.test.ts
 test/engine-parity/chronicle-coverage-gap.test.ts
 test/engine-parity/chronicle-decision.test.ts
 test/engine-parity/chronicle-executor.test.ts
@@ -218,6 +222,7 @@ test/engine-parity/concept-rebuild.test.ts
 test/engine-parity/config-ingest.test.ts
 test/engine-parity/connect-gate.test.ts
 test/engine-parity/connector-attempts.test.ts
+test/engine-parity/connector-sync-stamp.test.ts
 test/engine-parity/core-page-member-reads.test.ts
 test/engine-parity/credential-grant-writes.test.ts
 test/engine-parity/cycle-locks.test.ts
@@ -339,6 +344,7 @@ test/engine-parity/jobs.test.ts
 test/engine-parity/journal-purge-terminal.test.ts
 test/engine-parity/journal-typed-sites.test.ts
 test/engine-parity/keyword-visibility.test.ts
+test/engine-parity/label-guard-tiers.test.ts
 test/engine-parity/large-page.test.ts
 test/engine-parity/lifecycle.test.ts
 test/engine-parity/link-read-options.test.ts
@@ -371,7 +377,9 @@ test/engine-parity/open-loops.test.ts
 test/engine-parity/open-pages.test.ts
 test/engine-parity/owner-only-marks.test.ts
 test/engine-parity/owner-only-reads.test.ts
+test/engine-parity/owner-only-row-delete-marks.test.ts
 test/engine-parity/owner-recovery-scans.test.ts
+test/engine-parity/owner-write-privacy.test.ts
 test/engine-parity/page-embedding-budget.test.ts
 test/engine-parity/page-lock-anchors.test.ts
 test/engine-parity/page-purge-holds.test.ts
