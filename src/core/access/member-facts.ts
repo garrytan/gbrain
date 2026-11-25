@@ -12,7 +12,7 @@
  */
 import { createHash } from 'node:crypto';
 import type { OperationContext } from '../ops/contract.ts';
-import { currentCallerAccess, factOwnerOnlyWithinPageSql, folderRestrictedSql, isDerivationPrivate, pageReadsToReadersOfSql, privateFactSources, privatePagesFilterForCaller, withFolderRestricted } from '../search/private-visibility.ts';
+import { currentCallerAccess, factWithinPageReadersSql, folderRestrictedSql, isDerivationPrivate, pageReadsToReadersOfSql, privateFactSources, privatePagesFilterForCaller, withFolderRestricted } from '../search/private-visibility.ts';
 import { factPagesOpenSql, factProvenanceSlugSql, unpagedFactSql } from '../facts/private-fact-pages.ts';
 import { ownedMemorySubjectSql, unbackedEntitySql } from '../facts/withdrawal-schema.ts';
 import type { BrainEngine } from '../engine.ts';
@@ -263,7 +263,7 @@ export function readersSourcedFactSql(alias: string): string {
  * row passes, as a remote fact read passes it. `t` is the fact's entity page, so its own readers decide the rest.
  */
 export function factReadsToReadersOfSql(f: string, t: string): string {
-  return `(${f}.visibility = 'world' AND ${factOwnerOnlyWithinPageSql(f, t)} AND NOT EXISTS (SELECT 1 FROM pages fact_page
+  return `(${f}.visibility = 'world' AND ${factWithinPageReadersSql(f, t)} AND NOT EXISTS (SELECT 1 FROM pages fact_page
     WHERE fact_page.source_id = ${f}.source_id AND fact_page.slug IN (${f}.source_markdown_slug, ${factProvenanceSlugSql(f)})
       AND NOT ${pageReadsToReadersOfSql('fact_page', t)}))`;
 }

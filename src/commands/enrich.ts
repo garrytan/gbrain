@@ -76,6 +76,8 @@ import {
   type EnrichEvidence,
 } from '../core/enrich/thin.ts';
 import { restoreNeutralized } from '../core/think/sanitize.ts';
+import { sanitizeRemoteBody } from '../core/remote-body.ts';
+import { withEngineScope } from '../core/engine-scope.ts';
 
 // ---------------------------------------------------------------------------
 // Tunables (exported for tests).
@@ -173,6 +175,8 @@ export interface EnrichResult {
   pages_skipped_lock: number;
   /** Skipped because the page disappeared between enumeration and fetch. */
   pages_skipped_disappeared: number;
+  /** GST-3815: skipped because evidence stopped reading to every reader of the page during synthesis (retried next run). */
+  pages_skipped_evidence_narrowed?: number;
   /** Synthesis or write errors (best-effort; pool continued). */
   pages_failed: number;
   /** Dry-run only: candidates that WOULD be enriched (passed grounding). */
@@ -277,35 +281,51 @@ export function assembleEvidence(parts: {
   ];
 }
 
-/** GST-3815: the slugs among `slugs` whose every page row in `sourceId` reads to everyone who reads page `slug`. */
-async function pagesReadingToReadersOf(engine: BrainEngine, sourceId: string, slug: string, slugs: string[]): Promise<Set<string>> {
+/**
+ * GST-3815: which of `slugs` (every page row in `sourceId` with the slug, and a live one) and of the facts `factIds`
+ * about page `slug` read to everyone who reads that page. Retrieval filters by it, and publication asks again so
+ * evidence narrowed during the model call is never published.
+ */
+async function readableEvidence(engine: BrainEngine, sourceId: string, slug: string, slugs: string[], factIds: number[]): Promise<{ pages: Set<string>; facts: Set<number> }> {
   const wanted = [...new Set(slugs.filter(Boolean))];
-  if (!wanted.length) return new Set();
-  const rows = await engine.executeRaw<{ slug: string }>(
-    `SELECT p.slug FROM pages p JOIN pages t ON t.source_id = p.source_id AND t.slug = $2 AND t.deleted_at IS NULL
+  if (!wanted.length && !factIds.length) return { pages: new Set(), facts: new Set() };
+  const rows = await engine.executeRaw<{ kind: 'page' | 'fact'; key: string }>(
+    `SELECT 'page' AS kind, p.slug AS key FROM pages p JOIN pages t ON t.source_id = p.source_id AND t.slug = $2 AND t.deleted_at IS NULL
       WHERE p.source_id = $1 AND p.slug = ANY($3::text[])
-      GROUP BY p.slug HAVING bool_or(p.deleted_at IS NULL) AND bool_and(${pageReadsToReadersOfSql('p', 't')})`,
-    [sourceId, slug, wanted],
+      GROUP BY p.slug HAVING bool_or(p.deleted_at IS NULL) AND bool_and(${pageReadsToReadersOfSql('p', 't')})
+    UNION ALL
+    SELECT 'fact' AS kind, f.id::text AS key FROM facts f JOIN pages t ON t.source_id = f.source_id AND t.slug = f.entity_slug AND t.deleted_at IS NULL
+      WHERE f.source_id = $1 AND f.entity_slug = $2 AND f.id = ANY($4::bigint[]) AND f.expired_at IS NULL
+        AND (f.valid_until IS NULL OR f.valid_until > now()) AND ${factReadsToReadersOfSql('f', 't')}`,
+    [sourceId, slug, wanted, factIds],
   );
-  return new Set(rows.map((r) => r.slug));
+  return {
+    pages: new Set(rows.filter((r) => r.kind === 'page').map((r) => r.key)),
+    facts: new Set(rows.filter((r) => r.kind === 'fact').map((r) => Number(r.key))),
+  };
 }
+
+/** Evidence for one page, with the pages and facts it came from (GST-3815: checked again before publication). */
+interface RetrievedEvidence { evidence: EnrichEvidence[]; pages: string[]; factIds: number[] }
 
 async function retrieveEvidence(
   engine: BrainEngine,
   sourceId: string,
   slug: string,
   title: string,
-): Promise<EnrichEvidence[]> {
+): Promise<RetrievedEvidence> {
   const facts: EnrichEvidence[] = [];
   const backlinks: EnrichEvidence[] = [];
   const hybrid: EnrichEvidence[] = [];
+  const pages: string[] = [];
+  const factIds: number[] = [];
   const seen = new Set<string>();
 
   // 1. Facts the brain has extracted about this entity (highest signal/char), only those every reader of the page
   // already reads (GST-3815): the fill is written under the page's own readers.
   try {
-    const rows = await engine.executeRaw<{ fact: string; context: string | null }>(
-      `SELECT f.fact, f.context FROM facts f
+    const rows = await engine.executeRaw<{ id: number | string; fact: string; context: string | null }>(
+      `SELECT f.id, f.fact, f.context FROM facts f
         JOIN pages t ON t.source_id = f.source_id AND t.slug = f.entity_slug AND t.deleted_at IS NULL
         WHERE f.source_id = $1 AND f.entity_slug = $2 AND f.expired_at IS NULL
           AND (f.valid_until IS NULL OR f.valid_until > now())
@@ -317,6 +337,7 @@ async function retrieveEvidence(
     for (const r of rows) {
       const text = r.context ? `${r.fact} (${r.context})` : r.fact;
       facts.push({ source_slug: slug, text });
+      factIds.push(Number(r.id));
     }
   } catch {
     // Pre-facts brains / column drift → no facts evidence.
@@ -325,7 +346,7 @@ async function retrieveEvidence(
   // 2. Inbound-link context — how OTHER pages describe this entity, from pages every reader of this one reads.
   try {
     const rows = await engine.getBacklinks(slug, { sourceId });
-    const readable = await pagesReadingToReadersOf(engine, sourceId, slug, rows.flatMap((l) => [l.from_slug, l.origin_slug ?? '']));
+    const readable = (await readableEvidence(engine, sourceId, slug, rows.flatMap((l) => [l.from_slug, l.origin_slug ?? '']), [])).pages;
     let n = 0;
     for (const l of rows) {
       if (n >= BACKLINK_LIMIT) break;
@@ -337,6 +358,7 @@ async function retrieveEvidence(
       if (seen.has(dedup)) continue;
       seen.add(dedup);
       backlinks.push({ source_slug: l.from_slug, text: ctx });
+      pages.push(l.from_slug, ...(l.origin_slug ? [l.origin_slug] : []));
       n++;
     }
   } catch {
@@ -351,7 +373,7 @@ async function retrieveEvidence(
       sourceId,
       requireSafeChunks: true,
     });
-    const readable = await pagesReadingToReadersOf(engine, sourceId, slug, hits.map((h) => h.slug));
+    const readable = (await readableEvidence(engine, sourceId, slug, hits.map((h) => h.slug), [])).pages;
     for (const h of hits) {
       if (h.slug === slug) continue; // don't feed the stub its own body twice
       if ((h.source_id ?? sourceId) !== sourceId || !readable.has(h.slug)) continue;
@@ -360,13 +382,14 @@ async function retrieveEvidence(
       seen.add(dedup);
       if (h.chunk_text && h.chunk_text.trim()) {
         hybrid.push({ source_slug: h.slug, text: h.chunk_text });
+        pages.push(h.slug);
       }
     }
   } catch {
     // Search unavailable (no embeddings) → fall through to other signals.
   }
 
-  return assembleEvidence({ facts, backlinks, hybrid });
+  return { evidence: assembleEvidence({ facts, backlinks, hybrid }), pages, factIds };
 }
 
 // ---------------------------------------------------------------------------
@@ -397,7 +420,7 @@ async function enrichOne(ctx: EnrichOneCtx, candidate: EnrichCandidate): Promise
     await withRefreshingLock(
       engine,
       lockId,
-      () => enrichOneLocked(ctx, candidate),
+      () => withEngineScope(engine, () => enrichOneLocked(ctx, candidate)),
       { ttlMinutes: PER_PAGE_LOCK_TTL_MINUTES },
     );
   } catch (err) {
@@ -422,7 +445,10 @@ async function enrichOneLocked(ctx: EnrichOneCtx, candidate: EnrichCandidate): P
   const requestId = randomUUID();
 
   const kind = inferEnrichKind(page.type, slug);
-  const evidence = await retrieveEvidence(engine, sourceId, slug, page.title || slug);
+  const retrieved = await retrieveEvidence(engine, sourceId, slug, page.title || slug);
+  const evidence = retrieved.evidence;
+  // GST-3815: the stub as every reader of the page reads it, so no private fence row or take reaches the prose.
+  const stub = sanitizeRemoteBody(page.compiled_truth ?? '');
   const rendered = renderEvidence(evidence);
   const grounding = assessGrounding(rendered, ctx.minContextChars);
 
@@ -442,7 +468,7 @@ async function enrichOneLocked(ctx: EnrichOneCtx, candidate: EnrichCandidate): P
     slug,
     title: page.title || slug,
     kind,
-    currentBody: page.compiled_truth ?? '',
+    currentBody: stub,
     evidence,
   });
 
@@ -478,7 +504,7 @@ async function enrichOneLocked(ctx: EnrichOneCtx, candidate: EnrichCandidate): P
   // retrieved context was sanitized in buildEnrichPrompt; the synthesized body
   // is the model's grounded output, with any neutralized span it copied from
   // the prompt restored from the raw stub and evidence (#7125).
-  const body = restoreNeutralized(parsed.body, [page.compiled_truth ?? '', ...evidence.map(e => e.text)].join('\n')).text;
+  const body = restoreNeutralized(parsed.body, [stub, ...evidence.map(e => e.text)].join('\n')).text;
   const tags = snapshot.tags;
   const newFrontmatter: Record<string, unknown> = {
     ...page.frontmatter,
@@ -494,6 +520,13 @@ async function enrichOneLocked(ctx: EnrichOneCtx, candidate: EnrichCandidate): P
     title: page.title,
     tags,
   });
+
+  // GST-3815: evidence whose readers narrowed during the model call is never published; the next run retries the page.
+  const still = await readableEvidence(engine, sourceId, slug, retrieved.pages, retrieved.factIds);
+  if (retrieved.pages.some((s) => !still.pages.has(s)) || retrieved.factIds.some((id) => !still.facts.has(id))) {
+    ctx.result.pages_skipped_evidence_narrowed = (ctx.result.pages_skipped_evidence_narrowed ?? 0) + 1;
+    return;
+  }
 
   if (ctx.maintenance) {
     await publishMaintenancePage(engine, ctx.maintenance, slug, content, { expectedRevision: snapshot.revision });
