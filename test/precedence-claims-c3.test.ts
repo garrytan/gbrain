@@ -229,12 +229,12 @@ describe('check_claims matcher follow-ups (C3.1)', () => {
     expect(checkClaim('We have 12 paying customers, and ARR is $2,400,000.', lines).status).toBe('conflicts');
   });
 
-  test('a year after a year word beside other numbers is not checked; a count in the year range still is', () => {
-    const lines = linesOf('- 2026-01-01: 12 paying customers.');
-    expect(checkClaim('In 2025 we had 12 paying customers.', lines).status).toBe('supported');
-    expect(checkClaim('In 2025 we had 14 paying customers.', lines).status).toBe('conflicts');
+  test('every number is checked, a year or a count in the year range included, so none can read as supported unchecked', () => {
+    expect(checkClaim('We cut headcount by 2000 and opened 12 offices.', linesOf('- 2026-01-01: We cut headcount by 1500.\n- 2026-01-01: opened 12 offices.')).status).toBe('conflicts');
+    expect(checkClaim('Users grew from 2000 to 2500.', linesOf('- 2026-01-01: Users grew from 1800 to 2500.')).status).toBe('conflicts');
     expect(checkClaim('We have 2000 employees and 12 offices.', linesOf('- 2026-01-01: 1500 employees.\n- 2026-01-01: 12 offices.')).status).toBe('conflicts');
     expect(checkClaim('We had 12 customers and 2019 signups.', linesOf('- 2026-01-01: 12 customers.')).status).toBe('not_found');
+    expect(checkClaim('In 2025 we had 12 paying customers.', linesOf('- 2026-01-01: 12 paying customers.')).status).not.toBe('supported');
   });
 
   test('a word shared by two clauses never hides a contradiction or loses exact support', () => {

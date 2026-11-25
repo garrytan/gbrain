@@ -11,8 +11,8 @@
  *   not_found  no allowed line covers it. That means "no allowed claim covers this", never "this is false".
  *
  * A sentence with several numbers is checked number by number, each with the words of its own clause: supported only
- * when every number is, conflicts when any number is contradicted, otherwise not_found. A year (1900 to 2099, no unit,
- * right after in, since, during, by, until, from, through or FY) beside other numbers is not checked. A percent
+ * when every number is, conflicts when any number is contradicted, otherwise not_found. Every number is checked, a year
+ * included, so a skipped number can never let a contradicted one read as supported. A percent
  * never matches a plain number, digits inside a word (Q3) are not numbers, and a comma between digits ($2,100,000) is
  * a thousands separator, not a clause break.
  */
@@ -25,7 +25,7 @@ export interface ClaimCheck {
   conflicting?: AllowedLine[];
 }
 
-interface Num { value: number; unit: string; year: boolean }
+interface Num { value: number; unit: string }
 
 const ISO_DATE = /\b\d{4}-\d{2}-\d{2}\b/g;
 const NUMBER = /([$€£])?\s?(?<![A-Za-z0-9_])(\d[\d,]*(?:\.\d+)?)\s?(%|percent\b|k\b|m\b|bn\b|b\b|thousand\b|million\b|billion\b)?/gi;
@@ -33,18 +33,16 @@ const SCALE: Record<string, number> = { k: 1e3, thousand: 1e3, m: 1e6, million: 
 const DATED_LINE = /^\s*(?:[-*]\s+)?(\d{4}-\d{2}-\d{2})\s*[:\u2013\u2014-]\s*(.+)$/;
 const STOPWORDS = new Set(('the and for with that this from have has had our are was were will been about into than then they them their '
   + 'you your per each every over under more less most least now not but all any its it\'s which who whom what when where how').split(' '));
-const YEAR_WORD = /(?:\b(?:in|since|during|by|until|from|through)|\bFY)\s*$/i;
 const MAX_CONFLICTS = 3;
 
 function numbers(text: string): Num[] {
   const out: Num[] = [];
-  const plain = text.replace(ISO_DATE, ' ');
-  for (const m of plain.matchAll(NUMBER)) {
+  for (const m of text.replace(ISO_DATE, ' ').matchAll(NUMBER)) {
     const raw = Number(m[2]!.replace(/,/g, ''));
     if (!Number.isFinite(raw)) continue;
     const suffix = m[3]?.toLowerCase();
     const unit = m[1] ? 'currency' : suffix === '%' || suffix === 'percent' ? 'percent' : '';
-    out.push({ value: raw * (suffix ? SCALE[suffix] ?? 1 : 1), unit, year: !m[1] && !suffix && /^(?:19|20)\d\d$/.test(m[2]!) && YEAR_WORD.test(plain.slice(0, m.index)) });
+    out.push({ value: raw * (suffix ? SCALE[suffix] ?? 1 : 1), unit });
   }
   return out;
 }
@@ -79,10 +77,8 @@ export function allowedLines(page: { slug: string; source_id: string; body: stri
 }
 
 export function checkClaim(claim: string, lines: readonly AllowedLine[]): ClaimCheck {
-  const all = numbers(claim);
-  const counted = all.every(n => n.year) ? () => true : (n: Num) => !n.year;
-  const units = numberClauses(claim, counted).flatMap(part => numbers(part).filter(counted).map(n => ({ part, n })));
-  if (units.length < 2) return checkPart(claim, claim, all.filter(counted), lines);
+  const units = numberClauses(claim).flatMap(part => numbers(part).map(n => ({ part, n })));
+  if (units.length < 2) return checkPart(claim, claim, numbers(claim), lines);
   const results = units.map(u => checkPart(claim, u.part, [u.n], lines));
   const conflicting = results.filter(r => r.status === 'conflicts');
   if (conflicting.length) {
@@ -95,13 +91,13 @@ export function checkClaim(claim: string, lines: readonly AllowedLine[]): ClaimC
  * A sentence with two or more numbers, split so each number is checked with the words of its own clause; a clause with
  * no number joins the next one. One number: the whole sentence.
  */
-function numberClauses(claim: string, counted: (n: Num) => boolean): string[] {
-  if (numbers(claim).filter(counted).length < 2) return [claim];
+function numberClauses(claim: string): string[] {
+  if (numbers(claim).length < 2) return [claim];
   const out: string[] = [];
   let pending = '';
   for (const clause of claim.split(/(?<!\d),\s*|,(?!\d)\s*|;\s*|\s+(?:and|but|while|whereas)\s+/i)) {
     pending = pending ? `${pending} ${clause}` : clause;
-    if (numbers(clause).some(counted)) { out.push(pending); pending = ''; }
+    if (numbers(clause).length) { out.push(pending); pending = ''; }
   }
   if (pending && out.length) out[out.length - 1] += ` ${pending}`;
   return out;
