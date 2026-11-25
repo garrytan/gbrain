@@ -163,6 +163,24 @@ fn write_probe_names_what_an_identity_could_open() {
 }
 
 #[test]
+fn write_probe_reports_a_labelled_only_member() {
+    let dir = TempDir::new("visibility-probe-labelled");
+    let store = seeded(&dir);
+    let any = || {
+        let read = store.read_write_visibility_probe("default", "notes/open", &read_policy());
+        read.unwrap().any_labelled
+    };
+    let spec: gbrain_store::access_members::AccessMemberInsert =
+        serde_json::from_value(json!({ "id": "carol" })).unwrap();
+    store.insert_access_member(&spec).unwrap();
+    assert!(!any());
+    store
+        .set_access_member_labelled_only("carol", true)
+        .unwrap();
+    assert!(any());
+}
+
+#[test]
 fn write_probe_reads_owner_only_sources() {
     let dir = TempDir::new("visibility-probe-owner");
     let store = seeded(&dir);
