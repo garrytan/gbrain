@@ -299,7 +299,7 @@ fn the_index_stays_in_step_and_the_members_answer_as_the_scans() {
                     stored_entries(&*store.read().unwrap())
                         .unwrap()
                         .iter()
-                        .map(|k| k[1]),
+                        .map(|k| k[keys::KEYED_INDEX.len()]),
                 );
             }
             if i % 25 == 24 {
@@ -430,8 +430,11 @@ fn a_raw_title_entry_reads_back_its_title_and_page() {
     let key = title_entry("a\u{0}b", 7);
     assert_eq!(raw_title_of(&key), Some((&b"a\0b"[..], 7)));
     let long = "x".repeat(RAW_TITLE_MAX + 1);
-    assert_eq!(title_entry(&long, 7)[1], LONG_TITLE);
-    assert_eq!(title_entry(&"x".repeat(RAW_TITLE_MAX), 7)[1], TITLE);
+    assert_eq!(title_entry(&long, 7)[keys::KEYED_INDEX.len()], LONG_TITLE);
+    assert_eq!(
+        title_entry(&"x".repeat(RAW_TITLE_MAX), 7)[keys::KEYED_INDEX.len()],
+        TITLE
+    );
 }
 
 /// A write that reads the lookups inside its own statement (`applyLinkTemporalRows` reads the

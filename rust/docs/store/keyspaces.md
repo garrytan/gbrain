@@ -2,7 +2,7 @@
 
 `gbrain_store::keyspaces` lists every top-level key tag of `keys.rs`: the tag, the family that owns
 every byte after it, what its records are and, for the families whose next byte names a record kind
-(`3` keyed lookups, `A` takes, `R` keyword, `a` telemetry), those kinds. The addon returns it from `brain.keyspaces()`
+(`A` takes, `R` keyword, `a` telemetry), those kinds. The addon returns it from `brain.keyspaces()`
 as `{ format_version, keyspaces: [{ tag, family, records, kinds: [{ kind, name }] }] }`.
 
 It describes what kinds of record this store format keeps, not what one brain holds. It changes

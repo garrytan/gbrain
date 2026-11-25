@@ -124,10 +124,6 @@ pub const ACCESS_RULES: u8 = b'z';
 /// `reason_purge_tombstones`, `1 source \0 commit \0 path`. Every letter is taken, so this family
 /// uses a digit; `y` is `SESSION_STATE`.
 pub const REASON_TOMBSTONE: u8 = b'1';
-/// Family `keyed_index` (`keyed_index.rs`, store format 9): the keyed lookups, entries derived from
-/// page, chunk and link records. The byte after the tag names the lookup (`keyed_index::CHUNK_ID`
-/// and the rest; `rust/docs/store/keyed-index.md`). Every letter is taken, so it uses a digit.
-pub const KEYED_INDEX: u8 = b'3';
 // Tag `2` is free. It held the `embedding_holds` family (a page's hold state and reason), dropped
 // at the main join: a page's embedding hold now lives only in its `page_embedding_budget` ledger
 // record (`page_embedding_budget.rs`). No store holds a record under it, so a new family may take it.
@@ -143,6 +139,11 @@ pub const SECRET_STORE: u8 = b'3';
 /// after both. `~` (0x7E) sorts after every letter and digit, so the two-byte families sit after the one-byte tags,
 /// each in its own contiguous range. No one-byte family ever takes `~`.
 pub const FAMILY_ESCAPE: u8 = b'~';
+
+/// Family `keyed_index` (`keyed_index.rs`, store format 9), the two-byte tag `~k`: the keyed lookups, entries derived
+/// from page, chunk, link and link transition records. The byte after the tag names the lookup
+/// (`keyed_index::CHUNK_ID` and the rest; `rust/docs/store/keyed-index.md`).
+pub const KEYED_INDEX: [u8; 2] = family_tag(b'k');
 
 /// The two-byte tag of a family under `FAMILY_ESCAPE`. `family` is never `0x00` (the storage adapter's byte).
 pub const fn family_tag(family: u8) -> [u8; 2] {

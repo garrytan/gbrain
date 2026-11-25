@@ -1,7 +1,7 @@
 //! Keyed lookups (store format 9): small secondary indexes that let the members below find their
 //! rows by key instead of reading every page, chunk or link record.
 //!
-//! | Kind | Key (after the tag `3`) | Derived from | Read by |
+//! | Kind | Key (after the two-byte tag `~k`) | Derived from | Read by |
 //! |---|---|---|---|
 //! | `0x01` | chunk id, page id, chunk index | each chunk record `K page_id index` (its `id`) | `cosinesByChunkIds`, `getEmbeddingsByChunkIds` |
 //! | `0x02` | lower-cased title, NUL, page id | each page record: `title.to_lowercase()` and `pg_lower(title)`, when at most `RAW_TITLE_MAX` bytes | `findPagesByTitles`, `listPagesTitledIn` |
@@ -98,9 +98,16 @@ fn is_transition_key(key: &[u8]) -> bool {
         .is_some_and(|nul| key.get(nul + 2) == Some(&TRANSITION_TAG))
 }
 
-/// `3 kind ids...` for entries keyed by ids only.
+/// `~k kind`: the start of every entry of one lookup.
+fn kind_prefix(kind: u8) -> Vec<u8> {
+    let mut key = keys::KEYED_INDEX.to_vec();
+    key.push(kind);
+    key
+}
+
+/// `~k kind ids...` for entries keyed by ids only.
 fn id_entry(kind: u8, ids: &[u64]) -> Vec<u8> {
-    let mut key = vec![keys::KEYED_INDEX, kind];
+    let mut key = kind_prefix(kind);
     for id in ids {
         key.extend_from_slice(&id.to_be_bytes());
     }
@@ -124,7 +131,7 @@ fn digest(parts: &[&str]) -> [u8; 16] {
 
 /// `3 kind h(parts)`: the scan prefix of every entry for `parts`.
 fn hashed_prefix(kind: u8, parts: &[&str]) -> Vec<u8> {
-    let mut key = vec![keys::KEYED_INDEX, kind];
+    let mut key = kind_prefix(kind);
     key.extend_from_slice(&digest(parts));
     key
 }
@@ -138,7 +145,7 @@ fn hashed_entry(kind: u8, parts: &[&str], page_id: u64) -> Vec<u8> {
 
 /// `3 0x02 title`: the start of every raw title entry for `title` and for titles that extend it.
 fn raw_title_prefix(title: &str) -> Vec<u8> {
-    let mut key = vec![keys::KEYED_INDEX, TITLE];
+    let mut key = kind_prefix(TITLE);
     key.extend_from_slice(title.as_bytes());
     key
 }
@@ -156,10 +163,14 @@ fn title_entry(title: &str, id: u64) -> Vec<u8> {
 
 /// The title and page id of a raw title entry.
 fn raw_title_of(key: &[u8]) -> Option<(&[u8], u64)> {
-    if key.len() < 11 || key[key.len() - 9] != 0 {
+    let start = keys::KEYED_INDEX.len() + 1;
+    if key.len() < start + 9 || key[key.len() - 9] != 0 {
         return None;
     }
-    Some((&key[2..key.len() - 9], keys::be8(&key[key.len() - 8..])?))
+    Some((
+        &key[start..key.len() - 9],
+        keys::be8(&key[key.len() - 8..])?,
+    ))
 }
 
 /// The entries one page record derives.
@@ -361,7 +372,7 @@ pub(crate) fn expected_entries(read: &dyn KvRead) -> Result<BTreeSet<Vec<u8>>> {
 /// Every entry the index holds.
 pub(crate) fn stored_entries(read: &dyn KvRead) -> Result<BTreeSet<Vec<u8>>> {
     let mut out = BTreeSet::new();
-    scan_prefix(read, &[keys::KEYED_INDEX], false, &mut |k, _| {
+    scan_prefix(read, &keys::KEYED_INDEX, false, &mut |k, _| {
         out.insert(k.to_vec());
         true
     })?;
@@ -526,7 +537,7 @@ pub(crate) fn unserved_pages(read: &dyn KvRead) -> Result<Vec<PageRecord>> {
     if full_scan() {
         return every_page(read);
     }
-    let prefix = [keys::KEYED_INDEX, UNSERVED];
+    let prefix = kind_prefix(UNSERVED);
     let mut ids = BTreeSet::new();
     page_ids_under(read, &prefix, &mut ids)?;
     pages_by_ids(read, ids)
@@ -592,11 +603,13 @@ pub(crate) fn has_supersedes(read: &dyn KvRead) -> Result<bool> {
         })?;
         return failed.map_or(Ok(found), Err);
     }
-    let prefix = [keys::KEYED_INDEX, SUPERSEDES];
+    let prefix = kind_prefix(SUPERSEDES);
+    let at = prefix.len();
     let mut links = Vec::new();
     scan_prefix(read, &prefix, false, &mut |k, _| {
-        if k.len() == prefix.len() + 16
-            && let (Some(from), Some(link)) = (keys::be8(&k[2..10]), keys::be8(&k[10..18]))
+        if k.len() == at + 16
+            && let (Some(from), Some(link)) =
+                (keys::be8(&k[at..at + 8]), keys::be8(&k[at + 8..at + 16]))
         {
             links.push((from, link));
         }

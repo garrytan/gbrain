@@ -3,7 +3,7 @@
 Part of the store contract in [rust/README.md](../../README.md) ("The brain store"): the rules there apply to every method here.
 
 Store format 9 keeps a few small indexes beside the records, so these members look their rows up by key instead of
-reading every page, chunk, link or link transition record (`crates/gbrain-store/src/keyed_index.rs`, tag `3`). The answers do not
+reading every page, chunk, link or link transition record (`crates/gbrain-store/src/keyed_index.rs`, two-byte tag `~k`). The answers do not
 change: each member reads the records an index names and applies its own test to them, then sorts as before.
 
 | Kind | Entry | Derived from | Read by |

@@ -81,24 +81,6 @@ pub const TELEMETRY_KINDS: &[KeyKind] = &[
     k(keys::TELEMETRY_CHAT_USAGE, "chat_usage_log"),
 ];
 
-/// The `keyed_index` family's kind bytes (`keyed_index.rs`).
-pub const KEYED_INDEX_KINDS: &[KeyKind] = &[
-    k(crate::keyed_index::CHUNK_ID, "keyed_chunk_id"),
-    k(crate::keyed_index::TITLE, "keyed_page_title"),
-    k(crate::keyed_index::UNSERVED, "keyed_unserved_page"),
-    k(crate::keyed_index::SUPERSEDES, "keyed_supersedes_link"),
-    k(crate::keyed_index::CONTENT_HASH, "keyed_page_content_hash"),
-    k(
-        crate::keyed_index::FRONTMATTER_ID,
-        "keyed_page_frontmatter_id",
-    ),
-    k(crate::keyed_index::LONG_TITLE, "keyed_page_long_title"),
-    k(
-        crate::keyed_index::TRANSITION_ORIGIN,
-        "keyed_transition_origin",
-    ),
-];
-
 /// The `keyword` family's kind bytes (`keys::KW_*`).
 pub const KEYWORD_KINDS: &[KeyKind] = &[
     k(keys::KW_STATE, "keyword_index_state"),
@@ -124,12 +106,6 @@ pub const KEYSPACES: &[Keyspace] = &[
         "secret_store",
         "secret store entries and occurrences",
     ),
-    Keyspace {
-        tag: keys::KEYED_INDEX,
-        family: "keyed_index",
-        records: "keyed lookups of page, chunk and link records",
-        kinds: KEYED_INDEX_KINDS,
-    },
     Keyspace {
         tag: keys::TAKE,
         family: "takes",
