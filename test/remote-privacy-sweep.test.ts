@@ -442,6 +442,10 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   loops_close: 'error',
   loops_mute: 'error',
   loops_unmute: 'error',
+  // Nightly learning PR 2: the generic invocation omits the required `ids` → validation error. Remote semantics
+  // (only readable items, the owner command for questions) are pinned in test/learning-decide.test.ts.
+  learned_keep: 'error',
+  learned_undo: 'error',
   // agent contract v1 A6: the generic invocation omits the required `code` → validation error.
   mute_notice: 'error',
   // C4 pinned questions are owner-private: a sweep caller cannot read private

@@ -28,5 +28,9 @@ export const listCheckoutFiles: Member<'listCheckoutFiles'> = (brain, pageIds) =
 export const readPageLabelRow: Member<'readPageLabelRow'> = (brain, sourceId, slug) =>
   storeCall({ member: 'readPageLabelRow' }, () => brain.readPageLabelRow(sourceId, slug));
 
+/** The page's owner-set guard tier and its open `lower_page` prior tiers (label_door.rs read_label_guard_tiers). */
+export const readLabelGuardTiers: Member<'readLabelGuardTiers'> = (brain, pageId) =>
+  storeCall({ member: 'readLabelGuardTiers' }, () => brain.readLabelGuardTiers(pageId));
+
 export const writePageLabelGuard: Member<'writePageLabelGuard'> = (brain, pageId, tier) =>
   storeCall({ member: 'writePageLabelGuard' }, () => brain.writePageLabelGuard(pageId, tier));

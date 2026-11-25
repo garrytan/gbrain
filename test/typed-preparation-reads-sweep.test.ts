@@ -75,6 +75,10 @@ const members: ReadonlyArray<readonly [string, string, (e: BrainEngine) => Promi
   // The link preparation's alias and source slug reads (persistence/links-preparation.ts).
   ['readLiveSlugAliases', 'FROM slug_aliases a', e => e.readLiveSlugAliases('default', ['a'])],
   ['readSourceSlugProbe', 'hashtextextended(slug, 0)', e => e.readSourceSlugProbe('default', 0)],
+  // The owner write's reads of the stored page (persistence/page-visibility.ts ownerRewriteOf, authorizePageVisibility's hiddenUnder and probe).
+  ['readPagePrivacyHidden', 'AS hidden FROM pages p', e => e.readPagePrivacyHidden('default', 'a')],
+  ['readLinkTargetPages', 'AS visible', e => e.readLinkTargetPages('default', ['a'], null)],
+  ['readWriteVisibilityProbe', 'AS identity_may_open', e => e.readWriteVisibilityProbe('default', 'a')],
   // The keyword timeout is resolved once per engine; its own read under a deadline has the test below.
   ['searchKeyword', 'count(*) OVER () AS bounded_rows', e => e.searchKeyword('a title', { limit: 3, sourceId: 'default' }), keywordTimeoutResolved],
 ];

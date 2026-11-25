@@ -44,6 +44,7 @@ permissions:
   actions: write   # read soak and upgrade matrix runs and their artifacts; dispatch a soak or the matrix
   issues: read     # find the upgrade matrix's open break issue, which holds stable
   pull-requests: read  # search merged stable:important PRs; without it the search returns no pull requests
+  statuses: read   # read the install canary's gbrain/install-canary status on each candidate's release commit
 
 concurrency:
   group: promote-stable
@@ -65,6 +66,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           STABLE_SOAK_WORKFLOW: ${{ vars.STABLE_SOAK_WORKFLOW }}
           STABLE_AUTO_PROMOTE: ${{ vars.STABLE_AUTO_PROMOTE }}
+          STABLE_CANARY_POSTERS: ${{ vars.STABLE_CANARY_POSTERS }}
           DAILY_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
         run: |
           git config user.name "gbrain-release-bot"
