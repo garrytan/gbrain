@@ -7,7 +7,7 @@
  * D23 (the maintainer's C1 ruling of 2026-11-19) makes the speed bar gate only turning Rust on by default, not the
  * opt-in swap.
  */
-import { DEFAULT_SHADOW_MIN_DAYS } from './policy.ts';
+import { DEFAULT_SHADOW_MIN_DAYS, effectiveShadowMin, READINESS_POLICY, type ReadinessPolicy } from './policy.ts';
 import type { SwapRefusalReason } from './refusals.ts';
 
 /** The fields S5a reads; S3 owns the document. Counts are epoch-scoped totals unless the name says otherwise. */
@@ -87,7 +87,7 @@ export interface ReadinessVerdict {
   missing_fields: string[];
 }
 
-/** Criterion 1's minimum shadow duration: the readiness policy's default (policy.ts, frozen for the Dec 1 swap). */
+/** Criterion 1's default minimum shadow duration (policy.ts); the policy in force may shorten it for a dated window. */
 export const MIN_SHADOW_DAYS = DEFAULT_SHADOW_MIN_DAYS;
 export const MAX_LAG_P99_MS = 60_000;
 export const MIN_CLEAN_RECONCILES = 3;
@@ -131,7 +131,7 @@ function guarded(r: Reader, body: () => Check): Check {
   return r.missing.length > before ? missingCheck(r.missing.slice(before)) : out;
 }
 
-function shadowDuration(r: Reader, now: Date): Check {
+function shadowDuration(r: Reader, now: Date, policy: ReadinessPolicy): Check {
   return guarded(r, () => {
     const started = r.s('epoch_started_at');
     const p99 = r.n('follower.lag_ms_p99_epoch');
@@ -147,12 +147,14 @@ function shadowDuration(r: Reader, now: Date): Check {
     if (!Number.isFinite(t)) return { state: 'fail', detail: `epoch_started_at is not a time: ${started}` };
     const days = (now.getTime() - t) / DAY_MS;
     const fails: string[] = [];
-    if (days < MIN_SHADOW_DAYS) fails.push(`${days.toFixed(1)} of ${MIN_SHADOW_DAYS} days in the epoch`);
+    // The duration is the only part of criterion 1 a policy sets (policy.ts); lag and clean reconciles always apply.
+    const min = effectiveShadowMin(policy, now);
+    if (min.required && days < min.days) fails.push(`${days.toFixed(1)} of ${min.days} days in the epoch`);
     if (p99 >= MAX_LAG_P99_MS) fails.push(`follower lag p99 ${p99} ms (needs under ${MAX_LAG_P99_MS})`);
     if (clean < MIN_CLEAN_RECONCILES) fails.push(`${clean} of ${MIN_CLEAN_RECONCILES} consecutive clean reconcile passes`);
     return fails.length
       ? { state: 'fail', detail: fails.join('; ') }
-      : { state: 'pass', detail: `${days.toFixed(1)} days, lag p99 ${p99} ms, ${clean} clean reconciles` };
+      : { state: 'pass', detail: `${days.toFixed(1)} days (minimum ${min.required ? `${min.days}` : 'not required'}), lag p99 ${p99} ms, ${clean} clean reconciles` };
   });
 }
 
@@ -313,11 +315,11 @@ export const CRITERIA: ReadonlyArray<{ n: number; name: string }> = [
  * Evaluates every criterion against the shadow status. `doc` null means no shadow runs for this brain: every gating
  * criterion is `missing` and the verdict is NOT READY (`no_shadow`).
  */
-export function evaluateReadiness(doc: ShadowStatus | null, now: Date = new Date()): ReadinessVerdict {
+export function evaluateReadiness(doc: ShadowStatus | null, now: Date = new Date(), policy: ReadinessPolicy = READINESS_POLICY): ReadinessVerdict {
   const r = new Reader(doc);
   const elig = eligibility(r);
   const checks: Check[] = [
-    shadowDuration(r, now),
+    shadowDuration(r, now, policy),
     readCoverage(r),
     zeroCounts(r, [['reads.rust_error_unresolved_7d', 'unresolved rust_error'], ['reads.diverged_unexplained_7d', 'unexplained diverged']]),
     searchArms(r),

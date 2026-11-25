@@ -12,6 +12,7 @@ import type { BrainEngine } from '../engine.ts';
 import { readManagedMode } from '../persistence/managed-mode.ts';
 import { activeWorktreeRefreshes } from '../persistence/worktree-refresh.ts';
 import { evaluateReadiness, type ReadinessVerdict, type ShadowStatus } from './readiness.ts';
+import { policyInForce, READINESS_POLICY, type PolicyInForce, type ReadinessPolicy } from './policy.ts';
 import { managedStorageError, refreshUnsettledError, type SwapRefusalReason, type UnsettledRefresh } from './refusals.ts';
 
 /** Environment variables that can select the current engine or its database (names only; values are never read out). */
@@ -47,6 +48,8 @@ export interface SwapPlan {
   refreshes: { unsettled: 0; checked: true };
   routes: { env: string[]; services: ServiceDefinition[] };
   disk: { path: string; free_bytes: number | null };
+  /** The readiness policy in force (criterion 1's minimum shadow duration), its hash and the dated override considered. */
+  policy: { text: string; hash: string; override: PolicyInForce['override'] };
   deferred: typeof DEFERRED_TO_S5B;
   plan_hash: string;
 }
@@ -59,6 +62,8 @@ export interface SwapPlanInputs {
   services?: ServiceDefinition[];
   disk?: { path: string; free_bytes: number | null };
   now?: Date;
+  /** The readiness policy (tests); default the approved READINESS_POLICY. */
+  policy?: ReadinessPolicy;
 }
 
 /** Non-terminal refresh rows (draining, fenced, merged, syncing, recovery_required), through the reader
@@ -95,7 +100,7 @@ export async function assertNotManaged(engine: BrainEngine): Promise<void> {
 function planHash(p: Omit<SwapPlan, 'plan_hash'>): string {
   const bound = {
     to: p.to, from: p.from, verdict: p.verdict, reason: p.reason,
-    criteria: p.criteria.map(c => [c.n, c.state]), routes: p.routes,
+    criteria: p.criteria.map(c => [c.n, c.state]), routes: p.routes, policy: p.policy.hash,
   };
   return createHash('sha256').update(JSON.stringify(bound)).digest('hex').slice(0, 16);
 }
@@ -104,8 +109,11 @@ function planHash(p: Omit<SwapPlan, 'plan_hash'>): string {
 export async function planEngineSwap(engine: BrainEngine, deps: SwapPlanInputs = {}): Promise<SwapPlan> {
   await assertNotManaged(engine);
   await assertRefreshesSettled(engine);
+  const now = deps.now ?? new Date();
+  // The only override listed applies to every opt-in brain, so no brain identity is read here (policy.ts).
+  const inForce = policyInForce(deps.policy ?? READINESS_POLICY, null, now);
   const status = deps.readShadowStatus ? await deps.readShadowStatus(engine) : null;
-  const readiness = evaluateReadiness(status, deps.now ?? new Date());
+  const readiness = evaluateReadiness(status, now, inForce.policy);
   const base: Omit<SwapPlan, 'plan_hash'> = {
     schema_version: 1,
     to: 'rust',
@@ -118,6 +126,7 @@ export async function planEngineSwap(engine: BrainEngine, deps: SwapPlanInputs =
     refreshes: { unsettled: 0, checked: true },
     routes: { env: [...(deps.envNames ?? [])], services: [...(deps.services ?? [])] },
     disk: deps.disk ?? { path: '', free_bytes: null },
+    policy: { text: inForce.text, hash: inForce.hash, override: inForce.override },
     deferred: DEFERRED_TO_S5B,
   };
   return { ...base, plan_hash: planHash(base) };

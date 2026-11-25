@@ -44,7 +44,8 @@ Two plan items wait for the run's machinery, and the plan names them instead of 
 - **Expected write pause.** The pause is the drain plus the final digest, measured under the write fence the run
   builds. The plan has no fence to measure.
 
-`READY` is evidence, not permission. A `NOT READY` plan can be read but not run. There is no readiness override.
+`READY` is evidence, not permission. A `NOT READY` plan can be read but not run. There is no readiness override; the only
+dated policy change is criterion 1's shorter shadow minimum below, which the plan prints with its ruling and end.
 
 <a id="readiness"></a>
 ## Readiness criteria
@@ -52,7 +53,8 @@ Two plan items wait for the run's machinery, and the plan names them instead of 
 The plan reads the shadow status (`gbrain engine shadow status --json`). A missing or malformed field is `missing`,
 never a pass. With no shadow running, every criterion is `missing`.
 
-1. At least 14 days of shadowing in the epoch, follower lag p99 under 60 s, three consecutive clean reconcile passes,
+1. At least 14 days of shadowing in the epoch (5 days for every opt-in brain until the end of Tue 2026-12-08 PST: the
+   opt-in swap opens Thu 2026-12-03, and the plan names the override and its end; a new Rust build starts a new epoch), follower lag p99 under 60 s, three consecutive clean reconcile passes,
    no unseeded gap rows, and a follower that is caught up. "Caught up" needs the follower's current lag, queue depth
    and coverage watermark in the status; a status that leaves any of them out is `missing`, never a pass, and a
    follower with lag, a queue or an invalid watermark fails.

@@ -88,9 +88,9 @@ describe('shadow days count only on the exact Rust build', () => {
   const dirs: string[] = [];
   afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
   const inputs = (addon: string): EpochInputs => ({
-    seed_id: 's', rust_addon_sha256: addon, comparator_version: 'c1', adapter_version: 'a1', capability_set_hash: 'caps',
+    seed_id: 's', rust_addon_sha256: addon, comparator_version: 1, adapter_version: 'a1', capability_set_hash: 'caps',
     readiness_policy_hash: policyHash(READINESS_POLICY),
-  } as EpochInputs);
+  });
 
   test('a new Rust build opens a new epoch, and criterion 1 counts its days from the new start, override or not', () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-policy-dec3-'));

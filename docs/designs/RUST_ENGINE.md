@@ -365,7 +365,8 @@ Decision D21 sets the first goal: 1x parity by 2026-12-01, with the workstreams 
 | Nov 24 | Core reads pass parity |
 | Nov 26 | Shadow release: shadow mode runs on the maintainer's brain, report-only (D25) |
 | Nov 30 | First `engine-bench` numbers |
-| Dec 1 | Parity suite on PGLite, Postgres and Rust; opt-in swap for unmanaged brains (no swap of the maintainer's managed brain, D25) |
+| Dec 1 | Parity suite on PGLite, Postgres and Rust |
+| Dec 3 | Opt-in swap opens for unmanaged brains, with a 5-day shadow minimum until the end of Dec 8 PST (D26; no swap of the maintainer's managed brain, D25) |
 | After Dec 1 | Rust managed-mode support, about 8 to 12 weeks, not started; then the maintainer's swap (D25) |
 
 ## Phases
@@ -657,7 +658,7 @@ The shadow lives on one host, the **shadow host**: the machine that would own th
 `READY` needs every criterion below, from evidence in the current epoch (thresholds proposed in D14 and fixed before any candidate result is collected):
 
 1. At least 14 days of shadowing in the epoch; follower lag p99 under 60 s; three consecutive nightly reconcile passes that repaired nothing.
-   Override (C1): the maintainer, "Do it" (Slack channel C0CJDTJG5PE, thread 1795295460.046919, message 1795295827.787139, 2026-11-21 at 1:17 PM PST), keeping the Dec 1 opt-in swap. For the maintainer's own brain only, 5 days of shadowing count instead of 14, until 2026-12-08 at 12:00 AM PST. The override binds one brain by `brain_ref` (a one-way digest of `persistence_brain.brain_id`); after its expiry, and for every other brain, 14 days stand again. Lag, clean reconciles and criteria 2 to 11 still gate, and the reverse shadow stays the way back. The value lives in `src/core/engine-swap/policy.ts` (`READINESS_POLICY`); the swap run applies it (the read-only plan still uses 14 days). `policyHash()` (the policy version, this duration and the unwaivable list; never `brain_ref`) is part of the shadow evidence epoch, so `policy.ts` is frozen for the Dec 1 swap: a change restarts the 5-day shadow clock.
+   Override (C1, as changed by D26): the maintainer, "Do it" (Slack channel C0CJDTJG5PE, message 1795648831.786269, 2026-11-25 at 3:20 PM PST). The opt-in swap opens Thu 2026-12-03. For every brain that opts in, 5 days of shadowing count instead of 14, until the end of Tue 2026-12-08 PST (2026-12-09 08:00 UTC); from then on 14 days stand again. Shadow days still count only in the evidence epoch of the exact Rust build the brain switches to. Lag, clean reconciles and criteria 2 to 11 still gate, and the reverse shadow stays the way back. The value lives in `src/core/engine-swap/policy.ts` (`READINESS_POLICY`, override `c1-opt-in-short-shadow`), and the plan and the run both apply it. `policyHash()` (the policy version, this duration and the unwaivable list; never an override) is part of the shadow evidence epoch, so `policy.ts` stays frozen: a change to the duration restarts every shadow clock, while a change to an override does not.
 2. Every operation class used in the window meets its minimum of successful comparisons (at least 10,000 reads in total). An errored, stale, inconclusive or dropped attempt is not successful coverage and never counts as a match. Missing evidence is `NOT READY`, never an omitted row. None was `capability_missing` in the last 7 days.
 3. Zero unresolved `rust_error` and zero unexplained `diverged` results on deterministic operations in the last 7 days.
 4. The trigram arm agrees exactly on every comparable sample. Keyword and title arms agree exactly when Rust runs the `ts_rank` compatibility ranker; with a better default ranker (D5), the release carries E1 and E2 results at least equal to both the PGLite and the Postgres values instead, where "at least equal" for ranked-search recall is the D24 definition. The vector arm's recall@10 against exact is at least 0.98 and at least the primary's recall@10 against the same exact scan. Overlap@10 with the primary, for the vector arm and the fused top 10, is reported and not gated (D17).
@@ -813,6 +814,10 @@ Each yes is quoted in the body of the PR that needs it.
   - Scope: D25 does not change the swap safety criteria, the parity gate or the speed ruling (C1 in D23).
   - Sections changed: Recommendation, Dec 1 schedule, Phase S-swap, open question 12, D21, D23, failure-mode row 21 and the approval record.
   - Where earlier text in this plan differs, D25 wins.
+
+- **D26. The opt-in swap opens Dec 3, with a 5-day shadow for every opt-in brain until the end of Dec 8 PST.** The maintainer, Slack channel C0CJDTJG5PE, message 1795648831.786269, 2026-11-25 at 3:20 PM PST: "Do it" (every recommendation of the ask).
+  - A1: the opt-in swap opens Thu 2026-12-03, not Dec 1. Criterion 1's 5-day override applies to every brain that opts in, not only the maintainer's, and expires at the end of Tue 2026-12-08 PST; then the 14-day rule is back. Shadow days count only on the exact Rust build a brain switches to (the evidence epoch); every other swap check still gates.
+  - Sections changed: Dec 1 schedule, Swap readiness (criterion 1 override) and the approval record.
 
 ## Open before `rust` can be selected
 
