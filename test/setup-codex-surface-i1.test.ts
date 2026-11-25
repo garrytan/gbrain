@@ -256,14 +256,14 @@ describe('gbrain setup openclaw: names the line that moves a starter entry to fu
     const b = box();
     const dir = join(b.home, '.openclaw');
     mkdirSync(dir, { recursive: true });
-    const entry = { command: b.bin, args: ['serve', '--surface', 'starter', '--advertise', 'verbs'], env: { GBRAIN_HOME: b.home, DATABASE_URL: 'postgresql://user-example:pw-example@db.example.test/brain' } };
+    const entry = { command: b.bin, args: ['serve', '--surface', 'starter', '--advertise', 'verbs'], env: { GBRAIN_HOME: b.home, DATABASE_URL: 'postgresql://db.example.test/brain-secret-example' } };
     const text = JSON.stringify({ mcp: { servers: { gbrain: entry } } }, null, 2);
     writeFileSync(join(dir, 'openclaw.json'), text);
     const r = await setupOpenclaw(b);
     expect(r.exitCode, r.stderr).toBe(0);
     const want = { command: b.bin, args: ['serve', '--surface', 'full'], env: { GBRAIN_HOME: b.home, DATABASE_URL: '<value of DATABASE_URL in openclaw.json>' } };
     expect(r.doc.mcp.replace.command).toBe(`openclaw mcp set gbrain '${JSON.stringify(want)}'`);
-    expect(r.doc.mcp.replace.command).not.toContain('pw-example');
+    expect(r.doc.mcp.replace.command).not.toContain('brain-secret-example');
     expect(readFileSync(join(dir, 'openclaw.json'), 'utf8')).toBe(text);
   }, 120_000);
 
