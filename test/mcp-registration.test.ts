@@ -43,6 +43,9 @@ describe('registrationProfile and stdioServeArgv', () => {
     expect(registrationProfile('claude-code', { mcp: { default_surface_codex: 'starter' } })).toEqual(STARTER_PROFILE);
     expect(registrationProfile('claude-code', { mcp: { default_surface_claude_code: 'full' } })).toEqual(FULL_PROFILE);
     expect(registrationProfile('hermes', { mcp: { default_surface_hermes: 'full' } })).toEqual(FULL_PROFILE);
+    for (const widen of [false, 'false']) expect(registrationProfile('codex', { mcp: { allow_session_widen: widen } })).toEqual(STARTER_PROFILE);
+    expect(registrationProfile('codex', { mcp: { allow_session_widen: false, default_surface_codex: 'full' } })).toEqual(FULL_PROFILE);
+    expect(registrationProfile('codex', { mcp: { allow_session_widen: true } })).toEqual(FULL_PROFILE);
     expect(registrationProfile('codex', { mcp: { default_surface_codex: 'verbs' } })).toEqual(FULL_PROFILE);
     expect(registrationProfile('opencode', { mcp: { default_surface_opencode: 'full' } })).toEqual(STARTER_PROFILE);
     expect(registrationProfile('codex', null)).toEqual(FULL_PROFILE);

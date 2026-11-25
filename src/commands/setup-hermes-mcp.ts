@@ -156,10 +156,12 @@ export function hermesMcpStep(o: { hermesHome: string; name: string; surface?: M
   }
   let profile: RegistrationProfile = o.surface ? { surface: o.surface, advertise: null } : o.defaults;
   if (!o.surface) {
-    const entry = readEntry(path, o.name);
-    const text = entry && ours(entry) && Array.isArray(entry.args) ? entry.args.map(String).join(' ') : '';
-    const surface = registeredSurface(text);
-    if (surface) profile = { surface, advertise: registeredAdvertise(text) };
+    try {
+      const entry = readEntry(path, o.name);
+      const text = entry && ours(entry) && Array.isArray(entry.args) ? entry.args.map(String).join(' ') : '';
+      const surface = registeredSurface(text);
+      if (surface) profile = { surface, advertise: registeredAdvertise(text) };
+    } catch { /* silent-read-ok: syncHermesMcp reads the same file inside its own handler and reports the error */ }
   }
   return syncHermesMcp({ hermesHome: o.hermesHome, name: o.name, command, gbrainBin: o.gbrainBin, surface: profile.surface,
     advertise: profile.advertise, gbrainHome: process.env.GBRAIN_HOME?.trim() || null, dryRun: o.dryRun });

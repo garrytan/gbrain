@@ -48,7 +48,7 @@ import { resolveGbrainBin } from '../core/gbrain-bin.ts';
 import { exitCodeForCode } from '../core/error-catalogue.ts';
 import { parseStdioMemberFlag } from '../core/stdio-member-flag.ts';
 import { isRegistrationSurface, isValidName, profileFlags, registeredAdvertise, registeredSurface, registrationAdvertise, registrationProfile, sameProfile, shellQuote, STARTER_PROFILE, stdioServeArgv, type RegistrationProfile } from '../core/mcp-registration.ts';
-import { hookLauncherPath } from '../core/setup/hook-launcher.ts';
+import { HOOK_LAUNCHER_NAME, hookLauncherPath } from '../core/setup/hook-launcher.ts';
 import { setupRerunArgv } from '../core/setup/launcher-lanes.ts';
 import { readResolverConfig, resolverHarnesses } from '../core/setup/skill-resolver-config.ts';
 import { describeCursorPins, readCursorPinsState, removeCursorSkillPins, syncCursorSkillPins, type CursorPinsResult } from '../core/setup/cursor-skill-pins.ts';
@@ -491,7 +491,7 @@ function ownerConflict(reason: string, message: string, fix: Pick<Action, 'actor
 
 interface Target {
   brain: { kind: 'local-pglite' | 'local-postgres' | 'new-local-pglite'; path?: string; config_dir: string };
-  source: { id: string | null; pinned: boolean; from: 'flag' | 'env' | 'brain-default' };
+  source: { id: string | null; pinned: boolean; from: 'flag' | 'env' | 'receipt' | 'brain-default' };
   transport: 'local-stdio';
   launcher: string;
   surface: McpSurface;
@@ -545,7 +545,7 @@ function describeTarget(t: Target, out: Out, harness: SetupHarnessId = 'claude-c
     : t.brain.kind === 'local-pglite' ? `existing PGLite brain at ${t.brain.path}` : 'existing Postgres brain (from this install\'s config)';
   say(out, `Target (${HARNESS_LABEL[harness]}, ${t.scope} scope):`);
   say(out, `  brain      ${brain}`);
-  say(out, `  source     ${t.source.id ? `'${t.source.id}' (pinned, from ${t.source.from === 'flag' ? '--source' : 'GBRAIN_SOURCE'})` : 'the brain\'s default source (unpinned)'}`);
+  say(out, `  source     ${t.source.id ? `'${t.source.id}' (pinned, from ${t.source.from === 'flag' ? '--source' : t.source.from === 'receipt' ? 'the setup receipt' : 'GBRAIN_SOURCE'})` : 'the brain\'s default source (unpinned)'}`);
   say(out, `  transport  stdio MCP: ${[hookLauncherPath(t.brain.config_dir), ...stdioServeArgv(t.launcher, t.surface, t.advertise ?? null, t.stdio_member)].join(' ')}${t.advertise ? ` (lists the ${t.advertise === 'verbs' ? 'memory verbs and request_tools' : `${t.advertise} tools`}; every ${t.surface} tool stays callable)` : ''}`);
   say(out, `  owner      ${t.registration_owner === 'setup' ? `this setup (${t.receipt_path})` : t.registration_owner === 'plugin' ? `the gbrain ${HARNESS_LABEL[harness]} plugin (MCP); setup adds hooks only` : `none yet; setup will own '${t.name}'`}`);
   if (t.live_owner) say(out, `  live       gbrain ${t.live_owner.transport === 'http' ? 'serve --http' : 'stdio serve'} PID ${t.live_owner.pid}${t.live_owner.ours ? ' (started by this registration)' : ''}`);
@@ -848,7 +848,7 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     const picked: { profile: RegistrationProfile; origin?: 'explicit' | 'default' } = chosenSurface !== undefined
       ? { profile: { surface: chosenSurface, advertise: flags.advertise ?? null }, origin: 'explicit' }
       : !priorProfile || priorOrigin === 'default' ? { profile: defaults, origin: 'default' } : { profile: priorProfile, origin: priorOrigin };
-    const sourceId = flags.source ?? (process.env.GBRAIN_SOURCE && isValidSourceId(process.env.GBRAIN_SOURCE) ? process.env.GBRAIN_SOURCE : null);
+    const sourceId = flags.source ?? (process.env.GBRAIN_SOURCE && isValidSourceId(process.env.GBRAIN_SOURCE) ? process.env.GBRAIN_SOURCE : prior?.source_id ?? null);
     let plan: CodexSetupPlan = {
       name: flags.name, launcher, brainHome,
       ...(process.env.GBRAIN_HOME?.trim() ? { gbrainHomeEnv: process.env.GBRAIN_HOME.trim() } : {}),
@@ -882,7 +882,7 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     const target: Target = {
       brain: !cfg ? { kind: 'new-local-pglite', path: gbrainPath('brain.pglite'), config_dir: brainHome }
         : cfg.engine === 'pglite' ? { kind: 'local-pglite', path: dataDir, config_dir: brainHome } : { kind: 'local-postgres', config_dir: brainHome },
-      source: { id: sourceId, pinned: sourceId !== null, from: flags.source ? 'flag' : sourceId ? 'env' : 'brain-default' },
+      source: { id: sourceId, pinned: sourceId !== null, from: flags.source ? 'flag' : sourceId && sourceId === process.env.GBRAIN_SOURCE ? 'env' : sourceId ? 'receipt' : 'brain-default' },
       transport: 'local-stdio', launcher, surface: plan.surface, ...(plan.surfaceOrigin ? { surface_origin: plan.surfaceOrigin } : {}), ...(plan.advertise ? { advertise: plan.advertise } : {}), ...(plan.stdioMember ? { stdio_member: plan.stdioMember } : {}),
       registration_owner: pluginOwner ? 'plugin' : prior ? 'setup' : 'none',
       live_owner: liveOwner, scope: 'user', name: flags.name,
@@ -1182,6 +1182,7 @@ function openclawStarterEntry(name: string): { path: string; detail: string; fro
   const args = entry.args as string[];
   if (registeredSurface(args.join(' ')) !== 'starter') return null;
   const serve = args.indexOf('serve');
+  if (serve < 0) return null;
   const kept: string[] = [];
   for (let i = serve + 1; i < args.length; i++) {
     if (args[i] === '--surface' || args[i] === '--advertise') { i++; continue; }
@@ -1190,7 +1191,7 @@ function openclawStarterEntry(name: string): { path: string; detail: string; fro
   }
   const from = profileFlags({ surface: 'starter', advertise: registeredAdvertise(args.join(' ')) });
   const to = profileFlags({ surface: 'full', advertise: null });
-  const echoable = kept.length === 0 && args.slice(0, serve).every((a) => !a.startsWith('-') && !a.includes('='))
+  const echoable = kept.length === 0 && serve === 0 && ['gbrain', HOOK_LAUNCHER_NAME].includes(basename(entry.command))
     && Object.keys(entry).every((k) => k === 'command' || k === 'args' || k === 'env')
     && (entry.env === undefined || (!!entry.env && typeof entry.env === 'object' && Object.entries(entry.env as Record<string, unknown>).every(([k, v]) => (k === 'GBRAIN_HOME' || k === 'GBRAIN_SOURCE') && typeof v === 'string')));
   const registered = `${path} registers '${name}' on serve ${from.join(' ')}; OpenClaw never calls a tool request_tools unlocks, so move it to the full surface (setup does not run OpenClaw's CLI)`;

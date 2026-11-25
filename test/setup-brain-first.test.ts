@@ -426,14 +426,15 @@ describe('brain-first block: hardening', () => {
 });
 
 describe('doctor harness_wiring: a full registration is information only', () => {
-  test('a stdio registration pinned to --surface full gets a note; status and fix are unchanged; starter or a GBRAIN_SURFACE override gets none', () => {
+  test('a stdio registration pinned to --surface full gets a note; status and fix are unchanged; starter, a GBRAIN_SURFACE override or Codex (whose default is full) gets none', () => {
     const ok = { name: 'harness_wiring', status: 'ok' as const, message: 'wired.' };
-    const full = withSurfaceNote(ok, [{ harness: 'codex', source: '/x/config.toml', kind: 'stdio', command: '/bin/gbrain', args: ['serve', '--surface', 'full'] }]);
+    const full = withSurfaceNote(ok, [{ harness: 'claude-code', source: '/x/.claude.json', kind: 'stdio', command: '/bin/gbrain', args: ['serve', '--surface', 'full'] }]);
     expect(full.status).toBe('ok');
     expect(full.fix).toBeUndefined();
-    expect(String(full.details?.surface_note)).toContain('Codex registered with --surface full, which stays supported');
-    expect(withSurfaceNote(ok, [{ harness: 'codex', source: '/x', kind: 'stdio', args: ['serve', '--surface', 'starter'] }])).toEqual(ok);
-    expect(withSurfaceNote(ok, [{ harness: 'codex', source: '/x', kind: 'stdio', args: ['serve', '--surface', 'full'], env: { GBRAIN_SURFACE: 'starter' } }])).toEqual(ok);
+    expect(String(full.details?.surface_note)).toContain('Claude Code registered with --surface full, which stays supported');
+    expect(withSurfaceNote(ok, [{ harness: 'claude-code', source: '/x', kind: 'stdio', args: ['serve', '--surface', 'starter'] }])).toEqual(ok);
+    expect(withSurfaceNote(ok, [{ harness: 'claude-code', source: '/x', kind: 'stdio', args: ['serve', '--surface', 'full'], env: { GBRAIN_SURFACE: 'starter' } }])).toEqual(ok);
+    expect(withSurfaceNote(ok, [{ harness: 'codex', source: '/x/config.toml', kind: 'stdio', command: '/bin/gbrain', args: ['serve', '--surface', 'full'] }])).toEqual(ok);
   });
 });
 

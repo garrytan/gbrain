@@ -122,7 +122,7 @@ describe('gbrain setup codex: the full surface by default (I1)', () => {
     expect(receipt(b)).toMatchObject({ surface: 'starter', advertise: 'verbs', surface_origin: 'default', source_id: 'default' });
 
     setKnob(b, null);
-    const moved = await setup(b, ['--source', 'default']);
+    const moved = await setup(b, []);
     expect(moved.exitCode, moved.stderr).toBe(0);
     expect(args(b)).toEqual([b.bin, 'serve', '--surface', 'full']);
     expect(toml(b).mcp_servers.gbrain.env).toMatchObject({ GBRAIN_SOURCE: 'default' });
@@ -285,6 +285,18 @@ describe('gbrain setup openclaw: names the line that moves a starter entry to fu
       expect(readFileSync(join(dir, 'openclaw.json'), 'utf8')).toBe(text);
     }
   }, 240_000);
+
+  test('an entry whose command is not gbrain, or with arguments before serve, gets only the flags to change', async () => {
+    for (const make of [(b: Box) => ({ command: '/usr/bin/node', args: ['serve', '--surface', 'starter'] }), (b: Box) => ({ command: b.bin, args: ['secret-example', 'serve', '--surface', 'starter'] })]) {
+      const b = box();
+      mkdirSync(join(b.home, '.openclaw'), { recursive: true });
+      writeFileSync(join(b.home, '.openclaw', 'openclaw.json'), JSON.stringify({ mcp: { servers: { gbrain: make(b) } } }));
+      const r = await setupOpenclaw(b);
+      expect(r.exitCode, r.stderr).toBe(0);
+      expect(r.doc.mcp.replace).toMatchObject({ command: null, from: ['--surface', 'starter'], to: ['--surface', 'full'] });
+      expect(r.stdout).not.toContain('secret-example');
+    }
+  }, 120_000);
 
   test('a full, bare or missing entry gets no replacement line', async () => {
     for (const args of [['serve', '--surface', 'full'], ['serve'], null]) {

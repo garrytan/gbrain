@@ -79,7 +79,8 @@ export function registrationProfile(harness: RegistrationHarness, config?: { mcp
   const knob = (DEFAULT_SURFACE_HARNESSES as readonly string[]).includes(harness)
     ? (config?.mcp as Record<string, unknown> | undefined)?.[defaultSurfaceKey(harness as DefaultSurfaceHarness).slice('mcp.'.length)]
     : undefined;
-  const choice = knob === 'full' || knob === 'starter' ? knob : SHIPPED_DEFAULT[harness] ?? 'starter';
+  const widen = (config?.mcp as Record<string, unknown> | undefined)?.allow_session_widen;
+  const choice = knob === 'full' || knob === 'starter' ? knob : widen === false || widen === 'false' ? 'starter' : SHIPPED_DEFAULT[harness] ?? 'starter';
   return { ...(choice === 'full' ? FULL_PROFILE : STARTER_PROFILE) };
 }
 

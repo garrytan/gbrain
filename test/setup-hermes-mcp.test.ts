@@ -138,6 +138,15 @@ describe('gbrain setup hermes registers MCP through hermes mcp add', () => {
     expect(calls(b).filter((c) => c.argv[1] === 'add')).toHaveLength(1);
   });
 
+  test('a malformed config.yaml is an MCP error on a bare run, and the rest of setup still runs', async () => {
+    const b = box({ hermes: true });
+    writeFileSync(join(b.home, '.hermes', 'config.yaml'), 'mcp_servers: {gbrain: [a b\n');
+    const r = await setup(b, []);
+    expect(r.doc, r.stderr).not.toBeNull();
+    expect(r.doc.mcp.setup).toBe('error');
+    expect(r.doc.instructions).toBeDefined();
+  });
+
   test('without a hermes command, setup prints the one command to run and writes no MCP entry', async () => {
     const b = box({ hermes: false });
     const r = await setup(b, []);
