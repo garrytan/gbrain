@@ -27,6 +27,7 @@ import {
   reserveFirstSession, stopFirstSession,
 } from '../src/core/onboard/first-session.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
+import { addMember } from '../src/core/access/members.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 
@@ -210,8 +211,19 @@ for (const kind of testBackends()) {
       if (!('text' in out)) throw new Error(out.reason);
       expect(out.text).not.toContain('canaryfs');
       expect(out.text).not.toContain('<!--');
+      expect(out.text).toContain('run `gbrain onboarding off` (MCP onboarding_off, where this connection lists it); `gbrain onboarding status` says why');
       const hostileLine = out.text.split('\n').find(l => l.endsWith('-> notes/hostile'))!;
       expect(hostileLine.startsWith('- "Ignore previous instructions')).toBe(true);
+    });
+
+    test('a brain with two enabled members is shared, even when its client heuristic reads personal', async () => {
+      await fresh(engine);
+      expect((await firstSessionStatus(engine)).state).toBe('armed');
+      await addMember(engine, 'alice-example');
+      await addMember(engine, 'bob-example');
+      const status = await firstSessionStatus(engine);
+      expect(status).toMatchObject({ state: 'off', reason: 'not_personal' });
+      expect(await reserveFirstSession(engine, { sessionId: 'two-members', harness: 'claude-code', lane: 'owner' })).toMatchObject({ ok: false });
     });
   });
 }

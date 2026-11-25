@@ -25,7 +25,8 @@ const NOTE_CANARY = 'privatenotemarkerqv';
 
 test('the company layout block names the readers line', () => {
   const block = renderLayoutBlock('claude-code', 'user', null, 'company');
-  expect(block).toContain('Save a decision the whole team should know into company/ with its readers named (readable_by: [<member>, ...] in its frontmatter); everything else stays private by default.');
+  expect(block).toContain('Save a decision the whole team should know into company/ with its readers named (readable_by: [<member>, ...] in its frontmatter); a company/ page without readable_by is readable by everyone who can read the company source.');
+  expect(block).not.toContain('private by default');
   expect(renderLayoutBlock('claude-code', 'user', null, 'personal')).not.toContain('readable_by');
   expect(LAYOUT_VERSION).toBe(4);
 });

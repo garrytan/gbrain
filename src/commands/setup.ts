@@ -582,6 +582,7 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
     const code = await finish(out, { dryRun: false, target: { ...target, registration_owner: pluginOwner ? 'plugin' : 'setup' }, consent: result.receipt.consent, steps: result.steps, states, verify, notices: withHistoryDecision(layout.notices(notices), history), notes,
       preserved: Object.keys(result.edited).map((event) => ({ kind: 'hook', event, reason: 'edited' })), instructions, skills, turnHook, resolver, serves: servesDone, launcher, layout: layout.outcome, history, suggestion });
     if (turnHook && !turnHook.ok) return out.json ? 1 : refuse(turnHookNotLoaded('claude-code', turnHook, ['gbrain', 'setup', 'claude-code', ...(scope === 'project' ? ['--scope', 'project'] : [])]), out);
+    if (suggestion?.failed) { process.stderr.write(`gbrain setup: --no-suggestion was not applied. ${suggestion.marker.why}\n`); return 1; }
     return verify.ok || pluginOwner ? code : 1;
   } catch (e) {
     if (e instanceof OperationError) return refuse(e, out);
@@ -833,6 +834,7 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     const code = await finish(out, { harness: 'codex', dryRun: false, target: { ...target, registration_owner: pluginOwner ? 'plugin' : 'setup' }, consent: result.receipt.consent,
       steps: result.steps, states, verify, notices: withHistoryDecision(layout.notices(notices), history), notes: [...notes, ...result.notes], preserved: result.preserved, instructions, skills, turnHook, resolver, serves: servesDone, layout: layout.outcome, history, suggestion });
     if (turnHook && !turnHook.ok) return out.json ? 1 : refuse(turnHookNotLoaded('codex', turnHook, ['gbrain', 'setup', 'codex']), out);
+    if (suggestion?.failed) { process.stderr.write(`gbrain setup: --no-suggestion was not applied. ${suggestion.marker.why}\n`); return 1; }
     return verify.ok || pluginOwner ? code : 1;
   } catch (e) {
     if (e instanceof OperationError) return refuse(e, out);

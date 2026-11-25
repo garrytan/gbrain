@@ -236,6 +236,24 @@ describe('SessionStart first-session section', () => {
     expect((await firstSessionStatus(engine)).delivered_sessions).toBe(0);
   }, 20_000);
 
+  test('a receipt the serve refused on purpose is not_due; one it could not record is ack_failed', async () => {
+    const cfg = config();
+    let reason = '';
+    await rawServe(cfg, () => JSON.stringify({ ok: true, protocol: 2, block: { text: '', pointers: [], factsCount: 0, mode: 'pack', sectionAck: { recorded: 'refused', reason } } }));
+    const settle = () => settleFirstSession(cfg, { reached: true, sections: [], firstSession: { due: true }, deadline: false, emitted: true, receipt: 'r', sessionId: 'refused' });
+    for (reason of ['stopped', 'sessions_exhausted', 'not_owner_lane']) expect(await settle()).toMatchObject({ outcome: 'not_due', reason });
+    for (reason of ['contended', 'unknown_reservation', 'error']) expect(await settle()).toMatchObject({ outcome: 'ack_failed', reason });
+  }, 20_000);
+
+  test('a startup with no session id gets no section and reserves nothing', async () => {
+    const cfg = config();
+    await serve(cfg);
+    expect(await sessionStart('startup', '')).not.toContain(SECTION_HEAD);
+    expect((await firstSessionStatus(engine)).delivered_sessions).toBe(0);
+    expect(JSON.parse((await engine.getConfig(FIRST_SESSION_KEY)) ?? '{"reservations":[]}').reservations).toEqual([]);
+    expect(lastOutcome()).toMatchObject({ outcome: 'not_due', reason: 'no_session' });
+  }, 20_000);
+
   test('a section the payload did not hold is trimmed and never acknowledged', async () => {
     const settled = await settleFirstSession(config(), { reached: true, sections: [], firstSession: { due: true }, deadline: false, emitted: false, receipt: 'r', sessionId: 's' });
     expect(settled.outcome).toBe('trimmed');

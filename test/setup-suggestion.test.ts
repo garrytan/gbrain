@@ -69,6 +69,17 @@ describe('gbrain setup reports the first-session suggestion', () => {
     expect(r.doc.suggestion.why).toContain('turned off');
   }, 300_000);
 
+  test('--no-suggestion that cannot be confirmed exits 1 and says so on stderr', async () => {
+    const b = box();
+    const wrapped = join(b.root, 'bin', 'gbrain-no-stop');
+    writeFileSync(wrapped, '#!/bin/sh\nif [ "$1" = onboarding ] && [ "$2" = off ]; then printf \'%s\\n\' \'{"verified":false}\'; exit 1; fi\nexec \'' + b.bin + '\' "$@"\n');
+    chmodSync(wrapped, 0o755);
+    const r = await setup({ home: b.home, bin: wrapped }, ['claude-code', '--history', 'none', '--no-suggestion']);
+    expect(r.doc?.suggestion).toMatchObject({ state: 'unknown', reason: 'stop_unverified' });
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toContain('could not confirm the first-session suggestion is off');
+  }, 200_000);
+
   test('the flag is refused outside claude-code and codex wiring, before anything is written', async () => {
     for (const args of [['openclaw', '--no-suggestion'], ['claude-code', '--remove', '--no-suggestion'], ['codex', '--instructions-only', '--no-suggestion']]) {
       const b = box();
@@ -91,6 +102,8 @@ describe('suggestion marker when setup cannot read the record', () => {
     expect(got.line).toContain('First-session suggestion: unknown.');
     const off = suggestionFor({ launcher: '/nonexistent', noSuggestion: true, dryRun: false, liveServe: { pid: 4242 } })!;
     expect(off.marker.why).toContain('onboarding_off');
+    expect(off.failed).toBe(true);
+    expect(got.failed).toBeUndefined();
   });
 
   test('a dry run reports nothing', () => {
@@ -100,6 +113,7 @@ describe('suggestion marker when setup cannot read the record', () => {
   test('an unverified stop and an unreadable status are unknown, never off', () => {
     const unverified = suggestionFor({ launcher: fakeLauncher({ status: '{"state":"armed"}', off: '{"verified":false}' }), noSuggestion: true, dryRun: false, liveServe: null })!;
     expect(unverified.marker).toMatchObject({ state: 'unknown', reason: 'stop_unverified' });
+    expect(unverified.failed).toBe(true);
     const unreadable = suggestionFor({ launcher: fakeLauncher({ status: 'not json' }), noSuggestion: false, dryRun: false, liveServe: null })!;
     expect(unreadable.marker).toMatchObject({ state: 'unknown', reason: 'status_unreadable' });
     const armed = suggestionFor({ launcher: fakeLauncher({ status: '{"state":"armed","why":"armed","delivered_sessions":1,"max_sessions":3,"window_ends_at":null}' }), noSuggestion: false, dryRun: false, liveServe: null })!;

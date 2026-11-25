@@ -3,7 +3,7 @@
  * src/core/onboard/first-session.ts). Setup is engine-free, so it reads and writes the suggestion through
  * `gbrain onboarding status|off --json` children. `--no-suggestion` turns it off for this install; every run that is not a
  * dry run reports one machine-readable `suggestion` marker in `setup --json`, next to `history`: armed, or off and why, with
- * the flag and the command that turn it off.
+ * the flag and the command that turn it off. A --no-suggestion that setup could not confirm is `failed`, and setup exits 1.
  */
 import { bunSpawnSync } from '../core/spawn.ts';
 
@@ -38,7 +38,7 @@ function child(launcher: string, args: string[]): Record<string, any> | { error:
 }
 
 /** The suggestion step of one setup run, after the history step; null on a dry run. */
-export function suggestionFor(ctx: { launcher: string; noSuggestion: boolean; dryRun: boolean; liveServe: { pid: number; started_at?: string } | null }): { marker: SuggestionMarker; line: string } | null {
+export function suggestionFor(ctx: { launcher: string; noSuggestion: boolean; dryRun: boolean; liveServe: { pid: number; started_at?: string } | null }): { marker: SuggestionMarker; line: string; failed?: true } | null {
   if (ctx.dryRun) return null;
   const b = base();
   if (ctx.liveServe) {
@@ -46,13 +46,13 @@ export function suggestionFor(ctx: { launcher: string; noSuggestion: boolean; dr
     const why = ctx.noSuggestion
       ? `Setup could not turn the first-session suggestion off now: ${owner}. Run gbrain onboarding off once it stops, or call onboarding_off from that session.`
       : `Setup could not read the first-session suggestion now: ${owner}. gbrain onboarding status reads it once the server stops (MCP: onboarding_status).`;
-    return { marker: { version: 1, state: 'unknown', reason: 'live_serve', why, ...b }, line: `First-session suggestion: unknown. ${why}` };
+    return { marker: { version: 1, state: 'unknown', reason: 'live_serve', why, ...b }, line: `First-session suggestion: unknown. ${why}`, ...(ctx.noSuggestion ? { failed: true as const } : {}) };
   }
   if (ctx.noSuggestion) {
     const off = child(ctx.launcher, ['off', '--by', 'setup']);
     if ('error' in off || off.verified !== true) {
       const why = `Setup could not confirm the first-session suggestion is off (${'error' in off ? off.error : 'the stored state does not say stopped'}); run gbrain onboarding off.`;
-      return { marker: { version: 1, state: 'unknown', reason: 'stop_unverified', why, ...b }, line: `First-session suggestion: ${why}` };
+      return { marker: { version: 1, state: 'unknown', reason: 'stop_unverified', why, ...b }, line: `First-session suggestion: ${why}`, failed: true };
     }
   }
   const s = child(ctx.launcher, ['status']);

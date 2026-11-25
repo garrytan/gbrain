@@ -156,10 +156,14 @@ export function firstSessionPackOutcome(res: SessionStartPackResult): { outcome?
   return pack.degradedReason === 'server_budget' ? { outcome: 'deadline', reason: 'server_budget' } : { outcome: 'unsupported', reason: 'no_sections' };
 }
 
+/** Receipt refusals that are the record's decision (nothing was due); any other refusal means the receipt did not land. */
+const NOT_DUE_ACK = new Set(['stopped', 'sessions_exhausted', 'not_owner_lane']);
+
 /**
  * d8 + d14, after the payload was written: the startup session's first-session outcome, sending the emission receipt
  * only when the written text held the section. Never throws (fail-open); nothing is counted without a receipt.
  */
+
 export async function settleFirstSession(cfg: IpcPathConfig | null, s: FirstSessionPackState & { deadline: boolean; emitted: boolean; receipt?: string; sessionId: string }):
   Promise<{ outcome: FirstSessionOutcome; reason?: string; retried?: boolean }> {
   const retried = s.retried === true;
@@ -169,7 +173,8 @@ export async function settleFirstSession(cfg: IpcPathConfig | null, s: FirstSess
   if (!s.emitted || !s.receipt) return { outcome: 'trimmed', retried };
   try {
     const ack = await acknowledgeSessionStartSection(cfg, { sourceId: s.sourceId, sessionId: s.sessionId, section: 'first_session', receipt: s.receipt });
-    return { outcome: ack.result === 'recorded' ? 'delivered' : ack.result === 'refused' ? 'not_due' : 'ack_failed', reason: ack.reason, retried: retried || ack.retried };
+    const notDue = ack.result === 'refused' && NOT_DUE_ACK.has(ack.reason ?? '');
+    return { outcome: ack.result === 'recorded' ? 'delivered' : notDue ? 'not_due' : 'ack_failed', reason: ack.reason, retried: retried || ack.retried };
   } catch { // silent-read-ok: fail-open; a receipt that never landed counts nothing, and the outcome says so
     return { outcome: 'ack_failed', retried };
   }

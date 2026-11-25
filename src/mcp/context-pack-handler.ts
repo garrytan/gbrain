@@ -76,7 +76,7 @@ async function firstSessionFor(engine: BrainEngine, req: { trigger?: string; har
   Promise<{ section?: SessionStartSection; state: { due: boolean; reason?: string } }> {
   if (lane !== 'owner') return { state: { due: false, reason: 'not_personal' } };
   if (req.trigger !== 'session-start:startup') return { state: { due: false, reason: 'not_startup' } };
-  if (!sessionId) return { state: { due: false, reason: 'no_session' } };
+  if (!sessionId || sessionId === 'unknown') return { state: { due: false, reason: 'no_session' } };
   try {
     const { firstSessionSectionFor } = await import('../core/onboard/first-session.ts');
     const got = await firstSessionSectionFor(engine, { sourceId, sessionId, harness: req.harness === 'codex' ? 'codex' : 'claude-code', lane });
