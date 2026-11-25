@@ -78,7 +78,7 @@ export function containsPath(root: string, path: string): boolean {
   const rel = relative(root, path);
   return !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`);
 }
-export { MANAGED_MODE_SQL, managedModeFromRows, readManagedMode, readPersistenceBrain, unknownManagedModeRefusal,
+export { MANAGED_MODE_SQL, managedModeFromRows, readManagedMode, readManagedModeTyped, readPersistenceBrain, unknownManagedModeRefusal,
   type ManagedModeReadOptions, type ManagedModeRefusalContext, type PersistenceBrainRow } from './managed-mode.ts';
 export async function managedPersistenceEnabled(engine: SqlEngine): Promise<boolean> {
   return readManagedMode(engine);
