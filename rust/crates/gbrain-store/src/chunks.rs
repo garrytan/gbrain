@@ -400,7 +400,7 @@ fn kept_meta(input: &ChunkInput) -> Map<String, Value> {
 
 /// Writes a chunk record and its share of the stats (the caller stores them). The keyword index
 /// (`keyword/index_writer.rs`) keeps its own postings in step; the legacy word postings (`T`) are
-/// gone since store format 13.
+/// gone since store format 14.
 fn write_chunk(tx: &mut dyn KvWrite, record: &ChunkRecord, stats: &mut StatsDelta) -> Result<()> {
     // `chunk_search_vector_trigger` builds the vector before the row is stored and its error aborts the statement.
     crate::keyword::check_chunk_vector(record)?;

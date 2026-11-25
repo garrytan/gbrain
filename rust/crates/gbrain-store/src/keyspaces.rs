@@ -146,7 +146,7 @@ pub const KEYSPACES: &[Keyspace] = &[
     ks(
         keys::POSTING,
         "core",
-        "legacy word postings (none from store format 13)",
+        "legacy word postings (none from store format 14)",
     ),
     ks(keys::LINK_UNIQUE, "core", "link uniqueness index"),
     ks(keys::VERSION, "core", "page versions"),

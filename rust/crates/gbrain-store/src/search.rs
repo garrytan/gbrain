@@ -2,9 +2,9 @@
 //! ([`Store::search_keyword_arm`], `keyword/arm.rs`) with `query` as both the match and the rank
 //! query, over the live keyword index.
 //!
-//! Until store format 13 this was a separate BM25 search over its own word postings (`T`), which
+//! Until store format 14 this was a separate BM25 search over its own word postings (`T`), which
 //! every chunk write kept in step. Production keyword search never read it (the TypeScript
-//! member calls `searchKeywordArm` and the other keyword members), so format 13 stops writing
+//! member calls `searchKeywordArm` and the other keyword members), so format 14 stops writing
 //! those postings and its upgrade deletes them (`legacy_postings.rs`). The addon method stays, with
 //! the arm's options and rows.
 

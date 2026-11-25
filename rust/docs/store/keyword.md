@@ -364,7 +364,7 @@ answers that check: the ids, ascending, whose page frontmatter holds every key, 
 the keyword and vector filters. Like the SQL (`SELECT p.id FROM pages p WHERE p.id = ANY($1)` plus the containment
 clauses), it reads every page row, a soft-deleted one included.
 
-The core BM25 member (`store-members/search.ts`) is gone. Since store format 13 its napi method `searchKeyword` and
+The core BM25 member (`store-members/search.ts`) is gone. Since store format 14 its napi method `searchKeyword` and
 `Store::search_keyword` answer as `searchKeywordArm(query, query, opts)`, and the BM25 word postings they read are gone.
 
 ## CJK queries

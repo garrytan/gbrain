@@ -35,7 +35,7 @@ One difference in `upsertChunks`: with `sealChunkerVersion`, `pageId` and `defer
 `brain.searchKeyword(query, opts?)` answers exactly what `brain.searchKeywordArm(query, query, opts?)` answers: the
 keyword arm's statement (`keyword.md`) with the query as both the match and the rank query, over the live keyword
 index. `opts` is the arm's options (`limit`, `offset`, `type`, `types`, `sources`, `hardExcludes`, `excludeSlugs`,
-`detailLow`, `where`, `afterDate`, `beforeDate` and the rest of `KeywordOptions`). Until store format 13 it was a BM25
-search over its own word postings (`T`), which no TypeScript member called; format 13 dropped those postings and
+`detailLow`, `where`, `afterDate`, `beforeDate` and the rest of `KeywordOptions`). Until store format 14 it was a BM25
+search over its own word postings (`T`), which no TypeScript member called; format 14 dropped those postings and
 their upkeep on every chunk write, and its upgrade deletes them in one write transaction (`legacy_postings.rs`).
 The TypeScript `searchKeyword` member is unchanged, and it runs the arm and its retries (`keyword.md`).

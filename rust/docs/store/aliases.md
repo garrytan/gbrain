@@ -6,7 +6,7 @@ This family moves a page to a new slug, keeps the old slug as an alias of the ne
 alias names a page answers to, and keeps a page's contextual retrieval state. In PGLite these are
 the `slug_aliases` and `page_aliases` tables and the `pages.contextual_retrieval_mode` and
 `pages.corpus_generation` columns. The key tag is the reserved `k`. These records were part of format 1 and
-changed no format number; the store is at format 13 now ([format.md](format.md)). Text
+changed no format number; the store is at format 14 now ([format.md](format.md)). Text
 parts of a key are joined with a `0x00` byte.
 
 | Key | Value | Mirrors |

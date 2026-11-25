@@ -272,7 +272,7 @@ fn open_records(dir: &Path, concurrent: bool, known: &[u32]) -> Result<Arc<dyn K
 /// Runs a pending format upgrade on the record file itself, before the concurrent-writes layer
 /// wraps it. The upgrade is still one write transaction, but its writes go to the record file's
 /// own transaction instead of the concurrent layer's in-memory write set, which would hold every
-/// key the upgrade deletes until it commits (a format-13 upgrade over 2 million legacy postings
+/// key the upgrade deletes until it commits (a format-14 upgrade over 2 million legacy postings
 /// peaked at about 1 GB that way, against about 150 MB here). A format this build does not open is
 /// left to `open_kv_in`, which refuses it.
 fn upgrade_before_occ(kv: &dyn Kv, known: &[u32]) -> Result<()> {
@@ -812,7 +812,7 @@ fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
             )
         })?;
     }
-    // Format 13: the legacy word postings are gone (`legacy_postings.rs`), deleted in this one
+    // Format 14: the legacy word postings are gone (`legacy_postings.rs`), deleted in this one
     // transaction.
     if stored.format_version < FORMAT_VERSION {
         legacy_postings::delete_all(&mut *tx)?;

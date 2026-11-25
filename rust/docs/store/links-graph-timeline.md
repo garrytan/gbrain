@@ -4,7 +4,7 @@ Part of the store contract in [rust/README.md](../../README.md) ("The brain stor
 
 Links and timeline entries are typed key-value records with their own index keys. Every write
 changes a record and all of its index keys in one transaction, so a crash keeps all of them or
-none (the simulation below checks this). The new key tags are additive and took no format number; the store is at format 13 now
+none (the simulation below checks this). The new key tags are additive and took no format number; the store is at format 14 now
 ([format.md](format.md)).
 
 | Key | Value | Mirrors |

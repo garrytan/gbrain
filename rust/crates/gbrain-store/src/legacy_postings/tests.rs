@@ -1,4 +1,4 @@
-//! The store format 13 upgrade deletes the legacy word postings in its one write transaction: a
+//! The store format 14 upgrade deletes the legacy word postings in its one write transaction: a
 //! failed upgrade leaves the old brain byte for byte, the next open upgrades it, keyword search
 //! answers as before, and a build that stops at format 8 refuses the upgraded brain.
 

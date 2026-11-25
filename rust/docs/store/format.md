@@ -5,7 +5,7 @@ Part of the store contract in [rust/README.md](../../README.md) ("The brain stor
 A brain's store format is the number in `FORMAT` and in the format record inside `records.redb`
 (`format_version`). A build opens the formats in `FORMAT_VERSIONS` (`addon.formatVersions`), which is
 formats 1 to 8 and then the formats the build adds, skipping the `allotted` rows of the registry below (formats 1 to 8
-and 13 today; `crates/gbrain-store/src/format.rs`). A brain at an older format is
+and 14 today; `crates/gbrain-store/src/format.rs`). A brain at an older format is
 upgraded to `FORMAT_VERSION` when it opens, every step in one write transaction (`upgrade_format` in
 `crates/gbrain-store/src/lib.rs`); a brain at a newer format, or at a format the build does not list, is refused.
 
@@ -32,7 +32,8 @@ row is a number the trunk holds for another lane's branch, and this build neithe
 | 10 | allotted | Held by the trunk for another lane's store format (vector-rank-key); this build does not open it. | rust-engine/vector-rank-key | Defined on that branch. |
 | 11 | allotted | Held by the trunk for another lane's store format (refresh-evidence-reads); this build does not open it. | rust-engine/refresh-evidence-reads | Defined on that branch. |
 | 12 | allotted | Held by the trunk for the update-time keyed lookup (https://github.com/garrytan/gbrain/pull/10328); this build does not open it. | rust-engine/keyed-lookups-2 | Defined on that branch. |
-| 13 | shipped | The legacy word postings under `T` are gone: chunk writes no longer keep one record per distinct word, and the addon's `searchKeyword` answers as `searchKeywordArm` over the live keyword index (`search.rs`, `legacy_postings.rs`). Store format 13 is the trunk's allotment; the trunk may renumber it at merge by landing order, by changing `FORMAT_VERSION` alone. | rust-engine/drop-legacy-word-index | On open, in one write transaction (`legacy_postings::delete_all` in `upgrade_format`, after every earlier step): every `T` record is deleted. A build that stops at format 8 refuses a format-13 brain as newer; going back means a re-seed. |
+| 13 | allotted | Held by the trunk for another lane's store format (the packed keyword index); this build does not open it. | rust-engine/lean-keyword-writes | Defined on that branch. |
+| 14 | shipped | The legacy word postings under `T` are gone: chunk writes no longer keep one record per distinct word, and the addon's `searchKeyword` answers as `searchKeywordArm` over the live keyword index (`search.rs`, `legacy_postings.rs`). Store format 14 is the trunk's allotment; the trunk may renumber it at merge by landing order, by changing `FORMAT_VERSION` alone. | rust-engine/drop-legacy-word-index | On open, in one write transaction (`legacy_postings::delete_all` in `upgrade_format`, after every earlier step): every `T` record is deleted. A build that stops at format 8 refuses a format-14 brain as newer; going back means a re-seed. |
 
 ## Older builds
 

@@ -934,7 +934,7 @@ describe('raw SQL by design on a Rust brain', () => {
 });
 
 /**
- * The addon's `searchKeyword` (store format 13) answers exactly as `searchKeywordArm(query, query, opts)`, the keyword arm
+ * The addon's `searchKeyword` (store format 14) answers exactly as `searchKeywordArm(query, query, opts)`, the keyword arm
  * the TypeScript member runs: the legacy BM25 postings it once read are gone. Checked on a seeded corpus of notes,
  * people and hidden-prefix pages in two sources, over plain words, OR, quoted phrases, negation, stopwords and
  * filters.

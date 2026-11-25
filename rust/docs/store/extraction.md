@@ -5,7 +5,7 @@ Part of the store contract in [rust/README.md](../../README.md) ("The brain stor
 Extraction state is what the link extractor and the frontmatter sweep keep about a page: when its
 links were last extracted, and the revision at which attendance extraction was blocked. In PGLite
 these are three columns of `pages`; here they are one record under the page id, written only by the
-methods below. The key tag is the reserved `e`. It took no format number; the store is at format 13 now ([format.md](format.md)).
+methods below. The key tag is the reserved `e`. It took no format number; the store is at format 14 now ([format.md](format.md)).
 
 | Key | Value | Mirrors |
 | --- | --- | --- |

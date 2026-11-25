@@ -9,7 +9,7 @@
 //! - against the commits the store acknowledged (`gbrain_sim::check::check_recovery`): nothing
 //!   acknowledged is lost, and the one batch in flight at the crash is all there or not at all;
 //! - against the store's own invariants (`integrity`): every page has its id index entry, every
-//!   chunk record its key, no legacy word posting exists (store format 13), the index totals match the chunks, every journal request its index entry,
+//!   chunk record its key, no legacy word posting exists (store format 14), the index totals match the chunks, every journal request its index entry,
 //!   and the outstanding counters match the requests that have not ended.
 //!
 //! Run more seeds with `GBRAIN_SIM_SEEDS=10000`; repeat one with `GBRAIN_SIM_SEED=<n>`.
@@ -669,7 +669,7 @@ fn integrity(kv: &dyn Kv) -> Result<Vec<String>, StoreError> {
         }
     }
 
-    // chunks and the index totals; no legacy word posting (store format 13 keeps none)
+    // chunks and the index totals; no legacy word posting (store format 14 keeps none)
     let (mut chunk_count, mut total_length) = (0u64, 0u64);
     for (key, value) in entries(read, keys::CHUNK)? {
         let (page_id, index) = (

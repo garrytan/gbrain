@@ -40,13 +40,13 @@ use std::path::Path;
 ///   access member links, whose scans started on it (`access_key_split.rs`). The upgrade moves the
 ///   one record in the one transaction, or refuses a record under `x 0x04` it cannot classify with
 ///   `shadow_reseed_required`. A build that keeps both kinds at `x 0x04` refuses a format-8 brain.
-/// - 13 (the trunk's allotment; formats 9 to 12 belong to other lanes and are not opened by this
+/// - 14 (the trunk's allotment; formats 9 to 13 belong to other lanes and are not opened by this
 ///   build): the legacy word postings under `T` are gone. Chunk writes no longer keep them, and the
 ///   upgrade deletes every one in its one write transaction (`legacy_postings.rs`). The addon's
 ///   `searchKeyword` answers as `searchKeywordArm` (`search.rs`). A build that stops at format 8
-///   refuses a format-13 brain. The trunk may renumber this at merge by landing order: change this
+///   refuses a format-14 brain. The trunk may renumber this at merge by landing order: change this
 ///   constant only; every test and the upgrade read it.
-pub const FORMAT_VERSION: u32 = 13;
+pub const FORMAT_VERSION: u32 = 14;
 /// Every format version this build can open. Addon exports list these as `formatVersions`.
 pub const FORMAT_VERSIONS: &[u32] = &[1, 2, 3, 4, 5, 6, 7, 8, FORMAT_VERSION];
 

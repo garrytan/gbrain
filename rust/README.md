@@ -156,7 +156,7 @@ chunks, version, admit, finish, link, batch link, unlink, walk, backlinks, timel
 batch, timeline read), the clock and ids the store sees, and where the disk crashes, tears
 a write, fails an fsync or lies about one. After a reboot the recovered records must equal the
 replay of a prefix of the acknowledged commits (nothing lost, the batch in flight all or nothing),
-and the store's own invariants must hold: id index, chunk records (and no legacy word posting, which store format 13 dropped), index totals, journal
+and the store's own invariants must hold: id index, chunk records (and no legacy word posting, which store format 14 dropped), index totals, journal
 index and outstanding counters, each link against its three index keys and its pages, and each
 timeline entry against its dedup key, its page and the page's newest-entry time. A control run (every fsync lies, the checker is told the disk was
 honest) must report violations, or the harness is blind.

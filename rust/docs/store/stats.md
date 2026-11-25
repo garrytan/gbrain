@@ -7,7 +7,7 @@ This family answers `pingStore`, `getStats`, `getHealth`, `countOnboardSignal`, 
 `findAnomalies` from the
 records the other families keep (pages, chunks, links, tags, timeline entries, sources, config),
 and keeps one table of its own: PGLite's `ingest_log`. The key tag is the reserved `n`. It took no format
-number; the store is at format 13 now ([format.md](format.md)).
+number; the store is at format 14 now ([format.md](format.md)).
 
 | Key | Value | Mirrors |
 | --- | --- | --- |
