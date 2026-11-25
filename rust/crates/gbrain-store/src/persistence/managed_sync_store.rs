@@ -1396,6 +1396,19 @@ fn run_write(tx: &mut dyn KvWrite, env: &dyn Env, name: &str, p: &[Value]) -> Re
             }
             rows(vec![])
         }
+        "page_set_type" => {
+            let (source, slug, page_type) = (text(p, 0)?, text(p, 1)?, text(p, 2)?);
+            if let Some(mut page) = crate::pages::read_page(&*tx, &source, &slug)?
+                && page.page_type != page_type
+            {
+                // A changed type takes a new knowledge revision, as the revision trigger reads the type.
+                page.page_type = page_type;
+                page.knowledge_revision = env.new_uuid();
+                page.text_projection_revision = None;
+                crate::pages::write_page(tx, &page)?;
+            }
+            rows(vec![])
+        }
         "page_clear_unbound" => {
             let (source, slug) = (text(p, 0)?, text(p, 1)?);
             if let Some(mut page) = crate::pages::read_page(&*tx, &source, &slug)?

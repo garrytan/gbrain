@@ -285,6 +285,7 @@ export const SYNC_STATEMENTS = {
         UNION ALL SELECT m FROM jsonb_array_elements(COALESCE(completed_keys->0->'window','[]'::jsonb)) g, jsonb_array_elements(g) m) members) AS group
      FROM op_checkpoints WHERE op='managed-sync' AND fingerprint=$1 FOR KEY SHARE` },
   // The imported page's origin and the deletion tombstone (sync-prepare.ts, sync-streamed.ts, sync-delete-tombstones.ts).
+  page_set_type: { kind: 'write', sql: 'UPDATE pages SET type=$3 WHERE source_id=$1 AND slug=$2' },
   page_clear_unbound: { kind: 'write', sql: "UPDATE pages SET database_only_reason=NULL WHERE source_id=$1 AND slug=$2 AND database_only_reason='unbound_source'" },
   delete_tombstone_record: { kind: 'write', sql: `INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
     SELECT $1, p.id::text, jsonb_build_array(jsonb_build_object('source_id', p.source_id, 'incarnation', $2::text, 'page_id', p.id, 'slug', p.slug,
