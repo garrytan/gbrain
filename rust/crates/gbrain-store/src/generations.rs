@@ -556,6 +556,15 @@ fn optional_text<'a>(name: &'a str, value: &'a Option<String>) -> Option<(&'a st
 }
 
 impl Store {
+    /// `hasFenceAbsentHold(sourceId, kind, ownerKey)` (`engine-sql/fence-projection.ts`): whether the
+    /// held row of the key was held because a write dropped its fence (`state='held' AND
+    /// held_reason='fence_absent'`).
+    pub fn has_fence_absent_hold(&self, key: &GenerationKey) -> Result<bool> {
+        check_key("hasFenceAbsentHold", key)?;
+        let read = self.read()?;
+        held_for(&*read, key, "fence_absent")
+    }
+
     /// `readLiveGenerationRow(key)`: the live row of `key` with the items it owns, or null.
     pub fn read_live_generation_row(&self, key: &GenerationKey) -> Result<Value> {
         check_key("readLiveGenerationRow", key)?;

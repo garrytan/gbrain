@@ -633,9 +633,9 @@ listFactsBySession	facts	yes	13	yes	yes	yes	serves
 listSupersessions	facts	yes	7	yes	yes	yes	serves
 countUnconsolidatedFacts	facts	yes	2	yes	yes	yes	serves
 listFenceRetireCandidates	facts	yes	3	no	yes	yes	serves
-readFactPreimages	facts	yes	4	no	yes	yes	serves
+readFactPreimages	facts	yes	5	no	yes	yes	serves
 restoreFactPreimage	facts	yes	2	no	yes	yes	serves
-listFactIdsBySourcePrefix	facts	yes	1	no	yes	yes	serves
+listFactIdsBySourcePrefix	facts	yes	2	no	yes	yes	serves
 expireFactRows	facts	yes	1	no	yes	yes	serves
 findCandidateDuplicates	facts	yes	6	yes	yes	yes	serves
 consolidateFact	facts	yes	9	no	yes	yes	serves
@@ -2054,7 +2054,7 @@ readPageTitle	alias_fanout_reads	yes	1	no	yes	yes	serves
 readPageAliasRows	alias_fanout_reads	yes	9	no	yes	yes	serves
 readEntityAliasRows	alias_fanout_reads	yes	2	no	yes	yes	serves
 listSlugAliases	alias_fanout_reads	yes	5	no	yes	yes	serves
-readLiveSlugAliases	alias_fanout_reads	yes	2	no	yes	yes	serves
+readLiveSlugAliases	alias_fanout_reads	yes	3	no	yes	yes	serves
 readSourceSlugProbe	alias_fanout_reads	yes	1	no	yes	yes	serves
 readStoredSlugSpellings	alias_fanout_reads	yes	1	no	yes	yes	serves
 hasSegmentStorage	write_guards	yes	1	no	yes	yes	serves

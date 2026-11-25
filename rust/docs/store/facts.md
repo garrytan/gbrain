@@ -1551,6 +1551,37 @@ no caller depends on that order. `now()` is the store's clock.
 | `readDeletedPageBody(sourceId, slug)` | `{ compiled_truth, timeline, body_storage }` of the coordinate's soft-deleted page; null when the page is live or missing. |
 | `expireFactsByIds(sourceId, ids)` | Expires the unexpired rows of the source among `ids` now; `{ id }` of each row it expired, by id. |
 
+## The fence projection's statements (`facts/fence_projection.rs`, `facts/unwithdrawn_restore.rs`)
+
+A put_page that updates a page with a `## Facts` fence runs these inside its publication
+(`src/core/engine-sql/fence-projection.ts`, `engine-sql/trust-fence.ts`); each is the statement the projection and its
+fence guard sent through `executeRaw`. The writes join the engine's transaction (`Store::write`). The writer's tier
+and the opened fact ids come from the store's write trust context ([`FenceContext`](#the-fence-guards-reads-factsfencers)).
+Documents (`incoming`, `fieldRows`, `moves`, `restated`) are `jsonb_to_recordset` text: a non-array, a non-object
+record or a field of the wrong type refuses with `invalid_argument`, as Postgres raises; every record is cast before
+any row changes. The members add no keys.
+
+- `listPageFenceFactCells(sourceId, slug)`: `{ row_num, fact, visibility }` of the page's positioned facts, any state,
+  by id (the SQL sets no order). `hasPositionedPageFacts`: whether one of them is not a conversation-extractor row.
+- `expireFenceFacts(sourceId, slug, incoming, ids)`: each positioned fact of `ids` the incoming fence does not state
+  as it is, under the retire rules of `listFenceRetireCandidates`, is detached and expired (`expired_at` kept when set,
+  else the transaction's now).
+- `refreshFenceFactFields(sourceId, slug, fieldRows)`: each record's cells onto the page's fact at its row number (any
+  state), `valid_from` kept when the record has none, only when a cell differs (`IS DISTINCT FROM`, NaN equal to NaN);
+  a row two records match takes the first. The CHECK constraints apply.
+- `detachFenceFactRows(ids)`: facts of any source leave their row number. `moveGuardedFenceRows(moves)`: each fact takes
+  its move's row number and visibility; the first move of a fact wins.
+- `listOccupiedFenceRowNums`: the row numbers of the page's live facts. `readLiveFenceFactAt(sourceId, slug, rowNum)`:
+  `{ id, trust_tier }` of the live fact there. `listFactsAboveWriter`: the page's live positioned facts whose stored
+  tier ranks above the writer's, by id.
+- `listTrustedPrivateCopies(sourceId, slug, restated)`: per restatement row number, the first live narrower fact more
+  trusted than the writer with its claim, the page's own first, then by id: on the page while no live world fact of the
+  page states the claim, or of the restatement's entity off the page, still valid, while no live valid world fact of
+  that entity states it.
+- `readPageInlineBody(pageId)` (the unwithdrawn-facts classifier): `{ id, compiled_truth, timeline, body_storage }`,
+  the body columns null for a segmented page. The unwithdrawn-facts restore runs only in a managed publication and is
+  not served.
+
 ## Derivation inputs (`generations/derivation_inputs.rs`)
 
 `recordDerivationEdges` (the store method is `recordDerivationInputs`) keeps each `derived <- input` edge once

@@ -52,6 +52,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 mod extract;
+mod fence_projection;
 mod grades;
 mod held;
 mod horizons;
@@ -59,6 +60,8 @@ pub(crate) mod nudges;
 mod prepare;
 pub(crate) mod proposals;
 mod reads;
+mod resolved_at;
+mod zone_abbreviations;
 
 pub use extract::{FenceRowClaim, IncomingTake, TakesLeavingFence};
 pub use grades::{TakeGradeFilter, TakeGradeInput, TakeGradeKey};

@@ -157,6 +157,16 @@ export const WRITE_MAP: Record<string, WriteSpec> = {
   stampTakeResolvedAt: { tables: ['takes'], plan: (a) => [{ relation: 'takes', sel: { page_id: id(a[0]), row_num: id(a[1]) } }] },
   supersedeTake: { tables: ['takes'], plan: (a) => [childById('takes', a[0])] },
   deleteTakeRows: { tables: ['takes', 'owner_only_marks'], plan: (a) => [childById('takes', a[0], true), ...OWNER_MARKS] },
+  // A page publication's fence projection and fence guard (engine-sql/fence-projection.ts, trust-fence.ts): the page's
+  // fact rows by (source, markdown slug) or by id, the page's takes by page id; selector columns never change.
+  expireFenceFacts: { tables: ['facts'], plan: (a) => [{ relation: 'facts', sel: { source_id: id(a[0]), source_markdown_slug: id(a[1]) } }] },
+  refreshFenceFactFields: { tables: ['facts'], plan: (a) => [{ relation: 'facts', sel: { source_id: id(a[0]), source_markdown_slug: id(a[1]) } }] },
+  detachFenceFactRows: { tables: ['facts'], plan: (a) => each<unknown>(a[0], (factId) => [{ relation: 'facts', sel: { id: id(factId) } }]) },
+  moveGuardedFenceRows: { tables: ['facts'], plan: (a) => each<any>(a[0], (m) => [{ relation: 'facts', sel: { id: id(m.id) } }]) },
+  clearChangedTakeResolutions: { tables: ['takes'], plan: (a) => [childById('takes', a[0])] },
+  writeFenceTakeResolutions: { tables: ['takes'], plan: (a) => [childById('takes', a[0])] },
+  // A tier-only row change (engine-sql/row-tier.ts): one row of facts, takes or pages by id.
+  setRowTrustTier: { tables: ['facts', 'takes', 'pages'], plan: (a) => [{ relation: String(a[0]), sel: { id: id(a[1]) } }] },
   addSynthesisEvidence: { tables: ['synthesis_evidence'], plan: (a) => each<any>(a[0], (e) => [childById('synthesis_evidence', e.synthesis_page_id, false, 'synthesis_page_id')]) },
   // Everything else with a precise home
   putRawData: { tables: ['raw_data'], plan: (a) => [child('raw_data', a[0], a[3]?.sourceId, false, { source: a[1] })] },

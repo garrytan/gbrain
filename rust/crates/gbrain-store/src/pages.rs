@@ -709,7 +709,7 @@ fn store_page(
 /// trigger applies to that UPDATE. A raise is kept only under a promotion that covers it (the caller's
 /// `withTrustPromotion`); otherwise an undeclared writer is refused and a declared one keeps the
 /// stored tier. The origin is the one the statement sets. Nothing for an unknown page id.
-fn restore_page_trust_in(
+pub(crate) fn restore_page_trust_in(
     tx: &mut dyn KvWrite,
     id: u64,
     tier: crate::trust::TrustTier,

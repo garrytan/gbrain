@@ -90,6 +90,7 @@ const VALID_UNTIL_WRITE_ALLOWLIST: ReadonlySet<string> = new Set([
   'src/core/facts/withdrawal.ts',
   'src/core/engine-sql/repair-bookkeeping.ts', // the loop-fact retirement expiry (expireSourceFactNow), moved from persistence/loop-fact-retirement.ts
   'src/core/engine-sql/facts-cycle.ts', // the fence row's cells statement (updateFenceFactCells), moved from cycle/extract-facts.ts
+  'src/core/engine-sql/fence-projection.ts', // the fence projection's field refresh (refreshFenceFactFields), moved from persistence/canonical-projections.ts
   'src/core/engine-sql/dream-cycle.ts', // setConsolidatedFactValidUntil, moved from cycle/phases/consolidate.ts: the consolidate phase closes a fact's interval when its take supersedes it
   'src/core/engine-sql/facts-purge.ts', // the withdrawal expiry statement (expireFactsByWithdrawal), moved from facts/withdrawal.ts
   'src/core/engine-sql/facts-trust.ts', // the decide supersede and its undo (expireSupersededFact, restoreSupersededFact, moved from facts/proposal-supersede.ts) and the forget expiries (expireFactSuperseded, expireFactAtDate, moved from facts/forget.ts)

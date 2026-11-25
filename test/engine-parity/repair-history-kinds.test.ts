@@ -7,14 +7,12 @@
  *    versions whose stored change reason is the trailer text of a tombstoned (commit, path) and its apply sets each
  *    approved one to '[purged]' on every arm. The version-reason members answer the same rows on every arm.
  *    redacted-facts restores a database-only row whose original words a page holds on every arm; a fenced row is restored
- *    by a page write on the SQL arms, and the Rust engine refuses that page write by name ("repair redacted-facts page
- *    write", lane 7's writer) before it writes anything of the page.
+ *    by a page write the same way on every arm.
  *    overwritten-edits lists a database edit a managed sync import archived (seeded through the typed journal members
  *    and coordinated writes, so the version receipts name both requests) the same way on every arm; the restore is a
  *    page write on the SQL arms, and the Rust engine refuses it by name ("repair overwritten-edits page write").
  *    accepted-takes lists the take an accepted `forget` proposal's `takes_remove` request removed (the archived version
- *    holds the row, the live fence reserves its number) the same way on every arm; the restore is a page write on the
- *    SQL arms, and the Rust engine refuses it by name ("repair accepted-takes page write").
+ *    holds the row, the live fence reserves its number) the same way on every arm, and its restore (a page write) too.
  *    atoms-restore lists the restorable re-extraction retirements (and counts the kept ones by reason) the same way on
  *    every arm, and its unmanaged apply restores the atom live without its retirement stamp on every arm.
  *    moved-pages, on a brain this host owns with a real Git history: a ghost page whose file was deleted while another
@@ -328,9 +326,9 @@ describe('engine parity: the history repair kinds of batch 6a', () => {
     return { run, after };
   }));
 
-  parityTest('redacted-facts restores a fenced row by a page write on the SQL arms, and the Rust engine refuses that write by name', {
+  parityTest('redacted-facts restores a fenced row by a page write the same way on every arm', {
     methods: ['putPage', 'insertFacts', 'listRedactedFactCandidates', 'listRetainedVersionBodies', 'listProjectedFenceRows'],
-    requires: 'raw_sql', timeout: 60_000,
+    timeout: 60_000,
   }, async (engine, backend) => withDir(async () => {
     await seedRedactedSource(engine);
     const fence = renderFactsTable([{ rowNum: 1, claim: ABS_DAMAGED, kind: 'fact', confidence: 1, visibility: 'private', notability: 'high', active: true, context: NOTES }] as never);
@@ -338,14 +336,10 @@ describe('engine parity: the history repair kinds of batch 6a', () => {
     const res = await engine.insertFacts([{ fact: ABS_DAMAGED, kind: 'fact', entity_slug: ACME, visibility: 'private', source: 'fence', context: NOTES,
       row_num: 1, source_markdown_slug: ACME }] as never, { source_id: 'default' });
     const id = Number(res.ids[0]);
-    try {
-      const run = await previewThenApply(engine, backend, 'redacted-facts', 'repair redacted-facts page write');
-      const after = await factTexts(engine, { abs: id });
-      expect(after).toEqual({ abs: 'restored-or-inactive' });
-      return { run, after };
-    } finally {
-      if (backend === 'rust') expect(await factTexts(engine, { abs: id })).toEqual({ abs: ABS_DAMAGED });
-    }
+    const run = await previewThenApply(engine, backend, 'redacted-facts', null);
+    const after = await factTexts(engine, { abs: id });
+    expect(after).toEqual({ abs: 'restored-or-inactive' });
+    return { run, after };
   }));
   parityTest('the fact-text repair members answer and write the same rows on every arm', {
     methods: ['putPage', 'insertFacts', 'listRedactedFactCandidates', 'restoreRedactedFactTexts', 'listProjectedFenceRows', 'listUnexpiredFactIds',
@@ -391,14 +385,14 @@ describe('engine parity: the history repair kinds of batch 6a', () => {
     expect(scanned.map(row => row.slug)).toEqual(['notes/overwritten']);
     return previewThenApply(engine, backend, 'overwritten-edits', 'repair overwritten-edits page write');
   }));
-  parityTest('accepted-takes previews the take an accepted removal took, and the Rust engine refuses the restore by name', {
+  parityTest('accepted-takes previews the take an accepted removal took and restores it the same way on every arm', {
     methods: ['putPage', 'addTakesBatch', 'insertTrustProposal', 'transitionTrustProposal', 'insertWriteRequest', 'completeWriteRow', 'setWriteContext',
       'createVersion', 'listAcceptedTakeRemovals', 'readArchivedVersionBody', 'readTakeRowTier'],
-    requires: 'raw_sql', timeout: 60_000,
+    timeout: 60_000,
   }, async (engine, backend) => withDir(async () => {
     await seedAcceptedRemoval(engine);
     expect((await engine.listAcceptedTakeRemovals(['default'], null)).map(r => r.row_num)).toEqual([2]);
-    const run = await previewThenApply(engine, backend, 'accepted-takes', 'repair accepted-takes page write');
+    const run = await previewThenApply(engine, backend, 'accepted-takes', null);
     const pageId = Number((await engine.getPage('people/mina-example', { sourceId: 'default' }))!.id);
     expect(await engine.readTakeRowTier(pageId, 2)).not.toBeNull();
     return run;

@@ -60,6 +60,11 @@ export const LEDGER_MEMBERS = {
   writeOpCheckpointDoc: 'takes',
   listWriteRequestsByRequestId: 'takes',
   listGuardedTakeRows: 'takes',
+  listQuotedTakeRows: 'takes',
+  listPageTakeRowNums: 'takes',
+  clearChangedTakeResolutions: 'takes',
+  writeFenceTakeResolutions: 'takes',
+  hasFenceAbsentHold: 'takes',
   // The extract receipt write's page reads and the extract_rollup_7d day upsert (store A 0x0A, extract_bookkeeping.rs).
   readExtractReceiptSlot: 'pages',
   readExtractReceiptSeal: 'pages',

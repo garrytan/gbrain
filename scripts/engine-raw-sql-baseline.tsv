@@ -359,7 +359,6 @@ src/core/persistence/administration.ts	execute_raw	5
 src/core/persistence/atom-maintenance.ts	execute_raw	20
 src/core/persistence/authority.ts	execute_raw	3
 src/core/persistence/bounded-reads.ts	execute_raw	10
-src/core/persistence/canonical-projections.ts	execute_raw	10
 src/core/persistence/capacity-view.ts	execute_raw	1
 src/core/persistence/change-reason.ts	execute_raw	2
 src/core/persistence/checkpoint-validation.ts	execute_raw	2
@@ -549,7 +548,7 @@ src/core/repair/readers.ts	execute_raw	3
 src/core/repair/rename-identity.ts	execute_raw	6
 src/core/repair/segmented-tiling.ts	execute_raw	6
 src/core/repair/slug-autoheal.ts	execute_raw	1
-src/core/repair/unwithdrawn-facts.ts	execute_raw	3
+src/core/repair/unwithdrawn-facts.ts	execute_raw	2
 src/core/repair/url-clone-fences.ts	execute_raw	2
 src/core/repair/visibility.ts	execute_raw	7
 src/core/schema-migrations/helpers.ts	execute_raw	12
@@ -645,12 +644,11 @@ src/core/trust/backfill.ts	execute_raw	6
 src/core/trust/channel.ts	execute_raw	1
 src/core/trust/claim.ts	execute_raw	7
 src/core/trust/derived-gate.ts	execute_raw	1
-src/core/trust/fence-guard.ts	execute_raw	6
 src/core/trust/held-removals.ts	execute_raw	4
 src/core/trust/label-lowerings.ts	execute_raw	1
 src/core/trust/marker-repair.ts	execute_raw	4
 src/core/trust/owner-actions.ts	execute_raw	6
-src/core/trust/page-handlers.ts	execute_raw	7
+src/core/trust/page-handlers.ts	execute_raw	5
 src/core/trust/page-write.ts	execute_raw	1
 src/core/trust/propagation.ts	execute_raw	4
 src/core/trust/release-publish.ts	execute_raw	2

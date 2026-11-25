@@ -384,6 +384,11 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readSyncAdmissionSettingRow', 'readTakeRowTrust', 'readTakeTrustRef', 'readTerminalFailureGroups',
   'readTextMentionPages', 'readTokenLifetimeClampedClients', 'readTrustScanCeilings', 'readTrustScanCursor',
   'readWorktreeManifest', 'readWriteRequestsByRequestId', 'readWriterDiagnosticRows', 'readWriterStatusRows',
+  // A page publication's fence projection and fence guard reads, the tier-only change's reads and the unwithdrawn-facts
+  // page body read (engine-sql/fence-projection.ts, trust-fence.ts, row-tier.ts, unwithdrawn-restore.ts).
+  'listQuotedTakeRows', 'listPageFenceFactCells', 'hasPositionedPageFacts', 'hasFenceAbsentHold', 'listPageTakeRowNums',
+  'listOccupiedFenceRowNums', 'listTrustedPrivateCopies', 'readLiveFenceFactAt', 'listFactsAboveWriter',
+  'readRowTrustTier', 'readTierProjectionPage', 'readPageInlineBody',
   // The page purge port's own typed reads (each reads only: its engine-sql function and the store function it calls):
   'countPageCascadeRows', 'countPageManifestRows', 'factsOrAliasesMayMatch', 'isConceptStillHeld',
   'listCatalogForeignKeys', 'listCatalogRelations', 'listCheckoutFiles', 'listConceptIncomingLinks', 'listDerivationClaimForms', 'listHorizonScanRows',
@@ -929,4 +934,13 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   deletePurgedSlugStoreRows: 'nothing: it deletes the rows of those slugs in each slug store, so running it again deletes nothing more',
   deletePurgedSlugHolds: 'nothing: it deletes the held writes of those slugs and the receipts of those holds, so running it again deletes nothing more',
   carryConceptIncomingLinks: 'listConceptIncomingLinks for that page',
+  // A page publication's fence projection and fence guard writes (engine-sql/fence-projection.ts, trust-fence.ts).
+  expireFenceFacts: 'listPageFenceFactCells for that page (an expired row holds no row number)',
+  refreshFenceFactFields: 'readFactPreimages for the page\'s fact ids at those row numbers',
+  detachFenceFactRows: 'readFactPreimages for those fact ids (their row numbers)',
+  moveGuardedFenceRows: 'readFactPreimages for those fact ids (their row numbers and visibility)',
+  clearChangedTakeResolutions: 'listTakes for that page (the resolution columns)',
+  writeFenceTakeResolutions: 'listTakes for that page (the resolution columns)',
+  // A tier-only row change (engine-sql/row-tier.ts).
+  setRowTrustTier: 'readRowTrustTier for that row',
 };
