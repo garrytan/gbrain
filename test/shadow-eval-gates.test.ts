@@ -10,12 +10,13 @@
  * directory and the real readiness evaluator; the fetch takes a fake `fetch` (no network).
  */
 import { afterEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { evaluateReadiness, type ShadowStatus } from '../src/core/engine-swap/readiness.ts';
 import { buildDrillStatus } from '../src/shadow/drill-status.ts';
 import { cachePaths, evalGatesPath, evalGatesUrl, fetchEvalGates, readEvalGatesVerdict } from '../src/shadow/eval-gates.ts';
+import { pinDir } from '../src/shadow/eval-gates.ts';
 import { shadowStatusDocument } from '../src/shadow/status-document.ts';
 import {
   ADDON_SHA, BUILD, COMMIT, EVALS_COMMIT, EVALS_REF, evalUrl, gatesObject, OTHER_ADDON_SHA, OTHER_COMMIT, passGate, pinFor, sha256, TAG, TARGET, writeCache, writeEpoch,
@@ -366,5 +367,61 @@ describe('fetchEvalGates never creates the shadow directory (review round 2)', (
     const result = await fetchEvalGates(dir, epoch, { fetch: fakeFetch(routes(replace)), hostTarget: TARGET });
     expect(result.reason).toBe('shadow_gone');
     expect(existsSync(cachePaths(dir).file)).toBe(false);
+  });
+});
+
+describe('pinDir tells a directory from one that took its place (ext4 hands a freed inode straight back)', () => {
+  const place = (): string => { const base = mkdtempSync(join(tmpdir(), 'gbrain-pin-')); dirs.push(base); const d = join(base, 'd'); mkdirSync(d); return d; };
+
+  test('a pinned directory is live until it is deleted and recreated at the same path', () => {
+    const d = place();
+    const pin = pinDir(d)!;
+    expect(pin.live()).toBe(true);
+    rmSync(d, { recursive: true, force: true });
+    expect(pin.live()).toBe(false);
+    mkdirSync(d);
+    expect(pin.live()).toBe(false);
+    pin.close();
+  });
+
+  test('while a pin is held, no replacement directory is ever given the pinned inode', () => {
+    const d = place();
+    const pin = pinDir(d)!;
+    const pinned = statSync(d).ino;
+    for (let i = 0; i < 50; i++) {
+      rmSync(d, { recursive: true, force: true });
+      mkdirSync(d);
+      expect(statSync(d).ino).not.toBe(pinned);
+      expect(pin.live()).toBe(false);
+    }
+    pin.close();
+  });
+
+  test('a pinned directory moved away and replaced is not live; one moved away alone is not live either', () => {
+    const d = place();
+    const pin = pinDir(d)!;
+    renameSync(d, `${d}-moved`);
+    expect(pin.live()).toBe(false);
+    mkdirSync(d);
+    expect(pin.live()).toBe(false);
+    pin.close();
+  });
+
+  test('a missing path and a plain file have no pin, and a closed pin is never live', () => {
+    const d = place();
+    writeFileSync(join(d, 'f'), 'x');
+    expect(pinDir(join(d, 'absent'))).toBeNull();
+    expect(pinDir(join(d, 'f'))).toBeNull();
+    const pin = pinDir(d)!;
+    pin.close();
+    pin.close();
+    expect(pin.live()).toBe(false);
+  });
+
+  test('pinning writes nothing into the directory', () => {
+    const d = place();
+    const pin = pinDir(d)!;
+    expect(readdirSync(d)).toEqual([]);
+    pin.close();
   });
 });

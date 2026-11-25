@@ -5,7 +5,9 @@
  * so a line the caller cannot read never supports or contradicts anything and its claim reads not_found.
  * A page counts only while its precedence is approved or record (eligibility/precedence.ts) and its trust tier is
  * neither external_untrusted nor written by an agent over MCP: a guest, external, remote-agent or quarantined page
- * marked claims: allowed is ignored. A trusted local write (setup's `gbrain put`, a local edit) keeps it approved.
+ * marked claims: allowed is ignored, and the result names it under `skipped` with the reason. A trusted local write
+ * (setup's `gbrain put`, a local edit) keeps it approved. The claims: allowed filter runs in SQL, so the page cap
+ * counts allowed-claims pages only.
  */
 import { allowedLines, checkClaim, extractClaims, type AllowedLine } from '../claims/check.ts';
 import { selfApprovalBlocked } from '../eligibility/precedence.ts';
@@ -18,6 +20,8 @@ import { stripPrivacyFencesForRemoteReader } from './pages.ts';
 
 export const CHECK_CLAIMS_MAX_CHARS = 20_000;
 const MAX_ALLOWED_PAGES = 200;
+/** Why an allowed-claims page the caller can read was not used. */
+export type SkipReason = 'segmented' | 'quarantined' | 'external' | 'written_by_agent' | 'not_approved';
 
 const check_claims: Operation = {
   name: 'check_claims',
@@ -39,15 +43,23 @@ const check_claims: Operation = {
     const scope = federatedSearchScope(ctx, sourceIdParam);
     await assertExplicitSourceLive(ctx, sourceIdParam);
     const policy = ctx.remote === false && !ctx.applyRemoteReadPolicy ? undefined : await readPolicyOpts(ctx, scope);
-    const pages = scope.sourceIds?.length === 0 ? [] : await ctx.engine.listPages({ type: 'facts' as never, limit: MAX_ALLOWED_PAGES, excludePrivate: policy?.excludePrivate, ...scope });
+    const pages = scope.sourceIds?.length === 0 ? [] : await ctx.engine.listPages({ type: 'facts' as never, where: { claims: ['allowed'] }, limit: MAX_ALLOWED_PAGES, excludePrivate: policy?.excludePrivate, ...scope });
     const lines: AllowedLine[] = [];
+    const skipped: Array<{ slug: string; source_id: string; reason: SkipReason }> = [];
     let read = 0;
     for (const page of pages) {
       const fm = page.frontmatter as Record<string, unknown> | null;
-      if (fm?.claims !== 'allowed' || page.body_storage === 'segmented' || isQuarantined(fm)) continue;
+      if (fm?.claims !== 'allowed') continue;
       const readable = await pageTrustForRead(ctx, page, undefined);
-      if (!readable || (readable.trust.precedence !== 'approved' && readable.trust.precedence !== 'record')) continue;
-      if (selfApprovalBlocked(readable.trust.trust_tier, readable.trust.origin)) continue;
+      if (!readable) continue;
+      const { precedence, trust_tier, origin } = readable.trust;
+      const reason: SkipReason | null = page.body_storage === 'segmented' ? 'segmented'
+        : isQuarantined(fm) ? 'quarantined'
+        : precedence === 'external' || trust_tier === 'external_untrusted' ? 'external'
+        : selfApprovalBlocked(trust_tier, origin) ? 'written_by_agent'
+        : precedence !== 'approved' && precedence !== 'record' ? 'not_approved'
+        : null;
+      if (reason) { skipped.push({ slug: page.slug, source_id: page.source_id, reason }); continue; }
       const visible = ctx.remote === false ? page : await stripPrivacyFencesForRemoteReader(ctx, page);
       read++;
       lines.push(...allowedLines({ slug: page.slug, source_id: page.source_id, body: visible.compiled_truth ?? '' }));
@@ -58,9 +70,11 @@ const check_claims: Operation = {
       claims,
       summary: { supported: count('supported'), conflicts: count('conflicts'), not_found: count('not_found') },
       allowed_pages: read,
+      ...(skipped.length ? { skipped } : {}),
       ...(pages.length >= MAX_ALLOWED_PAGES ? { pages_truncated: true } : {}),
       note: 'not_found means no allowed claim covers the sentence, not that it is false.'
-        + (pages.length >= MAX_ALLOWED_PAGES ? ` Only the ${MAX_ALLOWED_PAGES} newest type: facts pages were read, so an older allowed-claims page may be missing.` : ''),
+        + (skipped.length ? ` ${skipped.length} allowed-claims page(s) were not used; skipped names each and why.` : '')
+        + (pages.length >= MAX_ALLOWED_PAGES ? ` Only the ${MAX_ALLOWED_PAGES} newest allowed-claims pages were read, so an older one may be missing.` : ''),
     };
   },
   scope: 'read',

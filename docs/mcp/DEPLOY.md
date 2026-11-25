@@ -102,7 +102,9 @@ install default set up (`gbrain auth clients` shows `full (set by install)`)
 lists the memory verbs and `request_tools` whatever the server's `--advertise`
 or `mcp.advertised_surface` says; `gbrain auth rescope-client <client_id>
 --surface full` lists everything for it. Unset advertises the whole callable
-set.
+set. When `request_tools` with `surface` changes a client's surface, the OAuth
+HTTP server sends `tools/list_changed` on that call's own response stream, and the
+next `tools/list` shows the new surface.
 
 #### Stdio source binding
 
