@@ -12,7 +12,7 @@
 // Plus PageDiscovery shape, transcript-side idempotency, dual-source
 // merge, dedup, dry-run, fail-soft on executeRaw errors.
 
-import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, beforeEach, spyOn } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -23,6 +23,7 @@ import {
 import { runPhaseWithStoredPageFixtures as runPhaseExtractAtoms } from './helpers/extract-atoms-page-fixtures.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import type { ChatOpts, ChatResult } from '../src/core/ai/gateway.ts';
+import { renderFactsTable } from '../src/core/facts-fence.ts';
 
 let engine: PGLiteEngine;
 
@@ -244,6 +245,28 @@ describe('v0.41.2.1: discoverExtractablePages SQL contract', () => {
       expect(discovered).toEqual([]);
     } finally {
       (engine as unknown as { executeRaw: typeof engine.executeRaw }).executeRaw = realExecute;
+    }
+  });
+
+  test('an unreadable canonical fence leaves only its own candidate pending', async () => {
+    const fence = renderFactsTable([{ rowNum: 1, claim: 'Synthetic fence claim', visibility: 'world',
+      kind: 'fact', confidence: 1, notability: 'medium', active: true }]);
+    await seedPage({ slug: 'meeting/plain', type: 'meeting' });
+    await seedPage({ slug: 'meeting/valid-fence', type: 'meeting', compiled_truth: `${LONG_CONTENT}\n\n${fence}` });
+    await seedPage({ slug: 'meeting/unreadable-fence', type: 'meeting', compiled_truth: `${LONG_CONTENT}\n\n${fence}` });
+    const read = engine.readPageSnapshot.bind(engine);
+    const batch = spyOn(engine, 'readPageSnapshotsBatch').mockRejectedValue(new Error('synthetic batch read failure'));
+    const single = spyOn(engine, 'readPageSnapshot').mockImplementation(async (slug, opts) => {
+      if (slug === 'meeting/unreadable-fence') throw new Error('synthetic canonical fence read failure');
+      return read(slug, opts);
+    });
+    try {
+      const candidates = await discoverExtractablePages(engine, 'default');
+      expect(candidates.map(candidate => candidate.slug).sort()).toEqual(['meeting/plain', 'meeting/valid-fence']);
+      expect(single).toHaveBeenCalledWith('meeting/unreadable-fence', { sourceId: 'default' });
+    } finally {
+      single.mockRestore();
+      batch.mockRestore();
     }
   });
 });

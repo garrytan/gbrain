@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
-import type { ChatResult } from '../../src/core/ai/gateway.ts';
+import type { ChatOpts, ChatResult } from '../../src/core/ai/gateway.ts';
 import { runPhaseExtractAtoms, countExtractAtomsBacklog, discoverExtractablePages } from '../../src/core/cycle/extract-atoms.ts';
 import { disposePersistenceConsumer, waitForWrite } from '../../src/core/persistence/service.ts';
 import { submitPageMutation } from '../../src/core/persistence/page-mutations.ts';
@@ -25,8 +25,9 @@ import { MinionWorker } from '../../src/core/minions/worker.ts';
 import { registerBuiltinHandlers } from '../../src/commands/jobs.ts';
 import type { MinionJobContext } from '../../src/core/minions/types.ts';
 import { withEnv } from './with-env.ts';
+import { renderFactsTable, type ParsedFact } from '../../src/core/facts-fence.ts';
 
-export const atomContractCases = ['publication', 'zero_yield', 'revision', 'removal', 'deferred', 'unavailable', 'source_replaced', 'malformed', 'malformed_retry', 'malformed_retry_failure', 'malformed_retry_revision', 'publication_retry', 'pagination', 'transcript', 'transcript_changed', 'connector', 'connector_claimed'] as const;
+export const atomContractCases = ['publication', 'zero_yield', 'revision', 'removal', 'deferred', 'unavailable', 'source_replaced', 'malformed', 'malformed_retry', 'malformed_retry_failure', 'malformed_retry_revision', 'publication_retry', 'pagination', 'withdrawn_fence', 'transcript', 'transcript_changed', 'connector', 'connector_claimed'] as const;
 type Case = typeof atomContractCases[number];
 
 export async function exerciseManagedAtoms(engine: BrainEngine, scenario: Case): Promise<void> {
@@ -40,9 +41,26 @@ export async function exerciseManagedAtoms(engine: BrainEngine, scenario: Case):
       await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
       await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
       const contentDate = '2026-07-09T15:45:00.000Z'; // #6720: page-derived atoms inherit it; this undated transcript gives its atoms none (#7268)
-      await engine.putPage('notes/example', { type: 'source', title: 'Example', compiled_truth: 'A private project record. '.repeat(40),
+      const facts: ParsedFact[] = [
+        { rowNum: 1, claim: 'Synthetic withdrawn world claim', visibility: 'world', kind: 'fact', confidence: 1, notability: 'medium', active: true },
+        { rowNum: 2, claim: 'Synthetic withdrawn private claim', visibility: 'private', kind: 'fact', confidence: 1, notability: 'medium', active: true },
+        { rowNum: 3, claim: 'Synthetic retained world claim', visibility: 'world', kind: 'fact', confidence: 1, notability: 'medium', active: true },
+        { rowNum: 4, claim: 'Synthetic held world cell', visibility: 'world', kind: 'fact', confidence: 1, notability: 'medium', active: true },
+      ];
+      const story = 'A private project record. '.repeat(40);
+      const body = scenario === 'withdrawn_fence' ? `${story}\n\n${renderFactsTable(facts)}` : story;
+      await engine.putPage('notes/example', { type: 'source', title: 'Example', compiled_truth: body,
         frontmatter: { visibility: 'private', date: contentDate }, effective_date: new Date(contentDate), effective_date_source: 'date' }, { sourceId });
       const page = (await engine.getPage('notes/example', { sourceId }))!;
+      if (scenario === 'withdrawn_fence') {
+        // Simulate a persisted withdrawal whose historical body was never rewritten.
+        for (const fact of facts.slice(0, 2)) await engine.executeRaw(
+          'INSERT INTO fact_withdrawals(source_id, visibility, subject, fact_hash) VALUES($1,$2,$3,gbrain_fact_fingerprint($4))',
+          [sourceId, fact.visibility, page.slug, fact.claim]);
+        await engine.insertFacts([{ fact: facts[3].claim, source: 'test', visibility: 'private', row_num: 4,
+          source_markdown_slug: page.slug }], { source_id: sourceId });
+        expect((await engine.readPageSnapshot(page.slug, { sourceId }))?.page.compiled_truth).not.toBe(body);
+      }
       const transcript = scenario.startsWith('transcript') ? join(home, 'meeting.txt') : null;
       if (transcript) writeFileSync(transcript, page.compiled_truth);
       if (scenario === 'pagination') {
@@ -85,8 +103,14 @@ export async function exerciseManagedAtoms(engine: BrainEngine, scenario: Case):
       let blockedPath: string | undefined;
       let retryRecovery = false;
       const ctx = { engine, config: { engine: engine.kind }, remote: false, sourceId, dryRun: false, logger: console };
-      const chat = async (): Promise<ChatResult> => {
+      const chat = async (request: ChatOpts): Promise<ChatResult> => {
         calls++;
+        if (scenario === 'withdrawn_fence') {
+          const prompt = JSON.stringify(request.messages);
+          expect(prompt).toContain(facts[2].claim);
+          for (const fact of facts.slice(0, 2)) expect(prompt).not.toContain(fact.claim);
+          expect(prompt).not.toContain(facts[3].claim);
+        }
         if (scenario === 'revision' || scenario === 'removal') {
           const snapshot = (await engine.readPageSnapshot(page.slug, { sourceId }))!;
           await submitPageMutation(ctx, { operation: scenario === 'removal' ? 'delete_page' : 'put_page',
@@ -117,13 +141,20 @@ export async function exerciseManagedAtoms(engine: BrainEngine, scenario: Case):
       };
       const opts = { sourceId,
         _transcripts: transcript ? [{ filePath: transcript, content: page.compiled_truth, contentHash: sha256(page.compiled_truth) }] : [],
-        _pages: transcript ? [] : scenario === 'pagination' ? undefined : [{ slug: page.slug, content: page.compiled_truth, contentHash: page.content_hash! }], _chat: chat };
+        _pages: transcript ? [] : scenario === 'pagination' || scenario === 'withdrawn_fence' ? undefined : [{ slug: page.slug, content: page.compiled_truth, contentHash: page.content_hash! }], _chat: chat };
       if (scenario === 'unavailable') {
         await expect(runPhaseExtractAtoms(engine, opts)).rejects.toMatchObject({ code: 'owner_unavailable' });
         expect(calls).toBe(0);
         return;
       }
       const first = await runPhaseExtractAtoms(engine, opts);
+      if (scenario === 'withdrawn_fence') {
+        expect(calls).toBe(1);
+        const [stored] = await engine.executeRaw<{ compiled_truth: string }>(
+          'SELECT compiled_truth FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, page.slug]);
+        expect(stored.compiled_truth).toBe(body);
+        expect(await countExtractAtomsBacklog(engine, sourceId)).toBe(0);
+      }
       const readState = () => engine.executeRaw<{ content_hash: string; fail_count: number; tombstoned: boolean }>(
         'SELECT content_hash,fail_count,tombstoned FROM extract_atoms_page_state WHERE page_id=$1', [page.id]);
       if (scenario === 'zero_yield' || scenario === 'malformed' || scenario.startsWith('malformed_retry')) {
@@ -247,7 +278,8 @@ export async function exerciseManagedAtoms(engine: BrainEngine, scenario: Case):
       const replay = await runPhaseExtractAtoms(engine, opts);
       // #6325: a malformed batch is retried automatically (one strike per completed failure).
       expect(calls).toBe(scenario === 'malformed' ? 2 : 1);
-      expect(replay.status).toBe(scenario === 'malformed' ? 'warn' : 'ok');
+      const replayStatus = scenario === 'malformed' ? 'warn' : scenario === 'withdrawn_fence' ? 'skipped' : 'ok';
+      expect(replay.status).toBe(replayStatus);
       // A short maintenance wait returns the phase while the consumer is still committing the batch (`write_pending`
       // is progress, #5601); the final state below is the settled batch, so wait for the source's writes to end first.
       if (scenario === 'deferred') {

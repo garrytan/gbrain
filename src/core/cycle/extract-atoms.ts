@@ -91,7 +91,7 @@ import { normalizeForGrounding, isGroundingQuoteMark } from './synthesize-verify
 import type { TranscriptPageIndex } from '../transcripts/discover.ts';
 import { atomOriginPin, atomWriteFailure, type AtomWriteFailure, concurrentAtomBatch, managedAtomSession, readAtomOrigin, resumeManagedAtoms, publishManagedAtoms, publishManagedAtomGeneration, resumeManagedGenerationMembers,
   MANAGED_ATOM_DISCOVERY_SQL, managedAtomDiscoverySql, type AtomOrigin } from '../persistence/atom-maintenance.ts';
-import { effectiveVisibility, folderRestricted } from '../search/private-visibility.ts';
+import { effectiveVisibility, folderRestricted, withoutCallerAccess } from '../search/private-visibility.ts';
 import { OperationError } from '../ops/contract.ts';
 import { isOpPageSlug } from '../ops/context.ts';
 import type { WriteReceipt } from '../persistence/types.ts';
@@ -101,6 +101,10 @@ import { atomGenerationOrigin, atomInputPin, heldLine, publishUnmanagedAtoms, re
 import { heldForInput } from '../generations/publish.ts';
 import { ATOM_TYPES, ATOMS_RESPONSE_SCHEMA } from './extract-atoms-schema.ts';
 import { parseAtomsOutcome } from './extract-atoms-parse.ts';
+import { pageSnapshotKey } from '../page-snapshot-batch.ts';
+import type { PageSnapshot } from '../page-state/types.ts';
+import { FACTS_FENCE_BEGIN } from '../facts-fence.ts';
+import { heldRowsForCaller } from '../eligibility/fence-overlay.ts';
 export { parseAtomsOutcome, parseAtomsResponse, type AtomsParseOutcome } from './extract-atoms-parse.ts';
 
 const DEFAULT_BUDGET_USD = 0.3;
@@ -388,7 +392,7 @@ Output ONLY the JSON object, no prose. Use null for unavailable optional metadat
 /**
  * v0.41.2.1 (D2) — single-SQL discovery + idempotency filter for brain
  * pages. Discovers extractable pages whose content_hash has no
- * corresponding atom row yet. One round-trip; replaces the
+ * corresponding atom row yet. The discovery query replaces the
  * 6-listPages + per-candidate atom-existence-check pattern from PR #1414.
  *
  * Fails soft: any executeRaw error is logged to stderr and returns [].
@@ -462,12 +466,40 @@ export async function discoverExtractablePages(
       compiled_truth: string;
       content_hash: string;
     }>(sql, params);
-    return rows.map((r) => ({
-      slug: r.slug,
-      content: r.compiled_truth,
-      contentHash: r.content_hash,
-      identity: { pageId: r.id, sourceIncarnation: r.source_incarnation, revision: r.knowledge_revision },
-    }));
+    // The canonical reader overlays withdrawals and purges on stored fact fences.
+    // Keep discovery and the later origin check on the same page revision and view.
+    const withFences = new Map(rows.filter(row => row.compiled_truth.includes(FACTS_FENCE_BEGIN))
+      .map(row => [row.slug, row] as const));
+    const refs = [...withFences.keys()].map(slug => ({ slug, sourceId }));
+    const projected = new Map<string, string>();
+    const retainProjection = (slug: string, snapshot: PageSnapshot | null | undefined) => {
+      const row = withFences.get(slug)!;
+      if (snapshot?.page.id === row.id && snapshot.sourceIncarnation === row.source_incarnation
+        && snapshot.revision === row.knowledge_revision && snapshot.page.content_hash === row.content_hash) {
+        projected.set(slug, snapshot.page.compiled_truth);
+      }
+    };
+    for (let rest = refs; rest.length > 0;) {
+      const batch = await engine.readPageSnapshotsBatch(rest, { absentIsNull: true }).catch(() => null);
+      if (!batch) {
+        // One unreadable fence must not starve other candidates or fall back to raw text.
+        for (const { slug } of rest) {
+          try { retainProjection(slug, await engine.readPageSnapshot(slug, { sourceId })); }
+          catch { console.error(`[extract_atoms] could not read the canonical atom input for ${slug}; it remains pending`); }
+        }
+        break;
+      }
+      for (const { slug } of rest.slice(0, batch.covered)) {
+        retainProjection(slug, batch.snapshots.get(pageSnapshotKey(sourceId, slug)));
+      }
+      rest = rest.slice(Math.max(1, batch.covered));
+    }
+    return rows.flatMap(row => {
+      const content = withFences.has(row.slug) ? projected.get(row.slug) : row.compiled_truth;
+      if (content === undefined) return [];
+      return [{ slug: row.slug, content, contentHash: row.content_hash,
+        identity: { pageId: row.id, sourceIncarnation: row.source_incarnation, revision: row.knowledge_revision } }];
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[extract_atoms] page-discovery query failed: ${msg}`);
@@ -1110,10 +1142,14 @@ export async function runPhaseExtractAtoms(
     // item, so a quote can only verify against text the model actually saw.
     // #6503: a cut item is extracted once from its head and gets a partial
     // disposition instead of a completion stamp (extract-atoms-input.ts).
-    const input = extractAtomsInput(item, maxInputChars, item.kind === 'page' ? (await readPageWatermark(engine, sourceId, item.slug, 'extract_atoms')).stored : null);
-    const { promptContent, truncated } = input;
     let origin: AtomOrigin | null = null;
     try {
+      const omitRows = item.kind === 'page'
+        ? await withoutCallerAccess(() => heldRowsForCaller(engine, true, { sourceId, slug: item.slug, compiled_truth: item.content }))
+        : undefined;
+      const watermark = item.kind === 'page' ? (await readPageWatermark(engine, sourceId, item.slug, 'extract_atoms')).stored : null;
+      const input = extractAtomsInput(item, maxInputChars, watermark, omitRows);
+      const { promptContent, truncated } = input;
       origin = managed ? { ...await readAtomOrigin(engine, managed, item), ...(truncated ? { partialInputChars: maxInputChars } : {}) } : null;
       const sourcePage = item.kind === 'page' ? await engine.getPage(item.slug, { sourceId }) : null;
       const contentDate = await (item.kind === 'page' ? atomSourceDate(engine, sourcePage) : transcriptAtomSourceDate(engine, item.content, sourceDate(item.filePath, ''))); // #6720, #7268: captured with the input, before inference

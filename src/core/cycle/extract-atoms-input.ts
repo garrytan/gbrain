@@ -22,7 +22,7 @@ import { truncateUtf8 } from '../text-safe.ts';
 import { corpusTextForExtraction } from '../context/corpus-segments.ts';
 import { AtomPageStateError, type AtomPageInput } from './extract-atoms-page-state.ts';
 import { planExtraction, type ExtractionPlan, type StoredWatermark } from '../extraction-watermark.ts';
-import { publicBody } from '../mentions/aliases.ts';
+import { sanitizeRemoteBody } from '../remote-body.ts';
 
 export const DEFAULT_EXTRACT_MAX_INPUT_CHARS = 50_000;
 export const EXTRACT_MAX_INPUT_CHARS_KEY = 'cycle.extract_atoms.max_input_chars';
@@ -66,14 +66,14 @@ export interface ExtractAtomsInput {
  * Large pages A7: a page whose stored watermark still matches its body reads
  * the text appended since (`watermark`); a tail read is partial input too, so
  * the #6503 disposition holds (no completion stamp, nothing retired).
- * A page is read as a world reader sees it (`publicBody`: facts fence rows
- * other than world and the takes fence removed), so neither the prompt, the
- * atoms nor a verified quote can carry a row a remote read of the page hides;
- * the cap and the watermark apply to that text.
+ * Use the remote reader's facts and takes projection. The prompt and verified
+ * quotes exclude private, withdrawn, and held rows. The cap and
+ * watermark apply to that same text.
  */
-export function extractAtomsInput(item: ExtractAtomsItem, maxInputChars: number, watermark: StoredWatermark | null = null): ExtractAtomsInput {
+export function extractAtomsInput(item: ExtractAtomsItem, maxInputChars: number, watermark: StoredWatermark | null = null,
+  omitRows?: ReadonlySet<number>): ExtractAtomsInput {
   if (item.kind === 'page') {
-    const body = publicBody(item.content);
+    const body = sanitizeRemoteBody(item.content, { keepMaterializedMarkers: true, omitRows });
     const plan = planExtraction(body, watermark, { cap: maxInputChars, pipeline: 'extract_atoms', emptyTail: 'head' });
     return { promptContent: plan.text, truncated: plan.mode !== 'full', inputChars: body.length, plan };
   }
