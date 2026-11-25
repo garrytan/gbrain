@@ -59,36 +59,39 @@ export function rustMuArmRequested(env: Record<string, string | undefined> = pro
 /** The brain's own config row of the multi-user switch (`gbrain_store::MULTIUSER_CONFIG_KEY`). */
 export const RUST_MULTIUSER_CONFIG_KEY = 'engine.rust.multiuser';
 
-/** Printed once per file, and recorded in the ledger detail, when the build cannot report what the store resolved. */
-export const MU_NOT_RESOLVED_NOTICE = 'this build does not resolve the multi-user switch; rust-mu runs as rust';
+/** What the store of an engine resolved for multi-user mode (`RustStore.multiuser`, the open info's `multiuser`). */
+export type MuResolution = 'on' | 'off' | 'unexposed' | 'client' | 'closed';
 
-/**
- * What the store resolved for an open engine: true or false when the build exposes it (`RustStore.multiuser`, the open info's
- * `multiuser`), undefined when it does not (a build before I-0.v2), or when no store is open here (a client engine).
- */
+/** What the store resolved: true or false, or undefined when the build does not expose it or no store is open here. (Kept for callers that only read it; the rust-mu arm itself requires it, assertRustMultiuserResolved.) */
 export function resolvedMultiuser(engine: unknown): boolean | undefined {
-  const store = (engine as RustEngine).openStoreIfOpen?.('multiuserSwitch') as { multiuser?: unknown } | null | undefined;
-  return typeof store?.multiuser === 'boolean' ? store.multiuser : undefined;
+  const r = rustMultiuserResolution(engine);
+  return r === 'on' ? true : r === 'off' ? false : undefined;
 }
 
-let muResolutionExposed: boolean | undefined;
-
-/** Whether the build exposed the resolved switch on the last rust-mu brain the arm opened (undefined before one opened). */
-export function muResolutionIsExposed(): boolean | undefined {
-  return muResolutionExposed;
+export function rustMultiuserResolution(engine: unknown): MuResolution {
+  const e = engine as { ownerRole?: unknown; openStoreIfOpen?: (member: string) => unknown };
+  if (e.ownerRole === 'client') return 'client';
+  const store = e.openStoreIfOpen?.('multiuserSwitch') as { multiuser?: unknown } | null | undefined;
+  if (store === null || store === undefined) return 'closed';
+  if (typeof store.multiuser !== 'boolean') return 'unexposed';
+  return store.multiuser ? 'on' : 'off';
 }
 
 /**
- * Check an engine opened for the `rust-mu` view: when the build exposes the resolved switch it must be true, else the arm
- * fails; when it does not expose it, remember that (the file prints one notice, the ledger records it) and carry on.
+ * Assert that the Rust brain `engine` runs in multi-user mode, on the `route` the `rust-mu` view turned it on by. A pass on the
+ * view must prove the brain it ran on resolved the switch, so this FAILS when the store resolved it off, and when the build does
+ * not expose the resolution at all (no notice-and-pass). A client engine (it reaches a brain another engine owns) has no store of
+ * its own and is accepted: the owner's brain is the one that was checked. Call it on any brain a scenario opens itself (a child
+ * process brain, a reopened brain) after it connected.
  */
-export function checkMuResolved(engine: unknown, route: RustMuRoute): boolean {
-  const resolved = resolvedMultiuser(engine);
-  if (resolved === false) {
-    throw new Error(`[rust-mu-${route}] the store did not resolve multi-user mode although the arm turned it on by the ${route === 'env' ? `environment variable GBRAIN_RUST_MULTIUSER=1` : `config row ${RUST_MULTIUSER_CONFIG_KEY}`}`);
+export function assertRustMultiuserResolved(engine: unknown, route: RustMuRoute): void {
+  const how = route === 'env' ? 'the environment variable GBRAIN_RUST_MULTIUSER=1' : `the config row ${RUST_MULTIUSER_CONFIG_KEY}`;
+  switch (rustMultiuserResolution(engine)) {
+    case 'on': case 'client': return;
+    case 'off': throw new Error(`[rust-mu-${route}] the store did not resolve multi-user mode although the arm turned it on by ${how}`);
+    case 'unexposed': throw new Error(`[rust-mu-${route}] this build does not expose the resolved multi-user switch (RustStore.multiuser), so a rust-mu pass would prove nothing; ${how} was set`);
+    case 'closed': throw new Error(`[rust-mu-${route}] no open store to read the multi-user switch from; assert it after connect`);
   }
-  muResolutionExposed = resolved === true;
-  return resolved === true;
 }
 
 /** The capability a member needs (its row in the member table), or null for a lifecycle member or an unknown name. */
@@ -130,21 +133,50 @@ export function newRustBrain(): RustBrainDir {
   return { engine, dir: engine.databasePath };
 }
 
+/** The parts of an engine the multi-user connect needs (a Rust engine, or a fake in a test). */
+export interface MuConnectable {
+  connect(config: never): Promise<void>;
+  disconnect(): Promise<void>;
+  setConfig(key: string, value: string): Promise<void>;
+}
+
 /**
- * A Rust engine on a new brain directory, connected. With a `route` (the `rust-mu` view) multi-user mode is checked on it: by
- * the `config` route the brain's own config row is written first and the engine reconnected so the store resolves it at open.
+ * Make `engine.connect` bring the engine up in multi-user mode by `route`, and prove it did. The `env` route needs nothing
+ * before connect (the variable is set in the process). The `config` route seeds the brain's own config row first (connect,
+ * setConfig through the typed member, disconnect), then connects again so the store resolves it at open. After the connect
+ * the resolution is asserted; when it fails the engine is disconnected and `removeDir` removes the brain's directory before the
+ * error reaches the caller, who has no other handle to clean up with. Every connect of the engine goes through this, so a spare
+ * the scenario connects itself (`unconnectedEngine()`) is seeded and checked like the arm's own brain.
+ */
+export function installMuConnect(engine: MuConnectable, route: RustMuRoute, removeDir: () => void): void {
+  const connect = engine.connect.bind(engine);
+  engine.connect = async (config: never): Promise<void> => {
+    try {
+      await connect(config);
+      if (route === 'config') {
+        await engine.setConfig(RUST_MULTIUSER_CONFIG_KEY, 'true');
+        await engine.disconnect();
+        await connect(config);
+      }
+      assertRustMultiuserResolved(engine, route);
+    } catch (error) {
+      await engine.disconnect().catch(() => undefined);
+      removeDir();
+      throw error;
+    }
+  };
+}
+
+/**
+ * A Rust engine on a new brain directory, connected. With a `route` (the `rust-mu` view) it runs in multi-user mode by that
+ * route and the resolution is required (installMuConnect): a brain that did not resolve it is disconnected and removed before
+ * the error is thrown.
  */
 export async function openRustBrain(route?: RustMuRoute): Promise<RustBrainDir> {
   await loadRustArmAddon();
   const brain = newRustBrain();
-  const config = { engine: 'pglite', database_path: brain.dir } as never;
-  await brain.engine.connect(config);
-  if (route === 'config') {
-    await brain.engine.setConfig(RUST_MULTIUSER_CONFIG_KEY, 'true');
-    await brain.engine.disconnect();
-    await brain.engine.connect(config);
-  }
-  if (route !== undefined) checkMuResolved(brain.engine, route);
+  if (route !== undefined) installMuConnect(brain.engine as unknown as MuConnectable, route, () => removeBrainDir(brain.dir));
+  await brain.engine.connect({ engine: 'pglite', database_path: brain.dir } as never);
   return brain;
 }
 
@@ -154,10 +186,14 @@ export async function openRustBrain(route?: RustMuRoute): Promise<RustBrainDir> 
  * "a second engine on an open brain directory becomes a client of the first"). The caller disconnects it and never removes
  * the directory.
  */
-export async function openRustBrainAt(dir: string): Promise<RustEngine> {
+export async function openRustBrainAt(dir: string, route?: RustMuRoute): Promise<RustEngine> {
   const loaded = await loadRustArmAddon();
   const engine = openRustEngine({ addon: loaded, databasePath: dir });
   await engine.connect({ engine: 'pglite', database_path: dir } as never);
+  if (route !== undefined) {
+    // The brain was seeded by the arm that created it; a client reaches that owner, an owner resolves it from the brain itself.
+    try { assertRustMultiuserResolved(engine, route); } catch (error) { await engine.disconnect().catch(() => undefined); throw error; }
+  }
   return engine;
 }
 

@@ -52,7 +52,7 @@ const engineCapabilitiesModule = engineCapabilitiesNamespace as unknown as Recor
 import { itemSetHash } from '../../src/core/generations/publish.ts';
 import { IDENTITY_DOWNGRADE_OP } from '../../src/core/persistence/sync-status-sql.ts';
 import {
-  archiveRustSource, createRustSource, newRustBrain, putRustOpCheckpointRow, rustPageDeletedAt, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow, createRustMember, type MemberSeed, rustMuRoute, openRustBrainAt, muResolutionIsExposed, MU_NOT_RESOLVED_NOTICE, type RustMuRoute,
+  archiveRustSource, createRustSource, newRustBrain, putRustOpCheckpointRow, rustPageDeletedAt, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow, createRustMember, type MemberSeed, rustMuRoute, openRustBrainAt, installMuConnect, type MuConnectable, type RustMuRoute,
 } from './rust-arm.ts';
 import { isEngineMember, readStopPins, refusalFacts, rustServes, rustServesCapability, setupRefusalStep, setupStep, today, type StopPin } from './rust-refusals.ts';
 
@@ -162,10 +162,12 @@ async function openRustArm(route?: RustMuRoute): Promise<ParityArm> {
     unconnected: () => {
       const brain = newRustBrain();
       dirs.push(brain.dir);
+      // On the rust-mu view the spare is seeded and its multi-user resolution required when the scenario connects it.
+      if (route !== undefined) installMuConnect(brain.engine as unknown as MuConnectable, route, () => removeBrainDir(brain.dir));
       return { engine: brain.engine as unknown as BrainEngine, config: { engine: 'pglite', database_path: brain.dir } as never };
     },
     // The arm's current brain (a reset replaces it): the second engine is an owner-socket client of `arm.engine`.
-    sameBrain: async () => (await openRustBrainAt((arm.engine as unknown as { databasePath: string }).databasePath)) as unknown as BrainEngine,
+    sameBrain: async () => (await openRustBrainAt((arm.engine as unknown as { databasePath: string }).databasePath, route)) as unknown as BrainEngine,
   };
   return arm;
 }
@@ -766,7 +768,6 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
         else delete process.env.GBRAIN_RUST_MULTIUSER;
       }
       for (const backend of selected) opened.push(await openArm(backend, backend === 'rust' && muRoute !== null ? muRoute : undefined));
-      if (muRoute !== null && muResolutionIsExposed() === false) console.log(`[${rustLabel} arm] ${testFile}: ${MU_NOT_RESOLVED_NOTICE}`);
     } catch (error) {
       for (const arm of opened) await arm.close();
       restoreMultiuser();
@@ -794,6 +795,20 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
 
   function parityTest<T>(name: string, opts: ParityCaseOpts, scenario: ParityScenario<T>): void {
     registered++;
+    if (opts.mwCase !== undefined) {
+      // A multi-writer case no selected arm runs (every cell pending or n/a) must not read as a pass in a plain Bun run: it is
+      // registered as a todo that names the owners, and its per-arm ledger lines are still written when the ledger is on.
+      const row = mwEntry(opts.mwCase);
+      const labels = selected.map((backend) => (backend === 'rust' ? rustLabel : backend) as LedgerArm);
+      const plans = labels.map((label) => ({ label, plan: mwArmPlan(row, label) }));
+      if (plans.every((p) => p.plan.action === 'skip')) {
+        for (const { label, plan } of plans) if (plan.action === 'skip') appendLedger({ case: row.id, arm: label, outcome: plan.outcome, detail: plan.detail });
+        if (selected.includes('rust')) skipped++;
+        const why = [...new Set(plans.flatMap((p) => (p.plan.action === 'skip' ? [`${p.label}: ${p.plan.detail}`] : [])))].join('; ');
+        test.todo(`${name} [no selected arm runs it: ${why}]`, () => {});
+        return;
+      }
+    }
     test(name, async () => {
       expect(arms.length).toBeGreaterThan(0);
       const results: Array<{ backend: ParityBackend; value: T }> = [];
@@ -1180,7 +1195,6 @@ export async function runMwCase<T>(c: { row: MwEntryLike; name: string; opts: Pa
 function mwHandle<T>(arm: ParityArm, label: LedgerArm, scenario: ParityScenario<T>): MwArmHandle<T> {
   return {
     label, backend: arm.backend,
-    note: () => (arm.muRoute !== undefined && muResolutionIsExposed() === false ? MU_NOT_RESOLVED_NOTICE : undefined),
     start: async () => {
       await resetArm(arm);
       const calls = new Set<string>();

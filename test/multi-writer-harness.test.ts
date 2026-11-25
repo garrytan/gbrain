@@ -24,7 +24,7 @@ import { assertMultiuserCapabilityName, checkMwArm, checkRustArm, mwArmPlan, run
 import { checkRustTally } from './engine-parity/rust-tally.ts';
 import { MW_ARMS, type MwArm, type MwCase, type MwCell } from './engine-parity/multi-writer-cases.ts';
 import { type LedgerLine } from './engine-parity/multi-writer-ledger.ts';
-import { checkMuResolved, MU_NOT_RESOLVED_NOTICE, muResolutionIsExposed, rustArmAddonPath, rustMuRoute } from './engine-parity/rust-arm.ts';
+import { assertRustMultiuserResolved, installMuConnect, rustArmAddonPath, rustMuRoute, RUST_MULTIUSER_CONFIG_KEY } from './engine-parity/rust-arm.ts';
 import { mwEntries, mwEntry } from './engine-parity/multi-writer-entries.ts';
 import { parityDeclarations } from './engine-parity/coverage.ts';
 
@@ -279,16 +279,12 @@ describe('both rust-mu routes read the matrix\'s one rust-mu cell and keep their
     expect([mwArmPlan(r, 'rust').action, mwArmPlan(r, 'rust-mu-env').action, mwArmPlan(r, 'rust-mu-config').action]).toEqual(['run', 'skip', 'skip']);
   });
 
-  test('a ledger note (the build does not resolve the switch) is appended to every line of the arm that carries it, skips included', async () => {
+  test('a ledger note, when an arm handle carries one, is appended to every line of that arm, skips included', async () => {
     const r = row({ cells: { pglite: { status: 'n/a', why: 'one connection' }, 'rust-mu': { status: 'pending', owner: 'L5 hosts', why: 'fence' } } });
     const ledger = collect();
-    const arms = [handle('pglite', ok(1)), { ...handle('rust-mu-config', ok(1)), note: () => MU_NOT_RESOLVED_NOTICE }];
+    const arms = [handle('pglite', ok(1)), { ...handle('rust-mu-config', ok(1)), note: () => 'a note' }];
     await runMwCase({ row: r, name: 'C04 x', opts: OPTS, arms, ledger: ledger.write });
-    expect(ledger.lines.map((l) => [l.arm, l.outcome, l.detail])).toEqual([['pglite', 'n/a', 'one connection'],
-      ['rust-mu-config', 'pending', `L5 hosts: fence; ${MU_NOT_RESOLVED_NOTICE}`]]);
-    const passing = collect();
-    await runMwCase({ row: row(), name: 'C04 x', opts: OPTS, arms: [handle('pglite', ok(1)), { ...handle('rust-mu-env', ok(1)), note: () => MU_NOT_RESOLVED_NOTICE }], ledger: passing.write });
-    expect(passing.lines.map((l) => l.detail.includes(MU_NOT_RESOLVED_NOTICE))).toEqual([false, true]);
+    expect(ledger.lines.map((l) => [l.arm, l.outcome, l.detail])).toEqual([['pglite', 'n/a', 'one connection'], ['rust-mu-config', 'pending', 'L5 hosts: fence; a note']]);
   });
 });
 
@@ -335,16 +331,54 @@ describe('the rust-mu route: the flag, and what the store resolved', () => {
     expect([undefined, '1', 'env', 'config'].map((v) => rustMultiuserView({ GBRAIN_TEST_RUST_MU_ARM: v }))).toEqual(['off', 'env', 'env', 'config']);
   });
 
-  const engineWith = (multiuser: unknown) => ({ openStoreIfOpen: () => (multiuser === 'absent' ? {} : { multiuser }) });
+  const engineWith = (multiuser: unknown, ownerRole: string | null = 'owner') => ({ ownerRole, openStoreIfOpen: () => (multiuser === 'absent' ? {} : multiuser === 'none' ? null : { multiuser }) });
 
-  test('a build that exposes the resolved switch must say true; false fails the arm naming the route; absent is noted, not failed', () => {
-    expect(checkMuResolved(engineWith(true), 'env')).toBe(true);
-    expect(muResolutionIsExposed()).toBe(true);
-    expect(() => checkMuResolved(engineWith(false), 'config')).toThrow(/\[rust-mu-config\] the store did not resolve multi-user mode.*engine\.rust\.multiuser/);
-    expect(() => checkMuResolved(engineWith(false), 'env')).toThrow(/GBRAIN_RUST_MULTIUSER=1/);
-    expect(checkMuResolved(engineWith('absent'), 'env')).toBe(false);
-    expect(muResolutionIsExposed()).toBe(false);
-    expect(checkMuResolved({}, 'config')).toBe(false); // an engine with no open store here cannot say
+  test('a rust-mu pass requires the resolved switch: on passes, off fails naming the route, an unexposed build FAILS, a client is accepted', () => {
+    expect(() => assertRustMultiuserResolved(engineWith(true), 'env')).not.toThrow();
+    expect(() => assertRustMultiuserResolved(engineWith(false), 'config')).toThrow(/\[rust-mu-config\] the store did not resolve multi-user mode.*engine\.rust\.multiuser/);
+    expect(() => assertRustMultiuserResolved(engineWith(false), 'env')).toThrow(/GBRAIN_RUST_MULTIUSER=1/);
+    expect(() => assertRustMultiuserResolved(engineWith('absent'), 'env')).toThrow(/does not expose the resolved multi-user switch/);
+    expect(() => assertRustMultiuserResolved(engineWith('none'), 'config')).toThrow(/no open store/);
+    expect(() => assertRustMultiuserResolved(engineWith('absent', 'client'), 'env')).not.toThrow();
+  });
+
+  /** A fake engine that records what connect, setConfig and disconnect did, and what the store resolves after each connect. */
+  function fakeEngine(resolveAfter: (connects: number, seeded: boolean) => unknown) {
+    const log: string[] = [];
+    let connects = 0;
+    let seeded = false;
+    const engine = {
+      ownerRole: 'owner',
+      async connect() { connects++; log.push('connect'); },
+      async disconnect() { log.push('disconnect'); },
+      async setConfig(key: string, value: string) { seeded = true; log.push(`setConfig ${key}=${value}`); },
+      openStoreIfOpen: () => ({ multiuser: resolveAfter(connects, seeded) }),
+    };
+    return { engine, log };
+  }
+
+  test('the config route seeds the config row, disconnects and reconnects so the store resolves it at open; the env route just connects', async () => {
+    const config = fakeEngine((connects, seeded) => connects >= 2 && seeded);
+    installMuConnect(config.engine as never, 'config', () => config.log.push('removed'));
+    await config.engine.connect();
+    expect(config.log).toEqual(['connect', `setConfig ${RUST_MULTIUSER_CONFIG_KEY}=true`, 'disconnect', 'connect']);
+    const env = fakeEngine(() => true);
+    installMuConnect(env.engine as never, 'env', () => env.log.push('removed'));
+    await env.engine.connect();
+    expect(env.log).toEqual(['connect']);
+  });
+
+  test('a resolution that fails after connect disconnects the engine and removes its directory before the error is thrown', async () => {
+    for (const route of ['env', 'config'] as const) {
+      const { engine, log } = fakeEngine(() => false);
+      installMuConnect(engine as never, route, () => log.push('removed'));
+      await expect(engine.connect()).rejects.toThrow(/did not resolve multi-user mode/);
+      expect(log.slice(-2)).toEqual(['disconnect', 'removed']);
+    }
+    const unexposed = fakeEngine(() => undefined);
+    installMuConnect(unexposed.engine as never, 'env', () => unexposed.log.push('removed'));
+    await expect(unexposed.engine.connect()).rejects.toThrow(/does not expose/);
+    expect(unexposed.log.slice(-2)).toEqual(['disconnect', 'removed']);
   });
 });
 
@@ -385,8 +419,7 @@ parityTest('the multi-user switch as the arm sees it', { methods: ['getConfig'] 
       // The environment variable is unset for the whole view; only the Rust brain carries the config row.
       expect(config.seen).toEqual(['pglite unset config none', 'rust unset config true']);
       expect(config.text).toContain('[rust-mu-config arm]');
-      // A build that does not expose the resolved switch says so once; one that does would have failed the arm if it were off.
-      if (!/the store did not resolve/.test(config.text)) expect(config.text.match(new RegExp(MU_NOT_RESOLVED_NOTICE, 'g'))?.length ?? 0).toBeLessThanOrEqual(1);
+      expect(config.text).not.toContain('does not expose');
       const plain = runView('plain', { GBRAIN_TEST_RUST_ARM: '1' });
       expect(plain.status).toBe(0);
       expect(plain.seen).toEqual(['pglite unset off none', 'rust unset off none']);
@@ -471,4 +504,33 @@ describe('multi_writer is a multi-user capability', () => {
     expect(() => assertMultiuserCapabilityName('multi_writer', { ENGINE_CAPABILITIES: ['raw_sql'], MULTIUSER_CAPABILITIES: [] })).toThrow(/not in MULTIUSER_CAPABILITIES/);
     expect(() => assertMultiuserCapabilityName('multi_writer', { ENGINE_CAPABILITIES: ['raw_sql'], MULTIUSER_CAPABILITIES: ['multi_writer'] })).not.toThrow();
   });
+});
+
+describe('a case no selected arm runs is a todo, not a pass, and still writes its ledger lines', () => {
+  const REPO = join(import.meta.dir, '..');
+
+  test('C11 (every cell pending) in a plain Bun run: reported as todo, exit 0, no pass, one ledger line per selected arm naming the owner', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-mw-todo-'));
+    try {
+      const fixture = join(dir, 'todo.test.ts');
+      writeFileSync(fixture, `import { parityArms } from ${JSON.stringify(join(REPO, 'test/engine-parity/harness.ts'))};
+import { testBackends } from ${JSON.stringify(join(REPO, 'test/helpers/test-backends.ts'))};
+const { parityTest } = parityArms(testBackends());
+parityTest('C11 a case every arm holds pending', { methods: ['getConfig'], mwCase: 'C11' }, async (engine) => { await engine.getConfig('version'); return 1; });
+`);
+      const ledger = join(dir, 'ledger.jsonl');
+      writeFileSync(ledger, '');
+      const env: Record<string, string | undefined> = { ...process.env, DATABASE_URL: undefined, GBRAIN_TEST_RUST_ARM: undefined, GBRAIN_TEST_RUST_MU_ARM: undefined, GBRAIN_TEST_MW_LEDGER: ledger };
+      const proc = spawnSync('bun', ['test', '--timeout=60000', fixture], { cwd: REPO, env: env as NodeJS.ProcessEnv, encoding: 'utf8' });
+      const text = `${proc.stdout}\n${proc.stderr}`;
+      expect(proc.status).toBe(0);
+      expect(text).toMatch(/\(todo\) C11 a case every arm holds pending \[no selected arm runs it: pglite: L5 hosts/);
+      expect(text).toMatch(/\b1 todo\b/);
+      expect(text).not.toMatch(/\b[1-9]\d* pass\b/);
+      const lines = readFileSync(ledger, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { case: string; arm: string; outcome: string; detail: string });
+      expect(lines.map((l) => [l.case, l.arm, l.outcome, l.detail.startsWith('L5 hosts')])).toEqual([['C11', 'pglite', 'pending', true]]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
 });
