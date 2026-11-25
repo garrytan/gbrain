@@ -26,7 +26,8 @@ import { resetGateway } from '../src/core/ai/gateway.ts';
 import { withTrustPromotion, withWriteAttribution } from '../src/core/persistence/context.ts';
 import type { WriteAttribution } from '../src/core/persistence/attribution.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
-import { writeGitHold } from '../src/core/persistence/sync-holds.ts';
+import { clearGitHold, writeGitHold } from '../src/core/persistence/sync-holds.ts';
+import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { resolveRepairScope } from '../src/core/repair/core.ts';
 import { AUTO_REPAIR_REGISTRY, repairRunner } from '../src/core/repair/registry.ts';
 import { analyzePageDrift } from '../src/core/trust/provenance-drift.ts';
@@ -385,6 +386,82 @@ for (const kind of testBackends()) {
     };
     const repair = (engine: BrainEngine, apply: boolean, expect?: string) => (async () => (await repairRunner(engine, { apply, logger }))
       .run('provenance', await resolveRepairScope(engine, 'default'), { explicit: true, sourceFlag: 'default', ...(expect ? { expect } : {}) }))() as Promise<Record<string, any>>;
+
+    test('restores only database ingest stamps when the creation receipt corroborates the original', () => managedBrain(async ({ engine, ctx, root }) => {
+      const slug = 'inbox/first-ingest-repair';
+      await operationsByName.put_page.handler(ctx, { slug, content: '---\ntitle: Seeded\ntype: note\n---\nCaptured body\n' });
+      const created = (await engine.readPageSnapshot(slug, { sourceId: 'default' }))!;
+      await operationsByName.edit_page.handler({ ...ctx, remote: true }, {
+        slug, expected_revision: created.revision, edits: [{ old_text: 'Captured body', new_text: 'Captured body, edited' }],
+      });
+      await settleManagedGitEffects(engine);
+      // Simulate the physical columns left by a release before remote edit provenance was preserved.
+      await withManagedFixtureWrite(engine, ['default'], tx => tx.executeRaw(`UPDATE pages
+        SET source_kind='mcp:edit_page', ingested_via='mcp:edit_page', ingested_at=now()
+        WHERE source_id='default' AND slug=$1`, [slug]));
+      const pathOnDisk = path.join(root, `${slug}.md`);
+      const read = async () => ({
+        row: (await engine.executeRaw<Record<string, unknown>>(`SELECT to_jsonb(p) AS row FROM pages p WHERE source_id='default' AND slug=$1`, [slug]))[0]!.row as Record<string, unknown>,
+        file: fs.readFileSync(pathOnDisk, 'utf8'),
+        versions: await engine.executeRaw('SELECT to_jsonb(v) AS row FROM page_versions v WHERE page_id=$1 ORDER BY id', [created.page.id]),
+      });
+      const previewed = await read();
+      const stale = await repair(engine, false);
+      expect(stale.affected).toBe(1);
+      expect(await read()).toEqual(previewed);
+      await withManagedFixtureWrite(engine, ['default'], tx => tx.executeRaw(`UPDATE pages
+        SET ingested_at=ingested_at + interval '1 microsecond' WHERE source_id='default' AND slug=$1`, [slug]));
+      const before = await read();
+      expect(before.row.knowledge_revision).toBe(previewed.row.knowledge_revision);
+      await expect(repair(engine, true, stale.preview_hash)).rejects.toMatchObject({ code: 'preview_changed' });
+      expect(await read()).toEqual(before);
+
+      const queued = await repair(engine, false);
+      const observedAt = new Date().toISOString();
+      let heldAfterAdmission = false;
+      installFaultHook(async (point, detail) => {
+        if (point !== 'consumer:preparing' || detail.operation !== 'trust_owner_page' || heldAfterAdmission) return;
+        await engine.transaction(tx => writeGitHold(tx, {
+          source_id: 'default', incarnation: created.sourceIncarnation, path: `${slug}.md`, source_path: `${slug}.md`, slug,
+          page_id: created.page.id, code: 'file_drift', message: 'A synthetic hold appeared after admission.',
+          upstream_version: null, observed_at: observedAt, run_id: 'provenance-repair-fixture', mode: 'managed', meta: { side: 'both' },
+        } as Parameters<typeof writeGitHold>[1]));
+        heldAfterAdmission = true;
+      });
+      try {
+        await expect(repair(engine, true, queued.preview_hash)).rejects.toMatchObject({ code: 'preview_changed' });
+        expect(heldAfterAdmission).toBe(true);
+        expect(await read()).toEqual(before);
+      } finally {
+        installFaultHook(undefined);
+        if (heldAfterAdmission) await engine.transaction(tx => clearGitHold(tx, {
+          sourceId: 'default', incarnation: created.sourceIncarnation, path: `${slug}.md`, observedAt,
+        }));
+      }
+
+      const dry = await repair(engine, false);
+      expect(dry.affected).toBe(1);
+      expect(dry.listing[0]).toMatchObject({ class: 'restore_database' });
+      expect(dry.cost.embedding_pages).toBe(0);
+      expect(await read()).toEqual(before);
+      const applied = await repair(engine, true, dry.preview_hash);
+      expect(applied.applied).toBe(1);
+      const after = await read();
+      expect(after.row).toMatchObject({ source_kind: 'put_page', ingested_via: 'put_page' });
+      const [exact] = await engine.executeRaw<{ matches: boolean }>(`SELECT ingested_at=$1::timestamptz AS matches
+        FROM pages WHERE source_id='default' AND slug=$2`, [created.page.frontmatter.ingested_at, slug]);
+      expect(exact?.matches).toBe(true);
+      for (const key of ['source_kind', 'ingested_via', 'ingested_at']) before.row[key] = after.row[key];
+      expect(after).toEqual(before);
+      const [receipt] = await engine.executeRaw<Record<string, unknown>>(`SELECT r.state, r.outcome->'database_provenance' AS provenance,
+        (SELECT count(*)::int FROM persistence_effects e WHERE e.request_id=r.id) AS effects
+        FROM persistence_requests r WHERE r.source_id='default' AND r.slug=$1 AND r.operation='trust_owner_page'
+        ORDER BY r.sequence DESC LIMIT 1`, [slug]);
+      expect(receipt).toMatchObject({ state: 'committed', effects: 0, provenance: { restored: { source_kind: 'put_page' } } });
+      expect((await repair(engine, false)).affected).toBe(0);
+      const checks = await provenanceStampDriftEntry.run({ engine, args: [], sourceIds: ['default'] } as unknown as DoctorContext);
+      expect(Array.isArray(checks) && checks[0]?.status).toBe('ok');
+    }, { databaseUrl }), 120_000);
 
     test('apply publishes the restore through the coordinator: the file and the row carry the restored stamps and marker', () => managedBrain(async brain => {
       const { engine, root } = brain;

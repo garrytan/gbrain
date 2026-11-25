@@ -37,6 +37,8 @@ import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import { heldPrivacyLabels, queueTierProjection, recordAgentPageLowering, withLabels, type HeldPrivacyLabels } from './page-write.ts';
 import { plannedDigest, readPageDrift } from './provenance-drift.ts';
+import { firstIngestRecoveryDigest, readFirstIngestRecovery } from './first-ingest-recovery.ts';
+import { writeFirstIngestRecovery } from '../engine-sql/ingest-provenance.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { opError } from '../ops/contract.ts';
@@ -211,6 +213,8 @@ type OwnerPageIntent = {
   /** restore_provenance: the digest of the change the preview showed, and whether unattributed damage was included. */
   planned?: string;
   include_ambiguous?: boolean;
+  /** The owner preview corroborated the original database columns from a managed creation. */
+  restore_database_provenance?: true;
   via: OwnerConfirmation['via'];
   proposal?: PageActionInput['proposal'];
 };
@@ -318,6 +322,28 @@ export async function restorePageProvenance(engine: BrainEngine, input: PageActi
   const { content, tier } = await plannedProvenanceRestore(engine, state, intent);
   await publishOwnerPage(engine, input, intent, content, tier);
   return { status: 'restored', ref, tier, prior_tier: state.tier };
+}
+
+async function checkedFirstIngestRecovery(engine: BrainEngine, sourceId: string, slug: string, revision: string, planned?: string) {
+  const item = await readPageDrift(engine, sourceId, slug);
+  const proof = item?.revision === revision ? await readFirstIngestRecovery(engine, item) : null;
+  if (!proof || firstIngestRecoveryDigest(proof) !== planned) {
+    throw changedSincePreview(pageRef(sourceId, slug), ACTION_NAMES.restore_provenance);
+  }
+  return proof;
+}
+
+/** Publish a preview-bound repair of only the three database ingest fields, with the existing owner receipt. */
+export async function restorePageDatabaseProvenance(engine: BrainEngine, input: PageActionInput & { planned: string }): Promise<PageActionResult> {
+  const ref = pageRef(input.sourceId, input.slug);
+  const state = await readPageTrustState(engine, input.sourceId, input.slug);
+  if (input.confirmation.via !== 'preview_hash' || !state || !await managed(engine)) {
+    throw changedSincePreview(ref, ACTION_NAMES.restore_provenance);
+  }
+  await checkedFirstIngestRecovery(engine, input.sourceId, input.slug, input.expectedRevision, input.planned);
+  await submitOwnerPage(engine, input, { mode: 'restore_provenance', expected_revision: input.expectedRevision,
+    via: input.confirmation.via, planned: input.planned, restore_database_provenance: true });
+  return { status: 'restored', ref, tier: state.tier, prior_tier: state.tier };
 }
 
 /** The tier a version restores: its snapshot tier, `unknown` for legacy versions. */
@@ -485,6 +511,18 @@ export async function prepareTrustOwnerPageMutation(engine: BrainEngine, row: Wr
   const ref = pageRef(row.source_id, row.slug);
   const state = await readPageTrustState(engine, row.source_id, row.slug);
   if (!state || state.revision !== intent.expected_revision) throw changedSincePreview(ref, ACTION_NAMES[intent.mode]);
+  if (intent.mode === 'restore_provenance' && intent.restore_database_provenance) {
+    if (intent.via !== 'preview_hash' || row.authority.remote !== false) throw changedSincePreview(ref, ACTION_NAMES.restore_provenance);
+    await checkedFirstIngestRecovery(engine, row.source_id, row.slug, state.revision, intent.planned);
+    return { observedRevision: state.revision, contentUnchanged: true, deferEmbedding: true, databaseOnlyReason: 'db_only',
+      apply: async tx => {
+        const proof = await checkedFirstIngestRecovery(tx, row.source_id, row.slug, state.revision, intent.planned);
+        if (!await writeFirstIngestRecovery(tx, proof)) throw changedSincePreview(ref, ACTION_NAMES.restore_provenance);
+        return { status: 'restored', trust_action: intent.mode, trust_tier: state.tier,
+          database_provenance: { before: proof.before, restored: proof.original, creation_request: proof.creation_request,
+            edit_request: proof.edit_request } };
+      } };
+  }
   let content: string;
   let tags: string[] | undefined;
   let tier: TrustTier = 'user_confirmed';

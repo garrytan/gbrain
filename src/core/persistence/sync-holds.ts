@@ -326,7 +326,7 @@ export function gitHoldFingerprint(sourceId: string, incarnation: string, path: 
 export const summaryFingerprint = (sourceId: string, incarnation: string) => `${sourceId}:${incarnation}`;
 
 /** Locks the source's summary row (creating it), so hold writes of one source serialize. */
-async function lockSummary(tx: Exec, sourceId: string, incarnation: string): Promise<number> {
+export async function lockGitHoldSummary(tx: Exec, sourceId: string, incarnation: string): Promise<number> {
   const [row] = await tx.executeRaw<{ count: number | string }>(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
       VALUES($1,$2,jsonb_build_array(jsonb_build_object('source_id',$3::text,'incarnation',$4::text,'count',0,'stale',0)))
     ON CONFLICT(op,fingerprint) DO UPDATE SET updated_at=now()
@@ -375,7 +375,7 @@ const READ_HOLD_RECORD_SQL = `CASE WHEN COALESCE(s.config->>'mirror_read_only','
  * when a newer run already wrote this path's hold.
  */
 export async function writeGitHold(tx: Exec, input: Omit<GitHoldRecord, 'version' | 'held_at' | 'updated_at'>): Promise<'inserted' | 'updated' | 'skipped'> {
-  await lockSummary(tx, input.source_id, input.incarnation);
+  await lockGitHoldSummary(tx, input.source_id, input.incarnation);
   const existing = await readRow(tx, input.source_id, input.incarnation, input.path);
   if (existing && existing.observed_at > input.observed_at) return 'skipped';
   const now = new Date().toISOString();
@@ -472,7 +472,7 @@ export function recordKeepDeleted(tx: Exec, input: { sourceId: string; incarnati
 export async function clearGitHold(tx: Exec, input: { sourceId: string; incarnation: string; path: string; observedAt: string }): Promise<boolean> {
   const [any] = await tx.executeRaw('SELECT 1 FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [GIT_HOLD_OP, gitHoldFingerprint(input.sourceId, input.incarnation, input.path)]);
   if (!any) return false;
-  await lockSummary(tx, input.sourceId, input.incarnation);
+  await lockGitHoldSummary(tx, input.sourceId, input.incarnation);
   const existing = await readRow(tx, input.sourceId, input.incarnation, input.path);
   if (!existing || existing.observed_at > input.observedAt) return false;
   await tx.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [GIT_HOLD_OP, gitHoldFingerprint(input.sourceId, input.incarnation, input.path)]);

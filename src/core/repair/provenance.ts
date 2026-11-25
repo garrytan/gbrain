@@ -23,14 +23,19 @@ import { OperationError, opError } from '../ops/contract.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, retireAfterLastItem, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { GIT_HOLD_OP, gitHoldFix, type GitHoldRecord } from '../persistence/sync-holds.ts';
-import { ownerRepairFile, repairPageMarker, restorePageProvenance } from '../trust/page-handlers.ts';
+import { ownerRepairFile, repairPageMarker, restorePageDatabaseProvenance, restorePageProvenance } from '../trust/page-handlers.ts';
+import { firstIngestRecoveryDigest, readFirstIngestRecovery } from '../trust/first-ingest-recovery.ts';
+import { firstIngestAlreadyRestored, type IngestStamps } from '../engine-sql/ingest-provenance.ts';
 import { plannedDigest, readPageDrift, scanProvenanceDrift, type DriftItem } from '../trust/provenance-drift.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
 
 const DOCS = 'docs/guides/repair.md#provenance';
 
 interface Selection { source_ids: string[]; slugs: string[]; include_ambiguous: boolean }
-interface PlannedPage { source_id: string; slug: string; id: number; revision: string; action: 'restore' | 'restamp'; planned: string; summary: string }
+interface PlannedPage {
+  source_id: string; slug: string; id: number; revision: string; action: 'restore' | 'restamp' | 'restore_database'; planned: string; summary: string;
+  database?: { incarnation: string; original: IngestStamps };
+}
 interface ProvenanceItem extends RepairItem { page: PlannedPage; hash: string; includeAmbiguous: boolean; last: boolean }
 
 function previewCommand(scope: RepairScope, selection: Selection): string {
@@ -84,7 +89,7 @@ const segmented = async (engine: BrainEngine, pageId: number) =>
 async function scan(engine: BrainEngine, scope: RepairScope, selection: Selection) {
   const planned: PlannedPage[] = [];
   const listing: RepairListing[] = [];
-  const residuals: Record<string, number> = { restore: 0, restamp: 0, ambiguous: 0, needs_review: 0, local: 0, held: 0 };
+  const residuals: Record<string, number> = { restore: 0, restamp: 0, restore_database: 0, ambiguous: 0, needs_review: 0, local: 0, held: 0 };
   const managedBrain = await managedPersistenceEnabled(engine);
   for (const sourceId of scope.source_ids) {
     const drift = await scanProvenanceDrift(engine, sourceId, { limit: Number.MAX_SAFE_INTEGER, includeAmbiguous: selection.include_ambiguous, slugs: selection.slugs });
@@ -92,9 +97,10 @@ async function scan(engine: BrainEngine, scope: RepairScope, selection: Selectio
     for (const item of drift.items) {
       const label = `${item.source_id}:${item.slug} (revision ${item.revision})`;
       const { verdict } = item;
+      const database = managedBrain && verdict.class === 'needs_review' ? await readFirstIngestRecovery(engine, item) : null;
       if (verdict.class === 'local') { residuals.local!++; listing.push({ item: label, class: 'local', detail: `the owner's own edit, never repaired; ${writerDetail(item)}` }); continue; }
-      if (verdict.class === 'needs_review') { residuals.needs_review!++; listing.push({ item: label, class: 'needs_review', detail: verdict.reason }); continue; }
-      if (!verdict.restore) {
+      if (verdict.class === 'needs_review' && !database) { residuals.needs_review!++; listing.push({ item: label, class: 'needs_review', detail: verdict.reason }); continue; }
+      if (!verdict.restore && !database) {
         residuals.ambiguous!++;
         listing.push({ item: label, class: 'ambiguous', detail: `no recorded writer; previewed with --include-ambiguous only; ${writerDetail(item)}` });
         continue;
@@ -114,11 +120,16 @@ async function scan(engine: BrainEngine, scope: RepairScope, selection: Selectio
           : `the page file cannot be written (${file.reason}); fix the checkout, then preview again` });
         continue;
       }
-      const action = verdict.class === 'restamp' ? 'restamp' : 'restore';
+      const action = database ? 'restore_database' : verdict.class === 'restamp' ? 'restamp' : 'restore';
       residuals[action]!++;
-      const page: PlannedPage = { source_id: item.source_id, slug: item.slug, id: item.page_id, revision: item.revision, action, planned: plannedDigest(item), summary: summaryOf(item) };
+      const summary = database ? Object.entries(database.original).map(([key, value]) =>
+        `${key} ${database.before[key as keyof typeof database.before]} -> ${value}`).join('; ') : summaryOf(item);
+      const page: PlannedPage = { source_id: item.source_id, slug: item.slug, id: item.page_id, revision: item.revision, action,
+        planned: database ? firstIngestRecoveryDigest(database) : plannedDigest(item), summary,
+        ...(database ? { database: { incarnation: database.source_incarnation, original: database.original } } : {}) };
       planned.push(page);
-      listing.push({ item: label, class: action === 'restamp' ? 'restamp' : verdict.class, detail: action === 'restamp' ? page.summary : `${page.summary}; ${writerDetail(item)}` });
+      listing.push({ item: label, class: action === 'restore' ? verdict.class : action,
+        detail: database ? `database ingest fields only; ${summary}` : action === 'restamp' ? summary : `${summary}; ${writerDetail(item)}` });
     }
   }
   planned.sort((a, b) => a.id - b.id);
@@ -131,10 +142,16 @@ function item(page: PlannedPage, hash: string, includeAmbiguous: boolean, last: 
 
 /** The page still needs exactly the previewed change. */
 async function stillPlanned(engine: BrainEngine, page: PlannedPage, includeAmbiguous: boolean): Promise<'planned' | 'done' | 'moved'> {
+  if (page.database && await firstIngestAlreadyRestored(engine,
+    { ...page, page_id: page.id }, page.database.incarnation, page.database.original)) return 'done';
   const current = await readPageDrift(engine, page.source_id, page.slug, { includeAmbiguous });
-  if (!current) return 'done';
-  if (current.page_id !== page.id || !current.verdict.restore) return 'moved';
-  return current.revision === page.revision && plannedDigest(current) === page.planned ? 'planned' : 'moved';
+  if (!current) return page.action === 'restore_database' ? 'moved' : 'done';
+  if (current.page_id !== page.id || current.revision !== page.revision) return 'moved';
+  if (page.action === 'restore_database') {
+    const proof = await readFirstIngestRecovery(engine, current);
+    return proof && firstIngestRecoveryDigest(proof) === page.planned ? 'planned' : 'moved';
+  }
+  return current.verdict.restore && plannedDigest(current) === page.planned ? 'planned' : 'moved';
 }
 
 export const provenanceRepair: RepairHandler = {
@@ -146,7 +163,8 @@ export const provenanceRepair: RepairHandler = {
       const { planned, listing, residuals } = await scan(engine, scope, selection);
       const hash = await hashOf(engine, scope, selection, planned);
       if (planned.length) await saveApprovedSet<PlannedPage & { selection: Selection }>(engine, { command: 'provenance', hash }, planned.map(page => ({ ...page, selection })));
-      return { items: planned.map((page, index) => item(page, hash, selection.include_ambiguous, index === planned.length - 1)), preview_hash: hash, residuals, listing };
+      const items = planned.map((page, index) => item(page, hash, selection.include_ambiguous, index === planned.length - 1));
+      return { items, embedding_items: items.filter(item => item.page.action !== 'restore_database'), preview_hash: hash, residuals, listing };
     }
     if (opts.remote !== false) {
       throw opError('permission_denied', 'gbrain repair provenance --apply runs only from the local CLI on the brain host.', `Run it there: ${command}`);
@@ -168,8 +186,8 @@ export const provenanceRepair: RepairHandler = {
       if (state === 'planned') pages.push(page);
     }
     if (!pages.length) await clearApprovedSet(engine, { command: 'provenance', hash: expect });
-    return { items: pages.map((page, index) => item(page, expect, selection.include_ambiguous, index === pages.length - 1)).filter(entry => afterCursor(entry.cursor, after)),
-      preview_hash: expect, residuals: {} };
+    const items = pages.map((page, index) => item(page, expect, selection.include_ambiguous, index === pages.length - 1)).filter(entry => afterCursor(entry.cursor, after));
+    return { items, embedding_items: items.filter(item => item.page.action !== 'restore_database'), preview_hash: expect, residuals: {} };
   },
   async apply(ctx, entry): Promise<RepairItemOutcome> {
     const { page, hash, includeAmbiguous, last } = entry as ProvenanceItem;
@@ -179,6 +197,7 @@ export const provenanceRepair: RepairHandler = {
       if (hold) return { applied: false, outcome: 'held', reason: heldDetail(hold) };
       const input = { sourceId: page.source_id, slug: page.slug, expectedRevision: page.revision, confirmation: { via: 'preview_hash' as const }, config: ctx.config };
       const result = page.action === 'restamp' ? await repairPageMarker(ctx.engine, input)
+        : page.action === 'restore_database' ? await restorePageDatabaseProvenance(ctx.engine, { ...input, planned: page.planned })
         : await restorePageProvenance(ctx.engine, { ...input, planned: page.planned, includeAmbiguous });
       return { applied: true, outcome: page.action === 'restamp' ? 'restamped' : 'restored', detail: { tier: result.tier, prior_tier: result.prior_tier } };
     });

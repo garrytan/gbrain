@@ -968,6 +968,10 @@ Each listed page has a class:
   only with `--include-ambiguous`, which changes the hash.
 - `restamp`: the classified page from #7918. The apply stamps its stored tier as
   the marker; the row keeps its tier.
+- `restore_database`: the preserved first snapshot and managed creation
+  receipt agree with the original stamps still in frontmatter, and the
+  database stamps match a later remote edit. The apply restores the three
+  database ingest fields and keeps the page file, history, and tier.
 - `local`, `needs_review` and `held`: the owner's own edit, a page whose
   provenance needs manual review, or a page whose file sync holds. The repair
   lists these pages without writing them. If the database stamps match a later
@@ -980,7 +984,8 @@ page gets a `lower_page` proposal (proposer `provenance_repair`) that
 follow it down. The apply writes one owner page write per page, bound to the
 previewed revision and change, so a page that moved since is `preview_changed`
 and nothing is written. On a managed brain the write publishes the file through
-the coordinator (Git stays the parent); on a classic checkout it renders the
+the coordinator (Git stays the parent), except the database-only repair whose prior
+values are kept in the owner write receipt; on a classic checkout it renders the
 repaired page to its file in the same transaction, and a page whose file holds
 an edit the database lacks (run `gbrain sync` first) or whose checkout cannot
 be written is listed `needs_review` instead; on a repo-less brain the database

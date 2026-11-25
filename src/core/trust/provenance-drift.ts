@@ -58,6 +58,8 @@ export interface DriftVerdict {
   /** The restored stamps (`null` removes the key) and the marker the repair writes; absent for local and needs_review. */
   restore?: { stamps: Partial<Record<ProvenanceStampKey, unknown>>; marker: TrustTier | null; tier: TrustTier; frontmatter: Record<string, unknown> };
   reason?: string;
+  /** A server receipt whose remote edit channel matches the current ingest columns. */
+  columnEditRequest?: string;
 }
 
 const lowestCap = (fm: Record<string, unknown>): TrustTier | null => {
@@ -126,7 +128,8 @@ export function analyzePageDrift(input: DriftPageInput, opts: { includeAmbiguous
   }
   const writer: DriftWriter = damaging.some(change => change.writer === 'remote') ? 'remote' : 'unattributed';
   const verdict: DriftVerdict = { class: writer === 'remote' ? 'remote' : 'ambiguous', writer, marker_lost: markerLost, stamps_rewritten: stampsRewritten, marker_missing: markerMissing, changes };
-  if (needsReview) return { ...verdict, class: 'needs_review', reason: needsReview };
+  if (needsReview) return { ...verdict, class: 'needs_review', reason: needsReview,
+    ...(input.columnEditRequest ? { columnEditRequest: input.columnEditRequest } : {}) };
   if (verdict.class === 'ambiguous' && !opts.includeAmbiguous) return verdict;
   return { ...verdict, ...planRestore(live, restoredStamps, markerLost ? lostCap : null, stored) };
 }

@@ -700,10 +700,10 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
   provenance: {
     handler: provenanceRepair, embeds: 'effect', checks: ['provenance_stamp_drift'], explicit_only: true, preview_bound: true, consent: 'destructive',
     consentText: {
-      what: 'Restore the previewed provenance stamps and lowering markers, and lower each listed page to match',
-      why: 'The preview listed each page whose source_kind, ingested_via or ingested_at a remote write rewrote, or whose lowering marker it removed, before those stamps were server-owned (#7892), and each classified page whose file would re-read above its stored tier.',
-      risk: 'Only the three stamps and the trust_tier marker change, and a page is only lowered, never raised; each lowered page gets a lower_page proposal that gbrain trust review confirms or reverts. A page that changed since the preview refuses the apply (preview_changed). Managed sources commit the file through the Git effect; undo with gbrain trust review or git revert.',
-      user_message: 'Restore where the previewed pages came from and lower their trust to match? Only their provenance stamps and trust marker change, and you can undo each one in gbrain trust review',
+      what: 'Apply the previewed provenance stamp and trust-marker repairs',
+      why: 'The preview identifies which pages need their database ingest stamps restored, which need file or trust-marker repairs, and which need review.',
+      risk: 'A database-only repair changes three stamps and records their prior values in the owner receipt. It creates neither a Git commit nor a trust proposal to revert. File repairs can only lower trust; each lowered page gets a lower_page proposal that gbrain trust review confirms or reverts. Changed pages refuse the preview.',
+      user_message: 'Apply exactly the provenance repairs shown in this preview? Check which rows are database-only and which change a file or trust marker',
     },
     summary: 'Restore provenance stamps (source_kind, ingested_via, ingested_at) and lowering markers that writes removed before #7892, and stamp the '
       + 'trust marker on classified pages whose file would re-read above their stored tier (#7891, #7918). Remote damage is repaired; unattributed '
