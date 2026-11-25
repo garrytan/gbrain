@@ -1722,6 +1722,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readAccessGroups': OOS.callerRawSql, 'listPagesNamingReader': OOS.callerRawSql, 'forgetWakeMember': OOS.callerRawSql,
   'forgetWakeCredential': OOS.callerRawSql, 'readNewestTimelineEntryId': OOS.callerRawSql, 'readPageReferenceDate': OOS.callerRawSql,
   'matchHeadStems': OOS.callerRawSql, 'readLivePageFrontmatter': OOS.callerRawSql, 'readEntityAnchoredPages': OOS.callerRawSql,
+  'readImageSealProbe': OOS.callerRawSql, 'readPageChunkerVersion': OOS.callerRawSql, 'readPrefixAnchoredPages': OOS.callerRawSql, 'readPrivateOnlySlugs': OOS.callerRawSql,
   'readPageTitlesById': OOS.callerRawSql, 'readTextMentionPages': OOS.callerRawSql,
   // the page-write reads and upkeep that belong to no other domain
   'readSourceState': OOS.writeMisc,

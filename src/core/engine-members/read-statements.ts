@@ -15,6 +15,7 @@ import type { ExactIdentityRow, ExactIdentityStatementOpts } from '../engine-sql
 import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, FenceOverlayIncomingRow, FenceOverlayRow, FenceRowKey, FenceRowTrust, HeldFenceCellKey, HeldFenceCellRow, LongPageSizeRow, PageTypeProbe, RankCoverageRow, UnattributedFactRow, WantedPageRow } from '../engine-sql/cli-reads-ops.ts';
 import type { FactReadableSpec, FactWithdrawalClaim, FactWithdrawalClaimSpec, ForgetTargetRow, ForgetTargetSpec, LinkedFactCopiesSpec, LinkedFactCopy, OwnerReachSpec, SourceWriteRow } from '../engine.ts';
 import type { PageReadScope } from '../types.ts';
+import type { PrivateOnlySlugScope } from '../engine-sql/page-visibility.ts';
 import type { FrontmatterWhere } from '../search/frontmatter-where.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from '../engine-sql/graph-rank.ts';
 import type { WithdrawalDiscoveryKind, WithdrawalDiscoveryRead, WithdrawalDiscoveryRows } from '../engine-sql/withdrawal-discovery.ts';
@@ -192,6 +193,14 @@ export interface ReadStatementMembers {
   readEntityAnchoredPages(sourceId: string, entitySlug: string): Promise<EntityAnchoredPages>;
   /** The title of each page id, deleted or not, in no set order. */
   readPageTitlesById(ids: readonly number[]): Promise<Array<{ id: number; title: string }>>;
+  /** `{ has_visual }` of the image page row at `slug` when it is sealed past the safe-chunk fence, else null (importImageFile). */
+  readImageSealProbe(sourceId: string, slug: string): Promise<{ has_visual: boolean } | null>;
+  /** The stored chunker version of the page row with the id (live, deleted or segmented), or null when no row has it. */
+  readPageChunkerVersion(pageId: number): Promise<{ chunker_version: number | null } | null>;
+  /** Up to 10 newest live pages of the source under a literal slug prefix, no question, synthesis or pinned-question page. */
+  readPrefixAnchoredPages(sourceId: string, prefix: string): Promise<Array<{ id: number; slug: string }>>;
+  /** The slugs whose every in-scope page row (live unless `includeDeleted`) the caller's page policy hides, in no set order. */
+  readPrivateOnlySlugs(slugs: readonly string[], scope?: PrivateOnlySlugScope, opts?: { includeDeleted?: boolean }): Promise<string[]>;
   /** The live pages at `slugs` in `sourceIds` with title, type, frontmatter and `COALESCE(effective_date, updated_at)` as `date` (the entity card's text mentions). */
   readTextMentionPages(sourceIds: readonly string[], slugs: readonly string[]): Promise<TextMentionPageRow[]>;
   /** The retrieval reflex's alias live recheck: the live pages in the scope at `slugs`, as (slug, source_id), in no set order. */

@@ -494,6 +494,7 @@ test/engine-parity/restriction-flag-reads.test.ts
 test/engine-parity/retrieval-coverage.test.ts
 test/engine-parity/retrieval-reflex.test.ts
 test/engine-parity/schema-detect.test.ts
+test/engine-parity/search-caller-refusals.test.ts
 test/engine-parity/search-cjk.test.ts
 test/engine-parity/search-deep-query.test.ts
 test/engine-parity/search-privacy-retention.test.ts

@@ -2647,6 +2647,10 @@ export class PostgresEngine implements BrainEngine {
   readLivePageFrontmatter(sourceId: string, slug: string, opts?: { timeoutMs?: number }) { return entityReadsImpl.readLivePageFrontmatter(this, sourceId, slug, opts); }
   readEntityAnchoredPages(sourceId: string, entitySlug: string) { return entityReadsImpl.readEntityAnchoredPages(this, sourceId, entitySlug); }
   readPageTitlesById(ids: readonly number[]) { return entityReadsImpl.readPageTitlesById(this, ids); }
+  readImageSealProbe(sourceId: string, slug: string) { return this.ownRawRead(exec => entityReadsImpl.readImageSealProbe(exec, sourceId, slug)); }
+  readPageChunkerVersion(pageId: number) { return this.ownRawRead(exec => entityReadsImpl.readPageChunkerVersion(exec, pageId)); }
+  readPrefixAnchoredPages(sourceId: string, prefix: string) { return this.ownRawRead(exec => entityReadsImpl.readPrefixAnchoredPages(exec, sourceId, prefix)); }
+  readPrivateOnlySlugs(slugs: readonly string[], scope?: pageVisibilityImpl.PrivateOnlySlugScope, opts?: { includeDeleted?: boolean }) { return this.ownRawRead(exec => pageVisibilityImpl.readPrivateOnlySlugs(exec, slugs, scope, opts)); }
   readTextMentionPages(sourceIds: readonly string[], slugs: readonly string[]) { return entityReadsImpl.readTextMentionPages(this, sourceIds, slugs); }
   listLocalPathSources() { return sourcesImpl.listLocalPathSources(unscopedExecutor(this.engineSql, 'sources: source resolution read it unscoped through executeRaw')); }
   listSourcePathRows() { return sourcesImpl.listSourcePathRows(unscopedExecutor(this.engineSql, 'sources: sources add read it unscoped through executeRaw')); }

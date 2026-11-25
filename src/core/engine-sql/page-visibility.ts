@@ -11,7 +11,8 @@
 import { ANY_OWNER_ONLY_SQL, OWNER_ONLY_LINEAGE_PRESENT_SQL, READ_SOURCE_OWNER_ONLY_SQL } from '../access/owner-only.ts';
 import { callerAccessAllowedSql, privacyPartSql, privatePagesFilterForCaller, readPolicyFragment } from '../search/private-visibility.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
-import { sqlFragment, trustedSql } from './fragment.ts';
+import type { TimedRawRead } from './entity-reads.ts';
+import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 
 /** Which part of the page policy a visibility read applies. */
 export type PagePolicyPart = 'read' | 'access';
@@ -36,6 +37,30 @@ export async function readCallerPageAccess(exec: LegacyUnscopedRead, pages: read
     JOIN unnest(${pages.map(p => p.source_id)}::text[], ${pages.map(p => p.slug)}::text[]) AS t(source_id, slug) ON p.source_id = t.source_id AND p.slug = t.slug
     GROUP BY p.source_id, p.slug`);
   return rows.map(r => ({ source_id: r.source_id, slug: r.slug, readable: r.readable === true }));
+}
+
+/** The sources a private-only slug read covers: a federated array wins over a scalar; neither reads every source. */
+export interface PrivateOnlySlugScope { sourceId?: string; sourceIds?: string[] }
+
+/**
+ * The slugs among `slugs` whose every in-scope page row fails the current caller's page policy
+ * (`privatePagesFilterForCaller`), live rows only unless `includeDeleted`; a slug with no such row is not named. In no
+ * set order (search/private-visibility.ts findPrivateOnlySlugs, get_page's fuzzy candidates). The text is the statement
+ * that caller sent through `executeRaw`: the scope clause binds as its second parameter, as it did there.
+ */
+export async function readPrivateOnlySlugs(exec: TimedRawRead, slugs: readonly string[], scope: PrivateOnlySlugScope = {},
+  opts: { includeDeleted?: boolean } = {}): Promise<string[]> {
+  if (slugs.length === 0) return [];
+  const scoped = scope.sourceIds && scope.sourceIds.length > 0 ? sqlFragment`AND p.source_id = ANY(${scope.sourceIds}::text[])`
+    : scope.sourceId ? sqlFragment`AND p.source_id = ${scope.sourceId}` : sqlFragment``;
+  const { text, params } = renderFragment(sqlFragment`SELECT p.slug FROM pages p
+      WHERE p.slug = ANY(${slugs}::text[])
+        ${trustedSql(opts.includeDeleted ? '' : 'AND p.deleted_at IS NULL')}
+        ${scoped}
+      GROUP BY p.slug
+      HAVING bool_and(NOT (${trustedSql(privatePagesFilterForCaller('p'))}))`);
+  const rows = await exec.executeRaw<{ slug: string }>(text, params);
+  return rows.map(r => r.slug);
 }
 
 /**
