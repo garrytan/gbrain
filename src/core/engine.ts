@@ -1339,7 +1339,7 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   updateSourceConfig(sourceId: string, patch: Record<string, unknown>): Promise<boolean>;
 
   /** One source row (id, name, local_path, last_commit, last_sync_at, config, created_at, contextual_retrieval_mode, trust_frontmatter_overrides), or null when no source has that id. */
-  getSource(sourceId: string): Promise<SourceDetailRow | null>;
+  getSource(sourceId: string, opts?: { timeoutMs?: number }): Promise<SourceDetailRow | null>;
 
   /**
    * Local paths of every source that has one (non-null, non-empty), in no particular order. The filesystem lock

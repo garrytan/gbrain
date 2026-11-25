@@ -395,7 +395,8 @@ async function pickSoleNonDefaultSource(
   const rows: Array<{ id: string; config?: unknown }> = routing
     ? routing.filter(row => row.local_path !== null && row.id !== 'default' && row.archived === false
       && (fromSnapshot ? parseSourceConfig(row.config).role : sourceConfigText(row.config, 'role')) !== 'storage_manifest')
-    : (await legacySourceRows(engine)).filter(row => row.local_path !== null && row.id !== 'default' && row.archived !== true).map(({ id }) => ({ id }));
+    : (await legacySourceRows(engine)).filter(row => row.local_path !== null && row.id !== 'default' && row.archived !== true
+      && sourceConfigText(row.config, 'role') !== 'storage_manifest').map(({ id }) => ({ id }));
   const listed = routing;
   const defaultHasPages = (): Promise<boolean> => listed
     ? Promise.resolve(listed.some(row => row.default_has_pages))
@@ -1148,7 +1149,11 @@ let sourcesQueryShape: 'archived' | 'legacy' | null = null;
 async function otherSourceExists(engine: BrainEngine): Promise<boolean> {
   if (sourcesQueryShape !== 'legacy') {
     try {
-      const rows = await engine.listAllSources();
+      const rows = await engine.listAllSources().catch(async (err: unknown) => {
+        // listAllSources parses every config; one source whose config is not JSON must not decide this existence check, so ask for the rows with their config as stored.
+        if (!(err instanceof SyntaxError)) throw err;
+        return (await engine.listSourceRoutingRows()).filter(row => row.archived === false);
+      });
       sourcesQueryShape = 'archived';
       return rows.some(row => row.id !== 'default');
     } catch (err) {
