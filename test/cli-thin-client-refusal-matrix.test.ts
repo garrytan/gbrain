@@ -112,8 +112,8 @@ describe('A16b thin-client refusal matrix', () => {
     routing = await run(ROUTING_ROWS);
   }, 300_000);
 
-  test('the matrix covers all 79 handleCliOnly cases', () => {
-    expect(CASES.length).toBe(79);
+  test('the matrix covers all 80 handleCliOnly cases', () => {
+    expect(CASES.length).toBe(80); // +1: gbrain ledger (L2 action ledger)
   });
 
   test('every handleCliOnly case, run bare on a thin client, matches the golden', () => {
