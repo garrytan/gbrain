@@ -27,6 +27,8 @@ test/engine-parity/budget-ledger-writes.test.ts	2	0
 test/engine-parity/calibration-profiles.test.ts	5	0
 test/engine-parity/caller-typed-reads.test.ts	8	0
 test/engine-parity/checkpoint-validation.test.ts	2	3
+test/engine-parity/chronicle-backfill-done.test.ts	2	0
+test/engine-parity/chronicle-backfill.test.ts	2	0
 test/engine-parity/chronicle-coverage-gap.test.ts	1	0
 test/engine-parity/chronicle-decision.test.ts	6	2
 test/engine-parity/chronicle-executor.test.ts	3	0
@@ -65,6 +67,7 @@ test/engine-parity/concept-rebuild.test.ts	0	3
 test/engine-parity/config-ingest.test.ts	9	0
 test/engine-parity/connect-gate.test.ts	7	0
 test/engine-parity/connector-attempts.test.ts	2	0
+test/engine-parity/connector-sync-stamp.test.ts	2	0
 test/engine-parity/core-page-member-reads.test.ts	1	1
 test/engine-parity/credential-grant-writes.test.ts	6	0
 test/engine-parity/cycle-locks.test.ts	11	0
@@ -176,7 +179,7 @@ test/engine-parity/import-writes.test.ts	11	0
 test/engine-parity/jobs-checks.test.ts	9	0
 test/engine-parity/jobs-health.test.ts	8	0
 test/engine-parity/jobs-insight.test.ts	2	0
-test/engine-parity/jobs-queue.test.ts	40	0
+test/engine-parity/jobs-queue.test.ts	41	0
 test/engine-parity/jobs-spend.test.ts	4	0
 test/engine-parity/jobs-status.test.ts	15	0
 test/engine-parity/jobs-subagent.test.ts	16	0
@@ -220,6 +223,7 @@ test/engine-parity/owner-only-marks.test.ts	1	1
 test/engine-parity/owner-only-reads.test.ts	4	0
 test/engine-parity/owner-only-row-delete-marks.test.ts	2	0
 test/engine-parity/owner-recovery-scans.test.ts	5	0
+test/engine-parity/owner-write-privacy.test.ts	5	0
 test/engine-parity/page-embedding-budget.test.ts	9	0
 test/engine-parity/page-lock-anchors.test.ts	1	0
 test/engine-parity/page-purge-holds.test.ts	4	0
