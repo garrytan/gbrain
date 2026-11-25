@@ -134,6 +134,7 @@ pub use notifier::{
 };
 pub use op_checkpoint::AtomGenerationBump;
 mod trust_scan_cursor;
+mod upkeep;
 
 pub(crate) use op_checkpoint::{
     delete_op_checkpoint_in, list_op_checkpoint_records_in, op_checkpoint_completed_keys,

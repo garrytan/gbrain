@@ -10560,6 +10560,7 @@
         "pauseJob": "none",
         "pendingTrustProposalsFor": "none",
         "persistOauthClientGrant": "none",
+        "persistenceUpkeepStore": "none",
         "pickValidTimeEdition": "none",
         "pingStore": "none",
         "placeRelinkedFact": "none",

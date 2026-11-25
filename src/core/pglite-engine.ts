@@ -159,6 +159,7 @@ import type { WriterAdminStateOptions, WriterAdminStore } from './engine-sql/wri
 import * as writerReleaseImpl from './engine-sql/writer-release.ts';
 import type { CounterColumn, WriterReleaseStore } from './engine-sql/writer-release.ts';
 import * as publicationJournalImpl from './engine-sql/publication-journal.ts';
+import * as persistenceUpkeepImpl from './engine-sql/persistence-upkeep.ts';
 import * as writerStatusImpl from './engine-sql/writer-status.ts';
 import * as labelDoorImpl from './engine-sql/label-door.ts';
 import * as pagePurgeImpl from './engine-sql/page-purge.ts';
@@ -3103,6 +3104,7 @@ export class PGLiteEngine implements BrainEngine {
   writerAdminStore(): Promise<WriterAdminStore> { return writerAdminImpl.writerAdminStore(this); }
   writerReleaseStore(): Promise<WriterReleaseStore> { return writerReleaseImpl.writerReleaseStore(this); }
   publicationJournalStore() { return publicationJournalImpl.publicationJournalStore(this); }
+  persistenceUpkeepStore() { return persistenceUpkeepImpl.persistenceUpkeepStore(this); }
   chronicleStore() { return chronicleExecutorImpl.chronicleStore(this); }
   addPersistenceCounters(key: string, delta: Partial<Record<CounterColumn, number>>): Promise<void> { return writerReleaseImpl.addPersistenceCounters(this, key, delta); }
   hasExtractedEvents(sourceId: string, pageId: number) { return writeMiscImpl.hasExtractedEvents(this.writeMiscReads, sourceId, pageId); }

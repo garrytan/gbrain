@@ -879,6 +879,27 @@ counter row changes nothing. recoverPublication and upgradeRecoveryStaging move 
 `requireManagedPersistence` (`journal.ts` admission), which this engine refuses until that
 admission is typed. The owner pending-wait read in `owner-activity.ts` stays raw SQL.
 
+## Upkeep
+
+`persistenceUpkeepStore()` (`src/core/engine-sql/persistence-upkeep.ts`, store `persistence/upkeep.rs`, one
+`persistenceUpkeep(op, args)` binding) carries the write journal's upkeep statements:
+
+- Receipt compaction (`compactReceipt` in `src/core/persistence/journal.ts`): `lockCompactionReceipt` answers the
+  request row with `eligible_age` (null for a receipt with no completion time when a cutoff is given, as SQL's NULL
+  comparison is), `open_cursor` (a `managed-sync` checkpoint of its run whose cursor is not done) and `open_pass` (a
+  `managed-sync-pass` checkpoint of its pass whose telemetry outcome is `open`), or null; `hasUnfinishedEffect`,
+  `requestEffectBytes` (`EFFECT_BYTES_SQL` summed, as text), `newestSyncReceiptId` (the worktree's newest committed
+  `managed_sync_*` request by completion time, then sequence), `markReceiptCompacted` (no intent, no error message,
+  compacted, the reservation given; `updated_at` unchanged) and `releaseTerminalBytes` (each named counter once, never
+  below zero). `limitCompactionWaits` sets Postgres's transaction-local waits and changes nothing here: the store
+  runs one write transaction at a time.
+- Effect claim upkeep (`rearmWithheldTargets` and `effectClaimKeeper` in `src/core/persistence/effect-journal.ts`):
+  `lockRearmableEffects` is `REARMABLE_SQL` (the same rule as `hasRearmableTargets`), in id order; `rearmEffect`
+  queues an unclaimed effect with no recovery again, due now, with the data given; `renewHeldEffectClaim` renews a
+  running claim under its token for two minutes, also while the effect holds a recovery record.
+
+Pinned by `test/engine-parity/receipt-compaction-step.test.ts` and `test/engine-parity/effect-claim-upkeep.test.ts`.
+
 ## TypeScript members with no stored state
 
 | Member | Answer | Why |

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2401/2425
+# covered: 2401/2426
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -76,7 +76,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 16/16
 # wanted_links: 2/2
-# write_misc: 121/133
+# write_misc: 121/134
 # repair_bookkeeping: 59/59
 # write_attribution: 5/5
 # telemetry: 14/14
@@ -125,7 +125,7 @@ reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	4	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
 transaction	lifecycle	yes	388	no	yes	yes	serves
-transactionDirect	lifecycle	yes	24	no	yes	yes	serves
+transactionDirect	lifecycle	yes	26	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 listCatalogRelations	lifecycle	yes	1	no	yes	yes	serves
@@ -379,7 +379,7 @@ openPageEmbeddingHold	chunks	yes	2	no	yes	yes	serves
 reservePageEmbedding	chunks	yes	7	no	yes	yes	serves
 settlePageEmbeddingReservation	chunks	yes	2	no	yes	yes	serves
 readEmbeddingCompletion	chunks	yes	2	no	yes	yes	serves
-lockEffectClaimRow	chunks	yes	1	no	yes	yes	serves
+lockEffectClaimRow	chunks	yes	2	no	yes	yes	serves
 lockEmbeddingSwitch	chunks	yes	1	no	yes	yes	serves
 installChunkEmbeddings	chunks	yes	1	no	yes	yes	serves
 getChunksWithEmbeddings	chunks	yes	4	no	yes	yes	serves
@@ -817,7 +817,7 @@ writeDrainLeaseHolder	persistence_journal	yes	2	no	yes	yes	serves
 refreshDrainLeaseHolder	persistence_journal	no	0	no	-	-	-
 releaseDrainLeaseHolder	persistence_journal	yes	2	no	yes	yes	serves
 readChronicleBackfillBatch	persistence_journal	yes	2	no	yes	yes	serves
-declarePersistence	persistence_journal	yes	41	no	yes	yes	serves
+declarePersistence	persistence_journal	yes	43	no	yes	yes	serves
 requireSynchronousCommit	persistence_journal	yes	1	no	yes	yes	serves
 readJournalLimitRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldPageRows	persistence_journal	yes	3	no	yes	yes	serves
@@ -915,7 +915,7 @@ listAtomWriteReceipts	persistence_journal	yes	1	no	yes	yes	serves
 readWriteRequest	persistence_journal	yes	18	no	yes	yes	serves
 readWriteRequestsByRequestIds	persistence_journal	yes	3	no	yes	yes	serves
 readWriteRequestsByRequestId	persistence_journal	yes	1	no	yes	yes	serves
-readWriteRequestById	persistence_journal	yes	16	no	yes	yes	serves
+readWriteRequestById	persistence_journal	yes	17	no	yes	yes	serves
 listWriteRequestsByRequestIds	persistence_journal	yes	1	no	yes	yes	serves
 listWriteRequestRows	persistence_journal	yes	2	no	yes	yes	serves
 readWriteRequestProgress	persistence_journal	yes	1	no	yes	yes	serves
@@ -929,20 +929,20 @@ ownsSchemaTables	persistence_journal	yes	1	no	yes	yes	serves
 readOAuthClientWriteGrant	persistence_journal	yes	4	no	yes	yes	serves
 readAccessTokenWriteGrant	persistence_journal	yes	4	no	yes	yes	serves
 shareLockWriteCredential	persistence_journal	yes	1	no	yes	yes	serves
-readCounterRows	persistence_journal	yes	15	no	yes	yes	serves
+readCounterRows	persistence_journal	yes	16	no	yes	yes	serves
 readAdmissionRate	persistence_journal	yes	3	no	yes	yes	serves
-lockPersistenceCounters	persistence_journal	yes	99	no	yes	yes	serves
-insertWriteRequest	persistence_journal	yes	126	no	yes	yes	serves
+lockPersistenceCounters	persistence_journal	yes	102	no	yes	yes	serves
+insertWriteRequest	persistence_journal	yes	129	no	yes	yes	serves
 insertWriteRequestGroup	persistence_journal	yes	2	no	yes	yes	serves
 readOwnerHostBinding	persistence_journal	yes	1	no	yes	yes	serves
-stampWriteClaim	persistence_journal	yes	47	no	yes	yes	serves
+stampWriteClaim	persistence_journal	yes	50	no	yes	yes	serves
 lockWriteRequest	persistence_journal	yes	8	no	yes	yes	serves
-completeWriteRow	persistence_journal	yes	58	no	yes	yes	serves
+completeWriteRow	persistence_journal	yes	61	no	yes	yes	serves
 lockWriteRequestsById	persistence_journal	yes	2	no	yes	yes	serves
 compactTerminalIntent	persistence_journal	no	0	no	-	-	-
 cancelWriteRow	persistence_journal	yes	3	no	yes	yes	serves
 insertPublicationEffects	persistence_journal	yes	25	no	yes	yes	serves
-insertWithdrawalEffects	persistence_journal	yes	8	no	yes	yes	serves
+insertWithdrawalEffects	persistence_journal	yes	10	no	yes	yes	serves
 insertRemirrorEffects	persistence_journal	yes	1	no	yes	yes	serves
 readRemirrorEffects	persistence_journal	yes	1	no	yes	yes	serves
 listSourceCheckpointRecords	persistence_journal	yes	3	no	yes	yes	serves
@@ -991,7 +991,7 @@ moveTwinPageChildren	persistence_journal	yes	4	no	yes	yes	serves
 moveTwinFacts	persistence_journal	yes	3	no	yes	yes	serves
 recordRenameAlias	persistence_journal	yes	3	no	yes	yes	serves
 movePageVersions	persistence_journal	yes	1	no	yes	yes	serves
-readSourceMembership	persistence_journal	yes	137	no	yes	yes	serves
+readSourceMembership	persistence_journal	yes	140	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	3	no	yes	yes	serves
 readTopologyChangeDigest	persistence_journal	yes	2	no	yes	yes	serves
 listTopologyRecoveries	persistence_journal	yes	5	no	yes	yes	serves
@@ -1032,8 +1032,8 @@ deleteProjectionJob	persistence_journal	yes	11	no	yes	yes	serves
 markProjectionRebuildFailed	persistence_journal	yes	5	no	yes	yes	serves
 listGatedMirrorRequests	persistence_journal	yes	2	no	yes	yes	serves
 listEffectRecoveries	persistence_journal	yes	1	no	yes	yes	serves
-selectClaimableEffect	persistence_journal	yes	8	no	yes	yes	serves
-readRequestEffects	persistence_journal	yes	11	no	yes	yes	serves
+selectClaimableEffect	persistence_journal	yes	10	no	yes	yes	serves
+readRequestEffects	persistence_journal	yes	12	no	yes	yes	serves
 readSourceRequestById	persistence_journal	yes	1	no	yes	yes	serves
 listSourceRequestsByRequestId	persistence_journal	yes	2	no	yes	yes	serves
 listRetryTrackedEffects	persistence_journal	yes	2	no	yes	yes	serves
@@ -1044,14 +1044,14 @@ lockOverdueHold	persistence_journal	yes	1	no	yes	yes	serves
 listOwnerRecoveryHeads	persistence_journal	yes	1	no	yes	yes	serves
 listResumableRefreshes	persistence_journal	yes	1	no	yes	yes	serves
 listSourceLastCommits	persistence_journal	yes	1	no	yes	yes	serves
-stampEffectClaim	persistence_journal	yes	6	no	yes	yes	serves
+stampEffectClaim	persistence_journal	yes	8	no	yes	yes	serves
 renewEffectClaim	persistence_journal	yes	1	no	yes	yes	serves
 advanceEffectRow	persistence_journal	yes	1	no	yes	yes	serves
-completeEffectRow	persistence_journal	yes	2	no	yes	yes	serves
+completeEffectRow	persistence_journal	yes	3	no	yes	yes	serves
 retryEffectRow	persistence_journal	yes	2	no	yes	yes	serves
 retryBusyEffectRow	persistence_journal	yes	3	no	yes	yes	serves
 requeueEffectRow	persistence_journal	yes	1	no	yes	yes	serves
-parkEffectRow	persistence_journal	yes	5	no	yes	yes	serves
+parkEffectRow	persistence_journal	yes	6	no	yes	yes	serves
 failEffectRow	persistence_journal	yes	5	no	yes	yes	serves
 readMirrorGateRows	persistence_journal	yes	2	no	yes	yes	serves
 lockEffectGuard	persistence_journal	yes	1	no	yes	yes	serves
@@ -2002,7 +2002,7 @@ readRevisionWriterRequest	write_misc	yes	2	no	yes	yes	serves
 writeSyncAdmissionStamp	write_misc	yes	5	no	yes	yes	serves
 readSyncAdmissionEffects	write_misc	yes	6	no	yes	yes	serves
 readOpCheckpointRecord	write_misc	yes	26	no	yes	yes	serves
-writeOpCheckpointRecord	write_misc	yes	52	no	yes	yes	serves
+writeOpCheckpointRecord	write_misc	yes	53	no	yes	yes	serves
 purgeStaleCheckpoints	write_misc	yes	1	no	yes	yes	serves
 readHealthMemoClock	write_misc	yes	1	no	yes	yes	serves
 listSynopsisSourceIds	write_misc	yes	4	no	yes	yes	serves
@@ -2020,6 +2020,7 @@ attachSourcePath	write_misc	yes	14	no	yes	yes	serves
 readAtomGeneration	write_misc	yes	2	no	yes	yes	serves
 recordAtomGenerationBump	write_misc	yes	2	no	yes	yes	serves
 addPersistenceCounters	write_misc	yes	4	no	yes	yes	serves
+persistenceUpkeepStore	write_misc	no	0	no	-	-	-
 listAppliedPolicyRevisions	write_misc	yes	6	no	yes	yes	serves
 readLiveMember	write_misc	yes	13	no	yes	yes	serves
 readFolderAccess	write_misc	yes	12	no	yes	yes	serves

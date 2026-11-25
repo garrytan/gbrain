@@ -1758,6 +1758,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'writerReleaseStore': OOS.writerRelease,
   'addPersistenceCounters': OOS.writerRelease,
   'publicationJournalStore': OOS.publicationJournal,
+  'persistenceUpkeepStore': OOS.callerRawSql,
   'readWorktreeManifest': OOS.writerAdmin,
   'readWriterDiagnosticRows': OOS.writerStatus,
   'readWriterStatusRows': OOS.writerStatus,

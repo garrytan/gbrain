@@ -254,6 +254,7 @@ test/engine-parity/doctor-terminal.test.ts
 test/engine-parity/dream-config-members.test.ts
 test/engine-parity/dream-cycle-sites.test.ts
 test/engine-parity/edge-proposals-cli.test.ts
+test/engine-parity/effect-claim-upkeep.test.ts
 test/engine-parity/effect-scans.test.ts
 test/engine-parity/embed-stale-work.test.ts
 test/engine-parity/embedding-catalog.test.ts
@@ -439,6 +440,7 @@ test/engine-parity/read-shared-sources.test.ts
 test/engine-parity/reads-privacy.test.ts
 test/engine-parity/reason-tombstones.test.ts
 test/engine-parity/recall-members.test.ts
+test/engine-parity/receipt-compaction-step.test.ts
 test/engine-parity/referrer-reads.test.ts
 test/engine-parity/refusal-blocker-sites.test.ts
 test/engine-parity/refusal-swallow-extract.test.ts

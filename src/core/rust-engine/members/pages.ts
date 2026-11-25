@@ -390,6 +390,7 @@ export const PAGES_MEMBERS = {
   addPersistenceCounters: 'persistence_journal',
   // A bound publication's request-row reads and writes around its files (engine-sql/publication-journal.ts).
   publicationJournalStore: 'persistence_journal',
+  persistenceUpkeepStore: 'persistence_journal',
   readWorktreeManifest: 'persistence_journal',
   // Writer status (engine-sql/writer-status.ts).
   readWriterDiagnosticRows: 'persistence_journal',

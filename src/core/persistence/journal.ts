@@ -14,7 +14,7 @@ import { outstandingCapacityDetail, retryWriteAdmission, waitOutRefreshFence } f
 import { PreadmitBrainChanged } from './preadmit-cache.ts';
 import { pipelined } from '../page-state/transactions.ts';
 import { backgroundPaused, backgroundWorktreeInactive, declaredBackground, readBackgroundPauseShare, resolveAdmissionOrigin, type AdmissionOrigin } from './admission-origin.ts';
-import { EFFECT_BYTES_SQL, RECEIPT_RESERVATION_FLOOR, receiptReservation, retainedReceiptBytes } from './receipt-bytes.ts';
+import { RECEIPT_RESERVATION_FLOOR, receiptReservation, retainedReceiptBytes } from './receipt-bytes.ts';
 import { writeHealth, type WriteHealthFacts } from './health.ts';
 import { OWNER_READ_BUDGET_MS, startOwnerRead } from './owner-activity.ts';
 import { assertBackgroundOwner } from './owner-verification.ts';
@@ -36,6 +36,7 @@ import { CAPACITY_VERIFY } from './capacity-verify.ts';
 import { readManagedMode } from './managed-mode.ts';
 import { hostIdFor } from './identity.ts';
 import { MANAGED_SYNC_PASS_OP } from './sync-pass-row.ts';
+import type { PersistenceUpkeepStore } from '../engine-sql/persistence-upkeep.ts';
 import { BACKOFF_ELAPSED } from './transient-retry.ts';
 import { segmentWriteScope } from '../page-body/ingest.ts';
 import { sameAttestedActor } from '../access/member-facts.ts';
@@ -1149,12 +1150,10 @@ export const OPEN_SYNC_CURSOR_EXCLUSION = (r: string) => `AND NOT (${r}.intent ?
 export const NEWEST_SYNC_RECEIPT_EXCLUSION = (r: string) => `AND NOT (${r}.state='committed' AND ${r}.worktree_id IS NOT NULL AND (${r}.intent ? 'runId' OR ${r}.intent ? 'passId')
       AND COALESCE(${r}.intent->>'kind','') LIKE 'managed_sync_%' AND ${r}.id=(SELECT n.id FROM persistence_requests n WHERE n.worktree_id=${r}.worktree_id
         AND n.state='committed' AND COALESCE(n.intent->>'kind','') LIKE 'managed_sync_%' ORDER BY n.completed_at DESC, n.sequence DESC LIMIT 1))`;
-export async function newestSyncReceipt(tx: SqlEngine, row: Pick<WriteRequest, 'id' | 'state' | 'intent' | 'worktree_id'>): Promise<boolean> {
+export async function newestSyncReceipt(upkeep: Pick<PersistenceUpkeepStore, 'newestSyncReceiptId'>, row: Pick<WriteRequest, 'id' | 'state' | 'intent' | 'worktree_id'>): Promise<boolean> {
   const intent = row.intent as { runId?: unknown; passId?: unknown; kind?: unknown } | null;
   if (row.state !== 'committed' || !row.worktree_id || (typeof intent?.runId !== 'string' && typeof intent?.passId !== 'string') || !String(intent?.kind ?? '').startsWith('managed_sync_')) return false;
-  const [newest] = await tx.executeRaw<{ id: string }>(`SELECT id FROM persistence_requests WHERE worktree_id=$1::uuid AND state='committed'
-    AND COALESCE(intent->>'kind','') LIKE 'managed_sync_%' ORDER BY completed_at DESC, sequence DESC LIMIT 1`, [row.worktree_id]);
-  return newest?.id === row.id;
+  return await upkeep.newestSyncReceiptId(row.worktree_id) === row.id;
 }
 /** What one compaction pass did (#6696 A11): receipts compacted, reservation bytes it freed, candidates it left and why. */
 export interface ReceiptCompactionResult { compacted: number; freed_bytes: number; skipped_by_reason: Record<string, number> }
@@ -1192,29 +1191,22 @@ export async function compactReceipt(engine: BrainEngine, row: Pick<WriteRequest
   requireTransactions(engine, 'compactReceipt', 'it rechecks the receipt under its row lock and releases the counters in one transaction');
   return engine.transaction(async tx => {
     await declarePersistenceProtocol(tx);
-    await tx.executeRaw("SET LOCAL lock_timeout = '2s'");
-    await tx.executeRaw("SET LOCAL statement_timeout = '15s'");
+    const upkeep = await tx.persistenceUpkeepStore();
+    await upkeep.limitCompactionWaits();
     const keys = ['brain', principalKey(requestPrincipal(row as WriteRequest))];
     await lockCounters(tx, keys);
-    const [current] = await tx.executeRaw<WriteRequest & { eligible_age: boolean; open_cursor: boolean; open_pass: boolean }>(`SELECT r.*,
-        ($2::timestamptz IS NULL OR r.completed_at < $2::timestamptz) AS eligible_age,
-        EXISTS (SELECT 1 FROM op_checkpoints c WHERE r.intent ? 'runId' AND c.op='managed-sync' AND c.completed_keys->0->>'runId'=r.intent->>'runId'
-          AND COALESCE(c.completed_keys->0->>'done','false')<>'true') AS open_cursor,
-        COALESCE(${OPEN_SYNC_PASS_SQL('r')}, false) AS open_pass
-      FROM persistence_requests r WHERE r.id=$1::uuid FOR UPDATE OF r`, [row.id, opts.completedBefore ?? null]);
+    const current = await upkeep.lockCompactionReceipt<WriteRequest>(row.id, opts.completedBefore ?? null);
     if (!current || current.compacted || current.recovery || !isTerminal(current)) return { skipped: 'changed' };
     if (!(opts.states ?? COMPACTABLE_STATES).includes(current.state) || !current.eligible_age) return { skipped: 'changed' };
-    const unfinished = await tx.executeRaw("SELECT 1 FROM persistence_effects WHERE request_id=$1::uuid AND state<>'committed' LIMIT 1", [row.id]);
-    if (unfinished.length) return { skipped: 'unfinished_effect' };
+    if (await upkeep.hasUnfinishedEffect(row.id)) return { skipped: 'unfinished_effect' };
     if (current.open_cursor) return { skipped: 'open_sync_cursor' };
     if (current.open_pass) return { skipped: 'open_sync_pass' };
-    if (await newestSyncReceipt(tx, current)) return { skipped: 'newest_sync_receipt' };
-    const [effects] = await tx.executeRaw<{ bytes: string }>(`SELECT COALESCE(SUM(${EFFECT_BYTES_SQL}),0)::text AS bytes
-      FROM persistence_effects WHERE request_id=$1::uuid`, [row.id]);
-    const retained = Math.min(Number(current.terminal_reservation), retainedReceiptBytes(current, { stage: 'compacted', effects: Number(effects.bytes) }));
+    if (await newestSyncReceipt(upkeep, current)) return { skipped: 'newest_sync_receipt' };
+    const effectBytes = await upkeep.requestEffectBytes(row.id);
+    const retained = Math.min(Number(current.terminal_reservation), retainedReceiptBytes(current, { stage: 'compacted', effects: Number(effectBytes) }));
     const freed = Number(current.terminal_reservation) - retained;
-    await tx.executeRaw('UPDATE persistence_requests SET intent=NULL,compacted=true,error_message=NULL,terminal_reservation=$2 WHERE id=$1::uuid', [row.id, retained]);
-    await tx.executeRaw('UPDATE persistence_counters SET terminal_bytes=terminal_bytes-LEAST($2::bigint,terminal_bytes) WHERE key=ANY($1::text[])', [keys, freed]);
+    await upkeep.markReceiptCompacted(row.id, retained);
+    await upkeep.releaseTerminalBytes(keys, freed);
     return { freed_bytes: freed };
   });
 }

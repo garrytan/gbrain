@@ -906,6 +906,7 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   lockOauthClientName: nothingLock,
   persistOauthClientGrant: 'readOAuthClientWriteGrant for that client',
   publicationJournalStore: 'a SELECT of the rows the call writes',
+  persistenceUpkeepStore: 'a SELECT of the rows the call writes',
   queuePageProjectionJob: 'projectionRebuildProgress',
   rebindSharedSkillMember: 'readSharedSkillMember for that member',
   recountMentionIndexStatus: 'a SELECT of the rows the call writes',

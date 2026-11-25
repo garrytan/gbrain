@@ -42,7 +42,7 @@ fn uncompacted_before(r: &RequestRecord, states: &[&str], before: i64) -> bool {
 }
 
 /// `completed_keys->0` of each checkpoint row of `op`.
-fn first_records(read: &dyn KvRead, op: &str) -> Result<Vec<Value>> {
+pub(super) fn first_records(read: &dyn KvRead, op: &str) -> Result<Vec<Value>> {
     Ok(list_op_checkpoint_records_in(read, op)?
         .as_array()
         .into_iter()
@@ -59,22 +59,30 @@ fn arrow(value: &Value, key: &str) -> Option<String> {
 /// `OPEN_SYNC_CURSOR_EXCLUSION('r')` is false: the request belongs to a managed-sync run whose
 /// cursor is not done, or to a managed-sync pass whose telemetry outcome is still `open`.
 fn in_open_sync(r: &RequestRecord, runs: &[Value], passes: &[Value]) -> bool {
-    let run = jsonb_has(&r.intent, "runId")
+    in_open_run(r, runs) || in_open_pass(r, passes)
+}
+
+/// The request belongs to a managed-sync run whose cursor is not done (`open_cursor` of the compaction's locked read).
+pub(super) fn in_open_run(r: &RequestRecord, runs: &[Value]) -> bool {
+    jsonb_has(&r.intent, "runId")
         && arrow(&r.intent, "runId").is_some_and(|id| {
             runs.iter().any(|c| {
                 arrow(c, "runId").as_deref() == Some(id.as_str())
                     && arrow(c, "done").as_deref().unwrap_or("false") != "true"
             })
-        });
-    let pass = jsonb_has(&r.intent, "passId")
+        })
+}
+
+/// The request belongs to a managed-sync pass whose telemetry outcome is still `open` (`open_pass`).
+pub(super) fn in_open_pass(r: &RequestRecord, passes: &[Value]) -> bool {
+    jsonb_has(&r.intent, "passId")
         && arrow(&r.intent, "passId").is_some_and(|id| {
             passes.iter().any(|p| {
                 let telemetry = p.get("telemetry").cloned().unwrap_or(Value::Null);
                 arrow(&telemetry, "pass_id").as_deref() == Some(id.as_str())
                     && arrow(&telemetry, "outcome").as_deref() == Some("open")
             })
-        });
-    run || pass
+        })
 }
 
 impl Store {

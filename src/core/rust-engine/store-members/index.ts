@@ -147,6 +147,7 @@ import * as worktreeClaim from './worktree-claim.ts';
 import * as writerAdmin from './writer-admin.ts';
 import * as writerRelease from './writer-release.ts';
 import * as publicationJournal from './publication-journal.ts';
+import * as persistenceUpkeep from './persistence-upkeep.ts';
 import * as writerStatus from './writer-status.ts';
 import * as collateStoreReads from './collate-store-reads.ts';
 import * as writeAttribution from './write-attribution.ts';
@@ -316,6 +317,8 @@ export const STORE_MEMBERS = {
   ...writerReleaseMembers,
   // A bound publication's request-row reads and writes around its files (same doc, "Publication journal").
   ...publicationJournal,
+  // The write journal's upkeep statements (rust/docs/store/persistence.md, "Upkeep").
+  ...persistenceUpkeep,
   ...writerStatus,
   // Reads callers once ran through executeRaw: feedback, pins, credentials (rust/docs/store).
   ...collateStoreReads,
