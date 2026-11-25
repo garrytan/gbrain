@@ -4,7 +4,7 @@
  */
 import type { GuestSourceLookupRow, SourceIncarnationRow, SourceRecordRow } from '../../engine.ts';
 import { withDates } from '../store-codec.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
 export const listSourceRecords: StoreMember<[], SourceRecordRow[]> = async (brain) => {
   const rows: SourceRecordRow[] = await storeCall({ member: 'listSourceRecords' }, () => brain.listSourceRecords());
@@ -17,5 +17,13 @@ export const readSourceIncarnation: StoreMember<[sourceId: string], SourceIncarn
 export const hasCompanyBrainReceipt: StoreMember<[sourceId: string], boolean> = (brain, sourceId) =>
   storeCall({ member: 'hasCompanyBrainReceipt', sourceId }, () => brain.hasCompanyBrainReceipt(sourceId));
 
-export const readGuestSourceRow: StoreMember<[sourceId: string], GuestSourceLookupRow> = (brain, sourceId) =>
-  storeCall({ member: 'readGuestSourceRow', sourceId }, () => brain.readGuestSourceRow(sourceId));
+/**
+ * The store keeps no guest_sources table, so it answers "not a guest" for every source. A source whose config says
+ * `guest: true` is a guest source whose writer list this brain cannot hold, so the lookup refuses instead of
+ * letting the guest write guards (guests/admission.ts) pass it as an ordinary source.
+ */
+export const readGuestSourceRow: StoreMember<[sourceId: string], GuestSourceLookupRow> = async (brain, sourceId) => {
+  const guests: string[] = await storeCall({ member: 'readGuestSourceRow', sourceId }, () => brain.listGuestSourceIds([sourceId]));
+  if (guests.includes(sourceId)) refuseMember('readGuestSourceRow', `source ${sourceId} is a guest source (config guest: true) and the store keeps no guest_sources row for its writers`);
+  return storeCall({ member: 'readGuestSourceRow', sourceId }, () => brain.readGuestSourceRow(sourceId));
+};

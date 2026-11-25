@@ -219,7 +219,7 @@ export function cancelSettleMs(): number {
   return Number.isFinite(raw) && raw >= 100 ? raw : DEFAULT_CANCEL_SETTLE_MS;
 }
 import type { SqlExecutor } from './engine-sql/executor.ts';
-import { scopedRead, unscopedExecutor } from './engine-sql/brands.ts';
+import { scopedRead, unscopedExecutor, type LegacyUnscopedRead } from './engine-sql/brands.ts';
 import { writerStamp } from './persistence/writer-versions.ts';
 import { wellFormedJson } from './text-safe.ts';
 import { ENGINE_ROOT } from './engine-root.ts';
@@ -1141,6 +1141,14 @@ export class PostgresEngine implements BrainEngine {
   applyTransactionSettings(names: readonly string[], values: readonly string[]) { return transactionSettingsImpl.applyTransactionSettings(this.autocommitSql, names, values); }
   // Group A (decide store). The reads a doctor check reaches run bounded: they honour a read deadline as the typed preparation reads do (statement-deadline.ts BOUNDED_TYPED_READS).
   private async decideRead<T>(fn: (exec: ReturnType<typeof unscopedExecutor>) => Promise<T>): Promise<T> { throwIfRequestAborted(); return this.preparationRead(exec => fn(unscopedExecutor(exec, 'decide store: master engine.executeRaw, unscoped (it refused an aborted request, GBRA-156)'))); }
+
+  /**
+   * An executor whose reads go through this engine's `executeRaw`: a typed read that replaced an `engine.executeRaw` call keeps what
+   * that call had (an instance wrapper, the request-abort check, the retry and deadline), as master's statement did.
+   */
+  private get viaExecuteRaw(): LegacyUnscopedRead {
+    return unscopedExecutor({ executeRaw: (sql: string, params?: unknown[]) => this.executeRaw(sql, params) } as unknown as SqlExecutor, 'reads that ran through executeRaw on master');
+  }
   private async engineRead<T>(fn: (exec: ReturnType<typeof unscopedExecutor>) => Promise<T>): Promise<T> { throwIfRequestAborted(); return this.preparationRead(exec => fn(unscopedExecutor(abortGuarded(exec), 'N3 typed read: master engine.executeRaw, unscoped (it refused an aborted request and kept its deadline)'))); } // master's executeRaw reads: refuse an aborted request (GBRA-156); end at a doctor deadline or preparation clock (BOUNDED_TYPED_READS, TYPED_PREPARATION_READS)
   readDecideState(key: string) { return this.decideRead(exec => decideStoreImpl.readDecideState(exec, key)); }
   upsertDecideState(key: string, value: string) { return decideStoreImpl.upsertDecideState(this, key, value); }
@@ -1168,18 +1176,19 @@ export class PostgresEngine implements BrainEngine {
   isFolderRestricted(sourceId: string, slug: string) { return this.preparationRead(exec => accessControlImpl.isFolderRestricted(unscopedExecutor(exec, 'access: folder rule read ran unscoped through executeRaw'), sourceId, slug)); }
   readIgnoredPrivacyLabelPages(sourceId: string, scope: { slugs: readonly string[] } | { since: string }, opts?: { limit?: number; timeoutMs?: number }) { return entityReadsImpl.readIgnoredPrivacyLabelPages(this, sourceId, scope, opts); }
   readLivePageFrontmatter(sourceId: string, slug: string, opts?: { timeoutMs?: number }) { return entityReadsImpl.readLivePageFrontmatter(this, sourceId, slug, opts); }
-  listLocalPathSources() { return sourcesImpl.listLocalPathSources(unscopedExecutor(this.engineSql, 'sources: source resolution read it unscoped through executeRaw')); }
-  listSourceRoutingRows() { return sourcesImpl.listSourceRoutingRows(unscopedExecutor(this.engineSql, 'sources: source resolution read it unscoped through executeRaw')); }
-  countDefaultSourceSplit() { return sourcesImpl.countDefaultSourceSplit(unscopedExecutor(this.engineSql, 'sources: the default-write guard read it unscoped through executeRaw')); }
-  readSourceRow(sourceId: string) { return sourcesImpl.readSourceRow(unscopedExecutor(this.engineSql, 'sources: source checks read it unscoped through executeRaw'), sourceId); }
-  markSourceSynced(sourceId: string, opts?: sourcesImpl.SourceSyncStampOptions) { return sourcesImpl.markSourceSynced(this.autocommitSql, sourceId, opts); } // autocommitSql: keeps executeRaw's read-only-default retry (#7183)
+  listLocalPathSources() { return sourcesImpl.listLocalPathSources(this.viaExecuteRaw); }
+  listSourceRoutingRows() { return sourcesImpl.listSourceRoutingRows(this.viaExecuteRaw); }
+  countDefaultSourceSplit() { return sourcesImpl.countDefaultSourceSplit(this.viaExecuteRaw); }
+  readSourceRow(sourceId: string) { return sourcesImpl.readSourceRow(this.viaExecuteRaw, sourceId); }
+  markSourceSynced(sourceId: string) { return sourcesImpl.markSourceSynced(this.autocommitSql, sourceId); } // autocommitSql: keeps executeRaw's read-only-default retry (#7183)
   async listSourceLocalPaths(): Promise<string[]> {
     return this.preparationRead(exec => sourcesImpl.listSourceLocalPaths(unscopedExecutor(exec, 'sources: unscoped on master (the filesystem lock read it through executeRaw)')));
   }
-  listSourceRecords() { return this.engineRead(exec => cliReadsImpl.listSourceRecords(exec)); }
-  readSourceIncarnation(sourceId: string) { return this.engineRead(exec => cliReadsImpl.readSourceIncarnation(exec, sourceId)); }
-  hasCompanyBrainReceipt(sourceId: string) { return this.engineRead(exec => cliReadsImpl.hasCompanyBrainReceipt(exec, sourceId)); }
-  readGuestSourceRow(sourceId: string) { return this.engineRead(exec => cliReadsImpl.readGuestSourceRow(exec, sourceId)); }
+  listSourceRecords() { return cliReadsImpl.listSourceRecords(this.viaExecuteRaw); }
+  listActiveSourceConfigs() { return sourcesImpl.listActiveSourceConfigs(this.viaExecuteRaw); }
+  readSourceIncarnation(sourceId: string) { return cliReadsImpl.readSourceIncarnation(this.viaExecuteRaw, sourceId); }
+  hasCompanyBrainReceipt(sourceId: string) { return cliReadsImpl.hasCompanyBrainReceipt(this.viaExecuteRaw, sourceId); }
+  readGuestSourceRow(sourceId: string) { return cliReadsImpl.readGuestSourceRow(this.viaExecuteRaw, sourceId); }
 
   /** Page-write reads (engine-sql/write-misc.ts); a preparation read ends at its deadline, a locked read runs in the caller's transaction. */
   private get writeMiscReads() { return refuseAborted(unscopedExecutor(this.engineSql, 'write misc: page writes ran these unscoped through executeRaw')); }

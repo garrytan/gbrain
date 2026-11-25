@@ -24,7 +24,9 @@ export const ROUTER_MODULES: Readonly<Record<string, () => Promise<RouterModule>
   quarantine: () => import('../commands/quarantine.ts'),
   core: () => import('../commands/core.ts'),
   loops: () => import('../commands/loops.ts'),
+  household: () => import('../commands/household.ts'),
   guests: () => import('../commands/guests.ts'),
+  claims: () => import('../commands/claims.ts'),
 };
 
 /**

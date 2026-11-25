@@ -46,24 +46,34 @@ export async function readPageTrustRows(exec: LegacyUnscopedRead, lookup: PageTr
 }
 
 /**
- * Every source, `default` first, then by id in byte order (`COLLATE "C"`, on any Postgres locale), with the columns `loadAllSources` reads. A brain whose schema lacks
- * `archived` or `newest_content_at` (pre-v0.26.5, pre-v109) is read again with the historical minimal columns.
+ * Every source, `default` first, then by id (as `loadAllSources` orders them), with the columns `loadAllSources` reads. A brain whose schema lacks
+ * `newest_content_at` (pre-v109) is read again without it, and one that also lacks `archived` (pre-v0.26.5) with the historical minimal columns, so a brain
+ * that has `archived` always reports it.
  */
 export async function listSourceRecords(exec: LegacyUnscopedRead): Promise<SourceRecordRow[]> {
   try {
     return await exec.executeRaw<SourceRecordRow>(
       `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at, archived, newest_content_at
          FROM sources
-       ORDER BY (id = 'default') DESC, id COLLATE "C"`,
+       ORDER BY (id = 'default') DESC, id`,
     );
   } catch (err) {
     if (!isUndefinedColumnError(err)) throw err;
-    return exec.executeRaw<SourceRecordRow>(
-      `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at
-         FROM sources
-       ORDER BY (id = 'default') DESC, id COLLATE "C"`,
-    );
   }
+  try {
+    return await exec.executeRaw<SourceRecordRow>(
+      `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at, archived
+         FROM sources
+       ORDER BY (id = 'default') DESC, id`,
+    );
+  } catch (err) {
+    if (!isUndefinedColumnError(err)) throw err;
+  }
+  return exec.executeRaw<SourceRecordRow>(
+    `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at
+       FROM sources
+     ORDER BY (id = 'default') DESC, id`,
+  );
 }
 
 /** One source's config and incarnation, or null for an unknown id (the company-brain profile read). */

@@ -115,6 +115,7 @@ const EXTRACTORS: Record<string, (result: unknown, src: string, original: unknow
   think: (r, _src, original) => [thinkSlot(r, original)],
   put_page: (r, src) => [pageSlot(r, src)],
   remember: r => isObj(r) && Array.isArray(r.items) ? r.items.map(factSlot) : [factSlot(r)],
+  household_due: (r, src) => isObj(r) && Array.isArray(r.items) ? r.items.map(i => pageSlot(i, src)) : [],
 };
 /** Writes mark their own result, but a write's answer is never stamped degraded for its marks: a committed write must not read as one to retry. */
 const ROOM_WRITE_OPS: ReadonlySet<string> = new Set(['put_page', 'remember']);

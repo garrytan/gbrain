@@ -47,6 +47,10 @@ const DIM = 1536;
  * method) is asserted separately on the instance in the smoke block.
  */
 const INTERFACE_METHODS: readonly string[] = [
+  // Whether this role owns the schema tables (persistence-journal.ts), asked by the import's guest lookup.
+  'ownsSchemaTables',
+  // The active sources with their raw config (engine-sql/sources.ts), the read that scopes a legacy remote caller.
+  'listActiveSourceConfigs',
   // Cycle-lock leases
   'acquireCycleLock', 'refreshCycleLock', 'releaseCycleLock', 'readCycleLocks', 'deleteCycleLock', 'deleteCycleLockIfStale',
   // Alias fan-out reads (engine-sql/alias-fanout-reads.ts; master text pinned by test/n3-sql-move-parity.test.ts)
@@ -193,6 +197,8 @@ const ENGINE_INTERNAL_HELPERS: readonly string[] = [
   'db',
   // The member layer's private executors: the raw read the CLI reads run through, and the unscoped CLI-reads executor.
   'rawRead',
+  // The raw read the entity reads run through (no statement bound): readIgnoredPrivacyLabelPages, readLivePageFrontmatter.
+  'untimedRead',
   'cliReads',
   'connectForRestore',
   'applyForwardReferenceBootstrap',

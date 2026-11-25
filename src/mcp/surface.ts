@@ -113,6 +113,8 @@ export const STARTER_OPS: ReadonlySet<string> = new Set([
   'mute_notice',
   // GBRA-219: the per-conversation memory switch rides next to remember.
   'memory_conversation_mode',
+  // Agent platform H1: "what's at risk at home" is a daily-driver read (a direct literal, so subagents gain nothing).
+  'household_due',
 ]);
 
 /**
@@ -511,7 +513,7 @@ export function advertisedOps<T extends OperationMeta>(callable: T[], callableSu
  */
 export function stdioToolListing(advertised: () => Promise<McpSurface | null>, session: { readonly surface: McpSurface },
   server: { sendToolListChanged(): Promise<void> }) {
-  const revealed = new Set<string>();
+  const revealed = new Set<string>(), served = new Set<string>();
   const startSurface = session.surface;
   const notify = () => { Promise.resolve(server.sendToolListChanged()).catch(() => { /* best-effort */ }); };
   return {
@@ -525,6 +527,15 @@ export function stdioToolListing(advertised: () => Promise<McpSurface | null>, s
     async isListed(op: OperationMeta): Promise<boolean> {
       if (session.surface !== startSurface || revealed.has(op.name)) return true;
       return advertisedOps([op], session.surface, await advertised()).length > 0;
+    },
+    /** Records the names the latest tools/list answer served (the list the client last read). */
+    noteServed(names: string[]): void {
+      served.clear();
+      for (const name of names) served.add(name);
+    },
+    /** Whether the latest tools/list answer served this tool. */
+    servedToClient(name: string): boolean {
+      return served.has(name);
     },
     reveal(names: string[]): void {
       const before = revealed.size;

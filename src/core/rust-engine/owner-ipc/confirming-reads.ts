@@ -12,7 +12,7 @@
 /** Forwarded members that only read but are not open to remote callers. */
 export const OWNER_IPC_LOCAL_ONLY_READS: ReadonlySet<string> = new Set([
   // The import path's source, resolver, guest, privacy-label and writer-state reads: SELECTs only.
-  'listLocalPathSources', 'listSourceRoutingRows', 'countDefaultSourceSplit', 'listSourceRecords', 'readSourceIncarnation', 'hasCompanyBrainReceipt', 'readGuestSourceRow', 'ownsSchemaTables', 'readIgnoredPrivacyLabelPages', 'readLivePageFrontmatter', 'readWriterAdminState', 'readSourceRow',
+  'listLocalPathSources', 'listSourceRoutingRows', 'countDefaultSourceSplit', 'listSourceRecords', 'listActiveSourceConfigs', 'readSourceIncarnation', 'hasCompanyBrainReceipt', 'readGuestSourceRow', 'ownsSchemaTables', 'readIgnoredPrivacyLabelPages', 'readLivePageFrontmatter', 'readWriterAdminState', 'readSourceRow',
   'readStoredBodyBytes', 'readPageBodySizes', 'readFieldUsageSamples', 'listFiles', 'getCodeTraversalCache',
   'listSegmentedPages', 'hasWithdrawnFenceClaim',
   // N3: the alias, export, body-manifest, trust-tier, withdrawal-discovery, belief-coverage, search-vector and queue-health reads:

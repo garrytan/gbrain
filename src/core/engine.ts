@@ -484,7 +484,7 @@ import type { DecideMembers } from './engine-members/decide.ts';
 import type { JobsMembers } from './engine-members/jobs.ts';
 import type { DoctorMembers } from './engine-members/doctor.ts';
 import type { MentionPassMembers } from './engine-members/mentions.ts';
-import type { DefaultSourceSplit, LocalPathSourceRow, SourceCheckRow, SourceRoutingRow, SourceSyncStampOptions } from './engine-sql/sources.ts';
+import type { ActiveSourceConfigRow, DefaultSourceSplit, LocalPathSourceRow, SourceCheckRow, SourceRoutingRow } from './engine-sql/sources.ts';
 import type { IgnoredLabelPageRow } from './engine-sql/entity-reads.ts';
 import type { WriterAdminStateOptions } from './engine-sql/writer-admin.ts';
 export type { StaleTakeOpts, StaleTakeRow, TakeEmbeddingInput } from './takes-row-types.ts';
@@ -1353,9 +1353,11 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   /** One source's id, local_path, raw config and archived flag, or null; `lockSourceRow` reads it FOR UPDATE (engine-sql/sources.ts). */
   readSourceRow(sourceId: string): Promise<SourceCheckRow | null>;
   /** Sets the source's last sync time to now; false for an unknown source, which changes nothing (engine-sql/sources.ts). */
-  markSourceSynced(sourceId: string, opts?: SourceSyncStampOptions): Promise<boolean>;
+  markSourceSynced(sourceId: string): Promise<boolean>;
   /** Every source with the columns `loadAllSources` reads, `default` first then by id; a schema without `archived`/`newest_content_at` omits them. */
   listSourceRecords(): Promise<SourceRecordRow[]>;
+  /** The active sources with their raw config, by id (the read that scopes a legacy remote caller). */
+  listActiveSourceConfigs(): Promise<ActiveSourceConfigRow[]>;
   /** A source's config and incarnation, or null for an unknown id. */
   readSourceIncarnation(sourceId: string): Promise<SourceIncarnationRow | null>;
   /**
