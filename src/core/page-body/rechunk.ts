@@ -196,7 +196,11 @@ async function rechunkPage(engine: BrainEngine, id: number, apply: boolean, reti
   let reused = 0;
   try {
     for (const batch of batches) {
+      // A multi-user Rust brain may run the callback again after a lost commit: each run starts from this state.
+      const before = { out: { ...out }, generation, reused, budget: { ...fenceBudget } };
       await scope(exec => exec.transaction(async tx => {
+        Object.assign(out, before.out); Object.assign(fenceBudget, before.budget);
+        generation = before.generation; reused = before.reused;
         const page = await lockedPage(tx, ref, generation);
         const plan = await planBatch(tx, page, batch, fenceBudget);
         tally(plan);

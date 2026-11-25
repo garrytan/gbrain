@@ -163,6 +163,7 @@ async function buildClaimedProjection(engine: BrainEngine, ref: { sourceId: stri
   if (claimLost) return { chunks: staged.rows, retired, sealed: false, claimLost: true };
   await faultPoint('segmented:projection_staged', { sourceId: ref.sourceId, slug: ref.slug });
   const sealed = await engine.transaction(async tx => {
+    claimLost = false; // a rerun after a lost optimistic commit decides afresh (staging above already kept its claim)
     await tx.lockPageKeys([{ sourceId: ref.sourceId, slug: ref.slug }]);
     const current = await readProjectionPage(tx, ref);
     if (!current || current.knowledge_revision !== page.knowledge_revision || Number(current.body_generation) !== generation) return false;

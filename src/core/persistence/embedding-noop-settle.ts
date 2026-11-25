@@ -62,6 +62,7 @@ export async function settleNoopEmbeddingEffects(engine: BrainEngine, hostId: st
   if (!due) return { settled: 0, cursor: { key, through: from }, done: true };
   const requestIds: string[] = [];
   const pass = await engine.transaction(async tx => {
+    requestIds.length = 0; // a rerun after a lost optimistic commit collects its own ids
     await declarePersistenceProtocol(tx);
     // The window is the next `limit` unattempted embedding effects by id, read from the primary key and locked;
     // the per-effect tests then run on that window only, so a pass costs at most `limit` effects whatever the

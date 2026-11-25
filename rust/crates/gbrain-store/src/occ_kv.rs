@@ -41,7 +41,7 @@
 //! the brain is opened again (the Postgres answer to a failed WAL flush is the same: stop).
 
 use crate::error::{Result, STORE_CLOSED, STORE_CORRUPT, StoreError, WRITE_CONFLICT};
-use crate::kv::{Kv, KvRead, KvWrite};
+use crate::kv::{CounterCheck, Kv, KvRead, KvWrite};
 use crate::redb_kv::{RedbKv, reject_reserved};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -50,6 +50,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender, SyncSender, channel, sync_channel};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
+use std::time::Instant;
 
 /// Largest number of transactions the pipeline puts in one record-file commit.
 const MAX_BATCH_TXNS: usize = 512;
@@ -210,22 +211,50 @@ struct KeyLocks {
 }
 
 impl KeyLocks {
-    /// Takes every key in `keys`, in order, waiting for each one that another owner holds.
-    fn acquire(self: &Arc<Self>, keys: &BTreeSet<Vec<u8>>) -> LockGuard {
+    /// Takes every key in `keys`, in order, waiting for each one that another owner holds. With a
+    /// deadline, a wait that reaches it ends `timeout` (reason `key_wait`) and gives back every key
+    /// this call already took: the guard owns each key from the moment it is taken.
+    fn acquire(
+        self: &Arc<Self>,
+        keys: &BTreeSet<Vec<u8>>,
+        deadline: Option<Instant>,
+    ) -> Result<LockGuard> {
         let owner = self.next_owner.fetch_add(1, Ordering::Relaxed) + 1;
+        let mut guard = LockGuard {
+            locks: self.clone(),
+            owner,
+            keys: Vec::with_capacity(keys.len()),
+        };
         let mut held = self.held.lock().unwrap_or_else(|p| p.into_inner());
         for key in keys {
             while held.get(key).is_some_and(|o| *o != owner) {
-                held = self.released.wait(held).unwrap_or_else(|p| p.into_inner());
+                held = match deadline {
+                    None => self.released.wait(held).unwrap_or_else(|p| p.into_inner()),
+                    Some(at) => {
+                        let now = Instant::now();
+                        if now >= at {
+                            // Release the map before the guard gives back the keys it took.
+                            drop(held);
+                            drop(guard);
+                            return Err(StoreError::timeout(
+                                "key_wait",
+                                "the write waited for a busy key past its deadline; nothing was committed",
+                            ));
+                        }
+                        self.released
+                            .wait_timeout(held, at - now)
+                            .unwrap_or_else(|p| p.into_inner())
+                            .0
+                    }
+                };
             }
-            held.insert(key.clone(), owner);
-            self.count.fetch_add(1, Ordering::Release);
+            if held.insert(key.clone(), owner).is_none() {
+                self.count.fetch_add(1, Ordering::Release);
+                guard.keys.push(key.clone());
+            }
         }
-        LockGuard {
-            locks: self.clone(),
-            owner,
-            keys: keys.iter().cloned().collect(),
-        }
+        drop(held);
+        Ok(guard)
     }
 
     /// True when some retried transaction holds `key`.
@@ -731,7 +760,15 @@ impl Kv for OccKv {
     }
 
     fn begin_write_locked(&self, keys: &BTreeSet<Vec<u8>>) -> Result<Box<dyn KvWrite>> {
-        let guard = self.shared.locks.acquire(keys);
+        self.begin_write_locked_until(keys, None)
+    }
+
+    fn begin_write_locked_until(
+        &self,
+        keys: &BTreeSet<Vec<u8>>,
+        deadline: Option<Instant>,
+    ) -> Result<Box<dyn KvWrite>> {
+        let guard = self.shared.locks.acquire(keys, deadline)?;
         self.begin(Some(guard))
     }
 
@@ -994,13 +1031,28 @@ impl KvWrite for OccTxn {
     }
 
     fn counter_below(&mut self, key: &[u8], cap: i64) -> Result<Option<i64>> {
+        match self.counter_check(key, cap)? {
+            CounterCheck::Refused(value) => Ok(Some(value)),
+            CounterCheck::Admitted { bound } => {
+                // Accepted: commit only checks that the latest value still passes.
+                self.add_guard(key, bound)?;
+                Ok(None)
+            }
+        }
+    }
+
+    fn counter_check(&mut self, key: &[u8], cap: i64) -> Result<CounterCheck> {
         let pending = match self.writes.get(key) {
             None => 0,
             Some(Op::Add(d)) => *d,
             Some(_) => {
                 // A key this transaction set outright: a plain read decides.
                 let value = decode_i64(self.get(key)?.as_deref())?;
-                return Ok((value >= cap).then_some(value));
+                return Ok(if value >= cap {
+                    CounterCheck::Refused(value)
+                } else {
+                    CounterCheck::Admitted { bound: i64::MAX }
+                });
             }
         };
         self.check_lock(key)?;
@@ -1008,11 +1060,18 @@ impl KvWrite for OccTxn {
         if seen + pending >= cap {
             // The refusal depends on the value: read it like any other read.
             self.record(key.to_vec(), key_successor(key));
-            return Ok(Some(seen + pending));
+            return Ok(CounterCheck::Refused(seen + pending));
         }
-        // Accepted: commit only checks that the latest value still passes.
-        self.guards.push((key.to_vec(), cap - 1 - pending));
-        Ok(None)
+        Ok(CounterCheck::Admitted {
+            bound: cap - 1 - pending,
+        })
+    }
+
+    fn add_guard(&mut self, key: &[u8], bound: i64) -> Result<()> {
+        if bound != i64::MAX {
+            self.guards.push((key.to_vec(), bound));
+        }
+        Ok(())
     }
 
     fn commit(self: Box<Self>) -> Result<u64> {

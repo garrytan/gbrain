@@ -138,5 +138,28 @@ Page-key locks are kept in memory, per layer. The store has a single writer, so 
 written; the `w` (lock queue) key tag stays reserved. A scan callback must not call the store
 again: the layers are locked while the scan runs.
 
+## Optimistic transactions (multi-user mode)
+
+With multi-user mode on (`GBRAIN_RUST_MULTIUSER=1` or the brain's `engine.rust.multiuser` config row), the engine opens
+every explicit transaction optimistically (`Store::begin_with` / `begin_bound` with `TxnMode::Optimistic`; the binding's
+`beginTransaction(brain, readOnly, { mode: 'optimistic', deadlineAtMs?, retryKeys?, age? })`). Off, nothing here runs.
+
+- The base is an ordinary write of the concurrent store: it reads from a snapshot, records every key and range it read,
+  and its commit is validated in the ordered pipeline. Other writers do not wait for it. A refused commit
+  (`write_conflict`) keeps nothing; the engine runs the callback again (at most 8 more times, then `revision_conflict`
+  with reason `transaction_contention`). A rerun first queues for the keys earlier runs lost on (`retryKeys`), as a
+  retried single write does.
+- Layers keep `add_i64` and `raise_counter` as typed operations and `counter_below` admissions as checks of their own;
+  they reach the base only when the layer merges into it, so counters never conflict and a dropped layer leaves nothing.
+- The first `write_conflict` a transaction sees dooms it: `transactionConflicted()` is true and its commit refuses.
+- A transaction that ends without committing writes nothing back and raises the id sequences it advanced in a write of
+  its own, so no id is handed out twice, also after a reopen.
+- `holdPageKeys` also takes the keys in the brain's single-flight table until the transaction ends: sorted; a
+  transaction that holds no key, or is older than the holder, waits (bounded by the deadline, then `timeout` reason
+  `key_wait`); a younger one that already holds a key is refused and runs again keeping its age (`transactionAge()`).
+  A waiter that has read nothing reads on from after the holder's commit.
+- `deadlineAtMs` is checked at each statement and when the commit runs; past it the transaction ends `timeout` reason
+  `transaction_deadline`. Once the commit is handed to the pipeline, its answer is the result.
+
 On the JavaScript side the engine runs the transaction on its own one-thread pool, so reads on the
 engine keep their own threads while the transaction is open.

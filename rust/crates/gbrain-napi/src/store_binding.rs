@@ -30,6 +30,20 @@ type Slot = Arc<Mutex<Option<Arc<Store>>>>;
 /// How long `close` waits for calls already running before it reports `store_io`.
 const CLOSE_WAIT: Duration = Duration::from_secs(30);
 
+/// The `Instant` of `at_ms`, milliseconds since the Unix epoch (a past time is now).
+pub(crate) fn instant_at(at_ms: f64) -> Instant {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs_f64() * 1000.0)
+        .unwrap_or(0.0);
+    let ahead = if at_ms.is_finite() {
+        (at_ms - now_ms).max(0.0)
+    } else {
+        0.0
+    };
+    Instant::now() + Duration::from_secs_f64(ahead / 1000.0)
+}
+
 pub(crate) fn task_error(error: StoreError) -> TaskError {
     TaskError::new(error.code, error.message)
 }
@@ -71,6 +85,9 @@ pub struct BrainOpenOptions {
     /// A fresh brain records the write gate's scan baseline under this detector version (the
     /// TypeScript `WRITE_GATE_DETECTOR_VERSION`).
     pub write_gate_detector_version: Option<u32>,
+    /// Multi-user mode (I-0), resolved by the caller for this brain (`GBRAIN_RUST_MULTIUSER=1` or the brain's config
+    /// `engine.rust.multiuser: true`). It implies concurrent writes. Absent or false: the open is unchanged.
+    pub multiuser: Option<bool>,
 }
 
 #[napi]
@@ -82,6 +99,10 @@ pub struct Brain {
     closes: Arc<AtomicU64>,
     /// True while a `bind` on this handle is running, so a second one is refused at once.
     binding: Arc<AtomicBool>,
+    /// The deadline every call of this handle runs under (`withDeadline`, multi-user mode only):
+    /// installed for the one call on the worker thread (`gbrain_store::call_context`). `None` on
+    /// every handle `new Brain` makes.
+    deadline: Option<Instant>,
 }
 
 impl Brain {
@@ -93,11 +114,16 @@ impl Brain {
         work: impl FnOnce(&Store) -> Result<T, StoreError> + Send + 'static,
     ) -> napi::Result<Object<'env>> {
         let store = self.slot.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let deadline = self.deadline;
         spawn(env, &self.pool, move || {
             let store = store.ok_or_else(|| {
                 TaskError::new(gbrain_store::error::STORE_CLOSED, "the brain is not open")
             })?;
-            let value = work(&store).map_err(task_error)?;
+            let value = match deadline {
+                None => work(&store),
+                Some(at) => gbrain_store::call_context::with_deadline(Some(at), || work(&store)),
+            }
+            .map_err(task_error)?;
             serde_json::to_value(value).map_err(|e| {
                 TaskError::new(
                     gbrain_store::error::STORE_CORRUPT,
@@ -142,6 +168,22 @@ impl Brain {
             slot: Arc::new(Mutex::new(None)),
             closes: Arc::new(AtomicU64::new(0)),
             binding: Arc::new(AtomicBool::new(false)),
+            deadline: None,
+        }
+    }
+
+    /// `withDeadline(deadlineAtMs)`: a handle on the same brain and pool whose calls run under the
+    /// absolute deadline `deadlineAtMs` (milliseconds since the Unix epoch). A write that queues for
+    /// a busy key ends `timeout` (reason `key_wait`) at it. Multi-user mode only; nothing else makes
+    /// one.
+    #[napi]
+    pub fn with_deadline(&self, deadline_at_ms: f64) -> Self {
+        Self {
+            pool: self.pool.clone(),
+            slot: self.slot.clone(),
+            closes: self.closes.clone(),
+            binding: self.binding.clone(),
+            deadline: Some(instant_at(deadline_at_ms)),
         }
     }
 
@@ -200,6 +242,7 @@ impl Brain {
                         .push(("chunk_strategy".into(), strategy));
                 }
                 opts.write_gate_detector_version = options.write_gate_detector_version;
+                opts.multiuser = options.multiuser.unwrap_or(false);
             }
             // Holding the slot while opening makes a second `open` on this handle wait, then see
             // the brain open.
