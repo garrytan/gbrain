@@ -262,7 +262,7 @@ export async function settleLedgerWrites(engine: BrainEngine, deadline: number):
   for (;;) {
     const pending = await engine.executeRaw<{ n: number }>(
       `SELECT 1 AS n FROM persistence_requests r JOIN sources s ON s.id = r.source_id AND s.incarnation = r.source_incarnation
-        WHERE r.source_id = $1 AND r.slug LIKE 'actions/____/__/%' AND r.state IN ('queued', 'running', 'recovering')
+        WHERE r.source_id = $1 AND r.slug LIKE 'actions/____/__/%' AND r.state IN ('queued', 'deferred', 'running', 'recovering')
           AND NOT (r.state IN ('running', 'recovering') AND r.claim_expires_at IS NOT NULL AND r.claim_expires_at <= now()) LIMIT 1`, [ACTION_SOURCE]);
     if (!pending.length) return;
     if (Date.now() >= deadline) throw opError('ledger_busy', 'An earlier action is still being written, so this reservation was not checked or held.', 'Retry in a few seconds with the same request_id.', { retryable: true });

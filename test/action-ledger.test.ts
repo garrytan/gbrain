@@ -317,8 +317,12 @@ for (const kind of testBackends()) describe(`action ledger (L2, ${kind}, repo-le
       await settleLedgerWrites(engine, Date.now() + 200);
       await set("state='queued', claim_expires_at=NULL, updated_at=now() - interval '1 hour'");
       expect((await caught(() => settleLedgerWrites(engine, Date.now() + 200)) as { code: string }).code).toBe('ledger_busy');
+      await engine.executeRaw('ALTER TABLE persistence_requests DISABLE TRIGGER gbrain_request_deferred');
+      await set("state='deferred', claim_expires_at=NULL");
+      expect((await caught(() => settleLedgerWrites(engine, Date.now() + 200)) as { code: string }).code).toBe('ledger_busy');
     } finally {
       await set("state='committed'");
+      await engine.executeRaw('ALTER TABLE persistence_requests ENABLE TRIGGER gbrain_request_deferred');
     }
   });
 
