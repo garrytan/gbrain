@@ -545,7 +545,6 @@ src/core/schema-verify.ts	execute_raw	2
 src/core/search-vector-backfill.ts	execute_raw	3
 src/core/search/dedup.ts	execute_raw	1
 src/core/search/evidence-date.ts	execute_raw	3
-src/core/search/facts-arm.ts	execute_raw	1
 src/core/search/feedback-boost.ts	execute_raw	1
 src/core/search/projection-statistics.ts	execute_raw	11
 src/core/search/query-cache-gate.ts	execute_raw	2
@@ -647,5 +646,5 @@ src/shadow/writer-observations.ts	execute_raw	4	swap eligibility's writer observ
 src/core/learning/decide.ts	execute_raw	3	nightly learning PR 2: the learning_items ledger (v334) has no typed engine methods yet; keep and undo read item states, mark decided items and list the page versions after an enrich write
 src/core/learning/push.ts	execute_raw	1	nightly learning PR 2: the learning_items ledger (v334) has no typed engine methods yet; the session-start line counts unseen pending items
 src/core/repair/slug-spelling-guards.ts	execute_raw	3	The slug-spelling apply's three writes in the page's own transaction: copying fact and take purge tombstones to the moved page's normal name, and re-keying its attachments. Only a page stored under an older spelling reaches them, which the Rust store never holds (it writes every slug in normal form), so they stay raw SQL and are the typed raw_sql refusal there (docs/designs/RUST_ENGINE.md, the slug-spelling apply row).
-src/core/repair/slug-spelling.ts	execute_raw	10	The preview scan and the per-page re-check read pages, sources and files with SQL like the sibling repairs (legacy-twins, rename-identity), and the collision check looks up every stored spelling of a name through the spelling index (raised from 9: the move counts the attachments updateSlug carries, for its report); a typed method comes with the Rust store serving these members.
+src/core/repair/slug-spelling.ts	execute_raw	1	The preview scan and the per-page re-check read pages, sources and files with SQL like the sibling repairs (legacy-twins, rename-identity), and the collision check looks up every stored spelling of a name through the spelling index (raised from 9: the move counts the attachments updateSlug carries, for its report); a typed method comes with the Rust store serving these members.
 src/core/rust-engine/store-members/managed-hold.ts	execute_raw	1	the managed_persistence hold: a held managed store answers with the Rust engine's own executeRaw refusal (it runs no SQL), so a user's Rust brain refuses exactly as before lane LM typed these statements
