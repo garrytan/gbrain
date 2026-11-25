@@ -393,36 +393,156 @@ fn rebuild_writes_exactly_the_derived_entries() {
     assert_eq!(stored_entries(&*store.read().unwrap()).unwrap(), want);
 }
 
-#[test]
-fn a_format_8_brain_gets_its_index_when_it_opens() {
+/// A brain built by this build, then turned back into what a format-8 build leaves: no keyed
+/// entries and the format record at 8. Returns the record store, the entries the brain had and
+/// what its members answered before it was turned back.
+fn format_8_brain(
+    seed: u64,
+) -> (
+    std::sync::Arc<dyn crate::kv::Kv>,
+    BTreeSet<Vec<u8>>,
+    Vec<String>,
+) {
     let kv = crate::test_support::mem_kv();
     let env: std::sync::Arc<dyn crate::env::Env> = std::sync::Arc::new(crate::SystemEnv);
-    let want = {
-        let store = Store::open_kv(kv.clone(), env.clone(), crate::OpenOptions::default()).unwrap();
-        source(&store, "work");
-        let mut rng = Lcg(11);
-        for _ in 0..120 {
-            step(&store, &mut rng);
-        }
-        let want = stored_entries(&*store.read().unwrap()).unwrap();
-        assert!(!want.is_empty());
-        // What a format-8 build leaves: no keyed entries, format record at 8.
-        let mut tx = kv.begin_write().unwrap();
-        for key in &want {
-            tx.delete(key).unwrap();
-        }
-        let mut stored: crate::StoredFormat = crate::get_json(&*tx, &keys::meta("format"))
-            .unwrap()
-            .unwrap();
-        stored.format_version = 8;
-        crate::put_json(&mut *tx, &keys::meta("format"), &stored).unwrap();
-        tx.commit().unwrap();
-        want
+    let store = Store::open_kv(kv.clone(), env, crate::OpenOptions::default()).unwrap();
+    source(&store, "work");
+    let mut rng = Lcg(seed);
+    for _ in 0..120 {
+        step(&store, &mut rng);
+    }
+    let want = stored_entries(&*store.read().unwrap()).unwrap();
+    assert!(!want.is_empty());
+    let said = answers(&store);
+    drop(store);
+    let mut tx = kv.begin_write().unwrap();
+    for key in &want {
+        tx.delete(key).unwrap();
+    }
+    let mut stored: crate::StoredFormat = crate::get_json(&*tx, &keys::meta("format"))
+        .unwrap()
+        .unwrap();
+    stored.format_version = 8;
+    crate::put_json(&mut *tx, &keys::meta("format"), &stored).unwrap();
+    tx.commit().unwrap();
+    (kv, want, said)
+}
+
+/// Every record of a store, key and value (the commit sequence and other reserved keys aside).
+fn dump(kv: &dyn crate::kv::Kv) -> Vec<(Vec<u8>, Vec<u8>)> {
+    let mut out = Vec::new();
+    kv.snapshot()
+        .unwrap()
+        .scan(&[], &[0xFF; 64], false, &mut |k, v| {
+            out.push((k.to_vec(), v.to_vec()));
+            true
+        })
+        .unwrap();
+    out
+}
+
+/// What the members that read the keyed lookups answer, for comparing two opens of a brain.
+fn answers(store: &Store) -> Vec<String> {
+    let ids: Vec<u64> = (1..40).collect();
+    let titled = TitledInput {
+        query_lower: "the acme launch and widget plan".into(),
+        scope: GraphScope::default(),
     };
+    let q: DuplicateQuery = de(json!({"hash": "h1", "frontmatterId": "doc-1"}));
+    let mut out = vec![
+        format!(
+            "{:?}",
+            store.find_pages_by_titles(&TitleQuery {
+                title_norms: titles().iter().map(|t| t.to_lowercase()).collect(),
+                source_ids: vec!["default".into(), "work".into()],
+                types: vec!["note".into(), "person".into()],
+                exclude_private: None,
+            })
+        ),
+        format!("{:?}", store.list_pages_titled_in(&titled)),
+        format!("{:?}", store.find_duplicate_page("default", &q)),
+        format!("{:?}", store.has_supersede_edges()),
+        format!("{:?}", store.read_projection_readiness(&de(json!({})))),
+        format!("{:?}", store.cosines_by_chunk_ids(&ids, &basis(1))),
+    ];
+    for page_id in 1..30 {
+        out.push(format!(
+            "{:?}",
+            store.link_relationship_keys_for_origin(&KeysForOriginInput {
+                page_id,
+                link_types: vec!["works_at".into()],
+            })
+        ));
+    }
+    out
+}
+
+#[test]
+fn a_format_8_brain_gets_its_index_when_it_opens() {
+    let (kv, want, said) = format_8_brain(11);
+    let env: std::sync::Arc<dyn crate::env::Env> = std::sync::Arc::new(crate::SystemEnv);
     let store = Store::open_kv(kv, env, crate::OpenOptions::default()).unwrap();
     assert_eq!(store.info().format_version, crate::FORMAT_VERSION);
     assert_eq!(stored_entries(&*store.read().unwrap()).unwrap(), want);
+    assert_eq!(answers(&store), said);
     check_readers(&store);
+}
+
+/// The 8 to 9 upgrade fails at its last write (the format record) or at its commit: the open
+/// reports the failure, the brain is left exactly as a format-8 build left it (format 8, every
+/// record byte for byte, no keyed entry), and the next open upgrades it and every member answers
+/// as it did before the brain was turned back to format 8.
+/// The upgrade must be one transaction: a step committed on its own would leave keyed entries.
+fn upgrade_fails_then_succeeds(op: crate::test_support::FaultOp) {
+    use crate::test_support::FaultyKv;
+    let (inner, want, said) = format_8_brain(13);
+    let env: std::sync::Arc<dyn crate::env::Env> = std::sync::Arc::new(crate::SystemEnv);
+    let before = dump(&*inner);
+    let faulty: std::sync::Arc<dyn crate::kv::Kv> = std::sync::Arc::new(FaultyKv {
+        inner: inner.clone(),
+        code: crate::error::STORE_IO,
+        ops: match op {
+            crate::test_support::FaultOp::Commit => &[crate::test_support::FaultOp::Commit],
+            _ => &[crate::test_support::FaultOp::Put],
+        },
+        fail_on: |key| key == keys::meta("format").as_slice(),
+    });
+    let err = Store::open_kv(faulty, env.clone(), crate::OpenOptions::default())
+        .err()
+        .expect("the open must fail");
+    assert_eq!(err.code, crate::error::STORE_IO, "{}", err.message);
+    let after = dump(&*inner);
+    let stored: crate::StoredFormat =
+        crate::get_json(&*inner.snapshot().unwrap(), &keys::meta("format"))
+            .unwrap()
+            .unwrap();
+    assert_eq!(
+        stored.format_version, 8,
+        "the failed upgrade moved the format"
+    );
+    assert!(
+        stored_entries(&*inner.snapshot().unwrap())
+            .unwrap()
+            .is_empty(),
+        "the failed upgrade left keyed entries behind"
+    );
+    assert!(after == before, "the failed upgrade changed records");
+    // The next open runs the upgrade again, and it holds what an upgrade with no failure holds.
+    let store = Store::open_kv(inner, env.clone(), crate::OpenOptions::default()).unwrap();
+    assert_eq!(store.info().format_version, crate::FORMAT_VERSION);
+    assert_eq!(stored_entries(&*store.read().unwrap()).unwrap(), want);
+    assert_eq!(answers(&store), said);
+    check_readers(&store);
+}
+
+#[test]
+fn an_upgrade_that_fails_at_its_last_write_leaves_the_format_8_brain_and_runs_again() {
+    upgrade_fails_then_succeeds(crate::test_support::FaultOp::Put);
+}
+
+#[test]
+fn an_upgrade_that_fails_at_its_commit_leaves_the_format_8_brain_and_runs_again() {
+    upgrade_fails_then_succeeds(crate::test_support::FaultOp::Commit);
 }
 
 #[test]
