@@ -131,7 +131,7 @@ withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 listCatalogRelations	lifecycle	yes	1	no	yes	yes	serves
 readCatalogSchemaVersion	lifecycle	yes	1	no	yes	yes	serves
 listCatalogForeignKeys	lifecycle	yes	1	no	yes	yes	serves
-getPage	pages	yes	240	yes	yes	yes	serves
+getPage	pages	yes	241	yes	yes	yes	serves
 readPageSnapshot	pages	yes	92	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	3	no	yes	yes	serves
 lockPageKeys	pages	yes	15	no	yes	yes	serves
@@ -145,7 +145,7 @@ softDeletePage	pages	yes	316	yes	yes	yes	serves
 softDeletePages	pages	yes	4	yes	yes	yes	serves
 restorePage	pages	yes	14	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	8	no	yes	yes	serves
-listPages	pages	yes	20	yes	yes	yes	serves
+listPages	pages	yes	21	yes	yes	yes	serves
 findPages	pages	yes	5	no	yes	yes	serves
 countPagesBy	pages	yes	1	no	yes	yes	serves
 pageTypeTotals	pages	yes	2	no	yes	yes	serves
@@ -256,7 +256,7 @@ readPredictionLedgerEvents	pages	yes	2	no	yes	yes	serves
 readTakeHorizonRows	pages	yes	1	no	yes	yes	serves
 readLatestTakeGrades	pages	yes	2	no	yes	yes	serves
 readBeliefCoverageEvents	pages	yes	2	no	yes	yes	serves
-searchKeyword	search	yes	50	yes	yes	yes	serves
+searchKeyword	search	yes	52	yes	yes	yes	serves
 countKeywordPages	search	yes	13	no	yes	yes	serves
 searchKeywordPages	search	yes	18	no	yes	yes	serves
 searchTitles	search	yes	22	yes	yes	yes	serves
@@ -388,8 +388,8 @@ replaceDerivedLinks	links	yes	18	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
 removeLink	links	yes	3	no	yes	yes	serves
 removeLinksByPagesAndSource	links	yes	1	yes	yes	yes	serves
-getLinks	links	yes	38	yes	yes	yes	serves
-getBacklinks	links	yes	15	yes	yes	yes	serves
+getLinks	links	yes	39	yes	yes	yes	serves
+getBacklinks	links	yes	16	yes	yes	yes	serves
 listLinkSources	links	yes	2	yes	yes	yes	serves
 findByTitleFuzzy	links	yes	5	no	yes	yes	serves
 traverseGraph	links	yes	12	yes	yes	yes	serves
@@ -409,7 +409,7 @@ addTag	tags	yes	38	yes	yes	yes	serves
 removeTag	tags	yes	2	no	yes	yes	serves
 pruneFrontmatterTags	tags	yes	3	no	yes	yes	serves
 addPageTagsById	tags	yes	1	no	yes	yes	serves
-getTags	tags	yes	13	yes	yes	yes	serves
+getTags	tags	yes	14	yes	yes	yes	serves
 sampleEffectiveDates	timeline	yes	1	no	yes	yes	serves
 sampleEffectiveDateSources	timeline	yes	1	no	yes	yes	serves
 readMaxTimelineEntryId	timeline	yes	1	no	yes	yes	serves
@@ -429,7 +429,7 @@ listDateBulletPages	timeline	yes	2	no	yes	yes	serves
 listConnectorFencePages	timeline	yes	2	no	yes	yes	serves
 addTimelineEntry	timeline	yes	80	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	4	no	yes	yes	serves
-getTimeline	timeline	yes	38	yes	yes	yes	serves
+getTimeline	timeline	yes	39	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	9	no	yes	yes	serves
 getSince	timeline	yes	11	no	yes	yes	serves
 getOnThisDay	timeline	yes	7	no	yes	yes	serves
@@ -617,8 +617,8 @@ insertFact	facts	yes	184	yes	yes	yes	serves
 insertFacts	facts	yes	246	no	yes	yes	serves
 deleteFactsForPage	facts	yes	8	no	yes	yes	serves
 expireFact	facts	yes	89	no	yes	yes	serves
-listFactsByEntity	facts	yes	61	yes	yes	yes	serves
-listFactsSince	facts	yes	40	yes	yes	yes	serves
+listFactsByEntity	facts	yes	62	yes	yes	yes	serves
+listFactsSince	facts	yes	41	yes	yes	yes	serves
 listFactsKeyset	facts	yes	11	no	yes	yes	serves
 listFactsBySession	facts	yes	13	yes	yes	yes	serves
 listSupersessions	facts	yes	7	yes	yes	yes	serves
@@ -1911,7 +1911,7 @@ attachSourcePath	write_misc	yes	14	no	yes	yes	serves
 addPersistenceCounters	write_misc	yes	4	no	yes	yes	serves
 listAppliedPolicyRevisions	write_misc	yes	6	no	yes	yes	serves
 readLiveMember	write_misc	yes	13	no	yes	yes	serves
-readFolderAccess	write_misc	yes	11	no	yes	yes	serves
+readFolderAccess	write_misc	yes	12	no	yes	yes	serves
 readMayActFor	write_misc	yes	4	no	yes	yes	serves
 readJobPrincipal	write_misc	yes	6	no	yes	yes	serves
 readAudiencePrincipals	write_misc	yes	5	no	yes	yes	serves
@@ -1948,7 +1948,7 @@ switchAccessMigration	write_misc	yes	1	no	yes	yes	serves
 listAccessPolicySources	write_misc	yes	1	no	yes	yes	serves
 countPeopleFolderPages	write_misc	yes	1	no	yes	yes	serves
 countOpenPages	write_misc	yes	3	no	yes	yes	serves
-readAccessMembers	write_misc	yes	17	no	yes	yes	serves
+readAccessMembers	write_misc	yes	18	no	yes	yes	serves
 readAccessCredentials	write_misc	yes	5	no	yes	yes	serves
 revokeAccessTokensNamed	write_misc	yes	4	no	yes	yes	serves
 revokeAccessToken	write_misc	yes	13	no	yes	yes	serves

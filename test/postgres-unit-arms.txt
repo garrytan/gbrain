@@ -429,6 +429,7 @@ test/engine-parity/remember-members.test.ts
 test/engine-parity/remember-meta.test.ts
 test/engine-parity/remember-supersede.test.ts
 test/engine-parity/remember-whole.test.ts
+test/engine-parity/remote-access-matrix.test.ts
 test/engine-parity/remote-links.test.ts
 test/engine-parity/remote-policy.test.ts
 test/engine-parity/repair-aliases.test.ts
