@@ -15,6 +15,8 @@ export interface VectorPoolAttempt {
   maxScanTuples: number;
   remainingMs: number;
   exact: boolean;
+  /** With `exact`, bind the candidate window instead of scanning every eligible chunk (search/vector-exact.ts). */
+  exactWindow?: boolean;
   /** Run the statement's `indexWalkSql` with INDEX_WALK_SETTINGS instead of `sql`. */
   indexWalk?: boolean;
   /** Run the statement's `scopeScanSql` instead of `sql`. */

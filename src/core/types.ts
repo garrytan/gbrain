@@ -1287,6 +1287,8 @@ export interface SearchOpts extends PageReadPolicy {
   vectorLegacyGuard?: boolean;
   /** #6132: pgvector `hnsw.iterative_scan` mode (default relaxed_order), latched by the caller (search/hnsw-iterative-scan.ts). */
   hnswIterativeScan?: import('./search/hnsw-iterative-scan.ts').HnswIterativeScanMode;
+  /** Postgres: run an exact vector scan first on brains with at most this many chunks; 0 or unset is off (search/vector-exact.ts). */
+  vectorExactMaxChunks?: number;
   /** #5989: bounded CJK keyword arm (deadline + meta sink); set by hybrid only (engine-sql/cjk-search.ts). */
   cjkKeyword?: import('./engine-sql/cjk-search.ts').CjkKeywordRun;
   /** GBRA-156: the Postgres keyword arm ranked a bounded sample of its matches, or its OR retry dropped common terms (search/keyword-chunk-match.ts, search/keyword-or-narrow.ts). */

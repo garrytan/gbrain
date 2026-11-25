@@ -27,7 +27,7 @@ const IGNORED_READ_OPTIONS = ['minTrust', 'suppressFlagged', 'requireSafeChunks'
 /** `SearchOpts` keys that do not change which takes `searchTakes` returns (its SQL never reads them). */
 const SEARCH_IGNORED = [
   ...IGNORED_READ_OPTIONS,
-  'offset', 'onVectorPoolMeta', 'vectorLegacyGuard', 'hnswIterativeScan', 'cjkKeyword', 'onKeywordIncomplete',
+  'offset', 'onVectorPoolMeta', 'vectorLegacyGuard', 'hnswIterativeScan', 'vectorExactMaxChunks', 'cjkKeyword', 'onKeywordIncomplete',
   'adaptiveReturn', 'autocut', 'type', 'types', 'where', 'exclude_slugs', 'exclude_slug_prefixes', 'source_boosts',
   'include_slug_prefixes', 'detail', 'language', 'symbolKind', 'nearSymbol', 'walkDepth', 'orFallback', 'orFill',
   'keywordTimeoutCache', 'rankQuery', 'keywordPhrase', 'embeddingColumn', 'afterDate', 'afterDateInclusive',

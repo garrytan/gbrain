@@ -10,6 +10,9 @@
  * design) and below 10,000 embedded chunks (`pg_class.reltuples`; a seq scan
  * is the right plan for a small brain). The legacy guard rollback is reported
  * as configured, because a running service only picks it up on restart.
+ * When `search.vector_exact_max_chunks` covers the brain, searches run an
+ * exact scan first and the explained plan is the index fallback; the message
+ * says so and `details.exact_scan` carries the setting.
  */
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { PostgresEngine } from '../../../core/postgres-engine.ts';
@@ -20,6 +23,7 @@ import { readContentChunksColumnDim } from '../../../core/embedding-dim-check.ts
 import { loadConfig, loadConfigWithEngine, type GBrainConfig } from '../../../core/config.ts';
 import { resolveEmbeddingColumn } from '../../../core/search/embedding-column.ts';
 import { readVectorLegacyGuard, VECTOR_LEGACY_GUARD_ENV, VECTOR_LEGACY_GUARD_KEY } from '../../../core/search/vector-legacy-guard.ts';
+import { parseContentChunkCount, readVectorExactMaxChunks, vectorExactApplies, VECTOR_EXACT_MAX_CHUNKS_KEY } from '../../../core/search/vector-exact.ts';
 
 const NAME = 'vector_plan';
 const DOCS = 'docs/guides/troubleshooting.md#hybrid-search-returns-only-keyword-hits';
@@ -64,7 +68,7 @@ export async function vectorPlanCheck(engine: BrainEngine, opts: VectorPlanOpts 
       return { name: NAME, status: 'ok', message: `Skipped: ${column.name} is ${column.type}(${column.dimensions}), wider than pgvector's HNSW cap, so vector search is an exact scan by design.`,
         details: { ...base, outcome: 'skipped', reason: 'not_indexed' } };
     }
-    const embedded = await embeddedChunkEstimate(engine, column.name);
+    const { embedded, chunks: exactChunks } = await embeddedChunkEstimate(engine, column.name);
     if (embedded < VECTOR_PLAN_MIN_CHUNKS) {
       return { name: NAME, status: 'ok', message: `Skipped: about ${embedded} embedded chunk(s) in ${column.name}; below ${VECTOR_PLAN_MIN_CHUNKS} a sequential scan is the right plan.`,
         details: { ...base, outcome: 'skipped', reason: 'small_brain', embedded_chunks_estimate: embedded } };
@@ -86,7 +90,12 @@ export async function vectorPlanCheck(engine: BrainEngine, opts: VectorPlanOpts 
     const stale = column.name === 'embedding' ? await staleFraction(engine, embedded) : null;
     const staleNote = stale && stale.fraction > STALE_WARN
       ? ` About ${(stale.fraction * 100).toFixed(1)}% of sampled embedded chunks have stale text; run \`gbrain embed --stale\` to re-embed them.` : '';
+    const exactSetting = readVectorExactMaxChunks(cfg);
+    const exactApplies = vectorExactApplies(exactSetting.maxChunks, exactChunks);
+    const exactNote = exactApplies
+      ? ` Exact vector scan is on for brains up to ${exactSetting.maxChunks} chunks (${VECTOR_EXACT_MAX_CHUNKS_KEY}), so searches scan exactly first; this plan is the index fallback.` : '';
     const details = { ...base, embedded_chunks_estimate: embedded, plan_scans: scans, hnsw_indexes: indexes, legacy_guard: guard,
+      exact_scan: { max_chunks: exactSetting.maxChunks, via: exactSetting.via, chunks: exactChunks ?? null, applies: exactApplies },
       stale_fraction: stale?.fraction ?? null, stale_sampled_chunks: stale?.sampled ?? null };
 
     if (guard.enabled) {
@@ -98,7 +107,7 @@ export async function vectorPlanCheck(engine: BrainEngine, opts: VectorPlanOpts 
     }
     if (usesHnsw) {
       return { name: NAME, status: 'ok', details: { ...details, outcome: 'ok' },
-        message: `Vector search uses its HNSW index (${scans.join(', ')}) on ${column.name}.${staleNote}` };
+        message: `Vector search uses its HNSW index (${scans.join(', ')}) on ${column.name}.${exactNote}${staleNote}` };
     }
     const indexState = indexes.length === 0
       ? `no HNSW index exists on content_chunks.${column.name}; create it on the brain host: CREATE INDEX CONCURRENTLY idx_chunks_${column.name} ON content_chunks USING hnsw (${column.name} ${column.type}_cosine_ops)`
@@ -109,24 +118,28 @@ export async function vectorPlanCheck(engine: BrainEngine, opts: VectorPlanOpts 
       message: `Vector search plan does not use the HNSW index on content_chunks.${column.name}: the planner chose ${scans.join(', ') || 'a non-index plan'}. `
         + `Risk: vector candidates may hit the 8 s budget on large brains, and hybrid search then returns keyword-only results (vector_candidates_incomplete). `
         + `Index: ${indexState}. Fix: upgrade gbrain on the brain host (gbrain upgrade) and rerun gbrain doctor; `
-        + `if this started right after an upgrade, roll back with ${VECTOR_LEGACY_GUARD_KEY} and report it on #5824. See ${DOCS}.${staleNote}` };
+        + `if this started right after an upgrade, roll back with ${VECTOR_LEGACY_GUARD_KEY} and report it on #5824. See ${DOCS}.${exactNote}${staleNote}` };
   } catch (error) {
     return { name: NAME, status: 'warn', message: `Vector plan could not be inspected: ${error instanceof Error ? error.message : String(error)}. Health is unknown.`,
       details: { health: 'unknown', docs: DOCS } };
   }
 }
 
-/** Embedded rows from planner statistics; a never-analyzed table falls back to a count bounded at the threshold. */
-async function embeddedChunkEstimate(engine: BrainEngine, column: string): Promise<number> {
+/**
+ * Embedded rows from planner statistics; a never-analyzed table falls back to a count bounded at the threshold.
+ * `chunks` is every content_chunks row as the engine's exact-scan gate counts it (search/vector-exact.ts).
+ */
+async function embeddedChunkEstimate(engine: BrainEngine, column: string): Promise<{ embedded: number; chunks: number | undefined }> {
   const [stats] = await engine.executeRaw<{ reltuples: number; null_frac: number | null }>(
     `SELECT c.reltuples::float8 AS reltuples, s.null_frac::float8 AS null_frac
        FROM pg_class c
        LEFT JOIN pg_stats s ON s.schemaname = 'public' AND s.tablename = 'content_chunks' AND s.attname = $1
       WHERE c.oid = to_regclass('content_chunks')`, [column]);
-  if (stats && stats.reltuples >= 0 && stats.null_frac !== null) return Math.round(stats.reltuples * (1 - stats.null_frac));
+  const chunks = parseContentChunkCount(stats ? [stats] : []);
+  if (stats && stats.reltuples >= 0 && stats.null_frac !== null) return { embedded: Math.round(stats.reltuples * (1 - stats.null_frac)), chunks };
   const [bounded] = await engine.executeRaw<{ n: number }>(
     `SELECT count(*)::int AS n FROM (SELECT 1 FROM content_chunks WHERE "${column.replaceAll('"', '""')}" IS NOT NULL LIMIT ${VECTOR_PLAN_MIN_CHUNKS}) bounded`);
-  return Number(bounded?.n ?? 0);
+  return { embedded: Number(bounded?.n ?? 0), chunks };
 }
 
 /** Share of embedded chunks whose text changed after embedding, from a page sample of about 5,000 rows. */

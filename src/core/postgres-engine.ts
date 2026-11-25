@@ -80,6 +80,7 @@ import { applyChunkEmbeddingIndexPolicy, dropZombieIndexes, supportsHnswIterativ
 import { searchIndexWalk, searchVectorPool, readVectorPool, remainingVectorBudget, type VectorPoolAttempt, POOL_MAX_SCAN_TUPLES } from './search/vector-pool.ts';
 import { buildVectorSearchStatement, PAGE_SOURCE_STATS_SQL, SCOPE_CHUNKS_SQL, VECTOR_EXTENSION_VERSION_SQL, vectorScopeLoader, vectorStatementForms, type PageSourceStats, type ScopeChunkCount, type VectorSearchStatement } from './search/vector-statement.ts';
 import { VECTOR_SETTING_DEFAULTS, vectorScanSettings } from './search/vector-settings.ts';
+import { CONTENT_CHUNK_COUNT_SQL, contentChunkCountCache, parseContentChunkCount, searchExactFirst } from './search/vector-exact.ts';
 import { guardSearchStatistics } from './search/projection-statistics.ts';
 import {
   vectorCastSuffix,
@@ -261,6 +262,7 @@ export class PostgresEngine implements BrainEngine {
   private vectorIterativeScan?: Promise<boolean>;
   private keywordStatementTimeout?: Promise<string>;
   private keywordTimeouts = new KeywordTimeoutNegativeCache(Date.now, undefined, () => keywordRerunPoolIdle(enginePoolStats(this), this._disconnectPromise)); // #7082
+  private readonly vectorChunkCount = contentChunkCountCache(() => this.executeRaw<{ reltuples: number | null }>(CONTENT_CHUNK_COUNT_SQL).then(parseContentChunkCount));
   private readonly vectorScope = vectorScopeLoader(() => this.executeRaw<PageSourceStats>(PAGE_SOURCE_STATS_SQL), ids => this.executeRaw<ScopeChunkCount>(SCOPE_CHUNKS_SQL, [ids]));
   /** Transaction clones keep chunk invalidation and replacement atomic. */
   private _chunkWritesInTransaction = false;
@@ -1619,6 +1621,8 @@ export class PostgresEngine implements BrainEngine {
     const statementFor = vectorStatementForms(chunkManifest => buildVectorSearchStatement({ dialect: 'postgres', embedding, limit, offset: opts?.offset || 0, opts, scope, chunkManifest }));
     const stmt = statementFor(true);
     const iterative = await this.vectorIterativeScanSupported();
+    const exactRows = await searchExactFirst(stmt, limit, opts?.vectorExactMaxChunks, this.vectorChunkCount, async exact => readVectorPool(await this.runVectorAttempt(statementFor, exact, iterative, opts, (tx, sql, bound) => tx.unsafe(sql, bound)))); // search/vector-exact.ts; null continues on the index
+    if (exactRows) return exactRows.map(rowToSearchResult);
     const walked = await searchIndexWalk(stmt, limit, async walk => readVectorPool(await this.runVectorAttempt(statementFor, walk, iterative, opts, (tx, sql, bound) => tx.unsafe(sql, bound))));
     if (walked) return walked.map(rowToSearchResult);
     const rows = await searchVectorPool(limit, stmt.innerLimit, iterative, stmt.indexed, 'postgres',
@@ -1680,7 +1684,7 @@ export class PostgresEngine implements BrainEngine {
 
   private runVectorAttempt(
     statementFor: (chunkManifest: boolean) => VectorSearchStatement,
-    { innerLimit, maxScanTuples, remainingMs, exact, indexWalk, scopeScan }: VectorPoolAttempt,
+    { innerLimit, maxScanTuples, remainingMs, exact, exactWindow, indexWalk, scopeScan }: VectorPoolAttempt,
     iterative: boolean,
     opts: SearchOpts | undefined,
     run: (tx: ReturnType<typeof postgres>, sql: string, bound: Parameters<ReturnType<typeof postgres>['unsafe']>[1]) => Promise<Record<string, unknown>[]>,
@@ -1691,7 +1695,7 @@ export class PostgresEngine implements BrainEngine {
     return this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, async tx => {
       const stmt = statementFor(await chunkManifestReads(this, this.engineSqlOn(tx)));
       const bound = [...stmt.params];
-      bound[stmt.innerLimitIdx] = exact ? null : innerLimit;
+      bound[stmt.innerLimitIdx] = exact && !exactWindow ? null : innerLimit;
       return run(tx, (scopeScan && stmt.scopeScanSql) || (walk && stmt.indexWalkSql) || (exact ? stmt.exactSql : stmt.sql), bound as Parameters<typeof tx.unsafe>[1]);
     }, { alwaysTransaction: true, jitOff: true, settings: () => vectorScanSettings(iterative, innerLimit, maxScanTuples, deadline, opts?.hnswIterativeScan, walk ? shape.indexWalkOverfetch : undefined, !!shape.indexWalkSql && !walk && !(scopeScan && shape.scopeScanSql) && !exact) });
   }

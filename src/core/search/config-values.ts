@@ -8,6 +8,7 @@ import { CJK_KEYWORD_DEADLINE_DEFAULT_MS, CJK_KEYWORD_DEADLINE_KEY, cjkKeywordDe
 import { AUTO_PACKING_CONFIG_KEY, DEFAULT_AUTO_PACKING, autoPackingValueProblem } from './evidence-packing.ts';
 import { DEFAULT_LONG_PAGE_MIN_CHARS, LONG_PAGE_MIN_CHARS_CONFIG_KEY, LONG_PAGE_UNIT_CONFIG_KEY, longPageMinCharsValueProblem, longPageUnitValueProblem } from './evidence-delivery.ts';
 import { DIVERSE_POOL_DEPTH_KEY, diversePoolDepthValueProblem } from './diverse-pool.ts';
+import { VECTOR_EXACT_MAX_CHUNKS_KEY, VECTOR_EXACT_SUGGESTED_MAX_CHUNKS, vectorExactMaxChunksValueProblem } from './vector-exact.ts';
 import { parseBoolKnob } from './mode.ts';
 
 /** A `search.*` boolean the mode reader parses with parseBoolKnob (true/false, on/off, 1/0). */
@@ -22,6 +23,7 @@ interface SearchValueRule {
 
 export const SEARCH_VALUE_RULES: Readonly<Record<string, SearchValueRule>> = {
   [HNSW_ITERATIVE_SCAN_KEY]: { problem: hnswIterativeScanValueProblem, example: HNSW_ITERATIVE_SCAN_MODES[0] },
+  [VECTOR_EXACT_MAX_CHUNKS_KEY]: { problem: vectorExactMaxChunksValueProblem, example: String(VECTOR_EXACT_SUGGESTED_MAX_CHUNKS) },
   [CJK_KEYWORD_DEADLINE_KEY]: { problem: cjkKeywordDeadlineValueProblem, example: String(CJK_KEYWORD_DEADLINE_DEFAULT_MS) },
   [AUTO_PACKING_CONFIG_KEY]: { problem: autoPackingValueProblem, example: DEFAULT_AUTO_PACKING },
   [LONG_PAGE_UNIT_CONFIG_KEY]: { problem: longPageUnitValueProblem, example: 'section' },
