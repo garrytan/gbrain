@@ -518,7 +518,7 @@ impl VersionRecord {
     }
 }
 
-/// `validateSlug` (`src/core/utils.ts`): returns the slug lower-cased.
+/// `validateSlug` (`src/core/utils.ts`): returns the slug in its normal form, lower-cased and then composed to Unicode NFC.
 pub fn validate_slug(slug: &str) -> Result<String> {
     let bad = |why: &str| {
         Err(StoreError::new(
@@ -548,7 +548,9 @@ pub fn validate_slug(slug: &str) -> Result<String> {
     if lower.contains("%2e") || lower.contains("%2f") || lower.contains("%5c") {
         return bad("URL-encoded path separators are not allowed in slugs.");
     }
-    Ok(lower)
+    // The one slug normal form (`normalizeSlug`, src/core/utils.ts): lowercase, then Unicode NFC. NFC runs last because
+    // lowercasing can leave a sequence that is not composed.
+    Ok(unicode_normalization::UnicodeNormalization::nfc(lower.as_str()).collect())
 }
 
 fn blank(text: &str) -> bool {

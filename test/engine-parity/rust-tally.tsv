@@ -334,7 +334,7 @@ test/engine-parity/session-state.test.ts	7	0
 test/engine-parity/shared-skill-members.test.ts	10	1
 test/engine-parity/slot-ends-callers.test.ts	3	0
 test/engine-parity/slot-ends-refusal.test.ts	1	0
-test/engine-parity/slug-normalize.test.ts	6	7
+test/engine-parity/slug-normalize.test.ts	3	10
 test/engine-parity/source-admin-writes.test.ts	3	0
 test/engine-parity/source-archive.test.ts	6	0
 test/engine-parity/source-delete.test.ts	5	0
