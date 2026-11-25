@@ -42,7 +42,8 @@
  * Skill vectors (vectors.ts): when a catalog has a vectors.bin made by the
  * brain's current embedder (config.json embedding_model) and its key is
  * configured, the turn embeds the message once (at most VECTOR_WAIT_MS, or
- * inside the picker's wait when the picker is on) and ranks that catalog by
+ * inside the picker's wait when the picker is on, and never closer to the
+ * caller's deadline than VECTOR_DEADLINE_RESERVE_MS) and ranks that catalog by
  * the reciprocal rank fusion of its word ranking and its cosine list (skills
  * at or above the model's cosine floor). The fused order is what the block
  * shows when the picker is off or cannot answer, and the picker's shortlist
@@ -71,7 +72,7 @@ import { isAcknowledgement, maxIdf, mentionsSkill, rankIndex, reasonText, type R
 import { commitSession, freshState, loadSession, sessionKey, type SessionState, type TurnDelta } from './session.ts';
 import { PICKER_FULL_CATALOG_MAX, PICKER_SHORTLIST, pickSkills, routerTimeoutMs, type PickerSkill, type PickOutcome, type RouterFallbackCode } from './router.ts';
 import { readBounded } from './fsutil.ts';
-import { cosine, embedQuery, readCatalogVectors, RRF_K, turnEmbedder, vectorFloor, vectorsOutdated, VECTOR_WAIT_MS, type CatalogVectors, type EmbedSkipCode, type QueryOutcome } from './vectors.ts';
+import { cosine, embedQuery, readCatalogVectors, RRF_K, turnEmbedder, vectorFloor, vectorsOutdated, VECTOR_DEADLINE_RESERVE_MS, VECTOR_WAIT_MS, type CatalogVectors, type EmbedSkipCode, type QueryOutcome } from './vectors.ts';
 
 export const SCHEMA_VERSION = 1;
 export const MESSAGE_CAP_BYTES = 8192;
@@ -419,7 +420,7 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
       if (!('skip' in t)) {
         vecs = loaded.map(l => (l.receipt.vectors && 'model' in l.receipt.vectors ? readCatalogVectors(catalogFile(home, l.name, 'vectors.bin'), l.receipt.catalog.catalog_hash, t.embedder.model) : null));
         if (!vecs.some(Boolean)) report.fallback = { code: 'stale_vectors' };
-        else query = embedQuery(t.embedder, t.key, input.message, Math.min(pickerOn ? routerTimeoutMs(input.harness, settings.router) / (total > PICKER_FULL_CATALOG_MAX ? 2 : 1) : VECTOR_WAIT_MS, leftNow()), cancelQuery.signal);
+        else query = embedQuery(t.embedder, t.key, input.message, Math.min(pickerOn ? routerTimeoutMs(input.harness, settings.router) / (total > PICKER_FULL_CATALOG_MAX ? 2 : 1) : VECTOR_WAIT_MS, leftNow() - VECTOR_DEADLINE_RESERVE_MS), cancelQuery.signal);
       }
       check();
     }

@@ -464,7 +464,9 @@ turn embeds the message with the same model and compares the two.
   A skill named in the turn still bypasses it.
 - **How long it waits.** At most 1 second for the message's vector with the
   picker off; with the picker on, the picker's own wait covers both, and when
-  the picker answers the vector is not waited for. With the picker off,
+  the picker answers the vector is not waited for. Either way the wait ends
+  at least 100 ms before the caller's deadline, so a late timer on a busy
+  machine still leaves the word matcher time to answer. With the picker off,
   Claude Code's hook waits at most 1.5 seconds in all and every other harness
   2 seconds; with it on, the picker's own wait sets the limit.
 - **When it can't answer.** The turn is the word matcher's, byte for byte,
