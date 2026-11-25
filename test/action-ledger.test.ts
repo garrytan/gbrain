@@ -142,6 +142,16 @@ for (const kind of testBackends()) describe(`action ledger (L2, ${kind}, repo-le
     expect((steal as { code: string }).code).toBe('action_not_found');
   });
 
+  test('a connection whose write grant is another source records nothing', async () => {
+    const elsewhere = { ...ctxFor(engine, true), auth: { sourceId: 'source-a' } } as unknown as OperationContext;
+    const before = (await engine.listPages({ type: 'agent_action' as never, sourceId: 'default' })).length;
+    const logged = await caught(() => withCallerAccess(ALICE, () => logAction(elsewhere, { verb: 'book', summary: 'Booked a table', spent: 30, currency: 'USD', estimated: true })));
+    expect((logged as { code: string }).code).toBe('permission_denied');
+    const reserved = await caught(() => withCallerAccess(ALICE, () => policyReserve(elsewhere, { verb: 'spend', amount: { amount: 5, currency: 'USD' }, summary: 'Coffee' })));
+    expect((reserved as { code: string }).code).toBe('permission_denied');
+    expect((await engine.listPages({ type: 'agent_action' as never, sourceId: 'default' })).length).toBe(before);
+  });
+
   test('budgets: two concurrent reserves at the boundary cannot both be allowed; a settled hold counts its spend', async () => {
     const rules: PolicyRule[] = [
       { id: 'groceries-week', verb: 'spend', decision: 'allow', limit: { amount: 50, currency: 'USD' }, window: 'week', merchant: 'grocer-example' },

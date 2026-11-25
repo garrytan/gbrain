@@ -18,6 +18,7 @@ import { opError } from '../ops/contract.ts';
 import type { AgentVerb, RecipientClass, SpendPurpose } from '../agent-verbs.ts';
 import { submitPageMutation, requestPrincipalForContext } from '../persistence/page-mutations.ts';
 import { getWriteRequest } from '../persistence/journal.ts';
+import { grantedWriteSource, writeGrantRefusal } from '../persistence/write-grant.ts';
 import { dumpFrontmatterYaml } from '../data-frontmatter.ts';
 import { tryAcquireDbLock } from '../db-lock.ts';
 import { normalizeReaders, readersAllow } from '../access/principals.ts';
@@ -63,6 +64,13 @@ export function actorFor(remote: boolean): string {
   const member = access.identity.find(p => p.startsWith('member:'));
   if (member) return member;
   return access.audience?.length ? 'audience' : 'agent';
+}
+
+/** A remote caller writes the ledger only when its write grant is the ledger's source, the same rule every remote page write obeys. */
+function assertLedgerWriteGrant(ctx: OperationContext, remote: boolean): void {
+  if (remote && grantedWriteSource(ctx) !== ACTION_SOURCE) {
+    throw writeGrantRefusal(ctx, `The action ledger lives in source ${ACTION_SOURCE}, and this connection may write only to ${grantedWriteSource(ctx)}, so nothing was recorded. Ask the brain host's operator to grant this connection source ${ACTION_SOURCE}, or record it from the brain host's CLI.`);
+  }
 }
 
 function trustedCtx(ctx: Pick<OperationContext, 'engine' | 'config' | 'logger'>): OperationContext {
@@ -193,6 +201,7 @@ function moneyOf(input: LogActionInput): ActionRecord['money'] | undefined {
 /** log_action: record one outside action, or move a proposed or approved one on (a reservation settles here). */
 export async function logAction(ctx: OperationContext, input: LogActionInput, now = new Date()): Promise<LogActionResult> {
   const remote = ctx.remote !== false;
+  assertLedgerWriteGrant(ctx, remote);
   const actor = actorFor(remote);
   const reader = ledgerReader(remote);
   const requestId = input.request_id ?? randomUUID();
@@ -281,6 +290,7 @@ async function underReserveLock<T>(engine: BrainEngine, fn: () => Promise<T>): P
 /** policy_reserve: check the policy with its budget windows and hold the amount, under one lock. A deny holds nothing. */
 export async function policyReserve(ctx: OperationContext, input: ReserveInput, now = new Date()): Promise<ReserveResult> {
   const remote = ctx.remote !== false;
+  assertLedgerWriteGrant(ctx, remote);
   const reader = ledgerReader(remote);
   return underReserveLock(ctx.engine, async () => {
     const answer = await checkPolicy(ctx.engine, { verb: input.verb, amount: input.amount, merchant: input.merchant, to: input.to }, callerScopes(remote), { usage: usageLookup(ctx.engine, reader, now) });

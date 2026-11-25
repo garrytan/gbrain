@@ -34,7 +34,7 @@ Statuses move forward only: proposed, then approved, then done, failed or cancel
 
 ## Who reads what
 
-The owner, local commands and the owner's own agents read every action. A member's actions are labelled readable by that member and the owner, so a member reads its own actions and their totals. A guest, a group or an audience of several people reads none. No caller sees a count of actions it cannot read. Remote callers record actions only through `log_action` and `policy_reserve`; a direct page write to an action page is refused (`ledger_log_action_only`).
+The owner, local commands and the owner's own agents read every action. A member's actions are labelled readable by that member and the owner, so a member reads its own actions and their totals. A guest, a group or an audience of several people reads none. No caller sees a count of actions it cannot read. Remote callers record actions only through `log_action` and `policy_reserve`; a direct page write to an action page is refused (`ledger_log_action_only`). The ledger lives in the `default` source, so a connection whose write grant is another source records nothing and gets `permission_denied`.
 
 ## Budget holds
 
