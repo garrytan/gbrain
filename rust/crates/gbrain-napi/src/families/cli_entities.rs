@@ -407,4 +407,27 @@ impl Brain {
             s.read_page_titles_by_id(&required::<Vec<i64>>(ids, "readPageTitlesById ids")?)
         })
     }
+
+    /// `readImageSealProbe(sourceId, slug)`: `{ has_visual }` of a sealed image page, or `null`.
+    #[napi]
+    pub fn read_image_seal_probe<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_image_seal_probe(&source_id, &slug))
+    }
+
+    /// `readPageChunkerVersion(pageId)`: `{ chunker_version }` of the page record, or `null`.
+    #[napi]
+    pub fn read_page_chunker_version<'env>(
+        &self,
+        env: &'env Env,
+        page_id: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_page_chunker_version(required::<i64>(page_id, "readPageChunkerVersion pageId")?)
+        })
+    }
 }
