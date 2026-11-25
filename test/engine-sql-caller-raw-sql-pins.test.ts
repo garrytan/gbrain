@@ -3336,6 +3336,20 @@ const PINS: Pin[] = [
     texts: [`SELECT DISTINCT slug COLLATE "C" AS s FROM pages WHERE regexp_replace(normalize(translate(replace(replace(slug, chr(304), 'i' || chr(775)), chr(8490), 'k'), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), NFC), '[^a-z0-9]', '', 'g') = $1 AND source_id = ANY($2::text[]) AND slug COLLATE "C" > $3 ORDER BY s LIMIT 200`],
   },
   {
+    from: 'src/core/cycle/source-window.ts:42 LISTING_INSTANT_SQL (at 7c85d5696f)',
+    case: { method: 'readCycleListingInstant', variant: 'default', run: e => e.readCycleListingInstant() },
+    texts: [`SELECT to_char(GREATEST(LEAST(clock_timestamp(),
+  (SELECT min(xact_start) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type <> 'autovacuum worker') - interval '1 millisecond'),
+  clock_timestamp() - interval '10 minutes') AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at`],
+  },
+  {
+    from: 'src/core/cycle/source-window.ts:58 listSourceChangedPages (at 7c85d5696f)',
+    case: { method: 'listSourceChangedPagesAfter', variant: 'first', run: e => e.listSourceChangedPagesAfter('default', null, '', 3) },
+    texts: [`SELECT slug, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at FROM pages
+      WHERE source_id=$1 AND deleted_at IS NULL AND ($2::text IS NULL OR (updated_at, slug COLLATE "C") > ($2::text::timestamptz, $3::text))
+      ORDER BY updated_at, slug COLLATE "C" LIMIT $4`],
+  },
+  {
     from: 'src/core/access/federation-exposure.ts:32 remotePagesFederationExposes, privacy part on (at 0af1a6ecf0)',
     case: { method: 'readFederationExposedPages', variant: 'hidden', run: e => e.readFederationExposedPages('default', true) },
     texts: () => { const hidden = ` AND ${privacyPartSql('p')}`; return [`WITH open AS (SELECT p.id, p.slug, p.revision_principal_kind, p.revision_principal_id FROM pages p

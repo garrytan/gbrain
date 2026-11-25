@@ -20,6 +20,7 @@ pub mod chronicle_reads;
 pub mod chunks;
 pub mod cli_reads;
 pub mod config;
+pub mod cycle_window;
 pub mod env;
 pub mod error;
 #[cfg(test)]

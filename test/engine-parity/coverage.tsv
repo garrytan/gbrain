@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2401/2425
+# covered: 2403/2427
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -81,7 +81,7 @@
 # write_attribution: 5/5
 # telemetry: 14/14
 # field_usage: 1/1
-# alias_fanout_reads: 9/9
+# alias_fanout_reads: 11/11
 # write_guards: 16/16
 # page_visibility: 5/5
 # remote_links: 5/5
@@ -135,13 +135,13 @@ getPage	pages	yes	278	yes	yes	yes	serves
 readPageSnapshot	pages	yes	100	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1321	yes	yes	yes	serves
+putPage	pages	yes	1320	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	43	yes	yes	yes	serves
 deletePages	pages	yes	8	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	2	yes	yes	yes	serves
-softDeletePage	pages	yes	333	yes	yes	yes	serves
+softDeletePage	pages	yes	332	yes	yes	yes	serves
 softDeletePages	pages	yes	4	yes	yes	yes	serves
 restorePage	pages	yes	15	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	10	no	yes	yes	serves
@@ -189,7 +189,7 @@ markSourceSynced	pages	yes	8	no	yes	yes	serves
 advanceSyncCheckpoint	pages	yes	2	no	yes	yes	serves
 countSourcePages	pages	yes	6	no	yes	yes	serves
 readSourcesNotReadable	pages	yes	3	no	yes	yes	serves
-insertSource	pages	yes	19	no	yes	yes	serves
+insertSource	pages	yes	18	no	yes	yes	serves
 deleteSourceRecord	pages	yes	9	no	yes	yes	serves
 readSourceDeleteImpact	pages	yes	2	no	yes	yes	serves
 readPageSizeRows	pages	yes	4	no	yes	yes	serves
@@ -1958,7 +1958,7 @@ lockRegisteredSourceIds	wanted_links	yes	1	no	yes	yes	serves
 replaceWantedLinkRows	wanted_links	yes	9	no	yes	yes	serves
 listMarkdownPageSlugs	write_misc	yes	1	no	yes	yes	serves
 isSourceClaimed	write_misc	yes	5	no	yes	yes	serves
-readSourceState	write_misc	yes	17	no	yes	yes	serves
+readSourceState	write_misc	yes	18	no	yes	yes	serves
 readAdmissionSource	write_misc	yes	2	no	yes	yes	serves
 sharedSkillPackTablePresent	write_misc	yes	1	no	yes	yes	serves
 listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
@@ -2176,6 +2176,8 @@ readEntityAliasRows	alias_fanout_reads	yes	2	no	yes	yes	serves
 listSlugAliases	alias_fanout_reads	yes	7	no	yes	yes	serves
 readLiveSlugAliases	alias_fanout_reads	yes	3	no	yes	yes	serves
 readSourceSlugProbe	alias_fanout_reads	yes	1	no	yes	yes	serves
+readCycleListingInstant	alias_fanout_reads	yes	1	no	yes	yes	serves
+listSourceChangedPagesAfter	alias_fanout_reads	yes	1	no	yes	yes	serves
 readStoredSlugSpellings	alias_fanout_reads	yes	1	no	yes	yes	serves
 hasSegmentStorage	write_guards	yes	1	no	yes	yes	serves
 readPageOrigin	write_guards	yes	3	no	yes	yes	serves

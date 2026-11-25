@@ -4351,6 +4351,28 @@
         ],
         "flagOnScopes": []
       },
+      "listSourceChangedPagesAfter#after": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listSourceChangedPagesAfter#first": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listSourceIds#default": {
         "flagOffLanes": [
           "pool"
@@ -5695,6 +5717,17 @@
         "flagOn": "unscoped",
         "flagOnLanes": [
           "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "readCycleListingInstant#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
         ],
         "flagOnScopes": []
       },
@@ -10310,6 +10343,7 @@
         "listSlugAliases": "none",
         "listSlugPathCandidates": "none",
         "listSourceBindingsForMovement": "none",
+        "listSourceChangedPagesAfter": "none",
         "listSourceCheckpointRecords": "none",
         "listSourceHoldRecords": "none",
         "listSourceIds": "none",
@@ -10686,6 +10720,7 @@
         "readCredentialMemberId": "none",
         "readCurrentWriteTrust": "none",
         "readCursorEdition": "none",
+        "readCycleListingInstant": "none",
         "readCycleLocks": "none",
         "readDatabaseClock": "none",
         "readDecideState": "none",

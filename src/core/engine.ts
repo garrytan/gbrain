@@ -18,6 +18,7 @@ import type { HandoverReadMembers } from './engine-members/handover-reads.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type * as AccessMembersSql from './engine-sql/access-members.ts';
 import type * as LinkSlugReadsSql from './engine-sql/link-slug-reads.ts';
+import type * as CycleWindowSql from './engine-sql/cycle-window.ts';
 import type * as SlugSpellingsSql from './engine-sql/slug-spellings.ts';
 import type * as FederationExposureSql from './engine-sql/federation-exposure.ts';
 import type * as DreamCycleSql from './engine-sql/dream-cycle.ts';
@@ -2275,6 +2276,10 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   readLiveSlugAliases(sourceId: string, targets: readonly string[]): Promise<LinkSlugReadsSql.LiveSlugAliasRow[]>;
   /** Link preparation's slug fingerprint of a source and the slugs above `afterId` (engine-sql/link-slug-reads.ts). */
   readSourceSlugProbe(sourceId: string, afterId: number): Promise<LinkSlugReadsSql.SourceSlugProbe>;
+  /** A per-source cycle's listing instant, UTC ISO with microseconds, or null (engine-sql/cycle-window.ts). */
+  readCycleListingInstant(): Promise<string | null>;
+  /** Up to `limit` live pages of a source after the cursor `(since, slug)`, by (updated_at, slug bytes) (engine-sql/cycle-window.ts). */
+  listSourceChangedPagesAfter(sourceId: string, since: string | null, slug: string, limit: number): Promise<CycleWindowSql.SourceChangedPageRow[]>;
   /** A scalar slug read's stored-spelling scan: up to 200 stored slugs with spelling key `key`, after `after` by bytes (engine-sql/slug-spellings.ts). */
   readStoredSlugSpellings(key: string, scope: SlugSpellingsSql.StoredSpellingScope, after: string, keys?: readonly string[] | null): Promise<string[]>;
 

@@ -33,7 +33,7 @@ async function put(engine: BrainEngine, slug: string, sourceId = 'default'): Pro
 
 describe('engine parity: the per-source cycle window', () => {
   parityTest('listSourceChangedPages walks every live page of the source in write order, two at a time, through a stamped cursor', {
-    methods: ['putPage', 'insertSource', 'softDeletePage', 'updateSourceConfig'],
+    methods: ['readCycleListingInstant', 'listSourceChangedPagesAfter', 'readSourceState', 'updateSourceConfig'],
     timeout: 90_000,
   }, async (engine) => {
     await engine.insertSource({ id: 'other-example', name: 'other-example', local_path: null, config: {} });
