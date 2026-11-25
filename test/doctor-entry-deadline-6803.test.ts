@@ -56,7 +56,7 @@ function ctxFor(engine: BrainEngine | null, args: string[]): DoctorContext {
  * The engine with executeRaw delayed for statements matching `slow›, and statements matching `count› counted.
  * `settled()` resolves once every delayed statement has finished, so none outlives its test.
  */
-function instrumented(engine: BrainEngine, opts: { slow?: { match: RegExp; ms: number }; count?: RegExp; countMember?: keyof BrainEngine } = {}): BrainEngine & { counted: number; settled: () => Promise<void> } {
+function instrumented(engine: BrainEngine, opts: { slow?: { match: RegExp; ms: number }; slowMember?: { member: keyof BrainEngine; ms: number }; count?: RegExp; countMember?: keyof BrainEngine } = {}): BrainEngine & { counted: number; settled: () => Promise<void> } {
   const state = { counted: 0, delayed: new Set<Promise<unknown>>() };
   const proxy: BrainEngine = new Proxy(engine, {
     get(target, key) {
@@ -66,6 +66,16 @@ function instrumented(engine: BrainEngine, opts: { slow?: { match: RegExp; ms: n
       if (opts.countMember && key === opts.countMember) {
         const member = Reflect.get(target, key, target) as (...args: unknown[]) => unknown;
         return (...args: unknown[]) => { state.counted++; return member.apply(target, args); };
+      }
+      // A typed read whose SQL runs on the target: hold the member call itself.
+      if (opts.slowMember && key === opts.slowMember.member) {
+        const member = Reflect.get(target, key, target) as (...args: unknown[]) => unknown;
+        return (...args: unknown[]) => {
+          const run = new Promise((r) => setTimeout(r, opts.slowMember!.ms)).then(() => member.apply(target, args));
+          state.delayed.add(run);
+          void run.finally(() => state.delayed.delete(run)).catch(() => undefined);
+          return run;
+        };
       }
       if (key === 'executeRaw') {
         return (sql: string, params?: unknown[], o?: unknown) => {
@@ -258,7 +268,7 @@ for (const kind of testBackends()) {
       mkdirSync(root, { recursive: true });
       for (let i = 0; i < 200; i++) writeFileSync(join(root, `note-${i}.md`), `---\ntitle: Note ${i}\n---\n\nBody ${i}.\n`);
       await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2) ON CONFLICT (id) DO UPDATE SET local_path=EXCLUDED.local_path', ['fm-example', root]);
-      const slowCount = instrumented(engine, { slow: { match: /SELECT COUNT\(\*\)::text AS n FROM pages WHERE source_id/, ms: 1_500 } });
+      const slowCount = instrumented(engine, { slowMember: { member: 'countLivePagesInSource', ms: 1_500 } });
       try {
         await withEntryBudget(600, async () => {
           const started = Date.now();

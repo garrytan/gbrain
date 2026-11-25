@@ -27,6 +27,7 @@ import type { BrainEngine } from '../engine.ts';
 // it in the binary (mirrors brain-repo-durability.ts's import of the same
 // file). NOT a runtime dynamic import — nothing to resolve on disk.
 import bundledFilingRules from '../../../skills/_brain-filing-rules.json';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 type FilingRulesDoc = { dream_synthesize_paths?: { globs?: unknown } };
 
@@ -74,11 +75,10 @@ async function resolveBrainRepoPath(engine: BrainEngine): Promise<string | null>
   try {
     const cfg = await engine.getConfig('sync.repo_path');
     if (cfg) return cfg;
-    const rows = await engine.executeRaw<{ local_path: string | null }>(
-      `SELECT local_path FROM sources WHERE id = 'default'`,
-    );
-    return rows[0]?.local_path ?? null;
-  } catch {
+    return await engine.readSourceLocalPath('default');
+  } catch (e) {
+    // An engine that cannot read the path refuses; null would quietly drop the brain repo's own filing rules.
+    rethrowCapabilityRefusal(e);
     return null;
   }
 }

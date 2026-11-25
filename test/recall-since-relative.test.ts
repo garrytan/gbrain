@@ -78,4 +78,11 @@ describe('recall parseSinceParam stays additive', () => {
     }
     for (const f of ['a while back', '', '   ', null, undefined, {}, Number.NaN]) expect(parseSinceParam(f)).toBeNull();
   });
+
+  // Date.parse rolls 2026-02-30 over to March 2, so recall's window silently moved two days instead of refusing.
+  test('a date that is not a calendar day is refused, a real one still parses', () => {
+    for (const f of ['2026-02-30', '2025-02-29', '2026-04-31T09:00:00Z', '2026-11-31 08:00']) expect(parseSinceParam(f)).toBeNull();
+    expect(parseSinceParam('2028-02-29')!.toISOString()).toBe('2028-02-29T00:00:00.000Z');
+    expect(parseSinceParam('2026-04-30T09:00:00Z')!.toISOString()).toBe('2026-04-30T09:00:00.000Z');
+  });
 });

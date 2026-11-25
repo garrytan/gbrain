@@ -19,10 +19,12 @@
  * RECORD_ROWS_PER_CALL per call, allotted in input order.
  */
 import type { BrainEngine } from '../engine.ts';
+import type { DegradedStageEntry } from '../types.ts';
 import { readAka, selectAcrossSources, type EntityLookupScope, type EntityNameMatch } from './entity-card.ts';
 import { readSiblingIdentity } from './entity-card-identity.ts';
 import { boundedProjectedPrefix } from '../page-window/document.ts';
-import { boundedBodyPrefixSql, overlaidBoundedRows } from '../page-window/bounded-lead.ts';
+import { overlaidBoundedRows } from '../page-window/bounded-lead.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { redactFindings } from '../secret-scan.ts';
 import type { Notice } from '../agent-output.ts';
 import { readRowReferences, type RowReferences } from './entity-references.ts';
@@ -47,16 +49,18 @@ export function pageLead(body: string | null, max = ENTITY_LEAD_CHARS): string {
 }
 
 export async function lookupEntityNames(engine: BrainEngine, sourceId: string, names: string[],
-  opts: { remote: boolean; sources?: readonly string[]; surfaceCeiling?: 'verbs' | 'starter' | 'full'; emitNotice?: (n: Notice) => void; variants?: boolean }): Promise<{ results: EntityNameRow[]; found: number; missing: number }> {
+  opts: { remote: boolean; sources?: readonly string[]; surfaceCeiling?: 'verbs' | 'starter' | 'full'; emitNotice?: (n: Notice) => void; variants?: boolean }): Promise<{ results: EntityNameRow[]; found: number; missing: number; degraded?: DegradedStageEntry[] }> {
   const unique = [...new Set(names.map(n => n.trim()).filter(Boolean))];
   // #6723: each name resolves in the first source (home first) with a hit; a source's lookup scope is read once per batch.
   const sources = opts.sources?.length ? opts.sources : [sourceId];
   const scopes = new Map<string, Promise<EntityLookupScope>>();
   const excludePrivate = new Map<string, boolean>();
   const rows = new Map<string, EntityNameRow>();
+  // A failed lookup read in any name's resolution: its `found: false` row is then not proof the entity is absent.
+  const degraded: DegradedStageEntry[] = [];
   for (let i = 0; i < unique.length; i += CONCURRENCY) {
     await Promise.all(unique.slice(i, i + CONCURRENCY).map(async name => {
-      const { sourceId: hitSource, scope, selected } = await selectAcrossSources(engine, sources, name, opts.remote, { omitQuarantined: opts.remote, scopes, variants: opts.variants });
+      const { sourceId: hitSource, scope, selected } = await selectAcrossSources(engine, sources, name, opts.remote, { omitQuarantined: opts.remote, scopes, variants: opts.variants, degraded });
       excludePrivate.set(hitSource, scope.excludePrivate);
       rows.set(name, await lookupOne(engine, hitSource, name, scope, selected, opts));
     }));
@@ -66,7 +70,7 @@ export async function lookupEntityNames(engine: BrainEngine, sourceId: string, n
     await attachReferences(engine, src, results.filter(r => r.found && r.source_id === src), exclude, { ...opts, home: sources[0]! });
   }
   const found = results.filter(r => r.found).length;
-  return { results, found, missing: results.length - found };
+  return { results, found, missing: results.length - found, ...(degraded.length ? { degraded } : {}) };
 }
 
 /** One batched reference read per source for every found page and sibling, in input order (page first, then its siblings). */
@@ -100,9 +104,10 @@ async function lookupOne(engine: BrainEngine, sourceId: string, name: string, sc
   const siblingPages = identity_siblings?.pages ?? [];
   const bodies = new Map<string, string | null>([[row.slug, row.compiled_truth]]);
   if (siblingPages.length) {
-    const sib = await engine.executeRaw<{ slug: string; source_id: string; compiled_truth: string | null }>(
-      `SELECT slug, source_id, ${boundedBodyPrefixSql('pages')} AS compiled_truth FROM pages WHERE source_id = $1 AND slug = ANY($2::text[]) AND deleted_at IS NULL`,
-      [sourceId, siblingPages.map(p => p.slug)]).catch(() => []);
+    // The entity card's hydrate read (engine-sql/entity-reads.ts readEntityCardRows): the same bounded body prefix of the
+    // live pages at those slugs. A capability refusal surfaces; any other failure leaves the siblings without a lead.
+    const sib = await engine.readEntityCardRows(sourceId, { slugs: siblingPages.map(p => p.slug) })
+      .catch((err: unknown) => { rethrowCapabilityRefusal(err); return []; });
     for (const s of await overlaidBoundedRows(engine, sib)) bodies.set(s.slug, s.compiled_truth);
   }
   return {

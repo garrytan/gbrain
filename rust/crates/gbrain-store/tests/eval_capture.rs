@@ -329,3 +329,68 @@ fn failures_record_reasons_and_filter_by_since() {
     }
     assert_eq!(all(None).len(), 3);
 }
+
+#[test]
+fn a_purge_scrub_strips_purged_slugs_from_the_candidates_of_the_source() {
+    let dir = TempDir::new("eval-scrub");
+    let (store, _) = open(&dir);
+    let other: SourceInput = serde_json::from_value(json!({"id": "other"})).unwrap();
+    store.upsert_source(&other).unwrap();
+    put(&store, "other", "shared");
+    for slug in ["gone", "kept", "shared"] {
+        put(&store, "default", slug);
+    }
+    let log = |slugs: Value, sources: Value| {
+        store
+            .log_eval_candidate(&candidate(
+                json!({"retrieved_slugs": slugs, "source_ids": sources}),
+            ))
+            .unwrap()
+    };
+    let _ = log(json!([]), json!([]));
+    let both = log(
+        json!(["gone", "kept", "shared"]),
+        json!(["default", "other"]),
+    );
+    let only = log(json!(["gone", "gone", "kept"]), json!(["default"]));
+    let elsewhere = log(json!(["shared"]), json!(["other"]));
+    let none = log(json!(["gone"]), json!([]));
+    let wanted = |id: u64| {
+        let rows = list(&store, json!({}));
+        rows.iter().find(|r| r["id"] == json!(id)).unwrap()["retrieved_slugs"].clone()
+    };
+    let slugs = |names: &[&str]| names.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+
+    assert_eq!(store.scrub_eval_candidate_slugs("default", &[]).unwrap(), 0);
+    assert_eq!(
+        store
+            .scrub_eval_candidate_slugs("default", &slugs(&["nothing"]))
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        store
+            .scrub_eval_candidate_slugs("default", &slugs(&["gone", "shared"]))
+            .unwrap(),
+        2
+    );
+    // `shared` stays on the candidate that also covers the source holding a page of that name.
+    assert_eq!(wanted(both), json!(["kept", "shared"]));
+    assert_eq!(wanted(only), json!(["kept"]));
+    // A candidate that does not cover the source, or covers none, is not touched.
+    assert_eq!(wanted(elsewhere), json!(["shared"]));
+    assert_eq!(wanted(none), json!(["gone"]));
+    assert_eq!(
+        store
+            .scrub_eval_candidate_slugs("default", &slugs(&["gone"]))
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        store
+            .scrub_eval_candidate_slugs("default", &["a\0b".to_string()])
+            .unwrap_err()
+            .code,
+        INVALID_ARGUMENT
+    );
+}

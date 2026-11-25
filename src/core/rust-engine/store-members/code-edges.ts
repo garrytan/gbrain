@@ -51,6 +51,12 @@ export const deleteCodeEdgesForChunks: StoreMember<[chunkIds: number[]], void> =
   await storeCall({ member: 'deleteCodeEdgesForChunks' }, () => brain.deleteCodeEdgesForChunks(ids));
 };
 
+export const clearCodeEdgesLeavingChunks: StoreMember<[chunkIds: number[]], void> = async (brain, chunkIds) => {
+  if (chunkIds.length === 0) return;
+  const ids = chunkIds.map((id) => finiteChunkId('clearCodeEdgesLeavingChunks', id) ?? null);
+  await storeCall({ member: 'clearCodeEdgesLeavingChunks' }, () => brain.clearCodeEdgesLeavingChunks(ids));
+};
+
 type LookupOpts = { sourceId?: string; allSources?: boolean; limit?: number; bareFallback?: boolean; chunkId?: number };
 
 /** The shared SQL's lookup inputs: limit clamp, `scopedSource`, and chunk identity only for a number. */

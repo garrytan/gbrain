@@ -11,10 +11,13 @@
 // The napi macros register exports at load time, so under `cargo test` they look unused.
 #[cfg_attr(test, allow(dead_code))]
 mod binding;
+#[cfg(test)]
+mod boundary_props;
 pub mod error;
 #[cfg_attr(test, allow(dead_code))]
 mod families;
 pub mod pool;
+mod store_bind;
 #[cfg_attr(test, allow(dead_code))]
 mod store_binding;
 

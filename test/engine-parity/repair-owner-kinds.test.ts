@@ -13,11 +13,10 @@
  *    rows-behind tests run on PGLite or Postgres only.
  *  - Owner path: on a brain this host owns (a registered writer and a claimed worktree binding, which every engine now
  *    serves), ghost-pages previews the page whose file is gone and its apply soft-deletes exactly that page, and
- *    legacy-twins previews the twin pair, on every arm; its apply merges the pair on the SQL arms (the twin's sync import
+ *    legacy-twins previews the twin pair, on every arm; its apply merges the pair on every arm (the twin's sync import
  *    record moves to the legacy page and the twin's op_checkpoints row is deleted through writeOpCheckpointRecord on the
- *    merge transaction), and the Rust engine refuses the merge by name and leaves the twin's record
- *    (`engine_capability_missing`, raw_sql, "gbrain repair legacy-twins merge") until the merge moves to typed members. Before batch 8 a Rust brain stopped at the raw import-record read (ghost-pages)
- *    and the raw twin-merge conflict read (legacy-twins).
+ *    merge transaction). Before batch 8 a Rust brain stopped at the raw import-record read (ghost-pages) and the raw
+ *    twin-merge conflict read (legacy-twins); until batch 6c its merge stopped by name ("repair twin merge").
  *  - segmented-mirror on an owned brain: the preview walks the source's segmented pages (listSegmentedPageSlugs) and
  *    lists none when no page has a withdrawal ledger, and the apply of that empty preview is a no-op, on every arm.
  *    Before this case a Rust brain stopped at the raw segmented-slug read. A page with a withdrawal ledger still
@@ -141,14 +140,11 @@ describe('engine parity: repair kinds that need the owner host', () => {
   }, async (engine) => ownedBrain(engine, root => seedTwins(engine, root),
     async (root) => ({ preview: (await run(engine, 'legacy-twins', root)).preview })));
 
-  // The merge itself (mergeTwinInto) still moves rows through raw SQL until batch 6, so the Rust engine refuses it by
-  // name at the merge step, after the same preview, instead of failing inside the first raw statement.
-  parityTest('on a brain this host owns, legacy-twins merges the twin pair, and the Rust engine refuses the merge by name', {
+  parityTest('on a brain this host owns, legacy-twins merges the twin pair on every engine', {
     methods: ['putPage', 'attachSourcePath', 'getWorktreeBinding', 'listRepairScanPages', 'listTwinMergeLosers', 'listPages',
       'writeOpCheckpointRecord', 'readOpCheckpointRecord'],
-    requires: 'raw_sql',
     timeout: 60_000,
-  }, async (engine, backend) => ownedBrain(engine, root => seedTwins(engine, root), async (root) => {
+  }, async (engine) => ownedBrain(engine, root => seedTwins(engine, root), async (root) => {
     // The twin's sync import record: the merge moves it to the legacy page and deletes the twin's checkpoint row
     // (writeOpCheckpointRecord with no keys, on the merge transaction).
     const incarnation = (await engine.getWorktreeBinding('default', null))!.source_incarnation;
@@ -166,23 +162,12 @@ describe('engine parity: repair kinds that need the owner host', () => {
     const attempt = async (apply: boolean, expect?: string) =>
       (await repairRunner(engine, { apply, noEmbed: true, logger: quiet })).run('legacy-twins', scope, { explicit: true, ...(expect ? { expect } : {}) });
     const preview = await attempt(false);
-    try {
-      const applied = shape(await attempt(true, preview.preview_hash), root);
-      const live = (await engine.listPages({ sourceId: 'default', limit: 100 })).map(page => page.slug).sort();
-      expect(live.filter(slug => slug.startsWith('notes/foo'))).toHaveLength(1);
-      const moved = await records();
-      expect(moved).toEqual({ twin: false, legacy: true });
-      return { preview: shape(preview, root), applied, live, moved };
-    } catch (err) {
-      if (backend === 'rust') {
-        const text = JSON.stringify({ message: (err as Error).message, detail: (err as { detail?: unknown }).detail });
-        expect(text).toContain('gbrain repair legacy-twins merge');
-        expect(text).toContain('mergeTwinInto');
-        // Refused before the merge: the twin keeps its import record.
-        expect(await records()).toEqual({ twin: true, legacy: false });
-      }
-      throw err;
-    }
+    const applied = shape(await attempt(true, preview.preview_hash), root);
+    const live = (await engine.listPages({ sourceId: 'default', limit: 100 })).map(page => page.slug).sort();
+    expect(live.filter(slug => slug.startsWith('notes/foo'))).toHaveLength(1);
+    const moved = await records();
+    expect(moved).toEqual({ twin: false, legacy: true });
+    return { preview: shape(preview, root), applied, live, moved };
   }));
 
   parityTest('on a brain this host owns, segmented-mirror walks the segmented pages and lists none without a withdrawal', {

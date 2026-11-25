@@ -48,6 +48,11 @@ export interface PassConvergence {
   admission: SyncAdmissionStatus;
   not_converged_streak: number;
   duration_ms: number | null; timings_ms: Record<string, number>; last_full_at: string | null;
+  /**
+   * GST-3534: the commits the newest pass's rounds read and how many rounds read `I⋈P` whole or patched the previous read (null for
+   * a pass written before them).
+   */
+  levels: { heads: number; whole: number; patched: number } | null;
 }
 
 /** The live block of one source's pass row (design §9's field table). `holds` are the incarnation's holds the status read. */
@@ -68,7 +73,7 @@ export async function passConvergence(engine: Pick<BrainEngine, 'executeRaw'>, i
     episode: episode ? { full_id: episode.full_id ?? null, opened_at: episode.opened_at, inherited: episode.inherited, selection_fp: digest(episode.selection),
       reserved_usd: o.cost?.reserved_usd ?? null, approved_usd: o.cost?.approved_usd ?? null } : null,
     admission: input.admission, not_converged_streak: o.not_converged_streak ?? 0,
-    duration_ms: t.duration_ms, timings_ms: t.timings_ms, last_full_at: o.converged?.last_full_at ?? null };
+    duration_ms: t.duration_ms, timings_ms: t.timings_ms, last_full_at: o.converged?.last_full_at ?? null, levels: t.levels ?? null };
 }
 
 /** GST-2869: the rewrite was the attempt that exhausted a transient hold's retries, so the hold now waits on a person. */

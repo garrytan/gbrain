@@ -8,7 +8,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'fs';
+import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, rmSync, existsSync } from 'fs';
 import { join } from 'path';
 import { execSync } from 'child_process';
 import { tmpdir } from 'os';
@@ -947,16 +947,49 @@ describeE2E('E2E: Init Edge Cases', () => {
   afterAll(teardownDB);
 
   test('init --non-interactive without URL fails gracefully', async () => {
-    const env = { ...process.env };
-    delete env.DATABASE_URL;
-    delete env.GBRAIN_DATABASE_URL;
-    const result = await spawnInit({
-      cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive'],
-      cwd: join(import.meta.dir, '../..'),
-      env,
-      timeout: 10_000,
-    });
-    expect(result.exitCode).not.toBe(0);
+    // A fresh home with no config: an earlier test in this file writes a Postgres config into the shared HOME, and
+    // init --non-interactive now keeps a brain the config names, so "no URL" here also means "no config".
+    const freshHome = mkdtempSync(join(tmpdir(), 'gbrain-e2e-init-no-url-'));
+    try {
+      const env: Record<string, string | undefined> = { ...process.env, HOME: freshHome, GBRAIN_HOME: freshHome };
+      delete env.DATABASE_URL;
+      delete env.GBRAIN_DATABASE_URL;
+      const result = await spawnInit({
+        cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive'],
+        cwd: join(import.meta.dir, '../..'),
+        env,
+        timeout: 10_000,
+      });
+      expect(result.exitCode).not.toBe(0);
+      expect(existsSync(join(freshHome, '.gbrain', 'config.json'))).toBe(false);
+    } finally {
+      rmSync(freshHome, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test('init --non-interactive with no URL keeps the Postgres brain the config file names', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-e2e-init-kept-pg-'));
+    try {
+      mkdirSync(join(home, '.gbrain'));
+      writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ engine: 'postgres', database_url: process.env.DATABASE_URL }, null, 2));
+      const env: Record<string, string | undefined> = { ...process.env, HOME: home, GBRAIN_HOME: home };
+      delete env.DATABASE_URL;
+      delete env.GBRAIN_DATABASE_URL;
+      const result = await spawnInit({
+        cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive',
+              '--embedding-model', LEGACY_EMBEDDING_CONFIG.embedding_model,
+              '--embedding-dimensions', String(LEGACY_EMBEDDING_CONFIG.embedding_dimensions)],
+        cwd: join(import.meta.dir, '../..'),
+        env,
+        timeout: 15_000,
+      });
+      expect(result.exitCode).toBe(0);
+      const cfg = JSON.parse(readFileSync(join(home, '.gbrain', 'config.json'), 'utf8'));
+      expect(cfg.engine).toBe('postgres');
+      expect(cfg.database_url).toBe(process.env.DATABASE_URL);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   }, 30_000);
 
   test('double init is idempotent', async () => {

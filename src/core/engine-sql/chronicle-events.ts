@@ -28,6 +28,9 @@ export type PageContentHashQuery =
   | { sourceId: string; match: 'ids'; ids: readonly number[] }
   | { sourceId: string; match: 'live_slugs'; slugs: readonly string[] };
 
+/** One recent chronicle-shaped page with no event projection yet: its type, stored date and frontmatter date fields. */
+export interface ChronicleCoverageGapRow { type: string; effective_date: Date | null; effective_date_source: string | null; fm_date: string | null; fm_start: string | null }
+
 /** The `frontmatter.event` slot fields of one page, as text. */
 export interface ChronicleEventSlotRow { slug: string; when: string | null; where: string | null; kind: string | null }
 
@@ -145,4 +148,24 @@ export async function listOrphanedChronicleOwners(raw: EngineRawRead, sourceId: 
 /** The `frontmatter.event` when, where and kind of each page of `slugs` (soft-deleted pages included), in no set order. */
 export async function listChronicleEventSlotRows(raw: EngineRawRead, sourceId: string, slugs: readonly string[]): Promise<ChronicleEventSlotRow[]> {
   return raw<ChronicleEventSlotRow>(EVENT_SLOTS_SQL, [sourceId, [...slugs]]);
+}
+
+const COVERAGE_GAP_SQL = `SELECT p.type, p.effective_date, p.effective_date_source, p.frontmatter->>'date' AS fm_date, p.frontmatter->>'start' AS fm_start
+           FROM pages p
+          WHERE p.type IN ('meeting','conversation','calendar-event') AND p.deleted_at IS NULL
+            AND p.updated_at > now() - interval '30 days'
+            AND NOT EXISTS (
+              SELECT 1 FROM timeline_entries te
+              WHERE te.page_id = p.id AND te.event_page_id IS NOT NULL
+            )`;
+
+/**
+ * The chronicle advisor's coverage-gap read (advisor/collect-chronicle.ts): the live meeting, conversation and
+ * calendar-event pages of every source updated in the last 30 days (by the database clock) that no timeline row with an
+ * event page projects yet, with the date fields the caller filters on. In no set order. `effective_date` comes back as a
+ * Date (or null) on every engine.
+ */
+export async function listChronicleCoverageGapRows(raw: EngineRawRead): Promise<ChronicleCoverageGapRow[]> {
+  const rows = await raw<Omit<ChronicleCoverageGapRow, 'effective_date'> & { effective_date: Date | string | null }>(COVERAGE_GAP_SQL);
+  return rows.map(r => ({ ...r, effective_date: r.effective_date == null ? null : new Date(r.effective_date) }));
 }

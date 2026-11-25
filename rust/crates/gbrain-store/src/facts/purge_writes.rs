@@ -46,9 +46,13 @@ impl Store {
         self.write(|tx| crate::takes::delete_takes_by_id(tx, &ids))
     }
 
-    /// `deletePurgeReviewQueue(sourceId, refs)`: the source's review-queue rows naming a ref.
+    /// `deletePurgeReviewQueue(sourceId, refs)`: the source's review-queue rows naming a ref. A NUL
+    /// byte in the source id or a ref is refused, as a Postgres `text` parameter refuses it.
     pub fn delete_purge_review_queue(&self, source_id: &str, refs: &[String]) -> Result<u64> {
         no_nul("deletePurgeReviewQueue", &[("sourceId", source_id)])?;
+        for r in refs {
+            no_nul("deletePurgeReviewQueue", &[("refs", r.as_str())])?;
+        }
         let refs: HashSet<String> = refs.iter().cloned().collect();
         if refs.is_empty() {
             return Ok(0);
@@ -58,9 +62,13 @@ impl Store {
         })
     }
 
-    /// `deletePurgeReviewProposals(sourceId, refs)`: the source's review proposals naming a ref.
+    /// `deletePurgeReviewProposals(sourceId, refs)`: the source's review proposals naming a ref. A
+    /// NUL byte in the source id or a ref is refused, as a Postgres `text` parameter refuses it.
     pub fn delete_purge_review_proposals(&self, source_id: &str, refs: &[String]) -> Result<u64> {
         no_nul("deletePurgeReviewProposals", &[("sourceId", source_id)])?;
+        for r in refs {
+            no_nul("deletePurgeReviewProposals", &[("refs", r.as_str())])?;
+        }
         let refs: HashSet<String> = refs.iter().cloned().collect();
         if refs.is_empty() {
             return Ok(0);

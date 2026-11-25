@@ -311,7 +311,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
       const binding = await tokenMemberBinding(sql, row, row.created_at, engine).catch(() => null); // GBRA-218 verify join
       if (!binding) return { ok: false, code: 'access_member_disabled' };
       const allowList = await credentialHolders(engine, grant.takesHolders, binding.member?.id);
-      const { sourceId, allowedSources, hasSourceGrant, ...readShared } = await tokenReadSources(sql, grant, async () => binding.member?.id ?? null, engine);
+      const { sourceId, allowedSources, hasSourceGrant, ...readShared } = await tokenReadSources(engine, grant, async () => binding.member?.id ?? null);
       const auth: AuthInfo = {
         token,
         clientId: rowId,

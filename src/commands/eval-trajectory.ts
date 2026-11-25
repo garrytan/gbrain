@@ -13,6 +13,7 @@
  *   gbrain eval trajectory companies/acme-example --json
  */
 
+import { normalizeSlug } from '../core/utils.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
@@ -93,7 +94,7 @@ function parseArgs(args: string[]): RunOpts | { help: true } | { error: string }
   if (positional.length !== 1) {
     return { error: 'Exactly one entity-slug positional argument is required.' };
   }
-  return { ...(opts as RunOpts), entitySlug: positional[0] };
+  return { ...(opts as RunOpts), entitySlug: positional[0] === undefined ? positional[0] : normalizeSlug(positional[0]) };
 }
 
 export async function runEvalTrajectory(engine: BrainEngine, args: string[]): Promise<void> {
@@ -196,7 +197,7 @@ export async function runEvalTrajectory(engine: BrainEngine, args: string[]): Pr
       : undefined;
     if (reg) {
       const pct = Math.abs(reg.delta_pct * 100).toFixed(1);
-      line += ` [REGRESSION ↓${pct}%]`;
+      line += ` [REGRESSION ${reg.delta_pct > 0 ? '↑' : '↓'}${pct}%]`;
     }
     console.log(line);
   }

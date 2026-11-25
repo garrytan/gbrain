@@ -14,6 +14,7 @@ The cases are in `test/engine-parity/jobs-status.test.ts` and `tests/jobs_status
 | `readLastAutopilotCycles()` | `{ full, targeted }`: the newest completed `autopilot-cycle` row and the newest completed `autopilot-%` row, each `{ finished_at, name, status, started_at, result }` or null. Newest by `finished_at DESC NULLS LAST, id DESC` |
 | `countJobsByStatus(filter?)` | `{ status, count }` per status, in status (bytewise) order. A filter is a `name`, a `queue` and a `statuses` list; an absent field matches all, an empty list matches nothing |
 | `readWaitingQueueDepths()` | `{ queue, depth, oldest_waiting_age_seconds }` for each queue with `waiting` rows, deepest first, then by queue |
+| `listRecentSourceCycleFailures(cutoff, sourceId)` | `[{ source_id, fail_count, last_failed_at }]` (`last_failed_at` ISO) of the dead or failed `autopilot-cycle` rows that finished after the ISO `cutoff`, grouped by `data->>'source_id'` (null or absent skipped), by source id; a row whose `result->>'job_outcome'` is `phase_failed` is left out; `sourceId` narrows to one source |
 | `readLastCompletedJobAt()` | the largest `updated_at` of a `completed` row, or null |
 | `countTtlCancelledByName(like, secs)` | `{ name, count }` of `cancelled` rows whose `error_text` matches the LIKE pattern and whose `finished_at` is inside the window; most first, then by name |
 | `readWaitingScopeState({ name, queue, jobId })` | `{ waiting, live_id, age_min }`, always one answer (see below) |

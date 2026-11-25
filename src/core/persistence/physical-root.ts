@@ -6,6 +6,7 @@ import type { SqlEngine } from './model.ts';
 import type { WriterAdminStore } from '../engine-sql/writer-admin.ts';
 import { repairWedgedReservation, resolveCoordinationLock } from './coordination-lock.ts';
 import { canonicalFilesystemPath } from './root-registry.ts';
+import { requireManagedPersistence } from '../rust-engine/errors.ts';
 import type { OperationError } from '../ops/contract.ts';
 import { adoptTransferredRootStamp, assertNoPhysicalRootOverlap, assertPhysicalRoot, assertPhysicalRootStamp, describeMovedPhysicalRoot, PHYSICAL_ROOT_MARKER, physicalRootDeviceChange, physicalRootError,
   physicalRootMovedError, physicalRootMovedRefusal, readPhysicalRootReservation, readPhysicalRootStamp, reservePhysicalRootRecord, restampPhysicalRootDevice, samePhysicalBirth, writePhysicalRootStamp,
@@ -74,6 +75,7 @@ export async function movedPhysicalRoot(tx: SqlEngine, path: string, hostId: str
   Promise<(MovedPhysicalRoot & { members: Array<{ sourceId: string; relativePath: string }> }) | null> {
   const moved = describeMovedPhysicalRoot(canonicalFilesystemPath(path));
   if (!moved || !hostId) return null;
+  requireManagedPersistence(tx, 'movedPhysicalRoot', 'it reads the managed worktree and source bindings a moved checkout belongs to');
   const [row] = await tx.executeRaw<{ brain_id: string; owner_host_id: string | null; local_path: string | null }>(`SELECT brain_id::text AS brain_id,
     (SELECT owner_host_id::text FROM persistence_worktrees WHERE id=$1::uuid) AS owner_host_id,
     (SELECT local_path FROM persistence_host_bindings WHERE worktree_id=$1::uuid AND host_id=$2::uuid) AS local_path

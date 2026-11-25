@@ -22,6 +22,7 @@ import { LATEST_VERSION, MIGRATIONS, runMigrations } from '../src/core/migrate.t
 import { FACT_WITHDRAWAL_STAMP_DEFERRED_SETTING } from '../src/core/facts/insert-guard-schema.ts';
 import { failClosedLedgerGuards } from '../src/core/guard-ledger-checks.ts';
 import { recordDerivationPurge } from '../src/core/page-body/segment-derive.ts';
+import { listDerivationClaimForms, recordDerivationPurgeRow } from '../src/core/engine-sql/purge-receipt.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { databaseRefusal } from '../src/core/persistence/publication-failure.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
@@ -61,6 +62,10 @@ afterAll(async () => {
 });
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
+/** The transaction as the engine presents it to the derivation record: with the claim-forms and record members its engines carry. */
+const withClaimForms = (tx: Exec): Pick<BrainEngine, 'recordDerivationPurgeRow' | 'listDerivationClaimForms'> =>
+  ({ listDerivationClaimForms: (claims: readonly string[]) => listDerivationClaimForms(tx, claims),
+    recordDerivationPurgeRow: (row: Parameters<typeof recordDerivationPurgeRow>[1]) => recordDerivationPurgeRow(tx, row) }) as never;
 interface Seed { pageId: number; claim: string; hash: string }
 /** A page in 'default', written as the owner and committed; each case gets its own claim. */
 async function seedPage(engine: BrainEngine): Promise<Seed> {
@@ -117,14 +122,14 @@ const GUARDS: Guard[] = [
     op: s => ['UPDATE pages SET content_hash=$1 WHERE id=$2', [s.hash, s.pageId]],
     probe: s => ['SELECT count(*)::int AS pages FROM pages WHERE content_hash=$1', [s.hash]], guarded: { result: PURGED } },
   { name: 'a derivation holding a purged claim', raiser: 'gbrain_refuse_purging_derivation', hidden: ['page_segment_derivation_purges'],
-    seed: (tx, s) => recordDerivationPurge(tx, randomUUID(), 'default', [s.pageId], [s.claim]),
+    seed: (tx, s) => recordDerivationPurge(withClaimForms(tx), randomUUID(), 'default', [s.pageId], [s.claim]),
     op: s => [`INSERT INTO page_segment_derivations(page_id,pipeline,occurrence_id,pipeline_version,segment_sha256,context_hash,state,output)
       VALUES($1,'links',1,1,sha256('a'::bytea),sha256('b'::bytea),'done',jsonb_build_object('text',$2::text))`, [s.pageId, s.claim]],
     probe: s => ['SELECT count(*)::int AS derivations FROM page_segment_derivations WHERE page_id=$1', [s.pageId]],
     guarded: { result: 'ok', derived: { derivations: 0 } } },
   { name: 'a page leaving a running derivation sweep unnoted', raiser: 'gbrain_mark_derivation_scope_entry',
     hidden: ['page_segment_derivation_purges', 'page_segment_derivation_purge_pages'],
-    seed: (tx, s) => recordDerivationPurge(tx, randomUUID(), 'default', [], [s.claim]),
+    seed: (tx, s) => recordDerivationPurge(withClaimForms(tx), randomUUID(), 'default', [], [s.claim]),
     op: s => ['UPDATE pages SET deleted_at=now() WHERE id=$1', [s.pageId]],
     probe: s => ['SELECT count(*)::int AS noted FROM page_segment_derivation_purge_pages WHERE page_id=$1', [s.pageId]],
     guarded: { result: 'ok', derived: { noted: 1 } } },

@@ -79,6 +79,21 @@ export async function readFactSubject(raw: EngineRawRead, id: number): Promise<F
   return row ?? null;
 }
 
+/**
+ * recall's name-and-topic split (#4828): whether some fact of `sourceId` is keyed under a slug with a segment that is a
+ * listed token or starts with it and a hyphen, or some page alias of the source is a listed alias. Tokens are slugify
+ * output (`[a-z0-9-]`), so they carry no regex metacharacters.
+ */
+export async function factsOrAliasesMayMatch(raw: EngineRawRead, sourceId: string, slugTokens: readonly string[], aliasNorms: readonly string[]): Promise<boolean> {
+  if (slugTokens.length === 0 && aliasNorms.length === 0) return false;
+  const rows = await raw<{ hit: number }>(
+    `SELECT 1 AS hit FROM facts WHERE source_id = $1 AND entity_slug ~ ANY($2::text[])
+     UNION ALL SELECT 1 AS hit FROM page_aliases WHERE source_id = $1 AND alias_norm = ANY($3::text[])
+     LIMIT 1`,
+    [sourceId, slugTokens.map(t => `(^|/)${t}(-|$)`), [...aliasNorms]]);
+  return rows.length > 0;
+}
+
 /** One fence-owned fact row of a page as extract_facts reconciles it. */
 export interface PageFactRow {
   id: number | string;

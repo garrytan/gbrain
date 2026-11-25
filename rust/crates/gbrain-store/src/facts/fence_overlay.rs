@@ -29,6 +29,15 @@ pub struct FenceOverlayIncomingRow {
     pub fp: Option<String>,
 }
 
+/// One facts-fence row a chunk names (`FenceRowKey`): its source, page slug and row number.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FenceRowKey {
+    pub source_id: String,
+    pub slug: String,
+    pub row_num: i64,
+}
+
 /// `readFenceOverlayRows({ sourceId, slug }, incoming, { hideHeld })`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -139,6 +148,66 @@ impl Store {
                 "purged": purged,
                 "held": held,
                 "narrower": narrower,
+            }));
+        }
+        Ok(out)
+    }
+}
+
+impl Store {
+    /// `listFenceRowTrust(keys)` (engine-sql/cli-reads-ops.ts): for each distinct key, the newest live fact at the row
+    /// (`DISTINCT ON (source_id, slug, row_num) ... WHERE expired_at IS NULL ORDER BY ..., id DESC`) as `{ source_id,
+    /// slug, row_num, trust_tier, flagged, contested }`, where `flagged` is `activationSuppressedSql` and `contested` is
+    /// `contestedRefSql`. A key with no live fact gives no row; rows are in (source id, slug, row number) byte order. A
+    /// row number outside `int` is refused, as the `int[]` bind refuses it; a NUL byte is refused, as `text[]` does.
+    pub fn list_fence_row_trust(&self, keys: &[FenceRowKey]) -> Result<Vec<Value>> {
+        const OP: &str = "listFenceRowTrust";
+        let mut wanted = std::collections::BTreeSet::new();
+        for k in keys {
+            no_nul(
+                OP,
+                &[
+                    ("source_id", k.source_id.as_str()),
+                    ("slug", k.slug.as_str()),
+                ],
+            )?;
+            let row = i32::try_from(k.row_num).map_err(|_| {
+                StoreError::new(
+                    INVALID_ARGUMENT,
+                    format!(
+                        "{OP}: row_num {} is out of range for type integer",
+                        k.row_num
+                    ),
+                )
+            })?;
+            wanted.insert((k.source_id.clone(), k.slug.clone(), row));
+        }
+        let read = self.read()?;
+        let mut out = Vec::new();
+        let mut pages: std::collections::BTreeMap<(String, String), Vec<super::FactRecord>> =
+            std::collections::BTreeMap::new();
+        for (source_id, slug, row) in wanted {
+            let key = (source_id.clone(), slug.clone());
+            if !pages.contains_key(&key) {
+                pages.insert(key.clone(), page_rows(&*read, &source_id, &slug)?);
+            }
+            let Some(fact) = pages[&key]
+                .iter()
+                .filter(|f| f.row_num == Some(row) && f.expired_at_us.is_none())
+                .max_by_key(|f| f.id)
+            else {
+                continue;
+            };
+            let id = i64::try_from(fact.id).map_err(|_| {
+                StoreError::new(INVALID_ARGUMENT, format!("{OP}: fact id out of range"))
+            })?;
+            out.push(json!({
+                "source_id": source_id,
+                "slug": slug,
+                "row_num": row,
+                "trust_tier": fact.trust_tier,
+                "flagged": crate::trust::activation_suppressed(&*read, "facts", fact.id, fact.tier())?,
+                "contested": crate::trust::proposals::contested_ref(&*read, "facts", id)?,
             }));
         }
         Ok(out)

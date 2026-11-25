@@ -107,11 +107,11 @@ pub struct PurgedCandidatesArgs {
 }
 
 /// `PAGE_EXTRACTION_SOURCE_LIST` (facts/gone-page-facts.ts): the sources whose context names the page.
-pub(super) const PAGE_EXTRACTION_SOURCES: [&str; 4] =
+pub(crate) const PAGE_EXTRACTION_SOURCES: [&str; 4] =
     ["mcp:put_page", "sync:import", "file_upload", "code_import"];
 
 /// `contextHeadSql`: `split_part(context, ' — ', 1)`, the text before the first separator.
-pub(super) fn context_head(context: &str) -> &str {
+pub(crate) fn context_head(context: &str) -> &str {
     context.split(" \u{2014} ").next().unwrap_or("")
 }
 
@@ -779,6 +779,12 @@ pub(crate) fn folder_restricted(read: &dyn KvRead, page: &PageRecord) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_space_class_matches_pglite_on_every_code_point() {
+        let mismatches = crate::fingerprint_fixture::space_mismatches(posix_space);
+        assert_eq!(mismatches, Vec::<String>::new());
+    }
 
     #[test]
     fn the_context_head_is_the_text_before_the_first_separator() {

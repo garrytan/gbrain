@@ -1,11 +1,11 @@
 /**
  * #7967 item 2: retiring a code ghost on a git-canonical source (`sources.config.canonical = "git"`).
  *
- * A JSON file is committed and indexed as a code page, then removed from the worktree without a commit, so HEAD still
- * holds it. The ghost repair's soft delete must go through the door at the recorded file, not at `<slug>.md`: the
- * request commits, its Git effect settles (never parks), and HEAD drops the file in the same door commit, so Git and the
- * database agree. Before the fix the door committed a removal of `<slug>.md` (a path Git never held), HEAD kept the
- * recorded file and the worktree was left with an uncommitted deletion. Runs on PGLite and, with DATABASE_URL, Postgres.
+ * A JSON file is committed and indexed as a code page, then removed from the worktree. While HEAD still holds it the
+ * ghost repair lists it apart and removes nothing (GST-3637: `ghost_worktree_only`, with its `git checkout` restore). Once
+ * a commit deletes it, the repair's soft delete must go through the door at the recorded file, not at `<slug>.md`: the
+ * request commits, its Git effect settles (never parks), and Git and the database agree. Before the fix the door
+ * committed a removal of `<slug>.md` (a path Git never held). Runs on PGLite and, with DATABASE_URL, Postgres.
  */
 import { describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -34,13 +34,19 @@ const setup = ({ root }: { root: string }) => {
 for (const backend of testBackends()) describe(`[${backend}] #7967 code ghost on a git-canonical source`, () => {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
 
-  test('the retirement commits the recorded file\'s removal through the door and its Git effect settles', () => managedBrain(async ({ engine, root }) => {
+  test('kept while HEAD holds the file; once a commit deletes it the retirement goes through the door at the recorded file and its Git effect settles', () => managedBrain(async ({ engine, root }) => {
     await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
     await importCodeFile(engine, CODE_PATH, JSON_BYTES, { noEmbed: true, sourceId: 'default' });
     await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
     await engine.executeRaw(`UPDATE sources SET config = config || '{"canonical":"git"}'::jsonb WHERE id='default'`);
     unlinkSync(join(root, CODE_PATH));
     expect(git(root, 'ls-tree', '--name-only', '-r', 'HEAD').trim()).toBe(CODE_PATH);
+    const kept = await repair(engine);
+    expect(kept).toMatchObject({ affected: 0, residuals: { ghosts: 0, worktree_only: 1 } });
+    expect(kept.listing).toEqual([expect.objectContaining({ item: `default:${CODE_SLUG}`, class: 'ghost_worktree_only' })]);
+    expect(kept.listing![0]!.detail).toContain(`checkout HEAD -- '${CODE_PATH}'`);
+    git(root, 'rm', '-q', '--', CODE_PATH);
+    git(root, 'commit', '-q', '-m', 'remove the decisions file', `--date=${new Date(Date.now() + 2000).toISOString()}`);
 
     const preview = await repair(engine);
     expect(preview.sample).toEqual([`default:${CODE_SLUG}`]);

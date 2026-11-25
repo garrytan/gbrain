@@ -27,7 +27,6 @@ mutating: true
 writes_pages: false
 writes_to:
   - skills/<name>/eval/
-upstream: skill-autobench@fc834ee + panel-integrity@fc834ee + fail-improve-loop@fc834ee (taxonomy only)
 ---
 
 # skill-autobench — write the eval from lived usage

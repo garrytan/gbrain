@@ -16,6 +16,26 @@ Keys (tag `x`, `keys::ACCESS_MEMBERS`):
 | `x 0x03 <group id> 0x00 <member id>` | empty | `access_group_members`, primary key `(group_id, member_id)` |
 | `x 0x04 <system> 0x00 <external id>` | link record: `member_id`, `created_at` | `access_member_links` (v286), primary key `(system, external_id)`; `access_member_links.rs` |
 
+Every sub-tag under `x`, `keys::ACCESS_MEMBERS`, and the file that owns it. `crates/gbrain-store/tests/key_registry.rs` fails when
+two record kinds declare one, so a new kind takes the next free byte (`0x0e`); never reuse a byte a format moved a kind off
+(`x 0x04` now holds links only, and a store of format 7 or older held the token secret there as well).
+
+| Sub-tag | Record kind | File |
+| --- | --- | --- |
+| `0x01` | access member | `access_members.rs` |
+| `0x02` | access group | `access_members.rs` |
+| `0x03` | access group member | `access_members.rs` |
+| `0x04` | access member link | `access_member_links.rs` |
+| `0x05` | shared-skill member | `shared_skill_members.rs` |
+| `0x06` | shared-skill delivery batch | `shared_skill_members.rs` |
+| `0x07` | shared-skill policy | `shared_skill_catalog.rs` |
+| `0x08` | shared-skill policy audit | `shared_skill_catalog.rs` |
+| `0x09` | shared-skill head | `shared_skill_catalog.rs` |
+| `0x0a` | shared-skill revision | `shared_skill_catalog.rs` |
+| `0x0b` | shared-skill revision lease | `shared_skill_catalog.rs` |
+| `0x0c` | shared-skill pack | `shared_skill_publication.rs` |
+| `0x0d` | shared-skill token secret (the record is exactly `x 0x0d`) | `shared_skill_members.rs` |
+
 Ids never hold NUL (the id check), so the members of one group are one prefix. A brain holds few members, so the email
 uniqueness check, the groups of one member and the enabled-member count scan the member and group-member prefixes;
 there is no reverse index.

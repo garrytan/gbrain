@@ -29,6 +29,7 @@ function engineWithSources(ids: string[]): BrainEngine {
     ...stubSourceMembers(ids.map(id => ({ id }))),
     getConfig: async () => null,
     sql: async () => [],
+    resolveCaseSensitiveAliases: async () => [],
   } as unknown as BrainEngine;
 }
 
