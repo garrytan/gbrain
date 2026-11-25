@@ -608,6 +608,12 @@ export interface OperationContext {
    */
   revealTools?: (names: string[]) => void;
   /**
+   * Set by the stateless HTTP transport: sends tools/list_changed on this
+   * request's own response stream (the server has no standalone stream to
+   * push on). `request_tools` calls it after it persists a surface change.
+   */
+  notifyToolListChanged?: () => Promise<void>;
+  /**
    * Subagent runtime context (v0.16+). Set by the subagent tool dispatcher when
    * dispatching an op as a tool call from an LLM loop. Used to enforce per-op
    * agent policy (e.g. put_page namespace rule).

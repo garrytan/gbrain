@@ -336,6 +336,8 @@ export interface DispatchOpts {
   enforcedMember?: true;
   /** Threaded into OperationContext.revealTools (stdio session tool reveal). */
   revealTools?: (names: string[]) => void;
+  /** Threaded into OperationContext.notifyToolListChanged (HTTP: tools/list_changed on this request's stream). */
+  notifyToolListChanged?: () => Promise<void>;
   /**
    * D2: whether this connection's tools/list shows a callable tool (the
    * advertised surface can list fewer tools than the callable set). Unset =
@@ -973,6 +975,7 @@ export function buildOperationContext(
     ...(opts.stdioMember !== undefined && opts.transport === 'stdio' && !opts.auth ? { stdioMember: opts.stdioMember } : {}),
     ...(opts.guest && opts.remote !== false ? { guestChannels: opts.guest } : {}),
     ...(opts.revealTools ? { revealTools: opts.revealTools } : {}),
+    ...(opts.notifyToolListChanged ? { notifyToolListChanged: opts.notifyToolListChanged } : {}),
     ...(opts.writeWaitMs !== undefined ? { writeWaitMs: opts.writeWaitMs } : {}),
     ...(opts.admissionOrigin ? { admissionOrigin: opts.admissionOrigin } : {}),
     ...(opts.agentLabel ? { agentLabel: opts.agentLabel } : {}),
