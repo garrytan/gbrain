@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { readEpoch } from './evidence-epoch.ts';
 import { readSeedRecord, RESEED_STEPS } from './seed.ts';
 import type { ShadowState } from './state.ts';
+import { readQualifyingWrites, type QualifyingWrites } from './write-bar.ts';
 
 export interface ProbeRecord {
   state: 'pass' | 'fail' | 'not_run'; checked_at: string | null; server_version: string | null; collation: string | null; mismatches: number;
@@ -126,7 +127,9 @@ export interface FollowStatus {
     consecutive_clean_full_passes: number;
     next_full_pass_due: string | null;
   };
-  write_comparisons: { state: 'capability_missing'; sample_rate: number | null; comparable: number; unexplained_difference: number; uncomparable: number; capability_missing: number };
+  write_comparisons: { state: 'capability_missing'; sample_rate: number | null; comparable: number; unexplained_difference: number; uncomparable: number; capability_missing: number;
+    /** The brain's qualifying write calls by day (write-bar.ts), the source of criterion 5's bar; null when unreadable. */
+    qualifying_writes: QualifyingWrites | null };
   fingerprints: { checked_rows: number; mismatches: number; probe: ProbeRecord };
   seed: { seed_id: string | null; finished_at: string | null; unseeded_gap_rows_total: number | null };
   allocators: { verified: boolean; checked_at: string | null };
@@ -178,7 +181,8 @@ export function buildFollowStatus(dir: string, state: ShadowState | null, now: D
       consecutive_clean_full_passes: clean,
       next_full_pass_due: lastFull ? new Date(Date.parse(lastFull.finished_at) + NIGHTLY_MS).toISOString() : null,
     },
-    write_comparisons: { state: 'capability_missing', sample_rate: state?.sample_rate ?? null, comparable: 0, unexplained_difference: 0, uncomparable: 0, capability_missing: 0 },
+    write_comparisons: { state: 'capability_missing', sample_rate: state?.sample_rate ?? null, comparable: 0, unexplained_difference: 0, uncomparable: 0, capability_missing: 0,
+      qualifying_writes: readQualifyingWrites(dir, now) },
     fingerprints: { checked_rows: counted?.fingerprints.checked_rows ?? 0, mismatches: counted?.fingerprints.mismatches ?? 0, probe: counted?.probe ?? NOT_RUN_PROBE },
     seed: { seed_id: seed?.seed_id ?? null, finished_at: seed?.finished_at ?? null, unseeded_gap_rows_total: seed?.unseeded_gap_rows_total ?? null },
     allocators: counted?.allocators ?? { verified: false, checked_at: null },

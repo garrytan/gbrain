@@ -16,11 +16,12 @@ import { Reconciler } from './reconcile.ts';
 import { createLsnWatch, makeAskHandler, type LsnWatch } from './checks.ts';
 import { epochWatch } from './evidence-epoch.ts';
 import { readSeedRecord } from './seed.ts';
-import { MirrorQueue, zeroUsage } from './mirror.ts';
+import { MirrorQueue, UsageMeter, zeroUsage } from './mirror.ts';
 import { SampleRegistry } from './samples.ts';
 import { readShadowState, type ShadowState } from './state.ts';
 import { ShadowSupervisor, type ShadowSupervisorOptions } from './supervisor.ts';
 import { appendUsage } from './usage.ts';
+import { appendWriteUsage } from './write-bar.ts';
 import { wrapShadowEngine } from './wrapper.ts';
 import { WriterObserver, type WriterIdentity } from './writer-observations.ts';
 import { ensureWriterHooks, primaryTakesWriterHooks } from './writer-hooks.ts';
@@ -77,21 +78,26 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
     offer: (capture: Parameters<MirrorQueue['offer']>[0], op?: string) => queue.offer(capture, op),
     token: () => queue.token(),
     use: (op: string, field: Parameters<MirrorQueue['meter']['note']>[1]) => queue.meter.note(op, field),
+    noteWrite: (op: string) => writeMeter.note(op, 'offered'),
     active: () => supervisor.active(),
   };
+  // Qualifying write calls (criterion 5's bar, write-bar.ts), kept apart from read usage so read coverage never lists a write.
+  const writeMeter = new UsageMeter();
+  writeMeter.bind({ epoch: epochWatch(dir) });
   // Each call is noted under the epoch current when it happens, and the first call of a class is appended at once.
   queue.meter.bind({
     epoch: epochWatch(dir),
     register: (epoch_id, op) => appendUsage(dir, { ts: new Date().toISOString(), epoch_id, ops: { [op]: zeroUsage() } }),
   });
-  const flushUsage = (): void => {
-    const taken = queue.meter.take();
+  const flushMeter = (meter: UsageMeter, append: typeof appendUsage): void => {
+    const taken = meter.take();
     if (!taken) return;
     const ts = new Date().toISOString();
     for (const [i, bucket] of taken.entries()) {
-      try { appendUsage(dir, { ts, epoch_id: bucket.epoch_id, ops: bucket.ops }); } catch { queue.meter.restore(taken.slice(i)); return; }
+      try { append(dir, { ts, epoch_id: bucket.epoch_id, ops: bucket.ops }); } catch { meter.restore(taken.slice(i)); return; }
     }
   };
+  const flushUsage = (): void => { flushMeter(queue.meter, appendUsage); flushMeter(writeMeter, appendWriteUsage); };
   const usageTimer = setInterval(flushUsage, USAGE_FLUSH_MS);
   usageTimer.unref();
   const seeded = deps.follow === undefined && readSeedRecord(dir)?.digests === true;

@@ -29,7 +29,7 @@ import { seedStatus, shadowStatusDocument } from '../shadow/status-document.ts';
 import { installWriterHooks, primaryTakesWriterHooks, removeWriterHooks } from '../shadow/writer-hooks.ts';
 import { buildProvisionalReport, renderProvisionalMarkdown, writeProvisionalReport } from '../shadow/report.ts';
 import {
-  brainIdentity, DEFAULT_SHADOW_QUEUE_BOUND, DEFAULT_SHADOW_SAMPLE_RATE, readShadowState, shadowBrainKey, shadowDirFor, shadowStatePath,
+  brainIdentity, DEFAULT_SHADOW_QUEUE_BOUND, DEFAULT_SHADOW_SAMPLE_RATE, OPT_IN_WRITE_SAMPLE_RATE, readShadowState, shadowBrainKey, shadowDirFor, shadowStatePath,
   SHADOW_STATE_VERSION, writeShadowState, type ShadowState,
 } from '../shadow/state.ts';
 
@@ -296,8 +296,10 @@ async function start(
     out(`  sample rate ${plan.sample_rate}, serving-process queue bound ${plan.queue_bound}`);
     for (const w of plan.writes) out(`  writes: ${w}`);
     out(`  never writes: ${plan.never_writes.join(', ')}`);
-    const line = storageLine(await readStorage(brain, deps, now));
+    const storage = await readStorage(brain, deps, now);
+    const line = storageLine(storage);
     if (line) out(`  storage: ${line}`);
+    if (storage?.managed === false) out(`  write comparisons: every write (rate ${OPT_IN_WRITE_SAMPLE_RATE}), because this brain can opt in to the engine swap; each save is about 2x slower while the shadow runs`);
     out(`  the installed Rust engine addon is loaded and verified now`);
     out(`plan_hash: ${hash}`);
     out(`To turn it on: gbrain engine shadow start --yes --expect ${hash}${o.sampleRate !== DEFAULT_SHADOW_SAMPLE_RATE ? ` --sample-rate ${o.sampleRate}` : ''}${o.queueBound !== DEFAULT_SHADOW_QUEUE_BOUND ? ` --queue-bound ${o.queueBound}` : ''}`);
@@ -361,6 +363,8 @@ async function start(
   deps.afterHooks?.(); // test seam: a throw here stands for a start killed after the hooks changed and before the state is published
   const state: ShadowState = {
     version: SHADOW_STATE_VERSION, enabled: true, started_at: now().toISOString(), sample_rate: o.sampleRate,
+    // A brain without managed storage can opt in to the swap: its shadow compares every write (D26, ask D).
+    ...(storage?.managed === false ? { write_sample_rate: OPT_IN_WRITE_SAMPLE_RATE } : {}),
     queue_bound: o.queueBound, plan_hash: hash, brain: brain.key, primary_engine: brain.engine, storage,
     writer_evidence_since: evidenceSince, writer_evidence_seed: seedId,
     ...(continuing ? { writer_coverage_restarted_at: now().toISOString() } : {}),

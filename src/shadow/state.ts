@@ -28,6 +28,12 @@ export const SHADOW_STATE_VERSION = 1;
 export const DEFAULT_SHADOW_SAMPLE_RATE = 0.1;
 /** Default bound on queued mirror events in the serving process. */
 export const DEFAULT_SHADOW_QUEUE_BOUND = 256;
+/**
+ * The write sample rate of an opt-in shadow: a brain that can opt in to the swap (one without managed storage, D25)
+ * compares every write (D26, ask D), so criterion 5's bar is reachable inside the 5-day shadow. Each save is about 2x
+ * slower while it runs. Recorded in the state as `write_sample_rate`; the write comparison reads it.
+ */
+export const OPT_IN_WRITE_SAMPLE_RATE = 1;
 
 export interface ShadowState {
   version: number;
@@ -37,6 +43,9 @@ export interface ShadowState {
   /** ISO time `stop` ran, when it has. */
   stopped_at?: string;
   sample_rate: number;
+  /** Share of writes compared. Set to OPT_IN_WRITE_SAMPLE_RATE by `start` on a brain that can opt in to the swap;
+   * absent otherwise (the write comparison's general default applies). */
+  write_sample_rate?: number;
   queue_bound: number;
   /** The plan hash `start --yes --expect` confirmed. */
   plan_hash: string;

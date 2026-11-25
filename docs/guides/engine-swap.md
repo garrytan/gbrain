@@ -64,8 +64,16 @@ never a pass. With no shadow running, every criterion is `missing`.
 4. The search arms agree: trigram exactly; keyword and title exactly under the `ts_rank` ranker (or E1 and E2 at
    least equal to PGLite and Postgres under the default ranker); vector recall@10 at least 0.98 and at least the
    primary's.
-5. Zero unexplained differences on at least 1,000 comparable write comparisons. A shadow that cannot compare writes
-   (`capability_missing`) has no evidence.
+5. Zero unexplained differences on at least the brain's own write bar of compared writes:
+   `min(1000, max(100, window x W))`. The window is criterion 1's shadow minimum in force (5 days while the opt-in
+   override applies, until the end of Tue 2026-12-08 PST; 14 days after). W is the brain's qualifying writes a day
+   (`putPage`, `deletePage`, `addLink`, `addLinksBatch`, `removeLink`), from the shadow's own call counts with
+   sampled-out calls included, over the window (a shorter call history is scaled to a per-day rate). The plan names
+   the bar, the window, how W was computed and the compared count. Below the floor of 100 the check stays closed. A
+   shadow that cannot compare writes (`capability_missing`) has no evidence. A brain that can opt in (one without
+   managed storage) shadows with every write compared (rate 1.0), so the bar is reachable in 5 days; each save is
+   about 2x slower while that shadow runs. A brain with fewer than 20 qualifying writes a day cannot reach the floor
+   in a 5-day shadow.
 6. Zero `privacy_diverged` events (the field is absent, not zero, while any privacy check of the last 7 days is unsettled, so criterion 6 has no evidence until it settles).
 7. Zero fingerprint mismatches, a passed fingerprint probe and a passed allocator verification.
 8. Speed: paired bench samples. **Reported, not gating.** D23 (the maintainer's C1 ruling of 2026-11-19) makes the

@@ -9,6 +9,7 @@
  */
 import { DEFAULT_SHADOW_MIN_DAYS, effectiveShadowMin, READINESS_POLICY, type ReadinessPolicy } from './policy.ts';
 import type { SwapRefusalReason } from './refusals.ts';
+import { describeWriteBar, writeBar, type QualifyingWrites } from '../../shadow/write-bar.ts';
 
 /** The fields S5a reads; S3 owns the document. Counts are epoch-scoped totals unless the name says otherwise. */
 export interface ShadowStatus {
@@ -32,6 +33,8 @@ export interface ShadowStatus {
     unexplained_difference?: number;
     uncomparable?: number;
     capability_missing?: number;
+    /** The brain's qualifying write calls by day (shadow/write-bar.ts): the source of criterion 5's bar. */
+    qualifying_writes?: QualifyingWrites | null;
   };
   fingerprints?: {
     checked_rows?: number;
@@ -92,7 +95,6 @@ export const MIN_SHADOW_DAYS = DEFAULT_SHADOW_MIN_DAYS;
 export const MAX_LAG_P99_MS = 60_000;
 export const MIN_CLEAN_RECONCILES = 3;
 export const MIN_TOTAL_READS = 10_000;
-export const MIN_WRITE_COMPARISONS = 1_000;
 export const MIN_VECTOR_RECALL = 0.98;
 export const MIN_BENCH_PAIRS = 100;
 
@@ -208,18 +210,29 @@ function searchArms(r: Reader): Check {
   });
 }
 
-function writeComparisons(r: Reader): Check {
+/**
+ * Criterion 5: zero unexplained differences on at least the brain's own write bar of compared writes (write-bar.ts:
+ * min(1000, max(100, window x W)), the window being criterion 1's shadow minimum in force).
+ */
+function writeComparisons(r: Reader, now: Date, policy: ReadinessPolicy): Check {
   return guarded(r, () => {
     const state = r.s('write_comparisons.state');
     const comparable = r.n('write_comparisons.comparable');
     const unexplained = r.n('write_comparisons.unexplained_difference');
-    if (state === undefined || comparable === undefined || unexplained === undefined) return { state: 'missing', detail: '' };
+    const history = r.get<QualifyingWrites>('write_comparisons.qualifying_writes',
+      v => typeof v === 'object' && v !== null && typeof (v as QualifyingWrites).by_day === 'object' && (v as QualifyingWrites).by_day !== null);
+    if (state === undefined || comparable === undefined || unexplained === undefined || history === undefined) return { state: 'missing', detail: '' };
     // A shadow that cannot compare writes never passes (S3 rule: capability_missing refuses, like a missing field).
     if (state === 'capability_missing') return { state: 'missing', detail: 'no evidence: write_comparisons.state is capability_missing' };
+    const min = effectiveShadowMin(policy, now);
+    const bar = writeBar(history, min.required ? min.days : DEFAULT_SHADOW_MIN_DAYS, now);
+    const how = describeWriteBar(bar);
     const fails: string[] = [];
-    if (comparable < MIN_WRITE_COMPARISONS) fails.push(`${comparable} of ${MIN_WRITE_COMPARISONS} comparable write comparisons`);
+    if (comparable < bar.bar) fails.push(`${comparable} of ${bar.bar} compared writes`);
     if (unexplained > 0) fails.push(`${unexplained} unexplained differences`);
-    return fails.length ? { state: 'fail', detail: fails.join('; ') } : { state: 'pass', detail: `${comparable} comparable, zero unexplained` };
+    return fails.length
+      ? { state: 'fail', detail: `${fails.join('; ')} (${how})` }
+      : { state: 'pass', detail: `${comparable} compared writes, at least ${bar.bar}, zero unexplained (${how})` };
   });
 }
 
@@ -323,7 +336,7 @@ export function evaluateReadiness(doc: ShadowStatus | null, now: Date = new Date
     readCoverage(r),
     zeroCounts(r, [['reads.rust_error_unresolved_7d', 'unresolved rust_error'], ['reads.diverged_unexplained_7d', 'unexplained diverged']]),
     searchArms(r),
-    writeComparisons(r),
+    writeComparisons(r, now, policy),
     zeroCounts(r, [['privacy_diverged', 'privacy_diverged']]),
     fingerprintsAndAllocators(r),
     speed(r),
