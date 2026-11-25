@@ -395,7 +395,7 @@ name), `commit_log` (when the log is on), `served` (the engine is a client of a 
 
 ### Interface facts ruled on 2026-11-25
 
-These answer questions raised while building the leases (I-5) and are part of the contracts above.
+These answer questions raised while building the leases (I-5) and the switch (I-0) and are part of the contracts above.
 
 1. **Clock (I-5).** Times written by the store first follow one rule: never below the last committed time seen at
    open, and never backwards on one server. Then the commit pipeline gains an `on_accept(commit_time)` hook, and lease
@@ -412,6 +412,12 @@ These answer questions raised while building the leases (I-5) and are part of th
    which also needs its registry row before it is written.
 5. **Lease checks in a transaction (I-1, I-5).** `Transaction::assert_lease` delegates to `Store::assert_lease`; the
    check reads the lease row inside the transaction, so it is in the read set and checked again at commit.
+   Both ways are tested: on the optimistic path, the read set refuses the commit after a takeover; an exclusive
+   transaction sees its own consistent view.
+6. **Expired leases (I-5).** An expired lease cannot be renewed: `renew_lease` on it ends `lease_lost`. The holder
+   takes the lease again with `acquire_lease`, which gives a new epoch. So a machine that comes back after a
+   partition is refused for any work it started under the old epoch, even if no other machine took the lease
+   meanwhile.
 
 ## Audit: landed choices that are costly to undo
 
