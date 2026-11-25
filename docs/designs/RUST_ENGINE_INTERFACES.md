@@ -232,11 +232,10 @@ branch, and the reserved ones, with the owner who claimed it. The rules:
 |---|---|---|---|
 | `x` | `ACCESS_MEMBERS` | interfaces lane (session a9fd5b22) | branch rust-engine/access-rules-rust (row 32a-1) and the access branches stacked on it |
 | `y` | `SESSION_STATE` | not named on the branch; the trunk names it at intake | branch rust-engine/sync-checkpoint and the branches that contain 4601da37e0 |
-| `0` | `GUEST_SOURCE` | not named on the branch; the trunk names it at intake | branch rust-engine/collate-equal |
 | `3` | `SECRET_STORE` | lane 10 | reserved (the trunk holds it for the secret store) |
 | `~` | `FAMILY_ESCAPE` | core | main once this lands: the escape for two-byte family tags |
 
-Free one-byte tags: the digits `4` to `9` (approved rows only) and punctuation other than `~`, which stays unclaimed
+Free one-byte tags: the digit `0` (released: the guest-source claim of rust-engine/collate-equal did not land, and guest sources stay refused on Rust), the digits `4` to `9` (approved rows only) and punctuation other than `~`, which stays unclaimed
 unless a reviewed change to this table names it.
 
 `rust/crates/gbrain-store/tests/keys_registry.rs` fails when two constants of `keys.rs` take one tag byte (or one
