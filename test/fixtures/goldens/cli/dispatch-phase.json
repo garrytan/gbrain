@@ -2175,6 +2175,13 @@
         "thinClient": "none",
         "thinClientRoutedSubcommands": []
       },
+      "value": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "waiting": {
         "hasSwitchCase": false,
         "phase": "pre-connect-own-engine",

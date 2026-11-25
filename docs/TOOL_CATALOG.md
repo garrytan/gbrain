@@ -4,7 +4,7 @@
 <!-- Regenerate: bun run scripts/generate-tool-catalog.ts -->
 <!-- Freshness-guarded by scripts/check-tool-catalog-fresh.sh (bun run verify). -->
 
-Every non-localOnly operation on the MCP surface: 193 tools across 32 areas. **Starter** marks membership in the ~42-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
+Every non-localOnly operation on the MCP surface: 192 tools across 31 areas. **Starter** marks membership in the ~42-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
 
 ## admin
 
@@ -352,10 +352,4 @@ Every non-localOnly operation on the MCP surface: 193 tools across 32 areas. **S
 |---|---|---|---|---|
 | `add_timeline_entry` | Append a dated entry to a page timeline. | write | yes |  |
 | `get_timeline` | Get timeline entries for a page, optionally filtered by date window. | read |  |  |
-
-## value
-
-| Tool | Description | Scope | Starter | Gate |
-|---|---|---|---|---|
-| `value` | What this brain holds and has done for you, as counts: conversations archived and the days they cover, pages by kind, links, facts kept (active, superseded, withdrawn), nightly items, and for the owner only lookups served, pages brought up on their own and later retrieved, and the brain score. | read |  |  |
 

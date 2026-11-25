@@ -208,7 +208,6 @@ const SWEEP: Record<string, Row> = {
   whoami: { args: {} },
   capabilities: { args: {} },
   onboarding_status: { args: {} },
-  value: { args: {} },
   sources_list: { args: {} },
   sources_status: { args: { id: SRC } },
   sources_resolve_path: { skip: 'needs a Git checkout of the source; returns paths, slugs, states and counts, never page text; test/sources-resolve-path.test.ts owns it' },

@@ -64,7 +64,6 @@ const load_timeline = () => import('./ops/timeline.ts') as Promise<Record<string
 const load_transcripts = () => import('./ops/transcripts.ts') as Promise<Record<string, unknown>>;
 const load_trust = () => import('./ops/trust.ts') as Promise<Record<string, unknown>>;
 const load_usage = () => import('./ops/usage.ts') as Promise<Record<string, unknown>>;
-const load_value = () => import('./ops/value.ts') as Promise<Record<string, unknown>>;
 const load_wakeshift = () => import('./ops/wakeshift.ts') as Promise<Record<string, unknown>>;
 const load_whois = () => import('./ops/whois.ts') as Promise<Record<string, unknown>>;
 const load_verbs = () => import('./verbs.ts') as Promise<Record<string, unknown>>;
@@ -288,5 +287,4 @@ export const OPERATION_LOADERS: Record<string, readonly [() => Promise<Record<st
   "learned_undo": [load_learned, "learnedOperations"],
   "onboarding_status": [load_onboarding, "onboardingOperations"],
   "onboarding_off": [load_onboarding, "onboardingOperations"],
-  "value": [load_value, "valueOperations"],
 };

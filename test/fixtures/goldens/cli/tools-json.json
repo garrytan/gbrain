@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 321914,
-    "stdoutSha256": "c525d533d23c66e19ee4430c8430a3a3d728c5192a27a8b457a7ed0d7296b58f",
+    "stdoutBytes": 321154,
+    "stdoutSha256": "7ad8fb126cb3f8152f5eea2de78c4e4d51a8c23a0afb0692e0f62c2a41a2365e",
     "toolNames": [
       "remember",
       "entity",
@@ -222,8 +222,7 @@
       "learned_keep",
       "learned_undo",
       "onboarding_status",
-      "onboarding_off",
-      "value"
+      "onboarding_off"
     ],
     "tools": [
       {
@@ -9977,21 +9976,6 @@
           "type": "object"
         },
         "scope": "write"
-      },
-      {
-        "description": "What this brain holds and has done for you, as counts: conversations archived and the days they cover, pages by kind, links, facts kept (active, superseded, withdrawn), nightly items, and for the owner only lookups served, pages brought up on their own and later retrieved, and the brain score. Each row is measured, off (with the command that turns it on) or unavailable (with a code and cause); a member connection counts only what it can read. Reads only; stamps nothing.",
-        "idempotent": true,
-        "local_only": false,
-        "mutating": false,
-        "name": "value",
-        "parameters": {},
-        "required_scopes": [],
-        "schema": {
-          "properties": {},
-          "required": [],
-          "type": "object"
-        },
-        "scope": "read"
       }
     ]
   },

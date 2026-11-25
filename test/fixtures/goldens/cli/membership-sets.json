@@ -85,6 +85,7 @@
         "questions",
         "secrets",
         "trust",
+        "value",
         "watch"
       ],
       "selfHelpNotInCliOnly": [],
@@ -238,6 +239,7 @@
         "transcripts",
         "trust",
         "upgrade",
+        "value",
         "waiting",
         "wakeshift",
         "watch",
@@ -478,6 +480,7 @@
         "takes",
         "transcripts",
         "trust",
+        "value",
         "wakeshift",
         "watch"
       ],

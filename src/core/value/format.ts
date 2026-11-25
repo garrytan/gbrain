@@ -34,7 +34,7 @@ export function formatValueCard(card: ValueCard): string {
   const rows = card.rows.filter(r => !(r.id === 'nightly_items' && r.status === 'measured' && !(r.value as { items: number }).items));
   const labels = rows.map(r => r.label + (r.window_days ? ' (' + r.window_days + ' days)' : ''));
   const width = Math.max(...labels.map(l => l.length));
-  const lines = ['What your brain holds and has done for you' + (card.view === 'member' ? ' (what this connection can read)' : '') + ':'];
+  const lines = ['What your brain holds and has done for you' + ':'];
   rows.forEach((r, i) => lines.push('  ' + labels[i]!.padEnd(width) + '  ' + rowText(r)));
   if (card.state === 'degraded') lines.push('', 'Some counts could not be read; the others above are measured.');
   return lines.join('\n') + '\n';

@@ -13,6 +13,7 @@ import { readHolders } from './context.ts';
  */
 
 import { hybridSearchCached, stampContentFlags, stampUnverifiedExtractions } from '../search/hybrid.ts';
+import { KEYWORD_SEARCH_TELEMETRY_MODE, recordLookupTelemetry } from '../search/telemetry.ts';
 import { anchorOpResults } from '../search/entity-anchor.ts';
 import { applyQueryArms } from '../search/query-arms.ts';
 import { factRowOutput } from '../search/facts-arm.ts';
@@ -235,6 +236,7 @@ async function stampKeywordRows(ctx: OperationContext, results: SearchResult[], 
   await timings.stage('post_fusion', () => stampUnverifiedExtractions(ctx.engine, results, scope));
   bumpLastRetrievedAt(ctx.engine, results.map((r) => r.page_id));
   maybeCaptureSearch(ctx, queryText, results, Date.now() - startedAt, false);
+  recordLookupTelemetry(ctx.engine, KEYWORD_SEARCH_TELEMETRY_MODE);
 }
 
 /**
