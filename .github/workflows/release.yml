@@ -214,7 +214,8 @@ jobs:
       - name: Run the binary as an install from an empty directory (dry run)
         if: ${{ inputs.addon_dry_run }}
         run: |
-          d="$(mktemp -d)"
+          # Real path: on macOS mktemp gives /var/folders/..., and /var is a symlink gbrain refuses.
+          d="$(cd "$(mktemp -d)" && pwd -P)"
           cp "bin/${{ matrix.artifact }}" "$d/gbrain"
           cd "$d"
           env -i PATH=/usr/bin:/bin HOME="$d" GBRAIN_HOME="$d" ./gbrain --version
