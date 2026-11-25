@@ -225,6 +225,10 @@ export const SECTIONS: DocSection[] = [
         title: "docs/guides/live-sync.md",
         description: "Incremental markdown sync setup.",
         path: "docs/guides/live-sync.md",
+        // Linked, not inlined: a one-time setup runbook (56 KB) that AGENTS.md (inlined) links
+        // under Configure; dropping it, with MEMORY_VERBS_v1.md, restored about 140 KB of
+        // FULL_SIZE_BUDGET after the bundle reached 799,998 bytes.
+        includeInFull: false,
       },
       {
         title: "docs/guides/on-commit-sync.md",
@@ -392,6 +396,9 @@ export const SECTIONS: DocSection[] = [
         description:
           "The frozen memory-verb protocol (recall/remember/entity/synthesize/forget plus context_pack and delta): response envelopes, error contract, additive-forever versioning, surface modes, conformance certification, per-harness installs.",
         path: "docs/protocol/MEMORY_VERBS_v1.md",
+        // Linked, not inlined: an 85 KB frozen wire spec for harness and server implementers;
+        // `gbrain protocol --json` emits the same contract and CLAUDE.md (inlined) routes to it.
+        includeInFull: false,
       },
     ],
   },
