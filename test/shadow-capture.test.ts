@@ -401,9 +401,12 @@ describe('purge and delete paths (guard)', () => {
     const fns: Array<{ file: string; name: string; body: string }> = [];
     for (const f of files) {
       const text = readFileSync(join(root, f), 'utf8');
-      for (const m of text.matchAll(/^(?:export )?(?:async )?function (\w+)[^]*?\n}\n/gm)) fns.push({ file: f, name: m[1]!, body: m[0] });
+      // Each top-level function runs from its declaration to the next top-level declaration (one-liners included).
+      const starts = [...text.matchAll(/^(?:export )?(?:async )?function (\w+)/gm)];
+      const decls = [...text.matchAll(/^(?:export )?(?:async )?(?:function|const|let|class|interface|type) /gm)].map(m => m.index!);
+      for (const m of starts) fns.push({ file: f, name: m[1]!, body: text.slice(m.index!, decls.find(i => i > m.index!) ?? text.length) });
     }
-    const inBody = (f: { body: string }, re: RegExp) => re.test(f.body.slice(f.body.indexOf('{')));
+    const inBody = (f: { body: string }, re: RegExp) => re.test(f.body.slice(f.body.indexOf(')')));
     const named = (re: RegExp) => fns.filter(f => inBody(f, re)).map(f => f.name).sort();
     expect(named(/purgeLogChanged\(|onPurgeIntent\(/)).toEqual(['purgeIfLogChanged', 'watchPurges']);
     for (const f of fns.filter(f => inBody(f, /purgeLogChanged\(|onPurgeIntent\(/))) expect(`${f.name}: ${/purgeCapture\(/.test(f.body)}`).toBe(`${f.name}: true`);
