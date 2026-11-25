@@ -6,9 +6,10 @@
  * noise. The build-and-compare itself runs as a test.yml verify-job step.
  */
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BYTECODE_FLAGS, NORMALIZE, releaseCompileArgs, STEPS, stepProblems } from '../../scripts/check-bytecode-parity.ts';
+import { BYTECODE_FLAGS, makeWorkDir, NORMALIZE, releaseCompileArgs, STEPS, stepProblems } from '../../scripts/check-bytecode-parity.ts';
 
 const ROOT = join(import.meta.dir, '..', '..');
 const RELEASE = readFileSync(join(ROOT, '.github/workflows/release.yml'), 'utf8');
@@ -53,6 +54,20 @@ describe('bytecode release build', () => {
     expect(stepProblems(STEPS.find(s => s.name === 'embed')!, refused, refused, 1)).toEqual(['exit plain=3 bytecode=3, expected 0', 'stdout lacks Embedded (the step did not run its path)']);
     expect(stepProblems(mcp, ok, { ...ok, stderr: 'warn' }, 1)).toEqual(['stderr differs']);
     for (const s of STEPS) expect({ step: s.name, exit: s.exit ?? 0 }).toEqual({ step: s.name, exit: 0 });
+  });
+
+  test('the work directory is a real path when the temp folder is a symlink (macOS /var/folders)', () => {
+    const real = mkdtempSync(join(tmpdir(), 'parity-real-'));
+    const link = `${real}-link`;
+    symlinkSync(real, link);
+    try {
+      const work = makeWorkDir(link);
+      expect(work.startsWith(realpathSync(real))).toBe(true);
+      expect(work).toBe(realpathSync(work));
+    } finally {
+      rmSync(link, { force: true });
+      rmSync(real, { recursive: true, force: true });
+    }
   });
 
   test('pull requests run the check in the verify job', () => {

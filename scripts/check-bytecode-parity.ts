@@ -17,7 +17,7 @@
  * Exit:  0 when every command matches; 1 on a difference or a failed build.
  */
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -184,9 +184,17 @@ async function runMcp(bin: string, step: Step, cwd: string, env: Record<string, 
   return { stdout: stdout + dec.decode(), stderr: await stderr, status };
 }
 
+/**
+ * The work directory by its real path. macOS temp folders live under /var, a symlink, and gbrain init
+ * refuses a brain or content root below a symlink, so a symlinked spelling fails both builds the same way.
+ */
+export function makeWorkDir(base = tmpdir()): string {
+  return realpathSync(mkdtempSync(join(base, 'gbrain-bytecode-parity-')));
+}
+
 async function main(): Promise<number> {
   const keep = process.argv.includes('--keep');
-  const work = mkdtempSync(join(tmpdir(), 'gbrain-bytecode-parity-'));
+  const work = makeWorkDir();
   const stub = await startEmbeddingStub();
   let rc = 1;
   try {
