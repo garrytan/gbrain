@@ -47,6 +47,8 @@ import type { MwCase, MwCaseId } from './multi-writer-cases.ts';
 import { mwEntry } from './multi-writer-entries.ts';
 import { appendLedger, cellArm, type LedgerArm, type LedgerLine } from './multi-writer-ledger.ts';
 import { checkRustTally } from './rust-tally.ts';
+import * as engineCapabilitiesNamespace from '../../src/core/engine-capabilities.ts';
+const engineCapabilitiesModule = engineCapabilitiesNamespace as unknown as Record<string, unknown>;
 import { itemSetHash } from '../../src/core/generations/publish.ts';
 import { IDENTITY_DOWNGRADE_OP } from '../../src/core/persistence/sync-status-sql.ts';
 import {
@@ -1259,6 +1261,18 @@ function describeMwStop<T>(c: MwArmCase<T>, error: unknown): string {
  * reference arm records `prerequisite_missing` and fails naming DATABASE_URL. A `standalone` case compares nothing.
  * One ledger line is written for the arm, `fail` before the error is thrown. Returns the value and whether it stood alone.
  */
+/**
+ * `multi_writer` is a multi-user capability: it lives in `MULTIUSER_CAPABILITIES` (src/core/engine-capabilities.ts), which
+ * an engine reports only while the multi-user switch is on, never in `ENGINE_CAPABILITIES` (whose sets stay unchanged with
+ * the switch off). A build without that list yet (before the optimistic-transaction work lands) has neither entry.
+ */
+export function assertMultiuserCapabilityName(name: string, mod: Record<string, unknown> = engineCapabilitiesModule): void {
+  const base = (mod.ENGINE_CAPABILITIES ?? []) as readonly string[];
+  const multiuser = mod.MULTIUSER_CAPABILITIES as readonly string[] | undefined;
+  if (base.includes(name)) throw new Error(`engine-parity: ${name} is in ENGINE_CAPABILITIES; it belongs in MULTIUSER_CAPABILITIES only`);
+  if (multiuser !== undefined && !multiuser.includes(name)) throw new Error(`engine-parity: ${name} is not in MULTIUSER_CAPABILITIES`);
+}
+
 export async function checkMwArm<T>(c: MwArmCase<T>): Promise<{ value: T; standalone: boolean }> {
   const ledger = c.ledger ?? appendLedger;
   const id = c.row.id;
@@ -1269,6 +1283,7 @@ export async function checkMwArm<T>(c: MwArmCase<T>): Promise<{ value: T; standa
     if (c.opts.requires !== undefined) throw new Error(`${prefix}: an mwCase case takes no \`requires\`; its matrix row decides where it runs`);
     const needs = c.row.needs;
     if (needs !== undefined) {
+      assertMultiuserCapabilityName(needs);
       const has = isRust ? c.capabilities?.has(needs) === true : armHas(c.backend as ParityArmName, needs);
       if (!has) {
         throw new Error(`${prefix}: the matrix marks this arm \`runs\` and the case needs ${needs}, but ${isRust ? 'the engine does not report it' : 'the arm has no such capability'}`

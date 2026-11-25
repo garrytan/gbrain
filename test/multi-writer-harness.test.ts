@@ -20,7 +20,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkMwArm, checkRustArm, mwArmPlan, runMwCase, rustMultiuserView, type MwArmHandle, type MwArmStarted, type RustTally } from './engine-parity/harness.ts';
+import { assertMultiuserCapabilityName, checkMwArm, checkRustArm, mwArmPlan, runMwCase, rustMultiuserView, type MwArmHandle, type MwArmStarted, type RustTally } from './engine-parity/harness.ts';
 import { checkRustTally } from './engine-parity/rust-tally.ts';
 import { MW_ARMS, type MwArm, type MwCase, type MwCell } from './engine-parity/multi-writer-cases.ts';
 import { type LedgerLine } from './engine-parity/multi-writer-ledger.ts';
@@ -461,5 +461,14 @@ describe('coverage.ts reads mwCase statically, for cases and variants', () => {
     expect(() => read(`parityTest('x', { methods: ['putPage'], mwCase: 'C99' }, async () => 1);`)).toThrow(/is not a case id/);
     expect(() => read(`parityTest('x', { methods: ['putPage'], mwCase: id }, async () => 1);`)).toThrow(/must be a string literal/);
     expect(() => read(`parityTest('x', { methods: ['putPage'], requires: 'raw_sql', mwCase: 'C06' }, async () => 1);`)).toThrow(/takes no requires/);
+  });
+});
+
+describe('multi_writer is a multi-user capability', () => {
+  test('it is never in ENGINE_CAPABILITIES, and when MULTIUSER_CAPABILITIES exists it is listed there', () => {
+    expect(() => assertMultiuserCapabilityName('multi_writer')).not.toThrow();
+    expect(() => assertMultiuserCapabilityName('multi_writer', { ENGINE_CAPABILITIES: ['raw_sql', 'multi_writer'] })).toThrow(/ENGINE_CAPABILITIES/);
+    expect(() => assertMultiuserCapabilityName('multi_writer', { ENGINE_CAPABILITIES: ['raw_sql'], MULTIUSER_CAPABILITIES: [] })).toThrow(/not in MULTIUSER_CAPABILITIES/);
+    expect(() => assertMultiuserCapabilityName('multi_writer', { ENGINE_CAPABILITIES: ['raw_sql'], MULTIUSER_CAPABILITIES: ['multi_writer'] })).not.toThrow();
   });
 });
