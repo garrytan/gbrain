@@ -32,6 +32,7 @@ import { ownerSessionProof, terminalAuthorityProblem, withOwnerProof, type Termi
 import { parsePolicyFence, renderPolicyFence, type PolicyRule } from '../src/core/policy/fence.ts';
 import { ruleFromArgs } from '../src/commands/policy.ts';
 import { withCallerAccess } from '../src/core/search/private-visibility.ts';
+import { SCOPE_READ_ACCESS, withReadMode } from '../src/core/access/scope-read.ts';
 import { findPreset } from '../src/core/policy/presets.ts';
 import { policyOperations } from '../src/core/ops/policy.ts';
 import { renderPolicyLine, POLICY_LINE_LEAD } from '../src/core/setup/policy-line.ts';
@@ -263,6 +264,16 @@ describe('evaluatePolicy', () => {
     expect(evaluatePolicy(merchantDeny, { verb: 'spend', merchant: 'Acme-Example' }).decision).toBe('deny');
     expect(evaluatePolicy(merchantDeny, { verb: 'spend', merchant: 'other-example' }).decision).toBe('allow');
   });
+
+  test('a provisional ask never hides a stricter plain rule', () => {
+    expect(evaluatePolicy([{ id: 'spend-deny', verb: 'spend', decision: 'deny' }, { id: 'spend-acme', verb: 'spend', decision: 'deny', merchant: 'acme-example' }], { verb: 'spend' }))
+      .toMatchObject({ decision: 'deny', rule_id: 'spend-deny' });
+    expect(evaluatePolicy([{ id: 'send-deny', verb: 'send', decision: 'deny' }, { id: 'send-new', verb: 'send', decision: 'deny', when: 'new' }], { verb: 'send' }).decision).toBe('deny');
+    const small: PolicyRule[] = [{ id: 'small', verb: 'spend', decision: 'allow', limit: { amount: 25, currency: 'USD' } }, { id: 'spend', verb: 'spend', decision: 'deny' }];
+    expect(evaluatePolicy(small, { verb: 'spend', amount: { amount: 10, currency: 'EUR' } })).toMatchObject({ decision: 'deny', rule_id: 'spend' });
+    expect(evaluatePolicy(small, { verb: 'spend', amount: { amount: 10, currency: 'USD' } }).decision).toBe('allow');
+    expect(evaluatePolicy([small[0]!, { id: 'spend', verb: 'spend', decision: 'allow' }], { verb: 'spend', amount: { amount: 10, currency: 'EUR' } })).toMatchObject({ decision: 'ask', rule_id: 'small' });
+  });
 });
 
 describe('policy scopes for remote callers', () => {
@@ -274,6 +285,8 @@ describe('policy scopes for remote callers', () => {
     expect(withCallerAccess({ identity: ['group:team-a'] }, () => callerScopes(true))).toEqual(['company']);
     expect(withCallerAccess({ identity: [], audience: ['guest'], audienceIdentities: [[]] }, () => callerScopes(true))).toEqual(['company']);
     expect(withCallerAccess({ identity: [], audience: ['member:alice-example', 'member:bob-example'], audienceIdentities: [['member:alice-example'], ['member:bob-example']] }, () => callerScopes(true))).toEqual(['company']);
+    expect(withCallerAccess(SCOPE_READ_ACCESS, () => withReadMode('scope', () => callerScopes(true)))).toEqual(['company']);
+    expect(callerScopes(true)).toEqual(['company']);
   });
 });
 
@@ -288,6 +301,9 @@ describe('gbrain policy allow|ask|deny rule building', () => {
     expect(roundTrips(['spend', '--amount', '60.50USD']).id).toBe('spend-upto-60-5usd');
     expect(roundTrips(['spend', '--merchant', 'A Very Long Merchant Name Incorporated Holdings Example', '--to', 'household', '--amount', '12345.67', '--currency', 'USD']).id.length).toBeLessThanOrEqual(64);
     expect(roundTrips(['send', '--to', 'known', '--id', 'family_ok']).id).toBe('family_ok');
+    const padded = ruleFromArgs('deny', ['spend', '--merchant', '  Acme-Example  ']);
+    expect(padded.merchant).toBe('Acme-Example');
+    expect(evaluatePolicy([padded, { id: 'spend', verb: 'spend', decision: 'allow' }], { verb: 'spend', merchant: 'acme-example' }).decision).toBe('deny');
     for (const bad of [['send', '--id', 'My Rule'], ['spend', '--merchant', 'x'.repeat(201)]]) {
       expect((await caught(() => ruleFromArgs('allow', bad)) as { code: string }).code).toBe('invalid_params');
     }

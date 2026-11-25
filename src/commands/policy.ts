@@ -91,7 +91,7 @@ export function ruleFromArgs(decision: PolicyDecision, args: string[]): PolicyRu
   const rule: PolicyRule = { id, verb, decision, ...(to ? { when: to } : {}), ...(limit ? { limit } : {}), ...(window ? { window: 'per_action' as const } : {}), ...(merchant ? { merchant } : {}), ...(note ? { note } : {}) };
   const parsed = parsePolicyFence(renderPolicyFence([rule]));
   if (!parsed.ok) throw opError('invalid_params', `That rule cannot be saved: ${parsed.error.message}. Nothing was changed.`, 'Shorten --merchant or --note, or pass --id with lowercase letters, digits, - or _ (at most 64).');
-  return rule;
+  return parsed.rules[0]!;
 }
 
 function describeRule(r: PolicyRule): string {

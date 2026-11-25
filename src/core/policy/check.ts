@@ -6,7 +6,8 @@
 import type { BrainEngine } from '../engine.ts';
 import type { Action } from '../agent-output.ts';
 import type { AgentVerb, RecipientClass } from '../agent-verbs.ts';
-import { currentCallerAccess } from '../search/private-visibility.ts';
+import { callerAccessRecord, currentCallerAccess } from '../search/private-visibility.ts';
+import { currentReadMode } from '../access/scope-read.ts';
 import { evaluatePolicy, stricterVerdict, type PolicyQuery, type PolicyVerdict } from './evaluate.ts';
 import { formatLimit, type PolicyLimit, type PolicyRule } from './fence.ts';
 import { CHANGE_NOTICE_MS, resolvePolicy, type PolicyScope, type PolicyState, type ServedPolicy } from './store.ts';
@@ -18,11 +19,12 @@ const STATE_RANK: Record<PolicyState, number> = { none: 0, ok: 1, changed_outsid
 
 /**
  * The scopes this request reads. Local callers, owner credentials and unbound credentials (no audience, identity or
- * actor) read both. Every other remote caller (a member, a group, a guest, a several-member audience) reads only the
- * company policy, because the owner's policy page is private.
+ * actor) read both. Every other remote caller (a member, a group, a guest, a several-member audience, an attested scope
+ * read, a call with no access record) reads only the company policy, because the owner's policy page is private.
  */
 export function callerScopes(remote: boolean): PolicyScope[] {
   if (!remote) return ['owner', 'company'];
+  if (callerAccessRecord() === null || currentReadMode() === 'scope') return ['company'];
   const access = currentCallerAccess();
   const unbound = access.audience === null && access.identity.length === 0 && !access.actor;
   return access.owner || unbound ? ['owner', 'company'] : ['company'];
