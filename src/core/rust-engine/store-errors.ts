@@ -13,6 +13,8 @@
  *  - A `constraint_violation` that names a unique index of the facts table (`idx_facts_ontology_stint_dedup`,
  *    `idx_facts_fence_key`) is the error Postgres and PGLite raise for it: SQLSTATE `23505` in `code`, the same message,
  *    and the constraint, table and schema names. The Postgres `detail` line (the key values) is not reproduced.
+ *  - `timeout` (multi-user mode only: a deadline passed in the store) is the `timeout` operation error with the reason
+ *    the store's message starts with (`transaction_deadline`, `key_wait`); nothing was committed.
  *  - Every other code stays on the original error, which already carries it (`invalid_slug`, `empty_overwrite`, ...).
  */
 import type { Capability } from '../engine-capabilities.ts';
@@ -73,6 +75,8 @@ export function mapStoreError(error: unknown, ctx: StoreErrorContext): unknown {
       return new PageSnapshotAmbiguousError();
     case 'constraint_violation':
       return factsUniqueViolation(error);
+    case 'timeout':
+      return storeTimeout(detail, ctx.member);
     case 'lease_lost':
       // A lease fence failed (multi-user mode, rust/crates/gbrain-store/src/leases.rs): nothing was written.
       return leaseLostError(error);
@@ -142,4 +146,19 @@ function originClaimed(error: unknown): unknown {
   } catch {
     return error;
   }
+}
+
+/** The reasons a store `timeout` message starts with (`gbrain_store::error::TIMEOUT`). */
+const STORE_TIMEOUT_REASONS = new Set(['transaction_deadline', 'key_wait']);
+
+/** A store `timeout`: its reason decoded from the message prefix, with what happened and what to do. */
+function storeTimeout(message: string, member: string): unknown {
+  const match = /^([a-z_]+): /.exec(message);
+  const reason = match && STORE_TIMEOUT_REASONS.has(match[1]!) ? match[1]! : 'transaction_deadline';
+  const what = reason === 'key_wait'
+    ? `${member} waited for a key another writer holds past its deadline`
+    : `${member} ran past its transaction deadline`;
+  return opError('timeout', `${what}, so nothing was committed (ids it took may be skipped).`,
+    'Retry the call; if it keeps timing out, give it a longer deadline or retry when fewer writers use the same pages.',
+    { reason, detail: `member=${member} written=nothing` });
 }

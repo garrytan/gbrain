@@ -41,7 +41,7 @@
 //! the brain is opened again (the Postgres answer to a failed WAL flush is the same: stop).
 
 use crate::error::{Result, STORE_CLOSED, STORE_CORRUPT, StoreError, WRITE_CONFLICT};
-use crate::kv::{Kv, KvRead, KvWrite};
+use crate::kv::{CounterCheck, Kv, KvRead, KvWrite};
 use crate::redb_kv::{RedbKv, reject_reserved};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -50,6 +50,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender, SyncSender, channel, sync_channel};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
+use std::time::Instant;
 
 /// Largest number of transactions the pipeline puts in one record-file commit.
 const MAX_BATCH_TXNS: usize = 512;
@@ -210,22 +211,61 @@ struct KeyLocks {
 }
 
 impl KeyLocks {
-    /// Takes every key in `keys`, in order, waiting for each one that another owner holds.
-    fn acquire(self: &Arc<Self>, keys: &BTreeSet<Vec<u8>>) -> LockGuard {
+    /// Takes every key in `keys`, in order, waiting for each one that another owner holds. With a
+    /// deadline, a wait that reaches it ends `timeout` (reason `key_wait`) and gives back every key
+    /// this call already took: the guard owns each key from the moment it is taken.
+    fn acquire(
+        self: &Arc<Self>,
+        keys: &BTreeSet<Vec<u8>>,
+        deadline: Option<Instant>,
+    ) -> Result<LockGuard> {
         let owner = self.next_owner.fetch_add(1, Ordering::Relaxed) + 1;
-        let mut held = self.held.lock().unwrap_or_else(|p| p.into_inner());
-        for key in keys {
-            while held.get(key).is_some_and(|o| *o != owner) {
-                held = self.released.wait(held).unwrap_or_else(|p| p.into_inner());
-            }
-            held.insert(key.clone(), owner);
-            self.count.fetch_add(1, Ordering::Release);
-        }
-        LockGuard {
+        let mut guard = LockGuard {
             locks: self.clone(),
             owner,
-            keys: keys.iter().cloned().collect(),
+            keys: Vec::with_capacity(keys.len()),
+        };
+        let mut held = self.held.lock().unwrap_or_else(|p| p.into_inner());
+        for key in keys {
+            let mut waited = false;
+            while held.get(key).is_some_and(|o| *o != owner) {
+                waited = true;
+                held = match deadline {
+                    None => self.released.wait(held).unwrap_or_else(|p| p.into_inner()),
+                    Some(at) => {
+                        let now = Instant::now();
+                        if now >= at {
+                            // Release the map before the guard gives back the keys it took.
+                            drop(held);
+                            drop(guard);
+                            return Err(StoreError::timeout(
+                                "key_wait",
+                                "the write waited for a busy key past its deadline; nothing was committed",
+                            ));
+                        }
+                        self.released
+                            .wait_timeout(held, at - now)
+                            .unwrap_or_else(|p| p.into_inner())
+                            .0
+                    }
+                };
+            }
+            // A key freed just as the deadline passed is not taken after it.
+            if waited && deadline.is_some_and(|at| Instant::now() >= at) {
+                drop(held);
+                drop(guard);
+                return Err(StoreError::timeout(
+                    "key_wait",
+                    "the write waited for a busy key past its deadline; nothing was committed",
+                ));
+            }
+            if held.insert(key.clone(), owner).is_none() {
+                self.count.fetch_add(1, Ordering::Release);
+                guard.keys.push(key.clone());
+            }
         }
+        drop(held);
+        Ok(guard)
     }
 
     /// True when some retried transaction holds `key`.
@@ -330,6 +370,9 @@ struct Request {
     reads: Vec<(Vec<u8>, Vec<u8>)>,
     /// Commit-time checks: the latest committed value of the key must be <= the bound.
     guards: Vec<(Vec<u8>, i64)>,
+    /// The transaction read the commit sequence (`KvWrite::observe_sequence`): any commit accepted
+    /// after its snapshot refuses it.
+    observes_sequence: bool,
     writes: BTreeMap<Vec<u8>, Op>,
     reply: SyncSender<Result<u64>>,
 }
@@ -345,9 +388,24 @@ struct Shared {
     published: AtomicU64,
     poisoned: AtomicBool,
     stats: Arc<OccStats>,
+    /// Messages sent to the pipeline and not yet taken by a step (`OccKv::queued_commits`).
+    #[cfg(feature = "sim")]
+    queued: AtomicUsize,
 }
 
 impl Shared {
+    /// Counts one message about to be sent to the pipeline (the simulation seam only).
+    fn sent(&self) {
+        #[cfg(feature = "sim")]
+        self.queued.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// Takes back [`Shared::sent`] for a message that could not be sent.
+    fn unsent(&self) {
+        #[cfg(feature = "sim")]
+        self.queued.fetch_sub(1, Ordering::SeqCst);
+    }
+
     fn register(&self, version: u64) {
         let mut open = self.open.lock().unwrap_or_else(|p| p.into_inner());
         *open.entry(version).or_insert(0) += 1;
@@ -531,6 +589,9 @@ impl Pipeline {
         if let Some(key) = self.index.first_conflict(req.snapshot, &req.reads) {
             return Err(conflict(&key));
         }
+        if req.observes_sequence && (req.snapshot < self.version || !resolved.is_empty()) {
+            return Err(conflict(&[]));
+        }
         for (key, bound) in &req.guards {
             let current = self.current(key, resolved, latest)?;
             if decode_i64(current.as_deref())? > *bound {
@@ -595,6 +656,28 @@ fn approx_bytes(r: &Request) -> usize {
 pub struct OccKv {
     shared: Arc<Shared>,
     thread: Mutex<Option<JoinHandle<()>>>,
+    /// A pipeline with no thread, run by `step_pipeline` (`new_stepped`, the simulation seam).
+    #[cfg(feature = "sim")]
+    stepped: Mutex<Option<Stepped>>,
+}
+
+/// What `OccKv::step_pipeline` took and did (the simulation seam).
+#[cfg(feature = "sim")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PipelineStep {
+    /// The batch's commit sequence; `None` when every request in it was refused.
+    pub sequence: Option<u64>,
+    pub taken: usize,
+    pub accepted: usize,
+    pub conflicts: usize,
+}
+
+/// The pipeline of a stepped `OccKv`, its queue, and a message a step took but left for the next one.
+#[cfg(feature = "sim")]
+struct Stepped {
+    pipeline: Pipeline,
+    rx: Receiver<Msg>,
+    pending: Option<Msg>,
 }
 
 impl OccKv {
@@ -603,6 +686,20 @@ impl OccKv {
     }
 
     pub(crate) fn over(base: Arc<dyn OccBase>) -> Result<OccKv> {
+        let (shared, pipeline, rx) = Self::parts(base)?;
+        let thread = std::thread::Builder::new()
+            .name("gbrain-commit-pipeline".into())
+            .spawn(move || pipeline.run(rx))
+            .map_err(|e| StoreError::io(format!("starting the commit pipeline: {e}")))?;
+        Ok(OccKv {
+            shared,
+            thread: Mutex::new(Some(thread)),
+            #[cfg(feature = "sim")]
+            stepped: Mutex::new(None),
+        })
+    }
+
+    fn parts(base: Arc<dyn OccBase>) -> Result<(Arc<Shared>, Pipeline, Receiver<Msg>)> {
         let version = base.version()?;
         let (tx, rx) = channel::<Msg>();
         let shared = Arc::new(Shared {
@@ -614,6 +711,8 @@ impl OccKv {
             published: AtomicU64::new(version),
             poisoned: AtomicBool::new(false),
             stats: Arc::new(OccStats::default()),
+            #[cfg(feature = "sim")]
+            queued: AtomicUsize::new(0),
         });
         let pipeline = Pipeline {
             shared: shared.clone(),
@@ -623,14 +722,92 @@ impl OccKv {
             },
             version,
         };
-        let thread = std::thread::Builder::new()
-            .name("gbrain-commit-pipeline".into())
-            .spawn(move || pipeline.run(rx))
-            .map_err(|e| StoreError::io(format!("starting the commit pipeline: {e}")))?;
+        Ok((shared, pipeline, rx))
+    }
+
+    /// Like [`OccKv::new`], but starts no pipeline thread: commits queue until
+    /// [`OccKv::step_pipeline`] runs (the seeded simulation, `tests/multi_writer_sim.rs`).
+    #[cfg(feature = "sim")]
+    pub fn new_stepped(base: RedbKv) -> Result<OccKv> {
+        let (shared, pipeline, rx) = Self::parts(Arc::new(base))?;
         Ok(OccKv {
             shared,
-            thread: Mutex::new(Some(thread)),
+            thread: Mutex::new(None),
+            stepped: Mutex::new(Some(Stepped {
+                pipeline,
+                rx,
+                pending: None,
+            })),
         })
+    }
+
+    /// Commit requests (and exclusive-write messages) queued and not yet taken by a step.
+    #[cfg(feature = "sim")]
+    pub fn queued_commits(&self) -> usize {
+        self.shared.queued.load(Ordering::SeqCst)
+    }
+
+    /// One iteration of the pipeline loop on the calling thread: takes up to `max_batch` queued
+    /// commits in arrival order (an exclusive-write message ends the batch, and a step that starts
+    /// with one runs that exclusive write alone), validates and writes them as one batch and answers
+    /// each. `Ok(None)` when nothing was queued; `invalid_state` on an `OccKv` that was not made
+    /// with [`OccKv::new_stepped`].
+    #[cfg(feature = "sim")]
+    pub fn step_pipeline(&self, max_batch: usize) -> Result<Option<PipelineStep>> {
+        let mut slot = self.stepped.lock().unwrap_or_else(|p| p.into_inner());
+        let Some(stepped) = slot.as_mut() else {
+            return Err(StoreError::new(
+                crate::error::INVALID_STATE,
+                "step_pipeline needs an OccKv made with new_stepped",
+            ));
+        };
+        let take = |stepped: &mut Stepped| -> Option<Msg> {
+            let msg = stepped
+                .pending
+                .take()
+                .or_else(|| stepped.rx.try_recv().ok())?;
+            Some(msg)
+        };
+        let Some(first) = take(stepped) else {
+            return Ok(None);
+        };
+        self.shared.queued.fetch_sub(1, Ordering::SeqCst);
+        let stats = &self.shared.stats;
+        let commits_before = stats.commits.load(Ordering::Relaxed);
+        let version_before = stepped.pipeline.version;
+        let taken = match first {
+            Msg::Exclusive { granted, end } => {
+                stepped.pipeline.exclusive(granted, end);
+                1
+            }
+            Msg::Commit(req) => {
+                let mut batch = vec![req];
+                while batch.len() < max_batch.max(1) {
+                    match take(stepped) {
+                        Some(Msg::Commit(next)) => {
+                            self.shared.queued.fetch_sub(1, Ordering::SeqCst);
+                            batch.push(next);
+                        }
+                        Some(exclusive) => {
+                            stepped.pending = Some(exclusive);
+                            break;
+                        }
+                        None => break,
+                    }
+                }
+                let taken = batch.len();
+                stepped.pipeline.commit_batch(batch);
+                taken
+            }
+        };
+        let accepted = (stats.commits.load(Ordering::Relaxed) - commits_before) as usize;
+        let version = stepped.pipeline.version;
+        Ok(Some(PipelineStep {
+            sequence: (version != version_before).then_some(version),
+            taken,
+            accepted,
+            conflicts: taken - accepted.min(taken),
+        }))
     }
 
     pub fn stats(&self) -> Arc<OccStats> {
@@ -646,12 +823,16 @@ impl OccKv {
             let Some(sender) = sender.as_ref() else {
                 return Err(StoreError::new(STORE_CLOSED, "the brain is closing"));
             };
+            self.shared.sent();
             sender
                 .send(Msg::Exclusive {
                     granted: granted_tx,
                     end,
                 })
-                .map_err(|_| StoreError::new(STORE_CLOSED, "the brain is closing"))?;
+                .map_err(|_| {
+                    self.shared.unsent();
+                    StoreError::new(STORE_CLOSED, "the brain is closing")
+                })?;
         }
         let version = granted
             .recv()
@@ -698,6 +879,7 @@ impl OccKv {
             reads: RefCell::new(Vec::new()),
             writes: BTreeMap::new(),
             guards: Vec::new(),
+            observes_sequence: std::cell::Cell::new(false),
             locks,
             exclusive,
         }))
@@ -731,7 +913,15 @@ impl Kv for OccKv {
     }
 
     fn begin_write_locked(&self, keys: &BTreeSet<Vec<u8>>) -> Result<Box<dyn KvWrite>> {
-        let guard = self.shared.locks.acquire(keys);
+        self.begin_write_locked_until(keys, None)
+    }
+
+    fn begin_write_locked_until(
+        &self,
+        keys: &BTreeSet<Vec<u8>>,
+        deadline: Option<Instant>,
+    ) -> Result<Box<dyn KvWrite>> {
+        let guard = self.shared.locks.acquire(keys, deadline)?;
         self.begin(Some(guard))
     }
 
@@ -757,6 +947,8 @@ struct OccTxn {
     reads: RefCell<Vec<(Vec<u8>, Vec<u8>)>>,
     writes: BTreeMap<Vec<u8>, Op>,
     guards: Vec<(Vec<u8>, i64)>,
+    /// Set by `observe_sequence` (see `Request::observes_sequence`).
+    observes_sequence: std::cell::Cell<bool>,
     locks: Option<LockGuard>,
     /// Set on an exclusive write: its commit goes here, and dropping it lets the pipeline go on.
     exclusive: Option<SyncSender<Request>>,
@@ -994,25 +1186,92 @@ impl KvWrite for OccTxn {
     }
 
     fn counter_below(&mut self, key: &[u8], cap: i64) -> Result<Option<i64>> {
+        match self.counter_check(key, cap)? {
+            CounterCheck::Refused(value) => Ok(Some(value)),
+            CounterCheck::Admitted { bound } => {
+                // Accepted: commit only checks that the latest value still passes.
+                self.add_guard(key, bound)?;
+                Ok(None)
+            }
+        }
+    }
+
+    fn counter_check(&mut self, key: &[u8], cap: i64) -> Result<CounterCheck> {
         let pending = match self.writes.get(key) {
             None => 0,
             Some(Op::Add(d)) => *d,
             Some(_) => {
                 // A key this transaction set outright: a plain read decides.
                 let value = decode_i64(self.get(key)?.as_deref())?;
-                return Ok((value >= cap).then_some(value));
+                return Ok(if value >= cap {
+                    CounterCheck::Refused(value)
+                } else {
+                    CounterCheck::Admitted { bound: i64::MAX }
+                });
             }
         };
         self.check_lock(key)?;
-        let seen = decode_i64(self.snap.get(key)?.as_deref())?;
+        let raw = self.snap.get(key)?;
+        let seen = match decode_i64(raw.as_deref()) {
+            Ok(v) => v,
+            Err(e) => {
+                // The failure depends on the stored value: a read like any other.
+                self.record(key.to_vec(), key_successor(key));
+                return Err(e);
+            }
+        };
         if seen + pending >= cap {
             // The refusal depends on the value: read it like any other read.
             self.record(key.to_vec(), key_successor(key));
-            return Ok(Some(seen + pending));
+            return Ok(CounterCheck::Refused(seen + pending));
         }
-        // Accepted: commit only checks that the latest value still passes.
-        self.guards.push((key.to_vec(), cap - 1 - pending));
-        Ok(None)
+        Ok(CounterCheck::Admitted {
+            bound: cap - 1 - pending,
+        })
+    }
+
+    fn snapshot_sequence(&self) -> Option<u64> {
+        Some(self.version)
+    }
+
+    fn observe_sequence(&self) -> Option<u64> {
+        if self.exclusive.is_none() {
+            self.observes_sequence.set(true);
+        }
+        Some(self.version)
+    }
+
+    fn refresh_snapshot(&mut self) -> Result<bool> {
+        if self.exclusive.is_some()
+            || !self.writes.is_empty()
+            || !self.guards.is_empty()
+            || self.observes_sequence.get()
+        {
+            return Ok(false);
+        }
+        // Register the new floor before the snapshot, as `begin_inner` does, then drop the old one.
+        let floor = self.shared.published.load(Ordering::Acquire);
+        self.shared.register(floor);
+        let snapshot = match self.shared.base.versioned_snapshot() {
+            Ok(s) => s,
+            Err(e) => {
+                self.shared.unregister(floor);
+                return Err(e);
+            }
+        };
+        self.shared.unregister(self.registered);
+        self.registered = floor;
+        self.snap = snapshot.0;
+        self.version = snapshot.1;
+        self.reads.get_mut().clear();
+        Ok(true)
+    }
+
+    fn add_guard(&mut self, key: &[u8], bound: i64) -> Result<()> {
+        if bound != i64::MAX {
+            self.guards.push((key.to_vec(), bound));
+        }
+        Ok(())
     }
 
     fn commit(self: Box<Self>) -> Result<u64> {
@@ -1026,6 +1285,7 @@ impl KvWrite for OccTxn {
             reads: std::mem::take(this.reads.get_mut()),
             guards: std::mem::take(&mut this.guards),
             writes: std::mem::take(&mut this.writes),
+            observes_sequence: this.observes_sequence.get(),
             reply,
         };
         if let Some(end) = this.exclusive.take() {
@@ -1036,9 +1296,11 @@ impl KvWrite for OccTxn {
             let Some(sender) = sender.as_ref() else {
                 return Err(StoreError::new(STORE_CLOSED, "the brain is closing"));
             };
-            sender
-                .send(Msg::Commit(request))
-                .map_err(|_| StoreError::new(STORE_CLOSED, "the brain is closing"))?;
+            this.shared.sent();
+            sender.send(Msg::Commit(request)).map_err(|_| {
+                this.shared.unsent();
+                StoreError::new(STORE_CLOSED, "the brain is closing")
+            })?;
         }
         let result = answer
             .recv()
@@ -1046,5 +1308,73 @@ impl KvWrite for OccTxn {
         // Locks are released only after the commit is durable (or refused).
         drop(this.locks.take());
         result
+    }
+}
+
+#[cfg(all(test, feature = "sim"))]
+mod sim_seam_tests {
+    use super::*;
+    use crate::kv::Kv;
+
+    fn stepped() -> Arc<OccKv> {
+        let kv = crate::redb_kv::RedbKv::open_backend(Box::new(
+            crate::test_support::FlakyFile::default(),
+        ))
+        .unwrap();
+        Arc::new(OccKv::new_stepped(kv).unwrap())
+    }
+
+    /// Commits queue until a step takes them; a step batches in arrival order, refuses a stale
+    /// read, and reports what it did.
+    #[test]
+    fn a_stepped_pipeline_commits_only_when_stepped() {
+        let kv = stepped();
+        assert_eq!(kv.step_pipeline(4).unwrap(), None);
+        let mut stale = kv.begin_write().unwrap();
+        assert_eq!(stale.get(b"yk").unwrap(), None);
+        stale.put(b"ystale", b"x").unwrap();
+        let commit = |kv: Arc<OccKv>, key: &'static [u8]| {
+            std::thread::spawn(move || {
+                let mut w = kv.begin_write().unwrap();
+                w.put(key, b"v").unwrap();
+                w.commit()
+            })
+        };
+        let first = commit(kv.clone(), b"yk");
+        while kv.queued_commits() < 1 {
+            std::thread::yield_now();
+        }
+        let stale = std::thread::spawn(move || stale.commit());
+        while kv.queued_commits() < 2 {
+            std::thread::yield_now();
+        }
+        assert_eq!(kv.snapshot().unwrap().get(b"yk").unwrap(), None);
+        let step = kv.step_pipeline(4).unwrap().unwrap();
+        assert_eq!(
+            step,
+            PipelineStep {
+                sequence: Some(1),
+                taken: 2,
+                accepted: 1,
+                conflicts: 1
+            }
+        );
+        assert_eq!(kv.queued_commits(), 0);
+        assert_eq!(first.join().unwrap().unwrap(), 1);
+        assert_eq!(
+            stale.join().unwrap().unwrap_err().code,
+            crate::error::WRITE_CONFLICT
+        );
+        assert!(
+            OccKv::new(
+                crate::redb_kv::RedbKv::open_backend(Box::new(
+                    crate::test_support::FlakyFile::default()
+                ))
+                .unwrap()
+            )
+            .unwrap()
+            .step_pipeline(1)
+            .is_err()
+        );
     }
 }

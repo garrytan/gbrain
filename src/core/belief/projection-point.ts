@@ -21,6 +21,9 @@ export function unmanagedBeliefPoint(sourceId: string, slugs: readonly string[],
   let nested = false;
   return {
     async run<T>(tx: BrainEngine, fn: () => Promise<T>): Promise<T> {
+      // Each run of a transaction callback starts clean (a multi-user Rust rerun after a lost commit).
+      report.appended = 0;
+      nested = false;
       if (beliefBatchCovers(sourceId, sorted)) return fn();
       nested = insideBeliefBatch();
       await tx.lockPageKeys(sorted.map(slug => ({ sourceId, slug })));

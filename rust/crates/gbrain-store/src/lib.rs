@@ -16,6 +16,7 @@ pub mod access_members;
 pub mod access_migrations;
 pub mod access_policy;
 pub mod access_rules;
+pub mod call_context;
 mod cascade;
 pub mod chronicle_reads;
 pub mod chunks;
@@ -255,7 +256,9 @@ pub struct Store {
     info: StoreInfo,
     /// The open transaction this store runs on (`transactions.rs`); `None` for the brain's own
     /// store, whose writes each commit on their own.
-    pub(crate) bound: Option<Arc<transactions::Transaction>>,
+    pub(crate) bound: Option<Arc<transactions::OpenTransaction>>,
+    /// The single-flight table of the open brain (`transactions.rs`), shared by every store on it.
+    pub(crate) flights: Arc<transactions::SingleFlight>,
     /// The keyword index build this store runs (`keyword/index_build.rs`); dropping the store
     /// stops it after its current batch. `None` on a bound store and on the builder's own store.
     builder: Mutex<Option<keyword::Builder>>,
@@ -513,6 +516,7 @@ impl Store {
                 multiuser,
             },
             bound: None,
+            flights: Arc::default(),
             builder: Mutex::new(None),
             runs_builder: options.keyword_index_builder,
             flag_assumed,
@@ -535,6 +539,7 @@ impl Store {
             write_context: write_trust::WriteContextSlot::default(),
             info: self.info.clone(),
             bound: None,
+            flights: self.flights.clone(),
             builder: Mutex::new(None),
             runs_builder: false,
             flag_assumed: self.flag_assumed,
@@ -588,7 +593,7 @@ impl Store {
     }
 
     /// A store on the same brain whose reads and writes run inside `tx` (`transactions.rs`).
-    pub(crate) fn bound_to(&self, tx: Arc<transactions::Transaction>) -> Store {
+    pub(crate) fn bound_to(&self, tx: Arc<transactions::OpenTransaction>) -> Store {
         Store {
             kv: self.kv.clone(),
             // One time for the whole transaction, as PGLite's now() (`transactions.rs`, "Time").
@@ -604,6 +609,7 @@ impl Store {
             write_context: write_trust::WriteContextSlot::default(),
             info: self.info.clone(),
             bound: Some(tx),
+            flights: self.flights.clone(),
             builder: Mutex::new(None),
             runs_builder: false,
             flag_assumed: self.flag_assumed,
@@ -627,6 +633,10 @@ impl Store {
 
     /// The commit sequence of the latest commit.
     pub fn commit_version(&self) -> Result<u64> {
+        // Inside an optimistic transaction (multi-user mode): its snapshot's, checked at its commit.
+        if let Some(seen) = self.bound_commit_version() {
+            return seen;
+        }
         self.kv.version()
     }
 
@@ -711,9 +721,13 @@ impl Store {
         }
         let mut locked: std::collections::BTreeSet<Vec<u8>> = std::collections::BTreeSet::new();
         let mut attempt = 0u32;
+        // One absolute deadline for every run (multi-user mode only; `None` waits as before).
+        let deadline = call_context::deadline();
         loop {
             let mut tx = if locked.is_empty() {
                 self.kv.begin_write()?
+            } else if deadline.is_some() {
+                self.kv.begin_write_locked_until(&locked, deadline)?
             } else {
                 self.kv.begin_write_locked(&locked)?
             };

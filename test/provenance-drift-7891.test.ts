@@ -265,6 +265,33 @@ for (const kind of testBackends()) {
         }
       }, 120_000);
 
+      // Multi-user Rust: a commit that loses a conflict keeps nothing and the callback runs again (lane L1). The page file the
+      // lost run wrote must not make the rerun refuse as "changed since preview".
+      test.skipIf(!repo)('a repair whose transaction callback runs again after a lost commit still applies, once', async () => {
+        const slug = 'inbox/rerun';
+        await seed(slug, STORED);
+        await rewrite(slug, {}, 'oauth_client');
+        const dry = await run(false);
+        expect(dry.affected).toBe(1);
+        const outer = engine;
+        const transaction = Object.getPrototypeOf(outer).transaction as BrainEngine['transaction'];
+        const LOST = new Error('lost optimistic commit');
+        let reran = false;
+        outer.transaction = async function (this: BrainEngine, fn: (tx: BrainEngine) => Promise<unknown>, opts?: Parameters<BrainEngine['transaction']>[1]) {
+          if (this !== outer || reran) return transaction.call(this, fn, opts);
+          reran = true;
+          await transaction.call(outer, async tx => { await fn(tx); throw LOST; }, opts).catch((e: unknown) => { if (e !== LOST) throw e; });
+          return transaction.call(outer, fn, opts);
+        } as BrainEngine['transaction'];
+        try {
+          await run(true, { expect: dry.preview_hash });
+        } finally { delete (outer as { transaction?: unknown }).transaction; }
+        expect(reran).toBe(true);
+        const file = parseMarkdown(fs.readFileSync(fileOf(slug), 'utf8'), slug).frontmatter;
+        expect({ stamps: stampsOf(file), tier: await tierOf(slug), proposals: await proposals(slug) })
+          .toEqual({ stamps: STORED, tier: 'external_untrusted', proposals: [{ action: 'lower_page', proposer: 'provenance_repair', status: 'pending' }] });
+      }, 120_000);
+
       test.skipIf(!repo)('#7960: a database commit that fails after the page file was committed puts the file and HEAD back; both sides stay unchanged', async () => {
         const slug = 'inbox/commit-fails';
         const rel = `${slug}.md`;

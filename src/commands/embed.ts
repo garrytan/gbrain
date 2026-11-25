@@ -2086,13 +2086,16 @@ async function embedAllStale(
           // `--stale` reuses stored rows; without this, one pre-cap chunk
           // (e.g. a long pre-cap notes page on a 512-token model) fails
           // forever and exits the sweep non-zero.
+          const splitsBefore = result.healed_splits, said = new Set<string>(); // a multi-user Rust rerun starts from here
           const healed = await observed(pacer, () => engine.transaction(async tx => {
+            if (splitsBefore === undefined) delete result.healed_splits; else result.healed_splits = splitsBefore;
             await staleOpts?.assertOwned?.(tx);
             return healOversizedPageChunks(tx, slug, {
               sourceId: keySourceId,
               onSplit: (n) => {
                 result.healed_splits = (result.healed_splits ?? 0) + n;
-                serr(`\n  ${slug}: split ${n} oversized chunk(s) to fit embedding input limit`);
+                const line = `\n  ${slug}: split ${n} oversized chunk(s) to fit embedding input limit`;
+                if (!said.has(line)) serr(line), said.add(line);
               },
             });
           }));
