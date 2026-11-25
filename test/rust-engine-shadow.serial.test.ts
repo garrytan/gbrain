@@ -85,6 +85,19 @@ describe('gbrain engine shadow', () => {
     });
   });
 
+  test('start with no addon installed refuses with the install command and keeps shadow mode off', async () => {
+    await inHome(async (_home, config) => {
+      const plan = capture();
+      await runEngineShadow(['start', '--plan'], { ...plan.deps, config: () => config, ...unmanagedBrain });
+      const hash = plan.out.find((l) => l.startsWith('plan_hash: '))!.slice(11);
+      const go = capture();
+      expect(await runEngineShadow(['start', '--yes', '--expect', hash], { ...go.deps, config: () => config, ...unmanagedBrain })).toBe(1);
+      expect(go.err[0]).toStartWith('engine shadow: rust_engine_addon_missing (');
+      expect(go.err[0]).toContain('gbrain engine install rust');
+      expect(existsSync(shadowDirFor(shadowBrainKey(config)!))).toBe(false);
+    });
+  });
+
   test('start, status, report and stop --delete', async () => {
     await inHome(async (home, config) => {
       const hash = await startShadow(config);

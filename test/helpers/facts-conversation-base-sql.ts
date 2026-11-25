@@ -3,7 +3,7 @@
  * copied verbatim (helpers such as outcomeMarkerSql, unbackedEntitySql and retiredPageSql already resolved to their text).
  * test/facts-conversation-sites-sql-pin.test.ts holds the typed members (src/core/engine-sql/facts-conversation.ts) to them.
  * Generated once from the base commit; never regenerate from the current helpers, or the pin only compares them with themselves.
- * One intended change since: listPurgeTombstoneMatches also matches gbrain_fact_fingerprint_v2 (migration v339, fact fingerprint v3).
+ * One intended change since: listPurgeTombstoneMatches also matches gbrain_fact_fingerprint_v2 (migration v341, fact fingerprint v3).
  */
 export const BASE_SQL: Record<string, string> = {
   readNewestConversationFactId: "SELECT max(id) AS id FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND source LIKE 'cli:extract-conversation-facts%'",

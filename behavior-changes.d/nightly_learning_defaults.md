@@ -1,0 +1,4 @@
+---
+kind: default
+---
+The dream cycle now finds facts that disagree by default. dream.claim_conflicts.mode unset now means propose: each cycle files a pending proposal when two typed facts about the same thing disagree. It needs no key, costs nothing and changes no fact until you decide (gbrain trust review --kind contradiction). While a proposal is pending, recall and search mark the facts in it as contested. Turn it off with gbrain config set dream.claim_conflicts.mode off; a value you already set is kept. Thin-page filling (cycle.enrich_thin) is still off until you turn it on, and its brain-wide cap per cycle run (cycle.enrich_thin.max_total_cost_usd) now defaults to $0.50 instead of $5.00; a cap you set is kept. gbrain doctor now reports the newest nightly learning run and how much of the morning note you kept or undid (learning_note).

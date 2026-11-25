@@ -203,16 +203,18 @@ describe.skipIf(SKIP)('holds follow a page across a rename under concurrent conn
     return late;
   }
 
-  // Known limit: concurrent purges with a reused name can leave a held row; gbrain trust review lists it and gbrain trust drop removes it; a maintenance sweep will remove these later.
-  // This asserts the end state we want (hold and receipts gone), which does not hold today, so it is marked failing; flip it to `test` when the sweep lands.
-  test.failing('(f) two purges of the pages an unbound hold reaches, run side by side, leave neither the hold nor its receipts', async () => {
+  // Concurrent purges with a reused name can leave a held row: each purge notes the held write it kept for the other page, and the next
+  // maintenance run (bookkeeping_gc) checks it again and removes it with its receipts once no page row is left (test/write-gate-hold-recheck.test.ts).
+  test('(f) two purges of the pages an unbound hold reaches, run side by side, then maintenance, leave neither the hold nor its receipts', async () => {
     const sourceId = await source();
     const late = await purgeReachedPagesSideBySide(sourceId);
+    const { runPhaseBookkeepingGc } = await import('../src/core/cycle/bookkeeping-gc.ts');
+    await runPhaseBookkeepingGc(engine, false);
     expect(await holds(sourceId)).toEqual([]);
     expect(await engine.executeRaw("SELECT 1 FROM write_gate_receipts WHERE target_table='write_gate_holds' AND target_id=$1", [String(late)])).toEqual([]);
   });
 
-  // The held row the limit above leaves behind is inert: it stays held and unbound, is not marked as ambiguous (so `gbrain doctor` does not list it),
+  // Until maintenance runs, the held row the purges leave behind is inert: it stays held and unbound, is not marked as ambiguous (so `gbrain doctor` does not list it),
   // and shows nothing: a page that later takes the name still has the held row hidden, and a page under another name is untouched.
   test('(f2) the hold left behind by side-by-side purges stays held, delivers nothing and touches no other page', async () => {
     const sourceId = await source();
@@ -228,7 +230,7 @@ describe.skipIf(SKIP)('holds follow a page across a rename under concurrent conn
     await expectHeldHidden(engine, sourceId, 'notes/alpha');
     await putPage(sourceId, 'notes/other');
     await expectNothingHeld(engine, sourceId, 'notes/other');
-    // The owner can find and remove it with the ordinary commands: trust review lists it, trust drop accepts its ref.
+    // The owner can find it with the ordinary commands: trust review lists it, and trust drop marks it dropped (the payload stays until maintenance removes the row).
     const { localTrustBackend, runTrustOwnerCommand } = await import('../src/commands/trust.ts');
     const out: string[] = [];
     const log = console.log;

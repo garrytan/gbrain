@@ -25,6 +25,12 @@ export interface ShadowLedgerRow {
   epoch_id?: string;
   /** For stale, inconclusive and collation_order rows: the mismatch that was found. */
   mismatch?: 'diff' | 'order_diff';
+  /** How the stable rerun of an inconclusive sample ended (child.ts): `matched`, `differed`, or `skipped:<why>`. Absent when none was due. */
+  rerun?: string;
+  /** The opaque sample id (samples.ts): links an unresolved (`rerun: 'pending'`) row to the completion row that settles it. Content-free. */
+  sid?: string;
+  /** The read asked for the read policy (`excludePrivate`); content-free. The status counts a ranked-search diff only for such a read (exactness.ts). */
+  private_read?: true;
   primary_ms: number;
   rust_ms: number | null;
   primary_rows: number | null;
