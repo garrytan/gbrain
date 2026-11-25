@@ -22,7 +22,7 @@
 # timeline: 33/33
 # ontology: 9/9
 # raw_files: 25/25
-# takes: 73/73
+# takes: 76/76
 # dream: 37/37
 # contradictions: 28/28
 # facts: 23/23
@@ -490,13 +490,15 @@ countStaleTakes	takes	yes	1	no	yes	yes	serves
 listStaleTakes	takes	yes	1	no	yes	yes	serves
 updateTake	takes	yes	5	no	yes	yes	serves
 supersedeTake	takes	yes	8	no	yes	yes	serves
-resolveTake	takes	yes	21	no	yes	yes	serves
+resolveTake	takes	yes	22	no	yes	yes	serves
 getScorecard	takes	yes	4	no	yes	yes	serves
 getCalibrationCurve	takes	yes	4	no	yes	yes	serves
 addSynthesisEvidence	takes	yes	4	no	yes	yes	serves
 listActiveTakesForPages	takes	yes	5	no	yes	yes	serves
 matchTakeRows	takes	yes	1	no	yes	yes	serves
-deleteTakeRows	takes	yes	1	no	yes	yes	serves
+deleteTakeRows	takes	yes	2	no	yes	yes	serves
+stampTakeResolvedAt	takes	yes	1	no	yes	yes	serves
+recordTakeHoldersUsed	takes	yes	5	no	yes	yes	serves
 countOffGridTakeWeights	takes	yes	1	no	yes	yes	serves
 countTakes	takes	yes	3	no	yes	yes	serves
 planFactPurgeTakes	takes	yes	1	no	yes	yes	serves
@@ -540,7 +542,8 @@ readTakeTrustRef	takes	yes	1	no	yes	yes	serves
 listTakeIdsLeavingFence	takes	yes	1	no	yes	yes	serves
 listTakePreimages	takes	yes	1	no	yes	yes	serves
 deleteTakesByIds	takes	yes	1	no	yes	yes	serves
-findTakeId	takes	yes	7	no	yes	yes	serves
+findTakeId	takes	yes	12	no	yes	yes	serves
+listTakeHoldersAtRows	takes	yes	3	no	yes	yes	serves
 countMcpResolvedTakes	takes	yes	5	no	yes	yes	serves
 listTopResolvedTakesForHolder	takes	yes	2	no	yes	yes	serves
 listAbandonedTakes	takes	yes	2	no	yes	yes	serves
@@ -848,7 +851,7 @@ listChronicleCoverageGapRows	persistence_journal	yes	1	no	yes	yes	serves
 readAtomOriginInput	persistence_journal	yes	2	no	yes	yes	serves
 listProducerVersionRows	persistence_journal	yes	1	no	yes	yes	serves
 listAtomWriteReceipts	persistence_journal	yes	1	no	yes	yes	serves
-readWriteRequest	persistence_journal	yes	16	no	yes	yes	serves
+readWriteRequest	persistence_journal	yes	18	no	yes	yes	serves
 readWriteRequestsByRequestIds	persistence_journal	yes	3	no	yes	yes	serves
 readWriteRequestsByRequestId	persistence_journal	yes	1	no	yes	yes	serves
 readWriteRequestById	persistence_journal	yes	16	no	yes	yes	serves

@@ -531,6 +531,7 @@ test/engine-parity/take-purge-overlay.test.ts
 test/engine-parity/take-trust-fields.test.ts
 test/engine-parity/take-trust-reads.test.ts
 test/engine-parity/take-vector-search.test.ts
+test/engine-parity/takes-prepare.test.ts
 test/engine-parity/takes.test.ts
 test/engine-parity/telemetry.test.ts
 test/engine-parity/think-gather-takes.test.ts
