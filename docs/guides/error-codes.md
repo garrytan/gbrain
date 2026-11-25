@@ -4125,6 +4125,16 @@ More: [docs/guides/write-refusals.md#on_behalf_of_not_permitted](../../docs/guid
 
 More: [docs/guides/write-refusals.md#on_behalf_of_unknown_member](../../docs/guides/write-refusals.md#on_behalf_of_unknown_member)
 
+### onboarding_owner_only
+
+<a id="onboarding_owner_only"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Only the owner of this install can turn the first-session suggestion off, and this connection is not bound to the owner, so nothing changed. | The suggestion belongs to the install's owner; a member-bound connection can read its status but never change it. | Ask the brain owner to run gbrain onboarding off on the brain host. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/first-session-suggestion.md](../../docs/guides/first-session-suggestion.md)
+
 ### openclaw_not_found
 
 <a id="openclaw_not_found"></a>

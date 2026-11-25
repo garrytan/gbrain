@@ -53,7 +53,7 @@ export interface LayoutFlags {
 }
 
 export const IMPORT_INLINE_MAX = 500;
-export const LAYOUT_VERSION = 3;
+export const LAYOUT_VERSION = 4;
 export const LAYOUT_BEGIN = '<!-- gbrain:brain-layout:begin -->';
 export const LAYOUT_END = '<!-- gbrain:brain-layout:end -->';
 export const COMPANY_SOURCE = 'company';
@@ -164,7 +164,8 @@ export function renderLayoutBlock(harness: string, scope: LayoutScope = 'user', 
     lines.push(`- Before a task that needs the company's context, read company/facts, company/decisions and company/pricing (source ${COMPANY_SOURCE}).`,
       '- Quote company numbers only from company/facts, and name it.',
       '- Add a new decision to company/decisions as a dated entry with why, who and what would make us revisit it.',
-      `- Save company facts and decisions with --source ${COMPANY_SOURCE}; personal ones go to the default source.`);
+      `- Save company facts and decisions with --source ${COMPANY_SOURCE}; personal ones go to the default source.`,
+      '- Save a decision the whole team should know into company/ with its readers named (readable_by: [<member>, ...] in its frontmatter); everything else stays private by default.');
   }
   lines.push('- A page with type: facts holds one dated line per fact: quote only its dated lines, and add a new fact as a new dated line.',
     '- Never overwrite a page: add a new dated line. Save facts I tell you with remember, naming where they came from.',
