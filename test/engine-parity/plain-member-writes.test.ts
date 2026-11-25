@@ -66,17 +66,22 @@ describe('engine parity: a plain member writes on a brain with a labelled-only m
     return out;
   });
 
-  // Row 32e-d-1 (a named loss): the owner's own remote put_page reads the stored page's privacy with raw SQL
-  // (page-visibility.ts ownerRewriteOf), so on Rust it is refused loudly; PGLite and Postgres write it.
-  test('loss (32e-d-1): the owner\'s own remote put_page is refused on Rust and written elsewhere', async () => {
+  // Row 32e-d-1, closed on main by 9a4a03bd36 (the owner's own write reads the stored page's privacy through typed
+  // reads): the owner's own remote put_page is written, and leaves the same page row and version, on every engine.
+  test('the owner\'s own remote put_page is written on every engine, with the same stored page and version', async () => {
+    const seen: { backend: string; outcome: string; stored: unknown }[] = [];
     for (const arm of arms()) {
       await resetArm(arm);
       await seed(arm.engine, arm.backend);
       await setOwner(arm.engine, 'alice-example');
       const outcome = await write(arm.engine, 'alice-example', 'put_page', 'notes/by-alice');
-      expect({ backend: arm.backend, outcome }).toEqual({ backend: arm.backend, outcome: arm.backend === 'rust' ? 'engine_capability_missing' : 'written' });
+      const page = await arm.engine.getPage('notes/by-alice', { sourceId: SRC });
+      const stored = { page: page && [page.title, page.type, page.compiled_truth, page.deleted_at], versions: (await arm.engine.getVersions('notes/by-alice', { sourceId: SRC })).length };
+      seen.push({ backend: arm.backend, outcome, stored });
     }
     expect(arms().length).toBeGreaterThan(0);
+    for (const s of seen) expect(s).toEqual({ backend: s.backend, outcome: 'written', stored: seen[0]!.stored });
+    expect(seen[0]!.stored).toEqual({ page: ['Note', 'note', 'Harbor notes.', null], versions: 0 });
   }, 120_000);
 
   test('a labelled-only member\'s unlabelled put_page is refused on every arm (on Rust loudly: row 32e-b)', async () => {
