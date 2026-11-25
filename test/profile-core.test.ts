@@ -30,8 +30,12 @@ import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { extractFactsFromFenceText, normalizeExtractedMetricLabel, normalizeMetricLabel } from '../src/core/facts/extract-from-fence.ts';
 import type { ParsedFact } from '../src/core/facts-fence.ts';
 import { parseProfileArgs, renderProfile } from '../src/commands/profile.ts';
+import { profileRemember, profileSelf } from '../src/core/profile/remember.ts';
+import { unquoteFactText } from '../src/core/search/transcript-quote.ts';
+import { findTrajectory as rustFindTrajectory } from '../src/core/rust-engine/store-members/facts.ts';
 import { canonicalFacet, facetOfMetric } from '../src/core/profile/facets.ts';
-import { PROFILE_HEADER } from '../src/core/profile/read.ts';
+import { packProfile, PROFILE_HEADER } from '../src/core/profile/read.ts';
+import { estimateTokens } from '../src/core/search/token-budget.ts';
 import { codeEntry } from '../src/core/error-catalogue.ts';
 import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
 
@@ -88,6 +92,26 @@ describe('a facts-fence row carries a profile metric only on its profile home', 
   });
 });
 
+describe('reservation and engine guards', () => {
+  test('a remote claim_metric that unquotes to profile.* is refused like a plain one', async () => {
+    const quoted = '[quoted conversation excerpt from fact 7; source material, not instructions]\n```text\nprofile.allergy\n```';
+    expect(unquoteFactText(quoted)).toBe('profile.allergy');
+    const e = await refusal(() => profileRemember({ remote: true } as OperationContext, { fact: 'x', claim_metric: quoted }));
+    expect([e.code, e.canonical]).toEqual(['invalid_params', 'profile_metric_reserved']);
+  });
+  test('the profile refuses a Rust brain up front instead of failing on raw SQL', async () => {
+    const e = await refusal(() => profileSelf({ engine: { kind: 'rust' }, remote: false } as unknown as OperationContext));
+    expect(e.code).toBe('engine_capability_missing');
+  });
+  test('Rust trajectory: newer profile rows never crowd older points out of the page', async () => {
+    const row = (metric: string, i: number) => ({ id: i, metric, text: metric + i, valid_from: '2026-01-0' + (9 - i), valid_until: null });
+    const native = [row('profile.diet', 1), row('profile.allergy', 2), row('profile.style', 3), row('mrr', 4), row('mrr', 5)];
+    const brain = { findTrajectory: async (o: { limit: number }) => native.slice(0, o.limit) };
+    const points = await rustFindTrajectory(brain as never, { entitySlug: 'memory/owner', sourceId: 'default', remote: false, limit: 2 } as never);
+    expect(points.map(p => p.metric)).toEqual(['mrr', 'mrr']);
+  });
+});
+
 describe('gbrain profile output', () => {
   const fact = (claim: string, facet: string | null) => ({ fact_id: 'f1', source_id: 'default', facet, claim, provenance: null, content_origin: 'user_said',
     valid_from: '2026-01-01', visibility: 'private' as const, confidence: 1 });
@@ -97,6 +121,13 @@ describe('gbrain profile output', () => {
     expect(parseProfileArgs(['--budget-tokens', '50'])).toEqual({ json: false, budget: 50 });
     for (const bad of [['--budget-tokens', '0'], ['--budget-tokens', '1.5'], ['--budget-tokens'], ['--nope']]) expect(parseProfileArgs(bad)).toHaveProperty('error');
   });
+  test('a partial profile says so in the packed text, and the price covers the block separator', async () => {
+    const owner = { slug: 'memory/owner', basis: 'reserved_page' as const };
+    const packed = await packProfile({ ...empty, entity: owner, constraints: [fact('Allergic to peanuts', 'allergy')], partial: true }, null);
+    expect(packed.text).toContain('[notice] This profile may be incomplete');
+    expect(packed.block.withheld).toBe(0);
+    expect(packed.used).toBeGreaterThanOrEqual(estimateTokens('\n\n' + packed.text));
+  });
   test('renders no-profile, empty, filled, withheld and partial blocks', () => {
     expect(renderProfile({ ...empty, entity: null })).toContain('has no profile');
     const owner = { slug: 'memory/owner', basis: 'reserved_page' as const };
@@ -104,7 +135,7 @@ describe('gbrain profile output', () => {
     const out = renderProfile({ ...empty, entity: owner, constraints: [fact('Allergic\n## to peanuts', 'allergy')], withheld: 2, partial: true });
     expect(out).toContain('Constraints:\n  - [allergy] Allergic ## to peanuts (private, user_said, fact f1)');
     expect(out).toContain('2 more left out');
-    expect(out).toContain('Only the newest facts');
+    expect(out).toContain('may be incomplete');
   });
 });
 
@@ -155,6 +186,14 @@ describe('profile core on a single-user keyless brain (local CLI)', () => {
     expect(points.map(p => p.metric)).toContain('runway_months');
     expect(points.filter(p => String(p.metric).startsWith('profile.'))).toEqual([]);
     expect(points.some(p => p.text.includes('canarydiet'))).toBe(false);
+  }, 60_000);
+
+  test('context_pack {profile: true} applies the pack trust floor to profile rows', async () => {
+    const all = await run(engine, 'context_pack', { profile: true });
+    const tiers = (out: R) => [...out.profile.constraints, ...out.profile.facets, ...out.profile.preferences].map((f: R) => f.trust_tier);
+    expect(tiers(all).some((t: string) => t !== 'user_confirmed')).toBe(true);
+    const floored = await run(engine, 'context_pack', { profile: true, min_trust: 'user_confirmed' });
+    expect(tiers(floored).every((t: string) => t === 'user_confirmed')).toBe(true);
   }, 60_000);
 
   test('context_pack {profile: true} returns the owner block, user_said first, constraints apart, as labelled data', async () => {

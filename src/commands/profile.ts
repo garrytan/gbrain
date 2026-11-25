@@ -49,7 +49,7 @@ export function renderProfile(block: ProfileBlock): string {
   section('Relationships:', block.relationships.map(r => `  - ${r.type} ${r.direction === 'out' ? '→' : '←'} ${r.slug}${r.context ? ` — ${r.context.replace(/\s+/g, ' ')}` : ''}`));
   if (out.length === 1) out.push('', 'No profile facts yet. Save one with: gbrain remember "<fact>" --facet diet --provenance "<where, with the date>"');
   if (block.withheld) out.push('', `${block.withheld} more left out by --budget-tokens.`);
-  if (block.partial) out.push('', 'Only the newest facts on your page were scanned; older profile facts may be missing.');
+  if (block.partial) out.push('', 'This profile may be incomplete: some of it could not be read (too many facts on your page, or a failed read).');
   return out.join('\n');
 }
 
@@ -65,9 +65,9 @@ export async function runProfile(engine: BrainEngine | null, args: string[]): Pr
     const { callRemoteTool, unpackToolResult } = await import('../core/mcp-client.ts');
     result = unpackToolResult(await callRemoteTool(cfg!, 'context_pack', params, { timeoutMs: 30_000 }));
   } else {
-    const { operationsByName } = await import('../core/operations.ts');
+    const [{ operationsByName }, { resolveSourceId }] = await Promise.all([import('../core/operations.ts'), import('../core/source-resolver.ts')]);
     const ctx = { engine: engine!, config: cfg ?? { engine: engine!.kind }, logger: { info() {}, warn: console.error, error: console.error }, dryRun: false,
-      remote: false, sourceId: 'default' } as unknown as OperationContext;
+      remote: false, sourceId: await resolveSourceId(engine!, null) } as unknown as OperationContext;
     result = await operationsByName.context_pack!.handler(ctx, params) as { profile?: ProfileBlock };
   }
   const block = result.profile;

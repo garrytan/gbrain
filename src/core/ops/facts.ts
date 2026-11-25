@@ -849,7 +849,7 @@ const context_pack: Operation = {
     const threadsOf = (c: (typeof cards)[number]) =>
       (c.open_threads ?? []).filter((t) => !since || (t.date !== null && isAfter(t.date, since)));
     let droppedCount: number | undefined;
-    const profilePack = p.profile === true ? await (await import('../profile/read.ts')).contextPackProfile(ctx, walk.sources, budgetTokens === null ? null : budgetTokens - packHeaderCost() - coreTokens - (pullBrief?.text ? estimateTokens(pullBrief.text) : 0)) : null;
+    const profilePack = p.profile === true ? await (await import('../profile/read.ts')).contextPackProfile(ctx, walk.sources, budgetTokens === null ? null : budgetTokens - packHeaderCost() - coreTokens - (pullBrief?.text ? estimateTokens(pullBrief.text) : 0), eligibility) : null;
     if (budgetTokens !== null) {
       // #4761: reserve the envelope + headers, then price each card as its
       // rendered line plus its rendered (since-filtered) thread lines.

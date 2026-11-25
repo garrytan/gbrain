@@ -266,14 +266,16 @@ export const findTrajectory: Member<'findTrajectory'> = async (brain, opts) => {
     refuseMember('findTrajectory', 'visibility widened by member pages or grants');
   }
   const sourceIds = Array.isArray(o.sourceIds) && o.sourceIds.length > 0 ? [...new Set(o.sourceIds)] : [o.sourceId ?? 'default'];
+  const limit = clampSearchLimit(o.limit, 100, 500);
   const rows: Row[] = await storeCall({ member: 'findTrajectory' }, () => brain.findTrajectory({
     sourceIds, entitySlug: o.entitySlug, worldOnly, metric: o.metric ?? undefined, kind: o.kind ?? 'all',
     since: o.since ? new Date(o.since).toISOString() : undefined, until: o.until ? new Date(o.until).toISOString() : undefined,
-    limit: clampSearchLimit(o.limit, 100, 500),
+    limit: 500,
     excludePrivate: factPolicy('findTrajectory', o.excludePrivate),
   }));
-  // Lane 3 P1: profile.<facet> claims are never trajectory points (engine-sql/facts.ts filters them in SQL).
-  return rows.filter((row) => !String(row.metric ?? '').startsWith('profile.'))
+  // Lane 3 P1: profile.<facet> claims are never trajectory points (engine-sql/facts.ts filters them in SQL); the native read
+  // takes the 500 cap so dropping them here cannot shorten the caller's page.
+  return rows.filter((row) => !String(row.metric ?? '').startsWith('profile.')).slice(0, limit)
     .map((row) => withDates(withVector(row), ['valid_from', 'valid_until']) as unknown as TrajectoryPoint);
 };
 

@@ -4,6 +4,9 @@
  */
 import type { OperationContext, OperationError } from '../ops/contract.ts';
 import { opError } from '../ops/contract.ts';
+import { unquoteFactText } from '../search/transcript-quote.ts';
+import { isRustEngineKind } from '../sql-engine-kind.ts';
+import { capabilityMissing } from '../rust-engine/errors.ts';
 import { canonicalFacet, facetKind, isProfileMetricLabel, PRIVATE_BY_DEFAULT_FACETS, PROFILE_FACETS, PROFILE_METRIC_PREFIX } from './facets.ts';
 
 const FACET_LIST = 'size.<item> (e.g. size.shoe), ' + PROFILE_FACETS.filter(f => f !== 'size').join(', ');
@@ -56,6 +59,7 @@ export interface ProfileSelf {
  * credential, which is the owner's. Any other caller has no profile (null).
  */
 export async function profileSelf(ctx: OperationContext): Promise<ProfileSelf | null> {
+  if (isRustEngineKind(ctx.engine.kind)) throw capabilityMissing('raw_sql', 'profile');
   const [{ callerMember, memberPageSlug, ownerSpeaksForItself }, { currentCallerAccess }, { ownerIdentity }] = await Promise.all([
     import('../access/member-facts.ts'), import('../search/private-visibility.ts'), import('../identity/owner.ts')]);
   const owner = async (): Promise<ProfileSelf> => {
@@ -81,7 +85,9 @@ export async function profileSelf(ctx: OperationContext): Promise<ProfileSelf | 
  */
 export async function profileRemember(ctx: OperationContext, p: Record<string, unknown>): Promise<Record<string, unknown>> {
   if (p.facet === undefined || p.facet === null) {
-    if (isProfileMetricLabel(typeof p.claim_metric === 'string' ? p.claim_metric : null)) throw metricReserved(p);
+    // remember unquotes a remote caller's claim_metric before storing it, so the reservation reads the same value.
+    const metric = typeof p.claim_metric === 'string' ? (ctx.remote === false ? p.claim_metric : unquoteFactText(p.claim_metric)) : null;
+    if (isProfileMetricLabel(metric)) throw metricReserved(p);
     return p;
   }
   const facet = typeof p.facet === 'string' ? canonicalFacet(p.facet) : null;

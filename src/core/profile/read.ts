@@ -6,6 +6,7 @@
  */
 import type { OperationContext } from '../ops/contract.ts';
 import type { FactRow } from '../engine.ts';
+import type { ReadEligibility } from '../eligibility/policy.ts';
 import type { TrustTier } from '../trust/tier.ts';
 import { CONSTRAINT_FACETS, facetKind, facetOfMetric } from './facets.ts';
 import { profileSelf, type ProfileSelf } from './remember.ts';
@@ -35,7 +36,7 @@ export interface ProfileBlock {
   preferences: ProfileFact[];
   /** Rows the caller can read that the budget left out. */
   withheld: number;
-  /** Set when more than PROFILE_SCAN_CAP facts were scanned, so older rows may be missing. */
+  /** Set when part of the profile could not be read (more than PROFILE_SCAN_CAP facts scanned, or a failed read), so rows may be missing. */
   partial?: true;
 }
 
@@ -54,19 +55,19 @@ const order = (a: ProfileFact, b: ProfileFact): number =>
   (a.content_origin === 'user_said' ? 0 : 1) - (b.content_origin === 'user_said' ? 0 : 1) || b.valid_from.localeCompare(a.valid_from) || Number(b.fact_id) - Number(a.fact_id);
 
 /** The caller's readable profile rows and relationships, before packing. */
-export async function readProfile(ctx: OperationContext, sources: string[]): Promise<Omit<ProfileBlock, 'withheld'>> {
+export async function readProfile(ctx: OperationContext, readable: string[], eligibility: ReadEligibility): Promise<Omit<ProfileBlock, 'withheld'>> {
   const self = await profileSelf(ctx);
   if (!self) return { entity: null, facets: [], constraints: [], relationships: [], preferences: [] };
-  const [{ worldOnlyFacts, resolveExcludePrivatePages }, { resolveReadEligibility }, { factEntitySlugs }, { stampRowTrust }] = await Promise.all([
-    import('../search/private-visibility.ts'), import('../eligibility/policy.ts'), import('../mentions/siblings.ts'), import('../eligibility/stamp.ts')]);
+  const sources = self.source_id ? readable.filter(s => s === self.source_id) : readable;
+  const [{ worldOnlyFacts, resolveExcludePrivatePages }, { factEntitySlugs }, { stampRowTrust }] = await Promise.all([
+    import('../search/private-visibility.ts'), import('../mentions/siblings.ts'), import('../eligibility/stamp.ts')]);
   const visibility = worldOnlyFacts(ctx.remote) ? ['world' as const] : undefined;
   const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
-  const eligibility = await resolveReadEligibility(ctx, {});
   const rows: FactRow[] = [];
   let scanned = 0;
   let partial = false;
   for (const src of sources) {
-    const slugs = await factEntitySlugs(ctx.engine, src, self.slug, { excludePrivate: ctx.remote !== false }).catch(() => [self.slug]);
+    const slugs = await factEntitySlugs(ctx.engine, src, self.slug, { excludePrivate: ctx.remote !== false }).catch(() => { partial = true; return [self.slug]; });
     for (const slug of slugs) {
       for (let offset = 0; ; offset += PAGE) {
         if (scanned >= PROFILE_SCAN_CAP) { partial = true; break; }
@@ -78,7 +79,7 @@ export async function readProfile(ctx: OperationContext, sources: string[]): Pro
     }
   }
   const unique = [...new Map(rows.map(r => [`${r.source_id}:${r.id}`, r])).values()];
-  const stamped: Array<FactRow & { origin?: string }> = await stampRowTrust(ctx.engine, 'facts', unique, r => r.id).catch(() => unique);
+  const stamped: Array<FactRow & { origin?: string }> = await stampRowTrust(ctx.engine, 'facts', unique, r => r.id).catch(() => { partial = true; return unique; });
   const items = stamped.map((r): ProfileFact => ({
     fact_id: String(r.id), source_id: r.source_id, facet: facetOfMetric(r.claim_metric), claim: r.fact.slice(0, CLAIM_CAP),
     provenance: r.source ?? null, content_origin: originOf(r), valid_from: iso(r.valid_from), visibility: r.visibility, confidence: r.confidence,
@@ -86,10 +87,10 @@ export async function readProfile(ctx: OperationContext, sources: string[]): Pro
     ...(r.trust_tier ? { trust_tier: r.trust_tier, origin: r.origin } : {}),
   })).sort(order);
   const { buildEntityCard } = await import('../verbs/entity-card.ts');
-  const card = await buildEntityCard(ctx.engine, sources[0] ?? 'default', self.slug, {
+  const card = sources.length === 0 ? null : await buildEntityCard(ctx.engine, sources[0]!, self.slug, {
     remote: ctx.remote !== false, readerRemote: ctx.remote !== false, includeReferences: false, surfaceCeiling: ctx.surfaceCeiling, sources, variants: false,
     omitQuarantined: ctx.remote !== false,
-  }).catch(() => null);
+  }).catch(() => { partial = true; return null; });
   const relationships = (card?.card?.edges ?? []).map(e => ({ type: e.type, direction: e.direction, slug: e.slug, context: e.context }));
   const faceted = items.filter(i => i.facet !== null);
   return {
@@ -103,11 +104,12 @@ export async function readProfile(ctx: OperationContext, sources: string[]): Pro
 }
 
 /** context_pack {profile: true}: the caller's own profile, read at its scope and packed first into what the core and brief left. */
-export async function contextPackProfile(ctx: OperationContext, sources: string[], budget: number | null): Promise<{ block: ProfileBlock; text: string; used: number }> {
-  return packProfile(await readProfile(ctx, sources), budget);
+export async function contextPackProfile(ctx: OperationContext, sources: string[], budget: number | null, eligibility: ReadEligibility): Promise<{ block: ProfileBlock; text: string; used: number }> {
+  return packProfile(await readProfile(ctx, sources, eligibility), budget);
 }
 
-type Line = { kind: 'constraints' | 'facets' | 'preferences' | 'relationships'; item: ProfileFact | ProfileRelationship; line: string };
+type Line = { kind: 'constraints' | 'facets' | 'preferences' | 'relationships' | 'notice'; item: ProfileFact | ProfileRelationship | null; line: string };
+const PROFILE_PARTIAL_LINE = '- [notice] This profile may be incomplete: some of it could not be read (too many facts on the page, or a failed read).';
 
 /**
  * Packs the profile into `budget` tokens (null: no cap): constraints first, then facets, unfaceted preferences and
@@ -127,9 +129,13 @@ export async function packProfile(read: Omit<ProfileBlock, 'withheld'>, budget: 
       line: `- [relationship] ${item.type} ${item.direction === 'out' ? '→' : '←'} \`${item.slug}\`${item.context ? ` — ${neutralizeForPrompt(item.context.slice(0, CLAIM_CAP).replace(/\s+/g, ' ')).text}` : ''}` })),
   ];
   const cost = (line: string) => estimateTokens(line + '\n');
-  const header = cost(PROFILE_HEADER);
+  const header = estimateTokens('\n\n' + PROFILE_HEADER + '\n');
   const kept: Line[] = [];
   let used = 0;
+  if (read.partial) {
+    const next = cost(PROFILE_PARTIAL_LINE) + header;
+    if (budget === null || next <= budget) { kept.push({ kind: 'notice', item: null, line: PROFILE_PARTIAL_LINE }); used = next; }
+  }
   for (const c of candidates) {
     const next = used + cost(c.line) + (kept.length ? 0 : header);
     if (budget !== null && next > budget) continue;
@@ -140,7 +146,7 @@ export async function packProfile(read: Omit<ProfileBlock, 'withheld'>, budget: 
   const block: ProfileBlock = {
     entity: read.entity, facets: facts('facets'), constraints: facts('constraints'), preferences: facts('preferences'),
     relationships: kept.filter(k => k.kind === 'relationships').map(k => k.item as ProfileRelationship),
-    withheld: candidates.length - kept.length, ...(read.partial ? { partial: true } : {}),
+    withheld: candidates.length - kept.filter(k => k.kind !== 'notice').length, ...(read.partial ? { partial: true } : {}),
   };
   return { block, text: kept.length ? [PROFILE_HEADER, ...kept.map(k => k.line)].join('\n') : '', used };
 }
