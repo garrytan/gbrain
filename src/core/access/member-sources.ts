@@ -83,12 +83,16 @@ async function sourceOwners(engine: BrainEngine, source: string): Promise<string
  * The personal sources among `sources` an attested call for `member` must not read: every personal source not bound to
  * that member, or every personal source under a scope read. A schema before v299 has no personal source.
  */
-export async function hiddenPersonalSources(engine: Pick<BrainEngine, 'executeRaw'>, sources: readonly string[], member: string, scopeRead: boolean): Promise<Set<string>> {
-  const ids = [...new Set(sources)];
-  if (!ids.length) return new Set();
+export async function hiddenPersonalSources(engine: Pick<BrainEngine, 'readSharedSourceRows'>, sources: readonly string[], member: string, scopeRead: boolean): Promise<Set<string>> {
+  const ids = new Set(sources);
+  if (!ids.size) return new Set();
+  // The owners of every live source, through the typed member the Rust store serves (GST-3747 puts this read on every member
+  // connection's floor read, so it must not need raw SQL). An archived source has no row here and is never hidden by it; the
+  // reads this guards refuse an archived source anyway.
   let rows: { source_id: string; member_id: string }[];
   try {
-    rows = await engine.executeRaw<{ source_id: string; member_id: string }>('SELECT source_id, member_id FROM access_member_sources WHERE source_id = ANY($1::text[])', [ids]);
+    rows = (await engine.readSharedSourceRows()).filter(r => ids.has(String(r.id)))
+      .flatMap(r => (Array.isArray(r.owners) ? r.owners : []).map(owner => ({ source_id: String(r.id), member_id: String(owner) })));
   } catch (e) {
     if (!isMissingSchemaObject(e, 'table', 'access_member_sources')) throw e;
     return new Set();
@@ -105,7 +109,7 @@ export async function hiddenPersonalSources(engine: Pick<BrainEngine, 'executeRa
  * source moves to the first kept source, or to NO_SOURCES, which refuses. Unchanged (the same object) when nothing is
  * hidden; the member is looked up only when the floor holds a personal source.
  */
-export async function memberFloorScope<T extends ReadScopeOpts>(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig'>, opts: T, member: () => Promise<string | null>): Promise<T> {
+export async function memberFloorScope<T extends ReadScopeOpts>(engine: Pick<BrainEngine, 'readSharedSourceRows' | 'getConfig'>, opts: T, member: () => Promise<string | null>): Promise<T> {
   const ids = floorIds(opts);
   if (!ids.length || !(await hiddenPersonalSources(engine, ids, '', true)).size) return opts;
   const id = await member();
@@ -154,7 +158,7 @@ export interface ReadScopeOpts { auth?: AuthInfo; sourceId?: string; localFedera
  * source, or to NO_SOURCES, which refuses. Unchanged (the same object) when nothing is hidden. A grant left empty reads
  * nothing (NO_SOURCES never names a source).
  */
-export async function attestedReadScope<T extends ReadScopeOpts>(engine: Pick<BrainEngine, 'executeRaw'>, opts: T, member: string, scopeRead: boolean): Promise<T> {
+export async function attestedReadScope<T extends ReadScopeOpts>(engine: Pick<BrainEngine, 'readSharedSourceRows'>, opts: T, member: string, scopeRead: boolean): Promise<T> {
   const auth = opts.auth;
   if (!auth || auth.sourceId === NO_SOURCES) return opts;
   const federated = opts.localFederatedSourceIds;
