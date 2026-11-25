@@ -51,6 +51,20 @@ describe('runPhaseEnrichThin', () => {
     const r = await runPhaseEnrichThin(engine, { dryRun: true });
     expect(r.status).toBe('ok');
     expect(r.details).toMatchObject({ enabled_by: 'chat_key_default', max_total_cost_usd: 0.5, max_pages_per_tick: 3, max_cost_usd: 1 });
+    expect(r.details.daily).toMatchObject({ max_daily_cost_usd: 0.5, max_daily_pages: 'off' });
+  });
+
+  test('on by default, the day stops at $0.50: a spent day runs nothing, and a stored daily cap wins', async () => {
+    __setChatTransportForTests(async () => { throw new Error('no chat call expected'); });
+    const day = new Date().toISOString().slice(0, 10);
+    await engine.setConfig('enrich_thin.daily_spend', JSON.stringify({ day, spent_usd: 0.5, pages: 50 }));
+    const spent = await runPhaseEnrichThin(engine, {});
+    expect(spent.status).toBe('skipped');
+    expect(spent.details).toMatchObject({ reason: 'daily_cap_reached' });
+    await engine.setConfig('cycle.enrich_thin.max_daily_cost_usd', '2');
+    expect((await runPhaseEnrichThin(engine, { dryRun: true })).details.daily).toMatchObject({ max_daily_cost_usd: 2 });
+    await engine.setConfig('cycle.enrich_thin.max_daily_cost_usd', 'off');
+    expect((await runPhaseEnrichThin(engine, { dryRun: true })).details.daily).toMatchObject({ max_daily_cost_usd: 'off' });
   });
 
   test('a stored false wins over a chat key, and a stored true runs without one (dry-run)', async () => {
@@ -63,6 +77,7 @@ describe('runPhaseEnrichThin', () => {
     const on = await runPhaseEnrichThin(engine, { dryRun: true });
     expect(on.status).toBe('ok');
     expect(on.details.enabled_by).toBe('config');
+    expect(on.details.daily).toMatchObject({ max_daily_cost_usd: 'off' });
   });
 
   test('stored caps are kept: an explicit brain-wide cap is not replaced by the new default', async () => {

@@ -36,7 +36,7 @@
  *   cycle.enrich_thin.max_pages_per_tick     (3)      per source per tick
  *   cycle.enrich_thin.types                  (["person","company"])
  *   cycle.enrich_thin.order                  ("owner-contact" when the owner resolves, else "inbound-links")
- *   cycle.enrich_thin.max_daily_cost_usd     (unset: no daily cap)  every run in the owner's day
+ *   cycle.enrich_thin.max_daily_cost_usd     (0.50 while enabled is unset, else no daily cap)  every run in the owner's day
  *   cycle.enrich_thin.max_daily_pages        (unset: no daily cap)  every run in the owner's day
  *   cycle.enrich_thin.workers                (1)
  *   cycle.enrich_thin.model                  (configured chat model)
@@ -86,6 +86,8 @@ export interface EnrichThinPhaseResult {
 const CFG_PREFIX = 'cycle.enrich_thin';
 /** Internal state, not a knob: today's running enrich_thin total. */
 export const ENRICH_THIN_DAILY_SPEND_KEY = 'enrich_thin.daily_spend';
+/** The daily cap when the phase runs because a chat key is configured and nobody set enabled or a daily cap. */
+const DEFAULT_ON_DAILY_COST_USD = 0.5;
 
 export interface EnrichThinDailySpend { day: string; spent_usd: number; pages: number }
 
@@ -186,7 +188,7 @@ async function loadCfg(engine: BrainEngine): Promise<ResolvedConfig> {
     maxPagesPerTick: parseIntOrDefault(maxPages, 3),
     types,
     order,
-    maxDailyCostUsd: parseDailyCap('max_daily_cost_usd', maxDailyCost, parseFloat),
+    maxDailyCostUsd: maxDailyCost == null && enabled == null ? DEFAULT_ON_DAILY_COST_USD : parseDailyCap('max_daily_cost_usd', maxDailyCost, parseFloat),
     maxDailyPages: parseDailyCap('max_daily_pages', maxDailyPages, s => parseInt(s, 10)),
     invalidDailyCaps,
     workers: parseIntOrDefault(workersRaw, 1),
@@ -244,7 +246,7 @@ const KEYLESS_CONTACTS_MAX = 5000;
 
 /**
  * Keyless brains: how many thin pages of the phase's types the owner-contact ranking finds with recent contact
- * (contact_score > 0), and what filling them would cost (the daily cap when one is set, else the per-page estimate).
+ * (contact_score > 0), and what filling them would cost (the daily cap when the owner set one, else the per-page estimate).
  * Null when a chat model is configured (the phase's own skip check) or the owner does not resolve. Ranks in SQL only:
  * no model call, no spend.
  */
@@ -258,7 +260,8 @@ export async function keylessThinContacts(engine: BrainEngine): Promise<{ count:
     ownerSlug: resolved.owner.slug, ownerSourceId: resolved.owner.source_id,
   });
   const count = ranked.filter(c => (c.contact_score ?? 0) > 0).length;
-  if (Number.isFinite(cfg.maxDailyCostUsd)) return { count, cost_usd: cfg.maxDailyCostUsd, cost_basis: 'daily_cap' };
+  const capSet = (await engine.getConfig(`${CFG_PREFIX}.max_daily_cost_usd`)) != null;
+  if (capSet && Number.isFinite(cfg.maxDailyCostUsd)) return { count, cost_usd: cfg.maxDailyCostUsd, cost_basis: 'daily_cap' };
   return { count, cost_usd: Math.round(count * COST_ESTIMATE_PER_PAGE_USD * 100) / 100, cost_basis: 'per_page_estimate' };
 }
 
