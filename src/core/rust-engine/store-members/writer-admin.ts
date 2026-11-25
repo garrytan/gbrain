@@ -46,7 +46,7 @@ function rustWriterAdminStore(brain: StoreBrain, tx: BrainEngine): WriterAdminSt
       assertStoreSerializedTransactions(brain, 'writerAdmin.lockBrain');
     },
     assertAdminState: expected => assertWriterAdminState(tx, expected),
-    async assertAdminUnlocked() { assertWriterAdminLockValue(await call<string | null>(() => brain.getConfig(WRITER_ADMIN_LOCK_KEY))); },
+    async assertAdminUnlocked() { assertStoreSerializedTransactions(brain, 'writerAdmin.assertAdminUnlocked'); assertWriterAdminLockValue(await call<string | null>(() => brain.getConfig(WRITER_ADMIN_LOCK_KEY))); },
     adminLockValue: () => call<string | null>(() => brain.getConfig(WRITER_ADMIN_LOCK_KEY)),
     async setAdminLockValue(value) { await call(() => brain.setConfig(WRITER_ADMIN_LOCK_KEY, value)); },
     preparedTransferWorktree: () => call<string | null>(() => brain.preparedTransferWorktree()),

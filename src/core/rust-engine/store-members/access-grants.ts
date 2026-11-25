@@ -53,6 +53,8 @@ export const readAccessTokenMemberGrant: StoreMember<[tokenId: string, opts?: { 
 
 /** The local writer's grant ceiling and revoked_at, revoked or not (the caller refuses a revoked writer). */
 export const readLocalWriterMemberGrant: StoreMember<[id: string], MemberLocalWriterGrant | undefined> = async (brain, id) => {
+  // The SQL reads the row FOR SHARE; skipped while explicit transactions hold the writer (`serialized_transactions`).
+  assertStoreSerializedTransactions(brain, 'readLocalWriterMemberGrant');
   const row = await readLocalWriterRow(brain, id);
   return row ? { grant_ceiling: row.grant_ceiling, revoked_at: row.revoked_at } : undefined;
 };

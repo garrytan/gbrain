@@ -135,6 +135,42 @@ pub trait Kv: Send + Sync {
     }
 }
 
+/// A record store that answers every call through `inner` but reports no `serialized_transactions`
+/// ([`Kv::serializes_explicit_transactions`] is false). `OpenOptions::withhold_serialized_transactions`
+/// opens a brain over it, so every lock skip refuses as it will on a store whose explicit transactions
+/// stop holding the whole writer. A test seam: nothing in production turns it on.
+pub struct Unserialized(pub std::sync::Arc<dyn Kv>);
+
+impl Kv for Unserialized {
+    fn snapshot(&self) -> Result<Box<dyn KvRead>> {
+        self.0.snapshot()
+    }
+    fn versioned_snapshot(&self) -> Result<(Box<dyn KvRead + Send>, u64)> {
+        self.0.versioned_snapshot()
+    }
+    fn begin_write(&self) -> Result<Box<dyn KvWrite>> {
+        self.0.begin_write()
+    }
+    fn begin_write_locked(
+        &self,
+        keys: &std::collections::BTreeSet<Vec<u8>>,
+    ) -> Result<Box<dyn KvWrite>> {
+        self.0.begin_write_locked(keys)
+    }
+    fn begin_write_exclusive(&self) -> Result<Box<dyn KvWrite>> {
+        self.0.begin_write_exclusive()
+    }
+    fn serializes_explicit_transactions(&self) -> bool {
+        false
+    }
+    fn version(&self) -> Result<u64> {
+        self.0.version()
+    }
+    fn occ_stats(&self) -> Option<crate::occ_kv::OccStatsSnapshot> {
+        self.0.occ_stats()
+    }
+}
+
 /// The byte file a storage engine runs on. The binding uses a real file; the simulation passes a
 /// fault-injecting one. Offsets and lengths are in bytes; `sync` must make every earlier write
 /// durable.

@@ -71,6 +71,9 @@ pub struct BrainOpenOptions {
     /// A fresh brain records the write gate's scan baseline under this detector version (the
     /// TypeScript `WRITE_GATE_DETECTOR_VERSION`).
     pub write_gate_detector_version: Option<u32>,
+    /// Test seam (groundwork G1): open a store that reports no `serialized_transactions`, so every
+    /// lock skip refuses `engine_capability_missing`. Off unless this is true.
+    pub withhold_serialized_transactions: Option<bool>,
 }
 
 #[napi]
@@ -208,6 +211,8 @@ impl Brain {
                         .push(("chunk_strategy".into(), strategy));
                 }
                 opts.write_gate_detector_version = options.write_gate_detector_version;
+                opts.withhold_serialized_transactions =
+                    options.withhold_serialized_transactions == Some(true);
             }
             // Holding the slot while opening makes a second `open` on this handle wait, then see
             // the brain open.

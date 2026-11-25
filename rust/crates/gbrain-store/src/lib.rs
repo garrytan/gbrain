@@ -188,6 +188,10 @@ pub struct OpenOptions {
     /// brain records the write gate's scan baseline under it, as migration v227 does on the SQL engines;
     /// `None` records it under `DEFAULT_WRITE_GATE_DETECTOR_VERSION`.
     pub write_gate_detector_version: Option<u32>,
+    /// Test seam (groundwork G1): open over [`kv::Unserialized`], so the store reports no
+    /// `serialized_transactions` and every lock skip refuses `engine_capability_missing`. Off by
+    /// default; nothing in production turns it on.
+    pub withhold_serialized_transactions: bool,
 }
 
 impl Default for OpenOptions {
@@ -201,6 +205,7 @@ impl Default for OpenOptions {
             keyword_index_builder: true,
             initial_config: Vec::new(),
             write_gate_detector_version: None,
+            withhold_serialized_transactions: false,
         }
     }
 }
@@ -213,6 +218,9 @@ pub struct StoreInfo {
     pub schema_version: u32,
     /// True when this open created the brain.
     pub created: bool,
+    /// The `serialized_transactions` capability this store promises for as long as it is open
+    /// ([`Store::serialized_transactions`]); the TypeScript engine reports the capability from it.
+    pub serialized_transactions: bool,
 }
 
 /// One open brain. All methods take `&self` and the store is shared across threads. A brain opened
@@ -410,6 +418,12 @@ impl Store {
         options: OpenOptions,
         known: &[u32],
     ) -> Result<Store> {
+        let kv: Arc<dyn Kv> = if options.withhold_serialized_transactions {
+            Arc::new(kv::Unserialized(kv))
+        } else {
+            kv
+        };
+        let serialized_transactions = kv.serializes_explicit_transactions();
         let snapshot = kv.snapshot()?;
         let stored: Option<StoredFormat> = get_json(&*snapshot, &keys::meta("format"))?;
         drop(snapshot);
@@ -463,6 +477,7 @@ impl Store {
                 format_version: stored.format_version,
                 schema_version,
                 created,
+                serialized_transactions,
             },
             bound: None,
             builder: Mutex::new(None),

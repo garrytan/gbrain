@@ -5,32 +5,32 @@
  * is safe only while explicit transactions hold the store's writer (`serialized_transactions`). Every such skip asserts
  * the capability first: `assertSerializedTransactions(engine, site)` (rust-engine/errors.ts),
  * `assertStoreSerializedTransactions(brain, site)` (rust-engine/store-members/common.ts) or
- * `Store::assert_serialized_transactions(site)` (gbrain-store lib.rs). This guard:
+ * `Store::assert_serialized_transactions(site)` (gbrain-store lib.rs). The checks live in test/helpers/lock-skip-guard.ts.
  *
- * 1. counts the marked sites per file against SITES, so a removed assertion fails here;
- * 2. requires a refusal case for every site (TypeScript: test/serialized-transactions-ts-sites.test.ts, Rust:
- *    rust/crates/gbrain-store/tests/serialized_transactions.rs), each naming the site;
- * 3. finds unmarked skips: a file that states the single-writer model (the phrases below) or, in Rust engine code, names
- *    a SQL lock must either hold a marked site or be listed in NOT_A_SKIP with the reason. A skip with neither a comment
- *    nor a lock word is not found this way, so this is a floor, as the design note's appendix is.
+ * Enforcement (the baseline):
+ * 1. The inventory: every BrainEngine member whose PGLite implementation reaches a lock clause (test/helpers/lock-inventory.ts,
+ *    read from the code) and that the Rust engine serves has a marked site of its own name, or a DISPOSITIONS entry naming
+ *    the marked sites that cover it, or the reason it needs none.
+ * 2. The marks: real assertion calls only (never a comment or a string), pinned per file in SITES, each site id unique and
+ *    covered by a refusal case (TypeScript: test/serialized-transactions-ts-sites.test.ts, Rust:
+ *    rust/crates/gbrain-store/tests/serialized_transactions.rs).
  *
- * To add a skip: assert at it, add its refusal case, and add it to SITES. To add a file whose comment only mentions the
- * single writer (or a SQL lock it does not skip): add it to NOT_A_SKIP with the reason.
+ * Discovery (asks for a reason, never counts as a site): a file that states the single-writer model or, in Rust engine
+ * code, names a SQL lock holds a marked site or is in NOT_A_SKIP with the reason.
+ *
+ * To add a skip: assert at it, add its refusal case, and add it to SITES (and to DISPOSITIONS if its id is not the member's).
  */
 import { describe, expect, test } from 'bun:test';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { lockingMembers } from './helpers/lock-inventory.ts';
+import {
+  type Disposition, SINGLE_WRITER, baselineDrift, discovered, duplicateSites, rustMarks, sitesWithoutCases, tsMarks,
+  uncoveredLockingMembers,
+} from './helpers/lock-skip-guard.ts';
+import { STORE_MEMBERS } from '../src/core/rust-engine/store-members/index.ts';
 
 const ROOT = join(import.meta.dir, '..');
-
-/** Comments that state the single-writer model as a fact (the appendix search, widened). */
-const SINGLE_WRITER = /one write( transaction)? at a time|one writer|single writer|single-writer|writer gate|holds the writer|no other writer|nothing to wait for|takes no (row )?lock|no lock is needed|has nothing to (add|skip|wait)|nothing to skip|lock has nothing|locks? (is|are) (a )?no-?op|one process owns the brain|serializes? (its )?writes?\b|serialised|admits one write|store write is exclusive|write transaction is the (advisory )?lock|is the row lock|holds the whole store/i;
-/** SQL lock words, checked in Rust engine code only (rust/crates, src/core/rust-engine). */
-const SQL_LOCK = /FOR UPDATE|FOR SHARE|FOR KEY SHARE|FOR NO KEY UPDATE|SKIP LOCKED|advisory|row lock|share lock|LOCK TABLE/i;
-
-const TS_MARK = /assert(?:Store)?SerializedTransactions\(\s*[\w.]+\s*,\s*'([^']+)'/g;
-const RUST_MARK = /assert_serialized_transactions\(\s*"([^"]+)"/g;
-
 const TS_CASES = 'test/serialized-transactions-ts-sites.test.ts';
 const RUST_CASES = 'rust/crates/gbrain-store/tests/serialized_transactions.rs';
 
@@ -63,7 +63,7 @@ const SITES: Readonly<Record<string, readonly string[]>> = {
   'rust/crates/gbrain-store/src/wanted_links.rs': ['lockRegisteredSourceIds'],
   'rust/crates/gbrain-store/src/write_guards.rs': ['listOriginClaims'],
   'src/core/persistence/managed-mode.ts': ['readManagedMode', 'readPersistenceBrain'],
-  'src/core/rust-engine/store-members/access-grants.ts': ['readOAuthClientReceiptGrant', 'readAccessTokenReceiptGrant', 'readOAuthClientMemberGrant', 'readAccessTokenMemberGrant'],
+  'src/core/rust-engine/store-members/access-grants.ts': ['readOAuthClientReceiptGrant', 'readAccessTokenReceiptGrant', 'readOAuthClientMemberGrant', 'readAccessTokenMemberGrant', 'readLocalWriterMemberGrant'],
   'src/core/rust-engine/store-members/access-members.ts': ['readCredentialBindingForUpdate', 'readOauthClientAttest'],
   'src/core/rust-engine/store-members/cli-sources.ts': ['lockAllSourceRows', 'lockSourceRow', 'lockSourceForUpdate'],
   'src/core/rust-engine/store-members/decide-proposals.ts': ['getDecideProposal', 'getDecideReviewProposal'],
@@ -78,22 +78,82 @@ const SITES: Readonly<Record<string, readonly string[]>> = {
   'src/core/rust-engine/store-members/fence-holds.ts': ['lockGenerationKey'],
   'src/core/rust-engine/store-members/jobs-client-grants.ts': ['readOauthClientForUpdate', 'lockOauthClientName', 'readSourceArchivedForShare'],
   'src/core/rust-engine/store-members/jobs-queue.ts': ['lockOAuthClient'],
+  'src/core/rust-engine/store-members/jobs.ts': ['admitJob'],
   'src/core/rust-engine/store-members/managed-sync-orphans.ts': ['retireManagedSyncPassSlugMode', 'readConfigForUpdate'],
   'src/core/rust-engine/store-members/memory-mutation-reads.ts': ['readForgetTarget', 'readFactWithdrawalClaim'],
   'src/core/rust-engine/store-members/mention-pass.ts': ['lockMentionSources', 'readMentionPageRevisions', 'lockMentionEntries', 'readMentionGenerations'],
+  'src/core/rust-engine/store-members/noop-settle.ts': ['readNoopEmbeddingCandidates'],
   'src/core/rust-engine/store-members/persistence-admission.ts': ['readWorktreeAdmission'],
-  'src/core/rust-engine/store-members/persistence.ts': ['readLocalWriterRow', 'readOAuthClientWriteGrant', 'readAccessTokenWriteGrant', 'shareLockWriteCredential', 'lockWriteRequest', 'lockWriteRequestsById', 'readSourceMembership'],
+  'src/core/rust-engine/store-members/persistence.ts': ['readLocalWriterRow', 'readOAuthClientWriteGrant', 'readAccessTokenWriteGrant', 'shareLockWriteCredential', 'lockWriteRequest', 'lockWriteRequestsById', 'selectClaimableWrite', 'readSourceMembership'],
   'src/core/rust-engine/store-members/publication-journal.ts': ['publicationJournal.shareWorktreeOwner', 'publicationJournal.shareWorktree', 'publicationJournal.lockSource', 'publicationJournal.recoveryStaging'],
   'src/core/rust-engine/store-members/repair-applies.ts': ['lockApprovedFacts'],
   'src/core/rust-engine/store-members/repair-bookkeeping.ts': ['readLoopFactState', 'listConnectorSources'],
+  'src/core/rust-engine/store-members/secret-store.ts': ['listSecretHoldingPages'],
   'src/core/rust-engine/store-members/shared-skill-members.ts': ['readSharedSkillPolicyRow', 'lockSharedSkillBrainId', 'readSharedSkillMember', 'readSharedSkillDeliveryBatch'],
+  'src/core/rust-engine/store-members/transactions.ts': ['declarePersistence'],
   'src/core/rust-engine/store-members/trust-fence.ts': ['listFenceFactRows'],
   'src/core/rust-engine/store-members/trust-proposals.ts': ['getTrustProposal'],
-  'src/core/rust-engine/store-members/worktree-claim.ts': ['worktreeClaim.lockSource'],
+  'src/core/rust-engine/store-members/worktree-claim.ts': ['worktreeClaim.assertAdminUnlocked', 'worktreeClaim.lockSource', 'worktreeClaimStore'],
   'src/core/rust-engine/store-members/write-guards.ts': ['readLiveStoredBody'],
   'src/core/rust-engine/store-members/write-misc.ts': ['readSourceState', 'readScopeSourceConfigs'],
-  'src/core/rust-engine/store-members/writer-admin.ts': ['readWriterAdminState', 'writerAdmin.lockBrain', 'writerAdmin.lockWorktree'],
+  'src/core/rust-engine/store-members/writer-admin.ts': ['readWriterAdminState', 'writerAdmin.lockBrain', 'writerAdmin.assertAdminUnlocked', 'writerAdmin.lockWorktree'],
   'src/core/rust-engine/store-members/writer-release.ts': ['writerRelease.shareBrain', 'writerRelease.lockWorktreesAndSources', 'writerRelease.lockCycleLocks', 'writerRelease.shareWorktree'],
+};
+
+/** Rust-served members whose SQL takes a lock but that hold no site of their own name: the sites that cover them, or why none is needed. */
+const DISPOSITIONS: Readonly<Record<string, Disposition>> = {
+  addLink: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  addTimelineEntry: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  applyIdentityDecisions: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  applyRetrievalRatings: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  cancelWriteRow: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  claimNextJob: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  completeJob: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  continueDerivationSweep: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  convertLegacyAccessTokenGrant: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  deleteChunks: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  ensureFactsKeywordIndex: { notALock: 'LOCK TABLE for ANALYZE runs only on Postgres; the Rust member answers present without SQL' },
+  expireStaleWriteClaims: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  failJob: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  flipBodyGeneration: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  initSchema: { notALock: 'schema DDL text (trigger and function bodies), not a lock this member takes' },
+  insertFact: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  insertRetrievalEvents: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  insertVolunteerEvents: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  invalidateContentDriftChunks: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  invalidateStaleSignatureEmbeddings: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  killTimedOutJobs: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  killWallClockJobs: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  logEvalCandidate: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  patchOauthClient: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  pruneMcpRequestLogBatch: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  publicationJournalStore: { sites: ['publicationJournal.lockSource', 'publicationJournal.shareWorktree', 'publicationJournal.shareWorktreeOwner', 'publicationJournal.recoveryStaging'] },
+  putPage: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  readFactSnapshots: { refuses: 'a lock request refuses outright (facts-repair.ts refuseMember)' },
+  reclaimStalledJobs: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  replaceDerivedAliases: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  replaceDerivedLinks: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  replaceDerivedLinksBatch: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  reserveChronicleJudgeSlot: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  reserveClientSpend: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  reserveGroupSpend: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  reservePageEmbedding: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  restorePage: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  sealChunks: { atomic: 'the write is a compare-and-set on the page revision the read returned (expectedRevision)' },
+  setPageAliases: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  settleBudgetReservation: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  stageSegmentChunks: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  stampWorktreeHeartbeats: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  storeSegmentDerivationsIfLive: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  sweepSegments: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  touchAccessTokenLastUsed: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  transaction: { notALock: 'the transaction itself: it takes the store writer (RustEngine.transaction)' },
+  updatePageContextualRetrievalState: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  updateSlug: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  upsertChunks: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  upsertOpFileRow: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  writerAdminStore: { sites: ['writerAdmin.lockBrain', 'writerAdmin.lockWorktree', 'writerAdmin.assertAdminUnlocked'] },
+  writerReleaseStore: { sites: ['writerRelease.shareBrain', 'writerRelease.lockWorktreesAndSources', 'writerRelease.lockCycleLocks', 'writerRelease.shareWorktree'] },
 };
 
 /** Files that state the single-writer model or name a SQL lock, and hold no skip of their own: why. */
@@ -159,7 +219,6 @@ const NOT_A_SKIP: Readonly<Record<string, string>> = {
   'src/core/rust-engine/store-members/git-gap-census.ts': 'a transaction setting, not a lock',
   'src/core/rust-engine/store-members/import-members.ts': 'its writes are single store writes; the SQL FOR UPDATE covers only rows the same statement writes',
   'src/core/rust-engine/store-members/jobs-access-tokens.ts': 'forwards to lockActiveAccessTokens / lockLegacyAccessTokens / readOauthCodeForUpdate, which assert in the store',
-  'src/core/rust-engine/store-members/jobs.ts': 'job admission and claims are single store writes: atomic in both store modes',
   'src/core/rust-engine/store-members/page-body.ts': 'forwards to lockBodyStagingState, which asserts; flipBodyGeneration and sweepSegments are single store writes',
   'src/core/rust-engine/store-members/page-embedding-budget.ts': 'reservePageEmbedding is one store write: atomic in both store modes',
   'src/core/rust-engine/store-members/page-purge-journal.ts': 'the request lock is lockWriteRequestsById, which asserts (persistence.ts)',
@@ -167,7 +226,6 @@ const NOT_A_SKIP: Readonly<Record<string, string>> = {
   'src/core/rust-engine/store-members/page-purge.ts': 'the delete is one store write; the caller holds lockSourceRow, which asserts',
   'src/core/rust-engine/store-members/segmented-writes.ts': 'forwards to lockSegmentedGenerationPage, which asserts in the store',
   'src/core/rust-engine/store-members/sync-hold-store.ts': 'each member is one store write: atomic in both store modes',
-  'src/core/rust-engine/store-members/transactions.ts': 'the transaction members themselves (holdPageKeys asserts in the store)',
   'src/core/rust-engine/store-members/trust-tier-reads.ts': 'forwards to lockLivePagesByKey, which asserts in the store',
   'src/core/rust-engine/store-members/withdrawal-commit.ts': 'forwards to lockFactForWithdrawal, which asserts in the store',
   'src/core/rust-engine/store-members/withdrawal-pages.ts': 'the invalidation is one store write: atomic in both store modes',
@@ -182,68 +240,92 @@ function walk(dir: string, ext: string, out: string[] = []): string[] {
   return out;
 }
 
-const RUST_FILES = [
+const FILES = [
   ...walk(join(ROOT, 'rust/crates/gbrain-store/src'), '.rs'),
   ...walk(join(ROOT, 'rust/crates/gbrain-napi/src'), '.rs'),
-].sort();
-const TS_FILES = walk(join(ROOT, 'src'), '.ts').sort();
+].sort().concat(walk(join(ROOT, 'src'), '.ts').sort());
 const read = (file: string) => readFileSync(join(ROOT, file), 'utf8');
 
-function marks(): Record<string, string[]> {
-  const out: Record<string, string[]> = {};
-  for (const file of [...RUST_FILES, ...TS_FILES]) {
-    const text = read(file);
-    const found = [...text.matchAll(file.endsWith('.rs') ? RUST_MARK : TS_MARK)].map(m => m[1]!);
-    if (found.length) out[file] = found;
-  }
-  return out;
+const found: Record<string, string[]> = {};
+const stray: Record<string, number> = {};
+const flagged: string[] = [];
+for (const file of FILES) {
+  const text = read(file);
+  const marks = file.endsWith('.rs') ? rustMarks(text) : tsMarks(file, text);
+  if (marks.sites.length) found[file] = marks.sites;
+  if (marks.stray) stray[file] = marks.stray;
+  if (!marks.sites.length && discovered(file, text)) flagged.push(file);
 }
-
-/** The files the scan flags: a single-writer phrase, or (Rust engine code) a SQL lock word. */
-function flagged(): string[] {
-  const out: string[] = [];
-  for (const file of [...RUST_FILES, ...TS_FILES]) {
-    const rustEngine = file.endsWith('.rs') || file.startsWith('src/core/rust-engine');
-    const lines = read(file).split('\n');
-    const hit = lines.some(line => rustEngine
-      ? SINGLE_WRITER.test(line) || SQL_LOCK.test(line)
-      // Elsewhere in src only a line about the Rust store counts: PGLite's own single-writer lock is another thing.
-      : SINGLE_WRITER.test(line) && /rust|store/i.test(line));
-    if (hit) out.push(file);
-  }
-  return out;
-}
+const allSites = new Set(Object.values(found).flat());
 
 describe('lock skips that rely on one writer fail closed (serialized_transactions)', () => {
-  const current = marks();
-
-  test('the scan finds the marks it counts (a positive control)', () => {
-    expect(Object.keys(current).length).toBeGreaterThan(0);
-    expect(flagged().length).toBeGreaterThan(0);
-    expect(SINGLE_WRITER.test('the store runs one write transaction at a time')).toBe(true);
+  test('the inventory reads locking members from the code (positive controls)', () => {
+    const locking = lockingMembers();
+    // TypeScript-only skips (no store call on Rust) and Rust-side skips are both in it.
+    for (const member of ['lockMentionSources', 'lockMentionEntries', 'lockSourceForUpdate', 'lockPageKeys', 'readOauthCodeForUpdate']) {
+      expect(locking.has(member)).toBe(true);
+    }
+    expect(locking.has('getPage')).toBe(false);
   });
 
-  test('every marked site is pinned, and every pinned site is still marked', () => {
-    expect(current).toEqual(SITES as Record<string, string[]>);
+  test('every Rust-served locking member has an executed assertion or a stated reason', () => {
+    const served = new Set(Object.keys(STORE_MEMBERS));
+    const locking = [...lockingMembers().keys()];
+    expect(uncoveredLockingMembers(locking, served, allSites, DISPOSITIONS)).toEqual([]);
+    // No stale disposition: each still names a served locking member that holds no site of its own name.
+    expect(Object.keys(DISPOSITIONS).filter(m => !locking.includes(m) || !served.has(m) || allSites.has(m))).toEqual([]);
   });
 
-  test('every site name is unique and has a refusal case naming it', () => {
-    const names = Object.values(current).flat();
-    expect(names.filter((n, i) => names.indexOf(n) !== i)).toEqual([]);
-    const tsCases = read(TS_CASES);
-    const rustCases = read(RUST_CASES);
-    const missing = Object.entries(current).flatMap(([file, sites]) => sites.filter(site =>
-      file.endsWith('.rs') ? !rustCases.includes(`"${site}"`) : !tsCases.includes(`'${site}'`)).map(site => `${file}: ${site}`));
-    expect(missing).toEqual([]);
+  test('marks sit on real assertion calls only', () => {
+    expect(stray).toEqual({});
+  });
+
+  test('the marked sites match the pinned baseline', () => {
+    expect(baselineDrift(found, SITES)).toEqual([]);
+  });
+
+  test('every site id is unique and has a refusal case naming it', () => {
+    expect(duplicateSites(found)).toEqual([]);
+    expect(sitesWithoutCases(found, read(TS_CASES), read(RUST_CASES))).toEqual([]);
   });
 
   test('a file that states the single-writer model or names a SQL lock holds a marked skip or says why not', () => {
-    const unexplained = flagged().filter(file => !(file in SITES) && !(file in NOT_A_SKIP));
-    expect(unexplained).toEqual([]);
+    expect(flagged.filter(file => !(file in NOT_A_SKIP))).toEqual([]);
   });
 
-  test('NOT_A_SKIP lists only files the scan still flags and that hold no marked skip', () => {
-    const now = new Set(flagged());
-    expect(Object.keys(NOT_A_SKIP).filter(file => !now.has(file) || file in current)).toEqual([]);
+  test('NOT_A_SKIP lists only files discovery still flags', () => {
+    const now = new Set(flagged);
+    expect(Object.keys(NOT_A_SKIP).filter(file => !now.has(file))).toEqual([]);
+  });
+});
+
+describe('the guard checks on fixtures', () => {
+  test('unrelated "writer gate" prose outside Rust engine code is not discovery; the same words about the Rust store are', () => {
+    expect(discovered('src/core/persistence/x.ts', '// waits on the segmented-storage writer gate of an old binary')).toBe(false);
+    expect(discovered('src/core/persistence/x.ts', '// on Rust the store runs one write transaction at a time')).toBe(true);
+    expect(discovered('src/core/rust-engine/store-members/x.ts', '// the writer gate already serializes this')).toBe(true);
+    expect(discovered('rust/crates/gbrain-store/src/x.rs', '/// reads the row FOR UPDATE on Postgres')).toBe(true);
+    expect(SINGLE_WRITER.test('PGLite holds the single-writer lock')).toBe(true);
+  });
+
+  test('a missing check: a mark in a comment or string, or with a computed id, is stray and counts no site', () => {
+    const ts = `// assertStoreSerializedTransactions(brain, 'inComment');\nconst s = "assertSerializedTransactions(e, 'inString')";\nassertStoreSerializedTransactions(brain, name);\nassertStoreSerializedTransactions(brain, 'real');`;
+    expect(tsMarks('x.ts', ts)).toEqual({ sites: ['real'], stray: 3 });
+    const rs = `// self.assert_serialized_transactions("inComment")?;\n/* store.assert_serialized_transactions("inBlock") */\nself.assert_serialized_transactions("real")?;\npub fn assert_serialized_transactions(&self, site: &str) {}`;
+    expect(rustMarks(rs)).toEqual({ sites: ['real'], stray: 2 });
+    expect(sitesWithoutCases({ 'a.ts': ['covered', 'uncovered'], 'b.rs': ['rustSite'] }, "['covered', run]", '')).toEqual(['a.ts: uncovered', 'b.rs: rustSite']);
+  });
+
+  test('duplicate ids and baseline drift are reported', () => {
+    expect(duplicateSites({ 'a.ts': ['x', 'y'], 'b.rs': ['x'] })).toEqual(['x']);
+    expect(baselineDrift({ 'a.ts': ['x', 'y'] }, { 'a.ts': ['x'], 'c.ts': ['z'] })).toEqual(['a.ts: found [x,y], pinned [x]', 'c.ts: found [], pinned [z]']);
+  });
+
+  test('an uncovered locking member, or a disposition naming an unmarked site, is reported', () => {
+    const served = new Set(['lockA', 'lockB', 'lockC', 'store']);
+    const sites = new Set(['lockA', 'store.lock']);
+    expect(uncoveredLockingMembers(['lockA', 'lockB', 'lockC', 'store', 'unserved'], served, sites,
+      { lockC: { atomic: 'one write' }, store: { sites: ['store.lock', 'store.share'] } }))
+      .toEqual(['lockB: no marked site and no disposition', 'store: names site store.share, which is not marked']);
   });
 });

@@ -86,6 +86,11 @@ export interface OpenRustEngineOptions {
   databasePath: string;
   /** How long `connect` waits to become the owner or reach it (owner-ipc/election.ts); tests shorten it. */
   ownerWaitMs?: number;
+  /**
+   * Test seam (groundwork G1): open the store so it promises no `serialized_transactions`; the engine then withholds the
+   * capability and every lock skip refuses `engine_capability_missing`. Nothing in production sets it.
+   */
+  withholdSerializedTransactions?: boolean;
 }
 
 /**
@@ -134,7 +139,10 @@ export function openRustEngine(opts: OpenRustEngineOptions): RustEngine {
 export interface RustEngine extends Omit<BrainEngine, 'kind'> {}
 export class RustEngine implements BrainEngine {
   readonly kind = 'rust' as const;
-  /** The capabilities whose every member the store serves (rust-engine/store-capabilities.ts). */
+  /**
+   * The capabilities whose every member the store serves (rust-engine/store-capabilities.ts), plus the guarantees this
+   * engine's open store promised (`serialized_transactions`, applyStoreGuarantees). A client reports its owner's set.
+   */
   readonly capabilities: EngineCapabilities = servedCapabilities();
 
   readonly addon: RustEngineAddonHandle;
@@ -174,6 +182,21 @@ export class RustEngine implements BrainEngine {
     this.addon = opts.addon;
     this.databasePath = opts.databasePath;
     this._ownerWaitMs = opts.ownerWaitMs;
+    this._withholdSerializedTransactions = opts.withholdSerializedTransactions === true;
+  }
+
+  private readonly _withholdSerializedTransactions: boolean;
+
+  /**
+   * Reports `serialized_transactions` exactly when this engine's own open store promised it at open
+   * (store.ts `storePromisesSerializedTransactions`), and withholds it with no store or a store that did not. Runs on
+   * every open, reopen and takeover, after the static set is restored; a client takes its owner's answer from the hello
+   * instead (owner-ipc/client.ts), and a transaction clone shares this set.
+   */
+  private _applyStoreGuarantees(): void {
+    const caps = this.capabilities as Set<Capability>;
+    if (this._store?.serializedTransactions === true) caps.add('serialized_transactions');
+    else caps.delete('serialized_transactions');
   }
 
   /** True between `connect()` and `disconnect()`. */
@@ -247,13 +270,16 @@ export class RustEngine implements BrainEngine {
           this._claiming = true;
           let store: RustStore;
           try {
-            store = await openRustStore(this.addon, this.databasePath, await seedEmbeddingIdentity(this));
+            store = await openRustStore(this.addon, this.databasePath, await seedEmbeddingIdentity(this),
+              { withholdSerializedTransactions: this._withholdSerializedTransactions });
             if (generation !== this._generation) {
               await store.close().catch(() => undefined);
               throw abandoned();
             }
             opened = store;
             this._store = store;
+            // Before the owner socket serves: the hello carries this store's promise.
+            this._applyStoreGuarantees();
           } catch (error) {
             storeFailure = { error };
             throw error;
@@ -307,6 +333,7 @@ export class RustEngine implements BrainEngine {
       // The members of the owner that went away give way to this engine's own, which run on the store opened above.
       prior();
       for (const capability of servedCapabilities()) (this.capabilities as Set<Capability>).add(capability);
+      this._applyStoreGuarantees();
     }
     this._connected = true;
   }
@@ -319,6 +346,7 @@ export class RustEngine implements BrainEngine {
     leave();
     // Leaving the owner empties the capability set; this engine reports what its own store serves again.
     for (const capability of servedCapabilities()) (this.capabilities as Set<Capability>).add(capability);
+    this._applyStoreGuarantees();
   }
 
   async disconnect(): Promise<void> {
@@ -352,6 +380,7 @@ export class RustEngine implements BrainEngine {
     this._leaveClient();
     const store = this._store;
     this._store = null;
+    this._applyStoreGuarantees();
     const txPool = this._txPool;
     this._txPool = null;
     // The owner stops taking calls (and drains them) before its store closes, and gives up the lock last. The lock is

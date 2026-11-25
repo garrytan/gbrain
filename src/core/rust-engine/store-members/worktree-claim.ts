@@ -35,6 +35,7 @@ function rustWorktreeClaimStore(brain: StoreBrain, tx: BrainEngine): WorktreeCla
   return {
     assertAdminState: expected => assertWriterAdminState(tx, expected),
     async assertAdminUnlocked() {
+      assertStoreSerializedTransactions(brain, 'worktreeClaim.assertAdminUnlocked');
       assertWriterAdminLockValue(await call<string | null>(() => brain.getConfig(WRITER_ADMIN_LOCK_KEY)));
     },
     async lockSource(sourceId) {
@@ -54,5 +55,7 @@ function rustWorktreeClaimStore(brain: StoreBrain, tx: BrainEngine): WorktreeCla
 
 /** `worktreeClaimStore()`: the claim store over this engine's store handle; called on a transaction, every call runs in it. */
 export const worktreeClaimStore = async function worktreeClaimStore(this: RustEngine, brain: StoreBrain): Promise<WorktreeClaimStore> {
+  // The SQL store locks the brain row FOR UPDATE first; skipped while explicit transactions hold the writer.
+  assertStoreSerializedTransactions(brain, 'worktreeClaimStore');
   return rustWorktreeClaimStore(brain, this as unknown as BrainEngine);
 };

@@ -9,7 +9,7 @@
  * What each member answers and why: rust/docs/store/persistence.md ("No-op embedding settle").
  */
 import type { NoopSettleCandidate, NoopSettleCandidateSpec, NoopSettledRow, NoopSettleWindow } from '../../engine-sql/persistence-embedding-noop-settle.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { assertStoreSerializedTransactions, refuseMember, storeCall, type StoreMember } from './common.ts';
 
 /** Whether an unattempted queued embedding effect lies past effect id `from`. */
 export const probeNoopEmbeddingSettle: StoreMember<[from: string], boolean> = (brain, from) =>
@@ -21,6 +21,8 @@ export const lockNoopEmbeddingWindow: StoreMember<[spec: { from: string; limit: 
 
 /** The window effects with nothing left to embed, before their source guard. */
 export const readNoopEmbeddingCandidates: StoreMember<[spec: NoopSettleCandidateSpec], NoopSettleCandidate[]> = async (brain, spec) => {
+  // The SQL holds the candidates' pages FOR SHARE until it commits; skipped while explicit transactions hold the writer.
+  assertStoreSerializedTransactions(brain, 'readNoopEmbeddingCandidates');
   if (spec.column !== 'embedding') refuseMember('readNoopEmbeddingCandidates', `column ${spec.column}`);
   return storeCall({ member: 'readNoopEmbeddingCandidates' }, () => brain.readNoopEmbeddingCandidates({
     hostId: spec.hostId, signature: spec.signature, expectedModel: spec.expectedModel,

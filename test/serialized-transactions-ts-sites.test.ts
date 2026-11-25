@@ -29,6 +29,10 @@ import * as jobsClientGrants from '../src/core/rust-engine/store-members/jobs-cl
 import * as jobsQueue from '../src/core/rust-engine/store-members/jobs-queue.ts';
 import * as managedSyncOrphans from '../src/core/rust-engine/store-members/managed-sync-orphans.ts';
 import * as memoryMutationReads from '../src/core/rust-engine/store-members/memory-mutation-reads.ts';
+import * as secretStore from '../src/core/rust-engine/store-members/secret-store.ts';
+import * as transactionsMembers from '../src/core/rust-engine/store-members/transactions.ts';
+import * as noopSettle from '../src/core/rust-engine/store-members/noop-settle.ts';
+import * as jobs from '../src/core/rust-engine/store-members/jobs.ts';
 import * as mentionPass from '../src/core/rust-engine/store-members/mention-pass.ts';
 import * as persistenceAdmission from '../src/core/rust-engine/store-members/persistence-admission.ts';
 import * as persistence from '../src/core/rust-engine/store-members/persistence.ts';
@@ -67,6 +71,20 @@ const KEY = { worktreeId: '00000000-0000-4000-8000-000000000001', sourceId: 's',
 const TARGET = { cursorKey: 'k', sourceId: 's', incarnation: null, runId: null, requestId: null };
 const UUID = '00000000-0000-4000-8000-000000000003';
 
+/**
+ * The store a factory member returns, built while `brain` answers true, so a case can reach one method of it: the
+ * factory's own assertion (worktreeClaimStore) passes, and the method then reads `brain`'s answer.
+ */
+async function storeOf<T>(factory: (this: RustEngine, brain: StoreBrain) => Promise<T>, brain: StoreBrain): Promise<T> {
+  let armed = false;
+  const view = new Proxy({}, {
+    get(_target, name) { return name === 'serializedTransactions' && !armed ? true : (brain as never)[name]; },
+  }) as unknown as StoreBrain;
+  const store = await factory.call(thisEngine, view);
+  armed = true;
+  return store;
+}
+
 const CASES: Array<[site: string, run: (brain: StoreBrain) => Promise<unknown>]> = [
   ['readManagedMode', async brain => readManagedMode(rustEngine(brain), { lock: 'update' })],
   ['readPersistenceBrain', async brain => readPersistenceBrain(rustEngine(brain), { lock: 'update' })],
@@ -104,6 +122,12 @@ const CASES: Array<[site: string, run: (brain: StoreBrain) => Promise<unknown>]>
   ['readMentionGenerations', brain => mentionPass.readMentionGenerations(brain, ['s'], true)],
   ['readWorktreeAdmission', brain => persistenceAdmission.readWorktreeAdmission(brain, KEY, { lockRefresh: true })],
   ['readLocalWriterRow', brain => persistence.readLocalWriterRow(brain, 'w', { lock: true })],
+  ['readLocalWriterMemberGrant', brain => accessGrants.readLocalWriterMemberGrant(brain, UUID)],
+  ['readNoopEmbeddingCandidates', brain => noopSettle.readNoopEmbeddingCandidates(brain, { hostId: UUID, signature: 's', expectedModel: 'm', window: [], pageIds: [], column: 'embedding' } as never)],
+  ['listSecretHoldingPages', brain => secretStore.listSecretHoldingPages(brain, 's', ['a'], UUID)],
+  ['declarePersistence', brain => transactionsMembers.declarePersistence.call(thisEngine, brain)],
+  ['selectClaimableWrite', brain => persistence.selectClaimableWrite(brain, {} as never)],
+  ['admitJob', brain => jobs.admitJob.call(thisEngine, brain, {} as never, { checkCapacity: async () => undefined } as never)],
   ['readOAuthClientWriteGrant', brain => persistence.readOAuthClientWriteGrant(brain, 'c', { lock: true })],
   ['readAccessTokenWriteGrant', brain => persistence.readAccessTokenWriteGrant(brain, UUID, { lock: true })],
   ['shareLockWriteCredential', brain => persistence.shareLockWriteCredential(brain, 'oauth_client', 'c')],
@@ -123,13 +147,16 @@ const CASES: Array<[site: string, run: (brain: StoreBrain) => Promise<unknown>]>
   ['readSharedSkillDeliveryBatch', brain => sharedSkillMembers.readSharedSkillDeliveryBatch(brain, 't', 'i', 1)],
   ['listFenceFactRows', brain => trustFence.listFenceFactRows(brain, { sourceId: 's', slug: 'x', incoming: '' })],
   ['getTrustProposal', brain => trustProposals.getTrustProposal(brain, 1, true)],
-  ['worktreeClaim.lockSource', async brain => (await worktreeClaim.worktreeClaimStore.call(thisEngine, brain)).lockSource('s')],
+  ['worktreeClaimStore', brain => worktreeClaim.worktreeClaimStore.call(thisEngine, brain)],
+  ['worktreeClaim.lockSource', async brain => (await storeOf(worktreeClaim.worktreeClaimStore, brain)).lockSource('s')],
+  ['worktreeClaim.assertAdminUnlocked', async brain => (await storeOf(worktreeClaim.worktreeClaimStore, brain)).assertAdminUnlocked()],
   ['readLiveStoredBody', brain => writeGuards.readLiveStoredBody(brain, 's', 'x', true)],
   ['readSourceState', brain => writeMisc.readSourceState(brain, 's', { lock: 'share' })],
   ['readScopeSourceConfigs', brain => writeMisc.readScopeSourceConfigs(brain, ['s'], 'share')],
   ['readWriterAdminState', brain => writerAdmin.readWriterAdminState(brain, { lock: true })],
   ['writerAdmin.lockBrain', async brain => (await writerAdmin.writerAdminStore.call(thisEngine, brain)).lockBrain()],
   ['writerAdmin.lockWorktree', async brain => (await writerAdmin.writerAdminStore.call(thisEngine, brain)).lockWorktree(UUID)],
+  ['writerAdmin.assertAdminUnlocked', async brain => (await writerAdmin.writerAdminStore.call(thisEngine, brain)).assertAdminUnlocked()],
   ['writerRelease.shareBrain', async brain => (await writerRelease.writerReleaseStore.call(thisEngine, brain)).shareBrain()],
   ['writerRelease.lockWorktreesAndSources', async brain => (await writerRelease.writerReleaseStore.call(thisEngine, brain)).lockWorktreesAndSources()],
   ['writerRelease.lockCycleLocks', async brain => (await writerRelease.writerReleaseStore.call(thisEngine, brain)).lockCycleLocks()],

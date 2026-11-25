@@ -334,12 +334,15 @@ export const hasClaimableWrite: StoreMember<[hostId: string, excludeRoots: strin
  * The request a FIFO claim takes next, or null. The whole spec goes to the store: the lease holder ranks a managed-sync
  * row whose drain lease another process holds last, and the host id, nonce and sync-seen map select worktree rows (a
  * row on a worktree refuses `engine_capability_missing` until the store can read its worktree). One process owns the
- * store, so no row is locked against another.
+ * store. The SQL's `FOR UPDATE OF r SKIP LOCKED` is skipped while explicit transactions hold the writer
+ * (`serialized_transactions`), which the member asserts.
  */
-export const selectClaimableWrite: StoreMember<[spec: ClaimHeadSpec], WriteRequest | null> = async (brain, spec) =>
-  requestRow<WriteRequest>(await storeCall({ member: 'selectClaimableWrite' }, () => brain.selectClaimableWrite({
+export const selectClaimableWrite: StoreMember<[spec: ClaimHeadSpec], WriteRequest | null> = async (brain, spec) => {
+  assertStoreSerializedTransactions(brain, 'selectClaimableWrite');
+  return requestRow<WriteRequest>(await storeCall({ member: 'selectClaimableWrite' }, () => brain.selectClaimableWrite({
     hostId: spec.hostId, excludeRoots: spec.excludeRoots, fifoRoots: spec.fifoRoots, laneRoots: spec.laneRoots, nonce: spec.nonce,
     syncSeen: spec.syncSeen, priority: spec.priority, leaseHolder: spec.leaseHolder })));
+};
 
 // The consumer rows. One process owns this engine's brain, so the store keeps no consumer heartbeat rows and no
 // worktrees: the reads answer none (PGLite's callers answer the same without a read) and the writes change nothing.

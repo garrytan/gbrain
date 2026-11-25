@@ -10,8 +10,9 @@ mod common;
 
 use common::{TempDir, open, open_concurrent};
 use gbrain_store::facts::FenceContext;
+use gbrain_store::kv::Unserialized;
 use gbrain_store::redb_kv::RedbKv;
-use gbrain_store::{Kv, KvRead, KvWrite, OpenOptions, Store, SystemEnv};
+use gbrain_store::{Kv, OpenOptions, Store, SystemEnv};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -21,43 +22,15 @@ use std::sync::Arc;
 
 const MISSING: &str = "engine_capability_missing";
 
-/// A record store that delegates every `Kv` method to `inner` but does not serialize explicit
-/// transactions, as a store with optimistic explicit transactions would.
-struct Unserialized(Arc<dyn Kv>);
-
-impl Kv for Unserialized {
-    fn snapshot(&self) -> gbrain_store::Result<Box<dyn KvRead>> {
-        self.0.snapshot()
-    }
-    fn begin_write(&self) -> gbrain_store::Result<Box<dyn KvWrite>> {
-        self.0.begin_write()
-    }
-    fn begin_write_locked(
-        &self,
-        keys: &BTreeSet<Vec<u8>>,
-    ) -> gbrain_store::Result<Box<dyn KvWrite>> {
-        self.0.begin_write_locked(keys)
-    }
-    fn begin_write_exclusive(&self) -> gbrain_store::Result<Box<dyn KvWrite>> {
-        self.0.begin_write_exclusive()
-    }
-    fn serializes_explicit_transactions(&self) -> bool {
-        false
-    }
-    fn version(&self) -> gbrain_store::Result<u64> {
-        self.0.version()
-    }
-    fn occ_stats(&self) -> Option<gbrain_store::occ_kv::OccStatsSnapshot> {
-        self.0.occ_stats()
-    }
-}
-
+/// A brain opened through the public seam `OpenOptions::withhold_serialized_transactions`: the store
+/// is the same, but it promises no `serialized_transactions`.
 fn unserialized(dir: &Path) -> Store {
-    let inner: Arc<dyn Kv> = Arc::new(RedbKv::open_path(&dir.join("records.redb")).unwrap());
-    Store::open_kv(
-        Arc::new(Unserialized(inner)),
-        Arc::new(SystemEnv),
-        OpenOptions::default(),
+    Store::open_dir(
+        dir,
+        OpenOptions {
+            withhold_serialized_transactions: true,
+            ..OpenOptions::default()
+        },
     )
     .unwrap()
 }
@@ -67,13 +40,20 @@ fn args<T: DeserializeOwned>(value: Value) -> T {
     serde_json::from_value(value).unwrap()
 }
 
-/// The call refuses `engine_capability_missing`, and its message names `site` first.
+/// The call refuses `engine_capability_missing`, its message names `site` first, and it wrote
+/// nothing (the store's commit sequence did not move).
 fn refuses<T: Debug>(
     store: &Store,
     site: &str,
     call: impl FnOnce(&Store) -> gbrain_store::Result<T>,
 ) {
+    let before = store.commit_version().unwrap();
     let err = call(store).expect_err(&format!("{site} ran on a store that cannot serialize"));
+    assert_eq!(
+        store.commit_version().unwrap(),
+        before,
+        "{site} wrote before it refused"
+    );
     assert_eq!(err.code, MISSING, "{site}: {err:?}");
     let want = format!("serialized_transactions: {site} ");
     assert!(
@@ -129,6 +109,39 @@ fn a_store_that_does_not_serialize_reports_it_and_refuses_the_assertion() {
     refuses(&store, "anySite", |s| {
         s.assert_serialized_transactions("anySite")
     });
+}
+
+/// The open result carries the store's promise (`StoreInfo::serialized_transactions`), the field the
+/// TypeScript engine reads at every open: true on a normal store in both modes, false through the seam.
+#[test]
+fn the_open_result_carries_the_store_promise() {
+    let dir = TempDir::new("serialized-info");
+    assert!(open(&dir).info().serialized_transactions);
+    let dir = TempDir::new("serialized-info-concurrent");
+    assert!(open_concurrent(&dir).info().serialized_transactions);
+    let dir = TempDir::new("serialized-info-withheld");
+    let store = unserialized(dir.path());
+    assert!(!store.info().serialized_transactions);
+    assert!(!store.serialized_transactions());
+}
+
+/// `kv::Unserialized` over any record store withholds only the capability: the same records read
+/// and write, and the skips refuse.
+#[test]
+fn a_wrapped_record_store_keeps_its_records_and_withholds_the_capability() {
+    let dir = TempDir::new("serialized-wrapped");
+    let inner: Arc<dyn Kv> = Arc::new(RedbKv::open_path(&dir.path().join("records.redb")).unwrap());
+    let store = Store::open_kv(
+        Arc::new(Unserialized(inner)),
+        Arc::new(SystemEnv),
+        OpenOptions::default(),
+    )
+    .unwrap();
+    store.set_config("probe", "1").unwrap();
+    assert_eq!(store.get_config("probe").unwrap().as_deref(), Some("1"));
+    assert!(!store.serialized_transactions());
+    let err = store.assert_serialized_transactions("probe").unwrap_err();
+    assert_eq!(err.code, MISSING);
 }
 
 fn unserialized_store() -> (TempDir, Store) {

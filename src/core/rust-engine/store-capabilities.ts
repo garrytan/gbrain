@@ -39,11 +39,10 @@ export const CAPABILITY_REQUIRES: Partial<Record<Capability, readonly Capability
 };
 
 /**
- * Guarantees of the store's transaction model, reported with the capabilities above. `serialized_transactions`: an
- * explicit transaction holds the store's whole writer (`Kv::begin_write_exclusive`), in both store modes, so the lock
- * skips that assert it take today's branch. The store answers the same through `brain.serializedTransactions`
- * (`Store::serialized_transactions`); test/serialized-transactions.test.ts pins the two together, so a store mode that stops
- * serializing explicit transactions must drop it here too.
+ * Capabilities that come from the open store, never from this static set: `serialized_transactions` (an explicit
+ * transaction holds the store's whole writer) is a promise the store makes when it opens (`Store::serialized_transactions`,
+ * the open result's `serialized_transactions`). RustEngine adds it from that answer on every open, reopen and takeover
+ * (`applyStoreGuarantees` in rust-engine.ts) and withholds it when the answer is false or absent.
  */
 export const STORE_GUARANTEES: readonly Capability[] = ['serialized_transactions'];
 
@@ -59,6 +58,5 @@ export function servedCapabilities(): EngineCapabilities {
   for (const [cap, needs] of Object.entries(CAPABILITY_REQUIRES) as [Capability, readonly Capability[]][]) {
     if (needs.some((need) => !served.has(need))) served.delete(cap);
   }
-  for (const guarantee of STORE_GUARANTEES) served.add(guarantee);
   return served;
 }

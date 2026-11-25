@@ -16,7 +16,7 @@ import { loadRustAddon, type RustAddon } from '../src/core/rust-engine/addon-loa
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
 import { openRustEngine, RustEngine } from '../src/core/rust-engine.ts';
 import { RUST_ENGINE_MEMBERS } from '../src/core/rust-engine/members.ts';
-import { STORE_GUARANTEES, servedCapabilities } from '../src/core/rust-engine/store-capabilities.ts';
+import { servedCapabilities } from '../src/core/rust-engine/store-capabilities.ts';
 import { STORE_MEMBERS } from '../src/core/rust-engine/store-members/index.ts';
 import { labelsOf } from '../src/core/rust-engine/store-members/label-line.ts';
 import { METADATA_LABELS } from '../src/core/conversation-parser/builtins.ts';
@@ -486,8 +486,6 @@ describe('Rust store members', () => {
     const members = RUST_ENGINE_MEMBERS as Record<string, string>;
     for (const capability of servedCapabilities()) {
       expect((ENGINE_CAPABILITIES as readonly string[]).includes(capability)).toBe(true);
-      // A guarantee of the store's transaction model (serialized_transactions) has no members of its own.
-      if (STORE_GUARANTEES.includes(capability)) continue;
       const needed = Object.keys(members).filter((m) => members[m] === capability);
       expect(needed.length).toBeGreaterThan(0);
       for (const member of needed) expect(Object.hasOwn(STORE_MEMBERS, member)).toBe(true);

@@ -16,7 +16,7 @@ import type {
   RestorePageHit, SecretAllowedMac, SecretBackupEntryRow, SecretBackupOccurrenceRow, SecretEntryConflict, SecretEntryInsert, SecretEntryRow,
   SecretEntrySummaryRow, SecretHoldingPageRow, SecretKeyInUse, SecretOccurrenceInsert, SecretOccurrenceRow,
 } from '../../engine-sql/secret-store.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { assertStoreSerializedTransactions, refuseMember, storeCall, type StoreMember } from './common.ts';
 
 const wholeNumber = (member: string, name: string, value: number): number => {
   if (!Number.isInteger(value)) refuseMember(member, `${name} is not an integer`);
@@ -72,9 +72,12 @@ export const insertBackupSecretOccurrence: StoreMember<[o: SecretBackupOccurrenc
 export const deleteUnreferencedSecretEntry: StoreMember<[id: string], boolean> = (brain, id) =>
   storeCall({ member: 'deleteUnreferencedSecretEntry' }, () => brain.deleteUnreferencedSecretEntry(id)) as Promise<boolean>;
 
-export const listSecretHoldingPages: StoreMember<[sourceId: string, slugs: readonly string[], id: string], SecretHoldingPageRow[]> = async (brain, sourceId, slugs, id) =>
-  (await storeCall({ member: 'listSecretHoldingPages', sourceId }, () => brain.listSecretHoldingPages(sourceId, [...slugs], id)) as SecretHoldingPageRow[])
+/** The SQL holds the pages `FOR SHARE OF p`; skipped while explicit transactions hold the writer (`serialized_transactions`). */
+export const listSecretHoldingPages: StoreMember<[sourceId: string, slugs: readonly string[], id: string], SecretHoldingPageRow[]> = async (brain, sourceId, slugs, id) => {
+  assertStoreSerializedTransactions(brain, 'listSecretHoldingPages');
+  return (await storeCall({ member: 'listSecretHoldingPages', sourceId }, () => brain.listSecretHoldingPages(sourceId, [...slugs], id)) as SecretHoldingPageRow[])
     .map(row => ({ ...row, id: Number(row.id) }));
+};
 
 export const countUnreferencedSecretEntries: StoreMember<[], number> = async brain =>
   Number(await storeCall({ member: 'countUnreferencedSecretEntries' }, () => brain.countUnreferencedSecretEntries()));
