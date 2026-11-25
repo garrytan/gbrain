@@ -21,7 +21,7 @@
 //! A refusal by redb's own integrity checks is a verdict of its own, apart from a mismatch.
 
 use crate::error::{Result, STORE_CORRUPT, StoreError};
-use crate::format::{self, FORMAT_VERSIONS, RECORDS_FILE};
+use crate::format::{self, RECORDS_FILE};
 use crate::keyword;
 use crate::kv::{Kv, KvRead, scan_prefix};
 use crate::redb_kv::RedbReadOnlyKv;
@@ -108,7 +108,7 @@ pub fn verify_store_dir(dir: &Path, expected: Option<&SnapshotManifest>) -> Resu
     if let Some(expected) = expected {
         expected.validate()?;
     }
-    let format_file = format::read_in(dir, FORMAT_VERSIONS)?;
+    let format_file = format::read_in(dir, format::OPENED_FORMATS)?;
     let mut report = VerifyReport::empty();
     report.format_file_version = format_file.as_ref().map(|f| f.format_version);
     // redb can panic, not only refuse, on a page whose bytes were damaged: that is the same
