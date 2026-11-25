@@ -1,0 +1,4 @@
+**Codex sessions get gbrain's session-start context again on a new brain, instead of Codex rejecting the hook.**
+
+### Fixed
+- In Codex, `gbrain hook session-start --harness codex` now prints Codex's JSON envelope (`hookSpecificOutput.additionalContext`) instead of plain text. Codex reads any hook output that starts with `[` or `{` as JSON, and a new brain with no core memory starts its context with `[gbrain] First sessions on this brain`, so Codex marked the hook failed and dropped all of it while gbrain still counted the first-session suggestion as delivered. Context trimmed inside an emoji is also made well-formed first, since Codex rejects JSON that holds half of one. Claude Code still gets plain text. Existing Codex installs get the fix on upgrade with no new `gbrain setup codex` run, because their hook command already passes `--harness codex`.
