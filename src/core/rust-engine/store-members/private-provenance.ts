@@ -249,6 +249,9 @@ function storePrivacyPolicyRendered(
     if (folders.satisfiedRuleIds.length || folders.folderCoverage.length) records.push({ ...readers, ...folders, hidePrivate: true, restricted: !open });
     if (access.owner) {
       records.push({ ...readers, hidePrivate: access.hidePrivate, restricted: !open, owner: true, ...(access.ownerReads ? { ownerReads: access.ownerReads } : {}) });
+      if (access.lineage && !access.ownerReadsRestricted && access.audienceKindMembers.length === 0) {
+        records.push({ ...readers, ...folders, hidePrivate: access.hidePrivate, restricted: !open, owner: true, lineage: true, ...(access.ownerReads ? { ownerReads: access.ownerReads } : {}) });
+      }
     }
     for (const record of records) {
       for (const form of FACT_FORMS) {
@@ -259,7 +262,7 @@ function storePrivacyPolicyRendered(
         // A local owner reading with privacy off renders no privacy part on the provenance page either.
         const provenancePrivacyOff = record.owner === true && !canonical.includes(privateSnapshotFilterFragment('pp'));
         const withFolders = 'satisfiedRuleIds' in record || 'folderCoverage' in record;
-        return { ...factPolicyFlags(canonical), ...readers, ...(withFolders ? stored : {}), ...(judged ? { memberPage } : {}), ...(provenancePrivacyOff ? { provenancePrivacyOff: true } : {}) };
+        return { ...factPolicyFlags(canonical), ...readers, ...(withFolders ? stored : {}), ...(judged ? { memberPage } : {}), ...(provenancePrivacyOff ? { provenancePrivacyOff: true } : {}), ...(record.lineage ? { ownerRead: true } : {}) };
       }
     }
     return undefined;
@@ -481,6 +484,12 @@ function storePageTextPolicyRendered(
       const owner = renderForStoreCaller({ ...callerReaders, ...folders, hidePrivate: access.hidePrivate, restricted: !open, owner: true,
         ...(access.ownerReads ? { ownerReads: access.ownerReads } : {}) }, () => privatePagesFilterForCaller('p'));
       if (text === normalizeConceptInputs(owner)) return { ...pagePolicyFlags(owner), ...callerReaders, ...stored, callerRecord: true };
+      // The remote owner's lineage read (GST-2490, the opt-in off, no audience): the owner read rule, served as `ownerRead`.
+      if (access.lineage && !access.ownerReadsRestricted && access.audienceKindMembers.length === 0) {
+        const lineage = renderForStoreCaller({ ...callerReaders, ...folders, hidePrivate: access.hidePrivate, restricted: !open, owner: true, lineage: true,
+          ...(access.ownerReads ? { ownerReads: access.ownerReads } : {}) }, () => privatePagesFilterForCaller('p'));
+        if (text === normalizeConceptInputs(lineage)) return { ...pagePolicyFlags(lineage), ...callerReaders, ...stored, callerRecord: true, ownerRead: true };
+      }
     }
     return undefined;
   });
