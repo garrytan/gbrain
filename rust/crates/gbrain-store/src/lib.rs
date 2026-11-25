@@ -19,6 +19,7 @@ mod cascade;
 pub mod chronicle_reads;
 pub mod chunks;
 pub mod cli_reads;
+pub mod concept_rebuild;
 pub mod config;
 pub mod env;
 pub mod error;

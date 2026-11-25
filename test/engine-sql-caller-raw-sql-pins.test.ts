@@ -56,10 +56,50 @@ import { identityDowngradeOpen } from '../src/core/sync-identity-downgrades.ts';
 import { EFFECT_BYTES_SQL } from '../src/core/persistence/receipt-bytes.ts';
 import { ruleCoversSql } from '../src/core/access/folder-rules.ts';
 import { exactIdentityStatement } from '../src/core/engine-sql/exact-identity.ts';
+import { extractedFromPageSql } from '../src/core/facts/gone-page-facts.ts';
+import { holdAppliesToPageSql } from '../src/core/write-gate-binding.ts';
+import { HELD_CONCEPT_SQL } from '../src/core/engine-sql/concept-rebuild.ts';
+import { privatePagesFilterFragment } from '../src/core/search/private-visibility.ts';
 import { tokenGrantJsonSql } from '../src/core/guests/owner-credentials.ts';
 import { foldSql } from '../src/core/page-body/schema.ts';
 import { CLIENT_INSPECTION_COLUMNS } from '../src/core/harness/client-setup.ts';
 import { ownerOnlyPageSql } from '../src/core/access/owner-only.ts';
+
+/** persistence/concept-rebuild.ts STATED_SQL at 7c85d5696f, rebuilt from the builders it interpolated. */
+const conceptStatedSql = () => `SELECT array_remove(ARRAY[
+  CASE WHEN EXISTS (SELECT 1 FROM facts f WHERE f.source_id = $2 AND (f.entity_slug = $3 OR f.source_markdown_slug = $3) AND NOT ${extractedFromPageSql('f', '$3')}) THEN 'facts' END,
+  CASE WHEN EXISTS (SELECT 1 FROM takes t WHERE t.page_id = $1) THEN 'takes' END,
+  CASE WHEN EXISTS (SELECT 1 FROM timeline_entries t WHERE t.page_id = $1) THEN 'timeline_entries' END,
+  CASE WHEN EXISTS (SELECT 1 FROM links l WHERE (l.to_page_id = $1 OR l.from_page_id = $1) AND l.link_source IS NOT NULL
+    AND l.link_source <> ALL($4::text[])) THEN 'links' END,
+  CASE WHEN EXISTS (SELECT 1 FROM tags t WHERE t.page_id = $1) THEN 'tags' END,
+  CASE WHEN EXISTS (SELECT 1 FROM files x WHERE x.page_id = $1) THEN 'files' END,
+  CASE WHEN EXISTS (SELECT 1 FROM page_aliases a WHERE a.source_id = $2 AND a.slug = $3) THEN 'page_aliases' END,
+  CASE WHEN EXISTS (SELECT 1 FROM slug_aliases a WHERE a.source_id = $2 AND a.canonical_slug = $3) THEN 'slug_aliases' END,
+  CASE WHEN EXISTS (SELECT 1 FROM core_edit_notices c WHERE c.source_id = $2 AND c.slug = $3) THEN 'core_edit_notices' END,
+  CASE WHEN EXISTS (SELECT 1 FROM write_gate_holds h WHERE h.source_id = $2 AND ${holdAppliesToPageSql('h', '$1', '$3')}) THEN 'write_gate_holds' END,
+  CASE WHEN EXISTS (SELECT 1 FROM pages p WHERE p.id = $1 AND p.title <> replace(regexp_replace(p.slug, '^.*/', ''), '-', ' ')) THEN 'title' END,
+  CASE WHEN EXISTS (SELECT 1 FROM pages p, jsonb_each(p.frontmatter) e WHERE p.id = $1 AND e.key <> ALL($6::text[]) AND e.key <> ALL($5::text[])
+    AND NOT (e.key = 'tags' AND e.value = '[]'::jsonb)) THEN 'frontmatter' END,
+  CASE WHEN EXISTS (SELECT 1 FROM pages p WHERE p.id = $1 AND p.body_storage IS DISTINCT FROM 'segmented' AND coalesce(p.timeline, '') <> '') THEN 'timeline' END,
+  CASE WHEN EXISTS (SELECT 1 FROM pages p WHERE p.id = $1 AND ((p.source_path IS NOT NULL AND p.source_path <> p.slug || '.md')
+    OR p.source_uri IS NOT NULL OR p.withheld_source_path IS NOT NULL)) THEN 'source_path' END,
+  CASE WHEN EXISTS (SELECT 1 FROM link_transitions t WHERE t.from_page_id = $1 OR t.to_page_id = $1 OR t.origin_page_id = $1) THEN 'link_transitions' END,
+  CASE WHEN EXISTS (SELECT 1 FROM raw_data r WHERE r.page_id = $1) THEN 'raw_data' END,
+  CASE WHEN EXISTS (SELECT 1 FROM link_edge_proposals e WHERE $1 IN (e.from_page_id, e.a_to_page_id, e.b_to_page_id, e.ending_to_page_id)
+    AND e.status IN ('rejected', 'undone', 'reverted_by_user')) THEN 'link_edge_proposals' END,
+  CASE WHEN EXISTS (SELECT 1 FROM entity_identities i WHERE i.page_id = $1) THEN 'entity_identities' END,
+  CASE WHEN EXISTS (SELECT 1 FROM guest_marks g WHERE g.page_id = $1) THEN 'guest_marks' END,
+  CASE WHEN EXISTS (SELECT 1 FROM guest_promotions g WHERE g.guest_page_id = $1) THEN 'guest_promotions' END,
+  CASE WHEN EXISTS (SELECT 1 FROM secret_store_occurrence o WHERE o.source_id = $2 AND o.commit_sha IS NULL
+    AND (o.page_id = $1 OR (o.page_id IS NULL AND o.slug = $3)) AND NOT EXISTS (SELECT 1 FROM secret_store_occurrence k WHERE k.entry_id = o.entry_id
+      AND NOT (k.source_id = $2 AND k.commit_sha IS NULL AND (k.page_id = $1 OR (k.page_id IS NULL AND k.slug = $3)))
+      AND (k.commit_sha IS NOT NULL OR EXISTS (SELECT 1 FROM pages pk WHERE pk.deleted_at IS NULL
+        AND (pk.id = k.page_id OR (k.page_id IS NULL AND pk.source_id = k.source_id AND pk.slug = k.slug)))))) THEN 'secret_store_occurrence' END,
+  CASE WHEN EXISTS (SELECT 1 FROM page_label_guards g WHERE g.page_id = $1) OR EXISTS (SELECT 1 FROM pages p WHERE p.id = $1
+    AND p.frontmatter ?| $5::text[]) THEN 'labels' END
+], NULL) AS kinds,
+  (SELECT ${boundedBodyPrefixSql('p')} FROM pages p WHERE p.id = $1) AS lead, (SELECT p.body_storage = 'segmented' FROM pages p WHERE p.id = $1) AS segmented`;
 
 const memberSql = (member: string) => `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
   FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
@@ -2687,6 +2727,27 @@ const PINS: Pin[] = [
        AND p.type NOT IN ('question', 'synthesis') AND NOT (p.frontmatter ? '${PINNED_QUESTION_MARKER}')
        AND (p.compiled_truth ~* $3 OR ($4::integer IS NOT NULL AND EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id AND l.to_page_id = $4::integer AND ${rankingLinkSql('l')})))
      ORDER BY COALESCE(p.effective_date, p.updated_at) DESC, p.id DESC LIMIT ${MAX_ANCHORED}`],
+  },
+  {
+    from: 'src/core/persistence/concept-rebuild.ts:140 statedKinds (STATED_SQL; at 7c85d5696f)',
+    case: { method: 'readConceptStatedKinds', variant: 'default', run: e => e.readConceptStatedKinds(7, 'default', 'concepts/a', { derivedLinkSources: ['markdown'], statedLabelKeys: ['readable_by'], synthesisKeys: ['type'] }) },
+    // The caller's interpolations are rebuilt here from their builders, so a drift in either fails.
+    texts: () => [conceptStatedSql()],
+  },
+  {
+    from: 'src/core/persistence/concept-rebuild.ts:176 readRebuildAccess (ACCESS_SQL; at 7c85d5696f)',
+    case: { method: 'readRebuildAccess', variant: 'default', run: e => e.readRebuildAccess(7) },
+    texts: () => [`SELECT ${privatePagesFilterFragment('p')} AS open, ${privacyPartSql('p')} AS public_part, gbrain_access_readers(p.frontmatter) AS readers,
+  p.page_readers, p.folder_rule_ids FROM pages p WHERE p.id = $1`],
+  },
+  {
+    from: 'src/core/persistence/concept-rebuild.ts:319 readHeldConceptRows (the held-concept report; at 7c85d5696f)',
+    case: { method: 'readHeldConceptRows', variant: 'default', run: e => e.readHeldConceptRows() },
+    texts: () => [`SELECT p.id, p.source_id, p.slug,
+    NOT ${privacyPartSql('p')} AS private,
+    EXISTS (SELECT 1 FROM derivation_inputs d JOIN pages m ON m.id::text = d.input_id AND d.input_table = 'pages'
+      WHERE d.derived_table = 'pages' AND d.derived_id = p.id::text AND m.deleted_at IS NULL AND NOT (${privatePagesFilterFragment('m')})) AS members_private
+    FROM (SELECT $1::text AS owed_op) q, pages p WHERE ${HELD_CONCEPT_SQL} ORDER BY p.source_id, p.slug`],
   },
   {
     from: 'src/core/search/entity-anchor.ts:116 applyEntityAnchoring (the anchored page titles; at efeb078093)',

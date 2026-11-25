@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2401/2425
+# covered: 2404/2428
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -50,7 +50,7 @@
 # fact_relink_writes: 3/3
 # facts_cycle: 13/13
 # facts_cycle_sites: 34/34
-# facts_purge: 100/100
+# facts_purge: 103/103
 # purge_plan: 4/4
 # projection_rebuild: 32/33
 # facts_repair: 75/75
@@ -132,7 +132,7 @@ listCatalogRelations	lifecycle	yes	1	no	yes	yes	serves
 readCatalogSchemaVersion	lifecycle	yes	1	no	yes	yes	serves
 listCatalogForeignKeys	lifecycle	yes	1	no	yes	yes	serves
 getPage	pages	yes	278	yes	yes	yes	serves
-readPageSnapshot	pages	yes	100	no	yes	yes	serves
+readPageSnapshot	pages	yes	101	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
 putPage	pages	yes	1320	yes	yes	yes	serves
@@ -143,7 +143,7 @@ deletePages	pages	yes	8	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	2	yes	yes	yes	serves
 softDeletePage	pages	yes	332	yes	yes	yes	serves
 softDeletePages	pages	yes	4	yes	yes	yes	serves
-restorePage	pages	yes	15	yes	yes	yes	serves
+restorePage	pages	yes	16	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	10	no	yes	yes	serves
 listPages	pages	yes	21	yes	yes	yes	serves
 findPages	pages	yes	5	no	yes	yes	serves
@@ -399,7 +399,7 @@ listFactsFencePages	extraction	no	0	no	-	-	-
 listSweepStalePages	extraction	yes	1	no	yes	yes	serves
 listSweepDeferredPages	extraction	no	0	no	-	-	-
 listPageRefsForSlugs	extraction	yes	1	no	yes	yes	serves
-addLink	links	yes	165	yes	yes	yes	serves
+addLink	links	yes	166	yes	yes	yes	serves
 addLinksBatch	links	yes	41	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	18	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
@@ -422,7 +422,7 @@ getPageTimestamps	links	yes	1	no	yes	yes	serves
 getEffectiveDates	links	yes	10	no	yes	yes	serves
 getSalienceScores	links	yes	13	yes	yes	yes	serves
 findOrphanPages	links	yes	9	yes	yes	yes	serves
-addTag	tags	yes	41	yes	yes	yes	serves
+addTag	tags	yes	42	yes	yes	yes	serves
 removeTag	tags	yes	2	no	yes	yes	serves
 pruneFrontmatterTags	tags	yes	3	no	yes	yes	serves
 addPageTagsById	tags	yes	1	no	yes	yes	serves
@@ -444,7 +444,7 @@ listMaterializedMarkerPages	timeline	yes	3	no	yes	yes	serves
 rewriteTimelineRow	timeline	yes	2	no	yes	yes	serves
 listDateBulletPages	timeline	yes	2	no	yes	yes	serves
 listConnectorFencePages	timeline	yes	2	no	yes	yes	serves
-addTimelineEntry	timeline	yes	85	yes	yes	yes	serves
+addTimelineEntry	timeline	yes	86	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	4	no	yes	yes	serves
 getTimeline	timeline	yes	40	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	9	no	yes	yes	serves
@@ -469,7 +469,7 @@ repointSupersededToKept	ontology	yes	1	no	yes	yes	serves
 clearOntologySlots	ontology	yes	1	no	yes	yes	serves
 deleteRekeyLosers	ontology	yes	1	no	yes	yes	serves
 restoreOntologyFact	ontology	yes	2	no	yes	yes	serves
-putRawData	raw_files	yes	22	yes	yes	yes	serves
+putRawData	raw_files	yes	23	yes	yes	yes	serves
 getRawData	raw_files	yes	10	yes	yes	yes	serves
 upsertFile	raw_files	yes	18	no	yes	yes	serves
 getFile	raw_files	yes	2	no	yes	yes	serves
@@ -946,7 +946,7 @@ insertWithdrawalEffects	persistence_journal	yes	8	no	yes	yes	serves
 insertRemirrorEffects	persistence_journal	yes	1	no	yes	yes	serves
 readRemirrorEffects	persistence_journal	yes	1	no	yes	yes	serves
 listSourceCheckpointRecords	persistence_journal	yes	3	no	yes	yes	serves
-insertOpCheckpointIfAbsent	persistence_journal	yes	3	no	yes	yes	serves
+insertOpCheckpointIfAbsent	persistence_journal	yes	4	no	yes	yes	serves
 replaceOpCheckpointAtVersion	persistence_journal	yes	1	no	yes	yes	serves
 upsertFenceTrendRunRecord	persistence_journal	yes	1	no	yes	yes	serves
 readOldestSyncHoldAt	persistence_journal	yes	3	no	yes	yes	serves
@@ -1488,14 +1488,17 @@ insertReasonPurgeTombstones	facts_purge	yes	4	no	yes	yes	serves
 deletePurgedSlugStoreRows	facts_purge	yes	4	no	yes	yes	serves
 listPageSecretOccurrences	facts_purge	yes	3	no	yes	yes	serves
 deletePurgedSlugHolds	facts_purge	yes	1	no	yes	yes	refuses:pages
-readHeldConcept	facts_purge	yes	1	no	yes	yes	refuses:pages
-isConceptStillHeld	facts_purge	yes	1	no	yes	yes	refuses:pages
-lockHeldConcept	facts_purge	yes	1	no	yes	yes	refuses:pages
-lockLiveConceptMembers	facts_purge	yes	1	no	yes	yes	refuses:pages
-listLiveConceptMemberRevisions	facts_purge	yes	1	no	yes	yes	refuses:pages
-listConceptIncomingLinks	facts_purge	yes	1	no	yes	yes	refuses:pages
-carryConceptIncomingLinks	facts_purge	yes	1	no	yes	yes	refuses:pages
-readTombstoneWindow	facts_purge	yes	1	no	yes	yes	refuses:pages
+readHeldConcept	facts_purge	yes	3	no	yes	yes	serves
+isConceptStillHeld	facts_purge	yes	2	no	yes	yes	serves
+lockHeldConcept	facts_purge	yes	2	no	yes	yes	serves
+lockLiveConceptMembers	facts_purge	yes	1	no	yes	yes	serves
+listLiveConceptMemberRevisions	facts_purge	yes	2	no	yes	yes	serves
+listConceptIncomingLinks	facts_purge	yes	1	no	yes	yes	serves
+carryConceptIncomingLinks	facts_purge	yes	1	no	yes	yes	serves
+readTombstoneWindow	facts_purge	yes	1	no	yes	yes	serves
+readConceptStatedKinds	facts_purge	yes	1	no	yes	yes	serves
+readRebuildAccess	facts_purge	yes	1	no	yes	yes	serves
+readHeldConceptRows	facts_purge	yes	2	no	yes	yes	serves
 countFactFingerprintLeftovers	facts_purge	yes	4	no	yes	yes	serves
 loadPurgeTarget	facts_purge	yes	42	no	yes	yes	serves
 planFactPurgeIds	facts_purge	yes	2	no	yes	yes	serves
@@ -1730,11 +1733,11 @@ readLiveFactEntityPage	facts_trust	yes	2	no	yes	yes	serves
 lockAgentWritebackSetting	facts_trust	yes	2	no	yes	yes	serves
 listFactsToRetireFromPage	facts_trust	yes	2	no	yes	yes	serves
 listContestedProposalPairs	facts_trust	yes	1	no	yes	yes	serves
-recordDerivationEdges	facts_trust	yes	10	no	yes	yes	serves
+recordDerivationEdges	facts_trust	yes	11	no	yes	yes	serves
 expireDerivedFacts	facts_trust	yes	3	no	yes	yes	serves
 deactivateDerivedTakes	facts_trust	yes	3	no	yes	yes	serves
 softDeleteDerivedPages	facts_trust	yes	3	no	yes	yes	serves
-markNeedsRederive	facts_trust	yes	2	no	yes	yes	serves
+markNeedsRederive	facts_trust	yes	4	no	yes	yes	serves
 readMemberPageWithdrawal	facts_trust	yes	3	no	yes	yes	serves
 readFactVisibility	facts_trust	yes	4	no	yes	yes	serves
 readReplacementTarget	facts_trust	yes	6	no	yes	yes	serves
@@ -1859,7 +1862,7 @@ listSegmentedPages	withdrawal_pages	yes	2	no	yes	yes	serves
 invalidateWithdrawnPages	withdrawal_pages	yes	2	no	yes	yes	serves
 hasWithdrawnFenceClaim	withdrawal_fence	yes	2	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	91	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	90	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 addCodeEdges	code_edges	yes	7	yes	yes	yes	serves
@@ -1989,7 +1992,7 @@ listAccessTokens	write_misc	yes	8	no	yes	yes	serves
 readOpCheckpointKeys	write_misc	yes	8	no	yes	yes	serves
 writeOpCheckpointKeys	write_misc	yes	8	no	yes	yes	serves
 appendOpCheckpointPaths	write_misc	yes	5	no	yes	yes	serves
-deleteOpCheckpoint	write_misc	yes	3	no	yes	yes	serves
+deleteOpCheckpoint	write_misc	yes	4	no	yes	yes	serves
 deleteOpCheckpointPaths	write_misc	yes	2	no	yes	yes	serves
 readOpCheckpointRecords	write_misc	yes	6	no	yes	yes	serves
 writeOpCheckpointRecords	write_misc	yes	9	no	yes	yes	serves

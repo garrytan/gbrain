@@ -9,20 +9,20 @@
  *    says when a tombstone's recovery window ends and whether it has; lockLiveConceptMembers counts the members live
  *    at the named revision; listLiveConceptMemberRevisions lists the live ones; listConceptIncomingLinks lists the
  *    links into a page from other live pages, except concept provenance; carryConceptIncomingLinks points those links
- *    at the live page now at the slug. Same result on PGLite and Postgres. The rebuild's three remaining raw reads
- *    mean an engine without raw SQL (the Rust arm, GBRAIN_TEST_RUST_ARM=1) must refuse every rebuild entry point with
- *    `engine_capability_missing` (reason raw_sql) before it locks, purges or writes anything.
+ *    at the live page now at the slug. Every rebuild entry point answers the same on every engine arm (PGLite always;
+ *    Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1), including the stated-row check, the access
+ *    read and the held-concept report.
  *  - Regression: a held predicate that drifts lets a rebuild purge a concept a person deleted or one an owner purge is
- *    owed on; a carry that drops a column rewrites a person's link; a rebuild that starts on an engine that cannot
- *    finish it leaves a purged concept with no fresh page.
+ *    owed on; a carry that drops a column rewrites a person's link; an engine that refuses the rebuild's reads leaves
+ *    a held concept hidden forever.
  *  - Why existing coverage misses it: test/concept-rebuild-*-9653.test.ts run one engine at a time and never the Rust
  *    arm, and these statements ran through `executeRaw`, which the parity cases cannot call (D18).
- *  - Seam: the hold (needs_rederive, op_checkpoints) has no typed writer, so those cases seed it through `executeRaw`
- *    and declare raw_sql.
+ *  - Seam: none. The hold is seeded through typed members: softDeletePage, then markNeedsRederive with the page in
+ *    `hiddenNow` (its mark takes the page's delete instant, as the purge's hideDerivedRows marks it), and an owed owner
+ *    purge through insertOpCheckpointIfAbsent.
  */
 import { describe, expect } from 'bun:test';
 import { parityArms } from './harness.ts';
-import { isCapabilityRefusal } from './arm-capabilities.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine, PageSnapshot } from '../../src/core/engine.ts';
 import { OWED_PURGE_OP } from '../../src/core/persistence/derived-origin-hold.ts';
@@ -40,14 +40,14 @@ async function heldTombstone(engine: BrainEngine, slug: string): Promise<number>
   await engine.putPage(slug, concept(slug), { sourceId: SRC });
   const id = Number((await engine.getPage(slug, { sourceId: SRC }))!.id);
   await engine.softDeletePage(slug, { sourceId: SRC });
-  await engine.executeRaw(`INSERT INTO needs_rederive (derived_table, derived_id, source_id, reason, marked_at)
-    SELECT 'pages', id::text, source_id, 'input_purged', deleted_at FROM pages WHERE id = $1`, [id]);
+  await engine.markNeedsRederive('pages', [String(id)], SRC, null, 'input_purged', [String(id)]);
   return id;
 }
 
 describe('engine parity: concept rebuild', () => {
   parityTest('readHeldConcept, isConceptStillHeld and lockHeldConcept see a concept only while it is held for a rebuild', {
-    methods: ['executeRaw', 'readHeldConcept', 'isConceptStillHeld', 'lockHeldConcept', 'readTombstoneWindow'], requires: 'raw_sql' }, async (engine) => {
+    methods: ['markNeedsRederive', 'insertOpCheckpointIfAbsent', 'deleteOpCheckpoint', 'restorePage', 'readHeldConcept', 'isConceptStillHeld', 'lockHeldConcept',
+      'readTombstoneWindow'] }, async (engine) => {
     const id = await heldTombstone(engine, 'concepts/held');
     await engine.putPage('concepts/live', concept('concepts/live'), { sourceId: SRC });
     const live = Number((await engine.getPage('concepts/live', { sourceId: SRC }))!.id);
@@ -64,16 +64,21 @@ describe('engine parity: concept rebuild', () => {
       windowPast: await engine.readTombstoneWindow(id, 0).then(w => w && w.past),
       windowLive: await engine.readTombstoneWindow(live, 72),
     };
-    // An owed owner purge ends the hold; so does closing the needs_rederive mark.
-    await engine.executeRaw(`INSERT INTO op_checkpoints (op, fingerprint) VALUES ($1, $2)`, [OWED_PURGE_OP, String(id)]);
+    // An owed owner purge ends the hold; so does a later delete (a person restores the page and deletes it again: the
+    // mark is no longer at the page's delete instant).
+    await engine.insertOpCheckpointIfAbsent(OWED_PURGE_OP, String(id), []);
     const owed = { held: await engine.readHeldConcept(id), still: await engine.isConceptStillHeld(id, us) };
-    await engine.executeRaw('DELETE FROM op_checkpoints WHERE op = $1', [OWED_PURGE_OP]);
-    await engine.executeRaw("DELETE FROM needs_rederive WHERE derived_table = 'pages'");
+    await engine.deleteOpCheckpoint(OWED_PURGE_OP, String(id));
+    const released = { held: (await engine.readHeldConcept(id))?.deleted_us === us };
+    await engine.restorePage('concepts/held', { sourceId: SRC });
+    await new Promise(resolve => setTimeout(resolve, 5));
+    await engine.softDeletePage('concepts/held', { sourceId: SRC });
     const unmarked = { held: await engine.readHeldConcept(id), still: await engine.isConceptStillHeld(id, us) };
     expect(out).toMatchObject({ held: true, live: null, still: true, otherDelete: false, locked: true, lockedOtherSlug: false,
       window: { until: true, past: false }, windowPast: true, windowLive: null });
-    expect([owed, unmarked]).toEqual([{ held: null, still: false }, { held: null, still: false }]);
-    return { out, owed, unmarked };
+    expect([owed, released, unmarked]).toEqual([{ held: null, still: false }, { held: true }, { held: null, still: false }]);
+    // The delete instant differs per arm's clock; it is checked above as digits and compared here by whether it matched.
+    return { out: { ...out, held: out.held }, owed, released, unmarked };
   });
 
   parityTest('member reads and the incoming-link carry', {
@@ -112,8 +117,8 @@ describe('engine parity: concept rebuild', () => {
     return out;
   });
 
-  parityTest('every rebuild entry point refuses before any write on an engine without raw SQL', {
-    methods: ['putPage', 'getPage', 'softDeletePage'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('every rebuild entry point answers for a concept that is not held, and nothing is locked, purged or written', {
+    methods: ['putPage', 'getPage', 'softDeletePage', 'lockHeldConcept', 'readHeldConcept', 'readHeldConceptRows', 'isConceptStillHeld'] }, async (engine) => {
     await engine.putPage('concepts/held', concept('concepts/held'), { sourceId: SRC });
     const page = (await engine.getPage('concepts/held', { sourceId: SRC }))!;
     await engine.softDeletePage('concepts/held', { sourceId: SRC });
@@ -128,18 +133,91 @@ describe('engine parity: concept rebuild', () => {
       conceptPurgeRefusal: await settle(conceptPurgeRefusal(engine, SRC, 'concepts/held', { page_id: Number(page.id), deleted_us: '1' })),
     };
     const after = await engine.getPage('concepts/held', { sourceId: SRC, includeDeleted: true } as never);
-    const refusals = Object.entries(runs).filter(([, r]) => 'error' in r && isCapabilityRefusal(r.error, 'raw_sql'));
-    if (refusals.length) {
-      // The Rust arm: every entry point refused up front, and nothing was locked, purged or written.
-      expect({ refused: refusals.map(([name]) => name), wrote, tombstone: after?.deleted_at != null })
-        .toEqual({ refused: Object.keys(runs), wrote: false, tombstone: true });
-      expect(String((refusals[0]![1] as { error: { message: string } }).error.message)).toContain('rebuildHeldConcept');
-      throw (refusals[0]![1] as { error: unknown }).error;
-    }
     const message = (r: { value?: unknown; error?: unknown }) => 'error' in r ? `${(r.error as { code?: string }).code}: ${(r.error as Error).message}` : r.value;
     const out: Record<string, unknown> = { ...Object.fromEntries(Object.entries(runs).map(([name, r]) => [name, message(r)])), wrote, tombstone: after?.deleted_at != null };
-    expect(out).toMatchObject({ heldConceptRebuild: null, readHeldConcepts: { held: [], kept: [] }, wrote: false, tombstone: true });
-    expect(String(out.rebuildHeldConcept)).toContain('revision_conflict: The concept is no longer held for a rebuild');
+    expect(out).toEqual({
+      rebuildHeldConcept: 'revision_conflict: The concept is no longer held for a rebuild (a person or sync deleted, restored or purged it), so the rebuild wrote nothing.',
+      heldConceptRebuild: null, readHeldConcepts: { held: [], kept: [] },
+      conceptPurgeRefusal: 'the concept is no longer held for a rebuild (a person or sync deleted, restored or purged it)',
+      wrote: false, tombstone: true,
+    });
     return out;
+  });
+
+  /**
+   * Held concepts that carry what synthesis did not write, one per stated kind a typed write can leave, plus a private
+   * concept whose members are world-readable and a world concept with nothing stated. The report keeps each, with its
+   * reason; the stated check and the access read answer the same on every arm.
+   */
+  parityTest('the stated-row check, the access read and the held-concept report keep each concept for its reason', {
+    methods: ['readConceptStatedKinds', 'readRebuildAccess', 'readHeldConceptRows', 'listLiveConceptMemberRevisions', 'readHeldConcept', 'readPageSnapshot',
+      'markNeedsRederive', 'recordDerivationEdges', 'addTag', 'addLink', 'addTimelineEntry', 'putRawData'] }, async (engine) => {
+    const tail = (slug: string) => slug.split('/').pop()!.replace(/-/g, ' ');
+    const held = async (slug: string, frontmatter: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) => {
+      await engine.putPage(slug, { type: 'concept', title: tail(slug), compiled_truth: `${tail(slug)} narrative.`, timeline: '',
+        frontmatter: { synthesized_by: 'synthesize_concepts:v1', ...frontmatter }, ...extra } as never, { sourceId: SRC });
+      return Number((await engine.getPage(slug, { sourceId: SRC }))!.id);
+    };
+    const hide = async (slug: string, id: number) => {
+      await engine.softDeletePage(slug, { sourceId: SRC });
+      await engine.markNeedsRederive('pages', [String(id)], SRC, null, 'input_purged', [String(id)]);
+    };
+    await engine.putPage('notes/world-member', note('notes/world-member'), { sourceId: SRC });
+    await engine.putPage('notes/private-member', { ...note('notes/private-member'), frontmatter: { visibility: 'private' } }, { sourceId: SRC });
+    const ids: Record<string, number> = {};
+    const plan: Array<[string, Record<string, unknown>, Record<string, unknown>, (id: number, slug: string) => Promise<void>]> = [
+      ['concepts/plain', { visibility: 'world' }, {}, async () => {}],
+      ['concepts/private', {}, {}, async (id) => { await engine.recordDerivationEdges({ table: 'pages', id: String(id) }, SRC, [{ table: 'pages', id: String(ids['notes/world-member']) }]); }],
+      ['concepts/private-members', {}, {}, async (id) => { await engine.recordDerivationEdges({ table: 'pages', id: String(id) }, SRC, [{ table: 'pages', id: String(ids['notes/private-member']) }]); }],
+      ['concepts/tagged', { visibility: 'world' }, {}, async (_id, slug) => { await engine.addTag(slug, 'kept', { sourceId: SRC }); }],
+      ['concepts/linked', { visibility: 'world' }, {}, async (_id, slug) => { await engine.addLink('notes/world-member', slug, 'see', 'mentions', 'manual'); }],
+      ['concepts/derived-link', { visibility: 'world' }, {}, async (_id, slug) => { await engine.addLink('notes/world-member', slug, 'see', 'mentions', 'markdown'); }],
+      ['concepts/dated', { visibility: 'world' }, {}, async (_id, slug) => { await engine.addTimelineEntry(slug, { date: '2026-01-02', summary: 'Met.' }, { sourceId: SRC }); }],
+      ['concepts/raw', { visibility: 'world' }, {}, async (_id, slug) => { await engine.putRawData(slug, 'parity', { a: 1 }, { sourceId: SRC }); }],
+      ['concepts/renamed-title', { visibility: 'world' }, { title: 'Another Title' }, async () => {}],
+      ['concepts/extra-key', { visibility: 'world', owner_note: 'kept' }, {}, async () => {}],
+      ['concepts/empty-tags', { visibility: 'world', tags: [] }, {}, async () => {}],
+      ['concepts/labelled', { visibility: 'world', readable_by: ['member:alice-example'] }, {}, async () => {}],
+      ['concepts/timeline-text', { visibility: 'world' }, { timeline: '2026-01-01: a line.' }, async () => {}],
+    ];
+    ids['notes/world-member'] = Number((await engine.getPage('notes/world-member', { sourceId: SRC }))!.id);
+    ids['notes/private-member'] = Number((await engine.getPage('notes/private-member', { sourceId: SRC }))!.id);
+    for (const [slug, frontmatter, extra, after] of plan) {
+      const id = await held(slug, frontmatter, extra);
+      ids[slug] = id;
+      await after(id, slug);
+      await hide(slug, id);
+    }
+    const lists = { derivedLinkSources: ['markdown', 'frontmatter', 'mentions', 'wikilink-resolved', 'concept-provenance'],
+      statedLabelKeys: ['access', 'confidentiality', 'readable_by', 'pinned_question', 'derived_from'],
+      synthesisKeys: ['type', 'title', 'trust_tier', 'tier', 'mention_count', 'composite_score', 'synthesis_mode', 'member_hash',
+        'synthesized_at', 'synthesized_by', 'visibility', 'unverified_claims'] };
+    const kinds = Object.fromEntries(await Promise.all(plan.map(async ([slug]) => {
+      const row = await engine.readConceptStatedKinds(ids[slug]!, SRC, slug, lists);
+      return [slug, { kinds: row.kinds, lead: row.lead, segmented: row.segmented }] as const;
+    })));
+    const access = Object.fromEntries(await Promise.all(['concepts/plain', 'concepts/private', 'concepts/labelled', 'notes/world-member', 'notes/private-member']
+      .map(async slug => [slug, await engine.readRebuildAccess(ids[slug]!)] as const)));
+    const report = await readHeldConcepts(engine, false);
+    const rows = (await engine.readHeldConceptRows()).map(({ id: _, ...row }) => row);
+    const missing = { kinds: await engine.readConceptStatedKinds(2_000_000_000, SRC, 'concepts/none', lists), access: await engine.readRebuildAccess(2_000_000_000) };
+    // The world concept with nothing stated is rebuilt from its live members; a private one with world members is kept.
+    const rebuildOf = async (slug: string, visibility: 'private' | 'world') => {
+      const snapshot = (await engine.readPageSnapshot(slug, { sourceId: SRC, includeDeleted: true }))!;
+      const out = await heldConceptRebuild(engine, SRC, snapshot, ['notes/world-member'], [undefined], visibility);
+      return out && ('kept' in out ? out : { rebuild: { held: out.rebuild.page_id === ids[slug], deleted: /^\d+$/.test(out.rebuild.deleted_us), members: out.rebuild.members.map(m => m.slug) } });
+    };
+    const rebuilds = { plain: await rebuildOf('concepts/plain', 'world'), private: await rebuildOf('concepts/private', 'world') };
+    const answer = { kinds, access, report, rows, missing, rebuilds };
+    expect(rebuilds).toEqual({ plain: { rebuild: { held: true, deleted: true, members: ['notes/world-member'] } },
+      private: { kept: { source_id: SRC, slug: 'concepts/private', reason: 'access', why: 'its current members are all world-readable and the hidden concept was not' } } });
+    expect(Object.fromEntries(Object.entries(kinds).map(([slug, k]) => [slug, k.kinds]))).toEqual({
+      'concepts/plain': [], 'concepts/private': [], 'concepts/private-members': [], 'concepts/tagged': ['tags'], 'concepts/linked': ['links'],
+      'concepts/derived-link': [], 'concepts/dated': ['timeline_entries'], 'concepts/raw': ['raw_data'], 'concepts/renamed-title': ['title'],
+      'concepts/extra-key': ['frontmatter'], 'concepts/empty-tags': [], 'concepts/labelled': ['labels'], 'concepts/timeline-text': ['timeline'],
+    });
+    expect(report.held.length).toBe(plan.length);
+    expect(missing).toEqual({ kinds: { kinds: [], lead: null, segmented: null }, access: null });
+    return answer;
   });
 });
