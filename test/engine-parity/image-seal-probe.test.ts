@@ -83,4 +83,17 @@ describe('engine parity: image import seal probe and chunker version', () => {
     expect(answer).toEqual({ distrusted: true, clean: false, missing: false, sign: -1, none: null });
     return answer;
   });
+
+  parityTest('the seal probe answers null for a page that is absent or not chunked by the sealing chunker', {
+    methods: ['putPage', 'readImageSealProbe'],
+    timeout: 60_000,
+  }, async (engine) => {
+    await engine.putPage('images/probe-direct', note('Probe direct'));
+    const answer = {
+      absent: await engine.readImageSealProbe('default', 'images/no-such-page'),
+      unsealed: await engine.readImageSealProbe('default', 'images/probe-direct'),
+    };
+    expect(answer).toEqual({ absent: null, unsealed: null });
+    return answer;
+  });
 });
