@@ -92,6 +92,11 @@ const EDGE_PATCHES: Array<Partial<CallerAccess> | null> = [
   { identity: ['member:alice-example'], lineage: true },
   { identity: ['member:alice-example'], labelledOnly: true },
   { identity: ['member:alice-example'], labelledOnly: true, lineage: true },
+  // The labelled-only lineage branch on an owner read (labelledOnlySql skips it) and on a member read without one.
+  { identity: ['member:alice-example'], labelledOnly: true, lineage: true, owner: true },
+  { identity: ['member:alice-example'], labelledOnly: true, lineage: true, owner: true, hidePrivate: false, remotePolicy: { privacyRelaxed: false, restricted: true, schemaVersion: 330 } },
+  { identity: [], labelledOnly: true, lineage: true, owner: true },
+  { identity: ['group:team-a'], labelledOnly: true, lineage: true, owner: true, satisfiedRuleIds: ['wiki:team'] },
   { identity: ['member:alice-example'], privateFactSources: ['wiki'] },
   { identity: ['member:alice-example'], privateReadableSources: ['wiki'], satisfiedRuleIds: ['wiki:team'], folderCoverage: [{ source_id: 'wiki', prefix: 'p/' }] },
   { identity: [], audience: ['member:alice-example', 'member:bob-example'], audienceIdentities: [['member:alice-example'], ['member:bob-example']] },

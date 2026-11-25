@@ -399,6 +399,39 @@ impl Scope {
   the scope work lands, callers use `Scope::trusted_local` (that is the stub).
 - "Not found" and "not visible to you" return the same error.
 
+#### Session contract for the server (as built on `rust-engine/mu-access`)
+
+The hello handler (lane L3) opens one session per authenticated connection and runs every call of that connection
+through it. TypeScript entry: `openPrincipalSession(store, bearer)` in `src/core/rust-engine/principal-session.ts`;
+store side: `Store::authenticate_bearer`, `Scope::from_principal` and `Scope::revalidate` in
+`rust/crates/gbrain-store/src/scope.rs`; napi: `mintScope`, `checkScope`, `scopeGrant`, `releaseScope`
+(`rust/crates/gbrain-napi/src/families/access_scope.rs`).
+
+1. **Hello.** Pass the hello's `auth.token` to `openPrincipalSession(store, token)`. The store hashes it and looks it up
+   in its own `access_tokens` records; nothing else the client sent reaches the session. The session exists only on a
+   store in multi-user mode (I-0.v2); with the mode off it refuses.
+2. **Owner gate (fail closed).** A session opens only for a live token bound to the enabled member named by config
+   `access.owner_member`. Every other credential (unknown, revoked, empty, unbound, another member's, or any token on a
+   brain with no owner member) refuses with one `permission_denied` and one message, so the refusal does not say which
+   case it hit. The gate stays until both conditions under M2 hold (the design owner's ruling A1, 2026-11-25).
+3. **Handle.** The session holds a store-minted handle (a decimal string). There is no call that builds a scope from
+   parts. A handle is tied to the store that minted it: after a close or a reopen every older handle refuses. One
+   `Brain` handle keeps at most 4096 sessions; a mint past that refuses.
+4. **Every call.** Call `session.admit(member)` before the member runs. It has the store re-read the token (still live,
+   same grant revision, same member), the member (still enabled) and `access.owner_member` (unchanged); any change
+   refuses this call and kills the session, so a revoke or narrowing committed between two calls takes effect on the
+   next one. It also refuses a write member (anything not in `OWNER_IPC_REMOTE_READS` or the local-only reads, unknown
+   members included) when the grant has no `write` scope.
+5. **Grant.** Build the call's `AuthInfo` from `session.grant` (the store-verified token row read through
+   `grantFromTokenRow`, the model the HTTP transport uses), never from the client's frame. The operation layer's scope,
+   source and operation checks then apply as they do over HTTP.
+6. **Remote flag.** The principal is a remote caller. Pass `principalRemote: true` to `ownerRemoteRefusal` (groundwork K,
+   `src/core/rust-engine/owner-ipc/remote-check.ts`); a frame that marks itself local on such a connection refuses.
+7. **Close.** Call `session.release()` when the connection closes.
+
+What the session does not do yet: derive the read policy from the principal for non-owner keys (the access
+self-check proves the derivation first), and carry a session across a reconnect (a reconnect opens a new session).
+
 ### I-7. Wire protocol v3 (grown from owner socket v2, `src/core/rust-engine/owner-ipc/protocol.ts`)
 
 - Hello: `{ t: 'hello', v: 3, caps: string[], auth?: { scheme: 'bearer', token: string } }`. A v2 peer keeps v2.

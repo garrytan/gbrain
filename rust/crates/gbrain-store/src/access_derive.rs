@@ -1601,6 +1601,22 @@ mod tests {
         assert_eq!(d, Derived::Value(json!({ "honorAliases": false, "entityPrivacy": false, "ownerOnly": "closed", "provenanceOnly": true })));
     }
 
+    /// `labelledOnlySql`: `if (!access.lineage || access.owner) return named` — an owner read never
+    /// takes the lineage branch of the labelled-only conjunct. At the outcome level this is not
+    /// observable today (every record that reaches the conjunct is a labelled-only record, and no
+    /// reference record the helpers compare against is one, so both forms refuse alike); this pins
+    /// the key itself so the store renders what TypeScript renders the day a reference can be one.
+    #[test]
+    fn the_labelled_only_lineage_branch_is_never_an_owner_read() {
+        let rec = |owner: bool, lineage: bool| -> CallerRecord {
+            serde_json::from_value(json!({ "identity": ["member:alice-example"], "labelledOnly": true, "owner": owner, "lineage": lineage })).unwrap()
+        };
+        assert!(labelled(&rec(false, true)).lineage, "a member's lineage read takes the branch");
+        assert!(!labelled(&rec(true, true)).lineage, "an owner's lineage read does not");
+        assert!(!labelled(&rec(false, false)).lineage);
+        assert!(!labelled(&rec(true, false)).lineage);
+    }
+
     #[test]
     fn an_unknown_mode_or_field_is_refused_as_invalid() {
         assert!(derive_json(&ctx(None, json!({ "mode": "nope" }))).is_err());
