@@ -20,6 +20,7 @@ import { join, resolve } from 'node:path';
 import { runCli } from './helpers/cli-spawn.ts';
 import { codingPersona } from './helpers/setup-history-fixtures.ts';
 import { historyAnswer, historyFor, parseHistoryFlags } from '../src/commands/setup-history.ts';
+import { __testing } from '../src/commands/setup.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const CLI = resolve(import.meta.dir, '..', 'src', 'cli.ts');
@@ -158,6 +159,26 @@ describe('gbrain setup offers the history import on a new install', () => {
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toContain("--history-dir '" + textSessions + "'");
   }, 600_000);
+
+  test('the printed commands carry a pinned --source and --no-stdio-member, so re-running one keeps the same wiring', () => {
+    const f = __testing.parseFlags(['claude-code', '--source', 'work-example', '--no-stdio-member', '--no-hooks']);
+    if (typeof f === 'string') throw new Error(f);
+    const choices = __testing.setupChoices(f);
+    expect(choices.slice(choices.indexOf('--source'), choices.indexOf('--source') + 2)).toEqual(['--source', 'work-example']);
+    expect(choices).toContain('--no-stdio-member');
+    const plain = __testing.parseFlags(['codex']);
+    if (typeof plain === 'string') throw new Error(plain);
+    expect(__testing.setupChoices(plain)).toEqual([]);
+  });
+
+  test('the deferred command printed while a server holds the brain keeps --history-dir and --no-extract', async () => {
+    const dir = join(tmpdir(), 'agent sessions');
+    for (const flags of [{ history: 'latest' as const, historyDir: dir, noExtract: true }, { historyDecision: 'dec-example', historyDir: dir, noExtract: true }]) {
+      const o = await historyFor({ harness: 'codex', launcher: '/bin/false', flags, brainCreate: true, json: true, liveServe: true, setupArgv: ['gbrain', 'setup', 'codex'], choices: ['--no-hooks'] });
+      expect(o).toMatchObject({ status: 'deferred', reason: 'live_serve' });
+      expect(o!.lines[0]).toContain("--history-dir '" + dir + "' --no-extract --no-hooks");
+    }
+  });
 
   test('every setup-import child is pinned to the host brain setup created, never to a mounted project\'s brain', async () => {
     const b = box(false);

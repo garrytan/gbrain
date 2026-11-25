@@ -25,7 +25,7 @@ import { addMember } from '../src/core/access/members.ts';
 import { setOwner } from '../src/core/access/owner.ts';
 import { withRefreshingLock } from '../src/core/db-lock.ts';
 import { redactSession } from '../src/core/transcripts/render.ts';
-import { ARCHIVE_SOURCE_KEY, ARCHIVE_TIMEZONE_KEY, setArchiveEnabled } from '../src/core/transcripts/archive.ts';
+import { ARCHIVE_SOURCE_KEY, ARCHIVE_TIMEZONE_KEY, adoptLegacyArchive, setArchiveEnabled } from '../src/core/transcripts/archive.ts';
 import {
   HISTORY_BOUNDS, INSTALL_RECEIPT_KEY, declineHistory, decisionTopic, historyCard, offerHistoryDecision, previewHistory, readInstallReceipt,
   recordInstallReceipt, renderHistoryCard, runSetupHistory,
@@ -367,6 +367,23 @@ if (pgliteOnly) describe('setup history import: bounds, holds and the lock (pgli
       } finally { await close(); }
     }
   }, 180_000);
+
+  test('a newest session the old archive already covers counts as imported, not nothing_found, so setup does not offer it again', async () => {
+    const { engine, close } = await brain('pglite');
+    try {
+      await inHome(() => recordInstallReceipt(engine, { harness: 'claude-code', createdBySetup: true, now: NOW }));
+      const dir = tmp('setup-history-legacy-');
+      writeClaudeSession(join(dir, 'claude-code'), { sessionId: 'sess-legacy-newest', project: 'acme-example-web', turns: [['user', daysAgo(NOW, 1, 9), 'Notes the old archive already kept.']] });
+      const legacy = tmp('setup-history-legacy-folder-');
+      writeFileSync(join(legacy, daysAgo(NOW, 1).slice(0, 10) + '.md'), '# chats of the day\n');
+      await setArchiveEnabled(engine, true);
+      await adoptLegacyArchive(engine, { dir: legacy, apply: true });
+      const result = await inHome(() => runSetupHistory(engine, { harness: 'claude-code', stage: 'latest', dir, deadlineAtMs: soon(), now: NOW }));
+      expect({ status: result.status, imported: result.sessions_imported, days: result.days_written }).toEqual({ status: 'imported', imported: 1, days: 0 });
+      expect((await readInstallReceipt(engine))!.stages.latest?.status).toBe('imported');
+      expect((await inHome(() => previewHistory(engine, { stage: 'latest', dir, now: NOW }))).answered).toContain('latest');
+    } finally { await close(); }
+  }, 120_000);
 
   test('an expired or replaced range decision imports nothing', async () => {
     const { engine, close, dir } = await freshInstall('pglite');

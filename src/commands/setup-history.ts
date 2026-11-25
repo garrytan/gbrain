@@ -102,7 +102,8 @@ export async function historyFor(ctx: { harness: string; launcher: string; flags
   const o: HistoryOutcome = { version: 1, status: 'skipped', stages: [], sessions_found: null, sessions_imported: 0, no_history: false, decision: null, card: null, exit: 0, lines: [] };
   if (flags.history === 'none') return { ...o, reason: 'history_none', lines: ['History import: skipped (--history none).'] };
   if (ctx.liveServe) {
-    const resume = [...ctx.setupArgv, ...(flags.historyDecision ? ['--history-decision', flags.historyDecision] : ['--history', String(flags.history ?? 'latest')]), ...choices];
+    const resume = [...ctx.setupArgv, ...(flags.historyDecision ? ['--history-decision', flags.historyDecision] : ['--history', String(flags.history ?? 'latest')]),
+      ...(flags.historyDir ? ['--history-dir', flags.historyDir] : []), ...(flags.noExtract ? ['--no-extract'] : []), ...choices];
     return { ...o, status: 'deferred', reason: 'live_serve', lines: ['History import: deferred, because a running gbrain server holds this brain. Once it stops, run ' + shellQuote(resume)] };
   }
   let deadline = Date.now() + (ctx.budgetMs ?? HISTORY_BUDGET_MS);

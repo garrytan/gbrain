@@ -681,6 +681,8 @@ const setupChoices = (f: SetupFlags): string[] => [
   ...(f.skillResolver === 'on' ? ['--skill-loading', 'resolve'] : f.skillLoading ? ['--skill-loading', f.skillLoading] : []),
   ...(f.workspace ? ['--workspace', f.workspace] : []),
   ...(f.gbrainBin ? ['--gbrain-bin', f.gbrainBin] : []),
+  ...(f.source ? ['--source', f.source] : []),
+  ...(f.noStdioMember ? ['--no-stdio-member'] : []),
 ];
 
 async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainConfig | null, brainHome: string, out: Out): Promise<number> {
@@ -1365,3 +1367,5 @@ async function finish(out: Out, doc: {
 
 /** An index the user asked for by flag that could not be written fails the run (the rest of the install still finished). */
 const skillsFailed = (o: SkillsBlockOutcome | null): boolean => skillsOutcomeFailed(o);
+
+export const __testing = { parseFlags, setupChoices };
