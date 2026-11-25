@@ -11,8 +11,10 @@
  *   not_found  no allowed line covers it. That means "no allowed claim covers this", never "this is false".
  *
  * A sentence with several numbers is checked number by number, each with the words of its own clause: supported only
- * when every number is, conflicts when any number is contradicted, otherwise not_found. A percent never matches a
- * plain number, and digits inside a word (Q3) are not numbers.
+ * when every number is, conflicts when any number is contradicted, otherwise not_found. A line that backs one of the
+ * sentence's other numbers never contradicts this one, and its words are not this number's words. A bare year (1900 to
+ * 2099, no unit) beside other numbers is not checked. A percent never matches a plain number, digits inside a word
+ * (Q3) are not numbers, and a comma between digits ($2,100,000) is a thousands separator, not a clause break.
  */
 
 export interface AllowedLine { slug: string; source_id: string; line: number; date: string; text: string }
@@ -23,7 +25,7 @@ export interface ClaimCheck {
   conflicting?: AllowedLine[];
 }
 
-interface Num { value: number; unit: string }
+interface Num { value: number; unit: string; year: boolean }
 
 const ISO_DATE = /\b\d{4}-\d{2}-\d{2}\b/g;
 const NUMBER = /([$€£])?\s?(?<![A-Za-z0-9_])(\d[\d,]*(?:\.\d+)?)\s?(%|percent\b|k\b|m\b|bn\b|b\b|thousand\b|million\b|billion\b)?/gi;
@@ -40,7 +42,7 @@ function numbers(text: string): Num[] {
     if (!Number.isFinite(raw)) continue;
     const suffix = m[3]?.toLowerCase();
     const unit = m[1] ? 'currency' : suffix === '%' || suffix === 'percent' ? 'percent' : '';
-    out.push({ value: raw * (suffix ? SCALE[suffix] ?? 1 : 1), unit });
+    out.push({ value: raw * (suffix ? SCALE[suffix] ?? 1 : 1), unit, year: !m[1] && !suffix && /^(?:19|20)\d\d$/.test(m[2]!) });
   }
   return out;
 }
@@ -54,7 +56,7 @@ function words(text: string): Set<string> {
   return out;
 }
 
-const sameNumber = (a: Num, b: Num) => a.value === b.value
+const sameNumber = (a: Num, b: Num) => Math.abs(a.value - b.value) <= 1e-9 * Math.max(Math.abs(a.value), Math.abs(b.value))
   && (a.unit === b.unit || ((a.unit === '' || b.unit === '') && a.unit !== 'percent' && b.unit !== 'percent'));
 
 /** The sentences of a draft that hold a number, trimmed. */
@@ -75,9 +77,17 @@ export function allowedLines(page: { slug: string; source_id: string; body: stri
 }
 
 export function checkClaim(claim: string, lines: readonly AllowedLine[]): ClaimCheck {
-  const units = numberClauses(claim).flatMap(part => numbers(part).map(n => ({ part, n })));
-  if (units.length < 2) return checkPart(claim, claim, numbers(claim), lines);
-  const results = units.map(u => checkPart(claim, u.part, [u.n], lines));
+  const all = numbers(claim);
+  const counted = all.every(n => n.year) ? () => true : (n: Num) => !n.year;
+  const units = numberClauses(claim, counted).flatMap(part => numbers(part).filter(counted).map(n => ({ part, n })));
+  if (units.length < 2) return checkPart(claim, claim, all.filter(counted), lines);
+  const facts = lines.map(l => { const body = lineBody(l); return { l, words: words(body), nums: numbers(body) }; });
+  const results = units.map(u => {
+    const backsSibling = new Set(facts.filter(f => !f.nums.some(n => sameNumber(n, u.n)) && units.some(s => s !== u
+      && f.nums.some(n => sameNumber(n, s.n)) && [...words(s.part)].some(w => f.words.has(w)))).map(f => f.l));
+    const taken = new Set([...backsSibling].flatMap(l => [...words(lineBody(l))]));
+    return checkPart(claim, u.part, [u.n], lines.filter(l => !backsSibling.has(l)), taken);
+  });
   const conflicting = results.filter(r => r.status === 'conflicts');
   if (conflicting.length) {
     return { claim, status: 'conflicts', conflicting: conflicting.flatMap(r => r.conflicting ?? []).slice(0, MAX_CONFLICTS) };
@@ -89,23 +99,25 @@ export function checkClaim(claim: string, lines: readonly AllowedLine[]): ClaimC
  * A sentence with two or more numbers, split so each number is checked with the words of its own clause; a clause with
  * no number joins the next one. One number: the whole sentence.
  */
-function numberClauses(claim: string): string[] {
-  if (numbers(claim).length < 2) return [claim];
+function numberClauses(claim: string, counted: (n: Num) => boolean): string[] {
+  if (numbers(claim).filter(counted).length < 2) return [claim];
   const out: string[] = [];
   let pending = '';
-  for (const clause of claim.split(/[,;]\s*|\s+(?:and|but|while|whereas)\s+/i)) {
+  for (const clause of claim.split(/(?<!\d),\s*|,(?!\d)\s*|;\s*|\s+(?:and|but|while|whereas)\s+/i)) {
     pending = pending ? `${pending} ${clause}` : clause;
-    if (numbers(clause).length) { out.push(pending); pending = ''; }
+    if (numbers(clause).some(counted)) { out.push(pending); pending = ''; }
   }
   if (pending && out.length) out[out.length - 1] += ` ${pending}`;
   return out;
 }
 
-function checkPart(claim: string, part: string, claimNums: readonly Num[], lines: readonly AllowedLine[]): ClaimCheck {
-  const claimWords = words(part);
+const lineBody = (l: AllowedLine) => l.text.replace(/\bsource:.*$/i, '');
+
+function checkPart(claim: string, part: string, claimNums: readonly Num[], lines: readonly AllowedLine[], taken: ReadonlySet<string> = new Set()): ClaimCheck {
+  const claimWords = new Set([...words(part)].filter(w => !taken.has(w)));
   const need = Math.min(2, claimWords.size);
   const scored = lines.map(l => {
-    const body = l.text.replace(/\bsource:.*$/i, '');
+    const body = lineBody(l);
     const lineWords = words(body);
     const overlap = [...claimWords].filter(w => lineWords.has(w)).length;
     const lineNums = numbers(body);

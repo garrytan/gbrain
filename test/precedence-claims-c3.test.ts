@@ -9,6 +9,9 @@
  * Keyless PGLite brain, no repository, no model calls. All names are placeholders.
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operations } from '../src/core/operations.ts';
 import { projectRows } from '../src/core/search/lean-rows.ts';
@@ -37,7 +40,7 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-  for (const [id, config] of [['ledger-src', { precedence: 'record' }], ['meet', { kind: 'meetings' }], ['conversations', {}], ['guest-src', { guest: true }]] as const) {
+  for (const [id, config] of [['ledger-src', { precedence: 'record' }], ['meet', { kind: 'meetings' }], ['conversations', {}], ['guest-src', { guest: true }], ['ext-src', { precedence: 'external' }]] as const) {
     await engine.executeRaw('INSERT INTO sources (id, name, config) VALUES ($1, $1, $2::text::jsonb) ON CONFLICT (id) DO NOTHING', [id, JSON.stringify(config)]);
   }
   await seedPage(engine, 'notes/plain', `A plain note about the ${TERM} project.`);
@@ -52,6 +55,8 @@ beforeAll(async () => {
   await seedPage(engine, 'notes/facts-draft', `Unapproved ${TERM} facts.\n\n- 2026-03-01: 40 employees.`, { type: 'facts' });
   await seedPage(engine, 'me/private-facts', `Private ${TERM} facts.\n\n- 2026-04-01: 7 board seats.`, { type: 'facts', frontmatter: { claims: 'allowed', visibility: 'private' } });
   await seedIn('ledger-src', 'ledgers/q1', `The ${TERM} ledger for Q1.`);
+  await seedIn('ledger-src', 'ledgers/facts', `Ledger ${TERM} facts.\n\n- 2026-01-01: 8 vaults.`, { claims: 'allowed' }, 'facts');
+  await seedIn('ext-src', 'ext/facts', `Outside ${TERM} facts.\n\n- 2026-01-01: 11 kiosks.`, { claims: 'allowed' }, 'facts');
   await seedIn('guest-src', 'guest/facts', `Guest ${TERM} facts.\n\n- 2026-01-01: 5 offices.`, { claims: 'allowed' }, 'facts');
   await seedPage(engine, 'held/facts', `Held ${TERM} facts.\n\n- 2026-01-01: 3 data centers.`, { type: 'facts', frontmatter: { claims: 'allowed' } });
   await engine.executeRaw(`UPDATE pages SET frontmatter = frontmatter || jsonb_build_object('${QUARANTINE_KEY}', jsonb_build_object('reason', 'instruction_like')) WHERE slug = 'held/facts'`);
@@ -116,12 +121,16 @@ describe('precedence labels', () => {
 
   test('gbrain sources set-precedence sets and clears the class', async () => {
     const log = spyOn(console, 'log').mockImplementation(() => {});
+    const patch = spyOn(engine, 'updateSourceConfig');
     try {
       await runSetPrecedence(engine, ['meet', 'doc']);
+      expect(patch).toHaveBeenCalledWith('meet', { precedence: 'doc' });
       expect((await getPage('meetings/standup', 'meet')).precedence).toBe('doc');
       await runSetPrecedence(engine, ['meet', '--clear']);
       expect((await getPage('meetings/standup', 'meet')).precedence).toBe('chat');
-    } finally { log.mockRestore(); }
+      const [row] = await engine.executeRaw<{ config: Record<string, unknown> }>(`SELECT config FROM sources WHERE id = 'meet'`);
+      expect(row!.config).toEqual({ kind: 'meetings' });
+    } finally { log.mockRestore(); patch.mockRestore(); }
   });
 });
 
@@ -207,3 +216,64 @@ describe('setup layout', () => {
     expect(renderLayoutBlock('claude-code')).toContain('check_claims (gbrain claims check)');
   });
 });
+
+describe('check_claims matcher follow-ups (C3.1)', () => {
+  const linesOf = (body: string) => allowedLines({ slug: 'company/facts', source_id: 'default', body });
+  const check = async (text: string) =>
+    await op('check_claims').handler(ctxFor(false), { text, source_id: '__all__' }) as { claims: Array<Record<string, any>>; skipped?: Array<Record<string, string>>; pages_truncated?: boolean };
+
+  test('a comma between digits is a thousands separator, not a clause break', () => {
+    const lines = linesOf('- 2026-01-01: ARR $2,100,000. Source: invoices.\n- 2026-01-01: 12 paying customers.');
+    expect(checkClaim('ARR is $2,100,000 and we have 12 paying customers.', lines).status).toBe('supported');
+    expect(checkClaim('We have 12 paying customers, and ARR is $2,100,000.', lines).status).toBe('supported');
+    expect(checkClaim('We have 12 paying customers, and ARR is $2,400,000.', lines).status).toBe('conflicts');
+  });
+
+  test('a bare year beside other numbers is not checked as a number', () => {
+    const lines = linesOf('- 2026-01-01: 12 paying customers.');
+    expect(checkClaim('In 2025 we had 12 paying customers.', lines).status).toBe('supported');
+    expect(checkClaim('In 2025 we had 14 paying customers.', lines).status).toBe('conflicts');
+  });
+
+  test('a line that backs one number of a sentence never contradicts its other numbers', () => {
+    const lines = linesOf('- 2026-01-01: 12 paying customers.\n- 2026-01-01: 12 employees.');
+    expect(checkClaim('Our 2 cofounders have 12 paying customers.', lines).status).toBe('not_found');
+    expect(checkClaim('Our 2 cofounders have 12 paying customers.', [...lines, ...linesOf('- 2026-01-01: 2 cofounders.')]).status).toBe('supported');
+    expect(checkClaim('Our 3 cofounders have 12 paying customers.', [...lines, ...linesOf('- 2026-01-01: 2 cofounders.')]).status).toBe('conflicts');
+    expect(checkClaim('We have 12 paying customers and 3 employees.', lines).status).toBe('conflicts');
+  });
+
+  test('a scaled decimal equals the same amount written out', () => {
+    const lines = linesOf('- 2026-01-01: ARR $2,010,000. Source: invoices.');
+    expect(checkClaim('ARR is $2.01M.', lines)).toMatchObject({ status: 'supported', cited: { line: 1 } });
+  });
+
+  test('a record source supports a claim, a source labeled external never does, and the result names each skipped page and why', async () => {
+    const out = await check('We hold 8 vaults. We run 11 kiosks.');
+    expect(out.claims.map(c => c.status)).toEqual(['supported', 'not_found']);
+    expect(out.claims[0]!.cited).toMatchObject({ slug: 'ledgers/facts', source_id: 'ledger-src' });
+    const skipped = new Map((out.skipped ?? []).map(s => [s.slug, s.reason]));
+    expect(Object.fromEntries(['ext/facts', 'guest/facts', 'agent/facts', 'held/facts', 'notes/facts-draft'].map(s => [s, skipped.get(s)]))).toEqual({
+      'ext/facts': 'external', 'guest/facts': 'external', 'agent/facts': 'written_by_agent', 'held/facts': 'quarantined', 'notes/facts-draft': undefined,
+    });
+  });
+
+  test('gbrain claims check --file reads the draft from a file and names the skipped pages', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'claims-file-'));
+    const path = join(dir, 'draft.md');
+    writeFileSync(path, 'We have 20 paying customers.\n');
+    const lines: string[] = [];
+    const log = spyOn(console, 'log').mockImplementation((...a: unknown[]) => { lines.push(a.join(' ')); });
+    try { await runClaims(engine, ['check', '--file', path, '--source', '__all__']); } finally { log.mockRestore(); rmSync(dir, { recursive: true, force: true }); }
+    expect(lines[0]).toBe('supported  "We have 20 paying customers."  company/facts:3 (2026-06-01)');
+    expect(lines.find(l => l.startsWith('Skipped'))).toContain('agent/facts (written by an agent)');
+  });
+
+  test('the 200-page cap counts only allowed-claims pages, so newer facts pages without claims: allowed never crowd them out', async () => {
+    for (let i = 0; i < 201; i++) await seedPage(engine, `notes/facts-${String(i).padStart(3, '0')}`, `Draft facts ${i}.\n\n- 2026-07-01: ${i} widgets.`, { type: 'facts' });
+    const out = await check('We have 20 paying customers.');
+    expect(out.claims[0]!.status).toBe('supported');
+    expect(out.pages_truncated).toBeUndefined();
+  }, 120_000);
+});
+
