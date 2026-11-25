@@ -10,7 +10,9 @@ import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { getMountsPath, loadMounts } from '../../core/brain-registry.ts';
 import { configPath, gbrainPath, loadConfig } from '../../core/config.ts';
-import { opError, type OperationError } from '../../core/ops/contract.ts';
+import { opError, OperationError } from '../../core/ops/contract.ts';
+import { installPgliteCreateGuard } from '../../core/pglite-create-guard.ts';
+import { pgliteLockDirFor } from '../../core/pglite-lock.ts';
 import { probeStatus, statusFix, type StatusModeState } from '../../mcp/status-mode.ts';
 
 /**
@@ -33,27 +35,61 @@ function localFolder(engine: string | undefined, databasePath: string | undefine
 
 interface MissingState extends Pick<StatusModeState, 'config_path' | 'brain_path'> { mount?: string }
 
-/** The selected brain's PGLite folder when a connect would create it; null for everything else. */
-function missingState(brainId: string): MissingState | null {
+/** The selected brain's PGLite folder, whether or not it is there; null when a connect opens no local folder or the probe leaves the case to doctor's own diagnostics. */
+function selectedDatastore(brainId: string): MissingState | null {
   if (brainId !== 'host') {
     // The mount doctor really opens: BrainRegistry.getBrain resolves an enabled mount by its exact id (an alias never counts).
     let mount;
     // silent-read-ok: a mounts.json that does not load is not a missing brain; the registry loads the same file and fails with its own error before any folder is opened, so nothing can be created
     try { mount = loadMounts().find((m) => m.id === brainId && m.enabled !== false); } catch { return null; }
     const dir = mount && localFolder(mount.engine, mount.database_path);
-    return mount && dir && connectWouldCreate(dir) ? { config_path: getMountsPath(), brain_path: dir, mount: mount.id } : null;
+    return mount && dir ? { config_path: getMountsPath(), brain_path: dir, mount: mount.id } : null;
   }
   const state = probeStatus();
-  if (state && state.reason !== 'missing_brain') return null; // lock held, graduated, repair failed, no config: doctor's own diagnostics own those
+  // Graduated, repair failed, no config: doctor's own diagnostics own those, and none of them connects. A lock reported held
+  // still gets the folder test: an unreadable leftover lock reads as held while no process holds it, and the connect would
+  // take that lock and build an empty brain in a folder with no PG_VERSION.
+  if (state && state.reason !== 'missing_brain' && state.reason !== 'lock_held') return null;
   const cfg = loadConfig();
   const dir = cfg && localFolder(cfg.engine, cfg.database_path, gbrainPath('brain.pglite'));
-  return dir && connectWouldCreate(dir) ? { config_path: configPath(), brain_path: dir } : null;
+  return dir ? { config_path: configPath(), brain_path: dir } : null;
+}
+
+/** The selected brain's PGLite folder when a connect would create it; null for everything else. */
+function missingState(brainId: string): MissingState | null {
+  const found = selectedDatastore(brainId);
+  return found?.brain_path && connectWouldCreate(found.brain_path) ? found : null;
 }
 
 /** The refusal to render, or null when the selected brain is not configured-but-missing. */
 export function missingBrainRefusal(brainId = 'host'): OperationError | null {
   const found = missingState(brainId);
-  if (!found) return null;
+  return found ? refusalFor(found) : null;
+}
+
+/** True for the refusal this module builds (`brain_missing`), however it reached the caller. */
+export function isMissingBrainRefusal(e: unknown): e is OperationError {
+  return e instanceof OperationError && e.code === 'brain_missing';
+}
+
+/**
+ * Doctor's second look, for as long as the returned function has not been called. Connecting waits for the datastore's
+ * kernel lock, and the folder can be moved or unmounted during that wait; `acquireLock` runs this once it holds the
+ * lock and before it creates anything, so a missing datastore is refused (the lock is released on the throw). The
+ * datastore is the one this run is about to open, read once now: a `database_path` edited, or a symlink that stops
+ * resolving, while doctor waits does not change which lock is ours. Locks on any other folder are not this guard's to judge.
+ */
+export function guardMissingBrainAtLock(brainId = 'host'): () => void {
+  const target = selectedDatastore(brainId);
+  if (!target?.brain_path) return () => {};
+  // pgliteLockDirFor names a datastore the way acquireLock does (canonical path + the lock folder), so the two spellings compare equal.
+  const ours = pgliteLockDirFor(target.brain_path);
+  return installPgliteCreateGuard((lockedDir) => {
+    if (join(lockedDir, '.gbrain-lock') === ours && connectWouldCreate(lockedDir)) throw refusalFor(target);
+  });
+}
+
+function refusalFor(found: MissingState): OperationError {
   const state = { reason: 'missing_brain' as const, config_path: found.config_path, brain_path: found.brain_path, checked_at: Date.now() };
   const where = state.brain_path ?? 'its configured path';
   const { fix } = statusFix({ ...state, recovered: false }, 'http');
@@ -76,13 +112,38 @@ export function missingBrainRefusal(brainId = 'host'): OperationError | null {
     });
 }
 
-/** Render the refusal like every doctor structured error (`--json` envelope or text) and set the exit verdict. */
+/** Render the refusal like every doctor structured error (`--json` envelope or text) and set the exit verdict. Under `--alert` it is the alert contract instead. */
 export async function refuseMissingBrain(args: string[], err: OperationError): Promise<void> {
   const { renderCliError } = await import('../../core/agent-output.ts');
   const { setCliExitVerdict, writeStdoutFinal } = await import('../../core/cli-force-exit.ts');
+  if (args.includes('--alert')) { await alertMissingBrain(err, args.includes('--json')); return; }
   const out = renderCliError(err, { json: args.includes('--json'), command: 'doctor', tty: !!process.stderr.isTTY });
   // Under the --json guard only writeStdoutFinal reaches fd 1; process.stdout.write is rerouted to stderr.
   if (out.stdout) await writeStdoutFinal(out.stdout);
   if (out.stderr) process.stderr.write(out.stderr);
   setCliExitVerdict(out.exitCode);
+}
+
+/**
+ * `doctor --alert` on a missing brain: the datastore cannot be connected to, so the page-class `connection` check pages (act, exit 17),
+ * never the bare error exit 1 a cron cannot tell from a crash. The item's code is brain_missing, its fix the refusal's own (ask the user).
+ * The brain_missing envelope a caller already reads stays at the top of the `--json` document, with `alert` beside it.
+ */
+async function alertMissingBrain(err: OperationError, json: boolean): Promise<void> {
+  const { renderCliError } = await import('../../core/agent-output.ts');
+  const { ALERT_DOCS, alertExitCode, recordAlertStreak } = await import('./alert.ts');
+  const { fixLine } = await import('./check-fix.ts');
+  const { setCliExitVerdict, writeStdoutFinal } = await import('../../core/cli-force-exit.ts');
+  const envelope = JSON.parse(renderCliError(err, { json: true, command: 'doctor', tty: false }).stdout!) as Record<string, any>;
+  const item = { code: 'brain_missing', check: 'connection', status: 'fail' as const, message: envelope.message as string, docs: envelope.docs as string, fix: envelope.fix };
+  const alert = recordAlertStreak({ level: 'act', items: [item], unknown: [], docs: ALERT_DOCS });
+  if (json) {
+    await writeStdoutFinal(JSON.stringify({ ...envelope, alert }));
+  } else {
+    console.log('Alert: act');
+    console.log(`  [ACT] connection (brain_missing): ${item.message}`);
+    const fix = fixLine(item.fix);
+    if (fix) console.log(`    Fix: ${fix}`);
+  }
+  setCliExitVerdict(alertExitCode(alert.level));
 }

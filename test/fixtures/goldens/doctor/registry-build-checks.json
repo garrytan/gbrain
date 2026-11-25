@@ -1051,6 +1051,10 @@
       },
       {
         "category": "brain",
+        "name": "learning_note"
+      },
+      {
+        "category": "brain",
         "name": "memory_proposals_pending"
       },
       {
@@ -1203,6 +1207,10 @@
       },
       {
         "category": "brain",
+        "name": "legacy_slug_spellings"
+      },
+      {
+        "category": "brain",
         "name": "purge_parked_pages"
       },
       {
@@ -1248,6 +1256,10 @@
       {
         "category": "brain",
         "name": "entity_duplicates"
+      },
+      {
+        "category": "brain",
+        "name": "dedupe_auto_links"
       },
       {
         "category": "brain",

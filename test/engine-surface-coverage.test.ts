@@ -167,7 +167,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'listDecideResolvedModels', 'listDecideSpendBySlot', 'pruneDecideReceipts', 'readDecideState',
   'setDecideCalibrationRetired', 'storeDecideQualification', 'upsertDecideState',
   // Open loops (src/core/engine-sql/open-loops.ts; covered by test/engine-parity/open-loops.test.ts)
-  'closeOpenLoop', 'listOpenLoops', 'readEntityOpenLoops', 'upsertOpenLoop',
+  'closeOpenLoop', 'countOpenLoopsByCounterpartyEmail', 'listOpenLoops', 'readEntityOpenLoops', 'upsertOpenLoop',
   // Timeline reads (src/core/engine-sql/timeline-reads.ts; covered by test/engine-parity/timeline-reads.test.ts)
   'countSegmentedTimelinePages', 'countTimelineCommentMarkupRows', 'deleteTimelineRows', 'listStoredTimelineRowsOrdered',
   'listTimelineOrphanPages', 'readMaxTimelineEntryId', 'sampleEffectiveDateSources', 'sampleEffectiveDates',
@@ -178,6 +178,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'listOwnerProposalRows', 'listSharedSkillPackRoots', 'listSynopsisSourceIds', 'notifierCoverageRecorded',
   'purgeMemoryProposals', 'readAdmissionSource', 'readHealthMemoClock', 'readMemoryProposal', 'readOpCheckpointKeys',
   'readPendingProposalSummary', 'readSourceState', 'sharedSkillPackTablePresent',
+  // Held members the member layer adds before any caller moves (engine-sql/trust-tier-reads.ts, engine-sql/op-checkpoint.ts)
+  'listPendingCoreEditNotices', 'purgeStaleAppliedCaptures',
 ];
 
 /**
@@ -189,6 +191,9 @@ const INTERFACE_METHODS: readonly string[] = [
  */
 const ENGINE_INTERNAL_HELPERS: readonly string[] = [
   'db',
+  // The member layer's private executors: the raw read the CLI reads run through, and the unscoped CLI-reads executor.
+  'rawRead',
+  'cliReads',
   'connectForRestore',
   'applyForwardReferenceBootstrap',
   'getBulkRetryOpts',

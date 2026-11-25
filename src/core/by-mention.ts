@@ -94,6 +94,11 @@ export interface GazetteerEntry {
   /** Spelling being matched (the alias, not the display title, for aliases). */
   matchText?: string;
   /**
+   * Set only on the mention pass's scan entries for retired names, whose saved form lost the written
+   * spacing: a Hangul name matches however its words are spaced.
+   */
+  anySpacing?: true;
+  /**
    * Set on a name two or three identity siblings claim (mentions/siblings.ts):
    * a match links to every sibling with the same tokens instead of one.
    */
@@ -825,15 +830,16 @@ const HANGUL_NAME_SUFFIX_RE = new RegExp(
  * end at a non-Hangul character or an attached name suffix (above).
  */
 function hasHangulMatchBoundary(
-  text: string, tokens: ScannedToken[], start: number, entry: GazetteerEntry,
+  text: string, tokens: ScannedToken[], start: number, entry: GazetteerEntry, scripts: EntryScripts,
 ): boolean {
-  if (!entry.tokens.every(t => /^[가-힣]+$/u.test(t))) return true;
+  if (!(scripts(entry) & ALL_HANGUL)) return true;
   const first = tokens[start]!;
   if (first.offset > 0 && /[가-힣]/u.test(text[first.offset - 1]!)) return false;
   const last = tokens[start + entry.tokens.length - 1]!;
   const end = last.offset + last.length;
-  const actual = text.slice(first.offset, end).replace(/\s+/gu, ' ');
-  const expected = (entry.matchText ?? entry.tokens.join('')).trim().replace(/\s+/gu, ' ');
+  const space = entry.anySpacing ? '' : ' ';
+  const actual = text.slice(first.offset, end).replace(/\s+/gu, space);
+  const expected = (entry.matchText ?? entry.tokens.join('')).trim().replace(/\s+/gu, space);
   return actual === expected && HANGUL_NAME_SUFFIX_RE.test(text.slice(end, end + 12));
 }
 
@@ -849,10 +855,31 @@ const KATAKANA_RUN_CHARS = '\\p{Script=Katakana}ー\\u3099-\\u309c\\uff70\\uff9e
 const KATAKANA_RUN_BEFORE_RE = new RegExp(`[${KATAKANA_RUN_CHARS}]$`, 'u');
 const KATAKANA_RUN_AFTER_RE = new RegExp(`^[${KATAKANA_RUN_CHARS}]`, 'u');
 
+const HANGUL_NAME_TOKEN_RE = /^[가-힣]+$/u;
+const ALL_HANGUL = 1;
+const ALL_KATAKANA = 2;
+/** Whether a name is written only in Hangul (ALL_HANGUL) or only in Katakana (ALL_KATAKANA). */
+type EntryScripts = (entry: GazetteerEntry) => number;
+/** The answer depends on the name alone, so one scan works it out once per
+ * name, not at every place in the text where the name could match.
+ */
+function entryScriptCache(): EntryScripts {
+  const seen = new Map<readonly string[], number>();
+  return entry => {
+    let flags = seen.get(entry.tokens);
+    if (flags === undefined) {
+      flags = (entry.tokens.every(t => HANGUL_NAME_TOKEN_RE.test(t)) ? ALL_HANGUL : 0)
+        | (entry.tokens.every(t => KATAKANA_NAME_TOKEN_RE.test(t)) ? ALL_KATAKANA : 0);
+      seen.set(entry.tokens, flags);
+    }
+    return flags;
+  };
+}
+
 function hasKatakanaMatchBoundary(
-  text: string, tokens: ScannedToken[], start: number, entry: GazetteerEntry,
+  text: string, tokens: ScannedToken[], start: number, entry: GazetteerEntry, scripts: EntryScripts,
 ): boolean {
-  if (!entry.tokens.every(t => KATAKANA_NAME_TOKEN_RE.test(t))) return true;
+  if (!(scripts(entry) & ALL_KATAKANA)) return true;
   const first = tokens[start]!;
   const last = tokens[start + entry.tokens.length - 1]!;
   const end = last.offset + last.length;
@@ -897,6 +924,7 @@ export function findMentionedEntities(
   const stripped = stripCodeBlocks(text, { onHtmlComment: () => {} });
   const tokens = tokenizeForScan(stripped);
   if (tokens.length === 0) return [];
+  const scripts = entryScriptCache();
   const ignored = new Set((opts.ignoreNames ?? []).map(n => tokenizeTitle(n).join(' ')).filter(Boolean));
   // A case-sensitive entry matches only the original-case body text.
   const caseMatches = (entry: GazetteerEntry, at: number) => !entry.caseTokens || entry.caseTokens.every((t, k) => {
@@ -924,17 +952,10 @@ export function findMentionedEntities(
     let matchedTokens = 0;
     for (const entry of bucket) {
       if (i + entry.tokens.length > tokens.length) continue;
-      if (!hasHangulMatchBoundary(stripped, tokens, i, entry)) continue;
-      if (!hasKatakanaMatchBoundary(stripped, tokens, i, entry)) continue;
-      if (!caseMatches(entry, i)) continue;
-      if (!atMatches(entry, i)) continue;
-      if (entry.tokens.length === 1) {
-        matched = entry;
-        matchedTokens = 1;
-        break;
-      }
-      // Multi-word: validate subsequent tokens.
-      if (i + entry.tokens.length > tokens.length) continue;
+      // Cheapest test first: the name's later tokens must follow. Every check
+      // in this loop is pure, so their order does not change which entry wins,
+      // and a big bucket of names sharing a first word no longer pays the
+      // boundary checks for every name that does not match here.
       let allMatch = true;
       for (let k = 1; k < entry.tokens.length; k++) {
         if (tokens[i + k]!.text !== entry.tokens[k]) {
@@ -942,11 +963,14 @@ export function findMentionedEntities(
           break;
         }
       }
-      if (allMatch) {
-        matched = entry;
-        matchedTokens = entry.tokens.length;
-        break;
-      }
+      if (!allMatch) continue;
+      if (!hasHangulMatchBoundary(stripped, tokens, i, entry, scripts)) continue;
+      if (!hasKatakanaMatchBoundary(stripped, tokens, i, entry, scripts)) continue;
+      if (!caseMatches(entry, i)) continue;
+      if (!atMatches(entry, i)) continue;
+      matched = entry;
+      matchedTokens = entry.tokens.length;
+      break;
     }
 
     if (!matched) {
@@ -962,8 +986,8 @@ export function findMentionedEntities(
         && e.tokens.every((t, k) => t === want.tokens[k])
         && caseMatches(e, i)
         && atMatches(e, i)
-        && hasHangulMatchBoundary(stripped, tokens, i, e)
-        && hasKatakanaMatchBoundary(stripped, tokens, i, e);
+        && hasHangulMatchBoundary(stripped, tokens, i, e, scripts)
+        && hasKatakanaMatchBoundary(stripped, tokens, i, e, scripts);
     if (matched.source_id !== opts.fromSourceId) {
       const want = matched;
       const own = bucket.find(e => e.source_id === opts.fromSourceId && sameName(e, want));

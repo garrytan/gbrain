@@ -22,6 +22,8 @@ export const OWNER_IPC_LOCAL_ONLY_READS: ReadonlySet<string> = new Set([
   'readWithdrawalDiscovery', 'listCoveredSources', 'countSearchVectorRows',
   'readQueueHealthSignals', 'listPrivateQueueHealth', 'listQueueWedgeCounts', 'listStuckActiveJobsByName', 'listWaitingByQueue',
   'readOldestWaitingAge', 'readQueueDivergence', 'readWedgeSignals',
+  // The core-edit notice read (engine-sql/trust-tier-reads.ts): a SELECT only, closed to remote callers like the other trust-tier reads.
+  'listPendingCoreEditNotices',
   // The decide store: SELECTs only (getDecideProposal and getDecideReviewProposal may lock the row, released when
   // the call ends).
   'readDecideState', 'dailyDecideSpend', 'listDecideSpendBySlot', 'listDecideReceiptStats', 'decideSlotUsage',
@@ -33,7 +35,7 @@ export const OWNER_IPC_LOCAL_ONLY_READS: ReadonlySet<string> = new Set([
   // timeline-reads.ts, write-misc.ts): SELECTs only (readSourceState may take a share lock, released when the call ends).
   'countSegmentedTimelinePages', 'countTimelineCommentMarkupRows', 'getWorktreeBinding', 'hasExtractedEvents',
   'hasLabelledOnlyMember', 'listAccessTokens', 'listActiveAccessMembers', 'listAwaitingMemoryProposals',
-  'listMemoryProposalRows', 'listOpenLoops', 'listOwnerProposalRows', 'listSharedSkillPackRoots',
+  'listMemoryProposalRows', 'listOpenLoops', 'countOpenLoopsByCounterpartyEmail', 'listOwnerProposalRows', 'listSharedSkillPackRoots',
   'listStoredTimelineRowsOrdered', 'listSynopsisSourceIds', 'listTimelineOrphanPages', 'notifierCoverageRecorded',
   'readAdmissionSource', 'readEntityOpenLoops', 'readHealthMemoClock', 'readMaxTimelineEntryId',
   'readMemoryProposal', 'readOpCheckpointKeys', 'readPendingProposalSummary', 'readSourceState',
@@ -119,6 +121,8 @@ export const OWNER_IPC_CONFIRMING_READS: Readonly<Record<string, string>> = {
   upsertOpenLoop: 'listOpenLoops for that loop\'s source', closeOpenLoop: 'listOpenLoops for that loop\'s source',
   deleteTimelineRows: 'storedTimelineRowsByPageIds for the pages the call named', attachSourcePath: 'readSourceState for that source',
   expireMemoryProposals: 'listMemoryProposalRows for that source', purgeMemoryProposals: 'listMemoryProposalRows for that source',
+  // The applied-capture purge (engine-sql/op-checkpoint.ts).
+  purgeStaleAppliedCaptures: 'nothing: a purge removes only records past the retention, so running it again removes nothing more',
 };
 
 /**
@@ -130,6 +134,8 @@ export const OWNER_IPC_WHOLE_OP_CONFIRMING_READS: Readonly<Record<string, string
   importFromFile: 'getPage for the slug of that file',
   importImageFile: 'getPage for the slug of that file',
   importManagedFiles: 'getPage for each slug the call named',
+  snapshotStore: 'nothing: a snapshot writes only a new directory, so the brain is as it was; ask snapshotStatus for the operation id',
+  snapshotStatus: 'nothing: it only reads what the owner remembers',
 };
 
 /**

@@ -58,7 +58,7 @@ async function seedLinkInto(toSlug: string, fromSlug: string, context: string) {
   await engine.putPage(fromSlug, {
     type: 'note' as never,
     title: fromSlug,
-    compiled_truth: `Notes referencing ${toSlug}.`,
+    compiled_truth: `Notes referencing ${toSlug}. ${context}`,
     timeline: '',
     frontmatter: {},
   });

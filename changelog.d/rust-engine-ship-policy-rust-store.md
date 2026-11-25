@@ -1,0 +1,7 @@
+**/ship's secrets check no longer stops the Rust store landing on 71 lines that are Rust field names and test fixtures, not keys.**
+
+### Fixed
+- The local pre-landing check read Rust text such as `owner_key: Option<String>,` or `"token": b.token,` as a secret-named assignment with a random-looking value, test strings that hold only a private-key header line as private keys, and fictional 555-01xx numbers and all-ones test UUIDs as phone numbers or a card. It failed the Rust store landing on 49 credential findings (22 more were warnings). The base policy now names those lines with 29 entries, each limited to one file under `rust/crates` and to a pattern anchored at both ends of the flagged text, so a real value on the same line, or any other line in those files, is still flagged. No file glob and no blanket pattern was added.
+- The standalone `rust/concurrency-bench` crate (not part of the addon workspace and with no tests of its own) is declared as needing no test lane, as `scripts/bench` already is, so a change to it no longer stops at "no test lane".
+- One more entry covers a SQL line in the persistence journal's claim statement (`src/core/engine-sql/persistence-journal.ts`, `execution_token=$2::uuid,...`), which the check reads as a secret-named assignment. It is limited to that file and anchored at the value and the line end, so a quoted real key on the same line is still flagged.
+- This changes only what /ship checks before a push; nothing in gbrain runs differently.
