@@ -26,7 +26,7 @@ import { applyRouting, JSON_INPUT_CAP_BYTES, mergeSkillFolders, readBundledSourc
 import { TOKENIZER_ID } from './tokenize.ts';
 import { BLOCK_TOKEN_CAP, BLOCK_TOKENIZER, HARNESSES } from './block.ts';
 import { readResolverSettings } from './config.ts';
-import { PICKER_DESCRIPTION_CHARS } from './router.ts';
+import { PICKER_DESCRIPTION_CHARS, PICKER_PROMPT_VERSION } from './router.ts';
 
 export const RECEIPT_SCHEMA_VERSION = 1;
 export const T_SHARE_ON = 0.25;
@@ -230,7 +230,7 @@ export async function buildSkillIndex(input: BuildInput, opts: { home?: string; 
       if (p.source.kind === 'json') writeFileDurable(join(dir, 'source.json'), p.source.snapshot!);
       if (p.source.fingerprint) writeFileDurable(join(dir, 'fingerprint.json'), JSON.stringify({ fingerprint: p.source.fingerprint, routing: p.routing?.stat ?? null }));
       writeFileDurable(join(dir, 'index.bin'), bytes);
-      writeFileDurable(join(dir, 'picker.json'), `${JSON.stringify({ v: 1, catalog_hash: p.catalog_hash, skills: p.records.map(s => [s.id, pickerDescription(s.description)]) })}\n`);
+      writeFileDurable(join(dir, 'picker.json'), `${JSON.stringify({ v: 1, catalog_hash: p.catalog_hash, prompt_version: PICKER_PROMPT_VERSION, skills: p.records.map(s => [s.id, pickerDescription(s.description)]) })}\n`);
       receipt.build.ms = Math.round(performance.now() - started);
       writeFileDurable(join(dir, 'receipt.json'), `${JSON.stringify(receipt, null, 2)}\n`);
     } catch (e) {
