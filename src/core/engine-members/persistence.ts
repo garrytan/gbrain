@@ -13,6 +13,7 @@ import type { TopologyStore } from '../engine-sql/topology-store.ts';
 import type { RefreshStore } from '../engine-sql/refresh-store.ts';
 import type { GroupPublishStore } from '../engine-sql/group-publish-store.ts';
 import type { ManualLinkStore } from '../engine-sql/manual-links.ts';
+import type { SyncStatementName, SyncStatementOptions } from '../engine-sql/managed-sync-store.ts';
 import type { CoalescedGitClaim, EffectClaim, EffectClaimRef, EffectWorktreeOwner, MirrorGateRow } from '../engine-sql/persistence-effect-worker.ts';
 import type { FenceHoldFileRow, FenceHoldKey, FenceHoldRow } from '../engine-sql/fence-holds.ts';
 import type { FenceVersionBodyRow } from '../engine-sql/generation-fence-evidence.ts';
@@ -552,6 +553,12 @@ export interface PersistenceMembers {
    * engine, every store call runs in that transaction.
    */
   manualLinkStore(): Promise<ManualLinkStore>;
+  /**
+   * One named statement of the managed sync (engine-sql/managed-sync-store.ts): the rows `gbrain sync` of a managed source reads and
+   * writes. PGLite and Postgres run its text on their own `executeRaw`; a Rust brain answers by name from its records. Called on a
+   * transaction engine, the statement runs in that transaction.
+   */
+  runSyncStatement<R = Record<string, unknown>>(name: SyncStatementName, params?: readonly unknown[], opts?: SyncStatementOptions): Promise<R[]>;
   /**
    * Extends an effect claim's lease by 2 minutes; true while it is running under the token with no recovery. `direct`
    * runs it on the Postgres direct lane (`executeRawDirect`), outside any pooled transaction.

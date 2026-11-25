@@ -20,6 +20,7 @@
  * so status can say who holds it, and a row whose lock is free is orphaned: the
  * next plain refresh finishes it through the `--resume` path before refreshing.
  */
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
 import { closeSync, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, rmSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
@@ -1430,7 +1431,7 @@ async function adoptOrphanedRefresh(engine: BrainEngine, sourceId: string, syncB
  * freezes a cursor against the pre-refresh HEAD; the next cycle retries.
  */
 export async function assertManagedSyncAllowed(engine: BrainEngine, worktreeId: string, sourceId: string): Promise<void> {
-  const refresh = await (await engine.refreshStore()).blocking(worktreeId);
+  const [refresh] = await syncRows<{ id: string; state: string }>(engine, 'blocking_refresh', [worktreeId]);
   if (!refresh) return;
   if (refresh.state === 'recovery_required') throw refusal('refresh_recovery_required',
     `Refresh ${refresh.id} could not verify the checkout HEAD of source ${sourceId}; sync stays fenced.`,

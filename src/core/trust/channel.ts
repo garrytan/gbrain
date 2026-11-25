@@ -21,6 +21,7 @@
  * publication (persistence/coordinator.ts, group-publish.ts); preparers that
  * know more (sync markers, derivation inputs) declare their own.
  */
+import { SYNC_STATEMENTS, syncRows } from '../engine-sql/managed-sync-store.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import { CONNECTOR_SOURCE_KINDS } from '../persistence/connector-identity.ts';
@@ -213,7 +214,7 @@ export function stampTrustMarker(frontmatter: Record<string, unknown>, tier: Tru
 }
 
 /** The source config `ownerImportTrust` reads. */
-export const SOURCE_TRUST_CONFIG_SQL = 'SELECT config FROM sources WHERE id = $1';
+export const SOURCE_TRUST_CONFIG_SQL = SYNC_STATEMENTS.source_trust_config.sql;
 
 /**
  * The tier of a journaled owner-source write of one page (managed sync,

@@ -3,6 +3,7 @@ import { join, relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { resolveSlugForPath } from '../sync.ts';
+import { SYNC_STATEMENTS, syncRows } from '../engine-sql/managed-sync-store.ts';
 
 /** The source's position inside its Git repository and the origin form sync records. */
 export interface SyncOriginScope { sourceId: string; root: string; scope: string; slugMode: 'git-root' | 'source-root'; }
@@ -94,7 +95,7 @@ export function sharedOriginExit(sourceId: string, slugs: readonly string[]): st
 }
 
 /** `assertSyncPageOrigin`'s read (the POSIX spelling): the source's pages recording one of the candidate origins. */
-export const SYNC_ORIGIN_PAGES_SQL = 'SELECT id,slug,source_path,deleted_at FROM pages WHERE source_id=$1 AND source_path=ANY($2::text[])';
+export const SYNC_ORIGIN_PAGES_SQL = SYNC_STATEMENTS.origin_pages.sql;
 
 export async function assertSyncPageOrigin(engine: BrainEngine, sourceId: string, sourcePath: string, pageId: number | null, requireOrigin = false,
   context?: SyncOriginScope): Promise<void> {
@@ -102,8 +103,7 @@ export async function assertSyncPageOrigin(engine: BrainEngine, sourceId: string
   const legacy = legacySyncOrigin(context, origin);
   const candidates = [origin, ...(legacy ? [legacy] : [])];
   const key = (path: string) => process.platform === 'win32' ? syncOriginPath(path).toLowerCase() : syncOriginPath(path);
-  const rows = await engine.executeRaw<{ id: number; slug: string; source_path: string; deleted_at: Date | string | null }>(process.platform === 'win32'
-    ? "SELECT id,slug,source_path,deleted_at FROM pages WHERE source_id=$1 AND lower(replace(source_path,chr(92),'/'))=ANY($2::text[])" : SYNC_ORIGIN_PAGES_SQL, [sourceId, candidates.map(key)]);
+  const rows = await syncRows<{ id: number; slug: string; source_path: string; deleted_at: Date | string | null }>(engine, process.platform === 'win32' ? 'origin_pages_folded' : 'origin_pages', [sourceId, candidates.map(key)]);
   const pages = rows.filter(page => legacy === null || key(page.source_path) !== key(legacy) || sameSyncOrigin(page.source_path, origin, context, page.slug));
   const { winner, ambiguous } = selectOriginClaimant(pages);
   if (ambiguous || requireOrigin && pageId !== null && !winner ||

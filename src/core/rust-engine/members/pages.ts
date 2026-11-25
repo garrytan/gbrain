@@ -403,6 +403,7 @@ export const PAGES_MEMBERS = {
   refreshStore: 'managed_persistence',
   groupPublishStore: 'managed_persistence',
   manualLinkStore: 'managed_persistence',
+  runSyncStatement: 'managed_persistence',
   readWorktreeManifest: 'persistence_journal',
   // Writer status (engine-sql/writer-status.ts).
   readWriterDiagnosticRows: 'persistence_journal',

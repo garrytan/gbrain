@@ -376,7 +376,7 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'restoreRedactedFactTexts', 'restoreSupersededFact', 'resumeJob', 'retireManagedSyncCursor',
   'retireManagedSyncPassSlugMode', 'retireSessionTakes', 'retryBusyEffectRow', 'retryEffectRow', 'retryJob',
   'revokeAccessToken', 'revokeAccessTokenById', 'revokeAccessTokensNamed', 'revokeLocalWriterRow', 'rewriteTimelineRow',
-  'scrubGenerationPageRows', 'scrubGenerationTextRows', 'sealImagePages', 'sealImportedPage', 'selectFactsReconcileDrain',
+  'runSyncStatement', 'scrubGenerationPageRows', 'scrubGenerationTextRows', 'sealImagePages', 'sealImportedPage', 'selectFactsReconcileDrain',
   'setAccessMemberDisabled', 'setAccessMemberEmail', 'setAccessMemberKind', 'setAccessMemberLabelledOnly',
   'setAccessTokenMinTrust', 'setAccessTokenReadSharedRevision', 'setConsolidatedFactValidUntil', 'setEdgeProposalStatus',
   'setEffectTransactionLimits', 'setFactSupersededBy', 'setLocalStatementTimeout', 'setOauthClientReadSharedRevision',

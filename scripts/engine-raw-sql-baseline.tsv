@@ -200,7 +200,7 @@ src/core/cycle/patterns-plan.ts	execute_raw	1
 src/core/cycle/patterns.ts	execute_raw	7
 src/core/cycle/transcript-discovery.ts	execute_raw	2
 src/core/cycle/unindexed-files.ts	execute_raw	1
-src/core/db-lock.ts	execute_raw	2
+src/core/db-lock.ts	execute_raw	1
 src/core/db.ts	driver_call	2
 src/core/db.ts	sql_template	4
 src/core/derived-links.ts	execute_raw	10
@@ -435,38 +435,15 @@ src/core/persistence/sync-delete-tombstones.ts	execute_raw	1
 src/core/persistence/sync-discovery.ts	execute_raw	6
 src/core/persistence/sync-drain.ts	execute_raw	2
 src/core/persistence/sync-dry-run-writer.ts	execute_raw	1
-src/core/persistence/sync-failures.ts	execute_raw	4
 src/core/persistence/sync-freshness.ts	execute_raw	1
-src/core/persistence/sync-ghosts.ts	execute_raw	3
-src/core/persistence/sync-group.ts	execute_raw	1
-src/core/persistence/sync-held-deletions.ts	execute_raw	1
-src/core/persistence/sync-holds.ts	execute_raw	6
-src/core/persistence/sync-idle-skips.ts	execute_raw	1
 src/core/persistence/sync-lanes.ts	execute_raw	1
-src/core/persistence/sync-markers.ts	execute_raw	9
-src/core/persistence/sync-origin.ts	execute_raw	1
-src/core/persistence/sync-page-fault.ts	execute_raw	9
-src/core/persistence/sync-pass-apply.ts	execute_raw	3
-src/core/persistence/sync-pass-batch.ts	execute_raw	3
-src/core/persistence/sync-pass-carried.ts	execute_raw	2
+src/core/persistence/sync-page-fault.ts	execute_raw	5
 src/core/persistence/sync-pass-confirm.ts	execute_raw	8
-src/core/persistence/sync-pass-episode.ts	execute_raw	2
-src/core/persistence/sync-pass-fold.ts	execute_raw	3
-src/core/persistence/sync-pass-readers.ts	execute_raw	1
-src/core/persistence/sync-pass-run.ts	execute_raw	12
-src/core/persistence/sync-pass-status.ts	execute_raw	3
-src/core/persistence/sync-pass.ts	execute_raw	10	readFileRemovingDeletes (audit LC-1, decision E1): one bounded read of the committed delete_page receipts whose write-through removed the file, so a restored file is held for repair file-drift; the managed-sync pass reads stay raw until the persistence area is typed (sync 13b: the trunk side counted 9, this read is the tenth; a Rust brain refuses managed persistence before the pass runs)
-src/core/persistence/sync-prepare.ts	execute_raw	15	#9646: the stamp fence-trend pre-read runs outside the 5 s publication (newest sequence, open-import probe); moves with the persistence engine-sql conversion
-src/core/persistence/sync-prescreen.ts	execute_raw	2
-src/core/persistence/sync-run.ts	execute_raw	27
-src/core/persistence/sync-screen.ts	execute_raw	1
-src/core/persistence/sync-slices.ts	execute_raw	2
-src/core/persistence/sync-slug-mode.ts	execute_raw	3
+src/core/persistence/sync-pass-fold.ts	execute_raw	1
+src/core/persistence/sync-prepare.ts	execute_raw	5	#9646: the stamp fence-trend pre-read runs outside the 5 s publication (newest sequence, open-import probe); moves with the persistence engine-sql conversion
+src/core/persistence/sync-run.ts	execute_raw	17
 src/core/persistence/sync-status.ts	execute_raw	6
 src/core/persistence/sync-stop-class.ts	execute_raw	1
-src/core/persistence/sync-streamed.ts	execute_raw	1
-src/core/persistence/sync-tail-record.ts	execute_raw	3
-src/core/persistence/sync-tail.ts	execute_raw	2
 src/core/persistence/sync-waivers.ts	execute_raw	8
 src/core/persistence/sync-window.ts	execute_raw	2
 src/core/persistence/transient-retry.ts	execute_raw	1

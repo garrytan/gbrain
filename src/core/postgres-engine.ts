@@ -183,6 +183,7 @@ import * as topologyStoreImpl from './engine-sql/topology-store.ts';
 import * as refreshStoreImpl from './engine-sql/refresh-store.ts';
 import * as groupPublishStoreImpl from './engine-sql/group-publish-store.ts';
 import * as manualLinksImpl from './engine-sql/manual-links.ts';
+import * as managedSyncStoreImpl from './engine-sql/managed-sync-store.ts';
 import * as writerStatusImpl from './engine-sql/writer-status.ts';
 import * as labelDoorImpl from './engine-sql/label-door.ts';
 import * as pagePurgeImpl from './engine-sql/page-purge.ts';
@@ -2900,6 +2901,7 @@ export class PostgresEngine implements BrainEngine {
   refreshStore() { return refreshStoreImpl.refreshStore(this); }
   groupPublishStore() { return groupPublishStoreImpl.groupPublishStore(this); }
   manualLinkStore() { return manualLinksImpl.manualLinkStore(this); }
+  runSyncStatement<R = Record<string, unknown>>(name: managedSyncStoreImpl.SyncStatementName, params?: readonly unknown[], opts?: managedSyncStoreImpl.SyncStatementOptions) { return managedSyncStoreImpl.runSyncStatement<R>(this, name, params, opts); }
   chronicleStore() { return chronicleExecutorImpl.chronicleStore(this); }
   addPersistenceCounters(key: string, delta: Partial<Record<CounterColumn, number>>): Promise<void> { return writerReleaseImpl.addPersistenceCounters(this, key, delta); }
   hasExtractedEvents(sourceId: string, pageId: number) { return whenNotAborted(() => writeMiscImpl.hasExtractedEvents(this.writeMiscReads, sourceId, pageId)); }

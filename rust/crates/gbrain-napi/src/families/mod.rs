@@ -78,6 +78,7 @@ mod sync_run_reads;
 mod tags;
 mod timeline;
 mod topology_store;
+mod managed_sync_store;
 mod trust;
 mod trust_fence;
 mod trust_proposals;

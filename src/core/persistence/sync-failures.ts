@@ -8,6 +8,7 @@ import { resolveManagedSyncContext, syncGit, syncGitPath } from './sync-discover
 import { pruneMirrorOnlyManagedFailures } from './managed-sync-orphans.ts';
 import { publicFailureDetail } from './publication-failure.ts';
 import { VERSION } from '../../version.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
 
 export interface ManagedSyncFailure {
   source_id: string;
@@ -52,25 +53,8 @@ export interface ManagedSyncRootCause { request_id: string | null; slug: string 
 export async function recordManagedSyncFailure(engine: BrainEngine, value: Omit<ManagedSyncFailure, 'first_seen' | 'attempts' | 'repeats'> & { first_seen?: string }): Promise<{ failure: ManagedSyncFailure; ledgerRecorded: boolean }> {
   const failure = { ...value, gbrain_version: VERSION, first_seen: value.first_seen ?? new Date().toISOString(), attempts: 1, repeats: 1 };
   const recorded = await engine.transaction(async tx => {
-    await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
-    const [row] = await tx.executeRaw<{ completed_keys: [ManagedSyncFailure] }>(`
-      WITH pair AS (SELECT completed_keys->0 AS was, $2::text::jsonb->0 AS incoming FROM op_checkpoints WHERE op='managed-sync-failure' AND fingerprint=$1),
-      same AS (SELECT was, incoming, was->>'path'=incoming->>'path' AND was->>'code'=incoming->>'code' AND was->>'message'=incoming->>'message' AS same,
-        COALESCE((was->>'repeats')::int,1)+1 AS repeats FROM pair)
-      INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES('managed-sync-failure',$1,$2::text::jsonb)
-      ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=CASE
-        WHEN op_checkpoints.completed_keys->0->>'observation_id'=EXCLUDED.completed_keys->0->>'observation_id'
-        THEN CASE WHEN (SELECT same AND incoming->>'invocation' IS NOT NULL AND was->>'invocation' IS DISTINCT FROM incoming->>'invocation' FROM same)
-          THEN jsonb_build_array(op_checkpoints.completed_keys->0 || jsonb_build_object('repeats',(SELECT repeats FROM same),'invocation',EXCLUDED.completed_keys->0->>'invocation'))
-          ELSE op_checkpoints.completed_keys END
-        WHEN op_checkpoints.completed_keys->0->>'target' IS DISTINCT FROM EXCLUDED.completed_keys->0->>'target'
-        THEN EXCLUDED.completed_keys
-        ELSE jsonb_build_array(EXCLUDED.completed_keys->0 || jsonb_build_object(
-          'first_seen',op_checkpoints.completed_keys->0->>'first_seen',
-          'attempts',COALESCE((op_checkpoints.completed_keys->0->>'attempts')::int,0)+1,
-          'repeats',(SELECT CASE WHEN same THEN repeats ELSE 1 END FROM same))) END,
-        updated_at=now()
-      RETURNING completed_keys`, [value.cursor_key, JSON.stringify([failure])]);
+    await syncRows(tx, 'sync_commit_on');
+    const [row] = await syncRows<{ completed_keys: [ManagedSyncFailure] }>(tx, 'failure_record', [value.cursor_key, JSON.stringify([failure])]);
     return row.completed_keys[0];
   });
   let ledgerRecorded = false;
@@ -82,8 +66,7 @@ export async function recordManagedSyncFailure(engine: BrainEngine, value: Omit<
 }
 
 export async function clearManagedSyncFailureAfterSuccess(engine: BrainEngine, key: string): Promise<void> {
-  const removed = await engine.executeRaw(`DELETE FROM op_checkpoints WHERE op='managed-sync-failure' AND fingerprint=$1
-    AND NOT EXISTS(SELECT 1 FROM op_checkpoints c WHERE c.op='managed-sync' AND c.fingerprint=$1 AND COALESCE(c.completed_keys->0->>'done','false')<>'true') RETURNING fingerprint`, [key]);
+  const removed = await syncRows(engine, 'failure_clear', [key]);
   if (removed.length) try { clearManagedSyncFailure(key); } catch { }
 }
 
@@ -93,7 +76,7 @@ export interface ManagedSyncImported { sourceId: string; incarnation: string; ro
 /** The imported state of a managed source on its owner host; throws when this host does not own an active binding. */
 export async function readManagedSyncImported(engine: BrainEngine, sourceId: string): Promise<ManagedSyncImported | null> {
   const context = await resolveManagedSyncContext(engine, { sourceId, noPull: true });
-  const [source] = await engine.executeRaw<{ last_commit: string | null }>('SELECT last_commit FROM sources WHERE id=$1 AND incarnation=$2::uuid', [sourceId, context.incarnation]);
+  const [source] = await syncRows<{ last_commit: string | null }>(engine, 'source_last_commit', [sourceId, context.incarnation]);
   if (!source?.last_commit) return null;
   return { sourceId, incarnation: context.incarnation, root: context.root, gitRoot: context.gitRoot, target: source.last_commit };
 }

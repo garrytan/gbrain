@@ -6,11 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-<<<<<<< HEAD
 # covered: 2443/2470
-=======
-# covered: 2403/2432
->>>>>>> 0e8e0545d1 (A Rust brain publishes a group of bound writes and imports files into a managed checkout (hold kept for users))
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -81,11 +77,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 16/16
 # wanted_links: 2/2
-<<<<<<< HEAD
 # write_misc: 124/139
-=======
-# write_misc: 122/139
->>>>>>> 0e8e0545d1 (A Rust brain publishes a group of bound writes and imports files into a managed checkout (hold kept for users))
 # repair_bookkeeping: 59/59
 # write_attribution: 5/5
 # telemetry: 14/14
@@ -140,13 +132,9 @@ withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 listCatalogRelations	lifecycle	yes	1	no	yes	yes	serves
 readCatalogSchemaVersion	lifecycle	yes	1	no	yes	yes	serves
 listCatalogForeignKeys	lifecycle	yes	1	no	yes	yes	serves
-<<<<<<< HEAD
 getPage	pages	yes	288	yes	yes	yes	serves
 readPageSnapshot	pages	yes	103	no	yes	yes	serves
 getPage	pages	yes	284	yes	yes	yes	serves
-=======
-getPage	pages	yes	285	yes	yes	yes	serves
->>>>>>> 0e8e0545d1 (A Rust brain publishes a group of bound writes and imports files into a managed checkout (hold kept for users))
 readPageSnapshot	pages	yes	100	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
@@ -2066,6 +2054,7 @@ gitDurabilityStore	write_misc	no	0	no	-	-	-
 gitEffectStore	write_misc	no	0	no	-	-	-
 topologyStore	write_misc	yes	6	no	yes	yes	serves
 manualLinkStore	write_misc	no	0	no	-	-	-
+runSyncStatement	write_misc	yes	1	no	yes	yes	serves
 listAppliedPolicyRevisions	write_misc	yes	6	no	yes	yes	serves
 readLiveMember	write_misc	yes	13	no	yes	yes	serves
 readFolderAccess	write_misc	yes	13	no	yes	yes	serves

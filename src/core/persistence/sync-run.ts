@@ -80,6 +80,7 @@ import { serr } from '../console-prefix.ts';
 import { noteIdentityDowngrades } from '../sync-identity-downgrades.ts';
 import { isContentRefusal } from '../import-screen.ts';
 import { requireManagedPersistence } from '../rust-engine/errors.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
 
 export interface ManagedSyncWriteDiagnostic {
   source_id: string;
@@ -246,10 +247,10 @@ async function saveCursor(engine: BrainEngine, key: string, before: Cursor | nul
       assertActive?.();
       return current;
     }
-    await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
+    await syncRows(tx, 'sync_commit_on');
     if (requireIdle) {
-      await tx.executeRaw('SELECT id FROM persistence_worktrees WHERE id=$1::uuid FOR UPDATE', [next.binding.worktree_id]);
-      const active = await tx.executeRaw("SELECT id FROM persistence_requests WHERE source_id=$1 AND (state IN ('queued','running','recovering') OR recovery IS NOT NULL) LIMIT 1", [next.sourceId]);
+      await syncRows(tx, 'worktree_lock', [next.binding.worktree_id]);
+      const active = await syncRows(tx, 'source_unfinished_request', [next.sourceId]);
       if (active.length) {
         const current = (await readCursor(tx, key, before ?? undefined))!;
         assertActive?.();
@@ -271,7 +272,7 @@ async function writeCursor(tx: BrainEngine, key: string, before: Cursor | null, 
   if (isPassBatchKey(key)) return await passBatchStep(tx, key, before && JSON.stringify(header(before)), next, JSON.stringify(header(next)), inTx) ? next : currentCursor(tx, key, next);
   await assertDrainLease(tx, next.sourceId);
   if (before === null) {
-    if (synchronous) await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
+    if (synchronous) await syncRows(tx, 'sync_commit_on');
     await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb) ON CONFLICT DO NOTHING`, [`${OP}-manifest`, next.runId, JSON.stringify(next.entries)]);
     const inserted = await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb) ON CONFLICT DO NOTHING RETURNING fingerprint`, [OP, key, JSON.stringify([header(next)])]);
     // #6278 (B7): what rides a fresh cursor's save (the retry schedule it consumed) commits only with the insert that won.
@@ -279,7 +280,7 @@ async function writeCursor(tx: BrainEngine, key: string, before: Cursor | null, 
   } else {
     // #5984: the settings, the compare-and-swap and the manifest touch go out together; a won swap is the saved cursor.
     const [, saved] = await pipelined(tx, [
-      () => synchronous ? tx.executeRaw("SELECT set_config('synchronous_commit','on',true)") : Promise.resolve([]),
+      () => synchronous ? syncRows(tx, 'sync_commit_on') : Promise.resolve([]),
       () => tx.executeRaw(`UPDATE op_checkpoints SET completed_keys=$4::text::jsonb,updated_at=now()
       WHERE op=$1 AND fingerprint=$2 AND completed_keys=$3::text::jsonb RETURNING fingerprint`, [OP, key, JSON.stringify([header(before)]), JSON.stringify([header(next)])]),
       () => tx.executeRaw('UPDATE op_checkpoints SET updated_at=now() WHERE op=$1 AND fingerprint=$2', [`${OP}-manifest`, next.runId]),
@@ -841,7 +842,7 @@ async function alreadyImportedAtOrigin(engine: BrainEngine, cursor: Cursor, entr
   } catch (error) {
     if (!(error instanceof OperationError) || error.code !== 'page_identity_changed' || entry.action !== 'import' || (entry.pageId ?? null) !== null
       || entry.renameFrom || cursor.companyPlan || !cursor.processingOptions) throw error;
-    const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text FROM sources WHERE id=$1', [cursor.sourceId]);
+    const [source] = await syncRows<{ incarnation: string }>(engine, 'source_incarnation_plain', [cursor.sourceId]);
     const occupant = await engine.readPageSnapshot(entry.slug!, { sourceId: cursor.sourceId, includeDeleted: true });
     if (source?.incarnation !== cursor.incarnation || !occupant || occupant.page.deleted_at != null || occupant.page.source_path == null
       || !sameSyncOrigin(occupant.page.source_path, entry.sourcePath, originScope, occupant.page.slug)) throw error;
@@ -1323,8 +1324,7 @@ async function performManagedPass(engine: BrainEngine, opts: SyncOpts, slice?: {
 function admitPendingWrite(engine: BrainEngine, key: string, admitting: Cursor, pending: Pending, assertActive: () => void) {
   return retryWriteAdmission(pending.requestId, remaining => engine.transaction(async tx => {
     assertActive();
-    await tx.executeRaw("SELECT set_config('synchronous_commit','on',true),set_config('lock_timeout',$1,true),set_config('statement_timeout',$2,true)",
-      [`${Math.min(1000, remaining)}ms`, `${remaining}ms`]);
+    await syncRows(tx, 'admission_settings', [`${Math.min(1000, remaining)}ms`, `${remaining}ms`]);
     const accepted = await admitWriteInTransaction(tx, { requestId: pending.requestId, operation: 'submit_job',
       sourceId: admitting.sourceId, sourceIncarnation: admitting.incarnation, slug: pending.slug, pageId: pending.pageId,
       worktreeId: admitting.binding.worktree_id, topologyGeneration: admitting.binding.topology_generation, ownerEpoch: admitting.binding.owner_epoch,
@@ -1364,7 +1364,7 @@ async function companyRetryOwed(engine: BrainEngine, cursor: Cursor, companyStop
   run: { processingOptions: NonNullable<Cursor['processingOptions']>; syncOptions: Cursor['syncOptions']; repoPath: string | undefined; assertActive: () => void }): Promise<boolean> {
   const { processingOptions, syncOptions, assertActive } = run;
   const failed = cursor.pending ? await getWriteRequest(engine, admittedBy(cursor.pending, cursor), cursor.pending.requestId) : null;
-  const unfinished = await engine.executeRaw("SELECT id FROM persistence_requests WHERE source_id=$1 AND (state IN ('queued','running','recovering') OR recovery IS NOT NULL) LIMIT 1", [cursor.sourceId]);
+  const unfinished = await syncRows(engine, 'source_unfinished_request', [cursor.sourceId]);
   assertActive();
   // #6712: a legacy knock-on is re-frozen in place by the drain (refreezeInPlace), within its stop bound.
   // The approved manifest pins the content, so a content refusal this version recorded replays until the approval changes.
@@ -1397,7 +1397,7 @@ async function recordRunFailure(engine: BrainEngine, error: unknown, run: { curs
   // A refresh fence, write back-pressure, a lost connection or a statement timeout is not a sync failure to record: the
   // cursor and its frozen manifest stay, and the next pass resumes them (`unrecordedStop`).
   if (!unrecordedStop(error)) {
-    const [stored] = cursor ? [] : await engine.executeRaw<{ completed_keys: [CursorHeader] }>('SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [OP, key]);
+    const [stored] = cursor ? [] : await syncRows<{ completed_keys: [CursorHeader] }>(engine, 'checkpoint_keys', [OP, key]);
     const failedCursor = cursor ?? stored?.completed_keys?.[0];
     const { failure } = await recordManagedSyncFailure(engine, { source_id: context.sourceId, source_incarnation: context.incarnation, path: cursor?.entries[cursor.index]?.path ?? failedCursor?.pending?.intent.path ?? `<${phase}>`, code,
       message: error instanceof Error ? error.message : String(error), request_id: failedCursor?.pending?.requestId ?? null,
@@ -1486,8 +1486,7 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
         if (!cursor.pending) {
           // A source remains fair in both directions: foreground gets service, then sync earns one bounded batch even if new interactive work keeps arriving.
           if (creditedPages && performance.now() - creditStarted >= 250) creditedPages = 0;
-          const [foreground] = await engine.executeRaw(`SELECT id FROM persistence_requests WHERE worktree_id=$1::uuid
-            AND state IN ('queued','running','recovering') AND NOT(COALESCE(intent->>'kind','') LIKE 'managed_sync_%') LIMIT 1`, [cursor.binding.worktree_id]);
+          const [foreground] = await syncRows(engine, 'foreground_request', [cursor.binding.worktree_id]);
           assertActive();
           if ((foregroundQueued = Boolean(foreground))) bulk.foregroundAt = performance.now();
           if (foreground && creditedPages === 0 && !bulk.foregroundFirst) {

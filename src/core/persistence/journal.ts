@@ -252,6 +252,7 @@ export async function getWriteRequestById(engine: Pick<BrainEngine, 'readWriteRe
 /** #5984: the progress columns a waiter polls (engine-sql/persistence-journal.ts `readWriteRequestProgress`). */
 export { WRITE_PROGRESS_SQL, type WriteRequestProgress } from '../engine-sql/persistence-journal.ts';
 import type { CompletedWriteRow, WriteCompletion, WriteRequestProgress } from '../engine-sql/persistence-journal.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
 export async function getWriteRequestProgress(engine: Pick<BrainEngine, 'readWriteRequestProgress'>, id: string, signal?: AbortSignal): Promise<WriteRequestProgress | null> {
   return engine.readWriteRequestProgress(id, { signal });
 }
@@ -766,8 +767,7 @@ export async function claimNextWrite(engine: BrainEngine, hostId: string, leaseM
     ]) as [unknown, WriteRequest | null];
     if (!row) return null;
     if (holderOnly && String(row.intent?.kind ?? '').startsWith('managed_sync_')) {
-      const [lease] = await tx.executeRaw<{ holder_pid: number; holder_host: string | null }>(`SELECT holder_pid, holder_host FROM gbrain_cycle_locks
-        WHERE id=$1::text AND ttl_expires_at>now() AND NOT (holder_pid=$2::integer AND holder_host IS NOT DISTINCT FROM $3::text)`, [syncLockId(row.source_id), process.pid, hostname()]);
+      const [lease] = await syncRows<{ holder_pid: number; holder_host: string | null }>(tx, 'lease_other_holder', [syncLockId(row.source_id), process.pid, hostname()]);
       if (lease && classifyHolderLiveness(lease.holder_pid, lease.holder_host ?? '', 0, { graceMs: 0 }) !== 'dead_eligible') return null;
     }
     // `passed_sync`: the claimed row went ahead of a queued sync row of its root.

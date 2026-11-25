@@ -41,6 +41,7 @@ import { classifyTerminal } from './terminal-classify.ts';
 import { VERSION } from '../../version.ts';
 import { concurrentWriteHold, concurrentWriteProof } from './sync-concurrent-write.ts';
 import { KEEP_DISK_ABANDONED_PREFIX } from './verb-errors.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
 
 export { HOLD_ATTEMPTS_NEEDS_HUMAN } from './sync-fault-class.ts';
 
@@ -124,8 +125,8 @@ export function dependentHold(entry: HoldEntry, slug: string, pageId: number | n
  */
 export async function liveRevision(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, page: { pageId: number | null; slug: string }): Promise<string | null> {
   const [row] = page.pageId === null
-    ? await engine.executeRaw<{ revision: string | null }>('SELECT knowledge_revision::text AS revision FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, page.slug])
-    : await engine.executeRaw<{ revision: string | null }>('SELECT knowledge_revision::text AS revision FROM pages WHERE id=$1 AND source_id=$2', [page.pageId, sourceId]);
+    ? await syncRows<{ revision: string | null }>(engine, 'page_revision_by_slug', [sourceId, page.slug])
+    : await syncRows<{ revision: string | null }>(engine, 'page_revision_by_id', [page.pageId, sourceId]);
   return row?.revision ?? null;
 }
 
@@ -166,9 +167,7 @@ export function fileDriftHold(entry: HoldEntry, slug: string, pageId: number | n
  * the delete's receipt does.
  */
 export async function sharedOriginSurvivor(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, sourcePath: string): Promise<boolean> {
-  const rows = await engine.executeRaw(`SELECT 1 FROM pages d JOIN persistence_requests r ON r.source_id=d.source_id AND r.slug=d.slug
-    WHERE d.source_id=$1 AND d.deleted_at IS NOT NULL AND d.source_path=$2 AND r.operation='delete_page' AND r.state='committed'
-      AND r.outcome->'write_through'->>'skipped'='shared_origin' LIMIT 1`, [sourceId, sourcePath]);
+  const rows = await syncRows(engine, 'shared_origin_survivor', [sourceId, sourcePath]);
   return rows.length > 0;
 }
 
@@ -288,10 +287,7 @@ async function repeatedWriteFailure(engine: Pick<BrainEngine, 'executeRaw'>, sou
   if (!verdict || !UNPLACED.has(verdict.category)) return null;
   const field = (key: string) => typeof detail?.[key] === 'string' ? detail[key] as string : null;
   const fault = { code: done.error_code, origin: field('origin'), error_class: field('error_class'), errno: field('errno') ?? field('sqlstate') };
-  const [row] = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM persistence_requests WHERE source_id=$1 AND source_incarnation=$2::uuid AND slug=$3
-    AND state='failed' AND intent->>'kind' IN ('managed_sync_import','managed_sync_delete') AND error_code=$4 AND COALESCE(error_detail->>'origin','')=$5
-    AND COALESCE(error_detail->>'error_class','')=$6 AND COALESCE(error_detail->>'errno',error_detail->>'sqlstate','')=$7`,
-  [sourceId, incarnation, slug, fault.code, fault.origin ?? '', fault.error_class ?? '', fault.errno ?? '']);
+  const [row] = await syncRows<{ n: number }>(engine, 'repeated_write_failures', [sourceId, incarnation, slug, fault.code, fault.origin ?? '', fault.error_class ?? '', fault.errno ?? '']);
   const attempts = Number(row?.n ?? 0);
   return attempts >= PAGE_WRITE_FAILURE_REPEATS ? { ...fault, attempts } : null;
 }

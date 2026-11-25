@@ -21,6 +21,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { GIT_HOLD_OP, gitHoldFingerprint } from './sync-holds.ts';
 import { rethrowCapabilityMissing } from '../rust-engine/errors.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
 
 export const SOAK_COUNTERS_OP = 'sync-soak-counters';
 export const SOAK_WINDOW_DAYS = 7;
@@ -63,7 +64,7 @@ export function nonPlainSyncFlags(args: readonly string[]): string[] {
  * stamped per run and the rest are counted by the next. Returns what it counted.
  */
 export async function sweepNeedsHumanHolds(engine: BrainEngine, sourceId: string, now = Date.now()): Promise<{ needs_human: number; file_drift_hold: number }> {
-  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]);
+  const [source] = await syncRows<{ incarnation: string }>(engine, 'source_incarnation_text', [sourceId]);
   const counted = { needs_human: 0, file_drift_hold: 0 };
   if (!source) return counted;
   const { fenceAutoRepairFor, readGitSourceHolds } = await import('./sync-holds.ts');

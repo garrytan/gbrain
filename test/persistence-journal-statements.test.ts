@@ -60,6 +60,8 @@ import { TOPOLOGY_STORE_STATEMENTS } from '../src/core/engine-sql/topology-store
 import { REFRESH_STORE_STATEMENTS } from '../src/core/engine-sql/refresh-store.ts';
 import { GROUP_PUBLISH_STORE_STATEMENTS } from '../src/core/engine-sql/group-publish-store.ts';
 import { MANUAL_LINK_STATEMENTS } from '../src/core/engine-sql/manual-links.ts';
+import { SYNC_STATEMENTS } from '../src/core/engine-sql/managed-sync-store.ts';
+import { databaseOnlyPageSql } from '../src/core/persistence/unbound-pages.ts';
 import { LINKS_FENCE_ORIGIN_FIELD } from '../src/core/links-fence.ts';
 import { EXPIRED_ARCHIVE_SQL } from '../src/core/engine-sql/sources.ts';
 import { ACTIVE_REFRESH_STATES_SQL, CHECKOUT_EFFECT_KINDS_SQL, RELEASED_DEFERRED } from '../src/core/persistence/worktree-refresh-schema.ts';
@@ -683,5 +685,24 @@ describe('the manual link store sends the statements manual-links.ts built, frag
       RETURNING l.to_page_id, l.link_type, l.link_source, l.origin_field IS NOT DISTINCT FROM '${LINKS_FENCE_ORIGIN_FIELD}' AS fenced`);
     expect(MANUAL_LINK_STATEMENTS.DERIVED_EDGES_SQL).toBe(`SELECT DISTINCT l.link_type COLLATE "C" AS link_type, l.link_source COLLATE "C" AS link_source FROM links l, pages t
       WHERE ${RELATIONSHIP} AND l.link_source = ANY($4::text[]) ORDER BY l.link_type COLLATE "C", l.link_source COLLATE "C"`);
+  });
+});
+
+describe('the managed sync store sends the statements the sync built, fragments written out', () => {
+  // The fragments persistence/sync-pass-run.ts, sync-discovery.ts, sync-tail-record.ts and sync-tail.ts composed their statements from
+  // before they moved (engine-sql/managed-sync-store.ts).
+  test('the page statements carry the unbound-source predicate of their alias', () => {
+    expect(SYNC_STATEMENTS.pages_by_slug.sql).toBe(`SELECT id, slug, source_path, knowledge_revision::text AS revision, deleted_at IS NOT NULL AS deleted, ${databaseOnlyPageSql('pages')} AS unbound, frontmatter->>'id' AS fm_id FROM pages WHERE source_id=$1 AND slug=ANY($2::text[])`);
+    expect(SYNC_STATEMENTS.database_only_pages.sql).toBe(`SELECT p.id FROM pages p WHERE p.id=ANY($1::bigint[]) AND (${databaseOnlyPageSql('p')} OR p.database_only_reason IS NOT DISTINCT FROM 'origin_twin')`);
+  });
+  test('the tail statements carry the obligation cap and the page cap', () => {
+    expect(SYNC_STATEMENTS.tail_record_run.sql).toContain('jsonb_array_length(op_checkpoints.completed_keys)>=16');
+    expect(SYNC_STATEMENTS.tail_record_pass.sql).toContain('jsonb_array_length(op_checkpoints.completed_keys)>=16');
+    expect(SYNC_STATEMENTS.tail_slugs.sql.endsWith(') imported LIMIT 1001')).toBe(true);
+  });
+  test('the in-flight statements carry the request-naming predicate', () => {
+    const names = `r.page_id=ANY($2::int[]) OR r.intent->>'sourcePath'=ANY($3::text[]) OR r.intent->>'path'=ANY($3::text[])`;
+    expect(SYNC_STATEMENTS.inflight_open_ids.sql).toBe(`SELECT r.id FROM persistence_requests r WHERE r.source_id=$1 AND r.state IN ('queued','running','recovering') AND (${names})`);
+    expect(SYNC_STATEMENTS.inflight_open_work.sql.split(names).length).toBe(3);
   });
 });

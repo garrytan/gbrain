@@ -35,6 +35,7 @@ import { pinnedWindowBlock, readTreeBlobs, seedPinnedWindow, type TreeBlob } fro
 import { syncOriginPath } from './sync-origin.ts';
 import { liveFileDrift, recordDriftSkip } from './drift-conflicts.ts';
 import type { SyncDiscovery, SyncEntry } from './sync-discovery.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
 
 /** Which side moved since the page's last recorded import (`unknown`: no usable record). */
 export type SyncDriftSide = 'database' | 'both' | 'unknown';
@@ -105,8 +106,7 @@ export async function movedDriftHolds(engine: Pick<BrainEngine, 'executeRaw'>, s
   holds: ReadonlyArray<{ path: string; code: string; page_id: number | null; meta: { page_revision?: string } }>): Promise<Set<string>> {
   const drift = holds.filter(hold => hold.code === 'file_drift' && hold.page_id !== null);
   if (!drift.length) return new Set();
-  const rows = await engine.executeRaw<{ id: number | string; revision: string | null }>('SELECT id, knowledge_revision::text AS revision FROM pages WHERE source_id=$1 AND id=ANY($2::bigint[])',
-    [sourceId, drift.map(hold => hold.page_id)]);
+  const rows = await syncRows<{ id: number | string; revision: string | null }>(engine, 'page_revisions', [sourceId, drift.map(hold => hold.page_id)]);
   const revisions = new Map(rows.map(row => [Number(row.id), row.revision]));
   return new Set(drift.filter(hold => (revisions.get(Number(hold.page_id)) ?? null) !== (hold.meta.page_revision ?? null)).map(hold => hold.path));
 }
@@ -120,11 +120,7 @@ export async function movedDriftHolds(engine: Pick<BrainEngine, 'executeRaw'>, s
 async function fileBackedRevisions(engine: BrainEngine, discovered: Pick<SyncDiscovery, 'sourceId' | 'incarnation'>, pageIds: number[]): Promise<Set<number>> {
   const out = new Set<number>();
   for (let i = 0; i < pageIds.length; i += PROVENANCE_CHUNK) {
-    const rows = await engine.executeRaw<{ id: number | string }>(`SELECT p.id FROM pages p JOIN persistence_requests r ON r.id=p.revision_write_request_id
-      WHERE p.source_id=$1 AND p.id=ANY($2::bigint[]) AND r.state='committed' AND r.source_id=p.source_id AND (
-        r.intent->>'kind' IN ('managed_sync_import','managed_sync_delete') AND r.source_incarnation::text=$3 AND (r.page_id IS NULL OR r.page_id=p.id)
-        OR EXISTS (SELECT 1 FROM persistence_effects e WHERE e.request_id=r.id AND e.kind='git' AND e.revision=p.knowledge_revision
-          AND e.data->>'expected_hash' IS NOT NULL AND (e.data->>'relative_path'=p.source_path OR right(e.data->>'relative_path', length(p.source_path)+1)='/'||p.source_path)))`, [discovered.sourceId, pageIds.slice(i, i + PROVENANCE_CHUNK), discovered.incarnation]);
+    const rows = await syncRows<{ id: number | string }>(engine, 'file_backed_pages', [discovered.sourceId, pageIds.slice(i, i + PROVENANCE_CHUNK), discovered.incarnation]);
     for (const row of rows) out.add(Number(row.id));
   }
   return out;
