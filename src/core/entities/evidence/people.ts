@@ -3,11 +3,13 @@
  *
  * A candidate pair is two live person pages that the duplicate finder groups (same or variant name, a shared key, a
  * conflict; groups of more than MAX_GROUP_MEMBERS pages are counted and left out) or that share one exact email or phone
- * (identityEmailKey, canonicalPhone with identity.phone_country_code) carried by at most CROWDED_LIMIT person pages. A
- * pair already in one identity group, a pair the owner recorded as different (gbrain dedupe reject) and a pair one of
- * whose pages names the other in distinct_from are left out. So are mirror copies (isCopy: one page kept under the same
- * slug in two sources, same name, nothing that disagrees): a copy pair is no duplicate, and of the pairs that differ only
- * by which copy they hold, the one with the most default-source pages is kept.
+ * (identityEmailKey, phoneHandle: canonicalPhone with identity.phone_country_code, plus ";ext=<n>" when the number has an
+ * extension) carried by at most CROWDED_LIMIT person pages. A pair already in one identity group, a pair the owner
+ * recorded as different (gbrain dedupe reject; matched by slug, and by page fingerprint so a renamed or moved page stays
+ * apart) and a pair one of whose pages names the other in distinct_from, in any source, are left out. So are mirror
+ * copies (isCopy: one page kept under the same slug in two sources, same name, nothing that disagrees): a copy pair is no
+ * duplicate, and a pair is dropped as a copy of a kept pair only when each of its pages is that pair's page or a copy of
+ * it holding no email or phone the kept page lacks (default-source pages first, then the pages holding most).
  *
  * The base class (classify):
  *   C6  a contradiction: an account or registry id each page holds with no value in common, a shared id or contact value
@@ -95,8 +97,8 @@ const MINOR_TAGS = new Set(['minor', 'child', 'children', 'kid', 'kids']);
 /** A label word right after "family" that names something other than the owner's family (a family office, family friends). */
 const NOT_FAMILY_LABEL = new Set(['office', 'offices', 'friend', 'friends', 'foundation']);
 /** Someone other than the owner, who can own a relative: "wife of a colleague", "a friend's son". */
-const OTHER_OWNERS = new Set(['friend', 'friends', 'colleague', 'colleagues', 'coworker', 'co-worker', 'client', 'customer', 'neighbor',
-  'neighbour', 'boss', 'manager', 'investor', 'founder', 'cofounder', 'co-founder', 'employee', 'classmate', 'teammate', 'acquaintance']);
+const OTHER_OWNERS = new Set(['friend', 'friends', 'colleague', 'colleagues', 'coworker', 'co-worker', 'customer', 'neighbor',
+  'neighbour', 'manager', 'cofounder', 'co-founder', 'employee', 'classmate', 'teammate', 'acquaintance']);
 const familyWords = (s: string) => s.split(/[^a-z-]+/).filter(w => FAMILY_WORDS.has(w));
 /**
  * One relationship value's family words, less those a friend, colleague or client owns ("wife of a colleague", "a
@@ -136,6 +138,17 @@ export function handleOf(raw: string, countryCode: string): string | null {
   return phone ? `p:${phone}` : null;
 }
 
+/**
+ * A stored phone value as a handle: `p:+<digits>`, or `p:+<digits>;ext=<n>` when the value names an extension, so a
+ * shared switchboard number with two people's extensions never reads as one line only they hold.
+ */
+export function phoneHandle(raw: string, countryCode: string): string | null {
+  const phone = canonicalPhone(raw, countryCode);
+  if (!phone) return null;
+  const ext = /(?:[;,#]|ext(?:ension)?\.?|x)\s*=?\s*(\d+)\D*$/i.exec(raw.normalize('NFKC').trim())?.[1];
+  return ext ? `p:${phone};ext=${ext}` : `p:${phone}`;
+}
+
 export const isRoleHandle = (h: string) => h.startsWith('e:') && ROLE_MAILBOXES.has(h.slice(2, h.indexOf('@')));
 
 /**
@@ -171,7 +184,7 @@ function toPerson(row: { source_id: string; slug: string; page_id: number; title
   const k = row.keys;
   const handles = new Set<string>();
   for (const raw of [...strings(k.email), ...strings(k.emails)]) { const e = identityEmailKey(raw); if (e) handles.add(`e:${e}`); }
-  for (const raw of [...strings(k.phone), ...strings(k.phones)]) { const p = canonicalPhone(raw, countryCode); if (p) handles.add(`p:${p}`); }
+  for (const raw of [...strings(k.phone), ...strings(k.phones)]) { const p = phoneHandle(raw, countryCode); if (p) handles.add(p); }
   const visibility = first(k.visibility)?.toLowerCase() ?? 'world';
   const title = row.title ?? '';
   return { source_id: row.source_id, slug: row.slug, page_id: row.page_id, title, strict: strictNameFold(title), handles,
@@ -256,7 +269,7 @@ export function classify(a: PersonPage, b: PersonPage, fa: EntityPage | undefine
     else { sharedId = true; why.push(`shared ${ka.key}`); }
   }
   const shared = [...a.handles].filter(h => b.handles.has(h)).sort();
-  if (!sharedId && (differingId || contestedId)) return { base: 'C6', names, shared, why };
+  if (differingId || (!sharedId && contestedId)) return { base: 'C6', names, shared, why };
   if (sharedId) {
     if (names !== true) return { base: 'C6', names, shared, why: [...why, 'names disagree'] };
     return { base: sameSource ? 'C7' : 'C3', names, shared, why };
@@ -291,12 +304,18 @@ export async function scanPeople(engine: BrainEngine): Promise<PeopleScan> {
   const nameCounts = new Map<string, number>();
   const bySlug = new Map<string, PersonPage[]>();
   const idCarriers: IdCarriers = new Map();
+  const push = <K, V>(map: Map<K, V[]>, key: K, value: V) => { const list = map.get(key); if (list) list.push(value); else map.set(key, [value]); };
   for (const [key, p] of people) {
-    for (const h of p.handles) carriers.set(h, [...(carriers.get(h) ?? []), key]);
+    for (const h of p.handles) push(carriers, h, key);
     if (p.strict) nameCounts.set(p.strict, (nameCounts.get(p.strict) ?? 0) + 1);
-    bySlug.set(p.slug, [...(bySlug.get(p.slug) ?? []), p]);
-    for (const [id, k] of exclusiveValues(finderPages.get(key))) for (const v of k.values) idCarriers.set(`${id}\t${v}`, [...(idCarriers.get(`${id}\t${v}`) ?? []), p]);
+    push(bySlug, p.slug, p);
+    for (const [id, k] of exclusiveValues(finderPages.get(key))) for (const v of k.values) push(idCarriers, `${id}\t${v}`, p);
   }
+  const prints = decided.apartEvidence.filter(e => e.length > 1);
+  const printedApart = (x: EntityPage | undefined, y: EntityPage | undefined) => {
+    const [fx, fy] = [x?.fingerprint, y?.fingerprint];
+    return !!fx && !!fy && prints.some(e => { const i = e.indexOf(fx); return i >= 0 && e.some((f, j) => j !== i && f === fy); });
+  };
   const mirrorOf = (p: PersonPage) => ((bySlug.get(p.slug) ?? []).some(o => isCopy(p, o)) ? `copy\t${p.slug}` : pageKey(p));
   const apart = new Map<string, Set<string>>();
   for (const set of decided.apart) for (const m of set) {
@@ -325,7 +344,7 @@ export async function scanPeople(engine: BrainEngine): Promise<PeopleScan> {
     if (a.entity_id && a.entity_id === b.entity_id) { skipped.already_linked++; continue; }
     const fa = finderPages.get(ka);
     const fb = finderPages.get(kb);
-    if (apart.get(ka)?.has(kb) || fa?.distinctFrom.has(b.slug) && a.source_id === b.source_id || fb?.distinctFrom.has(a.slug) && a.source_id === b.source_id) {
+    if (apart.get(ka)?.has(kb) || fa?.distinctFrom.has(b.slug) || fb?.distinctFrom.has(a.slug) || printedApart(fa, fb)) {
       skipped.decided_apart++;
       continue;
     }
@@ -335,14 +354,18 @@ export async function scanPeople(engine: BrainEngine): Promise<PeopleScan> {
     found.push({ id: pairId(a, b), a, b, ...c });
   }
   const outside = (p: CandidatePair) => Number(p.a.source_id !== DEFAULT_SOURCE_ID) + Number(p.b.source_id !== DEFAULT_SOURCE_ID);
-  const kept = new Map<string, CandidatePair>();
+  const held = (p: CandidatePair) => p.a.handles.size + p.b.handles.size;
+  const kept = new Map<string, CandidatePair[]>();
   const pairs: CandidatePair[] = [];
   const copyOf = (x: PersonPage, y: PersonPage) => pageKey(x) === pageKey(y) || isCopy(x, y);
-  for (const p of found.sort((x, y) => outside(x) - outside(y) || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0))) {
+  /** k stands in for p: each page of p is k's page or a copy of it, and holds no email or phone k's page lacks. */
+  const standsIn = (k: CandidatePair, p: CandidatePair) => (copyOf(k.a, p.a) && copyOf(k.b, p.b) && within(p.a.handles, k.a.handles) && within(p.b.handles, k.b.handles))
+    || (copyOf(k.a, p.b) && copyOf(k.b, p.a) && within(p.b.handles, k.a.handles) && within(p.a.handles, k.b.handles));
+  for (const p of found.sort((x, y) => outside(x) - outside(y) || held(y) - held(x) || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0))) {
     const key = [mirrorOf(p.a), mirrorOf(p.b)].sort().join('\n');
-    const k = kept.get(key);
-    if (k && (copyOf(k.a, p.a) && copyOf(k.b, p.b) || copyOf(k.a, p.b) && copyOf(k.b, p.a))) { skipped.copies++; continue; }
-    if (!k) kept.set(key, p);
+    const ks = kept.get(key);
+    if (ks?.some(k => standsIn(k, p))) { skipped.copies++; continue; }
+    push(kept, key, p);
     pairs.push(p);
   }
   const paired = new Map<string, PersonPage>();

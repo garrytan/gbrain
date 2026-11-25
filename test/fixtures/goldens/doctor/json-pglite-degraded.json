@@ -3916,7 +3916,7 @@
             "links": 0
           },
           "elapsed_ms": "<volatile>",
-          "message": "No person links made automatically in the last 24 hours.",
+          "message": "No person pages linked or collapsed automatically in the last 24 hours.",
           "name": "dedupe_auto_links",
           "status": "ok"
         },
