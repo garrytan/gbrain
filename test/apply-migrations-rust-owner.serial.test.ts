@@ -25,6 +25,7 @@ import { join, resolve } from 'node:path';
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
 import { acquireMigrationOrchestrationLock } from '../src/core/migration-orchestration-lock.ts';
 import type { GBrainConfig } from '../src/core/config.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const ROOT = resolve(import.meta.dir, '..');
 const CLI = join(ROOT, 'src', 'cli.ts');
@@ -161,13 +162,29 @@ describeRust('apply-migrations on a Rust brain', () => {
 
   // Value: protects=a Rust brain's migration lock excludes a second runner, as PGLite's does: while one process holds it, apply-migrations exits 75 and names the holder, and runs nothing; fails_when=a Rust brain gets a no-op lock (two upgrades run at once); why_new=the Rust lock is new; seam=the lock is taken in this process through the real acquire; no_claim=recovery after a holder dies (the native lock's own tests)
   test('the migration lock on a Rust brain refuses a second runner (exit 75) while another process holds it', async () => {
-    const held = await acquireMigrationOrchestrationLock({ engine: 'rust', database_path: brains.rust.db } as GBrainConfig);
+    // The lock constructs the Rust engine first (not opened), so this process needs the addon the brain's CLI uses.
+    const held = await withEnv({ GBRAIN_RUST_ENGINE_ADDON: ADDON }, () =>
+      acquireMigrationOrchestrationLock({ engine: 'rust', database_path: brains.rust.db } as GBrainConfig));
     expect(held).not.toBeNull();
     try {
       const second = await migrate(brains.rust, '0.12.2');
       expect({ exitCode: second.exitCode, running: second.out.includes('another apply-migrations is running'), pid: second.out.includes(`pid ${process.pid}`) })
         .toEqual({ exitCode: 75, running: true, pid: true });
     } finally { await held!.release(); }
+  }, 300_000);
+
+  // Value: protects=a Rust brain whose addon is missing is refused before the run touches the migration ledger, as the old open did, so three failed runs never wedge v0.11.0; fails_when=the file lock admits the run before the engine is checked; why_new=the Rust lock no longer opens the brain; seam=GBRAIN_RUST_ENGINE_ADDON names a missing file; no_claim=which addon error code the loader picks
+  test('a Rust brain with no addon is refused before any migration ledger write', async () => {
+    const home = join(root, 'no-addon', 'home');
+    mkdirSync(join(home, '.gbrain'), { recursive: true });
+    writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ engine: 'rust', database_path: join(root, 'no-addon', 'db') }));
+    const brain: Brain = { backend: 'rust', home, db: join(root, 'no-addon', 'db') };
+    const proc = Bun.spawn(['bun', 'run', CLI, 'apply-migrations', '--yes', '--non-interactive'], {
+      cwd: root, env: { ...childEnv(brain), GBRAIN_RUST_ENGINE_ADDON: join(root, 'no-such-addon.node') }, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
+    const [out, err, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+    expect(exitCode).not.toBe(0);
+    expect(out + err).not.toContain('Applying migration');
+    expect(existsSync(join(home, '.gbrain', 'migrations', 'completed.jsonl'))).toBe(false);
   }, 300_000);
 
   // Value: protects=each upgrade migration that still refuses on a Rust brain refuses with the typed raw_sql refusal of the phase named here, and a new pass or a different refusal is seen at once; fails_when=a stop starts passing (drop its row) or refuses for another reason; why_new=the stops are new; seam=none; no_claim=what the owners of these stops build

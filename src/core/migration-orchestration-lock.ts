@@ -105,21 +105,24 @@ function readPgliteHolder(lockPath: string): MigrationLockHolder | null {
 }
 
 /**
- * A brain kept in one store directory (PGLite, Rust) takes a file lock beside that directory, held without opening the
- * brain; a Postgres brain takes the database lease. Opening a Rust brain makes this process its owner, so a lease held
- * through an open engine would keep the brain from the `gbrain` children a migration starts (the v0.11.0 smoke):
- * they would wait on an owner that is blocked in the synchronous spawn.
+ * How a brain takes the orchestration lock. A brain kept in one store directory (PGLite, Rust) takes a file lock beside
+ * that directory, held without opening the brain; a Postgres brain takes the database lease. Opening a Rust brain makes
+ * this process its owner, so a lease held through an open engine would keep the brain from the `gbrain` children a
+ * migration starts (the v0.11.0 smoke): they would wait on an owner that is blocked in the synchronous spawn.
+ * A Rust brain's engine is still constructed first (not opened), so a missing addon or a bad store path refuses the run
+ * before any ledger write, as the open used to. Any other engine value takes the lease path, whose engine
+ * construction refuses it as before.
  */
-function usesFileLock(config: GBrainConfig): boolean {
+type LockMode = 'file' | 'checked-file' | 'lease';
+function lockMode(config: GBrainConfig): LockMode {
   switch (config.engine) {
-    case 'pglite':
-    case 'rust':
-      return true;
-    case 'postgres':
-      return false;
+    case 'pglite': return 'file';
+    case 'rust': return 'checked-file';
+    case 'postgres': return 'lease';
     default: {
       const unreachable: never = config.engine;
-      return unreachable;
+      void unreachable;
+      return 'lease';
     }
   }
 }
@@ -216,7 +219,9 @@ export function migrationOrchestrationHeldHere(): boolean {
  * starts orchestrators.
  */
 export async function acquireMigrationOrchestrationLock(config: GBrainConfig): Promise<MigrationOrchestrationLock | null> {
-  const lock = usesFileLock(config)
+  const mode = lockMode(config);
+  if (mode === 'checked-file') await createEngine(toEngineConfig(config));
+  const lock = mode !== 'lease'
     ? config.database_path ? await acquirePglite(config.database_path) : { assertHeld: async () => {}, release: async () => {} }
     : await acquirePostgres(config);
   if (!lock) return null;
@@ -228,7 +233,7 @@ export async function acquireMigrationOrchestrationLock(config: GBrainConfig): P
 /** Best-effort holder lookup for callers that only saw the runner's exit status. */
 export async function readMigrationLockHolder(config: GBrainConfig): Promise<MigrationLockHolder | null> {
   try {
-    if (usesFileLock(config)) {
+    if (lockMode(config) !== 'lease') {
       return config.database_path ? readPgliteHolder(getPgliteMigrationLockPath(config.database_path)) : null;
     }
     const engine = await createEngine(toEngineConfig(config));
