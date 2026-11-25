@@ -307,7 +307,7 @@ describe('a local caller\'s own writes on a Rust brain still reach the owner', (
   const admissionRefusal = { member: 'transaction', remote: false, outcome: 'engine_capability_missing' };
 
   // Value: protects=`gbrain bootstrap verify` on a Rust brain's second process calls the owner as a local caller (its localCtx says remote: false), so every check runs and the roundtrip fails only on the transactions refusal; fails_when=localCtx stops naming remote: false, or the mark reads an explicit local context as remote; why_new=the review of the remote mark named verify.ts as a caller that builds its own context and was not checked; seam=the real verifyWorkspace on an owner-client stand-in, real PGLite owner on a real socket; no_claim=a passing roundtrip, which needs journaled writes to reach the owner
-  test('bootstrap verify: every check calls the owner as a local caller; the roundtrip stops on the transactions refusal, not the remote one', () => isolated(async () => {
+  test('embedded, one owner: bootstrap verify: every check calls the owner as a local caller; the roundtrip stops on the transactions refusal, not the remote one', () => isolated(async () => {
     const ws = join(sandbox, 'verify-ws');
     mkdirSync(join(ws, 'brain'), { recursive: true });
     const report = await verifyWorkspace(client, ws, { sourceId: 'default', skipHooksSmoke: true, gbrainHomeDir: brainHome, sweepBudgetMs: 2_000 });
@@ -325,9 +325,10 @@ describe('a local caller\'s own writes on a Rust brain still reach the owner', (
     expect(refusal?.why).toContain('cannot run from this process yet');
     expect(refusal?.why).not.toContain('sent to the owner as one request');
   }), 60_000);
+  test.todo('multi-writer (C12): bootstrap verify: every check calls the server as a local caller, and the roundtrip transaction from a client process runs instead of being refused', () => {});
 
   // Value: protects=the Apple Contacts person-fact sync on a Rust brain's second process calls `remember` as a local caller (its context says remote: false), so the write stops on the transactions refusal and writes no fact; fails_when=the sync's context stops naming remote: false, or the mark reads an explicit local context as remote; why_new=the review of the remote mark named person-facts.ts as a caller that builds its own context and was not checked; seam=the real syncPersonFacts and remember handler on an owner-client stand-in, real PGLite owner on a real socket; no_claim=a written fact, which needs journaled writes to reach the owner
-  test('Apple Contacts person facts: remember is called as a local caller and stops on the transactions refusal, not the remote one', () => isolated(async () => {
+  test('embedded, one owner: Apple Contacts person facts: remember is called as a local caller and stops on the transactions refusal, not the remote one', () => isolated(async () => {
     const slug = 'people/alice-example';
     await engine.putPage(slug, { type: 'person', title: 'Alice Example', compiled_truth: 'A person.', timeline: '' } as never);
     asked.length = 0; reached.length = 0;
@@ -339,4 +340,5 @@ describe('a local caller\'s own writes on a Rust brain still reach the owner', (
     expect(calls).toContainEqual(admissionRefusal);
     expect(await engine.executeRaw(`SELECT fact FROM facts WHERE entity_slug = $1`, [slug])).toEqual([]);
   }), 60_000);
+  test.todo('multi-writer (C12): Apple Contacts person facts: remember is called as a local caller and its transaction from a client process runs instead of being refused', () => {});
 });

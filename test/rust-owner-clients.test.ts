@@ -26,7 +26,7 @@ const SCRATCH = mkdtempSync(join(tmpdir(), 'gbrain-rust-owner-clients-'));
 afterAll(() => rmSync(SCRATCH, { recursive: true, force: true }));
 
 describe('sixteen processes on one Rust brain', () => {
-  withAddon('all reach the owner, none gets a busy error, and every page they wrote is there', async () => {
+  withAddon('embedded, one owner: all reach the owner, none gets a busy error, and every page they wrote is there', async () => {
     const result = await runOwnerBench({ addonPath: BUILT, db: join(SCRATCH, 'brain'), clients: 16, ops: 100 });
     console.log(`[owner-clients] ${JSON.stringify({ ...result, roles: undefined })}`);
     expect(result.ownerRole).toBe('owner');
@@ -35,4 +35,5 @@ describe('sixteen processes on one Rust brain', () => {
     expect(result.pagesFound).toBe(result.pagesWritten);
     expect(result.pagesWritten).toBe(16 * 50);
   }, 120_000);
+  test.todo('multi-writer (C18): sixty-four writers in eight processes all reach the server, none gets a busy error, and every page they wrote is there', () => {});
 });

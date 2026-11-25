@@ -139,11 +139,12 @@ describe('two or more client processes on one owner', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  test('this process owns the brain', () => {
+  test('embedded, one owner: this process owns the brain', () => {
     expect(role.role).toBe('owner');
   });
+  test.todo('multi-writer (C17): the first process to open the brain is a client of the server like every other, and no opener is refused', () => {});
 
-  test('a symlink alias of the brain directory reaches the same owner as a client', async () => {
+  test('embedded, one owner: a symlink alias of the brain directory reaches the same owner as a client', async () => {
     const alias = join(dir, 'alias.rust');
     symlinkSync(db, alias, 'dir');
     expect(ownerLockPath(alias)).toBe(ownerLockPath(db));
@@ -161,8 +162,9 @@ describe('two or more client processes on one owner', () => {
       else { await second.server.close(); await second.lock.release(); }
     }
   });
+  test.todo('multi-writer (C17): a symlink alias of the brain directory reaches the same served brain as a client', () => {});
 
-  test('two writer processes put pages, links, timeline and a whole import through the owner', async () => {
+  test('embedded, one owner: two writer processes put pages, links, timeline and a whole import through the owner', async () => {
     const results = await Promise.all([runChild('write', db, 0), runChild('write', db, 1)]);
     for (const [worker, r] of results.entries()) {
       expect(r.out.fatal, r.stderr).toBeUndefined();
@@ -183,8 +185,9 @@ describe('two or more client processes on one owner', () => {
     for (let i = 0; i < 100 && stats()?.connections !== 0; i++) await Bun.sleep(10);
     expect(stats()).toEqual({ active: 0, queued: 0, connections: 0, inflightBytes: 0 });
   }, 120_000);
+  test.todo('multi-writer (C18): writer processes put pages, links, timeline and a whole import through the server with no busy error and no lost write', () => {});
 
-  test('two reader processes get results byte-identical to in-process calls', async () => {
+  test('embedded, one owner: two reader processes get results byte-identical to in-process calls', async () => {
     const local = JSON.stringify(await readScript(owner));
     const results = await Promise.all([runChild('read', db, 0), runChild('read', db, 1)]);
     for (const r of results) {
@@ -199,6 +202,7 @@ describe('two or more client processes on one owner', () => {
     expect((parsed.keyword.ok as unknown[]).length).toBeGreaterThan(0);
     expect((parsed.hybrid.ok as unknown[]).length).toBeGreaterThan(0);
   }, 120_000);
+  test.todo('multi-writer (C18): reader processes get results from the server byte-identical to in-process calls while writers run', () => {});
 
   test('an engine error crosses the socket with the same code, message and fields', async () => {
     const { engine, close } = await clientOf(ownerSocketPath(db));
@@ -800,7 +804,7 @@ describe('an owner that exits', () => {
     }
   }, 60_000);
 
-  test('a Rust engine client reaches the new owner on its next call, with no restart', async () => {
+  test('embedded, one owner: a Rust engine client reaches the new owner on its next call, with no restart', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-ipc-handoff-'));
     const db = join(dir, 'brain.rust');
     const first = await ownerChild(db);
@@ -831,8 +835,9 @@ describe('an owner that exits', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 60_000);
+  test.todo('multi-writer (C06): a client reaches the new primary on its next call with no restart, and the old primary writes are refused by its lease token', () => {});
 
-  test('with no other owner, a Rust engine client becomes the owner on its next call and serves it from its store', async () => {
+  test('embedded, one owner: with no other owner, a Rust engine client becomes the owner on its next call and serves it from its store', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-ipc-takeover-'));
     const db = join(dir, 'brain.rust');
     const { child } = await ownerChild(db);
@@ -863,6 +868,7 @@ describe('an owner that exits', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 60_000);
+  test.todo('multi-writer (C06): after a takeover the calls of every client share one election and the new primary holds a higher epoch', () => {});
 
   describe('the first ordinary member call after the owner dies', () => {
     /** The owner has gone and this engine's client connection has seen it close, with no other call made yet. */

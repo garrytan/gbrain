@@ -30,6 +30,18 @@ export function rustArmRequested(env: Record<string, string | undefined> = proce
   return env[RUST_ARM_FLAG] === '1';
 }
 
+/**
+ * `GBRAIN_TEST_RUST_MU_ARM=1` runs the Rust arm as the `rust-mu` view: the same arm (backend `rust`) with the multi-user
+ * switch `GBRAIN_RUST_MULTIUSER=1` set inside the test process before the arm opens (harness.ts; the operator-env preload
+ * strips GBRAIN_* variables from the test process, so the switch cannot come from the caller's environment). It implies the
+ * Rust arm. With the flag unset nothing here or in the harness changes.
+ */
+export const RUST_MU_ARM_FLAG = 'GBRAIN_TEST_RUST_MU_ARM';
+
+export function rustMuArmRequested(env: Record<string, string | undefined> = process.env): boolean {
+  return env[RUST_MU_ARM_FLAG] === '1';
+}
+
 /** The capability a member needs (its row in the member table), or null for a lifecycle member or an unknown name. */
 export function rustMemberCapability(method: string): string | null {
   const cls = (RUST_ENGINE_MEMBERS as Record<string, string>)[method];
@@ -75,6 +87,19 @@ export async function openRustBrain(): Promise<RustBrainDir> {
   const brain = newRustBrain();
   await brain.engine.connect({ engine: 'pglite', database_path: brain.dir } as never);
   return brain;
+}
+
+/**
+ * A second connected Rust engine on an existing brain directory. While the directory's first engine is open, connect
+ * elects the first as the owner and this one becomes its client over the owner socket (test/rust-engine-store.test.ts,
+ * "a second engine on an open brain directory becomes a client of the first"). The caller disconnects it and never removes
+ * the directory.
+ */
+export async function openRustBrainAt(dir: string): Promise<RustEngine> {
+  const loaded = await loadRustArmAddon();
+  const engine = openRustEngine({ addon: loaded, databasePath: dir });
+  await engine.connect({ engine: 'pglite', database_path: dir } as never);
+  return engine;
 }
 
 export function removeBrainDir(dir: string): void {

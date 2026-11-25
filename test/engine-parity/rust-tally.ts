@@ -25,8 +25,13 @@ const HEADER = 'file\tequal\tstopped\tstop_reason';
 
 /** A file's pinned counts; `reason` says why its stopped cases stop by design (no tab or newline). */
 export interface TallyPin { equal: number; stopped: number; reason?: string }
-/** What the Rust arm did with one file's cases (harness.ts RustTally plus the cases an `n/a` capability skipped). */
-export interface FileTally { compared: number; refused: number; diverged: number; skipped: number }
+/**
+ * What the Rust arm did with one file's cases (harness.ts RustTally plus the cases an `n/a` capability skipped).
+ * `standalone` counts multi-writer cases that passed on their inline invariant alone (no reference arm to compare with):
+ * they are a column of their own, join the sum check so a file of them can finish, and never raise `compared` (the pin's
+ * `equal`), so a standalone case is never counted as equal to PGLite.
+ */
+export interface FileTally { compared: number; refused: number; diverged: number; skipped: number; standalone?: number }
 
 export function parsePins(text: string): Map<string, TallyPin> {
   const pins = new Map<string, TallyPin>();
@@ -67,7 +72,7 @@ function readPins(): Map<string, TallyPin> {
  */
 export function checkRustTally(file: string, tally: FileTally, registered: number,
   pins: Map<string, TallyPin> = readPins(), env: Record<string, string | undefined> = process.env): string | null {
-  if (tally.compared + tally.refused + tally.diverged + tally.skipped !== registered) return null;
+  if (tally.compared + tally.refused + tally.diverged + tally.skipped + (tally.standalone ?? 0) !== registered) return null;
   // The pin covers test/engine-parity/ only. A file outside it that runs the parity harness (doctor-catalog-probes,
   // rust-arm-harness) has no parity file name and no pin row.
   if (file === '') return null;

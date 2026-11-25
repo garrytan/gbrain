@@ -45,7 +45,7 @@ const rust = (db: string) => ({ engine: 'rust', database_path: db }) as unknown 
 const keys = { VOYAGE_API_KEY: 'v', GBRAIN_MODEL: undefined, GBRAIN_BRAIN_ID: undefined };
 
 describe('lock owner of a Rust brain', () => {
-  test('the serve that owns the brain names itself and wraps the exclusive embeddings fix', async () => {
+  test('embedded, one owner: the serve that owns the brain names itself and wraps the exclusive embeddings fix', async () => {
     const { db, role } = await ownedBrain();
     expect(role.role).toBe('owner');
     const r = await withEnv(keys, () => asServe(() => configReadiness(rust(db), { transport: 'stdio' })));
@@ -55,6 +55,7 @@ describe('lock owner of a Rust brain', () => {
     expect(fix?.argv).toEqual(['kill', String(process.pid)]);
     expect(fix?.then?.argv?.slice(0, 3)).toEqual(['gbrain', 'embeddings', 'enable']);
   });
+  test.todo('multi-writer (C17): every serve on the brain names itself, the server names the primary, and the embeddings fix does not need the brain to be exclusive', () => {});
 
   test('a process that is not a serve, or a released owner lock, names no owner', async () => {
     const { db, role } = await ownedBrain();

@@ -77,7 +77,7 @@ async function gatedOwner(opts: OwnerServerOptions) {
 async function until(done: () => boolean): Promise<void> { for (let i = 0; i < 80 && !done(); i++) await Bun.sleep(25); }
 
 describe('the owner queue cap', () => {
-  test('a call past maxQueued is refused with owner_busy queue_full and never runs; a cancelled call frees its slot', async () => {
+  test('embedded, one owner: a call past maxQueued is refused with owner_busy queue_full and never runs; a cancelled call frees its slot', async () => {
     const { server, ran } = await blockingOwner({ permits: 1, maxQueued: 2 });
     const raw = rawSession(server.socketPath);
     cleanups.push(() => { raw.destroy(); });
@@ -101,6 +101,7 @@ describe('the owner queue cap', () => {
     expect(raw.frames.find(f => f.id === 5)).toBeUndefined();
     expect(server.stats().queued).toBe(2);
   });
+  test.todo('multi-writer (C18): a call past the server queue cap gets a typed retryable refusal and never runs, never a busy error from the store; a cancelled call frees its slot', () => {});
 });
 
 describe('the owner queue slot and bytes of a call that ends without running', () => {
@@ -153,7 +154,7 @@ describe('the owner queue slot and bytes of a call that ends without running', (
 });
 
 describe('the owner in-flight byte cap', () => {
-  test('a call whose frame would pass maxInflightBytes is refused with owner_busy inflight_bytes; bytes come back when a call settles', async () => {
+  test('embedded, one owner: a call whose frame would pass maxInflightBytes is refused with owner_busy inflight_bytes; bytes come back when a call settles', async () => {
     const { server, ran } = await blockingOwner({ permits: 4, maxInflightBytes: 1_000 });
     const raw = rawSession(server.socketPath);
     cleanups.push(() => { raw.destroy(); });
@@ -177,6 +178,7 @@ describe('the owner in-flight byte cap', () => {
     expect(server.stats().active).toBe(1);
     expect(raw.frames.find(f => f.id === 4)).toBeUndefined();
   });
+  test.todo('multi-writer (C18): a call whose frame would pass the server in-flight byte cap gets a typed retryable refusal; bytes come back when a call settles', () => {});
 });
 
 describe('the owner byte budget of a running call that is timed out or cancelled', () => {
@@ -288,7 +290,7 @@ describe('the owner queue and byte limits are shared by every connection', () =>
 });
 
 describe('the owner connection cap', () => {
-  test('a connection past maxConnections gets owner_busy connections and is closed; the client connect rejects with it', async () => {
+  test('embedded, one owner: a connection past maxConnections gets owner_busy connections and is closed; the client connect rejects with it', async () => {
     const { server } = await blockingOwner({ maxConnections: 1 });
     const first = rawSession(server.socketPath);
     cleanups.push(() => { first.destroy(); });
@@ -307,6 +309,7 @@ describe('the owner connection cap', () => {
     await first.send(call(1, 'getConfig', ['still']));
     expect((await first.next(f => f.t === 'result' && f.id === 1))?.ok).toBe(true);
   });
+  test.todo('multi-writer (C18): a connection past the server connection cap gets a typed retryable refusal and is closed; the client connect rejects with it', () => {});
 
   // Value: protects=a peer that reads its refusal and never closes its own half cannot keep an owner descriptor open for good; fails_when=a refused socket waits on the peer to close; why_new=refused peers in the tests close themselves, never half-open; seam=none; no_claim=socket count
   test('a refused peer that keeps its half open is cut off after the drain period', async () => {
