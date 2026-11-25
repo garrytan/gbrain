@@ -55,8 +55,9 @@ On a new personal brain, the [first-session suggestion](first-session-suggestion
 answered yet, once a Google source has finished its first sync. It is one line in that section, worded with counts
 only, and it names `gbrain propose` for the pages. It follows the section's own rules: the first 3 sessions within 14
 days of setup, and `gbrain onboarding off` (or `onboarding_off`) turns it off with the rest of the section. A job you
-declined or accepted is not offered again. When the detectors take longer than 1.5 seconds, the section goes out
-without the job.
+declined or accepted is not offered again. Session start runs no detector: the top job is worked out after each Google
+sync and each `gbrain propose` run while the suggestion is on, stored with the first-session record, and offered only
+while that stored job is at most 3 days old.
 
 ## Who can see them
 

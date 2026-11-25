@@ -25,7 +25,7 @@ import { importFromContent } from '../src/core/import-file.ts';
 import { upsertOpenLoop } from '../src/core/loops/loops-store.ts';
 import { INSTALL_RECEIPT_KEY, type InstallReceipt } from '../src/core/onboard/setup-history.ts';
 import { FIRST_SESSION_KEY, firstSessionSectionFor } from '../src/core/onboard/first-session.ts';
-import { PROPOSE_SIGNALS, SIGNAL_LABEL, proposeJobs, setProposalDecision } from '../src/core/onboard/propose.ts';
+import { PROPOSAL_CACHE_MAX_AGE_MS, PROPOSE_SIGNALS, SIGNAL_LABEL, proposeJobs, refreshProposalCache, setProposalDecision } from '../src/core/onboard/propose.ts';
 import { proposeOperations } from '../src/core/ops/propose.ts';
 import { __setEmbedTransportForTests } from '../src/core/skills/resolver/embed-http.ts';
 import { __setPickerTransportForTests } from '../src/core/skills/resolver/router-http.ts';
@@ -176,6 +176,25 @@ describe('gbrain propose (repo-less PGLite)', () => {
     expect(out.jobs.length).toBeGreaterThan(0);
   });
 
+  test('every signal takes accept and decline, stored in the first-session record and shown by propose', async () => {
+    const decide = proposeOperations.find(o => o.name === 'propose_decide')!;
+    for (const signal of PROPOSE_SIGNALS) for (const decision of ['accepted', 'declined'] as const) {
+      const r = await decide.handler({ engine, remote: false } as never, { signal, decision }) as { verified: boolean };
+      expect(r.verified).toBe(true);
+      expect(JSON.parse((await engine.getConfig(FIRST_SESSION_KEY))!).proposals[signal].decision).toBe(decision);
+      expect((await proposeJobs(engine, { days: 7, now: NOW, resolver: { home } })).jobs.find(j => j.signal === signal)!.decision).toBe(decision);
+    }
+    const top = await refreshProposalCache(engine, { now: NOW });
+    expect(top === null || top === 'not_armed').toBe(true);
+    await expect(decide.handler({ engine, remote: false } as never, { signal: 'nope', decision: 'declined' })).rejects.toMatchObject({ code: 'invalid_params' });
+    await engine.executeRaw('DELETE FROM config WHERE key = $1', [FIRST_SESSION_KEY]);
+  });
+
+  test('a sender the owner wrote to long ago is never a bulk sender', async () => {
+    const r = await proposeJobs(engine, { days: 7, now: NOW, resolver: { home } });
+    expect(r.jobs.find(j => j.signal === 'bulk_senders')!.cites.some(c => c.slug.startsWith('email/alice'))).toBe(false);
+  });
+
   describe('first-session section', () => {
     async function freshInstall() {
       await engine.executeRaw('DELETE FROM config WHERE key IN ($1, $2)', [INSTALL_RECEIPT_KEY, FIRST_SESSION_KEY]);
@@ -191,12 +210,38 @@ describe('gbrain propose (repo-less PGLite)', () => {
     test('no job line before a Google source has synced', async () => {
       await freshInstall();
       await engine.executeRaw(`UPDATE sources SET last_sync_at = NULL WHERE id = 'mail'`, []);
+      expect(await refreshProposalCache(engine, { now: NOW })).toMatchObject({ signal: 'waiting_on_you' });
       expect(await section('s-nosync')).not.toContain('propose');
+    });
+
+    test('session start runs no detector: the section reads only the cached job', async () => {
+      await freshInstall();
+      await engine.executeRaw(`UPDATE sources SET last_sync_at = now() WHERE id = 'mail'`, []);
+      await refreshProposalCache(engine, { now: NOW });
+      const seen: string[] = [];
+      const raw = engine.executeRaw.bind(engine);
+      (engine as { executeRaw: unknown }).executeRaw = (sql: string, params?: unknown[]) => { seen.push(sql); return raw(sql, params as never); };
+      try {
+        expect(await section('s-cache')).toContain('people are waiting on you');
+      } finally {
+        (engine as { executeRaw: unknown }).executeRaw = raw;
+      }
+      expect(seen.some(s => /open_loops|type = 'email'|type = 'meeting'|type = 'conversation'/.test(s))).toBe(false);
+    });
+
+    test('a cached job older than its freshness window is not offered, and nothing is cached unless armed', async () => {
+      await freshInstall();
+      await engine.executeRaw(`UPDATE sources SET last_sync_at = now() WHERE id = 'mail'`, []);
+      await refreshProposalCache(engine, { now: new Date(NOW.getTime() - PROPOSAL_CACHE_MAX_AGE_MS - 60_000) });
+      expect(await section('s-stale')).not.toContain('propose_decide');
+      await engine.executeRaw('DELETE FROM config WHERE key = $1', [INSTALL_RECEIPT_KEY]);
+      expect(await refreshProposalCache(engine, { now: NOW })).toBe('not_armed');
     });
 
     test('after the first Google sync the top job rides the section as data-free text, and a decline moves to the next', async () => {
       await freshInstall();
       await engine.executeRaw(`UPDATE sources SET last_sync_at = now() WHERE id = 'mail'`, []);
+      await refreshProposalCache(engine, { now: NOW });
       const first = await section('s-1');
       expect(first).toContain('people are waiting on you');
       expect(first).toContain('propose_decide');
@@ -210,7 +255,10 @@ describe('gbrain propose (repo-less PGLite)', () => {
       expect(stored.proposals.waiting_on_you).toMatchObject({ decision: 'declined', by: 'cli' });
       const second = await section('s-2');
       expect(second).not.toContain('waiting on you');
-      expect(second).toContain('gbrain propose decline owe_reply');
+      expect(second).not.toContain('propose_decide');
+      await refreshProposalCache(engine, { now: NOW });
+      const third = await section('s-3');
+      expect(third).toContain('gbrain propose decline owe_reply');
 
       const r = await proposeJobs(engine, { days: 7, now: NOW, resolver: { home } });
       expect(r.jobs.find(j => j.signal === 'waiting_on_you')!.decision).toBe('declined');

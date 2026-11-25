@@ -45,6 +45,8 @@ export interface FirstSessionRecord {
   stopped?: { at: string; by: StoppedBy };
   /** Lane 5 (O2): the owner's answer per job-proposal signal (src/core/onboard/propose.ts). */
   proposals?: Record<string, ProposalState>;
+  /** Lane 5 (O2): the top undecided job, computed off the session-start path (after a Google sync, or gbrain propose). */
+  proposal_cache?: { signal: string; sentence: string; at: string } | null;
 }
 
 export const FIRST_SESSION_OFF = { argv: ['gbrain', 'onboarding', 'off'], mcp: 'onboarding_off', setup_flag: '--no-suggestion' } as const;
@@ -242,6 +244,17 @@ export async function decideProposal(engine: BrainEngine, opts: { signal: string
   return { signal: opts.signal, decision: opts.decision, verified };
 }
 
+/** The cached top job proposal for this install, if any; session start reads only this, never the detectors. */
+export async function readProposalCache(engine: BrainEngine): Promise<{ signal: string; sentence: string; at: string } | null> {
+  return (await readFirstSessionRecord(engine, await recordInstallId(engine))).proposal_cache ?? null;
+}
+
+/** Store (or clear, with null) the cached top job proposal for this install. */
+export async function writeProposalCache(engine: BrainEngine, job: { signal: string; sentence: string } | null, now = new Date()): Promise<void> {
+  const proposal_cache = job ? { signal: job.signal, sentence: job.sentence, at: now.toISOString() } : null;
+  await updateRecord<true>(engine, await recordInstallId(engine), (r) => ({ next: { ...r, proposal_cache }, result: true }));
+}
+
 function oneLine(s: string): string {
   return s.replace(/<!--|-->/g, ' ').replace(/[`"]/g, "'").replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
@@ -306,21 +319,18 @@ export async function firstSessionSectionFor(engine: BrainEngine, opts: { source
   return { text: renderFirstSessionSection({ harness: opts.harness, ordinal: reserved.ordinal, receipt, pointers, job }), token: reserved.token };
 }
 
-/** The longest the section waits for the job-proposal detectors; past it the section goes out without a job. */
-export const FIRST_SESSION_JOB_DEADLINE_MS = 1500;
-
-/** Lane 5 (O2): the top undecided job proposal, once a Google source has synced; null on any failure or past the deadline. */
+/**
+ * Lane 5 (O2): the cached top undecided job proposal, once a Google source has synced; null on any failure. No
+ * detector runs here: the session-start request has a few hundred milliseconds, so the job is computed after a Google
+ * sync or a `gbrain propose` run (refreshProposalCache in propose.ts) and only read back now.
+ */
 async function firstSessionJobFor(engine: BrainEngine, now?: Date): Promise<{ signal: string; sentence: string } | null> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const { topProposalForFirstSession } = await import('./propose.ts');
-    const deadline = new Promise<null>((res) => { timer = setTimeout(() => res(null), FIRST_SESSION_JOB_DEADLINE_MS); });
-    return await Promise.race([topProposalForFirstSession(engine, { now }), deadline]);
+    const { cachedProposalForFirstSession } = await import('./propose.ts');
+    return await cachedProposalForFirstSession(engine, { now });
   } catch (err) { // silent-read-ok: the job line is optional; the section stands without it
     rethrowCapabilityRefusal(err);
     return null;
-  } finally {
-    if (timer) clearTimeout(timer);
   }
 }
 

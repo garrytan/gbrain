@@ -19,7 +19,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { BULK_CATEGORY_LABELS } from '../google/gmail-categories.ts';
 import { boundedBodyPrefixSql } from '../page-window/bounded-lead.ts';
-import { decideProposal, proposalDecisions, type ProposalDecision, type ProposalState, type StoppedBy } from './first-session.ts';
+import { decideProposal, firstSessionStatus, proposalDecisions, readProposalCache, writeProposalCache, type ProposalDecision, type ProposalState, type StoppedBy } from './first-session.ts';
 
 export const PROPOSE_SIGNALS = ['waiting_on_you', 'owe_reply', 'meeting_prep', 'repeat_question', 'bulk_senders'] as const;
 export type ProposeSignal = typeof PROPOSE_SIGNALS[number];
@@ -30,6 +30,7 @@ const ROW_CAP = 2000;
 const CONVERSATION_CAP = 400;
 const MEETING_SERIES_CAP = 20;
 const BULK_MIN_THREADS = 3;
+const BULK_CANDIDATE_CAP = 200;
 
 /** The fixed text each signal sends to the skill resolver (d14): never the job's own text. */
 export const SIGNAL_LABEL: Record<ProposeSignal, string> = {
@@ -153,20 +154,11 @@ const asList = (v: unknown): string[] => {
 };
 
 async function bulkSenders(engine: BrainEngine, scope: Scope, since: Date): Promise<Found> {
-  const [mail, wrote] = await Promise.all([
-    engine.executeRaw<{ source_id: string; slug: string; senders: unknown; labels: unknown; account: string | null }>(
-      `SELECT p.source_id, p.slug, p.frontmatter->'senders' AS senders, p.frontmatter->'labels' AS labels, p.frontmatter->>'account' AS account
-         FROM pages p
-        WHERE p.type = 'email' AND p.deleted_at IS NULL AND ${srcSql('p', 1)} AND p.frontmatter->>'date' >= $2
-        ORDER BY p.frontmatter->>'date' DESC, p.slug LIMIT ${ROW_CAP}`, [srcParam(scope), since.toISOString()]),
-    engine.executeRaw<{ participants: unknown }>(
-      `SELECT p.frontmatter->'participants' AS participants
-         FROM pages p
-        WHERE p.type = 'email' AND p.deleted_at IS NULL AND ${srcSql('p', 1)} AND jsonb_typeof(p.frontmatter->'labels') = 'array'
-          AND (p.frontmatter->'labels') @> '["SENT"]'::jsonb
-        LIMIT ${ROW_CAP * 5}`, [srcParam(scope)]),
-  ]);
-  const writtenTo = new Set(wrote.flatMap(r => asList(r.participants)));
+  const mail = await engine.executeRaw<{ source_id: string; slug: string; senders: unknown; labels: unknown; account: string | null }>(
+    `SELECT p.source_id, p.slug, p.frontmatter->'senders' AS senders, p.frontmatter->'labels' AS labels, p.frontmatter->>'account' AS account
+       FROM pages p
+      WHERE p.type = 'email' AND p.deleted_at IS NULL AND ${srcSql('p', 1)} AND p.frontmatter->>'date' >= $2
+      ORDER BY p.frontmatter->>'date' DESC, p.slug LIMIT ${ROW_CAP}`, [srcParam(scope), since.toISOString()]);
   const bulkLabels = new Set(BULK_CATEGORY_LABELS);
   const senders = new Map<string, { threads: number; bulk: boolean; cite: Cite }>();
   for (const r of mail) {
@@ -174,14 +166,22 @@ async function bulkSenders(engine: BrainEngine, scope: Scope, since: Date): Prom
     if (labels.includes('SENT')) continue;
     const account = (r.account ?? '').toLowerCase().trim();
     for (const s of asList(r.senders)) {
-      if (!s || s === account || writtenTo.has(s)) continue;
+      if (!s || s === account || s.includes(',')) continue;
       const cur = senders.get(s) ?? { threads: 0, bulk: false, cite: { source_id: r.source_id, slug: r.slug } };
       cur.threads++;
       cur.bulk ||= labels.some(l => bulkLabels.has(l));
       senders.set(s, cur);
     }
   }
-  const hits = [...senders.values()].filter(s => s.bulk || s.threads >= BULK_MIN_THREADS);
+  const candidates = [...senders.entries()].filter(([, s]) => s.bulk || s.threads >= BULK_MIN_THREADS).slice(0, BULK_CANDIDATE_CAP);
+  // Never wrote to: no SENT thread at any time lists the sender as a participant, checked per candidate (no capped scan).
+  const wrote = candidates.length ? await engine.executeRaw<{ addr: string }>(
+    `SELECT c.addr FROM unnest(string_to_array($2::text, ',')) AS c(addr)
+      WHERE EXISTS (SELECT 1 FROM pages p, jsonb_array_elements_text(CASE WHEN jsonb_typeof(p.frontmatter->'participants') = 'array' THEN p.frontmatter->'participants' ELSE '[]'::jsonb END) AS e(v)
+                     WHERE p.type = 'email' AND p.deleted_at IS NULL AND ${srcSql('p', 1)} AND (p.frontmatter->'labels') @> '["SENT"]'::jsonb
+                       AND lower(trim(e.v)) = c.addr)`, [srcParam(scope), candidates.map(([a]) => a).join(',')]) : [];
+  const writtenTo = new Set(wrote.map(r => r.addr));
+  const hits = candidates.filter(([a]) => !writtenTo.has(a)).map(([, s]) => s);
   const cites: Cite[] = [];
   for (const h of hits) addCite(cites, h.cite);
   return { count: hits.length, cites };
@@ -289,20 +289,42 @@ async function googleSynced(engine: BrainEngine): Promise<boolean> {
   });
 }
 
+/** How long a cached top job stays fresh enough to offer at session start. */
+export const PROPOSAL_CACHE_MAX_AGE_MS = 3 * 86_400_000;
+
 /**
- * The first-session section's job: the first signal, in signal order, with something found and no answer from the
- * owner yet, once a Google source has synced. Only its signal and count-only sentence leave here.
+ * Recompute the first-session section's job and cache it in the first-session record: the first signal, in signal
+ * order, with something found (over every source, the default window) and no answer from the owner yet. Runs only
+ * while the suggestion is armed, off the session-start path: after a Google sync, and on `gbrain propose`, which
+ * passes the jobs it already found. Only the signal and its count-only sentence are stored.
  */
-export async function topProposalForFirstSession(engine: BrainEngine, opts: { now?: Date } = {}): Promise<{ signal: ProposeSignal; sentence: string } | null> {
-  if (!await googleSynced(engine)) return null;
+export async function refreshProposalCache(engine: BrainEngine, opts: { now?: Date; jobs?: ProposedJob[] } = {}): Promise<{ signal: ProposeSignal; sentence: string } | null | 'not_armed'> {
   const now = opts.now ?? new Date();
+  if ((await firstSessionStatus(engine, { now })).state !== 'armed') return 'not_armed';
   const decisions = await proposalDecisions(engine);
-  for (const signal of PROPOSE_SIGNALS) {
-    if (decisions[signal]) continue;
-    const f = await detect(engine, signal, null, now, PROPOSE_DEFAULT_DAYS);
-    if (f.count > 0) return { signal, sentence: sentenceFor(signal, f.count, PROPOSE_DEFAULT_DAYS) };
+  let top: { signal: ProposeSignal; sentence: string } | null = null;
+  if (opts.jobs) {
+    const j = opts.jobs.find(x => !decisions[x.signal]);
+    top = j ? { signal: j.signal, sentence: j.sentence } : null;
+  } else {
+    for (const signal of PROPOSE_SIGNALS) {
+      if (decisions[signal]) continue;
+      const f = await detect(engine, signal, null, now, PROPOSE_DEFAULT_DAYS);
+      if (f.count > 0) { top = { signal, sentence: sentenceFor(signal, f.count, PROPOSE_DEFAULT_DAYS) }; break; }
+    }
   }
-  return null;
+  await writeProposalCache(engine, top, now);
+  return top;
+}
+
+/** The session-start read: the cached job, if fresh, still unanswered, and a Google source has synced. No detector runs. */
+export async function cachedProposalForFirstSession(engine: BrainEngine, opts: { now?: Date } = {}): Promise<{ signal: string; sentence: string } | null> {
+  const cached = await readProposalCache(engine);
+  const now = (opts.now ?? new Date()).getTime();
+  if (!cached || !isProposeSignal(cached.signal) || !(now - Date.parse(cached.at) <= PROPOSAL_CACHE_MAX_AGE_MS)) return null;
+  if ((await proposalDecisions(engine))[cached.signal]) return null;
+  if (!await googleSynced(engine)) return null;
+  return { signal: cached.signal, sentence: cached.sentence };
 }
 
 export function isProposeSignal(s: unknown): s is ProposeSignal {

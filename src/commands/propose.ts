@@ -19,7 +19,7 @@ export async function runPropose(engine: BrainEngine, args: string[]): Promise<v
   const json = args.includes('--json');
   const { exitCliError, usageError } = await import('../cli/cli-error.ts');
   if (args.includes('--help') || args.includes('-h') || args[0] === 'help') { console.log(PROPOSE_HELP); return; }
-  const { PROPOSE_SIGNALS, isProposeSignal, proposeJobs, setProposalDecision, clampDays } = await import('../core/onboard/propose.ts');
+  const { PROPOSE_DEFAULT_DAYS, PROPOSE_SIGNALS, isProposeSignal, proposeJobs, refreshProposalCache, setProposalDecision, clampDays } = await import('../core/onboard/propose.ts');
   const sub = args[0] && !args[0].startsWith('--') ? args[0] : null;
   if (sub === 'accept' || sub === 'decline') {
     const signal = args[1];
@@ -35,6 +35,7 @@ export async function runPropose(engine: BrainEngine, args: string[]): Promise<v
   const raw = i === -1 ? undefined : Number(args[i + 1]);
   if (raw !== undefined && !(Number.isInteger(raw) && raw >= 1)) exitCliError(usageError('--days needs a whole number of days from 1 to 90.', 'For example gbrain propose --days 14.'), 'propose', { json });
   const r = await proposeJobs(engine, { days: clampDays(raw) });
+  if (r.days === PROPOSE_DEFAULT_DAYS) await refreshProposalCache(engine, { jobs: r.jobs }).catch(() => null); // silent-read-ok: the session-start cache is optional
   if (json) { console.log(JSON.stringify(r, null, 2)); return; }
   if (!r.jobs.length) { console.log(`No jobs to propose from the last ${r.days} days of this brain. Connect more (gbrain google setup, gbrain transcripts archive) and run it again.`); return; }
   console.log(`Jobs your agent could take on (last ${r.days} days, from what is already in this brain):`);
