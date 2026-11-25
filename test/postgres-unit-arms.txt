@@ -25,6 +25,7 @@ test/access-labelled-only-fail-closed.test.ts
 test/access-labelled-only.test.ts
 test/access-member-facts.test.ts
 test/access-member-handover.test.ts
+test/access-member-personal-sources.test.ts
 test/access-member-sweep.test.ts
 test/access-members-read-lineage.test.ts
 test/access-members.test.ts
