@@ -60,7 +60,10 @@ enum ScopeKind {
     /// The embedded engine's own caller (today's behavior), with the access record it runs under.
     TrustedLocal(Value),
     /// A verified principal admitted by the owner gate.
-    Principal { principal: AuthenticatedPrincipal, owner_member: String },
+    Principal {
+        principal: AuthenticatedPrincipal,
+        owner_member: String,
+    },
 }
 
 /// Who a call runs as. Private fields: build one with [`Scope::trusted_local`] or
@@ -95,26 +98,45 @@ impl Store {
         if token.is_empty() {
             return Err(refused());
         }
-        let row = self.read_active_access_token_by_hash(&token_hash(token))?.ok_or_else(refused)?;
+        let row = self
+            .read_active_access_token_by_hash(&token_hash(token))?
+            .ok_or_else(refused)?;
         let token_id = text(&row, "id").ok_or_else(refused)?;
-        let grant_revision = row.get("grant_revision").and_then(Value::as_i64).unwrap_or(0);
+        let grant_revision = row
+            .get("grant_revision")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
         let member_id = text(&row, "member_id");
-        Ok(AuthenticatedPrincipal { token_id, grant_revision, member_id, row })
+        Ok(AuthenticatedPrincipal {
+            token_id,
+            grant_revision,
+            member_id,
+            row,
+        })
     }
 
     /// The owner member when it names an enabled member.
     fn live_owner_member(&self) -> Result<Option<String>> {
-        let Some(owner) = self.get_config(OWNER_MEMBER_KEY)?.map(|v| v.trim().to_string()).filter(|v| !v.is_empty()) else {
+        let Some(owner) = self
+            .get_config(OWNER_MEMBER_KEY)?
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+        else {
             return Ok(None);
         };
-        Ok(self.list_active_access_members()?.contains(&owner).then_some(owner))
+        Ok(self
+            .list_active_access_members()?
+            .contains(&owner)
+            .then_some(owner))
     }
 }
 
 impl Scope {
     /// Today's behavior, embedded only: the caller's own access record, trusted.
     pub fn trusted_local(access_record: &Value) -> Scope {
-        Scope { kind: ScopeKind::TrustedLocal(access_record.clone()) }
+        Scope {
+            kind: ScopeKind::TrustedLocal(access_record.clone()),
+        }
     }
 
     /// The server path: a scope for a verified principal, through the owner gate (see the module
@@ -124,7 +146,12 @@ impl Scope {
         if principal.member_id.as_deref() != Some(owner.as_str()) {
             return Err(refused());
         }
-        Ok(Scope { kind: ScopeKind::Principal { principal: principal.clone(), owner_member: owner } })
+        Ok(Scope {
+            kind: ScopeKind::Principal {
+                principal: principal.clone(),
+                owner_member: owner,
+            },
+        })
     }
 
     /// True for a principal scope (the server path), false for the embedded caller.
@@ -151,11 +178,25 @@ impl Scope {
     /// Re-reads, from the store's current records, everything the scope was admitted on; refuses
     /// `permission_denied` when any of it changed. The embedded caller always passes.
     pub fn revalidate(&self, store: &Store) -> Result<()> {
-        let ScopeKind::Principal { principal, owner_member } = &self.kind else { return Ok(()) };
-        let row = store.read_access_token(&principal.token_id)?.ok_or_else(refused)?;
+        let ScopeKind::Principal {
+            principal,
+            owner_member,
+        } = &self.kind
+        else {
+            return Ok(());
+        };
+        let row = store
+            .read_access_token(&principal.token_id)?
+            .ok_or_else(refused)?;
         let revoked = row.get("revoked_at").is_some_and(|v| !v.is_null());
-        let revision = row.get("grant_revision").and_then(Value::as_i64).unwrap_or(0);
-        if revoked || revision != principal.grant_revision || text(&row, "member_id") != principal.member_id {
+        let revision = row
+            .get("grant_revision")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        if revoked
+            || revision != principal.grant_revision
+            || text(&row, "member_id") != principal.member_id
+        {
             return Err(refused());
         }
         if store.live_owner_member()?.as_deref() != Some(owner_member.as_str()) {
