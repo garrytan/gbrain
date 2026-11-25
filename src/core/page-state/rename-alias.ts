@@ -120,11 +120,14 @@ export async function moveSlugBindings(
     // An attachment that names its page only by slug (no page_id) moves when the old slug named exactly this live
     // page: the moved page is live at the new slug, no other page of the source, live or soft-deleted, holds the old
     // slug now, and no earlier rename moved another page away from it (slug_rename_history). Otherwise the slug is
-    // ambiguous, so the rows stay and the skip is logged.
+    // ambiguous, so the rows stay and the skip is logged. A role that row-level security applies to on those tables cannot
+    // prove what it does not see, so it never moves such rows.
     const [r] = await savepoint.executeRaw<{ ok: boolean; skipped: number }>(`WITH ok AS (
         SELECT EXISTS (SELECT 1 FROM pages WHERE source_id = $1 AND slug = $3 AND deleted_at IS NULL)
            AND NOT EXISTS (SELECT 1 FROM pages WHERE source_id = $1 AND slug = $2)
-           AND NOT EXISTS (SELECT 1 FROM slug_rename_history WHERE source_id = $1 AND old_slug = $2 AND new_slug <> $3) AS ok),
+           AND NOT EXISTS (SELECT 1 FROM slug_rename_history WHERE source_id = $1 AND old_slug = $2 AND new_slug <> $3)
+           AND NOT pg_catalog.row_security_active('slug_rename_history') AND NOT pg_catalog.row_security_active('pages')
+           AND NOT pg_catalog.row_security_active('files') AS ok),
       moved AS (UPDATE files SET page_slug = $3 WHERE source_id = $1 AND page_slug = $2 AND page_id IS NULL AND (SELECT ok FROM ok) RETURNING 1)
       SELECT (SELECT ok FROM ok) AS ok, (SELECT count(*)::int FROM files WHERE source_id = $1 AND page_slug = $2 AND page_id IS NULL) AS skipped`,
       [sourceId, oldSlug, newSlug]);
