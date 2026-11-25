@@ -102,9 +102,9 @@ describe('engine parity: a whole fact purge', () => {
       expect({ backend, code: error.code }).toEqual({ backend: 'rust', code: 'engine_capability_missing' });
       // The check runs before the purge reads or writes: no member was called, so nothing was journaled.
       expect([...called]).toEqual([]);
-      // rust-5a serves the purge transaction's statements, so the first stop left on the list is the segmented rewrite's raw-SQL
-      // site (trunk's); the refusal names its owner and date.
-      expect(error.message).toContain('which needs rewriteLiveSegmentedFences (page-body/segment-rewrite.ts)');
+      // rust-5a serves the purge transaction's statements and segment-pending-stamp serves the segmented rewrite's statements as
+      // typed members, so the first stop left on the list is the receipt's belief probe (lane 3); the refusal names it.
+      expect(error.message).toContain('which needs listBeliefEventsForPurgeProbe');
       expect(error.message).toContain('owner trunk (segment-pending-stamp f71c844551, contains 34fa27c472), due 5 PM PST Nov 23');
       expect(error.detail).toContain('outcome=none');
       expect(error.detail).toContain('owner="trunk (segment-pending-stamp f71c844551, contains 34fa27c472)" due="5 PM PST Nov 23"');

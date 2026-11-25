@@ -624,7 +624,6 @@ src/core/trust/label-lowerings.ts	execute_raw	1
 src/core/trust/marker-repair.ts	execute_raw	4
 src/core/trust/owner-actions.ts	execute_raw	6
 src/core/trust/page-handlers.ts	execute_raw	5
-src/core/trust/page-write.ts	execute_raw	1
 src/core/trust/propagation.ts	execute_raw	4
 src/core/trust/release-publish.ts	execute_raw	2
 src/core/trust/review.ts	execute_raw	15
