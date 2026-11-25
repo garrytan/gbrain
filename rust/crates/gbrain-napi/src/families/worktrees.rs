@@ -199,6 +199,27 @@ impl Brain {
         })
     }
 
+    /// `listHostTopologyRows(hostId)`: each host binding of the host with its worktree's owner,
+    /// epoch, state and topology generation.
+    #[napi]
+    pub fn list_host_topology_rows<'env>(
+        &self,
+        env: &'env Env,
+        host_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_host_topology_rows(&host_id))
+    }
+
+    /// `listWorktreeMembers(worktreeId)`: the worktree's source bindings by byte source id.
+    #[napi]
+    pub fn list_worktree_members<'env>(
+        &self,
+        env: &'env Env,
+        worktree_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_worktree_members(&worktree_id))
+    }
+
     /// Records a worktree row.
     #[napi]
     pub fn insert_worktree<'env>(

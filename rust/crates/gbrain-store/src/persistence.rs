@@ -77,6 +77,7 @@ mod effect_scans;
 mod effect_worker;
 pub(crate) mod effects;
 mod embedding_candidates;
+mod freshness;
 mod git_holds;
 mod head_blocker;
 mod housekeeping;

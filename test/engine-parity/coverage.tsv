@@ -158,7 +158,7 @@ listIdentityDecisions	pages	yes	10	no	yes	yes	serves
 listRestrictedIdentityMembers	pages	yes	1	no	yes	yes	serves
 applyIdentityDecisions	pages	yes	12	no	yes	yes	serves
 listAllPageRefs	pages	yes	4	yes	yes	yes	serves
-listAllSources	pages	yes	24	no	yes	yes	serves
+listAllSources	pages	yes	26	no	yes	yes	serves
 updateSourceConfig	pages	yes	20	no	yes	yes	serves
 renameSource	pages	yes	1	no	yes	yes	serves
 readFederationExposedPages	pages	yes	1	no	yes	yes	serves
@@ -199,7 +199,7 @@ writeReasonPurgeTombstones	pages	yes	2	no	yes	yes	serves
 advanceSourcePurgeEpoch	pages	no	0	no	-	-	-
 listSourcePathPages	pages	yes	3	no	yes	yes	serves
 listQuarantinedSlugs	pages	yes	1	no	yes	yes	serves
-readRenameIdentityRows	pages	yes	3	no	yes	yes	serves
+readRenameIdentityRows	pages	yes	4	no	yes	yes	serves
 readLiveIdentityHolders	pages	yes	4	no	yes	yes	serves
 listPrefixSampledPages	pages	yes	4	no	yes	yes	serves
 listCorpusSample	pages	yes	2	no	yes	yes	serves
@@ -229,9 +229,9 @@ readCompanyBrainEvidenceRows	pages	yes	2	no	yes	yes	serves
 listCardRows	pages	yes	2	no	yes	yes	serves
 readShelfPageRows	pages	yes	2	no	yes	yes	serves
 findCardRows	pages	yes	3	no	yes	yes	serves
-readFirstLiveSlugAtPath	pages	yes	2	no	yes	yes	serves
-listPathTwinSlugs	pages	yes	1	no	yes	yes	serves
-listLiveSlugOrigins	pages	yes	1	no	yes	yes	serves
+readFirstLiveSlugAtPath	pages	yes	3	no	yes	yes	serves
+listPathTwinSlugs	pages	yes	2	no	yes	yes	serves
+listLiveSlugOrigins	pages	yes	2	no	yes	yes	serves
 probeRetypeRows	pages	yes	2	no	yes	yes	serves
 listAliasCandidatePages	pages	yes	2	no	yes	yes	serves
 listLinkCandidatePages	pages	yes	4	no	yes	yes	serves
@@ -744,7 +744,7 @@ getConfigValues	config	yes	10	no	yes	yes	serves
 readStoredConfigValue	config	yes	5	no	yes	yes	serves
 readManagedModeRows	import_guards	yes	2	no	yes	yes	serves
 getSourceStrictness	import_guards	yes	2	no	yes	yes	serves
-readPersistenceBrainId	import_guards	yes	30	no	yes	yes	serves
+readPersistenceBrainId	import_guards	yes	32	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	12	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	12	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	15	no	yes	yes	serves
@@ -827,12 +827,16 @@ readSyncStatusCommittedRow	persistence_journal	yes	1	no	yes	yes	serves
 readManagedSyncCursorHeader	persistence_journal	yes	2	no	yes	yes	serves
 readRetiredManagedSyncCursor	persistence_journal	yes	2	no	yes	yes	serves
 readManagedSyncFailureRows	persistence_journal	yes	2	no	yes	yes	serves
+listFreshnessTargets	persistence_journal	yes	1	no	yes	yes	serves
 readOrphanedManagedSyncFailureRows	persistence_journal	yes	2	no	yes	yes	serves
 readSyncHeadRequestRow	persistence_journal	yes	1	no	yes	yes	serves
 readSyncRecoveryProbeRow	persistence_journal	yes	1	no	yes	yes	serves
-readIdentityDowngradeRows	persistence_journal	yes	5	no	yes	yes	serves
+readIdentityDowngradeRows	persistence_journal	yes	6	no	yes	yes	serves
+readIdentityDowngradeOldPage	persistence_journal	yes	1	no	yes	yes	serves
+countIdentityDowngradeCarry	persistence_journal	yes	1	no	yes	yes	serves
+readIdentityRemedySide	persistence_journal	yes	1	no	yes	yes	serves
 readWriteWatermarkRow	persistence_journal	yes	1	no	yes	yes	serves
-readSourceMovementRows	persistence_journal	yes	1	no	yes	yes	serves
+readSourceMovementRows	persistence_journal	yes	2	no	yes	yes	serves
 readLiveSyncJobId	persistence_journal	yes	1	no	yes	yes	serves
 readSourceCheckoutRoot	persistence_journal	yes	1	no	yes	yes	serves
 readUnembeddedPageSummary	persistence_journal	yes	1	no	yes	yes	serves
@@ -1318,7 +1322,7 @@ insertLeasePressure	minion_queue	yes	2	no	yes	yes	serves
 countLeasePressure	minion_queue	yes	2	no	yes	yes	serves
 listRecentLeasePressure	minion_queue	yes	2	no	yes	yes	serves
 readLastAutopilotCycles	minion_status	yes	1	no	yes	yes	serves
-countJobsByStatus	minion_status	yes	3	no	yes	yes	serves
+countJobsByStatus	minion_status	yes	4	no	yes	yes	serves
 readWaitingQueueDepths	minion_status	yes	1	no	yes	yes	serves
 listRecentSourceCycleFailures	minion_status	yes	3	no	yes	yes	serves
 readLastCompletedJobAt	minion_status	yes	1	no	yes	yes	serves
@@ -1968,7 +1972,7 @@ readRevisionWriterRequest	write_misc	yes	2	no	yes	yes	serves
 writeSyncAdmissionStamp	write_misc	yes	5	no	yes	yes	serves
 readSyncAdmissionEffects	write_misc	yes	6	no	yes	yes	serves
 readOpCheckpointRecord	write_misc	yes	26	no	yes	yes	serves
-writeOpCheckpointRecord	write_misc	yes	50	no	yes	yes	serves
+writeOpCheckpointRecord	write_misc	yes	52	no	yes	yes	serves
 purgeStaleCheckpoints	write_misc	yes	1	no	yes	yes	serves
 readHealthMemoClock	write_misc	yes	1	no	yes	yes	serves
 listSynopsisSourceIds	write_misc	yes	4	no	yes	yes	serves
@@ -2093,6 +2097,7 @@ listOriginClaimants	repair_bookkeeping	yes	1	no	yes	yes	serves
 countLiveFileBackedPages	repair_bookkeeping	yes	2	no	yes	yes	serves
 listRepairScanPages	repair_bookkeeping	yes	7	no	yes	yes	serves
 listFileTombstones	repair_bookkeeping	yes	1	no	yes	yes	serves
+listUnreviewedSyncTombstones	repair_bookkeeping	yes	1	no	yes	yes	serves
 listTwinMergeLosers	repair_bookkeeping	yes	3	no	yes	yes	serves
 listContactRowPages	repair_bookkeeping	yes	1	no	yes	yes	serves
 listSplitFactsPages	repair_bookkeeping	yes	1	no	yes	yes	serves

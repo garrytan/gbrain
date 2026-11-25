@@ -69,7 +69,7 @@ import type {
 } from './engine-sql/notifier.ts';
 import type {
   AdmissionSourceRow, AttachSourcePathOptions, OpCheckpointRecord, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions,
-  SourceStateRow, WorktreeBinding,
+  SourceStateRow, WorktreeBinding, HostTopologyRow,
 } from './engine-sql/write-misc.ts';
 import type { ChronicleJudgeKey, ChronicleRowKey, ChronicleRowUpsert } from './engine-sql/chronicle-ledger.ts';
 import type { StoredPageHead } from './engine-sql/page-mutation-reads.ts';
@@ -170,7 +170,7 @@ import type { AtomFenceCandidate, AtomFenceQuery, ContactRowQuery, RepairPageRef
 import type { AttributionTable, DriftConflictBounds, DriftConflictDetails, DriftConflictGroups, DriftConflictQuery, FailedWriteQuery, FailedWriteRow, OriginPathPageRow, SourceHoldQuery, SourceHoldRecordRow, UntiledPage, UntiledPageQuery } from './engine-sql/repair-plan-scans.ts';
 import type { ConnectorSourceRow, LoopFactState, OrphanBinding, OrphanCheckpointBounds, OrphanCheckpointRow } from './engine-sql/repair-bookkeeping.ts';
 import type { ContentReceiptBinding, OwnedContentRow } from './engine-sql/owned-content.ts';
-import type { FileTombstone, FileTombstoneQuery, LegacyOriginPair, LiveOriginPage, OriginClaimantRow, OriginTwinGroupRow, RepairScanPage, RepairScanQuery, SafeChunksPendingRow, TwinMergeLosers } from './engine-sql/repair-page-scans.ts';
+import type { FileTombstone, FileTombstoneQuery, LegacyOriginPair, LiveOriginPage, OriginClaimantRow, OriginTwinGroupRow, RepairScanPage, RepairScanQuery, SafeChunksPendingRow, TwinMergeLosers, UnreviewedSyncTombstone } from './engine-sql/repair-page-scans.ts';
 import type { LinkTargetPage, LinksRearm, OwnedLink, WriterReadPolicy } from './engine-sql/remote-links.ts';
 import type { ManagedSyncOrphanRows, ManagedSyncRetireMode, ManagedSyncRetireTarget, SourceManagedSyncFailure } from './engine-sql/managed-sync-orphans.ts';
 import type { OriginIndexState, OriginTwinCount, PageRef, TornPages } from './engine-sql/repair-page-reads.ts';
@@ -1656,6 +1656,10 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   listSharedSkillPackRoots(hostId: string): Promise<SharedSkillPackRoot[]>;
   /** The source's writer binding with host `hostId`'s paths (null host columns for a null or unbound host); null when unbound. */
   getWorktreeBinding(sourceId: string, hostId: string | null): Promise<WorktreeBinding | null>;
+  /** Every worktree host `hostId` binds, with its owner, epoch, state and topology generation, in no set order (the topology lock's local read). */
+  listHostTopologyRows(hostId: string): Promise<HostTopologyRow[]>;
+  /** The source bindings of one worktree, by byte source id. */
+  listWorktreeMembers(worktreeId: string): Promise<Array<{ source_id: string; relative_path: string }>>;
   /**
    * The unmanaged writer claim's store (engine-sql/worktree-claim.ts). Call it on a transaction engine: it turns on
    * durable commit, locks the brain row, and every store call runs in that transaction. `claimWorktreeBinding(engine,
@@ -1864,6 +1868,8 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   listRepairScanPages(sourceId: string, q: RepairScanQuery): Promise<RepairScanPage[]>;
   /** Soft-deleted pages of the source recording a non-blank file, below `q.before`, by id descending (uncommitted-deletions). */
   listFileTombstones(sourceId: string, q: FileTombstoneQuery): Promise<FileTombstone[]>;
+  /** Every tombstone a managed sync made that no live page of its source backs by content, oldest first (`expired`: older than the cutoff). */
+  listUnreviewedSyncTombstones(olderThanHours: number): Promise<UnreviewedSyncTombstone[]>;
   /** What moving twin `twinId` into `survivorId` would land on (engine-sql/repair-page-scans.ts `TwinMergeLosers`). Read-only. */
   listTwinMergeLosers(survivorId: number, twinId: number): Promise<TwinMergeLosers>;
   /** Live inline pages of `sourceIds` with two or more contact rows, by id (contact-rows; engine-sql/repair-fence-scans.ts). */

@@ -15,10 +15,14 @@
 use super::housekeeping::HousekeepingRow;
 use super::projection_queue::parse_timestamptz;
 use crate::Store;
+use crate::aliases::page_alias_rows;
+use crate::cli_reads::pg_text::timestamptz_text;
 use crate::error::{Result, StoreError};
+use crate::facts::source_rows;
 use crate::keys;
 use crate::kv::{KvRead, scan_prefix};
-use crate::pages::{PageRecord, read_page_by_id};
+use crate::links::{in_links, out_links};
+use crate::pages::{PageRecord, all_pages, read_page, read_page_by_id};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -213,10 +217,119 @@ pub(crate) fn read_identity_downgrade_rows_in(
         .collect())
 }
 
+/// `readIdentityDowngradeOldPage(sourceId, path, slug)` (`recordIdentityDowngrades`): the
+/// soft-deleted page of the source that recorded `path` (or, recording no path, sits at `slug`),
+/// the most recently deleted first, then the lowest id; `deleted_at` is the `::text` form.
+pub(crate) fn identity_downgrade_old_page_in(
+    read: &dyn KvRead,
+    source_id: &str,
+    path: &str,
+    slug: &str,
+) -> Result<Value> {
+    let mut best: Option<(i64, u64, String)> = None;
+    for page in all_pages(read)? {
+        let Some(deleted_at) = page.deleted_at_us else {
+            continue;
+        };
+        let at_path = match page.source_path.as_deref() {
+            Some(p) => p == path,
+            None => page.slug == slug,
+        };
+        if page.source_id != source_id || !at_path {
+            continue;
+        }
+        let better = best
+            .as_ref()
+            .is_none_or(|(at, id, _)| deleted_at > *at || (deleted_at == *at && page.id < *id));
+        if better {
+            best = Some((deleted_at, page.id, page.slug.clone()));
+        }
+    }
+    Ok(best.map_or(
+        Value::Null,
+        |(at, id, slug)| json!({ "id": id, "slug": slug, "deleted_at": timestamptz_text(at) }),
+    ))
+}
+
+/// `countIdentityDowngradeCarry(sourceId, slug, pageId)`: what an old page carries, as the
+/// record counts it: the source's facts about `slug`, the links from or to `page_id` (a link from
+/// the page to itself once), and the source's `page_aliases` rows of `slug`.
+pub(crate) fn identity_downgrade_counts_in(
+    read: &dyn KvRead,
+    source_id: &str,
+    slug: &str,
+    page_id: u64,
+) -> Result<Value> {
+    let facts = source_rows(read, source_id)?
+        .iter()
+        .filter(|f| f.entity_slug.as_deref() == Some(slug))
+        .count();
+    let links: BTreeSet<u64> = out_links(read, page_id)?
+        .into_iter()
+        .chain(in_links(read, page_id)?)
+        .map(|l| l.id)
+        .collect();
+    let aliases = page_alias_rows(read, source_id, slug)?.len();
+    Ok(json!({ "facts": facts, "links": links.len(), "aliases": aliases }))
+}
+
+/// `readIdentityRemedySide(sourceId, by)`: one page of the source, by id or by slug, deleted or
+/// not, as the remedy binds it: id, slug, knowledge revision and whether it is soft-deleted.
+pub(crate) fn identity_remedy_side_in(
+    read: &dyn KvRead,
+    source_id: &str,
+    page_id: Option<u64>,
+    slug: Option<&str>,
+) -> Result<Value> {
+    let page: Option<PageRecord> = match (page_id, slug) {
+        (Some(id), _) => read_page_by_id(read, id)?.filter(|p| p.source_id == source_id),
+        (None, Some(slug)) => read_page(read, source_id, slug)?,
+        (None, None) => None,
+    };
+    Ok(page.map_or(Value::Null, |p| {
+        json!({
+            "id": p.id,
+            "slug": p.slug,
+            "revision": p.knowledge_revision,
+            "deleted": p.deleted_at_us.is_some(),
+        })
+    }))
+}
+
 impl Store {
     /// `readIdentityDowngradeRows(sourceIds)`: the open identity-downgrade records, oldest first,
     /// each with the live slugs at its new path (null when none).
     pub fn read_identity_downgrade_rows(&self, spec: &IdentityDowngradeSpec) -> Result<Vec<Value>> {
         read_identity_downgrade_rows_in(&*self.read()?, spec)
+    }
+
+    /// `readIdentityDowngradeOldPage(sourceId, path, slug)`, or `Value::Null`.
+    pub fn read_identity_downgrade_old_page(
+        &self,
+        source_id: &str,
+        path: &str,
+        slug: &str,
+    ) -> Result<Value> {
+        identity_downgrade_old_page_in(&*self.read()?, source_id, path, slug)
+    }
+
+    /// `countIdentityDowngradeCarry(sourceId, slug, pageId)`.
+    pub fn count_identity_downgrade_carry(
+        &self,
+        source_id: &str,
+        slug: &str,
+        page_id: u64,
+    ) -> Result<Value> {
+        identity_downgrade_counts_in(&*self.read()?, source_id, slug, page_id)
+    }
+
+    /// `readIdentityRemedySide(sourceId, by)`, or `Value::Null`.
+    pub fn read_identity_remedy_side(
+        &self,
+        source_id: &str,
+        page_id: Option<u64>,
+        slug: Option<&str>,
+    ) -> Result<Value> {
+        identity_remedy_side_in(&*self.read()?, source_id, page_id, slug)
     }
 }

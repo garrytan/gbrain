@@ -966,11 +966,8 @@ src/core/minions/handlers/embed-backfill.ts#makeEmbedBackfillHandler>embedBackfi
 src/core/minions/handlers/embed-backfill.ts#makeEmbedBackfillHandler>embedBackfillHandler	promise_catch_empty	1	fixed on rust-engine/doctor-checks-2 e6a66e9306, not on master
 src/core/minions/handlers/subagent.ts#makeSubagentHandler>subagentHandlerInner	promise_catch_empty	3
 src/core/minions/handlers/supervisor-audit.ts#readSupervisorEvents	catch_empty	1
-src/core/minions/handlers/sync-job-drain.ts#planJobDrain	capability_refusal_swallowed	1
-src/core/minions/handlers/sync-job-drain.ts#planJobDrain	promise_catch_empty	2
-src/core/minions/handlers/sync.ts#makeSyncHandler<anon@1>	capability_refusal_swallowed	3
-src/core/minions/handlers/sync.ts#makeSyncHandler<anon@1>	catch_empty	2
-src/core/minions/handlers/sync.ts#makeSyncHandler<anon@1>	promise_catch_empty	3
+src/core/minions/handlers/sync-job-drain.ts#planJobDrain	promise_catch_empty	1
+src/core/minions/handlers/sync.ts#makeSyncHandler<anon@1>	promise_catch_empty	2
 src/core/minions/job-isolation.ts#observeTiniChildProcessGroups	catch_empty	1
 src/core/minions/job-isolation.ts#readProcessSnapshot	catch_empty	1
 src/core/minions/job-isolation.ts#resolveChildCliInvocation	catch_empty	1
@@ -989,7 +986,6 @@ src/core/minions/spend-authorization.ts#pressureRenewals	catch_empty	1
 src/core/minions/supervisor-pid.ts#readSupervisorBuild	catch_empty	1
 src/core/minions/supervisor.ts#MinionSupervisor.start<anon@1>	catch_empty	1
 src/core/minions/supervisor.ts#MinionSupervisor.tryAtomicCreate	catch_empty	1
-src/core/minions/sync-queue-wake.ts#startSyncQueueWake	capability_refusal_swallowed	1
 src/core/minions/worker-registry.ts#registerWorker<anon@1>	catch_empty	1
 src/core/minions/worker.ts#MinionWorker.checkMemoryLimit	catch_empty	1
 src/core/minions/worker.ts#MinionWorker.start>runHealthCheck	catch_empty	1
@@ -1457,7 +1453,6 @@ src/core/serve-service.ts#readExposeReceipt	catch_empty	1
 src/core/serve-service.ts#resolveServeGbrainCommand	catch_empty	1
 src/core/serve-service.ts#resolveServeGbrainCommand<anon@2>	catch_empty	1
 src/core/serve-service.ts#serveServiceRunsWrapper	catch_empty	1
-src/core/serve-sync-runner.ts#maybeDrainDeferredEmbeds	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/session-lane.ts#readSessionLane	capability_refusal_swallowed	1
 src/core/session-lane.ts#readSessionLane	promise_catch_empty	1
 src/core/setup/brain-first.ts#codexInstructionFile	catch_empty	1
@@ -1584,20 +1579,16 @@ src/core/sync-cost-gate.ts#estimateDeltaTokens	catch_empty	1
 src/core/sync-cost-gate.ts#estimateLanguageTokens	catch_empty	2
 src/core/sync-cost-gate.ts#estimateSourceTreeTokens	catch_empty	2
 src/core/sync-cost-gate.ts#resolveEstimateTarget	catch_empty	1
-src/core/sync-cost-gate.ts#runInlineCostGate	capability_refusal_swallowed	1
-src/core/sync-cost-gate.ts#runInlineCostGate	catch_empty	3
+src/core/sync-cost-gate.ts#runInlineCostGate	catch_empty	2
 src/core/sync-cost-gate.ts#runInlineCostGate	promise_catch_empty	1
 src/core/sync-git.ts#resolveSlugByPathOrSourcePath	catch_empty	1
 src/core/sync-git.ts#resolveSlugsForRemovedPaths	catch_empty	4
-src/core/sync-identity-downgrades.ts#identityRemedyParts	capability_refusal_swallowed	1
-src/core/sync-identity-downgrades.ts#identityRemedyParts	promise_catch_empty	1
 src/core/sync-metafile-pages.ts#diskMetafileHeads<anon@1>	catch_empty	1
 src/core/sync-metafile-pages.ts#gitMetafileHeads>load	catch_empty	1
 src/core/sync-metafile-pages.ts#gitMetafileHeads>prime	catch_empty	1
 src/core/sync-metafile-pages.ts#metafileBackfillDue	catch_empty	1
 src/core/sync-pending.ts#readPendingCommits<anon@2>	promise_catch_empty	1
 src/core/sync-pending.ts#readTail	catch_empty	1
-src/core/sync-policy.ts#loadActivationPendingSourceIds	capability_refusal_swallowed	1
 src/core/sync-policy.ts#loadActivationPendingSourceIds	catch_empty	1
 src/core/sync-rename-identity.ts#workingTreeHead	catch_empty	1
 src/core/sync-status-report.ts#buildSyncStatusReport	catch_empty	1
