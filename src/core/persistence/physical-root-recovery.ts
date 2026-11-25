@@ -3,7 +3,8 @@ import { lstatSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, relative, sep } from 'node:path';
 import { digest } from './digest.ts';
 import { canonicalFilesystemPath } from './root-registry.ts';
-import { adoptTransferredRootStamp, assertNoPhysicalRootOverlap, assertPhysicalRoot, physicalRootError,
+import { ownershipReservationMissingError } from './owner-marker.ts';
+import { adoptTransferredRootStamp, assertNoPhysicalRootOverlap, assertPhysicalRoot, lostReservationStamp, physicalRootError,
   readPhysicalRootReservation, readPhysicalRootStamp, replacePhysicalRootReservation, restorePhysicalRootReservation,
   type PhysicalRootReservation, type PhysicalRootStamp } from './physical-root-record.ts';
 
@@ -31,7 +32,12 @@ export function inspectPhysicalRootRecovery(root: string, identity: Identity & {
     || !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`)) throw physicalRootError();
   const reservation = readPhysicalRootReservation(root), stamp = readPhysicalRootStamp(root), info = statSync(root, { bigint: true });
   if (!info.isDirectory()) throw physicalRootError();
-  if (opts.relocated && !reservation) throw physicalRootError('No ownership reservation exists beside this checkout, so the relocation cannot be confirmed; a copied stamp alone is not authority.');
+  if (opts.relocated && !reservation) {
+    // #10260: a stamp that still identifies this exact directory points at the plain self-transfer, which re-creates the reservation.
+    if (lostReservationStamp(root, { brainId: identity.brainId, worktreeId: identity.worktreeId })) throw ownershipReservationMissingError(undefined, undefined,
+      'No ownership reservation exists beside this checkout, so --confirm-relocated-root cannot confirm a relocation; the checkout\'s stamp still identifies this exact directory, so the self-transfer without --confirm-relocated-root re-creates the reservation.');
+    throw physicalRootError('No ownership reservation exists beside this checkout, so the relocation cannot be confirmed; a copied stamp alone is not authority.');
+  }
   if (reservation && (reservation.brainId !== identity.brainId || reservation.worktreeId !== identity.worktreeId
     || reservation.coordinationPath !== identity.coordinationPath)) throw physicalRootError();
   const sameDirectory = (inode: string, birth: string) => opts.relocated || inode === info.ino.toString() && birth === info.birthtimeNs.toString();
