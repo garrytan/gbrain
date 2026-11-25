@@ -238,6 +238,21 @@ for (const backend of backends) {
       expect(await h.holds(sourceId)).toEqual([]);
     });
 
+    // Review finding (targeted, pass 1): an unreadable off switch must not read as "on".
+    test('an unreadable off switch runs no sweep: the maintenance phase reports the failure and deletes nothing', async () => {
+      const sourceId = await h.source();
+      const late = await h.leftover(sourceId);
+      const failing = new Proxy(engine(), { get: (t, k) => k === 'getConfig'
+        ? async (key: string) => { if (key === 'write_gate.orphan_sweep') throw new Error('permission denied for table config'); return (t as BrainEngine).getConfig(key); }
+        : Reflect.get(t, k, t) }) as BrainEngine;
+      const { orphanSweepEnabled } = await sweepModule();
+      await expect(orphanSweepEnabled(failing)).rejects.toThrow('permission denied');
+      const result = await runPhaseBookkeepingGc(failing, false);
+      expect(result.details.held_write_rechecks).toMatchObject({ status: 'fail' });
+      expect((await h.holds(sourceId)).map(x => x.id)).toEqual([late]);
+      expect((await h.notes(sourceId)).map(n => n.hold)).toEqual([late]);
+    });
+
     test('one run checks at most its limit of notes, oldest first; the rest wait for the next run', async () => {
       const sourceId = await h.source();
       const first = await h.leftover(sourceId);
