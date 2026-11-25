@@ -1,8 +1,8 @@
 # Engine shadow drill (criterion 10)
 
-How `gbrain engine shadow drill` runs the restore drill on the shadow store and the eval-gates fetch, and what `status` and the swap read from them. This page holds the whole Drill item of [Rust engine shadow mode](../ENGINES.md); it lives here so `llms-full.txt`, which inlines the engines page, stays under its size cap.
+How `gbrain engine shadow drill` runs the restore drill on the shadow store and the eval-gates fetch, and what `status` and the swap read from them. This page is the full reference for the drill. [Rust engine shadow mode](../ENGINES.md) does not list it, so `llms-full.txt`, which inlines the engines page, stays under its size cap.
 
-The command, as it was listed with the other `gbrain engine shadow` commands:
+The command:
 
 ```
 gbrain engine shadow drill [--backup] [--evals] [--json]   # restore drill on the shadow store and eval-gates fetch (swap criterion 10); both without a flag
