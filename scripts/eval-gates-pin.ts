@@ -4,7 +4,8 @@
  *
  *   GH_TOKEN=<token> bun run scripts/eval-gates-pin.ts --out <dir> [--github-output]
  *
- * For each of the last 10 releases of gbrain it lists `eval/results/engine-bench/eval-gates/<tag>/` on gbrain-evals main
+ * For each of the last 100 releases of gbrain (the FINAL eval file lands about two days after a tag, and releases come
+ * several a day, so a window of 10 let a delayed file's release fall out before its file arrived) it lists `eval/results/engine-bench/eval-gates/<tag>/` on gbrain-evals main
  * and reads each file at `evals_ref`, the squash commit on main that landed it (the file is never rewritten, so that
  * commit never changes and the pin of an old release comes out byte for byte the same on every run). It takes the
  * first FINAL file that is for THAT release (its own `gbrain_tag`, never today's VERSION) and whose tag resolves to the file's `gbrain_commit`,
@@ -21,7 +22,7 @@ import { join } from 'node:path';
 import { evalGatesPath, evalGatesUrl, FINAL_TAG, MAX_FILE_BYTES, parseEvalGatesFile, PIN_ASSET, type EvalGatesPin } from '../src/shadow/eval-gates.ts';
 
 const API = 'https://api.github.com';
-const RELEASES_LOOKED_AT = 10;
+const RELEASES_LOOKED_AT = 100;
 
 export interface ReleaseInfo { tag: string; assets: Array<{ name: string; url: string }> }
 

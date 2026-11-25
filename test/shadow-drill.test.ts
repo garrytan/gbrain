@@ -15,14 +15,15 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { evaluateReadiness, type ShadowStatus } from '../src/core/engine-swap/readiness.ts';
-import { runBackupDrill, type DrillDeps, type DrillOwner } from '../src/shadow/drill.ts';
+import { addonFileSha256, probeCopy, runBackupDrill, type DrillDeps, type DrillOwner, type ProbeEngine } from '../src/shadow/drill.ts';
+import { DEFAULT_HARD_EXCLUDES } from '../src/core/search/source-boost.ts';
 import { buildDrillStatus } from '../src/shadow/drill-status.ts';
 import { runEngineShadow } from '../src/commands/engine-shadow.ts';
 import { ensureEpoch } from '../src/shadow/evidence-epoch.ts';
 import { shadowBrainKey, shadowDirFor } from '../src/shadow/state.ts';
 import type { StoreSnapshotManifest, StoreVerifyReport } from '../src/core/rust-engine/store.ts';
 import type { SnapshotStatus } from '../src/core/rust-engine/store-snapshot.ts';
-import { evalUrl, gatesObject, pinFor, SEED, TARGET, TAG, writeEpoch, writeStoreFiles } from './helpers/shadow-drill-fixtures.ts';
+import { ADDON_SHA, evalUrl, gatesObject, pinFor, SEED, TARGET, TAG, writeEpoch, writeStoreFiles } from './helpers/shadow-drill-fixtures.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const MANIFEST: StoreSnapshotManifest = {
@@ -68,7 +69,7 @@ let ids = 0;
 function deps(owner: DrillOwner, over: Partial<DrillDeps> = {}): DrillDeps {
   return {
     loadAddon: async () => ({ ok: true, addon: {} as never }), openOwner: async () => owner, verify: async () => report(), verifyAfter: async () => report({ generation: 43 }),
-    openCopy: async () => ({ pages: 3, searchHits: 1 }), statfs: () => plenty, id: () => `d${++ids}`, endedWaitMs: 40, endedPollMs: 5, ...over,
+    openCopy: async () => ({ pages: 3, searchHits: 1 }), addonSha256: () => ADDON_SHA, statfs: () => plenty, id: () => `d${++ids}`, endedWaitMs: 40, endedPollMs: 5, ...over,
   };
 }
 const scratches = (dir: string): string[] => (existsSync(join(dir, 'drills')) ? readdirSync(join(dir, 'drills')).filter(n => n.startsWith('scratch-')) : []);
@@ -374,5 +375,193 @@ describe('gbrain engine shadow drill', () => {
     expect((await cli(['drill', '--nope'], seeded)).code).toBe(2);
     const help = await cli(['--help'], seeded);
     expect(help.out).toContain('gbrain engine shadow drill [--backup] [--evals] [--json]');
+  });
+});
+
+describe('review round 1: the lock, the probe, persistence, the addon and the disk check', () => {
+  const lockFile = (dir: string): string => join(dir, 'drills', 'drill.lock');
+  const deadLock = JSON.stringify({ pid: 2 ** 22 + 12345, at: 1 });
+
+  test('a lock that is empty or cannot be read is never taken over, and nothing is deleted', async () => {
+    for (const text of ['', '{"pid":', 'null', '{"pid":"x"}']) {
+      const { dir } = shadow();
+      mkdirSync(join(dir, 'drills'), { recursive: true });
+      writeFileSync(lockFile(dir), text);
+      const owner = fakeOwner();
+      expect(await runBackupDrill(dir, deps(owner))).toMatchObject({ pass: false, reason: 'drill_running', op_id: null });
+      expect(readFileSync(lockFile(dir), 'utf8')).toBe(text);
+      expect(owner.snapshots).toHaveLength(0);
+    }
+  });
+
+  test('a dead holder is taken over only through the takeover file: while another taker holds it, the lock stays', async () => {
+    const { dir } = shadow();
+    mkdirSync(join(dir, 'drills'), { recursive: true });
+    writeFileSync(lockFile(dir), deadLock);
+    writeFileSync(join(dir, 'drills', 'drill.lock.takeover'), 'someone else');
+    const owner = fakeOwner();
+    expect(await runBackupDrill(dir, deps(owner))).toMatchObject({ pass: false, reason: 'drill_running' });
+    expect(owner.snapshots).toHaveLength(0);
+    expect(readFileSync(lockFile(dir), 'utf8')).toBe(deadLock);
+    expect(readFileSync(join(dir, 'drills', 'drill.lock.takeover'), 'utf8')).toBe('someone else');
+    // With no takeover in progress the same dead lock is taken, used and released, and the takeover file is gone.
+    rmSync(join(dir, 'drills', 'drill.lock.takeover'));
+    expect((await runBackupDrill(dir, deps(fakeOwner()))).pass).toBe(true);
+    expect(existsSync(lockFile(dir))).toBe(false);
+    expect(existsSync(join(dir, 'drills', 'drill.lock.takeover'))).toBe(false);
+  });
+
+  test('a drill releases the lock and the pending record only while they are its own', async () => {
+    const { dir } = shadow();
+    const theirs = JSON.stringify({ pid: process.pid, at: 5, token: 'someone-else' });
+    const otherPending = JSON.stringify({ version: 1, op_id: 'drill-other', drill_id: 'other', scratch: join(dir, 'drills', 'scratch-other'), started_at: 'x' });
+    const owner = fakeOwner({
+      snapshot: async (target, options) => {
+        writeFileSync(lockFile(dir), theirs);
+        writeFileSync(join(dir, 'drills', 'pending.json'), otherPending);
+        mkdirSync(target, { mode: 0o700 });
+        writeFileSync(join(target, 'records.redb'), 'copy');
+        return { op_id: options.opId, state: 'done', manifest: MANIFEST, free_bytes: { initial: 1, low: 1 } } as never;
+      },
+    });
+    await runBackupDrill(dir, deps(owner));
+    expect(readFileSync(lockFile(dir), 'utf8')).toBe(theirs);
+    expect(readFileSync(join(dir, 'drills', 'pending.json'), 'utf8')).toBe(otherPending);
+  });
+
+  test('a shadow deleted while the drill runs is not recreated: nothing is published and the reason is shadow_gone', async () => {
+    const { dir } = shadow();
+    const owner = fakeOwner({
+      snapshot: async (target, options) => {
+        mkdirSync(target, { mode: 0o700 });
+        writeFileSync(join(target, 'records.redb'), 'copy');
+        rmSync(dir, { recursive: true, force: true }); // gbrain engine shadow stop --delete
+        return { op_id: options.opId, state: 'done', manifest: MANIFEST, free_bytes: { initial: 1, low: 1 } } as never;
+      },
+    });
+    const rec = await runBackupDrill(dir, deps(owner));
+    expect(rec).toMatchObject({ pass: false, reason: 'shadow_gone' });
+    expect(existsSync(dir)).toBe(false);
+  });
+
+  test('a shadow replaced by a new one while the drill runs gets no record from the old drill', async () => {
+    const { dir } = shadow();
+    const owner = fakeOwner({
+      snapshot: async (target, options) => {
+        mkdirSync(target, { mode: 0o700 });
+        writeFileSync(join(target, 'records.redb'), 'copy');
+        rmSync(dir, { recursive: true, force: true });
+        mkdirSync(join(dir, 'drills'), { recursive: true });
+        return { op_id: options.opId, state: 'done', manifest: MANIFEST, free_bytes: { initial: 1, low: 1 } } as never;
+      },
+    });
+    expect(await runBackupDrill(dir, deps(owner))).toMatchObject({ pass: false, reason: 'shadow_gone' });
+    expect(existsSync(join(dir, 'drills', 'backup.json'))).toBe(false);
+    expect(existsSync(join(dir, 'drills', 'history.jsonl'))).toBe(false);
+  });
+
+  test('the drill must verify and open the copy with the addon the epoch started on, and the record carries its digest', async () => {
+    const { dir } = shadow();
+    const ok = await runBackupDrill(dir, deps(fakeOwner()));
+    expect(ok).toMatchObject({ pass: true, addon_sha256: ADDON_SHA });
+    expect(JSON.parse(readFileSync(join(dir, 'drills', 'backup.json'), 'utf8')).addon_sha256).toBe(ADDON_SHA);
+    for (const [name, sha] of [['another addon', 'd'.repeat(64)], ['an addon file that cannot be read', null]] as const) {
+      const { dir: other } = shadow();
+      const owner = fakeOwner();
+      const rec = await runBackupDrill(other, deps(owner, { addonSha256: () => sha }));
+      expect([name, rec.reason, rec.pass, rec.addon_sha256]).toEqual([name, 'addon_mismatch', false, sha]);
+      expect(owner.snapshots).toHaveLength(0);
+      expect(existsSync(join(other, 'drills'))).toBe(false);
+    }
+    for (const addon of [null, 'unreadable']) {
+      const { dir: other } = shadow();
+      writeEpoch(other, { addon });
+      expect((await runBackupDrill(other, deps(fakeOwner()))).reason).toBe('addon_mismatch');
+    }
+  });
+
+  test('the digest is the one the shadow child records: the sha256 of the override file, else the cached build', async () => {
+    const { dir } = shadow();
+    const file = join(dir, 'addon.node');
+    writeFileSync(file, 'addon bytes');
+    const expected = new Bun.CryptoHasher('sha256').update('addon bytes').digest('hex');
+    await withEnv({ GBRAIN_RUST_ENGINE_ADDON: file }, async () => { expect(addonFileSha256({ engineBuild: 'b', target: 't' })).toBe(expected); });
+    await withEnv({ GBRAIN_RUST_ENGINE_ADDON: join(dir, 'missing.node') }, async () => { expect(addonFileSha256({ engineBuild: 'b', target: 't' })).toBeNull(); });
+  });
+
+  test('a copy an earlier drill left behind is cleared before the disk check, so it cannot hold the space it needs', async () => {
+    const { dir } = shadow(10 * 1024 * 1024);
+    const old = join(dir, 'drills', 'scratch-old');
+    mkdirSync(join(old, 'restored'), { recursive: true });
+    writeFileSync(join(dir, 'drills', 'pending.json'), JSON.stringify({ version: 1, op_id: 'drill-old', drill_id: 'old', scratch: old, started_at: 'x' }));
+    const short = { bavail: Math.floor((2 * 10 * 1024 * 1024 + 2 * 1024 ** 3 - 1) / 4096), bsize: 4096 };
+    const owner = fakeOwner();
+    const rec = await runBackupDrill(dir, deps(owner, { statfs: () => (existsSync(old) ? short : plenty) }));
+    expect(rec).toMatchObject({ pass: true });
+    expect(existsSync(old)).toBe(false);
+    expect(existsSync(join(dir, 'drills', 'pending.json'))).toBe(false);
+    // Still short once it is cleared: refused with disk_space, the old copy gone, no new copy made.
+    mkdirSync(join(old, 'restored'), { recursive: true });
+    writeFileSync(join(dir, 'drills', 'pending.json'), JSON.stringify({ version: 1, op_id: 'drill-old', drill_id: 'old', scratch: old, started_at: 'x' }));
+    const again = fakeOwner();
+    expect(await runBackupDrill(dir, deps(again, { statfs: () => short }))).toMatchObject({ pass: false, reason: 'disk_space', op_id: null });
+    expect(existsSync(old)).toBe(false);
+    expect(again.snapshots).toHaveLength(0);
+    expect(existsSync(join(dir, 'drills', 'drill.lock'))).toBe(false);
+  });
+
+  describe('the probe of the opened copy', () => {
+    interface FakePage { slug: string; source_id: string; text: string }
+    function engine(pages: FakePage[], hitsFor: (word: string) => number, seen: { words: string[]; scopes: unknown[] } = { words: [], scopes: [] }): ProbeEngine & { seen: typeof seen } {
+      return {
+        seen,
+        getStats: async () => ({ page_count: pages.length }) as never,
+        listPages: async () => pages.map(p => ({ slug: p.slug, source_id: p.source_id })) as never,
+        getChunks: async (slug: string, opts?: { sourceId?: string }) => {
+          seen.scopes.push(opts);
+          // Like the real member: a read without the page's own source finds only the default source.
+          const page = pages.find(p => p.slug === slug && p.source_id === (opts?.sourceId ?? 'default'));
+          return (page ? [{ chunk_text: page.text }] : []) as never;
+        },
+        searchKeyword: async (word: string) => { seen.words.push(word); return Array.from({ length: hitsFor(word) }, () => ({})) as never; },
+      };
+    }
+
+    test('a longest word that is a stop word is skipped: the next word that the engine answers is the probe', async () => {
+      const e = engine([{ slug: 'notes/a', source_id: 'default', text: 'quasar themselves' }], w => (w === 'quasar' ? 2 : 0));
+      expect(await probeCopy(e, true)).toEqual({ pages: 1, searchHits: 2 });
+      expect(e.seen.words).toEqual(['themselves', 'quasar']);
+    });
+
+    test('a page of a named source is read in its own source', async () => {
+      const e = engine([{ slug: 'notes/a', source_id: 'wiki', text: 'harbor lanterns' }], () => 1);
+      expect(await probeCopy(e, true)).toEqual({ pages: 1, searchHits: 1 });
+      expect(e.seen.scopes).toEqual([{ sourceId: 'wiki' }]);
+    });
+
+    test('pages under a slug prefix the search excludes give no probe word', async () => {
+      const prefix = DEFAULT_HARD_EXCLUDES[0]!;
+      const e = engine([{ slug: `${prefix}x`, source_id: 'default', text: 'harbor lanterns' }], () => 1);
+      await expect(probeCopy(e, true)).rejects.toMatchObject({ drillReason: 'no_probe_term' });
+      expect(e.seen.words).toEqual([]);
+    });
+
+    test('a populated copy where no word is answered, or no word exists, is no_probe_term; an incomplete index may miss but must query', async () => {
+      const text = [{ slug: 'notes/a', source_id: 'default', text: 'Because cats' }];
+      await expect(probeCopy(engine(text, () => 0), true)).rejects.toMatchObject({ drillReason: 'no_probe_term' });
+      expect(await probeCopy(engine(text, () => 0), false)).toEqual({ pages: 1, searchHits: 0 });
+      const none = [{ slug: 'notes/a', source_id: 'default', text: '12 34 ab' }];
+      await expect(probeCopy(engine(none, () => 1), false)).rejects.toMatchObject({ drillReason: 'no_probe_term' });
+      expect(await probeCopy(engine([], () => 1), true)).toEqual({ pages: 0, searchHits: null });
+    });
+
+    test('the drill records no_probe_term, never a pass, for a populated copy that ran no search', async () => {
+      const { dir } = shadow();
+      const viaProbe = await runBackupDrill(dir, deps(fakeOwner(), { openCopy: (_a, _d, hit) => probeCopy(engine([{ slug: 'notes/a', source_id: 'default', text: 'Because cats' }], () => 0), hit) }));
+      expect(viaProbe).toMatchObject({ pass: false, reason: 'no_probe_term' });
+      const noSearch = await runBackupDrill(dir, deps(fakeOwner(), { openCopy: async () => ({ pages: 3, searchHits: null }) }));
+      expect(noSearch).toMatchObject({ pass: false, reason: 'no_probe_term' });
+      expect(buildDrillStatus(dir).drills).toMatchObject({ backup_restore_passed: false, backup_reason: 'backup_drill_failed:no_probe_term' });
+    });
   });
 });

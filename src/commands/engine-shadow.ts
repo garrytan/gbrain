@@ -489,7 +489,10 @@ const DRILL_FIX: Partial<Record<DrillReason, string>> = {
   no_store: 'The shadow has no Rust store; run gbrain engine shadow seed.',
   addon_unavailable: 'The Rust engine addon is not installed; run gbrain doctor.',
   disk_space: 'Free disk space: the drill needs twice the store file plus 2 GiB.',
-  drill_running: 'Another drill is running; wait for it to end.',
+  drill_running: 'Another drill is running; wait for it to end. If none is, remove drills/drill.lock (one that cannot be read) or drills/drill.lock.takeover (left by a crash).',
+  addon_mismatch: 'The addon this command loaded is not the one the evidence epoch started on; run the drill with the same addon the shadow child runs (the installed addon, or the same GBRAIN_RUST_ENGINE_ADDON).',
+  no_probe_term: 'No stored word got a keyword hit on the copy; check gbrain doctor and the shadow store, then run the drill again.',
+  shadow_gone: 'The shadow directory was deleted or replaced while the drill ran; nothing was recorded.',
   cleanup_pending: 'A copy from an earlier drill is still ending; run the drill again in a minute.',
 };
 

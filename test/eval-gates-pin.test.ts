@@ -122,13 +122,21 @@ describe('planPins', () => {
     expect(plan).toMatchObject({ publish: [], unchanged: [A], conflicts: [] });
   });
 
-  test('only the last 10 releases are looked at, and names that are not release tags are ignored', async () => {
-    const releases = [...Array.from({ length: 12 }, (_, n) => release(`v0.60.${800 + n}.0`)), release('latest-stable'), release('v1.0.0-rc.1')];
+  test('only the last 100 releases are looked at, and names that are not release tags are ignored', async () => {
+    const releases = [...Array.from({ length: 102 }, (_, n) => release(`v0.60.${800 + n}.0`)), release('latest-stable'), release('v1.0.0-rc.1')];
     const calls: string[] = [];
     const plan = await planPins(world({ releases, files: {}, calls }));
-    expect(plan.waiting).toHaveLength(10);
+    expect(plan.waiting).toHaveLength(100);
     expect(plan.waiting).not.toContain('latest-stable');
     expect(plan.waiting).not.toContain('v1.0.0-rc.1');
+  });
+
+  test('a release more than ten newer releases back still gets its pin when its FINAL file lands late', async () => {
+    const old = release(A);
+    const newer = Array.from({ length: 11 }, (_, n) => release(`v0.60.${900 + n}.0`));
+    const plan = await planPins(world({ releases: [...newer, old], files: { [A]: [fileFor(A)] } }));
+    expect(plan.publish.map(p => p.tag)).toEqual([A]);
+    expect(plan.waiting).toHaveLength(11);
   });
 });
 
@@ -138,6 +146,13 @@ describe('githubSource', () => {
     await expect(githubSource('t', answer(500)).releases()).rejects.toThrow('500');
     expect(await githubSource('t', answer(404)).evalFiles('v1.0.0')).toEqual([]);
     expect(await githubSource('t', answer(404)).tagCommit('v1.0.0')).toBeNull();
+  });
+
+  test('the release list asks for the newest 100 in one page', async () => {
+    const urls: string[] = [];
+    const fetcher = (async (url: string) => { urls.push(url); return new Response('[]'); }) as unknown as typeof fetch;
+    await githubSource('t', fetcher).releases();
+    expect(urls).toEqual(['https://api.github.com/repos/garrytan/gbrain/releases?per_page=100']);
   });
 
   test('the landing commit is the oldest commit that touched the file', async () => {

@@ -6,6 +6,7 @@ import { loadRustEngineAddon } from '../../src/core/rust-engine/addon-loader.ts'
 import { runBackupDrill } from '../../src/shadow/drill.ts';
 
 const [addonPath, dir, delay, bytes] = process.argv.slice(2) as [string, string, string, string];
+process.env.GBRAIN_RUST_ENGINE_ADDON = addonPath; // the digest the drill checks against the epoch is of this file
 const record = await runBackupDrill(dir, {
   loadAddon: () => loadRustEngineAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: addonPath } }),
   snapshotOptions: { batchDelayMs: Number(delay), batchBytes: Number(bytes) },

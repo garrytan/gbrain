@@ -10,14 +10,17 @@
  * skips without the addon (GBRAIN_TEST_RUST_ADDON_REQUIRED=1 makes that an error, as the CI addon job sets).
  */
 import { afterEach, describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadRustEngineAddon } from '../src/core/rust-engine/addon-loader.ts';
+import { loadRustAddon, loadRustEngineAddon } from '../src/core/rust-engine/addon-loader.ts';
+import { openRustEngine } from '../src/core/rust-engine.ts';
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
 import { runBackupDrill } from '../src/shadow/drill.ts';
 import { buildDrillStatus } from '../src/shadow/drill-status.ts';
 import { writeEpoch } from './helpers/shadow-drill-fixtures.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const TARGET = detectAddonTarget();
 const BUILT = join(import.meta.dir, '..', 'rust', 'target', 'addon', `gbrain_engine.${TARGET ?? 'unsupported'}.node`);
@@ -25,6 +28,10 @@ const HAVE_ADDON = TARGET !== null && existsSync(BUILT);
 if (!HAVE_ADDON && process.env.GBRAIN_TEST_RUST_ADDON_REQUIRED === '1') {
   throw new Error(`GBRAIN_TEST_RUST_ADDON_REQUIRED=1 but ${BUILT} does not exist; run bun run rust:build`);
 }
+// The drill checks the digest of the addon it loads against the epoch's: the epoch of these tests names this file's.
+const BUILT_SHA = HAVE_ADDON ? createHash('sha256').update(readFileSync(BUILT)).digest('hex') : '';
+/** The drill's digest reads the override file, as the shadow child's epoch does. */
+const drill = (dir: string, deps?: Parameters<typeof runBackupDrill>[1]) => withEnv({ GBRAIN_RUST_ENGINE_ADDON: BUILT }, () => runBackupDrill(dir, deps));
 
 const root = join(import.meta.dir, '..');
 const sleep = (ms: number) => new Promise(done => setTimeout(done, ms));
@@ -47,7 +54,7 @@ async function shadowWithOwner(): Promise<{ dir: string; initialPages: number; s
   void (async () => { for await (const chunk of child.stdout) out += new TextDecoder().decode(chunk); })();
   cleanups.push(() => { child.kill('SIGKILL'); rmSync(dir, { recursive: true, force: true }); });
   await until('the owner to be ready', () => /ready \d+/.test(out), 40_000);
-  writeEpoch(dir);
+  writeEpoch(dir, { addon: BUILT_SHA });
   return {
     dir, initialPages: Number(/ready (\d+)/.exec(out)![1]),
     stop: async () => {
@@ -63,7 +70,7 @@ const scratches = (dir: string): string[] => (existsSync(join(dir, 'drills')) ? 
 (HAVE_ADDON ? describe : describe.skip)('the restore drill on a real shadow store', () => {
   test('copies the store while its owner keeps writing, verifies and opens the copy, and leaves nothing behind', async () => {
     const shadow = await shadowWithOwner();
-    const record = await runBackupDrill(shadow.dir, {
+    const record = await drill(shadow.dir, {
       loadAddon: () => loadRustEngineAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: BUILT } }),
       snapshotOptions: { batchBytes: 4096, batchDelayMs: 20 },
     });
@@ -94,11 +101,11 @@ const scratches = (dir: string): string[] => (existsSync(join(dir, 'drills')) ? 
     expect(existsSync(join(shadow.dir, 'drills', 'pending.json'))).toBe(true);
     expect(buildDrillStatus(shadow.dir).drills).toMatchObject({ backup_restore_passed: false, backup_state: 'cleanup_pending' });
     // The owner stops the copy for the gone caller and says so; only then does a drill clear it and run.
-    let next = await runBackupDrill(shadow.dir, { loadAddon: () => loadRustEngineAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: BUILT } }) });
+    let next = await drill(shadow.dir, { loadAddon: () => loadRustEngineAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: BUILT } }) });
     const deadline = Date.now() + 30_000;
     while (next.reason === 'cleanup_pending' && Date.now() < deadline) {
       await sleep(100);
-      next = await runBackupDrill(shadow.dir, { loadAddon: () => loadRustEngineAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: BUILT } }) });
+      next = await drill(shadow.dir, { loadAddon: () => loadRustEngineAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: BUILT } }) });
     }
     expect(next).toMatchObject({ pass: true, scratch_deleted: true });
     expect(scratches(shadow.dir)).toEqual([]);
@@ -111,7 +118,53 @@ const scratches = (dir: string): string[] => (existsSync(join(dir, 'drills')) ? 
     const shadow = await shadowWithOwner();
     await shadow.stop();
     await sleep(500);
-    const record = await runBackupDrill(shadow.dir, { loadAddon: () => loadRustEngineAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: BUILT } }) });
+    const record = await drill(shadow.dir, { loadAddon: () => loadRustEngineAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: BUILT } }) });
     expect(record).toMatchObject({ pass: true, via: 'in_process', scratch_deleted: true });
+  }, 90_000);
+
+  /** A shadow directory whose store holds the given pages (source, slug, text) and has no owner running. */
+  async function shadowWithPages(pages: Array<{ source?: string; slug: string; text: string }>): Promise<string> {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-drill-pages-'));
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+    const store = `${dir}/store`;
+    const engine = openRustEngine({ addon: await loadRustAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: BUILT } }), databasePath: store });
+    await engine.connect({ database_path: store } as never);
+    try {
+      for (const source of new Set(pages.map(p => p.source).filter(Boolean))) {
+        await (engine as unknown as { openStore(member: string): { brain: { upsertSource(input: object): Promise<unknown> } } }).openStore('test').brain.upsertSource({ id: source, name: source, config: {} });
+      }
+      for (const p of pages) {
+        const opts = p.source ? { sourceId: p.source } : undefined;
+        await engine.putPage(p.slug, { type: 'note', title: p.slug, compiled_truth: p.text, timeline: '' }, opts);
+        await engine.sealChunks(p.slug, [{ chunk_index: 0, chunk_text: p.text, chunk_source: 'compiled_truth' }], opts);
+      }
+    } finally {
+      await engine.disconnect();
+    }
+    writeEpoch(dir, { addon: BUILT_SHA });
+    return dir;
+  }
+
+  test('a healthy copy whose longest word is a stop word passes, with a keyword hit from a word the engine indexes', async () => {
+    const dir = await shadowWithPages([{ slug: 'notes/s', text: 'quasar themselves' }]);
+    const record = await drill(dir);
+    expect(record).toMatchObject({ pass: true, reason: null, addon_sha256: BUILT_SHA, scratch_deleted: true });
+    expect(record.post_open!.search_hits).toBeGreaterThan(0);
+  }, 90_000);
+
+  test('a brain that holds pages only in a named source still runs its search and passes', async () => {
+    const dir = await shadowWithPages([{ source: 'wiki', slug: 'notes/w', text: 'harbor lanterns' }]);
+    const record = await drill(dir);
+    expect(record).toMatchObject({ pass: true, reason: null });
+    expect(record.post_open!.pages).toBeGreaterThan(0);
+    expect(record.post_open!.search_hits).toBeGreaterThan(0);
+  }, 90_000);
+
+  test('an epoch that started on another addon refuses before any copy is made', async () => {
+    const dir = await shadowWithPages([{ slug: 'notes/s', text: 'harbor lanterns' }]);
+    writeEpoch(dir, { addon: 'd'.repeat(64) });
+    const record = await drill(dir);
+    expect(record).toMatchObject({ pass: false, reason: 'addon_mismatch', addon_sha256: BUILT_SHA, op_id: null });
+    expect(existsSync(join(dir, 'drills'))).toBe(false);
   }, 90_000);
 });

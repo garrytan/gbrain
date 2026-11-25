@@ -75,7 +75,9 @@ never a pass. With no shadow running, every criterion is `missing`.
     physical-copy proof); `--evals` downloads the final eval file pinned to the release the shadow's evidence started
     on. `gbrain engine shadow status` and the swap read only what those commands kept, so a drill from an earlier
     evidence epoch, a file for another platform or another build, and a provisional or unfinished eval file all stay
-    NOT READY, with the reason printed. **Say to your agent:** *"Run the shadow restore drill and fetch the eval gates."*
+    NOT READY, with the reason printed. The drill refuses (`addon_mismatch`) when the addon it loads is not the one the
+    evidence started on, and it never passes without a keyword search that got a hit (`no_probe_term` otherwise). **Say to
+    your agent:** *"Run the shadow restore drill and fetch the eval gates."*
 11. Eligibility: exactly one observed writer host in the last 7 days with no unknown write path (zero observed hosts
     is no evidence, `writer_coverage_unknown`, never "one host"), a personal brain (not a mounted team brain), and a
     shadow host on a preview target.

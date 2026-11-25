@@ -19,12 +19,15 @@
  *
  * Records carry codes, counts and ids, never a key, a value, a path of the brain's content or an error message.
  */
-import { randomBytes } from 'node:crypto';
-import { appendFileSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statfsSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
+import { createHash, randomBytes } from 'node:crypto';
+import { appendFileSync, closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statfsSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { BACKUP_ARCHIVE_MAX_BYTES } from '../core/backup/archive.ts';
+import { gbrainPath } from '../core/config.ts';
 import { withRequestSignal } from '../core/request-signal.ts';
+import type { BrainEngine } from '../core/engine.ts';
 import type { RustEngineAddonLoad } from '../core/rust-engine/addon-loader.ts';
+import { resolveHardExcludes } from '../core/search/source-boost.ts';
 import type { SnapshotStatus, SnapshotStoreOptions } from '../core/rust-engine/store-snapshot.ts';
 import type { StoreSnapshotManifest, StoreVerifyReport } from '../core/rust-engine/store.ts';
 import { backupRecordPath, drillsDir, DRILL_METHOD, DRILL_VERSION, pendingPath } from './drill-status.ts';
@@ -39,7 +42,8 @@ export const DRILL_MARGIN_BYTES = 2 * GIB;
 export type DrillReason =
   | 'no_seed' | 'no_epoch' | 'no_store' | 'addon_unavailable' | 'disk_space' | 'drill_running' | 'cleanup_pending'
   | 'snapshot_busy' | 'snapshot_cancelled' | 'snapshot_disk_pressure' | 'snapshot_age_budget' | 'snapshot_failed'
-  | 'copy_mismatch' | 'copy_integrity' | 'copy_unreadable' | 'open_failed' | 'search_failed' | 'cleanup_failed' | 'drill_error';
+  | 'copy_mismatch' | 'copy_integrity' | 'copy_unreadable' | 'open_failed' | 'search_failed' | 'cleanup_failed' | 'drill_error'
+  | 'addon_mismatch' | 'no_probe_term' | 'shadow_gone';
 
 export interface DrillRecord {
   version: typeof DRILL_VERSION;
@@ -59,6 +63,8 @@ export interface DrillRecord {
   generation: number | null;
   engine_format_version: number | null;
   over_archive_cap: boolean;
+  /** SHA-256 of the addon file this drill verified and opened the copy with; it must equal the evidence epoch's. */
+  addon_sha256: string | null;
   free_bytes_initial: number | null;
   free_bytes_low_water: number | null;
   /** Tags and relations whose digests the verifier compared against the manifest. */
@@ -90,6 +96,8 @@ export interface DrillDeps {
   verifyAfter?: (addon: object, dir: string) => Promise<StoreVerifyReport | null>;
   /** Phase 2: opens the copy the normal way, searches once and counts pages. */
   openCopy?: (addon: object, dir: string, expectKeywordHit: boolean) => Promise<OpenCheck>;
+  /** The SHA-256 of the addon file the loader opened (child.ts `addonFileSha256`); null when it cannot be read. */
+  addonSha256?: (addon: object) => string | null;
   statfs?: (path: string) => { bavail: number | bigint; bsize: number | bigint };
   now?: () => number;
   id?: () => string;
@@ -103,6 +111,7 @@ export interface DrillDeps {
 
 const lockPath = (dir: string): string => join(drillsDir(dir), 'drill.lock');
 const historyPath = (dir: string): string => join(drillsDir(dir), 'history.jsonl');
+const takeoverPath = (dir: string): string => join(drillsDir(dir), 'drill.lock.takeover');
 
 interface Pending { version: 1; op_id: string; drill_id: string; scratch: string; started_at: string }
 
@@ -129,27 +138,65 @@ export function readPending(dir: string): Pending | null {
 
 const pidAlive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM'; } };
 
-/** Creates `drills/drill.lock` exclusively; false when it exists. */
-function createLock(dir: string, now: number): boolean {
+/** Writes `body` to a private file and hard-links it to `path`: `path` appears complete or not at all. False when it exists. */
+function publishExclusive(path: string, body: string): boolean {
+  const tmp = `${path}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
+  writeFileSync(tmp, body, { mode: 0o600, flag: 'wx' });
   try {
-    const fd = openSync(lockPath(dir), 'wx', 0o600);
-    try { writeSync(fd, JSON.stringify({ pid: process.pid, at: now })); } finally { closeSync(fd); }
+    linkSync(tmp, path);
     return true;
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'EEXIST') return false;
     throw e;
+  } finally {
+    try { unlinkSync(tmp); } catch { /* the link, if made, is the file */ }
   }
 }
 
-/** Takes the drill lock. A lock whose process is gone is taken over once; one held by a live process is not. */
+const readLock = (dir: string): string | null => { try { return readFileSync(lockPath(dir), 'utf8'); } catch { return null; } }; // silent-read-ok: no readable lock is never taken over
+const lockHolder = (text: string): number => { try { return Number((JSON.parse(text) as { pid?: unknown }).pid); } catch { return NaN; } }; // silent-read-ok: an unreadable lock has no holder, and is never stolen
+
+/**
+ * Takes the drill lock. The lock file appears whole (written to a private file, then linked), so a reader never sees it
+ * half written. A lock held by a live process, a lock that cannot be read and one that is gone are never taken. A lock
+ * whose holder process is dead is taken over only through `drill.lock.takeover`, created exclusively: the taker re-reads
+ * the lock under it and removes it only if it is still the very text it judged dead, so two takers can never both
+ * enter, and a lock another drill just created is never removed. A takeover file a crash left behind keeps the drill
+ * refused (`drill_running`) until it is removed by hand. The release removes the lock only while it is still ours.
+ */
 function takeLock(dir: string, now: number): (() => void) | null {
-  const release = (): void => { try { unlinkSync(lockPath(dir)); } catch { /* already gone */ } };
-  if (createLock(dir, now)) return release;
-  let pid = NaN;
-  try { pid = (JSON.parse(readFileSync(lockPath(dir), 'utf8')) as { pid?: number }).pid ?? NaN; } catch { /* unreadable lock: treated as stale below */ } // silent-read-ok: an unreadable lock is stale
-  if (Number.isInteger(pid) && pidAlive(pid)) return null;
-  release();
-  return createLock(dir, now) ? release : null;
+  const body = JSON.stringify({ pid: process.pid, at: now, token: randomBytes(8).toString('hex') });
+  const release = (): void => { try { if (readLock(dir) === body) unlinkSync(lockPath(dir)); } catch { /* already gone */ } }; // silent-read-ok: a lock that is already gone is released
+  if (publishExclusive(lockPath(dir), body)) return release;
+  const seen = readLock(dir);
+  if (seen === null) return null;
+  const pid = lockHolder(seen);
+  if (!Number.isInteger(pid) || pidAlive(pid)) return null;
+  if (!publishExclusive(takeoverPath(dir), body)) return null;
+  try {
+    if (readLock(dir) !== seen) return null;
+    unlinkSync(lockPath(dir));
+    return publishExclusive(lockPath(dir), body) ? release : null;
+  } finally {
+    try { unlinkSync(takeoverPath(dir)); } catch { /* ours; already gone */ }
+  }
+}
+
+/** Removes the pending record only while it is still the one for `opId`: never another drill's. */
+function removePendingIf(dir: string, opId: string): void {
+  if (readPending(dir)?.op_id === opId) rmSync(pendingPath(dir), { force: true });
+}
+
+/** `dev:ino:birth` of a directory, or null when it is gone: tells a shadow that was deleted (and maybe recreated) from the one the drill started in. */
+function dirIdentity(path: string): string | null {
+  try { const st = statSync(path); return `${st.dev}:${st.ino}:${st.birthtimeMs}`; } catch { return null; } // silent-read-ok: a missing directory is the answer
+}
+
+/** SHA-256 of the addon file the loader opened, as the shadow child records it in the epoch (child.ts `addonFileSha256`). */
+export function addonFileSha256(addon: object): string | null {
+  const a = addon as { engineBuild?: unknown; target?: unknown };
+  const path = process.env.GBRAIN_RUST_ENGINE_ADDON?.trim() || join(gbrainPath('engines', 'rust'), String(a.engineBuild), `${String(a.target)}.node`);
+  try { return createHash('sha256').update(readFileSync(path)).digest('hex'); } catch { return null; } // silent-read-ok: null is the typed marker; the drill refuses on it
 }
 
 const sleep = (ms: number): Promise<void> => new Promise(done => setTimeout(done, ms));
@@ -197,24 +244,49 @@ async function verifyCopy(addon: object, dir: string, expected: StoreSnapshotMan
   return verifyStoreDir(addon, dir, expected);
 }
 
+/** How many pages the probe reads chunks from, and how many distinct words it tries before it gives up. */
+const PROBE_PAGES = 20;
+const PROBE_TRIES = 24;
+
+/** What the probe needs from the opened copy (a `BrainEngine` serves it; tests pass a fake). */
+export type ProbeEngine = Pick<BrainEngine, 'getStats' | 'listPages' | 'getChunks' | 'searchKeyword'>;
+
+/**
+ * Phase 2's check on an opened copy: the page count, and one keyword search. The word comes from the copy's own stored
+ * chunks, from pages the search can see (not under a hard-excluded slug prefix), read in the page's own source; the
+ * longest letter-only words go first and the engine itself decides which one is indexed, so a stop word ('themselves')
+ * or a word the tokenizer drops is skipped, never a failure of the copy. The first word with a hit passes. A copy with
+ * pages and no word that answers (or no word at all) is `no_probe_term`: a named non-pass, because a populated copy that
+ * ran no search proves nothing about its index. When the index is not complete a miss is allowed, but a query must run.
+ */
+export async function probeCopy(engine: ProbeEngine, expectKeywordHit: boolean): Promise<OpenCheck> {
+  const pages = (await engine.getStats()).page_count;
+  if (pages === 0) return { pages, searchHits: null };
+  const excluded = resolveHardExcludes();
+  const words = new Set<string>();
+  for (const page of await engine.listPages({ limit: PROBE_PAGES })) {
+    if (excluded.some(prefix => page.slug.startsWith(prefix))) continue;
+    for (const chunk of await engine.getChunks(page.slug, { sourceId: page.source_id })) {
+      for (const w of chunk.chunk_text.split(/[^\p{L}\p{N}]+/u)) if (/^\p{L}{4,24}$/u.test(w)) words.add(w.toLowerCase());
+    }
+  }
+  const tries = [...words].sort((x, y) => y.length - x.length).slice(0, PROBE_TRIES);
+  let last: number | null = null;
+  for (const word of tries) {
+    const hits = (await engine.searchKeyword(word, { limit: 5 })).length;
+    last = hits;
+    if (hits > 0) return { pages, searchHits: hits };
+  }
+  if (last !== null && !expectKeywordHit) return { pages, searchHits: 0 };
+  throw Object.assign(new Error('no word of the copy is answered by its keyword search'), { drillReason: 'no_probe_term' });
+}
+
 async function openCopyReal(addon: object, dir: string, expectKeywordHit: boolean): Promise<OpenCheck> {
   const { openRustEngine } = await import('../core/rust-engine.ts');
   const engine = openRustEngine({ addon: addon as Parameters<typeof openRustEngine>[0]['addon'], databasePath: dir });
   await engine.connect({ database_path: dir } as never);
   try {
-    const pages = (await engine.getStats()).page_count;
-    if (pages === 0) return { pages, searchHits: null };
-    // One word of one stored chunk: the longest (a stop word would match nothing), so a complete index must answer it.
-    let word: string | undefined;
-    for (const page of await engine.listPages({ limit: 5 })) {
-      const [chunk] = await engine.getChunks(page.slug);
-      word = chunk?.chunk_text.split(/[^\p{L}\p{N}]+/u).filter(w => w.length >= 4).sort((x, y) => y.length - x.length)[0];
-      if (word) break;
-    }
-    if (!word) return { pages, searchHits: null };
-    const hits = (await engine.searchKeyword(word, { limit: 5 })).length;
-    if (expectKeywordHit && hits === 0) throw Object.assign(new Error('keyword search found nothing on a complete index'), { drillReason: 'search_failed' });
-    return { pages, searchHits: hits };
+    return await probeCopy(engine, expectKeywordHit);
   } finally {
     await engine.disconnect();
   }
@@ -230,18 +302,31 @@ export async function runBackupDrill(dir: string, deps: DrillDeps = {}): Promise
   const rec: DrillRecord = {
     version: DRILL_VERSION, drill_id: drillId, method: DRILL_METHOD, epoch_id: epoch?.epoch_id ?? '', seed_id: seed?.seed_id ?? '', op_id: null, via: null,
     started_at: new Date(started).toISOString(), finished_at: '', duration_ms: 0, snapshot_ms: null, restore_ms: null, store_bytes: null, snapshot_bytes: null,
-    generation: null, engine_format_version: null, over_archive_cap: false, free_bytes_initial: null, free_bytes_low_water: null, compared: null,
+    generation: null, engine_format_version: null, over_archive_cap: false, addon_sha256: null, free_bytes_initial: null, free_bytes_low_water: null, compared: null,
     mismatches: [], post_open: null, scratch_deleted: true, pass: false, reason: null,
   };
+  // The shadow directory this drill started in (taken once admission has found its files) and its drills directory. A
+  // drill never creates the shadow root: when `stop --delete` removed it (or a new one took its place) while the drill ran,
+  // nothing is published and the drill is `shadow_gone`, the same rule the ledger and usage writers follow.
+  let rootId: string | null = null;
+  let drillsId: string | null = null;
+  const shadowLive = (): boolean => rootId !== null && dirIdentity(dir) === rootId && drillsId !== null && dirIdentity(drillsDir(dir)) === drillsId;
   const finish = (reason: DrillReason | null, persist: boolean): DrillRecord => {
+    const gone = persist && !shadowLive();
+    const final = gone ? 'shadow_gone' : reason;
     rec.finished_at = new Date(now()).toISOString();
     rec.duration_ms = now() - started;
-    rec.pass = reason === null;
-    rec.reason = reason;
-    if (persist) {
-      mkdirSync(drillsDir(dir), { recursive: true, mode: 0o700 });
-      writeAtomic(backupRecordPath(dir), JSON.stringify(rec, null, 2) + '\n');
-      appendFileSync(historyPath(dir), JSON.stringify(rec) + '\n', { mode: 0o600 });
+    rec.pass = final === null;
+    rec.reason = final;
+    if (persist && !gone) {
+      try {
+        // The history first: a pass is published only by `backup.json`, the one file status reads.
+        appendFileSync(historyPath(dir), JSON.stringify(rec) + '\n', { mode: 0o600 });
+        writeAtomic(backupRecordPath(dir), JSON.stringify(rec, null, 2) + '\n');
+      } catch {
+        rec.pass = false;
+        rec.reason = shadowLive() ? 'drill_error' : 'shadow_gone';
+      }
     }
     return rec;
   };
@@ -254,13 +339,26 @@ export async function runBackupDrill(dir: string, deps: DrillDeps = {}): Promise
   if (!existsSync(records)) return finish('no_store', false);
   rec.store_bytes = statSync(records).size;
   rec.over_archive_cap = rec.store_bytes > BACKUP_ARCHIVE_MAX_BYTES;
-  const stats = (deps.statfs ?? (path => statfsSync(path)))(dir);
-  const freeNow = Number(stats.bavail) * Number(stats.bsize);
-  rec.free_bytes_initial = freeNow;
-  if (freeNow < 2 * rec.store_bytes + DRILL_MARGIN_BYTES) return finish('disk_space', false);
+  // Free space is read again, after a copy an earlier drill left behind is cleared: that copy holds the very space the
+  // check needs, so refusing on it first would keep it forever. Without a pending copy the check stays up front.
+  const freeSpace = (): number => { const stats = (deps.statfs ?? (path => statfsSync(path)))(dir); return Number(stats.bavail) * Number(stats.bsize); };
+  const needBytes = 2 * rec.store_bytes + DRILL_MARGIN_BYTES;
+  const hadPending = existsSync(pendingPath(dir));
+  rec.free_bytes_initial = freeSpace();
+  if (!hadPending && rec.free_bytes_initial < needBytes) return finish('disk_space', false);
   const load = await (deps.loadAddon ?? (async () => (await import('./addon.ts')).loadRustEngineAddonOffline()))();
   if (!load.ok) return finish('addon_unavailable', false);
-  mkdirSync(drillsDir(dir), { recursive: true, mode: 0o700 });
+  // The copy is verified and opened with the addon loaded here: it must be the addon the evidence epoch started on, or
+  // this pass would describe a different candidate. An unknown digest, or an epoch that never knew its addon, refuses too.
+  rec.addon_sha256 = (deps.addonSha256 ?? addonFileSha256)(load.addon);
+  const epochAddon = epoch.inputs.rust_addon_sha256;
+  if (rec.addon_sha256 === null || epochAddon === null || epochAddon === 'unreadable' || rec.addon_sha256 !== epochAddon) return finish('addon_mismatch', false);
+  rootId = dirIdentity(dir);
+  try { mkdirSync(drillsDir(dir), { mode: 0o700 }); } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return finish('shadow_gone', false);
+    if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+  }
+  drillsId = dirIdentity(drillsDir(dir));
   const release = takeLock(dir, now());
   if (!release) return finish('drill_running', false);
 
@@ -282,9 +380,10 @@ export async function runBackupDrill(dir: string, deps: DrillDeps = {}): Promise
       const old = readPending(dir);
       if (!old || !(await copyEnded(owner, old.op_id, 0, pollMs))) return finish('cleanup_pending', false);
       if (ownScratch(dir, old.scratch)) rmSync(old.scratch, { recursive: true, force: true });
-      if (!existsSync(old.scratch)) rmSync(pendingPath(dir), { force: true });
+      if (!existsSync(old.scratch)) removePendingIf(dir, old.op_id);
       else return finish('cleanup_failed', false);
     }
+    if (hadPending && freeSpace() < needBytes) return finish('disk_space', false);
 
     // Phase 1 (immutable): the owner's copy at one generation, then the verifier on the closed copy.
     rec.op_id = opId;
@@ -323,6 +422,7 @@ export async function runBackupDrill(dir: string, deps: DrillDeps = {}): Promise
       if (reason === null) {
         try {
           const check = await (deps.openCopy ?? openCopyReal)(load.addon, restored, keywordState === 'complete');
+          if (check.pages > 0 && check.searchHits === null) throw Object.assign(new Error('no search ran on a populated copy'), { drillReason: 'no_probe_term' });
           const after = await (deps.verifyAfter ?? verifyAfterOpen)(load.addon, restored);
           rec.post_open = { generation_after: after?.generation ?? null, keyword_state: after?.keyword_index?.state ?? keywordState, pages: check.pages, search_hits: check.searchHits };
         } catch (error) {
@@ -337,7 +437,7 @@ export async function runBackupDrill(dir: string, deps: DrillDeps = {}): Promise
     if (ended) {
       try { rmSync(scratch, { recursive: true, force: true }); } catch { /* checked below */ }
       rec.scratch_deleted = !existsSync(scratch);
-      if (rec.scratch_deleted && wrotePending) rmSync(pendingPath(dir), { force: true });
+      if (rec.scratch_deleted && wrotePending) removePendingIf(dir, opId);
     } else {
       rec.scratch_deleted = false;
     }
