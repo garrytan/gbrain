@@ -32,6 +32,7 @@ const LEDGER: Record<string, string> = {
   remember: 'test/memory-verbs-conformance.test.ts',
   onboarding_status: 'test/onboarding-ops.test.ts',
   onboarding_off: 'test/onboarding-ops.test.ts',
+  value: 'test/value-card.test.ts',
   entity: 'test/memory-verbs-conformance.test.ts',
   synthesize: 'test/memory-verbs-conformance.test.ts',
   forget: 'test/memory-verbs-conformance.test.ts',

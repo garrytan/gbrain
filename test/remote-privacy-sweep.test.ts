@@ -308,6 +308,7 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   whoami: 'ok', // base unused — per-shape override in EXPECTED_BY_SHAPE (above)
   policy_check: 'ok',
   onboarding_status: 'ok',
+  value: 'ok',
   onboarding_off: 'error', // onboarding_owner_only: the sweep's remote caller is not the install's owner
   agent_policy: 'ok',
   capabilities: 'ok',

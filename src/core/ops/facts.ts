@@ -1,6 +1,7 @@
 import { searchAnswerFeedback } from '../feedback/record.ts';
 import { recordFunnelEvent, recordRecallOutcome } from '../funnel.ts';
 import { parseRelationalPlan } from '../search/relational-plan.ts';
+import { recordRecallTelemetry } from '../search/telemetry.ts';
 import { loadSearchModeConfig, resolveSearchMode } from '../search/mode.ts';
 import { WRITE_REQUEST_PARAM } from '../persistence/params.ts';
 import { parseWriteRequestId } from '../persistence/preconditions.ts';
@@ -664,6 +665,7 @@ const recall: Operation = {
       ...(delivery ? { delivery } : {}),
     };
     recordRecallOutcome(out);
+    if (!queryText) recordRecallTelemetry(ctx.engine);
     return maxChars === null ? out : boundRecallChars(out, maxChars);
   },
 };

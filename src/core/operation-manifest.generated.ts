@@ -8631,5 +8631,21 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "hidden": true
     },
     "area": "onboarding"
+  },
+  {
+    "name": "value",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "What this brain holds and has done for you, as counts: conversations archived and the days they cover, pages by kind, links, facts kept (active, superseded, withdrawn), nightly items, and for the owner only lookups served, pages brought up on their own and later retrieved, and the brain score. Each row is measured, off (with the command that turns it on) or unavailable (with a code and cause); a member connection counts only what it can read. Reads only; stamps nothing.",
+    "params": {},
+    "scope": "read",
+    "annotations": {
+      "readOnlyHint": true
+    },
+    "cliHints": {
+      "name": "value"
+    },
+    "area": "value"
   }
 ];

@@ -1620,6 +1620,7 @@ export function formatResult(
       return tags.length > 0 ? tags.join(', ') + '\n' : 'No tags.\n';
     }
     case 'find_pages': return formatFindPages(result);
+    case 'value': return require('../core/value/format.ts').formatValueCard(result);
     case 'learned_keep':
     case 'learned_undo': return require('../core/learning/decide.ts').formatDecisions(result);
     case 'learned': return (result as { stats?: unknown }).stats ? require('../core/learning/stats.ts').formatLearnedStats((result as { stats: unknown }).stats) : require('../core/learning/read.ts').formatLearned(result);

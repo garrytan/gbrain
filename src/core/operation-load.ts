@@ -126,6 +126,8 @@ const OP_AREAS: Record<string, string> = {
   policy_check: 'agent-policy', agent_policy: 'agent-policy',
   // first-session suggestion (onboarding PR 2)
   onboarding_status: 'onboarding', onboarding_off: 'onboarding',
+  // the value card (roadmap PR 3)
+  value: 'value',
 };
 
 const finalized = new WeakSet<Operation>();

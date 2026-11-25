@@ -87,6 +87,13 @@ export type EmptyResultCause = 'vector_disabled' | 'budget_dropped_all' | 'keywo
  */
 export const RERANK_GATE_TELEMETRY_MODE = 'rerank_gate';
 
+/**
+ * Roadmap PR 3 — reserved `mode` value counting recall calls that read facts only (a recall that also searches pages
+ * is already counted once, as that search). `count` carries it; readSearchStats keeps these rows out of the search
+ * aggregates, and the value card (core/value/card.ts) adds them to the lookups it served.
+ */
+export const RECALL_TELEMETRY_MODE = 'recall';
+
 /** The rerank gate counter rows one search contributes (intent slot of the reserved rows). */
 export function rerankGateCounters(gate: NonNullable<HybridSearchMeta['rerank_gate']>): string[] {
   if (!gate.eligible) return [`ineligible:${gate.ineligible_reason ?? 'unknown'}`];
@@ -206,6 +213,15 @@ class TelemetryWriter {
       for (const counter of rerankGateCounters(meta.rerank_gate)) this.bumpReserved(date, RERANK_GATE_TELEMETRY_MODE, counter);
     }
 
+    this.pendingCount += 1;
+    if (this.pendingCount >= FLUSH_THRESHOLD_CALLS) {
+      void this.flush().catch(() => { /* swallow */ });
+    }
+  }
+
+  /** Count one call of a reserved operation mode (RECALL_TELEMETRY_MODE). Sync, like record(). */
+  recordOperation(mode: string, intent: string): void {
+    this.bumpReserved(nowDate(), mode, intent);
     this.pendingCount += 1;
     if (this.pendingCount >= FLUSH_THRESHOLD_CALLS) {
       void this.flush().catch(() => { /* swallow */ });
@@ -518,6 +534,15 @@ export function recordSearchTelemetry(
   }
 }
 
+/** Count one facts-only recall call (RECALL_TELEMETRY_MODE). Never throws. */
+export function recordRecallTelemetry(engine: BrainEngine): void {
+  try {
+    getTelemetryWriter(engine).recordOperation(RECALL_TELEMETRY_MODE, 'facts');
+  } catch {
+    // swallow — telemetry is best-effort.
+  }
+}
+
 /**
  * Read aggregated stats over a window. Read-time derives averages from
  * sums + counts so writers can ON CONFLICT-add freely.
@@ -657,6 +682,7 @@ export async function readSearchStats(
         addRerankGateRow(rerank_gate, r.intent, r.count);
         continue;
       }
+      if (r.mode === RECALL_TELEMETRY_MODE) continue;
       total_calls += r.count;
       cache_hits += r.cache_hit;
       cache_misses += r.cache_miss;
