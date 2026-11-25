@@ -264,7 +264,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'listAccessPolicySources', 'listAccessPrefixSlugs', 'listAccessRules', 'listAttendedOriginSlugs',
   'listKeysReadingSource', 'listLinkPageMetadataForSlugs', 'listNotifierHostSourceRows', 'listPageTrustTiersByKey',
   'listQuarantinedSlugs', 'listSlugAliases', 'listSourcePathPages', 'listSourceWantedMarkers',
-  'listTopologyRecoveries', 'listUnarchivedSourceRows', 'listUnboundClientIds', 'listUnboundTokenNames',
+  'listTopologyRecoveries', 'listTypedClaimFactsAtPages', 'listUnarchivedSourceRows', 'listUnboundClientIds', 'listUnboundTokenNames',
   'lockLivePagesByKey', 'readAccessPolicyMarks', 'readAccessPolicyRevisions', 'readAccessStateUnreadable',
   'readAccessStoreConfig', 'readAdmittedPageRefs', 'readAdmittedWriteRequests', 'readBrainMaturity',
   'readDueWantedMarkers', 'readFirstDue', 'readGitHoldCodeCountRows', 'readGitHoldListingRows',

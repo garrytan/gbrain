@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2279/2293
+# covered: 2280/2294
 # lifecycle: 12/12
 # pages: 124/125
 # search: 8/8
@@ -55,7 +55,7 @@
 # projection_rebuild: 32/33
 # facts_repair: 48/48
 # facts_trust: 55/56
-# facts_recall: 9/9
+# facts_recall: 10/10
 # facts_conversation: 30/30
 # belief_ledger: 17/17
 # belief_purge: 6/6
@@ -614,7 +614,7 @@ readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
 readLiveFactRowTier	facts	yes	1	no	yes	yes	serves
 insertFact	facts	yes	185	yes	yes	yes	serves
-insertFacts	facts	yes	246	no	yes	yes	serves
+insertFacts	facts	yes	247	no	yes	yes	serves
 deleteFactsForPage	facts	yes	8	no	yes	yes	serves
 expireFact	facts	yes	89	no	yes	yes	serves
 listFactsByEntity	facts	yes	61	yes	yes	yes	serves
@@ -1656,6 +1656,7 @@ listBeliefStreamSlugs	facts_trust	yes	1	no	yes	yes	serves
 readFactsEmbeddingColumn	facts_recall	yes	3	no	yes	yes	serves
 listNearestFacts	facts_recall	yes	3	no	yes	yes	serves
 listFactSourcePages	facts_recall	yes	1	no	yes	yes	serves
+listTypedClaimFactsAtPages	facts_recall	yes	1	no	yes	yes	serves
 listSlotRows	facts_recall	yes	7	no	yes	yes	serves
 listPoolUnbackedKeys	facts_recall	yes	4	no	yes	yes	serves
 listCallOffCueFacts	facts_recall	yes	3	no	yes	yes	serves
