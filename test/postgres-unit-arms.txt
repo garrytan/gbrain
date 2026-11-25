@@ -415,6 +415,7 @@ test/engine-parity/persistence-binding-reads.test.ts
 test/engine-parity/persistence-declaration.test.ts
 test/engine-parity/persistence.test.ts
 test/engine-parity/person-duplicates.test.ts
+test/engine-parity/plain-member-reads.test.ts
 test/engine-parity/privacy-hold-reply.test.ts
 test/engine-parity/private-page-reads.test.ts
 test/engine-parity/private-reads-remote.test.ts
@@ -735,6 +736,7 @@ test/keyword-timeout-rerun-7082.test.ts
 test/known-as-of-owner-r94.test.ts
 test/label-only-repairs.test.ts
 test/label-repair-derived-stamps-gst2603.test.ts
+test/labelled-only-owner-snapshot.test.ts
 test/lane-apply-pipelining.test.ts
 test/large-pages/append-concurrency.test.ts
 test/large-pages/append-cost.test.ts
