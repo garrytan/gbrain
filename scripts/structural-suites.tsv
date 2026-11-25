@@ -374,6 +374,7 @@ test/scripts/nightly-issue.test.ts	nightly-watch coverage ratchet	2	readFileSync
 test/scripts/nightly-issue.test.ts	nightly-watch incidents	9	readFileSync
 test/scripts/nightly-issue.test.ts	nightly-watch routing and guard	9	readFileSync
 test/scripts/nightly-issue.test.ts	operator messages carry docs anchors that resolve	1	readFileSync
+test/scripts/openclaw-cell-receipts.test.ts	(file-level)	2	readFileSync
 test/scripts/postgres-lane-coverage.test.ts	check-postgres-lane-coverage.ts	9	readFileSync
 test/scripts/postgres-unit-arms.test.ts	postgres-unit-arms list	14	readFileSync
 test/scripts/pregate-remote-gate.test.ts	.gstack policy floor	1	readFileSync

@@ -384,7 +384,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "grep": {
         "type": "string",
-        "description": "Only the paragraphs containing this text (case-insensitive substring, not a regex), with line numbers and total_matches.",
+        "description": "Only the paragraphs containing this text (case-insensitive substring, not a regex; an inner \"a|b\" also matches either side), with line numbers and total_matches.",
         "fullSurfaceOnly": true
       },
       "context": {
