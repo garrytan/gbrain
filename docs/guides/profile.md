@@ -47,7 +47,8 @@ them.
   instead of saving the fact where the profile never reads it, and passing another `source_id` with `facet` is refused
   (`profile_entity_not_self`).
 - The brain owner's profile is the owner's entity, the one `gbrain identity` names. The trusted local CLI and a
-  credential bound to the owner (`gbrain access owner set`) read and write it.
+  credential bound to the owner (`gbrain access owner set`) read and write it. The read also covers `memory/owner`
+  and the owner member's page, so facts saved before you named an owner or matched a person page stay in the profile.
 - A member credential's profile is its own member page, `memory/members/<member>`. A member never writes a profile
   fact onto another page and never reads the owner's profile: `remember` with `facet` and another `entity` is refused
   (`profile_entity_not_self`), and a member CLI under `GBRAIN_ENFORCED_MEMBER` cannot pass `facet` at all.
@@ -62,6 +63,7 @@ as `entity`.
 ```bash
 gbrain profile            # readable summary
 gbrain profile --json     # the block as JSON
+gbrain profile --budget-tokens 400   # pack into 400 tokens; the rest is counted as withheld
 ```
 
 An agent calls `context_pack {profile: true}` (add `budget_tokens` to cap it). The response's `profile` block has:
