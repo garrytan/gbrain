@@ -233,6 +233,7 @@ describe('check_claims matcher follow-ups (C3.1)', () => {
     const lines = linesOf('- 2026-01-01: 12 paying customers.');
     expect(checkClaim('In 2025 we had 12 paying customers.', lines).status).toBe('supported');
     expect(checkClaim('In 2025 we had 14 paying customers.', lines).status).toBe('conflicts');
+    expect(checkClaim('We have 2000 employees and 12 offices.', linesOf('- 2026-01-01: 1500 employees.\n- 2026-01-01: 12 offices.')).status).toBe('conflicts');
   });
 
   test('a line that backs one number of a sentence never contradicts its other numbers', () => {
@@ -241,6 +242,7 @@ describe('check_claims matcher follow-ups (C3.1)', () => {
     expect(checkClaim('Our 2 cofounders have 12 paying customers.', [...lines, ...linesOf('- 2026-01-01: 2 cofounders.')]).status).toBe('supported');
     expect(checkClaim('Our 3 cofounders have 12 paying customers.', [...lines, ...linesOf('- 2026-01-01: 2 cofounders.')]).status).toBe('conflicts');
     expect(checkClaim('We have 12 paying customers and 3 employees.', lines).status).toBe('conflicts');
+    expect(checkClaim('We have 12 paying customers and 3 employees.', linesOf('- 2026-01-01: 12 paying customers and 5 employees.')).status).toBe('conflicts');
   });
 
   test('a scaled decimal equals the same amount written out', () => {

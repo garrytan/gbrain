@@ -12,9 +12,10 @@
  *
  * A sentence with several numbers is checked number by number, each with the words of its own clause: supported only
  * when every number is, conflicts when any number is contradicted, otherwise not_found. A line that backs one of the
- * sentence's other numbers never contradicts this one, and its words are not this number's words. A bare year (1900 to
- * 2099, no unit) beside other numbers is not checked. A percent never matches a plain number, digits inside a word
- * (Q3) are not numbers, and a comma between digits ($2,100,000) is a thousands separator, not a clause break.
+ * sentence's other numbers (and holds no other number) never contradicts this one, and its words are not this number's
+ * words. A bare year (1900 to 2099, no unit) beside other numbers counts only when some line covers it. A percent
+ * never matches a plain number, digits inside a word (Q3) are not numbers, and a comma between digits ($2,100,000) is
+ * a thousands separator, not a clause break.
  */
 
 export interface AllowedLine { slug: string; source_id: string; line: number; date: string; text: string }
@@ -78,34 +79,37 @@ export function allowedLines(page: { slug: string; source_id: string; body: stri
 
 export function checkClaim(claim: string, lines: readonly AllowedLine[]): ClaimCheck {
   const all = numbers(claim);
-  const counted = all.every(n => n.year) ? () => true : (n: Num) => !n.year;
-  const units = numberClauses(claim, counted).flatMap(part => numbers(part).filter(counted).map(n => ({ part, n })));
-  if (units.length < 2) return checkPart(claim, claim, all.filter(counted), lines);
+  if (all.length < 2) return checkPart(claim, claim, all, lines);
+  const optionalYears = all.some(n => !n.year);
+  const units = numberClauses(claim).flatMap(part => numbers(part).map(n => ({ part, n })));
+  if (units.length < 2) return checkPart(claim, claim, all, lines);
   const facts = lines.map(l => { const body = lineBody(l); return { l, words: words(body), nums: numbers(body) }; });
-  const results = units.map(u => {
-    const backsSibling = new Set(facts.filter(f => !f.nums.some(n => sameNumber(n, u.n)) && units.some(s => s !== u
-      && f.nums.some(n => sameNumber(n, s.n)) && [...words(s.part)].some(w => f.words.has(w)))).map(f => f.l));
+  const results = units.flatMap(u => {
+    const siblings = units.filter(s => s !== u);
+    const backsSibling = new Set(facts.filter(f => f.nums.every(n => siblings.some(s => sameNumber(n, s.n)))
+      && siblings.some(s => f.nums.some(n => sameNumber(n, s.n)) && [...words(s.part)].some(w => f.words.has(w)))).map(f => f.l));
     const taken = new Set([...backsSibling].flatMap(l => [...words(lineBody(l))]));
-    return checkPart(claim, u.part, [u.n], lines.filter(l => !backsSibling.has(l)), taken);
+    const result = checkPart(claim, u.part, [u.n], lines.filter(l => !backsSibling.has(l)), taken);
+    return optionalYears && u.n.year && result.status === 'not_found' ? [] : [result];
   });
   const conflicting = results.filter(r => r.status === 'conflicts');
   if (conflicting.length) {
-    return { claim, status: 'conflicts', conflicting: conflicting.flatMap(r => r.conflicting ?? []).slice(0, MAX_CONFLICTS) };
+    return { claim, status: 'conflicts', conflicting: [...new Set(conflicting.flatMap(r => r.conflicting ?? []))].slice(0, MAX_CONFLICTS) };
   }
-  return results.every(r => r.status === 'supported') ? { claim, status: 'supported', cited: results[0]!.cited } : { claim, status: 'not_found' };
+  return results.length && results.every(r => r.status === 'supported') ? { claim, status: 'supported', cited: results[0]!.cited } : { claim, status: 'not_found' };
 }
 
 /**
  * A sentence with two or more numbers, split so each number is checked with the words of its own clause; a clause with
  * no number joins the next one. One number: the whole sentence.
  */
-function numberClauses(claim: string, counted: (n: Num) => boolean): string[] {
-  if (numbers(claim).filter(counted).length < 2) return [claim];
+function numberClauses(claim: string): string[] {
+  if (numbers(claim).length < 2) return [claim];
   const out: string[] = [];
   let pending = '';
   for (const clause of claim.split(/(?<!\d),\s*|,(?!\d)\s*|;\s*|\s+(?:and|but|while|whereas)\s+/i)) {
     pending = pending ? `${pending} ${clause}` : clause;
-    if (numbers(clause).some(counted)) { out.push(pending); pending = ''; }
+    if (numbers(clause).length) { out.push(pending); pending = ''; }
   }
   if (pending && out.length) out[out.length - 1] += ` ${pending}`;
   return out;
