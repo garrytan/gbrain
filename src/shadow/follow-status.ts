@@ -15,7 +15,7 @@ import { join } from 'node:path';
 import { WRITE_COVERAGE_LIMIT } from '../core/engine-swap/readiness.ts';
 import { readEpoch } from './evidence-epoch.ts';
 import { readSeedRecord, RESEED_STEPS } from './seed.ts';
-import type { ShadowState } from './state.ts';
+import { writeSampleRate, type ShadowState } from './state.ts';
 import { readWriteTally } from './write-compare.ts';
 
 export interface ProbeRecord {
@@ -190,7 +190,7 @@ export function buildFollowStatus(dir: string, state: ShadowState | null, now: D
       next_full_pass_due: lastFull ? new Date(Date.parse(lastFull.finished_at) + NIGHTLY_MS).toISOString() : null,
     },
     write_comparisons: {
-      state: writes && writes.comparable + writes.unexplained_difference > 0 ? 'measured' : 'capability_missing', sample_rate: state?.sample_rate ?? null,
+      state: writes && writes.comparable + writes.unexplained_difference > 0 ? 'measured' : 'capability_missing', sample_rate: state ? writeSampleRate(state) : null,
       comparable: writes?.comparable ?? 0, unexplained_difference: writes?.unexplained_difference ?? 0, uncomparable: writes?.uncomparable ?? 0, capability_missing: writes?.capability_missing ?? 0,
       ...(writes ? { capability_missing_by_family: writes.capability_missing_by_family, uncomparable_by_reason: writes.uncomparable_by_reason } : {}),
     },

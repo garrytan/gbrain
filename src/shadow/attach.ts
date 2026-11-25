@@ -18,7 +18,7 @@ import { epochWatch } from './evidence-epoch.ts';
 import { readSeedRecord } from './seed.ts';
 import { MirrorQueue, zeroUsage } from './mirror.ts';
 import { SampleRegistry } from './samples.ts';
-import { readShadowState, type ShadowState } from './state.ts';
+import { readShadowState, writeSampleRate, type ShadowState } from './state.ts';
 import { ShadowSupervisor, type ShadowSupervisorOptions } from './supervisor.ts';
 import { appendUsage } from './usage.ts';
 import { wrapShadowEngine } from './wrapper.ts';
@@ -137,7 +137,7 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
   const follow = follower ? { sink: follower } : deps.follow;
   const onCommittedWrite = () => observer.note();
   // Write comparisons need the seeded store's epoch to count under: a brain that was never seeded samples no writes.
-  const writes = reads ? createWriteSampler({ rate: state.sample_rate, random: deps.random, send: (line) => supervisor.send(line), generation: () => follower?.published, active: () => supervisor.active() }) : undefined;
+  const writes = reads ? createWriteSampler({ rate: writeSampleRate(state), random: deps.random, send: (line) => supervisor.send(line), generation: () => follower?.published, active: () => supervisor.active() }) : undefined;
   return { engine: wrapShadowEngine(engine, sink, { sampleRate: state.sample_rate, random: deps.random, follow, onCommittedWrite, writes }), queue, supervisor, follower, reconciler, observer, lsnWatch: watch };
 }
 

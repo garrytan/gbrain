@@ -1,0 +1,330 @@
+/**
+ * The write-comparison scenarios shared by test/shadow-write-compare.test.ts (PGLite) and test/e2e/shadow-write-compare.test.ts
+ * (Postgres): the preimage read, the scratch replay with the real addon, the counts that must never be comparable, and the
+ * promise that the pilot never changes what a primary write does. Everything here talks to a real primary.
+ */
+import { describe, expect, spyOn, test } from 'bun:test';
+import { existsSync, readdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { evaluateReadiness, WRITE_COVERAGE_LIMIT, type ShadowStatus } from '../../src/core/engine-swap/readiness.ts';
+import type { BrainEngine } from '../../src/core/engine.ts';
+import type { RustAddon } from '../../src/core/rust-engine/addon-loader.ts';
+import { attachShadowParts } from '../../src/shadow/attach.ts';
+import { buildFollowStatus, renderFollowStatus } from '../../src/shadow/follow-status.ts';
+import { newMirrorCounters } from '../../src/shadow/mirror.ts';
+import { writeSeedRecord } from '../../src/shadow/seed.ts';
+import { wrapShadowEngine } from '../../src/shadow/wrapper.ts';
+import { createWriteSampler, readPreimage } from '../../src/shadow/write-capture.ts';
+import { createWriteComparer } from '../../src/shadow/write-compare-child.ts';
+import { readWriteTally, WriteTally, type WriteEvent } from '../../src/shadow/write-compare.ts';
+import { withEnv } from './with-env.ts';
+import { fillSeedFixture, seedInto } from './shadow-seed-fixture.ts';
+
+export interface WriteCompareContext {
+  primary: () => BrainEngine;
+  /** Puts the primary back to an empty brain before a scenario (a clone per test needs nothing). */
+  reset: () => Promise<void>;
+  kind: 'pglite' | 'postgres';
+  tempDir: () => string;
+  /** The built addon and its path; absent where there is none (the replay scenarios then skip). */
+  addon?: () => RustAddon;
+  addonPath?: string;
+}
+
+const NOW = new Date('2026-12-01T00:00:00Z');
+export const page = (title: string) => ({ type: 'person', title, compiled_truth: `${title}.`, timeline: '' }) as never;
+export async function until(check: () => boolean, ms = 30_000): Promise<void> {
+  const end = Date.now() + ms;
+  while (!check()) { if (Date.now() > end) throw new Error('timed out waiting'); await new Promise((r) => setTimeout(r, 25)); }
+}
+export const row5 = (doc: Partial<ShadowStatus>) => evaluateReadiness(doc as ShadowStatus, NOW).criteria.find((c) => c.n === 5)!;
+
+/** A comparer over fake scratch engines: `imported` shapes the import result and `put` stands for the Rust write. */
+export function fakeComparer(dir: string, over: { imported?: (rows: number) => Record<string, unknown>; put?: () => Promise<void>; page?: unknown } = {}) {
+  return createWriteComparer({
+    dir, tally: new WriteTally(dir, () => 'e1'), alive: () => true, load: { ok: true, addon: {} } as never,
+    openEngine: () => ({
+      connect: async () => {}, disconnect: async () => {},
+      storeFor: async () => ({ importRelation: async (_s: string, _r: string, rows: unknown[]) => ({ imported: rows.length, skipped: 0, dropped: 0, unmapped_columns: [], losses: {}, ...over.imported?.(rows.length) }) }),
+      putPage: over.put ?? (async () => {}), getPage: async () => over.page ?? null, getLinks: async () => [],
+    }),
+  });
+}
+export const settle = async (c: { handle(e: WriteEvent): void; idle(): Promise<void> }, events: WriteEvent[]) => { for (const e of events) c.handle(e); await c.idle(); };
+
+/** Counts the preimage reads an engine is asked for: they run inside a transaction, so this watches the SQL its transactions run. */
+export function watchPreimage(engine: BrainEngine): { count: () => number; restore: () => void } {
+  let n = 0;
+  const real = engine.transaction.bind(engine) as (fn: (tx: BrainEngine) => Promise<unknown>, opts?: unknown) => Promise<unknown>;
+  const spy = spyOn(engine, 'transaction').mockImplementation(((fn: (tx: BrainEngine) => Promise<unknown>, opts?: unknown) => {
+    let counted = false; // one preimage read is a few statements in one transaction
+    return real((tx) => fn(new Proxy(tx, {
+      get: (target, prop) => {
+        const value = Reflect.get(target, prop, target);
+        if (prop !== 'executeRaw' || typeof value !== 'function') return typeof value === 'function' ? value.bind(target) : value;
+        return (sql: unknown, ...rest: unknown[]) => { if (!counted && typeof sql === 'string' && sql.includes('shadow write preimage')) { counted = true; n++; } return value.call(target, sql, ...rest); };
+      },
+    })), opts);
+  }) as never);
+  return { count: () => n, restore: () => spy.mockRestore() };
+}
+
+export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
+  const primary = ctx.primary;
+  const addonOf = (): RustAddon => ctx.addon!();
+  /** The primary behind the write sampler at rate 1; `inbox` holds what a serving process would send the child. */
+  function rig(opts: { send?: (line: string) => boolean; preimageTimeoutMs?: number } = {}) {
+    const inbox: WriteEvent[] = [];
+    const sampler = createWriteSampler({ rate: 1, send: opts.send ?? ((line) => { inbox.push(JSON.parse(line)); return true; }), active: () => true, preimageTimeoutMs: opts.preimageTimeoutMs });
+    const sink = { counters: newMirrorCounters(), offer: () => {}, active: () => true };
+    return { inbox, wrapped: wrapShadowEngine(primary(), sink, { sampleRate: 0, writes: sampler }) };
+  }
+  const tallyOf = async (events: WriteEvent[], over?: Parameters<typeof fakeComparer>[1]) => {
+    const dir = ctx.tempDir();
+    await settle(fakeComparer(dir, over), events);
+    return readWriteTally(dir, 'e1')!;
+  };
+
+  describe('the preimage read', () => {
+    test('copies the page, its links and the pages they reach, and only the link between a pair for a link write', async () => {
+      await ctx.reset();
+      await fillSeedFixture(primary());
+      const alice = { source: 'default', slug: 'people/alice-example' };
+      const acme = { source: 'default', slug: 'companies/acme-example' };
+      const forDelete = await readPreimage(primary(), 'deletePage', [alice]);
+      expect(forDelete.pages.map((p) => p.slug).sort()).toEqual(['companies/acme-example', 'people/alice-example']); // the link's other end comes along
+      expect(forDelete.links).toHaveLength(1);
+      expect(forDelete.pages.every((p) => !('k0' in p) && typeof p.compiled_truth === 'string')).toBe(true);
+      const forLink = await readPreimage(primary(), 'addLink', [alice, acme]);
+      expect(forLink.links.map((l) => l.link_type)).toEqual(['works_at']);
+      expect((await readPreimage(primary(), 'putPage', [{ source: 'default', slug: 'people/new-example' }])).pages).toEqual([]); // a page not there yet has no rows
+    }, 60_000);
+
+    test('a read that does not finish in time counts uncomparable (preimage_timeout) and the write still goes through', async () => {
+      await ctx.reset();
+      const hang = spyOn(primary(), 'transaction').mockImplementationOnce(() => new Promise(() => {}) as never);
+      const { inbox, wrapped } = rig({ preimageTimeoutMs: 50 });
+      await wrapped.putPage('people/slow-example', page('Slow Example'));
+      hang.mockRestore();
+      expect(await primary().getPage('people/slow-example')).not.toBeNull();
+      expect(inbox.map((e) => [e.outcome, e.reason])).toEqual([['uncomparable', 'preimage_timeout']]);
+      expect((await tallyOf(inbox)).comparable).toBe(0);
+    }, 60_000);
+  });
+
+  (ctx.addon ? describe : describe.skip)('a sampled page or link write replayed on a scratch Rust store', () => {
+    const addonOf = (): RustAddon => ctx.addon!();
+
+    async function replay(act: (engine: BrainEngine) => Promise<void>, expectEvents: number, tamper?: (e: WriteEvent) => void) {
+      await ctx.reset();
+      await fillSeedFixture(primary());
+      const dir = ctx.tempDir();
+      const { inbox, wrapped } = rig();
+      await act(wrapped);
+      await until(() => inbox.length >= expectEvents);
+      const tally = new WriteTally(dir, () => 'e1');
+      const comparer = createWriteComparer({ dir, tally, alive: () => true, load: { ok: true, addon: addonOf() } as never });
+      if (tamper) inbox.forEach(tamper);
+      await settle(comparer, inbox);
+      return { tally: readWriteTally(dir, 'e1')!, inbox, dir };
+    }
+
+    test('a write whose changed rows match is counted comparable (putPage, addLink, addLinksBatch, removeLink, deletePage)', async () => {
+      const out = await replay(async (e) => {
+        await e.putPage('people/dora-example', page('Dora Example'));
+        await e.addLink('people/dora-example', 'companies/acme-example', 'works at', 'works_at');
+        await e.addLinksBatch([{ from_slug: 'people/alice-example', to_slug: 'people/dora-example', link_type: 'knows', context: 'met' }]);
+        await e.removeLink('people/alice-example', 'companies/acme-example', 'works_at');
+        await e.deletePage('people/alice-example');
+      }, 5);
+      expect(out.tally).toMatchObject({ comparable: 5, unexplained_difference: 0, uncomparable: 0, capability_missing: 0 });
+      expect(existsSync(join(out.dir, 'scratch')) ? readdirSync(join(out.dir, 'scratch')) : []).toEqual([]); // every scratch store is deleted
+    }, 120_000);
+
+    test('a write whose changed rows differ is counted unexplained_difference, never comparable', async () => {
+      const out = await replay(async (e) => { await e.putPage('people/dora-example', page('Dora Example')); }, 1, (ev) => {
+        (ev.post as { pages: Array<{ title: string }> }).pages[0]!.title = 'Not What Rust Wrote';
+      });
+      expect(out.tally).toMatchObject({ comparable: 0, unexplained_difference: 1 });
+    }, 60_000);
+
+    test('a difference that comes with another write landing meanwhile is uncomparable, not unexplained', async () => {
+      const out = await replay(async (e) => { await e.putPage('people/dora-example', page('Dora Example')); }, 1, (ev) => {
+        (ev.post as { pages: Array<{ title: string }> }).pages[0]!.title = 'Changed By Someone Else';
+        ev.moved = true;
+      });
+      expect(out.tally).toMatchObject({ comparable: 0, unexplained_difference: 0, uncomparable: 1, uncomparable_by_reason: { moved: 1 } });
+    }, 60_000);
+
+    test('a follow run with compared writes moves criterion 5 off missing (real child, seeded brain)', async () => {
+      const home = ctx.tempDir();
+      await ctx.reset();
+      await fillSeedFixture(primary());
+      const { record } = await seedInto(primary(), addonOf(), home, ctx.kind);
+      writeSeedRecord(home, record);
+      const state = { version: 1, enabled: true, started_at: 'x', sample_rate: 1, write_sample_rate: 1, queue_bound: 64, plan_hash: 'h', brain: 'b', primary_engine: ctx.kind };
+      await withEnv({ GBRAIN_RUST_ENGINE_ADDON: ctx.addonPath! }, async () => {
+        const attached = attachShadowParts(primary(), home, state as never, { gbrainArgv: [process.execPath, join(import.meta.dir, '..', '..', 'src', 'cli.ts')] });
+        try {
+          await attached.engine.putPage('people/erin-example', page('Erin Example'));
+          await attached.engine.addTag('people/erin-example', 'team'); // another family
+          await until(() => (readWriteTally(home, buildFollowStatus(home, state as never, NOW).epoch_id)?.comparable ?? 0) >= 1 && (buildFollowStatus(home, state as never, NOW).write_comparisons.capability_missing ?? 0) >= 1, 90_000);
+        } finally { attached.supervisor.stop(); attached.reconciler?.stop(); }
+      });
+      const status = buildFollowStatus(home, { sample_rate: 1 } as never, NOW);
+      expect(status.write_comparisons).toMatchObject({ state: 'measured', comparable: 1, unexplained_difference: 0, capability_missing: 1, capability_missing_by_family: { tags: 1 } });
+      const row = row5({ write_comparisons: status.write_comparisons as ShadowStatus["write_comparisons"] });
+      expect(row.state).toBe('fail'); // below 1,000 comparable writes: said plainly, and no longer missing
+      expect(row.detail).toContain('1 of 1000 comparable write comparisons');
+      expect(row.detail).toContain(WRITE_COVERAGE_LIMIT);
+      expect(renderFollowStatus(status).join('\n')).toContain('capability_missing 1 (by family: tags 1)');
+    }, 180_000);
+  });
+
+  describe('write comparison counts', () => {
+  test('a write from another family is capability_missing by family, and nothing else', async () => {
+    const dir = ctx.tempDir();
+    const { inbox, wrapped } = rig();
+    await wrapped.putPage('people/dora-example', page('Dora Example')); // pilot: not part of this test
+    await wrapped.addTag('people/dora-example', 'team');
+    await wrapped.softDeletePage('people/dora-example'); // a page member the pilot does not cover
+    await until(() => inbox.some((e) => e.op === 'softDeletePage'));
+    const others = inbox.filter((e) => e.op === 'addTag' || e.op === 'softDeletePage');
+    expect(others.map((e) => [e.op, e.outcome, e.family, e.pre])).toEqual([['addTag', 'capability_missing', 'tags', undefined], ['softDeletePage', 'capability_missing', 'pages:softDeletePage', undefined]]);
+    await settle(fakeComparer(dir), others);
+    expect(readWriteTally(dir, 'e1')).toMatchObject({ comparable: 0, capability_missing: 2, capability_missing_by_family: { tags: 1, 'pages:softDeletePage': 1 } });
+  });
+
+
+  test('an uncomparable or unreadable write is never comparable', async () => {
+    await ctx.reset();
+    await fillSeedFixture(primary());
+    const sample = async (act: (e: BrainEngine) => Promise<unknown>) => {
+      const { inbox, wrapped } = rig();
+      await act(wrapped).catch(() => undefined);
+      await until(() => inbox.length >= 1);
+      return inbox;
+    };
+    const tallyOf = async (events: WriteEvent[], over?: Parameters<typeof fakeComparer>[1]) => {
+      const dir = ctx.tempDir();
+      await settle(fakeComparer(dir, over), events);
+      return readWriteTally(dir, 'e1')!;
+    };
+    // The preimage could not be loaded into the scratch store (one row skipped).
+    expect(await tallyOf(await sample((e) => e.putPage('people/alice-example', page('Alice Example'))), { imported: (rows) => ({ imported: rows - 1, skipped: 1 }) }))
+      .toMatchObject({ comparable: 0, unexplained_difference: 0, uncomparable: 1, uncomparable_by_reason: { preimage_not_loaded: 1 } });
+    // Rust refused the write.
+    expect(await tallyOf(await sample((e) => e.putPage('people/frank-example', page('Frank Example'))), { put: async () => { throw new Error('refused'); } }))
+      .toMatchObject({ comparable: 0, uncomparable: 1, uncomparable_by_reason: { rust_write_failed: 1 } });
+    // A delete of a page the preimage does not hold compares nothing.
+    const absent = await sample((e) => e.deletePage('people/never-example'));
+    // The primary write failed (the link names no page), the write ran inside a transaction, and the preimage could not be read (the write still goes through).
+    const failed = await sample((e) => e.addLink('people/nobody-example', 'people/ghost-example'));
+    const inTx = await sample((e) => e.transaction((tx) => tx.putPage('people/gina-example', page('Gina Example'))));
+    const snapshot = spyOn(primary(), 'transaction').mockRejectedValueOnce(new Error('no snapshot'));
+    const unreadable = await sample((e) => e.putPage('people/hank-example', page('Hank Example')));
+    snapshot.mockRestore();
+    expect(await primary().getPage('people/hank-example')).not.toBeNull();
+    const events = [...failed, ...inTx, ...unreadable];
+    expect(await tallyOf(events)).toMatchObject({
+      comparable: 0, unexplained_difference: 0, uncomparable: 3, uncomparable_by_reason: { primary_write_failed: 1, in_transaction: 1, preimage_unreadable: 1 },
+    });
+    expect(await tallyOf(absent)).toMatchObject({ comparable: 0, unexplained_difference: 0, uncomparable: 1 });
+  }, 60_000);
+
+    test('samples the pipe refused are counted uncomparable on the next one (a full queue is never comparable)', async () => {
+      let refuse = 2;
+      const lines: string[] = [];
+      const { wrapped } = rig({ send: (line) => { if (refuse-- > 0) return false; lines.push(line); return true; } });
+      await ctx.reset();
+      await wrapped.putPage('people/one-example', page('One Example'));
+      await wrapped.putPage('people/two-example', page('Two Example'));
+      await wrapped.putPage('people/three-example', page('Three Example'));
+      await until(() => lines.length >= 1);
+      const events = lines.map((l) => JSON.parse(l) as WriteEvent);
+      expect(events[0]!.dropped).toBe(2);
+      expect(await tallyOf(events.map((e) => ({ ...e, outcome: 'uncomparable', reason: 'x' })))).toMatchObject({ comparable: 0, uncomparable: 3, uncomparable_by_reason: { send_shed: 2, x: 1 } });
+    }, 60_000);
+  });
+
+  describe('the pilot never changes what a primary write does', () => {
+    // What each engine generates for itself on every run (ids, clocks, a random revision) is left out of both sides.
+    const GENERATED = new Set(['id', 'knowledge_revision', 'created_at', 'updated_at', 'ingested_at', 'salience_touched_at', 'text_projection_revision']);
+    const plain = (v: unknown): string => JSON.stringify(v, (k, x) => (GENERATED.has(k) ? undefined : x));
+    const STEPS: Array<[string, (e: BrainEngine) => Promise<unknown>]> = [
+      ['new page', (e) => e.putPage('people/dora-example', page('Dora Example'))],
+      ['update', (e) => e.putPage('people/dora-example', page('Dora Example Again'))],
+      ['link', (e) => e.addLink('people/dora-example', 'companies/acme-example', 'works at', 'works_at')],
+      ['batch', (e) => e.addLinksBatch([{ from_slug: 'people/alice-example', to_slug: 'people/dora-example', link_type: 'knows', context: 'met' }])],
+      ['unlink', (e) => e.removeLink('people/alice-example', 'companies/acme-example', 'works_at')],
+      ['link to nothing', (e) => e.addLink('people/dora-example', 'people/ghost-example')],
+      ['in a transaction', (e) => e.transaction((tx) => tx.putPage('people/gina-example', page('Gina Example')))],
+      ['delete', (e) => e.deletePage('people/alice-example')],
+      ['delete nothing', (e) => e.deletePage('people/never-example')],
+    ];
+    async function run(engineOf: () => { wrapped: BrainEngine; settled: () => Promise<void> }) {
+      await ctx.reset();
+      await fillSeedFixture(primary());
+      const { wrapped, settled } = engineOf();
+      const outcomes: string[] = [];
+      for (const [name, step] of STEPS) {
+        try { outcomes.push(`${name}: ${plain(await step(wrapped))}`); } catch (error) { outcomes.push(`${name}: threw ${(error as Error).message}`); }
+      }
+      await settled();
+      const rows = {
+        pages: await primary().executeRaw('SELECT source_id, slug, type, title, compiled_truth, content_hash, frontmatter::text AS frontmatter, deleted_at IS NOT NULL AS deleted FROM pages ORDER BY source_id, slug'),
+        links: await primary().executeRaw('SELECT f.slug AS from_slug, t.slug AS to_slug, l.link_type, l.context, l.link_source FROM links l JOIN pages f ON f.id = l.from_page_id JOIN pages t ON t.id = l.to_page_id ORDER BY 1, 2, 3'),
+      };
+      return { outcomes, stored: plain(rows) };
+    }
+
+    test('every result and every stored row is identical with the pilot on and with it off', async () => {
+      const off = await run(() => ({ wrapped: primary(), settled: async () => {} }));
+      let inbox: WriteEvent[] = [];
+      const on = await run(() => { const r = rig(); inbox = r.inbox; return { wrapped: r.wrapped, settled: () => until(() => inbox.length >= STEPS.length) }; });
+      expect(inbox).toHaveLength(STEPS.length); // the pilot really ran: one sample per write, whether or not it could be compared
+      expect(inbox.some((e) => e.pre)).toBe(true);
+      expect(on.outcomes).toEqual(off.outcomes);
+      expect(on.stored).toBe(off.stored);
+      expect(off.outcomes.some((o) => o.includes('threw'))).toBe(true); // failures match too
+    }, 120_000);
+
+    test('the write sample rate, not the read rate, decides which writes are copied', async () => {
+      await ctx.reset();
+      const seeded = (): string => { const dir = ctx.tempDir(); writeFileSync(join(dir, 'seed.json'), JSON.stringify({ version: 1, seed_id: 's', digests: true })); return dir; };
+      const attach = (write_sample_rate: number | undefined) => attachShadowParts(primary(), seeded(), { version: 1, enabled: true, started_at: 'x', sample_rate: 1, write_sample_rate, queue_bound: 64, plan_hash: 'h', brain: 'b', primary_engine: ctx.kind } as never, { gbrainArgv: ['unused'], random: () => 0.5 });
+      const watch = watchPreimage(primary());
+      // random() is 0.5: a read share of 1 would take every write, the default write share of 0.05 takes none.
+      const byDefault = attach(undefined);
+      await byDefault.engine.putPage('people/rate-example', page('Rate Example'));
+      byDefault.supervisor.stop(); byDefault.reconciler?.stop();
+      expect(watch.count()).toBe(0);
+      const raised = attach(0.9);
+      await raised.engine.putPage('people/rate-example', page('Rate Example Again'));
+      raised.supervisor.stop(); raised.reconciler?.stop();
+      expect(watch.count()).toBe(1);
+      watch.restore();
+    }, 60_000);
+
+    test('with no shadow attached, or one that was never seeded, no preimage read happens at all', async () => {
+      await ctx.reset();
+      const watch = watchPreimage(primary());
+      await primary().putPage('people/bare-example', page('Bare Example'));
+      await primary().deletePage('people/bare-example');
+      const state = { version: 1, enabled: true, started_at: 'x', sample_rate: 1, write_sample_rate: 1, queue_bound: 64, plan_hash: 'h', brain: 'b', primary_engine: ctx.kind };
+      const attached = attachShadowParts(primary(), ctx.tempDir(), state as never, { gbrainArgv: ['unused'] }); // no seed.json: nothing to compare against
+      await attached.engine.putPage('people/unseeded-example', page('Unseeded Example'));
+      await attached.engine.deletePage('people/unseeded-example');
+      attached.supervisor.stop();
+      expect(watch.count()).toBe(0);
+      // The same engine and the same writes do read once a seeded shadow samples them: the detector can find a positive.
+      const seeded = ctx.tempDir();
+      writeFileSync(join(seeded, 'seed.json'), JSON.stringify({ version: 1, seed_id: 's', digests: true }));
+      const on = attachShadowParts(primary(), seeded, state as never, { gbrainArgv: ['unused'] });
+      await on.engine.putPage('people/seeded-example', page('Seeded Example'));
+      on.supervisor.stop(); on.reconciler?.stop();
+      expect(watch.count()).toBe(1);
+      watch.restore();
+    }, 60_000);
+  });
+}

@@ -87,6 +87,7 @@ export function createWriteComparer(d: WriteComparerDeps): { handle(event: Write
 
   return {
     handle(event) {
+      if (Number.isInteger(event.dropped) && event.dropped! > 0) d.tally.note('uncomparable', 'send_shed', Math.min(event.dropped!, 10_000));
       // The serving process can only report what it saw itself; a verdict (`comparable`, `unexplained_difference`) is made here, from a replay.
       if (event.outcome === 'capability_missing' || event.outcome === 'uncomparable') { d.tally.note(event.outcome, event.family ?? event.reason); return; }
       if (!event.pre || !event.args) { d.tally.note('uncomparable', 'no_sample'); return; }

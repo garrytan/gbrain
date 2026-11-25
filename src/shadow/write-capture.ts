@@ -26,6 +26,8 @@ export interface WriteSamplerOptions {
   /** The serving process's write count (follower.published): a move beyond the sampled write's own marks the sample `moved`. */
   generation?: () => number | undefined;
   active: () => boolean;
+  /** How long the preimage read may hold a write; default PREIMAGE_TIMEOUT_MS (a seam for tests). */
+  preimageTimeoutMs?: number;
 }
 export interface WriteSampler { wrap(name: string, fn: Function, ctx: { engine: any; inTransaction: boolean; mayWrite: (name: string, args: unknown[]) => boolean }): Function }
 
@@ -38,6 +40,7 @@ export async function readPreimage(engine: BrainEngine, op: string, targets: Pag
     const query = digestQuery(tx);
     await query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ'); // the first statement fixes the snapshot, as in the seed
     await query(DIGEST_SESSION_SETTINGS);
+    if (engine.kind === 'postgres') await query(`SET LOCAL statement_timeout = ${PREIMAGE_TIMEOUT_MS}`); // the wait below only abandons a read: this stops it
     const rowsOf = async (relation: string, where: string, params: unknown[], limit: number): Promise<Row[]> => {
       const read = await relationRead(tx, relation, ['id']);
       const rows = await tx.executeRaw<Record<string, string | null>>(`/* shadow write preimage */ ${read.select} WHERE ${where} LIMIT ${limit + 1}`, params);
@@ -65,7 +68,15 @@ const timeout = <T>(promise: Promise<T>, ms: number): Promise<T> => new Promise(
 export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
   const random = o.random ?? Math.random;
   const rate = Math.min(1, Math.max(0, o.rate));
-  const send = (event: WriteEvent): void => { try { const line = JSON.stringify(event) + '\n'; if (Buffer.byteLength(line) <= MAX_SAMPLE_BYTES) o.send(line); else o.send(JSON.stringify({ t: 'write', op: event.op, outcome: 'uncomparable', reason: 'sample_too_large' }) + '\n'); } catch { /* the shadow never fails a write */ } };
+  /** Samples the pipe refused since the last one it took: the next line carries the count, so a shed sample is counted `uncomparable`, never lost as if it were not sampled. */
+  let dropped = 0;
+  const send = (event: WriteEvent): void => {
+    try {
+      let line = JSON.stringify({ ...event, ...(dropped ? { dropped } : {}) }) + '\n';
+      if (Buffer.byteLength(line) > MAX_SAMPLE_BYTES) line = JSON.stringify({ t: 'write', op: event.op, outcome: 'uncomparable', reason: 'sample_too_large', ...(dropped ? { dropped } : {}) }) + '\n';
+      if (o.send(line)) dropped = 0; else dropped++;
+    } catch { /* the shadow never fails a write */ }
+  };
   const uncomparable = (op: string, reason: string): void => send({ t: 'write', op, outcome: 'uncomparable', reason });
   return {
     wrap(name, fn, ctx) {
@@ -84,9 +95,10 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
           try {
             encoded = encodeArgs(args, { left: CAPTURE_BUDGET_BYTES });
             targets = pageRefs(name, args);
-            pre = await timeout(readPreimage(ctx.engine, name, targets), PREIMAGE_TIMEOUT_MS);
+            pre = await timeout(readPreimage(ctx.engine, name, targets), o.preimageTimeoutMs ?? PREIMAGE_TIMEOUT_MS);
           } catch (error) {
-            uncomparable(name, (error as Error)?.message === 'preimage_too_large' ? 'preimage_too_large' : 'preimage_unreadable');
+            const why = (error as Error)?.message;
+            uncomparable(name, why === 'preimage_too_large' || why === 'preimage_timeout' ? why : 'preimage_unreadable');
             return run();
           }
           let result: unknown;

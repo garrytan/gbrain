@@ -23,7 +23,7 @@ export interface PageRef { source: string; slug: string }
 /** Text-valued rows of the primary as the seed reads them (seed.ts `relationRead`). */
 export interface PreImage { sources: Array<Record<string, string | null>>; pages: Array<Record<string, string | null>>; links: Array<Record<string, string | null>> }
 /** What the serving process sends for one sampled write: a full sample (`pre`, `post`), or just its outcome (`outcome`, `reason`/`family`). */
-export interface WriteEvent { t: 'write'; op: string; outcome?: WriteOutcome; reason?: string; family?: string; args?: unknown[]; pre?: PreImage; post?: unknown; moved?: boolean }
+export interface WriteEvent { t: 'write'; op: string; outcome?: WriteOutcome; reason?: string; family?: string; /** Earlier samples the pipe refused (counted uncomparable, `send_shed`). */ dropped?: number; args?: unknown[]; pre?: PreImage; post?: unknown; moved?: boolean }
 
 const ref = (slug: unknown, source: unknown): PageRef | null =>
   (typeof slug === 'string' && slug ? { source: typeof source === 'string' && source ? source : 'default', slug: slug.toLowerCase() } : null);
@@ -90,19 +90,19 @@ export function readWriteTally(dir: string, epochId: string | null): WriteTallyF
 }
 
 const MAX_KEYS = 64;
-const bump = (map: Record<string, number>, key: string): void => { const k = key in map || Object.keys(map).length < MAX_KEYS ? key : 'other'; map[k] = (map[k] ?? 0) + 1; };
+const bump = (map: Record<string, number>, key: string, count: number): void => { const k = key in map || Object.keys(map).length < MAX_KEYS ? key : 'other'; map[k] = (map[k] ?? 0) + count; };
 
 /** Counts outcomes under the current epoch and writes the file after each one (sampled writes are rare). With no epoch, or no directory, nothing is counted. */
 export class WriteTally {
   constructor(private readonly dir: string, private readonly epoch: () => string | null, private readonly alive: () => boolean = () => existsSync(dir)) {}
-  note(outcome: WriteOutcome, key?: string): void {
+  note(outcome: WriteOutcome, key?: string, count = 1): void {
     const epoch = this.epoch();
     if (epoch === null || !this.alive()) return;
     const file = readWriteTally(this.dir, epoch) ?? { version: 1 as const, epoch_id: epoch, updated_at: '', comparable: 0, unexplained_difference: 0, uncomparable: 0, capability_missing: 0, capability_missing_by_family: {}, uncomparable_by_reason: {} };
-    file[outcome]++;
+    file[outcome] += count;
     const name = typeof key === 'string' && /^[A-Za-z][A-Za-z0-9_:]{0,59}$/.test(key) ? key : 'other'; // a name, never text that could hold content
-    if (outcome === 'capability_missing') bump(file.capability_missing_by_family, name);
-    if (outcome === 'uncomparable') bump(file.uncomparable_by_reason, name);
+    if (outcome === 'capability_missing') bump(file.capability_missing_by_family, name, count);
+    if (outcome === 'uncomparable') bump(file.uncomparable_by_reason, name, count);
     file.updated_at = new Date().toISOString();
     try {
       const tmp = `${writeTallyPath(this.dir)}.${process.pid}.tmp`;

@@ -260,6 +260,41 @@ function createWedgeWatch(pending: () => Promise<unknown>, track: (chain: Promis
   };
 }
 
+/**
+ * The evidence epoch a child session belongs to, read lazily. It names the addon THIS child loaded, so it is only valid while this
+ * child is the owner of the Rust store: a client of another process's owner reads answers from an addon whose digest
+ * the owner handshake does not carry, so it cannot name an epoch and its rows and counts carry none (fail closed).
+ * Without a seed or a writable manifest there is no epoch either. The role is checked on every use, so a client that
+ * takes over opens (or joins) the epoch for its own addon from then on.
+ */
+function childEpoch(
+  shadowDir: string, deps: ShadowChildDeps, load: Awaited<ReturnType<RustEngineAddonLoaderFn>>,
+  deleted: () => boolean, isClient: () => boolean, now: () => number,
+): () => EpochManifest | null {
+  let epoch: EpochManifest | null = null;
+  let epochTried = false;
+  const seed = readSeedRecord(shadowDir);
+  return () => {
+    if (isClient()) return null;
+    if (!epochTried) {
+      epochTried = true;
+      if (seed && !deleted()) { // a deleted shadow directory must not be recreated by the manifest
+        try {
+          epoch = ensureEpoch(shadowDir, {
+            seed_id: seed.seed_id,
+            rust_addon_sha256: load.ok ? ((deps.addonSha256 ?? addonFileSha256)(load.addon) ?? 'unreadable') : null,
+            comparator_version: SHADOW_COMPARATOR_VERSION,
+            adapter_version: adapterIdentity(RUST_ENGINE_ABI, load.ok ? String(load.addon.catalogVersion) : 'none', deps.adapterVersion),
+            capability_set_hash: load.ok ? capabilitySetHash((deps.capabilities ?? servedCapabilities)()) : null,
+            readiness_policy_hash: (deps.readinessPolicyHash ?? (() => policyHash(READINESS_POLICY)))(),
+          }, now(), (deps.build ?? currentBuild)());
+        } catch { epoch = null; }
+      }
+    }
+    return epoch;
+  };
+}
+
 /** Runs the child loop until stdin closes. Resolves with the number of events handled. */
 export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): Promise<number> {
   const now = deps.now ?? Date.now;
@@ -282,34 +317,8 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   // `stop --delete` can land while the addon loads: opening the store now would recreate the directory it removed.
   const hadState = existsSync(shadowStatePath(shadowDir));
   const deleted = (): boolean => !existsSync(shadowDir) || (hadState && !existsSync(shadowStatePath(shadowDir)));
-  // The evidence epoch this child session belongs to. It names the addon THIS child loaded, so it is only valid while this
-  // child is the owner of the Rust store: a client of another process's owner reads answers from an addon whose digest
-  // the owner handshake does not carry, so it cannot name an epoch and its rows and counts carry none (fail closed).
-  // Without a seed or a writable manifest there is no epoch either. The role is checked on every use, so a client that
-  // takes over opens (or joins) the epoch for its own addon from then on.
-  let epoch: EpochManifest | null = null;
-  let epochTried = false;
-  const seed = readSeedRecord(shadowDir);
   const isClient = (): boolean => (engine as { ownerRole?: string | null } | null)?.ownerRole === 'client';
-  const epochNow = (): EpochManifest | null => {
-    if (isClient()) return null;
-    if (!epochTried) {
-      epochTried = true;
-      if (seed && !deleted()) { // a deleted shadow directory must not be recreated by the manifest
-        try {
-          epoch = ensureEpoch(shadowDir, {
-            seed_id: seed.seed_id,
-            rust_addon_sha256: load.ok ? ((deps.addonSha256 ?? addonFileSha256)(load.addon) ?? 'unreadable') : null,
-            comparator_version: SHADOW_COMPARATOR_VERSION,
-            adapter_version: adapterIdentity(RUST_ENGINE_ABI, load.ok ? String(load.addon.catalogVersion) : 'none', deps.adapterVersion),
-            capability_set_hash: load.ok ? capabilitySetHash((deps.capabilities ?? servedCapabilities)()) : null,
-            readiness_policy_hash: (deps.readinessPolicyHash ?? (() => policyHash(READINESS_POLICY)))(),
-          }, now(), (deps.build ?? currentBuild)());
-        } catch { epoch = null; }
-      }
-    }
-    return epoch;
-  };
+  const epochNow = childEpoch(shadowDir, deps, load, deleted, isClient, now);
   const curEpoch = (): string | null => epochNow()?.epoch_id ?? null;
   const recordRustError = internalErrorRecorder(shadowDir, () => epochNow()?.epoch_id ?? null, now);
   const opened = await openRustStore(shadowDir, deps, load, deleted, recordRustError);

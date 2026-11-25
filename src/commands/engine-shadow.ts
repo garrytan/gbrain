@@ -29,7 +29,7 @@ import { seedStatus, shadowStatusDocument } from '../shadow/status-document.ts';
 import { installWriterHooks, primaryTakesWriterHooks, removeWriterHooks } from '../shadow/writer-hooks.ts';
 import { buildProvisionalReport, renderProvisionalMarkdown, writeProvisionalReport } from '../shadow/report.ts';
 import {
-  brainIdentity, DEFAULT_SHADOW_QUEUE_BOUND, DEFAULT_SHADOW_SAMPLE_RATE, readShadowState, shadowBrainKey, shadowDirFor, shadowStatePath,
+  brainIdentity, DEFAULT_SHADOW_QUEUE_BOUND, DEFAULT_SHADOW_SAMPLE_RATE, DEFAULT_SHADOW_WRITE_SAMPLE_RATE, readShadowState, writeSampleRate, shadowBrainKey, shadowDirFor, shadowStatePath,
   SHADOW_STATE_VERSION, writeShadowState, type ShadowState,
 } from '../shadow/state.ts';
 
@@ -58,8 +58,8 @@ export interface EngineShadowDeps {
 const HELP = `gbrain engine shadow — compare the Rust engine against this brain's reads, off the request path
 
 Usage:
-  gbrain engine shadow start [--plan] [--sample-rate <0..1>] [--queue-bound <n>]
-  gbrain engine shadow start --yes --expect <plan_hash> [--sample-rate <0..1>] [--queue-bound <n>]
+  gbrain engine shadow start [--plan] [--sample-rate <0..1>] [--write-sample-rate <0..1>] [--queue-bound <n>]
+  gbrain engine shadow start --yes --expect <plan_hash> [--sample-rate <0..1>] [--write-sample-rate <0..1>] [--queue-bound <n>]
   gbrain engine shadow status [--json]
   gbrain engine shadow stop [--delete]
   gbrain engine shadow report [--json]
@@ -101,10 +101,10 @@ The report is provisional and always says NOT READY.`;
 
 class UsageError extends Error {}
 
-interface StartOpts { plan: boolean; yes: boolean; expect: string | null; sampleRate: number; queueBound: number }
+interface StartOpts { plan: boolean; yes: boolean; expect: string | null; sampleRate: number; writeSampleRate: number; queueBound: number }
 
 function parseStart(args: string[]): StartOpts {
-  const o: StartOpts = { plan: false, yes: false, expect: null, sampleRate: DEFAULT_SHADOW_SAMPLE_RATE, queueBound: DEFAULT_SHADOW_QUEUE_BOUND };
+  const o: StartOpts = { plan: false, yes: false, expect: null, sampleRate: DEFAULT_SHADOW_SAMPLE_RATE, writeSampleRate: DEFAULT_SHADOW_WRITE_SAMPLE_RATE, queueBound: DEFAULT_SHADOW_QUEUE_BOUND };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     const value = (): string => {
@@ -119,6 +119,10 @@ function parseStart(args: string[]): StartOpts {
       const n = Number(value());
       if (!Number.isFinite(n) || n <= 0 || n > 1) throw new UsageError('--sample-rate must be a number above 0 and at most 1');
       o.sampleRate = n;
+    } else if (a === '--write-sample-rate') {
+      const n = Number(value());
+      if (!Number.isFinite(n) || n <= 0 || n > 1) throw new UsageError('--write-sample-rate must be a number above 0 and at most 1');
+      o.writeSampleRate = n;
     } else if (a === '--queue-bound') {
       const n = Number(value());
       if (!Number.isInteger(n) || n < 1 || n > 100_000) throw new UsageError('--queue-bound must be a whole number from 1 to 100000');
@@ -142,15 +146,17 @@ export interface ShadowPlan {
   primary_engine: string;
   directory: string;
   sample_rate: number;
+  /** Share of page and link writes compared on a scratch Rust store (write-compare.ts). */
+  write_sample_rate: number;
   queue_bound: number;
   mirrors: string;
   writes: string[];
   never_writes: string[];
 }
 
-export function shadowPlan(brain: string, primaryEngine: string, dir: string, o: Pick<StartOpts, 'sampleRate' | 'queueBound'>): { plan: ShadowPlan; hash: string } {
+export function shadowPlan(brain: string, primaryEngine: string, dir: string, o: Pick<StartOpts, 'sampleRate' | 'queueBound'> & Partial<Pick<StartOpts, 'writeSampleRate'>>): { plan: ShadowPlan; hash: string } {
   const plan: ShadowPlan = {
-    brain, primary_engine: primaryEngine, directory: dir, sample_rate: o.sampleRate, queue_bound: o.queueBound,
+    brain, primary_engine: primaryEngine, directory: dir, sample_rate: o.sampleRate, write_sample_rate: o.writeSampleRate ?? DEFAULT_SHADOW_WRITE_SAMPLE_RATE, queue_bound: o.queueBound,
     mirrors: 'a sample of reads and searches this brain answers, after the answer; none inside a transaction',
     writes: [`${dir}/state.json`, `${dir}/store (the Rust engine's own store)`, `${dir}/ledger, summaries, faults.jsonl, reports, child.log`,
       'the brain database: one row per writing process in engine_writer_observations, at most every 10 minutes (swap eligibility)',
@@ -287,13 +293,14 @@ async function start(
     out(`Shadow mode plan for brain ${plan.brain} (${plan.primary_engine}):`);
     out(`  mirrors: ${plan.mirrors}`);
     out(`  sample rate ${plan.sample_rate}, serving-process queue bound ${plan.queue_bound}`);
+    out(`  write sample rate ${plan.write_sample_rate}: that share of page and link writes is checked on a throwaway Rust store; one of them outside a transaction first waits (at most 2 s) for one read of the rows it touches`);
     for (const w of plan.writes) out(`  writes: ${w}`);
     out(`  never writes: ${plan.never_writes.join(', ')}`);
     const line = storageLine(await readStorage(brain, deps, now));
     if (line) out(`  storage: ${line}`);
     out(`  the installed Rust engine addon is loaded and verified now`);
     out(`plan_hash: ${hash}`);
-    out(`To turn it on: gbrain engine shadow start --yes --expect ${hash}${o.sampleRate !== DEFAULT_SHADOW_SAMPLE_RATE ? ` --sample-rate ${o.sampleRate}` : ''}${o.queueBound !== DEFAULT_SHADOW_QUEUE_BOUND ? ` --queue-bound ${o.queueBound}` : ''}`);
+    out(`To turn it on: gbrain engine shadow start --yes --expect ${hash}${o.sampleRate !== DEFAULT_SHADOW_SAMPLE_RATE ? ` --sample-rate ${o.sampleRate}` : ''}${o.writeSampleRate !== DEFAULT_SHADOW_WRITE_SAMPLE_RATE ? ` --write-sample-rate ${o.writeSampleRate}` : ''}${o.queueBound !== DEFAULT_SHADOW_QUEUE_BOUND ? ` --queue-bound ${o.queueBound}` : ''}`);
     return o.plan ? 0 : 3;
   }
   if (o.expect !== hash) {
@@ -353,7 +360,7 @@ async function start(
   }
   deps.afterHooks?.(); // test seam: a throw here stands for a start killed after the hooks changed and before the state is published
   const state: ShadowState = {
-    version: SHADOW_STATE_VERSION, enabled: true, started_at: now().toISOString(), sample_rate: o.sampleRate,
+    version: SHADOW_STATE_VERSION, enabled: true, started_at: now().toISOString(), sample_rate: o.sampleRate, write_sample_rate: o.writeSampleRate,
     queue_bound: o.queueBound, plan_hash: hash, brain: brain.key, primary_engine: brain.engine, storage,
     writer_evidence_since: evidenceSince, writer_evidence_seed: seedId,
     ...(continuing ? { writer_coverage_restarted_at: now().toISOString() } : {}),
@@ -377,7 +384,7 @@ async function status(brain: { key: string; dir: string }, json: boolean, out: (
   }
   const { state, totals, recent_faults: faults } = doc;
   out(`Shadow mode: ${state?.enabled ? 'on' : 'off'} (brain ${brain.key})`);
-  if (state) out(`  started ${state.started_at}${state.stopped_at ? `, stopped ${state.stopped_at}` : ''}; sample rate ${state.sample_rate}`);
+  if (state) out(`  started ${state.started_at}${state.stopped_at ? `, stopped ${state.stopped_at}` : ''}; sample rate ${state.sample_rate}, write sample rate ${writeSampleRate(state)}`);
   const line = storageLine(state?.storage);
   if (line) out(`  storage: ${line}`);
   const compared = Object.values(totals).reduce((a, b) => a + b, 0);
