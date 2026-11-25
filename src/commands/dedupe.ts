@@ -24,7 +24,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { DUPLICATE_KINDS, entityPagesOf, findTypedDuplicateGroups, type DuplicateEvidence, type DuplicateGroup, type DuplicateKind, type DuplicateResult, type EntityKind, type EntityPage } from '../core/entities/duplicates.ts';
 import { autoLinkCompanies } from '../core/entities/company-auto-link.ts';
-import { canonicalOf, decidedSets, decisionId, forgetDecisions, identityHome, reconcileDecisions, recordDecisions, unpublishableMembers, type DecisionInput, type RecordResult } from '../core/entities/identity-decisions.ts';
+import { canonicalOf, decidedSets, decisionId, fillDecisionEvidence, forgetDecisions, identityHome, reconcileDecisions, recordDecisions, unpublishableMembers, type DecisionInput, type RecordResult } from '../core/entities/identity-decisions.ts';
 import type { IdentityDecisionsRead, IdentityMemberRef } from '../core/engine-sql/identity-decisions.ts';
 import { identityIdsForPages, isEntityId, listEntityIdentities, validateEntityId } from '../core/entity-identity.ts';
 import { opError, OperationError } from '../core/ops/contract.ts';
@@ -456,6 +456,7 @@ async function runReject(engine: BrainEngine, args: string[]): Promise<void> {
   }
   const pages = await entityPagesOf(engine, decisions.flatMap(d => d.members));
   for (const d of decisions) d.evidence = d.members.map(m => pages.get(`${m.source_id}\t${m.slug}`)?.fingerprint).filter((x): x is string => !!x);
+  for (const d of decisions) if (uncollapse.some(c => c.collapse === d.group_id) && (d.evidence?.length ?? 0) < 2) d.evidence = [];
   const undone = new Set(decisions.map(d => decisionId(d.members)));
   for (const d of decisions) {
     const keys = new Set(d.members.map(memberText));
@@ -474,6 +475,7 @@ async function runReject(engine: BrainEngine, args: string[]): Promise<void> {
   const r = await recordDecisions(engine, decisions, `dedupe: record ${decisions.length} group(s) as different people or companies`);
   const uncollapsed: CollapseOutcome[] = [];
   for (const c of uncollapse) uncollapsed.push(await undoCollapse(engine, c, loadConfig()));
+  if (uncollapse.length) await fillDecisionEvidence(engine);
   await unlinkRejectedContacts(engine, decisions);
   const sameSource = await markDistinct(engine, decisions);
   if (f.json) {

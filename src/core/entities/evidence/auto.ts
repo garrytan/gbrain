@@ -129,10 +129,7 @@ export async function applyAutoLinks(engine: BrainEngine, plan: AutoPlan, config
   }
   const linked = record?.recorded ?? [];
   const collapses: CollapseOutcome[] = [];
-  for (const c of plan.collapses) {
-    if ((await autoSwitches(engine))[c.class] !== 'on') { collapses.push({ collapse: c.collapse, status: 'skipped', reason: 'changed', store: c.store }); continue; }
-    collapses.push(await applyCollapse(engine, c, config));
-  }
+  for (const c of plan.collapses) collapses.push(await applyCollapse(engine, c, config, () => stillCollapsible(engine, c)));
   return { record, linked, changed: plan.links.map(l => l.decision).filter(id => !linked.includes(id)), collapses };
 }
 
@@ -151,6 +148,21 @@ async function stillLinkable(engine: BrainEngine, pending: DecisionInput[], read
     out.push(d);
   }
   return out;
+}
+
+/**
+ * A planned collapse may still be written: C7 is on and no "different" decision covers the pair (in the database, or
+ * committed to the decisions repository and not read back yet). applyCollapse runs it inside the write.
+ */
+async function stillCollapsible(engine: BrainEngine, c: CollapsePlan): Promise<boolean> {
+  if ((await autoSwitches(engine))[c.class] !== 'on') return false;
+  const home = await identityHome(engine);
+  const keys = [c.retired, c.canonical].map(slug => memberKey({ source_id: c.source_id, slug }));
+  return ![...(await engine.listIdentityDecisions()).decisions, ...(home ? await committedDecisions(home) : [])].some(d => {
+    if (d.verdict !== 'different') return false;
+    const set = new Set(d.members.map(memberKey));
+    return set.size === 1 ? keys.some(k => set.has(k)) : keys.every(k => set.has(k));
+  });
 }
 
 /** The automatic links recorded at or after `since` (epoch ms), newest first; one class when named. */

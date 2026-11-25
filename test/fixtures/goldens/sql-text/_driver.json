@@ -3628,7 +3628,7 @@
       "listEntityKeyRows": {
         "after": [
           {
-            "paramCount": 11,
+            "paramCount": 12,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -3639,7 +3639,7 @@
         ],
         "default": [
           {
-            "paramCount": 11,
+            "paramCount": 12,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,

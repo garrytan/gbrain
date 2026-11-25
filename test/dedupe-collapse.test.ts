@@ -22,6 +22,9 @@ import { dedupeAutoLinksEntry } from '../src/commands/doctor/checks/entity-dupli
 import type { DoctorContext } from '../src/commands/doctor/context.ts';
 import { applyAutoLinks, planAutoLinks } from '../src/core/entities/evidence/auto.ts';
 import { decisionId, IDENTITY_DIR, recordDecisions } from '../src/core/entities/identity-decisions.ts';
+import { listCollapses } from '../src/core/entities/evidence/collapse.ts';
+import * as mutations from '../src/core/persistence/page-mutations.ts';
+import { OperationError } from '../src/core/ops/contract.ts';
 
 const git = (dir: string, ...args: string[]) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 
@@ -128,6 +131,42 @@ for (const backend of testBackends()) describe(`C7 collapse without a repository
     await h.person('people/bob-example', 'Bob Example', { linkedin: 'https://linkedin.com/in/robert-ex', company: 'Acme Example' });
   });
 
+  test('a reject, a distinct_from or an --off that lands after the plan is never written over by a collapse', async () => {
+    const members = [{ source_id: 'default', slug: 'people/bob-example' }, { source_id: 'default', slug: 'people/robert-example' }];
+    let plan = await planAutoLinks(engine);
+    await recordDecisions(engine, [{ verdict: 'different', members, group_id: null, entity_id: null, canonical: null, decided_by: 'owner' }], 'test: reject the pair');
+    expect((await applyAutoLinks(engine, plan)).collapses).toEqual([expect.objectContaining({ collapse, status: 'skipped', reason: 'changed' })]);
+    expect(await h.fm('people/bob-example')).not.toHaveProperty('merged_into');
+    await h.dedupe(['undo', collapse]);
+    plan = await planAutoLinks(engine);
+    await h.person('people/bob-example', 'Bob Example', { linkedin: 'https://linkedin.com/in/robert-ex', company: 'Acme Example', distinct_from: ['people/robert-example'] });
+    expect((await applyAutoLinks(engine, plan)).collapses).toEqual([expect.objectContaining({ status: 'skipped', reason: 'changed' })]);
+    await h.person('people/bob-example', 'Bob Example', { linkedin: 'https://linkedin.com/in/robert-ex', company: 'Acme Example' });
+    plan = await planAutoLinks(engine);
+    await h.dedupe(['auto', '--off', 'C7']);
+    expect((await applyAutoLinks(engine, plan)).collapses).toEqual([expect.objectContaining({ status: 'skipped', reason: 'changed' })]);
+    expect(await h.fm('people/bob-example')).not.toHaveProperty('merged_into');
+    await h.dedupe(['auto', '--on', 'C7']);
+  });
+
+  test('a kept page that fails to take its aliases takes the collapse back; an undo that cannot reach the kept page says so', async () => {
+    const real = mutations.submitPageMutation;
+    const onKept = (error: Error) => spyOn(mutations, 'submitPageMutation').mockImplementation(async (ctx, req) =>
+      ((req.params as { slug?: string }).slug === 'people/robert-example' ? Promise.reject(error) : real(ctx, req)));
+    const spy = onKept(new Error('injected'));
+    try { await expect(applyAutoLinks(engine, await planAutoLinks(engine))).rejects.toThrow('injected'); } finally { spy.mockRestore(); }
+    expect(await h.fm('people/bob-example')).not.toHaveProperty('merged_into');
+    expect((await h.fm('people/robert-example')).aliases).toEqual(['Rob E']);
+    await applyAutoLinks(engine, await planAutoLinks(engine));
+    const spy2 = onKept(new OperationError('revision_conflict', 'the page moved'));
+    let undone: any;
+    try { undone = await h.json(['undo', collapse]); } finally { spy2.mockRestore(); }
+    expect(undone.collapses).toEqual([expect.objectContaining({ status: 'skipped', reason: 'changed', note: expect.stringContaining('Bob Example') })]);
+    expect(await h.fm('people/bob-example')).not.toHaveProperty('merged_into');
+    expect((await h.fm('people/robert-example')).aliases).toEqual(['Rob E', 'Bob Example']);
+    await h.person('people/robert-example', 'Robert Example', { linkedin: 'in/robert-ex', aliases: ['Rob E'] });
+  });
+
   test('reject <collapse id> takes the collapse back and keeps the pair apart; the weekly sample keeps it as corrected', async () => {
     await h.dedupe(['auto', '--apply']);
     expect((await h.fm('people/bob-example')).merged_into).toBe('people/robert-example');
@@ -136,6 +175,7 @@ for (const backend of testBackends()) describe(`C7 collapse without a repository
     expect(await h.fm('people/bob-example')).not.toHaveProperty('merged_into');
     const d = (await engine.listIdentityDecisions()).decisions.find(x => x.decision_id === collapse)!;
     expect(d).toMatchObject({ verdict: 'different', decided_by: 'owner:corrects:dedupe:auto:C7' });
+    expect(d.evidence).toHaveLength(2);
     expect((await h.json(['auto'])).collapses).toEqual([]);
     const sample = await h.json(['sample', '--class', 'C7', '--since', '7d']);
     expect(sample).toMatchObject({ total: 1, corrected: 1 });
@@ -251,5 +291,64 @@ describe('with a repository', () => {
     expect(off.removed).toContain(id);
     expect(() => git(root, 'show', `HEAD:${IDENTITY_DIR}/${id}.md`)).toThrow();
     await h.dedupe(['auto', '--on', 'C2']);
+  });
+
+  const extra: Record<string, string> = {
+    'people/gus-example.md': '\uFEFF---\ntype: person\ntitle: Gus Example\ngithub: gusex\n---\nGus notes.\n',
+    'people/gus-example-2.md': '---\ntype: person\ntitle: Gus Example\ngithub: https://github.com/gusex\n---\nGus, again.\n',
+    'people/hal-example.md': '---\ntype: person\ntitle: Hal Example\ngithub: halex\n---\nHal notes.\n',
+    'people/hal-example-2.md': '---\ntype: person\ntitle: Hal Example\ngithub: https://github.com/halex\n---\nHal, again.\n',
+  };
+  const read = (path: string) => readFileSync(join(root, path), 'utf8');
+  const planFor = async (slug: string) => (await planAutoLinks(engine)).collapses.filter(c => [c.retired, c.canonical].includes(slug));
+
+  test('a file whose frontmatter opens with a byte-order mark is left alone, never given a second block', async () => {
+    for (const [path, text] of Object.entries(extra)) writeFileSync(join(root, path), text);
+    git(root, 'add', '-A');
+    git(root, 'commit', '-qm', 'more pages');
+    await performSync(engine, { sourceId: 'default', repoPath: root, noPull: true, noEmbed: true, concurrency: 1 });
+    const [gus] = await planFor('people/gus-example');
+    expect(gus).toBeDefined();
+    const out = await applyAutoLinks(engine, { ...(await planAutoLinks(engine)), links: [], collapses: [gus!] });
+    expect(out.collapses).toEqual([expect.objectContaining({ status: 'skipped', reason: 'frontmatter_not_editable', store: 'git' })]);
+    expect(read('people/gus-example.md')).toBe(extra['people/gus-example.md']!);
+    expect(read('people/gus-example-2.md')).toBe(extra['people/gus-example-2.md']!);
+  });
+
+  test('reject and --off of a collapse in git: the collapse taken back in a commit, the reject committed, --off restoring the files byte for byte', async () => {
+    const danaOf = async () => (await listCollapses(engine)).filter(c => [c.retired, c.canonical].includes('people/dana-example'));
+    if (!(await danaOf()).length) await applyAutoLinks(engine, { ...(await planAutoLinks(engine)), links: [], collapses: await planFor('people/dana-example') });
+    const [dana] = await danaOf();
+    expect((await h.fm(dana!.retired)).merged_into).toBe(dana!.canonical);
+    const out = await h.json(['reject', dana!.collapse]);
+    expect(out.collapses).toEqual([expect.objectContaining({ status: 'undone', store: 'git' })]);
+    for (const path of Object.keys(files)) expect(read(path)).not.toMatch(/merged_into|dedupe_collapse|- Dana Example/);
+    expect(Object.keys(files).some(path => read(path).includes('distinct_from:'))).toBe(true);
+    if (git(root, 'status', '--porcelain')) git(root, 'commit', '-qam', 'distinct_from written by the reject');
+    expect(git(root, 'show', `HEAD:${IDENTITY_DIR}/${dana!.collapse}.md`)).toContain('verdict: different');
+    expect(await planFor('people/dana-example')).toEqual([]);
+    const [hal] = await planFor('people/hal-example');
+    await applyAutoLinks(engine, { ...(await planAutoLinks(engine)), links: [], collapses: [hal!] });
+    expect(read(`${hal!.retired}.md`)).toContain('merged_into: people/hal-example');
+    const off = await h.json(['auto', '--off', 'C7']);
+    expect(off.removed).toEqual([hal!.collapse]);
+    for (const path of ['people/hal-example.md', 'people/hal-example-2.md']) expect(read(path)).toBe(extra[path]!);
+    expect(git(root, 'status', '--porcelain')).toBe('');
+    await h.dedupe(['auto', '--on', 'C7']);
+  });
+
+  test('in git, a reject or a distinct_from committed after the plan is read under the lock and never written over', async () => {
+    const [hal] = await planFor('people/hal-example');
+    const plan = { ...(await planAutoLinks(engine)), links: [], collapses: [hal!] };
+    const members = [{ source_id: 'default', slug: hal!.retired }, { source_id: 'default', slug: hal!.canonical }];
+    await recordDecisions(engine, [{ verdict: 'different', members, group_id: null, entity_id: null, canonical: null, decided_by: 'owner' }], 'test: reject the pair');
+    expect((await applyAutoLinks(engine, plan)).collapses).toEqual([expect.objectContaining({ status: 'skipped', reason: 'changed', store: 'git' })]);
+    await h.dedupe(['undo', hal!.collapse]);
+    const path = `${hal!.retired}.md`;
+    const edited = read(path).replace('\n---\n', `\ndistinct_from: [${hal!.canonical}]\n---\n`);
+    writeFileSync(join(root, path), edited);
+    git(root, 'commit', '-qam', 'kept apart by hand');
+    expect((await applyAutoLinks(engine, plan)).collapses).toEqual([expect.objectContaining({ status: 'skipped', reason: 'changed', store: 'git' })]);
+    expect(read(path)).toBe(edited);
   });
 });
