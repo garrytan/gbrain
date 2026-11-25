@@ -443,6 +443,55 @@ impl Brain {
         })
     }
 
+    /// `selectClaimableLaneHead({ hostId, worktreeId, run, seenSequence, nonce, priority })`: the lane head
+    /// `claimNextLaneHead` claims next, or `null`.
+    #[napi]
+    pub fn select_claimable_lane_head<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.select_claimable_lane_head(&required(spec, "selectClaimableLaneHead spec")?)
+        })
+    }
+
+    /// `stampLaneHeadClaim({ id, token, leaseMs, phaseJson })`: the claimed row with `seen_sequence`, or `null`.
+    #[napi]
+    pub fn stamp_lane_head_claim<'env>(
+        &self,
+        env: &'env Env,
+        stamp: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.stamp_lane_head_claim(&required(stamp, "stampLaneHeadClaim stamp")?)
+        })
+    }
+
+    /// `chargeTransientInterruption({ id, token, baseMs, maxMs })`: `{ transient_interruptions }`, or `null`.
+    #[napi]
+    pub fn charge_transient_interruption<'env>(
+        &self,
+        env: &'env Env,
+        charge: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.charge_transient_interruption(&required(charge, "chargeTransientInterruption charge")?)
+        })
+    }
+
+    /// `reclaimReleasedWrite({ id, token, leaseMs, phaseJson })`: the claimed row, or `null`.
+    #[napi]
+    pub fn reclaim_released_write<'env>(
+        &self,
+        env: &'env Env,
+        stamp: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.reclaim_released_write(&required(stamp, "reclaimReleasedWrite stamp")?)
+        })
+    }
+
     /// `readCounterRows(keys)`: the counter rows that exist, in key order, unlocked.
     #[napi]
     pub fn read_counter_rows<'env>(
@@ -778,6 +827,18 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.stamp_effect_claim(&required(claim, "stampEffectClaim claim")?)
+        })
+    }
+
+    /// `claimEffectRecovery({ id, token, ownerJson })`: the claimed row, or `null` when the effect holds no recovery.
+    #[napi]
+    pub fn claim_effect_recovery<'env>(
+        &self,
+        env: &'env Env,
+        claim: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.claim_effect_recovery(&required(claim, "claimEffectRecovery claim")?)
         })
     }
 

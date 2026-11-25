@@ -32,6 +32,13 @@ export const STAMP_EFFECT_CLAIM_SQL = `UPDATE persistence_effects SET state='run
       claim_expires_at=now()+interval '2 minutes',attempts=attempts+1,updated_at=now() WHERE id=$1 RETURNING *`;
 
 /**
+ * `claimEffectRecovery` (the protocol predicate written out): claims effect $1 for its recovery under token $2 with owner
+ * stamp $3, only while it still holds a recovery record. The text `claimAndRecoverEffect` (persistence/effects.ts) has always sent.
+ */
+export const CLAIM_EFFECT_RECOVERY_SQL = `UPDATE persistence_effects SET state='running',execution_token=$2::uuid,claim_owner=$3::text::jsonb,
+      claim_expires_at=now()+interval '2 minutes',attempts=attempts+1,updated_at=now() WHERE id=$1 AND recovery IS NOT NULL AND set_config('gbrain.persistence_protocol','2',true)='2' RETURNING *`;
+
+/**
  * `claimCoalescedGitEffects`: $1 host id, $2 worktree id, $3 limit, $4 the owner keys proved dead, $5 the owner stamp.
  * The text `claimCoalescedGitEffects` (persistence/effect-journal.ts) has always sent, with `refreshFenceClear('w', 'id')`
  * and `DEAD_OWNER_EFFECT_SQL('e', '$4')` written out; test/persistence-journal-statements.test.ts checks it against those
@@ -128,6 +135,12 @@ export interface MirrorGateRow { request_id: string; state: string; data: Record
 /** Claims effect `id` under `token`: the claimed row, or null when no effect has the id. */
 export async function stampEffectClaim<R = Record<string, unknown>>(exec: EffectExec, claim: EffectClaim): Promise<R | null> {
   const [row] = await exec.executeRaw<R>(STAMP_EFFECT_CLAIM_SQL, [claim.id, claim.token, claim.ownerJson]);
+  return row ?? null;
+}
+
+/** Claims effect `id` for its recovery under `token`: the claimed row, or null when no effect with that id holds a recovery record. */
+export async function claimEffectRecovery<R = Record<string, unknown>>(exec: EffectExec, claim: EffectClaim): Promise<R | null> {
+  const [row] = await exec.executeRaw<R>(CLAIM_EFFECT_RECOVERY_SQL, [claim.id, claim.token, claim.ownerJson]);
   return row ?? null;
 }
 

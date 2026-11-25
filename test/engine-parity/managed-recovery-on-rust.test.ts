@@ -45,6 +45,7 @@ import { topologyPrincipal } from '../../src/core/persistence/topology-locks.ts'
 import { claimNextWrite } from '../../src/core/persistence/journal.ts';
 import { readTopologyRecoveryStops } from '../../src/core/persistence/topology-stop.ts';
 import { runPersistenceEffects } from '../../src/core/persistence/effects.ts';
+import { serveGitOverHttps } from '../helpers/git-smart-http.ts';
 import { claimPersistenceEffect, parkEffect } from '../../src/core/persistence/effect-journal.ts';
 import type { SourceLifecycleInput } from '../../src/core/persistence/source-lifecycle.ts';
 
@@ -158,6 +159,38 @@ describe('managed clone and recovery on a Rust brain, hold kept for users', () =
     expect(answer).toEqual({ receipt: expect.objectContaining({ state: 'committed', cloned: true, operation: 'add', local_path: '<home>/cloned' }),
       source: { registered: true, archived: false }, note: true, bound: { local: true, state: 'active', relative: '' }, leftovers: [], recovering: 0 });
     return answer;
+  }));
+
+  parityTest('sources add --url clones over a real https transport (Git smart HTTP on 127.0.0.1, no file transport) and registers the source', {
+    methods: ['worktreeClaimStore', 'topologyStore', 'readSourceMembership', 'getWorktreeBinding'],
+    timeout: 180_000,
+  }, async (engine, backend) => withManagedBrain(engine, backend, {}, async home => {
+    const bare = bareRemote(home, 'net', 'nora-example.md', 'Nora Example');
+    const server = await serveGitOverHttps(home);
+    try {
+      const remote = `${server.url}/${bare.split('/').pop()}`;
+      const target = join(home, 'cloned-over-https');
+      // The real clone: no provider hook, and none of the file-transport escape hatch the other cases use.
+      const answer = await withEnv({ GBRAIN_GIT_ALLOW_FILE_TRANSPORT: undefined, GBRAIN_ALLOW_PRIVATE_REMOTES: '1', GIT_SSL_CAINFO: server.caFile }, async () => {
+        const plain = await clone(engine, { operation: 'add', sourceId: 'plain-http', remoteUrl: remote.replace('https:', 'http:'), path: join(home, 'refused-plain-http') }, {});
+        const loopback = await withEnv({ GBRAIN_ALLOW_PRIVATE_REMOTES: undefined }, () =>
+          clone(engine, { operation: 'add', sourceId: 'loopback', remoteUrl: remote, path: join(home, 'refused-loopback') }, {}));
+        const out = await clone(engine, { operation: 'add', sourceId: 'cloned-over-https', remoteUrl: remote, path: target }, {});
+        const binding = await engine.getWorktreeBinding('cloned-over-https', hostIdFor(engine));
+        return { fileTransport: process.env.GBRAIN_GIT_ALLOW_FILE_TRANSPORT ?? null, plain, loopback, receipt: receipt(out, home), source: await sourceOf(engine, 'cloned-over-https'),
+          refusedSources: [await sourceOf(engine, 'plain-http'), await sourceOf(engine, 'loopback')],
+          note: existsSync(join(target, 'notes', 'nora-example.md')), bound: binding && { local: binding.local_path === target, state: binding.state },
+          served: { info: server.requests.some(r => r.includes('/info/refs?service=git-upload-pack')), pack: server.requests.some(r => r.startsWith('POST') && r.includes('/git-upload-pack')) },
+          leftovers: leftovers(home), recovering: (await engine.listTopologyRecoveries(localHostId(), null, 16)).length };
+      });
+      expect(answer).toEqual({ fileTransport: null, plain: { refused: 'invalid_params' }, loopback: { refused: 'invalid_params' },
+        receipt: expect.objectContaining({ state: 'committed', cloned: true, operation: 'add', local_path: '<home>/cloned-over-https' }),
+        source: { registered: true, archived: false }, refusedSources: [null, null], note: true, bound: { local: true, state: 'active' },
+        served: { info: true, pack: true }, leftovers: [], recovering: 0 });
+      return answer;
+    } finally {
+      await server.stop();
+    }
   }));
 
   parityTest('sources reclone replaces the checkout with a fresh clone of the same remote', {
