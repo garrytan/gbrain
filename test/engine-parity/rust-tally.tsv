@@ -168,7 +168,7 @@ test/engine-parity/holding-page-purges.test.ts	3	0
 test/engine-parity/hot-memory-meta.test.ts	3	0
 test/engine-parity/hot-memory-watermark.test.ts	2	0
 test/engine-parity/identity-auto-sweeps.test.ts	3	0
-test/engine-parity/identity-finder.test.ts	3	0
+test/engine-parity/identity-finder.test.ts	4	0
 test/engine-parity/import-folder-stamp.test.ts	5	0
 test/engine-parity/import-members.test.ts	10	0
 test/engine-parity/import-path.test.ts	8	0
