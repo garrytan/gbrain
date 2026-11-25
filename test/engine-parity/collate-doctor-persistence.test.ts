@@ -40,6 +40,7 @@ import { FILE_DRIFT_MESSAGE } from '../../src/core/persistence/drift-conflicts.t
 import type { OperationContext } from '../../src/core/operations.ts';
 import { localHostId } from '../../src/core/persistence/identity.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import type { ExtractRollupDelta } from '../../src/core/engine-sql/extract-bookkeeping.ts';
 import type { DoctorContext, DoctorEntry } from '../../src/commands/doctor/context.ts';
 import type { Check } from '../../src/commands/doctor.ts';
 import { requireManagedPersistence } from '../../src/core/rust-engine/errors.ts';
@@ -348,18 +349,49 @@ describe('doctor persistence reads sort text keys by byte', () => {
     } finally { rmSync(home, { recursive: true, force: true }); }
   });
 
+  /** One rollup day row through the typed writer the extract rollup uses (extract/rollup-writer.ts). */
+  const rollupDay = (engine: BrainEngine, kind: string, daysAgo: number, extra: Partial<ExtractRollupDelta> = {}) =>
+    engine.upsertExtractRollupDay({
+      kind, source_id: 'default', day: new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10), cost_usd: 0,
+      halt_count: 0, eval_fail_count: 0, eval_pass_count: 0, round_completed_count: 0, expected_limit_count: 0, rollup_write_failures: 0,
+      halt_reason: null, ...extra,
+    });
+
   parityTest('extract_health lists the extraction kinds by byte', {
-    methods: ['executeRaw'], requires: 'raw_sql',
+    methods: ['upsertExtractRollupDay', 'readExtractRollup7d', 'listRecordedHaltReasons7d'],
   }, async engine => {
     const { computeExtractHealthCheck } = await import('../../src/commands/doctor/checks/extraction-sync.ts');
     const kinds = ['kab', 'ka-z', 'kac'];
-    for (const kind of kinds) {
-      await engine.executeRaw(`INSERT INTO extract_rollup_7d (kind, source_id, day, cost_usd, halt_count, eval_fail_count, eval_pass_count, round_completed_count, expected_limit_count, rollup_write_failures, updated_at)
-        VALUES ($1, 'default', CURRENT_DATE, 0, 1, 0, 0, 1, 0, 0, now())`, [kind]);
-    }
+    for (const kind of kinds) await rollupDay(engine, kind, 0, { halt_count: 1, round_completed_count: 1 });
     const check = await computeExtractHealthCheck(engine);
     const out = (detailsOf(check).kinds as { kind: string }[]).map(k => k.kind);
     expect(out).toEqual(byteOrder(kinds));
+    return out;
+  });
+
+  parityTest('extract_health sums the 7-day rollup per kind, with its halt reasons, last halt age and write failures', {
+    methods: ['upsertExtractRollupDay', 'readExtractRollup7d', 'listRecordedHaltReasons7d', 'readExtractKindRollup7d'],
+  }, async engine => {
+    const { computeExtractHealthCheck } = await import('../../src/commands/doctor/checks/extraction-sync.ts');
+    // takes: a halt 3 days ago (reason timeout, twice), a clean day today with costs and evals; a day 9 days ago is outside.
+    await rollupDay(engine, 'takes', 3, { halt_count: 2, halt_reason: 'timeout', cost_usd: 0.1 });
+    await rollupDay(engine, 'takes', 3, { halt_count: 1, cost_usd: 0.2 });
+    await rollupDay(engine, 'takes', 0, { round_completed_count: 3, eval_pass_count: 4, eval_fail_count: 1, cost_usd: 0.3, expected_limit_count: 2 });
+    await rollupDay(engine, 'takes', 9, { halt_count: 50, halt_reason: 'old', cost_usd: 5 });
+    await rollupDay(engine, 'atoms', 1, { round_completed_count: 1, rollup_write_failures: 1 });
+    const check = await computeExtractHealthCheck(engine);
+    const kinds: Array<Record<string, unknown>> = (detailsOf(check).kinds as Array<Record<string, unknown>>).map(({ last_updated_at, ...k }) =>
+      ({ ...k, updated: typeof last_updated_at === 'string' && !Number.isNaN(Date.parse(last_updated_at)) }));
+    const takes = await engine.readExtractKindRollup7d('takes');
+    const none = await engine.readExtractKindRollup7d('absent');
+    const one = takes && { ...takes, last_updated_at: takes.last_updated_at !== null };
+    const out = { status: check.status, message: check.message, kinds, failures: detailsOf(check).rollup_write_failures_7d, one, none };
+    expect(out.kinds.map(k => [k.kind, k.halt_count, k.round_completed_count, k.expected_limit_count, k.last_halt_age_days, k.halt_reasons])).toEqual([
+      ['atoms', 0, 1, 0, null, {}],
+      ['takes', 3, 3, 2, 3, { timeout: 2, unknown: 1 }],
+    ]);
+    expect(out.one).toEqual({ cost_7d_usd: 0.6, eval_pass_count: '4', eval_fail_count: '1', halt_count: '3', round_completed_count: '3', last_updated_at: true });
+    expect(out.none).toEqual({ cost_7d_usd: null, eval_pass_count: null, eval_fail_count: null, halt_count: null, round_completed_count: null, last_updated_at: null });
     return out;
   });
 

@@ -203,7 +203,8 @@ impl Store {
     }
 
     /// The stored rollup rows of days on or after `since` (`YYYY-MM-DD`), in `(kind, source_id,
-    /// day)` key order: the rows a typed `extract_rollup_7d` read aggregates (Rust only; no member).
+    /// day)` key order: the rows the 7-day readers (`readExtractRollup7d`, `listRecordedHaltReasons7d`,
+    /// `readExtractKindRollup7d`, in store-members/doctor-derived.ts) aggregate.
     pub fn list_extract_rollup_days(&self, since: &str) -> Result<Vec<RollupDay>> {
         let read = self.read()?;
         let mut rows = Vec::new();

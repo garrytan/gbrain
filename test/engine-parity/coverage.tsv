@@ -394,7 +394,7 @@ listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
 readExtractReceiptSlot	extraction	yes	1	no	yes	yes	serves
 readExtractReceiptSeal	extraction	yes	1	no	yes	yes	serves
-upsertExtractRollupDay	extraction	yes	1	no	yes	yes	serves
+upsertExtractRollupDay	extraction	yes	3	no	yes	yes	serves
 listFactsFencePages	extraction	no	0	no	-	-	-
 listSweepStalePages	extraction	yes	1	no	yes	yes	serves
 listSweepDeferredPages	extraction	no	0	no	-	-	-
@@ -1859,7 +1859,7 @@ listSegmentedPages	withdrawal_pages	yes	2	no	yes	yes	serves
 invalidateWithdrawnPages	withdrawal_pages	yes	2	no	yes	yes	serves
 hasWithdrawnFenceClaim	withdrawal_fence	yes	2	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	88	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	87	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 addCodeEdges	code_edges	yes	7	yes	yes	yes	serves
@@ -2383,9 +2383,9 @@ listLiveGenerationRetirements	doctor_derived	yes	1	no	yes	yes	serves
 listHeldGenerations	doctor_derived	yes	1	no	yes	yes	serves
 listOrphanGenerationCandidates	doctor_derived	yes	1	no	yes	yes	serves
 readAtomProvenanceCounts	doctor_derived	yes	1	no	yes	yes	serves
-readExtractRollup7d	doctor_derived	yes	1	no	yes	yes	serves
-readExtractKindRollup7d	doctor_derived	yes	1	no	yes	yes	serves
-listRecordedHaltReasons7d	doctor_derived	yes	1	no	yes	yes	serves
+readExtractRollup7d	doctor_derived	yes	3	no	yes	yes	serves
+readExtractKindRollup7d	doctor_derived	yes	2	no	yes	yes	serves
+listRecordedHaltReasons7d	doctor_derived	yes	3	no	yes	yes	serves
 listCapacityCounters	doctor_persistence	yes	3	no	yes	yes	serves
 listOutstandingHolders	doctor_persistence	yes	2	no	yes	yes	serves
 countPersistenceRequestRows	doctor_persistence	yes	2	no	yes	yes	serves
