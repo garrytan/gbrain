@@ -834,6 +834,10 @@ impl Kv for OccKv {
         self.shared.log_on.load(Ordering::Acquire)
     }
 
+    fn clear_commit_clock(&self) {
+        *self.shared.clock.lock().unwrap_or_else(|p| p.into_inner()) = None;
+    }
+
     fn set_commit_clock(
         &self,
         clock: Arc<dyn crate::env::Env>,

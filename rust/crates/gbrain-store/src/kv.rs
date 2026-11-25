@@ -164,6 +164,9 @@ pub trait Kv: Send + Sync {
             "this record store has no accept step to keep commit times at",
         ))
     }
+    /// Stops the commit clock (`set_commit_clock`), if one runs: an open with multi-user mode off on
+    /// a reused adapter writes no commit time.
+    fn clear_commit_clock(&self) {}
     /// The newest durable commit time (`None` before the first, or when no commit clock ever ran).
     fn last_commit_time(&self) -> Result<Option<i64>> {
         crate::redb_kv::read_commit_time(&*self.snapshot()?)

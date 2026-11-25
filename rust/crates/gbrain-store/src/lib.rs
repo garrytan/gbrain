@@ -399,11 +399,17 @@ impl Store {
         let existing = format::read_in(dir, known)?;
         // Multi-user mode from the brain's own config row picks the concurrent store at open; read without opening the
         // file for writing. A file redb must repair first reads as off here; the open below still reads the row.
+        let records = dir.join(format::RECORDS_FILE);
         let config_on = multiuser_config_on(
-            redb_kv::peek(&dir.join(format::RECORDS_FILE), &config::config_key(MULTIUSER_CONFIG_KEY)?).as_deref(),
+            redb_kv::peek(&records, &config::config_key(MULTIUSER_CONFIG_KEY)?).as_deref(),
         );
-        // The commit log counts only in multi-user mode (I-0.v2).
-        let log_on = options.multiuser_writes.commit_log && (options.multiuser || config_on);
+        // The record file read without opening it for writing: when it cannot be (redb must recover it
+        // first), the brain's config row is unknown here, not off.
+        let readable = !records.exists() || redb_kv::peek(&records, &keys::meta("format")).is_some();
+        // The commit log counts only in multi-user mode (I-0.v2). Refused up front only when the mode
+        // is known off; when it cannot be known yet, the open below decides before any write.
+        let log_on = options.multiuser_writes.commit_log
+            && (options.multiuser || config_on || !readable);
         // A commit log brain (or one whose switch to the log was under way) is never opened for
         // writing without the log: nothing may commit that the log would miss.
         if existing.as_ref().is_some_and(|f| f.log.is_some()) && !log_on {
@@ -524,6 +530,14 @@ impl Store {
             );
         let off = MultiUserWrites::default();
         let multiuser = if multiuser_on { &options.multiuser_writes } else { &off };
+        if !read_only && multiuser.any() && multiuser.host_id.as_deref().is_none_or(str::is_empty) {
+            // Before any write: an origin without its machine is refused, never stamped empty.
+            return Err(StoreError::invalid(HOST_ID_REQUIRED));
+        }
+        if !read_only && !multiuser_on {
+            // An adapter reused from an open with the mode on keeps no commit clock into this one.
+            kv.clear_commit_clock();
+        }
         // This open's origin: minted only in multi-user mode, so an open with the mode off draws
         // nothing from `env` it did not draw before.
         let origin = (!read_only && multiuser.any()).then(|| {
@@ -653,11 +667,7 @@ impl Store {
             runs_builder: options.keyword_index_builder,
             flag_assumed,
             dir: None,
-            // Without a host id there is no origin to stamp (the caller could not name this machine
-            // without minting its identity while it could not know the mode was on).
-            stamp_rows: multiuser.write_origin
-                && origin.is_some()
-                && multiuser.host_id.as_deref().is_some_and(|h| !h.is_empty()),
+            stamp_rows: multiuser.write_origin && origin.is_some(),
             origin,
             multiuser: multiuser_on,
         })
@@ -1000,6 +1010,10 @@ enum OpenMode<'a> {
     Write { dir: Option<&'a Path> },
     ReadOnly,
 }
+
+/// The message of the refusal of a multi-user open that asks for the commit log or write origin
+/// without naming this machine (`invalid_argument`): every commit record and stamped row names it. The binding's caller opens again with the host id when it sees it.
+pub const HOST_ID_REQUIRED: &str = "multi-user write origin needs this machine's host id (GBRAIN_RUST_COMMIT_LOG=1 or GBRAIN_RUST_WRITE_ORIGIN=1); nothing was changed";
 
 /// The refusal of a writable open of a commit log brain without the log.
 fn log_required() -> StoreError {

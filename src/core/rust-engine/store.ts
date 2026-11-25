@@ -33,6 +33,9 @@ export interface StoreOpenOptions {
   hostId?: string;
 }
 
+/** The start of the store's refusal of a multi-user open whose write origin names no machine (`gbrain_store::HOST_ID_REQUIRED`). */
+const HOST_ID_REQUIRED_TEXT = "multi-user write origin needs this machine's host id";
+
 /** The answer a sub-switch is read under before the open resolves the brain's mode: the store decides (I-0.v2). */
 const MODE_MAY_BE_ON = { multiuser: true } as const;
 
@@ -291,7 +294,7 @@ export async function openRustStore(
   addon: object,
   databasePath: string,
   embedding?: { model: string; dimensions: number },
-  origin?: { hostId: string },
+  origin?: { hostId?: string; mint?: () => string },
 ): Promise<RustStore> {
   const { Pool, Brain } = addon as StoreAddon;
   const pool = new Pool(STORE_POOL_THREADS);
@@ -305,18 +308,28 @@ export async function openRustStore(
     // reads it only when the switch itself is on or a sub-switch is set.
     const commitLogOn = rustMultiuserSubSwitch('GBRAIN_RUST_COMMIT_LOG', MODE_MAY_BE_ON);
     const writeOriginOn = rustMultiuserSubSwitch('GBRAIN_RUST_WRITE_ORIGIN', MODE_MAY_BE_ON);
-    const writes = {
+    const writes = (hostId: string | undefined) => ({
       ...(commitLogOn ? { commitLog: true } : {}),
       ...(writeOriginOn ? { writeOrigin: true } : {}),
-      ...((commitLogOn || writeOriginOn) && origin?.hostId ? { hostId: origin.hostId } : {}),
-    };
-    const info = await brain.open(databasePath, {
+      ...((commitLogOn || writeOriginOn) && hostId ? { hostId } : {}),
+    });
+    const base = {
       schemaVersion: LATEST_SCHEMA_VERSION, createdBy: 'gbrain', chunkStrategy: SEED_CHUNK_STRATEGY,
       writeGateDetectorVersion: WRITE_GATE_DETECTOR_VERSION,
       ...(embedding ? { embeddingModel: embedding.model, embeddingDimensions: embedding.dimensions } : {}),
       ...(rustMultiuserFromEnv() ? { multiuser: true } : {}),
-      ...writes,
-    }) as { multiuser?: unknown; commit_log?: unknown } | null;
+    };
+    let info: { multiuser?: unknown; commit_log?: unknown } | null;
+    try {
+      info = await brain.open(databasePath, { ...base, ...writes(origin?.hostId) }) as typeof info;
+    } catch (error) {
+      // The store resolved multi-user mode on (its config row) and write origin needs this machine's id, which was not
+      // sent because the mode was not known before the open: name the machine now and open again. Nothing was written.
+      const needsHost = (writeOriginOn || commitLogOn) && !origin?.hostId && origin?.mint
+        && String((error as { message?: unknown } | null)?.message ?? '').includes(HOST_ID_REQUIRED_TEXT);
+      if (!needsHost) throw error;
+      info = await brain.open(databasePath, { ...base, ...writes(origin!.mint!()) }) as typeof info;
+    }
     multiuser = info?.multiuser === true;
     commitLog = info?.commit_log === true;
   } catch (error) {

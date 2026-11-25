@@ -621,6 +621,10 @@ impl Kv for RedbKv {
         self.log.on.load(Ordering::Acquire)
     }
 
+    fn clear_commit_clock(&self) {
+        *self.log.clock.lock().unwrap_or_else(|p| p.into_inner()) = None;
+    }
+
     fn set_commit_clock(
         &self,
         clock: Arc<dyn crate::env::Env>,

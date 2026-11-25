@@ -161,6 +161,9 @@ impl Kv for RecKv {
     fn last_commit_time(&self) -> Result<Option<i64>, StoreError> {
         self.inner.last_commit_time()
     }
+    fn clear_commit_clock(&self) {
+        self.inner.clear_commit_clock();
+    }
 }
 
 struct RecWrite {

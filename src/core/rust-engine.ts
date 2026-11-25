@@ -332,18 +332,24 @@ export class RustEngine implements BrainEngine {
   /**
    * The host id the multi-user write origin stamps, read only when a sub-switch asks for it. With the switch itself on
    * the identity may be minted (`hostIdFor`); otherwise (a brain that may be on through its config row) only an
-   * existing identity is read, never minted, and a missing one leaves the origin unstamped.
+   * existing identity is sent, and `mint` names this machine only after the store answered that the brain is on and
+   * needs it (`HOST_ID_REQUIRED`), so a brain that is off never mints an identity.
    */
-  private _multiuserOrigin(): { hostId: string } | undefined {
+  private _multiuserOrigin(): { hostId?: string; mint: () => string } | undefined {
     const wanted = rustMultiuserSubSwitch('GBRAIN_RUST_WRITE_ORIGIN', { multiuser: true })
       || rustMultiuserSubSwitch('GBRAIN_RUST_COMMIT_LOG', { multiuser: true });
     if (!wanted) return undefined;
+    const mint = () => hostIdFor(this);
+    if (rustMultiuserFromEnv()) return { hostId: mint(), mint };
+    let existing: string | null = null;
     try {
-      const hostId = rustMultiuserFromEnv() ? hostIdFor(this) : existingHostIdFor(this);
-      return hostId ? { hostId } : undefined;
-    } catch {
-      return undefined; // silent-read-ok: no identity means no stamped origin, never a refused open
+      existing = existingHostIdFor(this);
+    } catch (error) {
+      // silent-read-ok: an unreadable identity is sent as none; the store refuses the open if it needs one, and the
+      // retry mints it through hostIdFor, whose own error then surfaces
+      void error;
     }
+    return existing ? { hostId: existing, mint } : { mint };
   }
 
   async disconnect(): Promise<void> {

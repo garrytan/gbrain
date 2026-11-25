@@ -423,20 +423,116 @@ fn journal_rows_carry_the_write_origin_only_with_the_switch_on() {
 }
 
 #[test]
-fn write_origin_without_a_host_id_stamps_nothing() {
-    let dir = TempDir::new("origin-host");
+fn multi_user_writes_without_a_host_id_are_refused_before_any_write() {
+    for writes in [
+        MultiUserWrites { host_id: None, ..mu() },
+        MultiUserWrites { host_id: None, write_origin: false, ..mu() },
+        MultiUserWrites { host_id: None, commit_log: false, ..mu() },
+    ] {
+        let dir = TempDir::new("origin-host");
+        let kv = records_kv(&dir.path().join("r.redb"), false);
+        let err = Store::open_kv(kv.clone(), Arc::new(SystemEnv), options(false, writes))
+            .err()
+            .unwrap();
+        assert_eq!(err.code, gbrain_store::error::INVALID_ARGUMENT);
+        assert_eq!(err.message, gbrain_store::HOST_ID_REQUIRED);
+        assert_eq!(kv.version().unwrap(), 0, "the refused open wrote nothing");
+    }
+    // With the mode off, the same request is not refused and stamps nothing.
+    let dir = TempDir::new("origin-host-off");
     let kv = records_kv(&dir.path().join("r.redb"), false);
     let store = Store::open_kv(
         kv.clone(),
         Arc::new(SystemEnv),
-        options(false, MultiUserWrites { host_id: None, ..mu() }),
+        OpenOptions {
+            keyword_index_builder: false,
+            multiuser_writes: MultiUserWrites { host_id: None, ..mu() },
+            ..OpenOptions::default()
+        },
     )
     .unwrap();
     store.admit_write(&admission(&uuid(1), "notes/a", None), None).unwrap();
-    let row = raw_request(&*kv, &uuid(1));
-    for field in ["admitter_host_id", "admitter_incarnation", "writer_id"] {
-        assert!(row.get(field).is_none(), "{field}: {row}");
+    assert!(raw_request(&*kv, &uuid(1)).get("writer_id").is_none());
+}
+
+#[test]
+fn a_reused_adapter_opened_again_with_the_mode_off_writes_no_commit_time() {
+    for concurrent in MODES {
+        let dir = TempDir::new("reuse-off");
+        let kv = records_kv(&dir.path().join("r.redb"), concurrent);
+        let on = Store::open_kv(
+            kv.clone(),
+            Arc::new(SystemEnv),
+            OpenOptions {
+                concurrent_writes: concurrent,
+                keyword_index_builder: false,
+                multiuser: true,
+                ..OpenOptions::default()
+            },
+        )
+        .unwrap();
+        on.set_config("test.a", "1").unwrap();
+        let time = on.last_commit_time().unwrap();
+        assert!(time.is_some());
+        drop(on);
+        let off = Store::open_kv(kv.clone(), Arc::new(SystemEnv), options(concurrent, MultiUserWrites::default())).unwrap();
+        assert!(!off.multiuser());
+        off.set_config("test.a", "2").unwrap();
+        assert_eq!(off.last_commit_time().unwrap(), time, "concurrent {concurrent}: the off open moved the time");
     }
+}
+
+#[test]
+fn a_config_only_log_brain_that_needs_recovery_reopens_with_the_log() {
+    let dir = TempDir::new("config-recover");
+    let brain = dir.path().join("brain");
+    // Multi-user mode on through the brain's own row only; the log asked for by the sub-switch.
+    let opts = || OpenOptions {
+        keyword_index_builder: false,
+        multiuser: false,
+        multiuser_writes: mu(),
+        ..OpenOptions::default()
+    };
+    {
+        let store = Store::open_dir(&brain, mu_only(false)).unwrap();
+        store.set_config(gbrain_store::MULTIUSER_CONFIG_KEY, "true").unwrap();
+    }
+    {
+        let store = Store::open_dir(&brain, opts()).unwrap();
+        assert!(store.multiuser() && store.info().commit_log);
+        store.set_config("test.a", "1").unwrap();
+        // An unclean stop: the handle goes away without closing the record file.
+        std::mem::forget(store);
+    }
+    // In this process the forgotten handle still holds redb's lock; copy the files as a crash leaves them.
+    let crashed = dir.path().join("crashed");
+    std::fs::create_dir_all(&crashed).unwrap();
+    for entry in std::fs::read_dir(&brain).unwrap() {
+        let entry = entry.unwrap();
+        std::fs::copy(entry.path(), crashed.join(entry.file_name())).unwrap();
+    }
+    assert!(
+        gbrain_store::redb_kv::peek(&crashed.join("records.redb"), &keys::meta("format")).is_none(),
+        "the copy must need recovery for this case"
+    );
+    let store = Store::open_dir(&crashed, opts()).unwrap();
+    assert!(store.multiuser() && store.info().commit_log, "the recovered brain resolves its row and keeps its log");
+    assert_eq!(store.get_config("test.a").unwrap().as_deref(), Some("1"));
+    store.set_config("test.b", "2").unwrap();
+    let page = store.read_commit_log(None, usize::MAX).unwrap();
+    assert!(!page.snapshot_required);
+    drop(store);
+    // Without the sub-switch it is refused as any log brain is.
+    let err = Store::open_dir(
+        &crashed,
+        OpenOptions {
+            keyword_index_builder: false,
+            ..OpenOptions::default()
+        },
+    )
+    .err()
+    .unwrap();
+    assert_eq!(err.code, FORMAT_UNKNOWN);
 }
 
 /// A raw store with the log activated before its first write (the activation commit holds only
