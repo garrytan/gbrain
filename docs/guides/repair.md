@@ -3294,12 +3294,15 @@ The local, read-only file has `version: 1` and a `facts` array. Each entry
 contains `source_id`, `fact_id`, `entity_slug` (or null), the exact stored ISO timestamp `valid_from`,
 and `claim_sha256` (UTF-8 SHA-256 of the stored claim). It also contains the
 reviewed `event_day` (UTC date), `original_page_id`, `original_revision`, and
-the original `line` (1-based in the revision's compiled body) and
-`line_sha256` (UTF-8 SHA-256 with no trailing newline). Only use a line
-whose date you independently verified as the date of that fact. Doctor
-checks the live assertion and retained source line, then reports
+the original `excerpt_start`, `excerpt_length`, and `excerpt_sha256`
+(1-based Unicode character offset in the compiled body, length up to 4000
+characters, and UTF-8 SHA-256). The excerpt may span several lines. Only
+use an excerpt whose date you independently verified as the date of that
+fact. Doctor checks the live assertion and retained source context, then reports
 `verified_same_day`, `verified_different_day`, and `unknown`. Missing, stale,
-and contradictory evidence remains unknown. The file is not stored, no
+and contradictory evidence remains unknown. Code blocks and comments are
+not evidence. Originals larger than 256 KiB, or outside the 8 MiB total
+archive read budget, remain unknown. The file is not stored, no
 dates are written, and the repair preview still uses the claim-date rule.
 
 A candidate is an active fact whose `valid_from` falls on a loaded day and
