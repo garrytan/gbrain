@@ -54,7 +54,7 @@ export async function readLandingGaps(engine: BrainEngine, sourceId: string, opt
   const base = { status: 'ok' as const, window_hours: LANDING_WINDOW_HOURS, after_seconds: after, checked: imports.length, complete: receipts.length < LANDING_RECEIPT_LIMIT };
   if (!imports.length) return { ...base, gaps: 0, by_state: {}, pages: [] };
   const slugs = imports.map(r => r.slug);
-  const live = new Set((await syncRows<{ slug: string }>(engine, 'live_slugs', [sourceId, slugs])).map(p => p.slug));
+  const live = new Set((await syncRows<{ slug: string }>(engine, 'landing_live_slugs', [sourceId, slugs])).map(p => p.slug));
   const disabled = await embeddingsDisabled(engine);
   const states = ORDER.filter(state => !(disabled && state === 'pending'));
   const rows = live.size ? await engine.listEmbeddingStateRows({ sourceIds: [sourceId], slugs: [...live], states, limit: live.size * states.length, purgeWindowHours: DELETED_PAGE_PURGE_WINDOW_HOURS }) : [];
