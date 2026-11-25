@@ -3,11 +3,12 @@
  * src/core/questions/ and src/core/search/entity-anchor.ts.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: the evidence facts of a refresh, the newest pages under a pin's slug prefix, the new-facts check of the
- *    freshness watermark, a pin's unknown-source refusal and a receipt's page_materialized read the same on PGLite,
- *    Postgres and Rust. The reads that return pages.generation or read a pin record stop on Rust with a typed refusal
- *    naming the missing piece (test/questions-rust-stops.test.ts pins the message); on the SQL engines a pin with a
- *    slug prefix refreshes end to end and its receipt is the same.
+ *  - Contract: the evidence facts of a refresh, the newest pages under a pin's slug prefix, the timeline and takes of the
+ *    evidence pages (with the page generation each carries), the new-pages and new-facts checks of the freshness
+ *    watermark, a pin's unknown-source refusal and a receipt's page_materialized read the same on PGLite, Postgres and
+ *    Rust. The reads of a pin record stop on Rust with a typed refusal naming the missing piece
+ *    (test/questions-rust-stops.test.ts pins the message); on the SQL engines a pin with a slug prefix refreshes end to
+ *    end and its receipt is the same.
  *  - Regression: every one of these reads ran through executeRaw, so a Rust brain refused them with raw_sql.
  *  - Why existing coverage misses it: test/pinned-questions-*.test.ts run on PGLite only.
  *  - Seam: real engines; pages and facts through typed writes; the model call is a fixed fake answer.
@@ -121,8 +122,8 @@ describe('pinned-question reads on every engine', () => {
     return { present, absent };
   });
 
-  // These reads return or compare pages.generation, which the Rust store does not keep yet: it refuses them by name
-  // (rust-engine/question-stops.ts). The SQL engines read the same rows.
+  // These reads return or compare pages.generation, the per-page counter the Rust store keeps like the SQL engines'
+  // trigger (test/engine-parity/page-generation.test.ts pins the counter itself).
   parityTest('the timeline and takes of the evidence pages, and the new-pages check of the watermark', {
     methods: ['listQuestionEvidenceTimeline', 'listQuestionEvidenceTakes', 'hasNewQuestionPages'],
   }, async (engine) => {
@@ -149,8 +150,8 @@ describe('pinned-question reads on every engine', () => {
     return { timeline, takes, fresh };
   });
 
-  // The pin records and pages.generation are not in the Rust store yet: the pin's first write refuses there by name
-  // before anything is written (rust-engine/question-stops.ts). The SQL engines pin, refresh and publish end to end.
+  // The pin records are not in the Rust store yet: the pin's first write refuses there by name before anything is
+  // written (rust-engine/question-stops.ts). The SQL engines pin, refresh and publish end to end.
   parityTest('a pin with a slug prefix refreshes end to end and publishes a cited answer', {
     methods: ['readPrefixAnchoredPages', 'listQuestionCandidatePages', 'listPublishedQuestionAnswers', 'readQuestionEvidenceClock',
       'readQuestionPageRow', 'listQuestionEvidenceJoin', 'lockQuestionEvidenceRows'],

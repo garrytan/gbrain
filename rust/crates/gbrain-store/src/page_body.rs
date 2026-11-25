@@ -1534,7 +1534,9 @@ impl Store {
                 write_origin: None,
                 version_history_gap_at_us: None,
                 revision_receipt: Default::default(),
+                generation: 0,
             };
+            // The INSERT of a shell takes the highest generation plus one (`page_generation.rs`).
             write_page(tx, &record)?;
             let state = BodyState {
                 body_storage: "segmented".into(),
@@ -1726,7 +1728,14 @@ impl Store {
             // trigger fires also when the title is unchanged: the vector is checked and the sealed search timeline
             // goes.
             put_json(tx, &body_key(page.id), &state)?;
-            crate::pages::write_page_setting_vector(tx, &page)?;
+            // `body_generation` moved in this same UPDATE: the page's generation adds one for it when the body columns
+            // are NULL before and after, or for the columns the record holds, never twice (`page_generation.rs`).
+            crate::pages::write_page_counting(
+                tx,
+                &page,
+                true,
+                crate::page_generation::Counter::StatementMovingBody,
+            )?;
             let live: Vec<ManifestRow> = manifest_rows(&*tx, page.id)?
                 .into_iter()
                 .map(|(_, r)| r)

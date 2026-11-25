@@ -6,6 +6,17 @@
 //! cross the binding as ISO strings.
 //!
 //! `list_pages` and `resolve_slugs` scan every page: there are no secondary indexes yet.
+//!
+//! `generation` is the per-page counter of PGLite's and Postgres's `bump_page_generation_fn` trigger
+//! (`page_generation.rs` has the rule). A record stored before the counter has no field and reads as 1. The store keeps
+//! an index of it under `META`, one row per page record, live or soft-deleted:
+//!
+//! - `M page_generation/<generation BE8><page id BE8>` -> empty. Written in the same `Store::write` as the page change;
+//!   a generation change deletes the old key and puts the new one, and [`remove_page`] deletes the page's key. The
+//!   highest generation (`MAX(generation)` over every page, which an insert takes plus one) is the last key of the
+//!   range, one reverse seek; the pinned-question reads scan it for pages above a watermark. It is not under the `P`
+//!   family: four scans (`access_flag`, `cli_reads/sources`, `field_usage`, [`all_pages`]) decode every `P` value as a
+//!   page record. Store format 11 added it; the upgrade numbers the existing pages 1, 2, 3, ... in id order.
 
 use crate::chunks::{
     ChunkInput, SAFE_FENCE_CHUNKER_VERSION, auto_chunks, clear_chunks, replace_chunks,
@@ -18,6 +29,7 @@ use crate::error::{
 use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::keyword::{TRGM_SIMILARITY_THRESHOLD, sql_ilike, trgm_similarity};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
+use crate::page_generation::Counter;
 use crate::sources::{DEFAULT_SOURCE, all_sources, require_source};
 use crate::write_receipt::{ActorColumns, RevisionReceipt, VersionReceipt};
 use crate::{Store, get_json, keys, put_json};
@@ -197,6 +209,16 @@ pub(crate) struct PageRecord {
     /// before it, and omitted while every column is null. [`write_page`] stamps it.
     #[serde(default, skip_serializing_if = "ActorColumns::is_empty")]
     pub revision_receipt: RevisionReceipt,
+    /// `pages.generation`: the per-page counter of the SQL engines' trigger, assigned by every page write
+    /// (`page_generation.rs`; a new record may carry 0 and gets its number there). Absent in a record stored before
+    /// the counter, and read as 1. Not part of `to_page`.
+    #[serde(default = "initial_generation")]
+    pub generation: u64,
+}
+
+/// The generation a record stored before the counter reads as (the column default).
+fn initial_generation() -> u64 {
+    1
 }
 
 /// The `database_only_reason` markers a `putPage` that names a file clears (PGLite `putPage`'s `CASE`).
@@ -633,7 +655,7 @@ pub(crate) fn read_page_by_id(read: &dyn KvRead, id: u64) -> Result<Option<PageR
 /// `purged_content`, as the `pages_refuse_purged` trigger refuses it
 /// (`facts::page_purges::refuse_purged_page`).
 pub(crate) fn write_page(tx: &mut dyn KvWrite, record: &PageRecord) -> Result<()> {
-    write_page_as(tx, record, false, None)
+    write_page_as(tx, record, false, None, Counter::Statement)
 }
 
 /// [`write_page`] for a write that also sets the page's `trust_tier` and `write_origin` columns
@@ -645,7 +667,7 @@ pub(crate) fn write_page_setting_trust(
     record: &PageRecord,
     set: Option<(crate::trust::TrustTier, Option<Value>)>,
 ) -> Result<()> {
-    write_page_as(tx, record, false, set)
+    write_page_as(tx, record, false, set, Counter::Statement)
 }
 
 /// `write_page` for a statement that SETs `title` and `timeline` whatever their values: PGLite's search vector trigger
@@ -653,7 +675,24 @@ pub(crate) fn write_page_setting_trust(
 /// have grown since (a timeline entry added, an entry's cutoff passed, a lead published), so the check and the
 /// sealed search timeline's forgetting run every time.
 pub(crate) fn write_page_setting_vector(tx: &mut dyn KvWrite, record: &PageRecord) -> Result<()> {
-    write_page_as(tx, record, true, None)
+    write_page_as(tx, record, true, None, Counter::Statement)
+}
+
+/// [`write_page`] for a statement that also changes a watched column the page record does not hold (the contextual
+/// retrieval state, `body_generation`): `counter` says which, so the statement adds one generation in all, however
+/// many watched columns it changes. `sets_vector` is as in [`write_page_setting_vector`].
+pub(crate) fn write_page_counting(
+    tx: &mut dyn KvWrite,
+    record: &PageRecord,
+    sets_vector: bool,
+    counter: Counter,
+) -> Result<()> {
+    write_page_as(tx, record, sets_vector, None, counter)
+}
+
+/// [`write_page`] for the shadow seed and follower: the record's own generation is stored as the primary holds it.
+pub(crate) fn write_page_stored(tx: &mut dyn KvWrite, record: &PageRecord) -> Result<()> {
+    write_page_as(tx, record, false, None, Counter::Stored)
 }
 
 fn write_page_as(
@@ -661,6 +700,7 @@ fn write_page_as(
     record: &PageRecord,
     sets_vector: bool,
     set: Option<(crate::trust::TrustTier, Option<Value>)>,
+    counter: Counter,
 ) -> Result<()> {
     let before = read_page_by_id(&*tx, record.id)?;
     crate::facts::page_purges::refuse_purged_page(&*tx, before.as_ref(), record)?;
@@ -673,6 +713,8 @@ fn write_page_as(
         &record.revision_receipt,
         &record.knowledge_revision,
     )?;
+    // `bump_page_generation_fn`, the last BEFORE trigger of the statement.
+    crate::page_generation::assign(&*tx, before.as_ref(), &mut stamped, counter)?;
     store_page(tx, before.as_ref(), &stamped, sets_vector)
 }
 
@@ -698,6 +740,7 @@ fn store_page(
     let key = page_key(&record.source_id, &record.slug);
     put_json(tx, &key, record)?;
     tx.put(&keys::page_id(record.id), &key)?;
+    crate::page_generation::reindex(tx, before, record)?;
     index_origin(tx, before, Some(record))?;
     crate::page_index::reindex_page(tx, before, Some(record))?;
     crate::access_flag::mark_restricted(tx, record)?;
@@ -1300,6 +1343,7 @@ pub(crate) fn put_page_in(
             write_origin: None,
             version_history_gap_at_us: None,
             revision_receipt: RevisionReceipt::default(),
+            generation: 0,
         },
         Some(old) => {
             let canonical_changed = old.page_type != input.page_type
@@ -1367,7 +1411,19 @@ pub(crate) fn put_page_in(
     // `putPage` is `INSERT ... ON CONFLICT DO UPDATE`: the `BEFORE INSERT` purge trigger fires for the
     // insert attempt, so a tombstoned hash is refused here even when the page already holds it.
     crate::facts::page_purges::refuse_purged_page(&*tx, None, &record)?;
-    write_page_setting_vector(tx, &record)?;
+    // The upsert writes the page columns and the stamp's `contextual_retrieval_mode` and `corpus_generation` in one
+    // statement: the page's generation adds one for all of them (`page_generation.rs`), so the stamp is counted here
+    // and `stamp_contextual_retrieval` below counts nothing.
+    let stamping = match &options.contextual_retrieval {
+        Some(stamp) => crate::aliases::stamp_changes(&*tx, record.id, stamp)?,
+        None => false,
+    };
+    let counter = if stamping {
+        Counter::StatementStamping
+    } else {
+        Counter::Statement
+    };
+    write_page_counting(tx, &record, true, counter)?;
     if let Some(stamp) = &options.contextual_retrieval {
         crate::aliases::stamp_contextual_retrieval(tx, record.id, stamp)?;
     }
@@ -2509,6 +2565,7 @@ fn remove_page_record(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()> {
     index_origin(tx, Some(stored), None)?;
     crate::page_index::reindex_page(tx, Some(stored), None)?;
     crate::page_projection::queue_page_projection(tx, Some(stored), None)?;
+    crate::page_generation::remove(tx, stored)?;
     tx.delete(&keys::page(&page.source_id, &page.slug))?;
     tx.delete(&keys::page_id(page.id))
 }
@@ -2789,7 +2846,11 @@ mod tests {
         assert!(!page.timeline.is_null());
         assert_eq!(page.content_hash.as_deref(), Some("abc"));
         assert_eq!(page.chunker_version, None);
-        assert_eq!(serde_json::to_value(&page).unwrap(), legacy);
+        // A record stored before the counter reads as generation 1, and writes it back: the one field added.
+        assert_eq!(page.generation, 1);
+        let mut written = legacy.clone();
+        written["generation"] = json!(1);
+        assert_eq!(serde_json::to_value(&page).unwrap(), written);
         let shown = page.to_page();
         assert_eq!(shown["compiled_truth"], "body");
         assert_eq!(shown["content_hash"], "abc");

@@ -40,9 +40,15 @@ use std::path::Path;
 ///   access member links, whose scans started on it (`access_key_split.rs`). The upgrade moves the
 ///   one record in the one transaction, or refuses a record under `x 0x04` it cannot classify with
 ///   `shadow_reseed_required`. A build that keeps both kinds at `x 0x04` refuses a format-8 brain.
-pub const FORMAT_VERSION: u32 = 8;
+/// - 11: every page record carries its `generation` (`pages.generation` of the SQL engines' trigger,
+///   `page_generation.rs`), and the store keeps an index of it, `M page_generation/<generation BE8><page id BE8>`, one
+///   empty row per page. The upgrade numbers the existing pages 1, 2, 3, ... in id order and writes every row in the
+///   one transaction. A build without the counter refuses a format-11 brain, as a page it rewrote would lose its
+///   generation and leave a stale index row. Formats 9 and 10 belong to other branches (keyed lookups, the vector rank
+///   key) and are not on this base: this build opens 1 to 8 and 11, and a brain at 9 or 10 is refused as unknown.
+pub const FORMAT_VERSION: u32 = 11;
 /// Every format version this build can open. Addon exports list these as `formatVersions`.
-pub const FORMAT_VERSIONS: &[u32] = &[1, 2, 3, 4, 5, 6, 7, FORMAT_VERSION];
+pub const FORMAT_VERSIONS: &[u32] = &[1, 2, 3, 4, 5, 6, 7, 8, FORMAT_VERSION];
 
 pub const FORMAT_FILE: &str = "FORMAT";
 pub const RECORDS_FILE: &str = "records.redb";

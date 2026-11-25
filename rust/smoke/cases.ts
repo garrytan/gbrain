@@ -254,7 +254,9 @@ export const cases: Case[] = [
       assert.equal(addon.engineAbi, 1);
       assert.match(addon.engineBuild, /^[0-9a-f]{64}$/);
       assert.equal(addon.catalogVersion, 0);
-      assert.deepEqual(addon.formatVersions, [1, 2, 3, 4, 5, 6, 7, 8]);
+      // Formats 9 and 10 belong to other branches: the list is 1 to 8, then this build's own format (rust/docs/store/format.md).
+      assert.deepEqual(addon.formatVersions.slice(0, 8), [1, 2, 3, 4, 5, 6, 7, 8]);
+      assert.ok(addon.formatVersions.length >= 8 && addon.formatVersions.at(-1)! >= 8);
     },
   },
   {

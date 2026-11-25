@@ -573,6 +573,48 @@ fn a_changed_page_keeps_its_chunks_links_and_tags() {
     );
 }
 
+/// The generation index rows, as (generation, page id).
+fn generation_rows(s: &Store) -> Vec<(u64, u64)> {
+    let read = s.read().unwrap();
+    let mut rows = Vec::new();
+    crate::page_generation::for_each_from(&*read, 0, &mut |g, id| {
+        rows.push((g, id));
+        Ok(true)
+    })
+    .unwrap();
+    rows
+}
+
+#[test]
+fn a_changed_page_takes_the_primarys_generation_and_a_deleted_page_loses_its_index_row() {
+    let s = linked_pages();
+    assert_eq!(generation_rows(&s), vec![(1, 7), (1, 9)]);
+    // The primary's trigger moved page 7 to 5; the follower stores that number, not its own count (it would say 2).
+    let mut changed = page_row("7", "people/alice-example");
+    changed.insert("title".into(), Some("Alice Changed".into()));
+    changed.insert("generation".into(), Some("5".into()));
+    s.replace_relation_rows(
+        SEED,
+        "pages",
+        1,
+        &[key(1, &[("id", "7")])],
+        &[changed],
+        &[digv(1, 31)],
+    )
+    .unwrap();
+    assert_eq!(generation_rows(&s), vec![(1, 9), (5, 7)]);
+    // The tags carried over the replacement are a write that changes no watched column: the number stays.
+    assert_eq!(
+        s.get_tags("people/alice-example", &ReadScope::default())
+            .unwrap(),
+        ["yc"]
+    );
+    assert_eq!(generation_rows(&s), vec![(1, 9), (5, 7)]);
+    s.replace_relation_rows(SEED, "pages", 2, &[key(2, &[("id", "7")])], &[], &[])
+        .unwrap();
+    assert_eq!(generation_rows(&s), vec![(1, 9)]);
+}
+
 #[test]
 fn a_deleted_page_takes_its_chunks_links_tags_and_their_entries() {
     let s = linked_pages();

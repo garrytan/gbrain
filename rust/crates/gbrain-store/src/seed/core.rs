@@ -12,7 +12,7 @@ use crate::extraction::ExtractionRecord;
 use crate::facts::{FactRecord, md5_hex, read_fact};
 use crate::kv::KvWrite;
 use crate::links::{LinkRecord, check_link};
-use crate::pages::{PageRecord, PageText, read_page_by_id, write_page};
+use crate::pages::{PageRecord, PageText, read_page_by_id, write_page, write_page_stored};
 use crate::sources::{SourceRecord, read_source, source_key};
 use crate::takes::TakeRecord;
 use crate::timeline::TimelineRecord;
@@ -167,7 +167,7 @@ static PAGES: Relation = Relation {
         ("projection_job_revision", Kept),
         ("projection_job_reason", Kept),
         ("projection_job_updated_at", Kept),
-        ("generation", Unmapped(Some("1"))),
+        ("generation", Kept),
     ],
     import: import_page,
 };
@@ -226,10 +226,14 @@ fn import_page(tx: &mut dyn KvWrite, row: &Row, losses: &mut Losses) -> Result<O
         ),
         version_history_gap_at_us: row.ts("version_history_gap_at")?,
         database_only_reason: row.text("database_only_reason"),
+        // The primary's own number: its trigger is the source of truth, and the index row follows from it.
+        generation: row.i64("generation")?.map_or(Ok(1), |g| {
+            u64::try_from(g).map_err(|_| StoreError::invalid("seed pages.generation: negative"))
+        })?,
     };
     // Before the page: its vector check reads the timeline lead.
     seed_body(tx, row, id, losses)?;
-    write_page(tx, &record)?;
+    write_page_stored(tx, &record)?;
     raise_counter(tx, crate::pages::NEXT_PAGE_ID, id)?;
     let job = crate::persistence::SeedJob {
         revision: row.text("projection_job_revision"),
