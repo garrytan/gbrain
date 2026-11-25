@@ -676,7 +676,7 @@ export interface FactRow {
    */
   notability: 'high' | 'medium' | 'low';
   context: string | null;
-  valid_from: Date;
+  valid_from: Date | null;
   valid_until: Date | null;
   expired_at: Date | null;
   superseded_by: number | null;
@@ -797,6 +797,8 @@ export interface FactListOpts {
    * creation-time semantics unchanged.
    */
   eventTime?: boolean;
+  /** A general read can sort undated rows by creation time without assigning an event time. */
+  includeUndated?: boolean;
   /**
    * When true, exclude the durable audit checkpoint rows that
    * extract-conversation-facts writes into the facts table

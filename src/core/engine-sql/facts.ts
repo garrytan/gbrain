@@ -446,8 +446,9 @@ export async function listFactsByEntity(
         ${grepPat ? sqlFragment`AND fact ILIKE ${grepPat} ESCAPE '\\'` : sqlFragment``}${eligibilityClause(opts)}`;
     const rows = (await exec.run<FactRowSqlShape>(sqlFragment`
       SELECT * FROM ((SELECT * FROM facts ${where} AND valid_from <= now() ORDER BY valid_from DESC, id DESC LIMIT ${limit + offset})
-        UNION ALL (SELECT * FROM facts ${where} AND valid_from > now() ORDER BY created_at DESC, id DESC LIMIT ${limit + offset})) f
-      ORDER BY (CASE WHEN valid_from > now() THEN created_at ELSE valid_from END) DESC, id DESC
+        UNION ALL (SELECT * FROM facts ${where} AND valid_from > now() ORDER BY created_at DESC, id DESC LIMIT ${limit + offset})
+        UNION ALL (SELECT * FROM facts ${where} AND valid_from IS NULL ORDER BY created_at DESC, id DESC LIMIT ${limit + offset})) f
+      ORDER BY (CASE WHEN valid_from IS NULL OR valid_from > now() THEN created_at ELSE valid_from END) DESC, id DESC
       LIMIT ${limit} OFFSET ${offset}
     `)).rows;
     return rows.map(rowToFact);
@@ -469,6 +470,7 @@ export async function listFactsSince(
     const rows = (await exec.run<FactRowSqlShape>(sqlFragment`
       SELECT *${opts?.fingerprint ? sqlFragment`, gbrain_fact_fingerprint(fact) AS fact_fingerprint` : sqlFragment``} FROM facts
       WHERE source_id = ${source_id}
+        ${eventTime && !opts?.includeUndated ? sqlFragment`AND valid_from IS NOT NULL` : sqlFragment``}
         AND ${eventTime ? sqlFragment`COALESCE(valid_from, created_at)` : sqlFragment`created_at`} >= ${since}${recallNarrowing(opts)}
         ${activeOnly ? sqlFragment`AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now())` : sqlFragment``}
         ${unconsolidatedOnly ? sqlFragment`AND consolidated_at IS NULL` : sqlFragment``}
@@ -730,6 +732,7 @@ export async function findTrajectory(exec: LegacyUnscopedRead, opts: import('../
       WHERE ${useArray ? sqlFragment`source_id = ANY(${sourceIds}::text[])` : sqlFragment`source_id = ${sourceId}`}
         AND entity_slug = ${opts.entitySlug}
         AND expired_at IS NULL
+        AND valid_from IS NOT NULL
         ${remoteFilter ? visibilityClause(['world']) : sqlFragment``}${privacyClause(opts)}
         AND ${trustedSql(projectionEligibleSql('facts', 'facts', undefined))}
         ${metric !== null ? sqlFragment`AND claim_metric = ${metric}` : sqlFragment``}
@@ -813,7 +816,7 @@ export interface FactRowSqlShape {
   visibility: FactVisibility;
   notability: 'high' | 'medium' | 'low';
   context: string | null;
-  valid_from: Date;
+  valid_from: Date | null;
   valid_until: Date | null;
   expired_at: Date | null;
   superseded_by: number | bigint | null;

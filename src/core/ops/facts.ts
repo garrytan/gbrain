@@ -481,7 +481,7 @@ const recall: Operation = {
       // No filter: return recent across the granted source(s).
       rows = mergeNewest(
         await Promise.all(factSources.map(src =>
-          ctx.engine.listFactsSince(src, new Date(0), { ...listOpts, eventTime: true }),
+          ctx.engine.listFactsSince(src, new Date(0), { ...listOpts, eventTime: true, includeUndated: true }),
         )),
         byEventTime,
       );
@@ -606,7 +606,7 @@ const recall: Operation = {
         // Pre-v46 brains return 'medium' via the row mapper's fallback so the
         // contract stays total.
         notability: r.notability,
-        valid_from: r.valid_from.toISOString(),
+        valid_from: r.valid_from?.toISOString() ?? null,
         valid_until: r.valid_until?.toISOString() ?? null,
         expired_at: r.expired_at?.toISOString() ?? null,
         superseded_by: r.superseded_by,

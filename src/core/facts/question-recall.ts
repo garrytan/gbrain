@@ -300,7 +300,8 @@ function weighByConfidence(scored: Array<{ id: number; score: number }>, byId: M
     rank.set(id, score * f);
   }
   const order = scored.map(s => s.id).sort((a, b) => rank.get(b)! - rank.get(a)!
-    || (byId.get(b)?.valid_from.getTime() ?? 0) - (byId.get(a)?.valid_from.getTime() ?? 0) || b - a);
+    || (byId.get(b)?.valid_from?.getTime() ?? byId.get(b)?.created_at.getTime() ?? 0)
+      - (byId.get(a)?.valid_from?.getTime() ?? byId.get(a)?.created_at.getTime() ?? 0) || b - a);
   for (const [id, s] of rank) rank.set(id, round4(s));
   return { order, rank, factor };
 }

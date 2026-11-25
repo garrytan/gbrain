@@ -27,7 +27,7 @@ export const CHANGE_CUE = /\b(?:moved|relocated|left|quit|joined|switched|transf
 
 export interface SlotRow {
   id: number; source_id: string; entity_slug: string; dimension: string; value_hash: string;
-  valid_from: Date | string; source_markdown_slug: string | null; fact: string;
+  valid_from: Date | string | null; source_markdown_slug: string | null; fact: string;
 }
 
 /**
@@ -38,17 +38,19 @@ export interface SlotRow {
  */
 export function deriveSlotEnds(rows: readonly SlotRow[]): Map<number, Date> {
   const ends = new Map<number, Date>();
-  const groups = new Map<string, SlotRow[]>();
+  const groups = new Map<string, Array<SlotRow & { valid_from: Date | string }>>();
   for (const r of rows) {
+    if (r.valid_from === null) continue;
     const key = [r.source_id, r.entity_slug, r.dimension].join('\u0000');
     const group = groups.get(key);
-    if (group) group.push(r);
-    else groups.set(key, [r]);
+    const dated = { ...r, valid_from: r.valid_from };
+    if (group) group.push(dated);
+    else groups.set(key, [dated]);
   }
-  const time = (r: SlotRow) => new Date(r.valid_from).getTime();
+  const time = (r: SlotRow & { valid_from: Date | string }) => new Date(r.valid_from).getTime();
   for (const group of groups.values()) {
     group.sort((a, b) => time(a) - time(b) || a.value_hash.localeCompare(b.value_hash) || Number(a.id) - Number(b.id));
-    const stints: SlotRow[][] = [];
+    const stints: Array<Array<SlotRow & { valid_from: Date | string }>> = [];
     for (const r of group) {
       const last = stints.at(-1);
       if (last && last[0]!.value_hash === r.value_hash) last.push(r);
