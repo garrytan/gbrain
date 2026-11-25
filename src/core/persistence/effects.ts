@@ -1139,3 +1139,6 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
   }
   return attempted;
 }
+
+/** @internal Test seam: the failure and skipped-target steps of an effect attempt, for the step-level parity cases. */
+export const __effectFailureStepsForTests = { recordFailure, recordSkippedTarget };
