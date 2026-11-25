@@ -134,14 +134,14 @@ impl Brain {
         self.run(env, |s| s.read_publication_refusals())
     }
 
-    /// `listRunningClaimOwners(hostId)`.
+    /// `listRunningClaimOwners(hostId)`; a null host answers the claims on no worktree only (managed mode held back).
     #[napi]
     pub fn list_running_claim_owners<'env>(
         &self,
         env: &'env Env,
-        host_id: String,
+        host_id: Option<String>,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.list_running_claim_owners(&host_id))
+        self.run(env, move |s| s.list_running_claim_owners(host_id.as_deref()))
     }
 
     /// `listLocalEditAdoptions()`.

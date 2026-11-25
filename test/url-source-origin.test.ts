@@ -293,12 +293,12 @@ for (const flavor of ['pglite', ...(databaseUrl ? ['postgres'] : [])] as const) 
     const topologyStore = engine.topologyStore;
     let recorded: Awaited<ReturnType<typeof recordSourceOrigin>> | undefined;
     let fired = false;
-    // The clone's first source read (the topology store's readSource on the engine itself) is the one before the record lands.
+    // The clone's first source read (the topology store's readCloneSource on the engine itself) is the one before the record lands.
     const patched = spyOn(engine, 'topologyStore').mockImplementation((async function (this: BrainEngine) {
       const store = await topologyStore.call(this);
       if (this !== engine) return store;
-      return { ...store, readSource: async (id: string) => {
-        const row = await store.readSource(id);
+      return { ...store, readCloneSource: async (id: string) => {
+        const row = await store.readCloneSource(id);
         if (!fired) {
           fired = true;
           recorded = await recordSourceOrigin(engine, [source], { origin: 'remote', apply: true, remote: false });

@@ -106,6 +106,12 @@ function rustTopologyStore(brain: StoreBrain): TopologyStore {
     async closeChange(id, state, outcome) { await write('close_change', { id, state, outcome }); },
     async commitChange(id, outcome) { await write('commit_change', { id, outcome }); },
     async resetSourceSync(id, incarnation) { await write('reset_source_sync', { id, incarnation }); },
+    readCloneSource: id => rows('source', { id }),
+    readSourceHead: id => rows('source', { id }),
+    cloneHostBindingPath: (worktreeId, hostId) => rows('host_binding', { worktreeId, hostId }),
+    lockCloneWorktree: async id => (await rows<Array<{ owner_host_id: string; owner_epoch: string; state: string }>>('worktrees', { ids: [id] }))[0] ?? null,
+    boundSourceIds: worktreeId => rows('member_sources', { ids: [worktreeId] }),
+    async insertCloneHostBinding(worktreeId, hostId, localPath, coordinationPath) { await write('insert_host_binding', { worktreeId, hostId, localPath, coordinationPath }); },
     // This engine keeps no consumer row, so `live` is false and the heartbeat of a consumer adds no evidence, as on PGLite.
     ownerActivity: (ids) => rows('owner_activity', { ids: [...ids] }),
   };

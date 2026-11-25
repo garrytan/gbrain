@@ -22,6 +22,7 @@ import { priorTopologyChange, recordTopologyChange, topologyReceipt, type Topolo
 import { readJournalLimits } from './limits.ts';
 import { cloneTopologyCheckout, flushTopologyDirectory, flushTopologyTree, topologyDirectoryBytes, topologyDirectoryIdentity } from './topology-filesystem.ts';
 import { finishTopologyClone } from './topology-recovery.ts';
+import { requireTopologyRawSql } from './topology-stop.ts';
 import { reservePhysicalRoot, preparePhysicalRootReplacement, readPhysicalRootReservation } from './physical-root.ts';
 
 const writerStatusFix=(sourceId?:string):Action=>readFix(
@@ -38,8 +39,10 @@ export interface CloneLifecycleHooks {
 }
 export async function runManagedSourceClone(engine:BrainEngine,input:SourceLifecycleInput,principal:string,requestId:string,intent:unknown,
   hooks:CloneLifecycleHooks={}):Promise<Record<string,unknown>>{
+  // The named Rust stop (topology-stop.ts): while the engine serves neither raw SQL nor managed worktrees, the clone refuses by name first.
+  requireTopologyRawSql(engine,'managed_source_clone');
   // The source row, through the topology store (engine-sql/topology-store.ts), so a Rust brain answers it from its records.
-  const source=await (await engine.topologyStore()).readSource(input.sourceId);
+  const source=await (await engine.topologyStore()).readCloneSource(input.sourceId);
   if(source)source.config=parseSourceConfig(source.config);
   if(input.operation==='add'&&source)throw opError('source_id_taken','Source ID is already registered.',
     `Source ${input.sourceId} already exists, so nothing was cloned. Choose a different source id, or use gbrain sources reclone ${input.sourceId} to replace its managed checkout.`,
@@ -103,7 +106,7 @@ export async function runManagedSourceClone(engine:BrainEngine,input:SourceLifec
         const store=await tx.topologyStore();
         await store.synchronousCommit();
         await store.lockBrain();
-        const [preparedOwner]=currentBinding?[]:await store.lockWorktrees([worktreeId]);
+        const preparedOwner=currentBinding?null:await store.lockCloneWorktree(worktreeId);
         if(preparedOwner){
           const hasMember=await store.worktreeHasMember(worktreeId);
           const host=await store.hostBinding(worktreeId,hostIdFor(engine));
@@ -114,7 +117,7 @@ export async function runManagedSourceClone(engine:BrainEngine,input:SourceLifec
               {fix:writerStatusFix()});
         }
         const sources=await lockTopologyRows(tx,input.sourceId,bindings);
-        const current=await store.readSource(input.sourceId);
+        const current=await store.readSourceHead(input.sourceId);
         if(current)lockedConfig=current.config;
         const replay=await priorTopologyChange(tx,principal,requestId,intent);if(replay)return replay;
         if((current?.incarnation??null)!==(source?.incarnation??null)||current?.last_commit!==source?.last_commit
@@ -140,7 +143,7 @@ export async function runManagedSourceClone(engine:BrainEngine,input:SourceLifec
         if(!currentBinding){
           if(preparedOwner)await store.markWorktreeRecovering(worktreeId);
           else await store.insertRecoveringWorktree(worktreeId,hostIdFor(engine));
-          await store.insertHostBinding(worktreeId,hostIdFor(engine),target,coordination);
+          await store.insertCloneHostBinding(worktreeId,hostIdFor(engine),target,coordination);
           await store.insertCloneBinding(input.sourceId,incarnation,worktreeId);
         }else await store.recoverWorktreeWithManifest(worktreeId,manifest as unknown as Record<string,unknown>);
         const brainId=(await store.brainId())!;

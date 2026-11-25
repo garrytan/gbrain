@@ -333,7 +333,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$SHARD" = 1 ]; then
-            bun test --timeout=60000 test/rust-engine-store.test.ts test/rust-engine-shell.test.ts test/rust-engine-differential.test.ts test/rust-managed-hold.test.ts
+            bun test --timeout=60000 test/rust-engine-store.test.ts test/rust-engine-shell.test.ts test/rust-engine-differential.test.ts test/rust-managed-hold.test.ts test/rust-managed-recovery-hold.test.ts
           fi
           position=0
           ran=0
