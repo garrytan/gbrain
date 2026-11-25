@@ -151,7 +151,10 @@ describe('the no-caller page policy PGLite renders, against privacy.rs', () => {
     expect(ownerOnlyFactSql('facts', 'fn')).toContain(`gbrain_owner_only_lineage('facts', facts.id)`);
     const body = RUST.slice(RUST.indexOf('pub(crate) fn hidden_by_private_provenance'));
     expect(body, 'hidden_by_private_provenance does not apply the owner-only fact rule').toContain('owner_only.fact_hidden(read, policy.owner_only, row.id, &row.source_id)?');
-    expect(body, 'hidden_by_private_provenance does not judge the provenance page by the owner-only rule').toContain('hidden_by_provenance_page_with(read, row, policy, true, owner_only)');
+    // The provenance page is judged restricted, except the remote floor of a caller that renders the short member-access
+    // form, which has no origin test (rust-5a 80e8848152, the restricted:false edge).
+    expect(body, 'hidden_by_private_provenance does not judge the provenance page by the owner-only rule').toContain('hidden_by_provenance_page_with(read, row, policy, restricted, owner_only)');
+    expect(body, 'hidden_by_private_provenance lost its restricted rule').toContain('let restricted = !(policy.provenance_only && policy.open);');
     expect(RUST, 'the page policy does not apply the owner-only page rule').toContain('owner_only.page_hidden(read, page, policy.owner_only)');
   });
 

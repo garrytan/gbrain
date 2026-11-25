@@ -29,6 +29,8 @@ import type { PurgedSlugStoreRows } from '../engine-sql/purge-slug-stores.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 
 export interface ReadStatementMembers {
+  /** revert_version: the whole row of version `versionId` of page `pageId`, or null. Reads page_versions. */
+  readPageVersionRow(versionId: number, pageId: number): Promise<import('../page-state/version-types.ts').PageVersion | null>;
   // Read-command statements (engine-sql/cli-reads-ops.ts). Each runs the statement its op ran through executeRaw.
   /**
    * One exact-phrase scan batch: the next `batchPages` in-scope pages after `afterPageId`, in id order, with their
@@ -367,6 +369,8 @@ export interface ReadStatementMembers {
   findTakeId(pageId: number, rowNum: number): Promise<number | null>;
   /** One page batch of `chronicle-backfill`: chronicle-shaped live pages after `q.afterId`, in id order (engine-sql/chronicle-reads.ts). */
   readChronicleBackfillBatch(q: ChronicleReadsSql.ChronicleBackfillBatchQuery): Promise<ChronicleReadsSql.ChronicleBackfillPage[]>;
+  /** The distinct holders of the page's takes at `rowNums`, in no set order. */
+  listTakeHoldersAtRows(pageId: number, rowNums: readonly number[]): Promise<string[]>;
   /** Resolved takes stamped `mcp:` by the MCP server, in the caller's source and holder scope. */
   countMcpResolvedTakes(spec: McpResolvedSpec): Promise<number>;
   /** A holder's 25 heaviest active resolved takes (the calibration pattern drill-down). */

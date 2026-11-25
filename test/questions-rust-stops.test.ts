@@ -1,7 +1,7 @@
 /**
  * The pinned-question stops on the Rust engine: the reads that return or compare pages.generation, and the pin record
- * reads and writes, refuse with a typed engine_capability_missing that names the member and the missing piece, before
- * any engine call.
+ * writes and evidence reads the store does not serve yet (it keeps the pin rows: insert, one pin, the listing), refuse
+ * with a typed engine_capability_missing that names the member and the missing piece, before any engine call.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: each stopped question read refuses on the Rust engine naming pages.generation (or the pin records) with
@@ -18,12 +18,14 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { RustEngine } from '../src/core/rust-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
-import { addSpend, getPin, listPins, releaseLease } from '../src/core/questions/store.ts';
+import type { OperationContext } from '../src/core/ops/contract.ts';
+import { addSpend, getPin, releaseLease, updatePinState } from '../src/core/questions/store.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { pinQuestion } from '../src/core/questions/service.ts';
 import { refreshPin } from '../src/core/questions/refresh.ts';
 import { parseQuestionId } from '../src/core/questions/identity.ts';
 import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
+import { openRustBrain, removeBrainDir, rustArmRequested } from './engine-parity/rust-arm.ts';
 import { ENTITY, QUESTION, localCtx, seedBrain, stubChat } from './helpers/pinned-questions-fixture.ts';
 
 const GENERATION_READS = ['listQuestionCandidatePages', 'listQuestionEvidenceTimeline', 'listQuestionEvidenceTakes', 'readQuestionPageRow',
@@ -53,25 +55,37 @@ describe('pinned-question stops on the Rust engine', () => {
     expect(e.detail).toContain('written=nothing');
   });
 
-  test.each([...PIN_RECORD_READS])('%s refuses naming the missing pin records', async (member: string) => {
+  test.each([...PIN_RECORD_READS])('%s refuses naming the missing evidence records', async (member: string) => {
     const e = await refusal(member);
     expect(e.code).toBe('engine_capability_missing');
     expect(e.message).toContain(member);
-    expect(e.message).toContain('pinned_questions');
+    expect(e.message).toContain('question_evidence');
+  });
+
+  test('questions pin refuses by name before its insert on an engine without raw SQL', async () => {
+    const calls: string[] = [];
+    const engine = { capabilities: new Set(['pages']), insertPinnedQuestion: async () => { calls.push('insertPinnedQuestion'); return null; },
+      readSourceRow: async () => ({ id: 'default', local_path: null, config: {}, archived: false }) } as unknown as BrainEngine;
+    const ctx = { engine, config: {}, remote: false, sourceId: 'default', dryRun: false, logger: { info() {}, warn() {}, error() {} } } as unknown as OperationContext;
+    const e = await pinQuestion(ctx, { question: 'Who leads acme-example?', scope: { slug_prefix: 'projects/' }, defer: true })
+      .then(() => null, (err: { code?: string; message: string }) => err);
+    expect(e?.code).toBe('engine_capability_missing');
+    expect(e?.message).toContain('pinned questions pin');
+    expect(calls).toEqual([]);
   });
 
   test('the pin store refuses by name and sends no statement on an engine without raw SQL', async () => {
     const sent: string[] = [];
     const engine = { capabilities: new Set(['pages']), executeRaw: async (sql: string) => { sent.push(sql); return []; } } as unknown as BrainEngine;
     const outcomes = await Promise.all([
-      getPin(engine, 'default', 'questions/x').then(() => null, (e: { code?: string; message: string }) => [e.code, e.message]),
-      listPins(engine).then(() => null, (e: { code?: string; message: string }) => [e.code, e.message]),
+      getPin(engine, 'default', 'questions/x', { forUpdate: true }).then(() => null, (e: { code?: string; message: string }) => [e.code, e.message]),
+      updatePinState(engine, 1, { state: 'archived' }).then(() => null, (e: { code?: string; message: string }) => [e.code, e.message]),
       releaseLease(engine, 1, 't', { error: null, spendUsd: 0 }).then(() => null, (e: { code?: string; message: string }) => [e.code, e.message]),
       addSpend(engine, 1, 0.5).then(() => null, (e: { code?: string; message: string }) => [e.code, e.message]),
     ]);
     expect(outcomes.map(o => o?.[0])).toEqual(Array(4).fill('engine_capability_missing'));
-    expect(outcomes.map(o => /pinned questions (\w+)/.exec(String(o?.[1]))?.[1])).toEqual(['getPin', 'listPins', 'releaseLease', 'addSpend']);
-    expect(String(outcomes[0]?.[1])).toContain('pinned_questions');
+    expect(outcomes.map(o => /pinned questions (\w+)/.exec(String(o?.[1]))?.[1])).toEqual(['getPin', 'updatePinState', 'releaseLease', 'addSpend']);
+    expect(String(outcomes[0]?.[1])).toContain('question_evidence');
     expect(sent).toEqual([]);
     // Spending nothing writes nothing, so it does not refuse.
     await addSpend(engine, 1, 0);
@@ -80,7 +94,7 @@ describe('pinned-question stops on the Rust engine', () => {
   test('an engine with raw SQL runs the pin store statement', async () => {
     const sent: string[] = [];
     const engine = { capabilities: new Set(['raw_sql']), executeRaw: async (sql: string) => { sent.push(sql); return []; } } as unknown as BrainEngine;
-    expect(await getPin(engine, 'default', 'questions/x')).toBeNull();
+    expect(await getPin(engine, 'default', 'questions/x', { forUpdate: true })).toBeNull();
     expect(sent.length).toBe(1);
   });
 });
@@ -110,5 +124,28 @@ describe('a refresh surfaces an engine refusal instead of reporting a failed ref
     } finally {
       engine.listQuestionCandidatePages = original;
     }
+  });
+});
+
+describe.skipIf(!rustArmRequested())('questions pin on a Rust brain', () => {
+  let rust: BrainEngine;
+  let dir: string;
+  beforeAll(async () => {
+    const opened = await openRustBrain();
+    rust = opened.engine as unknown as BrainEngine;
+    dir = opened.dir;
+  }, 120_000);
+  afterAll(async () => {
+    await rust?.disconnect();
+    if (dir) removeBrainDir(dir);
+  });
+
+  test('refuses by name, and no pin row and no question page is written', async () => {
+    const ctx = { engine: rust, config: {}, remote: false, sourceId: 'default', dryRun: false, logger: { info() {}, warn() {}, error() {} } } as unknown as OperationContext;
+    const e = await pinQuestion(ctx, { question: 'Who leads acme-example?', scope: { slug_prefix: 'projects/' }, defer: true })
+      .then(() => null, (err: { code?: string; message: string }) => err);
+    expect(e?.code).toBe('engine_capability_missing');
+    expect(await rust.listPinnedQuestions({ includeArchived: true })).toEqual([]);
+    expect((await rust.listPages({ limit: 10 })).map(p => p.slug)).toEqual([]);
   });
 });

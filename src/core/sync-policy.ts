@@ -15,6 +15,7 @@
 import type { BrainEngine } from './engine.ts';
 import { parseSourceConfig } from './sources-load.ts';
 import { readManagedMode } from './persistence/managed-mode.ts';
+import { rethrowCapabilityRefusal } from './engine-capability-refusal.ts';
 import { syncContentDirectory } from './sync-applicability.ts';
 
 /**
@@ -42,13 +43,17 @@ export function isSyncDisabledConfig(config: unknown): boolean {
  * with the typed `storage_error`; this filter never routes a write.
  */
 export async function loadActivationPendingSourceIds(
-  engine: Pick<BrainEngine, 'executeRaw'>,
+  engine: Pick<BrainEngine, 'executeRaw'> & Partial<Pick<BrainEngine, 'writerReleaseStore'>>,
 ): Promise<Set<string>> {
   try {
     if (await readManagedMode(engine)) return new Set();
-    const rows = await engine.executeRaw<{ source_id: string }>('SELECT b.source_id FROM persistence_source_bindings b');
-    return new Set(rows.map((r) => r.source_id));
-  } catch {
+    // The typed binding list on every engine; an executeRaw-only view of one keeps the statement.
+    const ids = engine.writerReleaseStore ? await (await engine.writerReleaseStore()).boundSourceIds()
+      : (await engine.executeRaw<{ source_id: string }>('SELECT b.source_id FROM persistence_source_bindings b')).map((r) => r.source_id);
+    return new Set(ids);
+  } catch (error) {
+    // An engine that cannot read the bindings says so instead of marking nothing pending.
+    rethrowCapabilityRefusal(error);
     return new Set();
   }
 }

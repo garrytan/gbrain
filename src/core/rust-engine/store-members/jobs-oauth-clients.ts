@@ -55,3 +55,24 @@ export const insertOauthClientGrant: StoreMember<[row: OauthClientGrantInsert], 
 
 /** The upgrade migrations that clamp a lifetime do not run on a Rust brain, so no client was clamped. */
 export const readTokenLifetimeClampedClients: StoreMember<[], string[]> = async () => [];
+
+/** The inspection columns the admin clients list reads (harness/client-setup.ts CLIENT_INSPECTION_COLUMNS). */
+const ADMIN_CLIENT_COLUMNS = ['client_id', 'client_name', 'redirect_uris', 'grant_types', 'token_endpoint_auth_method', 'client_id_issued_at',
+  'client_secret_expires_at', 'created_at', 'deleted_at', 'scope', 'source_id', 'federated_read', 'bound_slug_prefixes', 'allowed_operations',
+  'bound_tools', 'bound_source_id', 'bound_brain_id', 'delegated_slug_prefixes', 'delegated_namespace', 'bound_max_concurrent',
+  'budget_usd_per_day', 'surface', 'surface_set_by', 'token_ttl', 'grant_profile', 'grant_revision', 'grant_repair_reasons'] as const;
+
+const byteCompare = (a: string, b: string) => Buffer.compare(Buffer.from(a, 'utf8'), Buffer.from(b, 'utf8'));
+
+/**
+ * Every client, deleted ones included, as its inspection columns: newest `created_at` first (the stored ISO text, so
+ * microseconds order a tie inside one millisecond), then by byte order of client id.
+ */
+export const listAdminClientRows: StoreMember<[], Array<Record<string, unknown>>> = async (brain) => {
+  const raw = await storeCall({ member: 'listAdminClientRows' }, () => brain.listOauthClients()) as Record<string, unknown>[];
+  const sorted = [...raw].sort((a, b) => byteCompare(String(b.created_at), String(a.created_at)) || byteCompare(String(a.client_id), String(b.client_id)));
+  return sorted.map(r => {
+    const row = normalizeOauthClientRow(r) as unknown as Record<string, unknown>;
+    return Object.fromEntries(ADMIN_CLIENT_COLUMNS.map(c => [c, row[c]]));
+  });
+};

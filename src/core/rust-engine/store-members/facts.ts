@@ -321,13 +321,19 @@ export const findTrajectory: Member<'findTrajectory'> = async (brain, opts) => {
   // A world-only read is widened per row for the caller's member page and private-facts grant, as the lists are.
   const widen = worldOnly ? storeVisibility('findTrajectory', ['world']).widen : undefined;
   const sourceIds = Array.isArray(o.sourceIds) && o.sourceIds.length > 0 ? [...new Set(o.sourceIds)] : [o.sourceId ?? 'default'];
+  const limit = clampSearchLimit(o.limit, 100, 500);
   const rows: Row[] = await storeCall({ member: 'findTrajectory' }, () => brain.findTrajectory({
     sourceIds, entitySlug: o.entitySlug, worldOnly, ...(widen ? { widen } : {}), metric: o.metric ?? undefined, kind: o.kind ?? 'all',
     since: o.since ? new Date(o.since).toISOString() : undefined, until: o.until ? new Date(o.until).toISOString() : undefined,
-    limit: clampSearchLimit(o.limit, 100, 500),
+    limit: 500,
     excludePrivate: factPolicy('findTrajectory', o.excludePrivate),
   }));
-  return rows.map((row) => withDates(withVector(row), ['valid_from', 'valid_until']) as unknown as TrajectoryPoint);
+  // Lane 3 P1: profile.<facet> claims are never trajectory points (engine-sql/facts.ts filters them in SQL); the native read
+  // takes the 500 cap so dropping them here cannot shorten the caller's page. It returns the newest rows in date order, so the
+  // page is the last `limit` of them.
+  const points = rows.filter((row) => !String(row.metric ?? '').startsWith('profile.'));
+  return points.slice(Math.max(0, points.length - limit))
+    .map((row) => withDates(withVector(row), ['valid_from', 'valid_until']) as unknown as TrajectoryPoint);
 };
 
 export const getFactsHealth: Member<'getFactsHealth'> = (brain, sourceId) =>

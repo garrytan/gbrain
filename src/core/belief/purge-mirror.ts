@@ -37,6 +37,8 @@ import { pageChangeReasons } from '../facts/purge-reasons.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { sweepRequestsForGroups, type IntentRedactionTarget } from '../persistence/intent-redaction.ts';
 import { declarePersistenceProtocol } from '../persistence/protocol.ts';
+import { mayHaveLegacyFingerprint } from './legacy-fingerprint.ts';
+import { legacyFingerprintV2Sql } from '../facts/withdrawal-schema.ts';
 
 export const PURGE_MIRROR_FILE = 'purge-events.jsonl';
 
@@ -65,13 +67,17 @@ function writeMirrorLine(line: Record<string, unknown>, home: string): void {
   chmodSync(path, 0o600);
 }
 
+const purgeListeners = new Set<() => void>();
+/** Calls `fn` after every purge intent line this process writes (shadow replay capture deletes its epoch). Returns the unsubscribe. */
+export function onPurgeIntent(fn: () => void): () => void { purgeListeners.add(fn); return () => { purgeListeners.delete(fn); }; }
+
 /**
  * Appends and fsyncs the `intent` line inside the purge transaction, before it commits. A mirror that cannot be
  * written refuses the purge with the typed `purge_mirror_unwritable` (review #22): committing without the line would
  * let a later restore bring the content back silently.
  */
 export function appendPurgeIntent(line: Omit<PurgeMirrorIntent, 'recorded_at' | 'kind'>, home = configDir()): void {
-  try { writeMirrorLine({ kind: 'intent', ...line }, home); }
+  try { writeMirrorLine({ kind: 'intent', ...line }, home); for (const fn of purgeListeners) { try { fn(); } catch { /* a listener never fails a purge */ } } }
   catch (error) {
     throw opError('purge_mirror_unwritable', 'This purge could not record itself in the purge mirror, so nothing was purged.',
       `${purgeMirrorPath(home)} could not be written (${(error as NodeJS.ErrnoException).code ?? (error as Error).message}). Make it a writable file owned by the brain's user (mode 0600), then run the purge again with a new request_id.`);
@@ -196,9 +202,9 @@ async function replayOne(tx: BrainEngine, intent: PurgeMirrorIntent, ledger: boo
   } else {
     const scope = intent.facts[0] ?? { fact_hash: '', visibility: 'world', subject: '*' };
     const rows = await tx.executeRaw<{ id: number; fact: string; slug: string | null }>(`SELECT id, fact, source_markdown_slug AS slug FROM facts WHERE source_id = $1
-      AND gbrain_fact_fingerprint(fact) = $2 AND visibility = $3 AND ($4 = '*' OR entity_slug = $4) AND NOT ${outcomeMarkerSql('facts')}`, [src, scope.fact_hash, scope.visibility, scope.subject]);
+      AND $2 IN (gbrain_fact_fingerprint(fact), ${legacyFingerprintV2Sql('fact')}) AND visibility = $3 AND ($4 = '*' OR entity_slug = $4) AND NOT ${outcomeMarkerSql('facts')}`, [src, scope.fact_hash, scope.visibility, scope.subject]);
     const takes = await tx.executeRaw<{ id: number; claim: string; page_id: number }>(`SELECT k.id, k.claim, k.page_id FROM takes k JOIN pages p ON p.id = k.page_id
-      WHERE p.source_id = $1 AND gbrain_fact_fingerprint(k.claim) = $2 AND ($3 = '*' OR p.slug = $3)`, [src, scope.fact_hash, scope.subject]);
+      WHERE p.source_id = $1 AND $2 IN (gbrain_fact_fingerprint(k.claim), ${legacyFingerprintV2Sql('k.claim')}) AND ($3 = '*' OR p.slug = $3)`, [src, scope.fact_hash, scope.subject]);
     claims = [...new Set([...rows.map(r => r.fact), ...takes.map(t => t.claim)])];
     inputs = [...rows.map(r => ({ table: 'facts', id: Number(r.id) })), ...takes.map(t => ({ table: 'takes', id: Number(t.id) }))];
     if (claims.length) removeRows = async () => {
@@ -229,18 +235,18 @@ async function replayOne(tx: BrainEngine, intent: PurgeMirrorIntent, ledger: boo
   await removeRows();
   const outcome: ReplayOutcome = (claims.length || replayFault === 'always_complete') && walkable && !walk.truncated ? 'complete' : 'partial';
   if (!ledger) return outcome;
-  await redactPurgedKeys(tx, { sourceId: src, claimFps: fps, lifetimes });
+  await redactPurgedKeys(tx, { sourceId: src, claimFps: fps, lifetimes, claims });
   if (claims.length) {
     await redactCarryingFields(tx, { sourceId: src, request: intent.request, claims });
     await registerLiveCarriers(tx, { sourceId: src, request: intent.request, claims });
   }
   await appendDerivedHidden(tx, { sourceId: src, request: intent.request, publicationId, op: 'restore_replay', targets, truncated: walk.truncated,
     cause: { cause: 'restore_replay' } });
-  await appendBeliefEvents(tx, [await replayDraft(tx, intent, lifetimes, outcome)], { publicationId, origin: 'live', purgesPossible: true });
+  await appendBeliefEvents(tx, [await replayDraft(tx, intent, lifetimes, outcome, claims)], { publicationId, origin: 'live', purgesPossible: true });
   return outcome;
 }
 
-async function replayDraft(tx: BrainEngine, intent: PurgeMirrorIntent, lifetimes: readonly string[], outcome: ReplayOutcome): Promise<BeliefEventDraft> {
+async function replayDraft(tx: BrainEngine, intent: PurgeMirrorIntent, lifetimes: readonly string[], outcome: ReplayOutcome, claims: readonly string[] = []): Promise<BeliefEventDraft> {
   const cause = { op: 'restore_replay', cause: 'restore_replay', purge_request: intent.request, request_id: intent.request_id, outcome };
   const base = { sourceId: intent.source_id, incarnation: intent.source_incarnation, value: null, purged: true, trustTier: 'unknown', tierBasis: 'unknown' as const,
     visibility: 'world', stateHash: '', cause };
@@ -250,8 +256,13 @@ async function replayDraft(tx: BrainEngine, intent: PurgeMirrorIntent, lifetimes
       eventType: 'page.purged' };
   }
   const f = intent.facts[0]!;
+  // The claim's subject, also when its history carries the other fingerprint form (legacy-fingerprint.ts): the intent's
+  // hash and the restored claims' current and pre-v341 fingerprints, the intent's own hash first.
+  const legacy = claims.filter(mayHaveLegacyFingerprint);
   const [known] = await tx.executeRaw<{ subject_key: string; slug: string; page_lifetime: string | null }>(`SELECT subject_key, slug, page_lifetime::text AS page_lifetime
-    FROM belief_events WHERE source_id = $1 AND subject_kind = 'fact' AND claim_fp = $2 ORDER BY id DESC LIMIT 1`, [intent.source_id, f.fact_hash]);
+    FROM belief_events WHERE source_id = $1 AND subject_kind = 'fact' AND (claim_fp = $2${legacy.length ? ` OR claim_fp IN (SELECT gbrain_fact_fingerprint(c) FROM unnest($3::text[]) AS c
+      UNION SELECT ${legacyFingerprintV2Sql('c')} FROM unnest($3::text[]) AS c)` : ''})
+    ORDER BY (claim_fp = $2) DESC, id DESC LIMIT 1`, legacy.length ? [intent.source_id, f.fact_hash, legacy] : [intent.source_id, f.fact_hash]);
   return { ...base, lifetime: known?.page_lifetime ?? null, slug: known?.slug ?? f.subject, subjectKind: 'fact', claimFp: f.fact_hash, eventType: 'fact.purged',
     subjectKey: known?.subject_key ?? factKey(slugRef(intent.source_incarnation, f.subject), f.fact_hash, f.visibility) };
 }

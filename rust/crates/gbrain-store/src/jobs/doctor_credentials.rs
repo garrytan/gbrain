@@ -1,6 +1,7 @@
 //! Jobs: doctor's three credential reads (`src/core/engine-sql/doctor-acc.ts`) over the token and OAuth client records
 //! (rust/docs/store/cli-reads-doctor-acc.md): the active tokens and live clients as `SELECT *` returns them, and the
-//! attest credentials as `to_jsonb` rows. The grant, legacy-token and attest-read doctor checks read them.
+//! attest credentials as `to_jsonb` rows. The grant, legacy-token and attest-read doctor checks read them. Also the
+//! member handover preview's bound-credential count (`countMemberBoundCredentials`).
 
 use super::access_tokens::all_tokens;
 use super::oauth_clients::all_clients;
@@ -73,5 +74,20 @@ impl Store {
                 .map(|(kind, name, id, row)| json!({ "kind": kind, "id": id, "name": name, "row": row }))
                 .collect(),
         ))
+    }
+
+    /// `countMemberBoundCredentials(memberId)`: the member's tokens not revoked plus every OAuth client bound to it
+    /// (a deleted client still counts, as the SQL's `oauth_clients WHERE member_id = $1` does).
+    pub fn count_member_bound_credentials(&self, member_id: &str) -> Result<u64> {
+        let read = self.read()?;
+        let tokens = all_tokens(&*read)?
+            .into_iter()
+            .filter(|t| t.revoked_at.is_none() && t.member_id.as_deref() == Some(member_id))
+            .count();
+        let clients = all_clients(&*read)?
+            .into_iter()
+            .filter(|c| c.member_id.as_deref() == Some(member_id))
+            .count();
+        Ok((tokens + clients) as u64)
     }
 }

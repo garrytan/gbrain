@@ -48,10 +48,16 @@ interface Fixture {
 const committed = () => readFileSync(FINGERPRINT_FIXTURE_PATH, 'utf8');
 const sha256 = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex');
 
-/** The SQL of the two fingerprints, one step at a time, with the given per-character tables. */
-function modelWith(lower: Map<number, number>, space: Set<number>) {
+/**
+ * The SQL of the two fingerprints, one step at a time, with the given per-character tables. Since v341 the fingerprint
+ * folds one explicit whitespace list on every engine (`listSpace`, which is PGLite's `[[:space:]]`), and `_v1` keeps the
+ * host locale's fold (`localeSpace`) but answers null for a claim holding a character only the locale folds and none
+ * only the list folds (its old hash is another spelling's current hash; withdrawal-schema.ts).
+ */
+function modelWith(lower: Map<number, number>, listSpace: Set<number>, localeSpace: Set<number> = listSpace) {
   const low = (c: string) => String.fromCodePoint(lower.get(c.codePointAt(0)!) ?? c.codePointAt(0)!);
-  const isSpace = (c: string) => space.has(c.codePointAt(0)!);
+  const isSpace = (c: string) => listSpace.has(c.codePointAt(0)!);
+  const isLocaleSpace = (c: string) => localeSpace.has(c.codePointAt(0)!);
   // A maximal run of class characters becomes one space.
   const runs = (chars: string[], cls: (c: string) => boolean) => {
     const out: string[] = [];
@@ -69,8 +75,9 @@ function modelWith(lower: Map<number, number>, space: Set<number>) {
     const s3 = s2.map((c, i) => (c === '.' && (i + 1 === s2.length || s2[i + 1] === '.' || s2[i + 1] === ' ') ? ' ' : c));
     return runs(s3, (c) => c === ' ').join('').replace(/^ +| +$/g, '');
   };
-  const v1Input = (text: string) => runs([...text.replace(/^ +| +$/g, '')].map(low), isSpace).join('');
-  return { normalize, v1Input };
+  const v1Input = (text: string) => runs([...text.replace(/^ +| +$/g, '')].map(low), isLocaleSpace).join('');
+  const v1Null = (text: string) => [...text].some((c) => isLocaleSpace(c) && !isSpace(c)) && ![...text].some((c) => isSpace(c) && !isLocaleSpace(c));
+  return { normalize, v1Input, v1Null };
 }
 
 for (const kind of testBackends()) {
@@ -114,7 +121,7 @@ for (const kind of testBackends()) {
       const unmodelled = new Set(host.unmodelled);
       const different = new Set(chars.filter((cp) => unmodelled.has(cp)
         || (hostLower.get(cp) ?? cp) !== (pgliteLower.get(cp) ?? cp) || hostSpace.has(cp) !== pgliteSpace.has(cp)));
-      const model = modelWith(hostLower, hostSpace);
+      const model = modelWith(hostLower, pgliteSpace, hostSpace);
 
       const unexplained: string[] = [];
       const differing: string[] = [];
@@ -127,7 +134,7 @@ for (const kind of testBackends()) {
         // A claim with a character the host's lower() cannot be tabled for (ICU) is only compared with PGLite below.
         const modelled = ![...text].some((c) => unmodelled.has(c.codePointAt(0)!));
         if (modelled && (got.normalize !== model.normalize(text) || got.fingerprint !== sha256(model.normalize(text))
-          || got.fingerprint_v1 !== sha256(model.v1Input(text)))) unexplained.push(row.name);
+          || got.fingerprint_v1 !== (model.v1Null(text) ? null : sha256(model.v1Input(text))))) unexplained.push(row.name);
         // ...and a claim with no host-different character fingerprints exactly as on PGLite (and Rust).
         const same = got.fingerprint === want.fingerprint && got.fingerprint_v1 === want.fingerprint_v1;
         if (!same) differing.push(row.name);

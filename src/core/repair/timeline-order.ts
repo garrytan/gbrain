@@ -34,7 +34,6 @@ import { loadApprovedSet, previewChangedError, previewHash, retireAfterLastItem,
 import { orderTimeline, type TimelineOrderHold } from '../timeline-order.ts';
 import { segmentedTimelineNote, segmentedTimelinePages } from './timeline.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
-import { requireRawSql } from '../rust-engine/errors.ts';
 
 const BATCH = 200;
 const DOCS = 'docs/guides/repair.md#timeline-order';
@@ -188,7 +187,6 @@ export const timelineOrderRepair: RepairHandler = {
       if (!snapshot || snapshot.revision !== page.revision) return { applied: false, outcome: 'changed_since_preview', reason: 'the page changed since the preview' };
       const verdict = await plannedChange(ctx.engine, snapshot);
       if (!verdict || 'hold' in verdict) return { applied: false, outcome: 'changed_since_preview', reason: verdict ? verdict.hold : 'the timeline is already in order' };
-      requireRawSql(ctx.engine, 'repair timeline-order page write');
       await submitPageMutation(ctx, { operation: 'put_page', params: { slug: page.slug, source_id: page.source_id, content: verdict.content,
         expected_revision: snapshot.revision, request_id: requestId } });
       return { applied: true, outcome: 'reordered', detail };

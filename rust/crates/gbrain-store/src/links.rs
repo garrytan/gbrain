@@ -32,6 +32,7 @@ use std::rc::Rc;
 use crate::facts::PrivacyPolicy;
 
 mod link_read;
+pub mod phantom_merge;
 use link_read::EdgeRules;
 pub use link_read::{During, EdgeTemporal, FromType, Keep, LinkPage, RelationshipKeep};
 

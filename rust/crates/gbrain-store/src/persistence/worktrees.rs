@@ -307,6 +307,48 @@ pub(crate) fn host_worktrees_in(read: &dyn KvRead, host_id: &str) -> Result<Vec<
     Ok(out)
 }
 
+/// The topology lock's local read (`listHostTopologyRows`): every host binding of `host_id` with
+/// its worktree's owner, epoch, state and topology generation. A binding whose worktree row is
+/// gone is left out, as the SQL join leaves it out.
+pub(crate) fn host_topology_rows_in(read: &dyn KvRead, host_id: &str) -> Result<Vec<Value>> {
+    let host = uuid_param(host_id, "hostId")?;
+    let mut out = Vec::new();
+    for h in scan_records::<HostBindingRecord>(read, HOST_BINDING, "host binding")? {
+        if h.host_id != host {
+            continue;
+        }
+        let Some(w) = read_worktree_record(read, &h.worktree_id)? else {
+            continue;
+        };
+        out.push(json!({
+            "worktree_id": w.id,
+            "owner_host_id": w.owner_host_id,
+            "owner_epoch": w.owner_epoch,
+            "state": w.state,
+            "topology_generation": w.topology_generation,
+            "local_path": h.local_path,
+            "coordination_path": h.coordination_path,
+        }));
+    }
+    Ok(out)
+}
+
+/// The source bindings of one worktree (`listWorktreeMembers`): `{ source_id, relative_path }` by
+/// byte source id.
+pub(crate) fn worktree_members_in(read: &dyn KvRead, worktree_id: &str) -> Result<Vec<Value>> {
+    let id = uuid_param(worktree_id, "worktreeId")?;
+    let mut rows: Vec<SourceBindingRecord> =
+        scan_records::<SourceBindingRecord>(read, SOURCE_BINDING, "source binding")?
+            .into_iter()
+            .filter(|b| b.worktree_id == id)
+            .collect();
+    rows.sort_by(|a, b| a.source_id.as_bytes().cmp(b.source_id.as_bytes()));
+    Ok(rows
+        .into_iter()
+        .map(|b| json!({ "source_id": b.source_id, "relative_path": b.relative_path }))
+        .collect())
+}
+
 /// One worktree's owner and state, or None.
 pub(crate) fn worktree_in(read: &dyn KvRead, id: &str) -> Result<Option<Value>> {
     let id = uuid_param(id, "worktreeId")?;
@@ -885,6 +927,16 @@ impl Store {
     /// `deleteOrphanBinding({ source_id, source_incarnation })`.
     pub fn delete_orphan_binding(&self, source_id: &str, incarnation: &str) -> Result<bool> {
         self.write(|tx| delete_orphan_binding_in(tx, source_id, incarnation))
+    }
+
+    /// `listHostTopologyRows(hostId)`.
+    pub fn list_host_topology_rows(&self, host_id: &str) -> Result<Vec<Value>> {
+        host_topology_rows_in(&*self.read()?, host_id)
+    }
+
+    /// `listWorktreeMembers(worktreeId)`.
+    pub fn list_worktree_members(&self, worktree_id: &str) -> Result<Vec<Value>> {
+        worktree_members_in(&*self.read()?, worktree_id)
     }
 
     /// `readWriterAdminState()`: the writer topology as jsonb text.

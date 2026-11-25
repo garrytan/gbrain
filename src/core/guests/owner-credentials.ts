@@ -70,10 +70,8 @@ const json = (v: unknown) => (typeof v === 'string' ? JSON.parse(v) : v) as Reco
 export async function ownerCredentials(engine: BrainEngine, guestSourceId: string): Promise<{ owner: string | null; credentials: OwnerCredential[] }> {
   const owner = await ownerMemberId(engine);
   if (!owner) return { owner, credentials: [] };
-  const rows = await engine.executeRaw<{ kind: 'client' | 'token'; id: string; name: string; row: unknown }>(
-    "SELECT * FROM (SELECT 'token' AS kind, t.id::text AS id, t.name, " + tokenGrantJsonSql('t') + " AS row FROM access_tokens t WHERE t.member_id = $1 AND t.revoked_at IS NULL "
-      + "UNION ALL SELECT 'client' AS kind, c.client_id AS id, COALESCE(c.client_name, c.client_id) AS name, to_jsonb(c) - 'client_secret_hash' AS row "
-      + "FROM oauth_clients c WHERE c.member_id = $1 AND (to_jsonb(c)->>'deleted_at') IS NULL) q ORDER BY kind COLLATE \"C\", name COLLATE \"C\", id COLLATE \"C\"", [owner]);
+  // The statement's token row is tokenGrantJsonSql('t') (engine-sql/access-control.ts OWNER_CREDENTIAL_ROWS_SQL).
+  const rows = await engine.listOwnerCredentialRows(owner);
   return { owner, credentials: rows.map(r => {
     const row = json(r.row);
     const grant = r.kind === 'token' ? grantFromTokenRow(row) : grantFromClient(grantFromRow(row));

@@ -213,6 +213,70 @@ fn source_entries(read: &dyn KvRead, source: &str) -> Result<Vec<(String, String
     Ok(out)
 }
 
+/// The gazetteer entries of `source` whose target is `slug`, every name and case flag (a page purge receipt's
+/// `slug_key` probe, `SELECT 1 FROM mention_gazetteer_entries WHERE source_id = $1 AND target_slug = $2`).
+pub(crate) fn count_for_target(read: &dyn KvRead, source: &str, slug: &str) -> Result<usize> {
+    if source.contains('\0') {
+        return Ok(0);
+    }
+    Ok(source_entries(read, source)?
+        .iter()
+        .filter(|(_, target, _)| target == slug)
+        .count())
+}
+
+/// `scrubPurgedNameStores` on `mention_gazetteer_entries` (src/core/persistence/purge-name-stores.ts): deletes the
+/// entries of `source` whose target is one of the purged `slugs`, every name and case flag, and returns how many went
+/// (`DELETE .. WHERE source_id = $1 AND target_slug = ANY($2) RETURNING 1`). Entries have no foreign key to pages, so a
+/// hard page delete calls this; a soft delete keeps them, because restore_page can bring the page back.
+pub(crate) fn scrub_purged_entries(
+    tx: &mut dyn KvWrite,
+    source: &str,
+    slugs: &[String],
+) -> Result<u64> {
+    if source.contains('\0') || slugs.is_empty() {
+        return Ok(0);
+    }
+    let mut removed = 0;
+    for (name, target, cs) in source_entries(&*tx, source)? {
+        if slugs.contains(&target) {
+            tx.delete(&entry_key(source, &name, &target, cs))?;
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
+/// The `mention_gazetteer_entries` rows a purge verification probes (facts/purge_probe.rs `table_rows`): every saved
+/// entry of every source, with its `source_id`, `name_norm` and `target_slug` as text.
+pub(crate) fn purge_probe_rows(
+    read: &dyn KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow};
+    let mut sources = BTreeSet::new();
+    let p = prefix(&[ENTRY]);
+    scan_prefix(read, &p, false, &mut |k, _| {
+        if let Some(source) = k[p.len()..].split(|b| *b == 0).next() {
+            sources.insert(String::from_utf8_lossy(source).into_owned());
+        }
+        true
+    })?;
+    let mut out = Vec::new();
+    for source in sources {
+        for (name, target, _) in source_entries(read, &source)? {
+            out.push(ProbeRow {
+                cells: vec![
+                    ("source_id", ProbeCell::text(&source)),
+                    ("name_norm", ProbeCell::text(&name)),
+                    ("target_slug", ProbeCell::text(&target)),
+                ],
+                source_id: Some(source.clone()),
+            });
+        }
+    }
+    Ok(out)
+}
+
 /// The page's `page_mention_state` row, for a hard page delete.
 pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()> {
     tx.delete(&page_key(page.id))
@@ -325,7 +389,8 @@ pub struct CandidatePageRow {
     pub slug: String,
     pub source_id: String,
     pub body_storage: String,
-    pub body: String,
+    /// Null when `patterns` were given and the page is neither segmented nor matches one (the batch still counts it).
+    pub body: Option<String>,
     pub mention_ignore: Value,
 }
 
@@ -777,9 +842,10 @@ impl Store {
         })
     }
 
-    /// `listMentionCandidatePages(sourceIds, after, limit, patterns)`: live pages of `sourceIds`
-    /// after id `after`, by id, up to `limit`; with `patterns`, only segmented pages and pages whose
-    /// lowered text is LIKE one of them.
+    /// `listMentionCandidatePages(sourceIds, after, limit, patterns)`: the next `limit` live pages of `sourceIds`
+    /// after id `after`, by id, whether they match or not (so one statement never reads a whole source looking
+    /// for a rare name); with `patterns`, a page that is neither segmented nor has lowered text LIKE one of them
+    /// comes back with a null body.
     pub fn list_mention_candidate_pages(
         &self,
         source_ids: &[String],
@@ -794,12 +860,11 @@ impl Store {
             .filter(|p| i64::try_from(p.id).is_ok_and(|id| id > after))
             .collect();
         pages.sort_by_key(|p| p.id);
+        pages.truncate(usize::try_from(limit.max(0)).unwrap_or(usize::MAX));
         let mut out = Vec::new();
         for p in pages {
-            if out.len() as i64 >= limit.max(0) {
-                break;
-            }
             let storage = body_storage(&*read, &p)?;
+            let mut shown = true;
             if let Some(patterns) = patterns
                 && storage != "segmented"
             {
@@ -807,19 +872,17 @@ impl Store {
                     "{} {} {}",
                     p.title, &*p.compiled_truth, &*p.timeline
                 ));
-                let mut hit = false;
+                shown = false;
                 for pattern in patterns {
                     if crate::facts::like(&lowered, pattern, false)? {
-                        hit = true;
+                        shown = true;
                         break;
                     }
                 }
-                if !hit {
-                    continue;
-                }
             }
             // `E'\\n\\n'` in the SQL: two newlines between the title, the body and the timeline.
-            let body = format!("{}\n\n{}\n\n{}", p.title, &*p.compiled_truth, &*p.timeline);
+            let body =
+                shown.then(|| format!("{}\n\n{}\n\n{}", p.title, &*p.compiled_truth, &*p.timeline));
             out.push(CandidatePageRow {
                 id: p.id,
                 slug: p.slug.clone(),

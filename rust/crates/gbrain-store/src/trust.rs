@@ -62,6 +62,7 @@ pub(crate) use fingerprint::fact_fingerprint_v1;
 pub mod held_rows;
 pub mod label_guards;
 pub mod proposals;
+mod row_tier;
 mod row_trust;
 pub mod scan_state;
 pub mod tier_reads;

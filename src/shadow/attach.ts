@@ -11,11 +11,13 @@ import type { BrainEngine } from '../core/engine.ts';
 import { resolveServeGbrainCommand } from '../core/serve-service.ts';
 import type { FollowOptions } from './follow.ts';
 import { ShadowFollower } from './follower.ts';
-import { openReadSource } from './read-pool.ts';
+import { openReadSource, type ReadSource } from './read-pool.ts';
 import { Reconciler } from './reconcile.ts';
+import { createLsnWatch, makeAskHandler, type LsnWatch } from './checks.ts';
 import { epochWatch } from './evidence-epoch.ts';
 import { readSeedRecord } from './seed.ts';
 import { MirrorQueue, zeroUsage } from './mirror.ts';
+import { SampleRegistry } from './samples.ts';
 import { readShadowState, type ShadowState } from './state.ts';
 import { ShadowSupervisor, type ShadowSupervisorOptions } from './supervisor.ts';
 import { appendUsage } from './usage.ts';
@@ -51,6 +53,8 @@ export interface AttachedShadow<E extends BrainEngine> {
   reconciler?: Reconciler;
   /** Notes this process's committed writes for swap eligibility (writer-observations.ts). */
   observer: WriterObserver;
+  /** The freshness token every sample is captured with (checks.ts `createLsnWatch`). */
+  lsnWatch: LsnWatch;
 }
 
 /** The child's argv for `dir`. */
@@ -60,11 +64,18 @@ export function shadowChildArgv(dir: string, gbrainArgv?: string[]): string[] {
 }
 
 export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string, state: ShadowState, deps: AttachShadowDeps = {}): AttachedShadow<E> {
-  const supervisor = new ShadowSupervisor({ dir, argv: shadowChildArgv(dir, deps.gbrainArgv), onDirty: (relation) => reconciler?.markDirty(relation), ...deps.supervisor });
-  const queue = new MirrorQueue({ bound: state.queue_bound, transport: supervisor });
+  const supervisor = new ShadowSupervisor({
+    dir, argv: shadowChildArgv(dir, deps.gbrainArgv), onDirty: (relation) => reconciler?.markDirty(relation),
+    onAsk: (ask) => asks(ask), ...deps.supervisor,
+  });
+  const samples = new SampleRegistry();
+  let generation: () => number | undefined = () => undefined; // the follower's write count, set once it exists
+  let watch: LsnWatch | undefined; // the primary's freshness token, set once the child's read source exists
+  const queue = new MirrorQueue({ bound: state.queue_bound, transport: supervisor, samples, generation: () => generation(), lsn: () => watch?.current() });
   const sink = {
     counters: queue.counters,
     offer: (capture: Parameters<MirrorQueue['offer']>[0], op?: string) => queue.offer(capture, op),
+    token: () => queue.token(),
     use: (op: string, field: Parameters<MirrorQueue['meter']['note']>[1]) => queue.meter.note(op, field),
     active: () => supervisor.active(),
   };
@@ -86,11 +97,18 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
   const seeded = deps.follow === undefined && readSeedRecord(dir)?.digests === true;
   const rpc = <T>(method: string, args?: Record<string, unknown>, timeoutMs?: number): Promise<T> => supervisor.request<T>(method, args, timeoutMs);
   const reads = seeded ? openReadSource(engine) : undefined;
+  // The child's questions (checks.ts) read the primary through a source of their own, opened on first use, on a brain that was never seeded.
+  let own: ReadSource | undefined;
+  const askReads: ReadSource = reads ?? { pauseMs: 0, read: (fn) => (own ??= openReadSource(engine)).read(fn), close: async () => { await own?.close(); } };
+  watch = createLsnWatch(askReads);
+  void watch.ready(); // the first freshness token, so a sample captured a moment later has one to be held to
+  const asks = makeAskHandler({ engine, reads: askReads, dir, rpc, samples, watch, get follower() { return follower; } });
   const follower = reads ? new ShadowFollower({
     reads, send: (line) => supervisor.send(line), rpc,
     onDirty: (relation) => reconciler?.markDirty(relation),
     onFirstBatch: () => { void reconciler?.probe().catch(() => undefined); },
   }) : undefined;
+  generation = () => follower?.published;
   const reconciler = reads ? new Reconciler({ dir, reads, rpc, follower }) : undefined;
   reconciler?.startNightly();
   const observer = new WriterObserver({
@@ -112,11 +130,12 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
       reconciler?.stop();
       supervisor.stop();
       await reads?.close().catch(() => undefined);
+      if (askReads !== reads) await askReads.close().catch(() => undefined);
     }
   });
   const follow = follower ? { sink: follower } : deps.follow;
   const onCommittedWrite = () => observer.note();
-  return { engine: wrapShadowEngine(engine, sink, { sampleRate: state.sample_rate, random: deps.random, follow, onCommittedWrite }), queue, supervisor, follower, reconciler, observer };
+  return { engine: wrapShadowEngine(engine, sink, { sampleRate: state.sample_rate, random: deps.random, follow, onCommittedWrite }), queue, supervisor, follower, reconciler, observer, lsnWatch: watch };
 }
 
 /** This process's writer identity: the engine's host id, the name its pools give their connections, its kind, version. */
