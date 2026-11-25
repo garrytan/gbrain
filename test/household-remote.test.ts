@@ -454,6 +454,12 @@ describe('household privacy over remote MCP', () => {
     expect(asChild[0]).not.toMatch(/\d+ household record/);
     expect(asChild[1]).toBe(asChild[0]);
     expect(asChild[2]).toBe(asChild[0]);
+    const edited = await Promise.all(['xena', 'zed'].map(async who => {
+      const { revision } = await local('get_page', { slug: 'people/' + who + '-example' });
+      return strip(await remote(ADULT, 'edit_page', { slug: 'people/' + who + '-example', expected_revision: revision, edits: [{ old_text: 'household_role: adult', new_text: 'household_role: child' }] }), who);
+    }));
+    expect(edited[0]).toBe(asChild[0]);
+    expect(edited[1]).toBe(asChild[0]);
     const unrole = await Promise.all(['xena', 'zed'].map(async who => strip((await rewrite(ADULT, 'people/' + who + '-example', ({ household_role: _, ...fm }) => fm)), who)));
     expect(unrole[0]).toContain('household_reclassify');
     expect(unrole[0]).not.toMatch(/\d+ household record/);

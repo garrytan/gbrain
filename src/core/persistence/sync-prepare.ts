@@ -36,6 +36,7 @@ import { withoutSafetyAssessments } from './reconcile-safety.ts';
 import { digest, sha256 } from './digest.ts';
 import { preserveProtectedTakes } from './protected-takes.ts';
 import { getWorktreeBinding } from './ownership.ts';
+import { storedOwnerSpeaksForItself } from './page-visibility.ts';
 import { sourceMirrorReadOnly } from './mirror-read-only.ts';
 import { writeThroughConfigured } from './switches.ts';
 import { isSourceDbOnlySlug } from './source-storage.ts';
@@ -956,7 +957,7 @@ async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _c
   let prepared: PreparedContentImport | undefined;
   enterClaimStep(clock, 'import_content', undefined, 'db');
   // #6188: the import reuses this screen's fence verdict for the same bytes (one fence scan per file at prepare).
-  const importOptions = { ...source, noEmbed: true, remote: row.authority.remote, preserveGateMarkers: true, activePack, coordinated: true, fences: 'coordinated' as const, boundedChunkWrites: true as const, writeGate: await ownerGateInput(engine, row, parsedInput.frontmatter, p.sourcePath),
+  const importOptions = { ...source, noEmbed: true, remote: row.authority.remote, householdOwner: () => storedOwnerSpeaksForItself(engine, row.authority), preserveGateMarkers: true, activePack, coordinated: true, fences: 'coordinated' as const, boundedChunkWrites: true as const, writeGate: await ownerGateInput(engine, row, parsedInput.frontmatter, p.sourcePath),
     ...(importContent === p.content && screen.status === 'importable' ? { fenceScreen: screen.fences ?? null } : {}),
     filename: basename(p.sourcePath).replace(/\.mdx?$/i, ''), sourcePath: p.sourcePath, allowEmptyOverwrite: true, history,
     segmentedOwner: { kind: 'sync' as const, principalKind: row.principal_kind, principalId: row.principal_id, baseRevision: base?.revision ?? null } };
