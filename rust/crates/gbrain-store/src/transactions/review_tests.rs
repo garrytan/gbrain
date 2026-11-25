@@ -196,7 +196,7 @@ fn the_deadline_is_checked_again_after_the_savepoints_merge() {
     t.savepoint().unwrap();
     t.write(|w| w.put(b"ylate", b"x")).unwrap();
     AFTER_SAVEPOINT_MERGE.with(|h| {
-        *h.borrow_mut() = Some(Box::new(|| std::thread::sleep(Duration::from_millis(60))))
+        *h.borrow_mut() = Some(Box::new(|| std::thread::sleep(Duration::from_millis(400))))
     });
     let err = t.commit_transaction().unwrap_err();
     assert_eq!(err.code, TIMEOUT);
