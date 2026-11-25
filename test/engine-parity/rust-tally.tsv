@@ -445,3 +445,4 @@ test/engine-parity/writer-registration.test.ts	2	0
 test/engine-parity/writer-release.test.ts	4	0
 test/engine-parity/writer-status.test.ts	4	0
 test/engine-parity/writer-versions.test.ts	4	0
+test/engine-parity/guests-grant-owner-clients.test.ts	0	0
