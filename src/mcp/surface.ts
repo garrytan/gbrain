@@ -20,7 +20,7 @@
  * Resolution: stdio GBRAIN_SURFACE > --surface flag > config `mcp_surface` >
  * 'full' (resolveStdioSurface); `serve --http` ignores GBRAIN_SURFACE. Why
  * default full: a bare `serve` keeps existing advanced tooling, and the
- * registrations gbrain writes pin `REGISTRATION_SURFACE`
+ * registrations gbrain writes pin their harness's `registrationProfile`
  * (src/core/mcp-registration.ts) unless the user passes `--surface`.
  *
  * WP4 (D2 CEILING): on the OAuth HTTP transport the server-resolved surface is
@@ -41,6 +41,7 @@ import { opError } from '../core/ops/contract.ts';
 import { BRAIN_TOOL_ALLOWLIST } from '../core/minions/tools/brain-tool-allowlist.ts';
 import { flagValues } from '../core/direct-pool-profile.ts';
 import { SUBMIT_AGENT_DEFAULT_MAX_TURNS } from '../core/ops/jobs.ts';
+import { sessionWidenOff } from '../core/mcp-registration.ts';
 
 export type McpSurface = 'verbs' | 'starter' | 'full';
 
@@ -158,7 +159,7 @@ export function parseSurfaceFlag(args: string[]): McpSurface | null {
 
 /**
  * `--advertise`: the surface tools/list shows, narrower than what is callable.
- * Registrations gbrain writes pass `--advertise verbs` (REGISTRATION_ADVERTISE);
+ * Registrations gbrain writes on the starter profile pass `--advertise verbs` (STARTER_PROFILE);
  * absent, `mcp.advertised_surface` decides.
  */
 export function parseAdvertiseFlag(args: string[]): McpSurface | null {
@@ -606,12 +607,11 @@ export function createStdioSurfaceState(
 
 /** `mcp.allow_session_widen` (default true): DB plane, then the file plane (file only when `engine` is null). */
 export async function sessionWidenAllowed(engine: BrainEngine | null, config: GBrainConfig | null | undefined): Promise<boolean> {
-  const off = (v: unknown) => v === false || (typeof v === 'string' && /^(false|0|off|no)$/i.test(v.trim()));
   try {
     const dbVal = engine ? await engine.getConfig('mcp.allow_session_widen') : null;
-    if (dbVal != null) return !off(dbVal);
+    if (dbVal != null) return !sessionWidenOff(dbVal);
   } catch { /* the file plane decides */ }
-  return !off(config?.mcp?.allow_session_widen);
+  return !sessionWidenOff(config?.mcp?.allow_session_widen);
 }
 
 /** The once-per-process `surface_env_invalid` info notice for an ignored GBRAIN_SURFACE value. */
