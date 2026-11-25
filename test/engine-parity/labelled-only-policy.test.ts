@@ -16,7 +16,7 @@ import { describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { createSource, parityArms, resetArm, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
-import { addMember, bindCredential } from '../../src/core/access/members.ts';
+import { addMember, bindCredential, disableMember, removeMember } from '../../src/core/access/members.ts';
 import { setMemberLabelledOnly } from '../../src/core/access/labelled-only.ts';
 import { setOwner } from '../../src/core/access/owner.ts';
 import { mintLegacyToken } from '../../src/core/token-mint.ts';
@@ -25,10 +25,11 @@ import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
 import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
 import type { AuthInfo } from '../../src/core/ops/contract.ts';
 
-const { arms } = parityArms(testBackends());
+const { arms, parityTest } = parityArms(testBackends());
 const SRC = 'work';
 const OWNER = 'alice-example';
 const LABELLED = 'carol-example';
+const PLAIN = 'bob-example';
 // On PGLite and Postgres the rewrite is judged by the labelled-only page policy and refused page_not_found. Rust does not serve
 // that writer policy yet (row 32e-b-3), so the probe now sees the labelled-only writer and the check ends on the raw read the
 // engine refuses: a loud refusal with nothing written. When 32e-b-3 lands Rust answers page_not_found and this reverts to it.
@@ -38,18 +39,34 @@ async function seed(engine: BrainEngine, backend: ParityBackend): Promise<void> 
   await createSource(engine, backend, SRC);
   await addMember(engine, OWNER);
   await setOwner(engine, OWNER);
+  await addMember(engine, PLAIN);
   await addMember(engine, LABELLED);
   await setMemberLabelledOnly(engine, LABELLED, true, { remote: false });
 }
 
-/** The outcome of the labelled-only member's remote write: 'written', or the error code it was refused with. */
-async function labelledWrite(engine: BrainEngine, operation: 'put_page' | 'capture', params: Record<string, unknown>): Promise<string> {
-  const minted = await mintLegacyToken(engine, { name: `k-${String(params.slug)}`, scopes: ['read', 'write'], takesHolders: ['world'], sourceGrant: [SRC] });
-  await bindCredential(engine, { kind: 'token', id: minted.id }, { member: LABELLED });
+/** What a remote write answered: 'written', or the whole error body it was refused with (code, message, fix). */
+type WriteOutcome = 'written' | Record<string, unknown>;
+
+/** `member`'s remote write through the MCP dispatch, on a token bound to it; a refusal is returned as a value. */
+async function memberWriteOutcome(engine: BrainEngine, member: string, operation: 'put_page' | 'capture', params: Record<string, unknown>): Promise<WriteOutcome> {
+  const minted = await mintLegacyToken(engine, { name: `k-${member}-${String(params.slug)}`, scopes: ['read', 'write'], takesHolders: ['world'], sourceGrant: [SRC] });
+  await bindCredential(engine, { kind: 'token', id: minted.id }, { member });
   const auth = await new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), engine }).verifyAccessToken(minted.token) as unknown as AuthInfo;
   return dispatchToolCall(engine, operation, params, { remote: true, transport: 'http', auth, sourceId: SRC, takesHoldersAllowList: ['world'] })
-    .then(out => out.isError ? String((JSON.parse(out.content.map(c => c.text).join('')) as { code?: unknown }).code) : 'written',
-      (e: { code?: string }) => String(e.code));
+    .then(out => out.isError ? JSON.parse(out.content.map(c => c.text).join('')) as Record<string, unknown> : 'written',
+      (e: { code?: string }) => ({ code: String(e.code), thrown: true }));
+}
+
+/** The outcome of the labelled-only member's remote write: 'written', or the error code it was refused with. */
+async function labelledWrite(engine: BrainEngine, operation: 'put_page' | 'capture', params: Record<string, unknown>): Promise<string> {
+  const out = await memberWriteOutcome(engine, LABELLED, operation, params);
+  return out === 'written' ? 'written' : String(out.code);
+}
+
+/** The page's stored state, as a write must leave it or change it. */
+async function pageState(engine: BrainEngine, slug: string): Promise<{ body: string | null; versions: number }> {
+  const page = await engine.getPage(slug, { sourceId: SRC });
+  return { body: page?.compiled_truth ?? null, versions: (await engine.getVersions(slug, { sourceId: SRC })).length };
 }
 
 describe('engine parity: a labelled-only member\'s remote writes', () => {
@@ -62,10 +79,7 @@ describe('engine parity: a labelled-only member\'s remote writes', () => {
       const { engine } = arm;
       await seed(engine, arm.backend);
       await engine.putPage('notes/open', { type: 'note', title: 'Open', compiled_truth: 'First.', timeline: '', frontmatter: {} }, { sourceId: SRC });
-      const state = async (slug: string) => {
-        const page = await engine.getPage(slug, { sourceId: SRC });
-        return { body: page?.compiled_truth ?? null, versions: (await engine.getVersions(slug, { sourceId: SRC })).length };
-      };
+      const state = (slug: string) => pageState(engine, slug);
       const snapshot = async () => ({ open: await state('notes/open'), fresh: await state('notes/fresh'), captured: await state('notes/captured'), pages: await engine.countSourcePages(SRC) });
       const before = await snapshot();
       const revision = (await engine.getPage('notes/open', { sourceId: SRC }))?.knowledge_revision;
@@ -78,4 +92,28 @@ describe('engine parity: a labelled-only member\'s remote writes', () => {
     }
     expect(arms().length).toBeGreaterThan(0);
   }, 120_000);
+});
+
+describe('engine parity: writers a labelled-only member does not change', () => {
+  // The owner and an ordinary member are not labelled-only. While another member carries the grant (active, disabled or removed;
+  // the grant row stays either way), their remote rewrite of an open page must be judged as it is with no such member: written.
+  // Each case returns the whole outcome of both writers, so PGLite, Postgres and Rust must answer the same bytes.
+  for (const state of ['active', 'disabled', 'removed'] as const) {
+    parityTest(`the owner and an ordinary member still rewrite an open page while a labelled-only member is ${state}`, { methods: ['readWriteVisibilityProbe'] }, async (engine, backend) => {
+      await seed(engine, backend);
+      if (state === 'disabled') await disableMember(engine, LABELLED);
+      if (state === 'removed') await removeMember(engine, LABELLED);
+      await engine.putPage('notes/open', { type: 'note', title: 'Open', compiled_truth: 'First.', timeline: '', frontmatter: {} }, { sourceId: SRC });
+      const rewrite = async (member: string, text: string) => {
+        const revision = (await engine.getPage('notes/open', { sourceId: SRC }))?.knowledge_revision;
+        const outcome = await memberWriteOutcome(engine, member, 'put_page', { slug: 'notes/open', content: `---\ntitle: Open\n---\n${text}`, expected_revision: revision });
+        return { outcome: outcome === 'written' ? 'written' : outcome, page: await pageState(engine, 'notes/open') };
+      };
+      const owner = await rewrite(OWNER, 'Owner text.');
+      const plain = await rewrite(PLAIN, 'Member text.');
+      expect({ owner: owner.outcome, plain: plain.outcome }).toEqual({ owner: 'written', plain: 'written' });
+      expect({ owner: owner.page.body, plain: plain.page.body }).toEqual({ owner: 'Owner text.', plain: 'Member text.' });
+      return { state, owner, plain };
+    });
+  }
 });
