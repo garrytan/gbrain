@@ -29,7 +29,7 @@ start here.
 >
 > **Creating a new personal agent, explicitly requested by the user:** follow [BOOTSTRAP_FOR_AGENTS.md](BOOTSTRAP_FOR_AGENTS.md), then return here for the operating protocol.
 
-## Install (5 min)
+## Install (a few minutes)
 
 <!-- npm-trap + #218 recovery: canonical copy lives in README.md ("Install" warning) — sync edits. -->
 1. Install gbrain via Bun (the canonical path):
@@ -3836,9 +3836,9 @@ Alongside keyword and semantic retrieval, GBrain offers two optional ways to use
 
 The point of building a 150K-page brain is to use it as a strategic moat. To never lose context. To query what's in your own head without re-reading it. The brain layer is what makes the moat usable. The 24/7 dream cycle is what keeps it sharp. Both run on your hardware, your DB, your keys.
 
-It's easier to ship a daemon that runs 24/7 to ingest, enrich, and consolidate than it is to keep an agent in chat working hard. GBrain is that daemon, generalized. Install in 30 minutes. Your agent does the work. As my personal agent gets smarter, so does yours.
+It's easier to ship a daemon that runs 24/7 to ingest, enrich, and consolidate than it is to keep an agent in chat working hard. GBrain is that daemon, generalized. Install in a few minutes: on a cloud machine a cold `bun install -g` took about 11 seconds and `gbrain setup claude-code` about 10 (gbrain v0.60.769.0); the rest is you reading the output and opening a new session. Your agent does the work. As my personal agent gets smarter, so does yours.
 
-> **Start keyless.** Your harness subscription and any separately configured model API usage are different costs. The optional personal-agent bootstrap takes about 15 minutes; always-on enrichment needs its own compute and API configuration.
+> **Start keyless.** Your harness subscription and any separately configured model API usage are different costs. The optional personal-agent bootstrap takes about 15 more minutes of your time, mostly answering its interview; always-on enrichment needs its own compute and API configuration.
 
 Durable preferences and facts can be shared across agents; transient task and
 harness configuration state stay local. Configured cloud embedding, reranking,
