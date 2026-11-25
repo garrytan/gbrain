@@ -148,7 +148,11 @@ impl Store {
                 ));
             }
         }
-        if options.exclude_private.as_ref().is_some_and(|v| !v.is_null() && *v != Value::Bool(false)) {
+        if options
+            .exclude_private
+            .as_ref()
+            .is_some_and(|v| !v.is_null() && *v != Value::Bool(false))
+        {
             return Err(StoreError::new(
                 INVALID_ARGUMENT,
                 "searchKeyword: excludePrivate is not supported by this search; the keyword arm serves privacy-scoped reads",

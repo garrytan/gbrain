@@ -772,13 +772,31 @@ fn a_privacy_request_is_refused_not_ignored() {
         )
         .unwrap();
     let rows = find(&store, "needle");
-    let open = rows.iter().find(|r| r["slug"] == "open").unwrap()["score"].as_f64().unwrap();
-    assert_ne!(alone, open, "a hidden page's chunks move a visible page's score when no policy is read");
-    for ask in [json!({"excludePrivate": true}), json!({"excludePrivate": {"honorAliases": true, "entityPrivacy": true}})] {
-        let err = store.search_keyword("needle", &search_opts(ask)).unwrap_err();
+    let open = rows.iter().find(|r| r["slug"] == "open").unwrap()["score"]
+        .as_f64()
+        .unwrap();
+    assert_ne!(
+        alone, open,
+        "a hidden page's chunks move a visible page's score when no policy is read"
+    );
+    for ask in [
+        json!({"excludePrivate": true}),
+        json!({"excludePrivate": {"honorAliases": true, "entityPrivacy": true}}),
+    ] {
+        let err = store
+            .search_keyword("needle", &search_opts(ask))
+            .unwrap_err();
         assert_eq!(err.code, INVALID_ARGUMENT);
         assert!(err.to_string().contains("excludePrivate"), "{err}");
     }
     // No privacy asked: answered as before.
-    assert_eq!(slugs(&store.search_keyword("needle", &search_opts(json!({"excludePrivate": false}))).unwrap()).len(), 2);
+    assert_eq!(
+        slugs(
+            &store
+                .search_keyword("needle", &search_opts(json!({"excludePrivate": false})))
+                .unwrap()
+        )
+        .len(),
+        2
+    );
 }

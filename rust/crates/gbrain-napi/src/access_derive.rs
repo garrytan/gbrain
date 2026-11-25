@@ -5,7 +5,7 @@
 //! TypeScript self-check refuses the read (a mismatch) rather than failing open.
 
 use napi_derive::napi;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 #[napi(js_name = "deriveAccessPolicy")]
 pub fn derive_access_policy(ctx: Value) -> Value {
