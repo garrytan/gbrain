@@ -8,7 +8,22 @@ import type { BrainEngine } from '../core/engine.ts';
 import type { CliDispatchContext } from '../cli/command-table.ts';
 import { endSlowRead } from '../core/read-heartbeat.ts';
 
+const VALUE_HELP = `Usage: gbrain value [--json]
+
+What your brain holds and has done for you, as counts: conversations archived, pages by kind, links, facts kept,
+lookups served, pages brought up on their own and later retrieved, nightly items and the brain score. Each row is
+measured, off (with the command that turns it on) or unavailable (with a code and cause). Reads only; stamps nothing.
+Runs on the brain host only: it is not an MCP tool, and a thin client refuses it.
+
+  --json   Print the card as one JSON document (schema gbrain.value, schema_version 1).
+
+Examples:
+  gbrain value
+  gbrain value --json
+`;
+
 export async function runValue(engine: BrainEngine, args: string[], makeContext: NonNullable<CliDispatchContext['makeContext']>): Promise<void> {
+  if (args.includes('--help') || args.includes('-h')) { console.log(VALUE_HELP); return; }
   const { buildValueCard } = await import('../core/value/card.ts');
   const card = await buildValueCard(await makeContext(engine, {}));
   endSlowRead();

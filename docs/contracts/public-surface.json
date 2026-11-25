@@ -881,7 +881,6 @@
     "gbrain untag --request-id",
     "gbrain untag --slug",
     "gbrain untag --tag",
-    "gbrain value --json",
     "gbrain volunteer-context --days",
     "gbrain volunteer-context --max-pages",
     "gbrain volunteer-context --min-confidence",
