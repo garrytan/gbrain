@@ -92,6 +92,12 @@
  * The lane log line then carries router: who answered, the fallback code and
  * the wait.
  *
+ * Skill vectors (vectors.ts): when a turn's catalog has a vectors.bin and the
+ * picker is off, the deadline grows by VECTOR_WAIT_MS plus
+ * LANE_ROUTER_MARGIN_MS for the message's embedding (with the picker on, the
+ * embedding counts inside the picker's wait). The lane log line then carries
+ * vectors: whether the turn ranked with them, the fallback code and the wait.
+ *
  * Payload: the lane's own budget (skills.resolver.lane_payload_chars, default
  * 4000 characters of hook JSON, Hermes's included); a block that does not fit
  * is dropped whole and counted (outcome payload_dropped in the lane log).
@@ -113,6 +119,7 @@ import { shellWords } from '../../setup/hook-launcher.ts';
 import { isSkillResolverCommand, isSkillResolverEntry } from '../../setup/skill-resolver-lane.ts';
 import { laneOwnerSenders, laneSessionStart, laneTurnSettings, routerSettings, type LaneTurnSettings } from './config.ts';
 import { routerTimeoutMs } from './router.ts';
+import { VECTOR_WAIT_MS } from './vectors.ts';
 import { appendDailyLog, appendDailyLogSync, LANE_LOG } from './daily-log.ts';
 import { HOOK_FIELD_CAP, readHookFields } from './hook-input.ts';
 import { assertCatalogName, catalogFile, CLAUDE_PLUGINS_CATALOG, logsDir, resolverHome } from './paths.ts';
@@ -214,9 +221,11 @@ export async function readLaneSettings(home: string, env: NodeJS.ProcessEnv): Pr
   };
 }
 
-export interface LaneLogLine { at: string; harness: string; event: string; outcome: string; code?: string; ms: number; worker_ms?: number; catalogs?: string[]; dropped_chars?: number; router?: LaneRouterLog }
+export interface LaneLogLine { at: string; harness: string; event: string; outcome: string; code?: string; ms: number; worker_ms?: number; catalogs?: string[]; dropped_chars?: number; router?: LaneRouterLog; vectors?: LaneVectorsLog }
 /** The picker's part of a turn: who answered, why it fell back, its wait in ms. */
 export interface LaneRouterLog { by: 'picker' | 'words'; code?: string; ms: number }
+/** The skill vectors' part of a turn: whether it ranked with them, why not, its wait for the message's vector in ms. */
+export interface LaneVectorsLog { used: boolean; code?: string; ms: number }
 
 async function appendLaneLog(home: string, line: LaneLogLine): Promise<void> {
   try {
@@ -307,7 +316,7 @@ export interface LaneIo {
 
 const writeStdout = (s: string) => new Promise<void>((resolve, reject) => { process.stdout.write(s, (e) => (e ? reject(e) : resolve())); });
 
-interface Turn { outcome: string; code?: string; catalogs?: string[]; dropped_chars?: number; router?: LaneRouterLog }
+interface Turn { outcome: string; code?: string; catalogs?: string[]; dropped_chars?: number; router?: LaneRouterLog; vectors?: LaneVectorsLog }
 
 /** Run one lane event. Always resolves 0; at the deadline it exits the process itself. */
 export async function runSkillResolverLane(event: string, harness: LaneHarness, io: LaneIo = {}): Promise<number> {
@@ -326,7 +335,7 @@ export async function runSkillResolverLane(event: string, harness: LaneHarness, 
   ctl.worker = startLaneWorker(env);
   const turnLeft = () => deadlineMs - (ctl.turnStart === undefined ? 0 : elapsed() - ctl.turnStart);
   const tenths = (ms: number) => Math.round(ms * 10) / 10;
-  const line = (t: Turn): LaneLogLine => ({ at: new Date().toISOString(), harness, event, outcome: t.outcome, ...(t.code ? { code: t.code } : {}), ms: tenths(elapsed()), ...(ctl.workerMs !== undefined ? { worker_ms: tenths(ctl.workerMs) } : {}), ...(t.catalogs ? { catalogs: t.catalogs } : {}), ...(t.dropped_chars ? { dropped_chars: t.dropped_chars } : {}), ...(t.router ? { router: t.router } : {}) });
+  const line = (t: Turn): LaneLogLine => ({ at: new Date().toISOString(), harness, event, outcome: t.outcome, ...(t.code ? { code: t.code } : {}), ms: tenths(elapsed()), ...(ctl.workerMs !== undefined ? { worker_ms: tenths(ctl.workerMs) } : {}), ...(t.catalogs ? { catalogs: t.catalogs } : {}), ...(t.dropped_chars ? { dropped_chars: t.dropped_chars } : {}), ...(t.router ? { router: t.router } : {}), ...(t.vectors ? { vectors: t.vectors } : {}) });
   const log = (t: Turn) => appendLaneLog(home, line(t));
 
   const exit = io.exit ?? ((c: number) => process.exit(c));
@@ -429,6 +438,7 @@ async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHar
   if (catalogs.length === 0) return { outcome: 'no_catalog' };
   const router = (harness === 'claude-code' || harness === 'codex') && settings.section.router === true;
   if (router) ctl.extend(routerTimeoutMs(harness, routerSettings(settings.section)) + LANE_ROUTER_MARGIN_MS);
+  else if ((harness === 'claude-code' || harness === 'codex') && (await Promise.all(catalogs.map(c => stat(catalogFile(home, c, 'vectors.bin')).then(() => true, () => false)))).some(Boolean)) ctl.extend(VECTOR_WAIT_MS + LANE_ROUTER_MARGIN_MS);
 
   const worker = ctl.worker;
   if (!worker || laneWorkerFailed()) return { outcome: 'error', code: 'skill_resolver_internal', catalogs };
@@ -437,13 +447,14 @@ async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHar
   const out = posted.output;
   if (out.meta.index_stale && settings.autoRebuild) await scheduleStaleRebuilds(home, catalogs, spawnFn);
   const routerLog: LaneRouterLog | undefined = out.router ? { by: out.router.answered_by, ...(out.router.fallback ? { code: out.router.fallback.code } : {}), ms: out.router.ms } : undefined;
-  if (out.error) return { outcome: 'error', code: out.error.code, catalogs, router: routerLog };
-  if (ctl.expired) return { outcome: 'timeout', code: 'skill_resolve_timeout', catalogs, router: routerLog };
+  const vectors: LaneVectorsLog | undefined = out.vectors ? { used: out.vectors.used, ...(out.vectors.fallback ? { code: out.vectors.fallback.code } : {}), ms: out.vectors.ms } : undefined;
+  if (out.error) return { outcome: 'error', code: out.error.code, catalogs, router: routerLog, vectors };
+  if (ctl.expired) return { outcome: 'timeout', code: 'skill_resolve_timeout', catalogs, router: routerLog, vectors };
 
   const outcome = out.block ? 'delivered' : out.budget_exhausted ? 'budget_exhausted' : out.no_skill ? 'no_skill' : 'empty';
   if (out.block) {
     const payload = LANE_IO[harness].render(out.block);
-    if (payload.length > settings.payloadChars) return { outcome: 'payload_dropped', catalogs, dropped_chars: payload.length, router: routerLog };
+    if (payload.length > settings.payloadChars) return { outcome: 'payload_dropped', catalogs, dropped_chars: payload.length, router: routerLog, vectors };
     await (io.write ?? writeStdout)(`${payload}\n`);
   }
   const stall = env.GBRAIN_TEST_SKILL_LANE_STALL;
@@ -452,7 +463,7 @@ async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHar
     const gc = { files: LANE_GC_FILES, until: performance.now() + turnLeft() - GC_RESERVE_MS };
     await commitSessionAsync(home, posted.pending.key, { ...posted.pending.delta, ...(hookEvent.history !== undefined ? { history: hookEvent.history } : {}) }, ctl.commit, gc);
   }
-  return { outcome, catalogs, router: routerLog };
+  return { outcome, catalogs, router: routerLog, vectors };
 }
 
 interface WorkerReply { output?: TurnOutput; pending?: { key: string; delta: TurnDelta } | null; pinned?: string; error?: { code: string } }

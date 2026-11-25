@@ -19,11 +19,31 @@ export interface InteractiveProbe {
 }
 
 /** Process-scoped markers only: a variable set inside an agent's child process, never a user-level home dir. */
-const AGENT_MARKERS = ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX', 'CODEX_CI', 'OPENCODE', 'OPENCODE_PID'] as const;
+export const AGENT_MARKERS = ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX', 'CODEX_CI', 'OPENCODE', 'OPENCODE_PID'] as const;
 
 /** The first agent-process marker present in env, or null. Never CODEX_HOME (a human's shell sets it). */
 export function agentProcessMarker(env: NodeJS.ProcessEnv = process.env): string | null {
   for (const k of AGENT_MARKERS) if (env[k]) return k;
+  return null;
+}
+
+/** Variables a human's own shell sets, so their presence says nothing about an agent. */
+const HUMAN_SHELL_VARS: ReadonlySet<string> = new Set(['CODEX_HOME', 'OPENCLAW_HOME']);
+/** gbrain's own child processes: an agent job, the in-agent setup flow, a session agent. */
+const AGENT_CHILD_MARKER_VARS = ['GBRAIN_JOB_CHILD', 'GBRAIN_JOB_CHILD_CLI', 'GBRAIN_IN_AGENT_SETUP', 'GBRAIN_SESSION_AGENT'] as const;
+
+/**
+ * The wider net an owner-only write uses (agent policy): AGENT_MARKERS, any other CODEX_* or
+ * OPENCLAW_* variable an agent harness sets in its children, and gbrain's own agent children.
+ * A marker can only add a refusal; its absence never proves the owner is at the keyboard.
+ */
+export function ownerWriteAgentMarker(env: NodeJS.ProcessEnv = process.env): string | null {
+  const direct = agentProcessMarker(env);
+  if (direct) return direct;
+  for (const k of AGENT_CHILD_MARKER_VARS) if (env[k]) return k;
+  for (const k of Object.keys(env).sort()) {
+    if (env[k] && !HUMAN_SHELL_VARS.has(k) && (k.startsWith('CODEX_') || k.startsWith('OPENCLAW_'))) return k;
+  }
   return null;
 }
 

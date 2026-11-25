@@ -1059,6 +1059,10 @@
       },
       {
         "category": "brain",
+        "name": "policy_valid"
+      },
+      {
+        "category": "brain",
         "name": "unlinked_facts"
       },
       {
@@ -1256,6 +1260,10 @@
       {
         "category": "brain",
         "name": "entity_duplicates"
+      },
+      {
+        "category": "brain",
+        "name": "dedupe_auto_links"
       },
       {
         "category": "brain",

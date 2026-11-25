@@ -384,6 +384,9 @@ describe('release and purge of holds that follow a page (PGLite, managed brain)'
     await purge(alpha);
     await settleManagedGitEffects(engine);
     expect(await left()).toBe(1);
+    // The hold is bound to the renamed page, so the purge of the page that reused the name neither deletes nor notes it
+    // (only unbound holds kept for another page are noted for maintenance; test/write-gate-hold-recheck.test.ts).
+    expect(await engine.executeRaw('SELECT 1 FROM write_gate_hold_rechecks WHERE hold_id=$1', [holdId])).toEqual([]);
 
     await purge(beta);
     await settleManagedGitEffects(engine);

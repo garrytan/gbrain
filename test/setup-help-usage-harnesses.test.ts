@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { SETUP_HELP } from '../src/commands/setup.ts';
+import { SETUP_HELP } from '../src/commands/setup-help.ts';
 
 describe('gbrain setup --help usage', () => {
   test('the first lines name every harness setup writes instructions for', () => {

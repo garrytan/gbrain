@@ -198,8 +198,10 @@ process.exit(1);`);
     const supervisorModule = pathToFileURL(join(import.meta.dir, '../src/core/minions/child-worker-supervisor.ts')).href;
     const workerPidFile = join(root, 'worker.pid');
     const worker = join(root, 'worker.ts');
-    writeFileSync(worker, `import {writeFileSync} from 'node:fs';
-writeFileSync(${JSON.stringify(workerPidFile)},String(process.pid));
+    // Written aside and renamed into place: the poll below sees no file or the whole pid, never the empty file writeFileSync creates before it writes.
+    writeFileSync(worker, `import {renameSync,writeFileSync} from 'node:fs';
+writeFileSync(${JSON.stringify(`${workerPidFile}.tmp`)},String(process.pid));
+renameSync(${JSON.stringify(`${workerPidFile}.tmp`)},${JSON.stringify(workerPidFile)});
 setInterval(()=>{},1000);`);
     const ownerScript = join(root, 'owner.ts');
     writeFileSync(ownerScript, `import {OwnerProcessingState} from ${JSON.stringify(statusModule)};

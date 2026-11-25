@@ -50,6 +50,7 @@ test/access-who-can-read-owner-only.test.ts
 test/access-writes.test.ts
 test/activation-unbound-rooted-6449.test.ts
 test/adopt-local-edit.test.ts
+test/agent-policy.test.ts
 test/alias-source-cascade-5094.test.ts
 test/atom-retirement-keeps-trust-9456.test.ts
 test/attribution-backfill-history.test.ts
@@ -108,6 +109,7 @@ test/db-wins-unimported-gst2579.test.ts
 test/decide-sql-move-parity.test.ts
 test/decide/conflict-proposals-managed.test.ts
 test/declared-lineage-visibility.test.ts
+test/dedupe-collapse.test.ts
 test/degraded-engine-recovered-surface-9224.test.ts
 test/delta-beliefs-link-context-2957.test.ts
 test/derived-link-reconciliation.test.ts
@@ -192,6 +194,7 @@ test/engine-parity/timeline.test.ts
 test/engine-parity/title-fuzzy-like-bound.test.ts
 test/engine-parity/title-fuzzy-unicode.test.ts
 test/engine-parity/traversal-cache.test.ts
+test/engine-parity/trust-floor-refusal.test.ts
 test/engine-parity/trust-tier-reads.test.ts
 test/engine-parity/versions-raw.test.ts
 test/engine-parity/wanted-links.test.ts
@@ -238,6 +241,7 @@ test/fence-repair-receipts.test.ts
 test/fenced-embed-reuse-6961.test.ts
 test/file-drift-normalisation-gst2568.test.ts
 test/file-drift-soft-delete-hold-release-gbra133.test.ts
+test/file-upload-follows-rename.test.ts
 test/folder-holding-coverage-gst2497.test.ts
 test/folder-holding-page-gst2492.test.ts
 test/forecast-journal.test.ts
@@ -726,6 +730,7 @@ test/remember-segmented-entity-9213.test.ts
 test/remember-share-gst2243.test.ts
 test/remember-strict-held-gst2492.test.ts
 test/rename-atom-lineage-7462.test.ts
+test/rename-rekeys-attachments.test.ts
 test/repair-agent-session-facts-segmented-9027.test.ts
 test/repair-apply-pending-6543.test.ts
 test/repair-atom-fence-rows.test.ts
@@ -933,6 +938,7 @@ test/withdrawal-overlay-concurrency.test.ts
 test/withdrawal-publication-file.test.ts
 test/worktree-refresh-recovery-row-gbra130.test.ts
 test/worktree-refresh-unexpected-throw.test.ts
+test/write-gate-hold-recheck.test.ts
 test/write-refusal-refresh-fence-8621.test.ts
 test/write-roundtrips-gbra156.test.ts
 test/write-through-leak-guard-alias-7203.test.ts

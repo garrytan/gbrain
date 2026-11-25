@@ -4,7 +4,7 @@
 <!-- Regenerate: bun run scripts/generate-tool-catalog.ts -->
 <!-- Freshness-guarded by scripts/check-tool-catalog-fresh.sh (bun run verify). -->
 
-Every non-localOnly operation on the MCP surface: 183 tools across 28 areas. **Starter** marks membership in the ~41-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
+Every non-localOnly operation on the MCP surface: 189 tools across 30 areas. **Starter** marks membership in the ~42-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
 
 ## admin
 
@@ -27,6 +27,13 @@ Every non-localOnly operation on the MCP surface: 183 tools across 28 areas. **S
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
 | `advisor` | Ranked, read-only "what to do next" for this brain: version drift, pending migrations, schema-pack issues, stalled jobs, usage-shape gaps, and setup smells. | read |  | `mcp.publish_advisor` |
+
+## agent-policy
+
+| Tool | Description | Scope | Starter | Gate |
+|---|---|---|---|---|
+| `agent_policy` | The user's agent policy rules that apply to you, as rows, with its state and revision. | read |  |  |
+| `policy_check` | Before you send, spend, delete, sign up, call or publish on the user's behalf outside this brain, ask whether the user's agent policy allows it. | read |  |  |
 
 ## chronicle
 
@@ -53,6 +60,7 @@ Every non-localOnly operation on the MCP surface: 183 tools across 28 areas. **S
 
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
+| `capabilities` | Which gbrain ops this installation serves and this connection can call now, listed or not, with the fix for each one that is not callable. | read |  |  |
 | `request_tools` | More tools and params: no arguments lists your catalog; {tools: [names]} returns schemas with every param you may pass; {surface} widens it (per client or stdio session). | read | yes |  |
 
 ## entities
@@ -68,6 +76,14 @@ Every non-localOnly operation on the MCP surface: 183 tools across 28 areas. **S
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
 | `purge_fact` | Owner-only, trusted local CLI on the brain host (`gbrain forget <id> --purge`). | admin |  |  |
+
+## household
+
+| Tool | Description | Scope | Starter | Gate |
+|---|---|---|---|---|
+| `household_add` | Add one household record (supply, birthday, bill, deadline, appointment, return or credit). | write |  |  |
+| `household_due` | Household items overdue, at risk or coming up (bills, supplies, birthdays, school dates, returns, credits), ranked, each with a reason, its slug and a proposed action. | read | yes |  |
+| `household_mark` | Record what happened to a household record: done, bought, paid, booked, submitted, returned, used, gift_ideas, gift_bought, given, skip, pause, resume or archive. | write |  |  |
 
 ## identity
 

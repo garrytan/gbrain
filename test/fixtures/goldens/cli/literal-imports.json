@@ -109,6 +109,9 @@
       "guests": [
         "./commands/guests.ts"
       ],
+      "household": [
+        "./commands/household.ts"
+      ],
       "identity": [
         "./commands/identity.ts"
       ],
@@ -156,8 +159,14 @@
       "pages": [
         "./commands/pages.ts"
       ],
+      "policy": [
+        "./commands/policy.ts"
+      ],
       "pricing": [
         "./commands/pricing.ts"
+      ],
+      "profile": [
+        "./commands/profile.ts"
       ],
       "quarantine": [
         "./commands/trust.ts",

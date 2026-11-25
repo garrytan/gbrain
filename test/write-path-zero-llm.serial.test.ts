@@ -219,6 +219,15 @@ describe('writes commit with zero generative model calls', () => {
     }
   });
 
+  test('household_add, household_mark and household_replace (agent platform H1)', async () => {
+    for (const n of ['household_add', 'household_mark', 'household_replace']) COVERED.add(n);
+    const added = await call('household_add', { kind: 'supply', title: 'Coffee beans zero-llm', cadence: '14d', last_done: '2026-11-20' });
+    await call('household_mark', { slug: added.slug, event: 'bought', on: '2026-11-30' });
+    const { handleToolCall } = await import('../src/mcp/server.ts');
+    await handleToolCall(engine, 'household_replace', {});
+    expectNoGenerative('household_add + household_mark + household_replace');
+  });
+
   test('questions_pin with defer and questions_unpin (C4 pinned questions)', async () => {
     COVERED.add('questions_unpin');
     const pinned = await call('questions_pin', { question: 'What is the current quarterly roadmap with acme-example?', defer: true });

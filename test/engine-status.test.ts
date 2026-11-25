@@ -176,6 +176,18 @@ describe('gbrain engine status', () => {
     expect(existsSync(missing)).toBe(false);
   }, 60_000);
 
+  test('a rust brain reports the installed addon from disk; a pglite brain has no rust_addon block and no engines dir', () => {
+    writeConfig({ engine: 'pglite', database_path: join(home, '.gbrain', 'brain.pglite') });
+    expect(parseReport(run(['engine', 'status', '--json']).stdout).rust_addon).toBeUndefined();
+    writeConfig({ engine: 'rust', database_path: join(home, 'brain.rust') });
+    const { stdout, status } = run(['engine', 'status', '--json'], { GBRAIN_RUST_ENGINE_ADDON: '' });
+    expect(status).toBe(0);
+    expect(parseReport(stdout).rust_addon).toMatchObject({
+      target: ADDON_TARGET, override: false, installed: false, path: null, sha256: null, pinned_sha256: null,
+    });
+    expect(existsSync(join(home, '.gbrain', 'engines'))).toBe(false);
+  }, 60_000);
+
   test('--probe on a rust brain whose addon is missing reports rust_engine_addon_missing, not an unclassified database error', () => {
     const store = join(home, 'brain.rust');
     writeConfig({ engine: 'rust', database_path: store });

@@ -59,6 +59,8 @@ const EXTRA_FLAGS: Record<string, string[]> = {
   forget: ['--reason', '--request-id', '--purge', '--dry-run', '--yes', '--match', '--status', '--vacuum', '--all-subjects'],
   // sources add reads the meetings and slack options as bare names in src/commands/sources-lifecycle-args.ts (its valued set).
   sources: ['--provider', '--transcript', '--lookback-days', '--sync-interval-min', '--record', '--visibility', '--channels', '--timezone', '--max-requests', '--skip'],
+  // transcripts archive setup-import (setup's history import) parses its flags in src/commands/transcripts-archive-setup-import.ts (two levels deep).
+  transcripts: ['--harness', '--created-by-setup', '--blocker', '--stage', '--offer', '--decision', '--no-extract', '--deadline-ms'],
 };
 
 /**
@@ -100,9 +102,10 @@ const DELEGATED_MODULES: Record<string, string[]> = {
  * serve imports it for the read-only check, and its `--watch` made
  * `gbrain serve --watch` pass validation. grants/shared-exposure.ts (GST-363)
  * names other commands' flags (auth rescope, mcp grant, doctor) in warning
- * text that setup, mcp, connect, skillpack and auth print.
+ * text that setup, mcp, connect, skillpack and auth print. shadow/replay-spawn.ts builds the replay child's argv
+ * (`--no-env-file` is a Bun runtime flag for that child, not a flag `engine` parses).
  */
-const EXCLUDED_MODULES = ['thin-client-routing.ts', 'persistence-delegate.ts', 'job-isolation.ts', 'strict-args.ts', 'direct-pool-profile.ts', 'flag-equals.ts', 'shared-exposure.ts'];
+const EXCLUDED_MODULES = ['thin-client-routing.ts', 'persistence-delegate.ts', 'job-isolation.ts', 'strict-args.ts', 'direct-pool-profile.ts', 'flag-equals.ts', 'shared-exposure.ts', 'replay-spawn.ts'];
 
 function isExcludedModule(p: string): boolean {
   // Basename comparison is path-separator agnostic: on Windows p ends in

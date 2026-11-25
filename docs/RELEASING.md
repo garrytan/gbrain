@@ -662,6 +662,16 @@ already-published bad binaries; an affected release needs its own explicitly
 approved recovery and asset verification. The template and plugin publishing
 jobs pin the same Bun version.
 
+The executable build compiles with `--bytecode --format=esm` (the same flags
+sit in `bun run build` and `build:all`), so a binary starts from a stored
+parse of its bundle instead of parsing it on every command. Plain `--bytecode`
+builds CommonJS, which cannot hold top-level await, so `--format=esm` stays
+with it. `bun scripts/check-bytecode-parity.ts`, a step in the Test workflow's
+verify job, builds the release compile line for the host with and without the
+two flags and requires the same stdout, stderr and exit code from a fixed set
+of commands on a temporary PGLite brain; only clock, ids and timings are
+masked. Installs through `bun install -g` run the source and are unaffected.
+
 ### Release CI gate
 
 The `ci-gate` job (`scripts/release-gate.ts`) holds build, publication and the
@@ -683,6 +693,17 @@ succeed on the release commit.
   commit carries the same VERSION with unreleased changes, so the gate then
   refuses and names the re-run of the release commit's push Release run.
   Other refs are refused.
+- **Release dry run (Rust engine addon and gbrain binaries):**
+  `gh workflow run release.yml --ref <branch> -f addon_dry_run=true`
+  builds both addons from that branch, writes the manifest and installs the
+  packaged addon on each platform with the real installer. It also runs the
+  `build` job from that branch: the darwin-arm64 and linux-x64 gbrain binaries
+  are compiled and pass every smoke step, then each runs from an empty
+  directory with a fresh home, as a downloaded install does (`--version`,
+  `init --pglite --no-embedding`, `doctor --json`). It publishes nothing:
+  ci-gate and every publishing job are skipped, no attestation is made, and it
+  runs in its own concurrency group. Without the input the dispatch is the
+  backfill above.
 - The gate waits up to 110 minutes, then fails naming the re-run of the
   Release run.
 - **Reused push run:** a push run that reused a passed full-suite run of its
@@ -1095,7 +1116,10 @@ Invariants:
   platform means updating BOTH plus the version job's completeness check;
   `test/release-workflow.test.ts` pins all of it.
 - **Idempotent + self-repairing.** The version job skips when a release for
-  `v<VERSION>` already exists with all expected assets; a partial release
+  `v<VERSION>` already exists with all expected assets (a subset check: an
+  extra asset, such as `gbrain-eval-gates.pin.json`, which
+  `.github/workflows/eval-gates-pin.yml` attaches after the release, does not
+  make it incomplete); a partial release
   (tag but no release, or missing assets) is completed on re-run. Racing
   master pushes queue via the `release` concurrency group — a skipped
   intermediate version is fine, latest is what matters.
