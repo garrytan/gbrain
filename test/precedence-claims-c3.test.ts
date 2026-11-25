@@ -229,20 +229,20 @@ describe('check_claims matcher follow-ups (C3.1)', () => {
     expect(checkClaim('We have 12 paying customers, and ARR is $2,400,000.', lines).status).toBe('conflicts');
   });
 
-  test('a bare year beside other numbers is not checked as a number', () => {
+  test('a year after a year word beside other numbers is not checked; a count in the year range still is', () => {
     const lines = linesOf('- 2026-01-01: 12 paying customers.');
     expect(checkClaim('In 2025 we had 12 paying customers.', lines).status).toBe('supported');
     expect(checkClaim('In 2025 we had 14 paying customers.', lines).status).toBe('conflicts');
     expect(checkClaim('We have 2000 employees and 12 offices.', linesOf('- 2026-01-01: 1500 employees.\n- 2026-01-01: 12 offices.')).status).toBe('conflicts');
+    expect(checkClaim('We had 12 customers and 2019 signups.', linesOf('- 2026-01-01: 12 customers.')).status).toBe('not_found');
   });
 
-  test('a line that backs one number of a sentence never contradicts its other numbers', () => {
-    const lines = linesOf('- 2026-01-01: 12 paying customers.\n- 2026-01-01: 12 employees.');
-    expect(checkClaim('Our 2 cofounders have 12 paying customers.', lines).status).toBe('not_found');
-    expect(checkClaim('Our 2 cofounders have 12 paying customers.', [...lines, ...linesOf('- 2026-01-01: 2 cofounders.')]).status).toBe('supported');
-    expect(checkClaim('Our 3 cofounders have 12 paying customers.', [...lines, ...linesOf('- 2026-01-01: 2 cofounders.')]).status).toBe('conflicts');
-    expect(checkClaim('We have 12 paying customers and 3 employees.', lines).status).toBe('conflicts');
+  test('a word shared by two clauses never hides a contradiction or loses exact support', () => {
+    expect(checkClaim('We have 50 paying customers and 40 paying employees.', linesOf('- 2026-01-01: 40 paying customers.')).status).toBe('conflicts');
+    expect(checkClaim('Acme has 50 employees, Acme has 40 offices.', linesOf('- 2026-01-01: Acme has 40 employees.\n- 2026-01-01: Acme has 40 offices.')).status).toBe('conflicts');
+    expect(checkClaim('Revenue was $5M and revenue grew 40%.', linesOf('- 2026-01-01: revenue $5M.\n- 2026-01-01: revenue grew 40%.')).status).toBe('supported');
     expect(checkClaim('We have 12 paying customers and 3 employees.', linesOf('- 2026-01-01: 12 paying customers and 5 employees.')).status).toBe('conflicts');
+    expect(checkClaim('Our 2 cofounders have 12 paying customers.', linesOf('- 2026-01-01: 12 paying customers.\n- 2026-01-01: 2 cofounders.')).status).toBe('supported');
   });
 
   test('a scaled decimal equals the same amount written out', () => {

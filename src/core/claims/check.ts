@@ -11,9 +11,8 @@
  *   not_found  no allowed line covers it. That means "no allowed claim covers this", never "this is false".
  *
  * A sentence with several numbers is checked number by number, each with the words of its own clause: supported only
- * when every number is, conflicts when any number is contradicted, otherwise not_found. A line that backs one of the
- * sentence's other numbers (and holds no other number) never contradicts this one, and its words are not this number's
- * words. A bare year (1900 to 2099, no unit) beside other numbers counts only when some line covers it. A percent
+ * when every number is, conflicts when any number is contradicted, otherwise not_found. A year (1900 to 2099, no unit,
+ * right after in, since, during, by, until, from, through or FY) beside other numbers is not checked. A percent
  * never matches a plain number, digits inside a word (Q3) are not numbers, and a comma between digits ($2,100,000) is
  * a thousands separator, not a clause break.
  */
@@ -34,16 +33,18 @@ const SCALE: Record<string, number> = { k: 1e3, thousand: 1e3, m: 1e6, million: 
 const DATED_LINE = /^\s*(?:[-*]\s+)?(\d{4}-\d{2}-\d{2})\s*[:\u2013\u2014-]\s*(.+)$/;
 const STOPWORDS = new Set(('the and for with that this from have has had our are was were will been about into than then they them their '
   + 'you your per each every over under more less most least now not but all any its it\'s which who whom what when where how').split(' '));
+const YEAR_WORD = /(?:\b(?:in|since|during|by|until|from|through)|\bFY)\s*$/i;
 const MAX_CONFLICTS = 3;
 
 function numbers(text: string): Num[] {
   const out: Num[] = [];
-  for (const m of text.replace(ISO_DATE, ' ').matchAll(NUMBER)) {
+  const plain = text.replace(ISO_DATE, ' ');
+  for (const m of plain.matchAll(NUMBER)) {
     const raw = Number(m[2]!.replace(/,/g, ''));
     if (!Number.isFinite(raw)) continue;
     const suffix = m[3]?.toLowerCase();
     const unit = m[1] ? 'currency' : suffix === '%' || suffix === 'percent' ? 'percent' : '';
-    out.push({ value: raw * (suffix ? SCALE[suffix] ?? 1 : 1), unit, year: !m[1] && !suffix && /^(?:19|20)\d\d$/.test(m[2]!) });
+    out.push({ value: raw * (suffix ? SCALE[suffix] ?? 1 : 1), unit, year: !m[1] && !suffix && /^(?:19|20)\d\d$/.test(m[2]!) && YEAR_WORD.test(plain.slice(0, m.index)) });
   }
   return out;
 }
@@ -79,49 +80,38 @@ export function allowedLines(page: { slug: string; source_id: string; body: stri
 
 export function checkClaim(claim: string, lines: readonly AllowedLine[]): ClaimCheck {
   const all = numbers(claim);
-  if (all.length < 2) return checkPart(claim, claim, all, lines);
-  const optionalYears = all.some(n => !n.year);
-  const units = numberClauses(claim).flatMap(part => numbers(part).map(n => ({ part, n })));
-  if (units.length < 2) return checkPart(claim, claim, all, lines);
-  const facts = lines.map(l => { const body = lineBody(l); return { l, words: words(body), nums: numbers(body) }; });
-  const results = units.flatMap(u => {
-    const siblings = units.filter(s => s !== u);
-    const backsSibling = new Set(facts.filter(f => f.nums.every(n => siblings.some(s => sameNumber(n, s.n)))
-      && siblings.some(s => f.nums.some(n => sameNumber(n, s.n)) && [...words(s.part)].some(w => f.words.has(w)))).map(f => f.l));
-    const taken = new Set([...backsSibling].flatMap(l => [...words(lineBody(l))]));
-    const result = checkPart(claim, u.part, [u.n], lines.filter(l => !backsSibling.has(l)), taken);
-    return optionalYears && u.n.year && result.status === 'not_found' ? [] : [result];
-  });
+  const counted = all.every(n => n.year) ? () => true : (n: Num) => !n.year;
+  const units = numberClauses(claim, counted).flatMap(part => numbers(part).filter(counted).map(n => ({ part, n })));
+  if (units.length < 2) return checkPart(claim, claim, all.filter(counted), lines);
+  const results = units.map(u => checkPart(claim, u.part, [u.n], lines));
   const conflicting = results.filter(r => r.status === 'conflicts');
   if (conflicting.length) {
-    return { claim, status: 'conflicts', conflicting: [...new Set(conflicting.flatMap(r => r.conflicting ?? []))].slice(0, MAX_CONFLICTS) };
+    return { claim, status: 'conflicts', conflicting: conflicting.flatMap(r => r.conflicting ?? []).slice(0, MAX_CONFLICTS) };
   }
-  return results.length && results.every(r => r.status === 'supported') ? { claim, status: 'supported', cited: results[0]!.cited } : { claim, status: 'not_found' };
+  return results.every(r => r.status === 'supported') ? { claim, status: 'supported', cited: results[0]!.cited } : { claim, status: 'not_found' };
 }
 
 /**
  * A sentence with two or more numbers, split so each number is checked with the words of its own clause; a clause with
  * no number joins the next one. One number: the whole sentence.
  */
-function numberClauses(claim: string): string[] {
-  if (numbers(claim).length < 2) return [claim];
+function numberClauses(claim: string, counted: (n: Num) => boolean): string[] {
+  if (numbers(claim).filter(counted).length < 2) return [claim];
   const out: string[] = [];
   let pending = '';
   for (const clause of claim.split(/(?<!\d),\s*|,(?!\d)\s*|;\s*|\s+(?:and|but|while|whereas)\s+/i)) {
     pending = pending ? `${pending} ${clause}` : clause;
-    if (numbers(clause).length) { out.push(pending); pending = ''; }
+    if (numbers(clause).some(counted)) { out.push(pending); pending = ''; }
   }
   if (pending && out.length) out[out.length - 1] += ` ${pending}`;
   return out;
 }
 
-const lineBody = (l: AllowedLine) => l.text.replace(/\bsource:.*$/i, '');
-
-function checkPart(claim: string, part: string, claimNums: readonly Num[], lines: readonly AllowedLine[], taken: ReadonlySet<string> = new Set()): ClaimCheck {
-  const claimWords = new Set([...words(part)].filter(w => !taken.has(w)));
+function checkPart(claim: string, part: string, claimNums: readonly Num[], lines: readonly AllowedLine[]): ClaimCheck {
+  const claimWords = words(part);
   const need = Math.min(2, claimWords.size);
   const scored = lines.map(l => {
-    const body = lineBody(l);
+    const body = l.text.replace(/\bsource:.*$/i, '');
     const lineWords = words(body);
     const overlap = [...claimWords].filter(w => lineWords.has(w)).length;
     const lineNums = numbers(body);
