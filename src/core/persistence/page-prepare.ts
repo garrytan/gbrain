@@ -57,7 +57,7 @@ import { sealImportedPage, sealPageTextProjection } from '../page-state/projecti
 import { materializedSnapshot, sealSegmentedPage } from './segmented-apply.ts';
 import { isStagingBodyRef, prepareStagedUpload } from './page-upload.ts';
 import { pipelined } from '../page-state/transactions.ts';
-import { overlayCanonicalBodies } from '../page-state/snapshot.ts';
+import { overlayCanonicalBodiesTyped } from '../page-state/snapshot.ts';
 import { segmentedRevertRefusal } from '../page-state/versions.ts';
 import { bodyUnread, fenceBody, isSegmentedPage, pageBodySegmentedError, withoutBody } from '../page-body/page-shape.ts';
 import { fileBodyDigests, overlaidFileBodyDigests, storedBodyDigests, type ByteSource, type FileReading, type RegionDigests } from '../page-body/body-digests.ts';
@@ -279,7 +279,7 @@ export async function fileSnapshotDifference(engine: BrainEngine, slug: string, 
     const type = importedFileType(parsed, snapshot.page, inferred);
     // Withdrawal overlays intentionally precede physical mirroring. The ledger
     // is applied by the import preparation and cannot be undone by this check.
-    const actual = canonical({ ...parsed, frontmatter: withoutSafetyAssessments(parsed.frontmatter), type, ...await overlayCanonicalBodies(engine.executeRaw.bind(engine),
+    const actual = canonical({ ...parsed, frontmatter: withoutSafetyAssessments(parsed.frontmatter), type, ...await overlayCanonicalBodiesTyped(engine,
       parsed.compiled_truth, parsed.timeline ?? '', snapshot.withdrawals, { sourceId: snapshot.page.source_id, marker: snapshot.globalPurges }) }, parsed.tags);
     return expected.map(page => canonicalDifference(actual, page)).reduce((closer, keys) => keys.length < closer.length ? keys : closer);
   };
@@ -314,7 +314,7 @@ async function frontmatterDriftWrite(engine: BrainEngine, slug: string, fileText
   snapshot = (await materializedSnapshot(engine, snapshot))!;
   const file = parseMarkdown(fileText, slug, { activePack });
   const type = importedFileType(file, snapshot.page, false);
-  const bodies = await overlayCanonicalBodies(engine.executeRaw.bind(engine), file.compiled_truth, file.timeline ?? '', snapshot.withdrawals,
+  const bodies = await overlayCanonicalBodiesTyped(engine, file.compiled_truth, file.timeline ?? '', snapshot.withdrawals,
     { sourceId: snapshot.page.source_id, marker: snapshot.globalPurges });
   const bare = (page: Parameters<typeof canonical>[0], tags: string[]) => digest(canonical({ ...page, frontmatter: {} }, tags));
   if (!storedReadings(snapshot.page).some(page => bare({ ...file, type, ...bodies }, file.tags) === bare(page, snapshot.tags))) return null;
@@ -426,7 +426,7 @@ async function segmentedFileMatches(engine: BrainEngine, slug: string, bytes: By
     // A facts fence under a ledger that applies is compared overlaid, one complete fence block at a time; a fence longer
     // than FENCE_MAX_BYTES refuses, as the stored side's trusted read does.
     const fileDigests = file.factsFence && ledgerApplies(ledger)
-      ? await overlaidFileBodyDigests(bytes, reading, file.regions, async text => (await overlayCanonicalBodies(engine.executeRaw.bind(engine), text, '',
+      ? await overlaidFileBodyDigests(bytes, reading, file.regions, async text => (await overlayCanonicalBodiesTyped(engine, text, '',
         ledger.withdrawals, { sourceId: snapshot.page.source_id, marker: ledger.globalPurges })).compiled_truth,
       fence => fenceTooLargeError(slug, snapshot.page.source_id, fence), between)
       : file.digests;

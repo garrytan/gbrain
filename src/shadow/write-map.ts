@@ -263,7 +263,7 @@ export const READ_ONLY_MEMBERS: ReadonlySet<string> = new Set([
   'factRelinkAttemptsTableExists', 'filterPagesAtRevision', 'filterUnarchivedSourceIds', 'heldEntityPageDeleted',
   'heldGenerationRowsForInput', 'heldMoveDue', 'heldTargetPageLive', 'holdsNotifierLease', 'inboundLinkCoverage',
   'linkRelationshipKeysForOrigin', 'linkRelationshipKeysForPages', 'liveGenerationForOperation', 'lockActiveAccessTokens',
-  'lockAllSourceRows', 'lockBodyStagingState', 'lockLegacyAccessTokens', 'lockLivePagesByKey', 'lockSharedSkillBrainId',
+  'lockAllSourceRows', 'lockBodyStagingState', 'lockLegacyAccessTokens', 'lockSegmentedGenerationPage', 'lockLivePagesByKey', 'lockSharedSkillBrainId',
   'loopFactDrift', 'matchHeadStems', 'matchSavedFacts', 'maxConversationRowNum', 'maxFenceRowNum', 'maxFenceRowNumOfPage',
   'nextLivePageAfter', 'oauthClientHoldsAuthorization', 'oauthClientLive', 'originIndexPresent', 'ownerReachesFact',
   'ownsSchemaTables', 'pageAwaitsRederive', 'pageHasFrontmatterKey', 'pageHasTimelineEntries', 'pagePrefixSamples',
@@ -403,6 +403,9 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'invalidateContentDriftChunks', 'lockContentDriftState',
   // Batch 12 typed writes (repair-rust b9/b6b, lanes 6, 13 and the segmented and secret-store members): not mapped to a write plan yet, so they publish invalid like the rest of the list.
   'clearCodeEdgesLeavingChunks', 'deleteChunksByIds', 'deleteManagedSyncFailureObservation', 'deleteUnreferencedSecretEntry', 'dispatchBudgetReservation', 'insertBackupSecretEntry', 'insertBackupSecretOccurrence', 'insertOpCheckpointIfAbsent', 'insertRemirrorEffects', 'insertSecretEntry', 'insertSecretOccurrence', 'markSecretEntryAllowed', 'movePageVersions', 'moveTwinFacts', 'moveTwinPageChildren', 'moveTwinRelationships', 'reclaimBudgetReservations', 'recordRenameAlias', 'releaseBudgetReservation', 'replaceOpCheckpointAtVersion', 'reserveBudgetReservation', 'retireStaleSegmentChunks', 'setRawDataValue', 'setRedactedPageFields', 'setRedactedRowText', 'setRetainedVersionBody', 'settleBudgetReservation', 'upsertFenceTrendRunRecord',
+  // The segmented write path's typed writes (engine-members/segmented-writes.ts): a re-chunk, a fence rewrite and a segmented embed.
+  'installSegmentedVectors', 'publishRebuiltGeneration', 'restorePageDeletedAt', 'restorePageUpdatedAt',
+  'setMaterializingRevision', 'setSegmentedVersionHash', 'splitManifestGeneration',
 ]);
 export type MemberKind = 'read_name' | 'raw' | 'reserved' | 'ignored' | 'schema' | 'mapped' | 'unmapped';
 

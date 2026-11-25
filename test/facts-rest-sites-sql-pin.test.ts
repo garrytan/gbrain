@@ -108,6 +108,9 @@ const PINS: Pin[] = [
   AND NOT EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id
     AND w.visibility=f.visibility AND w.subject = ANY(CASE WHEN starts_with(COALESCE(f.source_markdown_slug, ''), 'memory/members/') THEN ARRAY[f.source_markdown_slug] ELSE ARRAY['*', f.entity_slug] END)
     AND w.fact_hash = gbrain_fact_fingerprint_v1(f.fact))
+  AND NOT EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id
+    AND w.visibility=f.visibility AND w.subject = ANY(CASE WHEN starts_with(COALESCE(f.source_markdown_slug, ''), 'memory/members/') THEN ARRAY[f.source_markdown_slug] ELSE ARRAY['*', f.entity_slug] END)
+    AND w.fact_hash = gbrain_fact_fingerprint_v2(f.fact))
   AND EXISTS (SELECT 1 FROM sources s WHERE s.id=f.source_id AND NOT s.archived)
   AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id
     AND p.slug=f.source_markdown_slug AND p.deleted_at IS NOT NULL) AND (f.embedding IS NULL OR f.embedding_model IS DISTINCT FROM $3
@@ -129,6 +132,9 @@ const PINS: Pin[] = [
   AND NOT EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id
     AND w.visibility=f.visibility AND w.subject = ANY(CASE WHEN starts_with(COALESCE(f.source_markdown_slug, ''), 'memory/members/') THEN ARRAY[f.source_markdown_slug] ELSE ARRAY['*', f.entity_slug] END)
     AND w.fact_hash = gbrain_fact_fingerprint_v1(f.fact))
+  AND NOT EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id
+    AND w.visibility=f.visibility AND w.subject = ANY(CASE WHEN starts_with(COALESCE(f.source_markdown_slug, ''), 'memory/members/') THEN ARRAY[f.source_markdown_slug] ELSE ARRAY['*', f.entity_slug] END)
+    AND w.fact_hash = gbrain_fact_fingerprint_v2(f.fact))
   AND EXISTS (SELECT 1 FROM sources s WHERE s.id=f.source_id AND NOT s.archived)
   AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id
     AND p.slug=f.source_markdown_slug AND p.deleted_at IS NOT NULL) AND (f.embedding IS NULL OR f.embedding_model IS DISTINCT FROM $3
@@ -314,7 +320,7 @@ const PINS: Pin[] = [
     from: "src/core/facts/single-prepare.ts:97 memberPageWithdrawal",
     member: 'readMemberPageWithdrawal',
     run: e => e.readMemberPageWithdrawal({ sourceId: 's1', visibility: 'world', fact: 'F', entitySlug: 'people/x', page: 'memory/members/m1', owner: false, identity: [], satisfied: [] }),
-    statements: [{ digest: { length: 16084, sha256: 'c8b42eacf1f3b3db6638a34fa8ab1c73273a2cd98e2c09631a08e279c1c6d335' }, params: ['s1', 'world', 'F', 'people/x', 'memory/members/m1'] }],
+    statements: [{ digest: { length: 16115, sha256: '36f1c0b304fba2d114da48c460bf21a3308d8fc08b8ab332a01739055d73f5d0' }, params: ['s1', 'world', 'F', 'people/x', 'memory/members/m1'] }],
   },
   {
     from: "src/core/facts/single-prepare.ts:106,117 factWithdrawnRefusal (at 8a5229aa8c)",
@@ -346,7 +352,7 @@ const PINS: Pin[] = [
     run: e => e.readReplacementTarget({ targetId: 7, sourceId: 's1', ownPage: null }),
     statements: [{ text: `SELECT f.*,
       EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id AND w.visibility=f.visibility
-        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact))
+        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v2(f.fact),gbrain_fact_fingerprint_v1(f.fact))
         AND (CASE WHEN starts_with(COALESCE(f.source_markdown_slug, ''), 'memory/members/') THEN w.subject = f.source_markdown_slug
     ELSE (w.subject = '*' OR w.subject = COALESCE(f.entity_slug, '*') OR (COALESCE(strpos(f.entity_slug, '/') = 0 AND NOT EXISTS (SELECT 1 FROM pages unbacked_page
     WHERE unbacked_page.source_id = f.source_id AND unbacked_page.slug = f.entity_slug AND unbacked_page.deleted_at IS NULL), false) AND NOT (starts_with(w.subject, 'memory/members/') OR w.subject = 'memory/scope')) OR ((starts_with(COALESCE(f.source_markdown_slug, ''), 'memory/members/') OR COALESCE(f.source_markdown_slug, '') = 'memory/scope') AND w.subject = f.source_markdown_slug)) END)) AS withdrawn
@@ -357,14 +363,14 @@ const PINS: Pin[] = [
     member: 'readReplacementTarget',
     label: "excludePrivate",
     run: e => e.readReplacementTarget({ targetId: 7, sourceId: 's1', excludePrivate: true, ownPage: null }),
-    statements: [{ digest: { length: 9054, sha256: '9e5efe7e8e12cc32aa211a21fc0bd969d5058f3b9d90d5cf5b4fb4551d2097dc' }, params: [7, 's1'] }],
+    statements: [{ digest: { length: 9089, sha256: '248f12b958390ecc43c4db78815aa26cc5cf41224ae2de3cedafa276177e82b1' }, params: [7, 's1'] }],
   },
   {
     from: "src/core/facts/single-prepare.ts:231 decideReplacement",
     member: 'readReplacementTarget',
     label: "excludePrivate, own member page",
     run: e => e.readReplacementTarget({ targetId: 7, sourceId: 's1', excludePrivate: true, ownPage: 'p1' }),
-    statements: [{ digest: { length: 9087, sha256: '9c5231313ee534ac46f7b620ec4c5ee69af98c40d88b9439cf82b285c46d0a5c' }, params: [7, 's1', 'p1'] }],
+    statements: [{ digest: { length: 9122, sha256: '68ae3aa57f657017bfd032c2cee9af7b9d84e115945a546318349e66b7fd8f84' }, params: [7, 's1', 'p1'] }],
   },
   {
     from: "src/core/facts/single-prepare.ts:231 decideReplacement",
@@ -373,7 +379,7 @@ const PINS: Pin[] = [
     run: e => e.readReplacementTarget({ targetId: 7, sourceId: 's1', ownPage: null, lock: true }),
     statements: [{ text: `SELECT f.*,
       EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id AND w.visibility=f.visibility
-        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact))
+        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v2(f.fact),gbrain_fact_fingerprint_v1(f.fact))
         AND (CASE WHEN starts_with(COALESCE(f.source_markdown_slug, ''), 'memory/members/') THEN w.subject = f.source_markdown_slug
     ELSE (w.subject = '*' OR w.subject = COALESCE(f.entity_slug, '*') OR (COALESCE(strpos(f.entity_slug, '/') = 0 AND NOT EXISTS (SELECT 1 FROM pages unbacked_page
     WHERE unbacked_page.source_id = f.source_id AND unbacked_page.slug = f.entity_slug AND unbacked_page.deleted_at IS NULL), false) AND NOT (starts_with(w.subject, 'memory/members/') OR w.subject = 'memory/scope')) OR ((starts_with(COALESCE(f.source_markdown_slug, ''), 'memory/members/') OR COALESCE(f.source_markdown_slug, '') = 'memory/scope') AND w.subject = f.source_markdown_slug)) END)) AS withdrawn
@@ -384,7 +390,7 @@ const PINS: Pin[] = [
     member: 'readReplacementTarget',
     label: "excludePrivate, own member page, row lock",
     run: e => e.readReplacementTarget({ targetId: 7, sourceId: 's1', excludePrivate: true, ownPage: 'p1', lock: true }),
-    statements: [{ digest: { length: 9103, sha256: '7fd54d799d924fc8f4bd5e00fb42f487e5f2431976014baa4633808ea8393a90' }, params: [7, 's1', 'p1'] }],
+    statements: [{ digest: { length: 9138, sha256: '23dd72adc38f957927ff402acb5695fb399160a1731331b763854e86037299a8' }, params: [7, 's1', 'p1'] }],
   },
   {
     from: "src/core/facts/proposal-supersede.ts:107 loadPairFact",
@@ -442,7 +448,7 @@ const PINS: Pin[] = [
     member: 'readWithdrawalAnchor',
     run: e => e.readWithdrawalAnchor(7, 's1'),
     statements: [{ text: `SELECT EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = f.source_id AND w.visibility = f.visibility
-        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact))
+        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v2(f.fact), gbrain_fact_fingerprint_v1(f.fact))
         AND (CASE WHEN starts_with(COALESCE(f.source_markdown_slug, ''), 'memory/members/') THEN w.subject = f.source_markdown_slug
     ELSE (w.subject = '*' OR w.subject = COALESCE(f.entity_slug, '*') OR (COALESCE(strpos(f.entity_slug, '/') = 0 AND NOT EXISTS (SELECT 1 FROM pages unbacked_page
     WHERE unbacked_page.source_id = f.source_id AND unbacked_page.slug = f.entity_slug AND unbacked_page.deleted_at IS NULL), false) AND NOT (starts_with(w.subject, 'memory/members/') OR w.subject = 'memory/scope')) OR ((starts_with(COALESCE(f.source_markdown_slug, ''), 'memory/members/') OR COALESCE(f.source_markdown_slug, '') = 'memory/scope') AND w.subject = f.source_markdown_slug)) END)) AS withdrawn

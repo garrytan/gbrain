@@ -338,6 +338,7 @@ import { v334 } from './v334-learning-items.ts';
 import { v336 } from './v336-byte-order-slug-indexes.ts';
 import { v337 } from './v337-projection-jobs-byte-order-index.ts';
 import { v338 } from './v338-pages-projection-waiting-haystack-trgm.ts';
+import { v339 } from './v339-fact-fingerprint-v3.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -674,4 +675,5 @@ export const MIGRATIONS: Migration[] = [
   v336,
   v337,
   v338,
+  v339,
 ];

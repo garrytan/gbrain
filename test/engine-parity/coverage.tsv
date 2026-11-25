@@ -57,7 +57,7 @@
 # facts_trust: 56/57
 # facts_recall: 9/9
 # facts_conversation: 30/30
-# belief_ledger: 17/17
+# belief_ledger: 19/19
 # belief_purge: 6/6
 # trust_tier_reads: 22/22
 # derivation_trust: 3/3
@@ -348,11 +348,11 @@ invalidateContentDriftEmbeddings	chunks	yes	2	no	yes	yes	serves
 listStaleChunks	chunks	yes	4	no	yes	yes	serves
 countChunklessPagesWithContent	chunks	yes	6	yes	yes	yes	serves
 listChunklessPagesWithContent	chunks	yes	4	yes	yes	yes	serves
-readEmbeddingStateCounts	chunks	yes	2	no	yes	yes	serves
-listEmbeddingStateRows	chunks	yes	3	no	yes	yes	serves
-deleteChunks	chunks	yes	3	no	yes	yes	serves
+readEmbeddingStateCounts	chunks	yes	3	no	yes	yes	serves
+listEmbeddingStateRows	chunks	yes	4	no	yes	yes	serves
+deleteChunks	chunks	yes	4	no	yes	yes	serves
 deleteChunksExcept	chunks	yes	4	no	yes	yes	serves
-setChunkerVersion	chunks	yes	19	no	yes	yes	serves
+setChunkerVersion	chunks	yes	20	no	yes	yes	serves
 writeTextProjectionSeal	chunks	yes	3	no	yes	yes	serves
 moveChunkIndexes	chunks	yes	2	no	yes	yes	serves
 getChunkReuseRows	chunks	yes	4	no	yes	yes	serves
@@ -654,20 +654,40 @@ sealSegmentedPage	segmented_body	yes	16	no	yes	yes	serves
 openBodyStaging	segmented_body	yes	52	no	yes	yes	serves
 setBodyStagingState	segmented_body	yes	49	no	yes	yes	serves
 sweepSegments	segmented_body	yes	4	no	yes	yes	serves
-readSegmentDerivations	segmented_body	yes	9	no	yes	yes	serves
-upsertSegmentDerivations	segmented_body	yes	13	no	yes	yes	serves
+readSegmentDerivations	segmented_body	yes	11	no	yes	yes	serves
+upsertSegmentDerivations	segmented_body	yes	14	no	yes	yes	serves
 retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
-lockBodyStagingState	segmented_body	yes	7	no	yes	yes	serves
-listChunkedOccurrences	segmented_body	yes	4	no	yes	yes	serves
-readRetiredChunkVectors	segmented_body	yes	1	no	yes	yes	serves
-hasStaleSegmentChunks	segmented_body	yes	3	no	yes	yes	serves
-retireStaleSegmentChunks	segmented_body	yes	2	no	yes	yes	serves
-readSegmentedProjectionPage	segmented_body	yes	2	no	yes	yes	serves
-deleteUnstagedSegmentChunks	segmented_body	yes	3	no	yes	yes	serves
-deleteRewrittenSegmentDerivations	segmented_body	yes	1	no	yes	yes	serves
+lockBodyStagingState	segmented_body	yes	8	no	yes	yes	serves
+listChunkedOccurrences	segmented_body	yes	5	no	yes	yes	serves
+readRetiredChunkVectors	segmented_body	yes	3	no	yes	yes	serves
+hasStaleSegmentChunks	segmented_body	yes	4	no	yes	yes	serves
+retireStaleSegmentChunks	segmented_body	yes	3	no	yes	yes	serves
+readSegmentedProjectionPage	segmented_body	yes	3	no	yes	yes	serves
+deleteUnstagedSegmentChunks	segmented_body	yes	4	no	yes	yes	serves
+deleteRewrittenSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 readPageViewDigest	segmented_body	yes	1	no	yes	yes	serves
 writePageViewDigest	segmented_body	yes	1	no	yes	yes	serves
 listVectorlessChunkIndexes	segmented_body	yes	3	no	yes	yes	serves
+readSegmentedLivePage	segmented_body	yes	1	no	yes	yes	serves
+listSegmentedRechunkCandidates	segmented_body	yes	1	no	yes	yes	serves
+readSegmentedRechunkPage	segmented_body	yes	1	no	yes	yes	serves
+listOccurrenceChunks	segmented_body	yes	1	no	yes	yes	serves
+readMaterializingRevision	segmented_body	yes	1	no	yes	yes	serves
+setMaterializingRevision	segmented_body	yes	1	no	yes	yes	serves
+restorePageUpdatedAt	segmented_body	yes	1	no	yes	yes	serves
+readSegmentedRewritePage	segmented_body	yes	2	no	yes	yes	serves
+restorePageDeletedAt	segmented_body	yes	1	no	yes	yes	serves
+lockSegmentedGenerationPage	segmented_body	yes	1	no	yes	yes	serves
+splitManifestGeneration	segmented_body	yes	1	no	yes	yes	serves
+publishRebuiltGeneration	segmented_body	yes	1	no	yes	yes	serves
+setSegmentedVersionHash	segmented_body	yes	1	no	yes	yes	serves
+hasLiveSegmentedPage	segmented_body	yes	1	no	yes	yes	serves
+countSegmentedEmbedRows	segmented_body	yes	1	no	yes	yes	serves
+listSegmentedStaleRows	segmented_body	yes	2	no	yes	yes	serves
+readSegmentChunkInputHashes	segmented_body	yes	1	no	yes	yes	serves
+installSegmentedVectors	segmented_body	yes	2	no	yes	yes	serves
+listLiveEmbedSegments	segmented_body	yes	1	no	yes	yes	serves
+listSegmentChunkRows	segmented_body	yes	1	no	yes	yes	serves
 listInlineVersionTexts	versions	yes	2	no	yes	yes	serves
 createVersion	versions	yes	86	no	yes	yes	serves
 getVersions	versions	yes	34	no	yes	yes	serves
@@ -1058,8 +1078,8 @@ listPurgeOrigins	page_purge	yes	2	no	yes	yes	serves
 upsertDerivedOriginPark	page_purge	yes	4	no	yes	yes	serves
 recordOwedPurgeRows	page_purge	yes	2	no	yes	yes	serves
 deleteOriginHoldRows	page_purge	yes	3	no	yes	yes	serves
-readSegmentedPageSealed	mention_pass	yes	1	no	yes	yes	serves
-storeSegmentDerivationsIfLive	mention_pass	yes	1	no	yes	yes	serves
+readSegmentedPageSealed	mention_pass	yes	2	no	yes	yes	serves
+storeSegmentDerivationsIfLive	mention_pass	yes	2	no	yes	yes	serves
 listMentionSourceIds	mention_pass	yes	1	no	yes	yes	serves
 writeMentionIndexStatus	mention_pass	yes	1	no	yes	yes	serves
 lockMentionSources	mention_pass	yes	1	no	yes	yes	serves
@@ -1321,11 +1341,11 @@ startSubagentToolExecution	minion_subagent	yes	3	no	yes	yes	serves
 completeSubagentToolExecution	minion_subagent	yes	7	no	yes	yes	serves
 failSubagentToolExecution	minion_subagent	yes	7	no	yes	yes	serves
 listExportPageKeys	cli_reads_export	yes	2	no	yes	yes	serves
-readExportWithdrawalLedgerBytes	cli_reads_export	yes	2	no	yes	yes	serves
-listExportWithdrawals	cli_reads_export	yes	3	no	yes	yes	serves
-readExportPageRows	cli_reads_export	yes	3	no	yes	yes	serves
-normalizeFenceLines	cli_reads_export	yes	3	no	yes	yes	serves
-readSegmentedPageHead	cli_reads_export	yes	4	no	yes	yes	serves
+readExportWithdrawalLedgerBytes	cli_reads_export	yes	3	no	yes	yes	serves
+listExportWithdrawals	cli_reads_export	yes	4	no	yes	yes	serves
+readExportPageRows	cli_reads_export	yes	4	no	yes	yes	serves
+normalizeFenceLines	cli_reads_export	yes	5	no	yes	yes	serves
+readSegmentedPageHead	cli_reads_export	yes	9	no	yes	yes	serves
 readBodyManifestRows	cli_reads_export	yes	4	no	yes	yes	serves
 readBodyManifestMeta	cli_reads_export	yes	1	no	yes	yes	serves
 readBodyManifestOutline	cli_reads_export	yes	1	no	yes	yes	serves
@@ -1733,6 +1753,8 @@ lockPageById	facts_conversation	yes	1	no	yes	yes	serves
 listClearedRelinkedFacts	facts_conversation	yes	1	no	yes	yes	serves
 countEmbeddedFactsAmong	facts_conversation	yes	1	no	yes	yes	serves
 readBeliefTombstones	belief_ledger	yes	8	no	yes	yes	serves
+readLegacyClaimFingerprints	belief_ledger	yes	1	no	yes	yes	serves
+readLegacyBeliefTombstones	belief_ledger	yes	1	no	yes	yes	serves
 readLatestBeliefCoverage	belief_ledger	yes	2	no	yes	yes	serves
 hasBeliefBaseline	belief_ledger	yes	1	no	yes	yes	serves
 listBeliefBaselinePending	belief_ledger	yes	3	no	yes	yes	serves
@@ -1826,7 +1848,7 @@ hasCoveringFactWithdrawal	trust	yes	5	no	yes	yes	serves
 insertFactWithdrawal	trust	yes	59	no	yes	yes	serves
 isFactWithdrawn	trust	yes	4	no	yes	yes	serves
 isFactPurged	trust	yes	7	no	yes	yes	serves
-listFactWithdrawalDates	trust	yes	2	no	yes	yes	serves
+listFactWithdrawalDates	trust	yes	3	no	yes	yes	serves
 moveFactWithdrawalSubject	trust	yes	1	no	yes	yes	serves
 hasFactWithdrawalForSubject	trust	yes	1	no	yes	yes	serves
 listFactWithdrawalKeys	trust	yes	4	no	yes	yes	serves
@@ -2058,7 +2080,7 @@ listFailedWriteRequests	repair_bookkeeping	yes	2	no	yes	yes	serves
 readDriftConflictBounds	repair_bookkeeping	yes	2	no	yes	yes	serves
 listDriftConflictGroups	repair_bookkeeping	yes	4	no	yes	yes	serves
 readDriftConflictDetails	repair_bookkeeping	yes	3	no	yes	yes	serves
-listUntiledSegmentedPages	repair_bookkeeping	yes	1	no	yes	yes	serves
+listUntiledSegmentedPages	repair_bookkeeping	yes	2	no	yes	yes	serves
 listSourceHoldRecords	repair_bookkeeping	yes	1	no	yes	yes	serves
 requestGitHoldRetry	repair_bookkeeping	yes	1	no	yes	yes	serves
 readRepairBusyRows	repair_bookkeeping	yes	1	no	yes	yes	serves
@@ -2125,7 +2147,7 @@ readAdmittedPageRefs	relational_reads	yes	2	no	yes	yes	serves
 readPageSynopses	relational_reads	yes	2	no	yes	yes	serves
 readSeedTitleSlugs	relational_reads	yes	1	no	yes	yes	serves
 listFenceFactRows	trust_fence	yes	5	no	yes	yes	serves
-restorePageTrust	trust_fence	yes	1	no	yes	yes	serves
+restorePageTrust	trust_fence	yes	2	no	yes	yes	serves
 listHeldRows	trust_fence	yes	6	no	yes	yes	serves
 listGuardedTakeRows	trust_fence	yes	1	no	yes	yes	serves
 insertTrustProposal	trust_proposals	yes	29	no	yes	yes	serves

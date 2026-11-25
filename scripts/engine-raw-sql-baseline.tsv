@@ -232,6 +232,7 @@ src/core/enrichment-service.ts	execute_raw	2
 src/core/entities/near-name.ts	execute_raw	1
 src/core/entities/resolve-on-save.ts	execute_raw	1	GBRA-574 F #9674 (opened before this ratchet): the live-page check before keeping an unbacked name tag
 src/core/export-publish.ts	driver_call	3
+src/core/export-snapshot.ts	execute_raw	1	aliases a withdrawal or purge stored under a fence claim's pre-v339 Postgres fingerprint (ember ruling 3); runs only on an engine with raw_sql, since the Rust store never held such a fingerprint
 src/core/export-stage.ts	driver_call	3
 src/core/extract-ner.ts	execute_raw	1
 src/core/extract-ner.ts	sql_template	1
@@ -327,11 +328,8 @@ src/core/ops/trust.ts	execute_raw	1
 src/core/oversized-backfill.ts	execute_raw	6
 src/core/owned-folder/destination.ts	execute_raw	1	GST-3022 owned folders, no typed engine method yet: reads the default source's local_path and config
 src/core/owned-folder/status.ts	execute_raw	1	GST-3022 owned folders, no typed engine method yet: reads the owned-folder sources' rows for pages_in
-src/core/page-body/rechunk.ts	execute_raw	7
 src/core/page-body/segment-derive.ts	execute_raw	25
 src/core/page-body/segment-facts.ts	execute_raw	1
-src/core/page-body/segment-rewrite.ts	execute_raw	8
-src/core/page-body/segmented-embedding.ts	execute_raw	7
 src/core/page-body/splice.ts	execute_raw	1
 src/core/page-embedding-budget.ts	execute_raw	4
 src/core/page-searchability.ts	execute_raw	3
@@ -346,7 +344,7 @@ src/core/page-state/rename-alias.ts	execute_raw	3
 src/core/page-state/revision-backfill-schema.ts	execute_raw	10
 src/core/page-state/tags.ts	execute_raw	3
 src/core/page-state/versions.ts	execute_raw	5
-src/core/page-window/bounded-lead.ts	execute_raw	2
+src/core/page-window/bounded-lead.ts	execute_raw	1
 src/core/page-window/segmented.ts	execute_raw	2
 src/core/pages-upsert-arbiter.ts	execute_raw	6
 src/core/persistence/admin-lock.ts	execute_raw	2
@@ -456,7 +454,7 @@ src/core/persistence/refusal-breaker.ts	execute_raw	1
 src/core/persistence/resolve-paths.ts	execute_raw	5
 src/core/persistence/rows-behind.ts	execute_raw	4
 src/core/persistence/searchable.ts	execute_raw	1
-src/core/persistence/segmented-apply.ts	execute_raw	7
+src/core/persistence/segmented-apply.ts	execute_raw	6
 src/core/persistence/skill-activation.ts	execute_raw	11
 src/core/persistence/soak-counters.ts	execute_raw	3
 src/core/persistence/source-lifecycle.ts	execute_raw	33

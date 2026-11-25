@@ -33,7 +33,7 @@ stored `trust_tier` and `write_origin`. Every write of a fact row (insert, updat
 purge) stamps them through `trust::stamp` from the store's write trust context
 ([trust.md](trust.md#the-tier-stamp-truststamp), [write_trust.md](write_trust.md)), as PGLite's
 `gbrain_stamp_trust_tier` trigger does; a record written before the field existed reads `unknown`. `fact_fingerprint` follows `gbrain_fact_fingerprint` (lowercase, fold the
-fingerprint punctuation, collapse spaces, sha256 hex).
+fingerprint punctuation, collapse the `is_pg_space` whitespace list, sha256 hex).
 
 ## Private-provenance policy (`facts/privacy.rs`)
 

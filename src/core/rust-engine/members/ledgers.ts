@@ -160,6 +160,8 @@ export const LEDGER_MEMBERS = {
   listVisibleBeliefLifetimes: 'belief_ledger',
   // belief ledger writes (engine-sql/belief-ledger.ts): the append guards and insert, the commit marks and the page lifetimes
   readBeliefTombstones: 'belief_ledger',
+  readLegacyClaimFingerprints: 'belief_ledger',
+  readLegacyBeliefTombstones: 'belief_ledger',
   readLatestBeliefCoverage: 'belief_ledger',
   hasBeliefBaseline: 'belief_ledger',
   listBeliefBaselinePending: 'belief_ledger',

@@ -9,6 +9,7 @@ import type { JobsMembers } from './engine-members/jobs.ts';
 import type { DoctorMembers } from './engine-members/doctor.ts';
 import type { MentionPassMembers } from './engine-members/mentions.ts';
 import type { FenceProjectionMembers } from './engine-members/fence-projection.ts';
+import type { SegmentedWriteMembers } from './engine-members/segmented-writes.ts';
 import type { EmbedStaleMembers } from './engine-members/embed-stale.ts';
 import type { DoctorTallyMembers } from './engine-members/doctor-tallies.ts';
 import type { ListReadMembers } from './engine-members/list-reads.ts';
@@ -1085,7 +1086,7 @@ export function clampSearchLimit(limit: number | undefined, defaultLimit = 20, c
   return Math.min(Math.floor(limit), cap);
 }
 
-export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers, PersistenceMembers, LedgerMembers, GovernanceMembers, DecideMembers, JobsMembers, DoctorMembers, MentionPassMembers, EmbedStaleMembers, DoctorTallyMembers, ListReadMembers, FenceProjectionMembers, SurfacedReadMembers {
+export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers, PersistenceMembers, LedgerMembers, GovernanceMembers, DecideMembers, JobsMembers, DoctorMembers, MentionPassMembers, EmbedStaleMembers, DoctorTallyMembers, ListReadMembers, FenceProjectionMembers, SurfacedReadMembers, SegmentedWriteMembers {
   /** Discriminator: lets migrations and other consumers branch on engine kind without instanceof + dynamic imports. */
   readonly kind: 'postgres' | 'pglite' | 'rust';
   readonly capabilities: EngineCapabilities; // what this engine can do, by name (engine-capabilities.ts); ask it instead of branching on kind

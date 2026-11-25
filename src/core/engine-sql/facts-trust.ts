@@ -104,7 +104,7 @@ export function poolWhere(scope: FactPoolScope, filters: FactPoolFilters | undef
 function endedFactSql(): SqlFragment {
   return sqlFragment`(f.superseded_by IS NOT NULL OR (f.expired_at IS NULL AND f.valid_until <= now()))
   AND NOT EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = f.source_id AND w.visibility = f.visibility
-    AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact)) AND ${trustedSql(withdrawalCoversFactSql('w', 'f'))})
+    AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v2(f.fact), gbrain_fact_fingerprint_v1(f.fact)) AND ${trustedSql(withdrawalCoversFactSql('w', 'f'))})
   AND (f.source_markdown_slug IS NULL OR (f.dimension IS NOT NULL AND NOT ${trustedSql(conversationSlotSql())})
     OR EXISTS (SELECT 1 FROM pages hp WHERE hp.source_id = f.source_id AND hp.slug = f.source_markdown_slug))
   AND (f.source_markdown_slug IS NOT NULL OR f.source <> ALL(${[...pageExtractionSources()]}::text[])
@@ -712,7 +712,7 @@ function memberReadsSql(alias: string, q: Pick<MemberPageWithdrawalQuery, 'owner
 }
 
 const MEMBER_WITHDRAWAL_HEAD = `SELECT w.subject,w.visibility,w.withdrawn_at::text AS withdrawn_at FROM fact_withdrawals w
-    WHERE w.source_id=$1 AND w.visibility=$2 AND w.fact_hash IN (gbrain_fact_fingerprint($3),gbrain_fact_fingerprint_v1($3))
+    WHERE w.source_id=$1 AND w.visibility=$2 AND w.fact_hash IN (gbrain_fact_fingerprint($3),gbrain_fact_fingerprint_v2($3),gbrain_fact_fingerprint_v1($3))
       AND (w.subject=$5::text OR ((w.subject='*' OR w.subject=$4::text) AND EXISTS (SELECT 1 FROM facts f
         WHERE f.source_id=w.source_id AND f.visibility=w.visibility AND f.expired_at IS NOT NULL
           AND gbrain_fact_fingerprint(f.fact)=gbrain_fact_fingerprint($3) AND `;
@@ -799,7 +799,7 @@ export async function readFactVisibility(raw: EngineRawRead, id: number, sourceI
 
 const REPLACEMENT_HEAD = `SELECT f.*,
       EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id AND w.visibility=f.visibility
-        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact))
+        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v2(f.fact),gbrain_fact_fingerprint_v1(f.fact))
         AND `;
 const REPLACEMENT_FROM = `) AS withdrawn
     FROM facts f WHERE f.id=$1 AND f.source_id=$2`;
@@ -895,7 +895,7 @@ export async function expireFactAtDate(raw: EngineRawRead, factId: number, today
 /** Whether the withdrawal ledger covers this fact of the source, or null when the fact is not there. */
 export async function readWithdrawalAnchor(raw: EngineRawRead, factId: number, sourceId: string): Promise<{ withdrawn: boolean } | null> {
   const { text } = renderFragment(sqlFragment`SELECT EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = f.source_id AND w.visibility = f.visibility
-        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact))
+        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v2(f.fact), gbrain_fact_fingerprint_v1(f.fact))
         AND ${trustedSql(withdrawalCoversFactSql('w', 'f'))}) AS withdrawn
        FROM facts f WHERE f.id = ${factId} AND f.source_id = ${sourceId}`);
   const [row] = await raw<{ withdrawn: boolean }>(text, [factId, sourceId]);

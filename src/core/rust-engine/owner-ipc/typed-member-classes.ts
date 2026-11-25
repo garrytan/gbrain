@@ -248,7 +248,8 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readBeliefRedactions', 'readBeliefStateRows', 'readBeliefTombstones', 'readChunkKeepState',
   'readChunkRowsFingerprint', 'readConfigForUpdate', 'readContentReceiptBinding', 'readDriftConflictBounds',
   'readDriftConflictDetails', 'readEngineMigrationHistory', 'readFactSnapshots', 'readFactTrustTier',
-  'readJobPrincipal', 'readLatestBeliefCoverage', 'readLiveFactRowTier', 'readLivePageByPath',
+  'readJobPrincipal', 'readLatestBeliefCoverage', 'readLegacyBeliefTombstones', 'readLegacyClaimFingerprints',
+  'readLiveFactRowTier', 'readLivePageByPath',
   'readLivePagesByIds', 'readLoopFactState', 'readMaxFactRowNum', 'readMigrationPageColumns',
   'readMigrationRows', 'readMovedBeliefLifetimes', 'readOpCheckpointRecord', 'readOpenBeliefLifetimes',
   'readOriginIndexState', 'readPageDatabaseOnlyReason', 'readProjectionHead', 'readProjectionJobReason',
@@ -421,6 +422,8 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   // engine-sql functions and the Rust store functions they call show (test/rust-owner-ipc-read-classes.test.ts scans both).
   'countReadersNoncanonicalHolds', 'listAtomBacklogSourceIds', 'listReaderCandidatePages', 'listRetryTrackedEffects',
   'listRevivalPages', 'listSourceRequestsByRequestId', 'lockEffectRow', 'readHeldHitRows', 'readSourceRequestById',
+  // The segmented write path's reads (engine-sql/segmented-writes.ts). lockSegmentedGenerationPage takes a row lock only.
+  'readSegmentedLivePage', 'listSegmentedRechunkCandidates', 'readSegmentedRechunkPage', 'listOccurrenceChunks', 'readMaterializingRevision', 'readSegmentedRewritePage', 'lockSegmentedGenerationPage', 'hasLiveSegmentedPage', 'countSegmentedEmbedRows', 'listSegmentedStaleRows', 'readSegmentChunkInputHashes', 'listLiveEmbedSegments', 'listSegmentChunkRows',
 ];
 
 const nothingSetting = 'nothing: the setting lasts only for the call, so running it again repeats no write';
@@ -501,6 +504,14 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   writePageViewDigest: nothingDigest,
   deleteRewrittenSegmentDerivations: 'readSegmentDerivations for that page',
   deleteUnstagedSegmentChunks: 'getChunks for that page generation',
+  // The segmented write path's writes (engine-sql/segmented-writes.ts).
+  setMaterializingRevision: "nothing: the setting lasts only for the call's transaction, so running it again repeats no write",
+  restorePageUpdatedAt: 'readSegmentedRechunkPage for that page (updated_us is the restored value)',
+  restorePageDeletedAt: 'readSegmentedRewritePage for that page (deleted_at is the restored value)',
+  splitManifestGeneration: 'readManifest for that page and staging',
+  publishRebuiltGeneration: 'readManifest for that page at that generation',
+  setSegmentedVersionHash: 'getVersions for that page (the segmented version rows of that generation carry the hash)',
+  installSegmentedVectors: 'readSegmentChunkInputHashes for that page at the chunk indexes sent (a row took its vector when its embedding_input_hash equals the hash installed; a count of rows without a vector cannot show a re-install of already-embedded rows, which is what --all sends)',
   deletePurgeDecideProposals: 'probePurgeDerivations for that purge',
   deletePurgeOpenLoops: 'probePurgeDerivations for that purge',
   deletePurgeReviewProposals: 'probePurgeDerivations for that purge',

@@ -24,8 +24,8 @@ export function openFactsReasonSql(f: string): string {
     WHEN ${f}.valid_until IS NOT NULL AND ${f}.valid_until <= now() THEN 'lapsed'
     WHEN ${factOnMemberPageSql(f)} THEN 'member_page'
     WHEN EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = ${f}.source_id
-        AND w.fact_hash IN (gbrain_fact_fingerprint(${f}.fact), gbrain_fact_fingerprint_v1(${f}.fact)) AND (w.subject = '*' OR w.subject = ${f}.entity_slug))
-      OR EXISTS (SELECT 1 FROM fact_purges x WHERE x.source_id = ${f}.source_id AND x.fact_hash = gbrain_fact_fingerprint(${f}.fact)
+        AND w.fact_hash IN (gbrain_fact_fingerprint(${f}.fact), gbrain_fact_fingerprint_v2(${f}.fact), gbrain_fact_fingerprint_v1(${f}.fact)) AND (w.subject = '*' OR w.subject = ${f}.entity_slug))
+      OR EXISTS (SELECT 1 FROM fact_purges x WHERE x.source_id = ${f}.source_id AND x.fact_hash IN (gbrain_fact_fingerprint(${f}.fact), gbrain_fact_fingerprint_v2(${f}.fact))
         AND (x.subject = '*' OR x.subject = ${f}.entity_slug)) THEN 'withdrawn'
     WHEN EXISTS (SELECT 1 FROM trust_proposals tp WHERE ((tp.target_table = 'facts' AND tp.target_id = ${f}.id) OR (tp.related_table = 'facts' AND tp.related_id = ${f}.id))
         AND (tp.status = 'pending' OR (tp.action IN ('supersede_fact', 'confirm') AND tp.status IN ('rejected', 'undone') AND tp.before_state->'visibility' IS NOT NULL))) THEN 'contested'

@@ -58,6 +58,7 @@ test/backstop-same-page-shadow-managed-6333.test.ts
 test/behavior-change-notice.test.ts
 test/belief-ledger-append-owner.test.ts
 test/belief-ledger-coverage.test.ts
+test/belief-ledger-fingerprint-v3.test.ts
 test/belief-ledger-group.test.ts
 test/belief-ledger-identity.test.ts
 test/belief-ledger-lifecycle.test.ts
@@ -268,6 +269,7 @@ test/engine-parity/extract-bookkeeping.test.ts
 test/engine-parity/extract-takes-reads.test.ts
 test/engine-parity/extract-takes.test.ts
 test/engine-parity/extraction.test.ts
+test/engine-parity/fact-fingerprint-ambiguous.test.ts
 test/engine-parity/fact-fingerprint-corpus.test.ts
 test/engine-parity/fact-future-order.test.ts
 test/engine-parity/fact-insert-guard.test.ts
@@ -403,6 +405,7 @@ test/engine-parity/page-snapshot-alias.test.ts
 test/engine-parity/page-vector-flip.test.ts
 test/engine-parity/page-vector-overflow.test.ts
 test/engine-parity/page-visibility.test.ts
+test/engine-parity/page-withdrawal-overlay.test.ts
 test/engine-parity/page-write-readers.test.ts
 test/engine-parity/pages.test.ts
 test/engine-parity/persistence-declaration.test.ts
@@ -486,12 +489,16 @@ test/engine-parity/search-reads.test.ts
 test/engine-parity/search-refusal-swallows.test.ts
 test/engine-parity/search-space-separators.test.ts
 test/engine-parity/search.test.ts
+test/engine-parity/segment-pending-stamp.test.ts
 test/engine-parity/segment-regions.test.ts
 test/engine-parity/segmented-body.test.ts
+test/engine-parity/segmented-callers.test.ts
+test/engine-parity/segmented-embedding.test.ts
 test/engine-parity/segmented-fence-staging.test.ts
 test/engine-parity/segmented-ledger-reads.test.ts
 test/engine-parity/segmented-mirror-effects.test.ts
 test/engine-parity/segmented-purge-writes.test.ts
+test/engine-parity/segmented-rewrite.test.ts
 test/engine-parity/session-state-cap.test.ts
 test/engine-parity/session-state.test.ts
 test/engine-parity/shared-skill-members.test.ts
@@ -616,6 +623,8 @@ test/extraction-watermark-atoms.test.ts
 test/fact-embedding-oversized-7211.test.ts
 test/fact-fence-adoption-exits.test.ts
 test/fact-fingerprint-corpus.test.ts
+test/fact-fingerprint-v3-encoding.test.ts
+test/fact-fingerprint-v3.test.ts
 test/fact-purge-lookup-timeout-6511.test.ts
 test/fact-reads-page-access.test.ts
 test/facts-absorb-stalled-receipt-7439.test.ts

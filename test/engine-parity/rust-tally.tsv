@@ -18,7 +18,7 @@ test/engine-parity/attendance-pages.test.ts	1	0
 test/engine-parity/attest-rights.test.ts	1	0
 test/engine-parity/attested-actor-link.test.ts	1	0
 test/engine-parity/backup-readiness-callers.test.ts	3	0
-test/engine-parity/belief-ledger.test.ts	11	0
+test/engine-parity/belief-ledger.test.ts	12	0
 test/engine-parity/belief-purge-probes.test.ts	6	0
 test/engine-parity/bench-save-repro.test.ts	2	1
 test/engine-parity/bound-write.test.ts	1	2
@@ -40,7 +40,7 @@ test/engine-parity/chunk-safe-fence.test.ts	3	0
 test/engine-parity/chunk-vector-overflow.test.ts	1	0
 test/engine-parity/chunks.test.ts	21	0
 test/engine-parity/cli-capabilities.test.ts	2	0
-test/engine-parity/cli-reads-export.test.ts	16	0
+test/engine-parity/cli-reads-export.test.ts	18	0
 test/engine-parity/cli-reads-import.test.ts	20	0
 test/engine-parity/cli-reads-ops.test.ts	24	0
 test/engine-parity/code-eval-salience.test.ts	13	0
@@ -112,6 +112,7 @@ test/engine-parity/extract-bookkeeping.test.ts	2	0
 test/engine-parity/extract-takes-reads.test.ts	9	0
 test/engine-parity/extract-takes.test.ts	2	0
 test/engine-parity/extraction.test.ts	7	0
+test/engine-parity/fact-fingerprint-ambiguous.test.ts	2	3
 test/engine-parity/fact-fingerprint-corpus.test.ts	2	0
 test/engine-parity/fact-future-order.test.ts	1	0
 test/engine-parity/fact-insert-guard.test.ts	2	0
@@ -153,13 +154,13 @@ test/engine-parity/files-ops-sites.test.ts	8	0
 test/engine-parity/first-due.test.ts	1	0
 test/engine-parity/floor-folder-rule.test.ts	1	0
 test/engine-parity/forget-commit.test.ts	3	0
-test/engine-parity/forget-fence-path.test.ts	2	1
+test/engine-parity/forget-fence-path.test.ts	3	0
 test/engine-parity/forget-members.test.ts	3	0
 test/engine-parity/forget-reach-reads.test.ts	4	1
 test/engine-parity/forget-rebuild.test.ts	1	0
 test/engine-parity/forget-remember.test.ts	2	0
 test/engine-parity/forget-whole-cli.test.ts	2	0
-test/engine-parity/forget-whole.test.ts	4	1
+test/engine-parity/forget-whole.test.ts	5	0
 test/engine-parity/generation-output-parity.test.ts	15	0
 test/engine-parity/generation-page-rows-order.test.ts	1	0
 test/engine-parity/generation-write-parity.test.ts	4	0
@@ -246,6 +247,7 @@ test/engine-parity/page-snapshot-alias.test.ts	2	0
 test/engine-parity/page-vector-flip.test.ts	1	0
 test/engine-parity/page-vector-overflow.test.ts	2	0
 test/engine-parity/page-visibility.test.ts	6	0
+test/engine-parity/page-withdrawal-overlay.test.ts	5	0
 test/engine-parity/page-write-readers.test.ts	1	0
 test/engine-parity/pages.test.ts	46	0
 test/engine-parity/persistence-declaration.test.ts	10	3
@@ -329,12 +331,16 @@ test/engine-parity/search-reads.test.ts	20	1
 test/engine-parity/search-refusal-swallows.test.ts	2	1
 test/engine-parity/search-space-separators.test.ts	1	0
 test/engine-parity/search.test.ts	23	0
+test/engine-parity/segment-pending-stamp.test.ts	1	1
 test/engine-parity/segment-regions.test.ts	1	0
 test/engine-parity/segmented-body.test.ts	22	0
+test/engine-parity/segmented-callers.test.ts	3	0
+test/engine-parity/segmented-embedding.test.ts	2	0
 test/engine-parity/segmented-fence-staging.test.ts	1	0
 test/engine-parity/segmented-ledger-reads.test.ts	5	0
 test/engine-parity/segmented-mirror-effects.test.ts	2	0
 test/engine-parity/segmented-purge-writes.test.ts	7	0
+test/engine-parity/segmented-rewrite.test.ts	4	0
 test/engine-parity/session-state-cap.test.ts	13	0
 test/engine-parity/session-state.test.ts	7	0
 test/engine-parity/shared-skill-members.test.ts	10	1

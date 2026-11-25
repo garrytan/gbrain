@@ -163,7 +163,6 @@ is still refused on write.
   row. A chunk whose occurrence a deferred retire closed is not read. The served reads (`getEmbeddingsByChunkIds`,
   `cosinesByChunkIds`, sealed `getChunksWithEmbeddings`) keep `chunkVisibleFilter`, the generation alone (`visible_at`).
 - A segmented page counts as having no chunkless content.
-- Segment chunks get no pending stamp.
 - `ops` mode counts `embedded` exactly; `unstamped_created_at_min` is null.
 - `moveDisplacedChunksAndPrune` (PGLite's re-index of displaced chunks) is not done.
 - The install path's zero-norm chunk update (`page-state/projections.ts`) is still raw SQL, so a Rust brain
