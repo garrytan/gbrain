@@ -1483,7 +1483,6 @@ src/core/setup/turn-hook-check.ts#readJson	catch_empty	1
 src/core/setup/turn-hook.ts#readJson	catch_empty	1
 src/core/shared-skills/adopted-packs.ts#adoptedSkillPackSourceIds	capability_refusal_swallowed	1
 src/core/shared-skills/migration-export.ts#exportDatabaseContent	capability_refusal_swallowed	1
-src/core/shared-skills/migration.ts#runSharedSkillsMigration	capability_refusal_swallowed	2
 src/core/shared-skills/migration.ts#runSharedSkillsMigration	catch_empty	1
 src/core/shared-skills/optimizer.ts#authorize	catch_empty	1
 src/core/skill-catalog.ts#readMcpPublishSkills	catch_empty	1
