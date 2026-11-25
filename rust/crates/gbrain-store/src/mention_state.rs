@@ -389,7 +389,8 @@ pub struct CandidatePageRow {
     pub slug: String,
     pub source_id: String,
     pub body_storage: String,
-    pub body: String,
+    /// Null when `patterns` were given and the page is neither segmented nor matches one (the batch still counts it).
+    pub body: Option<String>,
     pub mention_ignore: Value,
 }
 
@@ -841,9 +842,10 @@ impl Store {
         })
     }
 
-    /// `listMentionCandidatePages(sourceIds, after, limit, patterns)`: live pages of `sourceIds`
-    /// after id `after`, by id, up to `limit`; with `patterns`, only segmented pages and pages whose
-    /// lowered text is LIKE one of them.
+    /// `listMentionCandidatePages(sourceIds, after, limit, patterns)`: the next `limit` live pages of `sourceIds`
+    /// after id `after`, by id, whether they match or not (so one statement never reads a whole source looking
+    /// for a rare name); with `patterns`, a page that is neither segmented nor has lowered text LIKE one of them
+    /// comes back with a null body.
     pub fn list_mention_candidate_pages(
         &self,
         source_ids: &[String],
@@ -858,12 +860,11 @@ impl Store {
             .filter(|p| i64::try_from(p.id).is_ok_and(|id| id > after))
             .collect();
         pages.sort_by_key(|p| p.id);
+        pages.truncate(usize::try_from(limit.max(0)).unwrap_or(usize::MAX));
         let mut out = Vec::new();
         for p in pages {
-            if out.len() as i64 >= limit.max(0) {
-                break;
-            }
             let storage = body_storage(&*read, &p)?;
+            let mut shown = true;
             if let Some(patterns) = patterns
                 && storage != "segmented"
             {
@@ -871,19 +872,17 @@ impl Store {
                     "{} {} {}",
                     p.title, &*p.compiled_truth, &*p.timeline
                 ));
-                let mut hit = false;
+                shown = false;
                 for pattern in patterns {
                     if crate::facts::like(&lowered, pattern, false)? {
-                        hit = true;
+                        shown = true;
                         break;
                     }
                 }
-                if !hit {
-                    continue;
-                }
             }
             // `E'\\n\\n'` in the SQL: two newlines between the title, the body and the timeline.
-            let body = format!("{}\n\n{}\n\n{}", p.title, &*p.compiled_truth, &*p.timeline);
+            let body =
+                shown.then(|| format!("{}\n\n{}\n\n{}", p.title, &*p.compiled_truth, &*p.timeline));
             out.push(CandidatePageRow {
                 id: p.id,
                 slug: p.slug.clone(),

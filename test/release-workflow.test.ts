@@ -12,7 +12,9 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { load } from 'js-yaml';
 import { EXPECTED_BUILDER_IDS, expectedAssetName } from '../src/core/binary-self-update.ts';
+import { RELEASE_ADDON_TARGETS, RUST_ADDON_MANIFEST_ASSET, rustAddonAssetName } from '../src/core/rust-engine/addon-manifest.ts';
 
 const ROOT = join(import.meta.dir, '..');
 const WORKFLOW = readFileSync(join(ROOT, '.github/workflows/release.yml'), 'utf8');
@@ -24,6 +26,9 @@ const EXPECTED_ASSETS = (
     ['linux', 'x64'],
   ] as const
 ).map(([p, a]) => expectedAssetName(p, a) as string);
+
+/** The Rust engine addon files `gbrain engine install rust` downloads from a release (addon-install.ts). */
+const RUST_ADDON_ASSETS = [...RELEASE_ADDON_TARGETS.map(rustAddonAssetName), RUST_ADDON_MANIFEST_ASSET];
 
 describe('release.yml ↔ binary-self-update asset contract', () => {
   test('release compiler is covered by the required native runtime matrix', () => {
@@ -68,8 +73,10 @@ describe('release.yml ↔ binary-self-update asset contract', () => {
 
   test('idempotency completeness check names every expected asset', () => {
     // The version job only skips when the existing release carries ALL assets;
-    // its sorted-join comparison string must stay in sync with the matrix.
-    expect(WORKFLOW).toContain([...EXPECTED_ASSETS].sort().join(','));
+    // its sorted-join comparison string must stay in sync with the matrix and
+    // with the Rust engine addon files `gbrain engine install rust` downloads.
+    const all = [...EXPECTED_ASSETS, ...RUST_ADDON_ASSETS, 'gbrain-skill-resolver.mjs', 'gbrain-skill-resolver.mjs.sha256'];
+    expect(WORKFLOW).toContain(`if [ "$assets" = "${all.sort().join(',')}" ]`);
   });
 
   test('release tag derives from the VERSION file, v-prefixed', () => {
@@ -133,6 +140,109 @@ describe('release.yml ↔ binary-self-update asset contract', () => {
     expect(WORKFLOW).toContain('GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0');
     // Force-push semantics preserved (history-less template publish).
     expect(WORKFLOW).toMatch(/git push --force "https:\/\/github\.com\/\$\{TEMPLATE_REPO\}\.git" HEAD:main/);
+  });
+});
+
+describe('release.yml ↔ gbrain engine install rust', () => {
+  const job = (name: string) => {
+    const start = WORKFLOW.indexOf(`\n  ${name}:\n`);
+    expect(start).toBeGreaterThan(-1);
+    const next = WORKFLOW.slice(start + 1).search(/\n  [a-z0-9-]+:\n/);
+    return WORKFLOW.slice(start, next < 0 ? undefined : start + 1 + next);
+  };
+
+  test('every release target is built on a native runner from the gated commit, with no build cache', () => {
+    const build = job('rust-addon');
+    for (const target of RELEASE_ADDON_TARGETS) expect(build).toContain(`addon_target: ${target}`);
+    // The gated release commit; a dry run (ci-gate skipped) builds the dispatched commit.
+    expect(build).toContain('ref: ${{ needs.ci-gate.outputs.sha || github.sha }}');
+    expect(build).toContain('bun run rust:build');
+    expect(build).toContain('bun rust/scripts/release-addon.ts stage --target "${{ matrix.addon_target }}"');
+    expect(build).not.toContain('actions/cache');
+  });
+
+  test('the addons and their manifest are attested by this workflow and attached to the release', () => {
+    const pkg = job('rust-addon-package');
+    expect(pkg).toContain('attest-build-provenance');
+    for (const asset of RUST_ADDON_ASSETS) {
+      expect(pkg).toContain(`rust-addon/${asset}`);
+      expect(job('release')).toContain(`artifacts/gbrain-engine-rust/${asset}`);
+    }
+    // Carried-forward bytes must come from this workflow on master, the only builder gbrain trusts (EXPECTED_BUILDER_IDS).
+    expect(pkg).toContain('--source-ref refs/heads/master');
+    expect(pkg).toContain('--cert-identity "https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@refs/heads/master"');
+    expect(pkg).not.toContain('--signer-workflow');
+    // A failed addon build blocks publication: the release job waits on the package job, which waits on every build.
+    expect(job('release')).toMatch(/needs: \[[^\]]*rust-addon-package[^\]]*\]/);
+    expect(pkg).toMatch(/needs: \[[^\]]*rust-addon[,\]]/);
+  });
+
+  test('after publication the released executable installs the addon and opens a Rust brain with no override', () => {
+    const smoke = job('rust-addon-smoke');
+    expect(smoke).toMatch(/needs: \[[^\]]*release[^\]]*\]/);
+    for (const asset of EXPECTED_ASSETS) expect(smoke).toContain(`executable: ${asset}`);
+    expect(smoke).toContain('unset GBRAIN_RUST_ENGINE_ADDON');
+    expect(smoke).toContain('engine install rust --json');
+    expect(smoke).toContain('.rust_addon.installed == true and .rust_addon.override == false and .probe.ok == true');
+    expect(smoke).toContain('"$gbrain" stats --json');
+  });
+});
+
+describe('release.yml addon_dry_run publishes nothing', () => {
+  const doc = load(WORKFLOW) as any;
+  const jobs = doc.jobs as Record<string, any>;
+  /** The jobs a dry run may run: they read, build and test, and publish nothing. */
+  const DRY_RUN_JOBS = ['version', 'build', 'rust-addon', 'rust-addon-package', 'rust-addon-dry-run-check'];
+  /** Dry-run jobs that hold attestation permissions; their attest step is gated on !inputs.addon_dry_run. */
+  const ATTESTING = ['build', 'rust-addon-package'];
+  const publishes = (job: any) => {
+    const perms = job.permissions ?? {};
+    const text = JSON.stringify(job.steps ?? []);
+    return perms.contents === 'write' || perms['id-token'] === 'write' || perms.attestations === 'write'
+      || /action-gh-release|gh release (upload|create|edit)|git push|attest-build-provenance|npm publish|gh workflow run/.test(text);
+  };
+
+  test('the input defaults to false, and a dry run has its own concurrency group', () => {
+    expect(doc.on.workflow_dispatch.inputs.addon_dry_run).toMatchObject({ type: 'boolean', default: false });
+    expect(doc.concurrency.group).toBe("${{ inputs.addon_dry_run && 'release-addon-dry-run' || 'release' }}");
+  });
+
+  test('ci-gate is skipped on a dry run, and every other job needs publish true and no dry run', () => {
+    expect(jobs['ci-gate'].if).toContain('!inputs.addon_dry_run');
+    for (const [name, job] of Object.entries(jobs)) {
+      if (DRY_RUN_JOBS.includes(name) || name === 'ci-gate') continue;
+      expect({ name, gated: String(job.if).includes("needs.ci-gate.outputs.publish == 'true'") && String(job.if).includes('!inputs.addon_dry_run') }).toEqual({ name, gated: true });
+    }
+  });
+
+  test('a job a dry run may run publishes only behind !inputs.addon_dry_run', () => {
+    for (const name of DRY_RUN_JOBS) {
+      for (const step of jobs[name].steps ?? []) {
+        if (/attest-build-provenance|action-gh-release|gh release (upload|create)|git push/.test(JSON.stringify(step))) {
+          expect({ name, step: step.name, if: step.if }).toEqual({ name, step: step.name, if: '${{ !inputs.addon_dry_run }}' });
+        }
+      }
+      if (!ATTESTING.includes(name)) expect({ name, publishes: publishes(jobs[name]) }).toEqual({ name, publishes: false });
+    }
+    expect(jobs['rust-addon-dry-run-check'].if).toContain('inputs.addon_dry_run');
+    expect(jobs['rust-addon-dry-run-check'].permissions).toEqual({ contents: 'read' });
+  });
+
+  test('a dry run builds and smoke-tests every platform binary, then runs it as a fresh install', () => {
+    const build = jobs.build;
+    expect(build.if).toContain('inputs.addon_dry_run ||');
+    expect(build.if).toContain("needs.version.result == 'success'");
+    expect(build.steps[0].with.ref).toBe('${{ inputs.addon_dry_run && github.sha || needs.ci-gate.outputs.sha }}');
+    const names = (build.steps as any[]).map(s => String(s.name ?? s.uses));
+    for (const smoke of ['Verify embedded native writer locks and compiled process exclusion', 'Verify the admin UI with the actual release executable', 'Smoke-test the compiled binary']) {
+      expect({ smoke, gated: build.steps.find((s: any) => s.name === smoke)?.if }).toEqual({ smoke, gated: undefined });
+    }
+    const install = build.steps.find((s: any) => s.name === 'Run the binary as an install from an empty directory (dry run)');
+    expect(install.if).toBe('${{ inputs.addon_dry_run }}');
+    expect(install.run).toContain('--version');
+    expect(install.run).toContain('doctor --json');
+    expect(names.indexOf(install.name)).toBeLessThan(names.findIndex(n => n.includes('upload-artifact')));
+    expect(jobs.release.if).toContain('!inputs.addon_dry_run');
   });
 });
 

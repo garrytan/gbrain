@@ -7,4 +7,4 @@
 - The Rust engine served search on such a brain by refusing the capped count; it now returns the same count as Postgres.
 
 ### Changed
-- A new migration (v338) adds a trigram index over the title and slug of the pages waiting for indexing, so Postgres finds the few pages a query word matches without testing every waiting page. Postgres builds it concurrently; the index is empty once indexing catches up.
+- A new migration (v340) adds a trigram index over the title and slug of the pages waiting for indexing, so Postgres finds the few pages a query word matches without testing every waiting page. Postgres builds it concurrently; the index is empty once indexing catches up.

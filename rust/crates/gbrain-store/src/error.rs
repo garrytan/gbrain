@@ -70,6 +70,10 @@ pub const UNMODELED_INPUT: &str = "unmodeled_input";
 /// The TypeScript engine reports it as `engine_capability_missing` with that capability.
 pub const ENGINE_CAPABILITY_MISSING: &str = "engine_capability_missing";
 
+/// A store snapshot was cancelled (`snapshot.rs`). It removed what it had written and released
+/// its read before this error returned.
+pub const SNAPSHOT_CANCELLED: &str = "snapshot_cancelled";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoreError {
     pub code: &'static str,
