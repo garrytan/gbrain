@@ -40,7 +40,7 @@ use gbrain_store::timeline::{
 };
 use gbrain_store::commit_log::{self, CommitPosition};
 use gbrain_store::{
-    Env, FileBackend, Kv, KvRead, KvWrite, MultiUserOptions, OpenOptions, Store, StoreError, keys,
+    Env, FileBackend, Kv, KvRead, KvWrite, MultiUserWrites, OpenOptions, Store, StoreError, keys,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -600,7 +600,8 @@ fn workload(disk: &SimDisk, seed: u64, plan: Option<FaultPlan>) -> Result<Run, S
 /// The options of a logged run: the commit log on, with a host id for the write origin.
 fn logged_options() -> OpenOptions {
     OpenOptions {
-        multiuser: MultiUserOptions {
+        multiuser: true,
+        multiuser_writes: MultiUserWrites {
             commit_log: true,
             write_origin: true,
             host_id: Some("d0000000-0000-4000-8000-0000000000d1".into()),

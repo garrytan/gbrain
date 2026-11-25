@@ -8,7 +8,7 @@ import { embeddedSchemaEmbedding } from '../embedded-engine.ts';
 import { DEFAULT_EMBEDDING_DIMENSIONS, DEFAULT_EMBEDDING_MODEL } from '../ai/defaults.ts';
 import { WRITE_GATE_DETECTOR_VERSION } from '../write-gate-schema.ts';
 import { mapStoreError } from './store-errors.ts';
-import { rustMultiuserRequested } from './multiuser.ts';
+import { rustMultiuserFromEnv, rustMultiuserSubSwitch } from './multiuser-switch.ts';
 import { localHostId } from '../persistence/identity.ts';
 
 /** Worker threads the store's pool runs its calls on. One write runs at a time; reads overlap. */
@@ -25,11 +25,17 @@ export interface StoreOpenOptions {
   chunkStrategy?: string;
   /** A fresh brain records the write gate's scan baseline under this detector version. */
   writeGateDetectorVersion?: number;
-  /** Multi-user mode (./multiuser.ts): set only while it is on, so an open with it off sends what it always sent. */
+  /** Multi-user mode from the environment (I-0, multiuser-switch.ts); sent only when true, so an open with the switch off is unchanged. */
   multiuser?: boolean;
-  /** This machine's host id, the write origin multi-user mode stamps. */
+  /** Multi-user sub-switches (`GBRAIN_RUST_COMMIT_LOG=1`, `GBRAIN_RUST_WRITE_ORIGIN=1`), sent only when set; the store applies them only in multi-user mode. */
+  commitLog?: boolean;
+  writeOrigin?: boolean;
+  /** This machine's host id, the write origin the sub-switches stamp; sent only with one of them. */
   hostId?: string;
 }
+
+/** The answer a sub-switch is read under before the open resolves the brain's mode: the store decides (I-0.v2). */
+const MODE_MAY_BE_ON = { multiuser: true } as const;
 
 /** The strategy the SQL engines' schema seeds as config `chunk_strategy` (src/schema.sql). */
 const SEED_CHUNK_STRATEGY = 'semantic';
@@ -65,6 +71,8 @@ interface StoreAddon { Pool: new (threads: number) => StorePool; Brain: new (poo
 /** An open store: the brain and the pool it runs on. */
 export interface RustStore {
   readonly brain: StoreBrain;
+  /** True when the store runs in multi-user mode (I-0): the environment switch or the brain's own config row. */
+  readonly multiuser: boolean;
   /** True when the store keeps a commit log (multi-user mode): the engine then reports `commit_log`. */
   readonly commitLog: boolean;
   /**
@@ -289,18 +297,31 @@ export async function openRustStore(
   const { Pool, Brain } = addon as StoreAddon;
   const pool = new Pool(STORE_POOL_THREADS);
   const brain = new Brain(pool);
+  let multiuser = false;
   let commitLog = false;
   try {
-    // Multi-user mode sends the host id the write origin needs (the engine's own, else this machine's); off, the
-    // options are exactly what they were, and host.json is not read.
-    const multiuser = rustMultiuserRequested() ? { multiuser: true, hostId: origin?.hostId ?? localHostId() } : {};
+    // The commit log and write origin sub-switches, with the host id the write origin needs (the engine's own,
+    // else this machine's). Sent only when set: an open without them sends what it always sent and reads no host.json.
+    // The brain's mode is resolved by this very open (the switch or its config row), so they are sent as requests
+    // under a mode that may be on, and the store applies them only when it resolves the mode on (I-0.v2).
+    const commitLogOn = rustMultiuserSubSwitch('GBRAIN_RUST_COMMIT_LOG', MODE_MAY_BE_ON);
+    const writeOriginOn = rustMultiuserSubSwitch('GBRAIN_RUST_WRITE_ORIGIN', MODE_MAY_BE_ON);
+    const writes = commitLogOn || writeOriginOn
+      ? {
+        ...(commitLogOn ? { commitLog: true } : {}),
+        ...(writeOriginOn ? { writeOrigin: true } : {}),
+        hostId: origin?.hostId ?? localHostId(),
+      }
+      : {};
     const info = await brain.open(databasePath, {
       schemaVersion: LATEST_SCHEMA_VERSION, createdBy: 'gbrain', chunkStrategy: SEED_CHUNK_STRATEGY,
       writeGateDetectorVersion: WRITE_GATE_DETECTOR_VERSION,
       ...(embedding ? { embeddingModel: embedding.model, embeddingDimensions: embedding.dimensions } : {}),
-      ...multiuser,
-    });
-    commitLog = (info as { commit_log?: unknown } | null)?.commit_log === true;
+      ...(rustMultiuserFromEnv() ? { multiuser: true } : {}),
+      ...writes,
+    }) as { multiuser?: unknown; commit_log?: unknown } | null;
+    multiuser = info?.multiuser === true;
+    commitLog = info?.commit_log === true;
   } catch (error) {
     await pool.shutdown(0).catch(() => undefined);
     throw mapStoreError(error, { member: 'connect' });
@@ -315,6 +336,7 @@ export async function openRustStore(
   };
   return {
     brain,
+    multiuser,
     commitLog,
     importRelation: (seedId, relation, rows, digests) => call('importRelation', () => brain.importRelation(seedId, relation, rows, digests ?? null)),
     replaceRelationRows: (seedId, relation, generation, keys, rows, digests) =>

@@ -145,6 +145,7 @@ pub mod wanted_links;
 pub mod write_attribution;
 pub mod write_guards;
 pub mod write_misc;
+pub mod write_origin;
 mod write_receipt;
 pub mod write_trust;
 
@@ -156,7 +157,8 @@ use std::sync::{Arc, Mutex};
 
 pub use crate::env::{Env, SystemEnv};
 pub use crate::error::{Result, StoreError};
-pub use crate::commit_log::{CommitPosition, LogPage, WriteOrigin};
+pub use crate::commit_log::{CommitPosition, LogPage};
+pub use crate::write_origin::WriteOrigin;
 pub use crate::format::{
     FORMAT_VERSION, FORMAT_VERSIONS, FormatRecord, LOG_FORMAT_VERSION, OPENED_FORMATS,
 };
@@ -192,15 +194,20 @@ pub struct OpenOptions {
     /// brain records the write gate's scan baseline under it, as migration v227 does on the SQL engines;
     /// `None` records it under `DEFAULT_WRITE_GATE_DETECTOR_VERSION`.
     pub write_gate_detector_version: Option<u32>,
-    /// Multi-user mode (`GBRAIN_RUST_MULTIUSER=1`): the commit log and write origin. Default off:
-    /// the store then writes, reads and returns exactly what it did before the mode existed.
-    pub multiuser: MultiUserOptions,
+    /// Multi-user mode (I-0, `GBRAIN_RUST_MULTIUSER=1` or config `engine.rust.multiuser: true`, resolved by the
+    /// caller per brain). It implies `concurrent_writes`, and protected entry points then require a lease fence
+    /// (`leases.rs`). Off (the default), the store behaves exactly as without the field.
+    pub multiuser: bool,
+    /// The commit log and write origin sub-switches (`commit_log.rs`). Read only when the brain runs in
+    /// multi-user mode (`multiuser` or its config row, I-0.v2); off, or with the mode off, the store writes, reads
+    /// and returns exactly what it did before they existed.
+    pub multiuser_writes: MultiUserWrites,
 }
 
-/// What multi-user mode turns on (`commit_log.rs`). Each field is off by default; the binding
-/// reads them from `GBRAIN_RUST_MULTIUSER` and its sub-switches.
+/// The commit log and write origin sub-switches of multi-user mode (`GBRAIN_RUST_COMMIT_LOG=1`,
+/// `GBRAIN_RUST_WRITE_ORIGIN=1`). Each field is off by default.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct MultiUserOptions {
+pub struct MultiUserWrites {
     /// Keep a commit record per commit. A brain opened with it becomes a commit log brain
     /// (`LOG_FORMAT_VERSION`), which a writable open without it refuses.
     pub commit_log: bool,
@@ -212,7 +219,7 @@ pub struct MultiUserOptions {
     pub log_retention_bytes: Option<u64>,
 }
 
-impl MultiUserOptions {
+impl MultiUserWrites {
     fn any(&self) -> bool {
         self.commit_log || self.write_origin
     }
@@ -229,7 +236,8 @@ impl Default for OpenOptions {
             keyword_index_builder: true,
             initial_config: Vec::new(),
             write_gate_detector_version: None,
-            multiuser: MultiUserOptions::default(),
+            multiuser: false,
+            multiuser_writes: MultiUserWrites::default(),
         }
     }
 }
@@ -246,6 +254,17 @@ pub struct StoreInfo {
     /// serialized while false, so the open result keeps its shape.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub commit_log: bool,
+    /// True when the brain runs in multi-user mode (`Store::multiuser`). Left out of the serialized info when false,
+    /// so an open with the mode off reports exactly what it did before.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub multiuser: bool,
+}
+
+/// The config row that turns multi-user mode on for one brain (I-0): `engine.rust.multiuser` set to `true` or `1`.
+pub const MULTIUSER_CONFIG_KEY: &str = "engine.rust.multiuser";
+
+fn multiuser_config_on(value: Option<&[u8]>) -> bool {
+    matches!(value, Some(b"true") | Some(b"1"))
 }
 
 /// One open brain. All methods take `&self` and the store is shared across threads. A brain opened
@@ -283,6 +302,8 @@ pub struct Store {
     pub(crate) stamp_rows: bool,
     /// Where the commit log starts, on a commit log brain.
     pub(crate) log_since: Option<CommitPosition>,
+    /// `OpenOptions::multiuser` as the brain was opened; bound and sibling stores copy it.
+    multiuser: bool,
 }
 
 /// The record file of a brain directory, with one writer or many. Only for the storage bake-off:
@@ -378,7 +399,7 @@ impl Store {
         let existing = format::read_in(dir, known)?;
         // A commit log brain (or one whose switch to the log was under way) is never opened for
         // writing without the log: nothing may commit that the log would miss.
-        if existing.as_ref().is_some_and(|f| f.log.is_some()) && !options.multiuser.commit_log {
+        if existing.as_ref().is_some_and(|f| f.log.is_some()) && !options.multiuser_writes.commit_log {
             return Err(log_required());
         }
         if existing.is_none() {
@@ -391,7 +412,12 @@ impl Store {
                 format::check_version_in(stored.format_version, known)?;
             }
         }
-        let kv = open_records(dir, options.concurrent_writes)?;
+        // Multi-user mode from the brain's own config row picks the concurrent store at open; read without opening the
+        // file for writing. A file redb must repair first reads as off here; the open below still reads the row.
+        let config_on = multiuser_config_on(
+            redb_kv::peek(&dir.join(format::RECORDS_FILE), &config::config_key(MULTIUSER_CONFIG_KEY)?).as_deref(),
+        );
+        let kv = open_records(dir, options.concurrent_writes || options.multiuser || config_on)?;
         let mut store = Store::open_kv_in(
             kv,
             Arc::new(SystemEnv),
@@ -471,7 +497,14 @@ impl Store {
         mode: OpenMode<'_>,
     ) -> Result<Store> {
         let read_only = matches!(mode, OpenMode::ReadOnly);
-        let multiuser = &options.multiuser;
+        // Multi-user mode: the caller's resolved switch, or the brain's own config row (I-0). The commit log and
+        // write origin sub-switches count only while it is on (I-0.v2).
+        let multiuser_on = options.multiuser
+            || multiuser_config_on(
+                config::read_config(&*kv.snapshot()?, MULTIUSER_CONFIG_KEY)?.as_deref().map(str::as_bytes),
+            );
+        let off = MultiUserWrites::default();
+        let multiuser = if multiuser_on { &options.multiuser_writes } else { &off };
         if multiuser.write_origin && multiuser.host_id.as_deref().is_none_or(str::is_empty) {
             return Err(StoreError::invalid(
                 "multi-user write origin needs this machine's host id",
@@ -593,6 +626,7 @@ impl Store {
                 schema_version,
                 created,
                 commit_log: commit_log_on,
+                multiuser: multiuser_on,
             },
             log_since: stored.log.map(|l| l.since),
             bound: None,
@@ -600,8 +634,9 @@ impl Store {
             runs_builder: options.keyword_index_builder,
             flag_assumed,
             dir: None,
-            stamp_rows: options.multiuser.write_origin && origin.is_some(),
+            stamp_rows: multiuser.write_origin && origin.is_some(),
             origin,
+            multiuser: multiuser_on,
         })
         .inspect(|store| {
             if index.needs_build && store.runs_builder {
@@ -626,6 +661,7 @@ impl Store {
             origin: self.origin.clone(),
             stamp_rows: self.stamp_rows,
             log_since: self.log_since,
+            multiuser: self.multiuser,
         }
     }
 
@@ -697,6 +733,7 @@ impl Store {
             origin: self.origin.clone(),
             stamp_rows: self.stamp_rows,
             log_since: self.log_since,
+            multiuser: self.multiuser,
         }
     }
 
@@ -706,6 +743,11 @@ impl Store {
 
     pub fn brain_id(&self) -> &str {
         &self.info.brain_id
+    }
+
+    /// True when the brain was opened in multi-user mode (`OpenOptions::multiuser`).
+    pub fn multiuser(&self) -> bool {
+        self.multiuser
     }
 
     /// The commit sequence of the latest commit.
@@ -864,8 +906,15 @@ impl Store {
         })
     }
 
-    /// The position of the newest commit and where the commit log starts, when this brain keeps
-    /// one (`None` otherwise).
+    /// Installs the accept hook of this brain's record file (`commit_log::AcceptHook`): called for
+    /// each accepted transaction, in commit order, with its position and the time the store's clock
+    /// reads at the accept step. For multi-user mode's commit-ordered times (lane L5); nothing installs
+    /// one while the mode is off. Install it before the brain takes writes.
+    pub fn set_accept_hook(&self, hook: commit_log::AcceptHook) -> Result<()> {
+        self.kv.set_accept_hook(self.env.clone(), hook)
+    }
+
+    /// Where the commit log starts, when this brain keeps one (`None` otherwise).
     pub fn commit_log_since(&self) -> Option<CommitPosition> {
         self.log_since
     }
@@ -1478,9 +1527,10 @@ mod older_build_tests {
     fn a_build_without_the_log_refuses_a_log_brain_and_changes_no_byte() {
         let dir = fresh_dir("older-vs-log").join("brain");
         let options = OpenOptions {
-            multiuser: MultiUserOptions {
+            multiuser: true,
+            multiuser_writes: MultiUserWrites {
                 commit_log: true,
-                ..MultiUserOptions::default()
+                ..MultiUserWrites::default()
             },
             keyword_index_builder: false,
             ..OpenOptions::default()

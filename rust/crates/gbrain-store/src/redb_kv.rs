@@ -7,7 +7,9 @@
 use crate::error::{
     READ_ONLY_TRANSACTION, Result, STORE_CLOSED, STORE_CORRUPT, STORE_IO, STORE_LOCKED, StoreError,
 };
-use crate::commit_log::{CommitMeta, CommitPosition, LogOpRef, LogSettings, LogState};
+use crate::commit_log::{
+    AcceptHook, AcceptHookSlot, CommitMeta, CommitPosition, LogOpRef, LogSettings, LogState,
+};
 use crate::kv::{FileBackend, Kv, KvRead, KvWrite};
 use std::collections::BTreeMap;
 use std::sync::Mutex;
@@ -85,6 +87,8 @@ struct CommitLog {
     on: AtomicBool,
     /// A commit failed after its log bookkeeping was planned: the next writer reloads it.
     dirty: AtomicBool,
+    /// The accept hook, once installed (`Kv::set_accept_hook`).
+    hook: Mutex<Option<AcceptHookSlot>>,
 }
 
 impl RedbKv {
@@ -351,6 +355,8 @@ struct Writer {
     /// Set when the store keeps a commit log: the final value (`None`: deleted) of each key this
     /// write changed, and what it says about itself.
     logged: Option<Logged>,
+    /// The accept hook, when one is installed: called with this commit's position before it is durable.
+    hook: Option<AcceptHookSlot>,
 }
 
 struct Logged {
@@ -410,6 +416,11 @@ impl KvWrite for Writer {
     }
 
     fn commit_position(mut self: Box<Self>) -> Result<CommitPosition> {
+        if let Some(hook) = self.hook.take() {
+            // The accept step: this writer holds redb's write lock, so no later commit is accepted first.
+            let (current, _) = read_seq(&mut |key| self.get(key))?;
+            hook.call(CommitPosition::new(current + 1, 0));
+        }
         let logged = self.logged.take();
         // With the log on: the record of this commit, its trims and the meta record go into the
         // same redb transaction as the records (`commit_log.rs`).
@@ -520,7 +531,13 @@ impl Kv for RedbKv {
             ops: BTreeMap::new(),
             meta: CommitMeta::default(),
         });
-        Ok(Box::new(Writer { tx, logged }))
+        let hook = self
+            .log
+            .hook
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        Ok(Box::new(Writer { tx, logged, hook }))
     }
 
     fn version(&self) -> Result<u64> {
@@ -540,6 +557,11 @@ impl Kv for RedbKv {
 
     fn commit_log_enabled(&self) -> bool {
         self.log.on.load(Ordering::Acquire)
+    }
+
+    fn set_accept_hook(&self, clock: Arc<dyn crate::env::Env>, hook: AcceptHook) -> Result<()> {
+        *self.log.hook.lock().unwrap_or_else(|p| p.into_inner()) = Some(AcceptHookSlot { clock, hook });
+        Ok(())
     }
 }
 

@@ -18,7 +18,7 @@ use gbrain_store::occ_kv::OccKv;
 use gbrain_store::persistence::WriteRequestInsert;
 use gbrain_store::redb_kv::RedbKv;
 use gbrain_store::{
-    LOG_FORMAT_VERSION, MultiUserOptions, OpenOptions, Store, SystemEnv, keys,
+    LOG_FORMAT_VERSION, MultiUserWrites, OpenOptions, Store, SystemEnv, keys,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -40,8 +40,8 @@ fn records_kv(path: &Path, concurrent: bool) -> Arc<dyn Kv> {
     }
 }
 
-fn mu() -> MultiUserOptions {
-    MultiUserOptions {
+fn mu() -> MultiUserWrites {
+    MultiUserWrites {
         commit_log: true,
         write_origin: true,
         host_id: Some(HOST.into()),
@@ -49,17 +49,19 @@ fn mu() -> MultiUserOptions {
     }
 }
 
-fn options(concurrent: bool, multiuser: MultiUserOptions) -> OpenOptions {
+/// Multi-user mode is on exactly when a sub-switch is: the "off" cases open with the mode off too.
+fn options(concurrent: bool, writes: MultiUserWrites) -> OpenOptions {
     OpenOptions {
         concurrent_writes: concurrent,
         keyword_index_builder: false,
-        multiuser,
+        multiuser: writes.commit_log || writes.write_origin,
+        multiuser_writes: writes,
         ..OpenOptions::default()
     }
 }
 
 /// A brain over a record file the test keeps its own handle on, so it can read raw keys.
-fn leader(path: &Path, concurrent: bool, multiuser: MultiUserOptions) -> (Arc<dyn Kv>, Store) {
+fn leader(path: &Path, concurrent: bool, multiuser: MultiUserWrites) -> (Arc<dyn Kv>, Store) {
     let kv = records_kv(path, concurrent);
     let store =
         Store::open_kv(kv.clone(), Arc::new(SystemEnv), options(concurrent, multiuser)).unwrap();
@@ -386,7 +388,7 @@ fn journal_rows_carry_the_write_origin_only_with_the_switch_on() {
         let (kv_off, off) = leader(
             &dir.path().join("off.redb"),
             concurrent,
-            MultiUserOptions::default(),
+            MultiUserWrites::default(),
         );
         assert!(!off.info().commit_log);
         off.admit_write(
@@ -429,7 +431,7 @@ fn write_origin_needs_a_host_id() {
         Arc::new(SystemEnv),
         options(
             false,
-            MultiUserOptions {
+            MultiUserWrites {
                 host_id: None,
                 ..mu()
             },
@@ -766,7 +768,7 @@ fn a_log_brain_is_refused_for_writing_without_the_log_and_read_without_it() {
         assert_eq!(format["format_version"], LOG_FORMAT_VERSION);
         assert_eq!(format["log"]["since"], json!({"sequence": since.sequence, "index": since.index}));
         let before = files(&brain);
-        let err = Store::open_dir(&brain, options(concurrent, MultiUserOptions::default()))
+        let err = Store::open_dir(&brain, options(concurrent, MultiUserWrites::default()))
             .err()
             .unwrap();
         assert_eq!(err.code, FORMAT_UNKNOWN);
@@ -774,7 +776,7 @@ fn a_log_brain_is_refused_for_writing_without_the_log_and_read_without_it() {
         assert_eq!(files(&brain), before, "the refused open changed a file");
         // Without FORMAT the format record refuses it, still before any record is written.
         std::fs::remove_file(brain.join("FORMAT")).unwrap();
-        let err = Store::open_dir(&brain, options(concurrent, MultiUserOptions::default()))
+        let err = Store::open_dir(&brain, options(concurrent, MultiUserWrites::default()))
             .err()
             .unwrap();
         assert_eq!(err.code, FORMAT_UNKNOWN);
@@ -796,7 +798,7 @@ fn a_log_brain_is_refused_for_writing_without_the_log_and_read_without_it() {
 fn an_interrupted_switch_to_the_log_is_finished_with_the_log_and_refused_without_it() {
     let dir = TempDir::new("log-interrupted");
     let brain = dir.path().join("brain");
-    let store = Store::open_dir(&brain, options(false, MultiUserOptions::default())).unwrap();
+    let store = Store::open_dir(&brain, options(false, MultiUserWrites::default())).unwrap();
     store.set_config("test.a", "1").unwrap();
     drop(store);
     // The crash point: FORMAT stamped for the log, the records not yet.
@@ -806,7 +808,7 @@ fn an_interrupted_switch_to_the_log_is_finished_with_the_log_and_refused_without
     format["log"] = json!({"since": {"sequence": 99, "index": 0}});
     std::fs::write(brain.join("FORMAT"), serde_json::to_vec_pretty(&format).unwrap()).unwrap();
     let before = files(&brain);
-    let err = Store::open_dir(&brain, options(false, MultiUserOptions::default()))
+    let err = Store::open_dir(&brain, options(false, MultiUserWrites::default()))
         .err()
         .unwrap();
     assert_eq!(err.code, FORMAT_UNKNOWN);
@@ -824,7 +826,7 @@ fn an_interrupted_switch_to_the_log_is_finished_with_the_log_and_refused_without
 fn the_switch_off_leaves_format_and_records_without_any_log_field() {
     let dir = TempDir::new("log-off");
     let brain = dir.path().join("brain");
-    let store = Store::open_dir(&brain, options(false, MultiUserOptions::default())).unwrap();
+    let store = Store::open_dir(&brain, options(false, MultiUserWrites::default())).unwrap();
     store.set_config("test.a", "1").unwrap();
     let info = serde_json::to_value(store.info()).unwrap();
     assert_eq!(
@@ -952,5 +954,62 @@ fn a_log_brain_at_an_older_base_upgrades_inside_the_log() {
             .err()
             .unwrap();
         assert_eq!(err.code, FORMAT_UNKNOWN);
+    }
+}
+
+/// A clock that moves forward by one microsecond at every read, and random ids.
+struct Ticking(std::sync::atomic::AtomicI64);
+
+impl gbrain_store::Env for Ticking {
+    fn now_micros(&self) -> i64 {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+    }
+    fn new_uuid(&self) -> String {
+        gbrain_store::env::SystemEnv.new_uuid()
+    }
+}
+
+#[test]
+fn the_accept_hook_sees_every_commit_once_in_commit_order_with_its_time() {
+    for concurrent in MODES {
+        let dir = TempDir::new("accept-hook");
+        let kv = records_kv(&dir.path().join("r.redb"), concurrent);
+        let store = Store::open_kv(
+            kv.clone(),
+            Arc::new(Ticking(std::sync::atomic::AtomicI64::new(1_000))),
+            options(concurrent, MultiUserWrites::default()),
+        )
+        .unwrap();
+        let seen: Arc<std::sync::Mutex<Vec<commit_log::Accepted>>> = Arc::default();
+        let sink = seen.clone();
+        store
+            .set_accept_hook(Arc::new(move |a| sink.lock().unwrap().push(a)))
+            .unwrap();
+        let store = Arc::new(store);
+        let threads: Vec<_> = (0..8)
+            .map(|t| {
+                let store = store.clone();
+                std::thread::spawn(move || {
+                    for i in 0..25 {
+                        store.set_config(&format!("test.k{}", (t + i) % 3), &format!("{t}-{i}")).unwrap();
+                    }
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        let seen = seen.lock().unwrap().clone();
+        // Accepted transactions that lost nothing; a conflict is refused before the accept step.
+        assert_eq!(seen.len(), 200, "concurrent {concurrent}");
+        for pair in seen.windows(2) {
+            assert!(pair[0].position < pair[1].position, "accept order is commit order: {pair:?}");
+            assert!(pair[0].commit_time < pair[1].commit_time, "times follow accept order: {pair:?}");
+        }
+        assert_eq!(seen.last().unwrap().position.sequence, kv.version().unwrap());
+        if concurrent {
+            // At least one group commit held several transactions, and their times still follow their places.
+            assert!(seen.iter().any(|a| a.position.index > 0), "no group commit formed");
+        }
     }
 }

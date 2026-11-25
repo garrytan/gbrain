@@ -144,6 +144,20 @@ pub trait Kv: Send + Sync {
             "this record store cannot keep a commit log",
         ))
     }
+    /// Installs the accept hook (`commit_log::AcceptHook`), with the clock its commit times come
+    /// from. Called only while nothing else writes (a brain's open, or before the first write). A
+    /// store whose writer has no accept step refuses.
+    fn set_accept_hook(
+        &self,
+        clock: std::sync::Arc<dyn crate::env::Env>,
+        hook: crate::commit_log::AcceptHook,
+    ) -> Result<()> {
+        let _ = (clock, hook);
+        Err(crate::error::StoreError::new(
+            crate::error::INVALID_STATE,
+            "this record store has no accept step to hook",
+        ))
+    }
     /// True once [`Kv::enable_commit_log`] succeeded.
     fn commit_log_enabled(&self) -> bool {
         false

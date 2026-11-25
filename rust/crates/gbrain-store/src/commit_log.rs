@@ -101,16 +101,15 @@ impl CommitPosition {
     }
 }
 
-/// Which machine, which run of the program and which principal a write came from (I-3).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
-pub struct WriteOrigin {
-    /// The machine UUID from `host.json` (never a hostname).
-    pub host_id: String,
-    /// A fresh UUID v7 per engine open.
-    pub incarnation: String,
-    /// `<principal_kind>:<principal_id>`, or empty when the write names no principal.
-    pub writer_id: String,
+pub use crate::write_origin::WriteOrigin;
+
+/// An origin with every field empty: what a record carries when the store knows no origin.
+pub fn no_origin() -> WriteOrigin {
+    WriteOrigin {
+        host_id: String::new(),
+        incarnation: String::new(),
+        writer_id: String::new(),
+    }
 }
 
 /// What a commit says about itself beyond its changes: set on the record file's write before it
@@ -469,6 +468,36 @@ pub fn write_activation(tx: &mut dyn KvWrite, since: CommitPosition) -> Result<(
     tx.put(&meta_key(), &serde_json::to_vec(&meta)?)
 }
 
+/// One transaction the record file's writer accepted: its position and the time the writer read
+/// from the hook's clock at the accept step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Accepted {
+    pub position: CommitPosition,
+    pub commit_time: i64,
+}
+
+/// The accept hook (`Kv::set_accept_hook`): called once per accepted transaction, in accept order
+/// (which is commit order), by the record file's one writer, at the accept step: before the commit
+/// is durable, so a commit that then fails was still seen, and while no later transaction can be
+/// accepted. It holds no policy of the store's; it must be quick and must not write to the store.
+pub type AcceptHook = std::sync::Arc<dyn Fn(Accepted) + Send + Sync>;
+
+/// A clock and the hook it feeds, as a store keeps them.
+#[derive(Clone)]
+pub(crate) struct AcceptHookSlot {
+    pub(crate) clock: std::sync::Arc<dyn Env>,
+    pub(crate) hook: AcceptHook,
+}
+
+impl AcceptHookSlot {
+    pub(crate) fn call(&self, position: CommitPosition) {
+        (self.hook)(Accepted {
+            position,
+            commit_time: self.clock.clock_micros(),
+        });
+    }
+}
+
 /// How a store keeps its log (`Kv::enable_commit_log`).
 #[derive(Debug, Clone)]
 pub struct LogSettings {
@@ -481,7 +510,7 @@ impl Default for LogSettings {
     fn default() -> Self {
         Self {
             retention_bytes: DEFAULT_RETENTION_BYTES,
-            default_origin: WriteOrigin::default(),
+            default_origin: no_origin(),
         }
     }
 }

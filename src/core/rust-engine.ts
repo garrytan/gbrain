@@ -29,7 +29,7 @@ import { transactionAborted } from './postgres-engine/transaction-abort.ts';
 import { mapStoreError } from './rust-engine/store-errors.ts';
 import { STORE_MEMBERS } from './rust-engine/store-members/index.ts';
 import { servedCapabilities } from './rust-engine/store-capabilities.ts';
-import { rustMultiuserRequested } from './rust-engine/multiuser.ts';
+import { rustMultiuserSubSwitch } from './rust-engine/multiuser-switch.ts';
 import { hostIdFor } from './persistence/identity.ts';
 import { RECEIPT_STOP_OWNERS } from './rust-engine/receipt-stops.ts';
 import { electOwner, type OwnerRole } from './rust-engine/owner-ipc/election.ts';
@@ -251,7 +251,10 @@ export class RustEngine implements BrainEngine {
           try {
             store = await openRustStore(
               this.addon, this.databasePath, await seedEmbeddingIdentity(this),
-              rustMultiuserRequested() ? { hostId: hostIdFor(this) } : undefined,
+              // The store resolves the brain's mode at this open and applies the sub-switches only when it is on.
+              rustMultiuserSubSwitch('GBRAIN_RUST_WRITE_ORIGIN', { multiuser: true })
+                || rustMultiuserSubSwitch('GBRAIN_RUST_COMMIT_LOG', { multiuser: true })
+                ? { hostId: hostIdFor(this) } : undefined,
             );
             if (generation !== this._generation) {
               await store.close().catch(() => undefined);

@@ -40,7 +40,9 @@
 //! A failed record-file commit stops the pipeline: every later commit fails with `store_io` until
 //! the brain is opened again (the Postgres answer to a failed WAL flush is the same: stop).
 
-use crate::commit_log::{CommitMeta, CommitPosition, LogOpRef, LogSettings, LogState};
+use crate::commit_log::{
+    AcceptHook, AcceptHookSlot, CommitMeta, CommitPosition, LogOpRef, LogSettings, LogState,
+};
 use crate::error::{Result, STORE_CLOSED, STORE_CORRUPT, StoreError, WRITE_CONFLICT};
 use crate::kv::{Kv, KvRead, KvWrite};
 use crate::redb_kv::{RedbKv, reject_reserved};
@@ -352,6 +354,8 @@ struct Shared {
     /// transaction, in the batch's own record-file commit).
     log: Mutex<Option<LogState>>,
     log_on: AtomicBool,
+    /// The accept hook, once installed: the pipeline calls it for each transaction it accepts.
+    hook: Mutex<Option<AcceptHookSlot>>,
 }
 
 impl Shared {
@@ -447,10 +451,19 @@ impl Pipeline {
         let mut latest: Option<Box<dyn KvRead + Send>> = None;
         let mut accepted: Vec<Request> = Vec::new();
         let mut touched: Vec<Vec<u8>> = Vec::new();
+        let hook = self
+            .shared
+            .hook
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
         for req in batch {
             match self.accept(&req, next, &mut resolved, &mut latest) {
                 Ok(keys) => {
                     touched.extend(keys);
+                    if let Some(hook) = &hook {
+                        hook.call(CommitPosition::new(next, accepted.len() as u32));
+                    }
                     accepted.push(req);
                 }
                 Err(e) => {
@@ -658,6 +671,7 @@ impl OccKv {
             stats: Arc::new(OccStats::default()),
             log: Mutex::new(None),
             log_on: AtomicBool::new(false),
+            hook: Mutex::new(None),
         });
         let pipeline = Pipeline {
             shared: shared.clone(),
@@ -801,6 +815,11 @@ impl Kv for OccKv {
 
     fn commit_log_enabled(&self) -> bool {
         self.shared.log_on.load(Ordering::Acquire)
+    }
+
+    fn set_accept_hook(&self, clock: Arc<dyn crate::env::Env>, hook: AcceptHook) -> Result<()> {
+        *self.shared.hook.lock().unwrap_or_else(|p| p.into_inner()) = Some(AcceptHookSlot { clock, hook });
+        Ok(())
     }
 }
 
