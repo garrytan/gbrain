@@ -85,6 +85,9 @@ export function stubSourceMembers(sources: readonly StubSourceRow[] | (() => rea
     },
     /** The active sources with their raw config (listActiveSourceConfigs). */
     async listActiveSourceConfigs(): Promise<ActiveSourceConfigRow[]> {
+      // The same `sources` table as listSourceRecords: a test that makes the table unavailable through listSourceRecords makes this read fail too, as master's one statement did.
+      const unavailable = opts.fail?.('listSourceRecords');
+      if (unavailable) throw unavailable;
       enter('listActiveSourceConfigs');
       return byId(rows()).filter(r => !r.archived).map(({ id, config }) => ({ id, config, archived: false }));
     },
