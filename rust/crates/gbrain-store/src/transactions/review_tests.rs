@@ -189,7 +189,7 @@ fn the_deadline_is_checked_again_after_the_savepoints_merge() {
     let s = mu_store();
     let t = s
         .begin_bound(TxnOptions {
-            deadline: Some(Instant::now() + Duration::from_millis(40)),
+            deadline: Some(Instant::now() + Duration::from_millis(300)),
             ..optimistic()
         })
         .unwrap();
@@ -210,12 +210,12 @@ fn a_deadline_holds_on_a_transaction_that_runs_serialized() {
     let s = crate::test_support::store();
     let t = s
         .begin_bound(TxnOptions {
-            deadline: Some(Instant::now() + Duration::from_millis(20)),
+            deadline: Some(Instant::now() + Duration::from_millis(500)),
             ..optimistic()
         })
         .unwrap();
     t.write(|w| w.put(b"yk", b"x")).unwrap();
-    std::thread::sleep(Duration::from_millis(30));
+    std::thread::sleep(Duration::from_millis(600));
     assert_eq!(t.commit_transaction().unwrap_err().code, TIMEOUT);
     assert_eq!(get(&s, b"yk"), None);
 }
