@@ -14,8 +14,8 @@
  * source keeps the pair apart) and undoes a confirm or a link the company sweep made. reconcile also runs that sweep over
  * every company (core/entities/company-auto-link.ts); sync runs it over the companies it changed. decide records the
  * owner's choice for each Google Contacts contact that waits (dedupe-decide.ts) and undo removes
- * decisions by id. Nothing here merges,
- * renames or deletes a page, and no person is ever linked without the owner.
+ * decisions by id. auto links the person pairs of the classes that passed their labelled sample
+ * (core/entities/evidence/auto.ts), as decisions undo removes. Nothing here merges, renames or deletes a page.
  */
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -31,7 +31,8 @@ import { parseSourceConfig } from '../core/sources-load.ts';
 import { APPLE_CONTACTS_LINK_ORIGIN, unlinkContact } from '../core/apple-contacts/identity-match.ts';
 import { GOOGLE_CONTACTS_LINK_ORIGIN, IDENTITY_LINKS_CONFIG_KEY, identityLinksOn, linkGoogleContacts, unlinkGoogleContacts } from '../core/google/contact-identity.ts';
 import { decideContacts } from './dedupe-decide.ts';
-import { classifyPairs, samplePairs, type ClassesReport, type ClassifyOptions } from '../core/entities/evidence/classes.ts';
+import { classifyPairs, samplePairs, seededPick, type ClassesReport, type ClassifyOptions } from '../core/entities/evidence/classes.ts';
+import { AUTO_CLASSES, applyAutoLinks, autoLinksSince, autoSwitchKey, parseAutoClass, planAutoLinks, switchAutoClassOff } from '../core/entities/evidence/auto.ts';
 import { PAIR_CLASSES, parsePairClass } from '../core/entities/evidence/combine.ts';
 import { EXA_SWITCH_KEY, exaSettings } from '../core/entities/evidence/exa.ts';
 
@@ -48,6 +49,9 @@ const HELP = `Usage: gbrain dedupe --preview [--json] [--kind cross-source|in-so
        gbrain dedupe undo <decision-id>... [--json]
        gbrain dedupe classes [--source <id>] [--exa [--dry-run]] [--json]
        gbrain dedupe sample --class <class> [--n 100] [--seed <n>] [--source <id>] [--exa [--dry-run]] [--json]
+       gbrain dedupe sample --class <class> --since <7d> [--n 20] [--seed <n>] [--json]
+       gbrain dedupe auto [--apply] [--source <id>] [--json]
+       gbrain dedupe auto --off <class> | --on <class> [--json]
 
 List groups of person and company pages that are likely the same person or company, with the evidence
 (shared keys by type, never their values) and a class: clean, likely, weak, thin or conflict.
@@ -106,12 +110,22 @@ sample              a seeded random sample of one class's pairs with their evide
   --class <class>   ${PAIR_CLASSES.join(', ')}
   --n <n>           how many pairs (default 100); a smaller class is sampled whole
   --seed <n>        the sample's seed (default 1); the same seed and brain give the same sample
+  --since <Nd|Nh>   sample the automatic links of one class recorded in that time instead (the weekly check:
+                    --since 7d --n 20)
+auto                list the pairs of person pages that link automatically, in the classes that passed a labelled
+                    sample (${AUTO_CLASSES.join(', ')}: an email or phone only those two person pages hold, in two
+                    sources); a pair with a family, minor or non-person page, a contradiction, a page in two such
+                    pairs, or pages in two identity groups is set aside; changes nothing
+  --apply           link them: one "same" decision per pair (decided_by dedupe:auto:<class>), each printed with the
+                    gbrain dedupe undo command that removes it; gbrain dedupe reject keeps a pair apart for good
+  --off <class>     stop linking the class and remove every link it made
+  --on <class>      link the class again from the next --apply
 
 Companies link automatically: each sync links the cross-source company groups its changed pages belong to when
 they are clean, share a LinkedIn company page or their own site's domain, and name no different countries
 (identity rows established_by dedupe:auto, in the database only). gbrain dedupe reject undoes one.
-People are never linked automatically, except contact pages by exactly the same email or phone (Apple Contacts,
-and Google Contacts after link-contacts --apply).
+People are linked automatically only by gbrain dedupe auto --apply, and contact pages by exactly the same email or
+phone (Apple Contacts, and Google Contacts after link-contacts --apply).
 
 Decisions are kept in .gbrain/identity/ in the brain's repository (committed through gbrain git commit-push),
 or in the database on a brain with no repository. Nothing merges, renames or deletes a page.
@@ -164,6 +178,7 @@ export async function runDedupe(engine: BrainEngine, args: string[]): Promise<vo
   if (sub === 'decide') return runDecide(engine, args.slice(1));
   if (sub === 'undo') return runUndo(engine, args.slice(1));
   if (sub === 'classes' || sub === 'sample') return runClasses(engine, sub, args.slice(1));
+  if (sub === 'auto') return runAuto(engine, args.slice(1));
   let json = false;
   let kind: DuplicateKind | undefined;
   let sourceId: string | undefined;
@@ -629,19 +644,24 @@ async function runReconcile(engine: BrainEngine, args: string[]): Promise<void> 
 
 /** gbrain dedupe classes and gbrain dedupe sample (GST-3609): read-only counts and labelling samples of candidate person pairs. */
 async function runClasses(engine: BrainEngine, cmd: 'classes' | 'sample', args: string[]): Promise<void> {
-  let json = false, exa = false, dryRun = false, sourceId: string | undefined, cls: string | undefined, n = 100, seed = 1;
+  let json = false, exa = false, dryRun = false, sourceId: string | undefined, cls: string | undefined, n: number | undefined, seed = 1, since: number | undefined;
   const usage = (why: string) => { console.error(`gbrain dedupe ${cmd}: ${why}.\n\n${HELP}`); setCliExitVerdict(2); };
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === '--json') { json = true; continue; }
     if (a === '--exa') { exa = true; continue; }
     if (a === '--dry-run') { dryRun = true; continue; }
-    const valued = cmd === 'sample' ? ['--source', '--class', '--n', '--seed'] : ['--source'];
+    const valued = cmd === 'sample' ? ['--source', '--class', '--n', '--seed', '--since'] : ['--source'];
     if (!valued.includes(a)) return usage(`unknown argument ${a}`);
     const v = args[++i];
     if (!v) return usage(`${a} needs a value`);
     if (a === '--source') sourceId = v;
     else if (a === '--class') cls = v;
+    else if (a === '--since') {
+      const m = /^(\d+)([dh])$/.exec(v.trim());
+      if (!m || Number(m[1]) < 1) return usage('--since takes a time like 7d or 24h');
+      since = Number(m[1]) * (m[2] === 'd' ? 86_400_000 : 3_600_000);
+    }
     else {
       const num = Number(v);
       if (!Number.isInteger(num) || num < (a === '--n' ? 1 : 0)) return usage(`${a} takes a whole number${a === '--n' ? ' of at least 1' : ''}`);
@@ -649,6 +669,19 @@ async function runClasses(engine: BrainEngine, cmd: 'classes' | 'sample', args: 
     }
   }
   if (dryRun && !exa) return usage('--dry-run goes with --exa');
+  if (since !== undefined) {
+    const autoClass = cls === undefined ? null : parseAutoClass(cls);
+    if (!autoClass) return usage(`with --since, pass --class with one of the automatic classes: ${AUTO_CLASSES.join(', ')}`);
+    if (exa || sourceId) return usage('--since samples recorded links: it takes no --exa or --source');
+    const recent = autoLinksSince(await engine.listIdentityDecisions(), Date.now() - since, autoClass)
+      .sort((a, b) => (a.decision_id < b.decision_id ? -1 : 1));
+    const picked = seededPick(recent, n ?? 20, seed);
+    const links = picked.map(d => ({ decision: d.decision_id, members: d.members, entity_id: d.entity_id, decided_at: d.decided_at }));
+    if (json) { console.log(JSON.stringify({ class: autoClass, since_hours: since / 3_600_000, n: n ?? 20, seed, total: recent.length, links }, null, 2)); return; }
+    console.log(`${links.length} of ${recent.length} automatic ${autoClass} link(s) from the last ${since / 3_600_000} hour(s) (seed ${seed}). Label each one same, different or unsure; undo a wrong one with gbrain dedupe undo <decision>.`);
+    for (const l of links) console.log(`${l.decision}  ${l.members.map(memberText).join('  +  ')}  (${l.decided_at})`);
+    return;
+  }
   const pairClass = cls === undefined ? null : parsePairClass(cls);
   if (cmd === 'sample' && !pairClass) return usage(`pass --class with one of ${PAIR_CLASSES.join(', ')}`);
   const opts: ClassifyOptions = { ...(sourceId ? { sourceId } : {}) };
@@ -664,9 +697,9 @@ async function runClasses(engine: BrainEngine, cmd: 'classes' | 'sample', args: 
   }
   const { report, pairs } = await classifyPairs(engine, opts);
   if (cmd === 'sample') {
-    const picked = samplePairs(pairs, pairClass!, n, seed);
+    const picked = samplePairs(pairs, pairClass!, n ?? 100, seed);
     const total = report.classes[pairClass!];
-    if (json) { console.log(JSON.stringify({ schema_version: report.schema_version, class: pairClass, n, seed, total, pairs: picked, exa: report.exa }, null, 2)); return; }
+    if (json) { console.log(JSON.stringify({ schema_version: report.schema_version, class: pairClass, n: n ?? 100, seed, total, pairs: picked, exa: report.exa }, null, 2)); return; }
     console.log(`${picked.length} of ${total} pair(s) in class ${pairClass} (seed ${seed}). Label each one same, different or unsure.`);
     for (const p of picked) {
       console.log(`${p.id}  ${p.members.map(m => `${m.source_id}:${m.slug} (${m.title})`).join('  +  ')}`);
@@ -678,11 +711,51 @@ async function runClasses(engine: BrainEngine, cmd: 'classes' | 'sample', args: 
   console.log(classesText(report));
 }
 
+async function runAuto(engine: BrainEngine, args: string[]): Promise<void> {
+  let json = false, apply = false, sourceId: string | undefined, off: string | undefined, on: string | undefined;
+  const usage = (why: string) => { console.error(`gbrain dedupe auto: ${why}.\n\n${HELP}`); setCliExitVerdict(2); };
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === '--json') { json = true; continue; }
+    if (a === '--apply') { apply = true; continue; }
+    if (!['--source', '--off', '--on'].includes(a)) return usage(`unknown argument ${a}`);
+    const v = args[++i];
+    if (!v) return usage(`${a} needs a value`);
+    if (a === '--source') sourceId = v; else if (a === '--off') off = v; else on = v;
+  }
+  if (off !== undefined || on !== undefined) {
+    if ((off !== undefined && on !== undefined) || apply || sourceId) return usage('--off and --on take one class and no other flag but --json');
+    const cls = parseAutoClass((off ?? on)!);
+    if (!cls) return usage(`${off !== undefined ? '--off' : '--on'} takes one of ${AUTO_CLASSES.join(', ')}`);
+    if (on !== undefined) {
+      await engine.setConfig(autoSwitchKey(cls), 'on');
+      if (json) console.log(JSON.stringify({ class: cls, switch: 'on', removed: [] }, null, 2));
+      else console.log(`Automatic ${cls} links are on; gbrain dedupe auto --apply links the pairs that qualify.`);
+      return;
+    }
+    const { removed } = await switchAutoClassOff(engine, cls);
+    if (json) console.log(JSON.stringify({ class: cls, switch: 'off', removed }, null, 2));
+    else console.log(`Automatic ${cls} links are off; removed ${removed.length} link(s). gbrain dedupe auto --on ${cls} switches the class back on.`);
+    return;
+  }
+  const plan = await planAutoLinks(engine, sourceId ? { sourceId } : {});
+  const r = apply ? await applyAutoLinks(engine, plan) : null;
+  if (json) {
+    console.log(JSON.stringify({ mode: apply ? 'apply' : 'preview', ...plan, ...(r ? { store: r.store, ...(r.receipt ? { commit: r.receipt.commit, outcome: r.receipt.outcome } : {}) } : {}) }, null, 2));
+    return;
+  }
+  const switches = AUTO_CLASSES.map(c => `${c} ${plan.switches[c]}`).join(', ');
+  console.log(`${apply ? 'Linked' : 'Would link'} ${plan.links.length} pair(s) of person pages automatically (${switches}); ${plan.set_aside.length} set aside.${apply ? '' : ' Nothing was changed; link them with gbrain dedupe auto --apply.'}`);
+  for (const l of plan.links) console.log(`  ${l.decision}  ${l.members.map(memberText).join('  +  ')}  (${l.class}${apply ? `; undo: gbrain dedupe undo ${l.decision}` : ''})`);
+  for (const s of plan.set_aside) console.log(`  set aside (${s.reason}): ${s.members.map(memberText).join('  +  ')}`);
+  if (r) console.log(storedText(r));
+}
+
 function classesText(r: ClassesReport): string {
   const lines = [`${r.pairs} candidate pair(s) of person pages (nothing was written):`];
   lines.push(`  would link ${r.verdicts.link}, collapse ${r.verdicts.collapse}, wait ${r.verdicts.wait}, mark different ${r.verdicts.different}`);
   lines.push('  by class: ' + PAIR_CLASSES.map(c => `${c} ${r.classes[c]}`).join(', '));
-  lines.push(`  left out: ${r.skipped.already_linked} already linked, ${r.skipped.decided_apart} you recorded as different, ${r.skipped.large_groups} name group(s) of more than 10 pages, ${r.skipped.no_class} with names that disagree and nothing shared`);
+  lines.push(`  left out: ${r.skipped.already_linked} already linked, ${r.skipped.decided_apart} you recorded as different, ${r.skipped.large_groups} name group(s) of more than 10 pages, ${r.skipped.no_class} with names that disagree and nothing shared, ${r.skipped.copies} mirror copies (one page kept in two sources)`);
   lines.push(`  evidence read: ${r.email.pages} email page(s); ${r.messaging.pages} chat page(s) in ${r.messaging.chats} chat(s), ${r.messaging.one_to_one} one-to-one${r.messaging.too_large ? `, ${r.messaging.too_large} too large to read` : ''}; Signal has no reader`);
   const seg = r.messaging.segmented_page;
   if (seg.read || seg.set_aside) lines.push(`  chat pages stored in segments: ${seg.read} read whole, ${seg.set_aside} set aside (over 24 MiB or not readable as one body; their chats add no evidence)${seg.set_aside ? ': ' + seg.pages.slice(0, 20).map(p => `${p.source_id}:${p.slug}`).join(', ') + (seg.set_aside > 20 ? ` and ${seg.set_aside - 20} more (--json lists every one)` : '') : ''}`);

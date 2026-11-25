@@ -3,7 +3,8 @@
 The same person often has two or three pages: a contact from Google or Apple Contacts, a page in each source, a stray
 spelling. `gbrain dedupe classes` looks at every pair of person pages that might be one person and counts them by the
 evidence for and against. `gbrain dedupe sample` picks a random set of pairs from one class so someone can check them
-by hand. Both only read: nothing is linked, edited or removed.
+by hand. Both only read: nothing is linked, edited or removed. `gbrain dedupe auto` links the pairs of the classes
+that passed such a check ([Automatic links](#automatic-links)).
 
 ## Which pairs are looked at
 
@@ -13,23 +14,28 @@ with `gbrain dedupe reject` or `gbrain dedupe decide`, and names shared by more 
 Google Contacts that match two or more people are decided one by one with `gbrain dedupe decide`
 ([Google connect](google-connect.md#decide-the-contacts-that-wait)).
 
+A page kept under the same slug in two sources, with the same name and no company, role, email or phone that
+disagrees, is one page copied, not a duplicate: the pair is left out and counted as a mirror copy. When a third page
+pairs with each copy, only one of those pairs is kept, the one with the most pages in the default source.
+
 ## The classes
 
 | Class | What it means | What would happen |
 |---|---|---|
 | C1 | an email or phone only these two person pages hold, names agree | link |
-| C2 | the same, but the names clearly disagree (a shared or reused number) | wait for you |
+| C2 | the same, but the names disagree (usually a handle or a contact card beside a page) | link with `gbrain dedupe auto` |
 | C3 | an account id both hold, names agree | link |
 | C4 | same full name and company, two or more pages that link both, no other page of that name | wait (counted first) |
 | C5 | the names agree and nothing else is shared | wait, likeliest first |
-| C6 | a contradiction: different account ids, a role mailbox like team@, a value a third page also holds | wait |
+| C6 | a contradiction: different account ids, a role mailbox like team@, a value a third page also holds, or an id that a page with another name also holds (ids copied between cofounders' pages) | wait |
 | C7 | two pages in one source with the same name and a shared id | collapse into one |
 | M1 | a chat handle (phone or email) only one person page holds belongs, in your chats, to someone with the other page's name | link |
 | X1 | a web search for each page, with a different clue, finds the same profile | link |
 | X2 | the web searches find two different profiles | marked probably different |
 | C5+email+messaging, C5+email+C4, C5+messaging+C4 | a name-only pair with two independent kinds of evidence | link |
 
-A pair can be in more than one class. "What would happen" is what an automatic run would do; this release never does it.
+A pair can be in more than one class. "What would happen" is what the evidence says; only the classes listed under
+[Automatic links](#automatic-links) are linked without you.
 
 ## How the evidence combines
 
@@ -40,7 +46,10 @@ address), your chats (M3: a chat ties one page's phone or email to the other pag
 history (C4). Weaker signals only change the order of the waiting list: E3 (the two addresses write to largely the
 same people) and M2 (a chat name matches the page). Anything that contradicts waits, and a page marked family
 (`relationship`, a `family` tag or group) or about someone under 18 (`minor: true`, an age or a birth year) never links
-on its own.
+on its own. For that hold, a label or relationship that is someone else's doesn't count: a family office, family
+friends, "wife of ..." or a school parent. Web search still leaves all of them out. A page whose title reads as a room,
+a team, a shared mailbox or a business (`Team`, `Room`, `Partners`, `Inc` and similar words) never links on its own
+either.
 
 ## Email and chat evidence
 
@@ -84,3 +93,21 @@ gbrain dedupe sample --class C1 --n 100 --seed 1 --json
 
 The same seed on the same brain gives the same sample. A class with fewer pairs than `--n` is sampled whole. Label each
 pair same, different or unsure; a class with more than 2 wrong in 100 stays manual.
+
+## Automatic links
+
+`gbrain dedupe auto` lists the pairs it would link and changes nothing; `gbrain dedupe auto --apply` links them. It
+links only classes that passed a labelled sample, today C2: an email or phone that only these two person pages hold,
+in two sources. It leaves out a pair with a family, minor or non-person page, a pair with any contradiction, a pair
+whose page is in another pair it would link, and pages that sit in two different identity groups.
+
+Each link is a "same" decision, recorded like your own `gbrain dedupe confirm` (in git when the brain has a
+repository, in the database otherwise) with `decided_by: dedupe:auto:<class>`. So:
+
+- `gbrain dedupe undo <decision>` removes one link (the next `--apply` can make it again);
+- `gbrain dedupe reject <identity id>` marks the pair as different people for good;
+- `gbrain dedupe auto --off <class>` stops a class and removes every link it made; `--on <class>` starts it again;
+- `gbrain doctor` prints the last 24 hours of automatic links by class, with the undo commands (`dedupe_auto_links`).
+
+Check each class weekly: `gbrain dedupe sample --class C2 --since 7d --n 20 --json` picks 20 of the links it made in
+the last week. More than one wrong in 20 means switching the class off.

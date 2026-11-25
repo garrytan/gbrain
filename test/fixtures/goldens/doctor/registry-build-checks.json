@@ -1259,6 +1259,10 @@
       },
       {
         "category": "brain",
+        "name": "dedupe_auto_links"
+      },
+      {
+        "category": "brain",
         "name": "local_edit_adoptions"
       },
       {
