@@ -1100,7 +1100,6 @@ src/core/facts/absorb-log.ts#pendingReceipt	catch_empty	1
 src/core/facts/capture-dedup.ts#collapseFactReads	capability_refusal_swallowed	1
 src/core/facts/capture-dedup.ts#entityNames	capability_refusal_swallowed	1
 src/core/facts/capture-dedup.ts#entityNames	catch_empty	1
-src/core/facts/claim-conflicts.ts#claimConflictsMode	promise_catch_empty	1
 src/core/facts/contested-claims.ts#withDecideContested	capability_refusal_swallowed	1
 src/core/facts/dead-absorb-retry.ts#loadMaxResubmits	promise_catch_empty	1
 src/core/facts/dead-absorb-retry.ts#readState	catch_empty	1

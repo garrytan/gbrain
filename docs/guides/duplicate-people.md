@@ -9,7 +9,9 @@ by hand. Both only read: nothing is linked, edited or removed.
 
 A pair is two person pages with the same or a close name, a shared email address or phone number, or a shared account
 id (LinkedIn, GitHub or an id your schema declares). Pairs you already linked, pairs you marked as different people
-with `gbrain dedupe reject`, and names shared by more than 10 pages are left out and counted.
+with `gbrain dedupe reject` or `gbrain dedupe decide`, and names shared by more than 10 pages are left out and counted.
+Google Contacts that match two or more people are decided one by one with `gbrain dedupe decide`
+([Google connect](google-connect.md#decide-the-contacts-that-wait)).
 
 ## The classes
 

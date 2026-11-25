@@ -1684,7 +1684,15 @@ More: [docs/guides/repair.md#managed-sync-orphans](../../docs/guides/repair.md#m
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| gbrain dedupe confirm, reject or reconcile refused because this brain's duplicate decisions are kept in git in its home source and this host sees no git work tree for that source, so nothing was written. | On a brain with a repository git is the record of every duplicate decision and the database only its projection; a decision written to the database alone would be dropped by the next sync of the checkout and lost with the database. | Run the command on the host that holds the checkout, or restore the checkout and run gbrain dedupe reconcile there. Run: gbrain sources list --json | user | `gbrain doctor --json` | 1 | no |
+| gbrain dedupe confirm, reject, decide, undo or reconcile refused because this brain's duplicate decisions are kept in git in its home source and this host sees no git work tree for that source, so nothing was written. | On a brain with a repository git is the record of every duplicate decision and the database only its projection; a decision written to the database alone would be dropped by the next sync of the checkout and lost with the database. | Run the command on the host that holds the checkout, or restore the checkout and run gbrain dedupe reconcile there. Run: gbrain sources list --json | user | `gbrain doctor --json` | 1 | no |
+
+### dedupe_decision_unknown
+
+<a id="dedupe_decision_unknown"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain dedupe undo was given a decision id that no recorded duplicate decision has, so nothing was removed. | A decision id is a hash of the decision's member pages, printed by gbrain dedupe decide and stored as .gbrain/identity/<id>.md or a database row; removing only some of the ids given would leave a half-undone choice. | Pass the ids gbrain dedupe decide printed for the line to undo (each line prints its undo command). Run: gbrain entity-identity-list --json | agent | `repeat the read that failed` | 1 | no |
 
 ### dedupe_exa_off
 

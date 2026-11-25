@@ -30,7 +30,7 @@
  * Config keys (defaults explicit):
  *   cycle.enrich_thin.enabled                (false)
  *   cycle.enrich_thin.max_cost_usd           (1.00)   per source per tick
- *   cycle.enrich_thin.max_total_cost_usd     (5.00)   brain-wide per tick
+ *   cycle.enrich_thin.max_total_cost_usd     (0.50)   brain-wide per tick
  *   cycle.enrich_thin.max_total_walltime_min (30)     brain-wide per tick
  *   cycle.enrich_thin.max_pages_per_tick     (3)      per source per tick
  *   cycle.enrich_thin.types                  (["person","company"])
@@ -181,7 +181,7 @@ async function loadCfg(engine: BrainEngine): Promise<ResolvedConfig> {
   return {
     enabled: enabledFlag,
     maxCostUsd: parseCostOrDefault(maxCost, 1.0),
-    maxTotalCostUsd: parseCostOrDefault(maxTotalCost, 5.0),
+    maxTotalCostUsd: parseCostOrDefault(maxTotalCost, 0.5),
     maxTotalWalltimeMin: parseFloatOrDefault(maxTotalWall, 30),
     maxPagesPerTick: parseIntOrDefault(maxPages, 3),
     types,
