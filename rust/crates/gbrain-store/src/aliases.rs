@@ -553,19 +553,6 @@ fn rename_rows(read: &dyn KvRead, source: &str) -> Result<Vec<(String, String)>>
         .collect())
 }
 
-/// Whether the rename history of `source` records `old` moved to a slug other than `new` (an earlier page that left
-/// the name, so a row naming `old` by slug alone may be that page's).
-pub(crate) fn renamed_elsewhere(
-    read: &dyn KvRead,
-    source: &str,
-    old: &str,
-    new: &str,
-) -> Result<bool> {
-    Ok(rename_rows(read, source)?
-        .iter()
-        .any(|(o, n)| o == old && n != new))
-}
-
 fn rename_key(source: &str, old: &str, new: &str) -> Vec<u8> {
     key(RENAME_HISTORY, &[source, old, new])
 }

@@ -394,41 +394,26 @@ pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Resul
 }
 
 /// `moveSlugBindings`' attachment step of `updateSlug` (`page-state/rename-alias.ts`): after `page` moved from
-/// `old_slug` to `new_slug` in `source_id`, its files named by the old slug take the new one: the rows bound to it
-/// (`page_id`), and the rows that name it only by slug (no `page_id`) when the old slug named exactly this live
-/// page (it is not soft-deleted, no page of the source holds the old slug now, and the rename history records no
-/// earlier move of another page away from it). A row bound to another page never
-/// moves by slug. Returns the number of slug-only rows left because the slug was ambiguous.
+/// `old_slug` to `new_slug` in `source_id`, its files bound to it (`page_id`) and named by the old slug take the new
+/// one. A row with no `page_id` stays: nothing the store keeps proves which page it belonged to.
 pub(crate) fn rename_page_files(
     tx: &mut dyn KvWrite,
     source_id: &str,
     old_slug: &str,
     new_slug: &str,
     page: &PageRecord,
-) -> Result<u64> {
-    let unambiguous = page.deleted_at_us.is_none()
-        && read_page(&*tx, source_id, old_slug)?.is_none()
-        && !crate::aliases::renamed_elsewhere(&*tx, source_id, old_slug, new_slug)?;
-    let files: Vec<(Vec<u8>, FileRecord)> = collect_values(&*tx, &[keys::RAW_FILES, FILE])?;
-    let mut skipped = 0;
-    for (_, mut file) in files {
-        if file.source_id != source_id || file.page_slug.as_deref() != Some(old_slug) {
-            continue;
-        }
-        let moves = match file.page_id {
-            Some(id) => id == page.id,
-            None if unambiguous => true,
-            None => {
-                skipped += 1;
-                false
-            }
-        };
-        if moves {
+) -> Result<()> {
+    let attached: Vec<(Vec<u8>, String)> = collect_values(&*tx, &file_page_prefix(page.id))?;
+    for (_, path) in attached {
+        if let Some(mut file) = read_file(&*tx, &path)?
+            && file.source_id == source_id
+            && file.page_slug.as_deref() == Some(old_slug)
+        {
             file.page_slug = Some(new_slug.to_string());
             put_file(tx, &file)?;
         }
     }
-    Ok(skipped)
+    Ok(())
 }
 
 /// The number of files of source `source_id` (the delete preview's `files` count).

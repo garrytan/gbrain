@@ -472,8 +472,8 @@ async function movePageUnderStoredSlug(engine: BrainEngine, sourceId: string, pa
     await lockedBeliefBatch(tx, { sourceId, slugs: [page.slug, page.normal], publicationId, op: 'slug_spelling', remote: false, report }, async () => {
       // The page's attachments (bound to it, or naming the old spelling with no page id), counted first for the report.
       const [own] = await tx.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM files WHERE source_id = $1 AND page_slug = $2 AND (page_id = $3 OR page_id IS NULL)', [sourceId, page.slug, page.page_id]);
-      // updateSlug moves them (moveSlugBindings), except slug-only rows of a soft-deleted page; the spelling names this one
-      // page under the page locks, so this repair moves those itself.
+      // updateSlug moves the bound ones (moveSlugBindings); the rows with no page id stay there, but the older spelling
+      // names exactly this one page under the page locks, so this repair moves those itself.
       if (await tx.updateSlug(page.slug, page.normal, { sourceId }) !== 1) throw changedSincePreview(sourceId, page.slug, `page ${page.slug} could not move to ${page.normal}`);
       await tx.executeRaw('UPDATE files SET page_slug = $3 WHERE source_id = $1 AND page_slug = $2 AND page_id IS NULL', [sourceId, page.slug, page.normal]);
       attachments = Number(own?.n ?? 0);
