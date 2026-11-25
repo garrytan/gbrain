@@ -91,9 +91,11 @@ checks that with real agents on a keyless brain with no git repository, seeded w
 3. The same two steps run again with gbrain disconnected, using only each tool's own notes file (`AGENTS.md`). That
    answer has to miss at least one item, which shows the brain is what got the list right.
 
-It costs a few dollars of model use, so it runs only when you ask: `GBRAIN_TEST_HOUSEHOLD_LIVE=1`, the `claude`
-(2.1.280 or newer, for Opus 5.5) and `codex` commands, and `ANTHROPIC_API_KEY` plus `CODEX_API_KEY` or
-`OPENAI_API_KEY`. It passes no judge and publishes no number.
+It costs a few dollars of model use, so it runs only when you ask:
+`GBRAIN_TEST_HOUSEHOLD_LIVE=1 GBRAIN_TEST_KEEP_PROVIDER_KEYS=1 bun test test/e2e/household-cross-harness-real.serial.test.ts`,
+with the `claude` (2.1.280 or newer, for Opus 5.5) and `codex` commands, and `ANTHROPIC_API_KEY` plus `CODEX_API_KEY`
+or `OPENAI_API_KEY`. If you ask for it and something is missing, it fails and names what. It uses no judge and publishes
+no number. The seed script refuses a directory that already holds a brain.
 
 ## household_exists
 

@@ -11,9 +11,10 @@
  *      AGENTS.md notes file in the working directory, which Claude Code reads through CLAUDE.md and Codex reads as its
  *      project instructions). The pass bar is that it misses at least one item of the ranking.
  *
- * Opt-in and paid: runs only with GBRAIN_TEST_HOUSEHOLD_LIVE=1, the claude and codex binaries, and their keys
- * (ANTHROPIC_API_KEY; CODEX_API_KEY or OPENAI_API_KEY). Opus 5.5 needs Claude Code 2.1.280 or newer; an opted-in run
- * on an older claude fails instead of skipping. Every home is a temp dir, every name is invented.
+ * Opt-in and paid: GBRAIN_TEST_HOUSEHOLD_LIVE=1 GBRAIN_TEST_KEEP_PROVIDER_KEYS=1 bun test <this file>, with the claude and
+ * codex commands and their keys (ANTHROPIC_API_KEY; CODEX_API_KEY or OPENAI_API_KEY). An opted-in run that is missing any
+ * of them, or whose claude is older than 2.1.280 (Opus 5.5 needs it), fails instead of skipping. Every home is a temp
+ * dir (HOME, CLAUDE_CONFIG_DIR and CODEX_HOME), every name is invented.
  */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -33,8 +34,15 @@ const CODEX_MODEL = process.env.GBRAIN_TEST_HOUSEHOLD_CODEX_MODEL || 'gpt-6.2-so
 const CODEX_KEY = process.env.CODEX_API_KEY || process.env.OPENAI_API_KEY || '';
 const CLAUDE_BIN = resolveClaudeBinary();
 const CODEX_BIN = resolveCodexBinary();
-const READY = process.env.GBRAIN_TEST_HOUSEHOLD_LIVE === '1' && !!CLAUDE_BIN && !!CODEX_BIN && hasClaudeAuth()
-  && (!!CODEX_KEY || existsSync(join(homedir(), '.codex', 'auth.json')));
+const LIVE = process.env.GBRAIN_TEST_HOUSEHOLD_LIVE === '1';
+const MISSING = [
+  !CLAUDE_BIN && 'the claude command', !CODEX_BIN && 'the codex command', !hasClaudeAuth() && 'ANTHROPIC_API_KEY',
+  !CODEX_KEY && !existsSync(join(homedir(), '.codex', 'auth.json')) && 'CODEX_API_KEY or OPENAI_API_KEY',
+].filter(Boolean);
+if (LIVE && MISSING.length) {
+  throw new Error(`GBRAIN_TEST_HOUSEHOLD_LIVE=1 but this run is missing ${MISSING.join(', ')}. Provider keys reach tests only with GBRAIN_TEST_KEEP_PROVIDER_KEYS=1.`);
+}
+const READY = LIVE && !MISSING.length;
 
 const GAS_BILL = { title: 'Gas bill', due: '2026-12-06', amount: 40, currency: 'USD' };
 const MILK_BOUGHT = '2026-11-30';
@@ -78,7 +86,7 @@ function codexHome(prefix: string, gbrainHome?: string): string {
   return home;
 }
 
-const codexEnv = (): Record<string, string> => (CODEX_KEY ? { CODEX_API_KEY: CODEX_KEY } : {});
+const codexEnv = (home: string): Record<string, string> => ({ CODEX_HOME: join(home, '.codex'), ...(CODEX_KEY ? { CODEX_API_KEY: CODEX_KEY } : {}) });
 
 /** Numbered lines of an answer: `<n>. <title>` with an optional ` — <slug>` citation. */
 function listed(text: string): Array<{ title: string; slug: string | null }> {
@@ -161,7 +169,7 @@ describe.skipIf(!READY)('household outcome across Claude Code and Codex (W1a, li
       'List every item it returns as overdue or at risk, in the order it returns them, one per line exactly as "<n>. <title> — <slug>", and nothing else.';
     let passed = false;
     for (let attempt = 1; attempt <= 2 && !passed; attempt++) {
-      const turn = await codexExecTurn({ prompt: ask, cwd: codexCwd, home: chome, timeoutMs: 300_000, extraEnv: codexEnv(), waitForMcpStartup: true,
+      const turn = await codexExecTurn({ prompt: ask, cwd: codexCwd, home: chome, timeoutMs: 300_000, extraEnv: codexEnv(chome), waitForMcpStartup: true,
         mcpToolApprovals: [{ server: 'gbrain', tools: ['household_due', 'whoami'] }] });
       const raw = turn.rawLines.join('\n');
       const called = /"type"\s*:\s*"mcp_tool_call"[^\n]*"server"\s*:\s*"gbrain"[^\n]*"tool"\s*:\s*"household_due"/.test(raw)
@@ -193,7 +201,7 @@ describe.skipIf(!READY)('household outcome across Claude Code and Codex (W1a, li
     const chome = temp(codexHome('gb-w1a-native-codex-'));
     const ask = `${TODAY} ${QUESTION} Answer from our household notes in AGENTS.md. ` +
       'List every item that is overdue or at risk this week, most urgent first, one per line exactly as "<n>. <title>", and nothing else.';
-    const answer = await codexExecTurn({ prompt: ask, cwd, home: chome, timeoutMs: 300_000, extraEnv: codexEnv(), sandbox: 'read-only' });
+    const answer = await codexExecTurn({ prompt: ask, cwd, home: chome, timeoutMs: 300_000, extraEnv: codexEnv(chome), sandbox: 'read-only' });
     const titles = listed(answer.finalText).map(l => l.title.toLowerCase());
     const missing = AT_RISK.filter(t => !titles.includes(t.toLowerCase()));
     const extra = titles.filter(t => !AT_RISK.some(e => e.toLowerCase() === t));

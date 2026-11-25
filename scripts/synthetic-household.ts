@@ -4,14 +4,20 @@
  * the cross-harness outcome check (docs/guides/household.md#check-it-across-harnesses). Usage:
  *   bun scripts/synthetic-household.ts <gbrain-home>
  * The brain lives at <gbrain-home>/.gbrain/brain.pglite with a keyless config, so `GBRAIN_HOME=<gbrain-home> gbrain serve`
- * serves it. Every name in it is invented.
+ * serves it. It refuses a directory that already holds a brain. Every name in it is invented.
  */
+import { existsSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { handleToolCall } from '../src/mcp/server.ts';
 import { gbrainPath, saveConfig, type GBrainConfig } from '../src/core/config.ts';
 import { seedSyntheticHousehold, TIMEZONE } from '../test/fixtures/synthetic-household/household.ts';
 
-export async function seedSyntheticHouseholdBrain(home: string): Promise<Map<string, string>> {
+export async function seedSyntheticHouseholdBrain(dir: string): Promise<Map<string, string>> {
+  const home = resolve(dir);
+  for (const f of ['config.json', 'brain.pglite']) {
+    if (existsSync(join(home, '.gbrain', f))) throw new Error(`${join(home, '.gbrain', f)} already exists; the synthetic household seeds only a new, empty directory.`);
+  }
   const saved = process.env.GBRAIN_HOME;
   process.env.GBRAIN_HOME = home;
   try {
