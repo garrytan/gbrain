@@ -398,6 +398,11 @@ impl Store {
   a stale holder fails at commit even if it started before the takeover.
 - Job claims, effect claims and write claims keep their current token fields and add `epoch`.
 
+- **I-5, managed mode limit (2026-11-25).** Managed mode's topology locks (`withTopologyLocks`) stay native file locks
+  on the checkout (`GBRAIN_HOME/locks`) on every engine for the single-host phase, and are replaced with I-5 leases once
+  the lease work is on the multi-user branch; no stub lease is used before then. File locks do not fence writers on
+  two hosts, so managed mode on Rust is single-host until that swap.
+
 ### I-6. Scope (per-user access)
 
 ```rust
