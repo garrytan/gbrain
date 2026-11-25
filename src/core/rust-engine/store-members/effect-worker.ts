@@ -15,6 +15,7 @@
 import type { EffectClaim, EffectClaimRef, EffectWorktreeOwner, MirrorGateRow } from '../../engine-sql/persistence-effect-worker.ts';
 import type { IdleProbeRow, IdleProbeSpec } from '../../engine-sql/persistence-idle-probe.ts';
 import { assertStoreSerializedTransactions, storeCall, type StoreMember } from './common.ts';
+import { readBrainMode } from './writer-release.ts';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -56,6 +57,9 @@ export const readMirrorGateRows: StoreMember<[requestIds: readonly string[]], Mi
 export const lockEffectGuard: StoreMember<[worktreeId: string | null], EffectWorktreeOwner | null> = async (brain, worktreeId) => {
   assertStoreSerializedTransactions(brain, 'lockEffectGuard');
   if (worktreeId !== null && !UUID.test(worktreeId)) throw new Error(`invalid input syntax for type uuid: "${worktreeId}"`);
+  // Multi-user mode: the brain row's share lock becomes a read of the brain's stored mode, so a mode change committed before
+  // the commit refuses it and the transaction runs again. Single-user mode reads nothing, as before.
+  if (brain.multiuser === true) await readBrainMode(brain, 'lockEffectGuard');
   return null;
 };
 

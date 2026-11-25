@@ -41,15 +41,20 @@ function rustWriterReleaseStore(brain: StoreBrain): WriterReleaseStore {
     adminLockValue: () => call<string | null>(() => brain.getConfig(WRITER_ADMIN_LOCK_KEY)),
     async shareBrain() {
       assertStoreSerializedTransactions(brain, 'writerRelease.shareBrain');
+      // Multi-user mode (here and in the three locks below): each lock becomes a read of the rows the SQL locks, through the
+      // transaction's handle, so a row changed before the commit refuses it and the transaction runs again.
+      if (brain.multiuser === true) await readBrainMode(brain, MEMBER);
     },
     async lockWorktreesAndSources() {
       assertStoreSerializedTransactions(brain, 'writerRelease.lockWorktreesAndSources');
+      if (brain.multiuser === true) await call(() => brain.writerAdminStateText());
     },
     async lockCycleLocks() {
       assertStoreSerializedTransactions(brain, 'writerRelease.lockCycleLocks');
     },
-    async shareWorktree() {
+    async shareWorktree(id) {
       assertStoreSerializedTransactions(brain, 'writerRelease.shareWorktree');
+      if (brain.multiuser === true) await call(() => brain.readWorktreeOwner(id));
     },
     blockingRequests: limit => rows('blocking_requests', { limit }),
     recoveringTopologyChanges: () => rows('recovering_topology_changes'),

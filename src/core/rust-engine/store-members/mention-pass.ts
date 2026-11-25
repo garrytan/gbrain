@@ -15,8 +15,12 @@ const call = <T>(member: string, run: () => Promise<unknown>): Promise<T> => sto
 
 export const listMentionSourceIds: Member<'listMentionSourceIds'> = (brain) => call('listMentionSourceIds', () => brain.listMentionSourceIds());
 export const writeMentionIndexStatus: Member<'writeMentionIndexStatus'> = async (brain, sourceId, patch) => { await call('writeMentionIndexStatus', () => brain.writeMentionIndexStatus(sourceId, patch)); };
-export const lockMentionSources: Member<'lockMentionSources'> = async brain => {
+export const lockMentionSources: Member<'lockMentionSources'> = async (brain, sourceIds) => {
   assertStoreSerializedTransactions(brain, 'lockMentionSources');
+  // Multi-user mode: the advisory lock becomes a read of each source's status row (its generation), through the transaction's
+  // handle. A disable and a gazetteer save write that row, so a reconcile batch or a disable that locked it before the other
+  // committed is refused at its commit and runs again. Single-user mode reads nothing, as before.
+  if (brain.multiuser === true) await call('lockMentionSources', () => brain.readMentionGenerations([...sourceIds]));
 };
 export const listMentionLinkOrigins: Member<'listMentionLinkOrigins'> = (brain, sourceId) => call('listMentionLinkOrigins', () => brain.listMentionLinkOrigins(sourceId));
 export const deleteSourceMentionLinks: Member<'deleteSourceMentionLinks'> = (brain, sourceId, origins) => call('deleteSourceMentionLinks', () => brain.deleteSourceMentionLinks(sourceId, origins === null ? null : [...origins]));
@@ -34,8 +38,11 @@ export const upsertPageAliasState: Member<'upsertPageAliasState'> = async (brain
 export const listMentionCandidatePages: Member<'listMentionCandidatePages'> = (brain, sourceIds, after, limit, patterns) => call('listMentionCandidatePages', () => brain.listMentionCandidatePages([...sourceIds], after, limit, patterns === null ? null : [...patterns]));
 export const listGazetteerEntryKeys: Member<'listGazetteerEntryKeys'> = (brain, sourceId) => call('listGazetteerEntryKeys', () => brain.listGazetteerEntryKeys(sourceId));
 export const listMentionLinkersOfTargets: Member<'listMentionLinkersOfTargets'> = (brain, sourceId, slugs) => call('listMentionLinkersOfTargets', () => brain.listMentionLinkersOfTargets(sourceId, [...slugs]));
-export const lockMentionEntries: Member<'lockMentionEntries'> = async brain => {
+export const lockMentionEntries: Member<'lockMentionEntries'> = async (brain, sourceId) => {
   assertStoreSerializedTransactions(brain, 'lockMentionEntries');
+  // Multi-user mode: the advisory lock becomes a read of the source's gazetteer entry keys, which the save writes, so two
+  // saves of one source cannot both commit from the same entries. Single-user mode reads nothing, as before.
+  if (brain.multiuser === true) await call('lockMentionEntries', () => brain.listGazetteerEntryKeys(sourceId));
 };
 export const applyGazetteerEntryChanges: Member<'applyGazetteerEntryChanges'> = async (brain, sourceId, removed, added) => { await call('applyGazetteerEntryChanges', () => brain.applyGazetteerEntryChanges(sourceId, [...removed], [...added])); };
 export const resetMentionRevisions: Member<'resetMentionRevisions'> = async (brain, by) => { await call('resetMentionRevisions', () => 'afterPageId' in by ? brain.resetMentionRevisions([...by.sourceIds], [...by.pageIds], by.afterPageId) : 'sourceIds' in by ? brain.resetMentionRevisions([...by.sourceIds], null, null) : brain.resetMentionRevisions(null, [...by.pageIds], null)); };

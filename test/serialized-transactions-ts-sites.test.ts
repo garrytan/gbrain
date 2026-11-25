@@ -54,6 +54,7 @@ function fakeBrain(serialized: boolean): StoreBrain {
   return new Proxy({}, {
     get(_target, name) {
       if (name === 'serializedTransactions') return serialized;
+      if (name === 'multiuser') return false;
       throw new Error(`store call ${String(name)} reached`);
     },
   }) as unknown as StoreBrain;

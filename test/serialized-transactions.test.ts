@@ -21,6 +21,7 @@ import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
 import { openRustEngine, type RustEngine } from '../src/core/rust-engine.ts';
 import { STORE_GUARANTEES, servedCapabilities } from '../src/core/rust-engine/store-capabilities.ts';
 import { assertSerializedTransactions } from '../src/core/rust-engine/errors.ts';
+import { provenUnderMultiuser } from '../src/core/rust-engine/lock-skip-guarantees.ts';
 import { assertStoreSerializedTransactions } from '../src/core/rust-engine/store-members/common.ts';
 import { mapStoreError } from '../src/core/rust-engine/store-errors.ts';
 import { storePromisesSerializedTransactions } from '../src/core/rust-engine/store.ts';
@@ -129,6 +130,36 @@ describe('serialized_transactions: where the capability comes from', () => {
     const stored = Object.assign(new Error('serialized_transactions: lockPageKeys skips a lock that only explicit transactions holding the store\'s writer make safe, and this store does not serialize explicit transactions'), { code: 'engine_capability_missing' });
     const mapped = mapStoreError(stored, { member: 'lockPageKeys' }) as OperationError;
     expectRefusal(mapped, 'lockPageKeys (lockPageKeys)');
+  });
+});
+
+describe('serialized_transactions in multi-user mode (optimistic explicit transactions, I-8)', () => {
+  /** An engine opened with the brain's multi-user config row set (I-0), so the process environment is left alone. */
+  async function openMultiuser(): Promise<RustEngine> {
+    const dir = newDir();
+    const first = await open(dir);
+    await first.setConfig('engine.rust.multiuser', 'true');
+    await first.disconnect();
+    return open(dir);
+  }
+
+  withAddon('the store answers false and the engine withholds the capability, reporting multi_writer instead', async () => {
+    const engine = await openMultiuser();
+    expect((engine as unknown as { multiuser: boolean }).multiuser).toBe(true);
+    expect(engine.capabilities.has('serialized_transactions')).toBe(false);
+    expect(engine.capabilities.has('multi_writer' as never)).toBe(true);
+    expect((await brainOf(engine)).serializedTransactions).toBe(false);
+  });
+
+  withAddon('a skip with no proven multi-user guarantee refuses there, and runs with multi-user mode off', async () => {
+    const engine = await openMultiuser();
+    const site = 'retireManagedSyncPassSlugMode';
+    expect(provenUnderMultiuser(site)).toBe(false);
+    const target = { cursorKey: 'k', sourceId: 's', incarnation: null, runId: null, requestId: null } as never;
+    const retire = (e: RustEngine) => (e as unknown as { retireManagedSyncPassSlugMode(t: never, l: string): Promise<unknown> }).retireManagedSyncPassSlugMode(target, 'l');
+    expectRefusal(await rejection(() => retire(engine)), site);
+    const off = await open();
+    expect(await retire(off)).toBe(false);
   });
 });
 

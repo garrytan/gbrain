@@ -30,6 +30,7 @@ import { storeErrorCode } from '../store-errors.ts';
 import { readSharedSkillServingEpoch } from './access-grants.ts';
 import { assertStoreSerializedTransactions, storeCall, type StoreMember } from './common.ts';
 import { readPersistenceBrainId } from './persistence-identity.ts';
+import { readBrainMode } from './writer-release.ts';
 
 const PG_CODE: ReadonlyArray<[RegExp, string]> = [[/_(pkey|key)$/, '23505'], [/_fkey$/, '23503'], [/^shared_skill_delivery_lease$/, '23503']];
 
@@ -102,6 +103,9 @@ export const listSharedSkillFollowSources: StoreMember<[allowed: string[] | null
 /** The brain id; the row lock is skipped while explicit transactions hold the writer (`serialized_transactions`); the member asserts it. */
 export const lockSharedSkillBrainId: StoreMember<[], string | undefined> = async brain => {
   assertStoreSerializedTransactions(brain, 'lockSharedSkillBrainId');
+  // Multi-user mode: the brain row's lock becomes a read of the brain's stored mode as well as its id, so a change committed
+  // before the commit refuses it and the transaction runs again. Single-user mode reads nothing more, as before.
+  if (brain.multiuser === true) await readBrainMode(brain, 'lockSharedSkillBrainId');
   return (await readPersistenceBrainId(brain)) ?? undefined;
 };
 

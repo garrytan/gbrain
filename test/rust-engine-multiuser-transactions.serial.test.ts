@@ -97,7 +97,7 @@ describe('Rust engine in multi-user mode', () => {
     delete process.env.GBRAIN_RUST_MULTIUSER;
     const engine = await open(false);
     expect(engine.multiuser).toBe(false);
-    expect([...engine.capabilities].sort() as string[]).toEqual([...servedCapabilities()].sort() as string[]);
+    expect([...engine.capabilities].sort() as string[]).toEqual([...servedCapabilities(), 'serialized_transactions'].sort() as string[]);
   });
 
   withAddon('the brain config row turns multi-user mode on for that brain at its next open', async () => {

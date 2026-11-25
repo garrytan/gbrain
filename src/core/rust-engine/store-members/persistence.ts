@@ -168,8 +168,11 @@ export const readAccessTokenWriteGrant: StoreMember<[tokenId: string, opts?: { l
   return row ? withDates(row, ['revoked_at']) : null;
 };
 /** The share lock is skipped while explicit transactions hold the writer (`serialized_transactions`); it asserts that. */
-export const shareLockWriteCredential: StoreMember<[kind: 'oauth_client' | 'legacy_token', id: string], void> = async brain => {
+export const shareLockWriteCredential: StoreMember<[kind: 'oauth_client' | 'legacy_token', id: string], void> = async (brain, kind, id) => {
   assertStoreSerializedTransactions(brain, 'shareLockWriteCredential');
+  // Multi-user mode: the share lock becomes a read of the credential's grant row, so a revocation committed before the commit
+  // refuses it and the transaction runs again. Single-user mode reads nothing, as before.
+  if (brain.multiuser === true) await (kind === 'oauth_client' ? readOAuthClientWriteGrant(brain, id) : readAccessTokenWriteGrant(brain, id));
 };
 
 /** The existing counter rows of `keys` in key byte order (`COLLATE "C"`), unlocked; a missing key has no row. */

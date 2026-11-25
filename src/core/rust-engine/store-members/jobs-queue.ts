@@ -139,8 +139,11 @@ export const retryJob = async function retryJob(this: RustEngine, _brain: StoreB
  * while explicit transactions hold the writer (`serialized_transactions`); the member asserts it. Outside a transaction
  * Postgres releases the lock at once.
  */
-export const lockOAuthClient: StoreMember<[clientId: string], void> = async brain => {
+export const lockOAuthClient: StoreMember<[clientId: string], void> = async (brain, clientId) => {
   assertStoreSerializedTransactions(brain, 'lockOAuthClient');
+  // Multi-user mode: the row lock becomes a read of the client's row, so a change committed before the commit refuses it and
+  // the transaction runs again. Single-user mode reads nothing, as before.
+  if (brain.multiuser === true) await storeCall({ member: 'lockOAuthClient' }, () => brain.readOauthClient(clientId));
 };
 
 // ---------------------------------------------------------------- inbox

@@ -22,6 +22,7 @@ import type { RustEngine } from '../../rust-engine.ts';
 import type { StoreBrain } from '../store.ts';
 import { assertStoreSerializedTransactions, storeCall, takeOptions } from './common.ts';
 import { readPersistenceBrainId } from './persistence-identity.ts';
+import { readBrainMode } from './writer-release.ts';
 
 const STATE = 'readWriterAdminState';
 const MEMBER = 'writerAdminStore';
@@ -44,6 +45,9 @@ function rustWriterAdminStore(brain: StoreBrain, tx: BrainEngine): WriterAdminSt
   return {
     async lockBrain() {
       assertStoreSerializedTransactions(brain, 'writerAdmin.lockBrain');
+      // Multi-user mode: the brain row's lock becomes a read of the brain's stored mode, through the transaction's handle, so a
+      // mode change committed before the commit refuses it and the transaction runs again. Single-user mode reads nothing.
+      if (brain.multiuser === true) await readBrainMode(brain, MEMBER);
     },
     assertAdminState: expected => assertWriterAdminState(tx, expected),
     async assertAdminUnlocked() { assertStoreSerializedTransactions(brain, 'writerAdmin.assertAdminUnlocked'); assertWriterAdminLockValue(await call<string | null>(() => brain.getConfig(WRITER_ADMIN_LOCK_KEY))); },

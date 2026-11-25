@@ -35,11 +35,15 @@ function rustPublicationJournalStore(brain: StoreBrain): PublicationJournalStore
       const owner = await call<WorktreeOwnerRow | null>(() => brain.readWorktreeOwner(worktreeId));
       return owner ? { owner_host_id: owner.owner_host_id, owner_epoch: owner.owner_epoch, state: owner.state } : null;
     },
-    async shareWorktree() {
+    async shareWorktree(worktreeId) {
       assertStoreSerializedTransactions(brain, 'publicationJournal.shareWorktree');
+      // Multi-user mode (here and in lockSource): the lock becomes a read of the row the SQL locks, through the transaction's
+      // handle, so a row changed before the commit refuses it and the transaction runs again. Single-user mode reads nothing.
+      if (brain.multiuser === true) await call(() => brain.readWorktreeOwner(worktreeId));
     },
-    async lockSource() {
+    async lockSource(sourceId) {
       assertStoreSerializedTransactions(brain, 'publicationJournal.lockSource');
+      if (brain.multiuser === true) await call(() => brain.readSourceMembership(sourceId));
     },
     recordRecovery: ({ id, executionToken, recovery, bytes, keys, fence }, checked) =>
       write('record_recovery', { id, executionToken, recovery, bytes, keys, checked, ...(fence ? { fence } : {}) }),

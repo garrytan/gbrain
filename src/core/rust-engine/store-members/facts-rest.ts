@@ -46,8 +46,11 @@ export const listContestedProposalPairs: Member<'listContestedProposalPairs'> = 
 };
 
 /** The advisory lock of one setting is skipped while explicit transactions hold the writer (`serialized_transactions`); it asserts that. */
-export const lockAgentWritebackSetting: Member<'lockAgentWritebackSetting'> = async brain => {
+export const lockAgentWritebackSetting: Member<'lockAgentWritebackSetting'> = async (brain, key) => {
   assertStoreSerializedTransactions(brain, 'lockAgentWritebackSetting');
+  // Multi-user mode: the setting's advisory lock becomes a read of its config row, so a change committed before the commit
+  // refuses it and the transaction runs again. Single-user mode reads nothing, as before.
+  if (brain.multiuser === true) await storeCall({ member: 'lockAgentWritebackSetting' }, () => brain.getConfig(key));
 };
 
 export const expireFactsOfGonePages: Member<'expireFactsOfGonePages'> = async (brain, sourceIds, slugs) => {

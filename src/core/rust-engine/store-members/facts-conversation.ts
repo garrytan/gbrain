@@ -120,6 +120,9 @@ export const countEmbeddedFactsAmong: Member<'countEmbeddedFactsAmong'> = (brain
 export const lockPageById: Member<'lockPageById'> = async (brain, pageId) => {
   assertStoreSerializedTransactions(brain, 'lockPageById');
   if (!Number.isInteger(pageId)) refuseMember('lockPageById', 'a page id that is not an integer');
+  // Multi-user mode: the row lock becomes a read of the page's row, so a change committed before the commit refuses it and
+  // the transaction runs again. Single-user mode reads nothing, as before.
+  if (brain.multiuser === true) await storeCall({ member: 'lockPageById' }, () => brain.readPageIndexingState(pageId));
 };
 
 /** The store keeps the `fact_relink_attempts` table on every brain (rust/crates/gbrain-store/src/facts/relink.rs). */

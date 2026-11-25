@@ -31,6 +31,7 @@ import { mapStoreError, storeErrorCode } from '../store-errors.ts';
 import type { RustStore, StoreBrain } from '../store.ts';
 import { assertStoreSerializedTransactions, storeCall } from './common.ts';
 import { readPersistenceBrainId } from './persistence-identity.ts';
+import { readBrainMode } from './writer-release.ts';
 
 type TransactionFn<T> = (engine: BrainEngine) => Promise<T>;
 
@@ -151,6 +152,9 @@ export const applyTransactionSettings = async function applyTransactionSettings(
  */
 export const declarePersistence = async function declarePersistence(this: RustEngine, brain: StoreBrain, _opts?: Parameters<BrainEngine['declarePersistence']>[0]): Promise<string | null> {
   assertStoreSerializedTransactions(brain, 'declarePersistence');
+  // Multi-user mode: the brain row's share lock becomes a read of the brain's stored mode, so a mode change committed before
+  // this transaction commits refuses it and the transaction runs again. Single-user mode reads nothing, as before.
+  if (brain.multiuser === true) await readBrainMode(brain, 'declarePersistence');
   const scope = this._txScope;
   if (scope) {
     if (scope.ended) throw mapStoreError({ code: 'store_closed' }, { member: 'declarePersistence' });

@@ -83,6 +83,9 @@ export const readPendingWriteReceipt: Member<'readPendingWriteReceipt'> = async 
 };
 
 /** See the module note: the shared row lock is skipped while explicit transactions hold the writer (`serialized_transactions`). */
-export const lockSourceShared: Member<'lockSourceShared'> = async brain => {
+export const lockSourceShared: Member<'lockSourceShared'> = async (brain, sourceId) => {
   assertStoreSerializedTransactions(brain, 'lockSourceShared');
+  // Multi-user mode: the shared lock becomes a read of the source's row, so a source changed or removed before the commit
+  // refuses it and the transaction runs again. Single-user mode reads nothing, as before.
+  if (brain.multiuser === true) await storeCall({ member: 'lockSourceShared', sourceId }, () => brain.readSourceWriteRow(sourceId));
 };

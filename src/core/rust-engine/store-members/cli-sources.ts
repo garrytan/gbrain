@@ -86,6 +86,9 @@ export const readFirstSourceId: StoreMember<[], string | null> = async (brain) =
 /** Takes no row lock while explicit transactions hold the writer (`serialized_transactions`); it asserts that. */
 export const lockAllSourceRows: StoreMember<[mode: 'update' | 'share'], void> = async brain => {
   assertStoreSerializedTransactions(brain, 'lockAllSourceRows');
+  // Multi-user mode (optimistic transactions): the lock becomes a read of every source row, so a source written before
+  // the commit refuses it and the transaction runs again. Single-user mode reads nothing, as before.
+  if (brain.multiuser === true) await storeCall({ member: 'lockAllSourceRows' }, () => brain.listSourceRecords());
 };
 
 async function sourceCheckRow(brain: StoreBrain, member: string, sourceId: string): Promise<SourceCheckRow | null> {
@@ -108,8 +111,11 @@ export const lockSourceRow: StoreMember<[sourceId: string], SourceCheckRow | nul
  * calls no store function: the lock is skipped while explicit transactions hold the writer (`serialized_transactions`),
  * and the member asserts that, as `lockSourceRow` does.
  */
-export const lockSourceForUpdate: StoreMember<[sourceId: string], void> = async brain => {
+export const lockSourceForUpdate: StoreMember<[sourceId: string], void> = async (brain, sourceId) => {
   assertStoreSerializedTransactions(brain, 'lockSourceForUpdate');
+  // Multi-user mode: the lock becomes a read of the source's row (an unknown source reads as absent, so a source added
+  // before the commit refuses it). Single-user mode reads nothing, as before.
+  if (brain.multiuser === true) await storeCall({ member: 'lockSourceForUpdate', sourceId }, () => brain.readSourceWriteRow(sourceId));
 };
 
 export const countSourcePages: StoreMember<[sourceId: string, opts?: { includeDeleted?: boolean }], number> = async (brain, sourceId, opts) =>

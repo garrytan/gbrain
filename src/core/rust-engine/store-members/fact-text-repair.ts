@@ -50,6 +50,9 @@ export const lockFactRows: Member<'lockFactRows'> = async (brain, _sourceId, ids
   // The FOR UPDATE is skipped while explicit transactions hold the writer (`serialized_transactions`).
   assertStoreSerializedTransactions(brain, 'lockFactRows');
   wholeIds('lockFactRows', ids);
+  // Multi-user mode: the FOR UPDATE becomes a read of each fact row, so a fact changed before the commit refuses it and the
+  // transaction runs again. Single-user mode reads nothing, as before.
+  if (brain.multiuser === true) await storeCall({ member: 'lockFactRows' }, () => brain.listUnexpiredFactIds({ ids: [...ids] }));
 };
 
 export const expireFactWithNote: Member<'expireFactWithNote'> = async (brain, sourceId, id, note) => {

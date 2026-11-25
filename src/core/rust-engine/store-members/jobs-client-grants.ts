@@ -39,6 +39,9 @@ export const listAccessTokenRows: StoreMember<[], Record<string, unknown>[]> = a
 /** The same-name advisory lock is skipped while explicit transactions hold the writer (`serialized_transactions`); it asserts that. */
 export const lockOauthClientName: StoreMember<[lockKey: string], void> = async brain => {
   assertStoreSerializedTransactions(brain, 'lockOauthClientName');
+  // Multi-user mode: the same-name lock becomes a read of every client row (the uniqueness check reads names), so a client
+  // registered before the commit refuses it and the transaction runs again. Single-user mode reads nothing, as before.
+  if (brain.multiuser === true) await storeCall({ member: 'lockOauthClientName' }, () => brain.listOauthClients());
 };
 
 /** Whether the client holds an OAuth token or an authorization code (expired ones count), as the SQL engines' EXISTS pair. */

@@ -166,6 +166,8 @@ const NOT_A_SKIP: Readonly<Record<string, string>> = {
   'rust/crates/gbrain-store/src/config.rs': 'ensure_config serves lockContentDriftState, which asserts in its TypeScript member',
   'rust/crates/gbrain-store/src/eval_capture/decide_proposals.rs': 'the `lock` option is dropped by getDecideProposal / getDecideReviewProposal, which assert',
   'rust/crates/gbrain-store/src/facts/cycle.rs': 'read_live_stored_body takes no lock flag; the served readLiveStoredBody member asserts when locked',
+  'rust/crates/gbrain-store/src/facts/entity_order.rs': 'per-entity commit order is a counter in the write (multi-user lane); names the single-writer store, skips no lock',
+  'rust/crates/gbrain-store/src/facts/entity_order_tests.rs': 'tests of the per-entity commit order',
   'rust/crates/gbrain-store/src/facts/loops.rs': 'the `lock` option is dropped by readLoopFactState, which asserts',
   'rust/crates/gbrain-store/src/facts/purge_journal.rs': 'its reads take no lock; the FOR UPDATE OF e reads are persistence/purge_effects.rs, which assert',
   'rust/crates/gbrain-store/src/facts/write_path.rs': 'lockSourceShared is served in TypeScript (facts-write-path.ts), which asserts',
@@ -176,6 +178,8 @@ const NOT_A_SKIP: Readonly<Record<string, string>> = {
   'rust/crates/gbrain-store/src/jobs/credential_binding.rs': 'the lock reads are asserted by their TypeScript members (readCredentialBindingForUpdate, the write-grant reads)',
   'rust/crates/gbrain-store/src/journal.rs': 'admission is one store write; the comment describes the mode, not a skip',
   'rust/crates/gbrain-store/src/kv.rs': 'record store infrastructure (defines serializes_explicit_transactions)',
+  'rust/crates/gbrain-store/src/leases.rs': 'lease fences checked in the transaction read set (lane L5); not a lock skip',
+  'rust/crates/gbrain-store/src/leases_tests.rs': 'tests of the lease fences (lane L5)',
   'rust/crates/gbrain-store/src/lib.rs': 'Store core (defines assert_serialized_transactions)',
   'rust/crates/gbrain-store/src/memory_mutation_reads.rs': 'the `lock` option is dropped by readForgetTarget / readFactWithdrawalClaim, which assert',
   'rust/crates/gbrain-store/src/mention_state.rs': 'the advisory locks are served in TypeScript (mention-pass.ts), which asserts',
@@ -189,6 +193,7 @@ const NOT_A_SKIP: Readonly<Record<string, string>> = {
   'rust/crates/gbrain-store/src/raw_files/ops.rs': 'the upload reads the page slug inside its own store write; the SQL FOR SHARE covers only that statement',
   'rust/crates/gbrain-store/src/redb_kv.rs': 'record store infrastructure (the snapshot copy writes a new file it alone owns)',
   'rust/crates/gbrain-store/src/snapshot.rs': 'store snapshot copy: names the single-writer record store, not a lock skip',
+  'rust/crates/gbrain-store/src/transactions/review_tests.rs': 'tests of optimistic transactions (lane L1)',
   'rust/crates/gbrain-store/src/trust/proposals.rs': 'the `lock` option is dropped by getTrustProposal, which asserts',
   'rust/crates/gbrain-store/src/write_misc.rs': 'the `lock` option is dropped by readSourceState, which asserts',
   'rust/crates/gbrain-store/src/write_trust.rs': 'a test comment about one transaction per store handle (design note, tests that bake in a single writer)',
@@ -210,6 +215,7 @@ const NOT_A_SKIP: Readonly<Record<string, string>> = {
   'src/core/rust-engine.ts': 'the writer gate itself (RustEngine.transaction)',
   'src/core/rust-engine/errors.ts': 'defines assertSerializedTransactions',
   'src/core/rust-engine/members/ledgers.ts': 'member table comment; getDecideProposal / getDecideReviewProposal assert',
+  'src/core/rust-engine/optimistic-transaction.ts': 'the optimistic transaction wrapper itself (lane L1)',
   'src/core/rust-engine/owner-ipc/typed-member-classes.ts': 'owner IPC read/write classes, not a lock skip',
   'src/core/rust-engine/store-members/access-policy.ts': 'forwards to lockAccessPolicy, which asserts in the store',
   'src/core/rust-engine/store-members/chronicle-ledger.ts': 'reserveChronicleJudgeSlot is one store write: atomic in both store modes',
@@ -220,6 +226,7 @@ const NOT_A_SKIP: Readonly<Record<string, string>> = {
   'src/core/rust-engine/store-members/git-gap-census.ts': 'a transaction setting, not a lock',
   'src/core/rust-engine/store-members/import-members.ts': 'its writes are single store writes; the SQL FOR UPDATE covers only rows the same statement writes',
   'src/core/rust-engine/store-members/jobs-access-tokens.ts': 'forwards to lockActiveAccessTokens / lockLegacyAccessTokens / readOauthCodeForUpdate, which assert in the store',
+  'src/core/rust-engine/store-members/leases.ts': 'lease fence members (lane L5): the SQL engines fence with their own row locks',
   'src/core/rust-engine/store-members/page-body.ts': 'forwards to lockBodyStagingState, which asserts; flipBodyGeneration and sweepSegments are single store writes',
   'src/core/rust-engine/store-members/page-embedding-budget.ts': 'reservePageEmbedding is one store write: atomic in both store modes',
   'src/core/rust-engine/store-members/page-purge-journal.ts': 'the request lock is lockWriteRequestsById, which asserts (persistence.ts)',
@@ -297,6 +304,28 @@ describe('lock skips that rely on one writer fail closed (serialized_transaction
   test('NOT_A_SKIP lists only files discovery still flags', () => {
     const now = new Set(flagged);
     expect(Object.keys(NOT_A_SKIP).filter(file => !now.has(file))).toEqual([]);
+  });
+});
+
+describe('lock skips that run in multi-user mode name a marked site and a proving test', () => {
+  const allTests = [...walk(join(ROOT, 'test'), '.ts'), ...walk(join(ROOT, 'rust/crates'), '.rs')].map(f => [f, read(f)] as const);
+  const testExists = (ref: string): boolean => {
+    const [file, name] = ref.split('::');
+    const hit = allTests.find(([f]) => f === file);
+    return !!hit && !!name && hit[1].includes(name);
+  };
+  const rustRows = [...read('rust/crates/gbrain-store/src/lock_skips.rs').matchAll(/site: "([^"]+)",\s*guarantee: Guarantee::\w+,\s*test: "([^"]+)"/g)]
+    .map(m => [m[1]!, m[2]!] as const);
+  const rustSites = new Set(Object.entries(found).filter(([f]) => f.endsWith('.rs')).flatMap(([, s]) => s));
+  const tsSites = new Set(Object.entries(found).filter(([f]) => !f.endsWith('.rs')).flatMap(([, s]) => s));
+
+  test('every Rust proven row names a marked Rust site and an existing test', () => {
+    expect(rustRows.filter(([site, ref]) => !rustSites.has(site) || !testExists(ref))).toEqual([]);
+  });
+
+  test('every TypeScript proven row names a marked TypeScript site and an existing test', async () => {
+    const { MULTIUSER_PROVEN } = await import('../src/core/rust-engine/lock-skip-guarantees.ts');
+    expect(Object.entries(MULTIUSER_PROVEN).filter(([site, row]) => !tsSites.has(site) || !testExists(row.test)).map(([s]) => s)).toEqual([]);
   });
 });
 

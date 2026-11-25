@@ -30,6 +30,9 @@ export const lockEffectClaimRow: StoreMember<[effectId: number | string], { stat
 /** The FOR SHARE is skipped while explicit transactions hold the writer (`serialized_transactions`); it asserts that. */
 export const lockEmbeddingSwitch: StoreMember<[], void> = async brain => {
   assertStoreSerializedTransactions(brain, 'lockEmbeddingSwitch');
+  // Multi-user mode: the share lock becomes a read of the `embedding_disabled` config row, so a flip committed before the
+  // commit refuses it and the transaction runs again. Single-user mode reads nothing, as before.
+  if (brain.multiuser === true) await storeCall({ member: 'lockEmbeddingSwitch' }, () => brain.getConfig('embedding_disabled'));
 };
 
 interface BatchRow { id: number; chunk_text: string; embedding: string | null; image: string | null; model: string | null; input_hash: string }

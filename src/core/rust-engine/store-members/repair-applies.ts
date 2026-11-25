@@ -60,6 +60,9 @@ export const moveFactClaimDates: Member<'moveFactClaimDates'> = (brain, sourceId
 export const lockApprovedFacts: Member<'lockApprovedFacts'> = async (brain, _sourceId, ids) => {
   assertStoreSerializedTransactions(brain, 'lockApprovedFacts');
   wholeIds('lockApprovedFacts', ids);
+  // Multi-user mode: the FOR UPDATE becomes a read of each fact row, so a fact changed before the commit refuses it and the
+  // transaction runs again. Single-user mode reads nothing, as before.
+  if (brain.multiuser === true) await storeCall({ member: 'lockApprovedFacts' }, () => brain.listUnexpiredFactIds({ ids: [...ids] }));
 };
 
 export const expireApprovedFacts: Member<'expireApprovedFacts'> = (brain, sourceId, ids) =>

@@ -26,6 +26,7 @@ import type { RustEngine } from '../../rust-engine.ts';
 import type { StoreBrain } from '../store.ts';
 import { assertStoreSerializedTransactions, storeCall } from './common.ts';
 import { readPersistenceBrainId } from './persistence-identity.ts';
+import { readBrainMode } from './writer-release.ts';
 
 const MEMBER = 'worktreeClaimStore';
 
@@ -57,5 +58,8 @@ function rustWorktreeClaimStore(brain: StoreBrain, tx: BrainEngine): WorktreeCla
 export const worktreeClaimStore = async function worktreeClaimStore(this: RustEngine, brain: StoreBrain): Promise<WorktreeClaimStore> {
   // The SQL store locks the brain row FOR UPDATE first; skipped while explicit transactions hold the writer.
   assertStoreSerializedTransactions(brain, 'worktreeClaimStore');
+  // Multi-user mode: the brain row's lock becomes a read of the brain's stored mode, so a mode change committed before the
+  // commit refuses it and the transaction runs again. Single-user mode reads nothing, as before.
+  if (brain.multiuser === true) await readBrainMode(brain, MEMBER);
   return rustWorktreeClaimStore(brain, this as unknown as BrainEngine);
 };
