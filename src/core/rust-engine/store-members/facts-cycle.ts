@@ -83,7 +83,7 @@ export const countWorldFacts: Member<'countWorldFacts'> = async (brain, opts) =>
     sourceId: opts.sourceId, entitySlugs: opts.entitySlugs, worldOnly: opts.worldOnly,
     // entity-card.ts: `privateFactFilterForReader('facts')`. A caller with a reader identity and a private-readable
     // grant is served (`callerReaders`).
-    excludePrivate: storePrivacyPolicy(member, opts.excludePrivate, () => privateFactFilterForReader('facts'), { callerReaders: true }),
+    excludePrivate: storePrivacyPolicy(member, opts.excludePrivate, () => privateFactFilterForReader('facts'), { callerReaders: true, fragment: 'for_reader' }),
     minTrust: opts.eligibility?.floor || null,
     suppressFlagged: opts.eligibility?.suppressFlagged === true,
   }));

@@ -59,7 +59,7 @@ export const factReadableUnder: Member<'factReadableUnder'> = (brain, spec) => {
   if (!spec.anyVisibility && factVisibilitySql('facts', ['world']) !== WORLD_ONLY) {
     refuseMember(member, 'a caller whose member page or private-facts grant widens the world visibility rule');
   }
-  const excludePrivate = storePrivacyPolicy(member, spec.excludePrivate, () => privateProvenanceFilterUnderPolicy('facts'), { callerReaders: true });
+  const excludePrivate = storePrivacyPolicy(member, spec.excludePrivate, () => privateProvenanceFilterUnderPolicy('facts'), { callerReaders: true, fragment: 'under_policy' });
   const e = spec.eligibility;
   return storeCall({ member }, () => brain.factReadableUnder({
     id: spec.id,

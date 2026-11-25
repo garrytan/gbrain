@@ -89,9 +89,11 @@ pub struct Brain {
     slot: Slot,
     /// Bumped by every `close`. An `open` still queued when `close` is called sees a newer value
     /// and refuses, so a close never resolves while a queued open can still take the brain's lock.
-    closes: Arc<AtomicU64>,
+    pub(crate) closes: Arc<AtomicU64>,
     /// True while a `bind` on this handle is running, so a second one is refused at once.
     binding: Arc<AtomicBool>,
+    /// Multi-user sessions opened on this handle (`families/access_scope.rs`); unused unless one is minted.
+    pub(crate) scopes: Arc<Mutex<crate::families::access_scope::ScopeTable>>,
 }
 
 impl Brain {
@@ -152,6 +154,7 @@ impl Brain {
             slot: Arc::new(Mutex::new(None)),
             closes: Arc::new(AtomicU64::new(0)),
             binding: Arc::new(AtomicBool::new(false)),
+            scopes: Arc::new(Mutex::new(Default::default())),
         }
     }
 

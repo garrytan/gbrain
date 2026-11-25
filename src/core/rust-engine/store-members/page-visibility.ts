@@ -17,6 +17,7 @@
 import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from '../../engine-sql/page-visibility.ts';
 import { callerAccessAllowedSql, privacyPartSql, privatePagesFilterForCaller, readPolicyFragment, withCallerAccess } from '../../search/private-visibility.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { selfChecked } from '../access-self-check.ts';
 import { readOauthClient } from './jobs-oauth-clients.ts';
 import { judgeWidenedCaller, ownerOnlyFormIn, pagePolicyFlags, renderForStoreCaller, storePageTextPolicy, type StorePrivacyPolicy } from './private-provenance.ts';
 
@@ -26,7 +27,12 @@ import { judgeWidenedCaller, ownerOnlyFormIn, pagePolicyFlags, renderForStoreCal
  * restriction, anonymous or with a reader identity, under the restricted rendering the store implements.
  */
 function callerPolicy(member: string, part: PagePolicyPart): StorePrivacyPolicy {
-  if (part === 'read') return storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true });
+  if (part === 'read') return storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true, fragment: 'caller' });
+  return selfChecked(member, { mode: 'member_access' }, () => callerAccessPolicy(member));
+}
+
+/** The `access` part of {@link callerPolicy}: member access alone, with the privacy part off. */
+function callerAccessPolicy(member: string): StorePrivacyPolicy {
   const policy = judgeWidenedCaller<StorePrivacyPolicy>(readers => {
     const text = callerAccessAllowedSql('p');
     const off = { honorAliases: false, entityPrivacy: false, ownerOnly: ownerOnlyFormIn(text, 'pages', 'p') };
@@ -62,7 +68,7 @@ export const readCallerPageAccess: StoreMember<[pages: readonly { source_id: str
 export const readWriteVisibilityProbe: StoreMember<[sourceId: string, slug: string], WriteVisibilityProbe | undefined> =
   async (brain, sourceId, slug) => {
     const policy = withCallerAccess({ restricted: true, identity: [], privateReadableSources: [] }, () =>
-      storePageTextPolicy('readWriteVisibilityProbe', () => readPolicyFragment('p', [], true), { callerReaders: true }));
+      storePageTextPolicy('readWriteVisibilityProbe', () => readPolicyFragment('p', [], true), { callerReaders: true, fragment: 'plain' }));
     return await storeCall({ member: 'readWriteVisibilityProbe', slug, sourceId }, () =>
       brain.readWriteVisibilityProbe(sourceId, slug, policy)) as WriteVisibilityProbe;
   };
@@ -71,7 +77,8 @@ export const readWriteVisibilityProbe: StoreMember<[sourceId: string, slug: stri
 export const readPagePrivacyHidden: StoreMember<[sourceId: string, slug: string], boolean | null> =
   async (brain, sourceId, slug) =>
     await storeCall({ member: 'readPagePrivacyHidden', slug, sourceId }, () =>
-      brain.readPagePrivacyHidden(sourceId, slug, pagePolicyFlags(privacyPartSql('p')).honorAliases)) as boolean | null;
+      brain.readPagePrivacyHidden(sourceId, slug, selfChecked('readPagePrivacyHidden', { mode: 'privacy_part_aliases' },
+        () => pagePolicyFlags(privacyPartSql('p')).honorAliases))) as boolean | null;
 
 /**
  * A local writer's fence comes from the stored registration; an OAuth client's from its stored client record
