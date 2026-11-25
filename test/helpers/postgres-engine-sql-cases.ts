@@ -1019,6 +1019,10 @@ export const SQL_CASES: SqlCase[] = [
  * scoping is pinned, including the search paths that open transactions.
  */
 export const EXTRA_READ_CASES: SqlCase[] = [
+  // Out-of-scope reads (not SQL-text domains) whose RLS scoping the inventory still pins. The image seal probe reads one page by (source_id, slug) and its content_chunks;
+  // the chunker version reads one page by id. Both run unscoped on the pool through the engine's raw path, as master's executeRaw calls did.
+  ...variants('readImageSealProbe', [['default', (e) => e.readImageSealProbe(SRC, SLUG)]]),
+  ...variants('readPageChunkerVersion', [['default', (e) => e.readPageChunkerVersion(1)]]),
   ...variants('searchKeyword', [
     ['fts', (e) => e.searchKeyword('alice example')],
     ['fts+sourceIds', (e) => e.searchKeyword('alice example', { sourceIds: SRCS })],
