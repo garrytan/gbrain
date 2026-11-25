@@ -41,6 +41,15 @@ const errorOf = (e: unknown) => {
   return { code: String(err?.code ?? err?.detail?.code ?? 'error'), message: String((e as Error)?.message ?? e).slice(0, 500) };
 };
 
+/**
+ * A write the write gate held for owner review, as the brain refuses it (`write_held: held for owner review as h7 …`):
+ * recorded as failed with the command that keeps it, never as a refusal of the whole batch.
+ */
+const held = (message: string): { code: string; message: string } | null => {
+  const ref = /\bwrite_held: held for owner review as ([A-Za-z0-9_-]+)/.exec(message)?.[1];
+  return ref ? { code: 'write_held', message: `Held for owner review as ${ref}; nothing was saved. Keep it with: gbrain trust release ${ref}` } : null;
+};
+
 function batchState(items: ImportItemReceipt[]): ImportBatchReceipt['state'] {
   if (items.some(i => i.status === 'pending')) return 'pending';
   return items.some(i => i.status === 'failed') ? 'partial' : 'committed';
@@ -56,7 +65,7 @@ const failed = (item: ImportItemReceipt, code: string, message: string): ImportI
  * write gate held for review saved nothing, and a write the brain has no record of was never admitted.
  */
 async function poll(call: ImportCall, item: ImportItemReceipt): Promise<ImportItemReceipt> {
-  if (!item.request_id) return failed(item, 'write_outcome_unknown', 'The brain reported this line without a request id, so whether it was saved cannot be checked. Run gbrain profile, then preview and apply the file again to save what is missing.');
+  if (!item.request_id) return failed(item, 'write_outcome_unknown', 'The brain reported this line without a request id, so whether it was saved cannot be checked; gbrain profile shows what was. To send it again, move the receipt aside and apply again: the brain replays lines it already saved, so nothing is saved twice.');
   try {
     const r = await call('get_write_request', { request_id: item.request_id });
     const state = String(r.state ?? '');
@@ -70,7 +79,7 @@ async function poll(call: ImportCall, item: ImportItemReceipt): Promise<ImportIt
     return { ...item, status: 'pending' };
   } catch (e) {
     const error = errorOf(e);
-    if (error.code === 'not_found') return failed(item, 'write_outcome_unknown', 'The brain has no record of this write, so it was never saved. Preview and apply the file again to save it.');
+    if (error.code === 'not_found') return failed(item, 'write_outcome_unknown', 'The brain no longer shows this write, so whether it was saved is unknown; gbrain profile shows what was. To send it again, move the receipt aside and apply again: the brain replays lines it already saved, so nothing is saved twice.');
     return { ...item, status: 'pending', error };
   }
 }
@@ -84,15 +93,15 @@ function childReceipts(items: ImportItem[], out: Record<string, unknown>): Impor
     const unknown = err?.write_error === 'write_outcome_unknown' || err?.code === 'write_outcome_unknown';
     const status = unknown ? 'pending' : String(c.status ?? 'failed');
     const receipt: ImportItemReceipt = { line: it.line, request_id: String(c.request_id ?? ''), status,
-      ...(c.id !== undefined ? { fact_id: String(c.id) } : {}), ...(err ? { error: { code: String(err.code ?? 'error'), message: String(err.message ?? '') } } : {}) };
-    return status === 'pending' && !receipt.request_id ? failed(receipt, 'write_outcome_unknown', 'The brain reported this line pending without a request id, so it cannot be checked. Run gbrain profile, then preview and apply the file again to save what is missing.') : receipt;
+      ...(c.id !== undefined ? { fact_id: String(c.id) } : {}), ...(err ? { error: held(String(err.message ?? '')) ?? { code: String(err.code ?? 'error'), message: String(err.message ?? '') } } : {}) };
+    return status === 'pending' && !receipt.request_id ? failed(receipt, 'write_outcome_unknown', 'The brain reported this line pending without a request id, so it cannot be checked; gbrain profile shows what was saved. To send it again, move the receipt aside and apply again: the brain replays lines it already saved, so nothing is saved twice.') : receipt;
   });
 }
 
 /**
  * Brings the receipt forward: polls pending items, then sends each batch never sent, saving the receipt after every
  * step. Stops at the first batch the brain refuses as a whole (its error is on the batch; later batches stay
- * not_started for a resume). A batch refused for one of its items (invalid_params naming items[N]) records that line
+ * not_started for a resume). A batch refused for one of its items (invalid_params or a write-gate hold naming items[N]) records that line
  * as failed and sends the rest of the batch again under its own request id, so one bad line costs only itself.
  * Returns the receipt.
  */
@@ -116,7 +125,8 @@ export async function runImport(plan: ImportPlan, receipt: ImportReceipt, call: 
         break;
       } catch (e) {
         const error = errorOf(e);
-        const named = error.code === 'invalid_params' ? /\bitems\[(\d+)\]/.exec(error.message) : null;
+        const hold = held(error.message);
+        const named = error.code === 'invalid_params' || hold ? /\bitems\[(\d+)\]/.exec(error.message) : null;
         const bad = named ? Number(named[1]) : -1;
         if (bad < 0 || bad >= rest.length) {
           if (refused.length) batch.items = refused;
@@ -125,7 +135,7 @@ export async function runImport(plan: ImportPlan, receipt: ImportReceipt, call: 
           save(receipt);
           return receipt;
         }
-        refused.push({ line: rest[bad]!.line, request_id: '', status: 'failed', error });
+        refused.push({ line: rest[bad]!.line, request_id: '', status: 'failed', error: hold ?? error });
         rest = rest.filter((_, k) => k !== bad);
       }
     }

@@ -522,6 +522,36 @@ describe('progress receipt', () => {
     expect(lost).toMatchObject({ status: 'failed', error: { code: 'write_outcome_unknown' } });
     expect(summarize(receipt)).toMatchObject({ complete: true, items: { failed: 4 } });
   });
+  test('a line the write gate holds costs only itself, inside a batch or as the whole batch, and names its release command', async () => {
+    const plan = planImport(Array.from({ length: IMPORT_BATCH + 1 }, (_, i) => `- Fact ${i}`).join('\n'), 'muse-memory');
+    const target = { principal: 'local:test', profile: 'memory/owner' };
+    const receipt = newReceipt(plan, previewHash(plan, target), '/tmp/x.md', target, 'imported');
+    const heldMessage = (ref: string) => `write_held: held for owner review as ${ref} (reads like an instruction: imperative). Nothing was saved as memory.`;
+    const fake: ImportCall = async (_tool, p) => {
+      const items = p.items as unknown[];
+      if (items.length === 1) throw Object.assign(new Error(`items[0]: ${heldMessage('h9')} None of the 1 item(s) was saved.`), { code: 'scope_denied' });
+      return { items: items.map((_, index) => index === 2
+        ? { index, request_id: `c${index}`, status: 'failed', error: { code: 'scope_denied', canonical: 'write_held', message: heldMessage('h3') } }
+        : { index, request_id: `c${index}`, status: 'inserted', id: String(index) }) };
+    };
+    await runImport(plan, receipt, fake, () => {});
+    expect(receipt.batches.map(b => b.state)).toEqual(['partial', 'partial']);
+    expect(receipt.batches[0]!.items[2]!.error).toEqual({ code: 'write_held', message: 'Held for owner review as h3; nothing was saved. Keep it with: gbrain trust release h3' });
+    expect(receipt.batches[1]!.items).toEqual([{ line: plan.items[IMPORT_BATCH]!.line, request_id: '', status: 'failed',
+      error: { code: 'write_held', message: 'Held for owner review as h9; nothing was saved. Keep it with: gbrain trust release h9' } }]);
+  });
+  test('--status and --resume refuse a damaged receipt the same way the apply does', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-receipt-status-'));
+    try {
+      const path = join(dir, 'r.json');
+      writeFileSync(path, '{"schema": 1');
+      for (const flag of ['--status', '--resume']) {
+        const refused = await refusal(() => cli([flag, path], async () => ({}), 'memory/owner', dir));
+        expect(refused.code).toBe('invalid_params');
+        expect(String(refused.message)).toContain('cannot be read');
+      }
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
   test('a damaged receipt is refused and left as it is, never replaced', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-receipt-damaged-'));
     try {

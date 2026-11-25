@@ -149,7 +149,9 @@ Only facts visible to everyone are exported. A private fact, such as an allergy 
 the export says how many it left out. `--include-private` adds them and warns that the text now sits outside gbrain's
 access control: anyone or any assistant that reads the file reads them. Relationships from your page's links are
 never exported. A fact a tool wrote rather than you keeps the label "(from a tool, not confirmed by you)", so the
-other assistant never reads it as something you said.
+other assistant never reads it as something you said; a fact from an outside source is labelled "(from an outside source,
+not confirmed by you)". The export warns, and `--json` counts them, when facts your credential cannot read were left
+out (`withheld`) or a fact over 500 characters was cut (`cut`).
 
 `muse-memory` is one marked block:
 
@@ -171,6 +173,7 @@ begin with no end, an end before its begin, or a marker line that is not exactly
 an assistant that searches its own memory first can otherwise answer without ever asking GBrain. `profile import`
 skips the GBrain block, so importing that Memory.md later never reads your exported profile back as new facts; it
 refuses a file whose block is damaged the same way. The file is read after your profile, just before it is written, and
-a symlinked Memory.md is updated at its target.
+a symlinked Memory.md is updated at its target; a file that changes while the export writes it is left as it is, and
+the export asks you to run it again.
 
 To connect Muse itself, hand it the [Muse connector brief](../connectors/muse.md).

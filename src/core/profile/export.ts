@@ -36,8 +36,9 @@ export function selectFacts(block: ProfileBlock, includePrivate: boolean): Expor
 }
 
 const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim();
-/** A fact a tool wrote keeps that label in the other assistant's memory, so it never reads as something you said. */
-const claimText = (f: ProfileFact) => oneLine(f.claim) + (f.content_origin === 'tool_output' ? ' (from a tool, not confirmed by you)' : '');
+/** A fact a tool or an outside source wrote keeps that label in the other assistant's memory, so it never reads as something you said. */
+const claimText = (f: ProfileFact) => oneLine(f.claim)
+  + (f.content_origin === 'tool_output' ? ' (from a tool, not confirmed by you)' : f.trust_tier === 'external_untrusted' ? ' (from an outside source, not confirmed by you)' : '');
 const day = (f: ProfileFact) => f.valid_from.slice(0, 10);
 const group = (facts: ProfileFact[]) => {
   const by = new Map<string, ProfileFact[]>();

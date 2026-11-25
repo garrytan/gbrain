@@ -14,7 +14,7 @@
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, lstatSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -29,8 +29,8 @@ import { addMember, bindCredential } from '../src/core/access/members.ts';
 import { setOwner } from '../src/core/access/owner.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import type { ImportCall } from '../src/core/profile/import-run.ts';
-import type { ProfileBlock, ProfileFact } from '../src/core/profile/read.ts';
-import { MUSE_STANDING_LINE, mergeMuseBlock, renderMemoryText, renderMuseBlock, selectFacts } from '../src/core/profile/export.ts';
+import { PROFILE_CLAIM_CAP, type ProfileBlock, type ProfileFact } from '../src/core/profile/read.ts';
+import { MUSE_STANDING_LINE, mergeMuseBlock, renderMarkdown, renderMemoryText, renderMuseBlock, selectFacts } from '../src/core/profile/export.ts';
 import { planImport } from '../src/core/profile/import.ts';
 import { parseExportArgs, runProfileExport } from '../src/commands/profile-export.ts';
 
@@ -96,7 +96,7 @@ describe('renderers', () => {
   test('an import of a Memory.md holding GBrain\'s block skips the block and keeps the user\'s own lines', () => {
     const file = mergeMuseBlock('# Memory\n\n## Food\n- Likes ramen\n', renderMuseBlock(selectFacts(BLOCK, true).facts)) + '- Drinks oat milk\n';
     const plan = planImport(file, 'auto');
-    expect(plan.items.map(i => [i.fact, i.facet])).toEqual([['Likes ramen', 'diet'], ['Drinks oat milk', 'diet']]);
+    expect(plan.items.map(i => [i.fact, i.facet])).toEqual([['Likes ramen', 'diet'], ['Drinks oat milk', 'other']]);
     expect(plan.dropped).toEqual([{ line: 6, reason: expect.stringMatching(/^GBrain's own exported block/) }]);
   });
 
@@ -128,6 +128,26 @@ describe('renderers', () => {
     expect(renderMemoryText([tool])).toBe('[2026-11-01] - Prefers aisle seats (from a tool, not confirmed by you)\n');
     expect(renderMuseBlock([tool])).toContain('- Prefers aisle seats (from a tool, not confirmed by you)');
     expect(renderMemoryText([fact({})])).toBe('[2026-11-01] - Eats vegetarian\n');
+  });
+
+  test('a fact from an outside source keeps its label too, in every format', () => {
+    const outside = fact({ claim: 'Likes jazz', content_origin: null, trust_tier: 'external_untrusted', facet: null });
+    expect(renderMemoryText([outside])).toBe('[2026-11-01] - Likes jazz (from an outside source, not confirmed by you)\n');
+    expect(renderMarkdown(BLOCK, [outside])).toContain('- Likes jazz (from an outside source, not confirmed by you)');
+  });
+
+  test('the GBrain block ends the heading before it, so the user\'s later bullets keep their own facet', () => {
+    const file = mergeMuseBlock('# Memory\n\n## Allergies\n- Peanuts\n', renderMuseBlock([fact({})])) + '- Likes tea\n';
+    expect(planImport(file, 'muse-memory').items.map(i => [i.fact, i.facet])).toEqual([['Peanuts', 'allergy'], ['Likes tea', 'other']]);
+  });
+
+  test('facts the credential cannot read and facts cut at the read limit are named, never dropped silently', async () => {
+    const long = 'x'.repeat(PROFILE_CLAIM_CAP);
+    const call: ImportCall = async () => ({ profile: { ...BLOCK, withheld: 2, preferences: [fact({ fact_id: '9', facet: null, claim: long })] } });
+    const out = await exportCli(['--format', 'memory-text', '--include-private', '--json'], call);
+    expect(out.json).toMatchObject({ withheld: 2, cut: 1 });
+    expect(out.err).toContain('2 fact(s) this credential cannot read were not exported');
+    expect(out.err).toContain(`cut at ${PROFILE_CLAIM_CAP}`);
   });
 
   test('an import refuses a file whose GBrain block has no end, instead of skipping the lines after it', () => {
@@ -194,6 +214,16 @@ describe('local export on a single-user keyless brain', () => {
     expect(lstatSync(link).isSymbolicLink()).toBe(true);
     const text = readFileSync(target, 'utf8');
     expect(text.startsWith('# Memory\n- Written during the read\n\n<!-- gbrain:profile begin rev=')).toBe(true);
+  }, 60_000);
+
+  test('--into a symlink whose target does not exist yet creates the target and keeps the link', async () => {
+    const target = join(home, 'dotfiles-Memory.md');
+    const link = join(home, 'Dangling.md');
+    symlinkSync(target, link);
+    await exportCli(['--format', 'muse-memory', '--into', link], localCall(engine));
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(readFileSync(target, 'utf8')).toContain('<!-- gbrain:profile begin rev=');
+    expect(readdirSync(home).filter(n => n.endsWith('.tmp'))).toEqual([]);
   }, 60_000);
 });
 

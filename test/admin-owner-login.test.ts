@@ -17,8 +17,8 @@ const REQUEST = 'b'.repeat(64);
 
 describe('owner login strings', () => {
   test('the owner\'s own command keeps the waiting request and names the credential file', () => {
-    expect(ownerLoginCommand(URL_, REQUEST)).toBe(`gbrain mcp admin login-link --url ${URL_} --oauth-request ${REQUEST} --admin-token-file ~/.gbrain/serve/admin-token`);
-    expect(ownerLoginCommand(URL_)).toBe(`gbrain mcp admin login-link --url ${URL_} --admin-token-file ~/.gbrain/serve/admin-token`);
+    expect(ownerLoginCommand(URL_, REQUEST)).toBe(`gbrain mcp admin login-link --url '${URL_}' --oauth-request ${REQUEST} --admin-token-file ~/.gbrain/serve/admin-token`);
+    expect(ownerLoginCommand(URL_)).toBe(`gbrain mcp admin login-link --url '${URL_}' --admin-token-file ~/.gbrain/serve/admin-token`);
     expect(ownerLoginPrompt(URL_, REQUEST)).toContain(`--oauth-request ${REQUEST}`);
     for (const s of [ownerLoginCommand(URL_, REQUEST), ownerLoginPrompt(URL_, REQUEST)]) expect(s).not.toContain('/admin/auth/');
   });

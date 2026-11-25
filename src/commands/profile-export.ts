@@ -4,11 +4,13 @@
  * world-visible facts leave by default; --include-private adds private ones with a warning, because the exported text
  * is outside gbrain's access control.
  */
-import { chmodSync, existsSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { closeSync, existsSync, fchmodSync, lstatSync, openSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 import { EXPORT_FORMATS, mergeMuseBlock, renderMarkdown, renderMemoryText, renderMuseBlock, selectFacts, type ExportFormat } from '../core/profile/export.ts';
-import type { ProfileBlock } from '../core/profile/read.ts';
+import { PROFILE_CLAIM_CAP, type ProfileBlock } from '../core/profile/read.ts';
 import type { ImportCall } from '../core/profile/import-run.ts';
+import { opError } from '../core/ops/contract.ts';
 import { writeJsonDocument } from '../core/cli-force-exit.ts';
 
 export const EXPORT_HELP = `Usage:
@@ -44,18 +46,33 @@ export function parseExportArgs(args: string[]): ExportFlags | { error: string }
   return f;
 }
 
-/** Writes the file whole or not at all (a temporary file renamed over it), keeping an existing file's mode. */
-function writeWhole(path: string, text: string): void {
+/**
+ * Writes the file whole or not at all: a temporary file only this call creates (random name, exclusive, 0600) is renamed
+ * over it, keeping an existing file's mode. Refuses, writing nothing, when the file changed after it was read.
+ */
+function writeWhole(path: string, text: string, before: string): void {
   const mode = existsSync(path) ? statSync(path).mode & 0o777 : 0o600;
-  const tmp = `${path}.${process.pid}.tmp`;
-  writeFileSync(tmp, text, { mode });
-  chmodSync(tmp, mode);
-  renameSync(tmp, path);
+  const tmp = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`);
+  const fd = openSync(tmp, 'wx', 0o600);
+  try {
+    try { writeFileSync(fd, text); fchmodSync(fd, mode); } finally { closeSync(fd); }
+    if ((existsSync(path) ? readFileSync(path, 'utf8') : '') !== before) {
+      throw opError('invalid_params', `profile export: ${path} changed while the export was writing it; it was left as it is.`, 'Export again.');
+    }
+    renameSync(tmp, path);
+  } catch (e) { rmSync(tmp, { force: true }); throw e; }
+}
+
+/** The file a path names, a symlink's target included even when that target does not exist yet. */
+function destination(path: string): string {
+  const abs = resolve(path);
+  if (existsSync(abs)) return realpathSync(abs);
+  try { if (lstatSync(abs).isSymbolicLink()) return resolve(dirname(abs), readlinkSync(abs)); } catch { /* no such file yet */ }
+  return abs;
 }
 
 export async function runProfileExport(args: string[], call: ImportCall): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) { console.log(EXPORT_HELP); return; }
-  const { opError } = await import('../core/ops/contract.ts');
   const f = parseExportArgs(args);
   if ('error' in f) throw opError('invalid_params', f.error, 'gbrain profile export --help lists the forms.');
   const block = (await call('context_pack', { profile: true })).profile as ProfileBlock | undefined;
@@ -64,8 +81,10 @@ export async function runProfileExport(args: string[], call: ImportCall): Promis
     'Export from the brain owner\'s CLI or a member credential.');
   const { facts, private_left_out } = selectFacts(block, f.includePrivate);
   const privateIncluded = facts.filter(x => x.visibility === 'private').length;
+  const withheld = block.withheld ?? 0;
+  const cut = facts.filter(x => x.claim.length >= PROFILE_CLAIM_CAP).length;
   const text = f.format === 'memory-text' ? renderMemoryText(facts) : f.format === 'markdown' ? renderMarkdown(block, facts) : renderMuseBlock(facts);
-  const into = f.into === undefined ? undefined : existsSync(f.into) ? realpathSync(f.into) : resolve(f.into);
+  const into = f.into === undefined ? undefined : destination(f.into);
   if (into) {
     let existing = '';
     if (existsSync(into)) {
@@ -73,14 +92,17 @@ export async function runProfileExport(args: string[], call: ImportCall): Promis
         throw opError('invalid_params', `profile export: cannot read ${into} (${(e as NodeJS.ErrnoException).code ?? (e as Error).message}); nothing was written.`, 'Pass the path of your Memory.md.');
       }
     }
-    writeWhole(into, mergeMuseBlock(existing, text));
+    writeWhole(into, mergeMuseBlock(existing, text), existing);
   }
   if (privateIncluded) console.error(`Warning: ${privateIncluded} private fact(s) included. This text is outside gbrain's access control: anyone or any assistant that reads it reads them.`);
   else if (private_left_out) console.error(`${private_left_out} private fact(s) left out; --include-private adds them.`);
+  if (withheld) console.error(`Warning: ${withheld} fact(s) this credential cannot read were not exported, even with --include-private; export from the brain owner's CLI or a credential bound to you to include them.`);
+  if (cut) console.error(`Warning: ${cut} fact(s) longer than ${PROFILE_CLAIM_CAP} characters were cut at ${PROFILE_CLAIM_CAP}; gbrain profile shows the same text.`);
   if (block.partial) console.error('Warning: the profile may be incomplete (too many facts on your page, or a failed read); the export may miss facts.');
   if (f.json) {
     await writeJsonDocument(JSON.stringify({ format: f.format, profile: block.entity.slug, exported: facts.length, private_included: privateIncluded,
-      private_left_out: f.includePrivate ? 0 : private_left_out, ...(block.partial ? { partial: true } : {}), ...(into ? { into } : { text }) }, null, 2));
+      private_left_out: f.includePrivate ? 0 : private_left_out, ...(withheld ? { withheld } : {}), ...(cut ? { cut } : {}), ...(block.partial ? { partial: true } : {}),
+      ...(into ? { into } : { text }) }, null, 2));
     return;
   }
   if (into) console.log(`Wrote ${facts.length} fact(s) into the GBrain block of ${into}.`);

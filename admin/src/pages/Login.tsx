@@ -27,7 +27,8 @@ export function LoginPage({ onLogin }: { onLogin: () => void }) {
         const info = await response.json();
         if (typeof info?.endpoint !== 'string') throw new Error('Server discovery has no MCP endpoint.');
         const endpoint = new URL(info.endpoint);
-        if (!['https:', 'http:'].includes(endpoint.protocol) || endpoint.username || endpoint.password || endpoint.search || endpoint.hash || endpoint.pathname !== '/mcp') {
+        if (!['https:', 'http:'].includes(endpoint.protocol) || endpoint.username || endpoint.password || endpoint.search || endpoint.hash || endpoint.pathname !== '/mcp'
+          || !/^(?:[a-z0-9.-]+|\[[0-9a-f:.]+\])$/i.test(endpoint.hostname)) {
           throw new Error('Server discovery returned an invalid MCP endpoint.');
         }
         if (active) setMcpUrl(endpoint.toString());

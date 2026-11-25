@@ -95,8 +95,14 @@ export async function runProfileImport(args: string[], call: ImportCall, target:
   const f = parseImportArgs(args);
   if ('error' in f) throw opError('invalid_params', f.error, 'gbrain profile import --help lists the forms.');
   const scope = f.source ? ['--source', f.source] : [];
-  if (f.status) { await report(loadReceipt(f.status), f.status, f.json, global, scope); return; }
-  const prior = f.resume ? loadReceipt(f.resume) : null;
+  const readReceipt = (path: string): ImportReceipt => {
+    try { return loadReceipt(path); } catch (e) {
+      throw opError('invalid_params', `profile import: the receipt ${path} cannot be read (${(e as NodeJS.ErrnoException).code ?? "not a profile import receipt"}); nothing was sent, and the receipt was left as it is.`,
+        'Move the damaged receipt aside and apply again: the brain replays lines it already saved, so nothing is saved twice.');
+    }
+  };
+  if (f.status) { await report(readReceipt(f.status), f.status, f.json, global, scope); return; }
+  const prior = f.resume ? readReceipt(f.resume) : null;
   const file = prior ? prior.file : resolve(f.file!);
   let text: string;
   try { text = readFileSync(file, 'utf8'); } catch (e) {
@@ -127,12 +133,7 @@ export async function runProfileImport(args: string[], call: ImportCall, target:
   const path = f.resume ?? receiptPath(homeDir, hash);
   let receipt: ImportReceipt;
   if (!existsSync(path)) receipt = newReceipt(plan, hash, file, who, `imported from ${basename(file)} (${plan.format}), preview ${hash}`);
-  else {
-    try { receipt = loadReceipt(path); } catch (e) {
-      throw opError('invalid_params', `profile import: the receipt ${path} cannot be read (${(e as NodeJS.ErrnoException).code ?? "not a profile import receipt"}); nothing was sent, and the receipt was left as it is.`,
-        'Move the damaged receipt aside and apply again: the brain replays lines it already saved, so nothing is saved twice.');
-    }
-  }
+  else receipt = readReceipt(path);
   saveReceipt(path, receipt);
   await runImport(plan, receipt, call, r => saveReceipt(path, r));
   await report(receipt, path, f.json, global, scope);
