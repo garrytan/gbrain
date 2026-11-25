@@ -422,6 +422,8 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'applyRetrievalRatings', 'insertPinnedQuestion', 'insertRetrievalEvents', 'insertVolunteerEvents',
   // Lane 4 (sweep-facts-rust) typed edge-proposal writes: not mapped to a write plan yet.
   'deleteEdgeProposalError', 'deleteHeldEdgeProposalErrors', 'markEdgeProposalDated',
+  // Lane 8 (rust-members-tail) typed writes (the extraction watermark and receipt, the volunteer retention delete): not mapped to a write plan yet.
+  'clearPageExtractionState', 'commitPageExtraction', 'deleteVolunteerEventsOlderThan', 'writePageExtractionReceipt',
 ]);
 export type MemberKind = 'read_name' | 'raw' | 'reserved' | 'ignored' | 'schema' | 'mapped' | 'unmapped';
 
