@@ -15,6 +15,7 @@ import { isSyncReadBound, isUnreadableSyncFile } from './sync-screen.ts';
 import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
 import { sha256 } from './digest.ts';
 import { startClaimPhase } from './claim-phase.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { UNFINISHED_PAGE_REQUEST_SQL, syncRows } from '../engine-sql/managed-sync-store.ts';
 import { inspectUnchanged, kernelPageWork, screeningRequest, type KernelPage, type NoopKernelWaiver } from './noop-kernel.ts';
 import { chunkManifestReads } from '../search/safe-chunks.ts';
@@ -390,6 +391,8 @@ export async function unchangedSyncImport(engine: BrainEngine, cursor: WaiverCur
     return { kernel: inspected.waived ?? [], ...(prepared.importProvenance && !inspected.waived?.length ? { provenance: prepared.importProvenance } : {}) };
   } catch (error) {
     rethrowAbort(error, signal);
+    // A refusal of the engine (the kernel's page read) is not a screen that found no waiver.
+    rethrowCapabilityRefusal(error);
     return null;
   }
 }

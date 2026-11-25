@@ -410,7 +410,7 @@ src/core/persistence/managed-sources.ts	execute_raw	1
 src/core/persistence/memory-prepare.ts	execute_raw	1
 src/core/persistence/memory-proposals.ts	execute_raw	9
 src/core/persistence/mirror-read-only.ts	execute_raw	2
-src/core/persistence/noop-kernel.ts	execute_raw	2
+src/core/persistence/noop-kernel.ts	execute_raw	1
 src/core/persistence/origin-index.ts	execute_raw	2
 src/core/persistence/page-advisories.ts	execute_raw	1
 src/core/persistence/page-append.ts	execute_raw	2
@@ -442,20 +442,15 @@ src/core/persistence/searchable.ts	execute_raw	1
 src/core/persistence/segmented-apply.ts	execute_raw	6
 src/core/persistence/skill-activation.ts	execute_raw	11
 src/core/persistence/soak-counters.ts	execute_raw	2
-src/core/persistence/sync-cursor-key.ts	execute_raw	6
-src/core/persistence/sync-drain.ts	execute_raw	2
+src/core/persistence/sync-drain.ts	execute_raw	1
 src/core/persistence/sync-dry-run-writer.ts	execute_raw	1
 src/core/persistence/sync-freshness.ts	execute_raw	1
-src/core/persistence/sync-lanes.ts	execute_raw	1
 src/core/persistence/sync-page-fault.ts	execute_raw	5
 src/core/persistence/sync-pass-confirm.ts	execute_raw	8
-src/core/persistence/sync-pass-fold.ts	execute_raw	1
 src/core/persistence/sync-prepare.ts	execute_raw	5	#9646: the stamp fence-trend pre-read runs outside the 5 s publication (newest sequence, open-import probe); moves with the persistence engine-sql conversion
-src/core/persistence/sync-run.ts	execute_raw	17
+src/core/persistence/sync-run.ts	execute_raw	7
 src/core/persistence/sync-status.ts	execute_raw	6
 src/core/persistence/sync-stop-class.ts	execute_raw	1
-src/core/persistence/sync-waivers.ts	execute_raw	8
-src/core/persistence/sync-window.ts	execute_raw	2
 src/core/persistence/transient-retry.ts	execute_raw	1
 src/core/persistence/unbound-source.ts	execute_raw	4
 src/core/persistence/unimported-file.ts	execute_raw	1
