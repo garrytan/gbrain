@@ -11,17 +11,19 @@
 //! - `a 0x10 -> last id` (JSON integer): the reservation id sequence.
 //!
 //! The campaign, claim, retry and outcome writers of the ledger (`campaign.ts`, `execute.ts`) are the executor
-//! statements of `executor.rs`.
+//! statements of `executor.rs`. The shadow seed copies `chronicle_page_state` rows as they are (`seeded.rs`).
 
 use crate::error::{Result, StoreError};
 
 mod executor;
+mod seeded;
 use crate::kv::scan_prefix;
 use crate::{Store, get_json, keys, put_json};
 pub use executor::{
     ChronicleCampaignQueue, ChronicleCandidates, ChronicleDiscovery, ChronicleFinish,
     ChronicleKeyTuple,
 };
+pub(crate) use seeded::{SeededLedgerRow, remove_ledger_row, seed_ledger_row};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
