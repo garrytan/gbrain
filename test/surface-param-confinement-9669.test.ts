@@ -265,7 +265,8 @@ describe('census: every parameter a narrower surface leaves out of an operation 
         if (name in listed.params) continue;
         const companion = def.appliesWith ? { [def.appliesWith]: example(op.params[def.appliesWith]!) } : {};
         reached.clear();
-        const env = envelope(await dispatchToolCall(engine, op.name, { ...companion, [name]: example(def) }, stdio(surface)));
+        const value = surfaces.STARTER_PARAM_VALUES[op.name]?.[name]?.[0] ?? example(def);
+        const env = envelope(await dispatchToolCall(engine, op.name, { ...companion, [name]: value }, stdio(surface)));
         const id = `${op.name}.${name}`;
         if (CALLABLE[op.name]?.[name] !== undefined) {
           if (env.code === CODE && String(env.message).includes(' ' + name)) leaked.push(id + ' (listed callable, refused)');

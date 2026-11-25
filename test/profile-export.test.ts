@@ -58,7 +58,7 @@ async function exportCli(args: string[], call: ImportCall): Promise<{ out: strin
 const fact = (over: Partial<ProfileFact>): ProfileFact => ({ fact_id: '1', source_id: 'default', facet: 'diet', claim: 'Eats vegetarian',
   provenance: 'told me', content_origin: 'user_said', valid_from: '2026-11-01T00:00:00.000Z', visibility: 'world', confidence: 1, ...over });
 const BLOCK: ProfileBlock = {
-  entity: { slug: 'memory/owner', basis: 'owner' } as ProfileBlock['entity'],
+  entity: { slug: 'memory/owner', basis: 'reserved_page' },
   constraints: [fact({ fact_id: '2', facet: 'allergy', claim: 'Allergic to peanuts', visibility: 'private' })],
   facets: [fact({ fact_id: '1' }), fact({ fact_id: '3', facet: 'size.shoe', claim: '10 US', valid_from: '2026-10-02T00:00:00.000Z' })],
   preferences: [fact({ fact_id: '4', facet: null, claim: 'Prefers  window\nseats' })],

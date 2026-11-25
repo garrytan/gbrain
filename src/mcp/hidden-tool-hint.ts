@@ -20,7 +20,7 @@ import type { Action, McpCall } from '../core/agent-output.ts';
 import type { Operation, OperationMeta } from '../core/ops/contract.ts';
 import { cliEquivalent } from '../core/ops/cli-equivalent.ts';
 import { opError, type OperationError } from '../core/ops/contract.ts';
-import { clampSurface, filterOpsForSurface, isReadOnlyOperation, itemParamKeys, paramCallable, paramCeiling, surfaceWiderThan, type McpSurface } from './surface.ts';
+import { clampSurface, filterOpsForSurface, isReadOnlyOperation, itemParamKeys, paramCallable, paramCeiling, paramValueOffSurface, surfaceWiderThan, type McpSurface } from './surface.ts';
 
 export { itemParamKeys, paramCallable };
 
@@ -154,17 +154,21 @@ export function paramNotOnSurface(op: Operation, params: Record<string, unknown>
     return cap !== undefined && typeof params[key] === 'number' && params[key] > cap ? cap : undefined;
   };
   const inItem = (key: string) => !Object.keys(params).includes(key);
-  const param = Object.keys(params).find(key => !paramCallable(op, key, surface) || above(key, surface) !== undefined)
+  const hidden = Object.keys(params).find(key => !paramCallable(op, key, surface) || above(key, surface) !== undefined)
     ?? itemParamKeys(op, params).find(key => !paramCallable(op, key, surface));
+  const off = hidden === undefined ? paramValueOffSurface(op, params, surface) : undefined;
+  const param = hidden ?? off?.param;
   if (param === undefined) return null;
   const cap = above(param, surface);
   const target = clampSurface(conn.ceiling ?? 'full', () => {});
   const widen = conn.canWiden && !(conn.readOnly && !isReadOnlyOperation(op)) && surfaceWiderThan(target, surface)
-    && paramCallable(op, param, target) && above(param, target) === undefined;
-  const what = cap === undefined ? `parameter ${param}${inItem(param) ? ' (in an item)' : ''} is not on` : `${param} above ${cap} is not on`;
+    && paramCallable(op, param, target) && above(param, target) === undefined && (!off || paramValueOffSurface(op, params, target) === undefined);
+  const values = off ? off.allowed.join(' or ') : '';
+  const what = off ? `${param} ${JSON.stringify(off.value)}${off.inItem ? ' (in an item)' : ''} is not on`
+    : cap === undefined ? `parameter ${param}${inItem(param) ? ' (in an item)' : ''} is not on` : `${param} above ${cap} is not on`;
   const message = `${op.name}: ${what} this connection's ${surface} tool surface; nothing was ${op.mutating ? 'written' : 'read'}.`;
   const why = 'The tool surface the brain operator set for this connection limits the parameters it may pass, as well as the tools it may call.';
-  const retry = cap === undefined ? `Repeat the call without ${param}` : `Repeat the call with ${param} at most ${cap}`;
+  const retry = off ? `Repeat the call with ${param} ${values}` : cap === undefined ? `Repeat the call without ${param}` : `Repeat the call with ${param} at most ${cap}`;
   const scope = conn.transport === 'stdio' ? 'this session (nothing is written)' : 'this client\'s own surface, within the server ceiling';
   const refusal = widen
     ? opError(PARAM_NOT_ON_SURFACE_CODE, message, `${retry}, or call request_tools {"surface":"${target}"} to widen ${scope}, then repeat it.`, {
@@ -173,7 +177,9 @@ export function paramNotOnSurface(op: Operation, params: Record<string, unknown>
     : opError(PARAM_NOT_ON_SURFACE_CODE, message, `${retry}. Only the brain's operator can widen this connection's tool surface.`, {
       why, fix: { ask_user: true, consent: [], actor: conn.transport === 'stdio' ? 'user' : 'host_admin', requires_exclusive: false,
         why: 'This connection cannot widen its own tool surface.',
-        user_message: cap === undefined
+        user_message: off
+          ? `This gbrain connection serves the ${surface} tool surface, which takes ${param} of ${op.name} only as ${values}. Widening it is the brain operator's decision; the call works with ${param} ${values}.`
+          : cap === undefined
           ? `This gbrain connection serves the ${surface} tool surface, which does not take the ${param} parameter of ${op.name}. Widening it is the brain operator's decision; the call works without ${param}.`
           : `This gbrain connection serves the ${surface} tool surface, which caps ${param} of ${op.name} at ${cap}. Widening it is the brain operator's decision; the call works with ${param} at most ${cap}.` } });
   if (protocolVersion !== undefined) refusal.protocolVersion = protocolVersion;

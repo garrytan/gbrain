@@ -331,6 +331,28 @@ describe('local import on a single-user keyless brain', () => {
     expect(res.isError ?? false).toBe(false);
     expect((await rows(engine, 'canarystarter'))[0]).toMatchObject({ origin: 'inferred', visibility: 'private' });
   }, 60_000);
+  test('a starter-surface client cannot label a fact user_said, at the top or in an item; the full surface still can', async () => {
+    const starter = { remote: true, transport: 'stdio' as const, surface: 'starter' as const, allowedOps: allowedOpNames(operations, 'starter'), sourceId: 'default' };
+    const before = await count(engine);
+    for (const params of [
+      { fact: 'Says it is vegan canarystartersaid', provenance: 'told me', content_origin: 'user_said' },
+      { provenance: 'told me', items: [{ fact: 'Says it is vegan canarystartersaid', content_origin: 'user_said' }] },
+    ]) {
+      const res = await dispatchToolCall(engine, 'remember', params, starter);
+      expect(res.isError).toBe(true);
+      const body = JSON.parse(res.content[0]!.text) as R;
+      expect(body.code).toBe('param_not_on_surface');
+      expect(body.message).toContain('content_origin "user_said"');
+      expect(body.suggestion).toContain('content_origin inferred or tool_output');
+    }
+    expect(await count(engine)).toBe(before);
+    const tool = await dispatchToolCall(engine, 'remember', { fact: 'Read in a tool canarystartertool', provenance: 'a tool', content_origin: 'tool_output' }, starter);
+    expect(tool.isError ?? false).toBe(false);
+    const full = await dispatchToolCall(engine, 'remember', { fact: 'Says it is vegan canarystartersaid', provenance: 'told me', content_origin: 'user_said' },
+      { remote: true, transport: 'stdio', surface: 'full', allowedOps: allowedOpNames(operations, 'full'), sourceId: 'default' });
+    expect(full.isError ?? false).toBe(false);
+    expect((await rows(engine, 'canarystartersaid'))[0]).toMatchObject({ origin: 'user_said' });
+  }, 60_000);
   test('an import never supersedes a fact the user said', async () => {
     const said = await localCall(engine)('remember', { fact: 'Eats pescatarian canarysaid', facet: 'diet', provenance: 'told me 2026-11-25', content_origin: 'user_said' });
     const file = join(home, 'said.md');
