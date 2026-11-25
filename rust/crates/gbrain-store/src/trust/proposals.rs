@@ -23,6 +23,7 @@
 
 use crate::env::{iso, parse_iso};
 use crate::error::{CONSTRAINT_VIOLATION, Result, STORE_CORRUPT, StoreError};
+use crate::facts::{VisibilityWidening, read_fact};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::next_id;
@@ -31,6 +32,7 @@ use crate::trust::TrustTable;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
+use std::collections::HashSet;
 
 const PROPOSAL: u8 = 0x06;
 const PENDING: u8 = 0x07;
@@ -83,6 +85,15 @@ pub struct ProposalFilter {
     pub limit: Option<i64>,
 }
 
+/// `listUnreadablePrivacyHoldIds`: the proposal ids to judge and what widens the caller's
+/// world-only fact reads (`memberFactAdmitSql`, `grantedPrivateFactSql`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct HoldReadQuery {
+    pub ids: Vec<i64>,
+    pub widen: VisibilityWidening,
+}
+
 /// The decider a status change records.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -93,23 +104,25 @@ pub struct Decider {
 
 /// What is stored for a proposal.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct ProposalRecord {
-    id: u64,
-    action: String,
-    source_id: String,
-    target_table: String,
-    target_id: i64,
-    related_table: Option<String>,
-    related_id: Option<i64>,
-    before_state: Value,
-    after_state: Value,
-    proposer: String,
-    status: String,
-    decided_at_us: Option<i64>,
-    decided_principal_kind: Option<String>,
-    decided_principal_id: Option<String>,
-    created_at_us: i64,
-    updated_at_us: i64,
+pub(crate) struct ProposalRecord {
+    pub(crate) id: u64,
+    pub(crate) action: String,
+    pub(crate) source_id: String,
+    pub(crate) target_table: String,
+    pub(crate) target_id: i64,
+    pub(crate) related_table: Option<String>,
+    pub(crate) related_id: Option<i64>,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
+    pub(crate) before_state: Value,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
+    pub(crate) after_state: Value,
+    pub(crate) proposer: String,
+    pub(crate) status: String,
+    pub(crate) decided_at_us: Option<i64>,
+    pub(crate) decided_principal_kind: Option<String>,
+    pub(crate) decided_principal_id: Option<String>,
+    pub(crate) created_at_us: i64,
+    pub(crate) updated_at_us: i64,
 }
 
 impl ProposalRecord {
@@ -123,8 +136,8 @@ impl ProposalRecord {
             "target_id": self.target_id,
             "related_table": self.related_table,
             "related_id": self.related_id,
-            "before_state": self.before_state,
-            "after_state": self.after_state,
+            "before_state": crate::jsonb::ordered(&self.before_state),
+            "after_state": crate::jsonb::ordered(&self.after_state),
             "proposer": self.proposer,
             "proposer_principal_kind": Value::Null,
             "proposer_principal_id": Value::Null,
@@ -290,25 +303,102 @@ fn put_record(tx: &mut dyn KvWrite, record: &ProposalRecord) -> Result<()> {
     put_json(tx, &by_id(record.id), record)
 }
 
+/// The shadow seed (`seed.rs`): stores `record`, a proposal copied from another engine with its own
+/// id, status, decision and times, with the keys `insert_trust_proposal` writes: the row index
+/// entries, and the pending unique key when the status is `pending`. `false` when the id already
+/// holds a proposal; the pending key held by another id is the pending unique index violation.
+pub(crate) fn seed_proposal(tx: &mut dyn KvWrite, record: &ProposalRecord) -> Result<bool> {
+    const OP: &str = "shadow_seed trust_proposals";
+    if read_record(&*tx, record.id)?.is_some() {
+        return Ok(false);
+    }
+    one_of(OP, "action", &record.action, &ACTIONS)?;
+    one_of(OP, "status", &record.status, &STATUSES)?;
+    trust_table(OP, "target_table", &record.target_table)?;
+    if let Some(table) = &record.related_table {
+        trust_table(OP, "related_table", table)?;
+    }
+    if record.related_table.is_some() != record.related_id.is_some() {
+        return Err(StoreError::new(
+            CONSTRAINT_VIOLATION,
+            "new row for relation \"trust_proposals\" violates a check constraint: related_table and related_id are both set or both null",
+        ));
+    }
+    require_source(tx, &record.source_id)?;
+    if record.status == "pending" {
+        let pending = record.pending_key();
+        if get_id(&*tx, &pending)?.is_some() {
+            return Err(StoreError::new(
+                CONSTRAINT_VIOLATION,
+                "duplicate key value violates the pending trust proposal unique index",
+            ));
+        }
+        tx.put(&pending, &record.id.to_be_bytes())?;
+    }
+    tx.put(
+        &row_key(&record.target_table, record.target_id, record.id),
+        &[],
+    )?;
+    if let (Some(table), Some(row)) = (&record.related_table, record.related_id) {
+        tx.put(&row_key(table, row, record.id), &[])?;
+    }
+    put_record(tx, record)?;
+    Ok(true)
+}
+
 /// Removes every proposal of a deleted source and its index entries (`ON DELETE CASCADE`).
 pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
     for record in all_records(tx)? {
-        if record.source_id != source_id {
-            continue;
+        if record.source_id == source_id {
+            delete_record(tx, &record)?;
         }
-        if record.status == "pending" {
-            let key = record.pending_key();
-            if get_id(tx, &key)? == Some(record.id) {
-                tx.delete(&key)?;
-            }
-        }
-        tx.delete(&row_key(&record.target_table, record.target_id, record.id))?;
-        if let (Some(table), Some(id)) = (&record.related_table, record.related_id) {
-            tx.delete(&row_key(table, id, record.id))?;
-        }
-        tx.delete(&by_id(record.id))?;
     }
     Ok(())
+}
+
+/// Deletes one proposal with its pending-key and row-index entries.
+fn delete_record(tx: &mut dyn KvWrite, record: &ProposalRecord) -> Result<()> {
+    if record.status == "pending" {
+        let key = record.pending_key();
+        if get_id(tx, &key)? == Some(record.id) {
+            tx.delete(&key)?;
+        }
+    }
+    tx.delete(&row_key(&record.target_table, record.target_id, record.id))?;
+    if let (Some(table), Some(id)) = (&record.related_table, record.related_id) {
+        tx.delete(&row_key(table, id, record.id))?;
+    }
+    tx.delete(&by_id(record.id))
+}
+
+/// `deletePurgeTrustProposals` (a fact purge): deletes the proposals of `source_id` whose target or
+/// related row is a purged fact (`facts`, id in `fact_ids`) or take (`takes`, id in `take_ids`);
+/// how many.
+pub(crate) fn purge_rows(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    fact_ids: &std::collections::HashSet<i64>,
+    take_ids: &std::collections::HashSet<i64>,
+) -> Result<u64> {
+    let names = |table: &str, id: i64| match table {
+        "facts" => fact_ids.contains(&id),
+        "takes" => take_ids.contains(&id),
+        _ => false,
+    };
+    let mut deleted = 0;
+    for record in all_records(tx)? {
+        let related = match (&record.related_table, record.related_id) {
+            (Some(table), Some(id)) => names(table, id),
+            _ => false,
+        };
+        if record.source_id == source_id
+            && (names(&record.target_table, record.target_id) || related)
+        {
+            delete_record(tx, &record)?;
+            deleted += 1;
+        }
+    }
+    Ok(deleted)
 }
 
 fn get_id(read: &dyn KvRead, key: &[u8]) -> Result<Option<u64>> {
@@ -318,6 +408,27 @@ fn get_id(read: &dyn KvRead, key: &[u8]) -> Result<Option<u64>> {
             .map(Some)
             .ok_or_else(|| corrupt("pending index entry is malformed")),
     }
+}
+
+/// The open contest of one row (engine-sql/trust-fence.ts `OPEN_CONTEST_SQL`): a pending `forget`
+/// proposal whose target is the row.
+pub(crate) fn pending_forget(read: &dyn KvRead, table: &str, row_id: u64) -> Result<bool> {
+    let Ok(row_id) = i64::try_from(row_id) else {
+        return Ok(false);
+    };
+    for id in ids_naming(read, table, row_id)? {
+        let Some(p) = read_record(read, id)? else {
+            return Err(corrupt("row index entry without its row"));
+        };
+        if p.status == "pending"
+            && p.action == "forget"
+            && p.target_table == table
+            && p.target_id == row_id
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// The fence guard's held arm for one fact (engine-sql/trust-fence.ts `listFenceFactRows`): a
@@ -344,6 +455,77 @@ pub(crate) fn held_narrower(read: &dyn KvRead, fact_id: u64) -> Result<bool> {
         }
     }
     Ok(false)
+}
+
+/// The fact pairs a pending `supersede_fact` proposal between two facts covers, both ways round (the claim-conflict
+/// read leaves them out: `trust_proposals` with `status = 'pending'`, `target_table` and `related_table` `facts`).
+pub(crate) fn pending_fact_supersessions(read: &dyn KvRead) -> Result<HashSet<(i64, i64)>> {
+    let mut pairs = HashSet::new();
+    for p in all_records(read)? {
+        if p.status == "pending"
+            && p.action == "supersede_fact"
+            && p.target_table == "facts"
+            && p.related_table.as_deref() == Some("facts")
+            && let Some(related) = p.related_id
+        {
+            pairs.insert((p.target_id, related));
+            pairs.insert((related, p.target_id));
+        }
+    }
+    Ok(pairs)
+}
+
+/// The contested reference of one fact or take row (eligibility/sql.ts `contestedRefSql`): the
+/// lowest-id pending `supersede_fact` or `supersede_take` proposal naming it, as `tp<id>:challenger`
+/// when the row is the proposal's related row and `tp<id>:challenged` otherwise; `None` when no
+/// such proposal names it.
+pub(crate) fn contested_ref(read: &dyn KvRead, table: &str, row_id: i64) -> Result<Option<String>> {
+    for id in ids_naming(read, table, row_id)? {
+        let Some(p) = read_record(read, id)? else {
+            return Err(corrupt("row index entry without its row"));
+        };
+        if p.status == "pending"
+            && matches!(p.action.as_str(), "supersede_fact" | "supersede_take")
+            && p.names(table, row_id)
+        {
+            let side = if p.related_table.as_deref() == Some(table) && p.related_id == Some(row_id)
+            {
+                "challenger"
+            } else {
+                "challenged"
+            };
+            return Ok(Some(format!("tp{}:{side}", p.id)));
+        }
+    }
+    Ok(None)
+}
+
+/// The targets (`target_table`, `target_id`) of the visibility proposals that name fact `fact_id` as their related row,
+/// whatever their status: the `supersede_fact` and `confirm` proposals whose `before_state` has a `visibility` key
+/// (`heldRowSql`'s grant clause, `eligibility/fence-overlay.ts`). Ascending by proposal id.
+pub(crate) fn visibility_proposal_targets(
+    read: &dyn KvRead,
+    fact_id: u64,
+) -> Result<Vec<(String, i64)>> {
+    let Ok(row_id) = i64::try_from(fact_id) else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::new();
+    for id in ids_naming(read, "facts", row_id)? {
+        let Some(p) = read_record(read, id)? else {
+            return Err(corrupt("row index entry without its row"));
+        };
+        if matches!(p.action.as_str(), "supersede_fact" | "confirm")
+            && p.related_table.as_deref() == Some("facts")
+            && p.related_id == Some(row_id)
+            && p.before_state
+                .as_object()
+                .is_some_and(|state| state.contains_key("visibility"))
+        {
+            out.push((p.target_table, p.target_id));
+        }
+    }
+    Ok(out)
 }
 
 impl Store {
@@ -416,6 +598,43 @@ impl Store {
         };
         let read = self.read()?;
         Ok(read_record(&*read, id)?.map(|r| r.to_row()))
+    }
+
+    /// `listUnreadablePrivacyHoldIds(ids)`: the privacy holds among `ids` (a `supersede_fact`
+    /// proposal whose before state names a visibility) whose target fact is missing or one the
+    /// caller's widened world-only reads do not admit, ascending. A target outside `facts` reads
+    /// as a missing fact, as the SQL's `LEFT JOIN` does.
+    pub fn list_unreadable_privacy_hold_ids(&self, q: &HoldReadQuery) -> Result<Vec<i64>> {
+        let read = self.read()?;
+        let ids: std::collections::BTreeSet<i64> = q.ids.iter().copied().collect();
+        let mut out = Vec::new();
+        for id in ids {
+            let Ok(key) = u64::try_from(id) else {
+                continue;
+            };
+            let Some(p) = read_record(&*read, key)? else {
+                continue;
+            };
+            let hold = p.action == "supersede_fact"
+                && p.before_state
+                    .as_object()
+                    .is_some_and(|o| o.contains_key("visibility"));
+            if !hold {
+                continue;
+            }
+            let fact = match (p.target_table.as_str(), u64::try_from(p.target_id)) {
+                ("facts", Ok(target)) => read_fact(&*read, target)?,
+                _ => None,
+            };
+            let readable = match &fact {
+                Some(row) => q.widen.admits(&*read, row)?,
+                None => false,
+            };
+            if !readable {
+                out.push(id);
+            }
+        }
+        Ok(out)
     }
 
     /// `listTrustProposals(filter)`: by status (`pending` when absent; `all` for every status),
@@ -551,6 +770,26 @@ impl Store {
     }
 }
 
+/// The shadow follow (`seed/follow.rs`): removes the proposal `id` with its index entries. `false`
+/// when there is none.
+pub(crate) fn remove_proposal(tx: &mut dyn KvWrite, id: u64) -> Result<bool> {
+    let Some(record) = read_record(&*tx, id)? else {
+        return Ok(false);
+    };
+    if record.status == "pending" {
+        let key = record.pending_key();
+        if get_id(&*tx, &key)? == Some(record.id) {
+            tx.delete(&key)?;
+        }
+    }
+    tx.delete(&row_key(&record.target_table, record.target_id, record.id))?;
+    if let (Some(table), Some(row)) = (&record.related_table, record.related_id) {
+        tx.delete(&row_key(table, row, record.id))?;
+    }
+    tx.delete(&by_id(record.id))?;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -675,5 +914,81 @@ mod tests {
             .unwrap()
             .is_empty()
         );
+    }
+}
+
+/// `listAcceptedTakeRemovals({ sourceIds, proposalId })`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields, rename_all = "camelCase")]
+pub struct AcceptedTakeQuery {
+    pub source_ids: Vec<String>,
+    pub proposal_id: Option<i64>,
+}
+
+impl Store {
+    /// `listAcceptedTakeRemovals`: each accepted `forget` proposal on a take of the sources (not proposed by
+    /// `takes_remove`, its `before_state.change` `deactivated` or `replaced`) with the committed `takes_remove` request
+    /// that applied it (`intent.trust_accept` names the proposal, a page and a numeric `intent.row_num`), by proposal id.
+    /// `accepted-takes` (src/core/repair/accepted-takes.ts) restores the take those requests removed.
+    pub fn list_accepted_take_removals(&self, q: &AcceptedTakeQuery) -> Result<Vec<Value>> {
+        let op = "listAcceptedTakeRemovals";
+        for source in &q.source_ids {
+            no_nul(op, &[("sourceIds", source)])?;
+        }
+        let text = |v: Option<&Value>| v.and_then(crate::cli_reads::entities::arrow_text);
+        let read = self.read()?;
+        let requests: Vec<_> = crate::persistence::all_requests(&*read)?
+            .into_iter()
+            .filter(|r| {
+                r.operation == "takes_remove" && r.state == "committed" && r.page_id.is_some()
+            })
+            .collect();
+        let mut proposals: Vec<ProposalRecord> = all_records(&*read)?
+            .into_iter()
+            .filter(|p| {
+                p.action == "forget"
+                    && p.target_table == "takes"
+                    && p.status == "accepted"
+                    && p.proposer != "takes_remove"
+                    && matches!(
+                        text(p.before_state.get("change")).as_deref(),
+                        Some("deactivated" | "replaced")
+                    )
+                    && q.source_ids.contains(&p.source_id)
+                    && q.proposal_id
+                        .is_none_or(|id| i64::try_from(p.id).is_ok_and(|own| own == id))
+            })
+            .collect();
+        proposals.sort_by_key(|p| p.id);
+        let mut out = Vec::new();
+        for p in &proposals {
+            let id_text = p.id.to_string();
+            for r in &requests {
+                let row_text = text(r.intent.get("row_num"));
+                let Some(row_num) = row_text
+                    .as_deref()
+                    .filter(|t| !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit()))
+                    .and_then(|t| t.parse::<i32>().ok())
+                else {
+                    continue;
+                };
+                if r.source_id != p.source_id
+                    || text(r.intent.get("trust_accept")).as_deref() != Some(id_text.as_str())
+                {
+                    continue;
+                }
+                out.push(json!({
+                    "proposal_id": p.id,
+                    "source_id": r.source_id,
+                    "slug": r.slug,
+                    "page_id": r.page_id,
+                    "row_num": row_num,
+                    "receipt_id": r.id,
+                    "change": text(p.before_state.get("change")),
+                    "writer_tier": text(p.before_state.get("writer_tier")),
+                }));
+            }
+        }
+        Ok(out)
     }
 }

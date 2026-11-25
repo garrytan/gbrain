@@ -102,3 +102,5 @@ cli	src/core/facts/fence-write.ts	coordinator	Direct fence writes publish throug
 cli	src/core/chronicle/extract-events.ts	coordinator	Chronicle events and their depth timeline rows publish through publishMaintenancePage.
 cli	src/core/persistence/purge-deleted.ts	coordinator	Shared purge used by the cycle, the purge job, the operation and the CLI.
 cli	src/commands/sources-refresh.ts	coordinator	gbrain sources refresh drains and fences the worktree, fast-forwards it under the native lock, then imports through the managed --no-pull sync's journaled page requests.
+op	learned_keep	no_canonical_write	Marks learning_items ledger rows kept; no page, fact, link, loop or canonical file is written.
+op	learned_undo	coordinator	Runs forget, loops_close or revert_version as the caller, each through its own coordinated mutation; a local conflict undo only moves a decide_proposals row to rejected.

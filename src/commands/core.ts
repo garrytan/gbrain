@@ -14,6 +14,7 @@
  * Marking writes go through put_page as the trusted local owner, so the
  * write-path guard (budget, page cap) applies to them like any other write.
  */
+import { normalizeSlug } from '../core/utils.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { handleToolCall } from '../mcp/server.ts';
 import {
@@ -139,7 +140,8 @@ export async function runCore(engine: BrainEngine, args: string[]): Promise<void
   const sub = args[0] as (typeof CORE_SUBCOMMANDS)[number] | undefined;
   const json = args.includes('--json');
   const sourceId = flag(args, '--source') ?? 'default';
-  const slug = positional(args);
+  const rawSlug = positional(args);
+  const slug = rawSlug === undefined ? rawSlug : normalizeSlug(rawSlug);
   const print = (value: unknown, text: () => string) => console.log(json ? JSON.stringify(value, null, 2) : text());
 
   switch (sub) {

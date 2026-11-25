@@ -161,6 +161,8 @@ test/e2e/workspace-generic-compat.test.ts	generic agent-workspace compat (INSTAL
 test/embedding-dim-check-facts.test.ts	doctor checkFactsEmbeddingWidthConsistency wiring (T6)	4	doctor-source-helper
 test/embedding-dim-check-facts.test.ts	postgres-engine fact insert cast (T6, codex #20)	1	source-surface-helper
 test/enforced-member-classes.test.ts	enforced member allow-list	6	readFileSync
+test/engine-status-brain-ref-safety.test.ts	the PGLite lock is unchanged	3	readFileSync
+test/engine-status-brain-ref-safety.test.ts	the brain_ref write is best-effort and off the critical path	4	readFileSync
 test/env-trust-protected-keys.test.ts	CWD_DOTENV_PROTECTED_KEYS covers every suspicious GBRAIN_* env read in src/	3	readFileSync
 test/error-catalogue.test.ts	error code registry (agent contract v1)	5	readFileSync
 test/error-registry-6317-contract.test.ts	#6317 codes are registered with a full envelope	3	readFileSync
@@ -319,7 +321,7 @@ test/scripts/build-schema-migrations.test.ts	generator diagnostics (FAIL/Why/Fix
 test/scripts/build-schema-migrations.test.ts	out-of-order landing check	2	exec-scan
 test/scripts/check-agent-contract-baselines.test.ts	agent-contract baselines	2	readFileSync
 test/scripts/check-core-world-reads.test.ts	check-core-world-reads.ts: the ratchet	5	readFileSync
-test/scripts/check-dynamic-ci.test.ts	check-dynamic-ci.ts	1	exec-scan,readFileSync
+test/scripts/check-dynamic-ci.test.ts	check-dynamic-ci.ts	3	exec-scan,readFileSync
 test/scripts/check-function-size.test.ts	check-function-size.ts rules	11	readFileSync
 test/scripts/check-item-allowlist-catches.test.ts	CLI	2	readFileSync
 test/scripts/check-public-surface.test.ts	dropped manifest entries	7	bun-file
@@ -353,19 +355,19 @@ test/scripts/e2e-shard-budget.test.ts	E2E shard-time budget	3	readFileSync
 test/scripts/e2e-wiring.test.ts	(file-level)	14	readFileSync
 test/scripts/engine-raw-sql-ratchet.test.ts	check-engine-raw-sql-ratchet.ts: shrink-only baseline	11	readFileSync
 test/scripts/fix-wave-gate.test.ts	fix-wave gate workflow	3	readFileSync
-test/scripts/full-ci-workflow.test.ts	full CI on pull requests	7	readFileSync
+test/scripts/full-ci-workflow.test.ts	full CI on pull requests	8	readFileSync
 test/scripts/full-ci-workflow.test.ts	full-ci label lifetime	4	readFileSync
 test/scripts/full-ci-workflow.test.ts	master-push reuse of a passed full-suite run	2	readFileSync
 test/scripts/gh-issue-agent-filed.test.ts	agent-filed label	2	readFileSync
 test/scripts/heavy-door-workflow.test.ts	heavy door supply chain and coverage gates	8	readFileSync
-test/scripts/macos-runner-events.test.ts	(file-level)	3	readFileSync
+test/scripts/macos-runner-events.test.ts	(file-level)	5	readFileSync
 test/scripts/native-lock-prebuilds.test.ts	native lock distribution integrity	2	readFileSync
 test/scripts/native-setup-toolchain.test.ts	scripts/native/setup-toolchain.ts download budget	4	readFileSync
 test/scripts/nightly-e2e.test.ts	full E2E shard classification (#6040)	2	readFileSync
 test/scripts/nightly-e2e.test.ts	nightly E2E scheduling	4	readFileSync
 test/scripts/nightly-issue.test.ts	.github/nightly-known-red.tsv	2	readFileSync
 test/scripts/nightly-issue.test.ts	master-red: push-to-master runs	29	readFileSync
-test/scripts/nightly-issue.test.ts	nightly-watch coverage ratchet	1	readFileSync
+test/scripts/nightly-issue.test.ts	nightly-watch coverage ratchet	2	readFileSync
 test/scripts/nightly-issue.test.ts	nightly-watch incidents	9	readFileSync
 test/scripts/nightly-issue.test.ts	nightly-watch routing and guard	9	readFileSync
 test/scripts/nightly-issue.test.ts	operator messages carry docs anchors that resolve	1	readFileSync
@@ -398,6 +400,7 @@ test/scripts/test-shard.slow.test.ts	test-shard.sh — exclusion contract	7	read
 test/scripts/tier2-openclaw-mcp.test.ts	Tier 2 OpenClaw MCP wiring (#8002)	9	readFileSync
 test/scripts/ubi-runner-run.test.ts	run leftover line	2	readFileSync
 test/scripts/ubicloud-typecheck-state.test.ts	(file-level)	3	readFileSync
+test/scripts/unit-suite-gate.test.ts	test.yml unit-suite-gate job	3	readFileSync
 test/search/graph-signals-wire-integration.test.ts	v0.40.4 — source-grep regression guard	1	source-surface-helper
 test/serve-behavior-notice-6543.test.ts	(file-level)	3	readFileSync
 test/serve-http-admin-route-guard.test.ts	(file-level)	6	readFileSync
@@ -405,7 +408,7 @@ test/serve-http-github-webhook.test.ts	handler wiring (source pin)	1	source-surf
 test/serve-http-mcp-transport-cleanup.test.ts	POST /mcp transport cleanup (#2844)	2	source-surface-helper
 test/serve-http-metrics.test.ts	serve-http.ts wiring (structural — the two defects of the original PR)	2	source-surface-helper
 test/serve-stdin-eof-drain.test.ts	serve-sync-runner stays off the boot path (#4409)	1	readFileSync
-test/setup-brain-layout.test.ts	setup --shape personal	7	readFileSync
+test/setup-brain-layout.test.ts	setup --shape personal	9	readFileSync
 test/setup-pi-skill-extension.test.ts	(file-level)	7	readFileSync
 test/setup.test.ts	gbrain setup: setup migrations on the brain it creates (Cat 41 run 4)	3	readFileSync
 test/shared-skills-catalog.test.ts	(file-level)	22	readFileSync
@@ -418,6 +421,8 @@ test/shared-skills-setup.test.ts	packaged default skills	2	readFileSync
 test/shared-skills-setup.test.ts	shared-skills migration recovery (#5569, #5476, A-NEW-4)	4	readFileSync
 test/shared-skills-setup.test.ts	staged skill migration	8	readFileSync
 test/shared-skills-writer-boundary.test.ts	(file-level)	7	readFileSync
+test/skill-resolver-contract.test.ts	build input (the --from-json catalog)	2	readFileSync
+test/skill-resolver-contract.test.ts	turn input	1	readFileSync
 test/skill-resolver-hook-lane.test.ts	skill-resolver lane: codex project catalog	2	readFileSync
 test/skill-resolver-hook-lane.test.ts	skill-resolver lane: compiled binaries	1	readFileSync
 test/skill-resolver-hook-lane.test.ts	skill-resolver lane: delivery per harness	4	readFileSync
@@ -456,6 +461,9 @@ test/spec-refresh-barrier.test.ts	spec/tla/README.md documents the refresh-barri
 test/spec-refresh-barrier.test.ts	the TLA+ workflow runs when anything a refresh-barrier mutant names changes	1	readFileSync
 test/spend-off-switch.test.ts	reindex / onboard off-switch dispatch (regression guards)	3	bun-file
 test/spring-skill-index.test.ts	spring-loaded skill index	10	readFileSync
+test/st-write-move-parity.test.ts	moved writes before and after (${kind})	10	readFileSync
+test/st-write-move-parity.test.ts	the Postgres write members send master\'s statement text (no database)	3	readFileSync
+test/st-write-move-parity.test.ts	the strict call sites keep master\'s scope and order	3	readFileSync
 test/strict-source-unmanaged-import.test.ts	(file-level)	2	readFileSync
 test/supervisor.test.ts	recovery hook timeout bound (structural)	1	source-surface-helper
 test/sync-failures.test.ts	#4543 blocked output names failing files	4	doctor-source-helper,source-surface-helper
@@ -463,7 +471,7 @@ test/sync-failures.test.ts	Bug 9 — doctor surfaces sync failures	2	doctor-sour
 test/sync-failures.test.ts	Bug 9 — sync.ts CLI flag wiring	6	bun-file,doctor-source-helper,source-surface-helper
 test/sync-flag-table-6712.test.ts	(file-level)	5	readFileSync
 test/sync-include-hidden.test.ts	sync.ts delta path threads includeHidden (#4027 merge guard)	1	source-surface-helper
-test/sync-legacy-slug-adoption-6727.test.ts	(file-level)	8	readFileSync
+test/sync-legacy-slug-adoption-6727.test.ts	(file-level)	9	readFileSync
 test/sync.test.ts	buildSyncManifest	9	source-surface-helper
 test/sync.test.ts	isSyncable	8	source-surface-helper
 test/sync.test.ts	resolveSlugByPathOrSourcePath (CJK wave v0.32.7, codex F4)	3	source-surface-helper
@@ -497,6 +505,7 @@ test/v0_37_gap_fill.serial.test.ts	Lane D.3 — sync surfaces dim-mismatch recip
 test/v0_37_gap_fill.serial.test.ts	Lane E.4 — loadRecommendationContext is provider-aware	1	readFileSync,source-surface-helper
 test/v0_37_gap_fill.serial.test.ts	reinit-pglite — backup + reinit	8	source-surface-helper
 test/valid-time-gbra217.test.ts	valid-time normaliser and verdict (pure)	24	readFileSync
+test/vorflux-notify-workflow.test.ts	vorflux-notify.yml triggers and safety	2	readFileSync
 test/w13-small-hardening.test.ts	P1.14 paid-consent lint wording	1	exec-scan
 test/worker-supervised-db-probe.test.ts	issue #1801 fix #2 — supervised DB self-defense	5	readFileSync
 test/write-attribution-legacy.test.ts	write attribution inventory	1	readFileSync

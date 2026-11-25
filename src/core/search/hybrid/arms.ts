@@ -85,28 +85,23 @@ export async function runLexicalArms(req: HybridRequest, earlyModality: Modality
             rethrowCapabilityRefusal(err);
             if (isKeywordSkippedAfterTimeout(err)) {
               pushDegraded(degraded, 'keyword_arm_failed', 'skipped_after_timeout');
-              warnOncePerProcess('search-keyword-arm-skipped', `[gbrain] searchKeyword arm skipped (fail-open): ${err.message}`);
+              // Warnings in this file print the failure class only: an error's message or code can carry a connection string or password.
+              warnOncePerProcess('search-keyword-arm-skipped', '[gbrain] searchKeyword arm skipped (fail-open): skipped_after_timeout');
               return [] as SearchResult[];
             }
             if (isDbAccessFailure(err)) keywordAccessError = err;
-            pushDegraded(degraded, 'keyword_arm_failed', isTimeoutError(err) ? 'timeout' : 'provider_error');
-            warnOncePerProcess(
-              'search-keyword-arm-failed',
-              `[gbrain] searchKeyword arm failed (fail-open, keyword candidates skipped): ` +
-                `${err instanceof Error ? err.message : String(err)}`,
-            );
+            const reason = isTimeoutError(err) ? 'timeout' : 'provider_error';
+            pushDegraded(degraded, 'keyword_arm_failed', reason);
+            warnOncePerProcess('search-keyword-arm-failed', `[gbrain] searchKeyword arm failed (fail-open, keyword candidates skipped): ${reason}`);
             return [] as SearchResult[];
           }),
           req.timer.overlap('title_arm', engine.searchTitles(query, searchOpts)).catch((err: unknown) => {
             if (isDatetimeInputError(err)) throw err;
             rethrowCapabilityRefusal(err);
             if (isDbAccessFailure(err)) titleAccessError = err;
-            pushDegraded(degraded, 'title_arm_failed', isTimeoutError(err) ? 'timeout' : 'provider_error');
-            warnOncePerProcess(
-              'search-titles-arm-failed',
-              `[gbrain] searchTitles arm failed (fail-open, title candidates skipped): ` +
-                `${err instanceof Error ? err.message : String(err)}`,
-            );
+            const reason = isTimeoutError(err) ? 'timeout' : 'provider_error';
+            pushDegraded(degraded, 'title_arm_failed', reason);
+            warnOncePerProcess('search-titles-arm-failed', `[gbrain] searchTitles arm failed (fail-open, title candidates skipped): ${reason}`);
             return [] as SearchResult[];
           }),
         ]);
@@ -364,7 +359,7 @@ export async function runVectorArms(
       // D8 fail-open: zero rows + not strict-mode → fall through to dual-column.
       if (unifiedList.length === 0 && !resolvedMode.unified_multimodal_only) {
         console.error(
-          `[cross-modal] unified_multimodal returned zero rows for query="${query.slice(0, 60)}". ` +
+          `[cross-modal] unified_multimodal returned zero rows (the search text is not logged). ` +
           `Falling back to dual-column text path (partial coverage during reindex). ` +
           `Set search.unified_multimodal_only=true to bypass this fallback when reindex completes.`,
         );
@@ -375,7 +370,7 @@ export async function runVectorArms(
         req.imageArmRan = true;
       }
     } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
+      const reason = isTimeoutError(err) ? 'timeout' : 'provider_error';
       console.error(
         `[cross-modal] unified_multimodal embed failed; falling back to dual-column path. reason=${reason}`,
       );
@@ -411,7 +406,7 @@ export async function runVectorArms(
       req.imageArmRan = true;
     } catch (err) {
       // Fail-open per behavioral invariant 2.
-      const reason = err instanceof Error ? err.message : String(err);
+      const reason = isTimeoutError(err) ? 'timeout' : 'provider_error';
       console.error(
         `[cross-modal] image-side embed failed for modality=${effectiveModality}; falling back to text-only. reason=${reason}`,
       );
@@ -482,14 +477,10 @@ export async function runVectorArms(
         // A refused searchVector option is not an embedding failure: pass it on rather than answer from the keyword arm alone.
         rethrowCapabilityRefusal(err);
         // Embedding failure is non-fatal, fall back to keyword-only —
-        // stamped with an enumerated code; raw text to stderr only (D6).
+        // stamped with an enumerated code; stderr names the class only (D6).
         const timedOut = isTimeoutError(err);
         pushDegraded(degraded, timedOut ? 'embed_timeout' : 'embed_unavailable', timedOut ? 'timeout' : 'provider_error');
-        warnOncePerProcess(
-          'search-embed-fanout-failed',
-          `[gbrain] query embed/vector fan-out failed (keyword fallback): ` +
-            `${err instanceof Error ? err.message : String(err)}`,
-        );
+        warnOncePerProcess('search-embed-fanout-failed', `[gbrain] query embed/vector fan-out failed (keyword fallback): ${timedOut ? 'timeout' : 'provider_error'}`);
       }
     } else {
       // WP2/T3 (ENG-15) salvage fan-outs: allSettled on BOTH the embed
@@ -505,8 +496,7 @@ export async function runVectorArms(
       if (embedFailures.length > 0) {
         warnOncePerProcess(
           'search-embed-fanout-failed',
-          `[gbrain] ${embedFailures.length}/${settled.length} query embeds failed (salvaging survivors): ` +
-            `${embedFailures[0] instanceof Error ? (embedFailures[0] as Error).message : String(embedFailures[0])}`,
+          `[gbrain] ${embedFailures.length}/${settled.length} query embeds failed (salvaging survivors): ${isTimeoutError(embedFailures[0]) ? 'timeout' : 'provider_error'}`,
         );
       }
       if (okEmbeds.length === 0) {
@@ -550,12 +540,9 @@ export async function runVectorArms(
         }
         if (vFailed > 0) {
           rethrowCapabilityRefusal(vFirstErr);
-          pushDegraded(degraded, 'vector_arm_failed', isTimeoutError(vFirstErr) ? 'timeout' : 'provider_error');
-          warnOncePerProcess(
-            'search-vector-arm-failed',
-            `[gbrain] ${vFailed}/${vSettled.length} searchVector arms failed (salvaging survivors): ` +
-              `${vFirstErr instanceof Error ? vFirstErr.message : String(vFirstErr)}`,
-          );
+          const reason = isTimeoutError(vFirstErr) ? 'timeout' : 'provider_error';
+          pushDegraded(degraded, 'vector_arm_failed', reason);
+          warnOncePerProcess('search-vector-arm-failed', `[gbrain] ${vFailed}/${vSettled.length} searchVector arms failed (salvaging survivors): ${reason}`);
         }
         for (const list of okLists) {
           for (const r of list) {

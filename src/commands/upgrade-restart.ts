@@ -54,9 +54,12 @@ function processHome(pid: number): string | null | undefined {
   }
 }
 
-/** #9483: the systemd unit a process runs in, from its cgroup; null when none does or it cannot be read (only Linux exposes it). */
+/**
+ * #9483: the systemd unit a process runs in, from its cgroup; null when none does or it cannot be read (only Linux exposes it).
+ * Tests only: GBRAIN_TEST_UPGRADE_CGROUP stands in for every process's cgroup file, so a test never reads the units of the host it runs on.
+ */
 function processUnit(pid: number): ServiceUnit | null {
-  try { return unitFromCgroup(readFileSync(`/proc/${pid}/cgroup`, 'utf8')); } catch { return null; }
+  try { return unitFromCgroup(process.env.GBRAIN_TEST_UPGRADE_CGROUP ?? readFileSync(`/proc/${pid}/cgroup`, 'utf8')); } catch { return null; }
 }
 
 /** #9483: a serve's unit counts only when the unit's main process is the serve or its parent, not a unit it merely started under (a terminal, a CI runner). */

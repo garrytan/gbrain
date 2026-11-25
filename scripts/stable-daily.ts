@@ -39,6 +39,12 @@
  *    run yet: one matrix dispatch on the candidate tag, unless a matrix run is
  *    active. A red or foreign run holds stable (a maintainer decides) and is never
  *    re-dispatched by the schedule. promote() checks the run again.
+ * 3c. The candidate also needs the install canary's pass: a trusted gbrain/install-canary commit status on its
+ *    release commit (scripts/stable-canary.ts judgeCanary), read right after the soak so a release the canary
+ *    failed is skipped for an older one before its matrix is dispatched or judged; one it has not tested yet (no
+ *    status, or a pending one) is skipped after its matrix passes. When no release qualifies because of the
+ *    canary, the run waits for it (not tested yet) or holds for a maintainer (failed); it dispatches nothing,
+ *    since the release already soaked. A status list that cannot be read stops the run.
  * 4. Nothing promotable yet: the newest release is soaked (one dispatch of the
  *    soak on its tag, with an upgrade matrix dispatch on the same tag when it has
  *    no run) unless a soak is already running, or a soak on any newer
@@ -55,6 +61,7 @@ import {
   authorize, compareVersions, currentStable, DOCS, onReleaseBranch, processDeps, promote, readPriorRecord, refExists, Refusal, requireSoakWorkflow, scheduleAuthorized, STABLE_REF,
   type PromoteDeps, type Promotion,
 } from './promote-stable.ts';
+import { judgeCanary, parseCanaryPosters, readCanaryStatuses } from './stable-canary.ts';
 import {
   BREAK_PASS_CLASSES, breakIssueQuery, findBreakIssue, fragmentImportance, isGateRun, judgeMatrixRun, MATRIX_WORKFLOW, receiptNames,
   type MatrixReceipt, type MatrixRunRow,
@@ -64,6 +71,9 @@ export const IMPORTANT_LABEL = 'stable:important';
 export const WEEKLY_FLOOR_DAYS = 7;
 /** The soak gates a scheduled promotion requires (pass === true in every cell); the latency gates stay record-only. */
 export const INTEGRITY_GATES = ['privacy_leaks', 'read_errors', 'version_skew', 'residents_alive', 'session_refusals'] as const;
+/** The search speed gate (production-soak/search-gate.ts) a scheduled promotion requires in the soak's 2 ms cell; the 65 ms cell records it only. */
+export const SEARCH_GATES = ['search_gate_jit_on', 'search_gate_jit_off'] as const;
+export const SEARCH_GATE_RTT_MS = 2;
 /** The full soak a scheduled promotion requires: production-soak.yml's default cells, hours and fixture pages, with privacy probes run. */
 export const SOAK_SHAPE = { rtts: [65, 2], hours: 2, pages: 600_000 } as const;
 const DAY_MS = 86_400_000;
@@ -110,6 +120,16 @@ export function integrityFailures(boards: Scoreboard[]): string[] {
     }
   }
   return failures;
+}
+
+/** Search speed gate failures in the 2 ms cell; a missing cell or gate fails closed. An overridden gate carries pass: true. */
+export function searchGateFailures(boards: Scoreboard[]): string[] {
+  const cell = boards.find(b => b.rtt_ms === SEARCH_GATE_RTT_MS);
+  if (!cell) return [`no ${SEARCH_GATE_RTT_MS} ms cell for the search speed gate`];
+  return SEARCH_GATES.flatMap(id => {
+    const gate = cell.gates?.find(g => g.id === id);
+    return gate?.pass === true ? [] : [`${cell.label ?? 'cell'}: ${id} ${gate ? (gate.pass === null ? 'has no data' : 'failed') : 'missing'}`];
+  });
 }
 
 /** Ways a soak falls short of the full default soak (SOAK_SHAPE): a missing cell, a short run, a small requested fixture, no clean privacy probes. */
@@ -252,6 +272,8 @@ export async function daily(deps: DailyDeps): Promise<DailyResult> {
   }
   const oldestImportant = passing.reduce<string | null>((v, i) => (!v || compareVersions(i.version, v) < 0 ? i.version : v), null);
   let failedSoak: { version: string; run: SoakRunRow } | null = null;
+  let canaryBlock = null as { version: string; state: 'failure' | 'untested'; why: string } | null;
+  let newestSoaked = false;
   for (const rel of releases) {
     if (!weekly && oldestImportant && compareVersions(rel.version, oldestImportant) < 0) break;
     const tree = await treeOf(deps, rel.commit);
@@ -260,11 +282,24 @@ export async function daily(deps: DailyDeps): Promise<DailyResult> {
     let chosen: SoakRunRow | null = null;
     for (const run of passed) {
       const boards = await deps.scoreboards(run.id);
-      const failures = [...integrityFailures(boards), ...shapeFailures(boards)];
+      const failures = [...integrityFailures(boards), ...searchGateFailures(boards), ...shapeFailures(boards)];
       if (failures.length === 0) { chosen = run; break; }
       deps.log(`[stable-daily] not promotable: v${rel.version} soak ${run.html_url}: ${failures.join(', ')}.`);
     }
     if (!chosen) { failedSoak ??= completed[0] ? { version: rel.version, run: completed[0] } : null; continue; }
+    if (rel === releases[0]) newestSoaked = true;
+    let statuses;
+    try {
+      statuses = await readCanaryStatuses(deps.ghApi, deps.repo, rel.commit);
+    } catch (error) {
+      throw new Refusal(`the install canary's statuses on v${rel.version} (${rel.commit}) could not be read (${(error as Error).message.split('\n')[0]}), so stable holds; re-run the check.`);
+    }
+    const canary = judgeCanary(statuses, rel.version, deps.canaryPosters ?? parseCanaryPosters(undefined));
+    const skipCanary = () => {
+      deps.log(`[stable-daily] skipping v${rel.version}: ${canary.why}.`);
+      if (canary.state !== 'success' && (!canaryBlock || (canaryBlock.state === 'failure' && canary.state === 'untested'))) canaryBlock = { version: rel.version, state: canary.state, why: canary.why };
+    };
+    if (canary.state === 'failure') { skipCanary(); continue; }
     const matrix = await matrixRunFor(rel.version);
     if (!matrix) {
       if (activeMatrix) return { action: 'waiting', why: `${reason}; v${rel.version} passed its soak and upgrade matrix run ${activeMatrix.html_url} is still running.`, version: rel.version };
@@ -278,6 +313,8 @@ export async function daily(deps: DailyDeps): Promise<DailyResult> {
       deps.log(`::warning::Daily stable check: ${why} Docs: docs/RELEASING.md#daily-stable-check`);
       return { action: 'held', why };
     }
+    if (canary.state === 'untested') { skipCanary(); continue; }
+    deps.log(`[stable-daily] ${canary.why}.`);
     if (deps.dryRun) return { action: 'dry_run', why: reason, would: `promote v${rel.version} on soak ${chosen.html_url} and upgrade matrix ${matrix.run.html_url}` };
     const excused = judged.excused.length ? `; upgrade break #${breakIssue!.number} excused for ${judged.excused.join(', ')}` : '';
     const promotion = await promote(deps, {
@@ -287,18 +324,29 @@ export async function daily(deps: DailyDeps): Promise<DailyResult> {
     return { action: 'promoted', why: reason, promotion };
   }
 
+  if (canaryBlock && newestSoaked) {
+    if (canaryBlock.state === 'untested') {
+      const why = `${reason}; ${canaryBlock.why}, and no older release qualifies, so stable waits for the install canary`;
+      if (weekly) deps.log(`::warning::Daily stable check: stable v${current.version} is past the ${WEEKLY_FLOOR_DAYS}-day floor and ${why}. Docs: docs/RELEASING.md#daily-stable-check`);
+      return { action: 'waiting', why, version: canaryBlock.version };
+    }
+    const why = `${reason}; ${canaryBlock.why}, and no older release qualifies, so stable holds and a maintainer decides`;
+    deps.log(`::warning::Daily stable check: ${why}. Docs: docs/RELEASING.md#daily-stable-check`);
+    return { action: 'held', why };
+  }
+  const why = canaryBlock ? `${reason}; ${canaryBlock.why}` : reason;
   const newest = releases[0]!;
   const active = runs.find(r => r.status !== 'completed');
-  if (active) return { action: 'waiting', why: `${reason}; soak ${active.html_url} is still running.`, version: newest.version };
+  if (active) return { action: 'waiting', why: `${why}; soak ${active.html_url} is still running.`, version: newest.version };
   if (failedSoak) {
     if (weekly) deps.log(`::warning::Daily stable check: stable v${current.version} is past the ${WEEKLY_FLOOR_DAYS}-day floor and no soak qualifies; a maintainer decides. Docs: docs/RELEASING.md#daily-stable-check`);
-    return { action: 'waiting', why: `${reason}; v${failedSoak.version} already had a soak (${failedSoak.run.html_url}, ${failedSoak.run.conclusion}) that did not qualify, so no new soak is dispatched and a maintainer decides.`, version: newest.version };
+    return { action: 'waiting', why: `${why}; v${failedSoak.version} already had a soak (${failedSoak.run.html_url}, ${failedSoak.run.conclusion}) that did not qualify, so no new soak is dispatched and a maintainer decides.`, version: newest.version };
   }
   const matrixToo = !activeMatrix && !(await matrixRunFor(newest.version));
-  if (deps.dryRun) return { action: 'dry_run', why: reason, would: `dispatch the soak${matrixToo ? ' and the upgrade matrix' : ''} on v${newest.version}` };
+  if (deps.dryRun) return { action: 'dry_run', why, would: `dispatch the soak${matrixToo ? ' and the upgrade matrix' : ''} on v${newest.version}` };
   await deps.ghPost(`repos/${deps.repo}/actions/workflows/${soakPath.split('/').at(-1)}/dispatches`, { ref: `v${newest.version}` });
   if (matrixToo) await dispatchMatrix(newest.version);
-  return { action: 'soak_dispatched', why: reason, version: newest.version };
+  return { action: 'soak_dispatched', why, version: newest.version };
 }
 
 export function dailyDeps(env: NodeJS.ProcessEnv = process.env, cwd = process.cwd()): DailyDeps {

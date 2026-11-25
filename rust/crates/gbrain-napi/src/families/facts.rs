@@ -11,9 +11,11 @@ use napi_derive::napi;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
+use gbrain_store::error::StoreError;
 use gbrain_store::facts::{
-    DuplicateQuery, ExpireFactArgs, FactQuery, FenceTarget, InsertFactArgs, InsertFactsArgs,
-    PageDeleteArgs, SupersessionQuery, TrajectoryQuery, UnattributedQuery,
+    DuplicateQuery, ExpireFactArgs, ExpireFactUntilArgs, FactQuery, FactRestore, FactSourcePrefix,
+    FenceTarget, InsertFactArgs, InsertFactsArgs, PageDeleteArgs, SupersessionQuery,
+    TrajectoryQuery, UnattributedQuery,
 };
 
 #[napi]
@@ -55,6 +57,19 @@ impl Brain {
         self.run(env, move |s| {
             let a: ExpireFactArgs = required(args, "expireFact args")?;
             s.expire_fact(&a)
+        })
+    }
+
+    /// `expireFactUntil(id, until)`: resolves true when an unexpired row changed.
+    #[napi]
+    pub fn expire_fact_until<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: ExpireFactUntilArgs = required(args, "expireFactUntil args")?;
+            s.expire_fact_until(&a)
         })
     }
 
@@ -175,6 +190,64 @@ impl Brain {
         })
     }
 
+    /// `readFactPreimages(sourceId, ids)`: resolves the before-state of each fact of `ids` in the source,
+    /// in id order.
+    #[napi]
+    pub fn read_fact_preimages<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        ids: Vec<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let ids = whole_ids("readFactPreimages", &ids)?;
+            s.read_fact_preimages(&source_id, &ids)
+        })
+    }
+
+    /// `listFactIdsBySourcePrefix({ sourceId, slug, sourcePrefix })`: resolves the ids of the page's
+    /// facts whose `source` starts with the prefix, by id.
+    #[napi]
+    pub fn list_fact_ids_by_source_prefix<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: FactSourcePrefix = required(args, "listFactIdsBySourcePrefix args")?;
+            s.list_fact_ids_by_source_prefix(&a)
+        })
+    }
+
+    /// `expireFactRows(sourceId, ids)`: resolves how many live facts of `ids` it ended.
+    #[napi]
+    pub fn expire_fact_rows<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        ids: Vec<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let ids = whole_ids("expireFactRows", &ids)?;
+            s.expire_fact_rows(&source_id, &ids)
+        })
+    }
+
+    /// `restoreFactPreimage(sourceId, preimage)`: resolves whether the fact's before-state was put
+    /// back.
+    #[napi]
+    pub fn restore_fact_preimage<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        preimage: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let preimage: FactRestore = required(preimage, "restoreFactPreimage preimage")?;
+            s.restore_fact_preimage(&source_id, &preimage)
+        })
+    }
+
     /// `consolidateFact(id, takeId)`: resolves null.
     #[napi]
     pub fn consolidate_fact<'env>(
@@ -239,4 +312,34 @@ impl Brain {
             s.migrate_facts_to_canonical(&phantom_slug, &canonical_slug, &source_id)
         })
     }
+
+    /// `moveKeptFactRows(sourceId, slug, ids, claimed)`: resolves once the claimed rows moved.
+    #[napi]
+    pub fn move_kept_fact_rows<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+        ids: Vec<f64>,
+        claimed: Vec<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.move_kept_fact_rows(&source_id, &slug, &ids, &claimed)
+        })
+    }
+}
+
+/// A JS number past 2^31 reaches serde as a float, so each fact id is checked as a whole number here.
+fn whole_ids(op: &str, ids: &[f64]) -> Result<Vec<i64>, StoreError> {
+    ids.iter()
+        .map(|id| {
+            if id.fract() == 0.0 && id.abs() <= 9_007_199_254_740_991.0 {
+                Ok(*id as i64)
+            } else {
+                Err(StoreError::invalid(format!(
+                    "{op}: fact ids must be whole numbers: {id}"
+                )))
+            }
+        })
+        .collect()
 }

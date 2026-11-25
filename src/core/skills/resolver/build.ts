@@ -26,7 +26,7 @@ import { applyRouting, JSON_INPUT_CAP_BYTES, mergeSkillFolders, readBundledSourc
 import { TOKENIZER_ID } from './tokenize.ts';
 import { BLOCK_TOKEN_CAP, BLOCK_TOKENIZER, HARNESSES } from './block.ts';
 import { readResolverSettings } from './config.ts';
-import { PICKER_DESCRIPTION_CHARS } from './router.ts';
+import { PICKER_DESCRIPTION_CHARS, PICKER_PROMPT_VERSION } from './router.ts';
 import { embedCatalog, turnEmbedder, VECTOR_RETRY_CODES, vectorsIneligible, type VectorsReceipt, type VectorsSkip } from './vectors.ts';
 
 export const RECEIPT_SCHEMA_VERSION = 1;
@@ -102,7 +102,7 @@ const bodyHash = (s: SkillRecord) => sha(s.body);
 
 /** sha256 over every effective input that affects ranking, eligibility or loading. */
 export function catalogHash(skills: readonly SkillRecord[], skipped: readonly SkippedSkill[], routingRows: number, scope: string): string {
-  const rows = skills.map(s => [s.id, s.name, s.description, s.whenToUse ?? '', s.triggers, s.routing, bodyHash(s), s.path ?? '', s.namespace ?? '']);
+  const rows = skills.map(s => [s.id, s.name, s.description, s.whenToUse ?? '', s.triggers, s.routing, bodyHash(s), s.path ?? '', s.namespace ?? '', ...(s.deprecated ? [{ deprecated: s.replacedBy ?? true }] : [])]);
   const skips = skipped.map(k => [k.reason, k.id ?? '', k.path ?? '', k.kept ?? '']).sort((a, b) => (JSON.stringify(a) < JSON.stringify(b) ? -1 : 1));
   return sha(JSON.stringify({ v: 1, skills: rows, skipped: skips, routing_rows: routingRows, scope }));
 }
@@ -240,7 +240,7 @@ export async function buildSkillIndex(input: BuildInput, opts: { home?: string; 
       if (p.source.fingerprint) writeFileDurable(join(dir, 'fingerprint.json'), JSON.stringify({ fingerprint: p.source.fingerprint, routing: p.routing?.stat ?? null }));
       writeFileDurable(join(dir, 'index.bin'), bytes);
       if ('bytes' in vectors) writeFileDurable(join(dir, 'vectors.bin'), vectors.bytes); else rmSync(join(dir, 'vectors.bin'), { force: true });
-      writeFileDurable(join(dir, 'picker.json'), `${JSON.stringify({ v: 1, catalog_hash: p.catalog_hash, skills: p.records.map(s => [s.id, pickerDescription(s.description)]) })}\n`);
+      writeFileDurable(join(dir, 'picker.json'), `${JSON.stringify({ v: 1, catalog_hash: p.catalog_hash, prompt_version: PICKER_PROMPT_VERSION, skills: p.records.map(s => [s.id, pickerDescription(s.description)]) })}\n`);
       receipt.build.ms = Math.round(performance.now() - started);
       writeFileDurable(join(dir, 'receipt.json'), `${JSON.stringify(receipt, null, 2)}\n`);
     } catch (e) {

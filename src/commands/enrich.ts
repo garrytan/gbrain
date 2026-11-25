@@ -46,6 +46,7 @@ import { hybridSearch } from '../core/search/hybrid.ts';
 import { INTERNAL_BREADTH_SEARCH_OPTS } from '../core/search/internal-breadth.ts';
 import { serializeMarkdown } from '../core/markdown.ts';
 import { listSources } from '../core/sources-ops.ts';
+import { resolveOwnerContactAnchor, type OwnerContactAnchor } from '../core/enrich/owner-contact.ts';
 import {
   loadOpCheckpoint,
   recordCompleted,
@@ -99,9 +100,9 @@ export const HYBRID_CHUNK_CLAMP_CHARS = 2000;
 /** Flush the resume checkpoint every N completions during a long run. */
 const CHECKPOINT_FLUSH_EVERY = 25;
 /** Rough per-page cost estimate (USD) for the dry-run preview. */
-const COST_ESTIMATE_PER_PAGE_USD = 0.01;
+export const COST_ESTIMATE_PER_PAGE_USD = 0.01;
 
-export const ENRICH_ORDERS = ['inbound-links', 'salience', 'updated'] as const;
+export const ENRICH_ORDERS = ['inbound-links', 'salience', 'updated', 'owner-contact'] as const;
 export type EnrichOrder = (typeof ENRICH_ORDERS)[number];
 
 // ---------------------------------------------------------------------------
@@ -147,6 +148,11 @@ export interface EnrichCoreOpts {
   force?: boolean;
   /** Test seam — inject synthesis so tests skip the real gateway. */
   synthesizeFn?: SynthesizeFn;
+  /**
+   * `owner-contact` only: the owner's page, already resolved by the caller
+   * (null: none). Undefined: runEnrichCore resolves it (trusted local).
+   */
+  owner?: OwnerContactAnchor | null;
 }
 
 export interface EnrichResult {
@@ -169,6 +175,8 @@ export interface EnrichResult {
   pages_failed: number;
   /** Dry-run only: candidates that WOULD be enriched (passed grounding). */
   would_enrich?: number;
+  /** Dry-run only: this run's candidate slugs, in rank order. */
+  candidate_slugs?: string[];
   spent_usd?: number;
   budget_exhausted?: boolean;
   /** Why the run aborted when budget_exhausted (#4032): BudgetExhausted.reason.
@@ -546,6 +554,9 @@ export async function runEnrichCore(
   // pages sitting at the top of the ranking can't wedge the limit window
   // (limit=N with N done candidates used to yield pending=[] forever while
   // lower-ranked candidates never got a turn), then slice back to `limit`.
+  const owner = order !== 'owner-contact' ? null
+    : opts.owner !== undefined ? opts.owner
+      : (await resolveOwnerContactAnchor(engine)).owner;
   const candidates = await engine.listEnrichCandidates({
     types,
     sourceId,
@@ -553,6 +564,7 @@ export async function runEnrichCore(
     order,
     limit: limit + done.size,
     reenrichAfterMs,
+    ...(owner ? { ownerSlug: owner.slug, ownerSourceId: owner.source_id } : {}),
   });
   result.candidates_considered = candidates.length;
   if (candidates.length === 0) return result;
@@ -568,6 +580,7 @@ export async function runEnrichCore(
   // permanent instead of decaying (the intended retry channel; --force is
   // the immediate one).
   if (pending.length === 0) return result;
+  if (dryRun) result.candidate_slugs = pending.map((c) => c.slug);
   // #5280: a managed brain publishes through the maintenance coordinator; the
   // preflight refuses a missing canonical owner before any model spend.
   const maintenance = opts.dryRun ? null : await maintenancePreflight(engine, opts.sourceId);
@@ -827,7 +840,10 @@ brain-internal synthesis only.
 
 Options:
   --thin                 Select stub pages (always applied; accepted for clarity).
-  --order <signal>       Candidate ordering: inbound-links (default) | salience | updated.
+  --order <signal>       Candidate ordering: inbound-links (default) | salience | updated
+                         | owner-contact (people and companies the owner met,
+                         messaged or owes a reply to in the last 90 days first;
+                         keyless, no model call).
   --types <list>         Comma-separated page types. Default: person,company.
   --limit <N>            Max pages this run. Default ${DEFAULT_LIMIT}.
   --workers <K>          Parallel page workers. Default 1. PGLite clamps to 1.
@@ -847,7 +863,8 @@ Options:
   --source <id>          Source to enrich. When omitted, all sources are
                          enumerated (CLI loops; --background fans out one job
                          per source).
-  --dry-run              List candidates + cost estimate; no LLM, no write.
+  --dry-run              List candidates in rank order + cost estimate; no LLM,
+                         no write.
   --resume               Resume from the prior checkpoint (default behavior).
   --force                Clear the checkpoint and re-process every candidate.
   --background           Submit as Minion job(s); print job_id(s); exit.
@@ -1055,6 +1072,7 @@ export async function runEnrich(engine: BrainEngine, args: string[]): Promise<vo
   }
 
   const aggregate = emptyAgg();
+  const dryRunOrder: Array<[string, string[]]> = [];
   let totalSpent = 0;
   let anyBudgetExhausted = false;
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
@@ -1079,6 +1097,7 @@ export async function runEnrich(engine: BrainEngine, args: string[]): Promise<vo
         force: parsed.force,
       });
       addInto(aggregate, r);
+      if (r.candidate_slugs?.length) dryRunOrder.push([sourceId, r.candidate_slugs]);
       if (r.spent_usd) totalSpent += r.spent_usd;
       if (r.budget_exhausted) anyBudgetExhausted = true;
       progress.tick(1, `${sourceId}: ${r.pages_enriched} enriched`);
@@ -1095,8 +1114,11 @@ export async function runEnrich(engine: BrainEngine, args: string[]): Promise<vo
       budget_exhausted: anyBudgetExhausted,
       sources: sourceIds.length,
       dry_run: !!parsed.dryRun,
+      order: parsed.order ?? 'inbound-links',
     }, null, 2));
   } else if (parsed.dryRun) {
+    console.log(`\n(dry run) order: ${parsed.order ?? 'inbound-links'}`);
+    for (const [sourceId, slugs] of dryRunOrder) console.log(`  ${sourceId}: ${slugs.join(', ')}`);
     console.log(
       `\n(dry run) ${aggregate.candidates_considered} thin candidate(s) across ${sourceIds.length} source(s); ` +
       `${aggregate.would_enrich ?? 0} have enough context to enrich, ` +

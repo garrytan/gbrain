@@ -1,6 +1,6 @@
 # Background jobs, workers, schedulers, and daemons
 
-Research map for the Rust port. Reference: [garrytan/gbrain](https://github.com/garrytan/gbrain) at `origin/master` commit `8bbfd0b5e8` (v0.60.x), read on 2026-11-16. All paths are relative to that repo root. Statements were checked in code unless marked "(unverified)". Doc comments in the reference are sometimes stale (for example, the `cycle.ts` header says 9 phases and a 30-minute lock TTL; the code has 32 phases and a 5-minute TTL), so trust the code-derived values here over in-repo comments.
+Research map for the Rust port. Reference: [garrytan/gbrain](https://github.com/garrytan/gbrain) at `origin/master` commit `8bbfd0b5e8` (v0.60.x), read on 2026-11-16, with facts refreshed to master `116d737413` (2026-11-24). Line numbers on facts that did not change are at `8bbfd0b5e8`. New or changed facts cite `116d737413`. All paths are relative to that repo root. Statements were checked in code unless marked "(unverified)". Doc comments in the reference are sometimes stale (for example, the `cycle.ts` header says 9 phases and a 30-minute lock TTL; the code has 33 phases and a 5-minute TTL), so trust the code-derived values here over in-repo comments.
 
 Related maps: [subsystems.md](./subsystems.md) (one paragraph per `src/core` directory) and [test-suites.md](./test-suites.md). The BrainEngine, schema and Postgres-feature maps are [brain-engine.md](./brain-engine.md), [schema.md](./schema.md) and [postgres-features.md](./postgres-features.md).
 
@@ -11,7 +11,7 @@ flowchart TD
   CLI["gbrain CLI<br/>(sync, embed, enrich, dream, jobs submit)"] --> Q[("minion_jobs table")]
   MCP["MCP submit_job<br/>(remote: protected names refused)"] --> Q
   AP["autopilot daemon<br/>(launchd / systemd / cron / foreground)<br/>tick 300 s"] --> Q
-  AP --> CYC["dream cycle runCycle<br/>32 phases"]
+  AP --> CYC["dream cycle runCycle<br/>33 phases"]
   SERVE["gbrain serve (stdio / --http)<br/>idle sweep, upkeep, facts drain"] --> CYC
   SERVE --> NOTIF["commit notifier<br/>poll git HEAD 3 s"]
   NOTIF --> SYNC["sync runner"]
@@ -33,7 +33,7 @@ flowchart TD
 | Retry | `max_attempts` 3, backoff `2^(n-1) * 1000 ms` with ±20% jitter; deferred / lease-full / shutdown bounces burn no attempt; timeout and max-stall go to `dead` | engine section 6 |
 | Handlers | 42 registered job names (`registerBuiltinHandlers`, `src/commands/jobs.ts`); 13 protected names; remote submit allow-list `sync`, `import`, `lint`, `lint-fix` | [Job handler catalog](#job-handler-catalog) |
 | Autopilot | tick 300 s adapted by brain score; full cycle floor 60 min per source; pid lock `~/.gbrain/autopilot.lock` + heartbeat JSON | daemons section 1 |
-| Dream cycle | 32 phases in `ALL_PHASES`; per-phase USD caps; cycle lock row TTL 5 min, renewed every 50 s | daemons section 2 |
+| Dream cycle | 33 phases in `ALL_PHASES` (`src/core/cycle.ts:133`); per-phase USD caps; cycle lock row TTL 5 min, renewed every 50 s | daemons section 2 |
 | Serve idle work | 10 min tick; upkeep once per 24 h capped at `maintenance.embed_daily_usd` ($1); facts drain; corpus drain (HTTP) | daemons section 3 |
 | Embedding default | `voyage:voyage-4`, 1024 dims; reranker `voyage:rerank-3-lite`; embed-backfill $10 per job, $25 per source per 24 h | [pipelines](#sync-embedding-enrichment-and-ingestion-pipelines) |
 | Locks | about 25 primitives: DB lock rows with TTL (`gbrain_cycle_locks`), file pid locks, native `flock`/`LockFileEx` addon, transaction advisory locks (admission, quota, rate leases, budget, generations, facts) | daemons section 6 |
@@ -210,7 +210,7 @@ Three layers, each in its own file:
 - Default RSS cap is auto-sized (`rss-default.ts`): half of min(cgroup limit, total mem), clamped to [4096, 16384] MB. The supervisor's `maxRssMb` default is 2048 (`supervisor.ts` DEFAULTS), and the supervisor spawns the worker with `--max-rss` only when the value is > 0.
 - DB probe: a worker that cannot reach the DB exits after `dbFailExitAfter` failures (default 3).
 - Stall warn and exit: `stallWarnAfterMs` (5 min) and `stallExitAfterMs` (10 min), as worker options.
-- Wedge watchdog in the supervisor: `wedgeRestartMinutes` (15), `wedgeRestartChecks` (3), `wedgeRestartLoopBudget` (3 in a 30 min window) (`supervisor.ts` DEFAULTS). It restarts a child that has claimable work but no forward progress.
+- Wedge watchdog in the supervisor: `wedgeRestartMinutes` (15), `wedgeRestartChecks` (3), `wedgeRestartLoopBudget` (3 in a 30 min window) (`supervisor.ts` DEFAULTS). It restarts a child that has claimable work but no forward progress. Its queue reads are typed engine members, `readWedgeSignals` and `readOldestWaitingAge` (`src/core/minions/supervisor.ts:288`, `:378`; declared at `src/core/engine.ts:3163-3165`), not SQL inside the supervisor.
 
 **Niceness.** `niceness.ts` (`NICE_MIN -20`, `NICE_MAX 19`) applies `--nice N` or `GBRAIN_NICE`. The CLI reniceses the supervisor, and the worker re-applies the value to itself. Children inherit it. The effective value is recorded in `worker-registry.ts` for `jobs stats` and doctor.
 
@@ -248,7 +248,7 @@ Three layers, each in its own file:
 **Budget and spend metering.**
 - `budget-meter.ts`: durable reserve-then-settle for paid OAuth/MCP operations. Reservations are atomic under `pg_advisory_xact_lock` keyed by client ID or group key. `RESERVATION_TTL_MS = 10 min`. `sweepExpiredReservations` releases stale ones.
 - `spend-authorization.ts`: consent-gated producers (`book-mirror`, `enrich`, subagent submits) store a `spend_authorization` on the job (through the trusted `MinionQueue.add` option, not job data). Each provider call under `runWithJobSpend` reserves its maximum liability against `group:<group_id>`, then settles measured usage. Legacy NULL rows are stamped `legacy_default`.
-- `delegated-*` (`delegated-admission.ts`, `delegated-policy.ts`, `delegated-spend.ts`): replays keep the original owner and spend ceiling. Current grants may narrow a ceiling, never widen it.
+- `delegated-*` (`delegated-admission.ts`, `delegated-policy.ts`, `delegated-spend.ts`): replays keep the original owner and spend ceiling. Current grants may narrow a ceiling, never widen it. The client's takes holders list is read fresh with the grant on every call and is never stored with the job (`delegated-policy.ts:23`, `:162`).
 
 ### 6. Retry, failure, dead-lettering, timeouts, idempotency, parent/child
 
@@ -273,7 +273,7 @@ Three layers, each in its own file:
 
 **Error classification.** Two layers:
 - `error-classify.ts`: a string classifier for dashboards and the self-fix path. Buckets include `prompt_too_long`, `rate_limit`, `timeout`, `http_5xx`, `auth`, and `rate_lease_full`. Only `prompt_too_long`, `tool_schema_mismatch`, and `malformed_json` are recoverable for auto-resubmit.
-- `retry-matcher.ts` (`isRetryableConnError`, used in `worker.ts:574/823/888`): decides whether a DB error triggers `reconnectEngineAfterConnError` and retry, not whether the job retries.
+- `retry-matcher.ts` (`isRetryableConnError`, used in `worker.ts:574/823/888`): decides whether a DB error triggers `reconnectEngineAfterConnError` and retry, not whether the job retries. The claim path also treats a vanished local socket (`isVanishedSocketError`) and a server that refuses connections (`isServerRefusingConnections`) as a lost connection, so the worker reconnects and re-claims on the next tick (`src/core/minions/worker.ts:889`).
 
 **Timeouts** (three separate, each terminal, no retry):
 - `handleTimeouts` (`queue.ts:1547`): `timeout_at < now()` on active rows, to `dead` with `error_text='timeout exceeded'`.
@@ -315,6 +315,7 @@ Three layers, each in its own file:
 - Every row carries `submission_authority`. Kinds: `application`, `remote_generic` (for `sync`, `import`, `lint`, `lint-fix`), and `remote_agent` (OAuth client, with grant scopes and `payloadHash`).
 - Claim requires `submission_authority IS NOT NULL`. `authorizeJobExecution` (`:282`) re-checks the principal before the handler runs.
 - Payloads and caller-spread options are never authority. The authority is stored by the server.
+- A `remote_agent` grant also records the tool surface (`verbs`, `starter` or `full`) of the connection that submitted the job (`grant.surface`, `submission-authority.ts:33-35`, set from `ctx.surface` with `full` as the fallback at `:277`). Every tool call the job makes is confined to that surface and refused with `unknown_tool` or a hidden-parameter error, as MCP dispatch refuses it (`src/core/minions/tools/brain-allowlist.ts:320-325`). A job accepted before the surface was recorded keeps the full surface.
 - `REMOTE_JOB_NAMES` is the allowlist for remote generic submits.
 
 **Plugins.** `plugin-loader.ts` loads subagent definitions from `GBRAIN_PLUGIN_PATH` (colon-separated, each with `gbrain.plugin.json`).
@@ -410,8 +411,8 @@ Protected = in `PROTECTED_JOB_NAMES` (`src/core/minions/protected-names.ts`). Pr
 | `embed` | `handlers/embed.ts` → `commands/embed.ts` `runEmbedCore` | `embed --background`, brain-score recommendation (`core/brain-score-recommendations.ts:265`), doctor remediation | On demand | Short; null timeout unless submitter sets one; retry default | Embedding provider via gateway | Pages/chunks with null or stale embedding signature | Chunk embeddings | No |
 | `embed-catch-up` | `handlers/embed-catch-up.ts` → `runEmbedCore({stale, catchUp})` | Onboard remediation (`core/onboard/checks.ts:246,263`) | On onboard | Short; retry default | Embedding provider | Stale pages for source | Embeddings | No |
 | `embed-backfill` | `handlers/embed-backfill.ts` → `core/embed-stale.ts` `embedStaleForSource` | `core/embed-backfill-submit.ts` `submitEmbedBackfill`, called from sync, `commands/sources.ts`, `core/github-source.ts`, `core/google/google-source.ts`, `core/sync-embed-backfill.ts` | Per source: 10 min cooldown; 24 h spend cap $25 per source | Long lane; 30 min timeout; 300 s lease; DB lock `gbrain-embed-backfill:<source>` TTL 60 min; $10 per-job budget | Embedding provider | Pages/chunks for one source | Chunk embeddings, job progress | No |
-| `connector-sync` | `handlers/connector-sync.ts` → `core/connectors/sync.ts` `runConnectorSync` | `commands/connectors/sync.ts:178`; autopilot per connector (`commands/autopilot-fanout.ts:831`, slot-keyed) | Meetings every 60 min, Slack every 30 min (defaults in `core/meetings/types.ts:19`, `core/slack/types.ts:11`) | Long lane; 30 min; 300 s lease; per-provider lock TTL 35 min; auth errors are terminal (returned, not thrown); fetch failure limit 5 | Chat/meeting provider APIs; no LLM in fetch | Connector cursor state, `auto_sync` config | Ingested pages, connector state | No (remote blocked by design) |
-| `ingest_capture` | `handlers/ingest-capture.ts` → `importFromContent` | Ingestion daemon (`core/ingestion/daemon.ts`: file watcher, inbox folder, cron); `serve --http` POST `/ingest` (`commands/serve-http-webhooks.ts:609`) | Event-driven | Default lane; refuses (kept for `jobs retry`) when source is gone | None | Source grant, revision backfill state | Pages under `inbox/YYYY-MM-DD-<hash6>` or caller slug | No |
+| `connector-sync` | `handlers/connector-sync.ts` → `core/connectors/sync.ts` `runConnectorSync` | `commands/connectors/sync.ts:178`; autopilot per connector (`commands/autopilot-fanout.ts:831`, slot-keyed) | Meetings every 60 min, Slack every 30 min, iMessage and Apple Contacts every 15 min (defaults in `core/meetings/types.ts:19`, `core/slack/types.ts:11`, `core/imessage/types.ts:12`, `core/apple-contacts/types.ts:13`) | Long lane; 30 min; 300 s lease; per-provider lock TTL 35 min; auth errors are terminal (returned, not thrown); fetch failure limit 5 | Chat/meeting provider APIs; no LLM in fetch | Connector cursor state, `auto_sync` config | Ingested pages, connector state | No (remote blocked by design) |
+| `ingest_capture` | `handlers/ingest-capture.ts` → `importFromContent` | Ingestion daemon (`core/ingestion/daemon.ts`: file watcher, inbox folder, cron); `serve --http` POST `/ingest` (`commands/serve-http-webhooks.ts:609`) | Event-driven | Default lane; refuses (kept for `jobs retry`) when source is gone, or when a `readers` key is one page access does not read (`readers_noncanonical`, `handlers/ingest-capture.ts:435-445`) | None | Source grant, revision backfill state | Pages under `inbox/YYYY-MM-DD-<hash6>` or caller slug | No |
 | `lint` | `handlers/lint.ts` → `commands/lint.ts` `runLintCore` | CLI submit; remote-allowed; also inline cycle phase `lint` | Per cycle | Short | None | Markdown under `dir` or `.` | Report only | No |
 | `lint-fix` | `handlers/lint-fix.ts` → `runLintCore({fix:true})` | Doctor remediation; remote-allowed | On demand | Short | None | Markdown files | Markdown fixes on disk | No |
 | `integrity` | `handlers/integrity.ts` → `commands/integrity.ts` `runIntegrity` | CLI submit | On demand | Short | Unverified | Pages | Pages when mode is auto | No |
@@ -424,7 +425,7 @@ Protected = in `PROTECTED_JOB_NAMES` (`src/core/minions/protected-names.ts`). Pr
 | `extract-timeline-from-meetings` | `handlers/extract-timeline-from-meetings.ts` → `core/extract-timeline-from-meetings.ts` | Onboard checks (`core/onboard/checks.ts:462`) | On onboard | Short; throws on refused writes | None (SQL and string scan) | Meeting pages | Timeline entries | No |
 | `extract-takes-from-pages` | `handlers/extract-takes-from-pages.ts` → `core/extract-takes-from-pages.ts` | Onboard checks (`core/onboard/checks.ts:515`) | On onboard with consent | Refuses unless `takes.bootstrap_enabled` | Anthropic (Haiku classifier per page) | Pages, `takes.bootstrap_enabled` | Takes | Yes |
 | `extract-conversation-facts` | `handlers/extract-conversation-facts.ts` → `commands/extract-conversation-facts.ts` | Doctor local-audits (`commands/doctor/checks/local-audits.ts:246`); CLI | On demand | Needs `sourceId`; `max_cost_usd` default $5 | Chat LLM via gateway | Conversation pages | Facts | No |
-| `facts-absorb` | `handlers/facts-absorb.ts` → `core/facts/backstop.ts` `runFactsBackstop`; wrapper `core/minions/llm-halt-cooldown.ts` | `core/facts/backstop.ts:447`, once per page write (sources: `sync:import`, `mcp:put_page`, `file_upload`, `hook:writeback`) | Per page | 10 min; 120 s lease; 3 attempts; keyless worker defers 30 min without an attempt | Chat LLM via gateway | Page truth and frontmatter, chat config | Facts, fence blocks, absorb log | No |
+| `facts-absorb` | `handlers/facts-absorb.ts` → `core/facts/backstop.ts` `runFactsBackstop`; wrapper `core/minions/llm-halt-cooldown.ts` | `core/facts/backstop.ts:447`, once per page write (sources: `sync:import`, `mcp:put_page`, `file_upload`, `hook:writeback`) | Per page | 10 min; 120 s lease; 3 attempts; keyless worker defers 30 min without an attempt; a job with `remote_write: true` runs as a remote caller (`handlers/facts-absorb.ts:138`) | Chat LLM via gateway | Page truth and frontmatter, chat config | Facts, fence blocks, absorb log | No |
 | `chronicle_extract` | `handlers/chronicle-extract.ts` → `core/chronicle/job.ts` `runChronicleJob` | None in current code; drains legacy rows (comment: nothing enqueues it since #5876) | Legacy drain | 10 min; 120 s lease; provider errors retry, other failures unrecoverable | Chat LLM | Page content, content hash | Chronicle ledger and events | No |
 | `loops_extract` | `handlers/loops-extract.ts` → `core/google/loops-extract.ts` | `core/google/loops-enqueue.ts:134`; `core/google/loop-catchup.ts:322` | Enqueued by Google sync on recent trickle threads, capped per sweep | Default | Chat LLM judge | Google email pages, `loops.extraction_enabled` | Open loops, loop-extract outcome record | No |
 | `enrich` | `handlers/enrich.ts` → `commands/enrich.ts` `runEnrichCore` | CLI `gbrain enrich` (one job per source) | On demand | Needs `sourceId`; `maxCostUsd` default $5 | LLM via gateway (provider unverified) | Pages for source | Page enrichment | No |
@@ -456,7 +457,7 @@ Count: 42 handler rows backed by a worker registration (`registerBuiltinHandlers
 
 ### Key handler detail
 
-**Embedding backfill (`embed-backfill`, `embed`, `embed-catch-up`).** `embed-backfill` is the per-source path (v0.40 federated sync). Submission (`core/embed-backfill-submit.ts`) gates on a 10-minute cooldown after a run and on a rolling 24 h spend cap of $25 per source; PGLite refuses at the worker surface. The handler checks keyless mode first and returns `skipped` when no embedding key exists. It takes the per-source DB lock, then runs `embedStaleForSource` under a `BudgetTracker` (default $10 per job, skipped when the model has no known price). The submit path uses `batchSize` 500; with no `batchSize` the stale pass defaults to 2000 (`core/embed-stale.ts:393`). Concurrency comes from `GBRAIN_EMBED_CONCURRENCY` (default 20, `core/embed-concurrency.ts:25`). Sub-batches are 100 texts (`core/embedding.ts:74`). Rate-limit retries cap at 5 (`core/embed-retry.ts:75`). Progress goes to `job.updateProgress`. Failure handling: a stall watchdog fails the job for retry; an incomplete run throws a retryable error; a run with no progress and the same blockers as the previous attempt dead-letters (`UnrecoverableError`, see `embed-backfill-stall.ts`). A lost lock aborts the run (`LockStolenError`). The lock is always released in `finally`.
+**Embedding backfill (`embed-backfill`, `embed`, `embed-catch-up`).** `embed-backfill` is the per-source path (v0.40 federated sync). Submission (`core/embed-backfill-submit.ts`) gates on a 10-minute cooldown after a run and on a rolling 24 h spend cap of $25 per source; PGLite and the Rust engine refuse at the worker surface (`src/core/minions/embed-backfill-admission.ts:16`, `:29`). The handler checks keyless mode first and returns `skipped` when no embedding key exists. It takes the per-source DB lock, then runs `embedStaleForSource` under a `BudgetTracker` (default $10 per job, skipped when the model has no known price). The submit path uses `batchSize` 500; with no `batchSize` the stale pass defaults to 2000 (`core/embed-stale.ts:393`). Concurrency comes from `GBRAIN_EMBED_CONCURRENCY` (default 20, `core/embed-concurrency.ts:25`). Sub-batches are 100 texts (`core/embedding.ts:74`). Rate-limit retries cap at 5 (`core/embed-retry.ts:75`). Progress goes to `job.updateProgress`. Failure handling: a stall watchdog fails the job for retry; an incomplete run throws a retryable error; a run with no progress and the same blockers as the previous attempt dead-letters (`UnrecoverableError`, see `embed-backfill-stall.ts`). A lost lock aborts the run (`LockStolenError`). The lock is always released in `finally`.
 
 **Sync (`sync`).** The handler resolves `sourceId` from the job or by `sources.local_path`. It reads the pull flag through `job-pull.ts`. When pull is not set, `implyManagedNoPull` applies the managed default. `noEmbed` defaults to true and `noExtract` defaults to true; the embed and extract work is queued separately (`embed-backfill` via `sync-embed-backfill`, `extract` via finalize). For managed sources a drain plan (`sync-job-drain.ts`, #6706) keeps one drainer per source: a second sync job for the same source completes as a skip, while a GitHub single-item webhook that finds the source busy throws `JobDeferredError` (30 s). The run is wrapped in `performSync` and reads or settles "wanted markers" (`notifier/handoff.ts`). A busy per-source lock completes as a skip rather than failing.
 
@@ -470,7 +471,7 @@ Count: 42 handler rows backed by a worker registration (`registerBuiltinHandlers
 
 **Shell (`shell`).** The handler is always registered. It refuses unless the worker has `GBRAIN_ALLOW_SHELL_JOBS=1`, and the refusal is unrecoverable. Validation runs before the row is inserted (`shell-validate.ts`). The child env is an allowlist of PATH, HOME, USER, LANG, TZ and NODE_ENV, plus `inherit` config keys and caller `env`. Commands run through `/bin/sh -c` or argv. On cancel, timeout or worker shutdown the handler sends SIGTERM, waits 5 s, then SIGKILL (`KILL_GRACE_MS`). A non-zero exit throws, so the job retries. stdout keeps a 64 KB tail and stderr 16 KB.
 
-**Subagent and aggregator.** `subagent` runs a tool-using model turn loop. Defaults: model `claude-sonnet-4-6`, 20 max turns, 8192 output tokens (larger for thinking models), rate-lease key `anthropic:messages` with inflight cap `GBRAIN_ANTHROPIC_MAX_INFLIGHT` (`subagent.ts:138`), lease TTL 120 s, per-turn timeout from `ai.chat.per_turn_timeout_ms` (default 30 min). Tools are limited to the `brain_*` allowlist. Writes can be staged and persisted. `subagent_aggregator` waits for child-done messages in its inbox, then builds a summary and markdown. It is spawned by `commands/agent.ts` after its children.
+**Subagent and aggregator.** `subagent` runs a tool-using model turn loop. Defaults: model `claude-sonnet-4-6`, 20 max turns, 8192 output tokens (larger for thinking models), rate-lease key `anthropic:messages` with inflight cap `GBRAIN_ANTHROPIC_MAX_INFLIGHT` (`subagent.ts:138`), lease TTL 120 s, per-turn timeout from `ai.chat.per_turn_timeout_ms` (default 30 min). Tools are limited to the `brain_*` allowlist. Writes can be staged and persisted. The one-shot path (`subagent-oneshot.ts`) makes one provider call, and at most one follow-up call (`ONESHOT_REASK`, `:121`; the loop at `:428`) when the first answer is prose with no JSON at all. The follow-up takes its own rate lease, and a failed follow-up keeps the first answer. `subagent_aggregator` waits for child-done messages in its inbox, then builds a summary and markdown. It is spawned by `commands/agent.ts` after its children.
 
 **Autopilot cycle and global maintenance.** `autopilot-cycle` runs `SOURCE_FRESHNESS_PHASES` (lint, backlinks, sync, extract, extract_facts, recompute_emotional_weight) for a source, or `CONNECTOR_SOURCE_PHASES` for a connector. It normalizes queued phase lists. `autopilot-global-maintenance` runs `MAINTENANCE_PHASES` (all non-source phases) one phase per `runCycle`, records the current phase in `autopilot.global_maintenance.progress`, and stops starting phases when less than the next phase's measured duration remains before the deadline. A phase that dies mid-run is skipped for the rest of that pass. After `STREAK_BYPASS_PASSES` (3) it stamps past the failing phase, and backoff caps at 24 h. A successful pass stamps `autopilot.last_global_at`.
 
@@ -544,7 +545,7 @@ Per tick (`runAutopilotDaemon`, in order):
 3. Exit for relaunch if `~/.gbrain/config.json` engine identity changed since boot (post-migration).
 4. Honor the pause marker (`autopilot-paused`). Orphaned migrate-owned markers are cleared when their pid is dead. While paused, sleep `min(interval, 30 s)`.
 5. Probe the DB (`getConfig('version')`); reconnect on failure. Consecutive reconnect failures cap at `GBRAIN_AUTOPILOT_MAX_RECONNECT_FAILS` (default 30). Unrecoverable errors exit at once.
-6. Self-upgrade check (opt-in), restart serve after upgrade, `--no-worker` peer probe, and `autopilotReconcile` git reconcile unless automatic pull is disabled.
+6. Self-upgrade check (opt-in; after a swap `relaunchAfterSwap` decides who restarts the daemon, see 1.5), restart serve after upgrade, `--no-worker` peer probe, and `autopilotReconcile` git reconcile unless automatic pull is disabled.
 7. Dispatch (Minions mode) via `dispatchAutopilotTick`, or inline `runCycle({ pull: true })`.
 8. Adaptive interval (`adaptiveInterval`): score null means base; score >= 90 means 2x base; score < 70 means `max(floor(base/2), 60)`; otherwise base.
 9. Five consecutive failed ticks stop the daemon with exit 1 (`cycle-failure-cap`).
@@ -555,7 +556,7 @@ Per tick (`runAutopilotDaemon`, in order):
 
 `dispatchAutopilotTick` (`src/commands/autopilot-dispatch.ts`):
 
-- Per-source freshness syncs (`dispatchFreshnessSyncs`): a source is due when its checkout HEAD differs from the last synced commit, or on the wall-clock interval backstop. Idempotency key is the HEAD, not the wall-clock slot.
+- Per-source freshness syncs (`dispatchFreshnessSyncs`): a source is due when its checkout HEAD differs from the last synced commit, or on the wall-clock interval backstop. Idempotency key is the HEAD, not the wall-clock slot. Connector kinds use their own interval (`connectorSyncIntervalMs`, `src/commands/autopilot-dispatch.ts:582-590`). Google and github use the base interval. Meetings use 60 min, Slack 30 min, and iMessage and Apple Contacts 15 min. A source config can override the connector default with `sync_interval_min`.
 - `dispatchAutoDrain`: extract_atoms backlog drain per source. Threshold 25 backlog items, window 120 s (clamped to the job anchor), daily cap `autopilot.auto_drain.max_usd_per_day` ($2 default, $0.30 per attempt, so about 6 attempts per UTC day). Gated by `autopilot.auto_drain.enabled`.
 - Remediation plan (`computeAutopilotPlan`). Routing (`src/commands/autopilot-remediation-policy.ts`):
   - Sleep when score >= 95, plan empty, and less than 60 min since the last full cycle.
@@ -580,6 +581,7 @@ Per tick (`runAutopilotDaemon`, in order):
 
 #### 1.5 Failure handling and shutdown
 
+- After a self-upgrade swap, `relaunchAfterSwap` (`src/commands/autopilot/relaunch.ts`, called at `src/commands/autopilot.ts:520`) picks one of three outcomes. `supervisor` means the installed launchd or systemd service, this brain's cron line, or a declared `self_upgrade.autopilot_launcher external` will start the new build, so the daemon exits. `self` means nothing would, so a detached shell waits for the daemon's pid to exit and runs the same command line again. `stay` means no relaunch could be set up (Windows, or an unresolvable CLI path), so the daemon keeps running its loaded build and logs that it needs a manual restart.
 - Errors in a tick set `cycleOk=false` and increment `consecutiveErrors`. Five in a row stop the daemon.
 - Shutdown on SIGTERM or SIGINT: stop the notifier, abort the in-flight inline cycle (2 s cap), disconnect the engine (PGLite flush), unlink the lock, exit.
 - The unrecoverable DB error path exits so launchd `ThrottleInterval` or systemd `RestartSec` applies backoff.
@@ -612,7 +614,7 @@ Per tick (`runAutopilotDaemon`, in order):
 |---|---|---|---|---|---|
 | 1 | lint | source / filesystem | `cycle.lint.enabled` | Brain files (repairs), publishes via coordinator | None |
 | 2 | backlinks | source / filesystem | Always | Read-only audit of missing back-links | None |
-| 3 | sync | source / filesystem | Needs checkout; `pull` flag | Imports changed files; drain lease `gbrain-sync:<source>` | None |
+| 3 | sync | source / filesystem | Needs checkout; `pull` flag; skipped with `sync_disabled` when the source has `config.syncEnabled=false` (`src/core/cycle.ts:1318`) | Imports changed files; drain lease `gbrain-sync:<source>` | None |
 | 4 | fence_repair | global / free | Repairs held fences | Fence repair publishes through coordinator | Optional LLM (`fenceRepairLlmEnabled`); 300 s budget |
 | 5 | content_repair | global / free | Other repair kinds | Coordinated file repairs | 120 s budget |
 | 6 | unindexed_files | global / filesystem | Always | Schedules re-screen rows in `op_checkpoints` | None |
@@ -622,7 +624,7 @@ Per tick (`runAutopilotDaemon`, in order):
 | 10 | extract_atoms | source / paid | Pack-gated (`phases:` in active pack) | Atom pages | Haiku-class extraction (`models.dream.extract_atoms`); $0.30 (`DEFAULT_BUDGET_USD`) |
 | 11 | resolve_symbol_edges | global / free | Always | Chunk edge metadata (derived) | None |
 | 12 | patterns | mixed / filesystem, paid | `dream.patterns.min_interval_hours` (6 h default) | Pattern pages | LLM subagent (`models.dream.patterns`); 30/35 min |
-| 13 | synthesize_concepts | global / paid | Pack-gated | Concept pages | `models.dream.synthesize`; $1.50 default |
+| 13 | synthesize_concepts | global / paid | Pack-gated | Concept pages; rebuilds a concept hidden only by an input purge from its current members (`src/core/cycle/synthesize-concepts.ts:172`, `:391`) | `models.dream.synthesize`; $1.50 default |
 | 14 | recompute_emotional_weight | source / free | Always | Derived `emotional_weight` column | None |
 | 15 | consolidate | source / free | Always | Consolidated takes and facts (never deleted) | Unverified |
 | 16 | propose_takes | source / paid | Always | `take_proposals` review queue | Haiku and Sonnet defaults; $5 default; 90 s call timeout |
@@ -633,21 +635,22 @@ Per tick (`runAutopilotDaemon`, in order):
 | 21 | drift | global / paid | `dream.drift.enabled`, default off | Report page `reports/drift-<date>` | `models.drift` |
 | 22 | standing_questions | global / paid | Always | Question pages; `pinned_questions` | `models.standing_questions` |
 | 23 | chronicle | global / paid | Default on | Life Chronicle event pages | LLM (chronicle extraction) |
-| 24 | facts_drain | global / paid | PGLite only (no job worker) | Queued facts-absorb jobs | LLM |
+| 24 | facts_drain | global / paid | PGLite runs it (no job worker). Postgres skips it, but warns when facts-absorb jobs have waited past `GBRAIN_QUEUE_NO_WORKER_WARN_HOURS` (default 1) on a queue no worker serves (`src/core/cycle/facts-drain.ts:32`, `src/core/minions/no-worker.ts:53`) | Queued facts-absorb jobs | LLM |
 | 25 | conversation_facts_backfill | source / paid | Default off | Facts | LLM; brain-wide budget tracker |
-| 26 | enrich_thin | source / paid | Default off | Enriched pages | Grounded synthesis (LLM) |
+| 26 | enrich_thin | source / paid | Default off (`cycle.enrich_thin.enabled`); optional daily caps `cycle.enrich_thin.max_daily_cost_usd` and `max_daily_pages` per owner day, running total in `enrich_thin.daily_spend`; with no `cycle.enrich_thin.order` set, the order is `owner-contact` when the owner's page resolves, else `inbound-links` (`src/core/cycle/enrich-thin.ts:87`, `:234`) | Enriched pages | Grounded synthesis (LLM) |
 | 27 | skillopt | global / paid | Default off | Skill files and proposals outside DB | $0.50 per skill, $2 brain-wide |
 | 28 | embed | global / paid | Skipped when `embedding_disabled` | Chunk embeddings (`runEmbedCore`, stale only) | Embedding provider |
 | 29 | orphans | global / free | Always | Read-only report | None |
 | 30 | schema-suggest | source / free | Always | Suggestions outside canonical tables | LLM only when a chat provider exists |
-| 31 | purge | global / deletes | Always | Hard-deletes soft-deleted pages and expired archived sources (72 h window) | None |
-| 32 | bookkeeping_gc | global / deletes | Always | Deletes retention-bound bookkeeping rows and files | None |
+| 31 | learning_derive | global / free | Always; never fails the cycle | Pointer rows in `learning_items` for what the cycle learned (ids only, no text); watermark `learning.derive.watermark`, at most 7 days back, at most 500 rows per kind per pass (`src/core/learning/derive.ts:35-38`) | None |
+| 32 | purge | global / deletes | Always | Hard-deletes soft-deleted pages and expired archived sources (72 h window); keeps concepts hidden by an input purge for the next concept synthesis (`src/core/cycle.ts:1812`) | None |
+| 33 | bookkeeping_gc | global / deletes | Always | Deletes retention-bound bookkeeping rows and files | None |
 
 Notes: `CYCLE_DEADLINE_RESERVE_MS` (60 s) is subtracted from any job deadline before phase defaults apply (`src/core/cycle/base-phase.ts`). `CYCLE_STALE_DRAIN_BUDGET_MS` (3 min) bounds the stale-drain path. `GRADE_TAKES_PHASE_DEADLINE_MS` is 30 min. Budget meters write JSONL to `~/.gbrain/audit/dream-budget-YYYY-Www.jsonl`.
 
 #### 2.4 Budgets and retries
 
-- Budgets are per phase USD caps (`BaseCyclePhase.budgetUsdKey` and `budgetUsdDefault`), overridable by `cycle.<phase>.budget_usd` config. `BudgetMeter` refuses the next submit once cumulative cost exceeds the cap. Unpriced models fall back to a Sonnet-tier rate unless `dream.budget.allow_unpriced=true`.
+- Budgets are per phase USD caps (`BaseCyclePhase.budgetUsdKey` and `budgetUsdDefault`), overridable by `cycle.<phase>.budget_usd` config, read from the file config first and then from the value `gbrain config set` stored (`src/core/cycle/base-phase.ts:189-196`). `BudgetMeter` refuses the next submit once cumulative cost exceeds the cap. Unpriced models fall back to a Sonnet-tier rate unless `dream.budget.allow_unpriced=true`.
 - Retries are phase-specific: edge_contradictions has `JUDGE_MAX_ATTEMPTS = 3`; concept writes stop at `MAX_CONCEPT_ATTEMPTS = 3`; extract_atoms has `MAX_DETERMINISTIC_FAILURES = 3` (page-state record, `src/core/cycle/extract-atoms-page-state.ts`); propose_takes has a retry max-token limit of 4096 (`PROPOSE_TAKES_RETRY_MAX_TOKENS`).
 - A contained paid failure is recorded for `doctor`'s dream paid-loop check (`recordContainedPaidFailure`, `src/core/cycle/dream-breaker.ts`).
 
@@ -665,6 +668,7 @@ Notes: `CYCLE_DEADLINE_RESERVE_MS` (60 s) is subtracted from any job deadline be
 - Boot watchdog: `DEFAULT_BOOT_TIMEOUT_SECONDS` = 60, env-tunable, exits only if boot progress stops.
 - Stdio idle timeout: off by default (`--stdio-idle-timeout`).
 - Commit notifier: `startResidentNotifier` via `src/core/serve-head-watcher.ts` (adapter).
+- Brain reference sidecar: at start, serve calls `recordServeBrainRefAtStart` (`src/commands/serve.ts:317`). On PGLite it writes `<datadir>.gbrain-brain-ref.json` (0600, atomic replace), holding the `brain_ref` and a digest of the owner token the kernel lock recorded, so `gbrain engine status --probe` can name the brain without opening it. The probe trusts the file only while the live lock holder recorded the same token (`src/commands/serve-brain-ref.ts:1-10`).
 
 #### 3.2 `--http`
 
@@ -741,7 +745,7 @@ Notes: `CYCLE_DEADLINE_RESERVE_MS` (60 s) is subtracted from any job deadline be
 
 #### 6.2 Lock rules
 
-- DB rows (`src/core/db-lock.ts`): every acquisition mints a UUID `acquisition_token`. Refresh, release, and cleanup match on `(id, holder_pid, acquisition_token)`. `DEFAULT_TTL_MINUTES` = 30 when callers do not pass one.
+- DB rows (`src/core/db-lock.ts`): the lease statements are typed engine members, not SQL in the lock module. The members are `acquireCycleLock`, `refreshCycleLock`, `releaseCycleLock`, `readCycleLocks`, `deleteCycleLock` and `deleteCycleLockIfStale` (`src/core/engine.ts:3109-3146`, statements in `src/core/engine-sql/cycle-locks.ts`). Every acquisition mints a UUID `acquisition_token`. Refresh, release, and cleanup match on `(id, holder_pid, acquisition_token)`. `DEFAULT_TTL_MINUTES` = 30 when callers do not pass one.
 - Steal grace: `resolveStealGraceSeconds(ttl) = max(2 x max(15, ttl x 60 / 6), 60)` seconds (`GBRAIN_LOCK_STEAL_GRACE_SECONDS` overrides). For the 5 min cycle lock, 100 s.
 - Same-host liveness: `classifyHolderLiveness` probes pid. Dead pid with age under 60 s is `too_young` (PID reuse defense). Cross-host holders are TTL-only.
 - `gbrain sync --break-lock` clears a holder with an expired TTL, or a dead local pid older than 60 s. Otherwise it refuses.
@@ -842,6 +846,7 @@ Gate decision (`decideGateAction`, `sync-failure-ledger.ts:917`), in order:
 - Checkpoint every `GBRAIN_SYNC_CHECKPOINT_EVERY` files (default 1000) or every `GBRAIN_SYNC_CHECKPOINT_SECONDS` (default 10 s). Failures stop after `GBRAIN_SYNC_MAX_CHECKPOINT_FAILURES` (default 3). Source: `src/commands/sync/checkpoint.ts`.
 - `GBRAIN_SYNC_YIELD_EVERY` inserts `setImmediate` yields so lock timers can fire (`checkpoint.ts:82`).
 - Stall watchdog: `GBRAIN_SYNC_STALL_ABORT_SECONDS`, default `DEFAULT_SYNC_STALL_ABORT_SEC = 900` (`src/core/sync-reconcile.ts:224`). It is keyed on file-import progress and aborts with `reason: 'stall_timeout'`. It fires between files only.
+- Termination signals: when the CLI owns its signals, the first SIGTERM or SIGHUP during a managed pass aborts the shared controller, so the pass saves its state and stops, the result prints, and the run exits 143 (SIGTERM) or 129 (SIGHUP). A second signal, or a save that outlasts the 3 s cleanup window, takes the generic cleanup-and-exit path. A worker's sync job never takes this path (`withTerminationOwner`, `src/commands/sync/run.ts:840`; exit codes at `:832`).
 - Hard deadline: `GBRAIN_SYNC_MAX_RUNTIME_SECONDS`. Non-TTY default is 3600 s (`sync-reconcile.ts:291`). `0` or a negative value disables it.
 
 **Multi-source (`sync --all`).** `resolveParallelism` (`src/commands/sync.ts:477`, re-exported from `run.ts`):
@@ -885,7 +890,7 @@ Gate decision (`decideGateAction`, `sync-failure-ledger.ts:917`), in order:
 ### 3. Embed backfill job (`embed-backfill`)
 
 - Submit side: `submitEmbedBackfill` (`src/core/embed-backfill-submit.ts:177`) is the single entry for automatic callers: sync completion (`auto_embed_backfill`), webhooks, federation flips, `sync trigger`, autopilot. Explicit `jobs submit` uses the queue's admission gate.
-- Submit gates, in order: worker-surface gate (PGLite refuses; `embedBackfillWorkerSurface`), cooldown `embed.backfill_cooldown_min` default 10 min, 24 h spend cap `embed.backfill_max_usd_per_source_24h` default $25 (computed from completed `embed-backfill` rows), and the stall cap (`EMBED_BACKFILL_STALL_LIMIT = 3` identical no-progress runs, `src/core/embed-backfill-stall.ts:25`).
+- Submit gates, in order: worker-surface gate (PGLite and the Rust engine refuse; `embedBackfillWorkerSurface`, `src/core/minions/embed-backfill-admission.ts:29`), cooldown `embed.backfill_cooldown_min` default 10 min, 24 h spend cap `embed.backfill_max_usd_per_source_24h` default $25 (computed from completed `embed-backfill` rows), and the stall cap (`EMBED_BACKFILL_STALL_LIMIT = 3` identical no-progress runs, `src/core/embed-backfill-stall.ts:25`).
 - Run side: `src/core/minions/handlers/embed-backfill.ts`. Per-source lock `gbrain-embed-backfill:<sourceId>` (`embed-backfill-lock.ts:12`) with TTL `EMBED_BACKFILL_LOCK_TTL_MIN = 60` (`embed-backfill-lock.ts:17`). A second job returns `already_in_progress`. The lock is released in `finally`.
 - Budget: `BudgetTracker` per job. Default cap `DEFAULT_MAX_USD_PER_JOB = 10`, parsed by `parseUsdLimit` (`src/core/spend-posture.ts:72`). Exhaustion returns `budget_exhausted`; work already embedded stays embedded.
 - Honesty gates: a run with remaining or blocked chunks fails as "incomplete" (`UnrecoverableError` if no progress and the same blockers remain). Blockers are fingerprinted (`readEmbedBackfillBlockers`) so repeats dead-letter.
@@ -918,6 +923,7 @@ Runner mechanics:
 
 **Defaults** (`src/commands/enrich.ts:81-99`, `src/core/enrich/thin.ts:26`):
 - `DEFAULT_LIMIT = 50`; `DEFAULT_TYPES = ['person', 'company']`.
+- Order: `--order` takes `inbound-links` (default), `salience`, `updated` or `owner-contact` (`ENRICH_ORDERS`, `src/commands/enrich.ts:105`). `owner-contact` ranks people and companies the owner recently met, messaged or owes a reply to first, with no model call.
 - Thin threshold `DEFAULT_THIN_THRESHOLD = 400` body characters.
 - Re-enrich window 30 days (`DEFAULT_REENRICH_DAYS`).
 - Cost cap `DEFAULT_MAX_COST_USD = 5.0`.
@@ -936,9 +942,9 @@ Runner mechanics:
 
 ### 6. Extract, facts, and the cycle
 
-`gbrain cycle` runs phases in the order given by `ALL_PHASES` (`src/core/cycle.ts:130`): `lint`, `backlinks`, `sync`, `fence_repair`, `content_repair`, `unindexed_files`, `synthesize`, `extract`, `extract_facts`, then atom extraction, `resolve_symbol_edges`, `patterns`, `recompute_emotional_weight`, `consolidate`, `propose_takes`, `grade_takes`, `calibration_profile`, `edge_contradictions`, `claim_conflicts`, `drift` (opt-in), `standing_questions`, and later `embed` and `orphans`.
+`gbrain cycle` runs phases in the order given by `ALL_PHASES` (`src/core/cycle.ts:133`): `lint`, `backlinks`, `sync`, `fence_repair`, `content_repair`, `unindexed_files`, `synthesize`, `extract`, `extract_facts`, then atom extraction, `resolve_symbol_edges`, `patterns`, `recompute_emotional_weight`, `consolidate`, `propose_takes`, `grade_takes`, `calibration_profile`, `edge_contradictions`, `claim_conflicts`, `drift` (opt-in), `standing_questions`, and later `embed`, `orphans` and `learning_derive`, then the purge phases.
 
-Lock: `gbrain_cycle_locks` row with TTL 30 min (Postgres), or `~/.gbrain/cycle.lock` on PGLite (`src/core/cycle.ts:32-37`). DB-write phases hold the lock; read-only phases skip it.
+Lock: `gbrain_cycle_locks` row with TTL 5 min (Postgres, `LOCK_TTL_MINUTES` at `src/core/cycle.ts:689`), or `~/.gbrain/cycle.lock` on PGLite. DB-write phases hold the lock; read-only phases skip it.
 
 - **extract** (`src/commands/extract.ts`): deterministic regex. Two sources: `--source fs` (walk markdown) and `--source db` (iterate pages). Writes links and timeline entries in `BATCH_SIZE` buffers. No LLM.
 - **extract_facts** (`src/core/cycle/extract-facts.ts`): reconciles the DB facts index from each entity page's `## Facts` fence after extract. Refuses when pre-v51 legacy facts are pending.
@@ -998,6 +1004,10 @@ Lock: `gbrain_cycle_locks` row with TTL 30 min (Postgres), or `~/.gbrain/cycle.l
 **Slack** (`src/core/slack/slack-source.ts`). Cursor state in connector DB rows (`connectorDbCursorKey`, `readConnectorDbCursor`, `writeConnectorDbCursor`). Default `sync_interval_min = 30` (`SLACK_DEFAULT_SYNC_INTERVAL_MIN`, `src/core/slack/types.ts:11`).
 
 **Meetings** (`src/core/meetings/`). Default `sync_interval_min = 60` (`MEETINGS_DEFAULT_SYNC_INTERVAL_MIN`, `src/core/meetings/types.ts:19`).
+
+**iMessage** (`src/core/imessage/imessage-source.ts`, source kind `imessage`). One page per chat per day, read from a helper app on the same Mac over 127.0.0.1. The source is always owner-only and every page is `visibility: private`. Defaults: 30 days of history, 7 days re-read each run, `sync_interval_min = 15` (`src/core/imessage/types.ts:9-12`).
+
+**Apple Contacts** (`src/core/apple-contacts/apple-contacts-source.ts`, source kind `apple-contacts`). One owner-only page per contact, read from the helper app over the network. A contact links to an existing person page only through an identity link matched by exact email or phone. On a linked person page the sync updates only this connector's facts, adding or replacing company, job-title and group facts through `remember` and retiring facts the contact no longer carries (`syncPersonFacts`, `src/core/apple-contacts/apple-contacts-source.ts:350-403`, `src/core/apple-contacts/person-facts.ts:83-105`). It creates no person page. A snapshot that would delete more than 20% of the contacts the source owns writes nothing. Default `sync_interval_min = 15` (`src/core/apple-contacts/types.ts:9-17`).
 
 ### Parity risks
 

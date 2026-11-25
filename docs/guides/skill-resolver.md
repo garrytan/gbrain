@@ -62,6 +62,14 @@ One catalog per skill set. Names are 1-64 characters of `a-z`, `0-9`, `_` and
   `eligible: false` are never indexed. Dot-entries (harness-owned state such
   as Codex's `.system/` or Hermes's `.usage.json`) and `node_modules` are
   never read, so a harness writing them does not make the index stale.
+- A skill with `deprecated: true` in its SKILL.md frontmatter (a JSON entry:
+  `"deprecated": true`) is indexed but never suggested from a word match or
+  offered to the model picker. It still loads when the turn names it
+  (`use the reports skill`, `/reports`), and its reason then says so; add
+  `replaced_by: <skill>` and the reason reads `deprecated, use <skill>
+  instead`. It also leaves the trigger index that `gbrain check-resolvable`
+  and the routing eval read: its frontmatter triggers and its RESOLVER.md rows
+  are dropped, and it is not reported as unreachable.
 - `--routing <file>` adds the rows of one RESOLVER-style routing table to
   the skills they name.
 - `--scope project` marks a cloned repository's skills: their blocks show ids
@@ -566,12 +574,15 @@ endpoint can be the picker, a self-hosted or fine-tuned one included: set
 | `skills.resolver.router_base_url` | the endpoint's base URL up to `/v1`, like `https://models.example.com/v1` (https, or http to localhost only); required |
 | `skills.resolver.router_api_key_env` | the name of the environment variable holding its key, like `MY_MODEL_API_KEY`; unset sends no key |
 | `skills.resolver.router_usd_per_mtok` | `[input, output]` or `[input, output, cached input]` in USD per million tokens, so the daily cap holds; required (`0,0` for a free one). Without the third value, cached input is charged at the input rate |
+| `skills.resolver.router_extra_body` | optional: a JSON object of at most 4,096 bytes added to each request body, like `{"reasoning_effort": "none"}` for a model that should answer without reasoning. It may set only sampling and reasoning controls (`temperature`, `top_p`, `top_k`, `min_p`, `seed`, `presence_penalty`, `frequency_penalty`, `repetition_penalty`, `reasoning_effort`, `thinking`, `chat_template_kwargs`), so it can't add billable input such as tools or lift the output cap the daily spend cap counts on. Its bytes count toward each call's reservation, and it applies to `compat:` models only |
+| `skills.resolver.router_prompt_version` | optional: for a model trained on the picker's request, the picker prompt version it was trained on (`prompt_version` in a catalog's `picker.json`). When gbrain moves to a new version the picker turns itself off with `config_invalid` instead of sending the model a request it was not trained on |
 
 ```bash
 gbrain config set skills.resolver.router_model compat:acme/skill-picker-1
 gbrain config set skills.resolver.router_base_url https://models.example.com/v1
 gbrain config set skills.resolver.router_api_key_env MY_MODEL_API_KEY
 gbrain config set skills.resolver.router_usd_per_mtok 0.1,0.5
+gbrain config set skills.resolver.router_extra_body '{"reasoning_effort": "none"}'
 ```
 
 **Cost and wait.** A turn sends the skill list and the message, about 9,000
@@ -635,8 +646,9 @@ current ids.
 
 ### router_fallback: config_invalid
 
-A `skills.resolver.router_*` value is out of range. The turn is not refused:
-the picker stays off until the value is fixed or unset
+A `skills.resolver.router_*` value is out of range, or
+`router_prompt_version` names a version other than the one this gbrain sends.
+The turn is not refused: the picker stays off until the value is fixed or unset
 (`gbrain config unset skills.resolver.router_timeout_ms`).
 
 ### router_fallback: no_pricing
@@ -666,8 +678,9 @@ The JSON Schemas are checked in under `docs/schemas/`:
   carries `vectors`.
 - `skill-resolver.v1.build-input.json`: the `--from-json` catalog,
   `[{id, name, description?, when_to_use?, triggers?, routing?, body?, path?,
-  eligible?, disable_model_invocation?}]`. With the same fields a SKILL.md
-  folder has (`when_to_use`, `disable-model-invocation`), a JSON build gives
+  eligible?, disable_model_invocation?, deprecated?, replaced_by?}]`. With the
+  same fields a SKILL.md folder has (`when_to_use`, `disable-model-invocation`,
+  `deprecated`, `replaced_by`), a JSON build gives
   the same `catalog_hash` and `index_hash` as the folder build.
 - `skill-resolver.v1.build-receipt.json`: the build receipt, also saved as
   `receipt.json` beside the index.

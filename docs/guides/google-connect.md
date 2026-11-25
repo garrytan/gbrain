@@ -123,6 +123,80 @@ Two remedies, independent of each other:
   pages it reaches; `gbrain doctor --only junk_entity_hubs` names the
   canonical twin of each stub and the next step.
 
+### Link each contact to its person page
+
+`gbrain dedupe link-contacts --source <id>` counts how the source's contact
+pages would link to your person pages and changes nothing. Add `--apply` to
+link them. A contact page joins the identity group of the one person page
+whose email or phone is exactly the same as one of the contact's, the rule
+the Apple Contacts source uses:
+
+- A name alone never links.
+- The same person page copied into other sources (the same slug, the same
+  matching email or phone, and a name that agrees, as with a read-only
+  mirror) counts as one person: the contact links to every copy, with the
+  default source's page as the main one. A copy that carries a different
+  email or phone is another candidate.
+- A contact whose email or phone matches two or more people, or one person
+  whose page has another name (a shared or reused address), stays unlinked
+  and waits for you: `gbrain sync status --source <id>` lists it, and
+  `gbrain dedupe confirm` or `reject` on those people, or
+  `gbrain dedupe decide` ([below](#decide-the-contacts-that-wait)), settles it.
+- `gbrain dedupe reject` on a contact and person pair removes that link,
+  and the pair is never linked again.
+- A contact already in an identity group you made is left as it is.
+- Only identity links are written. No page is edited, so what every caller
+  can read stays the same.
+
+`--apply` also sets `google_contacts.identity_links` on, so each sync links
+the contacts it changed and settles the waiting ones. `--unlink` removes
+every link the source made and sets it off.
+
+#### Decide the contacts that wait
+
+`gbrain dedupe link-contacts --source <id> --json` (without `--apply`) also
+lists every contact that waits, under `reviews`: its `contact_slug`, the
+`reason` (`several_people` or `name_disagrees`) and each candidate as
+`source:slug` with what matched it (`email`, `phone` or both, never the
+address or number); copies of one page in other sources are listed once,
+under `mirrors`, and `link` or `reject` on it covers every copy. Write your choice for each one into a JSON file:
+
+```json
+[
+  { "contact_slug": "people/c-alice", "action": "link", "candidate": "default:people/alice-example" },
+  { "contact_slug": "people/c-bob", "action": "reject" },
+  { "contact_slug": "people/c-carol", "action": "reject", "candidate": "default:people/carol-other" },
+  { "contact_slug": "people/c-dana", "action": "new" },
+  { "contact_slug": "people/c-noreply", "action": "ignore" },
+  { "contact_slug": "people/c-erin", "action": "skip" }
+]
+```
+
+- `link`: the contact and that one candidate are the same person.
+- `new`: none of them; a person page named after the contact is made in the
+  default source and the contact is linked to it.
+- `reject`: a different person from each candidate listed (`candidate`, or a
+  `candidates` list), or from every candidate when none is listed. Each pair
+  is recorded on its own, so a contact that still matches someone you did not
+  reject keeps waiting on that one.
+- `ignore`: not a person (a shared inbox, a service): never linked and never
+  listed again.
+- `skip`: nothing, for now.
+
+```bash
+gbrain dedupe decide --source <id> --file choices.json --dry-run   # what each line would do; writes nothing
+gbrain dedupe decide --source <id> --file choices.json
+```
+
+Every line prints its decision ids and the command that undoes it,
+`gbrain dedupe undo <id>...` (plus `gbrain delete <slug> --source default`
+for a page `new` made). A line that can't apply (an unknown contact, a
+missing candidate, a pair you recorded as different) is set aside with its
+reason and the rest are still recorded. The decisions are kept with your other
+duplicate decisions: in `.gbrain/identity/` in the brain's repository, in one
+commit with any page `new` made, so a database rebuilt from git keeps them,
+or in the database on a brain with no repository.
+
 ### What a contact page carries
 
 Each page records the contact's names, email addresses, organization and
@@ -470,6 +544,55 @@ source config, is never reachable over MCP, and is the same trust class as a
 recipe health-check command. Failures surface as `access_command_failed` /
 `access_env_missing` with the fix attached.
 
+### Reading mail through gbrain.io
+
+A brain can read Gmail through a [gbrain.io](https://gbrain.io) terminal
+instead of a Google token. gbrain.io keeps the mailbox grant; this machine
+runs the `gbrainio` command line, and gbrain reads its JSON answers. gbrain
+stores only the command path, never a credential.
+
+```bash
+gbrain sources add mail-work --kind google --account you@example.com \
+  --access gbrainio --history-days 30 \
+  --private-senders-file ~/.gbrain/private-senders.txt   # optional
+gbrain sync --source mail-work                        # first sync: the last 30 days
+```
+
+It reads Gmail only (no Calendar or Contacts), and it reads by date window:
+each sync lists mail from an hour before the newest message it has, so new
+mail and replies land and a thread that did not change is never fetched
+again. The first sync fills `--history-days`, newest mail first, and
+resumes where it stopped if it runs out of time. `--gbrainio-command` sets a
+full path when `gbrainio` is not on `PATH`.
+
+Threads are sorted into tiers before anything is written:
+
+| Tier | Which threads | What gbrain does |
+|---|---|---|
+| `full` | You wrote in it, a message is starred or important, or someone in it has a person page | A normal email page |
+| `record` | Other mail that is not bulk | A searchable page with `facts_backstop: false`, `extract_atoms: false` and `conversation_parseable: false`; no model reads it |
+| none | You never wrote and every other message is bulk (promotions, social and forum categories, mail gbrain.io marks automated, noise senders, mail to more than five people from a sender with no person page) | No page |
+| `private` | Someone in it is on the private-senders list | An owner-only page (`visibility: private`), embedded like other private pages, never read by a model |
+
+The private-senders file holds one address or `@domain` per line (`#` starts
+a comment). If the file is missing, unreadable or empty, the sync stops before
+writing anything. When you add someone, the next sync rewrites their existing
+pages as private (up to 200 threads per sync; the rest follow on later syncs);
+on a git-backed brain, earlier commits still hold the old text. A page whose
+thread is gone from Gmail is never deleted for that: it keeps its tier, the
+sync log names it and retries it, and `gbrain delete <slug>` removes it. Otherwise a thread's tier is set when
+its newest message is read: starring it or creating a person page later
+changes the tier only when a new message arrives.
+
+What is not available on a gbrain.io source: `--full` skips the delete scan
+(pages of mail deleted later stay), `gbrain google attachments` repair is
+refused (`gbrainio_unsupported`), and labels you made yourself are not seen,
+so `g_loops_exclude_labels` matches only the built-in categories. A gbrain.io
+usage limit is handled like a Google rate limit: the unread range stays open
+and the next sync resumes it. Every mail answer must name the account the
+source was added for; an answer that names another account, or none, is
+refused (`gbrainio_account_mismatch`).
+
 ## Troubleshooting
 
 Every failure the connector can hit maps to a typed error with the fix
@@ -503,6 +626,13 @@ attached. The catalog (also emitted as structured JSON with `--json`):
 | `upstream` | Google returned an unexpected error | Retry; if it persists, run `gbrain google status --json` and file the output |
 | `access_command_failed` | The `--access command` token command exited non-zero, timed out, or printed nothing token-shaped | Run it by hand; it must print a bare token or JSON with `token`/`access_token` |
 | `access_env_missing` | The `--access env` variable is unset/blank in this process | Export a live token into it (refresh externally), or switch back to the vault flow |
+| `gbrainio_not_connected` | The gbrain.io terminal ended, was never approved, or cannot read this mailbox | `gbrainio terminal show`; approve or extend it on gbrain.io with mail at Read on the account |
+| `gbrainio_limit_reached` | gbrain.io's usage allowance is used up | Nothing is lost; the next sync resumes. Sync less often, or check the Limits tab on gbrain.io |
+| `gbrainio_account_mismatch` | A gbrain.io answer named a different mailbox than the source | Check `--account` on the source and the account the terminal reads |
+| `gbrainio_command_missing` | The `gbrainio` command is not installed or not on `PATH` | Install the gbrain.io terminal client, or set `--gbrainio-command /full/path` |
+| `gbrainio_command_failed` | A `gbrainio` read failed or printed something gbrain could not read | Run the same `gbrainio tool gmail ...` command by hand; the range stays open for the next sync |
+| `gbrainio_unsupported` | A step that needs a Google token (attachment repair, the change feed) on a gbrain.io source | Nothing to fix; use a vault-connected source for that step |
+| `private_senders_unreadable` | The source's private-senders file is missing, unreadable or empty | Restore the file (one address or `@domain` per line), or remove the setting |
 
 Cursor expiries (`historyId` older than ~a week, calendar/contacts
 `syncToken` 410, or a contacts HTTP 400 explicitly reporting an expired sync

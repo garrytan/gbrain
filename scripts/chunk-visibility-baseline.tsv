@@ -11,7 +11,6 @@ src/commands/doctor/checks/image-embedding-coverage.ts	1
 src/commands/doctor/checks/schema-health.ts	1
 src/commands/doctor/checks/vector-plan.ts	2
 src/commands/reindex-multimodal.ts	4
-src/commands/reindex-search-vector.ts	1
 src/core/code-graph-readiness.ts	2
 src/core/code-intel/read-scope.ts	1
 src/core/code-intel/recursive-walk.ts	4
@@ -46,3 +45,4 @@ src/core/sync-status-report.ts	1
 src/eval/brainbench/metrics/deletion.ts	1
 src/eval/brainbench/metrics/trust-reads.ts	1
 src/eval/longmemeval/retrieval-arms.ts	1
+src/core/engine-sql/facts-purge.ts	1

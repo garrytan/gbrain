@@ -16,9 +16,18 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
+
+const ADDON_TARGET = detectAddonTarget();
+const BUILT_ADDON = join(import.meta.dir, '..', 'rust', 'target', 'addon', `gbrain_engine.${ADDON_TARGET ?? 'unsupported'}.node`);
+const HAVE_ADDON = ADDON_TARGET !== null && existsSync(BUILT_ADDON);
+if (!HAVE_ADDON && process.env.GBRAIN_TEST_RUST_ADDON_REQUIRED === '1') {
+  throw new Error(`GBRAIN_TEST_RUST_ADDON_REQUIRED=1 but ${BUILT_ADDON} does not exist; run bun run rust:build`);
+}
+const withAddon = test.skipIf(!HAVE_ADDON);
 
 const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
 const REPO = join(import.meta.dir, '..');
@@ -165,6 +174,88 @@ describe('gbrain engine status', () => {
     expect(report.probe.note).toBe('data_dir_missing');
     // The store must not have been created by the probe.
     expect(existsSync(missing)).toBe(false);
+  }, 60_000);
+
+  test('--probe on a rust brain whose addon is missing reports rust_engine_addon_missing, not an unclassified database error', () => {
+    const store = join(home, 'brain.rust');
+    writeConfig({ engine: 'rust', database_path: store });
+    const { stdout, status } = run(['engine', 'status', '--json', '--probe'], { GBRAIN_RUST_ENGINE_ADDON: join(home, 'missing.node') });
+    expect(status).toBe(1);
+    const report = parseReport(stdout);
+    expect(report.effective_engine).toBe('rust');
+    expect(report.probe.ok).toBe(false);
+    expect(report.probe.note).toBe('rust_engine_addon_missing');
+    expect(report.probe.refusal).toMatchObject({ code: 'rust_engine_addon_missing', reason: 'override_not_found' });
+    expect(report.probe.diagnosis).toBeUndefined();
+    expect(existsSync(store)).toBe(false);
+    expect(existsSync(join(home, '.gbrain', 'engines'))).toBe(false);
+  }, 60_000);
+
+  withAddon('--probe with the built addon and a MISSING rust store: data_dir_missing, store NOT created, exit 1', () => {
+    // Opening a Rust store creates it, like PGLite: the read-only probe must report the missing path, not make it.
+    const missing = join(home, 'no-such-dir', 'brain.rust');
+    writeConfig({ engine: 'rust', database_path: missing });
+    const { stdout, status } = run(['engine', 'status', '--json', '--probe'], { GBRAIN_RUST_ENGINE_ADDON: BUILT_ADDON });
+    expect(status).toBe(1);
+    const report = parseReport(stdout);
+    expect(report.effective_engine).toBe('rust');
+    expect(report.probe).toEqual({ ok: false, note: 'data_dir_missing' });
+    expect(existsSync(missing)).toBe(false);
+  }, 60_000);
+
+  withAddon('--probe with the built addon and an EMPTY directory as the rust store: data_dir_missing, no store files made', () => {
+    const dir = join(home, 'empty-store');
+    mkdirSync(dir);
+    writeConfig({ engine: 'rust', database_path: dir });
+    const { stdout, status } = run(['engine', 'status', '--json', '--probe'], { GBRAIN_RUST_ENGINE_ADDON: BUILT_ADDON });
+    expect(status).toBe(1);
+    expect(parseReport(stdout).probe).toEqual({ ok: false, note: 'data_dir_missing' });
+    expect(existsSync(join(dir, 'records.redb'))).toBe(false);
+    expect(existsSync(join(dir, 'FORMAT'))).toBe(false);
+  }, 60_000);
+
+  withAddon('--probe with the built addon and an EMPTY records.redb: store_incomplete, the file stays empty, no FORMAT', () => {
+    // A first open that stopped early can leave a zero-length record file; opening it would set it up as a new brain.
+    const dir = join(home, 'incomplete-store');
+    mkdirSync(dir);
+    writeFileSync(join(dir, 'records.redb'), '');
+    writeConfig({ engine: 'rust', database_path: dir });
+    const { stdout, status } = run(['engine', 'status', '--json', '--probe'], { GBRAIN_RUST_ENGINE_ADDON: BUILT_ADDON });
+    expect(status).toBe(1);
+    expect(parseReport(stdout).probe).toEqual({ ok: false, note: 'store_incomplete' });
+    expect(statSync(join(dir, 'records.redb')).size).toBe(0);
+    expect(existsSync(join(dir, 'FORMAT'))).toBe(false);
+  }, 60_000);
+
+  withAddon('--probe with the built addon and a nonempty records.redb but no FORMAT: store_incomplete, nothing written', () => {
+    // A first open writes FORMAT last, so a record file without FORMAT may hold no brain metadata yet; opening it
+    // would make a new brain. The probe reports it and leaves the record file byte for byte, with no FORMAT made.
+    const store = join(home, 'brain.rust');
+    writeConfig({ engine: 'rust', database_path: store });
+    const init = run(['stats', '--json'], { GBRAIN_RUST_ENGINE_ADDON: BUILT_ADDON });
+    expect(init.status).toBe(0);
+    rmSync(join(store, 'FORMAT'));
+    const before = readFileSync(join(store, 'records.redb'));
+    expect(before.length).toBeGreaterThan(0);
+    const { stdout, status } = run(['engine', 'status', '--json', '--probe'], { GBRAIN_RUST_ENGINE_ADDON: BUILT_ADDON });
+    expect(status).toBe(1);
+    expect(parseReport(stdout).probe).toEqual({ ok: false, note: 'store_incomplete' });
+    expect(readFileSync(join(store, 'records.redb')).equals(before)).toBe(true);
+    expect(existsSync(join(store, 'FORMAT'))).toBe(false);
+  }, 60_000);
+
+  withAddon('--probe with the built addon and an existing rust store: ok, through a typed read (no raw SQL refusal)', () => {
+    const store = join(home, 'brain.rust');
+    writeConfig({ engine: 'rust', database_path: store });
+    // A first probe-free command opens and creates the store; the probe then reads it.
+    const init = run(['stats', '--json'], { GBRAIN_RUST_ENGINE_ADDON: BUILT_ADDON });
+    expect(init.status).toBe(0);
+    expect(existsSync(store)).toBe(true);
+    const { stdout, status } = run(['engine', 'status', '--json', '--probe'], { GBRAIN_RUST_ENGINE_ADDON: BUILT_ADDON });
+    const report = parseReport(stdout);
+    expect(report.probe.ok).toBe(true);
+    expect(report.probe.refusal).toBeUndefined();
+    expect(status).toBe(0);
   }, 60_000);
 
   test('unknown token reaching the command parser: exit 2', () => {

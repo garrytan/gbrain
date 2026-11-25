@@ -30,8 +30,9 @@
 //! check of addCodeEdges, the live-endpoint filter of the caller and callee reads, the bare-name
 //! fallback) reads every chunk record once.
 
-use crate::dream::{jsonb, jsonb_check};
-use crate::error::{Result, StoreError};
+use crate::dream::jsonb_check;
+use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
+use crate::jsonb::ordered;
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::{PageRecord, next_id, read_page_by_id};
@@ -91,7 +92,7 @@ impl Table {
         }
     }
 
-    fn sequence(self) -> &'static str {
+    pub(crate) fn sequence(self) -> &'static str {
         match self {
             Table::Chunk => "next_code_edge_chunk",
             Table::Symbol => "next_code_edge_symbol",
@@ -109,6 +110,7 @@ pub(crate) struct EdgeRecord {
     pub from_symbol_qualified: String,
     pub to_symbol_qualified: String,
     pub edge_type: String,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     pub edge_metadata: Value,
     pub source_id: Option<String>,
     pub created_at_us: i64,
@@ -124,7 +126,7 @@ impl EdgeRecord {
             "from_symbol_qualified": self.from_symbol_qualified,
             "to_symbol_qualified": self.to_symbol_qualified,
             "edge_type": self.edge_type,
-            "edge_metadata": self.edge_metadata,
+            "edge_metadata": crate::jsonb::ordered(&self.edge_metadata),
             "source_id": self.source_id,
             "resolved": self.table == Table::Chunk,
         })
@@ -293,6 +295,32 @@ fn delete_for_chunks(tx: &mut dyn KvWrite, chunk_ids: &[u64]) -> Result<()> {
 /// page.
 pub(crate) fn remove_page_rows(_tx: &mut dyn KvWrite, _page: &PageRecord) -> Result<()> {
     Ok(())
+}
+
+/// The shadow seed (`seed.rs`): stores `edge`, a row copied from another engine with its own id and
+/// `created_at`, with its unique key and every index key `add_code_edges` writes. `false` when the
+/// id already holds a row of the table; the unique key held by another id is the unique violation.
+/// The caller checked the chunks and the source.
+pub(crate) fn seed_edge(tx: &mut dyn KvWrite, edge: &EdgeRecord) -> Result<bool> {
+    if tx.get(&row_key(edge.table, edge.id))?.is_some() {
+        return Ok(false);
+    }
+    let all = edge.keys();
+    if tx.get(&all[1])?.is_some() {
+        return Err(StoreError::new(
+            CONSTRAINT_VIOLATION,
+            format!(
+                "duplicate key value violates unique constraint \"{}_unique\"",
+                edge.table.name()
+            ),
+        ));
+    }
+    tx.put(&all[1], &edge.id.to_be_bytes())?;
+    for key in &all[2..] {
+        tx.put(key, &[])?;
+    }
+    put_json(tx, &all[0], edge)?;
+    Ok(true)
 }
 
 /// Deletes the rows of chunks that are gone (`cascade::remove_chunk_rows`): every row of either
@@ -602,7 +630,7 @@ impl Store {
                         // the shell sends `{}` for a missing value.
                         Value::Null
                     } else {
-                        jsonb(&e.edge_metadata)
+                        ordered(&e.edge_metadata)
                     };
                     let unique = unique_key(table, from, to_chunk, &to_symbol, &edge_type);
                     if tx.get(&unique)?.is_some() {
@@ -796,6 +824,16 @@ fn finish(
         }
     }
     Ok(out)
+}
+
+/// The shadow follow (`seed/follow.rs`): removes the row `id` of `table` with its unique and index
+/// keys. `false` when there is none.
+pub(crate) fn remove_edge(tx: &mut dyn KvWrite, table: Table, id: u64) -> Result<bool> {
+    let Some(edge) = read_edge(&*tx, table, id)? else {
+        return Ok(false);
+    };
+    delete_edge(tx, &edge)?;
+    Ok(true)
 }
 
 #[cfg(test)]

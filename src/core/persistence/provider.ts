@@ -6,6 +6,7 @@ import { hasScope, operationScopesAllowed } from '../scope.ts';
 import { localFederatedSourceIds, resolveSourceId } from '../source-resolver.ts';
 import { dispatchToolCall } from '../../mcp/dispatch.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration } from './identity.ts';
+import { rustOwnerServesPersistence } from '../rust-engine/owner-ipc/client.ts';
 import { startPersistenceConsumer, assertPersistenceAccepting } from './service.ts';
 import { isWriteErrorCode, isWriteReceipt } from './types.ts';
 import { LOCAL_CLI_OWNER_OPERATIONS, PERSISTENCE_META_KEY, PERSISTENCE_ROOM_MARKED_KEY, restoreRecoveryContract, type PersistenceIpcProvider } from './ipc.ts';
@@ -28,6 +29,16 @@ const localWritersFix: Action = { argv: ['gbrain', 'auth', 'local-writer', 'list
  * backstop admits them; remote principals never get it.
  */
 const LOCAL_CLI_LOCAL_ONLY_OPS = new Set(['takes_remove', 'takes_rebuild']);
+
+/**
+ * The persistence socket a serve process offers, or none when the engine has no persistence journal. The provider
+ * registers local writers and reads persistence_brain with SQL; a Rust brain has neither yet, so its callers take the
+ * engine path and get a typed refusal instead of a socket that fails on its first request. The same check decides
+ * whether a Rust owner publishes the socket and whether a CLI sends writes to it (owner-ipc/client.ts).
+ */
+export async function servePersistenceIpcProvider(engine: BrainEngine, config: GBrainConfig): Promise<PersistenceIpcProvider | undefined> {
+  return rustOwnerServesPersistence(engine.capabilities) ? createPersistenceIpcProvider(engine, config) : undefined;
+}
 
 /** Resident lifecycle owns the consumer; each connection proves its own durable registration. */
 export async function createPersistenceIpcProvider(engine: BrainEngine, config: GBrainConfig): Promise<PersistenceIpcProvider> {

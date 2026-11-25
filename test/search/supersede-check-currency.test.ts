@@ -89,17 +89,18 @@ describe('supersession check currency (PGLite)', () => {
 
   test('any other read error reports reason provider_error, and no raw error text reaches the marker', async () => {
     await engine.addLink('notes/pricing-v2', 'notes/pricing-v1', '', 'supersedes', 'manual');
-    engine.supersedingPageSlugs = async () => { throw new Error('connection terminated postgres://user:secret@internal-host/db'); };
+    engine.supersedingPageSlugs = async () => { throw new Error('connection terminated postgresql://db.example/brain?app=VALUECANARY'); };
     let degraded: Array<{ stage: string; reason?: string }> = [];
     await hybridSearch(engine, 'tapirword', { limit: 5, useCache: false, onMeta: (m) => { degraded = (m.degraded ?? []) as typeof degraded; } });
     expect(degraded).toContainEqual({ stage: 'supersede_check_failed', reason: 'provider_error' });
-    expect(JSON.stringify(degraded)).not.toContain('secret');
+    expect(JSON.stringify(degraded)).not.toContain('VALUECANARY');
+    expect(JSON.stringify(degraded)).not.toContain('://');
   });
 
   test('the supersession warning names only the failure class, never the raw error text or its code', async () => {
     await engine.addLink('notes/pricing-v2', 'notes/pricing-v1', '', 'supersedes', 'manual');
     engine.supersedingPageSlugs = async () => {
-      throw Object.assign(new Error('connection terminated postgres://user:secret@internal-host/db'), { code: '57P01' });
+      throw Object.assign(new Error('connection terminated postgresql://db.example/brain?app=VALUECANARY'), { code: '57P01' });
     };
     _resetWarnOnceForTests();
     const warned: string[] = [];
@@ -115,8 +116,8 @@ describe('supersession check currency (PGLite)', () => {
     expect(line).toBeDefined();
     expect(line).toContain('provider_error');
     expect(line).not.toContain('57P01');
-    expect(line).not.toContain('secret');
-    expect(line).not.toContain('postgres://');
+    expect(line).not.toContain('VALUECANARY');
+    expect(line).not.toContain('://');
   });
 
   test('a brain whose links table does not exist yet stays silent (no edges can exist)', async () => {

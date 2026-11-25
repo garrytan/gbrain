@@ -25,6 +25,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { OperationContext } from '../operations.ts';
 import { loadActivePackForEngine } from './engine-resolution.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 export { readDbSchemaPack } from './engine-resolution.ts';
 import type { ResolvedPack } from './registry.ts';
 
@@ -32,7 +33,8 @@ import type { ResolvedPack } from './registry.ts';
  * Best-effort loader for the active schema pack. Returns null on any
  * failure path so callers can apply empty-filter semantics.
  *
- * NEVER throws. Never logs to stderr (callers don't need the noise on
+ * Never throws, except a capability refusal when the caller passes
+ * `rethrowRefusal`. Never logs to stderr (callers don't need the noise on
  * routine queries; the underlying pack-load errors surface through
  * `gbrain doctor`'s schema_pack_coverage / schema_pack_writability
  * checks).
@@ -47,13 +49,16 @@ import type { ResolvedPack } from './registry.ts';
  */
 export async function loadActivePackBestEffort(
   ctx: OperationContext,
+  opts: { rethrowRefusal?: boolean } = {},
 ): Promise<ResolvedPack | null> {
   try {
     return await loadActivePackForEngine(ctx.engine, {
       remote: ctx.remote ?? true,
       sourceId: ctx.sourceId,
     });
-  } catch {
+  } catch (e) {
+    // `rethrowRefusal`: a capability refusal (an engine that cannot read config) throws instead of reading as no pack.
+    if (opts.rethrowRefusal) rethrowCapabilityRefusal(e);
     return null;
   }
 }

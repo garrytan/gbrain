@@ -15,8 +15,8 @@
  *     an entry computed for another scope;
  *   - config generation: a hash of the orphan exclusions, the embedding
  *     column registry keys and the schema pack setting;
- *   - page clock: `page_generation_clock_seq.last_value`, which every page
- *     insert, update or delete advances;
+ *   - page clock (`engine.readHealthMemoClock`): `page_generation_clock_seq.last_value`,
+ *     which every page insert, update or delete advances;
  *   - age below the TTL: `GBRAIN_HEALTH_CACHE_TTL_MS`, else config
  *     `health.cache_ttl_ms`, else 30000 ms; 0 disables the memo. The TTL
  *     bounds staleness from writes that do not touch `pages` (links,
@@ -44,8 +44,6 @@ const GENERATION_CONFIG_KEYS = [
   'embedding_columns',
   'schema_pack',
 ] as const;
-const PAGE_CLOCK_ROW = '__page_clock__';
-const BRAIN_ID_ROW = '__brain_id__';
 const MAX_ENTRIES_PER_ENGINE = 256;
 
 interface Entry {
@@ -76,20 +74,16 @@ function parseTtl(raw: string | null | undefined): number | null {
 
 async function readGeneration(engine: BrainEngine): Promise<{ configGeneration: string; pageClock: string; configTtl: number | null } | null> {
   try {
-    const rows = await engine.executeRaw<{ k: string; v: string | null }>(
-      `SELECT key AS k, value AS v FROM config
-        WHERE key IN (${[...GENERATION_CONFIG_KEYS, HEALTH_CACHE_TTL_KEY].map(k => `'${k}'`).join(', ')})
-       UNION ALL
-       SELECT '${PAGE_CLOCK_ROW}' AS k, COALESCE((SELECT last_value FROM page_generation_clock_seq), 0)::text AS v
-       UNION ALL
-       SELECT '${BRAIN_ID_ROW}' AS k, (SELECT brain_id::text FROM persistence_brain WHERE singleton = 1) AS v`,
-    );
-    const byKey = new Map(rows.map(r => [r.k, r.v]));
+    const [rows, pageClock] = await Promise.all([
+      engine.getConfigValues([...GENERATION_CONFIG_KEYS, HEALTH_CACHE_TTL_KEY]),
+      engine.readHealthMemoClock(),
+    ]);
+    const byKey = new Map<string, string | null>(rows.map(r => [r.key, r.value]));
     const generation = GENERATION_CONFIG_KEYS.map(k => [k, byKey.get(k) ?? null]);
     generation.push(['env:GBRAIN_SCHEMA_PACK', process.env.GBRAIN_SCHEMA_PACK ?? null]);
     return {
       configGeneration: createHash('sha256').update(JSON.stringify(generation)).digest('hex').slice(0, 16),
-      pageClock: `${byKey.get(BRAIN_ID_ROW) ?? ''}:${byKey.get(PAGE_CLOCK_ROW) ?? ''}`,
+      pageClock,
       configTtl: parseTtl(byKey.get(HEALTH_CACHE_TTL_KEY)),
     };
   } catch {
