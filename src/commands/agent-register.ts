@@ -543,6 +543,11 @@ export async function runAgentRegister(engine: BrainEngine | null, args: string[
       // Name-scoped advisory lock: no unique index exists on client_name, so
       // two concurrent registers of the same name would both pass the
       // pre-check. xact-scoped — released at COMMIT/ROLLBACK.
+      // Single-writer assumption: the lock is skipped on the Rust engine, so the duplicate-name check below relies on
+      // the store running one write transaction at a time (rust/crates/gbrain-store/src/transactions.rs:571,
+      // begin_write_exclusive). The concurrency pin "agent register: two registers of the same name started together
+      // store one client, and the other is refused as a duplicate" (test/engine-parity/oauth-clients.test.ts) must fail
+      // if writes ever run at the same time. Multi-user write work must revisit this site.
       if (!lacksRawSql(engine)) await tx.executeRaw(`SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`, [registerClientNameLockKey(name)]);
 
       const dupRows = (await tx.listOauthClients()).filter(c => c.client_name === name && c.deleted_at == null);
