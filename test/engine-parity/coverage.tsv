@@ -614,10 +614,10 @@ readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
 readLiveFactRowTier	facts	yes	1	no	yes	yes	serves
 insertFact	facts	yes	184	yes	yes	yes	serves
-insertFacts	facts	yes	246	no	yes	yes	serves
+insertFacts	facts	yes	247	no	yes	yes	serves
 deleteFactsForPage	facts	yes	8	no	yes	yes	serves
 expireFact	facts	yes	89	no	yes	yes	serves
-listFactsByEntity	facts	yes	62	yes	yes	yes	serves
+listFactsByEntity	facts	yes	63	yes	yes	yes	serves
 listFactsSince	facts	yes	41	yes	yes	yes	serves
 listFactsKeyset	facts	yes	11	no	yes	yes	serves
 listFactsBySession	facts	yes	13	yes	yes	yes	serves
