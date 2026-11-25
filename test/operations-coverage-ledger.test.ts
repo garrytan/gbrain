@@ -222,6 +222,10 @@ const LEDGER: Record<string, string> = {
   // the ops suite covers remote posture, grant denial, and redaction arms.
   open_loops: 'test/ops-loops.test.ts',
   loops_close: 'test/ops-loops.test.ts',
+  household_due: 'test/household-ops.test.ts',
+  household_add: 'test/household-ops.test.ts',
+  household_mark: 'test/household-ops.test.ts',
+  household_replace: 'test/household-remote.test.ts',
   loops_mute: 'test/ops-loops.test.ts',
   loops_unmute: 'test/ops-loops.test.ts',
   questions_pin: 'test/helpers/pinned-questions-scenarios.ts',
