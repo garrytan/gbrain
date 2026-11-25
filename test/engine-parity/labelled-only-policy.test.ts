@@ -8,9 +8,13 @@
  *    A rewrite of a page is refused with page_not_found, the same bytes on every arm, unless the page names the member (its
  *    readable_by holds the member or one of its groups) or a folder rule the member satisfies is stamped on it.
  *  - Regression: the Rust opening probe (readWriteVisibilityProbe) always answered `any_labelled: false` and never read
- *    access_members, so the write check treated the writer as unlabelled and returned early for a page open to everyone.
+ *    access_members, so the write check treated the writer as unlabelled and returned early for a page open to everyone. Once the
+ *    probe answered truly, the check's raw read of the owner id refused every remote writer on Rust (the owner and ordinary members
+ *    too, also after the labelled-only member was disabled or removed), and the Rust store did not serve the labelled-only writer
+ *    policy, so the rewrite ended on engine_capability_missing instead of page_not_found.
  *  - Why existing coverage misses it: the labelled-only write cases (test/access-labelled-only-*.test.ts) run on PGLite and
- *    Postgres only; the parity cases of the grant set and read it, and the plain member's write case uses an unlabelled member.
+ *    Postgres only; the parity cases of the grant set and read it, and the plain member's write case uses an unlabelled member
+ *    on a brain with none.
  *  - Seam: none. The grant through setMemberLabelledOnly, the token through mintLegacyToken and bindCredential, the real bearer
  *    check and dispatchToolCall. A refusal is returned as a value: the harness counts a thrown typed refusal as a pass.
  */

@@ -132,6 +132,23 @@ pub struct PrivacyPolicy {
     /// provenance page by the privacy part too.
     #[serde(default)]
     pub provenance_privacy_off: bool,
+    /// The labelled-only conjunct a stored write's writer is held to (`labelledOnlyForSql`, GBRA-108 design 1): the page
+    /// names one of the identities (`page_readers && identity`) or has a folder rule in `satisfied_rule_ids`
+    /// (`folder_rule_ids && satisfied`), ANDed with the rest of the policy. No lineage: a write never reads through it.
+    /// Judged by [`page_hidden`] only.
+    #[serde(default)]
+    pub labelled_only: Option<LabelledOnly>,
+}
+
+/// The terms of [`PrivacyPolicy::labelled_only`]: every principal a labelled-only writer may be named by, and the folder
+/// rules it satisfies (each already validated by the TypeScript member, as `labelledOnlySql` does; an invalid set is empty).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LabelledOnly {
+    #[serde(default)]
+    pub identity: Vec<String>,
+    #[serde(default)]
+    pub satisfied_rule_ids: Vec<String>,
 }
 
 /// One entry of [`PrivacyPolicy::folder_coverage`]: `''` covers the whole source.
@@ -370,7 +387,11 @@ pub(crate) fn page_hidden_with(
     let allowed = member_access_allows(read, page, &policy.identity, policy, false, owner_only)?
         && (!policy.entity_privacy
             || private_source_open(page, policy)
-            || privacy_allows(read, page, policy.honor_aliases)?);
+            || privacy_allows(read, page, policy.honor_aliases)?)
+        && match &policy.labelled_only {
+            Some(labelled) => page_names_labelled(read, page, labelled, policy.caller_record)?,
+            None => true,
+        };
     Ok(!allowed)
 }
 
@@ -640,6 +661,17 @@ pub(crate) fn stamped_rules(read: &dyn KvRead, page: &PageRecord) -> Result<Vec<
     Ok(rules)
 }
 
+/// The folder rules a policy judges `page` by (`folder_rule_ids`). A caller record's rendering reads no live pending
+/// prefix, so a page under one (`kept`) is judged by the ids its last stamp kept, not the rules installed since;
+/// elsewhere the live pending prefix hides the page, and the kept ids equal the rules after the restamp ([`stamped_rules`]).
+fn page_rules(read: &dyn KvRead, page: &PageRecord, kept: bool) -> Result<Vec<AccessRuleRecord>> {
+    if kept {
+        kept_rules(read, &page.source_id, page.id)
+    } else {
+        stamped_rules(read, page)
+    }
+}
+
 /// The short member-access form `page_readers IS NULL AND folder_rule_ids IS NULL`: the page names no readers and no
 /// folder rule is stamped on it.
 pub(crate) fn names_no_readers_or_rules(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
@@ -725,15 +757,8 @@ fn readers_allowed(
     derived: bool,
     owner_read: bool,
 ) -> Result<bool> {
-    // A caller record's rendering reads no live pending prefix, so a page under one is judged by
-    // the ids its last stamp kept (`folder_rule_ids`), not the rules installed since; elsewhere the
-    // live pending prefix hides the page, and the kept ids equal the rules after the restamp.
     let pending = pending_covers(read, &page.source_id, &page.slug)?;
-    let rules = if folders.record && pending {
-        kept_rules(read, &page.source_id, page.id)?
-    } else {
-        stamped_rules(read, page)?
-    };
+    let rules = page_rules(read, page, folders.record && pending)?;
     if open && (names_readers(page) || !restrictions_present(read)?) {
         return Ok(!names_readers(page) && rules.is_empty());
     }
@@ -768,6 +793,27 @@ fn readers_allowed(
         origin_restricted_by(read, page, &|o| origin_closed(read, o))?
     };
     Ok(!closed)
+}
+
+/// The labelled-only conjunct (`labelledOnlySql` without lineage): the page's readers name one of `labelled.identity`
+/// (`page_readers && identity`), or a folder rule stamped on it is in `labelled.satisfied_rule_ids`
+/// (`folder_rule_ids && satisfied`). A page that names nobody and has no stamped rule is named by no one.
+fn page_names_labelled(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    labelled: &LabelledOnly,
+    record: bool,
+) -> Result<bool> {
+    if readers_name(page, &labelled.identity) {
+        return Ok(true);
+    }
+    let kept = record && pending_covers(read, &page.source_id, &page.slug)?;
+    Ok(page_rules(read, page, kept)?.iter().any(|r| {
+        labelled
+            .satisfied_rule_ids
+            .iter()
+            .any(|id| id.split_once(':') == Some((r.source_id.as_str(), r.rule_id.as_str())))
+    }))
 }
 
 /// `page_readers && identity`: the page's readers name one of the principals.

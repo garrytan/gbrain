@@ -93,6 +93,11 @@ export interface StorePrivacyPolicy {
   callerRecord?: boolean;
   /** A local owner's fact policy with privacy off: the provenance page is judged with no privacy part. */
   provenancePrivacyOff?: boolean;
+  /**
+   * The labelled-only conjunct of a stored write's writer (`labelledOnlyForSql`): the page names one of `identity` or has a
+   * folder rule in `satisfiedRuleIds` (`LabelledOnly` in privacy.rs). Judged by the page policy only, never by a fact policy.
+   */
+  labelledOnly?: { identity: string[]; satisfiedRuleIds: string[] };
 }
 
 /** `OwnerOnlyForm` (access/owner-only.ts), plus 'off' for a text with no owner-only test (`OwnerOnlyForm` in owner_only.rs). */
