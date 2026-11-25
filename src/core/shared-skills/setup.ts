@@ -175,6 +175,16 @@ export async function setupSharedBrainContent(ctx: OperationContext, options: Sh
     return receipt;
   }
   if (prior?.stage === 'complete') return prior;
+  if (receipt.owned_root && receipt.repository_kind === 'content_directory' && options.git !== 'init') {
+    // Judge the root before any checkpoint names it, so a refused root can still be replaced with --content-root.
+    let probe = root;
+    while (!existsSync(probe) && dirname(probe) !== probe) probe = dirname(probe);
+    const enclosing = spawnSync('git', ['-C', probe, 'rev-parse', '--show-toplevel'], { env: gitChildEnv(), encoding: 'utf8', timeout: 15_000 });
+    if (enclosing.status === 0 && resolve(enclosing.stdout.trim()) !== root) {
+      throw opError('local_conflict', 'The new content directory is inside another Git worktree. Choose a separate root or explicitly initialize Git here; setup will not claim its parent repository.',
+        `${root} is inside the Git worktree ${enclosing.stdout.trim()}. Pass --content-root a path outside any repository, or add --git so the content directory gets its own repository.`);
+    }
+  }
   await saveContentReceipt(ctx, receipt);
   if (!existed) {
     if (!receipt.owned_root) {
@@ -200,13 +210,6 @@ export async function setupSharedBrainContent(ctx: OperationContext, options: Sh
     else receipt.pending_actions.push('Git initialization was unavailable; install Git and explicitly initialize this content directory later.');
   }
   if (receipt.repository_kind === 'content_directory' && !receipt.pending_actions.length) receipt.pending_actions.push('Optional: initialize Git explicitly; configure an off-host backup separately.');
-  if (receipt.owned_root && receipt.repository_kind === 'content_directory') {
-    const enclosing = spawnSync('git', ['-C', root, 'rev-parse', '--show-toplevel'], { env: gitChildEnv(), encoding: 'utf8', timeout: 15_000 });
-    if (enclosing.status === 0 && resolve(enclosing.stdout.trim()) !== root) {
-      throw opError('local_conflict', 'The new content directory is inside another Git worktree. Choose a separate root or explicitly initialize Git here; setup will not claim its parent repository.',
-        `${root} is inside the Git worktree ${enclosing.stdout.trim()}. Pass --content-root a path outside any repository, or add --git so the content directory gets its own repository.`);
-    }
-  }
   if (!existingRoot) await ctx.engine.executeRaw('UPDATE sources SET local_path=$1 WHERE id=$2 AND incarnation=$3::uuid AND local_path IS NULL', [root, sourceId, source.incarnation]);
   receipt.stage = 'owner';
   await saveContentReceipt(ctx, receipt);
