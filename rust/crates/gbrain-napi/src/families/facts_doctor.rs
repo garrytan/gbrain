@@ -3,6 +3,7 @@
 //!
 //! Each method runs one store call on the pool through `Brain::run` and resolves plain JSON.
 //! `countFactRelinkOutcomes`, a read of the `fact_relink_attempts` table, is in `fact_relink.rs`.
+//! `countSegmentedCensusPages`, `listFactsPageBodies` and `readFactTableCatalog` run `facts::doctor_pages`.
 
 use napi::Env;
 use napi::bindgen_prelude::Object;
@@ -13,6 +14,7 @@ use crate::store_binding::{Brain, required};
 use gbrain_store::facts::doctor::{
     ConversationRowsQuery, CoverageQuery, RedactedQuery, UnlinkedQuery,
 };
+use gbrain_store::facts::doctor_pages::SegmentedCensusQuery;
 
 #[napi]
 impl Brain {
@@ -107,5 +109,24 @@ impl Brain {
             let a: CoverageQuery = required(args, "countFactEmbeddingCoverage args")?;
             s.count_fact_embedding_coverage(&a)
         })
+    }
+
+    /// `countSegmentedCensusPages(sourceIds, checkedOutSourceIds)`: resolves `{ n }`.
+    #[napi]
+    pub fn count_segmented_census_pages<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: SegmentedCensusQuery = required(args, "countSegmentedCensusPages args")?;
+            s.count_segmented_census_pages(&a)
+        })
+    }
+
+    /// `readFactTableCatalog()`: resolves `{ facts, attempts }`.
+    #[napi]
+    pub fn read_fact_table_catalog<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_fact_table_catalog())
     }
 }

@@ -98,6 +98,17 @@ fn owner_tier_facts_rank_at_or_above_the_floor() {
     // A typed write is tier unknown: it meets an unknown floor and nothing above it.
     assert_eq!(read("unknown", &[plain, plain, 999]), vec![plain]);
     assert!(read("operator_curated", &[plain]).is_empty());
-    assert!(read("no-such-tier", &[plain]).is_empty());
     assert!(read("unknown", &[]).is_empty());
+    assert!(read("no-such-tier", &[]).is_empty());
+    let refused = b
+        .list_owner_tier_facts(&args::<OwnerTierQuery>(
+            json!({ "ids": [plain], "floor": "no-such-tier" }),
+        ))
+        .unwrap_err();
+    assert!(
+        refused
+            .to_string()
+            .contains("listOwnerTierFacts: unknown trust tier \"no-such-tier\""),
+        "{refused}"
+    );
 }

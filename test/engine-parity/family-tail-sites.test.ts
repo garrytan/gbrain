@@ -23,10 +23,8 @@
  *    relationship or names a private page to a remote caller in `most_connected`.
  *  - Why existing coverage misses it: the statements ran through `executeRaw`, which the parity cases cannot call (D18),
  *    so no case compared them across engines.
- *  - Seam: none. Pages come from putPage (or put_page, which derives the links and dated evidence; on a Rust brain that
- *    write queues on a refused link-preparation read, so those cases stop on that typed refusal: a named known stop at
- *    liveSlugAliases, persistence/links-preparation.ts:29, which lane 1 (rust-engine/wikilink-put-rust) serves; the pin
- *    comes out when that lands), links from addLink or
+ *  - Seam: none. Pages come from putPage (or put_page, which derives the links and dated evidence; its link
+ *    preparation reads the live slug aliases through the typed readLiveSlugAliases on every engine), links from addLink or
  *    replaceDerivedLinks, takes from
  *    addTakesBatch, runs and queries from their typed writers. Ids differ between arms, so every case maps them to slugs or
  *    to the name of the row it seeded.
@@ -262,8 +260,16 @@ function watched(engine: BrainEngine) {
  * live slug alias read of that preparation now (readLiveSlugAliases, caller-links-federate-rust), so the apply-mode
  * cases run to the end on every arm; a refusal on any arm is a failure and reaches the harness as thrown.
  */
-async function orTheQueuedRefusal<T>(_w: ReturnType<typeof watched>, _backend: string, run: () => Promise<T>): Promise<T> {
-  return run();
+async function orTheQueuedRefusal<T>(w: ReturnType<typeof watched>, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    const request = (error as { writeRequest?: { blocked_reason?: unknown; write_error?: unknown } })?.writeRequest;
+    // A refused preparation step parks the request as blocked, or ends it failed with the typed refusal as its write error.
+    const blocked = request?.blocked_reason ?? request?.write_error;
+    if (blocked === 'engine_capability_missing' && w.refusal() !== null) throw w.refusal();
+    throw error;
+  }
 }
 
 describe('engine parity: the edge-contradictions phase end to end', () => {
@@ -307,10 +313,10 @@ describe('engine parity: the edge-contradictions phase end to end', () => {
     methods: ['getConfig', 'setConfig', 'markRevertedEdgeProposals', 'listEdgeContradictionCandidates', 'listKnownEdgeProposals',
       'listLinkContexts', 'recordEdgeProposal', 'readEdgeProposal',
       'readEdgeProposalEvidence', 'readEdgeProposalHash', 'edgeClosureLanded', 'setEdgeProposalStatus', 'markEdgeProposalUndone'],
-  }, async (base, backend) => {
+  }, async (base) => {
     const w = watched(base);
     const engine = w.engine;
-    return orTheQueuedRefusal(w, backend, async () => {
+    return orTheQueuedRefusal(w, async () => {
       await seedThroughOp(engine);
       await engine.setConfig('dream.edge_contradictions.mode', 'apply');
       const before = await liveEmployers(engine);
@@ -339,10 +345,10 @@ describe('engine parity: the edge-contradictions phase end to end', () => {
     methods: ['getConfig', 'setConfig', 'markRevertedEdgeProposals', 'listEdgeContradictionCandidates', 'listKnownEdgeProposals',
       'listLinkContexts', 'recordEdgeProposal', 'readEdgeProposal',
       'readEdgeProposalEvidence', 'readEdgeProposalHash', 'edgeClosureLanded', 'setEdgeProposalStatus'],
-  }, async (base, backend) => {
+  }, async (base) => {
     const w = watched(base);
     const engine = w.engine;
-    return orTheQueuedRefusal(w, backend, async () => {
+    return orTheQueuedRefusal(w, async () => {
       await seedThroughOp(engine);
       await engine.setConfig('dream.edge_contradictions.mode', 'apply');
       const applied = phaseView(await runPhaseEdgeContradictions(engine, { judge: conflictJudge }));

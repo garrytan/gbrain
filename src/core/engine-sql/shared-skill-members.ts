@@ -240,3 +240,24 @@ export async function acknowledgeSharedSkillDeliveryBatch(exec: SqlExecutor, a: 
     await exec.executeRaw(`UPDATE shared_skill_members SET acknowledged_sequence=GREATEST(acknowledged_sequence,$2),acknowledged_view=$3 WHERE installation_id=$1::uuid`, [a.installationId, a.advance.sequence, a.advance.viewToken]);
   }
 }
+
+/** One member following a source, as shared-skills/migration-members.ts inspects it. */
+export interface SharedMemberMigrationRow {
+  installation_id: string; adapter: string; epoch: string | number; active: boolean;
+  approved_incarnation: string | null; desired_view: string | null; acknowledged_view: string | null; stage: string | null;
+}
+
+/** The statement shared-skills/migration-members.ts inspectSharedMemberMigration ran through executeRaw. */
+export const SHARED_MEMBER_MIGRATION_SQL = `SELECT m.installation_id,m.adapter,m.epoch,m.active,m.follow_policy->'sources'->>$1 AS approved_incarnation,
+      m.desired_view,m.acknowledged_view,
+      (SELECT b.evidence->>'stage' FROM shared_skill_delivery_batches b WHERE b.installation_id=m.installation_id
+        AND b.epoch=m.epoch AND b.sequence=m.acknowledged_sequence AND b.acknowledged_at IS NOT NULL LIMIT 1) AS stage
+    FROM shared_skill_members m WHERE m.follow_policy->'sources' ? $1 ORDER BY m.adapter COLLATE "C",m.installation_id LIMIT 4096`;
+
+/**
+ * The members whose follow policy names source `sourceId`, by byte order of adapter and then installation id (at most
+ * 4096), with the incarnation each approved and the stage its acknowledged batch reported. A failure is thrown unchanged.
+ */
+export function listSharedMemberMigrationRows(exec: Pick<SqlExecutor, 'executeRaw'>, sourceId: string): Promise<SharedMemberMigrationRow[]> {
+  return exec.executeRaw<SharedMemberMigrationRow>(SHARED_MEMBER_MIGRATION_SQL, [sourceId]);
+}

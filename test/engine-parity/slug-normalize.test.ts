@@ -19,6 +19,10 @@
  *  - Seam: none. Real engines; get_page runs through the registry operation.
  *
  * Rust arm known stops (each case asserts the exact Rust answer, then rethrows or throws the typed refusal):
+ *  - a page under an older decomposed or capitalised spelling: capability `pages` (rustLegacySpellingStop, docs/designs/RUST_ENGINE.md
+ *    row 50). The Rust store writes every slug in normal form, as the TS engines now do, and keeps no other spelling, so the
+ *    cases that address such a stored spelling (put refusal, delete, restore, the in-place writes, the capital-stored writes)
+ *    stop there, before their journal steps run.
  *  - ambiguity refusal: member `executeRaw`, capability `raw_sql` (Rust raw-sql area): the case stores two capitalised
  *    rows by renaming them, which needs raw SQL; and the Rust store lowercases every slug it stores or reads, so it can hold
  *    neither capitalised spelling. Rust must keep a stored slug's capitals and read a slug exactly as sent for the refusal
@@ -28,9 +32,6 @@
  *    before admission. When it does, Rust must delete the row it stored, by the spelling it stored.
  *  - get_page: member `readPageSnapshot`, option `resolveAlias` (Rust pages area, store-members/pages.ts):
  *    the Rust store does not serve resolveAlias on master yet, so the op refuses before any slug is read.
- *  - NFC storage: member `putPage` (Rust pages area, gbrain-store pages.rs `validate_slug`): the Rust store
- *    lowercases a slug but does not compose it to NFC, so an NFD slug is stored as NFD and the NFC read
- *    misses it. Rust must compose to NFC in `validate_slug` and in its lowercased read lookups.
  *  - put refusal beside a composed twin, and the final-review reads (a Unicode-expansion spelling, out-of-scope rows crowding the
  *    candidates): the puts stop at `readPersistenceBrainId` as above, and the reads store their rows by renaming them, which stops at `executeRaw` / `raw_sql`.
  *  - legacy-spelling put refusal: member `readPersistenceBrainId`, capability `persistence_journal` (Rust
@@ -69,6 +70,17 @@ const RUST_RAW_SQL_STOP =
   "This brain's engine does not support executeRaw yet (it needs the raw_sql capability), so nothing ran.";
 const RUST_RESOLVE_ALIAS_STOP =
   "This brain's engine does not support readPageSnapshot (option resolveAlias) yet (it needs the pages capability), so nothing ran.";
+
+/**
+ * The Rust store keeps every slug in its normal form (lowercase, then NFC, as `validate_slug` writes it), so it cannot hold
+ * a page under an older decomposed or capitalised spelling (named stop, docs/designs/RUST_ENGINE.md row 50). A case that
+ * needs such a page stores it, checks the store kept the normal form, and stops on the typed refusal. Owner: lane 1 (pages).
+ */
+async function rustLegacySpellingStop(engine: BrainEngine, stored: string, title: string): Promise<never> {
+  const page = await engine.putPage(stored, { type: 'note', title, compiled_truth: 'Old.', timeline: '' });
+  expect(page.slug).toBe(stored.toLowerCase().normalize('NFC'));
+  throw capabilityMissing('pages', 'a page under an older decomposed or capitalised slug spelling (the Rust store keeps every slug in normal form)', 'partial');
+}
 
 function ctx(engine: BrainEngine): OperationContext {
   return { engine, config: { engine: engine.kind, embedding_disabled: true } as never, remote: false, sourceId: 'default',
@@ -114,25 +126,19 @@ describe('engine parity: slug normal form', () => {
     return reads;
   });
 
-  parityTest('putPage stores an NFD slug in NFC, and an NFD wikilink names that page', { methods: ['putPage', 'getPage'] }, async (engine, backend) => {
+  parityTest('putPage stores an NFD slug in NFC, and an NFD wikilink names that page', { methods: ['putPage', 'getPage'] }, async (engine) => {
     const stored = await engine.putPage(NFD_ZOE, { type: 'person', title: 'Zoe', compiled_truth: 'Zoe.', timeline: '' });
     const extracted = await extractPageLinks('people/hal-example', `Hal knows [[${NFD_ZOE}]].`, {}, 'person', { resolve: async () => null });
     const targets = extracted.candidates.map(c => c.targetSlug);
     const found = await engine.getPage(targets[0]!);
-    if (backend === 'rust') {
-      // The exact Rust difference today: the NFD bytes are stored, so the NFC read misses the page.
-      expect({ stored: stored.slug, targets, found: found?.slug ?? null }).toEqual({ stored: NFD_ZOE, targets: [NFC_ZOE], found: null });
-      throw capabilityMissing('pages', 'putPage (a slug in Unicode NFC)', 'partial');
-    }
     expect({ stored: stored.slug, targets, found: found?.slug ?? null }).toEqual({ stored: NFC_ZOE, targets: [NFC_ZOE], found: NFC_ZOE });
     return { stored: stored.slug, targets, found: found?.slug ?? null };
   });
   parityTest('a put by the stored decomposed spelling of a page is refused with the same text, and nothing changes', { methods: ['putPage', 'readPageSnapshot'] }, async (engine, backend) => {
     const stored = 'notes/legacy-cafe\u0301';
     const composed = 'notes/legacy-caf\u00e9';
-    // A page written before writes composed slugs. The Rust store still keeps the NFD bytes a caller sends (the stop
-    // pinned above), so it stores one directly; the TS engines compose, so the row is moved back to the old spelling.
-    if (backend === 'rust') await engine.putPage(stored, { type: 'note', title: 'Legacy', compiled_truth: 'Old.', timeline: '' });
+    // A page written before writes composed slugs: the TS engines compose, so the row is moved back to the old spelling.
+    if (backend === 'rust') await rustLegacySpellingStop(engine, stored, 'Legacy');
     else {
       await engine.putPage(composed, { type: 'note', title: 'Legacy', compiled_truth: 'Old.', timeline: '' });
       await engine.executeRaw('UPDATE pages SET slug = $1 WHERE slug = $2', [stored, composed]);
@@ -180,7 +186,7 @@ describe('engine parity: slug normal form', () => {
   parityTest('delete_page by the stored decomposed spelling soft-deletes that row in place, with no composed twin', { methods: ['putPage', 'readPageSnapshot'] }, async (engine, backend) => {
     const stored = 'notes/del-cafe\u0301';
     const composed = 'notes/del-caf\u00e9';
-    if (backend === 'rust') await engine.putPage(stored, { type: 'note', title: 'Delete me', compiled_truth: 'Old.', timeline: '' });
+    if (backend === 'rust') await rustLegacySpellingStop(engine, stored, 'Delete me');
     else {
       await engine.putPage(composed, { type: 'note', title: 'Delete me', compiled_truth: 'Old.', timeline: '' });
       await engine.executeRaw('UPDATE pages SET slug = $1 WHERE slug = $2', [stored, composed]);
@@ -202,7 +208,7 @@ describe('engine parity: slug normal form', () => {
   parityTest('restore_page by the stored decomposed spelling restores the row delete_page soft-deleted by it, with no composed twin', { methods: ['putPage', 'readPageSnapshot'] }, async (engine, backend) => {
     const stored = 'notes/res-cafe\u0301';
     const composed = 'notes/res-caf\u00e9';
-    if (backend === 'rust') await engine.putPage(stored, { type: 'note', title: 'Restore me', compiled_truth: 'Old.', timeline: '' });
+    if (backend === 'rust') await rustLegacySpellingStop(engine, stored, 'Restore me');
     else {
       await engine.putPage(composed, { type: 'note', title: 'Restore me', compiled_truth: 'Old.', timeline: '' });
       await engine.executeRaw('UPDATE pages SET slug = $1 WHERE slug = $2', [stored, composed]);
@@ -253,7 +259,7 @@ describe('engine parity: slug normal form', () => {
   parityTest('add_tag, remove_tag, add_timeline_entry, edit_page and append_page by the stored decomposed spelling change that row in place, with no composed twin', { methods: ['putPage', 'readPageSnapshot'] }, async (engine, backend) => {
     const stored = 'notes/write-cafe\u0301';
     const composed = 'notes/write-caf\u00e9';
-    if (backend === 'rust') await engine.putPage(stored, { type: 'note', title: 'Write', compiled_truth: 'Body.', timeline: '' });
+    if (backend === 'rust') await rustLegacySpellingStop(engine, stored, 'Write');
     else {
       await engine.putPage(composed, { type: 'note', title: 'Write', compiled_truth: 'Body.', timeline: '' });
       await engine.executeRaw('UPDATE pages SET slug = $1 WHERE slug = $2', [stored, composed]);
@@ -333,10 +339,8 @@ describe('engine parity: slug normal form', () => {
   parityTest('a put by the stored decomposed spelling is refused even when its composed twin exists, and neither page changes', { methods: ['putPage', 'readPageSnapshot'] }, async (engine, backend) => {
     const stored = 'notes/twin-cafe\u0301';
     const composed = 'notes/twin-caf\u00e9';
-    if (backend === 'rust') {
-      await engine.putPage(stored, { type: 'note', title: 'Legacy', compiled_truth: 'Old.', timeline: '' });
-      await engine.putPage(composed, { type: 'note', title: 'Twin', compiled_truth: 'Twin.', timeline: '' });
-    } else {
+    if (backend === 'rust') await rustLegacySpellingStop(engine, stored, 'Legacy');
+    else {
       await engine.putPage(composed, { type: 'note', title: 'Legacy', compiled_truth: 'Old.', timeline: '' });
       await engine.executeRaw('UPDATE pages SET slug = $1 WHERE slug = $2', [stored, composed]);
       await engine.putPage(composed, { type: 'note', title: 'Twin', compiled_truth: 'Twin.', timeline: '' });

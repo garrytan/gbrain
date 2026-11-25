@@ -12,9 +12,8 @@
  *  - Regression: both publications sent the checkpoint as raw SQL, which the Rust engine refuses, so a managed sync's
  *    checkpoint failed on a Rust brain. The step now calls `advanceSyncCheckpoint` (engine-sql/sources.ts).
  *  - Why existing coverage misses it: sync-checkpoint.test.ts covers the member alone; the managed sync suites run PGLite
- *    and Postgres only, and a Rust brain cannot activate managed persistence (managed-mode.ts reads it as not enabled),
- *    so no whole managed sync reaches the checkpoint on that arm (test/rust-managed-sync-gap-tripwire.test.ts, on main
- *    with rust-engine/sync-stamp-rest).
+ *    and Postgres only, and a Rust brain's managed sync refuses by name before it reaches the checkpoint (capability
+ *    managed_persistence, B2; the whole managed sync case in sync-stamp.test.ts pins that stop).
  *  - Seam: the case calls the step the publications call, in the same coordinated-write transaction shape, rather than a
  *    whole managed sync. Times are compared as present or absent, never to a clock value.
  */

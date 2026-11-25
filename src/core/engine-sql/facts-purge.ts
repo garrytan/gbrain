@@ -899,7 +899,7 @@ export async function deletePurgedFacts(raw: EngineRawRead, factIds: number[], s
   return (await raw(`DELETE FROM facts WHERE id=ANY($1::bigint[]) AND source_id=$2 RETURNING id`, [factIds, sourceId])).length;
 }
 
-/** submitPurgeFactMutation: Deletes the chunks of these pages and voids the text projection that certified them; how many pages had chunks deleted. Writes content_chunks and pages; run it in the purge transaction. */
+/** submitPurgeFactMutation: Deletes the chunks of these pages and voids the text projection that certified them; how many chunks it deleted (one row per deleted chunk). Writes content_chunks and pages; run it in the purge transaction. */
 export async function deletePurgedChunks(raw: EngineRawRead, pageIds: number[]): Promise<number> {
   return (await raw(`WITH gone AS (DELETE FROM content_chunks WHERE page_id=ANY($1::integer[]) RETURNING page_id),
         unsealed AS (UPDATE pages SET text_projection_revision=NULL WHERE id IN (SELECT page_id FROM gone) AND text_projection_revision IS NOT NULL)

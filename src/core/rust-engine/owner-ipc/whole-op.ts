@@ -4,6 +4,8 @@
  * socket (routes.ts). Its entry point calls `forwardWholeOperation` before it touches the engine; on a client engine
  * the whole operation runs inside the owner, transaction included, and its result or error comes back as the
  * in-process call would give it.
+ * `snapshotStore` and `snapshotStatus` are the whole operations that are not imports: one copy of the whole brain at one
+ * committed generation, and what became of it (store-snapshot.ts). Their caller is the shadow drill and `gbrain backup`.
  *
  * Only data crosses: an option that is a function (a coordinator `prepare` seam) refuses with
  * `engine_capability_missing`, and so does a caller that is not the trusted local CLI (a remote MCP caller of a second
@@ -36,7 +38,8 @@ import {
 } from './client.ts';
 import { ownerGone, ownerIpcRefusal } from './routes.ts';
 
-export type WholeOperationName = 'importFromContent' | 'importFromFile' | 'importImageFile' | 'importManagedFiles';
+export type WholeOperationName =
+  | 'importFromContent' | 'importFromFile' | 'importImageFile' | 'importManagedFiles' | 'snapshotStore' | 'snapshotStatus';
 
 /** The owner's entry for a registry operation sent whole (owner-ops.ts runs it). */
 export const OWNER_RUN_OPERATION = 'runOperation';
@@ -94,6 +97,8 @@ const PATH_ARGS: Readonly<Record<WholeOperationName, readonly number[]>> = {
   importFromFile: [0],
   importImageFile: [0],
   importManagedFiles: [],
+  snapshotStore: [0],
+  snapshotStatus: [],
 };
 
 /**

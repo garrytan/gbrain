@@ -72,7 +72,7 @@ impl FenceContext {
 /// One cell of the incoming fence. A field the JSON leaves out or null compares equal to nothing.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
-struct Cell {
+pub(super) struct Cell {
     row_num: Option<f64>,
     fact: Option<String>,
     visibility: Option<String>,
@@ -83,7 +83,7 @@ impl Cell {
         self.row_num == Some(f64::from(row_num))
     }
 
-    fn holds(&self, row: &FactRecord, row_num: i32, visibility: &str) -> bool {
+    pub(super) fn holds(&self, row: &FactRecord, row_num: i32, visibility: &str) -> bool {
         self.at(row_num)
             && self.fact.as_deref() == Some(row.fact.as_str())
             && self.visibility.as_deref() == Some(visibility)
@@ -92,7 +92,7 @@ impl Cell {
 
 /// `jsonb_to_recordset(incoming) AS c(row_num integer, fact text, visibility text)`: a non-array,
 /// a non-object cell or a `row_num` that is no integer is the error PGLite raises.
-fn cells(incoming: &str) -> Result<Vec<Cell>> {
+pub(super) fn cells(incoming: &str) -> Result<Vec<Cell>> {
     let bad = |what: &str| StoreError::new(INVALID_ARGUMENT, format!("incoming fence: {what}"));
     let Value::Array(items) =
         serde_json::from_str::<Value>(incoming).map_err(|_| bad("not a JSON document"))?
@@ -133,13 +133,13 @@ fn fence_rows(store: &Store, target: &FenceTarget) -> Result<Vec<(i32, FactRecor
 }
 
 /// A conversation-extractor row is in play only when a fence cell claims its number.
-fn in_play(row: &FactRecord, row_num: i32, cells: &[Cell]) -> bool {
+pub(super) fn in_play(row: &FactRecord, row_num: i32, cells: &[Cell]) -> bool {
     !row.conversation_slot() || cells.iter().any(|c| c.at(row_num))
 }
 
 /// `openedFactRowSql`: a private row `gbrain repair open-facts` names, whose cell is the same
 /// number and claim at world.
-fn opened(row: &FactRecord, row_num: i32, cells: &[Cell], ctx: &FenceContext) -> bool {
+pub(super) fn opened(row: &FactRecord, row_num: i32, cells: &[Cell], ctx: &FenceContext) -> bool {
     row.visibility == "private"
         && ctx.opened.contains(&row.id)
         && cells.iter().any(|c| c.holds(row, row_num, "world"))

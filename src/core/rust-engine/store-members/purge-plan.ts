@@ -22,9 +22,9 @@
  * A page purge receipt's store probes (engine-sql/purge-verify.ts) run through the same two members, as
  * `countPurgeStoreProbe` and `listPurgeStoreProbeItems` (facts/purge_store_probe.rs). The store answers `slug_key` for the
  * stores it keeps (pages, facts, take proposals, open loops, page and slug aliases, eval candidates, files, write-gate
- * holds), `page_rows`, `fact_refs`, `trust_proposals`, `page_requests`, `page_segment_texts`, `segment_texts` and
+ * holds, the mention gazetteer), `page_rows`, `fact_refs`, `trust_proposals`, `page_requests`, `page_segment_texts`, `segment_texts` and
  * `effect_payload`. It keeps no rows of `core_edit_notices`, the retrieval event, link, feedback and weight stores,
- * `context_volunteer_events`, `mention_gazetteer_entries` or `query_cache`, so a probe of one finds nothing without a store
+ * `context_volunteer_events` or `query_cache`, so a probe of one finds nothing without a store
  * call. The fact purge receipt's `fingerprint` probe (the fact, take and take proposal stores) and `claim_text` probe (pages,
  * chunks, versions and journal requests; facts/purge_claim_probe.rs) run there too. A `claim_text` probe of `core_edit_notices`
  * finds nothing without a store call, as a `slug_key` probe of it does.
@@ -42,8 +42,8 @@ type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infe
 const STORE_PROBED_TABLES: ReadonlySet<string> = new Set([
   'links', 'timeline_entries', 'raw_data', 'wanted_links', 'calibration_profiles', 'decision_receipts', 'dream_verdicts',
   'eval_candidates', 'eval_contradictions_cache', 'eval_contradictions_runs', 'fact_relink_attempts', 'ingest_log',
-  'mcp_request_log', 'minion_attachments', 'minion_inbox', 'minion_jobs', 'persistence_topology_changes',
-  'subagent_messages', 'subagent_tool_executions',
+  'mcp_request_log', 'mention_gazetteer_entries', 'minion_attachments', 'minion_inbox', 'minion_jobs', 'persistence_topology_changes',
+  'subagent_messages', 'subagent_tool_executions', 'pinned_questions', 'context_volunteer_events',
   // The swept stores a fact purge's receipt probes (facts/purge_probe.rs `for_each_table_row`).
   'belief_events', 'derived_generations', 'derived_generation_items', 'files', 'open_loops', 'page_aliases', 'page_body_manifest', 'page_body_stagings',
   'page_body_staging_texts', 'page_segment_texts', 'page_segment_derivations', 'page_segment_derivation_purges', 'persistence_effects', 'trust_proposals', 'write_gate_holds',
@@ -183,9 +183,6 @@ export const listPageSourcePathsForPurge: Member<'listPageSourcePathsForPurge'> 
 /** (store `listFactNeighbours`) */
 export const listNearestFactsForPurge: Member<'listNearestFactsForPurge'> = (brain, embedding, sourceId, model, fact) =>
   storeCall({ member: 'listNearestFactsForPurge' }, () => brain.listFactNeighbours({ embedding, sourceId, model, claim: fact }));
-
-/** A store read has no statement deadline to set. */
-export const setPurgeProbeTimeout: Member<'setPurgeProbeTimeout'> = async () => {};
 
 export const countPurgeProbe: Member<'countPurgeProbe'> = async (brain, probe, rows) => {
   // The SQL arms refuse a bad bound before they build a statement (boundedCountSql); so does a probe the store never sees.
