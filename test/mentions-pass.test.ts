@@ -96,6 +96,19 @@ describe('the stale sweep links mentions by default', () => {
     expect(await mentionLinks(engine)).toEqual([]);
   });
 
+  test('retiring a name rescans pages that contain it even with no mention link to it: a shorter name it hid now links', async () => {
+    await page(engine, 'companies/acme', 'company', 'Acme Example', 'A company.');
+    await page(engine, 'companies/acme-labs', 'company', 'Acme Example Labs', 'Its lab.');
+    await page(engine, 'notes/n1', 'note', 'n1', 'Met Acme Example Labs today.');
+    await engine.addLinksBatch([{ from_slug: 'notes/n1', to_slug: 'companies/acme-labs', link_type: 'met', link_source: 'manual', context: 'met' } as never]);
+    await sweep(engine);
+    expect(await mentionLinks(engine)).toEqual([]);
+    await engine.softDeletePage('companies/acme-labs');
+    await sweep(engine);
+    expect(await mentionLinks(engine)).toContain('notes/n1 -> companies/acme');
+    expect(await countMentionDuePages(engine)).toBe(0);
+  });
+
   test('Unicode and punctuation variants of a new name are found', async () => {
     await page(engine, 'companies/seed', 'company', 'Seed Company', 'x');
     await page(engine, 'notes/nfd', 'note', 'nfd', 'Visited Ha\u0300 Nô\u0323i Labs yesterday.');
