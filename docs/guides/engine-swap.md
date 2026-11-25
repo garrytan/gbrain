@@ -170,6 +170,15 @@ A run checks the plan hash (`preview_changed`), that no other process owns the R
 
 A brain that fails back can swap again later with a new plan.
 
+<a id="remote-callers"></a>
+### Remote callers after a swap
+
+A brain with remote callers (access tokens, OAuth clients or remote MCP) does not swap yet (`remote_access_unserved`).
+Once it can, one named loss stays: a remote read by the brain owner on a Rust brain refuses by name
+(`engine_capability_missing`, "the owner lineage read") until the Rust store models the owner's lineage read. Other
+remote callers, and the local CLI, read what they read on the old engine. The swap plan lists it under "Named loss for
+remote callers".
+
 <a id="policy"></a>
 ## The readiness policy
 

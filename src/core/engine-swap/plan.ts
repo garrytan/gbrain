@@ -8,7 +8,7 @@
  * but not run.
  */
 import { createHash } from 'node:crypto';
-import { FAILBACK_ACCEPTED_LOSSES, FAILBACK_KNOWN_LIMITS, FINGERPRINT_RULE_TEXT, WAY_BACK_TEXT } from './failback.ts';
+import { FAILBACK_ACCEPTED_LOSSES, FAILBACK_KNOWN_LIMITS, FINGERPRINT_RULE_TEXT, RUST_REMOTE_LIMITS, WAY_BACK_TEXT } from './failback.ts';
 import { failbackLosses, type FailbackLosses } from './failback-read.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { EngineCapabilities } from '../engine-capabilities.ts';
@@ -67,6 +67,8 @@ export interface WayBack {
   /** Null when the primary's schema could not be read; the plan text says so. */
   losses: FailbackLosses | null;
   known_limits: readonly string[];
+  /** What remote callers lose on the Rust engine (named losses). */
+  remote_limits: readonly string[];
   fingerprint_rule: string;
 }
 
@@ -158,5 +160,5 @@ export async function planEngineSwap(engine: BrainEngine, deps: SwapPlanInputs =
 async function wayBack(engine: BrainEngine): Promise<WayBack> {
   let losses: FailbackLosses | null = null;
   try { losses = await failbackLosses(engine); } catch { losses = null; }
-  return { statement: WAY_BACK_TEXT, accepted_losses: FAILBACK_ACCEPTED_LOSSES, losses, known_limits: FAILBACK_KNOWN_LIMITS, fingerprint_rule: FINGERPRINT_RULE_TEXT };
+  return { statement: WAY_BACK_TEXT, accepted_losses: FAILBACK_ACCEPTED_LOSSES, losses, known_limits: FAILBACK_KNOWN_LIMITS, remote_limits: RUST_REMOTE_LIMITS, fingerprint_rule: FINGERPRINT_RULE_TEXT };
 }

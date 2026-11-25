@@ -40,6 +40,14 @@ export const FAILBACK_KNOWN_LIMITS = [
   'No read call returns a fact\'s fence row, event type, dimension or attribution (facts.row_num, source_markdown_slug, event_type, dimension, value, value_hash, dim_status, attributed_to), so a fact added on Rust after the swap makes failback refuse by name.',
 ] as const;
 
+/**
+ * Stated in the swap plan: what a remote caller loses on the Rust engine. A brain with remote callers does not swap yet
+ * (remote_access_unserved); once it can, the owner's remote read is the named loss (RUST_ENGINE.md row RA-1).
+ */
+export const RUST_REMOTE_LIMITS = [
+  'A remote read by the brain owner on a Rust brain refuses by name (engine_capability_missing, "the owner lineage read") until the store models the owner\'s lineage read; other remote callers and the local CLI read as on the old engine.',
+] as const;
+
 /** The fingerprint guard's rule, in plain words, for the swap and failback plans and the guide. */
 export const FINGERPRINT_RULE_TEXT = 'Fingerprint rule (the probe\'s own rule, both directions): where the Postgres or PGLite engine\'s lower() or whitespace class differs from the Rust engine on some characters, the run stops only if a stored fact holds one; with no such character, any probe mismatch stops it. Stock Postgres differs on dozens of rare characters (for example U+0085, next line), so its probe always reports mismatches; a brain whose facts hold none of them is not affected.';
 
