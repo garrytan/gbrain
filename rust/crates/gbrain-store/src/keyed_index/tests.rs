@@ -702,3 +702,65 @@ fn new_transitions_with_no_link_are_in_keys_after() {
     let again = store.apply_link_temporal_rows(&input).unwrap();
     assert_eq!(again.keys_after, want);
 }
+
+/// Pages written in one transaction share one `updated_at`, so `listPages` orders them by its
+/// tie-breaks alone (slug, then source, then id). Every sort, limit, offset and cursor over such
+/// ties answers as the member's own scan, sort and slice (the walk is off under `FULL_SCAN`).
+#[test]
+fn list_pages_by_update_time_keeps_its_tie_breaks() {
+    let store = crate::test_support::store();
+    source(&store, "work");
+    let tx = store.begin_transaction(false).unwrap();
+    for slug in ["notes/b", "notes/a", "notes/c", "people/a"] {
+        for src in ["work", "default"] {
+            let input: PageInput =
+                de(json!({"type": "note", "title": slug, "compiled_truth": "x"}));
+            let options: PutPageOptions = de(json!({"sourceId": src, "index": false}));
+            tx.put_page(slug, &input, &options).unwrap();
+        }
+    }
+    tx.commit_transaction().unwrap();
+    drop(tx);
+    let mut rng = Lcg(23);
+    // Pages written later, at other times, around the tied ones.
+    for i in 0..30 {
+        put(&store, &mut rng, &format!("extra/{i}"), "default");
+    }
+    let tied = {
+        let read = store.read().unwrap();
+        crate::env::iso(
+            crate::pages::read_page(&*read, "work", "notes/a")
+                .unwrap()
+                .unwrap()
+                .updated_at_us,
+        )
+    };
+    let tie_count = crate::pages::all_pages(&*store.read().unwrap())
+        .unwrap()
+        .iter()
+        .filter(|p| crate::env::iso(p.updated_at_us) == tied)
+        .count();
+    assert!(
+        tie_count >= 8,
+        "only {tie_count} pages share the transaction's time"
+    );
+    for sort in [None, Some("updated_asc")] {
+        for (limit, offset) in [
+            (Some(1), None),
+            (Some(3), Some(2)),
+            (Some(5), Some(6)),
+            (Some(50), None),
+        ] {
+            for cursor in [None, Some("notes/a"), Some("notes/b"), Some("people/a")] {
+                let mut f = json!({"limit": limit, "offset": offset, "sort": sort});
+                if let Some(slug) = cursor {
+                    f["updatedAfterKeyset"] = json!({"updatedAt": tied, "slug": slug});
+                }
+                let filters: crate::pages::PageFilters = de(f.clone());
+                same(&format!("listPages over ties {f}"), || {
+                    store.list_pages(&filters).unwrap()
+                });
+            }
+        }
+    }
+}

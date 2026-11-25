@@ -453,7 +453,7 @@ thread_local! {
     pub(crate) static FULL_SCAN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-fn full_scan() -> bool {
+pub(crate) fn full_scan() -> bool {
     #[cfg(test)]
     {
         FULL_SCAN.with(std::cell::Cell::get)

@@ -1588,7 +1588,10 @@ impl Store {
             Some("updated_asc" | "created_desc" | "slug")
         );
         let by_updated = newest_first || filters.sort.as_deref() == Some("updated_asc");
+        // Under the test switch (`keyed_index::FULL_SCAN`) the walk is skipped entirely, so the
+        // comparison tests check it against this member's own scan, sort and slice below.
         if by_updated
+            && !crate::keyed_index::full_scan()
             && filters.page_type.is_none()
             && filters.tag.is_none()
             && filters.slug_prefix.is_none()
