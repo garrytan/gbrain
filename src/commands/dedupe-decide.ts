@@ -116,6 +116,7 @@ export async function decideContacts(engine: BrainEngine, sourceId: string, choi
       if (listed.length) {
         const refs = listed.map(parseRef);
         if (refs.some(r => !r)) { refuse('invalid_candidate', 'A candidate is written source:slug.'); continue; }
+        if (refs.some(r => memberKey(r!) === key)) { refuse('invalid_candidate', `${line.contact_slug} is the contact itself; to mark it as not a person, use ignore.`); continue; }
         targets = [...new Map((refs as IdentityMemberRef[]).flatMap(setOf).map(m => [memberKey(m), m])).values()];
       } else {
         const rejected = new Set(apart.filter(set => set.some(m => memberKey(m) === key)).flatMap(set => set.map(memberKey)));
@@ -138,8 +139,7 @@ export async function decideContacts(engine: BrainEngine, sourceId: string, choi
         if (!page || memberKey(cand) === key) { refuse('unknown_candidate', `No live page ${text(cand)} to link.`); continue; }
         if (page.type !== 'person') { refuse('not_a_person_page', `${text(cand)} is a ${page.type} page, not a person page.`); continue; }
         people = setOf(cand);
-        const same = decisionId([contact, ...people]);
-        const apartSet = apart.find(set => decisionId(set) !== same && set.some(m => memberKey(m) === key) && set.some(m => people.some(x => memberKey(x) === memberKey(m))));
+        const apartSet = apart.find(set => set.some(m => memberKey(m) === key) && set.some(m => people.some(x => memberKey(x) === memberKey(m))));
         if (apartSet) { refuse('rejected_pair', `${line.contact_slug} and ${text(cand)} are recorded as different people (decision ${decisionId(apartSet)}).`); continue; }
         person = people[0]!;
         let held: string | undefined;
