@@ -40,7 +40,7 @@
         "phase": "post-connect",
         "preConnectRules": [
           {
-            "condition": "(command === 'salience' || command === 'anomalies' || command === 'graph-query' || command === 'whoknows' || command === 'founder') && isThinClient(loadConfig())",
+            "condition": "(command === 'salience' || command === 'anomalies' || command === 'graph-query' || command === 'whoknows' || command === 'founder' || command === 'profile') && isThinClient(loadConfig())",
             "connectsEngine": false,
             "refusesThinClient": false,
             "routesThinClient": false,
@@ -941,7 +941,7 @@
         "phase": "post-connect",
         "preConnectRules": [
           {
-            "condition": "(command === 'salience' || command === 'anomalies' || command === 'graph-query' || command === 'whoknows' || command === 'founder') && isThinClient(loadConfig())",
+            "condition": "(command === 'salience' || command === 'anomalies' || command === 'graph-query' || command === 'whoknows' || command === 'founder' || command === 'profile') && isThinClient(loadConfig())",
             "connectsEngine": false,
             "refusesThinClient": false,
             "routesThinClient": false,
@@ -1034,7 +1034,7 @@
         "phase": "post-connect",
         "preConnectRules": [
           {
-            "condition": "(command === 'salience' || command === 'anomalies' || command === 'graph-query' || command === 'whoknows' || command === 'founder') && isThinClient(loadConfig())",
+            "condition": "(command === 'salience' || command === 'anomalies' || command === 'graph-query' || command === 'whoknows' || command === 'founder' || command === 'profile') && isThinClient(loadConfig())",
             "connectsEngine": false,
             "refusesThinClient": false,
             "routesThinClient": false,
@@ -1385,6 +1385,23 @@
         "thinClient": "refuse",
         "thinClientRoutedSubcommands": []
       },
+      "profile": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [
+          {
+            "condition": "(command === 'salience' || command === 'anomalies' || command === 'graph-query' || command === 'whoknows' || command === 'founder' || command === 'profile') && isThinClient(loadConfig())",
+            "connectsEngine": false,
+            "refusesThinClient": false,
+            "routesThinClient": false,
+            "terminates": true,
+            "thinClientCheck": true,
+            "unconditionalFor": []
+          }
+        ],
+        "thinClient": "none",
+        "thinClientRoutedSubcommands": []
+      },
       "projections": {
         "hasSwitchCase": false,
         "phase": "pre-connect-own-engine",
@@ -1691,7 +1708,7 @@
         "phase": "post-connect",
         "preConnectRules": [
           {
-            "condition": "(command === 'salience' || command === 'anomalies' || command === 'graph-query' || command === 'whoknows' || command === 'founder') && isThinClient(loadConfig())",
+            "condition": "(command === 'salience' || command === 'anomalies' || command === 'graph-query' || command === 'whoknows' || command === 'founder' || command === 'profile') && isThinClient(loadConfig())",
             "connectsEngine": false,
             "refusesThinClient": false,
             "routesThinClient": false,
@@ -2178,7 +2195,7 @@
         "phase": "post-connect",
         "preConnectRules": [
           {
-            "condition": "(command === 'salience' || command === 'anomalies' || command === 'graph-query' || command === 'whoknows' || command === 'founder') && isThinClient(loadConfig())",
+            "condition": "(command === 'salience' || command === 'anomalies' || command === 'graph-query' || command === 'whoknows' || command === 'founder' || command === 'profile') && isThinClient(loadConfig())",
             "connectsEngine": false,
             "refusesThinClient": false,
             "routesThinClient": false,

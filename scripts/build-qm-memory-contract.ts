@@ -39,6 +39,8 @@ const V4_SCOPE_READ_OPS: ReadonlySet<string> = new Set(['entity', 'find_experts'
 /** The arguments v1 publishes per tool, frozen: later arguments appear from v2 on. */
 const V1_PARAMS: Record<string, readonly string[]> = { memory_recall: ['query', 'max_chars', 'acting_user'], memory_write: ['facts', 'idempotency_key', 'acting_user'] };
 /** The arguments v2 publishes per tool, frozen: #8694's query_keep appears from v3 on. */
+/** Params an op gained after v5 was published; v1 to v5 render without them (lane 3 P1: context_pack's profile). */
+export const PARAMS_AFTER_V5: Record<string, readonly string[]> = { context_pack: ['profile'] };
 const V2_PARAMS: Record<string, readonly string[]> = { memory_recall: [...V1_PARAMS.memory_recall!, 'source_id', 'source_ids'], memory_write: [...V1_PARAMS.memory_write!, 'source_id'] };
 /** The deferred operations v1 published, frozen: GST-1158 F9 deferred more from v2 on. */
 const V1_DEFERRED_OPS: readonly string[] = ['capture', 'extract_facts', 'list_write_conflicts', 'takes_add', 'takes_resolve', 'takes_supersede', 'takes_update'];
@@ -178,7 +180,8 @@ function toolEntry(name: string, version: QmContractVersion) {
   const op = operations.find(o => o.name === name);
   if (!op) throw new Error(name + ' is not in the operation registry');
   const frozen = version === 1 ? V1_PARAMS[name] : version === 2 ? V2_PARAMS[name] : undefined;
-  const params = Object.entries(op.params).filter(([k]) => !frozen || frozen.includes(k));
+  const later = version <= 5 ? PARAMS_AFTER_V5[name] ?? [] : [];
+  const params = Object.entries(op.params).filter(([k]) => (!frozen || frozen.includes(k)) && !later.includes(k));
   const text = version <= 5 ? V5_TOOL_TEXT[name] : undefined;
   return {
     name, description: text?.description ?? op.description, scope: op.scope ?? 'read', mutating: op.mutating === true,

@@ -240,7 +240,7 @@ test/link-source-check-repair.test.ts	regex literal drift guard (#4613)	1	readFi
 test/longmemeval-embed-cache.test.ts	EmbeddingCache — canonical hash	4	readFileSync
 test/loops-extract-wiring.test.ts	jobs.ts wiring	2	source-surface-helper
 test/loops-extract-wiring.test.ts	relational edge vocabulary	2	readFileSync,source-surface-helper
-test/mcp-registration.test.ts	every stdio registration path builds from REGISTRATION_SURFACE	5	readFileSync
+test/mcp-registration.test.ts	every stdio registration path builds from registrationProfile	5	readFileSync
 test/meeting-ingestion-attendance-template.test.ts	(file-level)	3	readFileSync
 test/migrate-stdout-clean.test.ts	migration output stays off stdout	2	source-surface-helper
 test/migrate.test.ts	PR #356 + #363 — session timeouts applied via startup parameters	1	readFileSync,source-surface-helper
@@ -415,6 +415,11 @@ test/serve-stdin-eof-drain.test.ts	serve-sync-runner stays off the boot path (#4
 test/setup-brain-layout.test.ts	setup --shape personal	9	readFileSync
 test/setup-pi-skill-extension.test.ts	(file-level)	7	readFileSync
 test/setup.test.ts	gbrain setup: setup migrations on the brain it creates (Cat 41 run 4)	3	readFileSync
+test/shadow-replay.test.ts	comparison	2	readFileSync
+test/shadow-replay.test.ts	replay child (in-memory arms)	4	readFileSync
+test/shadow-replay.test.ts	review fixes (ship final review of the queued head)	4	readFileSync
+test/shadow-replay.test.ts	review fixes (ship pass 2)	3	readFileSync
+test/shadow-replay.test.ts	the per-brain hash key (review of 3e7a623341)	3	readFileSync
 test/shared-skills-catalog.test.ts	(file-level)	22	readFileSync
 test/shared-skills-export.serial.test.ts	(file-level)	15	readFileSync
 test/shared-skills-init.serial.test.ts	real combined brain initialization	4	readFileSync

@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 315761,
-    "stdoutSha256": "793d05f0517cfc1f8689ccd55e9facd4fd7746fbbb49e5bc3a9eb7532f3bc025",
+    "stdoutBytes": 316192,
+    "stdoutSha256": "21a97af9629febdf6e3510ffeb059577e5d67e31b8f4b8ac93fe1feafe86b3a1",
     "toolNames": [
       "remember",
       "entity",
@@ -233,6 +233,7 @@
           "content_origin": "string?",
           "entity": "string?",
           "expected_revision": "string?",
+          "facet": "string?",
           "fact": "string?",
           "force": "boolean?",
           "infer_entity": "boolean?",
@@ -281,6 +282,10 @@
             },
             "expected_revision": {
               "description": "Revision read; omit to create.",
+              "type": "string"
+            },
+            "facet": {
+              "description": "Profile facet (diet, allergy, size.shoe, brand, style, constraint, schedule, household, other); no entity: your own profile.",
               "type": "string"
             },
             "fact": {
@@ -7517,6 +7522,7 @@
           "intent": "string?",
           "min_trust": "string?",
           "prefer_source_id": "string?",
+          "profile": "boolean?",
           "session_id": "string?",
           "since": "string?",
           "source_id": "string?"
@@ -7584,6 +7590,10 @@
             "prefer_source_id": {
               "description": "Source to try first (thin clients send .gbrain-source here); never narrows.",
               "type": "string"
+            },
+            "profile": {
+              "description": "true: add your own profile (facets, constraints, relationships, preferences).",
+              "type": "boolean"
             },
             "session_id": {
               "description": "Opaque session id.",
