@@ -2892,11 +2892,13 @@
           "pool"
         ],
         "flagOffOpensTransaction": false,
-        "flagOn": "unscoped",
+        "flagOn": "scoped",
         "flagOnLanes": [
-          "pool"
+          "tx"
         ],
-        "flagOnScopes": []
+        "flagOnScopes": [
+          "src-a"
+        ]
       },
       "readLedgerSource#batch": {
         "flagOffLanes": [
@@ -3982,7 +3984,7 @@
       }
     },
     "static": {
-      "callSites": 36,
+      "callSites": 37,
       "directMethods": {
         "_searchKeywordCJK": 1,
         "countChunklessPagesWithContent": 1,
@@ -4011,6 +4013,7 @@
         "listStaleFrontmatterKeyPages": 1,
         "listStalePagesForExtraction": 1,
         "readEmbeddingStateCounts": 1,
+        "readImageSealProbe": 1,
         "readPageSnapshot": 1,
         "readPageSnapshotsBatch": 1,
         "runVectorAttempt": 1,
@@ -4302,7 +4305,7 @@
         "readGuestSourceRow": "none",
         "readHealthMemoClock": "none",
         "readIgnoredPrivacyLabelPages": "none",
-        "readImageSealProbe": "none",
+        "readImageSealProbe": "direct",
         "readLedgerSource": "none",
         "readLivePageFrontmatter": "none",
         "readLocalWriterRow": "none",

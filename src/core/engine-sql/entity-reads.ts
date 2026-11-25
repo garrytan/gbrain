@@ -40,6 +40,11 @@ export async function readLivePageFrontmatter(exec: TimedRawRead, sourceId: stri
   return page ?? null;
 }
 
+/** An executor reduced to the raw path with no options: a scoped transaction's executor and an engine's own `executeRaw` both fit. */
+export interface PlainRawRead {
+  executeRaw<R = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<R[]>;
+}
+
 export interface IgnoredLabelPageRow { type: string | null; frontmatter: Record<string, unknown> | null }
 
 /**
@@ -66,7 +71,7 @@ export async function readPageChunkerVersion(exec: TimedRawRead, pageId: number)
  * (import-file.ts importImageFile: an unchanged image whose index is complete is skipped). The fence test is written
  * out (`safeChunksFilter('p')`, SAFE_FENCE_CHUNKER_VERSION 4); the caller raw-SQL pins rebuild it from the builder.
  */
-export async function readImageSealProbe(exec: TimedRawRead, sourceId: string, slug: string): Promise<{ has_visual: boolean } | null> {
+export async function readImageSealProbe(exec: PlainRawRead, sourceId: string, slug: string): Promise<{ has_visual: boolean } | null> {
   const [row] = await exec.executeRaw<{ has_visual: boolean }>(
     `SELECT EXISTS (SELECT 1 FROM content_chunks c WHERE c.page_id = p.id AND c.embedding_image IS NOT NULL) AS has_visual
          FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND p.chunker_version >= 4`,
