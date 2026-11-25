@@ -51,6 +51,7 @@ export const SECTIONS: DocSection[] = [
       { title: "Guest notes", path: "docs/guides/guest-notes.md", description: "Keep what outside guests in a group chat say apart from your own pages: a database-only guest source (`gbrain guests init`), the writer list, how the broker saves a note with its sender and group, the warning every read shows, `gbrain guests promote`, `gbrain guests grant-owner-clients` and the guest_source doctor check.", includeInFull: false },
       { title: "Memory boundaries", path: "docs/guides/memory-boundaries.md", description: "Durable shared preferences versus harness state; remote graph maintenance, provider text disclosure, authorization and full-backup limits; large pages (segmented storage up to 256 MiB on Postgres, append_page / gbrain append, upload sessions, windowed reads, limits per entry point).", includeInFull: false },
       { title: "Page history", path: "docs/guides/page-history.md", description: "Why a page changed: an optional reason on page writes, replaced_because in get_versions, the gbrain-reason commit trailer, remote visibility and repo-less brains.", includeInFull: false },
+      { title: "The morning note", path: "docs/guides/morning-note.md", description: "What the nightly cycle learned and how to answer it: gbrain learned, learned-keep and learned-undo, the session-start count line, expiry and the defaults that turn nightly learning on.", includeInFull: false },
       { title: "Brain versus session memory", path: "docs/guides/brain-vs-memory.md", description: "Route durable facts and preferences to shared memory, configuration to the harness, and temporary work to session state.", includeInFull: false },
       // Linked, not inlined: it applies only once a brain already runs on another machine, and AGENTS.md (inlined) routes those agents to it; dropping it gave the bundle room under FULL_SIZE_BUDGET.
       { title: "Connect a hosted brain", path: "docs/guides/hosted-harness-access.md", description: "Getting the HTTPS endpoint (`gbrain mcp expose`, admin token file), host-side grants, private credential handoff, harness installation, profile repair, delegation limits and honest verification.", includeInFull: false },
@@ -135,6 +136,12 @@ export const SECTIONS: DocSection[] = [
         title: "docs/ENGINES.md",
         description: "PGLite vs Postgres trade-off and when to migrate.",
         path: "docs/ENGINES.md",
+      },
+      {
+        title: "docs/guides/engine-shadow-bench.md",
+        description: "Rust engine shadow mode, criterion 8: `gbrain engine shadow bench --import <receipt.json>`, what the speed receipt must hold, how a row counts as worse, better or not measured, and what the import never does.",
+        path: "docs/guides/engine-shadow-bench.md",
+        includeInFull: false,
       },
       {
         title: "docs/guides/move-to-postgres.md",

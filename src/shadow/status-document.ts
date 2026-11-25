@@ -7,6 +7,7 @@ import { existsSync } from 'node:fs';
 import type { BrainEngine } from '../core/engine.ts';
 import type { EngineConfig } from '../core/types.ts';
 import { buildDrillStatus } from './drill-status.ts';
+import { buildBenchStatus } from './bench.ts';
 import { buildEligibilityStatus } from './eligibility.ts';
 import { buildEvidenceStatus, type EvidenceStatus } from './evidence.ts';
 import { readEpoch } from './evidence-epoch.ts';
@@ -63,6 +64,7 @@ export async function shadowStatusDocument(brain: { key: string; dir: string }, 
     // Unbound: the epoch kept moving, so the evidence fields above are left out and the swap cannot be READY; the drills
     // block is then one read against whatever epoch is current, only so `status` can still print its reasons.
     ...(bound ? bound.drills : buildDrillStatus(brain.dir)),
+    ...buildBenchStatus({ dir: brain.dir, primaryEngine: state?.primary_engine ?? null }),
   };
 }
 

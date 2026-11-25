@@ -39,7 +39,7 @@ const scratch: string[] = [];
 afterAll(() => { for (const d of scratch) rmSync(d, { recursive: true, force: true }); });
 function tmp(prefix = 'skres-'): string { const d = mkdtempSync(join(tmpdir(), prefix)); scratch.push(d); return d; }
 
-interface J { id: string; name: string; description?: string; triggers?: string[]; routing?: string[]; body?: string; path?: string; eligible?: boolean }
+interface J { id: string; name: string; description?: string; triggers?: string[]; routing?: string[]; body?: string; path?: string; eligible?: boolean; deprecated?: boolean; replaced_by?: string }
 async function jsonCatalog(home: string, catalog: string, skills: J[], extra: Record<string, unknown> = {}) {
   const f = join(tmp('skres-src-'), 'catalog.json');
   writeFileSync(f, JSON.stringify(skills));
@@ -348,17 +348,18 @@ describe('sessions', () => {
     await jsonCatalog(home, 'c', [...targets, ...weak]);
     const strong = [1, 10, 18, 25, 37, 50];
     const perTurn: { turn: number; n: number; tokens: number }[] = [];
+    // pregate-literal: DEFAULT_SESSION_TOKEN_BUDGET=2000 this test pins the old budget on purpose to check pacing under a tight budget
+    const budget = 2000;
     for (let t = 1; t <= 50; t++) {
       const s = strong.indexOf(t);
       const message = s >= 0 ? `can you ${targets[s]!.name} this` : `${pool[t % 12]} ${pool[(t + 5) % 12]}`;
-      // pregate-literal: DEFAULT_SESSION_TOKEN_BUDGET=2000 this test pins the old budget on purpose to check pacing under a tight budget
-      const r = await resolveSkills({ message, session_id: 'fifty', top_gate: 0 }, { home, sessionTokenBudget: 2000 });
+      const r = await resolveSkills({ message, session_id: 'fifty', top_gate: 0 }, { home, sessionTokenBudget: budget });
       perTurn.push({ turn: t, n: r.output.suggestions.length, tokens: r.output.block_tokens });
       expect(await r.commit()).toBe(true);
     }
     for (const t of [10, 25, 50]) expect({ turn: t, n: perTurn[t - 1]!.n > 0 }).toEqual({ turn: t, n: true });
     const total = perTurn.reduce((a, x) => a + x.tokens, 0);
-    expect(total).toBeLessThanOrEqual(2000);
+    expect(total).toBeLessThanOrEqual(budget);
     expect(sessionStatus('fifty', { home }).spent).toBe(total);
     const late = perTurn.filter(x => x.turn > 12 && !strong.includes(x.turn));
     expect(late.every(x => x.n === 0)).toBe(true);
@@ -1064,5 +1065,33 @@ describe('daily logs', () => {
     writeFileSync(full, 'y'.repeat(DAILY_LOG_DAY_CAP_BYTES));
     await appendDailyLog(dir, LANE_LOG, 'z\n', now + day);
     expect(readFileSync(full, 'utf8').endsWith('z\n')).toBe(false);
+  });
+});
+
+describe('deprecated skills', () => {
+  test('a SKILL.md with deprecated: true drops out of matched suggestions but still loads when the turn names it, with its replacement in the reason', async () => {
+    const home = tmp();
+    const root = tmp('skres-dir-');
+    const old = skillDir(root, 'reports', { name: 'reports', description: 'Write weekly status reports for a team', deprecated: true, replaced_by: 'status-digest' });
+    skillDir(root, 'status-digest', { name: 'status-digest', description: 'Write a weekly status digest for a team' });
+    await buildSkillIndex({ catalog: 'c', dirs: [root] }, { home });
+    const matched = await resolveSkills({ message: 'write the weekly status reports for the team', top_k: 8, top_gate: 0 }, { home });
+    expect(matched.output.suggestions.map(s => s.id)).toEqual(['status-digest']);
+    const named = await resolveSkills({ message: 'use the reports skill', top_gate: 0 }, { home });
+    expect(named.output.suggestions[0]).toMatchObject({ id: 'reports', match_strength: 'named', path: old });
+    expect(named.output.suggestions[0]!.reason).toStartWith('named in the turn; deprecated, use status-digest instead; ');
+  });
+
+  test('a JSON entry takes deprecated and replaced_by the same way, and a deprecated that is not a boolean is refused', async () => {
+    const home = tmp();
+    await jsonCatalog(home, 'c', [...BASIC, { id: 'gbrain:old-deploy', name: 'old-deploy', description: 'Ship a service to production after the tests pass', deprecated: true }]);
+    const matched = await resolveSkills({ message: 'ship the service to production', top_k: 8, top_gate: 0 }, { home });
+    expect(matched.output.suggestions.map(s => s.id)).not.toContain('gbrain:old-deploy');
+    expect(matched.output.suggestions[0]!.id).toBe('gbrain:deploy');
+    const named = await resolveSkills({ message: 'run /old-deploy now', top_gate: 0 }, { home });
+    expect(named.output.suggestions[0]).toMatchObject({ id: 'gbrain:old-deploy', match_strength: 'named' });
+    expect(named.output.suggestions[0]!.reason).toStartWith('named in the turn; deprecated; ');
+    expect(await codeOf(jsonCatalog(tmp(), 'c', [{ id: 'a', name: 'a', deprecated: 'yes' } as unknown as J]))).toBe('skill_source_invalid');
+    expect(await codeOf(jsonCatalog(tmp(), 'c', [{ id: 'a', name: 'a', replaced_by: 3 } as unknown as J]))).toBe('skill_source_invalid');
   });
 });

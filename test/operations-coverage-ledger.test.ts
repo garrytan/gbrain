@@ -184,6 +184,8 @@ const LEDGER: Record<string, string> = {
   find_experts: 'test/find-experts-op.test.ts',
   find_trajectory: 'test/operations-find-trajectory.test.ts',
   learned: 'test/learning-ledger.test.ts',
+  learned_keep: 'test/learning-decide.test.ts',
+  learned_undo: 'test/learning-decide.test.ts',
   code_callers: 'test/e2e/code-intel-mcp-ops-pglite.test.ts',
   code_callees: 'test/e2e/code-intel-mcp-ops-pglite.test.ts',
   code_def: 'test/e2e/code-intel-mcp-ops-pglite.test.ts',

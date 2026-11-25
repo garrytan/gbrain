@@ -16,7 +16,8 @@ generation"). Code: `snapshot.rs`, `verify.rs`, `redb_kv.rs` (`RedbSink`), `seed
 | `Pool#verifyStoreDir(dir, { v: 1, expected? })` | Reads a brain directory nothing has open and resolves a report. `expected` is a manifest. |
 
 `snapshotTo` and the owner's `snapshotStore` take two test seams, `batchDelayMs` (at most 1000) and
-`batchBytes` (at least 4096). Nothing else changes a copy.
+`batchBytes` (at least 4096). Nothing else changes what a copy holds. The owner's `snapshotStore` also takes
+`maxAgeMs`, `minReserveBytes` and `pollMs`, which move the limits at which it stops a copy (below).
 
 ## The copy
 
@@ -83,7 +84,7 @@ older format, repair the member-access flag and start the keyword index builder,
 commits, so a correct copy would change before anyone compared it. Verification takes no write lock, runs
 no recovery and commits nothing, and refuses a file that was not closed cleanly (`store_io`).
 
-It reads the commit sequence, the format record, `FORMAT`, the schema version and every key in one
+It reads `FORMAT`, then the commit sequence, the format record, the schema version and every key in one
 snapshot, and recomputes the digests. With `expected`, every field but `created_at_us` must be equal and a tag that is missing
 or extra is a mismatch (`tag_missing:<hex>`, `tag_extra:<hex>`, `tag_digest:<hex>`). Without it (the copy
 of a stopped store, which has no manifest) the report states what the directory holds.

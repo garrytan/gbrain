@@ -1051,6 +1051,10 @@
       },
       {
         "category": "brain",
+        "name": "learning_note"
+      },
+      {
+        "category": "brain",
         "name": "memory_proposals_pending"
       },
       {
@@ -1200,6 +1204,10 @@
       {
         "category": "brain",
         "name": "rename_identity_downgrades"
+      },
+      {
+        "category": "brain",
+        "name": "legacy_slug_spellings"
       },
       {
         "category": "brain",
