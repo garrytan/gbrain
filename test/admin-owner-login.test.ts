@@ -32,4 +32,10 @@ describe('owner login strings', () => {
     expect(prompt).toBeGreaterThan(command);
     expect(page.slice(page.lastIndexOf('<details', prompt), prompt)).toContain('Someone else runs the brain host');
   });
+
+  test('the Chromium suite still drives the login page with a waiting request', () => {
+    const browser = readFileSync('admin/e2e/admin.pw.ts', 'utf8');
+    expect(browser).toContain("getByLabel('Owner login command', { exact: true })");
+    expect(browser).toContain('/admin/?oauth_request=');
+  });
 });
