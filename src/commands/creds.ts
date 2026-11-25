@@ -21,6 +21,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 
 import { exportBundle, importBundle, type EncryptedBundle } from '../core/creds/export.ts';
 import {
+  isGrantVault,
   openVault,
   type CredentialEntry,
   type ProviderClientRecord,
@@ -129,6 +130,14 @@ async function runExport(args: string[]): Promise<void> {
   for (const p of providers) {
     const c = await vault.getClient(p);
     if (c) clients.push(c);
+  }
+  // Personal-mode accounts carry their own client record (GST-3849).
+  if (isGrantVault(vault)) {
+    for (const e of entries) {
+      if (!e.meta.client_id) continue;
+      const own = await vault.getClientById(e.provider, e.meta.client_id);
+      if (own?.account && !clients.some((c) => c.client_id === own.client_id && c.account === own.account)) clients.push(own);
+    }
   }
 
   const passphrase = await passphraseFrom(args);
