@@ -832,3 +832,140 @@ Found by searching trunk `3e79ea5896` for comments that name the single writer (
 - `src/core/rust-engine/store-members/write-guards.ts:55`
 - `src/core/rust-engine/store-members/write-misc.ts:27`
 - `src/core/rust-engine/store-members/writer-release.ts:9`
+
+## Appendix: skip guarantees under multi-user mode (lane L1)
+
+Status: written with lane L1 (optimistic explicit transactions), branch `rust-engine/mu-optimistic-txn`, from trunk
+`4ca2fa285e`. It classifies each lock skip of the appendix above (rows R*, T*) and 18 more found by searching for the same
+patterns (rows E*), by the guarantee that replaces "nothing else can write" once explicit transactions run optimistically
+(`GBRAIN_RUST_MULTIUSER=1` or the brain's `engine.rust.multiuser` config row). L0's inventory, once it reaches
+`rust-engine/multiuser`, replaces this list as the source of sites; rows are then reconciled by member.
+
+What holds in the store core already, for every site, with the switch on:
+
+- **read-set**: every key and key range an optimistic transaction reads through its bound store (point reads, scans, and
+  reads of absent keys) is validated at commit in the ordered pipeline (`occ_kv.rs`); a transaction whose read changed
+  is refused with `write_conflict` and runs again. A lock replaced by a read of the same row is therefore kept, as long as
+  the read goes through the transaction handle (the re-entry guard refuses calls on the outer engine inside `fn`).
+  Proven by `transactions/optimistic_tests.rs` (stale read, write skew, phantom insert, lease record moved after a check).
+- **single_flight**: `lockPageKeys` takes its keys in the brain's single-flight table until commit or rollback
+  (`transactions.rs`, `SingleFlight`): sorted, wait-die by age, bounded by the deadline (C15, C20 tests).
+- **cas**: a revision compare inside the transaction is a read of the row, so it is also validated at commit.
+- **counter**: `add_i64`, `raise_counter`, `allocate` and `counter_below` stay commutative through statement and
+  savepoint layers (a kept admission check is re-evaluated at commit).
+
+Rows marked **needs-review** are not yet proven: a time-based lease, a `SKIP LOCKED` queue claim whose conflict rerun
+changes what is claimed, a Rust route not verified, or a global row every writer touches. Each needs its own test (or a
+code change) before multi-user mode is called safe for that path. With the switch on today these paths do run
+optimistically without that proof: they are an open gap of the lane, not a guarantee.
+
+| # | site | member | guarantee | what the lock protected |
+|---|---|---|---|---|
+| R1 | `rust/crates/gbrain-store/src/access_policy.rs:458` | `lock_access_policy` (TS ... | read-set | Serializes read-modify-write of a source's access rules, so two writers do not both apply a rule set. |
+| R2 | `chronicle_state.rs:225` (comment `:224`) | `upsert_chronicle_row` | read-set | FK check (source, page exist) and upsert are atomic. |
+| R3 | `dream_config.rs:112` (doc `:8`) | `lock_dream_map_config_row` (TS `dream-config.ts:15`) | read-set | Breaker map row read then write; FOR UPDATE keeps others off the row. |
+| R4 | `eval_capture/decide_proposals.rs:32` (member `get_decide_proposal` `:444`) | decide proposal reads | read-set | Row lock for decide transitions (read, check, write). |
+| R5 | `facts/cycle.rs:584` (comment `:583`) | `read_live_stored_body` (TS `write-guards.ts:62`) | read-set | Body read under the writer gate before a later write. |
+| R6 | `facts/loops.rs:650` | `read_loop_fact_state` | read-set | Loop row and its commitment fact read under FOR UPDATE. |
+| R7 | `facts/purge_writes.rs:17` | purge rewrite and gate deletes (`update_page_body_for_purge`, ... | read-set | Purge row writes under the purge transaction. |
+| R8 | `facts/reconcile.rs:238` (doc `:233-237`) | `lock_reconcile_revision` (TS `facts-purge.ts:55`, see row T14) | cas | Page is still at the revision the caller read (FOR SHARE until settle commits). |
+| R9 | `facts/write_path.rs:17` (TS `facts-write-path.ts:86`, `lockSourceShared` no-op) | `lockSourceShared` | read-set | Shared lock on the source row, so writes against the source serialize. |
+| R10 | `import_members.rs:10` (TS `import-members.ts:7`) | page import members (`refreshPageOrigin`, `setChunkerVersion`, ... | read-set | Page and chunk row writes around a chunk write, FOR UPDATE on the page. |
+| R11 | `jobs.rs:55` (TS `jobs.ts:84` `admitJob`) | job claim and admission | read-set | FOR UPDATE SKIP LOCKED claim of a waiting job, so two claims never take the same row. |
+| R12 | `jobs/access_tokens.rs:440` (appendix cited `:410`; `lock_active_access_tokens` is at 440) | `lock_active_access_tokens` (TS `jobs-access-tokens.ts:64`) | read-set | Token rows that `auth rescope` edits (SELECT FOR UPDATE). |
+| R13 | `jobs/credential_binding.rs:14` (member `read_credential_binding` `:64`) | credential binding read (TS `access-members.ts:176`) | read-set | Token or client row locked before a binding write. |
+| R14 | `mention_state.rs:13` | mention pass advisory locks (TS `mention-pass.ts:18`, `:32`) | needs-review | Advisory locks serialize the mention pass per source and per entry. |
+| R15 | `page_body/derivation_sweep.rs:21` (TS `page-purge-sweep.ts:13`) | derivation sweep batches | needs-review | Deletes of derivation rows during purge. |
+| R16 | `pages.rs:1632` (doc `:1628-1631` says nothing is held; this is wrong) | `lock_page_keys` (TS `transactions.ts:256`, `writer.ts:172`) | single_flight | Exact (source, slug) page keys held until the transaction ends (TOCTOU for slug creation). |
+| R17 | `persistence.rs:45` (TS `persistence.ts:46`, `:50` `readLocalWriterRow` lock, `:167` `shareLockWriteCredential` no-op) | request, writer and credential reads with `lock` | read-set | FOR SHARE so a revocation waits; FOR UPDATE on a write request claimed by a purge. |
+| R18 | `persistence/noop_settle.rs:7` (TS `noop-settle.ts:19`, `lockNoopEmbeddingWindow`) | noop embedding settle window | needs-review | FOR UPDATE SKIP LOCKED window of unattempted effects; FOR SHARE on pages. |
+| R19 | `takes/held.rs:9` | held takes read (`FOR UPDATE` on take rows) | read-set | Take rows read for held-row decisions. |
+| R20 | `timeline/held.rs:9` | held timeline read | read-set | Timeline rows read for held decisions. |
+| R21 | `transactions.rs:32` (module doc; the store's writer gate itself) | explicit transaction and page-key hold | single_flight | Writer gate for the whole transaction; the page-key hold queue in memory (`hold_page_keys`, `:704`). |
+| R22 | `trust/held_rows.rs:9` | held rows (`list_held_rows`, `list_guarded_take_rows`) | read-set | Held-row read that the SQL does with FOR UPDATE. |
+| R23 | `trust/proposals.rs:22` | proposal row lock (`lock`) | read-set | Proposal row read before a transition. |
+| R24 | `write_guards.rs:12` (TS `typed-member-classes.ts:499` `listOriginClaims` is `nothingLock`) | `listOriginClaims` and the origin advisory locks | single_flight | Two writes of one file queue (PGLite takes an advisory lock per origin spelling). |
+| R25 | `write_misc.rs:89` (appendix cites `:89`; `read_source_state` at 91; TS `write-misc.ts:27` drops the option) | `read_source_state` | read-set | Source incarnation, archived flag, path and config (FOR SHARE). |
+| T1 | `src/core/belief/coverage.ts:33` (lock at `:39` via `tx.lockSourceRow`) | `appendCoverage` | read-set | Coverage event appended after reading the latest state under the source lock. |
+| T2 | `src/core/engine-sql/oauth-clients.ts:219` (`patchOauthClient` at `:223`) | `patchOauthClient` | cas | Client row patch with a before-image, under a row lock. |
+| T3 | `src/core/engine-sql/page-purge.ts:156` | `deletePagePurgeTombstones` | read-set | Tombstone delete; the caller holds the source row. |
+| T4 | `src/core/engine-sql/publication-journal.ts:13` (module doc; member lock options) | publication journal conditional writes | read-set | Persistence ordering with FOR SHARE and FOR UPDATE. |
+| T5 | `src/core/engine-sql/writer-admin.ts:27` (`readWriterAdminState` `:125`) | writer admin state read with `lock: true` | read-set | SHARE ROW EXCLUSIVE on brain and topology rows so the state holds until commit. |
+| T6 | `src/core/output/writer.ts:159` (lock call at `:172`) | `createEntity` identity hold | single_flight | Desired slug held through the slug registry probes and `putPage`, so two `createEntity('people/alice')` calls serialize. |
+| T7 | `src/core/persistence/managed-mode.ts:70` (`readManagedMode` `:69`) | managed-mode read (`lock` option) | read-set | Brain managed-mode row, FOR SHARE/UPDATE. |
+| T8 | `src/core/rust-engine/store-members/access-grants.ts:23` (also `:30`, `:35`, `:42`) | `readOAuthClientReceiptGrant` and token grant reads | read-set | Receipt grant read; `lock` changes nothing. |
+| T9 | `src/core/rust-engine/store-members/access-members.ts:174` (`readCredentialBindingForUpdate` `:176`) | credential binding for update | read-set | Binding columns, FOR UPDATE. |
+| T10 | `src/core/rust-engine/store-members/access-policy.ts:23` | `lockAccessPolicy` (TS side of R1) | read-set | Same as R1. |
+| T11 | `src/core/rust-engine/store-members/cli-sources.ts:99` (sibling no-op `lockSourceForUpdate` at `:107`) | `lockSourceRow` | read-set | Source row FOR UPDATE, which every page-key holder waits on. |
+| T12 | `src/core/rust-engine/store-members/dream-config.ts:6` (`lockDreamMapConfigRow` `:15`) | dream map config lock | read-set | Same as R3. |
+| T13 | `src/core/rust-engine/store-members/effect-worker.ts:53` (`lockEffectGuard` `:56`) | effect guard worktree locks | read-set | Worktree owner for the effect guard. |
+| T14 | `src/core/rust-engine/store-members/facts-purge.ts:8` (`lockReconcileRevision` `:55`) | `lockReconcileRevision` (TS side of R8) | cas | Page at revision, FOR SHARE until settle. |
+| T15 | `src/core/rust-engine/store-members/facts-rest.ts:47` | `lockAgentWritebackSetting` (no-op, `:48`) | read-set | Advisory lock serializes writers of one setting. |
+| T16 | `src/core/rust-engine/store-members/facts-write-path.ts:9` (`lockSourceShared` `:86`) | `lockSourceShared` (no-op) | read-set | Same as R9. |
+| T17 | `src/core/rust-engine/store-members/fence-holds.ts:8` | generation key lock (store's write gate) | read-set | Two writers of one generation key run one after another. |
+| T18 | `src/core/rust-engine/store-members/import-members.ts:7` | import members (same as R10) | read-set | Same as R10. |
+| T19 | `src/core/rust-engine/store-members/jobs-access-tokens.ts:61` (`lockActiveAccessTokens` `:64`) | active token rows for rescope | read-set | Same as R12. |
+| T20 | `src/core/rust-engine/store-members/jobs-client-grants.ts:5` (`readOauthClientForUpdate` `:13`, `lockOauthClientName` `:36`) | client grant write, name lock | read-set | Name lock makes same-name registrations serialize (uniqueness check). |
+| T21 | `src/core/rust-engine/store-members/jobs.ts:84` (`admitJob` `:86`) | delegated admission (`policy.lock`, `checkCapacity`) | read-set | Capacity check and insert are one admission. |
+| T22 | `src/core/rust-engine/store-members/page-purge-journal.ts:8` (`lockWriteRequestsById` in `persistence.ts:253`) | purge request lock | read-set | Write request row claimed by the purge. |
+| T23 | `src/core/rust-engine/store-members/page-purge-sweep.ts:13` | page purge sweep deletes | read-set | Deletes with no row lock; the transaction serializes writers. |
+| T24 | `src/core/rust-engine/store-members/page-purge.ts:12` | `deletePagePurgeTombstones` on Rust | read-set | Tombstone delete under the unpurge transaction. |
+| T25 | `src/core/rust-engine/store-members/persistence.ts:46` (`readLocalWriterRow` `:50`) | local writer registration read with `lock` | read-set | Revocation waits (FOR SHARE). |
+| T26 | `src/core/rust-engine/store-members/shared-skill-members.ts:18` (SQL FOR UPDATE lives in `src/core/shared-skills/publication.ts:538-542`, not reached on Rust) | shared skill publication | read-set | Pack and head revision checks, FOR UPDATE on the SQL side. |
+| T27 | `src/core/rust-engine/store-members/transactions.ts:6` | `transaction(fn)` writer gate and re-entry guard | read-set | The gate itself. |
+| T28 | `src/core/rust-engine/store-members/trust-fence.ts:16` | `listHeldRows` and `listGuardedTakeRows` | read-set | Stamped take and timeline tiers read under the fence guard. |
+| T29 | `src/core/rust-engine/store-members/worktree-claim.ts:8` | worktree claim (`assertAdminUnlocked`, admin state) | read-set | Brain and source row locks (change nothing on Rust). |
+| T30 | `src/core/rust-engine/store-members/write-guards.ts:55` (`readLiveStoredBody` `:62`) | same as R5 | read-set | Body read for a later write. |
+| T31 | `src/core/rust-engine/store-members/write-misc.ts:27` (`readSourceState` `:30`) | same as R25 | read-set | Source state read with FOR SHARE option. |
+| T32 | `src/core/rust-engine/store-members/writer-release.ts:9` | `lockWorktreesAndSources`, `lockCycleLocks`, `shareWorktree` (no-ops) | needs-review | Writer release: worktrees, sources and cycle locks held so no writer changes topology during release. |
+| E1 | `src/core/engine-sql/chronicle-ledger.ts:76` (Rust: `store-members/chronicle-ledger.ts:60-62`, store `chronicle_ledger.rs:328`) | `reserveChronicleJudgeSlot` | needs-review | Global daily cap on judge reservations (advisory lock on the SQL side). |
+| E2 | `src/core/minions/budget-meter.ts:49`; `src/core/minions/rate-leases.ts:81` (advisory per client) | budget check-and-reserve; rate lease | needs-review | Check-and-reserve of a client budget or rate. |
+| E3 | `src/core/engine-sql/spend-log.ts:83`, `:171` (advisory per client and budget key) | spend admission | needs-review | Same family as E2. |
+| E4 | `src/core/engine-sql/jobs.ts:401`, `:554`, `:589`, `:605` (SKIP LOCKED); `:191`, `:207`, `:217` (advisory) | job claim, reclaim, admission locks | needs-review | Minion claim and admission (coalesce key, quota, max waiting). `:554` reclaims a job whose `lock_until` has passed. |
+| E5 | `src/core/engine-sql/persistence-claims.ts:114`, `:263`; `persistence-effect-scans.ts:68`; `src/core/persistence/journal.ts:839` (`claimNextWrite`) | write and effect claims | needs-review | FIFO claim of the next write request or effect (SKIP LOCKED). |
+| E6 | `src/core/engine-sql/page-body.ts:213` (advisory per page id), `:530` (SKIP LOCKED) | page-body chunk rewrite | needs-review | Per-page chunk rewrite mutex; SKIP LOCKED for the chunk sweep. |
+| E7 | `src/core/engine-sql/telemetry.ts:184`, `:204` (SKIP LOCKED prune) | operation and MCP log prune | needs-review | Each prune takes different rows. |
+| E8 | `src/core/engine-sql/files-ops.ts:242` (FOR SHARE in INSERT ... SELECT) | files insert with page id | needs-review | Page slug read as the insert value. |
+| E9 | `src/core/persistence/git-door.ts:65` (`sourceCanonicalGit`, FOR SHARE with `lock`) | strict-source check inside publication | needs-review | Source canonical flag stays put during publication. |
+| E10 | `src/core/persistence/git-conversion.ts:1125-1127` (raw `SELECT ... FOR UPDATE`, then raw `UPDATE`) | parked-effect reclassify | needs-review | Parked effect and page declared class change together. |
+| E11 | `src/core/rust-engine/store-members/cli-sources.ts:107` (`lockSourceForUpdate`, no-op) | publication transaction source lock | needs-review | Publication holds the source against other writers. |
+| E12 | `src/core/rust-engine/store-members/segmented-writes.ts:88` (`lockSegmentedGenerationPage`) | segmented generation page row | read-set | Generation page row read under lock. |
+| E13 | `src/core/rust-engine/store-members/embedding-install.ts:30` (`lockEmbeddingSwitch`, no-op) | embedding install and switch | read-set | Switch cannot flip inside the install write. |
+| E14 | `src/core/rust-engine/store-members/effect-scans.ts:62` (`lockEffectRow`) | effect row for settle | read-set | Effect row locked before settle. |
+| E15 | `src/core/rust-engine/store-members/facts-conversation.ts:120` (`lockPageById`) | page lock for conversation relink | read-set | Page row locked for relink. |
+| E16 | `src/core/rust-engine/store-members/managed-sync-orphans.ts:330` (`retireManagedSyncPassSlugMode`, reads cycle locks at `:333-335`) | managed sync slug-mode retire | needs-review | Obligation removed only while no pass holds the drain lease. |
+| E17 | `src/core/rust-engine/store-members/write-misc.ts:35` (`readScopeSourceConfigs` with `lock`) | scope source check | read-set | Source configs in id order, FOR SHARE or FOR UPDATE. |
+| E18 | `src/core/rust-engine/store-members/persistence.ts:167` (`shareLockWriteCredential`, no-op) | credential share lock for revocation | read-set | Revocation waits for the credential read. |
+
+Counts: cas 3, needs-review 16, read-set 52, single_flight 4 (75 sites). Callbacks with an effect outside the store are a separate audit (a rerun repeats them); its fixes are listed in the lane L1 report.
+
+## Appendix: transaction callback audit under multi-user mode (lane L1)
+
+Rule (coordinator, Nov 25): multi-user mode is not called safe on a path until the transaction callbacks on it are
+audited. In multi-user mode a callback runs again after a lost commit, so a count, flag, cursor or file it keeps outside
+the transaction must start each run from the same state, or move after the commit.
+
+Audited: every `transaction` / `transactionDirect` call in `src/` (467 sites, 451 callbacks); 26 read by hand in the first
+pass, the 44 the scan flagged read by hand in the second. The rest were cleared by the scan only, which proves nothing
+about them.
+
+Fixed (on paths the Rust engine runs today): shared-skill publication staging, segmented rechunk counters, secret backup
+restore counters, oversize-chunk heal counters and stderr line, trust scan counter, keep-db admission flags, no-op
+embedding settle ids, segmented projection seal flag, connector checkpoint cleanup counts, held-concept rebuild flags,
+owner page repair file (the lost run's file is put back first), publish redaction audit line (written after the commit),
+access restamp count (counted after the commit), unmanaged belief point report (reset per run). Tests that fail without
+the fix: `test/optimistic-callback-rerun.test.ts` (restamp, backup restore, connector cleanup) and
+`test/provenance-drift-7891.test.ts` (owner page repair). The other fixes have no rerun test yet.
+
+Not safe until audited when their members are served on Rust (the callback keeps state across a run today):
+`src/commands/sources-git-gap.ts` (cursor, census), `src/core/persistence/rows-behind.ts` (cursor, ids), `src/core/mentions/pass.ts`
+(beliefs), `src/commands/export.ts` (staged export state), `src/core/facts/purge.ts` (plan and counts),
+`src/core/write-gate-recheck.ts` (receipt counts), `src/core/page-body/ingest.ts` (moved, lost flags),
+`src/core/belief/backfill.ts` (publication ids), `src/core/persistence/graduation-copy.ts` (positions, trigger names),
+`src/core/persistence/effect-recovery.ts` (file mode changes), `src/core/facts/writeback-settings.ts` (request log line),
+`src/core/persistence/coordinator.ts` (bundle staging), `src/shadow/seed.ts` (writes to the sink engine),
+`src/core/company-brain/runtime.ts` (receipt and profile), `src/core/persistence/reconcile-backup.ts` (unlink before
+commit), `src/commands/mcp-provision.ts` (credential file before commit), `src/core/backfill-effective-date.ts`
+(counters), `src/core/persistence/sync-lease.ts` callers in `sync-pass-apply.ts` (counters), `src/core/engine-sql/facts.ts`
+insertFacts (warnings), `src/core/page-body/segment-derive.ts` (picked, parked), `src/core/persistence/connector-sync.ts`
+(admitted flag). The lists with line numbers and the fix for each are in the lane L1 report.

@@ -30,6 +30,20 @@ type Slot = Arc<Mutex<Option<Arc<Store>>>>;
 /// How long `close` waits for calls already running before it reports `store_io`.
 const CLOSE_WAIT: Duration = Duration::from_secs(30);
 
+/// The `Instant` of `at_ms`, milliseconds since the Unix epoch (a past time is now).
+pub(crate) fn instant_at(at_ms: f64) -> Instant {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs_f64() * 1000.0)
+        .unwrap_or(0.0);
+    let ahead = if at_ms.is_finite() {
+        (at_ms - now_ms).max(0.0)
+    } else {
+        0.0
+    };
+    Instant::now() + Duration::from_secs_f64(ahead / 1000.0)
+}
+
 pub(crate) fn task_error(error: StoreError) -> TaskError {
     TaskError::new(error.code, error.message)
 }
@@ -88,6 +102,10 @@ pub struct Brain {
     pub(crate) closes: Arc<AtomicU64>,
     /// True while a `bind` on this handle is running, so a second one is refused at once.
     binding: Arc<AtomicBool>,
+    /// The deadline every call of this handle runs under (`withDeadline`, multi-user mode only):
+    /// installed for the one call on the worker thread (`gbrain_store::call_context`). `None` on
+    /// every handle `new Brain` makes.
+    deadline: Option<Instant>,
     /// Multi-user sessions opened on this handle (`families/access_scope.rs`); unused unless one is minted.
     pub(crate) scopes: Arc<Mutex<crate::families::access_scope::ScopeTable>>,
 }
@@ -101,11 +119,16 @@ impl Brain {
         work: impl FnOnce(&Store) -> Result<T, StoreError> + Send + 'static,
     ) -> napi::Result<Object<'env>> {
         let store = self.slot.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let deadline = self.deadline;
         spawn(env, &self.pool, move || {
             let store = store.ok_or_else(|| {
                 TaskError::new(gbrain_store::error::STORE_CLOSED, "the brain is not open")
             })?;
-            let value = work(&store).map_err(task_error)?;
+            let value = match deadline {
+                None => work(&store),
+                Some(at) => gbrain_store::call_context::with_deadline(Some(at), || work(&store)),
+            }
+            .map_err(task_error)?;
             serde_json::to_value(value).map_err(|e| {
                 TaskError::new(
                     gbrain_store::error::STORE_CORRUPT,
@@ -150,7 +173,25 @@ impl Brain {
             slot: Arc::new(Mutex::new(None)),
             closes: Arc::new(AtomicU64::new(0)),
             binding: Arc::new(AtomicBool::new(false)),
+            deadline: None,
             scopes: Arc::new(Mutex::new(Default::default())),
+        }
+    }
+
+    /// `withDeadline(deadlineAtMs)`: a handle on the same brain and pool whose calls run under the
+    /// absolute deadline `deadlineAtMs` (milliseconds since the Unix epoch). A write that queues for
+    /// a busy key ends `timeout` (reason `key_wait`) at it. Multi-user mode only; nothing else makes
+    /// one.
+    #[napi]
+    pub fn with_deadline(&self, deadline_at_ms: f64) -> Self {
+        Self {
+            pool: self.pool.clone(),
+            slot: self.slot.clone(),
+            closes: self.closes.clone(),
+            binding: self.binding.clone(),
+            deadline: Some(instant_at(deadline_at_ms)),
+            // The same handle's sessions: the deadline view is the handle, not a new one.
+            scopes: self.scopes.clone(),
         }
     }
 

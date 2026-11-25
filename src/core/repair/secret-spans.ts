@@ -456,7 +456,10 @@ function item(page: PlannedPage, hash: string, rules: string[], last: boolean): 
  */
 export async function redactPageForPublish(engine: BrainEngine, sourceId: string, slug: string): Promise<'redacted' | 'clean' | Refusal | PlanRefusal> {
   const rules = resolveSecretRules();
+  // Written after the commit: a run that loses an optimistic commit (multi-user Rust) leaves no audit line.
+  let auditEntry: Parameters<typeof audit.log>[0] | null = null;
   const written = await engine.transaction(async tx => {
+    auditEntry = null;
     const managed = await readManagedMode(tx, { refusal: { subject: 'publish redaction' } });
     const attribution = await maintenanceAttribution(tx);
     const write = () => withTrustKeep(tx, ['pages', 'facts', 'takes', 'timeline_entries'], async (): Promise<{ outcome: 'redacted' | 'clean' | Refusal | PlanRefusal; unsealed?: boolean; storage?: string }> => {
@@ -469,12 +472,13 @@ export async function redactPageForPublish(engine: BrainEngine, sourceId: string
       if (refusal) return { outcome: refusal };
       const bound = await bindToStore(tx, planned, 'publish redact', 'publish_rebuild');
       const { unsealed } = await writePage(tx, planned);
-      audit.log({ ts: new Date().toISOString(), kind: 'publish-redact', source_id: sourceId, slug, page_id: read.page.id, store_entries: [...bound.entries.values()].map(entry => entry.id).sort(),
-        fields: changedOf(planned).map(result => result.key), versions_redacted: bound.versions });
+      auditEntry = { ts: new Date().toISOString(), kind: 'publish-redact', source_id: sourceId, slug, page_id: read.page.id, store_entries: [...bound.entries.values()].map(entry => entry.id).sort(),
+        fields: changedOf(planned).map(result => result.key), versions_redacted: bound.versions };
       return { outcome: 'redacted', unsealed, storage: read.page.body_storage };
     });
     return managed ? withCoordinatedWrite(tx, [sourceId], write, attribution) : withWriteAttribution(tx, attribution, write);
   });
+  if (auditEntry) audit.log(auditEntry);
   if (written.outcome === 'redacted') {
     try { await resealAfterRestore(engine, sourceId, slug, written.storage!, written.unsealed!); } catch { /* the projection is queued and rebuilt by the next pass */ }
   }

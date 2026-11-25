@@ -70,6 +70,11 @@ pub const UNMODELED_INPUT: &str = "unmodeled_input";
 /// The TypeScript engine reports it as `engine_capability_missing` with that capability.
 pub const ENGINE_CAPABILITY_MISSING: &str = "engine_capability_missing";
 
+/// A wait or a transaction passed its caller's deadline and nothing was committed. The message starts with the
+/// reason and a colon (`transaction_deadline: ...`, `key_wait: ...`); the TypeScript mapper reads the reason from it
+/// (`src/core/rust-engine/store-errors.ts`). Only multi-user mode sets a deadline, so no other path returns it.
+pub const TIMEOUT: &str = "timeout";
+
 /// A lease fence failed (`leases.rs`): the lease's epoch or token moved, it was released or expired, a protected
 /// entry point on a multi-user store had no fence, or the claim was taken under another epoch. Nothing was written.
 /// The message is JSON: `{ reason, name, epoch, current_epoch }`.
@@ -99,6 +104,11 @@ impl StoreError {
 
     pub fn io(message: impl Into<String>) -> Self {
         Self::new(STORE_IO, message)
+    }
+
+    /// A `timeout` whose message starts with `reason` (see [`TIMEOUT`]).
+    pub fn timeout(reason: &str, message: impl Into<String>) -> Self {
+        Self::new(TIMEOUT, format!("{reason}: {}", message.into()))
     }
 
     /// Whether the file system or the storage engine failed (`store_io`, `store_corrupt`), as

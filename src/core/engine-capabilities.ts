@@ -14,6 +14,8 @@
  * except the engine-specific `single_owner` and `postgres_admin` and the Rust-only `serialized_transactions`.
  */
 
+import { rustMultiuserFromEnv } from './rust-engine/multiuser-switch.ts';
+
 export const ENGINE_CAPABILITIES = [
   // Raw SQL entry points: executeRaw, executeRawDirect, withReservedConnection.
   // The Rust engine never reports it (D18: no SQL dialect).
@@ -77,7 +79,17 @@ export const ENGINE_CAPABILITIES = [
   'session_state',
 ] as const;
 
-export type Capability = (typeof ENGINE_CAPABILITIES)[number];
+/**
+ * Capabilities of the multi-user program (docs/designs/rust-engine/multi-user-server.md, interface I-8). They are
+ * reported only while the multi-user switch is on (rust-engine/multiuser-switch.ts), so with it off every engine's capability
+ * set, and the error catalogue that lists ENGINE_CAPABILITIES, stay exactly what they were.
+ *
+ * - `multi_writer`: explicit transactions on many connections run at once, each one validated at commit (Postgres:
+ *   yes; PGLite: no, one connection; Rust: yes when its optimistic transactions are on).
+ */
+export const MULTIUSER_CAPABILITIES = ['multi_writer'] as const;
+
+export type Capability = (typeof ENGINE_CAPABILITIES)[number] | (typeof MULTIUSER_CAPABILITIES)[number];
 
 /** The read-only capability set an engine reports. */
 export type EngineCapabilities = ReadonlySet<Capability>;
@@ -95,6 +107,12 @@ const NO_SQL_ENGINE: readonly Capability[] = ['serialized_transactions'];
 
 const ENGINE_SPECIFIC = new Set<Capability>([...Object.values(ENGINE_ONLY).flat(), ...NO_SQL_ENGINE]);
 
+/** What each SQL engine adds while the multi-user switch is on (MULTIUSER_CAPABILITIES). */
+const MULTIUSER_ONLY: Readonly<Record<SqlEngineKind, readonly Capability[]>> = {
+  pglite: [],
+  postgres: ['multi_writer'],
+};
+
 /**
  * The full capability set PGLite or Postgres reports: every shared capability
  * plus its own engine-specific ones. Returns a fresh set, so one engine can
@@ -103,6 +121,8 @@ const ENGINE_SPECIFIC = new Set<Capability>([...Object.values(ENGINE_ONLY).flat(
 export function capabilitiesForEngineKind(kind: SqlEngineKind): EngineCapabilities {
   const caps = new Set<Capability>(ENGINE_CAPABILITIES.filter(c => !ENGINE_SPECIFIC.has(c)));
   for (const c of ENGINE_ONLY[kind]) caps.add(c);
+  // Multi-user mode only (environment switch; the SQL engines read no Rust config).
+  if (rustMultiuserFromEnv()) for (const c of MULTIUSER_ONLY[kind]) caps.add(c);
   return caps;
 }
 

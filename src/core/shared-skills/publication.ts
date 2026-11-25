@@ -444,6 +444,9 @@ async function publishOnRust(ctx: OperationContext, admission: WriteAdmission): 
   let staged: ReturnType<typeof stageRustCanonicalFiles> = [];
   try {
     const receipt = await ctx.engine.transaction(async tx => {
+      // A multi-user Rust brain may run this callback again after a lost commit: an earlier attempt's staging goes first.
+      discardRustStaging(staged);
+      staged = [];
       const row = await admitWriteInTransaction(tx, admission);
       const prepared = await prepareSharedSkillMutation(tx, row, ctx.config);
       await prepared.validate?.(tx);

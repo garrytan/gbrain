@@ -28,6 +28,7 @@ import { opError } from './ops/contract.ts';
 import { transactionAborted } from './postgres-engine/transaction-abort.ts';
 import { mapStoreError } from './rust-engine/store-errors.ts';
 import { STORE_MEMBERS } from './rust-engine/store-members/index.ts';
+import { brainWithCallDeadline, endOptimisticTransactions, runOptimisticTransaction, type OptimisticTransactions } from './rust-engine/optimistic-transaction.ts';
 import { servedCapabilities } from './rust-engine/store-capabilities.ts';
 import { RECEIPT_STOP_OWNERS } from './rust-engine/receipt-stops.ts';
 import { electOwner, type OwnerRole } from './rust-engine/owner-ipc/election.ts';
@@ -145,9 +146,12 @@ export class RustEngine implements BrainEngine {
   readonly kind = 'rust' as const;
   /**
    * The capabilities whose every member the store serves (rust-engine/store-capabilities.ts), plus the guarantees this
-   * engine's open store promised (`serialized_transactions`, applyStoreGuarantees). A client reports its owner's set.
+   * engine's open store promised (`serialized_transactions`, applyStoreGuarantees) and `multi_writer` while its store runs
+   * in multi-user mode. A client reports its owner's set.
    */
   readonly capabilities: EngineCapabilities = servedCapabilities();
+  /** The open optimistic transactions (multi-user mode only). */
+  readonly _optimistic: OptimisticTransactions = { open: new Map() };
 
   readonly addon: RustEngineAddonHandle;
   readonly databasePath: string;
@@ -208,6 +212,18 @@ export class RustEngine implements BrainEngine {
       // (declarePersistence), so an owner must not advertise the journal it would refuse.
       if (this._store) for (const c of NEEDS_SERIALIZED_TRANSACTIONS) caps.delete(c);
     }
+  }
+
+  /**
+   * Multi-user mode (I-0, rust-engine/multiuser-switch.ts): what the store this process opened decided (the environment
+   * switch or the brain's config row). Explicit transactions then run optimistically with no writer gate. False while no
+   * store is open here (a client forwards to the owner).
+   */
+  get multiuser(): boolean { return this._store?.multiuser === true; }
+
+  /** What this engine's own store serves: the served set, plus `multi_writer` in multi-user mode. */
+  private _ownCapabilities(): Capability[] {
+    return this.multiuser ? [...servedCapabilities(), 'multi_writer'] : [...servedCapabilities()];
   }
 
   /** True between `connect()` and `disconnect()`. */
@@ -289,6 +305,7 @@ export class RustEngine implements BrainEngine {
             }
             opened = store;
             this._store = store;
+            if (store.multiuser) (this.capabilities as Set<Capability>).add('multi_writer');
             // Before the owner socket serves: the hello carries this store's promise.
             this._applyStoreGuarantees();
           } catch (error) {
@@ -343,7 +360,7 @@ export class RustEngine implements BrainEngine {
     if (prior) {
       // The members of the owner that went away give way to this engine's own, which run on the store opened above.
       prior();
-      for (const capability of servedCapabilities()) (this.capabilities as Set<Capability>).add(capability);
+      for (const capability of this._ownCapabilities()) (this.capabilities as Set<Capability>).add(capability);
       this._applyStoreGuarantees();
     }
     this._connected = true;
@@ -356,7 +373,7 @@ export class RustEngine implements BrainEngine {
     if (!leave) return;
     leave();
     // Leaving the owner empties the capability set; this engine reports what its own store serves again.
-    for (const capability of servedCapabilities()) (this.capabilities as Set<Capability>).add(capability);
+    for (const capability of this._ownCapabilities()) (this.capabilities as Set<Capability>).add(capability);
     this._applyStoreGuarantees();
   }
 
@@ -385,12 +402,14 @@ export class RustEngine implements BrainEngine {
     // opening, and another process could then open the same brain.
     await opening?.catch(() => undefined);
     await this._endOpenTransaction();
+    await endOptimisticTransactions(this._optimistic, TRANSACTION_SHUTDOWN_WAIT_MS);
     const owner = this._owner;
     this._owner = null;
     this._connected = false;
     this._leaveClient();
     const store = this._store;
     this._store = null;
+    (this.capabilities as Set<Capability>).delete('multi_writer');
     this._applyStoreGuarantees();
     const txPool = this._txPool;
     this._txPool = null;
@@ -445,11 +464,16 @@ export class RustEngine implements BrainEngine {
    */
   async _admit(member: string): Promise<void> {
     if (this._txScope) return;
+    // Multi-user mode: a callback that resumes after its transaction ended (a deadline) is refused too, so it
+    // cannot write through the outer engine after its caller was told nothing committed.
+    if (this.multiuser && transactionContext.getStore()?.some((scope) => scope.root === this && scope.ended)) {
+      throw mapStoreError({ code: 'store_closed' }, { member });
+    }
     if (transactionContext.getStore()?.some((scope) => scope.root === this && scope.live)) {
       throw opError('internal_error', `${member} was called on the engine from inside its own transaction(fn), and would wait forever for the writer that transaction holds.`,
         'Make every call inside transaction(fn) on the engine passed to fn, not on the outer engine.', { reason: 'transaction_reentry', detail: `member=${member}` });
     }
-    if (SELF_ADMITTED.has(member) || isReadMember(member)) return;
+    if (SELF_ADMITTED.has(member) || isReadMember(member) || this.multiuser) return;
     while (this._writer) await this._writer.done;
   }
 
@@ -476,6 +500,12 @@ export class RustEngine implements BrainEngine {
    * signal rejects before anything opens, as PGLite does.
    */
   async _openTransaction<T>(opts: TransactionOptions | undefined, run: (scope: RustTransactionScope) => Promise<T>): Promise<T> {
+    // The mode is the open store's: a transaction that starts while the store opens waits for it to decide.
+    if (!this._store && this._storeReady) await this._storeReady.catch(() => undefined);
+    if (this.multiuser) {
+      await this._admit('transaction');
+      return runOptimisticTransaction(this, this._optimistic, transactionContext, opts, run);
+    }
     const signal = opts?.signal;
     if (signal?.aborted) throw transactionAborted(signal);
     await this._admit('transaction');
@@ -570,9 +600,10 @@ for (const [member, impl] of Object.entries(STORE_MEMBERS)) {
     value: async function served(this: RustEngine, ...args: unknown[]): Promise<unknown> {
       const store = this.openStoreIfOpen(member) ?? await this.storeFor(member, args);
       await this._admit(member);
+      const brain = this.multiuser && !this._txScope ? brainWithCallDeadline(store.brain) : store.brain;
       // Multi-user lane L4: a store in multi-user mode runs the member with its answer in context (access-self-check.ts).
       return withAccessStore(store, this.addon, () =>
-        (impl as (this: RustEngine, brain: unknown, ...rest: unknown[]) => Promise<unknown>).call(this, store.brain, ...args));
+        (impl as (this: RustEngine, brain: unknown, ...rest: unknown[]) => Promise<unknown>).call(this, brain, ...args));
     },
   });
 }
