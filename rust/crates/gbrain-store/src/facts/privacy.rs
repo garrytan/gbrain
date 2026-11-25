@@ -1110,6 +1110,7 @@ mod tests {
                 FolderAccess::default(),
                 false,
                 false,
+                false,
             )
             .unwrap();
             let short = names_no_readers_or_rules(&*read, &stamped).unwrap();
