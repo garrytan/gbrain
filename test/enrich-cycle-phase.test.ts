@@ -39,45 +39,25 @@ async function seedStub(slug: string, title: string) {
 }
 
 describe('runPhaseEnrichThin', () => {
-  test('unset with no chat key → off by default, the hint names the key', async () => {
-    const r = await runPhaseEnrichThin(engine, {});
-    expect(r.status).toBe('skipped');
-    expect(r.details).toMatchObject({ reason: 'disabled', enabled_by: 'chat_key_default', enable_hint: 'export ANTHROPIC_API_KEY=<your key>' });
-    expect(r.summary).toContain('no chat model key');
+  test('disabled by default → skipped with enable hint, even with a chat key configured', async () => {
+    for (const withKey of [false, true]) {
+      resetGateway();
+      if (withKey) __setChatTransportForTests(async () => { throw new Error('no chat call expected'); });
+      const r = await runPhaseEnrichThin(engine, {});
+      expect(r.status).toBe('skipped');
+      expect(r.details.reason).toBe('disabled');
+      expect(String(r.details.enable_hint)).toContain('cycle.enrich_thin.enabled true');
+    }
   });
 
-  test('unset with a chat key → on by default with a $0.50 brain-wide cap and 3 pages per source', async () => {
-    __setChatTransportForTests(async () => { throw new Error('dry-run makes no chat call'); });
+  test('a stored true runs with a $0.50 brain-wide cap and 3 pages per source, and no daily cap (dry-run)', async () => {
+    await engine.setConfig('cycle.enrich_thin.enabled', 'true');
     const r = await runPhaseEnrichThin(engine, { dryRun: true });
     expect(r.status).toBe('ok');
-    expect(r.details).toMatchObject({ enabled_by: 'chat_key_default', max_total_cost_usd: 0.5, max_pages_per_tick: 3, max_cost_usd: 1 });
-    expect(r.details.daily).toMatchObject({ max_daily_cost_usd: 0.5, max_daily_pages: 'off' });
-  });
-
-  test('on by default, the day stops at $0.50: a spent day runs nothing, and a stored daily cap wins', async () => {
-    __setChatTransportForTests(async () => { throw new Error('no chat call expected'); });
-    const day = new Date().toISOString().slice(0, 10);
-    await engine.setConfig('enrich_thin.daily_spend', JSON.stringify({ day, spent_usd: 0.5, pages: 50 }));
-    const spent = await runPhaseEnrichThin(engine, {});
-    expect(spent.status).toBe('skipped');
-    expect(spent.details).toMatchObject({ reason: 'daily_cap_reached' });
-    await engine.setConfig('cycle.enrich_thin.max_daily_cost_usd', '2');
-    expect((await runPhaseEnrichThin(engine, { dryRun: true })).details.daily).toMatchObject({ max_daily_cost_usd: 2 });
-    await engine.setConfig('cycle.enrich_thin.max_daily_cost_usd', 'off');
-    expect((await runPhaseEnrichThin(engine, { dryRun: true })).details.daily).toMatchObject({ max_daily_cost_usd: 'off' });
-  });
-
-  test('a stored false wins over a chat key, and a stored true runs without one (dry-run)', async () => {
-    __setChatTransportForTests(async () => { throw new Error('no chat call expected'); });
+    expect(r.details).toMatchObject({ max_total_cost_usd: 0.5, max_pages_per_tick: 3, max_cost_usd: 1 });
+    expect(r.details.daily).toMatchObject({ max_daily_cost_usd: 'off', max_daily_pages: 'off' });
     await engine.setConfig('cycle.enrich_thin.enabled', 'false');
-    const off = await runPhaseEnrichThin(engine, {});
-    expect(off.details).toMatchObject({ reason: 'disabled', enabled_by: 'config', enable_hint: 'gbrain config set cycle.enrich_thin.enabled true' });
-    resetGateway();
-    await engine.setConfig('cycle.enrich_thin.enabled', 'true');
-    const on = await runPhaseEnrichThin(engine, { dryRun: true });
-    expect(on.status).toBe('ok');
-    expect(on.details.enabled_by).toBe('config');
-    expect(on.details.daily).toMatchObject({ max_daily_cost_usd: 'off' });
+    expect((await runPhaseEnrichThin(engine, {})).details.reason).toBe('disabled');
   });
 
   test('stored caps are kept: an explicit brain-wide cap is not replaced by the new default', async () => {

@@ -54,17 +54,12 @@ The note itself stays available with `gbrain learned`.
 
 ## What runs by default
 
-Two steps of the maintenance cycle feed the note without any setup. The cycle runs on `gbrain dream` and under
-autopilot, which can run it several times a day:
+Facts that disagree are found without any setup. Each dream cycle compares typed facts (a metric with a value, unit and
+period) and files a "which one is right?" question when two disagree. It needs no key and changes no fact until you
+answer. Turn it off with `gbrain config set dream.claim_conflicts.mode off`. A value you already set is kept.
 
-- **Facts that disagree.** Each dream cycle compares typed facts (a metric with a value, unit and period) and files a
-  "which one is right?" question when two disagree. It needs no key and changes no fact until you answer. Turn it off
-  with `gbrain config set dream.claim_conflicts.mode off`.
-- **Thin pages filled in.** When a chat model key you supplied is configured (for example `ANTHROPIC_API_KEY`), each
-  cycle run fills up to 3 thin person and company pages per source from what the brain already knows, at about $0.01 a
-  page. It stops at $0.50 per run and at $0.50 per day, counted across every run that day. Without a key it stays
-  off. Turn it off with `gbrain config set cycle.enrich_thin.enabled false`, and change the day's cap with
-  `gbrain config set cycle.enrich_thin.max_daily_cost_usd <usd>`.
+Filling in thin pages stays off until you turn it on with `gbrain config set cycle.enrich_thin.enabled true` (it needs
+a chat model key). Each cycle run then fills up to 3 thin person and company pages per source, at about $0.01 a page,
+and stops at $0.50 per run. `gbrain config set cycle.enrich_thin.max_daily_cost_usd <usd>` caps a whole day.
 
-A value you already set for these keys is kept. `gbrain doctor` reports the newest run and how much of the note you
-kept or undid (`learning_note`).
+`gbrain doctor` reports the newest run and how much of the note you kept or undid (`learning_note`).
