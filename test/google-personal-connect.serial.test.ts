@@ -35,6 +35,7 @@ let tokenReply: (form: URLSearchParams) => Response | Promise<Response> = () => 
 let tokeninfoScope = 'openid email ' + GMAIL_RO;
 let userinfoEmail = 'alice@example.com';
 const realFetch = globalThis.fetch;
+let prevExitCode: typeof process.exitCode;
 const stdinTty = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
 
 function json(body: unknown, status = 200): Response {
@@ -68,6 +69,7 @@ beforeEach(() => {
     throw new Error(`unexpected fetch: ${url}`);
   }) as typeof fetch;
   Object.defineProperty(process.stdin, 'isTTY', { value: undefined, configurable: true });
+  prevExitCode = process.exitCode;
   _resetCliExitVerdictForTests();
 });
 
@@ -75,6 +77,7 @@ afterEach(() => {
   globalThis.fetch = realFetch;
   if (stdinTty) Object.defineProperty(process.stdin, 'isTTY', stdinTty);
   _resetCliExitVerdictForTests();
+  process.exitCode = prevExitCode ?? 0;
 });
 
 function home(): string {
