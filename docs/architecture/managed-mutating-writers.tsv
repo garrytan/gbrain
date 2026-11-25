@@ -91,6 +91,7 @@ op	memory_conversation_mode	no_canonical_write	Returns the rule for the rest of 
 op	set_memory_writeback	no_canonical_write	memory.agent_writeback config row plus an mcp_request_log audit row; no page content.
 op	mute_notice	no_canonical_write	Notice mute list in <GBRAIN_HOME>/notices/muted.json; no brain table or canonical file.
 op	onboarding_off	no_canonical_write	Writes only the first-session suggestion's own config row (onboarding.first_session); no page, table row or canonical file.
+op	propose_decide	no_canonical_write	Writes only the owner's answer for one proposed job into the first-session config row (onboarding.first_session); no page, table row or canonical file.
 op	questions_pin	coordinator	pinned_questions side-table rows; the question page publishes through coordinated put_page (trusted local callers only).
 op	questions_refresh	coordinator	Answer and evidence pointers in the pinned_questions side tables; question page sync through coordinated put_page (trusted local callers only).
 op	questions_unpin	coordinator	pinned_questions state; the question page is archived through coordinated put_page (trusted local callers only).
