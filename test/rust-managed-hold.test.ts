@@ -21,6 +21,7 @@ import { withEnv } from './helpers/with-env.ts';
 import { writerAdminState } from '../src/core/persistence/admin-intent.ts';
 import { runPersistenceAdministration } from '../src/core/persistence/administration.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
+import { performSync } from '../src/commands/sync.ts';
 import { runManagedSourceLifecycle } from '../src/core/persistence/source-lifecycle.ts';
 import { assertWriterAdminUnlocked } from '../src/core/persistence/admin-lock.ts';
 import { hostIdFor } from '../src/core/persistence/identity.ts';
@@ -28,6 +29,8 @@ import { hostIdFor } from '../src/core/persistence/identity.ts';
 const refusal = (run: () => Promise<unknown>) => run().then(() => null, (e: { code?: string; detail?: unknown }) => ({
   code: e?.code ?? String(e), member: /member=(\w+)/.exec(String(e?.detail ?? ''))?.[1] ?? null, capability: /capability=(\w+)/.exec(String(e?.detail ?? ''))?.[1] ?? null }));
 const RAW = { code: 'engine_capability_missing', member: 'executeRaw', capability: 'raw_sql' };
+/** The base's refusal of a managed sync: performManagedSync names managed_persistence before discovery. */
+const SYNC_REFUSAL = { code: 'engine_capability_missing', member: 'performManagedSync', capability: 'managed_persistence' };
 
 describe.skipIf(!rustArmRequested())('a user\'s Rust brain keeps refusing managed mode (hold on)', () => {
   let brain: RustBrainDir;
@@ -78,5 +81,38 @@ describe.skipIf(!rustArmRequested())('a user\'s Rust brain keeps refusing manage
       const after = { source: await engine.readSourceMembership('work'), files: readdirSync(join(root, 'notes')).sort() };
       expect(after).toEqual(before);
       expect(existsSync(join(root, 'notes', 'alice-example.md'))).toBe(true);
+    }), 120_000);
+
+  test('a managed sync and a direct runSyncStatement refuse as before; nothing is imported or stamped', () =>
+    withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
+      expect(engine.capabilities.has('managed_persistence')).toBe(false);
+      // The claimed checkout the case before it set up, or its own when this case runs alone.
+      const root = join(home, 'checkout');
+      if (!await engine.getSource('work')) {
+        mkdirSync(join(root, 'notes'), { recursive: true });
+        execFileSync('git', ['-C', root, 'init', '-q', '-b', 'main']);
+        writeFileSync(join(root, 'notes', 'alice-example.md'), '---\ntitle: Alice Example\n---\nWorks at acme-example.\n');
+        execFileSync('git', ['-C', root, 'add', '.']);
+        execFileSync('git', ['-C', root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', 'notes']);
+        await createRustSource(engine, 'work', {}, root);
+        const reviewed = async (operation: string) => ({ admin_intent: operation, expected_state: await writerAdminState(engine) });
+        await runPersistenceAdministration(engine, 'writer_claim', { source_id: 'work', path: root, ...await reviewed('writer_claim') });
+        await runPersistenceAdministration(engine, 'writer_activate', { confirm_quiesced: true, ...await reviewed('writer_activate') });
+      }
+      const before = { source: await engine.readSourceMembership('work'), stamped: (await engine.getSource('work'))?.last_sync_at ?? null,
+        page: await engine.getPage('notes/alice-example', { sourceId: 'work' }), files: readdirSync(join(root, 'notes')).sort() };
+      const out = {
+        // performManagedSync names its capability before discovery (sync-run.ts, requireManagedPersistence): managed_persistence.
+        sync: await refusal(() => performSync(engine, { sourceId: 'work', repoPath: root, noPull: true, noEmbed: true, noExtract: true })),
+        // The member that replaced executeRaw refuses as executeRaw did, on a read and on a write statement.
+        statementRead: await refusal(() => engine.runSyncStatement('source_row', ['work'])),
+        statementWrite: await refusal(() => engine.runSyncStatement('checkpoint_delete', ['managed-sync-tail', 'work'])),
+      };
+      expect(out).toEqual({ sync: SYNC_REFUSAL, statementRead: RAW, statementWrite: RAW });
+      const after = { source: await engine.readSourceMembership('work'), stamped: (await engine.getSource('work'))?.last_sync_at ?? null,
+        page: await engine.getPage('notes/alice-example', { sourceId: 'work' }), files: readdirSync(join(root, 'notes')).sort() };
+      expect(after).toEqual(before);
+      expect(after.page).toBeNull();
+      expect(after.stamped).toBeNull();
     }), 120_000);
 });
