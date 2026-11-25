@@ -1,13 +1,14 @@
 /**
- * The pinned-question record members (BrainEngine readPinRow ... insertQuestionEvidence, and the two reads of the records
- * that join the evidence to what it cites) on the store's `~q` family (rust/crates/gbrain-store/src/questions.rs,
- * rust/docs/store/questions.md). Rows come back as the SQL engines return them once store.ts `toPinRow` normalizes
- * them: the timestamps as `Date`s, `spend_usd` and `cooldown_days` as numbers.
+ * The pinned-question members beyond main's insert, read and listing (store-members/pinned-questions.ts): the locked read,
+ * the state change, the refresh lease, spend, and a publication's answer and evidence rewrite on the pin records of
+ * rust/crates/gbrain-store/src/jobs/pinned_questions.rs; the evidence rows and the two joined reads are on the `~q` family
+ * (rust/crates/gbrain-store/src/questions.rs, rust/docs/store/questions.md). Rows come back as the SQL engines return
+ * them once store.ts `toPinRow` normalizes them: the timestamps as `Date`s, `spend_usd` and `cooldown_days` as numbers.
  *
  * Export only BrainEngine members from this file (index.ts spreads the whole module into STORE_MEMBERS).
  */
 import type {
-  PinAnswerPublish, PinRecordFilter, PinRecordInsert, PinRecordRow, PinStatePatch, QuestionEvidenceInsert,
+  PinAnswerPublish, PinRecordRow, PinStatePatch, QuestionEvidenceInsert,
 } from '../../engine-sql/question-store.ts';
 import type { PublishedQuestionAnswer, QuestionEvidenceJoinRow } from '../../engine-sql/question-reads.ts';
 import { withDates } from '../store-codec.ts';
@@ -18,7 +19,7 @@ const PIN_DATES = ['last_refresh_at', 'last_attempt_at', 'watermark_at', 'lease_
 /** A number the store sends as its Postgres text when it is not finite (`NaN`, `Infinity`, `-Infinity`). */
 const float8 = (v: number): number | string => (Number.isFinite(v) ? v : String(v));
 
-/** A pin row as PGLite returns it: dates as `Date`, the two float columns as numbers. */
+/** A pin row as the SQL engines return it once `toPinRow` normalizes it: `toPinRow` reads dates (ISO text too) and numbers itself. */
 const pinRow = (r: PinRecordRow): PinRecordRow => {
   const row = withDates({ ...r }, PIN_DATES);
   row.spend_usd = Number(row.spend_usd);
@@ -27,17 +28,9 @@ const pinRow = (r: PinRecordRow): PinRecordRow => {
 };
 const maybe = (r: unknown): PinRecordRow | null => (r === null || r === undefined ? null : pinRow(r as PinRecordRow));
 
-export const readPinRow: StoreMember<[sourceId: string, slug: string, forUpdate: boolean], PinRecordRow | null> = async (brain, sourceId, slug, forUpdate) =>
-  maybe(await storeCall({ member: 'readPinRow', sourceId }, () => brain.readPinRow(sourceId, slug, forUpdate)));
-
-export const listPinRows: StoreMember<[filter: PinRecordFilter], PinRecordRow[]> = async (brain, filter) =>
-  (await storeCall({ member: 'listPinRows' }, () => brain.listPinRows({
-    sourceIds: filter.sourceIds === null ? null : [...filter.sourceIds], states: filter.states === null ? null : [...filter.states],
-    includeArchived: filter.includeArchived,
-  })) as PinRecordRow[]).map(pinRow);
-
-export const insertPinRow: StoreMember<[pin: PinRecordInsert], PinRecordRow | null> = async (brain, pin) =>
-  maybe(await storeCall({ member: 'insertPinRow', sourceId: pin.sourceId }, () => brain.insertPinRow(pin)));
+/** One row lock is the store's one writer, which a publication's transaction already holds: the same row `readPinnedQuestion` returns. */
+export const readPinnedQuestionForUpdate: StoreMember<[sourceId: string, slug: string], PinRecordRow | null> = async (brain, sourceId, slug) =>
+  maybe(await storeCall({ member: 'readPinnedQuestionForUpdate', sourceId }, () => brain.readPinnedQuestionForUpdate(sourceId, slug)));
 
 export const updatePinRowState: StoreMember<[id: number, patch: PinStatePatch], PinRecordRow | null> = async (brain, id, patch) =>
   maybe(await storeCall({ member: 'updatePinRowState' }, () => brain.updatePinRowState(id, patch)));

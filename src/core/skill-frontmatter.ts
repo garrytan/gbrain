@@ -49,6 +49,8 @@ export interface ParsedFrontmatter {
   tools?: string[];
   /** Routing triggers list. */
   triggers?: string[];
+  /** `deprecated: true`: the skill loads when named and is left out of the trigger index. */
+  deprecated?: boolean;
   /**
    * Machine-checkable preconditions this skill needs before it can run;
    * each is a `kind:arg` token — see skillpack/preconditions.ts.
@@ -106,6 +108,9 @@ export function parseSkillFrontmatter(content: string): ParsedFrontmatter | null
 
   const mutMatch = raw.match(/^mutating:\s*(true|false)\s*$/m);
   if (mutMatch) out.mutating = mutMatch[1] === 'true';
+
+  const depMatch = raw.match(/^deprecated:\s*["']?(true|false)["']?\s*$/m);
+  if (depMatch) out.deprecated = depMatch[1] === 'true';
 
   // --- writes_to / tools / triggers (arrays, inline or block) ---
   out.writes_to = parseArrayField(raw, 'writes_to');

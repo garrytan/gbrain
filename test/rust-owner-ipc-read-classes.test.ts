@@ -27,12 +27,12 @@
  * change no row, so resending such a read repeats nothing. The reads that only take locks, as the scan finds them, are
  * LOCK_ONLY_READS below and this test checks the list is complete, so the header stays true:
  * getTrustProposal, listFenceFactRows, listGitEffectsCarryingReason, listGuardedTakeRows, listHeldRows,
- * listConnectorSources, listPageGitEffectsForStrip, lockBodyStagingState, lockLivePagesByKey, readConfigForUpdate, readFactSnapshots, readLoopFactState, readAccessTokenWriteGrant, readFactWithdrawalClaim, readForgetTarget,
+ * listConnectorSources, listPageGitEffectsForStrip, lockBodyStagingState, lockLivePagesByKey, lockSegmentedGenerationPage, readConfigForUpdate, readFactSnapshots, readLoopFactState, readAccessTokenWriteGrant, readFactWithdrawalClaim, readForgetTarget,
  * readMentionGenerations, readMentionPageRevisions, readPageRevisionForShare,
  * readLiveStoredBody, readNoopEmbeddingCandidates, readOAuthClientWriteGrant, readPairFactRow, readReplacementTarget,
  * readSourceMembership, readSourceState, readWorktreeAdmission, readWriterAdminState, selectClaimableEffect,
  * selectClaimableWrite, listSecretHoldingPages (the batch 6c secret store), the credential, source and shared-skill row-lock reads the batch 10 lanes added
- * (the list below), lockEffectRow, and the pinned-question row locks (lockPinRowForPublish, lockQuestionEvidenceRows, readPinRow).
+ * (the list below), lockEffectRow, and the pinned-question row locks (lockPinRowForPublish, lockQuestionEvidenceRows, readPinnedQuestionForUpdate).
  *
  * A constant that maps names to statements (`CREDENTIAL_SQL = { token_list: '...', client_token_ttl: '...' }`) is read per
  * statement: a function that names `CREDENTIAL_SQL.token_list` is charged with that statement, not with its siblings.
@@ -52,7 +52,7 @@ const ROOT = join(import.meta.dir, '..');
 /** Reads that only take row or advisory locks, found by the scan; the header names them too. */
 const LOCK_ONLY_READS: readonly string[] = [
   'getTrustProposal', 'listFenceFactRows', 'listGitEffectsCarryingReason', 'listGuardedTakeRows', 'listHeldRows',
-  'listConnectorSources', 'listPageGitEffectsForStrip', 'lockBodyStagingState', 'lockLivePagesByKey', 'readConfigForUpdate', 'readFactSnapshots', 'readLoopFactState', 'readAccessTokenWriteGrant', 'readFactWithdrawalClaim', 'readForgetTarget',
+  'listConnectorSources', 'listPageGitEffectsForStrip', 'lockBodyStagingState', 'lockLivePagesByKey', 'lockSegmentedGenerationPage', 'readConfigForUpdate', 'readFactSnapshots', 'readLoopFactState', 'readAccessTokenWriteGrant', 'readFactWithdrawalClaim', 'readForgetTarget',
   'readMentionGenerations', 'readMentionPageRevisions', 'readPageRevisionForShare', 'readLiveStoredBody', 'readNoopEmbeddingCandidates', 'readOAuthClientWriteGrant', 'readPairFactRow', 'readReplacementTarget',
   'readSourceMembership', 'readSourceState', 'readWorktreeAdmission', 'readWriterAdminState', 'selectClaimableEffect',
   'selectClaimableWrite',
@@ -67,7 +67,7 @@ const LOCK_ONLY_READS: readonly string[] = [
   // attest-rights-rust: the client attest read, whose `lock` form reads the row FOR UPDATE for the grant-write path.
   'readOauthClientAttest',
   // The pinned-question reads that row-lock what they read and change no row (engine-sql/question-reads.ts FOR SHARE, question-store.ts FOR UPDATE).
-  'lockPinRowForPublish', 'lockQuestionEvidenceRows', 'readPinRow',
+  'lockPinRowForPublish', 'lockQuestionEvidenceRows', 'readPinnedQuestionForUpdate',
 ];
 
 /**

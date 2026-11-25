@@ -1,7 +1,8 @@
 /**
  * Pinned-question rows: reads, idempotent pin, state changes and the durable
- * refresh lease. The rows are the typed pin-record members of the engine (engine-sql/question-store.ts on PGLite and
- * Postgres, the `~q` family of the Rust store), which return the columns below; `toPinRow` normalizes them. The
+ * refresh lease. The rows are the typed pin members of the engine: the insert and the two reads are
+ * engine-sql/pinned-questions.ts, the locked read, the state change, the lease and the spend are engine-sql/question-store.ts
+ * (PGLite and Postgres), and a Rust brain keeps them all in jobs/pinned_questions.rs. `toPinRow` normalizes the rows. The
  * pinned_questions table is not a canonical-writer table, so no coordinator capability is needed; the question page
  * itself is written by ./pages.ts through the coordinator.
  */
@@ -97,12 +98,15 @@ export function pinScope(row: Pick<PinRow, 'source_id' | 'scope_slug_prefix' | '
 }
 
 export async function getPin(engine: BrainEngine, sourceId: string, slug: string, opts: { forUpdate?: boolean } = {}): Promise<PinRow | null> {
-  const row = await engine.readPinRow(sourceId, slug, opts.forUpdate === true);
+  const row = opts.forUpdate ? await engine.readPinnedQuestionForUpdate(sourceId, slug) : await engine.readPinnedQuestion(sourceId, slug);
   return row ? toPinRow(row) : null;
 }
 
 export async function listPins(engine: BrainEngine, opts: { sourceIds?: string[]; includeArchived?: boolean; states?: PinState[] } = {}): Promise<PinRow[]> {
-  const rows = await engine.listPinRows({ sourceIds: opts.sourceIds ?? null, states: opts.states ?? null, includeArchived: opts.includeArchived === true });
+  // One constant statement per filter combination (engine-sql/pinned-questions.ts PINNED_QUESTION_SQL).
+  const rows = await engine.listPinnedQuestions({
+    ...(opts.sourceIds ? { sourceIds: opts.sourceIds } : {}), ...(opts.states ? { states: opts.states } : {}), includeArchived: opts.includeArchived === true,
+  });
   return rows.map(toPinRow);
 }
 
@@ -119,7 +123,7 @@ export interface PinInsert {
 
 /** Idempotent insert keyed on (source_id, slug). Returns the row and whether it was created. */
 export async function insertPin(engine: BrainEngine, p: PinInsert): Promise<{ row: PinRow; created: boolean }> {
-  const inserted = await engine.insertPinRow({
+  const inserted = await engine.insertPinnedQuestion({
     sourceId: p.sourceId, slug: p.slug, question: p.question, scopeSlugPrefix: p.scope.slug_prefix ?? null, scopeEntity: p.scope.entity ?? null,
     state: p.state, inactiveReason: p.inactiveReason, publishMode: p.publishMode, createdBy: p.createdBy,
   });

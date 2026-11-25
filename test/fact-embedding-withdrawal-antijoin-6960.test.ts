@@ -93,6 +93,6 @@ for (const backend of testBackends()) describe(`fact embedding withdrawal anti-j
         [SOURCE, [...AUDIT_ROW_SOURCES]])).map(r => r['QUERY PLAN']);
     });
     const conds = plan.filter(l => l.trim().startsWith('Index Cond:') && l.includes('fact_hash'));
-    expect(conds.map(l => /fact_hash = gbrain_fact_fingerprint(_v1)?\(f\.fact\)/.test(l))).toEqual([true, true]);
+    expect(conds.map(l => /fact_hash = gbrain_fact_fingerprint(_v[12])?\(f\.fact\)/.test(l))).toEqual([true, true, true]);
   });
 });

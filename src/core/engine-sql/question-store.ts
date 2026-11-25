@@ -1,24 +1,19 @@
 /**
- * The pinned-question records: the `pinned_questions` rows (src/core/questions/store.ts: reads, the idempotent pin,
- * state changes, the refresh lease, spend) and the refresh's ledger writes (questions/refresh.ts: the blocked record,
- * the publication's row lock, answer update and `question_evidence` rewrite). One implementation for both SQL engines;
- * the Rust store serves the same members from its `~q` family (src/core/rust-engine/store-members/question-store.ts,
+ * The pinned-question records the insert and the two reads of engine-sql/pinned-questions.ts do not cover: the locked
+ * read of a pin, its state changes, the refresh lease, spend (src/core/questions/store.ts) and the refresh's ledger
+ * writes (questions/refresh.ts: the blocked record, the publication's row lock, answer update and `question_evidence`
+ * rewrite). One implementation for both SQL engines; the Rust store serves the same members from the pin records of
+ * jobs/pinned_questions.rs and the evidence family `~q` (src/core/rust-engine/store-members/question-store.ts,
  * rust/crates/gbrain-store/src/questions.rs).
  *
  * Each statement is the text the caller sent through `executeRaw`, byte for byte (test/question-store-sql-pin.test.ts).
  * Rows come back as the driver reads them; store.ts `toPinRow` normalizes them.
  */
 import type { EngineRawRead } from './cli-reads-ops.ts';
+import type { PinnedQuestionRow } from './pinned-questions.ts';
 
 /** A `pinned_questions` row as `SELECT <columns>` returns it. */
-export type PinRecordRow = Record<string, unknown>;
-/** The columns `insertPin` writes; the others take the table's defaults. */
-export interface PinRecordInsert {
-  sourceId: string; slug: string; question: string; scopeSlugPrefix: string | null; scopeEntity: string | null;
-  state: string; inactiveReason: string | null; publishMode: string; createdBy: string;
-}
-/** Which pins a listing reads: `sourceIds` and `states` filter when not null; without states, archived pins only when `includeArchived`. */
-export interface PinRecordFilter { sourceIds: string[] | null; states: string[] | null; includeArchived: boolean }
+export type PinRecordRow = PinnedQuestionRow;
 /** A state change: each null field is kept; `setInactiveReason` false keeps the reason too. */
 export interface PinStatePatch { state: string | null; setInactiveReason: boolean; inactiveReason: string | null; publishMode: string | null }
 /** What a publication writes on the pin row. */
@@ -29,44 +24,10 @@ export interface QuestionEvidenceInsert {
   pageGeneration: number | null; pageRevision: string | null; itemId: number | null; contentHash: string | null;
 }
 
-const PIN_SQL = `SELECT id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
-  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
-  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
-  refresh_attempts, spend_usd, created_at, archived_at FROM pinned_questions WHERE source_id = $1 AND slug = $2`;
 const PIN_FOR_UPDATE_SQL = `SELECT id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
   cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
   last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
   refresh_attempts, spend_usd, created_at, archived_at FROM pinned_questions WHERE source_id = $1 AND slug = $2 FOR UPDATE`;
-const LIST_ALL_SQL = `SELECT id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
-  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
-  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
-  refresh_attempts, spend_usd, created_at, archived_at FROM pinned_questions  ORDER BY source_id COLLATE "C", created_at, id`;
-const LIST_UNARCHIVED_SQL = `SELECT id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
-  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
-  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
-  refresh_attempts, spend_usd, created_at, archived_at FROM pinned_questions WHERE state <> 'archived' ORDER BY source_id COLLATE "C", created_at, id`;
-const LIST_SOURCES_SQL = `SELECT id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
-  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
-  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
-  refresh_attempts, spend_usd, created_at, archived_at FROM pinned_questions WHERE source_id = ANY($1::text[]) ORDER BY source_id COLLATE "C", created_at, id`;
-const LIST_SOURCES_UNARCHIVED_SQL = `SELECT id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
-  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
-  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
-  refresh_attempts, spend_usd, created_at, archived_at FROM pinned_questions WHERE source_id = ANY($1::text[]) AND state <> 'archived' ORDER BY source_id COLLATE "C", created_at, id`;
-const LIST_STATES_SQL = `SELECT id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
-  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
-  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
-  refresh_attempts, spend_usd, created_at, archived_at FROM pinned_questions WHERE state = ANY($1::text[]) ORDER BY source_id COLLATE "C", created_at, id`;
-const LIST_SOURCES_STATES_SQL = `SELECT id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
-  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
-  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
-  refresh_attempts, spend_usd, created_at, archived_at FROM pinned_questions WHERE source_id = ANY($1::text[]) AND state = ANY($2::text[]) ORDER BY source_id COLLATE "C", created_at, id`;
-const INSERT_SQL = `INSERT INTO pinned_questions (source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-     ON CONFLICT (source_id, slug) DO NOTHING RETURNING id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
-  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
-  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
-  refresh_attempts, spend_usd, created_at, archived_at`;
 const UPDATE_STATE_SQL = `UPDATE pinned_questions SET
        state = COALESCE($2, state),
        inactive_reason = CASE WHEN $3::boolean THEN $4 ELSE inactive_reason END,
@@ -102,24 +63,9 @@ const DELETE_EVIDENCE_SQL = `DELETE FROM question_evidence WHERE question_id = $
 const INSERT_EVIDENCE_SQL = `INSERT INTO question_evidence (question_id, answer_revision, sentence_id, kind, source_id, page_id, page_slug, page_generation, page_revision, item_id, content_hash)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`;
 
-/** The pin `slug` of `sourceId`, or null; `forUpdate` locks the row until the transaction ends. */
-export async function readPinRow(raw: EngineRawRead, sourceId: string, slug: string, forUpdate: boolean): Promise<PinRecordRow | null> {
-  const [row] = await raw<PinRecordRow>(forUpdate ? PIN_FOR_UPDATE_SQL : PIN_SQL, [sourceId, slug]);
-  return row ?? null;
-}
-
-/** The pins `filter` names, by source id in byte order, then creation time and id. */
-export function listPinRows(raw: EngineRawRead, filter: PinRecordFilter): Promise<PinRecordRow[]> {
-  const { sourceIds, states } = filter;
-  if (states !== null) return sourceIds !== null ? raw<PinRecordRow>(LIST_SOURCES_STATES_SQL, [sourceIds, states]) : raw<PinRecordRow>(LIST_STATES_SQL, [states]);
-  if (sourceIds !== null) return raw<PinRecordRow>(filter.includeArchived ? LIST_SOURCES_SQL : LIST_SOURCES_UNARCHIVED_SQL, [sourceIds]);
-  return filter.includeArchived ? raw<PinRecordRow>(LIST_ALL_SQL, []) : raw<PinRecordRow>(LIST_UNARCHIVED_SQL, []);
-}
-
-/** Inserts the pin, or nothing when `(source_id, slug)` already has one: the new row, or null. */
-export async function insertPinRow(raw: EngineRawRead, p: PinRecordInsert): Promise<PinRecordRow | null> {
-  const [row] = await raw<PinRecordRow>(INSERT_SQL,
-    [p.sourceId, p.slug, p.question, p.scopeSlugPrefix, p.scopeEntity, p.state, p.inactiveReason, p.publishMode, p.createdBy]);
+/** The pin `slug` of `sourceId` locked until the transaction ends (`FOR UPDATE`), or null. */
+export async function readPinnedQuestionForUpdate(raw: EngineRawRead, sourceId: string, slug: string): Promise<PinRecordRow | null> {
+  const [row] = await raw<PinRecordRow>(PIN_FOR_UPDATE_SQL, [sourceId, slug]);
   return row ?? null;
 }
 

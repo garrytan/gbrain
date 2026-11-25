@@ -30,7 +30,7 @@
  * Config keys (defaults explicit):
  *   cycle.enrich_thin.enabled                (false)
  *   cycle.enrich_thin.max_cost_usd           (1.00)   per source per tick
- *   cycle.enrich_thin.max_total_cost_usd     (5.00)   brain-wide per tick
+ *   cycle.enrich_thin.max_total_cost_usd     (0.50)   brain-wide per tick
  *   cycle.enrich_thin.max_total_walltime_min (30)     brain-wide per tick
  *   cycle.enrich_thin.max_pages_per_tick     (3)      per source per tick
  *   cycle.enrich_thin.types                  (["person","company"])
@@ -181,7 +181,7 @@ async function loadCfg(engine: BrainEngine): Promise<ResolvedConfig> {
   return {
     enabled: enabledFlag,
     maxCostUsd: parseCostOrDefault(maxCost, 1.0),
-    maxTotalCostUsd: parseCostOrDefault(maxTotalCost, 5.0),
+    maxTotalCostUsd: parseCostOrDefault(maxTotalCost, 0.5),
     maxTotalWalltimeMin: parseFloatOrDefault(maxTotalWall, 30),
     maxPagesPerTick: parseIntOrDefault(maxPages, 3),
     types,
@@ -423,11 +423,12 @@ export async function runPhaseEnrichThin(
     }
   }
 
-  const totals = { enriched: 0, skipped_insufficient: 0, sources_processed: 0 };
+  const totals = { enriched: 0, skipped_insufficient: 0, skipped_evidence_narrowed: 0, sources_processed: 0 };
   for (const r of Object.values(perSourceResults)) {
     if (!r.error) totals.sources_processed++;
     totals.enriched += r.pages_enriched;
     totals.skipped_insufficient += r.pages_skipped_insufficient;
+    totals.skipped_evidence_narrowed += r.pages_skipped_evidence_narrowed ?? 0;
   }
 
   const anyError = Object.values(perSourceResults).some((r) => r.error);
@@ -444,6 +445,7 @@ export async function runPhaseEnrichThin(
       sources_processed: totals.sources_processed,
       pages_enriched: totals.enriched,
       pages_skipped_insufficient: totals.skipped_insufficient,
+      pages_skipped_evidence_narrowed: totals.skipped_evidence_narrowed,
       spent_usd: totalSpent,
       skipped_by_brain_wide_walltime: skippedByBrainWideWalltime,
       // #2504 — Infinity would JSON-serialize to null; report the 'off'

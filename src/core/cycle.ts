@@ -84,7 +84,7 @@ export type CyclePhase =
   //    narrative pattern statements + active bias tags. Voice-gated.
   | 'propose_takes' | 'grade_takes' | 'calibration_profile'
   | 'edge_contradictions' // temporal typed edges: LLM flags conflicts, date math closes
-  | 'claim_conflicts' // GBRA-216: keyless typed-claim conflicts filed as decide_proposals (default off)
+  | 'claim_conflicts' // GBRA-216: keyless typed-claim conflicts filed as decide_proposals (default propose)
   // #2653 — drift detection (default OFF; dream.drift.enabled). LLM-judges
   // soft-band takes against recent timeline evidence; report-only in v1
   // (writes reports/drift-<date>; auto_update mutates nothing).

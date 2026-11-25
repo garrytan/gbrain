@@ -1,17 +1,14 @@
 /**
- * The pinned-question records: the `pinned_questions` rows and a publication's `question_evidence` rewrite
+ * The pinned-question records beyond the insert and the two reads of engine-sql/pinned-questions.ts: the locked read, the
+ * state change, the refresh lease, spend, and a publication's answer and `question_evidence` rewrite
  * (engine-sql/question-store.ts). `BrainEngine` extends this interface. The reads of the records that join them to the
  * rows they cite are in question-reads.ts.
  */
 import type * as QuestionStoreSql from '../engine-sql/question-store.ts';
 
 export interface QuestionStoreMembers {
-  /** The pin `slug` of `sourceId`, or null; `forUpdate` locks the row until the transaction ends. */
-  readPinRow(sourceId: string, slug: string, forUpdate: boolean): Promise<QuestionStoreSql.PinRecordRow | null>;
-  /** The pins the filter names, by source id in byte order, then creation time and id. */
-  listPinRows(filter: QuestionStoreSql.PinRecordFilter): Promise<QuestionStoreSql.PinRecordRow[]>;
-  /** Inserts the pin, or nothing when `(source_id, slug)` already has one: the new row, or null. */
-  insertPinRow(pin: QuestionStoreSql.PinRecordInsert): Promise<QuestionStoreSql.PinRecordRow | null>;
+  /** The pin `slug` of `sourceId` locked until the transaction ends (`FOR UPDATE`), or null. */
+  readPinnedQuestionForUpdate(sourceId: string, slug: string): Promise<QuestionStoreSql.PinRecordRow | null>;
   /** Changes the pin's state, reason and publish mode and bumps its revision (archiving drops the lease): the row, or null for an unknown id. */
   updatePinRowState(id: number, patch: QuestionStoreSql.PinStatePatch): Promise<QuestionStoreSql.PinRecordRow | null>;
   /** Takes the refresh lease when the pin is not archived and holds no live lease: the leased row, or null. */
