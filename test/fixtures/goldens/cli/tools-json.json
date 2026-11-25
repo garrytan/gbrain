@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 319078,
-    "stdoutSha256": "a47ae464d06dd9b8546b07d64beaa22a7f68f1b872f6edb4c8e03559e9be97a6",
+    "stdoutBytes": 319976,
+    "stdoutSha256": "9d099af10a67cc63abe97a4456a56007d65d50a73511cc3eda7b60407e15f800",
     "toolNames": [
       "remember",
       "entity",
@@ -100,6 +100,7 @@
       "storage_register",
       "storage_update",
       "reveal_secret",
+      "check_claims",
       "policy_check",
       "agent_policy",
       "capabilities",
@@ -4794,6 +4795,35 @@
           },
           "required": [
             "id"
+          ],
+          "type": "object"
+        },
+        "scope": "read"
+      },
+      {
+        "description": "Check the numbers in a draft against allowed-claims pages (type: facts, claims: allowed) before stating them. Per claim: supported (with the cited dated line), conflicts (lines that say another number) or not_found, which means no allowed claim covers it, not that it is false.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": false,
+        "name": "check_claims",
+        "parameters": {
+          "source_id": "string?",
+          "text": "string"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "source_id": {
+              "description": "One source, or '__all__'.",
+              "type": "string"
+            },
+            "text": {
+              "description": "The draft to check (max 20000 characters).",
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
           ],
           "type": "object"
         },
