@@ -390,8 +390,16 @@ struct Writer {
 
 struct Logged {
     log: Arc<CommitLog>,
-    ops: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
+    ops: BTreeMap<Vec<u8>, LoggedOp>,
     meta: CommitMeta,
+}
+
+/// What a logged single-writer commit did to one key: its final value, its delete, or (when the
+/// write did nothing else to the key) an id sequence raised to at least a value.
+enum LoggedOp {
+    Put(Vec<u8>),
+    Delete,
+    Raise(u64),
 }
 
 impl KvRead for Writer {
@@ -419,7 +427,38 @@ impl KvWrite for Writer {
         let mut table = self.tx.open_table(TABLE).map_err(map)?;
         table.insert(key, value).map_err(map)?;
         if let Some(logged) = &mut self.logged {
-            logged.ops.insert(key.to_vec(), Some(value.to_vec()));
+            logged
+                .ops
+                .insert(key.to_vec(), LoggedOp::Put(value.to_vec()));
+        }
+        Ok(())
+    }
+
+    fn raise_counter(&mut self, key: &[u8], value: u64) -> Result<()> {
+        // As the default, plus: with the log on, a raise on a key this write did not otherwise
+        // touch is logged as the raise itself (replayed as a max), not as the value it read.
+        let current = match self.get(key)? {
+            Some(bytes) => crate::keys::be8(&bytes)
+                .ok_or_else(|| StoreError::new(STORE_CORRUPT, "bad id counter"))?,
+            None => 0,
+        };
+        let raised_alone = self
+            .logged
+            .as_ref()
+            .map(|l| matches!(l.ops.get(key), None | Some(LoggedOp::Raise(_))));
+        if current < value {
+            self.put(key, &value.to_be_bytes())?;
+        }
+        if raised_alone == Some(true)
+            && let Some(logged) = &mut self.logged
+        {
+            let prior = match logged.ops.get(key) {
+                Some(LoggedOp::Raise(m)) => *m,
+                _ => 0,
+            };
+            logged
+                .ops
+                .insert(key.to_vec(), LoggedOp::Raise(prior.max(value)));
         }
         Ok(())
     }
@@ -429,7 +468,7 @@ impl KvWrite for Writer {
         let mut table = self.tx.open_table(TABLE).map_err(map)?;
         table.remove(key).map_err(map)?;
         if let Some(logged) = &mut self.logged {
-            logged.ops.insert(key.to_vec(), None);
+            logged.ops.insert(key.to_vec(), LoggedOp::Delete);
         }
         Ok(())
     }
@@ -503,8 +542,9 @@ impl KvWrite for Writer {
                     (
                         k.as_slice(),
                         match v {
-                            Some(v) => LogOpRef::Put(v),
-                            None => LogOpRef::Delete,
+                            LoggedOp::Put(v) => LogOpRef::Put(v),
+                            LoggedOp::Delete => LogOpRef::Delete,
+                            LoggedOp::Raise(m) => LogOpRef::RaiseCounter(*m),
                         },
                     )
                 }),

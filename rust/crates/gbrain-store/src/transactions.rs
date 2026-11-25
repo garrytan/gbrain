@@ -156,7 +156,7 @@ pub struct Transaction {
 impl Drop for Transaction {
     fn drop(&mut self) {
         let state = self.state.get_mut().unwrap_or_else(|e| e.into_inner());
-        let _ = state.roll_back();
+        let _ = state.roll_back(&*self.kv);
     }
 }
 
@@ -365,7 +365,7 @@ impl State {
     /// every key the transaction wrote gets its earlier value back, every sequence is raised to
     /// the highest value the transaction took, and that write commits: no other writer can take
     /// an id the transaction handed out. Rolling back an ended transaction does nothing.
-    fn roll_back(&mut self) -> Result<()> {
+    fn roll_back(&mut self, kv: &dyn Kv) -> Result<()> {
         let Some(mut base) = self.base.take() else {
             return Ok(());
         };
@@ -381,6 +381,18 @@ impl State {
             *seen = (*seen).max(value);
         }
         if counters.is_empty() {
+            return Ok(());
+        }
+        if kv.commit_log_enabled() {
+            // With the commit log on, the rolled-back writes are dropped with their write (it never
+            // commits), and a new write carries only the id sequences forward: its record holds
+            // counter ops and nothing else, so a rollback leaves no data in the log.
+            drop(base);
+            let mut forward = kv.begin_write()?;
+            for (key, value) in counters {
+                forward.raise_counter(&key, value)?;
+            }
+            forward.commit()?;
             return Ok(());
         }
         for (key, before) in undo {
@@ -714,7 +726,7 @@ impl Store {
         let ended = {
             let mut state = lock(&tx.state);
             let open = state.base.is_some();
-            let result = state.roll_back();
+            let result = state.roll_back(&*tx.kv);
             if open {
                 self.vectors.clear();
             }

@@ -1668,3 +1668,97 @@ fn a_refused_open_on_a_shared_adapter_leaves_the_open_store_timing_its_commits()
         }
     }
 }
+
+/// Lane L6 finding: a rolled-back (or dropped) explicit transaction leaves no data in the log. The
+/// only record it may leave is the commit that writes its id sequences forward, and that record
+/// holds counter ops and nothing else; a retry then logs its data exactly once.
+#[test]
+fn a_rolled_back_or_dropped_transaction_logs_no_data_and_a_retry_logs_it_once() {
+    use gbrain_store::pages::{PageInput, PutPageOptions};
+    let page = |body: &str| -> PageInput {
+        serde_json::from_value(json!({"type": "note", "title": "t", "compiled_truth": body}))
+            .unwrap()
+    };
+    let only_counters = |records: &[commit_log::CommitRecord], what: &str| {
+        for r in records {
+            for (k, op) in &r.ops {
+                assert!(
+                    matches!(op, LogOp::AddI64(_) | LogOp::RaiseCounter(_)),
+                    "{what} left a data op on {}: {op:?}",
+                    k.escape_ascii()
+                );
+            }
+        }
+    };
+    for concurrent in MODES {
+        let dir = TempDir::new("rollback-no-data");
+        let (kv, store) = leader(&dir.path().join("r.redb"), concurrent, mu());
+        let mut follower = Follower::copy_of(&*kv, &dir.path().join("f.redb"));
+        let start = store.read_commit_log(None, usize::MAX).unwrap().newest;
+        let before = data(&*kv);
+        // Rolled back.
+        let tx = store.begin_transaction(false).unwrap();
+        tx.put_page(
+            "rolled/back",
+            &page("never committed"),
+            &PutPageOptions::default(),
+        )
+        .unwrap();
+        tx.submit_page_mutation(&mutation(&uuid(1), "rolled/mutation", "x"), None)
+            .unwrap();
+        tx.rollback_transaction().unwrap();
+        drop(tx);
+        // Dropped without a commit (an aborted attempt).
+        {
+            let tx = store.begin_transaction(false).unwrap();
+            tx.put_page(
+                "retried/page",
+                &page("first attempt"),
+                &PutPageOptions::default(),
+            )
+            .unwrap();
+        }
+        let page_after = store.read_commit_log(start, usize::MAX).unwrap();
+        only_counters(
+            &page_after.records,
+            &format!("concurrent {concurrent}: a rollback"),
+        );
+        let after = data(&*kv);
+        let changed: Vec<_> = after
+            .iter()
+            .filter(|(k, v)| before.get(*k) != Some(*v))
+            .map(|(k, _)| k.escape_ascii().to_string())
+            .collect();
+        assert!(
+            changed
+                .iter()
+                .all(|k| !k.contains("rolled") && !k.contains("retried")),
+            "concurrent {concurrent}: {changed:?}"
+        );
+        follower.catch_up(&store);
+        assert_eq!(follower.data(), after);
+        // The retry: one record carries its data.
+        let tx = store.begin_transaction(false).unwrap();
+        tx.put_page(
+            "retried/page",
+            &page("second attempt"),
+            &PutPageOptions::default(),
+        )
+        .unwrap();
+        let at = tx.commit_transaction_at().unwrap();
+        drop(tx);
+        let records = store.read_commit_log(start, usize::MAX).unwrap().records;
+        let with_data: Vec<_> = records
+            .iter()
+            .filter(|r| {
+                r.ops
+                    .iter()
+                    .any(|(_, o)| matches!(o, LogOp::Put(_) | LogOp::Delete))
+            })
+            .collect();
+        assert_eq!(with_data.len(), 1, "concurrent {concurrent}: {records:?}");
+        assert_eq!(with_data[0].position, at);
+        follower.catch_up(&store);
+        assert_eq!(follower.data(), data(&*kv));
+    }
+}
