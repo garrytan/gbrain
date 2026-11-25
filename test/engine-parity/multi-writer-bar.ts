@@ -1,7 +1,7 @@
 /**
  * The multi-writer pass mark: one command that prints, per case C01..C22, what each arm did.
  *
- *   bun test/engine-parity/multi-writer-bar.ts [--arms pglite,postgres,rust,rust-mu,store-single,store-optimistic]
+ *   bun test/engine-parity/multi-writer-bar.ts [--arms pglite,postgres,rust,rust-mu-env,rust-mu-config,store-single,store-optimistic]
  *                                              [--log-dir <dir>] [--timeout-ms <ms>]
  *
  * The engine arms run `test/engine-parity/multi-writer-conformance.test.ts` once per Rust label (so the Rust arm has the SQL
@@ -24,8 +24,17 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, writeFileSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { MW_ARMS, MW_CASES, MW_ENGINE_ARMS, MW_STORE_ARMS, type MwArm, type MwCase, type MwEngineArm, type MwStoreArm } from './multi-writer-cases.ts';
-import { MW_LEDGER_ENV, parseLedger, type LedgerLine } from './multi-writer-ledger.ts';
+import { MW_CASES, MW_STORE_ARMS, type MwCase, type MwStoreArm } from './multi-writer-cases.ts';
+import { mwEntries, type MwEntry } from './multi-writer-entries.ts';
+import { cellArm, LEDGER_ARMS, MW_LEDGER_ENV, parseLedger, type LedgerArm, type LedgerLine } from './multi-writer-ledger.ts';
+
+/**
+ * The arms of the bar: the engine arms by the label the ledger carries (the `rust-mu` view has two routes to the multi-user
+ * switch, `rust-mu-env` and `rust-mu-config`, each its own process, column and ledger label; both read the matrix's one
+ * `rust-mu` cell) and the two Rust store arms. `--arms rust-mu` is shorthand for both routes.
+ */
+export const BAR_ARMS = [...LEDGER_ARMS, ...MW_STORE_ARMS] as const;
+export type BarArm = typeof BAR_ARMS[number];
 
 const REPO = join(import.meta.dir, '..', '..');
 const ENGINE_FILE = 'test/engine-parity/multi-writer-conformance.test.ts';
@@ -124,7 +133,7 @@ export interface BarStep {
 export interface EngineUnit {
   id: string;
   /** The arms this process runs (the Rust label, and the SQL arms it has as its reference). */
-  arms: MwEngineArm[];
+  arms: LedgerArm[];
   env: Record<string, string | undefined>;
   setup: BarStep[];
   run: BarStep;
@@ -134,8 +143,8 @@ export interface EngineUnit {
 
 export interface BarCommands {
   /** Setup checks of an engine unit, run before it (default: the Rust addon file exists, for a Rust label). */
-  engineSetup(unit: { arms: MwEngineArm[]; env: Record<string, string | undefined> }): Array<Pick<BarStep, 'name' | 'cmd'>>;
-  engineRun(unit: { id: string; arms: MwEngineArm[] }): string[];
+  engineSetup(unit: { arms: LedgerArm[]; env: Record<string, string | undefined> }): Array<Pick<BarStep, 'name' | 'cmd'>>;
+  engineRun(unit: { id: string; arms: LedgerArm[] }): string[];
   storeBuild(): string[];
   storeList(): string[];
   storeRun(names: readonly string[]): string[];
@@ -144,7 +153,7 @@ export interface BarCommands {
 export const DEFAULT_COMMANDS: BarCommands = {
   engineSetup: (unit) => {
     const addon = unit.env.GBRAIN_TEST_RUST_ENGINE_ADDON;
-    return unit.arms.some((a) => a === 'rust' || a === 'rust-mu') && addon !== undefined && addon !== ''
+    return unit.arms.some((a) => a === 'rust' || a === 'rust-mu-env' || a === 'rust-mu-config') && addon !== undefined && addon !== ''
       ? [{ name: `the Rust addon file exists (${addon})`, cmd: ['test', '-f', addon] }] : [];
   },
   engineRun: () => ['bun', 'test', '--timeout=60000', ENGINE_FILE],
@@ -154,7 +163,7 @@ export const DEFAULT_COMMANDS: BarCommands = {
 };
 
 export interface BarOptions {
-  arms: readonly MwArm[];
+  arms: readonly BarArm[];
   matrix: readonly MwCase[];
   /** The caller's environment (DATABASE_URL, the addon path); children inherit the process environment plus each unit's own. */
   env: Record<string, string | undefined>;
@@ -192,7 +201,7 @@ export function planEngineUnits(opts: BarOptions): { units: EngineUnit[]; proble
     for (const flag of RUST_ENV_FLAGS) env[flag] = undefined;
     return env;
   };
-  const add = (id: string, arms: MwEngineArm[], extra: Record<string, string | undefined>): void => {
+  const add = (id: string, arms: LedgerArm[], extra: Record<string, string | undefined>): void => {
     const ledger = join(opts.logDir, `engine-${id}.ledger.jsonl`);
     const log = join(opts.logDir, `engine-${id}.log`);
     const env = { ...baseEnv(), ...extra, [MW_LEDGER_ENV]: ledger };
@@ -201,12 +210,13 @@ export function planEngineUnits(opts: BarOptions): { units: EngineUnit[]; proble
     units.push({ id, arms, env, setup, ledger, log, run: { name: `${ENGINE_FILE} (${arms.join(', ')})`, code: 'test_run_failed', cmd: cmds.engineRun({ id, arms }), env, timeoutMs: timeouts.engine } });
   };
   const wantsRust = selected.has('rust');
-  const wantsMu = selected.has('rust-mu');
+  const wantsMuEnv = selected.has('rust-mu-env');
+  const wantsMuConfig = selected.has('rust-mu-config');
   const sqlSelected = (['pglite', 'postgres'] as const).filter((a) => selected.has(a));
   if (selected.has('postgres') && !havePg) {
     problems.push({ code: 'setup_failed', message: 'the postgres arm is selected but DATABASE_URL is not set (set it with GBRAIN_TEST_ALLOW_DATABASE_URL=1, or leave postgres out of --arms)', rerun: rerun([...opts.arms].join(',')) });
   }
-  if (!wantsRust && !wantsMu) {
+  if (!wantsRust && !wantsMuEnv && !wantsMuConfig) {
     // Only the SQL arms: PGLite alone runs without DATABASE_URL, Postgres alone with GBRAIN_TEST_BACKEND=postgres, both as is.
     const running = sqlSelected.filter((a) => a !== 'postgres' || havePg);
     if (running.length > 0) {
@@ -214,10 +224,11 @@ export function planEngineUnits(opts: BarOptions): { units: EngineUnit[]; proble
     }
     return { units, problems };
   }
-  const reference: MwEngineArm[] = havePg ? ['pglite', 'postgres'] : ['pglite'];
+  const reference: LedgerArm[] = havePg ? ['pglite', 'postgres'] : ['pglite'];
   const databaseEnv: Record<string, string | undefined> = havePg ? {} : { DATABASE_URL: undefined };
   if (wantsRust) add('rust', [...reference, 'rust'], { ...databaseEnv, GBRAIN_TEST_RUST_ARM: '1' });
-  if (wantsMu) add('rust-mu', [...reference, 'rust-mu'], { ...databaseEnv, GBRAIN_TEST_RUST_MU_ARM: '1' });
+  if (wantsMuEnv) add('rust-mu-env', [...reference, 'rust-mu-env'], { ...databaseEnv, GBRAIN_TEST_RUST_MU_ARM: 'env' });
+  if (wantsMuConfig) add('rust-mu-config', [...reference, 'rust-mu-config'], { ...databaseEnv, GBRAIN_TEST_RUST_MU_ARM: 'config' });
   return { units, problems };
 }
 
@@ -248,12 +259,12 @@ export function checkLedger(unit: Pick<EngineUnit, 'id' | 'arms' | 'ledger'>, ma
     return { failures, cells };
   }
   for (const problem of parsed.malformed) fail('ledger_malformed', problem);
-  const expected = new Map<string, { row: MwCase; arm: MwEngineArm }>();
-  for (const row of matrix) for (const arm of unit.arms) expected.set(`${row.id}:${arm}`, { row, arm });
+  const expected = new Map<string, { row: MwEntry; arm: LedgerArm }>();
+  for (const row of mwEntries(matrix)) for (const arm of unit.arms) expected.set(`${row.id}:${arm}`, { row, arm });
   const seen = new Map<string, LedgerLine>();
   for (const line of parsed.lines) {
     const key = `${line.case}:${line.arm}`;
-    if (!expected.has(key)) { fail('ledger_unexpected', `${key} is not a (case, arm) this process runs (arms ${unit.arms.join(', ')}; ${matrix.length} matrix rows)`); continue; }
+    if (!expected.has(key)) { fail('ledger_unexpected', `${key} is not a (case, arm) this process runs (arms ${unit.arms.join(', ')}; ${mwEntries(matrix).length} matrix entries)`); continue; }
     if (seen.has(key)) { fail('ledger_duplicate', `${key} appears more than once in the ledger`); continue; }
     seen.set(key, line);
   }
@@ -261,7 +272,7 @@ export function checkLedger(unit: Pick<EngineUnit, 'id' | 'arms' | 'ledger'>, ma
     const line = seen.get(key);
     if (line === undefined) { fail('ledger_missing', `${key} has no ledger line`); continue; }
     cells.set(key, DISPLAY[line.outcome]);
-    const status = row.cells[arm].status;
+    const status = row.cells[cellArm(arm)].status;
     if (line.outcome === allowedOutcome(status)) continue;
     if (line.outcome === 'prerequisite_missing') fail('prerequisite_missing', `${key} could not run: ${line.detail}`);
     else if (line.outcome === 'fail') fail('case_failed', `${key} failed: ${line.detail}`);
@@ -335,7 +346,7 @@ export async function runBar(opts: BarOptions): Promise<BarReport> {
   const selected = new Set(opts.arms);
   const failures: BarFailure[] = [];
   const cells = new Map<string, string>();
-  const selectedEngine = MW_ENGINE_ARMS.filter((a) => selected.has(a));
+  const entries = mwEntries(opts.matrix);
   const selectedStore = MW_STORE_ARMS.filter((a) => selected.has(a));
 
   /** `ok`; `failed` (it ran and exited non-zero: its output is still worth reading); `abnormal` (never started, killed or timed out). */
@@ -358,13 +369,13 @@ export async function runBar(opts: BarOptions): Promise<BarReport> {
     for (const step of unit.setup) if (status === 'ok' && (await runStep(step, unit.log, rerun)) !== 'ok') status = 'abnormal';
     if (status === 'ok') status = await runStep(unit.run, unit.log, rerun);
     if (status === 'abnormal') {
-      for (const arm of unit.arms) for (const row of opts.matrix) if (selected.has(arm)) merge(cells, `${row.id}:${arm}`, 'ERROR');
+      for (const arm of unit.arms) for (const row of entries) if (selected.has(arm)) merge(cells, `${row.id}:${arm}`, 'ERROR');
       continue;
     }
     // A run that exited non-zero is already a failure; its ledger still says which cases failed.
     const checked = checkLedger(unit, opts.matrix, readText(unit.ledger), rerun);
     failures.push(...checked.failures);
-    for (const row of opts.matrix) {
+    for (const row of entries) {
       for (const arm of unit.arms) {
         if (!selected.has(arm)) continue;
         merge(cells, `${row.id}:${arm}`, checked.cells.get(`${row.id}:${arm}`) ?? 'MISSING');
@@ -376,7 +387,7 @@ export async function runBar(opts: BarOptions): Promise<BarReport> {
   if (selectedStore.length > 0) {
     const rerun = `bun test/engine-parity/multi-writer-bar.ts --arms ${selectedStore.join(',')}`;
     const log = (name: string) => join(opts.logDir, `store-${name}.log`);
-    const markAll = (value: string) => { for (const arm of selectedStore) for (const row of opts.matrix) merge(cells, `${row.id}:${arm}`, value); };
+    const markAll = (value: string) => { for (const arm of selectedStore) for (const row of entries) merge(cells, `${row.id}:${arm}`, value); };
     const build: BarStep = { name: 'cargo test --no-run (build the store conformance tests)', code: 'build_failed', cmd: cmds.storeBuild(), cwd: join(repo, 'rust'), timeoutMs: timeouts.build };
     writeFileSync(log('build'), '');
     if ((await runStep(build, log('build'), rerun)) !== 'ok') {
@@ -389,9 +400,9 @@ export async function runBar(opts: BarOptions): Promise<BarReport> {
       } else {
         const ignored = parseIgnoredList(readText(log('list')) ?? '');
         for (const arm of selectedStore) {
-          const runnable = unique(opts.matrix.filter((r) => r.cells[arm].status === 'runs').flatMap((r) => [...r.storeTests.runnable]));
+          const runnable = unique(entries.filter((r) => r.cells[arm].status === 'runs').flatMap((r) => [...r.storeTests.runnable]));
           const armLog = log(`run-${arm}`);
-          for (const row of opts.matrix) {
+          for (const row of entries) {
             const status = row.cells[arm].status;
             if (status === 'n/a') { merge(cells, `${row.id}:${arm}`, 'n/a'); continue; }
             const names = status === 'runs' ? row.storeTests.runnable : row.storeTests.pending;
@@ -412,7 +423,7 @@ export async function runBar(opts: BarOptions): Promise<BarReport> {
             cwd: join(repo, 'rust'), env: STORE_ENV[arm], timeoutMs: timeouts.store };
           const ran = await runStep(step, armLog, rerun);
           if (ran === 'abnormal') {
-            for (const row of opts.matrix) if (row.cells[arm].status === 'runs') merge(cells, `${row.id}:${arm}`, 'ERROR');
+            for (const row of entries) if (row.cells[arm].status === 'runs') merge(cells, `${row.id}:${arm}`, 'ERROR');
             continue;
           }
           const parsed = parseStoreRun(readText(armLog) ?? '');
@@ -431,7 +442,7 @@ export async function runBar(opts: BarOptions): Promise<BarReport> {
           for (const name of parsed.results.keys()) {
             if (!runnable.includes(name)) failures.push({ code: 'store_result_unexpected', message: `[${arm}] cargo ran ${name}, which the matrix did not name`, log: armLog, rerun });
           }
-          for (const row of opts.matrix) {
+          for (const row of entries) {
             if (row.cells[arm].status !== 'runs') continue;
             const parts = row.storeTests.runnable.map((n) => verdict.get(n) ?? 'MISSING');
             const worst = parts.length === 0 ? 'MISSING' : parts.reduce((a, b) => (WORSE.indexOf(b) < WORSE.indexOf(a) ? b : a));
@@ -443,12 +454,12 @@ export async function runBar(opts: BarOptions): Promise<BarReport> {
   }
 
   // The table, for the selected arms.
-  const shown = MW_ARMS.filter((a) => selected.has(a));
+  const shown = BAR_ARMS.filter((a) => selected.has(a));
   const header = ['case', ...shown, 'reference'];
-  const rows = opts.matrix.map((row) => [row.id, ...shown.map((arm) => cells.get(`${row.id}:${arm}`) ?? '-'), row.reference]);
+  const rows = entries.map((row) => [row.id, ...shown.map((arm) => cells.get(`${row.id}:${arm}`) ?? '-'), row.reference]);
   const widths = header.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i]!.length)));
   const line = (r: string[]) => r.map((c, i) => c.padEnd(widths[i]!)).join('  ').trimEnd();
-  const count = (text: string, reference?: MwCase['reference']) => opts.matrix.reduce((n, row) => n + shown.filter((arm) => cells.get(`${row.id}:${arm}`) === text && (reference === undefined || row.reference === reference)).length, 0);
+  const count = (text: string, reference?: MwEntry['reference']) => entries.reduce((n, row) => n + shown.filter((arm) => cells.get(`${row.id}:${arm}`) === text && (reference === undefined || row.reference === reference)).length, 0);
   const summary = `cells: ${count('pass', 'compare')} pass (compare), ${count('pass', 'standalone')} pass (standalone, invariant only), ${count('pending')} pending, ${count('n/a')} n/a, `
     + `${count('FAIL')} fail, ${count('PREREQ')} prerequisite missing, ${count('MISSING')} missing, ${count('ERROR')} error`;
   const table = [line(header), ...rows.map(line), '', summary, `failures: ${failures.length}`].join('\n');
@@ -460,12 +471,13 @@ export function renderFailures(failures: readonly BarFailure[]): string {
   return failures.map((f) => [`multi-writer bar FAILED [${f.code}] ${f.message}`, ...(f.log ? [`  log: ${f.log}`] : []), `  rerun: ${f.rerun}`].join('\n')).join('\n');
 }
 
-export function parseArms(arg: string | undefined): MwArm[] | string {
-  if (arg === undefined) return [...MW_ARMS];
-  const arms = arg.split(',').map((a) => a.trim()).filter((a) => a !== '');
-  const unknown = arms.filter((a) => !(MW_ARMS as readonly string[]).includes(a));
-  if (arms.length === 0 || unknown.length > 0) return `unknown arm ${unknown.join(', ') || '(none given)'}; arms are ${MW_ARMS.join(', ')}`;
-  return unique(arms) as MwArm[];
+export function parseArms(arg: string | undefined): BarArm[] | string {
+  if (arg === undefined) return [...BAR_ARMS];
+  // `rust-mu` is shorthand for both routes to the multi-user switch.
+  const arms = arg.split(',').map((a) => a.trim()).filter((a) => a !== '').flatMap((a) => (a === 'rust-mu' ? ['rust-mu-env', 'rust-mu-config'] : [a]));
+  const unknown = arms.filter((a) => !(BAR_ARMS as readonly string[]).includes(a));
+  if (arms.length === 0 || unknown.length > 0) return `unknown arm ${unknown.join(', ') || '(none given)'}; arms are ${BAR_ARMS.join(', ')} (rust-mu means both rust-mu routes)`;
+  return unique(arms) as BarArm[];
 }
 
 if (import.meta.main) {
@@ -473,7 +485,7 @@ if (import.meta.main) {
   const flag = (name: string): string | undefined => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
   const arms = parseArms(flag('--arms'));
   const usage = (message: string): never => {
-    process.stderr.write(`multi-writer bar FAILED [usage] ${message}\n  rerun: bun test/engine-parity/multi-writer-bar.ts --arms ${MW_ARMS.join(',')}\n`);
+    process.stderr.write(`multi-writer bar FAILED [usage] ${message}\n  rerun: bun test/engine-parity/multi-writer-bar.ts --arms ${BAR_ARMS.join(',')}\n`);
     process.exit(1);
   };
   if (typeof arms === 'string') usage(arms);
@@ -481,7 +493,7 @@ if (import.meta.main) {
   const timeoutMs = flag('--timeout-ms') === undefined ? undefined : Number(flag('--timeout-ms'));
   if (timeoutMs !== undefined && !(timeoutMs > 0)) usage('--timeout-ms needs a positive number');
   const logDir = flag('--log-dir') ?? mkdtempSync(join(tmpdir(), 'gbrain-mw-bar-'));
-  const report = await runBar({ arms: arms as MwArm[], matrix: MW_CASES, env: process.env, logDir,
+  const report = await runBar({ arms: arms as BarArm[], matrix: MW_CASES, env: process.env, logDir,
     ...(timeoutMs === undefined ? {} : { timeouts: { setup: timeoutMs, build: timeoutMs, engine: timeoutMs, store: timeoutMs } }) });
   process.stdout.write(`${report.table}\nlogs: ${report.logDir}\n`);
   if (report.failures.length > 0) {

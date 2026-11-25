@@ -20,11 +20,13 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkMwArm, checkRustArm, mwArmPlan, runMwCase, type MwArmHandle, type MwArmStarted, type RustTally } from './engine-parity/harness.ts';
+import { checkMwArm, checkRustArm, mwArmPlan, runMwCase, rustMultiuserView, type MwArmHandle, type MwArmStarted, type RustTally } from './engine-parity/harness.ts';
 import { checkRustTally } from './engine-parity/rust-tally.ts';
 import { MW_ARMS, type MwArm, type MwCase, type MwCell } from './engine-parity/multi-writer-cases.ts';
 import { type LedgerLine } from './engine-parity/multi-writer-ledger.ts';
-import { rustArmAddonPath } from './engine-parity/rust-arm.ts';
+import { checkMuResolved, MU_NOT_RESOLVED_NOTICE, muResolutionIsExposed, rustArmAddonPath, rustMuRoute } from './engine-parity/rust-arm.ts';
+import { mwEntries, mwEntry } from './engine-parity/multi-writer-entries.ts';
+import { parityDeclarations } from './engine-parity/coverage.ts';
 
 const RUNS: MwCell = { status: 'runs' };
 
@@ -44,7 +46,7 @@ interface Body<T> { calls: Set<string>; refusals: unknown[] }
 function handle<T>(label: MwArmHandle<T>['label'], body: (b: Body<T>) => Promise<T>,
   o: { capabilities?: string[]; started?: string[] } = {}): MwArmHandle<T> {
   return {
-    label, backend: label === 'rust' || label === 'rust-mu' ? 'rust' : (label as 'pglite' | 'postgres'),
+    label, backend: label === 'rust' || label.startsWith('rust-mu') ? 'rust' : (label as 'pglite' | 'postgres'),
     start: async (): Promise<MwArmStarted<T>> => {
       o.started?.push(label);
       const calls = new Set<string>();
@@ -121,7 +123,7 @@ describe('strict acceptance of a `runs` cell (checkMwArm)', () => {
   });
 
   test('a row that needs multi_writer fails on a Rust label unless the engine itself reports it, on both labels', async () => {
-    for (const label of ['rust', 'rust-mu'] as const) {
+    for (const label of ['rust', 'rust-mu-env', 'rust-mu-config'] as const) {
       const without = base({ row: row({ needs: 'multi_writer', reference: 'standalone' }), label, backend: 'rust', capabilities: new Set(['pages']) });
       await expect(checkMwArm(without.call)).rejects.toThrow(/needs multi_writer, but the engine does not report it \(engine\.capabilities has pages\)/);
       expect(without.ledger.lines.map((l) => l.outcome)).toEqual(['fail']);
@@ -177,9 +179,9 @@ describe('reference selection after per-case skips (runMwCase)', () => {
   });
 
   test('PGLite runs and no Postgres: PGLite is the reference, so Rust has one', async () => {
-    const out = await run(row(), [handle('pglite', ok({ won: 1 })), handle('rust-mu', ok({ won: 1 }))]);
+    const out = await run(row(), [handle('pglite', ok({ won: 1 })), handle('rust-mu-env', ok({ won: 1 }))]);
     expect(out.error).toBeNull();
-    expect(out.lines.map((l) => [l.arm, l.outcome, l.detail])).toEqual([['pglite', 'pass', 'reference arm'], ['rust-mu', 'pass', 'equal to pglite']]);
+    expect(out.lines.map((l) => [l.arm, l.outcome, l.detail])).toEqual([['pglite', 'pass', 'reference arm'], ['rust-mu-env', 'pass', 'equal to pglite']]);
   });
 
   test('a standalone case compares nothing, is counted in its own column and is never equal to PGLite', async () => {
@@ -199,11 +201,11 @@ describe('reference selection after per-case skips (runMwCase)', () => {
     const pending: MwCell = { status: 'pending', owner: 'L1 optimistic transactions', why: 'I-1' };
     const r = row({ cells: { pglite: { status: 'n/a', why: 'one connection' }, postgres: pending, rust: pending, 'rust-mu': pending } });
     const started: string[] = [];
-    const out = await run(r, [handle('pglite', ok(1), { started }), handle('postgres', ok(1), { started }), handle('rust-mu', ok(1), { started })]);
+    const out = await run(r, [handle('pglite', ok(1), { started }), handle('postgres', ok(1), { started }), handle('rust-mu-config', ok(1), { started })]);
     expect(out.error).toBeNull();
     expect(started).toEqual([]);
     expect(out.counts).toEqual({ skipped: 1, compared: 0, standalone: 0 });
-    expect(out.lines.map((l) => [l.arm, l.outcome])).toEqual([['pglite', 'n/a'], ['postgres', 'pending'], ['rust-mu', 'pending']]);
+    expect(out.lines.map((l) => [l.arm, l.outcome])).toEqual([['pglite', 'n/a'], ['postgres', 'pending'], ['rust-mu-config', 'pending']]);
   });
 
   test('the first arm that ran is the reference, not the first arm listed: a skipped first arm does not stop the second from providing it', async () => {
@@ -238,45 +240,129 @@ describe('the rust-tally sum check with skipped and standalone cases', () => {
   });
 });
 
-describe('the rust-mu view sets GBRAIN_RUST_MULTIUSER=1 inside the test process, and rust leaves it unset', () => {
+describe('both rust-mu routes read the matrix\'s one rust-mu cell and keep their own ledger label', () => {
+  test('rust-mu-env and rust-mu-config skip or run by the rust-mu cell; rust reads its own', () => {
+    const r = row({ cells: { 'rust-mu': { status: 'pending', owner: 'L5 hosts', why: 'fence' } } });
+    expect([mwArmPlan(r, 'rust').action, mwArmPlan(r, 'rust-mu-env').action, mwArmPlan(r, 'rust-mu-config').action]).toEqual(['run', 'skip', 'skip']);
+  });
+
+  test('a ledger note (the build does not resolve the switch) is appended to every line of the arm that carries it, skips included', async () => {
+    const r = row({ cells: { pglite: { status: 'n/a', why: 'one connection' }, 'rust-mu': { status: 'pending', owner: 'L5 hosts', why: 'fence' } } });
+    const ledger = collect();
+    const arms = [handle('pglite', ok(1)), { ...handle('rust-mu-config', ok(1)), note: () => MU_NOT_RESOLVED_NOTICE }];
+    await runMwCase({ row: r, name: 'C04 x', opts: OPTS, arms, ledger: ledger.write });
+    expect(ledger.lines.map((l) => [l.arm, l.outcome, l.detail])).toEqual([['pglite', 'n/a', 'one connection'],
+      ['rust-mu-config', 'pending', `L5 hosts: fence; ${MU_NOT_RESOLVED_NOTICE}`]]);
+    const passing = collect();
+    await runMwCase({ row: row(), name: 'C04 x', opts: OPTS, arms: [handle('pglite', ok(1)), { ...handle('rust-mu-env', ok(1)), note: () => MU_NOT_RESOLVED_NOTICE }], ledger: passing.write });
+    expect(passing.lines.map((l) => l.detail.includes(MU_NOT_RESOLVED_NOTICE))).toEqual([false, true]);
+  });
+});
+
+describe('variants: a variant is a case of its own, looked up through its parent row', () => {
+  const variantRow = (): MwCase => ({ ...row({ id: 'C06', reference: 'compare', needs: 'multi_writer' }),
+    variants: [{ id: 'C06.partition', of: 'C06', title: 'a host back from a partition', invariant: 'x', reference: 'standalone', members: ['putPage'],
+      cells: { pglite: RUNS, postgres: RUNS, rust: RUNS, 'rust-mu': { status: 'pending', owner: 'L5 hosts', why: 'fence' } } }] } as MwCase);
+
+  test('the variant has its own members, reference and cells; store arms are n/a; needs is its own, not the parent\'s', () => {
+    const entries = mwEntries([variantRow()]);
+    expect(entries.map((e) => [e.id, e.variant, e.parent.id, e.reference, e.needs ?? null, e.members])).toEqual([
+      ['C06', false, 'C06', 'compare', 'multi_writer', ['claimNextJob']], ['C06.partition', true, 'C06', 'standalone', null, ['putPage']]]);
+    const v = mwEntry('C06.partition', [variantRow()]);
+    expect([v.cells['rust-mu'].status, v.cells['store-single'].status, v.cells['store-optimistic'].status]).toEqual(['pending', 'n/a', 'n/a']);
+    expect(v.storeTests).toEqual({ runnable: [], pending: [] });
+    expect(() => mwEntry('C06.nope', [variantRow()])).toThrow(/no row or variant for C06\.nope/);
+  });
+
+  test('the harness plans a variant by its own cells and passes it as a case with the dotted id in the ledger', async () => {
+    const v = mwEntry('C06.partition', [variantRow()]);
+    expect(mwArmPlan(v, 'rust-mu-env')).toMatchObject({ action: 'skip', outcome: 'pending' });
+    const ledger = collect();
+    await runMwCase({ row: v, name: 'C06 x: a host back from a partition', opts: { methods: ['putPage'] } as never, ledger: ledger.write,
+      arms: [handle('postgres', ok(1, ['putPage'])), handle('rust-mu-env', ok(1, ['putPage']))] });
+    expect(ledger.lines.map((l) => [l.case, l.arm, l.outcome])).toEqual([['C06.partition', 'postgres', 'pass'], ['C06.partition', 'rust-mu-env', 'pending']]);
+  });
+
+  test('a variant with a wrong id, no cells or no reference is a loud error, never a silent skip', () => {
+    const bad = (v: object): MwCase => ({ ...row({ id: 'C06' }), variants: [v] } as unknown as MwCase);
+    const ok1 = { id: 'C06.partition', members: ['putPage'], reference: 'standalone', cells: {} };
+    expect(() => mwEntries([bad({ ...ok1, id: 'C07.partition' })])).toThrow(/the id must be `C06\.<name>`/);
+    expect(() => mwEntries([bad({ ...ok1, cells: undefined })])).toThrow(/its own cells/);
+    expect(() => mwEntries([bad({ ...ok1, reference: undefined })])).toThrow(/its own reference/);
+    expect(() => mwEntries([bad({ ...ok1, members: [] })])).toThrow(/its own members/);
+    expect(() => mwEntries([bad({ ...ok1, of: 'C07' })])).toThrow(/`of` is "C07"/);
+    expect(mwEntries([bad(ok1)]).length).toBe(2);
+  });
+});
+
+describe('the rust-mu route: the flag, and what the store resolved', () => {
+  test('the flag names a route: 1 and env are the environment route, config is the config-row route, anything else is an error', () => {
+    expect([undefined, '', '0', '1', 'env', 'config'].map((v) => rustMuRoute({ GBRAIN_TEST_RUST_MU_ARM: v }))).toEqual([null, null, null, 'env', 'env', 'config']);
+    expect(() => rustMuRoute({ GBRAIN_TEST_RUST_MU_ARM: 'both' })).toThrow(/not a route/);
+    expect([undefined, '1', 'env', 'config'].map((v) => rustMultiuserView({ GBRAIN_TEST_RUST_MU_ARM: v }))).toEqual(['off', 'env', 'env', 'config']);
+  });
+
+  const engineWith = (multiuser: unknown) => ({ openStoreIfOpen: () => (multiuser === 'absent' ? {} : { multiuser }) });
+
+  test('a build that exposes the resolved switch must say true; false fails the arm naming the route; absent is noted, not failed', () => {
+    expect(checkMuResolved(engineWith(true), 'env')).toBe(true);
+    expect(muResolutionIsExposed()).toBe(true);
+    expect(() => checkMuResolved(engineWith(false), 'config')).toThrow(/\[rust-mu-config\] the store did not resolve multi-user mode.*engine\.rust\.multiuser/);
+    expect(() => checkMuResolved(engineWith(false), 'env')).toThrow(/GBRAIN_RUST_MULTIUSER=1/);
+    expect(checkMuResolved(engineWith('absent'), 'env')).toBe(false);
+    expect(muResolutionIsExposed()).toBe(false);
+    expect(checkMuResolved({}, 'config')).toBe(false); // an engine with no open store here cannot say
+  });
+});
+
+describe('the rust-mu view runs the Rust arm by each route, and plain rust sets nothing', () => {
   const addon = rustArmAddonPath();
   const REPO = join(import.meta.dir, '..');
 
-  test.skipIf(!existsSync(addon))('a parity file run with GBRAIN_TEST_RUST_MU_ARM=1 sees the switch on the Rust arm and prints the rust-mu label; the plain Rust arm does not', () => {
+  test.skipIf(!existsSync(addon))('env (and its alias 1) sets GBRAIN_RUST_MULTIUSER=1 in the process; config leaves it unset and writes the config row on the Rust brain; rust sets neither', () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-mu-view-'));
     try {
       const fixture = join(dir, 'view.test.ts');
       writeFileSync(fixture, `import { appendFileSync } from 'node:fs';
-import { parityArms } from ${JSON.stringify(join(REPO, 'test/engine-parity/harness.ts'))};
+import { parityArms, rustMultiuserView } from ${JSON.stringify(join(REPO, 'test/engine-parity/harness.ts'))};
 import { testBackends } from ${JSON.stringify(join(REPO, 'test/helpers/test-backends.ts'))};
 const { parityTest } = parityArms(testBackends());
 parityTest('the multi-user switch as the arm sees it', { methods: ['getConfig'] }, async (engine, backend) => {
-  appendFileSync(process.env.MU_VIEW_OUT!, backend + ':' + (process.env.GBRAIN_RUST_MULTIUSER ?? 'unset') + '\\n');
-  await engine.getConfig('version');
+  const row = await engine.getConfig('engine.rust.multiuser');
+  appendFileSync(process.env.MU_VIEW_OUT!, [backend, process.env.GBRAIN_RUST_MULTIUSER ?? 'unset', rustMultiuserView(), row ?? 'none'].join(' ') + '\\n');
   return 'same';
 });
 `);
-      const runView = (flags: Record<string, string>) => {
-        const out = join(dir, `out-${Object.keys(flags)[0]}.txt`);
+      const runView = (name: string, flags: Record<string, string>) => {
+        const out = join(dir, `out-${name}.txt`);
         writeFileSync(out, '');
         const env: Record<string, string | undefined> = { ...process.env, GBRAIN_TEST_RUST_ARM: undefined, GBRAIN_TEST_RUST_MU_ARM: undefined, DATABASE_URL: undefined,
           GBRAIN_TEST_RUST_ENGINE_ADDON: addon, MU_VIEW_OUT: out, ...flags };
         const proc = spawnSync('bun', ['test', '--timeout=60000', fixture], { cwd: REPO, env: env as NodeJS.ProcessEnv, encoding: 'utf8' });
         return { status: proc.status, text: `${proc.stdout}\n${proc.stderr}`, seen: readFileSync(out, 'utf8').trim().split('\n').sort() };
       };
-      const mu = runView({ GBRAIN_TEST_RUST_MU_ARM: '1' });
-      expect(mu.status).toBe(0);
-      expect(mu.seen).toEqual(['pglite:1', 'rust:1']); // the switch is process-wide while the view is on
-      expect(mu.text).toContain('[rust-mu arm]');
-      const plain = runView({ GBRAIN_TEST_RUST_ARM: '1' });
+      for (const flag of ['1', 'env']) {
+        const mu = runView(`env-${flag}`, { GBRAIN_TEST_RUST_MU_ARM: flag });
+        expect({ flag, status: mu.status }).toEqual({ flag, status: 0 });
+        expect(mu.seen).toEqual(['pglite 1 env none', 'rust 1 env none']); // the switch is process-wide while the view is on
+        expect(mu.text).toContain('[rust-mu-env arm]');
+      }
+      const config = runView('config', { GBRAIN_TEST_RUST_MU_ARM: 'config', GBRAIN_RUST_MULTIUSER: '1' });
+      expect(config.status).toBe(0);
+      // The environment variable is unset for the whole view; only the Rust brain carries the config row.
+      expect(config.seen).toEqual(['pglite unset config none', 'rust unset config true']);
+      expect(config.text).toContain('[rust-mu-config arm]');
+      // A build that does not expose the resolved switch says so once; one that does would have failed the arm if it were off.
+      if (!/the store did not resolve/.test(config.text)) expect(config.text.match(new RegExp(MU_NOT_RESOLVED_NOTICE, 'g'))?.length ?? 0).toBeLessThanOrEqual(1);
+      const plain = runView('plain', { GBRAIN_TEST_RUST_ARM: '1' });
       expect(plain.status).toBe(0);
-      expect(plain.seen).toEqual(['pglite:unset', 'rust:unset']);
+      expect(plain.seen).toEqual(['pglite unset off none', 'rust unset off none']);
       expect(plain.text).toContain('[rust arm]');
-      expect(plain.text).not.toContain('[rust-mu arm]');
+      expect(plain.text).not.toContain('rust-mu');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  }, 180_000);
+  }, 240_000);
 });
 
 describe('ctx.sameBrainEngine: a second connected engine on the same brain', () => {
@@ -320,4 +406,27 @@ parityTest('a second engine on the same brain', { methods: ['putPage', 'getPage'
       rmSync(dir, { recursive: true, force: true });
     }
   }, 180_000);
+});
+
+describe('coverage.ts reads mwCase statically, for cases and variants', () => {
+  const read = (body: string) => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-mw-decl-'));
+    try {
+      writeFileSync(join(dir, 'x.test.ts'), `const { parityTest } = parityArms(testBackends());\n${body}\n`);
+      return parityDeclarations(dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+
+  test('a case id and a dotted variant id are read as string literals', () => {
+    const decls = read(`parityTest('C06 a', { methods: ['putPage'], mwCase: 'C06' }, async () => 1);\nparityTest('C06 a: b', { methods: ['putPage'], mwCase: 'C06.partition' }, async () => 1);\nparityTest('plain', { methods: ['getPage'] }, async () => 1);`);
+    expect(decls.map((d) => [d.name, d.mwCase ?? null])).toEqual([['C06 a', 'C06'], ['C06 a: b', 'C06.partition'], ['plain', null]]);
+  });
+
+  test('an unknown case id, a non-literal, and mwCase together with requires are errors', () => {
+    expect(() => read(`parityTest('x', { methods: ['putPage'], mwCase: 'C99' }, async () => 1);`)).toThrow(/is not a case id/);
+    expect(() => read(`parityTest('x', { methods: ['putPage'], mwCase: id }, async () => 1);`)).toThrow(/must be a string literal/);
+    expect(() => read(`parityTest('x', { methods: ['putPage'], requires: 'raw_sql', mwCase: 'C06' }, async () => 1);`)).toThrow(/takes no requires/);
+  });
 });

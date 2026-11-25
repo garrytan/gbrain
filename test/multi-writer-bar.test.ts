@@ -18,12 +18,13 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  checkLedger, DEFAULT_COMMANDS, parseArms, parseIgnoredList, parseStoreRun, planEngineUnits, renderFailures, runBar, runBounded,
-  type BarCommands, type BarOptions,
+  BAR_ARMS, checkLedger, DEFAULT_COMMANDS, parseArms, parseIgnoredList, parseStoreRun, planEngineUnits, renderFailures, runBar, runBounded,
+  type BarArm, type BarCommands, type BarOptions,
 } from './engine-parity/multi-writer-bar.ts';
 import { checkMwArm } from './engine-parity/harness.ts';
-import { MW_ARMS, type MwArm, type MwCase, type MwCell, type MwEngineArm } from './engine-parity/multi-writer-cases.ts';
-import { renderLedgerLine, type LedgerLine } from './engine-parity/multi-writer-ledger.ts';
+import type { MwCase, MwCell } from './engine-parity/multi-writer-cases.ts';
+import { cellArm, renderLedgerLine, type LedgerArm, type LedgerLine } from './engine-parity/multi-writer-ledger.ts';
+import { mwEntries } from './engine-parity/multi-writer-entries.ts';
 
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
@@ -45,13 +46,13 @@ const MATRIX: readonly MwCase[] = [
 
 const ALLOWED: Record<string, LedgerLine['outcome']> = { runs: 'pass', 'n/a': 'n/a', pending: 'pending' };
 
-function line(c: string, arm: MwEngineArm, outcome: LedgerLine['outcome'], detail = 'x'): LedgerLine {
+function line(c: string, arm: LedgerArm, outcome: LedgerLine['outcome'], detail = 'x'): LedgerLine {
   return { case: c as LedgerLine['case'], arm, outcome, detail };
 }
 
 /** The ledger a correct run of a unit with `arms` writes. */
-function goodLines(arms: readonly MwEngineArm[], matrix: readonly MwCase[] = MATRIX): LedgerLine[] {
-  return matrix.flatMap((row) => arms.map((arm) => line(row.id, arm, ALLOWED[row.cells[arm].status]!)));
+function goodLines(arms: readonly LedgerArm[], matrix: readonly MwCase[] = MATRIX): LedgerLine[] {
+  return mwEntries(matrix).flatMap((row) => arms.map((arm) => line(row.id, arm, ALLOWED[row.cells[cellArm(arm)].status]!)));
 }
 
 const ledgerText = (lines: readonly LedgerLine[]): string => lines.map(renderLedgerLine).join('');
@@ -83,7 +84,7 @@ function rig(): Rig {
   };
   return {
     dir, ledgers, marks,
-    opts: (over = {}) => ({ arms: [...MW_ARMS], matrix: MATRIX, env: { DATABASE_URL: 'postgres://fixture' }, logDir: join(dir, 'logs'), commands, timeouts: { setup: 5000, build: 5000, engine: 5000, store: 5000 }, ...over }),
+    opts: (over = {}) => ({ arms: [...BAR_ARMS], matrix: MATRIX, env: { DATABASE_URL: 'postgres://fixture' }, logDir: join(dir, 'logs'), commands, timeouts: { setup: 5000, build: 5000, engine: 5000, store: 5000 }, ...over }),
   };
 }
 
@@ -93,7 +94,8 @@ const codes = (failures: ReadonlyArray<{ code: string }>): string[] => failures.
 function goodRig(): Rig {
   const r = rig();
   r.ledgers.set('rust', ledgerText(goodLines(['pglite', 'postgres', 'rust'])));
-  r.ledgers.set('rust-mu', ledgerText(goodLines(['pglite', 'postgres', 'rust-mu'])));
+  r.ledgers.set('rust-mu-env', ledgerText(goodLines(['pglite', 'postgres', 'rust-mu-env'])));
+  r.ledgers.set('rust-mu-config', ledgerText(goodLines(['pglite', 'postgres', 'rust-mu-config'])));
   return r;
 }
 
@@ -102,12 +104,12 @@ describe('a correct run', () => {
     const r = goodRig();
     const report = await runBar(r.opts());
     expect(report.failures).toEqual([]);
-    expect(Object.fromEntries(['C01:pglite', 'C01:rust', 'C01:rust-mu', 'C02:pglite', 'C02:rust', 'C01:store-single', 'C01:store-optimistic', 'C02:store-single'].map((k) => [k, report.cells.get(k)])))
-      .toEqual({ 'C01:pglite': 'pass', 'C01:rust': 'pass', 'C01:rust-mu': 'pending', 'C02:pglite': 'n/a', 'C02:rust': 'pass', 'C01:store-single': 'pass',
+    expect(Object.fromEntries(['C01:pglite', 'C01:rust', 'C01:rust-mu-env', 'C01:rust-mu-config', 'C02:pglite', 'C02:rust', 'C01:store-single', 'C01:store-optimistic', 'C02:store-single'].map((k) => [k, report.cells.get(k)])))
+      .toEqual({ 'C01:pglite': 'pass', 'C01:rust': 'pass', 'C01:rust-mu-env': 'pending', 'C01:rust-mu-config': 'pending', 'C02:pglite': 'n/a', 'C02:rust': 'pass', 'C01:store-single': 'pass',
         'C01:store-optimistic': 'pending', 'C02:store-single': 'n/a' });
-    expect(report.table).toContain('4 pass (compare), 2 pass (standalone, invariant only), 3 pending, 3 n/a');
+    expect(report.table).toContain('4 pass (compare), 2 pass (standalone, invariant only), 5 pending, 3 n/a');
     // The pending store test was listed, never run; the runnable one ran by exact name.
-    expect(marksOf(r)).toEqual(['engine-rust', 'engine-rust-mu', 'build', 'list', 'run:c01_ok']);
+    expect(marksOf(r)).toEqual(['engine-rust', 'engine-rust-mu-env', 'engine-rust-mu-config', 'build', 'list', 'run:c01_ok']);
   });
 
   test('the store modes differ only in GBRAIN_RUST_CONCURRENT_WRITES, which the single-writer run leaves unset', async () => {
@@ -197,7 +199,7 @@ describe('a child that cannot finish fails the bar with a stable code, the log p
 });
 
 describe('the ledger is checked against the matrix, closed on every gap', () => {
-  async function withLedger(text: string, arms: MwArm[] = ['rust']) {
+  async function withLedger(text: string, arms: BarArm[] = ['rust']) {
     const r = goodRig();
     r.ledgers.set('rust', text);
     return runBar(r.opts({ arms }));
@@ -235,9 +237,9 @@ describe('the ledger is checked against the matrix, closed on every gap', () => 
     expect(report.cells.get('C02:rust')).toBe('MISSING');
   });
 
-  test('a line for an arm the process does not run, an unknown case and malformed JSON: unexpected and malformed', async () => {
-    const report = await withLedger(`${ledgerText([...good, line('C01', 'rust-mu', 'pass')])}{"case":"C99","arm":"rust","outcome":"pass","detail":"x"}\nnot json\n`);
-    expect(codes(report.failures).sort()).toEqual(['ledger_malformed', 'ledger_malformed', 'ledger_unexpected']);
+  test('a line for an arm the process does not run and one for a case the matrix lacks are unexpected; malformed JSON is malformed', async () => {
+    const report = await withLedger(`${ledgerText([...good, line('C01', 'rust-mu-env', 'pass')])}{"case":"C99","arm":"rust","outcome":"pass","detail":"x"}\nnot json\n`);
+    expect(codes(report.failures).sort()).toEqual(['ledger_malformed', 'ledger_unexpected', 'ledger_unexpected']);
   });
 
   test('outcomes the matrix does not allow: a failed case, a pending cell that passed, a runs cell that went pending, a missing prerequisite', async () => {
@@ -262,9 +264,9 @@ describe('the ledger is checked against the matrix, closed on every gap', () => 
 
   test('an expected pending case is not a failure while the ledger says pending, and the bar needs the ledger to say it', async () => {
     const r = goodRig();
-    const report = await runBar(r.opts({ arms: ['rust-mu'] }));
+    const report = await runBar(r.opts({ arms: ['rust-mu-env'] }));
     expect(report.failures).toEqual([]);
-    expect(report.cells.get('C01:rust-mu')).toBe('pending');
+    expect(report.cells.get('C01:rust-mu-env')).toBe('pending');
   });
 });
 
@@ -292,8 +294,8 @@ describe('a fake engine that reports multi_writer but refuses a required member:
 });
 
 describe('single-arm modes', () => {
-  const plan = (arms: MwArm[], env: Record<string, string | undefined>) => planEngineUnits({ arms, matrix: MATRIX, env, logDir: '/x' });
-  const shape = (arms: MwArm[], env: Record<string, string | undefined>) => {
+  const plan = (arms: BarArm[], env: Record<string, string | undefined>) => planEngineUnits({ arms, matrix: MATRIX, env, logDir: '/x' });
+  const shape = (arms: BarArm[], env: Record<string, string | undefined>) => {
     const { units, problems } = plan(arms, env);
     return { units: units.map((u) => ({ id: u.id, arms: u.arms, rust: u.env.GBRAIN_TEST_RUST_ARM, mu: u.env.GBRAIN_TEST_RUST_MU_ARM, db: 'DATABASE_URL' in u.env ? 'removed' : 'kept', backend: u.env.GBRAIN_TEST_BACKEND })), problems: codes(problems) };
   };
@@ -309,8 +311,9 @@ describe('single-arm modes', () => {
   test('a Rust label runs with PGLite (and Postgres when DATABASE_URL is set) as its reference; the two labels are two processes', () => {
     expect(shape(['rust'], {}).units).toEqual([{ id: 'rust', arms: ['pglite', 'rust'], rust: '1', mu: undefined, db: 'removed', backend: undefined }]);
     expect(shape(['rust'], { DATABASE_URL: 'u' }).units).toEqual([{ id: 'rust', arms: ['pglite', 'postgres', 'rust'], rust: '1', mu: undefined, db: 'kept', backend: undefined }]);
-    expect(shape(['rust-mu'], { DATABASE_URL: 'u' }).units).toEqual([{ id: 'rust-mu', arms: ['pglite', 'postgres', 'rust-mu'], rust: undefined, mu: '1', db: 'kept', backend: undefined }]);
-    expect(shape(['rust', 'rust-mu'], {}).units.map((u) => u.id)).toEqual(['rust', 'rust-mu']);
+    expect(shape(['rust-mu-env'], { DATABASE_URL: 'u' }).units).toEqual([{ id: 'rust-mu-env', arms: ['pglite', 'postgres', 'rust-mu-env'], rust: undefined, mu: 'env', db: 'kept', backend: undefined }]);
+    expect(shape(['rust-mu-config'], { DATABASE_URL: 'u' }).units).toEqual([{ id: 'rust-mu-config', arms: ['pglite', 'postgres', 'rust-mu-config'], rust: undefined, mu: 'config', db: 'kept', backend: undefined }]);
+    expect(shape(['rust', 'rust-mu-env', 'rust-mu-config'], {}).units.map((u) => u.id)).toEqual(['rust', 'rust-mu-env', 'rust-mu-config']);
   });
 
   test('a store arm alone starts no engine process', () => {
@@ -327,10 +330,47 @@ describe('single-arm modes', () => {
   });
 
   test('--arms parsing: all by default, a list, and a typed complaint for an unknown or empty one', () => {
-    expect(parseArms(undefined)).toEqual([...MW_ARMS]);
+    expect(parseArms(undefined)).toEqual([...BAR_ARMS]);
+    expect(parseArms('rust-mu,store-single')).toEqual(['rust-mu-env', 'rust-mu-config', 'store-single']);
     expect(parseArms('rust, store-single,rust')).toEqual(['rust', 'store-single']);
     expect(parseArms('rust,mu')).toContain('unknown arm mu');
     expect(typeof parseArms('')).toBe('string');
+  });
+});
+
+describe('variants and both rust-mu routes', () => {
+  const PART: MwCell = { status: 'pending', owner: 'L5 hosts', why: 'store lease fence' };
+  /** C01 as above, plus a variant with engine cells only (as the case work's MwVariant). */
+  const WITH_VARIANT: readonly MwCase[] = [{ ...MATRIX[0]!, variants: [{ id: 'C01.partition', of: 'C01', title: 'back from a partition', invariant: 'x', reference: 'compare', members: ['putPage'],
+    cells: { pglite: RUNS, postgres: RUNS, rust: RUNS, 'rust-mu': PART } }] } as MwCase, MATRIX[1]!];
+
+  test('the expected set is the rows on engine and store arms plus the variant on engine arms only; the variant is its own table row', async () => {
+    const r = rig();
+    for (const id of ['rust', 'rust-mu-env', 'rust-mu-config'] as const) r.ledgers.set(id, ledgerText(goodLines(['pglite', 'postgres', id], WITH_VARIANT)));
+    const report = await runBar(r.opts({ matrix: WITH_VARIANT }));
+    expect(report.failures).toEqual([]);
+    expect(report.table.split('\n').filter((l) => /^C0\d/.test(l)).map((l) => l.split(/\s+/)[0])).toEqual(['C01', 'C01.partition', 'C02']);
+    expect([report.cells.get('C01.partition:rust'), report.cells.get('C01.partition:rust-mu-config'), report.cells.get('C01.partition:store-single')]).toEqual(['pass', 'pending', 'n/a']);
+    // Only the row's runnable store test ran: the variant has no store tests, and its store cells are n/a, not a gap.
+    expect(marksOf(r).filter((m) => m.startsWith('run:'))).toEqual(['run:c01_ok']);
+  });
+
+  test('a missing variant line fails closed like a missing case line, and a variant pass on a pending cell is a mismatch', async () => {
+    const r = rig();
+    const lines = goodLines(['pglite', 'postgres', 'rust'], WITH_VARIANT);
+    r.ledgers.set('rust', ledgerText(lines.filter((l) => !(l.case === 'C01.partition' && l.arm === 'postgres'))));
+    const missing = await runBar(r.opts({ matrix: WITH_VARIANT, arms: ['rust'] }));
+    expect(missing.failures.map((f) => [f.code, f.message.includes('C01.partition:postgres')])).toEqual([['ledger_missing', true]]);
+    r.ledgers.set('rust-mu-env', ledgerText(goodLines(['pglite', 'postgres', 'rust-mu-env'], WITH_VARIANT).map((l) => (l.case === 'C01.partition' && l.arm === 'rust-mu-env' ? { ...l, outcome: 'pass' as const } : l))));
+    const mismatch = await runBar(r.opts({ matrix: WITH_VARIANT, arms: ['rust-mu-env'] }));
+    expect(mismatch.failures.map((f) => f.code)).toEqual(['outcome_mismatch']);
+  });
+
+  test('the two routes are two processes with their own ledger labels; a line labelled for the other route is unexpected', async () => {
+    const r = goodRig();
+    r.ledgers.set('rust-mu-config', ledgerText([...goodLines(['pglite', 'postgres']), ...goodLines(['rust-mu-env']).filter((l) => l.arm === 'rust-mu-env')]));
+    const report = await runBar(r.opts({ arms: ['rust-mu-config'] }));
+    expect(report.failures.map((f) => f.code).sort()).toEqual(['ledger_missing', 'ledger_missing', 'ledger_unexpected', 'ledger_unexpected']);
   });
 });
 

@@ -6,16 +6,31 @@
  * data and file helpers: no engine and no `bun:test` import, so the bar (a plain script) and the harness share it.
  */
 import { appendFileSync } from 'node:fs';
-import { MW_CASE_IDS, MW_ENGINE_ARMS, type MwCaseId, type MwEngineArm } from './multi-writer-cases.ts';
+import type { MwEngineArm } from './multi-writer-cases.ts';
+import { ENTRY_ID } from './multi-writer-entries.ts';
 
 export const MW_LEDGER_ENV = 'GBRAIN_TEST_MW_LEDGER';
+
+/**
+ * The arm labels a ledger line carries. The `rust-mu` view has two routes to the multi-user switch (the environment variable
+ * and the brain's config row), and each is its own label so a run says which one it was; both read the matrix's one `rust-mu`
+ * cell (`cellArm`).
+ */
+export const LEDGER_ARMS = ['pglite', 'postgres', 'rust', 'rust-mu-env', 'rust-mu-config'] as const;
+export type LedgerArm = typeof LEDGER_ARMS[number];
+
+/** The matrix cell a ledger arm label reads. */
+export function cellArm(arm: LedgerArm): MwEngineArm {
+  return arm === 'rust-mu-env' || arm === 'rust-mu-config' ? 'rust-mu' : arm;
+}
 
 export const LEDGER_OUTCOMES = ['pass', 'fail', 'pending', 'n/a', 'prerequisite_missing'] as const;
 export type LedgerOutcome = typeof LEDGER_OUTCOMES[number];
 
 export interface LedgerLine {
-  case: MwCaseId;
-  arm: MwEngineArm;
+  /** A case id (`C06`) or a variant id (`C06.partition`). */
+  case: string;
+  arm: LedgerArm;
   outcome: LedgerOutcome;
   detail: string;
 }
@@ -73,8 +88,8 @@ function ledgerLineProblem(value: unknown): string | null {
   const keys = Object.keys(value).sort().join(',');
   if (keys !== 'arm,case,detail,outcome') return `keys are ${keys}, expected arm,case,detail,outcome`;
   const v = value as Record<string, unknown>;
-  if (!(MW_CASE_IDS as readonly unknown[]).includes(v.case)) return `unknown case ${JSON.stringify(v.case)}`;
-  if (!(MW_ENGINE_ARMS as readonly unknown[]).includes(v.arm)) return `unknown arm ${JSON.stringify(v.arm)}`;
+  if (typeof v.case !== 'string' || !ENTRY_ID.test(v.case)) return `unknown case ${JSON.stringify(v.case)}`;
+  if (!(LEDGER_ARMS as readonly unknown[]).includes(v.arm)) return `unknown arm ${JSON.stringify(v.arm)}`;
   if (!(LEDGER_OUTCOMES as readonly unknown[]).includes(v.outcome)) return `unknown outcome ${JSON.stringify(v.outcome)}`;
   if (typeof v.detail !== 'string') return 'detail is not a string';
   return null;

@@ -33,7 +33,8 @@ import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { PARITY_ARMS, armHas, missingCapability, type EngineCapability, type ParityArmName } from './arm-capabilities.ts';
 import { rustRefusal } from './rust-arm.ts';
-import { MW_ARMS, MW_CASES, MW_CASE_IDS, mwCell, type MwCaseId, type MwCell } from './multi-writer-cases.ts';
+import { MW_ARMS, MW_CASES, MW_CASE_IDS, type MwCell } from './multi-writer-cases.ts';
+import { ENTRY_ID, mwEntries, mwEntry } from './multi-writer-entries.ts';
 
 const REPO = join(import.meta.dir, '..', '..');
 const PARITY_DIR = import.meta.dir;
@@ -564,7 +565,7 @@ export function interfaceMethods(): string[] {
   return names;
 }
 
-export interface ParityDeclaration { file: string; name: string; methods: string[]; requires?: EngineCapability; mwCase?: MwCaseId }
+export interface ParityDeclaration { file: string; name: string; methods: string[]; requires?: EngineCapability; mwCase?: string }
 
 function stringValue(node: ts.Node): string | null {
   return ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) ? node.text : null;
@@ -602,13 +603,13 @@ export function parityDeclarations(dir = PARITY_DIR): ParityDeclaration[] {
         }
         const mwProp = (optsArg as ts.ObjectLiteralExpression).properties
           .find((p) => p.name && ts.isIdentifier(p.name) && p.name.text === 'mwCase');
-        let mwCase: MwCaseId | undefined;
+        let mwCase: string | undefined;
         if (mwProp) {
           const value = ts.isPropertyAssignment(mwProp) ? stringValue(mwProp.initializer) : null;
           if (value === null) throw new Error(`${where}: parityTest mwCase must be a string literal`);
-          if (!(MW_CASE_IDS as readonly string[]).includes(value)) throw new Error(`${where}: parityTest mwCase ${value} is not a case id (${MW_CASE_IDS[0]}..${MW_CASE_IDS[MW_CASE_IDS.length - 1]})`);
+          if (!ENTRY_ID.test(value) || !(MW_CASE_IDS as readonly string[]).includes(value.split('.')[0]!)) throw new Error(`${where}: parityTest mwCase ${value} is not a case id (${MW_CASE_IDS[0]}..${MW_CASE_IDS[MW_CASE_IDS.length - 1]}) or a variant id (C06.name)`);
           if (requires !== undefined) throw new Error(`${where}: an mwCase case takes no requires; its matrix row decides where it runs`);
-          mwCase = value as MwCaseId;
+          mwCase = value;
         }
         out.push({ file: relative(REPO, path), name: (nameArg && stringValue(nameArg)) ?? '<dynamic>', methods, ...(requires && { requires }), ...(mwCase && { mwCase }) });
       }
@@ -639,7 +640,8 @@ function matrixLines(): string[] {
   if (MW_CASES.length === 0) return [];
   return [
     `# multi-writer cases: ${MW_CASES.length}/${MW_CASE_IDS.length}`,
-    ...MW_CASES.map((c) => `# multi-writer ${c.id} [${c.reference}${c.needs ? `, needs ${c.needs}` : ''}]: ${MW_ARMS.map((arm) => `${arm}=${cellText(c.cells[arm])}`).join(' ')}`),
+    // A variant (C06.partition) is a case of its own: its own line, its own cells.
+    ...mwEntries().map((c) => `# multi-writer ${c.id} [${c.reference}${c.needs ? `, needs ${c.needs}` : ''}]: ${MW_ARMS.map((arm) => `${arm}=${cellText(c.cells[arm])}`).join(' ')}`),
   ];
 }
 
@@ -660,7 +662,7 @@ export function buildCoverage(): CoverageReport {
     throw new Error(`engine-parity coverage: FAMILIES out of date. Unassigned: ${unassigned.join(', ') || '-'}; not in BrainEngine: ${stale.join(', ') || '-'}`);
   }
   const cases = new Map<string, number>();
-  const requirements = new Map<string, Array<{ requires?: EngineCapability; mwCase?: MwCaseId }>>();
+  const requirements = new Map<string, Array<{ requires?: EngineCapability; mwCase?: string }>>();
   for (const decl of parityDeclarations()) {
     for (const m of decl.methods) {
       if (!family.has(m)) throw new Error(`${decl.file} "${decl.name}": ${m} is not a BrainEngine method`);
@@ -678,11 +680,11 @@ export function buildCoverage(): CoverageReport {
       return refusal === null ? 'serves' : `refuses:${refusal}`;
     }
     // A multi-writer case runs on the arm where its matrix cell says `runs`; every other case by `requires`.
-    const runsOn = (r: { requires?: EngineCapability; mwCase?: MwCaseId }) => (r.mwCase === undefined ? armHas(arm, r.requires) : mwCell(r.mwCase, arm).status === 'runs');
+    const runsOn = (r: { requires?: EngineCapability; mwCase?: string }) => (r.mwCase === undefined ? armHas(arm, r.requires) : mwEntry(r.mwCase).cells[arm].status === 'runs');
     if (reqs.some(runsOn)) return 'yes';
     const plain = reqs.find((r) => r.mwCase === undefined && r.requires !== undefined);
     if (plain) return missingCapability(plain.requires!).label;
-    const cell = mwCell(reqs.find((r) => r.mwCase !== undefined)!.mwCase!, arm);
+    const cell = mwEntry(reqs.find((r) => r.mwCase !== undefined)!.mwCase!).cells[arm];
     return cell.status === 'pending' ? `pending:${cell.owner}` : missingCapability('multi_writer').label;
   };
   const legacy = legacyMethods(methods);
