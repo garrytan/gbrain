@@ -55,5 +55,5 @@ export async function runClaims(engine: BrainEngine, args: string[]): Promise<vo
   }
   const { supported, conflicts, not_found } = result.summary;
   console.log(`${result.claims.length} claim(s): ${supported} supported, ${conflicts} conflicts, ${not_found} not found (${result.allowed_pages} allowed-claims page(s) read).`);
-  if (result.allowed_pages === 0) console.log('No allowed-claims page is readable. Add "claims: allowed" to the frontmatter of a type: facts page, such as me/facts or company/facts.');
+  if (result.allowed_pages === 0) console.log('No allowed-claims page is readable. Add "claims: allowed" to the frontmatter of a type: facts page, such as me/facts or company/facts, from this machine (gbrain put or an edit in the brain repo); a page an agent wrote over MCP, or an outside sender\'s page, never counts.');
 }

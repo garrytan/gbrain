@@ -4,11 +4,11 @@
  * read the way get_page reads them for this caller: source scope, private pages, the read floor and the privacy fences,
  * so a line the caller cannot read never supports or contradicts anything and its claim reads not_found.
  * A page counts only while its precedence is approved or record (eligibility/precedence.ts) and its trust tier is
- * neither agent_written nor external_untrusted: a guest, external, agent-written or quarantined page marked
- * claims: allowed is ignored.
+ * neither external_untrusted nor written by an agent over MCP: a guest, external, remote-agent or quarantined page
+ * marked claims: allowed is ignored. A trusted local write (setup's `gbrain put`, a local edit) keeps it approved.
  */
 import { allowedLines, checkClaim, extractClaims, type AllowedLine } from '../claims/check.ts';
-import { SELF_APPROVAL_TIERS } from '../eligibility/precedence.ts';
+import { selfApprovalBlocked } from '../eligibility/precedence.ts';
 import { isQuarantined } from '../quarantine.ts';
 import type { Operation } from './contract.ts';
 import { assertExplicitSourceLive, federatedSearchScope, parseSourceIdParam, readPolicyOpts } from './context.ts';
@@ -47,7 +47,7 @@ const check_claims: Operation = {
       if (fm?.claims !== 'allowed' || page.body_storage === 'segmented' || isQuarantined(fm)) continue;
       const readable = await pageTrustForRead(ctx, page, undefined);
       if (!readable || (readable.trust.precedence !== 'approved' && readable.trust.precedence !== 'record')) continue;
-      if ((SELF_APPROVAL_TIERS as readonly string[]).includes(readable.trust.trust_tier)) continue;
+      if (selfApprovalBlocked(readable.trust.trust_tier, readable.trust.origin)) continue;
       const visible = ctx.remote === false ? page : await stripPrivacyFencesForRemoteReader(ctx, page);
       read++;
       lines.push(...allowedLines({ slug: page.slug, source_id: page.source_id, body: visible.compiled_truth ?? '' }));

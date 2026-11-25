@@ -19,7 +19,6 @@ import { COMPANY_PAGES, PERSONAL_PAGES, renderLayoutBlock, renderStarterPage } f
 import { searchCtx, seedPage } from './helpers/keyword-paging-fixture.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { serializeMarkdown } from '../src/core/markdown.ts';
-import { withTrustPromotion } from '../src/core/persistence/context.ts';
 import { QUARANTINE_KEY } from '../src/core/quarantine.ts';
 
 let engine: PGLiteEngine;
@@ -56,8 +55,9 @@ beforeAll(async () => {
   await seedIn('guest-src', 'guest/facts', `Guest ${TERM} facts.\n\n- 2026-01-01: 5 offices.`, { claims: 'allowed' }, 'facts');
   await seedPage(engine, 'held/facts', `Held ${TERM} facts.\n\n- 2026-01-01: 3 data centers.`, { type: 'facts', frontmatter: { claims: 'allowed' } });
   await engine.executeRaw(`UPDATE pages SET frontmatter = frontmatter || jsonb_build_object('${QUARANTINE_KEY}', jsonb_build_object('reason', 'instruction_like')) WHERE slug = 'held/facts'`);
-  await seedPage(engine, 'agent/facts', `Agent ${TERM} facts.\n\n- 2026-01-01: 9 warehouses.`, { type: 'facts', frontmatter: { claims: 'allowed' } });
-  await engine.transaction(tx => withTrustPromotion(tx, 'user_confirmed', () => tx.executeRaw("UPDATE pages SET trust_tier = 'agent_written' WHERE slug = 'agent/facts'")));
+  await op('put_page').handler(ctxFor(true), { slug: 'agent/facts', content: `---\ntype: facts\nclaims: allowed\n---\nAgent ${TERM} facts.\n\n- 2026-01-01: 9 warehouses.\n` });
+  const starter = PERSONAL_PAGES.find(p => p.slug === 'me/facts')!;
+  await op('put_page').handler(ctxFor(false), { slug: 'me/facts', content: `${renderStarterPage(starter)}\n- 2026-02-01: I have 3 kids.\n` });
   await seedIn('meet', 'meetings/standup', `Standup notes on the ${TERM} launch.`);
   await seedIn('conversations', 'chats/2026-01-01', `A chat about ${TERM} pricing.`);
   await engine.insertFact({ fact: `The ${TERM} launch slipped a week.`, kind: 'fact', entity_slug: 'companies/acme-example', source: 'test', visibility: 'world' }, { source_id: 'meet' });
@@ -80,10 +80,16 @@ describe('precedence labels', () => {
     expect((await getPage('chats/2026-01-01', 'conversations')).precedence).toBe('chat');
   });
 
-  test('a guest source is external, and an agent-written page cannot approve itself with claims: allowed', async () => {
+  test('a guest source is external, and a page an agent wrote over MCP cannot approve itself with claims: allowed', async () => {
     expect((await getPage('guest/facts', 'guest-src')).precedence).toBe('external');
-    expect((await getPage('agent/facts', 'default')).trust_tier).toBe('agent_written');
-    expect((await getPage('agent/facts', 'default')).precedence).toBe('curated');
+    const agent = await getPage('agent/facts', 'default');
+    expect([agent.trust_tier, agent.origin]).toEqual(['agent_written', 'mcp:put_page']);
+    expect(agent.precedence).toBe('curated');
+  });
+
+  test('the me/facts starter page written by a local gbrain put stays approved', async () => {
+    const page = await getPage('me/facts', 'default');
+    expect([page.trust_tier, page.origin, page.precedence]).toEqual(['agent_written', 'cli:put_page', 'approved']);
   });
 
   test('precedence never raises trust: a record source page keeps the trust tier a curated page has', async () => {
@@ -157,7 +163,11 @@ describe('check_claims', () => {
     expect(checkClaim('In Q3 we had 10 paying customers.', lines).status).toBe('supported');
   });
 
-  test('allowed-claims pages in a guest source, written by an agent or quarantined never support a claim', async () => {
+  test('a dated line on the locally written me/facts starter page supports a claim', async () => {
+    expect((await check('I have 3 kids.')).claims[0]).toMatchObject({ status: 'supported', cited: { slug: 'me/facts' } });
+  });
+
+  test('allowed-claims pages in a guest source, written by an agent over MCP or quarantined never support a claim', async () => {
     const out = await check('We have 5 offices. We run 9 warehouses. We run 3 data centers.');
     expect(out.claims.map(c => c.status)).toEqual(['not_found', 'not_found', 'not_found']);
   });

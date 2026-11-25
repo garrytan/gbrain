@@ -222,8 +222,9 @@ something said in a chat. Lean search rows show it only when it is not
 `curated`.
 
 - A page of `type: rule`, or a `type: facts` page with `claims: allowed` in its
-  front matter, is `approved`, unless an agent or an outside sender wrote it
-  (`agent_written` or `external_untrusted`): a page cannot approve itself.
+  front matter, is `approved`, unless an outside sender wrote it or an agent wrote it
+  over MCP: a page cannot approve itself from outside. A page you write on
+  this machine (`gbrain put`, an edit in the brain repo) stays approved.
 - The conversation archive, meeting and Google sources are `chat`; a guest
   source is `external`; everything else is `curated`.
 - `gbrain sources set-precedence <id> <class>` sets a source's class, and

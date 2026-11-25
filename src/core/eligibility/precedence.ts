@@ -6,7 +6,8 @@
  * The class is set per source with `gbrain sources set-precedence` (sources.config.precedence, trusted local). Without
  * it a guest source is external, the conversation archive, meeting and Google sources are chat, and everything else is
  * curated. A rule page (type: rule) or an allowed-claims page (type: facts with claims: allowed) counts as approved,
- * unless its source is set to record or external, or the page itself is agent_written or external_untrusted.
+ * unless its source is set to record or external, or the page itself is external_untrusted or was written by an agent
+ * over MCP.
  */
 
 export const PRECEDENCE_CLASSES = ['record', 'approved', 'curated', 'doc', 'chat', 'external'] as const;
@@ -18,8 +19,14 @@ export const isPrecedence = (value: unknown): value is Precedence =>
 const CHAT_SOURCE_IDS = ['conversations', 'conversations-owner'];
 const CHAT_SOURCE_KINDS = ['meetings', 'google'];
 const quoted = (values: readonly string[]) => values.map(v => `'${v}'`).join(', ');
-/** Tiers whose own front matter cannot approve a page: an agent or an outside sender could otherwise mark its numbers approved. */
-export const SELF_APPROVAL_TIERS = ['agent_written', 'external_untrusted'] as const;
+/**
+ * A page whose own front matter cannot approve it: an outside sender's page, or one an agent wrote over MCP. A trusted
+ * local writer (a server-stamped `cli:` channel, such as setup's `gbrain put` of me/facts) can approve its page.
+ */
+export const selfApprovalBlockedSql = (page: string) =>
+  `(${page}.trust_tier = 'external_untrusted' OR (${page}.trust_tier = 'agent_written' AND COALESCE(${page}.write_origin->>'channel', '') NOT LIKE 'cli:%'))`;
+export const selfApprovalBlocked = (tier: string, origin: string) =>
+  tier === 'external_untrusted' || (tier === 'agent_written' && !origin.startsWith('cli:'));
 
 /** SQL true for a page that states rules or allowed claims (`page` is a pages alias). */
 export const approvedPageSql = (page: string) =>
@@ -33,7 +40,7 @@ export const approvedPageSql = (page: string) =>
 export function precedenceSql(o: { source: string; sourceId: string; guest: string; page: string | null }): string {
   const set = `${o.source}.config->>'precedence'`;
   const approved = o.page
-    ? `WHEN ${approvedPageSql(o.page)} AND ${o.page}.trust_tier NOT IN (${quoted(SELF_APPROVAL_TIERS)}) AND COALESCE(${set}, '') NOT IN ('record', 'external') THEN 'approved'`
+    ? `WHEN ${approvedPageSql(o.page)} AND NOT ${selfApprovalBlockedSql(o.page)} AND COALESCE(${set}, '') NOT IN ('record', 'external') THEN 'approved'`
     : '';
   return `CASE WHEN ${o.guest} THEN 'external' ${approved}
     WHEN ${set} IN (${quoted(PRECEDENCE_CLASSES)}) THEN ${set}
