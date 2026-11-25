@@ -18,6 +18,7 @@ import { capabilitiesForEngineKind } from '../src/core/engine-capabilities.ts';
 import { rustMultiuserFromEnv, RUST_MULTIUSER_CONFIG_KEY } from '../src/core/rust-engine/multiuser-switch.ts';
 import { OPTIMISTIC_TRANSACTION_RETRIES, rustTransactionDeadlineMs } from '../src/core/rust-engine/optimistic-transaction.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { rustLeases } from '../src/core/rust-engine/store-members/leases.ts';
 
 const TARGET = detectAddonTarget();
 const BUILT = join(import.meta.dir, '..', 'rust', 'target', 'addon', `gbrain_engine.${TARGET ?? 'unsupported'}.node`);
@@ -311,4 +312,31 @@ describe('Rust engine in multi-user mode', () => {
     expect(closed).toBe('closed');
     void older; void younger;
   }, 30_000);
+
+  // I-5 on the optimistic path: a commit made under a lease epoch that moved is refused; the run again sees lease_lost.
+  withAddon('a transaction whose lease was taken over before it committed ends lease_lost, nothing kept', async () => {
+    const engine = await open(true);
+    expect(engine.multiuser).toBe(true);
+    const leases = rustLeases(engine as never);
+    const origin = (host: string) => ({ host_id: `host-${host}`, incarnation: '0190a000-0000-7000-8000-000000000001', writer_id: `local_cli:${host}` });
+    const a = (await leases.acquire('job-runner', origin('a'), 60_000))!;
+    const checked = gate();
+    const taken = gate();
+    let runs = 0;
+    const work = engine.transaction(async (tx) => {
+      runs++;
+      await rustLeases(tx as never).assert(a);
+      await tx.putPage('notes/protected', note('Under epoch 1'));
+      if (runs === 1) { checked.open(); await taken.wait; }
+    });
+    await checked.wait;
+    await leases.release(a);
+    const b = (await leases.acquire('job-runner', origin('b'), 60_000))!;
+    expect(b.epoch).toBeGreaterThan(a.epoch);
+    taken.open();
+    const err = await errorOf(() => work);
+    expect(err.code).toBe('lease_lost');
+    expect(runs).toBe(2);
+    expect(await engine.getPage('notes/protected')).toBeNull();
+  });
 });

@@ -196,7 +196,7 @@ fn the_deadline_is_checked_again_after_the_savepoints_merge() {
     t.savepoint().unwrap();
     t.write(|w| w.put(b"ylate", b"x")).unwrap();
     AFTER_SAVEPOINT_MERGE.with(|h| {
-        *h.borrow_mut() = Some(Box::new(|| std::thread::sleep(Duration::from_millis(60))))
+        *h.borrow_mut() = Some(Box::new(|| std::thread::sleep(Duration::from_millis(400))))
     });
     let err = t.commit_transaction().unwrap_err();
     assert_eq!(err.code, TIMEOUT);
@@ -296,6 +296,13 @@ fn transaction_assert_lease_is_checked_again_at_commit() {
     assert!(b.epoch > a.epoch);
     assert_eq!(t.commit().unwrap_err().code, WRITE_CONFLICT);
     assert_eq!(get(&s, b"yprotected"), None);
+    // The run again (what the engine does after a lost commit) is refused by the lease itself.
+    let rerun = s.begin_with(optimistic()).unwrap();
+    assert_eq!(
+        rerun.assert_lease(&a).unwrap_err().code,
+        crate::error::LEASE_LOST
+    );
+    rerun.rollback().unwrap();
 
     let x = s.begin_with(TxnOptions::default()).unwrap();
     x.assert_lease(&b).unwrap();
