@@ -25,7 +25,6 @@ export interface EnforcedSubcommands {
 const READ_OPS = [
   'search', 'query', 'search_exact', 'list_pages', 'find_pages', 'get_page', 'get_backlinks', 'get_timeline', 'get_links',
   'get_tags', 'get_versions', 'get_stats', 'whoami', 'entity', 'whois', 'traverse_graph',
-  'policy_check', 'agent_policy', 'capabilities',
 ] as const;
 
 const WRITE_OPS = [
@@ -54,6 +53,7 @@ const REFUSED_OPS = [
   'capture', 'list_page_purges', 'list_watches', 'purge_fact', 'unpurge_page', 'unwatch', 'watch_job', 'watch_write_request', 'watch_cron', 'accept_wakeshift_terms', 'connectors_status',
   'get_recent_transcripts', 'sources_inspect', 'sources_add', 'sources_remove', 'connector_sync',
   'code_traversal_cache_clear', 'migrate_embeddings', 'purge_deleted_pages', 'sync_brain',
+  'policy_check', 'agent_policy', 'capabilities',
   // writes outside the checked set: batch, upload, label, history, fact and queue writes
   'abort_page_upload', 'begin_page_upload', 'commit_page_upload', 'get_page_upload', 'upload_page_part', 'put_pages',
   'put_raw_data', 'put_skill', 'delete_skill', 'delete_page', 'restore_page', 'revert_version', 'cancel_write_request',
