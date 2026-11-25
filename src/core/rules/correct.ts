@@ -82,7 +82,7 @@ async function pruneReceipts(engine: BrainEngine): Promise<void> {
   const keys = await engine.listConfigKeys(RECEIPT_PREFIX);
   if (keys.length < RECEIPTS_KEPT) return;
   const finished = (await engine.getConfigValues(keys)).flatMap(({ key, value }) => {
-    try { const r = JSON.parse(value) as CorrectReceipt; return r.state === 'committed' || r.state === 'conflicted' ? [{ key, at: r.created_at }] : []; } catch { return [{ key, at: '' }]; }
+    try { const r = JSON.parse(value) as CorrectReceipt; return (r.state === 'committed' && r.confirmed) || r.state === 'conflicted' ? [{ key, at: r.created_at }] : []; } catch { return [{ key, at: '' }]; }
   }).sort((a, b) => a.at.localeCompare(b.at));
   for (const row of finished.slice(0, keys.length - RECEIPTS_KEPT + 1)) await engine.unsetConfig(row.key);
 }
@@ -142,7 +142,7 @@ export function parseCorrectInput(ctx: OperationContext, p: Record<string, unkno
   if (!RULE_SCOPES.includes(scope)) throw opError('invalid_params', 'scope must be me or team.', 'Omit scope for your own rule, or pass team for a rule every agent in this brain follows.');
   const factId = p.fact_id === undefined || p.fact_id === null || p.fact_id === '' ? null : String(p.fact_id).trim();
   if (factId !== null && !/^[1-9][0-9]{0,15}$/.test(factId)) throw opError('invalid_params', `fact_id "${factId.slice(0, 20)}" is not a fact id.`, 'Pass the fact_id that recall or remember returned.');
-  if (p.corrected_fact !== undefined && p.corrected_fact !== null && (typeof p.corrected_fact !== 'string' || !p.corrected_fact.trim())) {
+  if (p.corrected_fact !== undefined && p.corrected_fact !== null && (typeof p.corrected_fact !== 'string' || !oneLine(p.corrected_fact))) {
     throw opError('invalid_params', 'corrected_fact is empty, so nothing was written.', 'Pass the right fact in corrected_fact, or omit corrected_fact to withdraw the wrong fact.');
   }
   const corrected = typeof p.corrected_fact === 'string' ? oneLine(p.corrected_fact).slice(0, 2000) : null;
@@ -206,7 +206,10 @@ async function advance(ctx: OperationContext, r: CorrectReceipt, owner: boolean,
   for (const step of CORRECT_STEPS) {
     if (r.steps[step]?.state === 'committed') continue;
     if (step === 'fact' && r.fact.action === 'none') { r.steps.fact = { state: 'committed', request_id: '' }; continue; }
-    if (step !== 'rule' && !owner) { r.state = 'proposed'; r.step = step; await saveReceipt(engine, r); return r; }
+    if (step !== 'rule' && !owner) {
+      if (r.steps[step]?.state === 'pending' || r.steps[step]?.state === 'started') { r.state = r.steps[step]!.state === 'pending' ? 'pending' : 'partial'; r.step = step; return r; }
+      r.state = 'proposed'; r.step = step; await saveReceipt(engine, r); return r;
+    }
     const requestId = `${r.receipt_id}.${step}`;
     const tried = r.steps[step] !== undefined;
     r.steps[step] = { ...(r.steps[step] ?? {}), state: 'started', request_id: requestId };
@@ -222,10 +225,10 @@ async function advance(ctx: OperationContext, r: CorrectReceipt, owner: boolean,
       } else if (step === 'fact') {
         const snap = await engine.readPageSnapshot(r.rule.slug, { sourceId: r.source_id });
         const live = snap && !snap.page.deleted_at ? readRule({ ...snap.page, source_id: r.source_id }) : null;
-        if (!live || live.status !== 'proposed' || String(snap!.revision) !== r.steps.rule?.revision) {
+        if (!live || live.status !== 'proposed' || live.receipt !== r.receipt_id || String(snap!.revision) !== r.steps.rule?.revision) {
           throw new OperationError('rule_transition', 'The rule page changed or was retired before its fact was fixed, so the fact was left unchanged.', `Run gbrain rules show ${ruleIdOf(r.rule.slug)}.`);
         }
-        if (tried && (await readForgetTarget(engine, Number(r.fact.id), r.source_id, false, false))?.expired_at) { r.steps.fact!.state = 'committed'; r.steps.fact!.request_id = requestId; }
+        if (tried && r.fact.action === 'withdraw' && (await readForgetTarget(engine, Number(r.fact.id), r.source_id, false, false))?.expired_at) { r.steps.fact!.state = 'committed'; r.steps.fact!.request_id = requestId; }
         else {
         const { verbOperations } = await import('../verbs.ts');
         const verb = verbOperations.find(o => o.name === (r.fact.action === 'replace' ? 'remember' : 'forget'))!;
@@ -284,11 +287,14 @@ async function chooseSlug(engine: BrainEngine, sourceId: string, scope: RuleScop
 
 export interface CorrectOptions { probe?: TerminalProbe }
 
-/** A non-owner names only a fact it reads: a world fact, or one on its own member page. The owner's approval runs the fact step. */
-async function callerReadsFact(engine: BrainEngine, id: number, sourceId: string, member: string | null): Promise<boolean> {
+/**
+ * A non-owner names only a fact it reads: a world fact, or, to withdraw it, one on its own member page (the owner's
+ * local remember cannot write a replacement onto a member page). The owner's approval runs the fact step.
+ */
+async function callerReadsFact(engine: BrainEngine, id: number, sourceId: string, member: string | null, withdraw: boolean): Promise<boolean> {
   const excludePrivate = await resolveExcludePrivatePages(engine, true);
   if (await readForgetTarget(engine, id, sourceId, true, excludePrivate)) return true;
-  return !!member && !!(await readForgetTarget(engine, id, sourceId, true, excludePrivate, false, memberPageSlug(member)));
+  return withdraw && !!member && !!(await readForgetTarget(engine, id, sourceId, true, excludePrivate, false, memberPageSlug(member)));
 }
 
 const intentOf = (i: CorrectInput) => digestOf([i.rule, i.scope, i.fact_id, i.corrected_fact, i.entity, i.checks, i.source_id]);
@@ -308,7 +314,7 @@ export async function runCorrect(ctx: OperationContext, p: Record<string, unknow
   const key = principalKey(principal);
   let receiptId = `cr-${digestOf([key, input.request_id ?? intentOf(input)]).slice(0, 16)}`;
   const author = authorOf(ctx);
-  if (input.fact_id && !author.owner && !(await callerReadsFact(ctx.engine, Number(input.fact_id), input.source_id, author.member))) {
+  if (input.fact_id && !author.owner && !(await callerReadsFact(ctx.engine, Number(input.fact_id), input.source_id, author.member, !input.corrected_fact))) {
     throw opError('fact_not_found', `No fact with id "${input.fact_id}" that this connection can read, so nothing was written.`, 'Pass a fact_id that recall returned to this same connection.');
   }
   const intent = intentOf(input);
@@ -396,7 +402,7 @@ export async function approveRule(engine: BrainEngine, ref: string, opts: { sour
   const bound = approvalDigest(digest, fact);
   const proof = opts.proof ? opts.proof(bound) : await confirmOnTerminal({ argv, digest: bound, probe: opts.probe, subject: 'standing rule',
     summary: [`Rule ${rule.id} (${rule.scope}, ${rule.status}): ${oneLine(rule.text)}`, `Saved: ${oneLine(rule.attribution) || 'outside gbrain correct'}`,
-      `Applies to: ${rule.scope === 'team' ? 'every agent in this brain' : rule.readable_by?.length ? `the agents of member ${rule.readable_by.join(', ')}` : 'your own agents'}`,
+      `Applies to: ${rule.scope === 'team' ? 'every agent in this brain' : rule.readable_by?.length ? `the agents of member ${rule.readable_by.map(oneLine).join(', ')}` : 'your own agents'}`,
       ...(fact ? [`Approving also changes a fact. ${factLine(fact)} (on ${(await readForgetTarget(engine, Number(fact.id), sourceId, false, false))?.entity_slug ?? 'no page; the fact is not found'})`] : [])] });
   if (proof.digest !== bound) throw confirmRequiredError(argv, { reason: 'declined' });
   const ctx = localRulesCtx(engine, sourceId);
@@ -432,7 +438,10 @@ export async function retireRule(engine: BrainEngine, id: string, opts: { source
   const receipt = rule.receipt ? await readReceipt(engine, rule.receipt) : null;
   if (receipt && receipt.rule.slug === slug && receipt.state !== 'committed') {
     receipt.state = 'conflicted';
-    receipt.error = { code: 'rule_transition', message: 'The owner retired this rule before it was finished, so its fact was left unchanged and nothing more is written.' };
+    const submitted = receipt.steps.fact?.state === 'pending' || receipt.steps.fact?.state === 'committed';
+    receipt.error = { code: 'rule_transition', message: submitted
+      ? 'The owner retired this rule after its fact change was submitted; that change may still commit, and nothing more is written.'
+      : 'The owner retired this rule before it was finished, so its fact was left unchanged and nothing more is written.' };
     await saveReceipt(engine, receipt);
   }
   return { retired: true, rule_id: rule.id };

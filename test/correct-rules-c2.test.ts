@@ -345,7 +345,7 @@ describe('second-model review fixes', () => {
 
   test('an empty corrected_fact is refused instead of withdrawing the fact', async () => {
     const wrong = await seedFact('Alice Example plays the cello.');
-    for (const blank of ['', '   ']) {
+    for (const blank of ['', '   ', '\u0007\u001b']) {
       const e = await runCorrect(localRulesCtx(engine), { rule: 'Alice Example plays the viola.', fact_id: wrong, corrected_fact: blank }, { probe: noTty }).catch(x => x);
       expect(e.code).toBe('invalid_params');
     }
@@ -359,7 +359,7 @@ describe('receipts stay bounded', () => {
     const { RECEIPTS_KEPT } = await import('../src/core/rules/correct.ts');
     const keys = await engine.listConfigKeys('correct.receipt.');
     for (let i = keys.length; i < RECEIPTS_KEPT + 5; i++) {
-      await engine.setConfig(`correct.receipt.cr-${i.toString(16).padStart(16, '0')}`, JSON.stringify({ state: 'committed', created_at: '2000-01-01T00:00:00Z' }));
+      await engine.setConfig(`correct.receipt.cr-${i.toString(16).padStart(16, '0')}`, JSON.stringify({ state: 'committed', confirmed: true, created_at: '2000-01-01T00:00:00Z' }));
     }
     await runCorrect(localRulesCtx(engine), { rule: 'Keep receipts bounded for alice-example.' }, { probe: noTty });
     expect((await engine.listConfigKeys('correct.receipt.')).length).toBeLessThanOrEqual(RECEIPTS_KEPT);
