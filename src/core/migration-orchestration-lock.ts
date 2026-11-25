@@ -104,6 +104,26 @@ function readPgliteHolder(lockPath: string): MigrationLockHolder | null {
   }
 }
 
+/**
+ * A brain kept in one store directory (PGLite, Rust) takes a file lock beside that directory, held without opening the
+ * brain; a Postgres brain takes the database lease. Opening a Rust brain makes this process its owner, so a lease held
+ * through an open engine would keep the brain from the `gbrain` children a migration starts (the v0.11.0 smoke):
+ * they would wait on an owner that is blocked in the synchronous spawn.
+ */
+function usesFileLock(config: GBrainConfig): boolean {
+  switch (config.engine) {
+    case 'pglite':
+    case 'rust':
+      return true;
+    case 'postgres':
+      return false;
+    default: {
+      const unreachable: never = config.engine;
+      return unreachable;
+    }
+  }
+}
+
 /** A schema too old for the lease: no table, or one without the acquisition-token columns. */
 function isMissingLockSchema(error: unknown): boolean {
   const e = error as { code?: string; message?: string };
@@ -196,7 +216,7 @@ export function migrationOrchestrationHeldHere(): boolean {
  * starts orchestrators.
  */
 export async function acquireMigrationOrchestrationLock(config: GBrainConfig): Promise<MigrationOrchestrationLock | null> {
-  const lock = config.engine === 'pglite'
+  const lock = usesFileLock(config)
     ? config.database_path ? await acquirePglite(config.database_path) : { assertHeld: async () => {}, release: async () => {} }
     : await acquirePostgres(config);
   if (!lock) return null;
@@ -208,7 +228,7 @@ export async function acquireMigrationOrchestrationLock(config: GBrainConfig): P
 /** Best-effort holder lookup for callers that only saw the runner's exit status. */
 export async function readMigrationLockHolder(config: GBrainConfig): Promise<MigrationLockHolder | null> {
   try {
-    if (config.engine === 'pglite') {
+    if (usesFileLock(config)) {
       return config.database_path ? readPgliteHolder(getPgliteMigrationLockPath(config.database_path)) : null;
     }
     const engine = await createEngine(toEngineConfig(config));
