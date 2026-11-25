@@ -3123,6 +3123,21 @@ const PINS: Pin[] = [
       FROM pages WHERE source_id=$1`],
   },
   {
+    from: 'src/core/ops/slug-params.ts:203 storedSpellings, unscoped (at a59ee3ca58)',
+    case: { method: 'readStoredSlugSpellings', variant: 'unscoped', run: e => e.readStoredSlugSpellings('notesab', {}, '') },
+    texts: [`SELECT DISTINCT slug COLLATE "C" AS s FROM pages WHERE regexp_replace(normalize(translate(replace(replace(slug, chr(304), 'i' || chr(775)), chr(8490), 'k'), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), NFC), '[^a-z0-9]', '', 'g') = $1  AND slug COLLATE "C" > $2 ORDER BY s LIMIT 200`],
+  },
+  {
+    from: 'src/core/ops/slug-params.ts:203 storedSpellings, source (at a59ee3ca58)',
+    case: { method: 'readStoredSlugSpellings', variant: 'source', run: e => e.readStoredSlugSpellings('notesab', { sourceId: 'default' }, '') },
+    texts: [`SELECT DISTINCT slug COLLATE "C" AS s FROM pages WHERE regexp_replace(normalize(translate(replace(replace(slug, chr(304), 'i' || chr(775)), chr(8490), 'k'), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), NFC), '[^a-z0-9]', '', 'g') = $1 AND source_id = $2 AND slug COLLATE "C" > $3 ORDER BY s LIMIT 200`],
+  },
+  {
+    from: 'src/core/ops/slug-params.ts:203 storedSpellings, sources (at a59ee3ca58)',
+    case: { method: 'readStoredSlugSpellings', variant: 'sources', run: e => e.readStoredSlugSpellings('notesab', { sourceIds: ['default'] }, 'notes/a') },
+    texts: [`SELECT DISTINCT slug COLLATE "C" AS s FROM pages WHERE regexp_replace(normalize(translate(replace(replace(slug, chr(304), 'i' || chr(775)), chr(8490), 'k'), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), NFC), '[^a-z0-9]', '', 'g') = $1 AND source_id = ANY($2::text[]) AND slug COLLATE "C" > $3 ORDER BY s LIMIT 200`],
+  },
+  {
     from: 'src/core/access/federation-exposure.ts:32 remotePagesFederationExposes, privacy part on (at 0af1a6ecf0)',
     case: { method: 'readFederationExposedPages', variant: 'hidden', run: e => e.readFederationExposedPages('default', true) },
     texts: () => { const hidden = ` AND ${privacyPartSql('p')}`; return [`WITH open AS (SELECT p.id, p.slug, p.revision_principal_kind, p.revision_principal_id FROM pages p

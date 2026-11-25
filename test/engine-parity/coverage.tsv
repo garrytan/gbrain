@@ -81,7 +81,7 @@
 # write_attribution: 5/5
 # telemetry: 14/14
 # field_usage: 1/1
-# alias_fanout_reads: 8/8
+# alias_fanout_reads: 9/9
 # write_guards: 16/16
 # page_visibility: 5/5
 # remote_links: 5/5
@@ -141,7 +141,7 @@ findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	42	yes	yes	yes	serves
 deletePages	pages	yes	4	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	316	yes	yes	yes	serves
+softDeletePage	pages	yes	317	yes	yes	yes	serves
 softDeletePages	pages	yes	4	yes	yes	yes	serves
 restorePage	pages	yes	14	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	8	no	yes	yes	serves
@@ -388,7 +388,7 @@ replaceDerivedLinks	links	yes	18	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
 removeLink	links	yes	3	no	yes	yes	serves
 removeLinksByPagesAndSource	links	yes	1	yes	yes	yes	serves
-getLinks	links	yes	38	yes	yes	yes	serves
+getLinks	links	yes	39	yes	yes	yes	serves
 getBacklinks	links	yes	15	yes	yes	yes	serves
 listLinkSources	links	yes	2	yes	yes	yes	serves
 findByTitleFuzzy	links	yes	5	no	yes	yes	serves
@@ -687,7 +687,7 @@ listVisiblePageSlugs	stats_ingest	yes	1	no	yes	yes	refuses:pages
 readPagesForVersionHistory	stats_ingest	yes	1	no	yes	yes	refuses:pages
 logIngest	stats_ingest	yes	9	no	yes	yes	serves
 getIngestLog	stats_ingest	yes	2	no	yes	yes	serves
-updateSlug	sync_aliases	yes	37	no	yes	yes	serves
+updateSlug	sync_aliases	yes	38	no	yes	yes	serves
 rewriteLinks	sync_aliases	yes	1	no	yes	yes	serves
 resolveSlugWithAlias	sync_aliases	yes	3	yes	yes	yes	serves
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves
@@ -2045,6 +2045,7 @@ readEntityAliasRows	alias_fanout_reads	yes	2	no	yes	yes	serves
 listSlugAliases	alias_fanout_reads	yes	5	no	yes	yes	serves
 readLiveSlugAliases	alias_fanout_reads	yes	2	no	yes	yes	serves
 readSourceSlugProbe	alias_fanout_reads	yes	1	no	yes	yes	serves
+readStoredSlugSpellings	alias_fanout_reads	yes	1	no	yes	yes	serves
 hasSegmentStorage	write_guards	yes	1	no	yes	yes	serves
 readPageOrigin	write_guards	yes	3	no	yes	yes	serves
 listRevivalPages	write_guards	yes	2	no	yes	yes	serves

@@ -49,6 +49,7 @@ pub mod seed;
 pub mod shared_skill_catalog;
 pub mod shared_skill_members;
 pub mod shared_skill_publication;
+pub mod slug_spellings;
 pub mod sources;
 #[cfg(test)]
 mod test_support;

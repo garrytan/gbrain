@@ -349,6 +349,7 @@ test/engine-parity/spend-log.test.ts	11	0
 test/engine-parity/stats-pages-by-type-ties.test.ts	2	0
 test/engine-parity/stats-vectors.test.ts	3	0
 test/engine-parity/stats.test.ts	9	0
+test/engine-parity/stored-slug-spellings.test.ts	1	0
 test/engine-parity/sweep-reads.test.ts	2	1
 test/engine-parity/sync-admission-effects.test.ts	7	0
 test/engine-parity/sync-admission.test.ts	3	0
@@ -410,6 +411,7 @@ test/engine-parity/withdrawal-discovery-reads.test.ts	5	0
 test/engine-parity/withdrawal-fence.test.ts	2	0
 test/engine-parity/withdrawal-forget.test.ts	2	0
 test/engine-parity/worktree-terms.test.ts	3	1
+test/engine-parity/world-only-spelling-read.test.ts	4	1
 test/engine-parity/write-attribution.test.ts	11	0
 test/engine-parity/write-guards.test.ts	10	0
 test/engine-parity/write-misc.test.ts	81	1

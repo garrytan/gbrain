@@ -942,6 +942,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listSlugAliases': OOS.callerRawSql,
   'readLiveSlugAliases': OOS.callerRawSql,
   'readSourceSlugProbe': OOS.callerRawSql,
+  'readStoredSlugSpellings': OOS.callerRawSql,
   'readEntityOpenLoops': OOS.callerRawSql,
   'entityIdentityRead': OOS.helper,
   'linkEntityIdentityRow': OOS.callerRawSql,
@@ -3024,6 +3025,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('listSlugAliases', [['default', (e) => e.listSlugAliases(SRC)]]),
   ...variants('readLiveSlugAliases', [['default', (e) => e.readLiveSlugAliases(SRC, ['a', 'b'])]]),
   ...variants('readSourceSlugProbe', [['default', (e) => e.readSourceSlugProbe(SRC, 0)]]),
+  ...variants('readStoredSlugSpellings', [['unscoped', (e) => e.readStoredSlugSpellings('notesab', {}, '')], ['source', (e) => e.readStoredSlugSpellings('notesab', { sourceId: SRC }, '')], ['sources', (e) => e.readStoredSlugSpellings('notesab', { sourceIds: [SRC] }, 'notes/a')]]),
   ...variants('readFederationExposedPages', [['hidden', (e) => e.readFederationExposedPages(SRC, true)], ['relaxed', (e) => e.readFederationExposedPages(SRC, false)]]),
   ...variants('readEntityOpenLoops', [['default', (e) => e.readEntityOpenLoops(SLUG, SRC, 3)]]),
   ...variants('linkEntityIdentityRow', [

@@ -7231,6 +7231,39 @@
         ],
         "flagOnScopes": []
       },
+      "readStoredSlugSpellings#source": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readStoredSlugSpellings#sources": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readStoredSlugSpellings#unscoped": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readTakePreimages#by-id": {
         "flagOffLanes": [
           "pool"
@@ -10955,6 +10988,7 @@
         "readStoredConfigValue": "none",
         "readStoredConversationEntry": "none",
         "readStoredPageTier": "none",
+        "readStoredSlugSpellings": "none",
         "readStrandedTakeProposalClaim": "none",
         "readSupersessionReplacement": "none",
         "readSyncAdmissionEffects": "none",
