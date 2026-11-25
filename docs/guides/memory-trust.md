@@ -110,14 +110,19 @@ yourself (a release is refused for such a hold).
 If two purges run at the same time on pages that share a reused name, each can
 keep a held write for the other page. Each purge notes such a held write, and the
 next maintenance run (the `bookkeeping_gc` phase of `gbrain dream` and autopilot)
-checks it again: when no page is left for it, the held write and its receipts are
-deleted. Until then it stays hidden and is never shown, and `gbrain doctor` lists
-it under `write_gate_holds_stranded`. A held write that was saved before its page
+checks it again: when no page is left for it (a soft-deleted page still counts),
+the held write and its receipts are deleted. Until then it stays hidden and is
+never shown, and `gbrain doctor` lists it under `write_gate_holds_stranded`. A held write that was saved before its page
 exists is never noted, so this sweep never removes it. To turn the sweep off, run
 `gbrain config set write_gate.orphan_sweep false`.
-Known limit: a held write left behind this way before the upgrade is not noted
+Known limits: a held write left behind this way before the upgrade is not noted
 and stays until it is purged some other way. `gbrain trust drop` marks it dropped
-but keeps its text.
+but keeps its text. The sweep takes no page lock, so a rename (for example
+`gbrain repair frontmatter`) onto the same name while it checks can still let it
+delete the left-behind held write as the new page arrives; that only removes
+stale hiding and shows no held text. If the pages' rename history is not a flat
+list of renames, a held write the sweep kept for a page can stay after that page
+is purged later.
 With suppress, flagged items are still returned by explicit search, recall
 and `get_page`, labeled, but hook context, the context engine,
 `context_pack` and volunteer leave them out until you confirm them in
