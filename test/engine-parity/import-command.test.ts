@@ -39,7 +39,7 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
  * more, fails the file, so the list can only shrink. Part A (source, resolver, guest, privacy-label, writer-state reads,
  * cycle locks, seal read): transaction is next.
  */
-const KNOWN_STOPS: readonly string[] = ['transaction'];
+const KNOWN_STOPS: readonly string[] = ['readLedgerSource', 'setChunkerVersion'];
 const stopOf = (text: string): string | null => /does not support (\w+) yet/.exec(text)?.[1] ?? null;
 /** A typed refusal of a listed stop stays typed (the Rust arm counts it as the case's stop); any other refusal is a failure. */
 function refusalOrFailure(error: unknown, what: string): unknown {
