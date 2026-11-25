@@ -6,14 +6,13 @@
  * return exactly the true nearest eligible pages (computed in process)
  * unfiltered, under a source filter and with private pages excluded, and no
  * row may break its filter. With the setting off, or a ceiling below the
- * brain's chunk count, results are the index path's, unchanged. A timed-out
- * exact attempt falls back to the index path, also inside a caller's
- * transaction.
+ * brain's chunk count, results are the index path's, unchanged. An exact
+ * scan the server cancels at its budget falls back to the index path, also
+ * inside a caller's transaction.
  */
-import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { hasDatabase, setupDB, teardownDB } from './helpers.ts';
 import { refreshProjectionStatistics } from '../../src/core/search/projection-statistics.ts';
-import { __setVectorExactBudgetForTests } from '../../src/core/search/vector-exact.ts';
 import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import type { SearchOpts } from '../../src/core/types.ts';
 import { vectorPlanCheck } from '../../src/commands/doctor/checks/vector-plan.ts';
@@ -91,8 +90,6 @@ describe.skipIf(!RUN)('exact vector scan under search.vector_exact_max_chunks (P
     queries[0] = deletedVector.map(x => x + 1e-4); // the deleted page is this query's nearest neighbour
   }, 300_000);
 
-  afterEach(() => __setVectorExactBudgetForTests());
-
   afterAll(async () => {
     await engine.executeRaw('DROP INDEX IF EXISTS idx_chunks_exact_fixture');
     await engine.executeRaw('ALTER TABLE content_chunks DROP COLUMN IF EXISTS embedding_exact_fixture');
@@ -136,15 +133,36 @@ describe.skipIf(!RUN)('exact vector scan under search.vector_exact_max_chunks (P
     }
   }, 120_000);
 
-  test('a timed-out exact attempt falls back to the index path, also inside a caller transaction', async () => {
-    __setVectorExactBudgetForTests(1);
-    for (const q of queries.slice(0, 5)) expect(await search(q, ON)).toEqual(await search(q));
-    await engine.transaction(async tx => {
+  test('a server-cancelled exact scan falls back to the index path, also inside a caller transaction', async () => {
+    // Every exact statement (`ORDER BY (distance) + 0`) is swapped for a sleep longer than its 2 s budget.
+    const scoped = engine as unknown as { withScopedReadTransaction: (...args: any[]) => Promise<any> };
+    const original = scoped.withScopedReadTransaction;
+    const cancelled: string[] = [];
+    scoped.withScopedReadTransaction = function (sourceIds, sourceId, fn, options) {
+      return original.call(this, sourceIds, sourceId, (tx: any) => fn(new Proxy(tx, {
+        get(target, key) {
+          if (key !== 'unsafe') return Reflect.get(target, key);
+          return (sql: string, params: unknown[]) => sql.includes(') + 0')
+            ? target.unsafe('SELECT pg_sleep(30)').catch((error: { code?: string }) => { cancelled.push(String(error.code)); throw error; })
+            : target.unsafe(sql, params);
+        },
+      })), options);
+    };
+    try {
       const q = queries[2]!;
-      expect(await search(q, ON, tx as unknown as PostgresEngine)).toEqual(await search(q, {}, tx as unknown as PostgresEngine));
-      const [row] = await tx.executeRaw<{ one: number }>(`SELECT 1 AS one`);
-      expect(Number(row!.one)).toBe(1);
-    });
+      const started = performance.now();
+      expect(await search(q, ON)).toEqual(await search(q));
+      expect(performance.now() - started).toBeLessThan(10_000);
+      expect(cancelled).toEqual(['57014']);
+      await engine.transaction(async tx => {
+        const inTx = tx as unknown as PostgresEngine;
+        expect(await search(q, ON, inTx)).toEqual(await search(q, {}, inTx));
+        expect(await tx.executeRaw<{ one: number }>(`SELECT 1 AS one`)).toEqual([{ one: 1 }]);
+      });
+      expect(cancelled).toEqual(['57014', '57014']);
+    } finally {
+      scoped.withScopedReadTransaction = original;
+    }
   }, 120_000);
 
   test('doctor vector_plan reports the setting and says when it covers the brain', async () => {

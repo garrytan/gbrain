@@ -40,13 +40,6 @@ export const VECTOR_EXACT_SUGGESTED_MAX_CHUNKS = 150_000;
 /** Statement budget for the exact attempt and its widenings together. */
 export const VECTOR_EXACT_BUDGET_MS = 2_000;
 
-let exactBudgetMs = VECTOR_EXACT_BUDGET_MS;
-
-/** Test seam: lower the exact attempt's budget (e.g. to force its timeout); no argument restores VECTOR_EXACT_BUDGET_MS. */
-export function __setVectorExactBudgetForTests(ms?: number): void {
-  exactBudgetMs = ms ?? VECTOR_EXACT_BUDGET_MS;
-}
-
 /** Times a full exact window whose pages fall short of the limit widens (x4 each), as the index walk does. */
 export const VECTOR_EXACT_ESCALATIONS = 2;
 
@@ -123,7 +116,7 @@ export async function searchExactWindow(
   stmt: Pick<VectorSearchStatement, 'innerLimit'>,
   limit: number,
   run: (attempt: VectorPoolAttempt) => Promise<VectorPoolBatch>,
-  budgetMs: number = exactBudgetMs,
+  budgetMs: number = VECTOR_EXACT_BUDGET_MS,
 ): Promise<Record<string, unknown>[] | null> {
   const deadline = performance.now() + budgetMs;
   const attempt = async (innerLimit: number): Promise<VectorPoolBatch | null> => {
