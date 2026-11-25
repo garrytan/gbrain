@@ -81,7 +81,7 @@ export async function runProfile(engine: BrainEngine | null, args: string[]): Pr
         throw opError('profile_entity_not_self', 'profile import: this credential has no profile (it speaks for no member and is not the brain owner); nothing was sent.',
           'Import from the brain owner\'s CLI or a member credential.');
       }
-      return { principal, profile: entity.slug };
+      return { principal, profile: entity.slug ?? `unreadable:${entity.basis}` };
     };
     await runProfileImport(args.slice(1), call, target, configDir());
     return;
