@@ -424,6 +424,7 @@
   "test/engine-parity/search-reads.test.ts": 7567,
   "test/engine-parity/search.test.ts": 19578,
   "test/engine-parity/segment-regions.test.ts": 8200,
+  "test/engine-parity/segment-sweep-managed.test.ts": 9000,
   "test/engine-parity/segmented-body.test.ts": 13584,
   "test/engine-parity/segmented-fence-staging.test.ts": 7300,
   "test/engine-parity/segmented-ledger-reads.test.ts": 8000,

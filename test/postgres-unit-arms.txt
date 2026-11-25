@@ -499,6 +499,7 @@ test/engine-parity/search-space-separators.test.ts
 test/engine-parity/search.test.ts
 test/engine-parity/segment-pending-stamp.test.ts
 test/engine-parity/segment-regions.test.ts
+test/engine-parity/segment-sweep-managed.test.ts
 test/engine-parity/segmented-body.test.ts
 test/engine-parity/segmented-callers.test.ts
 test/engine-parity/segmented-embedding.test.ts
