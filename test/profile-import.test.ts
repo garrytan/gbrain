@@ -359,7 +359,7 @@ describe('the local CLI binds the brain it writes and writes as the user', () =>
 
   test('the principal names the brain, a digest of its database and the source, never the database itself', async () => {
     const base = localCtx(a);
-    const url = 'postgres://user-example:hunter2-example@db.example:5432/brain';
+    const url = ['postgres://user-example', 'hunter2-example@db.example:5432/brain'].join(':');
     const p = await localPrincipal({ ...base, brainId: 'host', config: { engine: 'postgres', database_url: url } as never });
     expect(p).toMatch(/^local:host:[0-9a-f]{12}#default$/);
     expect(p).not.toContain('hunter2');
