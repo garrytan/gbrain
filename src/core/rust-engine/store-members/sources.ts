@@ -2,7 +2,6 @@
 import type { SourceDetailRow, SourceRow } from '../../engine.ts';
 import { toSource, withDates } from '../store-codec.ts';
 import { storeCall, takeOptions, type StoreMember } from './common.ts';
-import type { SourceSyncStampOptions } from '../../engine-sql/sources.ts';
 
 export const listAllSources: StoreMember<[opts?: { includeArchived?: boolean; localPathOnly?: boolean }], SourceRow[]> = async (brain, opts) => {
   const rows = await storeCall({ member: 'listAllSources' }, () =>
@@ -25,6 +24,6 @@ export const listSourceLocalPaths: StoreMember<[], string[]> = (brain) =>
 export const getSourceStrictness: StoreMember<[sourceId: string], boolean> = (brain, sourceId) =>
   storeCall({ member: 'getSourceStrictness', sourceId }, () => brain.getSourceStrictness(sourceId));
 
-/** Sets the source's last sync time to the store clock; false for an unknown source (or another incarnation), which changes nothing. */
-export const markSourceSynced: StoreMember<[sourceId: string, opts?: SourceSyncStampOptions], boolean> = (brain, sourceId, opts) =>
-  storeCall({ member: 'markSourceSynced', sourceId }, () => brain.markSourceSynced(sourceId, takeOptions('markSourceSynced', opts, ['incarnation', 'newestContentAt'])));
+/** Sets the source's last sync time to the store clock; false for an unknown source, which changes nothing. */
+export const markSourceSynced: StoreMember<[sourceId: string], boolean> = (brain, sourceId) =>
+  storeCall({ member: 'markSourceSynced', sourceId }, () => brain.markSourceSynced(sourceId, {}));

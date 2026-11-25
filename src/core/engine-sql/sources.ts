@@ -82,6 +82,17 @@ export async function updateSourceConfig(exec: SqlExecutor, sourceId: string, pa
     return affectedRows > 0;
   }
 
+/** One active source with its raw config (`listActiveSourceConfigs`). */
+export interface ActiveSourceConfigRow { id: string; config: unknown; archived: boolean }
+
+/**
+ * The active sources with their raw config, by id: the read that scopes a legacy remote caller to the sources it may see
+ * (`SELECT id, config, archived FROM sources WHERE archived = false ORDER BY id`, as master issued it). Unscoped on master.
+ */
+export async function listActiveSourceConfigs(exec: LegacyUnscopedRead): Promise<ActiveSourceConfigRow[]> {
+  return exec.executeRaw<ActiveSourceConfigRow>(`SELECT id, config, archived FROM sources WHERE archived = false ORDER BY id`);
+}
+
 /** One source row with the columns a source check reads: its checkout path, raw config and archived flag. */
 export interface SourceCheckRow { id: string; local_path: string | null; config: unknown; archived: boolean }
 
@@ -148,7 +159,7 @@ export async function listLocalPathSources(exec: LegacyUnscopedRead): Promise<Lo
  */
 export async function listSourceRoutingRows(exec: LegacyUnscopedRead): Promise<SourceRoutingRow[]> {
   return exec.executeRaw<SourceRoutingRow>(
-    `SELECT id, local_path, archived, config, EXISTS (SELECT 1 FROM pages WHERE source_id = 'default' AND deleted_at IS NULL) AS default_has_pages FROM sources ORDER BY id COLLATE "C"`,
+    `SELECT id, local_path, archived, config, EXISTS (SELECT 1 FROM pages WHERE source_id = 'default' AND deleted_at IS NULL) AS default_has_pages FROM sources ORDER BY id`,
   );
 }
 
@@ -179,31 +190,13 @@ export async function countDefaultSourceSplit(exec: LegacyUnscopedRead): Promise
 
 /**
  * Sets the source's last sync time to the database clock (`now()`): the stamp a clean `gbrain import` of a folder
- * source makes (#1691), a no-change sync's heartbeat and a connector's clean run. With `incarnation`, only a source
- * still of that incarnation is stamped. Returns whether a source was stamped; an unknown source (or another
- * incarnation) changes nothing.
+ * source makes (#1691). Returns whether a source was stamped; an unknown source changes nothing. One statement: the
+ * sync paths that also stamp an incarnation or newest_content_at keep their own writes until they move here.
  */
-export async function markSourceSynced(exec: SqlExecutor, sourceId: string, opts: SourceSyncStampOptions = {}): Promise<boolean> {
-  const newest = opts.newestContentAt;
-  let rows: Array<{ id: string }>;
-  if (newest === undefined) {
-    rows = opts.incarnation === undefined
-      ? await exec.executeRaw<{ id: string }>('UPDATE sources SET last_sync_at = now() WHERE id = $1 RETURNING id', [sourceId])
-      : await exec.executeRaw<{ id: string }>('UPDATE sources SET last_sync_at = now() WHERE id = $1 AND incarnation = $2::uuid RETURNING id', [sourceId, opts.incarnation]);
-  } else {
-    rows = opts.incarnation === undefined
-      ? await exec.executeRaw<{ id: string }>('UPDATE sources SET last_sync_at = now(), newest_content_at = COALESCE($2::timestamptz, newest_content_at) WHERE id = $1 RETURNING id', [sourceId, newest])
-      : await exec.executeRaw<{ id: string }>('UPDATE sources SET last_sync_at = now(), newest_content_at = COALESCE($3::timestamptz, newest_content_at) WHERE id = $1 AND incarnation = $2::uuid RETURNING id', [sourceId, opts.incarnation, newest]);
-  }
+export async function markSourceSynced(exec: SqlExecutor, sourceId: string): Promise<boolean> {
+  const rows = await exec.executeRaw<{ id: string }>('UPDATE sources SET last_sync_at = now() WHERE id = $1 RETURNING id', [sourceId]);
   return rows.length > 0;
 }
-
-/**
- * `markSourceSynced` options. `incarnation` stamps only while the source is still that incarnation (a managed sync
- * run's guard). `newestContentAt` (a timestamptz text) also sets `newest_content_at`; null keeps the stored value
- * (`COALESCE`), as a connector run that saw nothing newer does.
- */
-export interface SourceSyncStampOptions { incarnation?: string; newestContentAt?: string | null }
 
 /** A source with a local path and its archived flag (`listLocalPathSources`). */
 export interface LocalPathSourceRow { id: string; local_path: string; archived: boolean }

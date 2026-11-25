@@ -221,10 +221,10 @@ describe('FileVaultBackend corrupt / unknown / missing files', () => {
   });
 
   it('unknown version throws (parseVaultFile and backend read)', async () => {
-    expect(() => parseVaultFile(JSON.stringify({ version: 2, clients: [], credentials: {} }))).toThrow(
-      'Unsupported credentials.json version: 2',
+    expect(() => parseVaultFile(JSON.stringify({ version: 3, clients: [], credentials: {} }))).toThrow(
+      'Unsupported credentials.json version: 3',
     );
-    seedRawVaultFile(JSON.stringify({ version: 2, clients: [], credentials: {} }));
+    seedRawVaultFile(JSON.stringify({ version: 3, clients: [], credentials: {} }));
     const vault = new FileVaultBackend();
     await expect(vault.get('google:a@example.com')).rejects.toThrow('Unsupported credentials.json version');
   });

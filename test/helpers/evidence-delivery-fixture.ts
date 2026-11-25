@@ -141,12 +141,18 @@ function quotedRow(row: Record<string, unknown>, field: 'chunk_text' | 'chunk'):
  * carry no trust declaration (`unknown`), so every remote row comes back
  * fenced and marked `quoted`. GBRA-200 appends the degraded stamp (a last
  * text block and `_meta.degraded`) to an MCP reply whose frozen meta names a
- * recall-affecting stage. The frozen pre-feature bytes stay as captured;
+ * recall-affecting stage. C3 (GST-3827) appends a `precedence` label to every
+ * local search and query row, and every page here sits in the default source
+ * with no rule or facts marking, so each reads `curated`. The frozen pre-feature bytes stay as captured;
  * this applies exactly those declared transforms to them, so every other byte
  * of the capture is still compared.
  */
 export function withCostWave(key: string, frozen: string): string {
   const base = key.replace(/:chunk$/, '');
+  if (['search', 'search-subagent', 'query', 'query-budget', 'query-low'].includes(base)) {
+    const v = JSON.parse(frozen) as { result: Record<string, unknown>[] };
+    return JSON.stringify({ ...v, result: v.result.map(r => ({ ...r, precedence: 'curated' })) });
+  }
   if (base === 'recall' || base === 'recall-budget') {
     const v = JSON.parse(frozen) as { result: Record<string, unknown>; meta: unknown };
     return JSON.stringify({ ...v, result: withFactsOrder(v.result) });

@@ -384,7 +384,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "grep": {
         "type": "string",
-        "description": "Only the paragraphs containing this text (case-insensitive substring, not a regex), with line numbers and total_matches.",
+        "description": "Only the paragraphs containing this text (case-insensitive substring, not a regex; an inner \"a|b\" also matches either side), with line numbers and total_matches.",
         "fullSurfaceOnly": true
       },
       "context": {
@@ -4127,6 +4127,29 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "name": "reveal-secret",
       "hidden": true
     }
+  },
+  {
+    "name": "check_claims",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": "retrieval",
+    "description": "Check the numbers in a draft against allowed-claims pages (type: facts, claims: allowed) before stating them. Per claim: supported (with the cited dated line), conflicts (lines that say another number) or not_found, which means no allowed claim covers it, not that it is false.",
+    "params": {
+      "text": {
+        "type": "string",
+        "required": true,
+        "description": "The draft to check (max 20000 characters)."
+      },
+      "source_id": {
+        "type": "string",
+        "description": "One source, or '__all__'."
+      }
+    },
+    "scope": "read",
+    "cliHints": {
+      "hidden": true
+    },
+    "area": "search"
   },
   {
     "name": "policy_check",
@@ -8000,6 +8023,316 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "mutating": true,
     "scope": "write",
     "area": "loops"
+  },
+  {
+    "name": "household_due",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": "retrieval",
+    "description": "Household items overdue, at risk or coming up (bills, supplies, birthdays, school dates, returns, credits), ranked, each with a reason, its slug and a proposed action. Every action needs the user's yes: never buy, pay, book, call or send without it.",
+    "params": {
+      "window_days": {
+        "type": "number",
+        "description": "Days ahead (default 7)."
+      },
+      "kinds": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "supply",
+            "birthday",
+            "bill",
+            "deadline",
+            "appointment",
+            "return",
+            "credit"
+          ]
+        },
+        "description": "Only these kinds."
+      },
+      "include": {
+        "type": "string",
+        "enum": [
+          "at_risk",
+          "due",
+          "all"
+        ],
+        "description": "Default due."
+      },
+      "about": {
+        "type": "string",
+        "description": "Only records about this page slug.",
+        "fullSurfaceOnly": true
+      },
+      "handled_by": {
+        "type": "string",
+        "description": "Only records handled by this person.",
+        "fullSurfaceOnly": true
+      },
+      "as_of": {
+        "type": "string",
+        "description": "YYYY-MM-DD (default today)."
+      },
+      "limit": {
+        "type": "number",
+        "description": "Max items (default 20, max 100).",
+        "fullSurfaceOnly": true
+      },
+      "source_id": {
+        "type": "string",
+        "description": "One source.",
+        "fullSurfaceOnly": true
+      }
+    },
+    "scope": "read",
+    "annotations": {
+      "readOnlyHint": true
+    },
+    "area": "household"
+  },
+  {
+    "name": "household_add",
+    "mutating": true,
+    "idempotent": false,
+    "writeInference": "none",
+    "outputRedaction": "no_stored_text",
+    "description": "Add one household record (supply, birthday, bill, deadline, appointment, return or credit). The placement table picks its folder and who may read it; a record about a child is adults only. Refuses full account or card numbers.",
+    "params": {
+      "kind": {
+        "type": "string",
+        "required": true,
+        "enum": [
+          "supply",
+          "birthday",
+          "bill",
+          "deadline",
+          "appointment",
+          "return",
+          "credit"
+        ],
+        "description": "Record kind."
+      },
+      "title": {
+        "type": "string",
+        "required": true,
+        "description": "Short title, e.g. \"Water bill\"."
+      },
+      "slug": {
+        "type": "string",
+        "description": "Name within its folder (default: from the title)."
+      },
+      "about": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Subject page slugs, e.g. people/alice-example."
+      },
+      "about_role": {
+        "type": "string",
+        "enum": [
+          "adult",
+          "child",
+          "helper",
+          "pet",
+          "home",
+          "other"
+        ],
+        "description": "Marks every about subject's household_role (child keeps the record adults only)."
+      },
+      "child": {
+        "type": "boolean",
+        "description": "Same as about_role child."
+      },
+      "handled_by": {
+        "type": "string",
+        "description": "Who usually handles it."
+      },
+      "due": {
+        "type": "string",
+        "description": "Due date YYYY-MM-DD (bill, deadline, return, credit; a booked appointment)."
+      },
+      "recurs": {
+        "type": "string",
+        "enum": [
+          "none",
+          "weekly",
+          "monthly",
+          "quarterly",
+          "yearly"
+        ],
+        "description": "How the due date repeats."
+      },
+      "cadence": {
+        "type": "string",
+        "description": "Supply or appointment cadence, e.g. 30d, 6m."
+      },
+      "last_done": {
+        "type": "string",
+        "description": "When it was last bought or done (YYYY-MM-DD)."
+      },
+      "on": {
+        "type": "string",
+        "description": "Birthday MM-DD."
+      },
+      "lead_days": {
+        "type": "number",
+        "description": "Days before the date it turns at risk."
+      },
+      "amount": {
+        "type": "number",
+        "description": "Amount (with currency)."
+      },
+      "currency": {
+        "type": "string",
+        "description": "Three-letter currency, e.g. USD."
+      },
+      "gift": {
+        "type": "string",
+        "enum": [
+          "none",
+          "ideas",
+          "bought",
+          "given"
+        ],
+        "description": "Birthday gift state."
+      },
+      "proposed_verb": {
+        "type": "string",
+        "description": "The action to propose when due (send, spend, book, ...)."
+      },
+      "proposed_note": {
+        "type": "string",
+        "description": "One line describing that action."
+      },
+      "audience": {
+        "type": "string",
+        "enum": [
+          "adults"
+        ],
+        "description": "Keep this record to adults even when its kind is shared."
+      },
+      "school": {
+        "type": "boolean",
+        "description": "A school deadline (goes under household/school/)."
+      },
+      "note": {
+        "type": "string",
+        "description": "Body text."
+      },
+      "source_id": {
+        "type": "string",
+        "description": "Write source."
+      },
+      "request_id": {
+        "type": "string",
+        "description": "Idempotency key for a retry."
+      }
+    },
+    "scope": "write",
+    "area": "household"
+  },
+  {
+    "name": "household_mark",
+    "mutating": true,
+    "idempotent": false,
+    "writeInference": "none",
+    "outputRedaction": "no_stored_text",
+    "description": "Record what happened to a household record: done, bought, paid, booked, submitted, returned, used, gift_ideas, gift_bought, given, skip, pause, resume or archive. Adds a timeline line and updates the state in one write; never deletes. Use it for what the user says was done, never for what you plan to do.",
+    "params": {
+      "slug": {
+        "type": "string",
+        "required": true,
+        "description": "The record (from household_due)."
+      },
+      "event": {
+        "type": "string",
+        "required": true,
+        "enum": [
+          "done",
+          "bought",
+          "paid",
+          "booked",
+          "submitted",
+          "returned",
+          "used",
+          "gift_ideas",
+          "gift_bought",
+          "given",
+          "skip",
+          "pause",
+          "resume",
+          "archive"
+        ],
+        "description": "What happened."
+      },
+      "on": {
+        "type": "string",
+        "description": "Day it happened (YYYY-MM-DD); default today."
+      },
+      "due": {
+        "type": "string",
+        "description": "For booked: the booked date."
+      },
+      "note": {
+        "type": "string",
+        "description": "One line for the timeline."
+      },
+      "source_id": {
+        "type": "string",
+        "description": "Write source."
+      },
+      "request_id": {
+        "type": "string",
+        "description": "Idempotency key for a retry."
+      }
+    },
+    "scope": "write",
+    "area": "household"
+  },
+  {
+    "name": "household_replace",
+    "mutating": true,
+    "idempotent": true,
+    "writeInference": "none",
+    "outputRedaction": "no_stored_text",
+    "description": "Recompute every household record's audience and readers from the placement table (when the brain starts serving several people). With about: narrow the records about those subjects to adults, set their household_role when role is given, then re-place them. Trusted local CLI only.",
+    "params": {
+      "source_id": {
+        "type": "string",
+        "description": "Source (default: the current one)."
+      },
+      "about": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Subject page slugs to reclassify; only the records about them are re-placed."
+      },
+      "role": {
+        "type": "string",
+        "enum": [
+          "adult",
+          "child",
+          "helper",
+          "pet",
+          "home",
+          "other"
+        ],
+        "description": "The household_role to give each about subject (needs about)."
+      }
+    },
+    "scope": "write",
+    "localOnly": true,
+    "cliOnly": {
+      "argv": [
+        "gbrain",
+        "household",
+        "replace"
+      ]
+    },
+    "area": "household"
   },
   {
     "name": "questions_pin",
