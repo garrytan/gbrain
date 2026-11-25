@@ -453,8 +453,8 @@ export async function runAgentRegister(engine: BrainEngine | null, args: string[
     const validateSourceIds = async (ids: string[]): Promise<void> => {
       const unique = [...new Set(ids)];
       if (unique.length === 0) return;
-      const rows = (await loadAllSources(engine, { includeArchived: true })).filter(r => unique.includes(r.id));
-      const found = new Map(rows.map(r => [r.id, r]));
+      // One typed single-row read per id (id, local_path, config, archived), so a brain older than v109 (no newest_content_at) reads fine.
+      const found = new Map(await Promise.all(unique.map(async id => [id, await engine.readSourceRow(id)] as const)));
       for (const id of unique) {
         const row = found.get(id);
         if (!row) {
@@ -627,13 +627,14 @@ export async function ensureWorkspaceSource(
   txSql: SqlQuery,
   id: string,
 ): Promise<boolean> {
-  const existing = (await loadAllSources(tx, { includeArchived: true })).filter(r => r.id === id);
-  if (existing.length > 0) {
-    if (existing[0].archived === true) {
+  // `readSourceRow` reads only id, local_path, config and archived, so it never fails inside the tx on a brain older than v109.
+  const existing = await tx.readSourceRow(id);
+  if (existing !== null) {
+    if (existing.archived === true) {
       throw new RegisterError('archived_source',
         `workspace source "${id}" exists but is archived — unarchive it (gbrain sources restore ${id}) or pick another name.`);
     }
-    const localPath = existing[0].local_path;
+    const localPath = existing.local_path;
     const pages = await txSql`SELECT count(*) AS n FROM pages WHERE source_id = ${id}`;
     const nPages = Number(pages[0]?.n ?? 0);
     const facts = await txSql`SELECT count(*) AS n FROM facts WHERE source_id = ${id}`;

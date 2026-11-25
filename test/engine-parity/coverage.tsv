@@ -1140,7 +1140,7 @@ accessTokenLive	minion_queue	yes	2	no	yes	yes	serves
 oauthClientLive	minion_queue	yes	10	no	yes	yes	serves
 readOauthClientColumns	minion_queue	yes	4	no	yes	yes	serves
 setOauthClientTokenTtl	minion_queue	yes	4	no	yes	yes	serves
-insertOauthClientGrant	minion_queue	yes	6	no	yes	yes	serves
+insertOauthClientGrant	minion_queue	yes	7	no	yes	yes	serves
 readTokenLifetimeClampedClients	minion_queue	yes	1	no	yes	yes	serves
 readScopeSourceConfigs	minion_queue	yes	6	no	yes	yes	serves
 readOauthClientForUpdate	minion_queue	yes	19	no	yes	yes	serves
@@ -1755,7 +1755,7 @@ listSegmentedPages	withdrawal_pages	yes	2	no	yes	yes	serves
 invalidateWithdrawnPages	withdrawal_pages	yes	2	no	yes	yes	serves
 hasWithdrawnFenceClaim	withdrawal_fence	yes	2	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	118	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	119	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 addCodeEdges	code_edges	yes	7	yes	yes	yes	serves
