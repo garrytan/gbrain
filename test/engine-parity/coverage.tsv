@@ -2059,7 +2059,7 @@ switchAccessMigration	write_misc	yes	4	no	yes	yes	serves
 listAccessPolicySources	write_misc	yes	1	no	yes	yes	serves
 countPeopleFolderPages	write_misc	yes	1	no	yes	yes	serves
 countOpenPages	write_misc	yes	4	no	yes	yes	serves
-readAccessMembers	write_misc	yes	19	no	yes	yes	serves
+readAccessMembers	write_misc	yes	18	no	yes	yes	serves
 readAccessCredentials	write_misc	yes	5	no	yes	yes	serves
 listOwnerCredentialRows	write_misc	yes	2	no	yes	yes	serves
 insertPinnedQuestion	write_misc	yes	1	no	yes	yes	serves
@@ -2088,7 +2088,7 @@ listPagesNamingReader	write_misc	yes	6	no	yes	yes	serves
 purgeStaleAppliedCaptures	write_misc	yes	1	no	yes	yes	serves
 listSharedMemberMigrationRows	write_misc	yes	1	no	yes	yes	serves
 listAdminClientRows	write_misc	yes	1	no	yes	yes	serves
-hasLabelledOnlyMemberAmong	write_misc	yes	1	no	yes	yes	serves
+hasLabelledOnlyMemberAmong	write_misc	yes	2	no	yes	yes	serves
 listSourceIncarnations	repair_bookkeeping	yes	15	no	yes	yes	serves
 listOrphanBindings	repair_bookkeeping	yes	4	no	yes	yes	serves
 deleteOrphanBinding	repair_bookkeeping	yes	3	no	yes	yes	serves
