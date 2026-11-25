@@ -10,6 +10,7 @@ interface Flags { json: boolean; budget?: number }
 
 const HELP = `Usage: gbrain profile [--json] [--budget-tokens <n>]
        gbrain profile import <file> [--yes --preview <hash>]   (gbrain profile import --help)
+       gbrain profile export --format memory-text|muse-memory|markdown   (gbrain profile export --help)
 
 Your own profile: the facts remember saved with a facet (diet, allergy, size.<item>, brand, style, constraint,
 schedule, household, other), relationships from your page's links, and unfaceted preferences. The brain owner reads
@@ -68,7 +69,8 @@ export async function localPrincipal(ctx: OperationContext): Promise<string> {
 }
 
 export async function runProfile(engine: BrainEngine | null, args: string[], makeContext?: MakeContext): Promise<void> {
-  if (args[0] !== 'import' && (args.includes('--help') || args.includes('-h'))) { console.log(HELP); return; }
+  const sub = args[0] === 'import' || args[0] === 'export' ? args[0] : null;
+  if (!sub && (args.includes('--help') || args.includes('-h'))) { console.log(HELP); return; }
   const { loadConfig, isThinClient, configDir } = await import('../core/config.ts');
   const cfg = loadConfig();
   const { getCliOptions, THIN_CLIENT_BRAIN_FLAG_MESSAGE } = await import('../core/cli-options.ts');
@@ -86,7 +88,7 @@ export async function runProfile(engine: BrainEngine | null, args: string[], mak
   if (isThinClient(cfg)) {
     const { callRemoteTool, unpackToolResult } = await import('../core/mcp-client.ts');
     call = async (tool, params) => unpackToolResult(await callRemoteTool(cfg!, tool, params, { timeoutMs: 30_000 }));
-  } else if (args[0] !== 'import' || !(args.includes('--help') || args.includes('-h'))) {
+  } else if (!sub || !(args.includes('--help') || args.includes('-h'))) {
     const { operationsByName } = await import('../core/operations.ts');
     ctx = makeContext ? await makeContext(engine!, source ? { source } : {}) : await fallbackContext(engine!, cfg, source);
     const local = ctx;
@@ -105,6 +107,11 @@ export async function runProfile(engine: BrainEngine | null, args: string[], mak
       return { principal, profile: entity.slug ?? `unreadable:${entity.basis}` };
     };
     await runProfileImport(args.slice(1), call, target, configDir(), brain ? ['--brain', brain] : []);
+    return;
+  }
+  if (sub === 'export') {
+    const { runProfileExport } = await import('./profile-export.ts');
+    await runProfileExport(args.slice(1), call);
     return;
   }
   const flags = parseProfileArgs(args);

@@ -11,6 +11,7 @@ import { scanText, scanTextSpans, TRANSCRIPT_LANE_SCAN_OPTS } from '../secret-sc
 import { isStrictIsoDateTime } from '../utils.ts';
 import { opError } from '../ops/contract.ts';
 import { canonicalFacet } from './facets.ts';
+import { museBlockLines } from './export.ts';
 
 export const IMPORT_FORMATS = ['muse-memory', 'claude-memories', 'memory-text'] as const;
 export type ImportFormat = (typeof IMPORT_FORMATS)[number];
@@ -124,7 +125,9 @@ const credential = (pattern: string): Raw => ({ line: 0, skip: `credential-shape
 /** Parses, drops credential-shaped and oversized rows, dedupes and assigns each item its facet. */
 export function planImport(text: string, format: ImportFormat | 'auto'): ImportPlan {
   const fmt = format === 'auto' ? sniffFormat(text) : format;
-  const parsed = fmt === 'claude-memories' ? claudeMemories(text) : fmt === 'memory-text' ? memoryText(text) : bullets(text);
+  const own = fmt === 'claude-memories' ? new Set<number>() : museBlockLines(text);
+  const body = own.size ? text.split(/\r?\n/).map((l, i) => own.has(i + 1) ? '' : l).join('\n') : text;
+  const parsed = fmt === 'claude-memories' ? claudeMemories(text) : fmt === 'memory-text' ? memoryText(body) : bullets(body);
   const inFile = fmt === 'claude-memories' ? new Map<number, string>() : credentialLines(text);
   const facts = parsed.filter(r => !('skip' in r)) as Array<Extract<Raw, { fact: string }>>;
   const acrossFacts = credentialLines(facts.map(f => f.fact.replace(/\s+/g, ' ')).join('\n'));
@@ -134,6 +137,7 @@ export function planImport(text: string, format: ImportFormat | 'auto'): ImportP
   });
   const items: ImportItem[] = [];
   const dropped: ImportDrop[] = [];
+  if (own.size) dropped.push({ line: Math.min(...own), reason: `GBrain's own exported block (${own.size} lines) skipped: it came from this brain` });
   const seen = new Set<string>();
   for (const r of raw) {
     if ('skip' in r) { dropped.push({ line: r.line, reason: r.skip }); continue; }
