@@ -186,6 +186,12 @@ describe('engine parity: forget reach reads', () => {
       expect(out['on private page']).toBe(false);
       expect(out['on member page']).toBe(false);
       expect(out['on scope page']).toBe(false);
+      // The pages the member's own rule opens: no page record, an open entity page, a page whose readers name the member,
+      // and a deleted page record, which judges by its own fields as any page does.
+      expect(out['missing pages']).toBe(true);
+      expect(out['about open entity']).toBe(true);
+      expect(out['on readers page']).toBe(true);
+      expect(out['on deleted page']).toBe(true);
       return out;
     });
 });

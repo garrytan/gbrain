@@ -410,6 +410,41 @@ pub(crate) fn page_access_allowed(
     member_access_allows(read, page, identity, policy, false, &owner_only)
 }
 
+/// Whether `page` passes both reads `ownerReachesFact` puts on a page of the fact:
+/// `ownerReadPolicyFragment('pp', identity, satisfied)` (GST-2490's owner read rule with the opt-in
+/// off: the page's readers and folder rules for the owner's identity, the lineage origin test of
+/// `gbrain_access_origin_hidden_for`, then the privacy part; no owner-only test, as the owner's)
+/// and `readPolicyFragment('pp', identity, true, satisfied)` (the member-access part in the
+/// policy's form, then the privacy part). The identity and the satisfied rules are the policy's; so are the
+/// caller record's folder coverage and whether the texts are a record's rendering (`caller_record`).
+pub(crate) fn owner_reads_page(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    policy: &PrivacyPolicy,
+) -> Result<bool> {
+    let identity = policy.identity.as_slice();
+    let satisfied = policy.satisfied_rule_ids.as_slice();
+    let folders = FolderAccess {
+        satisfied,
+        coverage: &policy.folder_coverage,
+        record: policy.caller_record,
+    };
+    let lineage = OriginWalk::Lineage {
+        identity,
+        satisfied,
+    };
+    if !readers_allowed_by(read, page, identity, folders, false, false, lineage)?
+        || !privacy_allows(read, page, policy.honor_aliases)?
+    {
+        return Ok(false);
+    }
+    let owner_only = OwnerOnlySources::read(read)?;
+    Ok(
+        member_access_allows(read, page, identity, policy, false, &owner_only)?
+            && privacy_allows(read, page, policy.honor_aliases)?,
+    )
+}
+
 /// `folderRulesAllowedSql(alias, satisfied)` for one page under a caller record's page policy:
 /// every rule stamped on the page is in `satisfied`, and no prefix of the record (or, outside a
 /// record, no pending prefix the store holds) covers it.
@@ -639,7 +674,7 @@ fn explicitly_private(page: &PageRecord) -> bool {
 const NOBODY: &str = "!nobody";
 
 /// `ACCESS_ID_RE`, `^[a-z0-9][a-z0-9._-]{0,63}$`.
-fn access_id(id: &str) -> bool {
+pub(crate) fn access_id(id: &str) -> bool {
     let bytes = id.as_bytes();
     (1..=64).contains(&bytes.len())
         && (bytes[0].is_ascii_lowercase() || bytes[0].is_ascii_digit())
@@ -700,6 +735,39 @@ fn readers_allowed(
     open: bool,
     derived: bool,
 ) -> Result<bool> {
+    readers_allowed_by(
+        read,
+        page,
+        identity,
+        folders,
+        open,
+        derived,
+        OriginWalk::Everyone,
+    )
+}
+
+/// Which origin test ends the member-access part: the every-caller one
+/// (`gbrain_access_origin_restricted`, `originAllowedSql`) or an owner's lineage read
+/// (`gbrain_access_origin_hidden_for`, `lineageOriginAllowedSql`) for `identity` and `satisfied`.
+#[derive(Clone, Copy)]
+enum OriginWalk<'a> {
+    Everyone,
+    Lineage {
+        identity: &'a [String],
+        satisfied: &'a [String],
+    },
+}
+
+/// [`readers_allowed`] with the origin test `walk` names.
+fn readers_allowed_by(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    identity: &[String],
+    folders: FolderAccess<'_>,
+    open: bool,
+    derived: bool,
+    walk: OriginWalk<'_>,
+) -> Result<bool> {
     // A caller record's rendering reads no live pending prefix, so a page under one is judged by
     // the ids its last stamp kept (`folder_rule_ids`), not the rules installed since; elsewhere the
     // live pending prefix hides the page, and the kept ids equal the rules after the restamp.
@@ -732,7 +800,16 @@ fn readers_allowed(
         page.page_type.as_str(),
         "atom" | "question" | "concept" | "event"
     ) && !page.frontmatter.contains_key("derived_from");
-    Ok(plain || !origin_restricted(read, page)?)
+    if plain {
+        return Ok(true);
+    }
+    Ok(!match walk {
+        OriginWalk::Everyone => origin_restricted(read, page)?,
+        OriginWalk::Lineage {
+            identity,
+            satisfied,
+        } => origin_hidden_for(read, page, identity, satisfied)?,
+    })
 }
 
 /// Whether the store's member-access flag (`access.restrictions_present`) is `'1'`.
@@ -743,11 +820,61 @@ fn restrictions_present(read: &dyn KvRead) -> Result<bool> {
 
 /// `gbrain_access_origin_restricted(id, source_id, type, frontmatter)`.
 fn origin_restricted(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
+    origin_walk(read, page, &|origin| origin_closed(read, origin))
+}
+
+/// `gbrain_access_origin_hidden_for(id, source_id, type, frontmatter, identity, satisfied, false,
+/// own_page, [])` (v305): the origin walk of `gbrain_access_origin_restricted` with an origin
+/// closed only to a reader that is not `identity` or does not satisfy its rules
+/// ([`origin_closed_for`]). The owner opt-in (`p_open`) and audience pages never apply to
+/// `ownerReadPolicyFragment`, so the own member page is not an argument.
+fn origin_hidden_for(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    identity: &[String],
+    satisfied: &[String],
+) -> Result<bool> {
+    origin_walk(read, page, &|origin| {
+        origin_closed_for(read, origin, identity, satisfied)
+    })
+}
+
+/// `gbrain_access_origin_closed_for(..., p_open => false, ...)` for one origin page: a pending
+/// prefix covers it, or its readers do not name `identity` (none named reads open), or it holds a
+/// rule that covers derived pages (`gbrain_access_lineage_rules`) that `satisfied` lacks.
+fn origin_closed_for(
+    read: &dyn KvRead,
+    origin: &PageRecord,
+    identity: &[String],
+    satisfied: &[String],
+) -> Result<bool> {
+    if pending_covers(read, &origin.source_id, &origin.slug)? {
+        return Ok(true);
+    }
+    let readers_allow = !names_readers(origin)
+        || access_readers(&origin.frontmatter)
+            .is_some_and(|readers| readers.iter().any(|r| identity.contains(r)));
+    let folders = FolderAccess {
+        satisfied,
+        coverage: &[],
+        record: false,
+    };
+    let rules = stamped_rules(read, origin)?;
+    Ok(!(readers_allow && folders.satisfies_all(rules.iter().filter(|r| r.covers_derived))))
+}
+
+/// The origin walk shared by `gbrain_access_origin_restricted` and `gbrain_access_origin_hidden_for`
+/// (the same arms, one origin test): whether any origin of `page` is `closed`.
+fn origin_walk(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    closed: &dyn Fn(&PageRecord) -> Result<bool>,
+) -> Result<bool> {
     let fm = &page.frontmatter;
     let source = page.source_id.as_str();
     let restricted = if page.page_type == "atom" {
         origin_where(read, source, text(fm, "source_slug").as_deref(), |p| {
-            origin_closed(read, p)
+            closed(p)
         })?
     } else if page.page_type == "question"
         || (page.page_type == "concept" && text(fm, "synthesized_by").is_some())
@@ -755,10 +882,8 @@ fn origin_restricted(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
         let mut any = false;
         for input in concept_inputs(read, page)? {
             let origin = text(&input.frontmatter, "source_slug");
-            if origin_closed(read, &input)?
-                || origin_where(read, &input.source_id, origin.as_deref(), |p| {
-                    origin_closed(read, p)
-                })?
+            if closed(&input)?
+                || origin_where(read, &input.source_id, origin.as_deref(), |p| closed(p))?
             {
                 any = true;
                 break;
@@ -767,7 +892,7 @@ fn origin_restricted(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
         any
     } else if page.page_type == "event" && life_chronicle(page) {
         origin_where(read, source, chronicle_depth(page).as_deref(), |p| {
-            origin_closed(read, p)
+            closed(p)
         })?
     } else {
         false
@@ -776,7 +901,7 @@ fn origin_restricted(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
         return Ok(true);
     }
     for slug in declared_slugs(fm).unwrap_or_default() {
-        if origin_where(read, source, Some(&slug), |p| origin_closed(read, p))? {
+        if origin_where(read, source, Some(&slug), |p| closed(p))? {
             return Ok(true);
         }
     }
@@ -1273,5 +1398,225 @@ mod tests {
         // Only the name-key directories cover a bare key; a slugged key is judged by its own page only.
         assert!(!hidden(&fact("bob-example")));
         assert!(!hidden(&fact("notes/bob-example")));
+    }
+
+    /// `ownerReadPolicyFragment` and `readPolicyFragment` for an owner bound to `member:alice-example` (`owner_reads_page`):
+    /// the owner's lineage test is identity-aware where the every-caller one closes any origin that names readers.
+    #[test]
+    fn an_owner_bound_to_a_member_reads_the_pages_its_identity_and_rules_open() {
+        let store = store();
+        let put_as = |slug: &str, page_type: &str, frontmatter: Value| {
+            let input: PageInput = serde_json::from_value(json!({
+                "type": page_type, "title": slug, "compiled_truth": "body", "frontmatter": frontmatter,
+            }))
+            .unwrap();
+            store
+                .put_page(slug, &input, &PutPageOptions::default())
+                .unwrap();
+        };
+        put_as("notes/open", "note", json!({}));
+        put_as(
+            "notes/alice",
+            "note",
+            json!({ "readable_by": ["member:alice-example"] }),
+        );
+        put_as(
+            "notes/bob",
+            "note",
+            json!({ "readable_by": ["member:bob-example"] }),
+        );
+        put_as("notes/private", "note", json!({ "visibility": "private" }));
+        put_as(
+            "notes/aliased",
+            "note",
+            json!({ "confidentiality": "secret" }),
+        );
+        for (slug, origin) in [
+            ("atoms/of-alice", "notes/alice"),
+            ("atoms/of-bob", "notes/bob"),
+            ("atoms/of-open", "notes/open"),
+        ] {
+            put_as(
+                slug,
+                "atom",
+                json!({ "visibility": "world", "source_slug": origin }),
+            );
+        }
+        put_as(
+            "notes/declares-alice",
+            "note",
+            json!({ "derived_from": ["notes/alice"] }),
+        );
+        put_as(
+            "notes/declares-bob",
+            "note",
+            json!({ "derived_from": ["notes/bob.md"] }),
+        );
+        put_as("notes/filed", "note", json!({}));
+        put_as("raw/log", "note", json!({}));
+        put_as(
+            "atoms/of-filed",
+            "atom",
+            json!({ "visibility": "world", "source_slug": "notes/filed" }),
+        );
+        put_as(
+            "atoms/of-raw",
+            "atom",
+            json!({ "visibility": "world", "source_slug": "raw/log" }),
+        );
+        store.put_access_policy_state("default").unwrap();
+        store
+            .put_access_rule(rule("filed", "notes/filed", true))
+            .unwrap();
+        store.put_access_rule(rule("raw", "raw/", false)).unwrap();
+        let policy = |satisfied: &[&str], honor_aliases: bool| PrivacyPolicy {
+            honor_aliases,
+            entity_privacy: true,
+            identity: vec!["member:alice-example".into()],
+            satisfied_rule_ids: satisfied.iter().map(|s| s.to_string()).collect(),
+            owner_only: OwnerOnlyForm::Off,
+            ..Default::default()
+        };
+        let reads = |slug: &str, policy: &PrivacyPolicy| {
+            let read = store.read().unwrap();
+            let page = read_page(&*read, "default", slug).unwrap().unwrap();
+            owner_reads_page(&*read, &page, policy).unwrap()
+        };
+        let none = policy(&[], true);
+        assert!(reads("notes/open", &none));
+        // The page's own readers: named, or another member's.
+        assert!(reads("notes/alice", &none));
+        assert!(!reads("notes/bob", &none));
+        assert!(!reads("notes/private", &none));
+        // A privacy alias counts unless the operator turned `visibility.honor_aliases` off.
+        assert!(!reads("notes/aliased", &none));
+        assert!(reads("notes/aliased", &policy(&[], false)));
+        // Lineage: the owner's test (`gbrain_access_origin_hidden_for`) closes an origin to a reader its readers do
+        // not name, where the every-caller test (`gbrain_access_origin_restricted`) closes any origin that names readers.
+        // The member read rule that follows keeps the every-caller test, so a derivative of a page that names readers
+        // is not reached by any owner; the owner's own test stands alone when it is judged by itself.
+        let identity = ["member:alice-example".to_string()];
+        let lineage = |slug: &str, satisfied: &[&str]| {
+            let satisfied: Vec<String> = satisfied.iter().map(|s| s.to_string()).collect();
+            let read = store.read().unwrap();
+            let page = read_page(&*read, "default", slug).unwrap().unwrap();
+            let folders = FolderAccess {
+                satisfied: &satisfied,
+                coverage: &[],
+                record: false,
+            };
+            let walk = OriginWalk::Lineage {
+                identity: &identity,
+                satisfied: &satisfied,
+            };
+            let by = |walk| {
+                readers_allowed_by(&*read, &page, &identity, folders, false, false, walk).unwrap()
+            };
+            (by(walk), by(OriginWalk::Everyone))
+        };
+        assert_eq!(lineage("atoms/of-open", &[]), (true, true));
+        assert_eq!(lineage("atoms/of-alice", &[]), (true, false));
+        assert_eq!(lineage("atoms/of-bob", &[]), (false, false));
+        assert_eq!(lineage("notes/declares-alice", &[]), (true, false));
+        assert_eq!(lineage("notes/declares-bob", &[]), (false, false));
+        assert_eq!(lineage("atoms/of-filed", &[]), (false, false));
+        assert_eq!(lineage("atoms/of-filed", &["default:filed"]), (true, false));
+        assert_eq!(lineage("atoms/of-raw", &[]), (true, true));
+        assert!(reads("atoms/of-open", &none));
+        assert!(!reads("atoms/of-alice", &none));
+        assert!(!reads("atoms/of-bob", &none));
+        assert!(!reads("notes/declares-alice", &none));
+        assert!(!reads("notes/declares-bob", &none));
+        // A folder rule keeps its page to a reader that satisfies it, and a rule that covers derived pages
+        // keeps its lineage too; a raw-only rule keeps the page but not what derives from it.
+        assert!(!reads("notes/filed", &none));
+        assert!(reads("notes/filed", &policy(&["default:filed"], true)));
+        assert!(!reads("notes/filed", &policy(&["default:other"], true)));
+        assert!(!reads("atoms/of-filed", &none));
+        // (the member read rule's every-caller lineage still closes it to the owner that satisfies the rule)
+        assert!(!reads("atoms/of-filed", &policy(&["default:filed"], true)));
+        assert!(!reads("raw/log", &none));
+        assert!(reads("atoms/of-raw", &none));
+        assert!(reads("raw/log", &policy(&["default:raw"], true)));
+        // A pending prefix reads as nobody for the page and for its lineage.
+        store
+            .put_access_pending_coverage(PendingCoverageRecord {
+                source_id: "default".into(),
+                prefix: "notes/open".into(),
+                reason: "pending".into(),
+                revision: None,
+                detail: None,
+            })
+            .unwrap();
+        assert!(!reads("notes/open", &none));
+        assert!(!reads("atoms/of-open", &none));
+        // Inside a caller record the record's coverage is the whole pending test (`coverageSql`), for both rules: a
+        // prefix the store holds pending that the record does not name hides the page itself, but not its lineage,
+        // which `gbrain_access_pending_covers` reads live.
+        let record = |coverage: &[(&str, &str)]| PrivacyPolicy {
+            caller_record: true,
+            folder_coverage: coverage
+                .iter()
+                .map(|(source_id, prefix)| FolderCoverage {
+                    source_id: source_id.to_string(),
+                    prefix: prefix.to_string(),
+                })
+                .collect(),
+            ..policy(&[], true)
+        };
+        assert!(reads("notes/open", &record(&[])));
+        assert!(!reads("atoms/of-open", &record(&[])));
+        assert!(!reads("notes/open", &record(&[("default", "notes/")])));
+        assert!(reads("notes/alice", &record(&[("default", "other/")])));
+        assert!(!reads("notes/alice", &record(&[("default", "")])));
+    }
+
+    /// `owner_reads_page` ends with the member-access test of `readPolicyFragment` in the policy's form: the short form
+    /// (`open`) fails a page that names readers whatever the identity, and the owner-only forms hide an owner-only page.
+    #[test]
+    fn the_member_read_rule_of_an_owner_follows_the_policys_form() {
+        let store = store();
+        let put_as = |slug: &str, frontmatter: Value| {
+            let input: PageInput = serde_json::from_value(json!({
+                "type": "note", "title": slug, "compiled_truth": "body", "frontmatter": frontmatter,
+            }))
+            .unwrap();
+            store
+                .put_page(slug, &input, &PutPageOptions::default())
+                .unwrap();
+        };
+        put_as(
+            "notes/alice",
+            json!({ "readable_by": ["member:alice-example"] }),
+        );
+        put_as("notes/open", json!({}));
+        let policy = |open: bool, owner_only: OwnerOnlyForm| PrivacyPolicy {
+            honor_aliases: true,
+            entity_privacy: true,
+            identity: vec!["member:alice-example".into()],
+            owner_only,
+            open,
+            ..Default::default()
+        };
+        let reads = |slug: &str, policy: &PrivacyPolicy| {
+            let read = store.read().unwrap();
+            let page = read_page(&*read, "default", slug).unwrap().unwrap();
+            owner_reads_page(&*read, &page, policy).unwrap()
+        };
+        assert!(reads("notes/alice", &policy(false, OwnerOnlyForm::Off)));
+        assert!(!reads("notes/alice", &policy(true, OwnerOnlyForm::Off)));
+        assert!(reads("notes/open", &policy(true, OwnerOnlyForm::Off)));
+        // Every page is hidden in the closed form while the brain holds an owner-only source.
+        store
+            .upsert_source(&crate::sources::SourceInput {
+                id: "vault".into(),
+                name: Some("vault".into()),
+                config: Some(serde_json::from_value(json!({ "owner_only": true })).unwrap()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(reads("notes/open", &policy(false, OwnerOnlyForm::Fn)));
+        assert!(!reads("notes/open", &policy(false, OwnerOnlyForm::Closed)));
+        assert!(reads("notes/open", &policy(false, OwnerOnlyForm::Off)));
     }
 }

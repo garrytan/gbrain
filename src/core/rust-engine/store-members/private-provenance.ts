@@ -52,6 +52,7 @@ import {
   remoteProvenanceFloorSql,
   remoteReadFloorSql,
   readPolicyFragment,
+  ownerReadPolicyFragment,
 } from '../../search/private-visibility.ts';
 import type { ReflexPrivacy } from '../../engine-sql/reflex-reads.ts';
 import { MEMBER_PAGE_PREFIX } from '../../access/principals.ts';
@@ -232,6 +233,57 @@ export function storeMemberReadPolicy(member: string, q: { owner: boolean; ident
     return { ...pagePolicyFlags(reference), identity: [...q.identity], ...(open ? { open: true } : {}) };
   }
   refuseMember(member, 'a member page read whose policy is not the one the store models');
+}
+
+/**
+ * The store policy for what `ownerReachesFact` judges each page of a fact by, for an owner bound to a member:
+ * `ownerReadPolicyFragment('pp', identity, satisfied)` (GST-2490's owner read rule with the opt-in off) AND
+ * `readPolicyFragment('pp', identity, true, satisfied)` (`owner_reads_page` in privacy.rs). Both texts must equal the
+ * same two fragments rendered for a reference caller, and the store reads the form off the reference that matches:
+ * outside any caller record (the live pending prefixes), inside a caller record that holds the caller's folder coverage
+ * (`callerRecord`, whose coverage replaces the live prefixes), and inside such a record for an owner (whose
+ * readPolicyFragment has no owner-only test, `ownerOnly` off). The short member-access form of a brain with no
+ * restriction (`restricted` false) is the same record with `open`. Any other ambient caller (a labelled-only or audience
+ * record, a text that differs in any other way) matches none of them and refuses. The identity and the satisfied rule
+ * ids must appear in the owner text as written: the fragments drop every one of them when one is not valid
+ * (`validIdentity`, `validQualifiedRuleId`), which the store would not, so a set the text dropped refuses; the owner
+ * text always renders the full form, so it decides this when the other is the short form.
+ */
+export function storeOwnerReadPolicy(member: string, q: { identity: readonly string[]; satisfied: readonly string[] }): StorePrivacyPolicy {
+  const access = currentCallerAccess();
+  const open = access.restricted === false;
+  const folderCoverage = access.folderCoverage.map(c => ({ source_id: c.source_id, prefix: c.prefix }));
+  const owner = () => ownerReadPolicyFragment('pp', q.identity, q.satisfied);
+  const readable = () => readPolicyFragment('pp', q.identity, true, q.satisfied);
+  const ownerText = normalizeConceptInputs(owner());
+  const readableText = normalizeConceptInputs(readable());
+  const named = [...q.identity, ...q.satisfied].every(id => ownerText.includes(`'${id}'`));
+  const inRecord: Partial<CallerAccess> = { folderCoverage, restricted: !open };
+  const references: Array<{ record: Partial<CallerAccess>; callerRecord: boolean }> = [
+    { record: open ? { restricted: false } : {}, callerRecord: open },
+    { record: inRecord, callerRecord: true },
+    { record: { ...inRecord, owner: true }, callerRecord: true },
+  ];
+  if (named) {
+    for (const { record, callerRecord } of references) {
+      const ownerReference = renderForStoreCaller(record, owner);
+      const readableReference = renderForStoreCaller(record, readable);
+      const honorAliases = readableReference.includes(privacyAliasSql('pp'));
+      if (ownerText !== normalizeConceptInputs(ownerReference) || readableText !== normalizeConceptInputs(readableReference)) continue;
+      // The owner text holds no owner-only test, and both apply the same process setting.
+      if (ownerOnlyFormIn(ownerReference, 'pages', 'pp') !== 'off' || ownerReference.includes(privacyAliasSql('pp')) !== honorAliases) continue;
+      return {
+        honorAliases,
+        entityPrivacy: true,
+        ownerOnly: ownerOnlyFormIn(readableReference, 'pages', 'pp'),
+        identity: [...q.identity],
+        ...(q.satisfied.length ? { satisfiedRuleIds: [...q.satisfied] } : {}),
+        ...(open ? { open: true } : {}),
+        ...(callerRecord ? { callerRecord: true, ...(folderCoverage.length ? { folderCoverage } : {}) } : {}),
+      };
+    }
+  }
+  refuseMember(member, 'an owner read of a fact\'s pages whose policy is not one the store models');
 }
 
 /** The process-setting flags of a rendered fact policy, and its owner-only form. */
