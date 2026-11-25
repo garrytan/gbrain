@@ -1,8 +1,7 @@
 /**
  * The copies a shadow replay runs on (docs/guides/shadow-replay.md). One `runSeed` snapshot read of the primary is
- * fanned out: the Rust store gets each batch through `importRelation`, and every SQL copy (a fresh PGLite brain, and
- * a local Postgres scratch database when one is configured) gets the same rows, so every arm holds the same
- * relations and leaves the same tables behind.
+ * fanned out: the Rust store gets each batch through `importRelation`, and the SQL copy (a fresh PGLite brain) gets
+ * the same rows, so both arms hold the same relations and leave the same tables behind.
  *
  * The SQL copy inserts each batch with user triggers and foreign-key checks off (`session_replication_role =
  * replica`, transaction-local, so it ends with every transaction), splits the `page_projection_jobs` columns the
@@ -137,96 +136,11 @@ export class FanOutSeedTarget implements SeedTarget {
   }
 }
 
+/**
+ * The Postgres replay arm is not in this release (it needs a database-scoped lock around its scratch ownership; see
+ * docs/guides/shadow-replay.md). Setting this variable is refused by name, never silently ignored.
+ */
 export const REPLAY_POSTGRES_ENV = 'GBRAIN_SHADOW_REPLAY_POSTGRES_URL';
-const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
-
-/**
- * Refuses a scratch Postgres URL that could send rows off this machine: a host other than localhost or a Unix
- * socket, several hosts, or a host override in the query string. Also refuses the primary's own database.
- */
-export function checkLocalPostgresUrl(raw: string, primaryUrl?: string | null): { host: string; port: string; database: string } {
-  let url: URL;
-  try { url = new URL(raw); } catch { throw new ReplayError('shadow_replay_postgres_not_local', 'the scratch Postgres URL does not parse'); }
-  if (url.protocol !== 'postgres:' && url.protocol !== 'postgresql:') throw new ReplayError('shadow_replay_postgres_not_local', 'the scratch URL is not a postgres URL');
-  // The driver does not route a Unix-socket host option (it would dial localhost:5432 instead), so only TCP to
-  // localhost is accepted, and any host override in the query string is refused.
-  for (const name of ['host', 'hostaddr']) if (url.searchParams.has(name)) {
-    throw new ReplayError('shadow_replay_postgres_not_local', `the scratch URL sets ${name} in its options; name localhost (and a port) as the URL's host instead`);
-  }
-  if (url.hostname.includes(',') || (url.hostname && !LOCAL_HOSTS.has(url.hostname))) {
-    throw new ReplayError('shadow_replay_postgres_not_local', 'the scratch Postgres host is not localhost or a Unix socket');
-  }
-  if (!url.hostname) throw new ReplayError('shadow_replay_postgres_not_local', 'the scratch URL names no host; use localhost');
-  const database = decodeURIComponent(url.pathname.replace(/^\//, ''));
-  if (!database) throw new ReplayError('shadow_replay_postgres_not_local', 'the scratch URL names no database');
-  if (primaryUrl) {
-    try {
-      const p = new URL(primaryUrl);
-      if (LOCAL_HOSTS.has(p.hostname) && (p.port || '5432') === (url.port || '5432') && decodeURIComponent(p.pathname.replace(/^\//, '')) === database) {
-        throw new ReplayError('shadow_replay_postgres_not_owned', 'the scratch database is the primary brain');
-      }
-    } catch (e) { if (e instanceof ReplayError) throw e; }
-  }
-  return { host: url.hostname, port: url.port || '5432', database };
-}
-
-/**
- * Makes the scratch database an empty replay copy owned by `brainKey`: refuses a database that holds tables but no
- * replay marker for this brain, then drops and recreates the public schema.
- */
-export async function resetScratchPostgres(engine: BrainEngine, brainKey: string): Promise<void> {
-  // Owned or not, nothing outside public may depend on it: DROP SCHEMA public CASCADE would reach it.
-  if (await objectsOutsidePublic(engine) > 0) throw new ReplayError('shadow_replay_postgres_not_owned', 'the scratch database holds objects in another schema, which dropping public could reach');
-  const [marker] = await engine.executeRaw<{ present: boolean }>("SELECT to_regclass('public.gbrain_shadow_replay_owner') IS NOT NULL AS present");
-  if (marker?.present) {
-    const [own] = await engine.executeRaw<{ brain: string }>('SELECT brain FROM gbrain_shadow_replay_owner LIMIT 1');
-    if (own?.brain !== brainKey) throw new ReplayError('shadow_replay_postgres_not_owned', 'the scratch database belongs to another brain\'s replay');
-  } else {
-    // Every relation (tables, views, materialized views, sequences), function and standalone type in public counts,
-    // except what an installed extension (vector) owns.
-    const [count] = await engine.executeRaw<{ n: number }>(`SELECT (
-        (SELECT count(*) FROM pg_class c WHERE c.relnamespace = 'public'::regnamespace AND NOT EXISTS (
-          SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e'))
-      + (SELECT count(*) FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND NOT EXISTS (
-          SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e'))
-      + (SELECT count(*) FROM pg_type t WHERE t.typnamespace = 'public'::regnamespace AND t.typrelid = 0 AND t.typelem = 0
-          AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_type'::regclass AND d.objid = t.oid AND d.deptype = 'e'))
-      )::int AS n`);
-    if ((count?.n ?? 0) > 0) throw new ReplayError('shadow_replay_postgres_not_owned', 'the scratch database is not empty and was not created by a replay');
-  }
-  try {
-    await engine.executeRaw('DROP SCHEMA IF EXISTS public CASCADE');
-    await engine.executeRaw('CREATE SCHEMA public');
-  } catch (e) {
-    throw new ReplayError('shadow_replay_postgres_privilege', `the scratch role cannot reset its database (${(e as { code?: string }).code ?? 'error'})`);
-  }
-}
-
-/**
- * User objects (relations, functions, types and domains) in any schema but public and the system ones: DROP SCHEMA public CASCADE
- * could reach them (a column of type public.vector, say), so a scratch database must have none.
- */
-export async function objectsOutsidePublic(engine: Pick<BrainEngine, 'executeRaw'>): Promise<number> {
-  const [row] = await engine.executeRaw<{ n: number }>(`SELECT (
-      (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE ${USER_SCHEMA} AND NOT EXISTS (
-        SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e'))
-    + (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE ${USER_SCHEMA} AND NOT EXISTS (
-        SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e'))
-    + (SELECT count(*) FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace WHERE ${USER_SCHEMA} AND t.typrelid = 0 AND t.typelem = 0
-        AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_type'::regclass AND d.objid = t.oid AND d.deptype = 'e'))
-    )::int AS n`);
-  return row?.n ?? 0;
-}
-const USER_SCHEMA = "n.nspname NOT IN ('public', 'pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg\\_%'";
-
-/** The brain a scratch database's owner marker names, or null when it has none. */
-export async function scratchOwner(engine: BrainEngine): Promise<string | null> {
-  const [marker] = await engine.executeRaw<{ present: boolean }>("SELECT to_regclass('public.gbrain_shadow_replay_owner') IS NOT NULL AS present");
-  if (!marker?.present) return null;
-  return (await engine.executeRaw<{ brain: string }>('SELECT brain FROM gbrain_shadow_replay_owner LIMIT 1'))[0]?.brain ?? null;
-}
-
-export async function markScratchPostgres(engine: BrainEngine, brainKey: string): Promise<void> {
-  await engine.executeRaw('CREATE TABLE IF NOT EXISTS gbrain_shadow_replay_owner (brain TEXT PRIMARY KEY)');
-  await engine.executeRaw('INSERT INTO gbrain_shadow_replay_owner (brain) VALUES ($1) ON CONFLICT DO NOTHING', [brainKey]);
+export function refusePostgresArm(env: Record<string, string | undefined>): void {
+  if (env[REPLAY_POSTGRES_ENV]) throw new ReplayError('shadow_replay_postgres_unavailable', `${REPLAY_POSTGRES_ENV} is set`);
 }

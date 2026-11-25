@@ -1,12 +1,11 @@
 /**
- * Shadow replay (docs/guides/shadow-replay.md): replays a sealed capture epoch on PGLite, Rust and (when configured)
- * local Postgres copies seeded from one snapshot of the brain when the epoch began, and compares the arms with each
- * other, never with the live brain.
+ * Shadow replay (docs/guides/shadow-replay.md): replays a sealed capture epoch on PGLite and Rust copies seeded from
+ * one snapshot of the brain when the epoch began, and compares the arms with each other, never with the live brain.
  *
  * The parent (`gbrain engine shadow replay`) holds a lock, checks the purge log, seals the current epoch, starts the
  * next one, replays the sealed one in a child, deletes the sealed epoch's recording and copies, and seeds the new
  * epoch's copies. The child (`__replay-child <run dir>`) gets an allowlisted environment with a throwaway home and no
- * provider keys, blocks every network connection except the local scratch database and Unix sockets in its run
+ * provider keys, blocks every network connection except Unix sockets in its run
  * directory, opens only the run's work copies, replays committed transaction groups and single calls in order, runs a
  * read-back sweep over every page a replayed write named, and writes a content-free report: operation, field path
  * (keys outside a fixed schema list are hashed) and keyed hashes. Run metadata (times, durations) stays out of the
@@ -29,8 +28,8 @@ export const REPLAY_REPORT_VERSION = 1;
 export const REPLAY_CALL_TIMEOUT_MS = 60_000;
 /** Pages the read-back sweep reads; past it the report says `incomplete` (counts.sweep_skipped). */
 export const SWEEP_LIMIT = 5_000;
-export type ArmName = 'pglite' | 'postgres' | 'rust';
-export const ARM_ORDER: readonly ArmName[] = ['pglite', 'postgres', 'rust'];
+export type ArmName = 'pglite' | 'rust';
+export const ARM_ORDER: readonly ArmName[] = ['pglite', 'rust'];
 
 /** The run file the parent writes for the child. */
 export interface RunSpec {
@@ -39,7 +38,7 @@ export interface RunSpec {
   brain_key: string;
   /** Hex key for the keyed hashes (from capture/key, 0600). */
   hmac_key: string;
-  arms: { pglite: string; rust: string; postgres?: { url_env: string } };
+  arms: { pglite: string; rust: string };
   rust_dir?: string;
   cut: { before: number; after: number | null };
   seed_losses_present: boolean;
@@ -52,7 +51,7 @@ export interface RunSpec {
 
 export type Outcome = { ok: true; value: unknown } | { ok: false; code: string };
 
-export type DiffClass = 'match' | 'capability_missing' | 'rust_diff' | 'rust_diff_seed_loss' | 'ts_disagree' | 'differs' | 'differs_seed_loss'
+export type DiffClass = 'match' | 'capability_missing' | 'differs' | 'differs_seed_loss'
   /** Every arm failed the same way on a call that succeeded on the live brain (a replay that is not faithful, e.g. a
    * conditional write whose expected revision was generated after the snapshot). Never counted as a match. */
   | 'replay_diverged';
@@ -152,18 +151,14 @@ function outcomeDiff(a: Outcome, b: Outcome, norm: NormState): DiffPath | null {
   return firstDiff(a.value, b.value, norm);
 }
 
-/** Classifies one replayed call: PGLite is the reference; Postgres, when present, splits Rust gaps from TS disagreement. */
-export function classify(out: Partial<Record<ArmName, Outcome>>, norms: { rust: NormState; postgres?: NormState }, seedLoss: boolean):
+/** Classifies one replayed call: PGLite is the reference (two arms show that they differ, not which is wrong). */
+export function classify(out: Partial<Record<ArmName, Outcome>>, norms: { rust: NormState }, seedLoss: boolean):
   { cls: DiffClass; path: DiffPath } {
   const p = out.pglite!;
   const r = out.rust!;
-  const g = out.postgres;
   const pr = outcomeDiff(p, r, norms.rust);
-  const pg = g ? outcomeDiff(p, g, norms.postgres!) : null;
-  if (pg) return { cls: 'ts_disagree', path: pg };
   if (!pr) return { cls: 'match', path: [] };
   if (!r.ok && CAPABILITY_CODES.has(r.code)) return { cls: 'capability_missing', path: pr };
-  if (g) return { cls: seedLoss ? 'rust_diff_seed_loss' : 'rust_diff', path: pr };
   return { cls: seedLoss ? 'differs_seed_loss' : 'differs', path: pr };
 }
 
@@ -316,7 +311,7 @@ export function reportMarkdown(r: ReplayReport): string {
 export function redactedSummary(r: ReplayReport): unknown {
   const groups = new Map<string, { member: string; path: string; class: DiffClass; hash: string; count: number }>();
   for (const d of r.diffs) {
-    const hash = d.hashes.rust ?? d.hashes.postgres ?? '';
+    const hash = d.hashes.rust ?? '';
     const k = `${d.member}|${d.path.join('.')}|${d.class}|${hash}`;
     const g = groups.get(k);
     if (g) g.count++; else groups.set(k, { member: d.member, path: d.path.join('.'), class: d.class, hash, count: 1 });
@@ -326,29 +321,23 @@ export function redactedSummary(r: ReplayReport): unknown {
 
 // ---- child ------------------------------------------------------------------------------------------------------
 
-/** Blocks network connections: fetch always; sockets except Unix paths under `allowDir` and `allowLocalTcp` hosts. */
-export function blockNetwork(allowDir: string, allowLocalTcp: boolean): void {
+/** Blocks network connections: fetch, TLS and TCP always; Unix sockets except paths inside `allowDir`. */
+export function blockNetwork(allowDir: string): void {
   const refuse = () => Object.assign(new Error('shadow_replay_network_blocked: the replay child opens no network connection'), { code: 'shadow_replay_network_blocked' });
   globalThis.fetch = (async () => { throw refuse(); }) as unknown as typeof fetch;
   const allowed = (args: unknown[]): boolean => {
     const a = Array.isArray(args[0]) ? (args[0] as unknown[])[0] : args[0]; // Bun's net.connect passes [options, callback]
     const opts = (a && typeof a === 'object' ? a : typeof a === 'string' && !/^\d+$/.test(a) ? { path: a } : { port: a, host: args[1] }) as { path?: string; host?: string };
-    if (opts.path) { const p = resolve(opts.path); const d = resolve(allowDir); return p === d || p.startsWith(d + sep); } // inside the run folder, never a same-prefix sibling
-    return allowLocalTcp && ['localhost', '127.0.0.1', '::1', undefined].includes(opts.host);
+    if (!opts.path) return false;
+    const p = resolve(opts.path); const d = resolve(allowDir);
+    return p === d || p.startsWith(d + sep); // inside the run folder, never a same-prefix sibling
   };
   const origConnect = net.Socket.prototype.connect;
   net.Socket.prototype.connect = function (this: net.Socket, ...args: unknown[]) {
     if (!allowed(args)) throw refuse();
     return (origConnect as Function).apply(this, args);
   } as typeof origConnect;
-  const origTls = tls.connect;
-  (tls as { connect: unknown }).connect = (...args: unknown[]) => {
-    // The local scratch database may ask for TLS: allow an upgrade of an already admitted socket, or a local host.
-    const o = (args.find(a => a && typeof a === 'object') ?? {}) as { socket?: unknown; host?: string; path?: string };
-    const local = o.socket ? true : o.path ? allowed([{ path: o.path }]) : allowLocalTcp && ['localhost', '127.0.0.1', '::1', undefined].includes(o.host);
-    if (!local) throw refuse();
-    return (origTls as Function)(...args);
-  };
+  (tls as { connect: unknown }).connect = () => { throw refuse(); };
   const bun = (globalThis as { Bun?: Record<string, unknown> }).Bun;
   if (bun) {
     const origBunConnect = bun.connect as ((o: { hostname?: string; unix?: string }) => unknown) | undefined;
@@ -435,13 +424,13 @@ function collectKnown(value: unknown, into: Set<string>): void {
 export interface ChildDeps {
   openArm(arm: ArmName, spec: RunSpec, runDir: string): Promise<BrainEngine>;
   /** Default blockNetwork; in-process tests pass a no-op so the test runner keeps its own network. */
-  blockNetwork?: (allowDir: string, allowLocalTcp: boolean) => void;
+  blockNetwork?: (allowDir: string) => void;
 }
 
 /** Replays the run's units on every arm and writes report.json, report.md and summary.json in `<runDir>/out`. */
 export async function runReplayChild(runDir: string, deps: ChildDeps, now: () => number = Date.now): Promise<ReplayReport> {
   const spec = JSON.parse(readFileSync(join(runDir, 'run.json'), 'utf8')) as RunSpec;
-  (deps.blockNetwork ?? blockNetwork)(runDir, !!spec.arms.postgres);
+  (deps.blockNetwork ?? blockNetwork)(runDir);
   const key = Buffer.from(spec.hmac_key, 'hex');
   const records: CaptureRecord[] = [];
   let torn = 0;
@@ -456,11 +445,11 @@ export async function runReplayChild(runDir: string, deps: ChildDeps, now: () =>
   if (spec.seeded_ids && existsSync(spec.seeded_ids)) for (const id of JSON.parse(readFileSync(spec.seeded_ids, 'utf8')) as string[]) known.add(id);
   // Only times the replay itself produced are volatile: `to` moves to now before each comparison.
   const window = { from: now(), to: now() };
-  const arms = ARM_ORDER.filter(a => a !== 'postgres' || !!spec.arms.postgres);
+  const arms = [...ARM_ORDER];
   const engines = {} as Record<ArmName, BrainEngine>;
   try {
     for (const a of arms) engines[a] = await deps.openArm(a, spec, runDir);
-    const norms = { rust: new NormState(known, window), postgres: spec.arms.postgres ? new NormState(known, window) : undefined };
+    const norms = { rust: new NormState(known, window) };
     const diffs: ReportDiff[] = [];
     let compared = 0;
     const compare = (ref: string, member: string, outs: Partial<Record<ArmName, Outcome>>, liveOk?: boolean) => {
@@ -518,10 +507,9 @@ export async function runReplayChild(runDir: string, deps: ChildDeps, now: () =>
 /** The environment the child gets: nothing but these names, with a throwaway home. Never a provider key. */
 export const CHILD_ENV_ALLOW = ['PATH', 'TZ', 'LANG', 'LC_ALL', 'TMPDIR', 'GBRAIN_RUST_ENGINE_ADDON'] as const;
 
-export function childEnv(parentEnv: Record<string, string | undefined>, runHome: string, postgres: { name: string; url: string } | null): Record<string, string> {
+export function childEnv(parentEnv: Record<string, string | undefined>, runHome: string): Record<string, string> {
   const env: Record<string, string> = { HOME: runHome, GBRAIN_HOME: runHome, GBRAIN_SHADOW_CHILD: '1', GBRAIN_SHADOW_CAPTURE: 'off' };
   for (const name of CHILD_ENV_ALLOW) { const v = parentEnv[name]; if (v) env[name] = v; }
-  if (postgres) env[postgres.name] = postgres.url;
   return env;
 }
 

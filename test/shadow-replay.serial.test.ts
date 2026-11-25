@@ -1,7 +1,6 @@
 /**
  * Shadow replay end to end: a real PGLite brain under a temporary GBRAIN_HOME, capture through the engine factory,
- * the nightly command seeding real PGLite and Rust copies, and the real `__replay-child` process. Postgres joins as a
- * third arm when GBRAIN_TEST_REPLAY_POSTGRES_URL names a local scratch database.
+ * the nightly command seeding real PGLite and Rust copies, and the real `__replay-child` process.
  *
  * Protects: capture is off by default (the factory returns the bare engine); the first night only seeds; the second
  * replays and writes a report and a summary that hold no input string; the child never writes the live brain files
@@ -33,7 +32,6 @@ const TARGET = detectAddonTarget();
 const BUILT = join(import.meta.dir, '..', 'rust', 'target', 'addon', `gbrain_engine.${TARGET ?? 'unsupported'}.node`);
 const HAVE_ADDON = TARGET !== null && existsSync(BUILT);
 if (!HAVE_ADDON && process.env.GBRAIN_TEST_RUST_ADDON_REQUIRED === '1') throw new Error(`GBRAIN_TEST_RUST_ADDON_REQUIRED=1 but ${BUILT} does not exist; run bun run rust:build`);
-const PG = process.env.GBRAIN_TEST_REPLAY_POSTGRES_URL;
 const CLI = [process.execPath, join(import.meta.dir, '..', 'src', 'cli.ts')];
 const SECRET = { slug: 'people/zelda-secretname', title: 'Zelda Secretname', body: 'quarterly plan for project nightjar' };
 
@@ -50,21 +48,6 @@ function tree(root: string): Record<string, string> {
   };
   walk(root);
   return out;
-}
-
-/** GBRAIN_TEST_REPLAY_POSTGRES_URL names a database this test owns: start each run from an empty schema. */
-async function emptyScratch(url: string): Promise<void> {
-  const cfg = { engine: 'postgres', database_url: url, poolSize: 1 } as EngineConfig;
-  const e = await constructEngine(cfg);
-  await e.connect(cfg);
-  try { await e.executeRaw('DROP SCHEMA IF EXISTS public CASCADE'); await e.executeRaw('CREATE SCHEMA public'); } finally { await e.disconnect(); }
-}
-
-async function scratchTables(url: string): Promise<number> {
-  const cfg = { engine: 'postgres', database_url: url, poolSize: 1 } as EngineConfig;
-  const e = await constructEngine(cfg);
-  await e.connect(cfg);
-  try { return (await e.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM pg_tables WHERE schemaname = 'public'"))[0]!.n; } finally { await e.disconnect(); }
 }
 
 describe('shadow replay end to end', () => {
@@ -101,9 +84,8 @@ describe('shadow replay end to end', () => {
 
   test.skipIf(!HAVE_ADDON)('off by default; first night seeds; second night replays on PGLite and Rust without touching the brain', async () => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-replay-e2e-'));
-    if (PG) await emptyScratch(PG);
     try {
-      await withEnv({ GBRAIN_HOME: home, GBRAIN_RUST_ENGINE_ADDON: BUILT, GBRAIN_SHADOW_CHILD: undefined, GBRAIN_SHADOW_CAPTURE: undefined, GBRAIN_SHADOW_REPLAY_POSTGRES_URL: PG }, async () => {
+      await withEnv({ GBRAIN_HOME: home, GBRAIN_RUST_ENGINE_ADDON: BUILT, GBRAIN_SHADOW_CHILD: undefined, GBRAIN_SHADOW_CAPTURE: undefined, GBRAIN_SHADOW_REPLAY_POSTGRES_URL: undefined }, async () => {
         const config = { engine: 'pglite', database_path: join(home, 'brain.pglite') } as EngineConfig;
         const { saveConfig } = await import('../src/core/config.ts');
         saveConfig(config as never);
@@ -170,115 +152,34 @@ describe('shadow replay end to end', () => {
         expect(JSON.parse(report).counts.replayed).toBeGreaterThan(0);
 
         const parsed = JSON.parse(report);
-        expect(parsed.arms).toEqual(PG ? ['pglite', 'postgres', 'rust'] : ['pglite', 'rust']);
-        expect(parsed.by_class.ts_disagree ?? 0).toBe(0);
-        if (PG) {
-          // A purge from a process with capture off and the env kill switch set still drops the scratch copy at once.
-          expect(await runEngineShadow(['capture', 'off'], io)).toBe(0);
-          await withEnv({ GBRAIN_SHADOW_CAPTURE: 'off' }, async () => {
-            const purger = await createEngine(config);
-            await purger.connect(config);
-            expect(await scratchTables(PG)).toBeGreaterThan(0);
-            appendPurgeIntent({ request: 'r1', request_id: 'q1', source_id: 'default', source_incarnation: 'i', scope: 'page', purge_epoch: 1, facts: [], takes: [], lifetimes: [] });
-            await purger.disconnect();
-          });
-          expect(await scratchTables(PG)).toBe(0);
-          return;
-        }
+        expect(parsed.arms).toEqual(['pglite', 'rust']);
         rmSync(cap, { recursive: true, force: true });
         cpSync(backup, cap, { recursive: true });
         const third = await runNightlyReplay(deps());
         expect(third.status).toBe('replayed');
         expect(readFileSync(third.report!.replace(/report\.md$/, 'report.json'), 'utf8')).toBe(report);
+
+        // A purge from a process with capture off and the env kill switch set still deletes the recording at once.
+        const liveEpoch = readEpoch(cap)!.id;
+        expect(existsSync(epochDir(cap, liveEpoch))).toBe(true);
+        expect(await runEngineShadow(['capture', 'off'], io)).toBe(0);
+        await withEnv({ GBRAIN_SHADOW_CAPTURE: 'off' }, async () => {
+          const purger = await createEngine(config);
+          await purger.connect(config);
+          appendPurgeIntent({ request: 'r1', request_id: 'q1', source_id: 'default', source_incarnation: 'i', scope: 'page', purge_epoch: 1, facts: [], takes: [], lifetimes: [] });
+          await purger.disconnect();
+        });
+        expect(existsSync(epochDir(cap, liveEpoch))).toBe(false);
+        expect(existsSync(basesDir(cap, liveEpoch))).toBe(false);
       });
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
   }, 300_000);
 
-  test.skipIf(!PG)('a scratch Postgres database that holds tables a replay did not create is refused and left as it was', async () => {
-    const { resetScratchPostgres } = await import('../src/shadow/replay-copy.ts');
-    const cfg = { engine: 'postgres', database_url: PG, poolSize: 1 } as EngineConfig;
-    const e = await constructEngine(cfg);
-    await e.connect(cfg);
-    try {
-      await e.executeRaw('DROP TABLE IF EXISTS gbrain_shadow_replay_owner');
-      await e.executeRaw('CREATE TABLE IF NOT EXISTS someone_elses_table (id int)');
-      await expect(resetScratchPostgres(e, 'pglite-abc')).rejects.toThrow(/shadow_replay_postgres_not_owned/);
-      const [row] = await e.executeRaw<{ present: boolean }>("SELECT to_regclass('public.someone_elses_table') IS NOT NULL AS present");
-      expect(row?.present).toBe(true);
-    } finally {
-      await e.executeRaw('DROP TABLE IF EXISTS someone_elses_table').catch(() => undefined);
-      await e.disconnect();
-    }
-  });
 
-  test.skipIf(!PG)('a purge drops the scratch copy through its own connection, even when this process holds the brain on Postgres', async () => {
-    const { captureDir: capDir } = await import('../src/shadow/capture-state.ts');
-    const { dropScratchPostgres, scratchRecordPath } = await import('../src/shadow/capture.ts');
-    const { writePrivateJson } = await import('../src/shadow/capture-state.ts');
-    const primaryUrl = PG!.replace(/\/[^/?]+(\?|$)/, '/replay_primary_probe$1');
-    const admin = { engine: 'postgres', database_url: PG, poolSize: 1 } as EngineConfig;
-    const a = await constructEngine(admin);
-    await a.connect(admin);
-    await a.executeRaw('DROP DATABASE IF EXISTS replay_primary_probe').catch(() => undefined);
-    await a.executeRaw('CREATE DATABASE replay_primary_probe');
-    await a.disconnect();
-    const primaryCfg = { engine: 'postgres', database_url: primaryUrl } as EngineConfig;
-    const primary = await constructEngine(primaryCfg); // the module singleton, as a Postgres brain uses it
-    await primary.connect(primaryCfg);
-    const dir = mkdtempSync(join(tmpdir(), 'gbrain-replay-pg-'));
-    try {
-      await primary.executeRaw('CREATE TABLE brain_rows (id int)');
-      await emptyScratch(PG!);
-      const s = { engine: 'postgres', database_url: PG, poolSize: 1 } as EngineConfig;
-      const sc = await constructEngine(s);
-      await sc.connect(s);
-      await sc.executeRaw('CREATE TABLE gbrain_shadow_replay_owner (brain TEXT PRIMARY KEY)');
-      await sc.executeRaw("INSERT INTO gbrain_shadow_replay_owner VALUES ('pglite-abc')");
-      await sc.executeRaw('CREATE TABLE copy_rows (id int)');
-      await sc.disconnect();
-      const cap = capDir(dir);
-      writePrivateJson(scratchRecordPath(cap), { url: PG, brain: 'pglite-abc', verified: true });
-      expect(await dropScratchPostgres(cap)).toBe(true);
-      const [row] = await primary.executeRaw<{ present: boolean }>("SELECT to_regclass('public.brain_rows') IS NOT NULL AS present");
-      expect(row?.present).toBe(true);
-      expect(await scratchTables(PG!)).toBe(0);
-    } finally {
-      await primary.disconnect();
-      rmSync(dir, { recursive: true, force: true });
-      const c = await constructEngine(admin);
-      await c.connect(admin);
-      await c.executeRaw('DROP DATABASE IF EXISTS replay_primary_probe').catch(() => undefined);
-      await c.disconnect();
-    }
-  });
 
-  test.skipIf(!PG)('the replay child refuses a Postgres arm that is not this brain\'s seeded copy', async () => {
-    const { openReplayArm } = await import('../src/commands/engine-shadow-replay.ts');
-    await emptyScratch(PG!);
-    await withEnv({ GBRAIN_SHADOW_REPLAY_POSTGRES_URL: PG }, async () => {
-      const spec = { brain_key: 'pglite-abc', arms: { pglite: '', rust: '', postgres: { url_env: 'GBRAIN_SHADOW_REPLAY_POSTGRES_URL' } } } as never;
-      await expect(openReplayArm('postgres', spec)).rejects.toThrow(/shadow_replay_postgres_not_owned/);
-    });
-  });
 
-  test.skipIf(!PG)('a scratch database that holds only a materialized view is still refused and left as it was', async () => {
-    const { resetScratchPostgres } = await import('../src/shadow/replay-copy.ts');
-    await emptyScratch(PG!);
-    const cfg = { engine: 'postgres', database_url: PG, poolSize: 1 } as EngineConfig;
-    const e = await constructEngine(cfg);
-    await e.connect(cfg);
-    try {
-      await e.executeRaw('CREATE MATERIALIZED VIEW someone_elses_view AS SELECT 1 AS n');
-      await expect(resetScratchPostgres(e, 'pglite-abc')).rejects.toThrow(/shadow_replay_postgres_not_owned/);
-      const [row] = await e.executeRaw<{ present: boolean }>("SELECT to_regclass('public.someone_elses_view') IS NOT NULL AS present");
-      expect(row?.present).toBe(true);
-    } finally {
-      await e.disconnect();
-      await emptyScratch(PG!);
-    }
-  });
 
   test.skipIf(!HAVE_ADDON)('copies get the brain\'s own embedding layout, not this process\'s default', async () => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-replay-dims-'));
@@ -320,65 +221,5 @@ describe('shadow replay end to end', () => {
     }
   }, 300_000);
 
-  test.skipIf(!PG)('a scratch database with objects in another schema is refused, and a purge never cascades into them', async () => {
-    const { resetScratchPostgres } = await import('../src/shadow/replay-copy.ts');
-    const { dropScratchPostgres, scratchRecordPath, scratchPendingPath } = await import('../src/shadow/capture.ts');
-    const { writePrivateJson, captureDir: capDir } = await import('../src/shadow/capture-state.ts');
-    await emptyScratch(PG!);
-    const cfg = { engine: 'postgres', database_url: PG, poolSize: 1 } as EngineConfig;
-    const e = await constructEngine(cfg);
-    await e.connect(cfg);
-    const dir = mkdtempSync(join(tmpdir(), 'gbrain-replay-schema-'));
-    try {
-      await e.executeRaw('CREATE EXTENSION IF NOT EXISTS vector SCHEMA public');
-      await e.executeRaw('CREATE SCHEMA IF NOT EXISTS other_app');
-      await e.executeRaw('CREATE TABLE other_app.documents (id int, embedding public.vector(3))');
-      await e.executeRaw("INSERT INTO other_app.documents VALUES (1, '[1,2,3]')");
-      await expect(resetScratchPostgres(e, 'pglite-abc')).rejects.toThrow(/shadow_replay_postgres_not_owned/);
-      // Even with this brain's owner marker, neither the nightly reset nor a purge cascades into other_app.
-      await e.executeRaw('CREATE TABLE gbrain_shadow_replay_owner (brain TEXT PRIMARY KEY)');
-      await e.executeRaw("INSERT INTO gbrain_shadow_replay_owner VALUES ('pglite-abc')");
-      await expect(resetScratchPostgres(e, 'pglite-abc')).rejects.toThrow(/shadow_replay_postgres_not_owned/);
-      const cap = capDir(dir);
-      writePrivateJson(scratchRecordPath(cap), { url: PG, brain: 'pglite-abc', verified: true });
-      expect(await dropScratchPostgres(cap)).toBe(false);
-      const [row] = await e.executeRaw<{ n: number }>('SELECT count(embedding)::int AS n FROM other_app.documents');
-      expect(row?.n).toBe(1);
-      void scratchPendingPath;
-    } finally {
-      await e.executeRaw('DROP SCHEMA IF EXISTS other_app CASCADE').catch(() => undefined);
-      await e.disconnect();
-      rmSync(dir, { recursive: true, force: true });
-      await emptyScratch(PG!);
-    }
-  });
 
-  test.skipIf(!PG)('a domain in another schema that depends on public is refused, and a purge never cascades into it', async () => {
-    const { resetScratchPostgres } = await import('../src/shadow/replay-copy.ts');
-    const { dropScratchPostgres, scratchRecordPath } = await import('../src/shadow/capture.ts');
-    const { writePrivateJson, captureDir: capDir } = await import('../src/shadow/capture-state.ts');
-    await emptyScratch(PG!);
-    const cfg = { engine: 'postgres', database_url: PG, poolSize: 1 } as EngineConfig;
-    const e = await constructEngine(cfg);
-    await e.connect(cfg);
-    const dir = mkdtempSync(join(tmpdir(), 'gbrain-replay-domain-'));
-    try {
-      await e.executeRaw('CREATE EXTENSION IF NOT EXISTS vector SCHEMA public');
-      await e.executeRaw('CREATE SCHEMA IF NOT EXISTS other_app');
-      await e.executeRaw('CREATE DOMAIN other_app.embedding AS public.vector(3)');
-      await expect(resetScratchPostgres(e, 'pglite-abc')).rejects.toThrow(/shadow_replay_postgres_not_owned/);
-      await e.executeRaw('CREATE TABLE gbrain_shadow_replay_owner (brain TEXT PRIMARY KEY)');
-      await e.executeRaw("INSERT INTO gbrain_shadow_replay_owner VALUES ('pglite-abc')");
-      const cap = capDir(dir);
-      writePrivateJson(scratchRecordPath(cap), { url: PG, brain: 'pglite-abc', verified: true });
-      expect(await dropScratchPostgres(cap)).toBe(false);
-      const [row] = await e.executeRaw<{ present: boolean }>("SELECT to_regtype('other_app.embedding') IS NOT NULL AS present");
-      expect(row?.present).toBe(true);
-    } finally {
-      await e.executeRaw('DROP SCHEMA IF EXISTS other_app CASCADE').catch(() => undefined);
-      await e.disconnect();
-      rmSync(dir, { recursive: true, force: true });
-      await emptyScratch(PG!);
-    }
-  });
 });

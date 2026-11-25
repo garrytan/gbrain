@@ -78,7 +78,7 @@ export function captureStateFor(config: EngineConfig): { shadowDir: string; cap:
 }
 
 /**
- * The capture directory of the brain `config` opens when it holds an epoch or a scratch Postgres record, whatever the
+ * The capture directory of the brain `config` opens when it holds an epoch, whatever the
  * on/off state and the environment: purges in every process must delete recordings and copies (capture.ts watchPurges).
  */
 export function capturePurgeWatchFor(config: EngineConfig): string | null {
@@ -86,5 +86,5 @@ export function capturePurgeWatchFor(config: EngineConfig): string | null {
   const key = shadowBrainKey(config);
   if (!key) return null;
   const cap = captureDir(shadowDirFor(key));
-  return existsSync(join(cap, 'epoch.json')) || existsSync(join(cap, 'scratch-postgres.json')) ? cap : null;
+  return existsSync(join(cap, 'epoch.json')) ? cap : null;
 }

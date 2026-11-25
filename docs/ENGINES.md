@@ -2135,7 +2135,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   (`docs/designs/RUST_ENGINE.md`, Phase S). Until the Rust engine serves reads, comparisons record
   `capability_missing`.
 
-To replay every engine call, writes included, on private PGLite, Rust and optional local Postgres copies each night, see [Shadow replay](guides/shadow-replay.md).
+To replay every engine call, writes included, on private PGLite and Rust copies each night, see [Shadow replay](guides/shadow-replay.md).
 
 ## Adding a new engine
 

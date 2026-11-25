@@ -17,11 +17,11 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { appendPurgeIntent } from '../src/core/belief/purge-mirror.ts';
 import {
-  __setScratchOpenerForTests, attachCapture, deleteEpochData, dropScratchPostgres, resumeInvalidatedCleanup, basesDir, CaptureWriter, epochDir, purgeIfLogChanged, purgeCapture, retireEpoch, readEpoch, readSegment, scratchCleared,
-  scratchPendingPath, scratchRecordPath, startEpoch, watchPurges, wrapCaptureEngine, type CaptureRecord,
+  attachCapture, deleteEpochData, resumeInvalidatedCleanup, basesDir, CaptureWriter, epochDir, purgeIfLogChanged, purgeCapture, retireEpoch, readEpoch, readSegment,
+  startEpoch, watchPurges, wrapCaptureEngine, type CaptureRecord,
 } from '../src/shadow/capture.ts';
 import { captureDir, captureOffMarker, writePrivateJson } from '../src/shadow/capture-state.ts';
-import { checkLocalPostgresUrl, FanOutSeedTarget } from '../src/shadow/replay-copy.ts';
+import { FanOutSeedTarget } from '../src/shadow/replay-copy.ts';
 import { acquireReplayLock, liveRecorders, runNightlyReplay, settleSeededEpoch } from '../src/shadow/replay-run.ts';
 import { decodeValue } from '../src/shadow/codec.ts';
 import {
@@ -107,13 +107,6 @@ function segmentRecords(cap: string): CaptureRecord[] {
   return readdirSync(dir).filter(f => f.endsWith('.jsonl')).flatMap(f => readSegment(join(dir, f)).records);
 }
 
-/** A scratch database whose owner marker names `owner` (null: no marker); records every statement in `sql`. */
-function ownedScratch(sql: string[], owner: string | null = 'pglite-abc') {
-  return async () => ({
-    async executeRaw(q: string) { sql.push(q); return (q.includes('to_regclass') ? [{ present: owner !== null }] : q.includes('FROM gbrain_shadow_replay_owner') ? [{ brain: owner }] : []) as never[]; },
-    async disconnect() {},
-  });
-}
 
 const PRIVATE = { slug: 'people/zelda-secretname', title: 'Zelda Secretname', body: 'quarterly plan for project nightjar', key: 'secret_project_key' };
 
@@ -178,46 +171,14 @@ describe('capture', () => {
     const { cap, home } = recordingCapture();
     const id = readEpoch(cap)!.id;
     const engine = fakeEngine() as unknown as BrainEngine;
-    watchPurges(engine, cap);
+    watchPurges(cap);
     const e = attachCapture(engine, cap);
     appendPurgeIntent({ request: 'r2', request_id: 'q2', source_id: 'default', source_incarnation: 'i', scope: 'page', purge_epoch: 1, facts: [], takes: [], lifetimes: [] }, home);
     expect(existsSync(epochDir(cap, id))).toBe(false);
     await e.getPage('x');
   });
 
-  test('a purge drops the scratch Postgres copy in the same step, with capture on or off', async () => {
-    for (const enabled of [true, false]) {
-      const { cap, home } = recordingCapture();
-      writePrivateJson(join(cap, 'state.json'), { version: 1, enabled, turned_on_at: '2026-11-22T00:00:00.000Z' });
-      writePrivateJson(scratchRecordPath(cap), { url: 'postgresql://localhost/replay_scratch', brain: 'pglite-abc', verified: true });
-      const sql: string[] = [];
-      __setScratchOpenerForTests(ownedScratch(sql));
-      const onDisconnect: Array<() => Promise<void>> = [];
-      try {
-        watchPurges({ registerBeforeDisconnect: (fn: () => Promise<void>) => onDisconnect.push(fn) } as unknown as BrainEngine, cap);
-        appendPurgeIntent({ request: `r${enabled}`, request_id: 'q', source_id: 'default', source_incarnation: 'i', scope: 'page', purge_epoch: 1, facts: [], takes: [], lifetimes: [] }, home);
-        for (const fn of onDisconnect) await fn();
-      } finally { __setScratchOpenerForTests(null); }
-      expect(sql).toContain('DROP SCHEMA IF EXISTS public CASCADE');
-      expect(existsSync(scratchRecordPath(cap))).toBe(false);
-      expect(existsSync(scratchPendingPath(cap))).toBe(false);
-    }
-  });
 
-  test('a scratch drop that fails stays pending, and the copy counts as not cleared until a drop succeeds', async () => {
-    const { cap, home } = recordingCapture();
-    writePrivateJson(scratchRecordPath(cap), { url: 'postgresql://localhost/replay_scratch', brain: 'pglite-abc', verified: true });
-    __setScratchOpenerForTests(async () => { throw Object.assign(new Error('down'), { code: 'ECONNREFUSED' }); });
-    try {
-      appendPurgeIntent({ request: 'r9', request_id: 'q', source_id: 'default', source_incarnation: 'i', scope: 'page', purge_epoch: 1, facts: [], takes: [], lifetimes: [] }, home);
-      expect(purgeIfLogChanged(cap, home)).toBe(true);
-      expect(await scratchCleared(cap)).toBe(false);
-      expect(existsSync(scratchPendingPath(cap))).toBe(true);
-      __setScratchOpenerForTests(ownedScratch([]));
-      expect(await scratchCleared(cap)).toBe(true);
-      expect(existsSync(scratchPendingPath(cap))).toBe(false);
-    } finally { __setScratchOpenerForTests(null); }
-  });
 
   test('a purge log that cannot be read fails closed', () => {
     const { cap } = recordingCapture();
@@ -242,8 +203,6 @@ describe('comparison', () => {
     const norm = () => new NormState(new Set(), { from: 0, to: 0 });
     const a = { ok: true as const, value: { n: 1 } };
     const b = { ok: true as const, value: { n: 2 } };
-    expect(classify({ pglite: a, postgres: a, rust: b }, { rust: norm(), postgres: norm() }, false).cls).toBe('rust_diff');
-    expect(classify({ pglite: a, postgres: b, rust: a }, { rust: norm(), postgres: norm() }, false).cls).toBe('ts_disagree');
     expect(classify({ pglite: a, rust: b }, { rust: norm() }, false).cls).toBe('differs');
     expect(classify({ pglite: a, rust: b }, { rust: norm() }, true).cls).toBe('differs_seed_loss');
     expect(classify({ pglite: a, rust: { ok: false, code: 'engine_capability_missing' } }, { rust: norm() }, false).cls).toBe('capability_missing');
@@ -340,20 +299,6 @@ describe('review fixes (ship pass 1)', () => {
     expect(existsSync(join(shadowDir, 'replay', 'run-x', 'out'))).toBe(true);
   });
 
-  test('cleanup never drops a scratch database the seed did not verify, and never drops one another brain owns', async () => {
-    // No marker (verified long ago or not: the database may have been recreated since), or a marker of another brain.
-    for (const [record, owner] of [[{ url: 'postgresql://localhost/x', brain: 'pglite-abc' }, null], [{ url: 'postgresql://localhost/x', brain: 'pglite-abc', verified: true }, null], [{ url: 'postgresql://localhost/x', brain: 'pglite-abc', verified: true }, 'pglite-other']] as const) {
-      const { cap } = recordingCapture();
-      writePrivateJson(scratchRecordPath(cap), record);
-      const sql: string[] = [];
-      __setScratchOpenerForTests(async () => ({
-        async executeRaw(q: string) { sql.push(q); return (q.includes('to_regclass') ? [{ present: owner !== null }] : q.includes('FROM gbrain_shadow_replay_owner') ? [{ brain: owner }] : []) as never[]; },
-        async disconnect() {},
-      }));
-      try { expect(await dropScratchPostgres(cap)).toBe(true); } finally { __setScratchOpenerForTests(null); }
-      expect(sql.some(q => q.startsWith('DROP'))).toBe(false);
-    }
-  });
 
   test('capture wraps only engine members; other function-valued properties come back untouched', async () => {
     const { cap, home } = recordingCapture();
@@ -429,7 +374,7 @@ describe('review fixes (ship pass 1, adversarial)', () => {
     const pointer = readEpoch(cap)!;
     writePrivateJson(join(cap, 'epoch.json'), { ...pointer, state: 'invalidated', reason: 'purge' });
     mkdirSync(join(cap, 'bases', pointer.id, 'pglite'), { recursive: true }); // left behind by a crash mid-cleanup
-    expect(await resumeInvalidatedCleanup(cap)).toBe(true);
+    resumeInvalidatedCleanup(cap);
     expect(existsSync(epochDir(cap, pointer.id))).toBe(false);
     expect(existsSync(join(cap, 'bases', pointer.id))).toBe(false);
     void shadowDir;
@@ -451,7 +396,7 @@ describe('review fixes (ship pass 1, adversarial)', () => {
     const id = readEpoch(c.cap)!.id;
     writePrivateJson(join(c.cap, 'state.json'), { version: 1, enabled: false, turned_on_at: '2026-11-22T00:00:00.000Z' });
     for (const d of ['pglite', 'rust']) mkdirSync(join(basesDir(c.cap, id), d), { recursive: true });
-    writeFileSync(join(basesDir(c.cap, id), 'manifest.json'), JSON.stringify({ version: 1, epoch: id, cut: { before: 0, after: 0 }, postgres: false, arms: {},
+    writeFileSync(join(basesDir(c.cap, id), 'manifest.json'), JSON.stringify({ version: 1, epoch: id, cut: { before: 0, after: 0 }, arms: {},
       seed: { unseeded_gap_rows_total: 0, segmented_pages: 0 } }));
     writeFileSync(join(epochDir(c.cap, id), 'p.jsonl'), '');
     const deps = { shadowDir: c.shadowDir, brainKey: 'pglite-abc', primaryEngine: 'pglite', env: {}, home: c.home,
@@ -468,17 +413,6 @@ describe('review fixes (ship pass 1, adversarial)', () => {
     expect(existsSync(epochDir(cap, id))).toBe(false);
   });
 
-  test('a retried replay runs without the Postgres arm, whose copy was replayed in place and reseeded', async () => {
-    const { cap, id, deps } = sealedEpoch();
-    const m = JSON.parse(readFileSync(join(basesDir(cap, id), 'manifest.json'), 'utf8'));
-    writeFileSync(join(basesDir(cap, id), 'manifest.json'), JSON.stringify({ ...m, postgres: true }));
-    writePrivateJson(scratchRecordPath(cap), { url: 'postgresql://localhost/replay_scratch', brain: 'pglite-abc', verified: true });
-    const specs: RunSpec[] = [];
-    const watching = { ...deps, spawnChild: (runDir: string) => { specs.push(JSON.parse(readFileSync(join(runDir, 'run.json'), 'utf8'))); return { exited: Promise.resolve(1), kill() {} }; } } as typeof deps;
-    await expect(runNightlyReplay(watching)).rejects.toThrow(/without a report/);
-    await expect(runNightlyReplay(watching)).rejects.toThrow(/without a report/);
-    expect(specs.map(s => !!s.arms.postgres)).toEqual([true, false]);
-  });
 
   test('the nightly run tells the replay how many recording processes were still alive at the seal', async () => {
     const { cap, id, deps } = sealedEpoch();
@@ -536,35 +470,7 @@ describe('review fixes (ship pass 1, outside voice)', () => {
     expect(JSON.stringify(segmentRecords(cap))).not.toContain(PRIVATE.slug);
   });
 
-  test('shadow stop --delete drops the replay Postgres copy first, and deletes nothing when it cannot', async () => {
-    const { cap, shadowDir } = recordingCapture();
-    writePrivateJson(scratchRecordPath(cap), { url: 'postgresql://localhost/x', brain: 'pglite-abc', verified: true });
-    const lines: string[] = [];
-    const brain = { key: 'pglite-abc', dir: shadowDir, engine: 'pglite' };
-    __setScratchOpenerForTests(async () => { throw Object.assign(new Error('down'), { code: 'ECONNREFUSED' }); });
-    try {
-      const { __stopForTests } = await import('../src/commands/engine-shadow.ts');
-      expect(await __stopForTests(brain, true, (l: string) => lines.push(l))).toBe(1);
-      expect(existsSync(shadowDir)).toBe(true);
-      const sql: string[] = [];
-      __setScratchOpenerForTests(ownedScratch(sql));
-      expect(await __stopForTests(brain, true, (l: string) => lines.push(l))).toBe(0);
-      expect(sql.some(q => q.startsWith('DROP SCHEMA'))).toBe(true);
-      expect(existsSync(shadowDir)).toBe(false);
-    } finally { __setScratchOpenerForTests(null); }
-  });
 
-  test('with GBRAIN_DIRECT_DATABASE_URL set, the Postgres arm is refused before any scratch connection opens', async () => {
-    const { shadowDir, home } = recordingCapture();
-    let opened = 0;
-    const deps = { shadowDir, brainKey: 'pglite-abc', primaryEngine: 'pglite', home,
-      env: { GBRAIN_SHADOW_REPLAY_POSTGRES_URL: 'postgresql://localhost/replay_scratch', GBRAIN_DIRECT_DATABASE_URL: 'postgresql://localhost/brain' },
-      openPrimary: async () => fakeEngine() as unknown as BrainEngine, loadAddon: async () => ({ ok: true, addon: {} }),
-      openStore: async () => { opened++; throw new Error('must not open'); }, openSql: async () => { opened++; throw new Error('must not open'); },
-    } as unknown as Parameters<typeof runNightlyReplay>[0];
-    await expect(runNightlyReplay(deps)).rejects.toThrow(/shadow_replay_postgres_not_local.*GBRAIN_DIRECT_DATABASE_URL/);
-    expect(opened).toBe(0);
-  });
 
   test('a sweep past its page limit makes the report incomplete', async () => {
     const many = async (e: BrainEngine) => { for (let i = 0; i <= SWEEP_LIMIT; i++) await e.putPage(`notes/p${i}`, { title: 't', compiled_truth: 'b' } as never); };
@@ -722,7 +628,7 @@ describe('review fixes (last read-only review, 8e7a0f5630)', () => {
     retireEpoch(cap, 'seed_failed');
     expect(existsSync(epochDir(cap, kept))).toBe(true);
     const e = fakeEngine() as unknown as BrainEngine;
-    watchPurges(e, cap);
+    watchPurges(cap);
     appendPurgeIntent({ request: 'r11', request_id: 'q', source_id: 'default', source_incarnation: 'i', scope: 'page', purge_epoch: 1, facts: [], takes: [], lifetimes: [] }, home);
     expect(existsSync(epochDir(cap, kept))).toBe(false);
     expect(existsSync(basesDir(cap, kept))).toBe(false);
@@ -731,10 +637,9 @@ describe('review fixes (last read-only review, 8e7a0f5630)', () => {
   test('the purge listener survives a reconnect (disconnect then connect on the same engine)', async () => {
     const { cap, home } = recordingCapture();
     const id = readEpoch(cap)!.id;
-    const hooks = new Set<() => Promise<void>>();
-    const engine = { registerBeforeDisconnect(fn: () => Promise<void>) { hooks.add(fn); return () => hooks.delete(fn); } } as unknown as BrainEngine;
-    watchPurges(engine, cap);
-    for (const fn of hooks) await fn(); // a reconnect runs the disconnect hooks and keeps the same engine
+    // The listener belongs to the process, not to an engine: a reconnect (or a second engine) cannot remove it.
+    watchPurges(cap);
+    watchPurges(cap);
     appendPurgeIntent({ request: 'r12', request_id: 'q', source_id: 'default', source_incarnation: 'i', scope: 'page', purge_epoch: 1, facts: [], takes: [], lifetimes: [] }, home);
     expect(existsSync(epochDir(cap, id))).toBe(false);
   });
@@ -774,20 +679,6 @@ describe('review fixes (last read-only review, 8e7a0f5630)', () => {
 describe('purge and destructive-delete owners (rework at bb8e6bf11f)', () => {
   const PURGE = { request: 'r13', request_id: 'q', source_id: 'default', source_incarnation: 'i', scope: 'page' as const, purge_epoch: 1, facts: [], takes: [], lifetimes: [] };
 
-  test('a purge on an already-invalidated epoch still drops a scratch copy an earlier failed drop left behind', async () => {
-    const { cap, home } = recordingCapture();
-    writePrivateJson(scratchRecordPath(cap), { url: 'postgresql://localhost/x', brain: 'pglite-abc', verified: true });
-    writePrivateJson(join(cap, 'epoch.json'), { ...readEpoch(cap)!, state: 'invalidated', reason: 'purge' });
-    const sql: string[] = [];
-    __setScratchOpenerForTests(ownedScratch(sql));
-    const hooks: Array<() => Promise<void>> = [];
-    try {
-      watchPurges({ registerBeforeDisconnect: (fn: () => Promise<void>) => hooks.push(fn) } as unknown as BrainEngine, cap);
-      appendPurgeIntent(PURGE, home);
-      for (const fn of hooks) await fn();
-    } finally { __setScratchOpenerForTests(null); }
-    expect(sql.some(q => q.startsWith('DROP SCHEMA'))).toBe(true);
-  });
 
   test('shadow stop --delete refuses while a replay holds the lock, and deletes nothing', async () => {
     const { cap, shadowDir } = recordingCapture();
@@ -833,12 +724,20 @@ describe('purge and destructive-delete owners (rework at bb8e6bf11f)', () => {
 });
 
 describe('isolation', () => {
-  test('the child environment carries no provider key or brain path, only the allowlist and a throwaway home', () => {
-    const env = childEnv({ PATH: '/bin', OPENAI_API_KEY: 'k1', ANTHROPIC_API_KEY: 'k2', VOYAGE_API_KEY: 'k3', GBRAIN_HOME: '/live', DATABASE_URL: 'postgres://db.example/x', GBRAIN_SHADOW_REPLAY_POSTGRES_URL: 'postgres://localhost/changed-tonight' }, '/run/home', { name: 'GBRAIN_SHADOW_REPLAY_POSTGRES_URL', url: 'postgres://localhost/seeded' });
-    expect(Object.keys(env).sort()).toEqual(['GBRAIN_HOME', 'GBRAIN_SHADOW_CAPTURE', 'GBRAIN_SHADOW_CHILD', 'GBRAIN_SHADOW_REPLAY_POSTGRES_URL', 'HOME', 'PATH']);
+  test('the child environment carries no provider key, database URL or brain path, only the allowlist and a throwaway home', () => {
+    const env = childEnv({ PATH: '/bin', OPENAI_API_KEY: 'k1', ANTHROPIC_API_KEY: 'k2', VOYAGE_API_KEY: 'k3', GBRAIN_HOME: '/live', DATABASE_URL: 'postgres://db.example/x', GBRAIN_SHADOW_REPLAY_POSTGRES_URL: 'postgres://localhost/s' }, '/run/home');
+    expect(Object.keys(env).sort()).toEqual(['GBRAIN_HOME', 'GBRAIN_SHADOW_CAPTURE', 'GBRAIN_SHADOW_CHILD', 'HOME', 'PATH']);
     expect(env.GBRAIN_HOME).toBe('/run/home');
-    // The Postgres arm is the copy the seed recorded, never what the variable names at replay time.
-    expect(env.GBRAIN_SHADOW_REPLAY_POSTGRES_URL).toBe('postgres://localhost/seeded');
+  });
+
+  test('the Postgres replay arm is refused by name before anything runs, never skipped silently', async () => {
+    const { cap, shadowDir, home } = recordingCapture();
+    const before = readEpoch(cap);
+    const deps = { shadowDir, brainKey: 'pglite-abc', primaryEngine: 'pglite', home, env: { GBRAIN_SHADOW_REPLAY_POSTGRES_URL: 'postgresql://localhost/replay' },
+      openPrimary: async () => { throw new Error('must not open'); } } as unknown as Parameters<typeof runNightlyReplay>[0];
+    await expect(runNightlyReplay(deps)).rejects.toThrow(/shadow_replay_postgres_unavailable.*postgres replay arm not in this release/);
+    expect(readEpoch(cap)).toEqual(before);
+    expect(existsSync(join(shadowDir, 'replay', 'lock'))).toBe(false);
   });
 
   test('the child blocks fetch, TCP to any host and Unix sockets outside its run directory', async () => {
@@ -846,7 +745,7 @@ describe('isolation', () => {
     const script = `
       import net from 'node:net';
       import { blockNetwork } from ${JSON.stringify(join(import.meta.dir, '..', 'src', 'shadow', 'replay.ts'))};
-      blockNetwork(${JSON.stringify(dir)}, false);
+      blockNetwork(${JSON.stringify(dir)});
       const out = [];
       try { await fetch('http://example.com/'); out.push('fetch:open'); } catch (e) { out.push('fetch:' + e.code); }
       try { const s = new net.Socket(); s.on('error', () => {}); s.connect(80, '203.0.113.1'); out.push('tcp:open'); s.destroy(); } catch (e) { out.push('tcp:' + e.code); }
@@ -863,29 +762,5 @@ describe('isolation', () => {
     expect(proc.stdout.toString().trim()).toBe('fetch:shadow_replay_network_blocked,tcp:shadow_replay_network_blocked,unix:shadow_replay_network_blocked,sibling:shadow_replay_network_blocked,bunsibling:shadow_replay_network_blocked,tls:shadow_replay_network_blocked');
   });
 
-  test('the child lets the local scratch database upgrade its own connection to TLS', async () => {
-    const dir = tmp();
-    const file = join(dir, 'probe.ts');
-    writeFileSync(file, `
-      import tls from 'node:tls';
-      import { Duplex } from 'node:stream';
-      import { blockNetwork } from ${JSON.stringify(join(import.meta.dir, '..', 'src', 'shadow', 'replay.ts'))};
-      blockNetwork(${JSON.stringify(dir)}, true);
-      const out = [];
-      try { const s = tls.connect({ socket: new Duplex({ read() {}, write(_c, _e, cb) { cb(); } }) }); s.on('error', () => {}); out.push('upgrade:open'); s.destroy(); } catch (e) { out.push('upgrade:' + e.code); }
-      try { const s = tls.connect({ host: '203.0.113.1', port: 5432 }); s.on('error', () => {}); out.push('remote:open'); s.destroy(); } catch (e) { out.push('remote:' + e.code); }
-      console.log(out.join(','));`);
-    const proc = Bun.spawnSync([process.execPath, file], { env: { PATH: process.env.PATH ?? '' } });
-    expect(proc.stdout.toString().trim()).toBe('upgrade:open,remote:shadow_replay_network_blocked');
-  });
 
-  test('a scratch Postgres URL that could leave the machine is refused before any row is sent', () => {
-    expect(checkLocalPostgresUrl('postgresql://localhost:5433/replay').database).toBe('replay');
-    for (const bad of ['postgresql://db.example.com/replay', 'postgresql://localhost,db.example.com/replay', 'postgresql://localhost/replay?host=db.example.com', 'postgresql://10.0.0.5/replay',
-      // The driver would not route a socket path (it dials localhost:5432), so socket URLs are refused too.
-      'postgresql://localhost/replay?host=/var/run/postgresql']) {
-      expect(() => checkLocalPostgresUrl(bad)).toThrow(/shadow_replay_postgres_not_local/);
-    }
-    expect(() => checkLocalPostgresUrl('postgresql://localhost/brain', 'postgresql://localhost:5432/brain')).toThrow(/shadow_replay_postgres_not_owned/);
-  });
 });

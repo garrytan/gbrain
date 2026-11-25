@@ -34,7 +34,6 @@ function captureStatus(cap: string) {
     off_marker: existsSync(captureOffMarker(cap)),
     epoch: epoch ? { id: epoch.id, state: epoch.state, started_at: epoch.started_at, seeded: existsSync(join(basesDir(cap, epoch.id), 'manifest.json')) } : null,
     invalidated_now: purged,
-    scratch_drop_pending: existsSync(join(cap, 'scratch-drop-pending')),
     recording_processes: files.filter(f => f.startsWith('proc-')).length,
     segment_bytes: files.filter(f => f.endsWith('.jsonl')).reduce((n, f) => n + statSync(join(dir!, f)).size, 0),
     directory: cap,
@@ -65,7 +64,6 @@ export async function runShadowReplayCommand(sub: string, rest: string[], io: Sh
     }
     if (action === 'status') {
       const s = captureStatus(cap);
-      if (s.invalidated_now || s.scratch_drop_pending) s.scratch_drop_pending = !await (await import('../shadow/capture.ts')).scratchCleared(cap);
       if (json) io.out(JSON.stringify(s, null, 2));
       else io.out(`capture: ${s.on ? 'on' : 'off'}${s.killed_by_env ? ' (GBRAIN_SHADOW_CAPTURE=off)' : ''}\nepoch: ${s.epoch ? `${s.epoch.id} ${s.epoch.state}${s.epoch.seeded ? ', copies seeded' : ', not seeded'}` : 'none'}\nrecording processes: ${s.recording_processes}\nrecorded bytes: ${s.segment_bytes}\ndirectory: ${s.directory}`);
       return 0;
@@ -73,9 +71,8 @@ export async function runShadowReplayCommand(sub: string, rest: string[], io: Sh
     if (action === 'delete') {
       if (!flags.includes('--yes')) { io.out(`This deletes every recording, seeded copy and replay report under ${cap} and ${join(io.brain.dir, 'replay')}. Run again with --yes.`); return 1; }
       const { deleteReplayState } = await import('../shadow/replay-run.ts');
-      const res = await deleteReplayState(io.brain.dir, { whole: false });
-      if (!res.ok) { io.err('engine shadow: the scratch Postgres copy could not be dropped; nothing was deleted. Make the scratch database reachable and run this again.'); return 1; }
-      io.out(res.gone.length ? `Deleted:\n${res.gone.join('\n')}` : 'Nothing to delete.');
+      const gone = deleteReplayState(io.brain.dir, { whole: false });
+      io.out(gone.length ? `Deleted:\n${gone.join('\n')}` : 'Nothing to delete.');
       return 0;
     }
     throw new ReplayError('shadow_capture_off', `unknown capture action ${action ?? '(none)'}; use on, off, status or delete`);
@@ -110,9 +107,8 @@ export async function runShadowReplayCommand(sub: string, rest: string[], io: Sh
 
 /** The real dependencies of the nightly replay (tests override single members). */
 export function nightlyDeps(io: ShadowReplayIo): import('../shadow/replay-run.ts').NightlyDeps {
-  const config = io.config();
   return {
-    shadowDir: io.brain.dir, brainKey: io.brain.key, primaryEngine: io.brain.engine as 'pglite' | 'postgres', primaryUrl: config?.database_url ?? null,
+    shadowDir: io.brain.dir, brainKey: io.brain.key, primaryEngine: io.brain.engine as 'pglite' | 'postgres',
     env: process.env, home: configDir(), openPrimary: io.openPrimary, now: io.now,
     rustDir: join(configDir(), 'engines', 'rust'),
     loadAddon: async () => (await import('../core/rust-engine/addon-loader.ts')).loadRustEngineAddon(),
@@ -133,17 +129,13 @@ export function nightlyDeps(io: ShadowReplayIo): import('../shadow/replay-run.ts
   };
 }
 
-/** The engine config of a SQL copy: a PGLite path or a Postgres URL. */
-function sqlConfig(kind: 'pglite' | 'postgres', where: string): EngineConfig {
-  switch (kind) {
-    case 'pglite': return { engine: kind, database_path: where } as EngineConfig;
-    case 'postgres': return { engine: kind, database_url: where, poolSize: 2 } as EngineConfig; // own pool, never the module singleton
-    default: { const unreachable: never = kind; return unreachable; }
-  }
+/** The engine config of a SQL copy: a PGLite brain at a path. */
+function sqlConfig(kind: 'pglite', where: string): EngineConfig {
+  return { engine: kind, database_path: where } as EngineConfig;
 }
 
 /** Opens one work copy in the replay child (no shadow, no capture: GBRAIN_SHADOW_CHILD=1). */
-export async function openReplayArm(arm: 'pglite' | 'postgres' | 'rust', spec: import('../shadow/replay.ts').RunSpec): Promise<BrainEngine> {
+export async function openReplayArm(arm: 'pglite' | 'rust', spec: import('../shadow/replay.ts').RunSpec): Promise<BrainEngine> {
   const { createEngine } = await import('../core/engine-factory.ts');
   if (arm === 'rust') {
     const { loadRustEngineAddon } = await import('../core/rust-engine/addon-loader.ts');
@@ -154,13 +146,8 @@ export async function openReplayArm(arm: 'pglite' | 'postgres' | 'rust', spec: i
     await e.connect({ engine: 'pglite', database_path: spec.arms.rust } as never);
     return e as unknown as BrainEngine;
   }
-  const cfg = sqlConfig(arm, arm === 'postgres' ? process.env[spec.arms.postgres!.url_env] ?? '' : spec.arms.pglite);
+  const cfg = sqlConfig(arm, spec.arms.pglite);
   const e = await createEngine(cfg);
   await e.connect(cfg);
-  if (arm === 'postgres') {
-    // Replay writes only into the copy this brain's seed made: its owner marker must name this brain.
-    const { scratchOwner } = await import('../shadow/replay-copy.ts');
-    if (await scratchOwner(e) !== spec.brain_key) { await e.disconnect(); throw new ReplayError('shadow_replay_postgres_not_owned', 'the replay Postgres arm is not this brain\'s seeded copy'); }
-  }
   return e;
 }

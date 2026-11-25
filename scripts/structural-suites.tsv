@@ -411,7 +411,7 @@ test/setup-brain-layout.test.ts	setup --shape personal	7	readFileSync
 test/setup-pi-skill-extension.test.ts	(file-level)	7	readFileSync
 test/setup.test.ts	gbrain setup: setup migrations on the brain it creates (Cat 41 run 4)	3	readFileSync
 test/shadow-replay.test.ts	comparison	2	readFileSync
-test/shadow-replay.test.ts	purge and destructive-delete owners (rework at bb8e6bf11f)	4	readFileSync
+test/shadow-replay.test.ts	purge and destructive-delete owners (rework at bb8e6bf11f)	3	readFileSync
 test/shadow-replay.test.ts	replay child (in-memory arms)	4	readFileSync
 test/shadow-replay.test.ts	review fixes (ship final review of the queued head)	5	readFileSync
 test/shadow-replay.test.ts	review fixes (ship pass 2)	4	readFileSync

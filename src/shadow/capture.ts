@@ -157,143 +157,46 @@ export function deleteAllCaptureData(cap: string): string[] {
 
 /**
  * THE purge owner; every purge entry point calls it (test "purge entry points" checks the source). Whatever the pointer
- * says: flip it to invalidated, delete every epoch, base copy, run copy and retry record, drop the scratch Postgres copy
- * (true once gone; a failed drop stays pending and blocks replay, status and seed). Safe to repeat.
+ * says: flip it to invalidated, then delete every epoch, base copy, run copy and retry record. Safe to repeat.
  */
-export function purgeCapture(cap: string): Promise<boolean> {
+export function purgeCapture(cap: string): true {
   const pointer = readEpoch(cap);
   if (pointer && !(pointer.state === 'invalidated' && pointer.reason === 'purge')) setEpochState(cap, pointer, 'invalidated', 'purge');
   deleteAllCaptureData(cap);
-  return scheduleScratchDrop(cap);
+  return true;
 }
 
 /** Runs purgeCapture when the purge log changed (or cannot be read) since the current epoch began. True when it did. */
 export function purgeIfLogChanged(cap: string, home?: string): boolean {
   const pointer = readEpoch(cap);
   if (!pointer || pointer.state === 'invalidated' || !purgeLogChanged(pointer.purge_log, home)) return false;
-  void purgeCapture(cap);
-  return true;
+  return purgeCapture(cap);
 }
 
-/** Retires one epoch that ends without a purge (never seeded, seed failed): that epoch only, and the scratch copy. */
-export function retireEpoch(cap: string, reason: 'unseeded' | 'seed_failed'): Promise<boolean> {
+/** Retires one epoch that ends without a purge (never seeded, seed failed): that epoch only. */
+export function retireEpoch(cap: string, reason: 'unseeded' | 'seed_failed'): void {
   const pointer = readEpoch(cap);
   if (pointer && pointer.state !== 'invalidated') setEpochState(cap, pointer, 'invalidated', reason);
   if (pointer) deleteEpochData(cap, pointer.id);
-  return scheduleScratchDrop(cap);
-}
-
-// ---- the scratch Postgres copy --------------------------------------------------------------------------------
-// The seed records where the scratch Postgres copy lives (`scratch-postgres.json`, 0600). Every invalidation writes
-// `scratch-drop-pending` and drops the copy's schema at once; the marker goes away only after the drop succeeded, and
-// every later replay, status and seed refuses to go on while it is there.
-
-export const scratchRecordPath = (cap: string) => join(cap, 'scratch-postgres.json');
-export const scratchPendingPath = (cap: string) => join(cap, 'scratch-drop-pending');
-type ScratchSql = { executeRaw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>; disconnect(): Promise<void> };
-type ScratchOpener = (url: string) => Promise<ScratchSql>;
-/**
- * The scratch connection for a drop: one plain driver connection to the recorded URL, never an engine, so neither the
- * module connection a Postgres brain holds nor a GBRAIN_DIRECT_DATABASE_URL route can be reached through it.
- */
-const openScratch: ScratchOpener = async url => {
-  const { default: postgres } = await import('#postgres');
-  const sql = postgres(url, { max: 1, onnotice: () => {}, connect_timeout: 10 });
-  return {
-    async executeRaw<T>(q: string, params: unknown[] = []) { return (await sql.unsafe(q, params as never[])) as unknown as T[]; },
-    async disconnect() { await sql.end({ timeout: 5 }); },
-  };
-};
-let scratchOpener: ScratchOpener = openScratch;
-/** Test seam: the opener the drop uses. Null restores the real one. */
-export function __setScratchOpenerForTests(o: ScratchOpener | null): void { scratchOpener = o ?? openScratch; }
-const scratchDrops = new Map<string, Promise<boolean>>();
-
-/** The recorded scratch copy (URL, owning brain, whether the seed verified it), or null. */
-export function readScratchRecord(cap: string): { url: string; brain: string; verified?: boolean } | null {
-  try { return JSON.parse(readFileSync(scratchRecordPath(cap), 'utf8')); } catch { return null; } // silent-read-ok: no record means no scratch copy to bind or drop
-}
-
-/** Drops the scratch Postgres copy's schema now when one is recorded or a drop is pending. True when nothing is left. */
-export async function dropScratchPostgres(cap: string): Promise<boolean> {
-  const recordPath = scratchRecordPath(cap);
-  if (!existsSync(recordPath)) { rmSync(scratchPendingPath(cap), { force: true }); return true; }
-  let rec: { url: string; brain: string; verified?: boolean };
-  try { rec = JSON.parse(readFileSync(recordPath, 'utf8')); } catch { return false; } // silent-read-ok: not silent; false keeps the drop pending and every replay, status and seed refuses
-  let e: ScratchSql | null = null;
-  try {
-    e = await scratchOpener(rec.url);
-    const [marker] = await e.executeRaw<{ present: boolean }>("SELECT to_regclass('public.gbrain_shadow_replay_owner') IS NOT NULL AS present");
-    // Drop only a database whose owner marker names this brain right now (the seed writes the marker before any other
-    // table). Anything else, a database recreated or reused since, is never touched; its record is just forgotten.
-    const owned = marker?.present === true
-      && (await e.executeRaw<{ brain: string }>('SELECT brain FROM gbrain_shadow_replay_owner LIMIT 1'))[0]?.brain === rec.brain;
-    // Objects in another schema could depend on public (a public.vector column): leave the drop pending, never cascade.
-    if (owned) {
-      const { objectsOutsidePublic } = await import('./replay-copy.ts');
-      if (await objectsOutsidePublic(e) > 0) return false;
-    }
-    if (!owned) {
-      rmSync(recordPath, { force: true });
-      rmSync(scratchPendingPath(cap), { force: true });
-      return true;
-    }
-    await e.executeRaw('DROP SCHEMA IF EXISTS public CASCADE');
-    await e.executeRaw('CREATE SCHEMA public');
-    rmSync(recordPath, { force: true });
-    rmSync(scratchPendingPath(cap), { force: true });
-    return true;
-    // capability-refusal-ok: the scratch copy is always a local Postgres database, never a Rust engine
-  } catch { // silent-read-ok: not silent; false keeps the drop pending and every replay, status and seed refuses
-    return false;
-  } finally {
-    await e?.disconnect().catch(() => undefined);
-  }
-}
-
-/** Marks the scratch copy for dropping and starts the drop; a second call while one runs joins it. */
-export function scheduleScratchDrop(cap: string): Promise<boolean> {
-  if (!existsSync(scratchRecordPath(cap))) return Promise.resolve(true);
-  try { writeFileSync(scratchPendingPath(cap), `${new Date().toISOString()}\n`, { mode: 0o600 }); } catch { /* the record stays; the next run drops it */ }
-  let p = scratchDrops.get(cap);
-  if (!p) {
-    p = dropScratchPostgres(cap).finally(() => scratchDrops.delete(cap));
-    scratchDrops.set(cap, p);
-  }
-  return p;
-}
-
-/** Waits for a drop this process started; then, when a drop is still pending, tries it once more. */
-export async function scratchCleared(cap: string): Promise<boolean> {
-  await scratchDrops.get(cap);
-  return existsSync(scratchPendingPath(cap)) ? scheduleScratchDrop(cap) : true;
 }
 
 /**
- * Installs the purge listener on an engine of a brain that has a capture directory, whether capture is on, off or
- * killed by the environment: a purge always deletes the epoch and drops the scratch copy. The engine's disconnect
- * waits for a drop it started.
+ * Installs the purge listener for a brain that has a capture directory, whether capture is on, off or killed by the
+ * environment. One listener per capture directory for the life of the process, so a reconnect (disconnect then
+ * connect on the same engine) never leaves the engine deaf to purges.
  */
 const purgeWatched = new Set<string>();
-export function watchPurges(engine: BrainEngine, cap: string): void {
-  // One listener per capture directory for the life of the process: a reconnect (disconnect then connect on the same
-  // engine) must not leave the engine deaf to purges. Disconnect only waits for a drop it started.
-  if (!purgeWatched.has(cap)) {
-    purgeWatched.add(cap);
-    onPurgeIntent(() => { try { void purgeCapture(cap); } catch { /* fail open */ } });
-  }
-  engine.registerBeforeDisconnect(async () => { await scratchDrops.get(cap); });
+export function watchPurges(cap: string): void {
+  if (purgeWatched.has(cap)) return;
+  purgeWatched.add(cap);
+  onPurgeIntent(() => { try { purgeCapture(cap); } catch { /* fail open */ } });
 }
 
-/**
- * Finishes an interrupted cleanup before anything new starts (the nightly run, under its lock): a purge's runs again in
- * full, a retirement's deletes its epoch again. True when nothing is left to clean.
- */
-export async function resumeInvalidatedCleanup(cap: string): Promise<boolean> {
+/** Finishes an interrupted cleanup before anything new starts (the nightly run, under its lock). */
+export function resumeInvalidatedCleanup(cap: string): void {
   const pointer = readEpoch(cap);
-  if (pointer?.state === 'invalidated' && pointer.reason === 'purge') return purgeCapture(cap);
-  if (pointer?.state === 'invalidated') deleteEpochData(cap, pointer.id);
-  return scratchCleared(cap);
+  if (pointer?.state === 'invalidated' && pointer.reason === 'purge') purgeCapture(cap);
+  else if (pointer?.state === 'invalidated') deleteEpochData(cap, pointer.id);
 }
 
 /** Reads one segment file; a torn last line is skipped and reported. */

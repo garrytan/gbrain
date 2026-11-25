@@ -45,6 +45,6 @@ export async function createEngine(config: EngineConfig): Promise<BrainEngine> {
     out = attachCapture(out, capture.cap);
   }
   const purgeWatch = cs?.capturePurgeWatchFor(config);
-  if (purgeWatch) (await import('../shadow/capture.ts')).watchPurges(out, purgeWatch);
+  if (purgeWatch) (await import('../shadow/capture.ts')).watchPurges(purgeWatch);
   return out;
 }
