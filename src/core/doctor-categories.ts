@@ -286,6 +286,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'person_title_duplicates',
   // plan autoplan-20261117192252 PR 1: likely duplicate person and company pages (read-only, gbrain dedupe --preview).
   'entity_duplicates',
+  // GST-3609 PR C: the person links gbrain dedupe auto --apply made in the last 24 hours (informational, always ok).
+  'dedupe_auto_links',
   // Nightly learning: the newest learning_derive run and the kept/undone share of the note (doctor/checks/learning-note.ts).
   'learning_note',
   // Git-canonical G1: the database compared with the commit at HEAD per source, informational (doctor/checks/db-ahead-of-git.ts).

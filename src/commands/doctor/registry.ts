@@ -133,7 +133,7 @@ import { factAdmissionFloorsEntry } from './checks/fact-admission-floors.ts';
 import { unlinkedFactsEntry } from './checks/unlinked-facts.ts';
 import { edgeValidityEntry } from './checks/edge-validity.ts';
 import { coreMemoryEntry } from './checks/core-memory.ts';
-import { entityDuplicatesEntry, personTitleDuplicatesEntry } from './checks/entity-duplicates.ts';
+import { dedupeAutoLinksEntry, entityDuplicatesEntry, personTitleDuplicatesEntry } from './checks/entity-duplicates.ts';
 import { plannerStatsEntry } from './checks/planner-stats.ts';
 import { revisionBackfillEntry } from './checks/revision-backfill.ts';
 import { beliefLedgerEntry } from './checks/belief-ledger.ts';
@@ -393,6 +393,8 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   personTitleDuplicatesEntry,
   // plan autoplan-20261117192252 PR 1: likely duplicate person and company pages by key, name and slug shape (read-only).
   entityDuplicatesEntry,
+  // GST-3609 PR C: the person links gbrain dedupe auto --apply made in the last 24 h, by class, with undo (informational, always ok).
+  dedupeAutoLinksEntry,
   // GST-1601: the one-sided local edits adopted in the last 24 h per source (informational, always ok).
   localEditAdoptionsEntry,
   // GBRA-221: live fence rows on imported pages whose body is outside-authored text (review only).
