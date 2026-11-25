@@ -10,9 +10,10 @@ export async function runJobsList({ args, queue, engine }: JobsCommandContext): 
   if (groupId !== undefined) return listSpendGroup(engine, groupId, hasFlag(args, '--json'));
   const status = parseFlag(args, '--status') as MinionJobStatus | undefined;
   const queueName = parseFlag(args, '--queue');
+  const name = parseFlag(args, '--name');
   const limit = parseInt(parseFlag(args, '--limit') ?? '20', 10);
   const finishedSince = parseFlag(args, '--finished-since');
-  if (finishedSince !== undefined) return listFinishedSince(engine, finishedSince, { queue: queueName, name: parseFlag(args, '--name'), limit }, hasFlag(args, '--json'));
+  if (finishedSince !== undefined) return listFinishedSince(engine, finishedSince, { queue: queueName, name, limit }, hasFlag(args, '--json'));
 
   // v0.32: thin-client routing. The `list_jobs` MCP op is admin-scoped
   // but not localOnly, so a thin-client install with admin access can
@@ -22,11 +23,11 @@ export async function runJobsList({ args, queue, engine }: JobsCommandContext): 
   const cfg = loadConfig();
   let jobs: MinionJob[];
   if (isThinClient(cfg)) {
-    jobs = await listRemoteJobs(cfg!, { status, queue: queueName, limit });
+    jobs = await listRemoteJobs(cfg!, { status, queue: queueName, name, limit });
   } else {
     try { await queue.ensureSchema(); }
     catch (e) { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); }
-    jobs = await queue.getJobs({ status, queue: queueName, limit });
+    jobs = await queue.getJobs({ status, queue: queueName, name, limit });
     const insight = await describeJobs(engine, jobs);
     jobs = jobs.map(j => withInsight(j, insight.get(j.id)));
   }
@@ -55,7 +56,7 @@ export async function runJobsList({ args, queue, engine }: JobsCommandContext): 
  * The host returns at most one page per call (500 jobs over MCP); follow next_cursor, carried on the last job of a
  * cut page, until the requested limit is met. A host without paging returns one page and no cursor.
  */
-async function listRemoteJobs(cfg: NonNullable<ReturnType<typeof loadConfig>>, opts: { status?: string; queue?: string; limit: number }): Promise<MinionJob[]> {
+async function listRemoteJobs(cfg: NonNullable<ReturnType<typeof loadConfig>>, opts: { status?: string; queue?: string; name?: string; limit: number }): Promise<MinionJob[]> {
   const jobs: MinionJob[] = [];
   let cursor: string | undefined;
   do {
