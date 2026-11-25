@@ -159,6 +159,7 @@ test/engine-parity/git-durability-credential.test.ts	0	1
 test/engine-parity/git-holds.test.ts	7	0
 test/engine-parity/graduation-catalog.test.ts	1	2
 test/engine-parity/harness-consumer-stop.test.ts	2	0
+test/engine-parity/held-fact-folder-rule.test.ts	1	0
 test/engine-parity/held-fence-cells.test.ts	5	0
 test/engine-parity/hidden-refusals-2.test.ts	12	0
 test/engine-parity/hidden-refusals.test.ts	4	1
