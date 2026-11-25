@@ -8,7 +8,10 @@
  *  - Contract: the cutoff is an ISO time no later than the first request admitted after it. listWriterVersions names,
  *    per role, the latest version each host and principal stamped (a consumer only for a committed request), newest
  *    first, at most `limit`. recentWriterVersions groups the committed requests published in the window per role, host,
- *    principal and version, with a count, newest first; an empty window reads no row. readSegmentedGateEvidence groups
+ *    principal and version, with a count, newest first; a zero-day window read after the last write reads no row (a row
+ *    stamped in the read's own clock tick is inside `>= now() - 0` on every arm; no caller reads a zero-day window).
+ *    Rows that tie on last_seen come by role, host (no host first), principal and version in byte order, and of
+ *    requests with one latest time the lowest request id names the version, on every arm. readSegmentedGateEvidence groups
  *    every admitted request (any state), every published request and every ingest-log row in the window per role,
  *    host, principal, version and segment-reader mark, newest first; an ingest row carries this binary's version and
  *    the mark. On every engine arm (PGLite
@@ -75,7 +78,7 @@ function untimed<R extends { last_seen: string | null }>(rows: R[]): Array<Omit<
  */
 async function seed(engine: BrainEngine) {
   const r1 = await admit(engine, { request: 'b0000000-0000-4000-8000-0000000000b1', writer: 'a', version: 'a1', host: ADMITTER });
-  await admit(engine, { request: 'b0000000-0000-4000-8000-0000000000b2', writer: 'a', version: 'a2', host: ADMITTER });
+  const r2 = await admit(engine, { request: 'b0000000-0000-4000-8000-0000000000b2', writer: 'a', version: 'a2', host: ADMITTER });
   const r3 = await admit(engine, { request: 'b0000000-0000-4000-8000-0000000000b3', writer: 'b', version: 'b1', host: null });
   await commit(engine, r1, 'a', 'c1', CONSUMER);
   await commit(engine, r3, 'b', 'c3', null);
@@ -84,6 +87,19 @@ async function seed(engine: BrainEngine) {
   // both can land in the same clock tick, and a tie leaves the newest-first order to the plan (seen on macOS CI).
   await Bun.sleep(5);
   await commit(engine, r4, 'a', 'c1', CONSUMER);
+  return { r1, r2, r3, r4 };
+}
+
+/**
+ * A zero-day window read waits this long after the last write, so every row is strictly older than the read's now():
+ * a row stamped in the read's own clock tick is inside `>= now() - 0`. The members take no timestamp, so a past time
+ * cannot be written on every arm.
+ */
+const apart = () => Bun.sleep(20);
+
+/** The rows with the importer's host (this process's identity, different per arm) replaced by one name. */
+function oneImporterHost<R extends { role: string; host_id: string | null }>(rows: R[]): R[] {
+  return rows.map(row => (row.role === 'importer' ? { ...row, host_id: 'this-host' } : row));
 }
 
 describe('engine parity: writer-version reads', () => {
@@ -129,6 +145,9 @@ describe('engine parity: writer-version reads', () => {
     const empty = await engine.recentWriterVersions(7);
     await seed(engine);
     const week = untimed(await engine.recentWriterVersions(7));
+    // A zero-day window starts at the read's now(), and `>= now() - 0` counts a request published in that very clock
+    // tick (seen on a macOS run). The read waits past the last publication, so the window holds none of the requests.
+    await apart();
     const window = await engine.recentWriterVersions(0);
     const answers = { empty, week, window };
     expect(answers).toEqual({
@@ -161,6 +180,8 @@ describe('engine parity: writer-version reads', () => {
     const importer = rows.find(row => row.role === 'importer');
     expect(importer?.host_id === null || /^[0-9a-f-]{36}$/.test(importer?.host_id ?? '')).toBe(true);
     const week = untimed(rows.map(({ first_seen: _, ...row }) => row.role === 'importer' ? { ...row, host_id: 'this-host' } : row));
+    // As in the recentWriterVersions case: the zero-day read waits past the last write, so no row is in its clock tick.
+    await apart();
     const window = await engine.readSegmentedGateEvidence(0);
     const answers = { empty, week: [...week].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))), window };
     const writerA = 'local_cli:parity-writer-a', writerB = 'local_cli:parity-writer-b';
@@ -177,5 +198,59 @@ describe('engine parity: writer-version reads', () => {
       window: [],
     });
     return answers;
+  });
+
+  /**
+   * Every row below ties on last_seen: the requests are admitted, published and read in ONE transaction, where each arm
+   * stamps them with the transaction's now(). A tie falls back to role, host (no host first), principal and version, then
+   * the segment-reader mark, in byte order, on every arm, so the order of tied rows is never left to the plan.
+   */
+  parityTest('listWriterVersions, recentWriterVersions and readSegmentedGateEvidence order rows that tie on last_seen by role, host, principal and version', {
+    methods: ['listWriterVersions', 'recentWriterVersions', 'readSegmentedGateEvidence', 'logIngest', 'insertWriteRequest', 'lockPersistenceCounters', 'stampWriteClaim', 'completeWriteRow', 'readSourceMembership'],
+    timeout: 60_000,
+  }, async (engine) => {
+    let ids!: Awaited<ReturnType<typeof seed>>;
+    const answers = await engine.transaction(async (tx) => {
+      ids = await seed(tx);
+      await tx.logIngest({ source_type: 'parity-import', source_ref: 'parity', pages_updated: ['notes/a'], summary: 'one' });
+      const latest = await tx.listWriterVersions(50);
+      const recent = await tx.recentWriterVersions(7);
+      const gate = await tx.readSegmentedGateEvidence(7);
+      return {
+        ties: [...latest, ...recent, ...gate].every(row => row.last_seen === recent[0]?.last_seen),
+        latest: untimed(latest),
+        recent: untimed(recent),
+        gate: untimed(oneImporterHost(gate)).map(({ first_seen: _, ...row }) => row),
+      };
+    });
+    const writerA = 'local_cli:parity-writer-a', writerB = 'local_cli:parity-writer-b';
+    // Writer a's requests r1, r2 and r4 were all admitted at one now(), so the latest admission is a tie too: the request
+    // with the lowest journal id (byte order, as the Rust store scans them) names the version.
+    const firstAdmitted = ([[ids.r1, 'a1'], [ids.r2, 'a2'], [ids.r4, 'a1']] as const).toSorted((x, y) => (x[0] < y[0] ? -1 : 1))[0]![1];
+    expect(answers).toEqual({
+      ties: true,
+      latest: [
+        { role: 'admitter', host_id: null, principal: writerB, version: 'b1' },
+        { role: 'admitter', host_id: ADMITTER, principal: writerA, version: firstAdmitted },
+        { role: 'consumer', host_id: null, principal: writerB, version: 'c3' },
+        { role: 'consumer', host_id: CONSUMER, principal: writerA, version: 'c1' },
+      ],
+      recent: [
+        { role: 'admitter', host_id: null, principal: writerB, version: 'b1', requests: 1 },
+        { role: 'admitter', host_id: ADMITTER, principal: writerA, version: 'a1', requests: 2 },
+        { role: 'consumer', host_id: null, principal: writerB, version: 'c3', requests: 1 },
+        { role: 'consumer', host_id: CONSUMER, principal: writerA, version: 'c1', requests: 2 },
+      ],
+      gate: [
+        { role: 'admitter', host_id: null, principal: writerB, version: 'b1', segment_reader: true, requests: 1 },
+        { role: 'admitter', host_id: ADMITTER, principal: writerA, version: 'a1', segment_reader: true, requests: 2 },
+        { role: 'admitter', host_id: ADMITTER, principal: writerA, version: 'a2', segment_reader: true, requests: 1 },
+        { role: 'consumer', host_id: null, principal: writerB, version: 'c3', segment_reader: true, requests: 1 },
+        { role: 'consumer', host_id: CONSUMER, principal: writerA, version: 'c1', segment_reader: true, requests: 2 },
+        { role: 'importer', host_id: 'this-host', principal: 'ingest:parity-import', version: VERSION, segment_reader: true, requests: 1 },
+      ],
+    });
+    // The journal ids are random per arm, so the arms compare that row by the rule it follows, not by the version it names.
+    return { ...answers, latest: answers.latest.map(row => (row.version === firstAdmitted && row.role === 'admitter' && row.host_id === ADMITTER ? { ...row, version: 'lowest-id' } : row)) };
   });
 });

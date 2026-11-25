@@ -73,7 +73,7 @@ test/engine-parity/core-page-member-reads.test.ts	1	1
 test/engine-parity/credential-grant-writes.test.ts	6	0
 test/engine-parity/cycle-locks.test.ts	11	0
 test/engine-parity/decide-proposals.test.ts	8	0
-test/engine-parity/decide-store.test.ts	42	0
+test/engine-parity/decide-store.test.ts	44	0
 test/engine-parity/delegated-grant.test.ts	2	0
 test/engine-parity/delete-page.test.ts	4	1
 test/engine-parity/derivation-inputs.test.ts	5	0
@@ -453,4 +453,4 @@ test/engine-parity/writer-admin.test.ts	5	0
 test/engine-parity/writer-registration.test.ts	2	0
 test/engine-parity/writer-release.test.ts	4	0
 test/engine-parity/writer-status.test.ts	4	0
-test/engine-parity/writer-versions.test.ts	4	0
+test/engine-parity/writer-versions.test.ts	5	0
