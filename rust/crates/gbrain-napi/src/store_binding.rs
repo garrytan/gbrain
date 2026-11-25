@@ -96,13 +96,15 @@ pub struct Brain {
     slot: Slot,
     /// Bumped by every `close`. An `open` still queued when `close` is called sees a newer value
     /// and refuses, so a close never resolves while a queued open can still take the brain's lock.
-    closes: Arc<AtomicU64>,
+    pub(crate) closes: Arc<AtomicU64>,
     /// True while a `bind` on this handle is running, so a second one is refused at once.
     binding: Arc<AtomicBool>,
     /// The deadline every call of this handle runs under (`withDeadline`, multi-user mode only):
     /// installed for the one call on the worker thread (`gbrain_store::call_context`). `None` on
     /// every handle `new Brain` makes.
     deadline: Option<Instant>,
+    /// Multi-user sessions opened on this handle (`families/access_scope.rs`); unused unless one is minted.
+    pub(crate) scopes: Arc<Mutex<crate::families::access_scope::ScopeTable>>,
 }
 
 impl Brain {
@@ -169,6 +171,7 @@ impl Brain {
             closes: Arc::new(AtomicU64::new(0)),
             binding: Arc::new(AtomicBool::new(false)),
             deadline: None,
+            scopes: Arc::new(Mutex::new(Default::default())),
         }
     }
 
@@ -184,6 +187,8 @@ impl Brain {
             closes: self.closes.clone(),
             binding: self.binding.clone(),
             deadline: Some(instant_at(deadline_at_ms)),
+            // The same handle's sessions: the deadline view is the handle, not a new one.
+            scopes: self.scopes.clone(),
         }
     }
 

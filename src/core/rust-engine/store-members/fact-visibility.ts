@@ -15,6 +15,7 @@
 import { callerMember, factVisibilitySql } from '../../access/member-facts.ts';
 import { currentCallerAccess, privateFactSources } from '../../search/private-visibility.ts';
 import { refuseMember } from './common.ts';
+import { selfChecked } from '../access-self-check.ts';
 import { callerReadersPagePolicy, judgeWidenedCaller, renderForStoreCaller, type StorePrivacyPolicy } from './private-provenance.ts';
 
 /** What the store reads to widen a visibility list without 'private' (`VisibilityWidening` in widen.rs). */
@@ -37,6 +38,10 @@ export interface StoreVisibility {
  * caller's member page or grant widens it. A widened list the store cannot model refuses.
  */
 export function storeVisibility(member: string, visibility: readonly string[] | undefined): StoreVisibility {
+  return selfChecked(member, { mode: 'visibility', ...(visibility ? { list: [...visibility] } : {}) }, () => storeVisibilityRendered(member, visibility));
+}
+
+function storeVisibilityRendered(member: string, visibility: readonly string[] | undefined): StoreVisibility {
   if (!visibility || visibility.length === 0) return {};
   const known = (['world', 'private'] as const).filter((v) => visibility.includes(v));
   const listed = known.length ? `facts.visibility IN (${known.map((v) => `'${v}'`).join(', ')})` : 'FALSE';

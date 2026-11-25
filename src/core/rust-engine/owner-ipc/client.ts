@@ -51,6 +51,7 @@ import {
   OWNER_IPC_CALLBACK_KEYS, OWNER_IPC_REMOTE_READS, OWNER_IPC_ROUTES, ownerCallCancelled, ownerCallTimeout, ownerGone, ownerIpcProtocol, ownerIpcRefusal,
   ownerPeerRefused,
 } from './routes.ts';
+import { remoteFrameMark } from './remote-check.ts';
 import { setDeadlineTimer, type DeadlineTimer } from './timer.ts';
 
 /** How long past `deadline_at` the client waits for the owner's own timeout before it ends the call itself. */
@@ -355,7 +356,7 @@ export function connectOwner(legacySocketPath: string, opts: ConnectOwnerOptions
       const line = frameLine({ t: kind, id, [kind === 'fn' ? 'name' : 'member']: member, args: wireArgs,
         ...(deadlineAt !== undefined ? { deadline_at: deadlineAt } : {}),
         ...(readDeadlineAt !== undefined ? { read_deadline_at: readDeadlineAt } : {}),
-        ...(access ? { access } : {}) });
+        ...(access ? { access } : {}), ...remoteFrameMark(callerIsRemote()) });
       if (line === null) return Promise.reject(ownerIpcRefusal(member, `its arguments are larger than ${OWNER_IPC_MAX_FRAME_BYTES} bytes, the most the owner socket carries`));
       return new Promise((resolveCall, rejectCall) => {
         let grace: DeadlineTimer | undefined;
