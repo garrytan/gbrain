@@ -31,6 +31,14 @@ export const MW_CASE_IDS = [
 export type MwCaseId = typeof MW_CASE_IDS[number];
 
 /**
+ * Case ids are shared names with the gbrain-evals suite, so a further scenario of a case is a variant of its row, never a
+ * new id: `<id>.<name>`. A variant is an engine-level scenario with its own members and engine cells (no store cells).
+ * Its parityTest name is the row's `<id> <title>` followed by `: <variant title>`, and its `mwCase` is the dotted id.
+ */
+export const MW_VARIANT_IDS = ['C06.partition'] as const;
+export type MwVariantId = typeof MW_VARIANT_IDS[number];
+
+/**
  * A cell: `runs` (the case must pass, strictly), `n/a` (the arm cannot express the case, with why), or `pending`
  * (the arm will run it once `owner`'s work lands; `why` names the missing interface).
  */
@@ -60,6 +68,22 @@ export interface MwCase {
   /** Cargo test names in multi_writer_conformance.rs: run on a `runs` store cell; listed (not run) when pending. */
   storeTests: { runnable: readonly string[]; pending: readonly string[] };
   cells: Readonly<Record<MwArm, MwCell>>;
+  /** Further engine-level scenarios of this case (see MW_VARIANT_IDS). */
+  variants?: readonly MwVariant[];
+}
+
+export interface MwVariant {
+  id: MwVariantId;
+  /** The case this is a scenario of. */
+  of: MwCaseId;
+  /** Appended to the row's `<id> <title>` after `: ` in the parityTest name. */
+  title: string;
+  /** What must hold; the scenario asserts it inline. */
+  invariant: string;
+  reference: 'compare' | 'standalone';
+  needs?: 'multi_writer';
+  members: readonly string[];
+  cells: Readonly<Record<MwEngineArm, MwCell>>;
 }
 
 /** Shorthands for the rows below. */
@@ -74,9 +98,11 @@ const pending = (owner: string, why: string): MwCell => ({ status: 'pending', ow
  * Reading a row:
  *  - `members` are the BrainEngine members the engine case calls; the design table's operation names (column 2) are
  *    D20 names, and where no typed member of that name exists the case uses the member that does the same work.
- *  - pglite and postgres run what the engines already do; `rust` follows the design table's "today on Rust (single
- *    writer)" column, and `rust-mu` runs exactly what `rust` runs (a case that already holds on the single-writer store
- *    holds with the multi-user switch on) and is pending on the same owner otherwise.
+ *  - pglite and postgres run what the engines already do. `rust` runs a case when its inline invariant holds on the
+ *    single-writer Rust arm today (proven by running it there), so the exam guards against a regression when multi-user
+ *    lands; where it does not hold, or needs a second connection the Rust arm cannot give yet, `rust` is pending with the
+ *    owner. `rust-mu` runs exactly what `rust` runs and is pending on the same owner otherwise, except where a variant
+ *    names its own owner.
  *  - store cells are `runs` where a plain cNN test exists in multi_writer_conformance.rs, else pending with the owner.
  *  - `reference`: `compare` where the case returns outcomes every arm must agree on; `standalone` where the arms
  *    cannot all run it (PGLite is `n/a`, or the load is spread over connections only some arms have), so it asserts
@@ -168,8 +194,8 @@ export const MW_CASES: readonly MwCase[] = [
     },
     cells: {
       pglite: RUNS, postgres: RUNS,
-      rust: pending('L1 optimistic transactions', 'concurrent sweeps need concurrent write transactions; the sequential reclaim runs at store level'),
-      'rust-mu': pending('L1 optimistic transactions', 'concurrent sweeps need concurrent write transactions; the sequential reclaim runs at store level'),
+      rust: RUNS,
+      'rust-mu': RUNS,
       'store-single': RUNS, 'store-optimistic': RUNS,
     },
   },
@@ -190,6 +216,21 @@ export const MW_CASES: readonly MwCase[] = [
       'rust-mu': RUNS,
       'store-single': RUNS, 'store-optimistic': RUNS,
     },
+    variants: [
+      {
+        id: 'C06.partition',
+        of: 'C06',
+        title: 'a host back from a partition with old-epoch work is refused',
+        invariant: 'a holder whose lease lapsed and was taken over cannot write protected data with its old token, renew, or release; it re-acquires under a new epoch',
+        reference: 'compare',
+        members: ['acquireCycleLock', 'refreshCycleLock', 'releaseCycleLock', 'readCycleLocks', 'transaction', 'assertCycleLease', 'putPage', 'readPageSnapshot'],
+        cells: {
+          pglite: RUNS, postgres: RUNS,
+          rust: RUNS,
+          'rust-mu': pending('L5 hosts', 'store lease fence (rustLeases, host-fence) not yet on rust-engine/multiuser'),
+        },
+      },
+    ],
   },
   {
     id: 'C07',
@@ -204,8 +245,8 @@ export const MW_CASES: readonly MwCase[] = [
     },
     cells: {
       pglite: RUNS, postgres: RUNS,
-      rust: pending('L5 hosts', 'a second host claiming an effect and the dead-owner list wait for the host lease and epoch work'),
-      'rust-mu': pending('L5 hosts', 'a second host claiming an effect and the dead-owner list wait for the host lease and epoch work'),
+      rust: RUNS,
+      'rust-mu': RUNS,
       'store-single': pending('L5 hosts', 'the store case is ignored until concurrent effect claims land'), 'store-optimistic': pending('L5 hosts', 'the store case is ignored until concurrent effect claims land'),
     },
   },
@@ -258,8 +299,8 @@ export const MW_CASES: readonly MwCase[] = [
     },
     cells: {
       pglite: RUNS, postgres: RUNS,
-      rust: pending('L5 hosts', 'concurrent appends to one entity wait for per-entity fact order across hosts'),
-      'rust-mu': pending('L5 hosts', 'concurrent appends to one entity wait for per-entity fact order across hosts'),
+      rust: RUNS,
+      'rust-mu': RUNS,
       'store-single': pending('L5 hosts', 'the store case is ignored until concurrent appends to one entity land'), 'store-optimistic': pending('L5 hosts', 'the store case is ignored until concurrent appends to one entity land'),
     },
   },
@@ -331,8 +372,8 @@ export const MW_CASES: readonly MwCase[] = [
     },
     cells: {
       pglite: RUNS, postgres: RUNS,
-      rust: pending('L1 optimistic transactions', 'concurrent publishers need concurrent write transactions'),
-      'rust-mu': pending('L1 optimistic transactions', 'concurrent publishers need concurrent write transactions'),
+      rust: RUNS,
+      'rust-mu': RUNS,
       'store-single': pending('L1 optimistic transactions', 'the store case is ignored until concurrent publishers land'), 'store-optimistic': pending('L1 optimistic transactions', 'the store case is ignored until concurrent publishers land'),
     },
   },
@@ -404,8 +445,8 @@ export const MW_CASES: readonly MwCase[] = [
     },
     cells: {
       pglite: RUNS, postgres: RUNS,
-      rust: pending('L3 server', 'eight client processes through the owner need the server (sixteen clients run through the owner today: rust-owner-clients.test.ts)'),
-      'rust-mu': pending('L3 server', 'eight client processes through the owner need the server (sixteen clients run through the owner today: rust-owner-clients.test.ts)'),
+      rust: pending('L3 server', 'a second Rust engine is an owner-socket client, and through it today admitJob and claimNextJob refuse (capability minion_queue), so 64 writers over eight connections are refused; the server serves them'),
+      'rust-mu': pending('L3 server', 'a second Rust engine is an owner-socket client, and through it today admitJob and claimNextJob refuse (capability minion_queue), so 64 writers over eight connections are refused; the server serves them'),
       'store-single': pending('L3 server', 'the store case is ignored until the server serves many client processes'), 'store-optimistic': pending('L3 server', 'the store case is ignored until the server serves many client processes'),
     },
   },
@@ -422,8 +463,8 @@ export const MW_CASES: readonly MwCase[] = [
     },
     cells: {
       pglite: RUNS, postgres: RUNS,
-      rust: pending('L3 server', 'the writer\'s connection is an owner-socket client, which the server serves; the SIGKILL case runs at store level'),
-      'rust-mu': pending('L3 server', 'the writer\'s connection is an owner-socket client, which the server serves; the SIGKILL case runs at store level'),
+      rust: pending('L3 server', 'the writer\'s second connection is an owner-socket client, and through it today admitJob refuses (capability minion_queue); the SIGKILL case runs at store level'),
+      'rust-mu': pending('L3 server', 'the writer\'s second connection is an owner-socket client, and through it today admitJob refuses (capability minion_queue); the SIGKILL case runs at store level'),
       'store-single': RUNS, 'store-optimistic': RUNS,
     },
   },
@@ -489,6 +530,20 @@ export function mwCase(id: MwCaseId): MwCase {
   const row = MW_CASES.find((c) => c.id === id);
   if (row === undefined) throw new Error(`multi-writer-cases: no row for ${id}`);
   return row;
+}
+
+/** The variant `id` (`C06.partition`). */
+export function mwVariant(id: MwVariantId): MwVariant {
+  for (const row of MW_CASES) {
+    const found = row.variants?.find((v) => v.id === id);
+    if (found) return found;
+  }
+  throw new Error(`multi-writer-cases: no variant ${id}`);
+}
+
+/** The cell of variant `id` on engine arm `arm`. */
+export function mwVariantCell(id: MwVariantId, arm: MwEngineArm): MwCell {
+  return mwVariant(id).cells[arm];
 }
 
 /** The cell for `id` on `arm`. */

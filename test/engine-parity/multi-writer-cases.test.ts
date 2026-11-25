@@ -20,7 +20,7 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import ts from 'typescript';
-import { MW_ARMS, MW_CASES, MW_CASE_IDS, MW_ENGINE_ARMS, MW_STORE_ARMS, mwCase, mwCell } from './multi-writer-cases.ts';
+import { MW_ARMS, MW_CASES, MW_CASE_IDS, MW_ENGINE_ARMS, MW_STORE_ARMS, MW_VARIANT_IDS, mwCase, mwCell, mwVariant, mwVariantCell } from './multi-writer-cases.ts';
 
 const REPO = join(import.meta.dir, '..', '..');
 // test-reads-source-ok[structural]: the matrix must agree with the case file, the design table and the Rust suite it names.
@@ -91,13 +91,36 @@ describe('multi-writer support matrix', () => {
 
   test('the conformance file declares one parityTest per case, in order, named id + title, with the row\'s members and mwCase', () => {
     const found = declarations();
-    expect(found.map(d => d.mwCase)).toEqual([...MW_CASE_IDS]);
+    // A variant's parityTest follows its row's, as `<id>.<variant>`.
+    expect(found.map(d => d.mwCase)).toEqual(MW_CASES.flatMap(c => [c.id, ...(c.variants ?? []).map(v => v.id)]));
     for (const row of MW_CASES) {
       const d = found.find(x => x.mwCase === row.id)!;
       expect(d.name, `${row.id}: the name must start with the id and the matrix title`).toBe(`${row.id} ${row.title}`);
       expect(d.methods, `${row.id}: methods must equal the row's members`).toEqual([...row.members]);
       expect(new Set(d.methods).size, `${row.id}: a member is listed twice`).toBe(d.methods.length);
     }
+  });
+
+  test('a variant is a dotted id of one row, named after the row\'s id and title, with its own members and engine cells', () => {
+    const found = declarations();
+    const variants = MW_CASES.flatMap(c => c.variants ?? []);
+    expect(variants.map(v => v.id)).toEqual([...MW_VARIANT_IDS]);
+    for (const v of variants) {
+      const row = mwCase(v.of);
+      expect(v.id.startsWith(`${v.of}.`), `${v.id} is a suffix of ${v.of}`).toBe(true);
+      const d = found.find(x => x.mwCase === v.id)!;
+      expect(d.name, `${v.id}: the name starts with the row's id and title, then the variant title`).toBe(`${row.id} ${row.title}: ${v.title}`);
+      expect(d.methods, `${v.id}: methods must equal the variant's members`).toEqual([...v.members]);
+      expect(Object.keys(v.cells).sort()).toEqual([...MW_ENGINE_ARMS].sort());
+      for (const arm of MW_ENGINE_ARMS) {
+        const cell = mwVariantCell(v.id, arm);
+        if (cell.status === 'pending') expect(OWNERS.has(cell.owner), `${v.id} ${arm}`).toBe(true);
+      }
+    }
+    // C06.partition: the cycle-lock fence runs on the SQL arms and the single-writer Rust arm; the store lease fence waits for the hosts work.
+    for (const arm of ['pglite', 'postgres', 'rust'] as const) expect(mwVariantCell('C06.partition', arm).status, arm).toBe('runs');
+    expect(mwVariantCell('C06.partition', 'rust-mu')).toMatchObject({ status: 'pending', owner: 'L5 hosts' });
+    expect(mwVariant('C06.partition').reference).toBe('compare');
   });
 
   test('every row names its design operation and invariant, and has a cell for every arm', () => {
@@ -137,6 +160,12 @@ describe('multi-writer support matrix', () => {
       else if (rust.status === 'pending') expect(mu, `${row.id}`).toMatchObject({ status: 'pending', owner: rust.owner });
       else expect(mu.status, row.id).toBe('n/a');
     }
+  });
+
+  test('the single-writer Rust arm runs every case whose invariant holds there; the rest wait for a second connection, a new rule, or the multi-writer work', () => {
+    expect(MW_CASES.filter(c => c.cells.rust.status !== 'runs').map(c => [c.id, c.cells.rust.status])).toEqual([
+      ['C11', 'pending'], ['C13', 'pending'], ['C16', 'pending'], ['C17', 'pending'], ['C18', 'pending'], ['C19', 'pending'], ['C21', 'pending'], ['C22', 'pending'],
+    ]);
   });
 
   test('a compared case has an SQL arm that runs it (or none runs it yet), and the standalone ones are the cases the arms cannot all run alike', () => {

@@ -271,6 +271,103 @@ describe('engine parity: multi-writer conformance', () => {
     return { pausedHolderWrote: refused, newHolderWrote: accepted };
   });
 
+  // C06, variant `C06.partition`: a machine that comes back after a partition with old-epoch work is refused. Holder A
+  // takes a short lease and writes protected data; it is cut off and its lease lapses; B takes over (a new epoch); A comes
+  // back and its protected write with the old token is refused, it cannot renew or release, and no protected data of A's
+  // old epoch is written. A then gets in only by re-acquiring after B, under a new epoch.
+  // Postgres, PGLite and the single-writer Rust arm fence with the cycle lock members. On a Rust brain in multi-user mode
+  // the fence is the store lease (`rustLeases`, host-fence): that branch is pending on the hosts work and is written
+  // against the shape of src/core/rust-engine/store-members/leases.ts through a cast.
+  parityTest('C06 stale holder\'s data write refused by its token: a host back from a partition with old-epoch work is refused', {
+    methods: ['acquireCycleLock', 'refreshCycleLock', 'releaseCycleLock', 'readCycleLocks', 'transaction', 'assertCycleLease', 'putPage', 'readPageSnapshot'],
+    mwCase: 'C06.partition',
+  }, async (engine, backend) => {
+    const SLUG = 'notes/c06-partition-protected';
+    const outcome = { oldEpochWriteRefused: true, protectedDataUnchanged: true, newHolderWrote: true, oldTokenRenewed: false, oldTokenReleased: false, reacquiredUnderNewEpoch: true };
+    if (backend === 'rust' && process.env.GBRAIN_RUST_MULTIUSER === '1') {
+      // The store lease path (interface I-5): not BrainEngine members, reached through the Rust engine's store.
+      type Holder = { host_id: string; incarnation: string; writer_id: string };
+      type Lease = { name: string; epoch: number; token: string };
+      type Leases = {
+        acquireLease(a: { name: string; holder: Holder; ttl_ms: number }): Promise<Lease | null>;
+        renewLease(a: { lease: Lease; ttl_ms: number }): Promise<void>;
+        releaseLease(lease: Lease): Promise<void>;
+        assertLease(lease: Lease): Promise<void>;
+      };
+      type Opens = { openStore(member: string): { brain: Leases } };
+      const reasonOf = (error: unknown) => {
+        const e = error as { code?: string; reason?: string; detail?: { reason?: string }; envelope?: { detail?: { reason?: string } } };
+        return { code: e?.code ?? 'threw', reason: e?.reason ?? e?.detail?.reason ?? e?.envelope?.detail?.reason ?? null };
+      };
+      const leasesOf = (e: BrainEngine) => (e as unknown as Opens).openStore('leases').brain;
+      const holder = (n: number): Holder => ({ host_id: `host-${n}`, incarnation: `inc-${n}`, writer_id: `writer-${n}` });
+      const NAME = 'consumer:c06-partition';
+      const ttlMs = 50;
+      const a = await leasesOf(engine).acquireLease({ name: NAME, holder: holder(1), ttl_ms: ttlMs });
+      expect(a).not.toBeNull();
+      const guarded = (lease: Lease, body: string) => engine.transaction(async (tx) => {
+        await leasesOf(tx).assertLease(lease);
+        await tx.putPage(SLUG, NOTE('C06', body));
+      });
+      await guarded(a!, 'epoch A');
+      await Bun.sleep(ttlMs * 3);
+      // An expired lease cannot be renewed: its holder must acquire again, under a new epoch.
+      const renewed = await attempt(() => leasesOf(engine).renewLease({ lease: a!, ttl_ms: 60_000 }));
+      expect(renewed.ok ? null : reasonOf(renewed)).toEqual({ code: 'lease_lost', reason: 'expired' });
+      const b = await leasesOf(engine).acquireLease({ name: NAME, holder: holder(2), ttl_ms: 60_000 });
+      expect(b, 'the takeover').not.toBeNull();
+      expect(b!.epoch, 'a takeover raises the epoch').toBeGreaterThan(a!.epoch);
+      const stale = await attempt(() => guarded(a!, 'old-epoch work from A'));
+      expect(stale.ok ? null : reasonOf(stale), 'the old epoch\'s write was not refused as epoch_moved').toEqual({ code: 'lease_lost', reason: 'epoch_moved' });
+      expect(await bodyOf(engine, SLUG), 'old-epoch work was written').toBe('epoch A');
+      await guarded(b!, 'epoch B');
+      expect(await bodyOf(engine, SLUG)).toBe('epoch B');
+      await leasesOf(engine).releaseLease(b!);
+      const a2 = await leasesOf(engine).acquireLease({ name: NAME, holder: holder(1), ttl_ms: 60_000 });
+      expect(a2!.epoch, 'the holder that came back re-acquired under a new epoch').toBeGreaterThan(b!.epoch);
+      await guarded(a2!, 'epoch A again');
+      expect((await attempt(() => guarded(a!, 'old token again'))).ok).toBe(false);
+      expect(await bodyOf(engine, SLUG)).toBe('epoch A again');
+      return outcome;
+    }
+    const LOCK = 'gbrain-cycle:c06-partition';
+    const [tokenA, tokenB, tokenA2] = ['00000000-0000-4000-8000-0000000000a1', '00000000-0000-4000-8000-0000000000b1', '00000000-0000-4000-8000-0000000000a2'];
+    const lease = (pid: number, token: string, ttlMinutes = 30) => ({ holderPid: pid, holderHost: `host-${pid}`, acquisitionToken: token, ttlMinutes, stealGraceSeconds: 0 });
+    const holderToken = async () => (await engine.readCycleLocks({ by: 'id', lockId: LOCK }))[0]?.acquisition_token ?? null;
+    const guardedWrite = (token: string, body: string) => engine.transaction(async (tx) => {
+      if (!(await tx.assertCycleLease(LOCK, token))) return false;
+      await tx.putPage(SLUG, NOTE('C06', body));
+      return true;
+    });
+    // A holds a short lease (1.2 s) and writes while it holds it.
+    expect(await engine.acquireCycleLock(LOCK, lease(1, tokenA, 0.02))).not.toBeNull();
+    expect(await guardedWrite(tokenA, 'epoch A'), 'a live holder must be able to write').toBe(true);
+    // A is cut off and stops renewing. B takes the lease as soon as it has lapsed (bounded wait, no fixed sleep).
+    const deadline = Date.now() + 10_000;
+    let took = await engine.acquireCycleLock(LOCK, lease(2, tokenB));
+    while (took === null && Date.now() < deadline) { await Bun.sleep(25); took = await engine.acquireCycleLock(LOCK, lease(2, tokenB)); }
+    expect(took, 'B never took over the lapsed lease').not.toBeNull();
+    expect(await holderToken()).toBe(tokenB);
+    // A comes back with work it began in the old epoch: refused, and nothing of it is written.
+    expect(await guardedWrite(tokenA, 'old-epoch work from A'), 'the old epoch\'s write was accepted').toBe(false);
+    expect(await bodyOf(engine, SLUG), 'old-epoch work was written').toBe('epoch A');
+    // It cannot renew or release a lease that is no longer its own, and B keeps it.
+    expect(await engine.refreshCycleLock(LOCK, { holderPid: 1, acquisitionToken: tokenA, ttlMinutes: 30 }), 'the old holder renewed').toBe(false);
+    expect(await engine.releaseCycleLock(LOCK, { holderPid: 1, acquisitionToken: tokenA }), 'the old holder released B\'s lease').toBe(false);
+    expect(await holderToken()).toBe(tokenB);
+    expect(await guardedWrite(tokenB, 'epoch B'), 'the new holder must be able to write').toBe(true);
+    expect(await guardedWrite(tokenA, 'old-epoch work again')).toBe(false);
+    expect(await bodyOf(engine, SLUG)).toBe('epoch B');
+    // Back in only by acquiring again: refused while B holds, granted after B releases, under a new token.
+    expect(await engine.acquireCycleLock(LOCK, lease(1, tokenA2)), 'the lease is exclusive while B holds it').toBeNull();
+    expect(await engine.releaseCycleLock(LOCK, { holderPid: 2, acquisitionToken: tokenB })).toBe(true);
+    expect(await engine.acquireCycleLock(LOCK, lease(1, tokenA2))).not.toBeNull();
+    expect(await guardedWrite(tokenA2, 'epoch A again')).toBe(true);
+    expect(await guardedWrite(tokenA, 'the first token again'), 'the first token works again').toBe(false);
+    expect(await bodyOf(engine, SLUG)).toBe('epoch A again');
+    return outcome;
+  });
+
   // C07: an effect is claimed once; if its owner dies between the action and recording it, the effect is claimed again,
   // the dead owner's late record changes nothing, and the request ends with one effect row.
   parityTest('C07 effect claimed once, rerun after owner crash', {
