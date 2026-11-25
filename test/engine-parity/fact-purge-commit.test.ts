@@ -105,9 +105,9 @@ describe('engine parity: a whole fact purge', () => {
       // rust-5a serves the purge transaction's statements and segment-pending-stamp serves the segmented rewrite's statements as
       // typed members, so the first stop left on the list is the receipt's belief probe (lane 3); the refusal names it.
       expect(error.message).toContain('which needs listBeliefEventsForPurgeProbe');
-      expect(error.message).toContain('owner trunk (segment-pending-stamp f71c844551, contains 34fa27c472), due 5 PM PST Nov 23');
+      expect(error.message).toContain('owner lane 3 (rust-belief-purge e211982aba), due 5 PM PST Nov 24');
       expect(error.detail).toContain('outcome=none');
-      expect(error.detail).toContain('owner="trunk (segment-pending-stamp f71c844551, contains 34fa27c472)" due="5 PM PST Nov 23"');
+      expect(error.detail).toContain('owner="lane 3 (rust-belief-purge e211982aba)" due="5 PM PST Nov 24"');
       expect(await brainState(engine, ctx, seeded.id)).toEqual(before);
       throw commit.error;
     }

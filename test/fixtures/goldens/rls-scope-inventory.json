@@ -7231,6 +7231,17 @@
         ],
         "flagOnScopes": []
       },
+      "readStoredPageHead#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readStoredSlugSpellings#source": {
         "flagOffLanes": [
           "pool"
@@ -9464,6 +9475,7 @@
         "deriveAccessReaders": "none",
         "detachChildJob": "none",
         "detachFenceFactRows": "none",
+        "detachFenceRowFacts": "none",
         "detachPageOrigin": "none",
         "directEngineSql": "none",
         "directRawSql": "none",
@@ -10047,6 +10059,7 @@
         "listLiveConceptMemberRevisions": "none",
         "listLiveDreamCycleLocks": "none",
         "listLiveDuplicateRows": "none",
+        "listLiveEmbedSegments": "none",
         "listLiveFencePageIds": "none",
         "listLiveGenerationItems": "none",
         "listLiveGenerationRetirements": "none",
@@ -10096,6 +10109,7 @@
         "listOauthClients": "none",
         "listOauthGrantAudit": "none",
         "listOccupiedFenceRowNums": "none",
+        "listOccurrenceChunks": "none",
         "listOlderDriftReceiptSlugs": "none",
         "listOnboardingSources": "none",
         "listOntologyFactCandidates": "none",
@@ -11383,6 +11397,7 @@
         "setRedactedRowText": "none",
         "setRetainedVersionBody": "none",
         "setRowTrustTier": "none",
+        "setSegmentedVersionHash": "none",
         "setSourceChunkerVersion": "none",
         "setSourceContextualMode": "none",
         "setTakeProposalPromotedRow": "none",
