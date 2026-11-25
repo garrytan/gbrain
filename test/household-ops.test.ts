@@ -14,6 +14,7 @@ import { importFromContent } from '../src/core/import-file.ts';
 import { readPageBodyPolicy } from '../src/core/page-body/limits.ts';
 import { importStreamedMarkdownFile } from '../src/core/page-body/streamed-import.ts';
 import { handleToolCall } from '../src/mcp/server.ts';
+import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { installTripwire, type Tripwire } from './helpers/ai-tripwire.ts';
 import { AS_OF, EXPECTED_COUNTS, EXPECTED_DUE, TIMEZONE, seedSyntheticHousehold } from './fixtures/synthetic-household/household.ts';
 
@@ -276,6 +277,77 @@ describe('household_due at scale', () => {
     }
   }, 120_000);
 
+  test('household replace re-places every record, archived ones included, past the scan cap (follow-up outside#9)', async () => {
+    try {
+      await bulk('kept', '{"kind":"supply","status":"archived","cadence":"30d","household_schema":1,"household_audience":"shared"}');
+      const out = await call('household_replace', {});
+      expect(out.checked).toBeGreaterThan(HOUSEHOLD_SCAN_CAP);
+    } finally {
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+      await engine.executeRaw("DELETE FROM pages WHERE slug LIKE 'household/bulk/%'");
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    }
+  }, 240_000);
+
+  test('household replace sees every record when an earlier one is deleted during the walk (follow-up final review)', async () => {
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+    try {
+      await engine.executeRaw("INSERT INTO pages (source_id, slug, type, title, compiled_truth, timeline, frontmatter) SELECT 'default', 'household/walk/w-' || lpad(g::text, 4, '0'), 'household', 'walk ' || g, '', '', '{\"kind\":\"bill\",\"status\":\"archived\",\"due\":\"2026-12-01\",\"household_schema\":1,\"household_audience\":\"shared\"}'::jsonb FROM generate_series(1, 501) g");
+    } finally {
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    }
+    const original = engine.listPages.bind(engine);
+    let calls = 0;
+    engine.listPages = (async (filters?: any) => {
+      if (filters?.type === 'household' && filters?.limit === 500 && calls++ === 1) {
+        await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+        await engine.executeRaw("UPDATE pages SET deleted_at = now() WHERE slug = 'household/walk/w-0001'");
+        await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+      }
+      return original(filters);
+    }) as typeof engine.listPages;
+    try {
+      const out = await call('household_replace', {});
+      expect(out.replaced.filter((s: string) => s.startsWith('household/walk/')).length).toBe(501);
+    } finally {
+      engine.listPages = original;
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+      await engine.executeRaw("DELETE FROM pages WHERE slug LIKE 'household/walk/%'");
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    }
+  }, 240_000);
+
+  test('a reused request_id is refused before household_add changes any subject (follow-up final review)', async () => {
+    await call('household_add', { kind: 'supply', title: 'Napkins', cadence: '30d', request_id: 'shared-request-2' });
+    const err = await call('household_add', { kind: 'supply', title: 'Terry glue', cadence: '30d', about: ['people/terry-example'], about_role: 'adult', request_id: 'shared-request-2' }).catch((e: any) => e);
+    expect(err.code).toBe('idempotency_conflict');
+    expect(await engine.getPage('people/terry-example')).toBeNull();
+  });
+
+  test('the user\'s own stdio agent can make a subject a child on a brain that serves one person (merged-head review)', async () => {
+    const out = await dispatchToolCall(engine, 'household_add', { kind: 'supply', title: 'Probe crayons', cadence: '30d', about: ['people/probe-example'], child: true }, { remote: true, transport: 'stdio', sourceId: 'default' });
+    expect(out.isError).toBeFalsy();
+    expect((await engine.getPage('people/probe-example'))!.frontmatter.household_role).toBe('child');
+    expect((await engine.getPage('household/kids/supply/probe-crayons'))!.frontmatter.readable_by).toBeUndefined();
+  });
+
+  test('a request_id reused with another role is refused, and an exact retry leaves the subject as written (merged-head review #4)', async () => {
+    const params = { kind: 'supply', title: 'Dog treats', cadence: '30d', about: ['people/fido-example'], about_role: 'pet', request_id: 'role-request-1' };
+    const first = await call('household_add', params);
+    const again = await call('household_add', params);
+    expect(again.slug).toBe(first.slug);
+    const err = await call('household_add', { ...params, about_role: 'other' }).catch((e: any) => e);
+    expect(err.code).toBe('idempotency_conflict');
+    expect((await engine.getPage('people/fido-example'))!.frontmatter.household_role).toBe('pet');
+  });
+
+  test('a request_id reused for the same record with different content changes no subject (final-head review #2)', async () => {
+    await call('household_add', { kind: 'supply', title: 'Wood glue', cadence: '30d', request_id: 'same-slug-request' });
+    const err = await call('household_add', { kind: 'supply', title: 'Wood glue', cadence: '30d', about: ['people/zed-example'], about_role: 'adult', request_id: 'same-slug-request' }).catch((e: any) => e);
+    expect(err.code).toBe('idempotency_conflict');
+    expect(await engine.getPage('people/zed-example')).toBeNull();
+  });
+
   test('household_due reads frontmatter only, never page bodies (outside#8)', async () => {
     const seen: any[] = [];
     const original = engine.listPages.bind(engine);
@@ -288,5 +360,20 @@ describe('household_due at scale', () => {
     const household = seen.filter(f => f?.type === 'household');
     expect(household.length).toBeGreaterThan(0);
     for (const f of household) expect(f.omitBodies).toBe(true);
+  });
+});
+
+describe('household_add on a brain with no writer registered yet', () => {
+  let fresh: PGLiteEngine;
+  beforeAll(async () => {
+    fresh = new PGLiteEngine();
+    await fresh.connect({});
+    await fresh.initSchema();
+  }, 60_000);
+  afterAll(async () => { await fresh.disconnect(); });
+
+  test('a first household_add with a request_id registers the writer and writes the record (merged-head review #6)', async () => {
+    const out = await handleToolCall(fresh, 'household_add', { kind: 'supply', title: 'Fresh soap', cadence: '30d', request_id: 'fresh-request-1' }) as any;
+    expect(out.slug).toBe('household/supplies/fresh-soap');
   });
 });

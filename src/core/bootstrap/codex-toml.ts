@@ -477,3 +477,51 @@ export function removeCodexTomlTable(configPath: string, path: string[], opts: {
   if (!opts.dryRun) atomicWriteTextFile(configPath, crlf ? next.replace(/\n/g, '\r\n') : next, { freshMode: 0o600 });
   return 'removed';
 }
+
+/**
+ * Prepend the top-level `key = <integer>` line (after an optional comment line) at the very top of the file, where it
+ * can never land inside a table or a multi-line string. Refuses when the key is already set, or when the result would
+ * not parse to the old document plus exactly this key.
+ */
+export function prependCodexTomlTopLevelInt(configPath: string, key: string, value: number, comment?: string): void {
+  const raw = existsSync(configPath) ? readFileSync(configPath, 'utf8') : '';
+  const crlf = raw.includes('\r\n');
+  const bom = raw.startsWith('\uFEFF') ? '\uFEFF' : '';
+  const text = raw.slice(bom.length).replace(/\r\n/g, '\n');
+  const before = parseToml(text);
+  if (key in before) throw new Error(`${configPath} already sets ${key}; setup never sets a key twice.`);
+  const head = [...(comment ? [`# ${comment}`] : []), `${tomlKey(key)} = ${Math.trunc(value)}`].join('\n');
+  const next = text.trim() ? `${head}\n\n${text}` : `${head}\n`;
+  if (canonicalJson(parseToml(next)) !== canonicalJson({ ...before, [key]: Math.trunc(value) })) throw new Error(`setting ${key} in ${configPath} would change other settings; the file is left as it was.`);
+  atomicWriteTextFile(configPath, bom + (crlf ? next.replace(/\n/g, '\r\n') : next), { freshMode: 0o600 });
+}
+
+/**
+ * Remove the one top-level `key = <value>` line above the first table header (plus a directly preceding
+ * `# gbrain setup` comment and one following blank line). `unlocatable` when there is no single such line or the edit
+ * would change anything but that key; the file is then left as it was.
+ */
+export function removeCodexTomlTopLevelInt(configPath: string, key: string, value: number, opts: { dryRun?: boolean } = {}): 'removed' | 'absent' | 'unlocatable' {
+  if (!existsSync(configPath)) return 'absent';
+  const raw = readFileSync(configPath, 'utf8');
+  const crlf = raw.includes('\r\n');
+  const bom = raw.startsWith('\uFEFF') ? '\uFEFF' : '';
+  const lines = raw.slice(bom.length).replace(/\r\n/g, '\n').split('\n');
+  const before = parseToml(lines.join('\n'));
+  if (!(key in before)) return 'absent';
+  const firstHeader = lines.findIndex((l) => /^\s*\[/.test(l));
+  const isLine = (l: string) => { const eq = l.indexOf('='); return eq > 0 && l.slice(0, eq).trim() === key && l.slice(eq + 1).trim() === String(Math.trunc(value)); };
+  const hits = lines.map((l, i) => (isLine(l) && (firstHeader < 0 || i < firstHeader) ? i : -1)).filter((i) => i >= 0);
+  if (hits.length !== 1) return 'unlocatable';
+  let from = hits[0]!, to = hits[0]! + 1;
+  if (from > 0 && lines[from - 1]!.startsWith('# gbrain setup')) from--;
+  if (to < lines.length - 1 && lines[to]!.trim() === '') to++;
+  const kept = [...lines.slice(0, from), ...lines.slice(to)];
+  while (kept.length > 0 && kept[kept.length - 1]!.trim() === '') kept.pop();
+  const next = kept.length > 0 ? `${kept.join('\n')}\n` : '';
+  let after: Record<string, unknown>;
+  try { after = parseToml(next); } catch { return 'unlocatable'; }
+  if (canonicalJson(after) !== canonicalJson(withoutPath(before, [key]))) return 'unlocatable';
+  if (!opts.dryRun) atomicWriteTextFile(configPath, bom + (crlf ? next.replace(/\n/g, '\r\n') : next), { freshMode: 0o600 });
+  return 'removed';
+}

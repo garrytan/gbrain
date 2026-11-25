@@ -47,6 +47,7 @@ import { buildRelationshipState, relationSemantics, type AssertionTense, type St
 export type LinkExtractionPack = Pick<SchemaPackManifest, 'link_types' | 'frontmatter_links'> & Partial<Pick<SchemaPackManifest, 'page_types'>>;
 
 export { stripCodeBlocks } from './markdown-code.ts';
+import { maskRanges } from './mask-ranges.ts';
 export { parseInlineCitationTimelineEntries, type InlineCitationTimelineCandidate } from './timeline-citations.ts';
 
 /**
@@ -559,20 +560,6 @@ export function entityRefPasses(content: string): EntityRef[][] {
  */
 function stripEscapedPipeTail(slug: string): string {
   return slug.replace(/\\+$/, '');
-}
-
-/**
- * Replace the byte ranges with spaces, preserving offsets. Used by
- * extractEntityRefs to prevent the unqualified wikilink regex from
- * matching inside a qualified wikilink span.
- */
-function maskRanges(content: string, ranges: Array<[number, number]>): string {
-  if (ranges.length === 0) return content;
-  const chars = content.split('');
-  for (const [s, e] of ranges) {
-    for (let i = s; i < e && i < chars.length; i++) chars[i] = ' ';
-  }
-  return chars.join('');
 }
 
 /**

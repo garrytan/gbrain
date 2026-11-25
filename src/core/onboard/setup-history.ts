@@ -457,7 +457,7 @@ async function importStage(engine: BrainEngine, opts: RunHistoryOpts, s: {
     base.receipts = [...new Set([...ledger.values()].filter(e => e.pending && accepted.has(e.harness + SEP + e.conversation_key_hash + SEP + e.day)).flatMap(e => e.pending!.requests))];
   }
   base.links = await linksEffect(engine, run, opts, base);
-  base.status = run.accepted ? 'accepted' : base.budget.stopped_at_deadline || base.deferred_sessions > 0 || run.errors.length ? 'partial' : 'imported';
+  base.status = run.accepted ? 'accepted' : base.budget.stopped_at_deadline || base.deferred_sessions > 0 || run.errors.length ? 'partial' : imported.size ? 'imported' : 'nothing_found';
   base.exit = run.accepted ? 10 : 0;
   if (base.status === 'partial') {
     base.resume = { argv: ['gbrain', 'setup', opts.harness, '--history', stage === 'latest' ? 'latest' : String(window.days), ...(opts.dir ? ['--history-dir', opts.dir] : []), ...(opts.noExtract ? ['--no-extract'] : [])], consent: [], actor: 'agent', requires_exclusive: false,

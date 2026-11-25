@@ -88,6 +88,7 @@ import {
 } from '../core/setup/claude-code.ts';
 import {
   applyCodexSetup,
+  CODEX_STARTUP_GRACE_KEY,
   codexSetupPaths,
   desiredCodexMcpEntry,
   inspectCodexSetup,
@@ -669,7 +670,21 @@ function historyReceipt(launcher: string, harness: SetupHarnessId, flags: SetupF
 
 const historyStep = (harness: SetupHarnessId, flags: SetupFlags, launcher: string, brainCreate: boolean, liveServe: boolean, extra: string[]): Promise<HistoryOutcome | null> =>
   historyFor({ harness, launcher, flags: { ...flags.historyImport, notes: flags.notes, dryRun: flags.dryRun }, brainCreate, json: flags.json, liveServe,
-    setupArgv: ['gbrain', 'setup', harness, ...extra, ...(flags.name === 'gbrain' ? [] : ['--name', flags.name])] });
+    setupArgv: ['gbrain', 'setup', harness, ...extra, ...(flags.name === 'gbrain' ? [] : ['--name', flags.name])], choices: setupChoices(flags) });
+
+/** The wiring choices this run was given, carried into the commands it prints, so accepting the offer keeps them. */
+const setupChoices = (f: SetupFlags): string[] => [
+  ...(f.noHooks ? ['--no-hooks'] : []),
+  ...(f.capture === undefined ? [] : [f.capture ? '--capture' : '--no-capture']),
+  ...(f.providers === undefined ? [] : [f.providers ? '--providers' : '--no-providers']),
+  ...(f.instructions === undefined ? [] : [f.instructions ? '--instructions' : '--no-instructions']),
+  ...(f.surface ? ['--surface', f.surface, ...(f.advertise ? ['--advertise', f.advertise] : [])] : []),
+  ...(f.skillResolver === 'on' ? ['--skill-loading', 'resolve'] : f.skillLoading ? ['--skill-loading', f.skillLoading] : []),
+  ...(f.workspace ? ['--workspace', f.workspace] : []),
+  ...(f.gbrainBin ? ['--gbrain-bin', f.gbrainBin] : []),
+  ...(f.source ? ['--source', f.source] : []),
+  ...(f.noStdioMember ? ['--no-stdio-member'] : []),
+];
 
 async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainConfig | null, brainHome: string, out: Out): Promise<number> {
   const paths = codexSetupPaths(flags.name);
@@ -764,11 +779,11 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     const brainCreate = !cfg;
     const initArgv = [launcher, 'init', '--pglite', ...(consent.providers.value === 'accepted' ? [] : ['--no-embedding']), '--json'];
     if (flags.dryRun) {
-      const unchanged = found.prior?.status === 'installed' && found.hooksCurrent && found.trustCurrent && (found.mcp.state === 'current' || !!pluginOwner) && !brainCreate;
+      const unchanged = found.prior?.status === 'installed' && found.hooksCurrent && found.trustCurrent && found.grace.state !== 'absent' && (found.mcp.state === 'current' || !!pluginOwner) && !brainCreate;
       const steps: CodexSetupStep[] = [
         { step: 'receipt', action: unchanged ? 'keep' : 'write', detail: found.receiptPath },
         ...(brainCreate ? [{ step: 'brain' as const, action: 'write' as const, detail: `would run: ${initArgv.join(' ')}` }] : []),
-        { step: 'mcp', action: pluginOwner ? 'skip' : found.mcp.state === 'current' ? 'keep' : 'write', detail: `[mcp_servers.${flags.name}] in ${found.configPath}${plan.stdioMember ? ` (serve --stdio-member ${plan.stdioMember})` : ''}` },
+        { step: 'mcp', action: pluginOwner ? 'skip' : found.mcp.state === 'current' && found.grace.state !== 'absent' ? 'keep' : 'write', detail: `[mcp_servers.${flags.name}] in ${found.configPath}${plan.stdioMember ? ` (serve --stdio-member ${plan.stdioMember})` : ''}${found.grace.state === 'absent' ? `, and ${CODEX_STARTUP_GRACE_KEY} = 0 (Codex waits for gbrain to start)` : ''}` },
         { step: 'hooks', action: found.hooksCurrent ? 'keep' : 'write', detail: plan.events.length ? `${plan.events.join(', ')} in ${found.hooksPath}` : `no hooks (${found.hooksPath})` },
         { step: 'trust', action: found.trustCurrent ? 'keep' : 'write', detail: `trust entries for setup's groups in ${found.configPath}` },
         ...Object.keys(found.edited).map((event) => ({ step: 'hooks' as const, action: 'preserve' as const, detail: `${event} was edited after setup wrote it; kept` })),
@@ -1353,3 +1368,5 @@ async function finish(out: Out, doc: {
 
 /** An index the user asked for by flag that could not be written fails the run (the rest of the install still finished). */
 const skillsFailed = (o: SkillsBlockOutcome | null): boolean => skillsOutcomeFailed(o);
+
+export const __testing = { parseFlags, setupChoices };
