@@ -34,6 +34,7 @@ import type { WriteRequest } from './model.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { belowSafeChunkFence, chunkGenerationFilter, chunkManifestReads, SAFE_FENCE_CHUNKER_VERSION } from '../search/safe-chunks.ts';
 import { fileContentHash } from './large-file.ts';
+import { kernelPageSql, syncRows } from '../engine-sql/managed-sync-store.ts';
 import { embeddingWriteTarget } from '../page-state/projections.ts';
 import { quoteIdentifier } from '../search/embedding-column.ts';
 
@@ -60,14 +61,7 @@ export function screeningRequest(fields: Pick<WriteRequest, 'source_id' | 'sourc
 /** What the kernel reads about a live page: its projection state, revision and recorded origin. */
 export interface KernelPage { id: number | string; slug: string; chunker_version: number | null; text_projection_revision: string | null; knowledge_revision: string;
   mode_pending: boolean; unembedded: boolean; source_path: string | null }
-/**
- * The kernel's page read; callers append the `WHERE` (one page by id, or #6712 PR 1 a prescreened run by slug).
- * `manifest` is chunkManifestReads: a write role without the segment grants that sees no segmented chunk reads it too.
- */
-export const kernelPageSql = (manifest: boolean) => `SELECT p.id,p.slug,p.chunker_version,p.text_projection_revision::text,p.knowledge_revision::text,p.source_path,
-      (p.contextual_retrieval_mode IS NULL AND EXISTS (SELECT 1 FROM content_chunks c WHERE c.page_id=p.id AND c.embedding IS NOT NULL AND ${chunkGenerationFilter('p', 'c', manifest)})) AS mode_pending,
-      EXISTS (SELECT 1 FROM content_chunks c WHERE c.page_id=p.id AND c.embedding IS NULL AND ${chunkGenerationFilter('p', 'c', manifest)}) AS unembedded
-    FROM pages p`;
+export { kernelPageSql };
 
 /**
  * The projection and metadata work a no-op would leave undone on `page` (null: none): a safe-chunk re-seal, a text
@@ -96,7 +90,7 @@ export async function inspectUnchanged(engine: Pick<BrainEngine, 'kind' | 'execu
   if (snapshot.page.deleted_at != null) return result('page_deleted');
   if (!unchanged) return result('content_changed');
   if (observedRevision !== snapshot.revision) return result('revision_moved');
-  const [page] = await engine.executeRaw<KernelPage>(`${kernelPageSql(await chunkManifestReads(engine))} WHERE p.id=$1 AND p.deleted_at IS NULL`, [snapshot.page.id]);
+  const [page] = await syncRows<KernelPage>(engine, await chunkManifestReads(engine) ? 'kernel_page_by_id' : 'kernel_page_by_id_unmanifested', [snapshot.page.id]);
   if (!page) return result('page_missing');
   // The page's current revision, read after the preparer ran: a write that landed since the snapshot was read is admitted.
   if (page.knowledge_revision != null && page.knowledge_revision !== snapshot.revision) return result('revision_moved');

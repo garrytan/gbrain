@@ -15,6 +15,31 @@
  * view of one (a test double, a bounded read view) runs the same text.
  */
 import type { BrainEngine } from '../engine.ts';
+import { chunkGenerationFilter } from '../search/safe-chunks.ts';
+import { supersessionSql } from '../persistence/supersession-sql.ts';
+
+/** The page-match predicate of `UNFINISHED_PAGE_REQUEST_SQL` (sync-waivers.ts re-exports the statement). */
+const PAGE_MATCH = `r.source_id=$3 AND (r.slug=$4 OR r.page_id=$5::bigint OR r.intent->'renameFrom'->>'slug'=$4 OR r.intent->'renameFrom'->>'pageId'=$6
+  OR ($7::text IS NOT NULL AND (r.intent->>'path'=$7 OR r.intent->>'sourcePath'=$8 OR r.intent->'renameFrom'->>'sourcePath'=$8)))`;
+/**
+ * CEO-A12/A34: an unfinished request for the page, by slug, page id or a rename from it; #6278: also by the entry's file path or
+ * origin, or a rename from that origin (`$7`, `$8`; null skips the path match). Each branch matches one partial request index:
+ * worktree pending, worktree recovery, and database-only pending by source incarnation.
+ */
+export const UNFINISHED_PAGE_REQUEST_SQL = `SELECT 1 FROM (
+  (SELECT r.id FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND r.state IN ('queued','running','recovering') AND ${PAGE_MATCH} LIMIT 1)
+  UNION ALL (SELECT r.id FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND r.recovery IS NOT NULL AND ${PAGE_MATCH} LIMIT 1)
+  UNION ALL (SELECT r.id FROM persistence_requests r WHERE r.source_incarnation=$2::uuid AND r.worktree_id IS NULL
+    AND r.state IN ('queued','running','recovering') AND ${PAGE_MATCH} LIMIT 1)) unfinished LIMIT 1`;
+
+/**
+ * The kernel's page read; callers append the `WHERE` (one page by id, or #6712 PR 1 a prescreened run by slug).
+ * `manifest` is chunkManifestReads: a write role without the segment grants that sees no segmented chunk reads it too.
+ */
+export const kernelPageSql = (manifest: boolean) => `SELECT p.id,p.slug,p.chunker_version,p.text_projection_revision::text,p.knowledge_revision::text,p.source_path,
+      (p.contextual_retrieval_mode IS NULL AND EXISTS (SELECT 1 FROM content_chunks c WHERE c.page_id=p.id AND c.embedding IS NOT NULL AND ${chunkGenerationFilter('p', 'c', manifest)})) AS mode_pending,
+      EXISTS (SELECT 1 FROM content_chunks c WHERE c.page_id=p.id AND c.embedding IS NULL AND ${chunkGenerationFilter('p', 'c', manifest)}) AS unembedded
+    FROM pages p`;
 
 /** A statement: `read` leaves the rows alone, `write` may change them (its `RETURNING` rows come back as rows). */
 interface SyncStatement { readonly kind: 'read' | 'write'; readonly sql: string }
@@ -295,6 +320,50 @@ export const SYNC_STATEMENTS = {
   // The refresh fence a managed sync checks before discovery (worktree-refresh.ts assertManagedSyncAllowed).
   blocking_refresh: { kind: 'read', sql: `SELECT id,state FROM persistence_worktree_refreshes
     WHERE worktree_id=$1::uuid AND state IN ('draining','fenced','merged','recovery_required')` },
+  // The managed sync's run, waiver, cursor-key, window, lane, drain and fold statements (sync-run.ts, sync-waivers.ts,
+  // sync-cursor-key.ts, sync-window.ts, sync-lanes.ts, sync-drain.ts, sync-pass-fold.ts, noop-kernel.ts). A Rust brain reaches
+  // them only through a company or dry-run cursor, a legacy cursor row a pass retires, a failed entry's hold, a waiver, a
+  // stall probe or a folded stamp; the bulk-group and lane sites (Postgres-only) stay on `executeRaw` in sync-run.ts.
+  cursor_manifest_insert: { kind: 'write', sql: `INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb) ON CONFLICT DO NOTHING` },
+  cursor_insert: { kind: 'write', sql: `INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb) ON CONFLICT DO NOTHING RETURNING fingerprint` },
+  cursor_swap: { kind: 'write', sql: `UPDATE op_checkpoints SET completed_keys=$4::text::jsonb,updated_at=now()
+      WHERE op=$1 AND fingerprint=$2 AND completed_keys=$3::text::jsonb RETURNING fingerprint` },
+  checkpoint_touch: { kind: 'write', sql: 'UPDATE op_checkpoints SET updated_at=now() WHERE op=$1 AND fingerprint=$2' },
+  cursor_head_locked: { kind: 'read', sql: `SELECT completed_keys->0->>'runId' AS run_id,
+    completed_keys->0->'index' AS index,completed_keys->0->'pending'->>'requestId' AS request_id FROM op_checkpoints WHERE op='managed-sync' AND fingerprint=$1 FOR UPDATE` },
+  pending_intent_held: { kind: 'read', sql: `SELECT completed_keys->0->'pending'->>'requestId' AS request_id,
+        completed_keys->0->'pending'->'intent' = $3::text::jsonb AS same FROM op_checkpoints WHERE op=$1 AND fingerprint=$2 FOR SHARE` },
+  unfinished_page_request: { kind: 'read', sql: UNFINISHED_PAGE_REQUEST_SQL },
+  stale_page_requests: { kind: 'read', sql: `SELECT request_id::text AS request_id FROM persistence_requests WHERE worktree_id=$1::uuid AND intent->>'runId'=$2
+        AND intent->>'kind' IN ('managed_sync_import','managed_sync_delete') AND intent->>'index'=$3 AND state IN ('failed','cancelled','conflict')` },
+  waiver_settings: { kind: 'read', sql: "SELECT set_config('lock_timeout','2s',true),set_config('statement_timeout','10s',true)" },
+  waiver_pages: { kind: 'read', sql: 'SELECT id,slug,deleted_at IS NOT NULL AS deleted,knowledge_revision FROM pages WHERE source_id=$1 AND slug=ANY($2::text[])' },
+  kernel_pages_by_slug: { kind: 'read', sql: `${kernelPageSql(true)} WHERE p.source_id=$1 AND p.slug=ANY($2::text[]) AND p.deleted_at IS NULL` },
+  kernel_pages_by_slug_unmanifested: { kind: 'read', sql: `${kernelPageSql(false)} WHERE p.source_id=$1 AND p.slug=ANY($2::text[]) AND p.deleted_at IS NULL` },
+  kernel_page_by_id: { kind: 'read', sql: `${kernelPageSql(true)} WHERE p.id=$1 AND p.deleted_at IS NULL` },
+  kernel_page_by_id_unmanifested: { kind: 'read', sql: `${kernelPageSql(false)} WHERE p.id=$1 AND p.deleted_at IS NULL` },
+  finished_cursor_delete: { kind: 'write', sql: `DELETE FROM op_checkpoints WHERE op='managed-sync' AND fingerprint=$1
+    AND COALESCE(completed_keys->0->>'done','false')='true' RETURNING completed_keys->0->>'runId' AS run_id` },
+  manifest_delete_unshared: { kind: 'write', sql: `DELETE FROM op_checkpoints WHERE op='managed-sync-manifest' AND fingerprint=$1
+    AND NOT EXISTS (SELECT 1 FROM op_checkpoints c WHERE c.op='managed-sync' AND c.completed_keys->0->>'runId'=$1)` },
+  prefix_delete: { kind: 'write', sql: 'DELETE FROM op_checkpoints WHERE op=$1 AND left(fingerprint, length($2))=$2' },
+  cursor_open_requests: { kind: 'read', sql: `SELECT * FROM persistence_requests WHERE source_id=$1 AND intent->>'cursorKey'=$2
+    AND (state IN ('queued','running','recovering') OR recovery IS NOT NULL) ORDER BY sequence` },
+  request_for_update: { kind: 'read', sql: 'SELECT * FROM persistence_requests WHERE id=$1::uuid FOR UPDATE' },
+  group_predecessor: { kind: 'read', sql: `SELECT state, request_id::text AS request_id FROM persistence_requests WHERE principal_kind=$1 AND principal_id=$2
+      AND sequence<$3 AND intent->>'group'=$4 ORDER BY sequence DESC LIMIT 1` },
+  request_state_by_principal: { kind: 'read', sql: 'SELECT state FROM persistence_requests WHERE principal_kind=$1 AND principal_id=$2 AND request_id=$3::uuid' },
+  stall_probe: { kind: 'read', sql: `SELECT r.state, r.blocked_reason, r.recovery IS NOT NULL AS recovering, r.worktree_id::text,
+         h.id::text AS head_id, h.state AS head_state, h.claim_phase AS head_claim_phase, h.execution_token::text AS head_token,
+         (h.claim_expires_at IS NOT NULL AND h.claim_expires_at < now()) AS head_lapsed, h.intent->>'kind' AS head_kind, w.owner_host_id::text
+       FROM persistence_requests r
+       LEFT JOIN persistence_worktrees w ON w.id = r.worktree_id
+       LEFT JOIN LATERAL (SELECT e.id, e.state, e.claim_phase, e.execution_token, e.claim_expires_at, e.intent FROM persistence_requests e WHERE e.worktree_id = r.worktree_id
+         AND (e.state IN ('queued','running','recovering') OR e.recovery IS NOT NULL) ORDER BY e.sequence LIMIT 1) h ON r.worktree_id IS NOT NULL
+       WHERE r.id = $1::uuid` },
+  refused_checkpoint: { kind: 'read', sql: `SELECT 1 FROM persistence_requests r WHERE r.source_id=$1 AND r.slug='__managed_sync_checkpoint__' AND r.intent IS NOT NULL AND NOT r.compacted
+      AND r.operation='submit_job' AND r.intent->>'kind'='managed_sync_checkpoint' AND r.state IN ('failed','conflict','cancelled')
+      AND NOT EXISTS (SELECT 1 FROM persistence_requests c WHERE ${supersessionSql('r', 'c')}) LIMIT 1` },
 } as const satisfies Record<string, SyncStatement>;
 
 export type SyncStatementName = keyof typeof SYNC_STATEMENTS;
