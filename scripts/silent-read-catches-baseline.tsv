@@ -1158,13 +1158,9 @@ src/core/persistence/sync-drain.ts#readPreparationBudgets>read	promise_catch_emp
 src/core/persistence/sync-entry-fault.ts#committedContentOrMissing	catch_empty	1
 src/core/persistence/sync-entry-fault.ts#danglingLink	catch_empty	1
 src/core/persistence/sync-freshness.ts#readFreshnessTarget	promise_catch_empty	1
-src/core/persistence/sync-ghosts.ts#countSyncGhosts	capability_refusal_swallowed	1
-src/core/persistence/sync-ghosts.ts#countSyncGhosts	promise_catch_empty	1
-src/core/persistence/sync-ghosts.ts#startScan<anon@2>	capability_refusal_swallowed	1
 src/core/persistence/sync-git-stream.ts#loadCleanProbes	catch_empty	1
 src/core/persistence/sync-git-stream.ts#probeDirtiness	catch_empty	1
 src/core/persistence/sync-git-stream.ts#racyFloor	catch_empty	1
-src/core/persistence/sync-group.ts#admitGroup	capability_refusal_swallowed	1	sync 13b: the trunk's capability-refusal rule also follows a promise a transaction callback returns; this managed-persistence path never runs on a Rust brain, which refuses managed mode (managed_persistence) before it
 src/core/persistence/sync-group.ts#resolveGrouping	promise_catch_empty	1
 src/core/persistence/sync-group.ts#whole	promise_catch_empty	1
 src/core/persistence/sync-held-deletions.ts#proveHeldDeletions	promise_catch_empty	2
@@ -1206,8 +1202,6 @@ src/core/persistence/sync-status.ts#readSyncStatus	promise_catch_empty	1
 src/core/persistence/sync-status.ts#unblockSync	promise_catch_empty	1
 src/core/persistence/sync-status.ts#workingHashOf	catch_empty	1
 src/core/persistence/sync-stop-class.ts#fileUnchangedSinceFreeze	catch_empty	1
-src/core/persistence/sync-tail.ts#runSyncTail	capability_refusal_swallowed	2
-src/core/persistence/sync-tail.ts#runSyncTail	promise_catch_empty	1
 src/core/persistence/sync-tree-reuse.ts#readTreeLevelReusing	promise_catch_empty	1
 src/core/persistence/sync-waivers.ts#unchangedSyncImport	catch_empty	1
 src/core/persistence/sync-waivers.ts#waiveNoopRun	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
