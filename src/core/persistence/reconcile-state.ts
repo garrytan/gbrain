@@ -21,7 +21,7 @@ import { hostIdFor } from './identity.ts';
 import { isDatabaseOnlyPage, recordsNoFileOrigin, slugDerivedOrigin } from './unbound-pages.ts';
 import { isUnboundSourcePage } from './unbound-source.ts';
 import { getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
-import { digest, gitBlobOid, requireUuid, sha256, stableJson } from './digest.ts';
+import { digest, requireUuid, sha256, stableJson } from './digest.ts';
 import { SYNC_ORIGIN_DELETED_OP } from './sync-pass-row.ts';
 import { reconcileCanonical, strictReconcileKeys, validateReconcileJson, type ReconcileConflict, type ReconcileDecision } from './reconcile-merge.ts';
 import type { ParsedPage } from '../import-file.ts';
@@ -133,7 +133,7 @@ export interface DeletedDriftTarget {
   marker_digest: string | null;
 }
 /** Why a held path no longer has a deleted side to resolve; a fresh sync re-classifies it. */
-export type DeletedDriftChange = 'file_gone' | 'live_page' | 'no_deletion' | 'deleted_same';
+export type DeletedDriftChange = 'file_gone' | 'live_page' | 'no_deletion';
 export async function readDeletedDriftTarget(engine: BrainEngine, sourceId: string, input: { path: string; sourcePath: string; pageId?: number | null }):
   Promise<DeletedDriftTarget | { changed: DeletedDriftChange }> {
   const binding = await getWorktreeBinding(engine, sourceId);
@@ -166,8 +166,6 @@ export async function readDeletedDriftTarget(engine: BrainEngine, sourceId: stri
   const [marker] = await engine.executeRaw<{ value: { kind?: string; blob_oids?: unknown } | null }>('SELECT completed_keys->0 AS value FROM op_checkpoints WHERE op=$1 AND fingerprint=$2',
     [SYNC_ORIGIN_DELETED_OP, `${sourceId}:${binding.source_incarnation}:${input.sourcePath}`]);
   if (!marker?.value || marker.value.kind === 'legacy') return { changed: 'no_deletion' };
-  const held = Array.isArray(marker.value.blob_oids) ? marker.value.blob_oids : [];
-  if (held.includes(gitBlobOid(raw, 'sha1')) || held.includes(gitBlobOid(raw, 'sha256'))) return { changed: 'deleted_same' };
   return { state: 'purged_differs', ...pin, tombstone: null, marker_digest: digest(marker.value) };
 }
 /** Whether `root` or an ancestor holds a `.git` entry (a checkout Git should answer for). */
@@ -185,9 +183,9 @@ function insideGitCheckout(root: string): boolean {
 export function missingFileRoute(sourceId: string, slug: string, rel: string, state: ReturnType<typeof canonicalDeletionState>): string {
   const fileDrift = `gbrain repair file-drift --source ${sourceId} --slug ${slug} --prefer database`;
   const ghosts = `gbrain repair ghost-pages --source ${sourceId}`;
-  if (state === 'in_head') return `${rel} is deleted in the worktree but still committed, so this is not file drift: commit the deletion (sync then imports it), or remove the page with ${ghosts}; to keep the page, restore the file from Git (git checkout -- ${rel}) and sync.`;
+  if (state === 'in_head') return `${rel} is deleted in the worktree but still committed, so this is not file drift: to keep the page, restore the file from Git (git checkout HEAD -- '${rel}') and sync; to remove it, commit the deletion and sync (${ghosts} lists it apart and removes nothing while HEAD still holds the file).`;
   if (state === 'gone') return `${rel} is gone from the last commit. Preview the resolution with ${fileDrift} (recreates the file from the page) or with --prefer file (soft-deletes the page), then apply the printed command after the user decides.`;
-  return `Git could not say whether the deletion of ${rel} is committed. If it is (gone from HEAD), preview ${fileDrift} or --prefer file; if it is deleted only in the worktree, commit the deletion or remove the page with ${ghosts}.`;
+  return `Git could not say whether the deletion of ${rel} is committed. If it is (gone from HEAD), preview ${fileDrift} or --prefer file; if it is deleted only in the worktree, restore it (git checkout HEAD -- '${rel}') or commit the deletion and sync.`;
 }
 /** The refusal for a canonical file that is gone, routed by where its deletion stands in Git (#6712 wave). */
 function missingCanonicalFile(sourceId: string, slug: string, root: string, path: string): OperationError {

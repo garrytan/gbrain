@@ -270,4 +270,27 @@ describe('engine parity: page embedding ledger', () => {
     });
     return answers;
   });
+
+  parityTest('a second grant while a reservation is open counts the money already reserved against the cap', {
+    methods: ['putPage', 'getPage', 'reservePageEmbedding', 'readPageEmbeddingBudget'],
+  }, async (engine) => {
+    // Every other grant here runs on a fresh or settled row. With a reservation open, the room left under the cap is the
+    // cap less the spend and the open reservation (audit r2 mutant R08: a grant that ignores the open reservation
+    // overspends).
+    await engine.putPage('notes/open-window', NOTE);
+    const page = await idOf(engine, 'notes/open-window');
+    const first = view(await engine.reservePageEmbedding(page, { ...OPEN, configuredCapUsd: 1, chunks: CHUNKS }));
+    const afterFirst = await ledger(engine, page);
+    const overCap = view(await engine.reservePageEmbedding(page, { ...OPEN, configuredCapUsd: 1, chunks: [{ chunkIndex: 3, costUsd: 0.25 }] }));
+    const afterOverCap = await ledger(engine, page);
+    const fits = view(await engine.reservePageEmbedding(page, { ...OPEN, configuredCapUsd: 1, chunks: [{ chunkIndex: 4, costUsd: 0.125 }] }));
+    const afterFits = await ledger(engine, page);
+    const answers = { first, afterFirst, overCap, afterOverCap, fits, afterFits };
+    expect(answers.first).toEqual({ kind: 'grant', chunkIndexes: [2, 1, 0], reservedUsd: 0.875, deferred: 0, capUsd: 1, window: true });
+    expect(answers.overCap).toMatchObject({ kind: 'grant', chunkIndexes: [], reservedUsd: 0, deferred: 1 });
+    expect(answers.afterOverCap).toMatchObject({ reserved_usd: 0.875, spent_usd: 0 });
+    expect(answers.fits).toMatchObject({ kind: 'grant', chunkIndexes: [4], reservedUsd: 0.125, deferred: 0 });
+    expect(answers.afterFits).toMatchObject({ reserved_usd: 1, spent_usd: 0 });
+    return answers;
+  });
 });

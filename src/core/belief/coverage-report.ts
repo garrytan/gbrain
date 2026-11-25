@@ -50,9 +50,7 @@ const field = (row: CoverageRow, name: string) => obj(row.value)[name] ?? obj(ro
 
 /** Coverage intervals of the source's current incarnation, oldest first. */
 export async function coverageIntervals(engine: BrainEngine, sourceId: string): Promise<CoverageInterval[]> {
-  const rows = await engine.executeRaw<CoverageRow>(`SELECT e.id, e.event_type, e.recorded_at, e.value, e.cause, e.source_incarnation::text AS incarnation
-    FROM belief_events e JOIN sources s ON s.id = e.source_id AND s.incarnation = e.source_incarnation
-    WHERE e.source_id = $1 AND e.subject_kind = 'coverage' AND e.subject_key = $2 ORDER BY e.id`, [sourceId, COVERAGE_KEY]);
+  const rows: CoverageRow[] = await engine.readBeliefCoverageEvents(sourceId);
   const intervals: CoverageInterval[] = [];
   for (const row of rows) {
     const id = Number(row.id);

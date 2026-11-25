@@ -6,12 +6,12 @@ import {
   getEmbeddingColumnRegistry,
   validateColumnKey,
   validateColumnConfig,
-  quoteIdentifier,
   EmbeddingColumnNotRegisteredError,
   EmbeddingColumnConfigError,
 } from '../core/search/embedding-column.ts';
 
 import { redactPgUrl } from '../core/url-redact.ts';
+import { rethrowCapabilityMissing } from '../core/rust-engine/errors.ts';
 import { PUBLISH_GATE_KEYS } from '../mcp/publish-gates.ts';
 import { isConsentConfigKey, setConsentPreapproval, unsetConsentPreapproval } from '../core/consent-preapproval.ts';
 import { WRITER_ADMIN_LOCK_KEY } from '../core/persistence/admin-contract.ts';
@@ -1431,16 +1431,10 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
         // coverage < 90% unless `--coverage-override` or `--yes` is
         // present.
         try {
-          const covRows = await engine.executeRaw<{ pct: number; total: number }>(
-            `SELECT (
-               COUNT(*) FILTER (WHERE ${quoteIdentifier(value)} IS NOT NULL)::float
-               / NULLIF(COUNT(*), 0) * 100
-             )::float AS pct,
-             COUNT(*)::int AS total
-             FROM content_chunks`,
-          );
-          const pct = covRows[0]?.pct ?? 0;
-          const total = covRows[0]?.total ?? 0;
+          // The typed coverage read (engine-sql/embedding-catalog.ts), so a Rust brain answers it.
+          const coverage = await engine.countChunkColumnCoverage(value);
+          const pct = coverage.pct ?? 0;
+          const total = coverage.total;
           if (total > 0 && pct < 90 && !coverageOverride) {
             console.error(
               `[config] Column "${value}" is ${pct.toFixed(1)}% populated (${total} total chunks).`,
@@ -1461,7 +1455,8 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
           // is otherwise valid (e.g. the column was JUST added, no chunks
           // yet, NULLIF guard returns NULL → pct=0 BUT total=0 short-
           // circuits above). If the SQL itself errors (column ALTER race,
-          // permission), warn but proceed.
+          // permission), warn but proceed. An engine that cannot read it refuses.
+          rethrowCapabilityMissing(err);
           console.error(
             `[config] WARN: coverage probe failed (${(err as Error).message}); proceeding.`,
           );

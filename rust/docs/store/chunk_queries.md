@@ -159,11 +159,6 @@ the page projection, repair contextual-mode and evidence delivery. Each answers 
   `sealChunks` of sanitized chunks. An `upsertChunks`
   that changes a chunk (text, source or modality, a given metadata value, or an added or dropped index) stamps -1,
   and one that repeats the stored chunks leaves the stamp, as `chunkWriteInvalidations` does.
-- The activation sentinel revision (`ACTIVATION_SERVED_REVISION`) of the served-projection filter does not exist in
-  the store.
-
-## Follow-ups
-
-- `frozen-hit-manifest-liveness`: for a segmented chunk the SQL engines also require a live `page_body_manifest`
-  row. The manifest is the page_body family's private state, so `resolveFrozenHits` joins a segmented chunk at or
-  below the page's body generation instead.
+- The store recognizes the activation sentinel revision (`ACTIVATION_SERVED_REVISION`,
+  `00000000-0000-0000-0000-000000000153`) as served for the chunk reads; the chunkless reads still require the
+  projection and knowledge revisions to match.

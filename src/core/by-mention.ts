@@ -1099,10 +1099,7 @@ export async function scanStaleMentions(
   const gazetteer = await buildGazetteer(engine);
   const allowCrossSource = await isCrossSourceLinksEnabled(engine);
 
-  // Same bounded page set for both queries so the link rows and the bodies
-  // can never describe different pages.
-  const bodies = await engine.listStaleMentionPages(limit);
-  const rows = await engine.listStaleMentionLinks(limit);
+  const { pages: bodies, links: rows } = await engine.readStaleMentionScan(limit);
 
   const byPage = new Map<number, typeof rows>();
   for (const r of rows) {

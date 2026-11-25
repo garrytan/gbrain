@@ -371,6 +371,51 @@ impl Store {
     }
 }
 
+/// One coverage event of `readBeliefCoverageEvents` (coverage-report.ts `CoverageRow`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CoverageEventRow {
+    pub id: u64,
+    pub event_type: String,
+    pub recorded_at: String,
+    pub value: serde_json::Value,
+    pub cause: serde_json::Value,
+    pub incarnation: String,
+}
+
+impl Store {
+    /// `readBeliefCoverageEvents(sourceId)`: every coverage event of the source's current
+    /// incarnation, in id order (none for an unknown source), `value` and `cause` in jsonb order.
+    pub fn read_belief_coverage_events(&self, source_id: &str) -> Result<Vec<CoverageEventRow>> {
+        const OP: &str = "readBeliefCoverageEvents";
+        no_nul(OP, &[("sourceId", source_id)])?;
+        let read = self.read()?;
+        let Some(source) = read_source(&*read, source_id)? else {
+            return Ok(Vec::new());
+        };
+        let prefix = subject_prefix(source_id, "coverage", COVERAGE_KEY);
+        let mut rows = Vec::new();
+        for (inc, id) in index_entries(&*read, id_range(&prefix, 0, None), false)? {
+            if inc != source.incarnation {
+                continue;
+            }
+            let e = load_event(&*read, OP, source_id, &inc, id)?;
+            rows.push(CoverageEventRow {
+                id: e.id,
+                event_type: e.event_type,
+                recorded_at: iso(e.recorded_at_us),
+                value: e
+                    .value
+                    .as_ref()
+                    .map_or(serde_json::Value::Null, crate::jsonb::ordered),
+                cause: crate::jsonb::ordered(&e.cause),
+                incarnation: e.source_incarnation,
+            });
+        }
+        rows.sort_by_key(|r| r.id);
+        Ok(rows)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -301,6 +301,59 @@ impl Store {
         }
         Ok(rows)
     }
+
+    /// `listChronicleCoverageGapRows()`: the chronicle advisor's coverage-gap read. The live
+    /// `meeting`, `conversation` and `calendar-event` pages of every source updated in the last 30
+    /// days (by the store clock, as the SQL reads `now()`) that own no timeline row with an event
+    /// page, each as `{ type, effective_date, effective_date_source, fm_date, fm_start }`
+    /// (`effective_date` as ISO text, the frontmatter fields as `->>` text), in page record order
+    /// (the SQL sets no order).
+    pub fn list_chronicle_coverage_gap_rows(&self) -> Result<Vec<Value>> {
+        const WINDOW_US: i64 = 30 * 86_400 * 1_000_000;
+        let read = self.read()?;
+        let cutoff = self.env.now_micros() - WINDOW_US;
+        let mut projected = BTreeSet::new();
+        let mut failure = None;
+        scan_prefix(&*read, &[crate::keys::TIMELINE], false, &mut |_, v| {
+            match serde_json::from_slice::<crate::timeline::TimelineRecord>(v) {
+                Ok(entry) => {
+                    if entry.event_page_id.is_some() {
+                        projected.insert(entry.page_id);
+                    }
+                }
+                Err(e) => failure = Some(StoreError::from(e)),
+            }
+            failure.is_none()
+        })?;
+        if let Some(e) = failure {
+            return Err(e);
+        }
+        let mut rows = Vec::new();
+        for page in crate::pages::all_pages(&*read)? {
+            if !matches!(
+                page.page_type.as_str(),
+                "meeting" | "conversation" | "calendar-event"
+            ) || page.deleted_at_us.is_some()
+                || page.updated_at_us <= cutoff
+                || projected.contains(&page.id)
+            {
+                continue;
+            }
+            let field = |key: &str| {
+                page.frontmatter
+                    .get(key)
+                    .and_then(crate::cli_reads::entities::arrow_text)
+            };
+            rows.push(json!({
+                "type": page.page_type,
+                "effective_date": page.effective_date_us.map(crate::env::iso),
+                "effective_date_source": page.effective_date_source,
+                "fm_date": field("date"),
+                "fm_start": field("start"),
+            }));
+        }
+        Ok(rows)
+    }
 }
 
 #[cfg(test)]
@@ -582,6 +635,51 @@ mod tests {
                 .unwrap_err()
                 .code,
             INVALID_ARGUMENT
+        );
+    }
+
+    #[test]
+    fn coverage_gap_rows_skip_other_types_deleted_pages_and_pages_an_event_projects() {
+        let store = store();
+        let typed = |slug: &str, kind: &str, frontmatter: Value| -> u64 {
+            let input: PageInput = serde_json::from_value(json!({
+                "type": kind, "title": slug, "compiled_truth": "body", "frontmatter": frontmatter,
+            }))
+            .unwrap();
+            store
+                .put_page(slug, &input, &PutPageOptions::default())
+                .unwrap()["id"]
+                .as_u64()
+                .unwrap()
+        };
+        typed(
+            "meetings/a",
+            "meeting",
+            json!({ "date": "2026-01-02", "start": 7 }),
+        );
+        typed("conversations/b", "conversation", json!({}));
+        typed("notes/c", "note", json!({}));
+        typed("meetings/gone", "meeting", json!({}));
+        store.soft_delete_page("meetings/gone", None).unwrap();
+        let covered = typed("meetings/covered", "meeting", json!({}));
+        let event = page(&store, "events/covered", json!({}));
+        store
+            .restore_event_projection(&serde_json::from_value(json!({
+                "depthPageId": covered, "date": "2026-01-03", "source": "s", "summary": "x", "detail": "", "eventPageId": event,
+            })).unwrap())
+            .unwrap();
+        let rows = store.list_chronicle_coverage_gap_rows().unwrap();
+        let mut shape: Vec<String> = rows
+            .iter()
+            .map(|r| json!([r["type"], r["fm_date"], r["fm_start"]]).to_string())
+            .collect();
+        shape.sort();
+        assert_eq!(
+            shape,
+            vec![
+                json!(["conversation", null, null]).to_string(),
+                json!(["meeting", "2026-01-02", "7"]).to_string()
+            ]
         );
     }
 

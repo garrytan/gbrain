@@ -20,11 +20,10 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { buildSegmentedProjection, hasStaleChunks } from '../../src/core/page-body/projection.ts';
-import type { EngineRawRead } from '../../src/core/engine-sql/cli-reads-ops.ts';
-import * as segmentedRewrite from '../../src/core/engine-sql/segmented-rewrite.ts';
 import { flipInput, publishSegmentedPage, segmentText, stageGeneration } from '../helpers/page-body-fixtures.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { segmentedWriteThrough } from '../helpers/segmented-writes-proxy.ts';
 
 interface PlanNode { 'Actual Rows'?: number; 'Actual Loops'?: number; 'Rows Removed by Filter'?: number;
   'Rows Removed by Index Recheck'?: number; 'Shared Hit Blocks'?: number; 'Shared Read Blocks'?: number; Plans?: PlanNode[] }
@@ -44,26 +43,24 @@ function measured(engine: BrainEngine, log: StatementWork[], inTx = false): Brai
     const plan = (typeof raw === 'string' ? JSON.parse(raw) : raw) as Array<{ Plan: PlanNode }>;
     log.push({ sql, rows: rowsExamined(plan[0]!.Plan), buffers: (plan[0]!.Plan['Shared Hit Blocks'] ?? 0) + (plan[0]!.Plan['Shared Read Blocks'] ?? 0) });
   };
-  // The probes and the retirement are typed engine members now (engine-sql/segmented-rewrite.ts): each runs here the engine-sql
-  // function the engine runs, over an executor that measures every content_chunks statement it issues before it runs it.
-  const raw = (async (sql: string, params?: unknown[]) => {
-    if (/content_chunks/.test(sql)) {
-      if (!/^\s*DELETE/i.test(sql)) await explain(engine, sql, params);
-      else if (inTx) {
-        await engine.executeRaw('SAVEPOINT plan_probe');
-        await explain(engine, sql, params);
-        await engine.executeRaw('ROLLBACK TO SAVEPOINT plan_probe');
-      } else throw new Error(`unmeasured DELETE outside a transaction: ${sql.slice(0, 80)}`);
-    }
-    return engine.executeRaw(sql, params);
-  }) as EngineRawRead;
   return new Proxy(engine, {
-    get(target, prop) {
-      if (prop === 'executeRaw') return (sql: string, params?: unknown[]) => raw(sql, params);
-      if (prop === 'listChunkedOccurrences') return (...args: [number, readonly number[], number]) => segmentedRewrite.listChunkedOccurrences(raw, ...args);
-      if (prop === 'hasStaleSegmentChunks') return (...args: [number, number, readonly number[]]) => segmentedRewrite.hasStaleSegmentChunks(raw, ...args);
-      if (prop === 'retireStaleSegmentChunks') return (...args: [number, number, readonly number[], number]) => segmentedRewrite.retireStaleSegmentChunks(raw, ...args);
+    get(target, prop, receiver) {
+      if (prop === 'executeRaw') {
+        return async (sql: string, params?: unknown[]) => {
+          if (/content_chunks/.test(sql)) {
+            if (!/^\s*DELETE/i.test(sql)) await explain(target, sql, params);
+            else if (inTx) {
+              await target.executeRaw('SAVEPOINT plan_probe');
+              await explain(target, sql, params);
+              await target.executeRaw('ROLLBACK TO SAVEPOINT plan_probe');
+            } else throw new Error(`unmeasured DELETE outside a transaction: ${sql.slice(0, 80)}`);
+          }
+          return target.executeRaw(sql, params);
+        };
+      }
       if (prop === 'transaction') return (fn: (tx: BrainEngine) => Promise<unknown>) => target.transaction(tx => fn(measured(tx, log, true)));
+      const through = segmentedWriteThrough(prop, receiver);
+      if (through) return through;
       const value = Reflect.get(target, prop, target);
       return typeof value === 'function' ? value.bind(target) : value;
     },

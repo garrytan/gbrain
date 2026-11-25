@@ -37,8 +37,6 @@ import { importFromFile } from '../../src/core/import-file.ts';
 import { readPageBodyPolicy } from '../../src/core/page-body/limits.ts';
 import type { SqlExecutor } from '../../src/core/engine-sql/executor.ts';
 import { renderFragment, type SqlFragment } from '../../src/core/engine-sql/fragment.ts';
-import type { EngineRawRead } from '../../src/core/engine-sql/cli-reads-ops.ts';
-import * as segmentedRewrite from '../../src/core/engine-sql/segmented-rewrite.ts';
 import { installFaultHook } from '../../src/core/persistence/fault-points.ts';
 import { registerLocalWriter } from '../../src/core/persistence/identity.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
@@ -47,6 +45,7 @@ import { conversationPage } from '../helpers/conversation-page.ts';
 import { segmentedPageRow } from '../helpers/segmented-page-checks.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
+import { segmentedWriteThrough } from '../helpers/segmented-writes-proxy.ts';
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-publication-seal-'));
 const env = { GBRAIN_HOME: home, OPENAI_API_KEY: undefined, VOYAGE_API_KEY: undefined, ANTHROPIC_API_KEY: undefined, GBRAIN_PLANNER_AUTO_ANALYZE: '0' };
@@ -77,13 +76,31 @@ function examined(node: PlanNode): number {
 }
 const planNodes = (node: PlanNode): PlanNode[] => [node, ...(node.Plans ?? []).flatMap(planNodes)];
 
-/** An engine-sql executor that records each statement it runs on either table. */
-function recordingExecutor(exec: SqlExecutor, log: Statement[]): SqlExecutor {
+/** Measures `sql` in a savepoint rolled back before the statement runs, and records its plan. */
+async function probePlan(target: { executeRaw: BrainEngine['executeRaw'] }, sql: string, params: unknown[] | undefined, log: Statement[]): Promise<void> {
+  await target.executeRaw('SAVEPOINT plan_probe');
+  const [row] = await target.executeRaw<Record<string, unknown>>(`EXPLAIN (ANALYZE, FORMAT JSON) ${sql}`, params);
+  await target.executeRaw('ROLLBACK TO SAVEPOINT plan_probe');
+  const raw = Object.values(row!)[0];
+  const plan = ((typeof raw === 'string' ? JSON.parse(raw) : raw) as Array<{ Plan: PlanNode }>)[0]!.Plan;
+  const nodes = planNodes(plan);
+  log.push({ sql: shape(sql), rows: examined(plan), nodes: nodes.map(n => `${n['Node Type'] ?? ''}${n['Index Name'] ? ` on ${n['Index Name']}` : ''}`), subplan: nodes.some(n => n['Parent Relationship'] === 'SubPlan' || n['Parent Relationship'] === 'InitPlan') });
+}
+
+/**
+ * An engine-sql executor that records each statement it runs on either table. With `measure`, an executeRaw statement on
+ * either table is measured (probePlan) instead: the typed members that replaced a caller's raw statement send it here.
+ */
+function recordingExecutor(exec: SqlExecutor, log: Statement[], measure = false): SqlExecutor {
   const note = (sql: string) => { if (TABLES.test(sql)) log.push({ sql: shape(sql) }); };
   return new Proxy(exec, { get(target, prop) {
+    if (prop === 'executeRaw' && measure) return async (sql: string, params?: unknown[], opts?: unknown) => {
+      if (TABLES.test(sql)) await probePlan(target, sql, params, log);
+      return (target.executeRaw as Function)(sql, params, opts);
+    };
     if (prop === 'query' || prop === 'executeRaw' || prop === 'unsafe') return (sql: string, ...rest: unknown[]) => { note(sql); return (target[prop] as Function)(sql, ...rest); };
     if (prop === 'run') return (fragment: SqlFragment, opts?: unknown) => { note(renderFragment(fragment).text); return target.run(fragment, opts as never); };
-    if (prop === 'transaction') return <T>(fn: (tx: SqlExecutor) => Promise<T>) => target.transaction(tx => fn(recordingExecutor(tx, log)));
+    if (prop === 'transaction') return <T>(fn: (tx: SqlExecutor) => Promise<T>) => target.transaction(tx => fn(recordingExecutor(tx, log, measure)));
     return Reflect.get(target, prop, target);
   } });
 }
@@ -103,27 +120,12 @@ function isMethod(target: object, prop: PropertyKey): boolean {
  * records too; each executeRaw statement is also measured first, in a savepoint rolled back before it runs.
  */
 function measuredTx(tx: BrainEngine, log: Statement[]): BrainEngine {
-  const measure = (async (sql: string, params?: unknown[], opts?: unknown) => {
-    if (TABLES.test(sql)) {
-      await tx.executeRaw('SAVEPOINT plan_probe');
-      const [row] = await tx.executeRaw<Record<string, unknown>>(`EXPLAIN (ANALYZE, FORMAT JSON) ${sql}`, params);
-      await tx.executeRaw('ROLLBACK TO SAVEPOINT plan_probe');
-      const raw = Object.values(row!)[0];
-      const plan = ((typeof raw === 'string' ? JSON.parse(raw) : raw) as Array<{ Plan: PlanNode }>)[0]!.Plan;
-      const nodes = planNodes(plan);
-      log.push({ sql: shape(sql), rows: examined(plan), nodes: nodes.map(n => `${n['Node Type'] ?? ''}${n['Index Name'] ? ` on ${n['Index Name']}` : ''}`), subplan: nodes.some(n => n['Parent Relationship'] === 'SubPlan' || n['Parent Relationship'] === 'InitPlan') });
-    }
-    return tx.executeRaw(sql, params, opts as never);
-  }) as EngineRawRead;
   const proxy: BrainEngine = new Proxy(tx, { get(target, prop) {
-    if (prop === 'engineSql') return recordingExecutor(Reflect.get(target, prop, target) as SqlExecutor, log);
-    if (prop === 'executeRaw') return measure;
-    // The chunk probes, the retirement and the vector read are typed members (engine-sql/segmented-rewrite.ts): each runs the
-    // engine-sql function the engine runs, over the measuring executor, so its statements are recorded and measured here too.
-    if (prop === 'listChunkedOccurrences') return (...args: [number, readonly number[], number]) => segmentedRewrite.listChunkedOccurrences(measure, ...args);
-    if (prop === 'hasStaleSegmentChunks') return (...args: [number, number, readonly number[]]) => segmentedRewrite.hasStaleSegmentChunks(measure, ...args);
-    if (prop === 'retireStaleSegmentChunks') return (...args: [number, number, readonly number[], number]) => segmentedRewrite.retireStaleSegmentChunks(measure, ...args);
-    if (prop === 'readRetiredChunkVectors') return (...args: [number, readonly number[], string]) => segmentedRewrite.readRetiredChunkVectors(measure, ...args);
+    if (prop === 'engineSql') return recordingExecutor(Reflect.get(target, prop, target) as SqlExecutor, log, true);
+    if (prop === 'executeRaw') return async (sql: string, params?: unknown[], opts?: unknown) => {
+      if (TABLES.test(sql)) await probePlan(target, sql, params, log);
+      return target.executeRaw(sql, params, opts as never);
+    };
     // A class method runs on the proxy, so its \`this.engineSql\` records; own properties (a driver handle) pass through untouched.
     const value = Reflect.get(target, prop, target);
     return typeof value === 'function' && isMethod(target, prop) ? value.bind(proxy) : value;
@@ -136,7 +138,7 @@ function measuredTx(tx: BrainEngine, log: Statement[]): BrainEngine {
  * recorded into `publication`, and whose post-commit projection is lost (its page read throws), so only the publication seals.
  */
 function measuredWrite(engine: BrainEngine, publication: Statement[]): BrainEngine {
-  return new Proxy(engine, { get(target, prop) {
+  return new Proxy(engine, { get(target, prop, receiver) {
     if (prop === 'readSegmentedProjectionPage') return () => Promise.reject(new Error('projection lost (probe)'));
     if (prop === 'transaction') return (fn: (tx: BrainEngine) => Promise<unknown>, opts?: unknown) => target.transaction(async tx => {
       const log: Statement[] = [];
@@ -148,6 +150,8 @@ function measuredWrite(engine: BrainEngine, publication: Statement[]): BrainEngi
         return out;
       } finally { installFaultHook(undefined); }
     }, opts as never);
+    const through = segmentedWriteThrough(prop, receiver);
+    if (through) return through;
     const value = Reflect.get(target, prop, target);
     return typeof value === 'function' ? value.bind(target) : value;
   } });

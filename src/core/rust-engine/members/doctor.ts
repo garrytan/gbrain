@@ -30,6 +30,7 @@ export const DOCTOR_MEMBERS = {
   readBodyRecheckPage: 'health',
   listBodyRecheckVersions: 'health',
   readExtractRollup7d: 'health',
+  readExtractKindRollup7d: 'health',
   listRecordedHaltReasons7d: 'health',
   // doctor page reads (engine-sql/doctor-pages.ts)
   listOversizedPages: 'health',
@@ -52,6 +53,7 @@ export const DOCTOR_MEMBERS = {
   listBracketPathPages: 'health',
   listSlugPathCandidates: 'health',
   countAtomExtractionBacklog: 'health',
+  listAtomBacklogSourceIds: 'health',
   readProjectionBacklog: 'health',
   listGitImageHoldCounts: 'health',
   listTruncatedMarkdownBodies: 'health',
@@ -87,7 +89,6 @@ export const DOCTOR_MEMBERS = {
   listMalformedReaderPages: 'access_control',
   listUnknownReaders: 'access_control',
   listRecentReaderNarrowings: 'access_control',
-  listChatChannelCensus: 'access_control',
   readMcpRequestLogBytes: 'telemetry',
   countMcpRequestLogRows: 'telemetry',
   hasMcpLogRowsPastWindow: 'telemetry',
@@ -105,8 +106,6 @@ export const DOCTOR_MEMBERS = {
   insertVolunteerEventRows: 'telemetry',
   listVolunteerUsage: 'telemetry',
   deleteVolunteerEventsOlderThan: 'telemetry',
-  deleteVolunteerEventsForSlugs: 'telemetry',
-  countVolunteerEventsForSlug: 'telemetry',
 
   // doctor checkpoint reads (engine-sql/doctor-checkpoints.ts)
   listFenceCandidateRecords: 'persistence_journal',
@@ -137,6 +136,8 @@ export const DOCTOR_MEMBERS = {
   readOldestSourceCreatedAt: 'sources',
   listVisibilityCandidatePages: 'health',
   countVisibilityNoncanonicalHolds: 'persistence_journal',
+  countReadersNoncanonicalHolds: 'persistence_journal',
+  listReaderCandidatePages: 'health',
   listContentBlockedReceipts: 'persistence_journal',
   listPassAdmittedReceipts: 'persistence_journal',
   // Doctor sync reads: the managed-sync cursor, failure and orphan statements doctor ran through executeRaw

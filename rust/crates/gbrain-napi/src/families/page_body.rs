@@ -10,6 +10,9 @@ use napi::bindgen_prelude::Object;
 use napi_derive::napi;
 use serde_json::Value;
 
+use gbrain_store::page_body::derivation_sweep::DerivationSweepArgs;
+use gbrain_store::page_body::purge_record::{DerivationPurgeRecordArgs, DerivationPurgeStateArgs};
+
 use crate::store_binding::{Brain, arg, required};
 
 #[napi]
@@ -239,7 +242,7 @@ impl Brain {
         })
     }
 
-    /// `upsertSegmentDerivations(rows)`: resolves `null`.
+    /// `upsertSegmentDerivations(rows)`: resolves how many rows a recorded fact purge sweep refused (they are not stored).
     #[napi]
     pub fn upsert_segment_derivations<'env>(
         &self,
@@ -250,6 +253,45 @@ impl Brain {
             let rows: Vec<gbrain_store::page_body::SegmentDerivationInput> =
                 required(rows, "upsertSegmentDerivations rows")?;
             s.upsert_segment_derivations(&rows)
+        })
+    }
+
+    /// `recordDerivationPurgeRow(args)`: resolves `null`.
+    #[napi]
+    pub fn record_derivation_purge_row<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: DerivationPurgeRecordArgs = required(args, "recordDerivationPurgeRow args")?;
+            s.record_derivation_purge_row(&a)
+        })
+    }
+
+    /// `readDerivationPurgeState(args)`: resolves `{ state, reason }`, or `null` for no record.
+    #[napi]
+    pub fn read_derivation_purge_state<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: DerivationPurgeStateArgs = required(args, "readDerivationPurgeState args")?;
+            s.read_derivation_purge_state(&a)
+        })
+    }
+
+    /// `continueDerivationSweep(args)`: resolves `{ deleted, work }`, the rows the first walks deleted and per page the rows read.
+    #[napi]
+    pub fn continue_derivation_sweep<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: DerivationSweepArgs = required(args, "continueDerivationSweep args")?;
+            s.continue_derivation_sweep(&a)
         })
     }
 
@@ -288,6 +330,82 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.refresh_page_body(&slug, &source_id, &compiled_truth, &timeline, &content_hash)
+        })
+    }
+
+    /// `listChunkedOccurrences(pageId, occurrences, generation)`: the occurrences with a chunk row
+    /// at or below the generation.
+    #[napi]
+    pub fn list_chunked_occurrences<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        occurrences: Value,
+        generation: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let occurrences: Vec<i64> =
+                required(occurrences, "listChunkedOccurrences occurrences")?;
+            s.list_chunked_occurrences(page_id, &occurrences, generation)
+        })
+    }
+
+    /// `readRetiredChunkVectors(pageId, occurrences)`: the vectors of those occurrences' rows.
+    #[napi]
+    pub fn read_retired_chunk_vectors<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        occurrences: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let occurrences: Vec<i64> =
+                required(occurrences, "readRetiredChunkVectors occurrences")?;
+            s.read_retired_chunk_vectors(page_id, &occurrences)
+        })
+    }
+
+    /// `hasStaleSegmentChunks(pageId, generation, live)`.
+    #[napi]
+    pub fn has_stale_segment_chunks<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        generation: i64,
+        live: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let live: Vec<i64> = required(live, "hasStaleSegmentChunks live")?;
+            s.has_stale_segment_chunks(page_id, generation, &live)
+        })
+    }
+
+    /// `retireStaleSegmentChunks(pageId, generation, live, maxRows)`: the number of rows deleted.
+    #[napi]
+    pub fn retire_stale_segment_chunks<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        generation: i64,
+        live: Value,
+        max_rows: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let live: Vec<i64> = required(live, "retireStaleSegmentChunks live")?;
+            s.retire_stale_segment_chunks(page_id, generation, &live, max_rows)
+        })
+    }
+
+    /// `readSegmentedProjectionPage(sourceId, slug)`: the live segmented page row or null.
+    #[napi]
+    pub fn read_segmented_projection_page<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_segmented_projection_page(&source_id, &slug)
         })
     }
 
@@ -361,62 +479,6 @@ impl Brain {
         })
     }
 
-    /// `readSegmentedProjectionPage(sourceId, slug)`: the live segmented page a projection builds, or null.
-    #[napi]
-    pub fn read_segmented_projection_page<'env>(
-        &self,
-        env: &'env Env,
-        source_id: String,
-        slug: String,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            s.read_segmented_projection_page(&source_id, &slug)
-        })
-    }
-
-    /// `listChunkedOccurrences(pageId, occurrenceIds, generation)`: the occurrences with a chunk row.
-    #[napi]
-    pub fn list_chunked_occurrences<'env>(
-        &self,
-        env: &'env Env,
-        page_id: i64,
-        occurrence_ids: Vec<i64>,
-        generation: i64,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            s.list_chunked_occurrences(page_id, &occurrence_ids, generation)
-        })
-    }
-
-    /// `hasStaleSegmentChunks(pageId, generation, live)`: whether a chunk row is stale.
-    #[napi]
-    pub fn has_stale_segment_chunks<'env>(
-        &self,
-        env: &'env Env,
-        page_id: i64,
-        generation: i64,
-        live: Vec<i64>,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            s.has_stale_segment_chunks(page_id, generation, &live)
-        })
-    }
-
-    /// `retireStaleSegmentChunks(pageId, generation, live, maxRows)`: how many stale rows it deleted.
-    #[napi]
-    pub fn retire_stale_segment_chunks<'env>(
-        &self,
-        env: &'env Env,
-        page_id: i64,
-        generation: i64,
-        live: Vec<i64>,
-        max_rows: i64,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            s.retire_stale_segment_chunks(page_id, generation, &live, max_rows)
-        })
-    }
-
     /// `readSegmentedLivePage(pageId)`: the page a segmented write diffs against, or null.
     #[napi]
     pub fn read_segmented_live_page<'env>(
@@ -425,18 +487,5 @@ impl Brain {
         page_id: i64,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.read_segmented_live_page(page_id))
-    }
-
-    /// `readRetiredChunkVectors(pageId, occurrences)`: the vectors of those occurrences' visible chunks.
-    #[napi]
-    pub fn read_retired_chunk_vectors<'env>(
-        &self,
-        env: &'env Env,
-        page_id: i64,
-        occurrences: Vec<i64>,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            s.read_retired_chunk_vectors(page_id, &occurrences)
-        })
     }
 }

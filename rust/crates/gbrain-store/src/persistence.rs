@@ -66,21 +66,29 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 mod checkpoint_rows;
+mod checkpoint_validation;
+mod connector_attempts;
 mod connector_orphans;
+mod diagnostic_checkpoints;
 mod dream_reads;
+mod effect_retry_reads;
 mod effect_scans;
 mod effect_worker;
-mod effects;
+pub(crate) mod effects;
 mod embedding_candidates;
 mod git_holds;
+mod head_blocker;
 mod housekeeping;
+mod identity_downgrade;
 mod idle_probe;
 mod image_seal;
+mod journal_redaction;
 #[cfg(test)]
 mod lease_order_tests;
 mod noop_settle;
 mod notifier;
 mod op_checkpoint;
+mod origin_holds;
 mod owner_scans;
 pub(crate) mod projection_queue;
 mod projection_rebuild;
@@ -88,6 +96,8 @@ mod publication;
 mod purge_effects;
 mod receipt_compaction;
 mod receipt_list;
+mod retained_sources;
+mod sync_conversions;
 mod sync_orphan_reads;
 mod sync_pass_pages;
 mod sync_run_reads;
@@ -100,15 +110,21 @@ mod worktree_rows;
 mod worktrees;
 mod write_claim_terms;
 mod writer_status;
+mod writer_status_queue;
 mod writer_versions;
+pub use checkpoint_validation::{IncompleteSyncReceiptSpec, OpenPassWorkSpec};
 pub use connector_orphans::OrphanBounds;
+pub use diagnostic_checkpoints::HeldHitQuery;
 pub use effect_worker::{EffectClaim, EffectSettle, LinksRearm, Settle};
 pub(crate) use effects::all_effects;
 pub use effects::{PublicationEffectsSpec, QueuedEffect, WithdrawalEffectsSpec};
+pub use head_blocker::HeadBlockerSpec;
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn, TrueUpReservation};
 pub(crate) use housekeeping::{HousekeepingRow, turn_key};
+pub use identity_downgrade::IdentityDowngradeSpec;
 pub use idle_probe::IdleProbeSpec;
 pub use image_seal::{ImageSealChunkRef, ImageSealPageRef, ImageSealRow};
+pub use journal_redaction::{RedactRequestArgs, SweepChunkArgs};
 pub use noop_settle::NoopSettleCandidateSpec;
 pub(crate) use notifier::remove_source_rows as remove_notifier_source_rows;
 pub use notifier::{
@@ -119,11 +135,14 @@ mod trust_scan_cursor;
 pub(crate) use op_checkpoint::{
     delete_op_checkpoint_in, list_op_checkpoint_records_in, op_checkpoint_completed_keys,
 };
+pub use origin_holds::PurgeOrigin;
+#[cfg(test)]
+pub(crate) use projection_queue::{JobRecord, read_page_job};
 pub use projection_queue::{
     ProjectionJobRef, ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
 };
 pub(crate) use projection_queue::{
-    activation_started_us, parse_timestamptz, queue_page_projection, queued_jobs,
+    SeedJob, activation_started_us, parse_timestamptz, queue_page_projection, queued_jobs, seed_job,
 };
 pub use projection_rebuild::{
     ProjectionJobKey, ProjectionWindowCandidate, QueuedProjectionFilter, QueuedProjectionKey,
@@ -1650,12 +1669,23 @@ impl Store {
     /// `readWriteRequestsByRequestId(requestId)`: at most two request rows with this request id,
     /// from any principal, in key order. The trusted local CLI answers a receipt by request id
     /// alone only when exactly one row has it, so two rows is enough to know it is ambiguous.
-    pub fn list_write_requests_by_request_id(&self, request_id: &str) -> Result<Vec<Value>> {
+    pub fn read_write_requests_by_request_id(&self, request_id: &str) -> Result<Vec<Value>> {
         let request_id = uuid_param(request_id, "requestId")?;
         Ok(all_requests(&*self.read()?)?
             .into_iter()
             .filter(|r| r.request_id == request_id)
             .take(2)
+            .map(|r| r.to_row())
+            .collect())
+    }
+
+    /// `listWriteRequestsByRequestId(requestId)`: every request admitted under `requestId`, whichever
+    /// principal admitted it, in key order (the SQL names no order).
+    pub fn list_write_requests_by_request_id(&self, request_id: &str) -> Result<Vec<Value>> {
+        let request_id = uuid_param(request_id, "requestId")?;
+        Ok(all_requests(&*self.read()?)?
+            .into_iter()
+            .filter(|r| r.request_id == request_id)
             .map(|r| r.to_row())
             .collect())
     }

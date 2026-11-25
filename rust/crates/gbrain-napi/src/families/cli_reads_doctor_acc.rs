@@ -6,9 +6,8 @@
 use napi::Env;
 use napi::bindgen_prelude::Object;
 use napi_derive::napi;
-use serde_json::Value;
 
-use crate::store_binding::{Brain, required};
+use crate::store_binding::Brain;
 
 #[napi]
 impl Brain {
@@ -50,29 +49,5 @@ impl Brain {
         updated_within_days: Option<f64>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.list_reader_pages(updated_within_days))
-    }
-
-    /// `listChatChannelCensus(sourceIds, chatTypes, dmTypes, policy)`: resolves `{ source_id, chat_pages, channels }`
-    /// per source; a `null` policy hides nothing.
-    #[napi]
-    pub fn list_chat_channel_census<'env>(
-        &self,
-        env: &'env Env,
-        source_ids: Vec<String>,
-        chat_types: Vec<String>,
-        dm_types: Vec<String>,
-        policy: Option<Value>,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let policy = policy
-                .map(|v| {
-                    required::<gbrain_store::facts::PrivacyPolicy>(
-                        v,
-                        "listChatChannelCensus policy",
-                    )
-                })
-                .transpose()?;
-            s.list_chat_channel_census(&source_ids, &chat_types, &dm_types, policy.as_ref())
-        })
     }
 }

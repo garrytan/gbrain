@@ -18,7 +18,7 @@ use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 
 pub(crate) const LIFETIMES: u8 = 0x0a;
-const RECORD: u8 = 0x00;
+pub(crate) const RECORD: u8 = 0x00;
 const OPEN: u8 = 0x01;
 const BY_PAGE: u8 = 0x02;
 

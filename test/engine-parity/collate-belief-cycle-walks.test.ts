@@ -16,7 +16,7 @@
  *  - Seam: none. Pages are written through the engine (the tie cases write them in one transaction, which stamps one
  *    updated_at, so slug breaks the tie); the baseline walk reads its events back through the ledger's history reader, the
  *    drift case rewrites the titles in one transaction, the orphan case hard-deletes the pages with `deletePage` (which
- *    tells the ledger nothing), the failed proposals are recorded with `recordFailureTombstone` and the window cursor is
+ *    tells the ledger nothing), the failed proposals are recorded with `insertTakeProposal` and the window cursor is
  *    stamped with `updateSourceConfig`, all typed members the Rust store serves.
  */
 import { describe, expect } from 'bun:test';
@@ -81,9 +81,10 @@ describe('belief walks and cycle listings take pages by byte', () => {
     expect(orphans.samples.map(s => s.slug)).toEqual(BYTE_SLUGS.slice(0, 2));
   });
 
-  parityTest('listFailedProposals lists pages by byte', { methods: ['recordFailureTombstone', 'listFailureTombstones'] }, async (engine) => {
+  parityTest('listFailedProposals lists pages by byte', { methods: ['insertTakeProposal', 'listTakeProposalTombstones'] }, async (engine) => {
     for (const slug of MIXED_SLUGS) {
-      await engine.recordFailureTombstone({ sourceId: 'default', slug, contentHash: 'h', promptVersion: 'v1', proposalRunId: 'run', claimText: failureTombstoneText('llm_error'), modelId: 'm' });
+      await engine.insertTakeProposal({ sourceId: 'default', pageSlug: slug, contentHash: 'h', promptVersion: 'v1', proposalRunId: 'run', claimText: failureTombstoneText('llm_error'), kind: 'fact',
+        holder: 'brain', weight: 0, domain: null, dedupAgainst: [], modelId: 'm', status: 'rejected' });
     }
     expect((await listFailedProposals(engine, 'default')).map(r => r.slug)).toEqual([...BYTE_SLUGS]);
   });
@@ -110,7 +111,7 @@ describe('belief walks and cycle listings take pages by byte', () => {
     }
   });
 
-  parityTest('runPhantomRedirectPass walks root pages by byte and rotates its cursor through them', { methods: ['putPage', 'getPage', 'listRootPageSlugsAfter', 'readOpCheckpointRecords', 'writeOpCheckpointRecords'] }, async (engine) => {
+  parityTest('runPhantomRedirectPass walks root pages by byte and rotates its cursor through them', { methods: ['putPage', 'getPage', 'listRootPageSlugsAfter', 'readOpCheckpointRecord', 'writeOpCheckpointRecord'] }, async (engine) => {
     await put(engine, ROOT_SLUGS);
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-collate-phantom-'));
     try {

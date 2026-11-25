@@ -23,8 +23,11 @@ The id is the table's `BIGSERIAL` (the counter `next_volunteer_event_id` under `
 | `listVolunteerChannels` | the events of the last 7 days (`volunteered_at > now() - interval '7 days'`) per channel, in byte order of the channel, scoped to `sourceIds` or brain-wide when null. `last_fired` crosses the binding as an ISO string and comes back as a `Date`. |
 | `listVolunteerUsage` | `volunteerUsageStats`: per `(match_arm, channel)` in byte order, the events of the sources in the last N days and those whose live page was retrieved after the event. The store keeps no legacy `pages.last_retrieved_at` column, so the page's retrieval record (`bumpPageRetrievals`) is the whole `GREATEST(...)`. Counts are text, as `count(*)::text`. |
 | `deleteVolunteerEventsOlderThan` | the 90-day retention delete of the dream purge phase; a day count that is not a number refuses. |
-| `deleteVolunteerEventsForSlugs` | the name-store scrub of a page purge (`scrubPurgedNameStores`). |
-| `countVolunteerEventsForSlug` | the page purge verification's `context_volunteer_events` check. |
+
+Two statements of the volunteer log are served through members that already exist for them: the name-store scrub of a page
+purge is `deletePurgedNameStoreRows` (the store deletes the slugs' rows, `delete_volunteer_events_for_slugs`, and the gazetteer
+count stays 0), and the page purge receipt's `context_volunteer_events` check is the `countPurgeStoreProbe` of a `slug_key`
+probe (`facts/purge_store_probe.rs`, `count_for_slug`).
 
 ## Scrubs
 

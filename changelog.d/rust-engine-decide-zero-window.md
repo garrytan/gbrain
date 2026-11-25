@@ -1,0 +1,4 @@
+**A decide receipt report over the last 0 hours now shows nothing on every engine, instead of sometimes counting receipts written that same moment.**
+
+### Fixed
+- The six windowed decide receipt reads (receipt stats, slot usage, conflict `no_entity` counts, replay receipts, resolved models and mixed-model decisions) filtered `created_at >= now() - hours`. With a window of 0 hours, a receipt stamped with the read's own `now()` still matched: always inside one transaction, and on PGLite whenever the write and the read fell in the same millisecond. A window of zero or fewer whole hours now answers empty (zeros for the conflict counts) before any query, on PGLite, Postgres and the Rust engine alike. A fractional window, a window outside the 32-bit integer range, or a NUL byte in the slot is still refused as before.

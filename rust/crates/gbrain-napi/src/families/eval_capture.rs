@@ -58,6 +58,19 @@ impl Brain {
         self.run(env, move |s| s.delete_eval_candidates_before(&date))
     }
 
+    /// `scrubEvalCandidateSlugs(sourceId, slugs)`: strips purged slugs from the candidates of the source; resolves how many it rewrote.
+    #[napi]
+    pub fn scrub_eval_candidate_slugs<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slugs: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.scrub_eval_candidate_slugs(&source_id, &slugs)
+        })
+    }
+
     /// `logEvalCaptureFailure(reason)`: resolves null.
     #[napi]
     pub fn log_eval_capture_failure<'env>(

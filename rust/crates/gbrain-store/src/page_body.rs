@@ -28,6 +28,7 @@
 //!   client key; the value is the staging id.
 //! - `b 0x07 <staging id text> <sha256>`: a text a staging recorded; the value is the source id.
 //! - `b 0x08 <page id> <staging id text>`: stagings of a page, for the page-delete cascade.
+//! - `b 0x09 <request id: lowercase uuid text>`: a fact purge's derivation sweep record (`purge_record::SweepRecord`).
 //! - `M next_body_occurrence_id`: the occurrence id counter (big-endian u64 of the next id).
 //!
 //! Refusals Postgres raises from a CHECK, foreign key or unique index are `constraint_violation`
@@ -47,10 +48,19 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+pub mod derivation_sweep;
+mod page_spend;
+mod segmented_embedding;
+mod segmented_writes;
+pub use segmented_embedding::RetiredChunkVector;
+pub use segmented_writes::SegmentedProjectionPage;
 pub(crate) mod health;
+pub mod purge_probe;
+pub mod purge_record;
 pub(crate) mod purge_scan;
 mod segment_rewrite;
 pub use segment_rewrite::SegmentedRewritePage;
+mod purge_sweep;
 
 const TEXT: u8 = 0x01;
 const MANIFEST: u8 = 0x02;
@@ -60,6 +70,9 @@ pub(crate) const BODY: u8 = 0x05;
 const STAGING_CLIENT: u8 = 0x06;
 const STAGING_TEXT: u8 = 0x07;
 const STAGING_BY_PAGE: u8 = 0x08;
+const DERIVATION_PURGE: u8 = 0x09;
+/// `b 0x0A <source id> 0x00 <request id>`: the sweep records of a source, so a walk finds its own without reading every source's.
+const DERIVATION_PURGE_BY_SOURCE: u8 = 0x0A;
 
 /// The page id counter of `pages.rs` (its `NEXT_PAGE_ID`, private there): a shell takes its id
 /// from the same sequence `putPage` does.
@@ -696,6 +709,21 @@ fn delete_prefix(tx: &mut dyn KvWrite, prefix: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// The shadow seed (`seed.rs`): stores a page's body columns (`body_storage`, `body_generation`,
+/// `body_bytes`, `truth_bytes`, `body_lines`, `segment_count`, `segmenter_version`, `truth_lead`,
+/// `timeline_lead`, `body_flags`, `chunker_version`) as another engine holds them.
+pub(crate) fn seed_body_state(tx: &mut dyn KvWrite, page_id: u64, columns: Value) -> Result<()> {
+    let state: BodyState = serde_json::from_value(columns)
+        .map_err(|e| StoreError::invalid(format!("seed pages body columns: {e}")))?;
+    put_json(tx, &body_key(page_id), &state)
+}
+
+/// The shadow follow (`seed/follow.rs`): removes a page's body columns and nothing else: its
+/// manifest, derivations and stagings stay.
+pub(crate) fn clear_body_state(tx: &mut dyn KvWrite, page_id: u64) -> Result<()> {
+    tx.delete(&body_key(page_id))
+}
+
 pub(crate) fn read_body_state(read: &dyn KvRead, page_id: u64) -> Result<Option<BodyState>> {
     get_json(read, &body_key(page_id))
 }
@@ -828,6 +856,10 @@ fn staging_id_arg(id: &str) -> Result<String> {
 /// their client keys and recorded texts), as the Postgres foreign keys cascade. Segment texts stay
 /// until a sweep, as in PGLite.
 pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()> {
+    // The foreign key's cascade deletes the page's manifest rows, which the SQL trigger notes like any other delete of a live row.
+    for (_, row) in manifest_rows(&*tx, page.id)? {
+        derivation_sweep::note_row_gone(tx, &row)?;
+    }
     delete_prefix(tx, &manifest_prefix(page.id))?;
     delete_prefix(tx, &derivation_prefix(page.id))?;
     tx.delete(&body_key(page.id))?;
@@ -1573,8 +1605,11 @@ impl Store {
             let staging_bytes = uuid_bytes(&staging);
             let mut live_seqs: HashSet<i64> = HashSet::new();
             let mut moved = Vec::new();
+            let mut closed_live: BTreeSet<(String, u64)> = BTreeSet::new();
             for (key, mut row) in rows {
                 if live_published(&row) && close.contains(&row.occurrence_id) {
+                    // A live published row closes: the trigger notes it under the row's own source, as `derivation_sweep::note_row_gone` does.
+                    closed_live.insert((row.source_id.clone(), page.id));
                     row.gen_to = Some(input.new_generation);
                     put_json(tx, &key, &row)?;
                 } else if row.staging_id.as_deref() == Some(staging.as_str()) {
@@ -1584,6 +1619,10 @@ impl Store {
                 if live_published(&row) {
                     live_seqs.insert(row.seq);
                 }
+            }
+            // A live segment of the page is retired: rows its occurrence backed enter a fact purge's derivation sweep's scope.
+            for (source, page_id) in &closed_live {
+                derivation_sweep::note_scope_entry(tx, source, *page_id)?;
             }
             let retired = if retire_deferred || to_retire == 0 {
                 0
@@ -1736,7 +1775,7 @@ impl Store {
             }
             // Not stale, so the generation is at or above the page's, which is at least 0.
             let at = u64::try_from(generation).unwrap_or(0);
-            crate::chunks::append_segment_chunks(tx, page.id, at, chunks)
+            crate::chunks::append_segment_chunks(tx, page.id, at, chunks, self.env.now_micros())
         })
     }
 
@@ -2077,10 +2116,12 @@ impl Store {
     /// `upsertSegmentDerivations(rows)`: inserts or replaces each row keyed (page, kind,
     /// occurrence); a replaced row keeps its `createdAt`. Refuses the batch on an unknown page,
     /// kind or state, a negative version, a hash that is not 32 bytes, or a key repeated in it.
-    pub fn upsert_segment_derivations(&self, rows: &[SegmentDerivationInput]) -> Result<()> {
+    ///
+    /// A row a recorded purge sweep drops (its trigger) is not stored; returns how many were dropped.
+    pub fn upsert_segment_derivations(&self, rows: &[SegmentDerivationInput]) -> Result<u64> {
         let prepared = prepare_derivations(rows)?;
         if prepared.is_empty() {
-            return Ok(());
+            return Ok(0);
         }
         let now = self.env.now_micros();
         self.write(|tx| put_derivations(tx, &prepared, now))
@@ -2089,7 +2130,8 @@ impl Store {
     /// `storeSegmentDerivationsIfLive(pageId, generation, rows)`: the derive pass's conditional store
     /// (`segment-derive.ts` storeRuns): the rows are upserted as `upsertSegmentDerivations` does only
     /// while the page is live, segmented and at body `generation`; returns how many rows were written
-    /// (0 when the page moved, as the SQL's `RETURNING 1` over an empty `live` set).
+    /// (0 when the page moved, as the SQL's `RETURNING 1` over an empty `live` set; a row a recorded
+    /// sweep drops is not written and not counted).
     pub fn store_segment_derivations_if_live(
         &self,
         page_id: i64,
@@ -2113,8 +2155,8 @@ impl Store {
             {
                 return Ok(0);
             }
-            put_derivations(tx, &prepared, now)?;
-            Ok(prepared.len() as u64)
+            let refused = put_derivations(tx, &prepared, now)?;
+            Ok(prepared.len() as u64 - refused)
         })
     }
 
@@ -2484,6 +2526,7 @@ pub(crate) fn sweep_segments_in(
             };
             if drop {
                 tx.delete(key)?;
+                derivation_sweep::note_row_gone(tx, row)?;
                 result.manifest_rows_deleted += 1;
                 if page_scope.is_some() {
                     released.insert(row.sha256.clone());
@@ -2672,6 +2715,33 @@ mod tests {
             "idleExpiresAt": "2099-01-01T00:00:00Z", "hardExpiresAt": "2099-01-02T00:00:00Z",
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn a_staging_locks_its_state_and_an_unknown_one_reads_none() {
+        let store = crate::test_support::store();
+        let staging = "11111111-1111-4111-8111-111111111111";
+        assert_eq!(store.lock_body_staging_state(staging).unwrap(), None);
+        store
+            .open_body_staging(&staging_input(
+                staging,
+                "default",
+                None,
+                "44444444-4444-4444-8444-444444444444",
+            ))
+            .unwrap();
+        assert_eq!(
+            store.lock_body_staging_state(staging).unwrap().as_deref(),
+            Some("open")
+        );
+        store
+            .set_body_staging_state(staging, "aborted", &StagingStateOptions::default())
+            .unwrap();
+        assert_eq!(
+            store.lock_body_staging_state(staging).unwrap().as_deref(),
+            Some("aborted")
+        );
+        assert!(store.lock_body_staging_state("not-a-uuid").is_err());
     }
 
     fn count(store: &Store, prefix: &[u8]) -> usize {
@@ -2884,7 +2954,7 @@ mod segment_chunk_tests {
         serde_json::from_value(input).unwrap()
     }
 
-    fn chunk(occurrence: i64, ordinal: i64, body: &str) -> SegmentChunkInput {
+    pub(super) fn chunk(occurrence: i64, ordinal: i64, body: &str) -> SegmentChunkInput {
         serde_json::from_value(json!({
             "chunk_text": body, "chunk_source": "compiled_truth", "model": "m",
             "occurrence_id": occurrence, "local_ordinal": ordinal,
@@ -2902,7 +2972,7 @@ mod segment_chunk_tests {
     }
 
     /// A shell published at generation 1 from occurrences 1 ("one\n" at 0) and 2 ("two\n" at 4).
-    fn published(store: &Store) -> i64 {
+    pub(super) fn published(store: &Store) -> i64 {
         published_with(store, json!({}))
     }
 
@@ -3137,7 +3207,7 @@ mod segment_chunk_tests {
 
     /// Generation 2 staged: occurrence 3 replaces occurrence 2 at byte 4, with a chunk for
     /// occurrence 3 and one for occurrence 9, which has no row in generation 2.
-    fn second_generation(store: &Store, id: i64) {
+    pub(super) fn second_generation(store: &Store, id: i64) {
         store
             .open_body_staging(&staging(
                 STAGING_2,
@@ -3261,6 +3331,51 @@ mod segment_chunk_tests {
             vec![2]
         );
         assert_eq!(visible(&store, id), vec!["one a", "one b", "two"]);
+    }
+
+    #[test]
+    fn a_replace_deletes_the_staged_chunks_it_did_not_keep_for_its_generation_only() {
+        let store = crate::test_support::store();
+        let id = published(&store);
+        store
+            .stage_segment_chunks(
+                id,
+                1,
+                &[chunk(1, 0, "a"), chunk(1, 1, "b"), chunk(2, 0, "c")],
+            )
+            .unwrap();
+        store
+            .stage_segment_chunks(id, 2, &[chunk(3, 0, "d"), chunk(3, 1, "e")])
+            .unwrap();
+        let rows = |store: &Store| -> Vec<(u32, String)> {
+            let mut rows: Vec<_> = crate::chunks::read_chunks(&*store.read().unwrap(), id as u64)
+                .unwrap()
+                .into_iter()
+                .map(|c| (c.chunk_index, c.chunk_text))
+                .collect();
+            rows.sort();
+            rows
+        };
+        let all = |texts: &[&str]| -> Vec<(u32, String)> {
+            texts
+                .iter()
+                .enumerate()
+                .map(|(i, t)| (i as u32, (*t).to_string()))
+                .collect()
+        };
+        assert_eq!(rows(&store), all(&["a", "b", "c", "d", "e"]));
+        // Generation 2 keeps index 3 only; generation 1 is not its to delete.
+        store.delete_unstaged_segment_chunks(id, 2, &[3]).unwrap();
+        let after = rows(&store);
+        assert_eq!(after.len(), 4);
+        assert!(after.iter().any(|(i, t)| *i == 3 && t == "d"));
+        assert!(!after.iter().any(|(_, t)| t == "e"));
+        // Nothing kept deletes the generation's chunks; a generation that has none changes nothing.
+        store.delete_unstaged_segment_chunks(id, 2, &[]).unwrap();
+        assert_eq!(rows(&store).len(), 3);
+        store.delete_unstaged_segment_chunks(id, 9, &[]).unwrap();
+        assert_eq!(rows(&store).len(), 3);
+        store.delete_unstaged_segment_chunks(-1, 2, &[]).unwrap();
     }
 
     fn lead(store: &Store, id: i64) -> Option<String> {
@@ -3780,6 +3895,42 @@ mod segment_chunk_tests {
     }
 
     #[test]
+    fn a_request_inserted_through_the_persistence_api_keeps_its_staging() {
+        // The persistence API (`insert_write_request`) writes a queued request into the same
+        // REQUEST family as `admit_write`, but charges only the persistence counters, never the
+        // journal's own. A request it inserted must still root its staging, so the sweep keeps
+        // the staged rows: dropping them would delete text the queued write still needs.
+        let run = |held: bool| {
+            let store = crate::test_support::store();
+            let id = published(&store);
+            second_generation(&store, id);
+            if held {
+                let insert: crate::persistence::WriteRequestInsert =
+                    serde_json::from_value(json!({
+                        "principalKind": "local_cli", "principalId": "cli",
+                        "requestId": "77777777-7777-4777-8777-777777777777",
+                        "operation": "put_page", "sourceId": "default",
+                        "sourceIncarnation": "88888888-8888-4888-8888-888888888888",
+                        "pageId": null, "slug": "notes/a", "worktreeId": null,
+                        "topologyGeneration": null, "digest": "digest",
+                        "intent": {"body_ref": {"staging_id": STAGING_2}},
+                        "authority": {}, "intentBytes": 10, "terminalReservation": 4096,
+                        "targetKind": "page", "protocolVersion": 1,
+                        "admitterVersion": "v-test", "admitterHostId": null,
+                        "counterKeys": [], "clientRequestId": null,
+                        "state": "queued", "deferredRefreshId": null,
+                    }))
+                    .unwrap();
+                store.insert_write_request(&insert).unwrap();
+            }
+            let result = sweep(&store, json!({"expireStagings": true, "now": LATER}));
+            (result, manifest_len(&store, id))
+        };
+        assert_eq!(run(true), (swept(1, 0, 0, 1), 3));
+        assert_eq!(run(false), (swept(2, 1, 1, 2), 2));
+    }
+
+    #[test]
     fn a_terminal_staging_is_deleted_a_day_after_its_last_change() {
         let store = crate::test_support::store();
         let id = published(&store);
@@ -3852,8 +4003,14 @@ mod segment_chunk_tests {
             // A late batch at the live generation (the flip went to another write first).
             store
                 .write(|tx| {
-                    crate::chunks::append_segment_chunks(tx, id as u64, 1, &[chunk(7, 0, "late")])
-                        .map(|_| ())
+                    crate::chunks::append_segment_chunks(
+                        tx,
+                        id as u64,
+                        1,
+                        &[chunk(7, 0, "late")],
+                        0,
+                    )
+                    .map(|_| ())
                 })
                 .unwrap();
             if abort {
@@ -4015,9 +4172,11 @@ mod segment_chunk_tests {
     }
 }
 
-type PreparedDerivation<'a> = (&'a SegmentDerivationInput, String, String);
+type PreparedDerivation<'a> = (&'a SegmentDerivationInput, String, String, bool);
 
-/// The rows of `upsertSegmentDerivations`, checked: each hash decoded, kind, state and version valid.
+/// The rows of `upsertSegmentDerivations`, decoded: each hash decoded, and whether the table's CHECK constraints
+/// (kind, state, version, 32-byte hashes) would refuse it. Postgres evaluates the CHECKs after the BEFORE trigger,
+/// so a row the trigger drops never reaches them: the refusal is raised in [`put_derivations`].
 fn prepare_derivations(rows: &[SegmentDerivationInput]) -> Result<Vec<PreparedDerivation<'_>>> {
     let mut prepared = Vec::with_capacity(rows.len());
     for row in rows {
@@ -4027,57 +4186,80 @@ fn prepare_derivations(rows: &[SegmentDerivationInput]) -> Result<Vec<PreparedDe
         )?;
         let context = from_hex(&row.context_hash, "upsertSegmentDerivations contextHash")?;
         int4(row.version, "upsertSegmentDerivations version")?;
-        if !DERIVATION_KINDS.contains(&row.kind.as_str())
+        let check_failed = !DERIVATION_KINDS.contains(&row.kind.as_str())
             || !DERIVATION_STATES.contains(&row.state.as_str())
             || row.version < 0
             || segment.len() != 32
-            || context.len() != 32
+            || context.len() != 32;
+        prepared.push((row, to_hex(&segment), to_hex(&context), check_failed));
+    }
+    Ok(prepared)
+}
+
+/// Upserts decoded derivation rows in the caller's write transaction; a replaced row keeps its `created_at`.
+/// Returns how many rows the page-purge sweep trigger dropped (not stored).
+fn put_derivations(
+    tx: &mut dyn KvWrite,
+    prepared: &[PreparedDerivation<'_>],
+    now: i64,
+) -> Result<u64> {
+    let mut seen = HashSet::new();
+    let mut refused = 0;
+    // The foreign key is checked at the end of the statement, after every row's trigger, CHECK and conflict handling.
+    let mut missing_page = None;
+    for (row, segment, context, check_failed) in prepared {
+        let found = page_u64(row.page_id).and_then(|id| match read_page_by_id(&*tx, id) {
+            Ok(Some(page)) => Some((id, page)),
+            _ => None,
+        });
+        let built = match &found {
+            Some((page_id, _)) => {
+                let key = derivation_key(*page_id, &row.kind, row.occurrence_id);
+                let created =
+                    get_json::<DerivationRecord>(&*tx, &key)?.map_or(now, |old| old.created_at_us);
+                let record = DerivationRecord {
+                    pipeline_version: row.version,
+                    segment_sha256: segment.clone(),
+                    context_hash: context.clone(),
+                    state: row.state.clone(),
+                    output: row.output.clone(),
+                    receipt: row.receipt.clone(),
+                    created_at_us: created,
+                    updated_at_us: now,
+                };
+                Some((*page_id, key, record))
+            }
+            None => None,
+        };
+        // The trigger on page_segment_derivations runs first: a row a recorded sweep would delete and that holds
+        // its claim is not stored, and reaches neither the CHECK constraints nor the conflict handling.
+        if let (Some((_, page)), Some((_, _, record))) = (&found, &built)
+            && purge_record::sweep_drops(&*tx, record, page, row.occurrence_id)?
         {
+            refused += 1;
+            continue;
+        }
+        if *check_failed {
             return Err(violation(format!(
                 "new row for relation \"page_segment_derivations\" violates check constraint (page {}, kind \"{}\", occurrence {})",
                 row.page_id, row.kind, row.occurrence_id
             )));
         }
-        prepared.push((row, to_hex(&segment), to_hex(&context)));
-    }
-    Ok(prepared)
-}
-
-/// Upserts checked derivation rows in the caller's write transaction; a replaced row keeps its `created_at`.
-fn put_derivations(
-    tx: &mut dyn KvWrite,
-    prepared: &[PreparedDerivation<'_>],
-    now: i64,
-) -> Result<()> {
-    let mut seen = HashSet::new();
-    for (row, segment, context) in prepared {
-        let Some(page_id) =
-            page_u64(row.page_id).filter(|id| matches!(read_page_by_id(&*tx, *id), Ok(Some(_))))
-        else {
-            return Err(violation(format!(
-                "insert into \"page_segment_derivations\" violates foreign key: page {} does not exist",
-                row.page_id
-            )));
+        let Some((page_id, key, record)) = built else {
+            missing_page.get_or_insert(row.page_id);
+            continue;
         };
         if !seen.insert((page_id, row.kind.clone(), row.occurrence_id)) {
             return Err(violation(
                 "ON CONFLICT DO UPDATE command cannot affect row a second time (a derivation key repeats in the batch)",
             ));
         }
-        let key = derivation_key(page_id, &row.kind, row.occurrence_id);
-        let created =
-            get_json::<DerivationRecord>(&*tx, &key)?.map_or(now, |old| old.created_at_us);
-        let record = DerivationRecord {
-            pipeline_version: row.version,
-            segment_sha256: segment.clone(),
-            context_hash: context.clone(),
-            state: row.state.clone(),
-            output: row.output.clone(),
-            receipt: row.receipt.clone(),
-            created_at_us: created,
-            updated_at_us: now,
-        };
         put_json(tx, &key, &record)?;
     }
-    Ok(())
+    if let Some(page) = missing_page {
+        return Err(violation(format!(
+            "insert into \"page_segment_derivations\" violates foreign key: page {page} does not exist"
+        )));
+    }
+    Ok(refused)
 }

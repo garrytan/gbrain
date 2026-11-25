@@ -36,6 +36,7 @@
 import { relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { SourceStateOptions } from '../engine-sql/write-misc.ts';
+import { PAGE_PURGE_TOMBSTONES_SQL } from '../engine-sql/page-purge.ts';
 import { SOURCE_PURGE_EPOCH_SQL } from '../engine-sql/sync-reason-reads.ts';
 import { OperationError } from '../ops/contract.ts';
 import { withoutReadDeadline } from '../read-deadline.ts';
@@ -194,6 +195,13 @@ const STABLE_IN_PREPARATION = new Set([
   MANAGED_MODE_SQL,
 ]);
 /**
+ * Typed members whose one statement is a plain read a caller can name in `also` by its text: when that text is stable,
+ * the member is answered once per argument list, as its text was while it ran through `executeRaw`.
+ */
+const TYPED_STABLE_READS: Readonly<Record<string, string>> = {
+  listPagePurgeTombstones: PAGE_PURGE_TOMBSTONES_SQL,
+};
+/**
  * #5984: the engine a claimed group's members are prepared with. The reads
  * above, source rows (`getSource`), worktree bindings (`getWorktreeBinding`) and config values (`getConfig`, `getAllConfig`) are answered once for
  * the whole preparation, as if every member were prepared at the same moment;
@@ -223,6 +231,10 @@ export function preparationReads(engine: BrainEngine, imports?: ImportGroupReads
       once<{ purge_epoch: string | number }[]>(JSON.stringify([flat(SOURCE_PURGE_EPOCH_SQL), [sourceId]]),
         () => target.readSourcePurgeEpoch(sourceId).then(epoch => epoch === null ? [] : [{ purge_epoch: epoch }]))
         .then(rows => rows[0]?.purge_epoch ?? null);
+    if (typeof key === 'string' && Object.hasOwn(TYPED_STABLE_READS, key) && stable.has(flat(TYPED_STABLE_READS[key]!))) {
+      const member = Reflect.get(target, key, target) as ((...args: unknown[]) => Promise<unknown>) | undefined;
+      if (typeof member === 'function') return (...args: unknown[]) => once(JSON.stringify([key, ...args]), () => member.apply(target, args));
+    }
     // GBRA-75 wave 10: every config key a member reads comes from one config read for the group (the same value per key).
     if (key === 'getConfig') return (name: string) => once('config:*', () => target.getAllConfig()).then(all => Object.hasOwn(all, name) ? all[name]! : null);
     if (key === 'readLocalWriterRow') return sharedWriterRow(target, reads, once);

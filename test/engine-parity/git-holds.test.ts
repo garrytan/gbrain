@@ -3,18 +3,19 @@
  * `writeGitHoldRow`, `replaceGitHoldRow`, `deleteGitHoldRow`, `countGitHolds`), the held-file reads built on it
  * (`readHeldPageRows`, `readHeldCoverageRows`, `readGitHoldRecords`, `readGitHoldReportInputs`), the managed sync pass
  * row (`writeSyncPassRow`, `readSyncPassRow`, `readLiveSyncPassRows`), and the status reads (`readGitHoldListingRows`,
- * `readGitHoldCodeCountRows`, `readGitImageHoldCountRows`, `readSyncConversionRows`), which persistence/sync-holds.ts and
- * persistence/sync-pass-row.ts call instead of raw SQL.
+ * `readGitHoldCodeCountRows`, `readGitImageHoldCountRows`, `readSyncConversionRows`) and the conversion log write
+ * (`recordSyncConversion`), which persistence/sync-holds.ts and persistence/sync-pass-row.ts call instead of raw SQL.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: a hold write inserts, a re-write of the same path updates and counts an attempt, an older run's write is
  *    skipped; the summary counts each held path once with its counters; a clear by an older run is refused, by a newer
  *    run lands once. Readers see only the source's current incarnation, mark a read-only mirror's holds, and name a
  *    held page with its revision. The pass row lands under its lease (or a pin), refuses another lease, and with
- *    `onlyOpen` lands only on an open row.
+ *    `onlyOpen` lands only on an open row. A conversion goes first in its source incarnation's log, the log keeps the
+ *    newest SYNC_CONVERSION_KEEP, the stored record keeps its other keys and reads back in jsonb key order.
  *  - Regression: an engine that refuses these as raw SQL (the Rust engine did, which stopped every first sync at the
  *    hold count), double-counts a re-written hold, leaks an old incarnation's holds, or lets a stale lease overwrite
- *    the pass row.
+ *    the pass row, or a conversion log write that drops the record's keys, the bound, or jsonb's key order.
  *  - Why existing coverage misses it: the sync-holds and sync-pass-row tests run on PGLite and Postgres only.
  *  - Seam: none. Real engines and the callers' own functions over the typed members.
  */
@@ -22,7 +23,7 @@ import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import {
   clearGitHold, countGitHolds, readGitHoldCodeCounts, readGitHoldListing, readGitImageHoldCounts, readGitSourceHolds, readSyncConversions,
-  readGitHoldRetryPaths, recordHoldAttempt, recordSyncConversion, requestGitHoldRetry, writeGitHold, type GitHoldRecord,
+  readGitHoldRetryPaths, recordHoldAttempt, recordSyncConversion, requestGitHoldRetry, writeGitHold, SYNC_CONVERSION_KEEP, SYNC_CONVERSION_OP, type GitHoldRecord,
 } from '../../src/core/persistence/sync-holds.ts';
 import { readLivePassRows, readPassRow, writePassRow } from '../../src/core/persistence/sync-pass-row.ts';
 import { heldFileCount } from '../../src/core/persistence/applied-watermark.ts';
@@ -151,8 +152,8 @@ describe('engine parity: git sync holds', () => {
       return { ...result, one: plain(result.one), all: plain(result.all), none: plain(result.none) };
     });
 
-  parityTest('the conversion log reads newest first per source, current incarnation only (a managed sync writes it, so a Rust brain stops at the write)',
-    { methods: ['readSyncConversionRows'] },
+  parityTest('the conversion log reads newest first per source, current incarnation only',
+    { methods: ['recordSyncConversion', 'readSyncConversionRows'] },
     async (engine, backend) => {
       await createSource(engine, backend, 'repo', {}, '/srv/brain/repo');
       await createSource(engine, backend, 'quiet', {}, '/srv/brain/quiet');
@@ -166,6 +167,43 @@ describe('engine parity: git sync holds', () => {
         .map(([id, list]) => [id, list.map(c => c.request_id)] as const).sort(([a], [b]) => a.localeCompare(b));
       const result = { five: await read(5), one: await read(1), zero: await read(0) };
       expect(result).toEqual({ five: [['quiet', ['r3']], ['repo', ['r2', 'r1']]], one: [['quiet', ['r3']], ['repo', ['r2']]], zero: [] });
+      return result;
+    });
+
+  parityTest('recordSyncConversion keeps the newest SYNC_CONVERSION_KEEP and stores the record byte for byte as jsonb does',
+    { methods: ['recordSyncConversion', 'readSyncConversionRows', 'readOpCheckpointRecord', 'writeOpCheckpointRecord'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'repo', {}, '/srv/brain/repo');
+      await createSource(engine, backend, 'kept', {}, '/srv/brain/kept');
+      const inc = await incarnationOf(engine, 'repo');
+      const keptInc = await incarnationOf(engine, 'kept');
+      for (let i = 0; i < SYNC_CONVERSION_KEEP + 2; i++) {
+        await recordSyncConversion(engine, 'repo', inc, { request_id: `r${i}`, path: `notes/${i}.md`, slug: `notes/${i}`, run_id: 'run-1', outcome: i % 2 ? 'held' : 'refrozen' });
+      }
+      // A stored record with another key and a log that is not an array: the write keeps the key, and jsonb's `||`
+      // takes the old log as one element after the new conversion.
+      await engine.writeOpCheckpointRecord(SYNC_CONVERSION_OP, `kept:${keptInc}`, [{ source_id: 'kept', incarnation: keptInc, note: 'kept', conversions: 'old' }]);
+      await recordSyncConversion(engine, 'kept', keptInc, { request_id: 'k1', path: null, slug: null, run_id: 'run-2', outcome: 'held' });
+      /** The stored record as JSON text, with the clock stamp and the random incarnation checked and set in place. */
+      const stored = async (id: string, incarnation: string) => {
+        const keys = (await engine.readOpCheckpointRecord(SYNC_CONVERSION_OP, `${id}:${incarnation}`))!.completed_keys as Array<Record<string, unknown>>;
+        for (const record of keys) {
+          expect(record.incarnation).toBe(incarnation);
+          record.incarnation = 'INC';
+          for (const c of (Array.isArray(record.conversions) ? record.conversions : []) as Array<Record<string, unknown>>) {
+            if (typeof c !== 'object' || c === null) continue;
+            expect(String(c.converted_at)).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+            c.converted_at = 'AT';
+          }
+        }
+        return JSON.stringify(keys);
+      };
+      const log = (await readSyncConversions(engine, ['repo'], 100)).get('repo')!.map(c => c.request_id);
+      const result = { log, repo: await stored('repo', inc), kept: await stored('kept', keptInc) };
+      expect(result.log).toEqual(Array.from({ length: SYNC_CONVERSION_KEEP }, (_, i) => `r${SYNC_CONVERSION_KEEP + 1 - i}`));
+      expect(result.repo.startsWith('[{"source_id":"repo","conversions":[{"path":"notes/21.md","slug":"notes/21","run_id":"run-1","outcome":"held","request_id":"r21","converted_at":"AT"},')).toBe(true);
+      expect(result.repo.endsWith('{"path":"notes/2.md","slug":"notes/2","run_id":"run-1","outcome":"refrozen","request_id":"r2","converted_at":"AT"}],"incarnation":"INC"}]')).toBe(true);
+      expect(result.kept).toBe('[{"note":"kept","source_id":"kept","conversions":[{"path":null,"slug":null,"run_id":"run-2","outcome":"held","request_id":"k1","converted_at":"AT"},"old"],"incarnation":"INC"}]');
       return result;
     });
 

@@ -2,9 +2,10 @@
 //! the log of every page the brain volunteered (`src/core/context/volunteer-events.ts`,
 //! `src/core/engine-sql/volunteer-events.ts`, `rust/docs/store/volunteer-events.md`).
 //!
-//! Members: `insertVolunteerEventRows`, `listVolunteerChannels`, `listVolunteerUsage`,
-//! `deleteVolunteerEventsOlderThan`, `deleteVolunteerEventsForSlugs` and
-//! `countVolunteerEventsForSlug`.
+//! Members: `insertVolunteerEventRows`, `listVolunteerChannels`, `listVolunteerUsage` and
+//! `deleteVolunteerEventsOlderThan`; the page purge's scrub is `deletePurgedNameStoreRows`
+//! (`delete_volunteer_events_for_slugs`) and its receipt probe is the `context_volunteer_events` store probe
+//! (`count_for_slug`).
 //!
 //! Keys (family `META`, name `volunteer_event`; text parts joined with `0x00`):
 //! `M volunteer_event \0 source \0 slug \0 <id, 20 digits>` holds an [`EventRecord`]. The id is the
@@ -149,6 +150,15 @@ pub(crate) fn purge_probe_rows(read: &dyn KvRead) -> Result<Vec<ProbeRow>> {
             source_id: Some(r.source_id),
         })
         .collect())
+}
+
+/// How many rows still name the slug: the page purge receipt's `context_volunteer_events` probe
+/// (`facts/purge_store_probe.rs`, the SQL's `SELECT 1 FROM context_volunteer_events WHERE source_id = $1 AND slug = $2`).
+pub(crate) fn count_for_slug(read: &dyn KvRead, source_id: &str, slug: &str) -> Result<usize> {
+    if source_id.contains('\0') || slug.contains('\0') {
+        return Ok(0);
+    }
+    Ok(events_under(read, &[source_id, slug])?.len())
 }
 
 impl Store {
@@ -297,14 +307,11 @@ impl Store {
         self.write(|tx| scrub_slugs(tx, source_id, slugs))
     }
 
-    /// `countVolunteerEventsForSlug(sourceId, slug)`: how many rows still name the slug (the purge
-    /// verification's `context_volunteer_events` check).
+    /// How many rows still name the slug (the purge receipt's `context_volunteer_events` probe through
+    /// [`count_for_slug`]); the store's own tests read it here.
     pub fn count_volunteer_events_for_slug(&self, source_id: &str, slug: &str) -> Result<u64> {
-        if source_id.contains('\0') || slug.contains('\0') {
-            return Ok(0);
-        }
         let read = self.read()?;
-        Ok(events_under(&*read, &[source_id, slug])?.len() as u64)
+        Ok(count_for_slug(&*read, source_id, slug)? as u64)
     }
 }
 

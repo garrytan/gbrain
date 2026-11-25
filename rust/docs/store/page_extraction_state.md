@@ -12,9 +12,9 @@ the store is `crates/gbrain-store/src/page_extraction_state.rs`.
 
 | Key | Value | Mirrors |
 | --- | --- | --- |
-| `2 page_id pipeline` | `{ pipeline_version, watermark_bytes?, watermark_sha256?, input_truncated?, updated_at }` (JSON, `updated_at` in microseconds; a NULL column is absent) | `page_extraction_state` |
+| `~e page_id pipeline` | `{ pipeline_version, watermark_bytes?, watermark_sha256?, input_truncated?, updated_at }` (JSON, `updated_at` in microseconds; a NULL column is absent) | `page_extraction_state` |
 
-The key tag is `2` (`keys::PAGE_EXTRACTION_STATE`), free since the `embedding_holds` family was dropped; `FORMAT_VERSION` stays 1. A
+The key tag is the two-byte family tag `~e` (`keys::PAGE_EXTRACTION_STATE`, registered in the Tag registry of docs/designs/RUST_ENGINE_INTERFACES.md); the one-byte tag `2` stays free, and no store holds a record of this family under it. `FORMAT_VERSION` does not change: the family writes nothing until a page is extracted. A
 page deleted for good loses every row (`cascade::remove_page_rows`), which a page delete, a retention purge and a source delete all
 reach, as PGLite's `ON DELETE CASCADE` does. A soft-deleted page keeps its rows. `input_truncated` keeps its keys in jsonb order.
 

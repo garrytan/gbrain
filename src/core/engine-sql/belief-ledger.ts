@@ -187,3 +187,13 @@ export async function readMovedBeliefLifetimes(exec: LegacyUnscopedRead, pageIds
       WHERE l.page_id = ANY($1::int[]) AND l.ended_at IS NULL`, [[...pageIds]]);
   return rows.map(r => ({ ...r, page_id: Number(r.page_id) }));
 }
+
+/** One coverage event of a source (belief/coverage-report.ts coverageIntervals). */
+export interface BeliefCoverageEventRow { id: number; event_type: string; recorded_at: string; value: unknown; cause: unknown; incarnation: string }
+
+/** The coverage events of the source's current incarnation, in id order (belief/coverage-report.ts coverageIntervals and coverageAt). */
+export async function readBeliefCoverageEvents(exec: Pick<SqlExecutor, 'executeRaw'>, sourceId: string): Promise<BeliefCoverageEventRow[]> {
+  return exec.executeRaw<BeliefCoverageEventRow>(`SELECT e.id, e.event_type, e.recorded_at, e.value, e.cause, e.source_incarnation::text AS incarnation
+    FROM belief_events e JOIN sources s ON s.id = e.source_id AND s.incarnation = e.source_incarnation
+    WHERE e.source_id = $1 AND e.subject_kind = 'coverage' AND e.subject_key = $2 ORDER BY e.id`, [sourceId, COVERAGE_KEY]);
+}

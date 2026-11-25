@@ -77,7 +77,7 @@ describe('orphan lifetime sample', () => {
 });
 
 describe('stale-mention scan', () => {
-  parityTest('scanStaleMentions cuts pages that two sources share by slug at the lowest page id', { methods: ['putPage', 'addLinksBatch', 'listStaleMentionPages', 'listStaleMentionLinks'] }, async (engine, backend) => {
+  parityTest('scanStaleMentions cuts pages that two sources share by slug at the lowest page id', { methods: ['putPage', 'addLinksBatch', 'readStaleMentionScan'] }, async (engine, backend) => {
     // Six sources each hold `dup/page`, which mentions a target of its own source and never names it, so the link is stale.
     for (const id of KEYS) await createSource(engine, backend, `src-${id}`);
     for (const id of KEYS) {

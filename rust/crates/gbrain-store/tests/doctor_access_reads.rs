@@ -1,5 +1,5 @@
 //! The doctor reads of the access and generation checks (`listLiveGenerationRetirements`,
-//! `listHeldGenerations`, `listReaderPages`, `listChatChannelCensus`, `countAccessFolderDrift`),
+//! `listHeldGenerations`, `listReaderPages`, `countAccessFolderDrift`),
 //! matched to the statements of `src/core/engine-sql/doctor-derived.ts`, `doctor-acc.ts` and
 //! `access-policy.ts`.
 
@@ -8,7 +8,6 @@ mod common;
 use common::{TempDir, open};
 use gbrain_store::Store;
 use gbrain_store::access_rules::AccessRuleRecord;
-use gbrain_store::facts::PrivacyPolicy;
 use gbrain_store::generations::{ActivationInput, GenerationKey, HeldInput, LedgerItemInput};
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::sources::SourceInput;
@@ -211,106 +210,6 @@ fn reader_pages_list_live_pages_naming_readers_with_the_newest_earlier_version()
     assert!(rows[1]["updated_at"].as_str().unwrap().ends_with("+00"));
     assert_eq!(store.list_reader_pages(Some(7.0)).unwrap().len(), 2);
     assert!(store.list_reader_pages(Some(-1.0)).unwrap().is_empty());
-}
-
-#[test]
-fn chat_census_counts_pages_and_channels_per_source_under_the_policy() {
-    let dir = TempDir::new("doctor-chat-census");
-    let store = open(&dir);
-    source(&store, "other");
-    put(
-        &store,
-        "default",
-        "chats/a",
-        "slack",
-        "x",
-        json!({"channel": "alpha"}),
-    );
-    put(
-        &store,
-        "default",
-        "chats/b",
-        "slack",
-        "x",
-        json!({"channel": "alpha"}),
-    );
-    put(&store, "default", "chats/c", "slack", "#General", json!({}));
-    put(
-        &store,
-        "default",
-        "chats/d",
-        "slack",
-        "plain",
-        json!({"chat": "", "conversation": "talk"}),
-    );
-    put(&store, "default", "chats/e", "slack", "plain", json!({}));
-    put(
-        &store,
-        "default",
-        "chats/dm1",
-        "dm",
-        "dm",
-        json!({"channel": "alpha"}),
-    );
-    put(
-        &store,
-        "default",
-        "chats/dm2",
-        "dm",
-        "dm",
-        json!({"channel": "alpha"}),
-    );
-    put(
-        &store,
-        "default",
-        "chats/private",
-        "slack",
-        "x",
-        json!({"channel": "secret", "visibility": "private"}),
-    );
-    put(
-        &store,
-        "default",
-        "notes/note",
-        "note",
-        "x",
-        json!({"channel": "n"}),
-    );
-    put(
-        &store,
-        "other",
-        "chats/o",
-        "slack",
-        "x",
-        json!({"channel": "alpha"}),
-    );
-
-    let chat = strings(&["slack", "dm"]);
-    let dm = strings(&["dm"]);
-    let sources = strings(&["default", "other", "missing"]);
-    let all = store
-        .list_chat_channel_census(&sources, &chat, &dm, None)
-        .unwrap();
-    // default: alpha, general, talk, "" (no channel), two dm pages, secret = 7 channels over 8 pages.
-    assert_eq!(
-        all,
-        [
-            json!({"source_id": "default", "chat_pages": 8, "channels": 7}),
-            json!({"source_id": "other", "chat_pages": 1, "channels": 1}),
-        ]
-    );
-    let policy = PrivacyPolicy {
-        honor_aliases: true,
-        entity_privacy: true,
-        ..Default::default()
-    };
-    let hidden = store
-        .list_chat_channel_census(&sources, &chat, &dm, Some(&policy))
-        .unwrap();
-    assert_eq!(
-        hidden[0],
-        json!({"source_id": "default", "chat_pages": 7, "channels": 6})
-    );
 }
 
 #[test]

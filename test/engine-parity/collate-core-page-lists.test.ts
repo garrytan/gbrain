@@ -65,14 +65,14 @@ describe('attendance repair scan window', () => {
   const preview = (engine: BrainEngine, limit: number, afterSlug?: string) =>
     previewAttendanceRepair(engine, { remote: false, sourceId: 'att-example', limit, ...(afterSlug === undefined ? {} : { afterSlug }) } as never);
 
-  parityTest('previewAttendanceRepair lists its scan window by slug byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('previewAttendanceRepair lists its scan window by slug byte', { methods: ['putPage', 'readClockMillisText', 'listLiveSourceIncarnations', 'readAttendanceWindow'] }, async (engine, backend) => {
     await seed(engine, backend);
     const slugs = (await preview(engine, 10)).window.map(p => p.slug);
     expect(slugs).toEqual([...BYTE_SLUGS]);
     return slugs;
   });
 
-  parityTest('the attendance-repair after-slug keyset pages through the pages without a skip or a repeat', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('the attendance-repair after-slug keyset pages through the pages without a skip or a repeat', { methods: ['putPage', 'readClockMillisText', 'listLiveSourceIncarnations', 'readAttendanceWindow'] }, async (engine, backend) => {
     await seed(engine, backend);
     const walked: string[] = [];
     let after: string | undefined;
@@ -103,7 +103,7 @@ describe('core and company-brain lists', () => {
     return notices;
   });
 
-  parityTest('readCompanyBrainEvidence picks the first page, owner and decision by byte', { methods: ['putPage', 'addLinksBatch', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('readCompanyBrainEvidence picks the first page, owner and decision by byte', { methods: ['putPage', 'addLinksBatch', 'readCompanyBrainEvidenceRows'] }, async (engine, backend) => {
     await createSource(engine, backend, 'brain-example');
     const put = (slug: string, type: string) => engine.putPage(slug, { type, title: `Title ${slug}`, compiled_truth: `${slug} body`, timeline: '' } as never, { sourceId: 'brain-example' });
     const link = (from: string, to: string, link_type: string) => ({ from_slug: from, to_slug: to, link_type, context: '', link_source: 'markdown',
@@ -125,7 +125,7 @@ describe('core and company-brain lists', () => {
 });
 
 describe('census, size states and file lists', () => {
-  parityTest('chatChannelCensus names the chat sources by byte', { methods: ['putPage', 'listChatChannelCensus'] }, async (engine, backend) => {
+  parityTest('chatChannelCensus names the chat sources by byte', { methods: ['putPage', 'readChatCensusRows'] }, async (engine, backend) => {
     for (const id of MIXED_SOURCES) {
       await createSource(engine, backend, id);
       await engine.putPage('chat/day-one', note('Day one', { type: 'dm' }), { sourceId: id });
@@ -152,14 +152,13 @@ describe('census, size states and file lists', () => {
     return slugs;
   });
 
-  parityTest('file_list lists files by page slug, then by filename, in byte order', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('file_list lists files by page slug, then by filename, in byte order', { methods: ['upsertCliFileRow', 'listReadableFileRows'] }, async (engine) => {
     const op = operations.find(o => o.name === 'file_list')!;
-    for (const slug of MIXED_SLUGS) {
-      await engine.executeRaw(`INSERT INTO files (page_slug, filename, storage_path, content_hash) VALUES ($1, 'one', $2, 'h')`, [slug, `p/${slug}/one`]);
-    }
-    for (const filename of MIXED_SLUGS) {
-      await engine.executeRaw(`INSERT INTO files (page_slug, filename, storage_path, content_hash) VALUES ('shared', $1, $2, 'h')`, [filename, `shared/${filename}`]);
-    }
+    // The rows `gbrain files upload` writes (its typed upsert), for pages the brain does not hold.
+    const file = (page_slug: string, filename: string, storage_path: string) =>
+      engine.upsertCliFileRow({ page_slug, filename, storage_path, mime_type: null, size_bytes: 1, content_hash: 'h' }, {});
+    for (const slug of MIXED_SLUGS) await file(slug, 'one', `p/${slug}/one`);
+    for (const filename of MIXED_SLUGS) await file('shared', filename, `shared/${filename}`);
     const all = await op.handler(ctxFor(engine), {}) as Array<{ page_slug: string; filename: string }>;
     const bySlug = all.filter(r => r.page_slug !== 'shared').map(r => r.page_slug);
     expect(bySlug).toEqual([...BYTE_SLUGS]);
@@ -178,7 +177,7 @@ describe('storage shelf and fact pool lists', () => {
     }
   }
 
-  parityTest('listCards pages the shelf by slug byte with an offset, without a skip or a repeat', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('listCards pages the shelf by slug byte with an offset, without a skip or a repeat', { methods: ['putPage', 'listCardRows'] }, async (engine, backend) => {
     await seedShelf(engine, backend);
     const walked: string[] = [];
     for (let offset = 0; offset < MIXED_SLUGS.length; offset++) {
@@ -188,7 +187,7 @@ describe('storage shelf and fact pool lists', () => {
     return walked;
   });
 
-  parityTest('findCards breaks a tie between equal cards by slug byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('findCards breaks a tie between equal cards by slug byte', { methods: ['putPage', 'findCardRows'] }, async (engine, backend) => {
     await createSource(engine, backend, 'storage');
     for (const slug of MIXED_SLUGS) {
       await engine.putPage(slug, { type: STORED, title: 'Zebra crate', compiled_truth: 'Same body.', timeline: '' } as never, { sourceId: 'storage' });
@@ -198,7 +197,32 @@ describe('storage shelf and fact pool lists', () => {
     return ids;
   });
 
-  parityTest('readShelfCards lists the shelf by slug byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  // The whole ranking on every arm: an exact id, an exact alias, an exact title, word matches over the body and the
+  // aliases, and the similarity of the rest, with the card columns and the store filter of each hit.
+  parityTest('findCards ranks by id, alias, title, words and similarity, with each card and its storage fields', { methods: ['putPage', 'setPageAliases', 'findCardRows'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'storage');
+    const card = (slug: string, title: string, body: string, storage: Record<string, unknown>) =>
+      engine.putPage(slug, { type: STORED, title, compiled_truth: body, timeline: '', frontmatter: { storage } } as never, { sourceId: 'storage' });
+    await card('red-kettle', 'Copper kettle', 'A copper kettle from the attic.', { status: 'stored', kind: 'object', locations: [{ store: 'b2' }, { store: 'attic' }, { store: 'b2' }], on_source_machine: 'true' });
+    await card('blue-kettle', 'Blue kettle', 'Enamel kettle, chipped.', { status: 'archived', locations: [{ store: 'attic' }, {}], on_source_machine: false });
+    await card('tea-set', 'Tea set', 'Six cups and a copper tray.', { status: 'stored', original_path: '/home/me/tea', locations: 'none' });
+    await card('red-mug', 'Red mug', 'No match here.', {});
+    await engine.setPageAliases('tea-set', 'storage', ['copper kettle tray']);
+    const view = async (q: string, filters = {}) => {
+      const found = await findCards(engine, q, { limit: 10, filters });
+      return { terms: found.terms, not_found: found.not_found,
+        hits: found.hits.map(({ updated_at: _u, ...h }) => h), closest: found.closest.map(({ updated_at: _u, ...c }) => c) };
+    };
+    const out = {
+      id: await view('red-kettle'), title: await view('Blue kettle'), words: await view('copper kettle'),
+      storeFilter: await view('kettle', { store: 'attic' }), statusFilter: await view('kettle', { status: 'stored' }),
+      machine: await view('kettle', { onSourceMachine: true }), closest: await view('kettel'),
+    };
+    expect(out.id.hits[0]).toMatchObject({ id: 'red-kettle', match: 'id' });
+    return out;
+  });
+
+  parityTest('readShelfCards lists the shelf by slug byte', { methods: ['putPage', 'readShelfPageRows'] }, async (engine, backend) => {
     await seedShelf(engine, backend);
     const ids = (await readShelfCards(engine)).map(c => c.id);
     expect(ids).toEqual([...BYTE_SLUGS]);
@@ -231,7 +255,7 @@ describe('storage shelf and fact pool lists', () => {
 });
 
 describe('forecast journal', () => {
-  parityTest('readForecastJournal lists predictions by (source, slug) byte order', { methods: ['putPage', 'getPage', 'addTakesBatch', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('readForecastJournal lists predictions by (source, slug) byte order', { methods: ['putPage', 'getPage', 'addTakesBatch', 'readForecastPredictions', 'listTakeHorizons', 'readPredictionLedgerEvents', 'readBeliefCoverageEvents', 'readLatestTakeGrades'] }, async (engine, backend) => {
     for (const id of MIXED_SOURCES) {
       await createSource(engine, backend, id);
       for (const slug of MIXED_SLUGS) {
@@ -248,7 +272,7 @@ describe('forecast journal', () => {
 });
 
 describe('stale-mention scan', () => {
-  parityTest('scanStaleMentions scans the byte-first pages under its limit and lists their links by byte', { methods: ['putPage', 'addLinksBatch', 'listStaleMentionPages'] }, async (engine) => {
+  parityTest('scanStaleMentions scans the byte-first pages under its limit and lists their links by byte', { methods: ['putPage', 'addLinksBatch', 'readStaleMentionScan'] }, async (engine) => {
     for (const slug of [...MIXED_SLUGS, 'm-hub', 'target']) await engine.putPage(slug, note(slug));
     const mention = (from: string, to: string) => ({ from_slug: from, to_slug: to, link_type: 'mentions', context: '', link_source: 'mentions',
       from_source_id: 'default', to_source_id: 'default' });
@@ -265,7 +289,7 @@ describe('stale-mention scan', () => {
 
 describe('onboard page-type walk', () => {
   parityTest('type_proliferation walks the (source, type) pairs by byte: a tie names the byte-first pool, and the walk reaches every source',
-    { methods: ['putPage', 'setConfig', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+    { methods: ['putPage', 'setConfig'] }, async (engine, backend) => {
       // `a-z` is on one pack; `a0` and `ab` share another. Each pack is `warn` with six undeclared types over it, so the worst
       // pool on a tie is the first one read: bytes read `a-z` first, an en_US order reads `a0` first.
       const env = { GBRAIN_HOME: emptyHome(), GBRAIN_SCHEMA_PACK: undefined };
@@ -283,8 +307,6 @@ describe('onboard page-type walk', () => {
         for (let i = 0; i < await declared('gbrain-base-v2') + 6; i++) await add('a-z', typeName('custom-type', i), i);
         for (let i = 0; i < await declared('gbrain-everything') + 6; i++) await add('a0', typeName('custom-type', i), i);
         await add('ab', typeName('custom-type', 0), 0);
-        // The check reports a failed query as not verified, so read raw SQL once first: the Rust arm stops here on its refusal.
-        await engine.executeRaw('SELECT 1');
         const tie = (await checkTypeProliferation(engine)).check;
         expect(tie.status).toBe('warn');
         expect(tie.message).toContain('(source a-z, pack gbrain-base-v2;');

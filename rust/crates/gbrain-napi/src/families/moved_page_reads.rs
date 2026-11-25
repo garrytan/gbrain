@@ -50,6 +50,33 @@ impl Brain {
         })
     }
 
+    /// `readMeetingPage(sourceId, meetingId)`: resolves the live page of the source holding the meeting,
+    /// `{ slug, source_path }` with the lowest id, or null (`gbrain_store::meeting_pages`).
+    #[napi]
+    pub fn read_meeting_page<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        meeting_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_meeting_page(&source_id, &meeting_id))
+    }
+
+    /// `listAttendanceMatches(sourceId, slugs, name)`: resolves at most two slugs of the live person pages of the
+    /// source the attendee name can mean (`gbrain_store::meeting_pages`).
+    #[napi]
+    pub fn list_attendance_matches<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slugs: Vec<String>,
+        name: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_attendance_matches(&source_id, &slugs, &name)
+        })
+    }
+
     /// `hasSegmentedHistory(pageId)`: resolves whether the page or a version of it is stored in segments.
     #[napi]
     pub fn has_segmented_history<'env>(

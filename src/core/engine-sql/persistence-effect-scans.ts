@@ -151,3 +151,39 @@ export async function listEmbeddingCandidates(exec: LegacyUnscopedRead, sourceId
   const rows = await exec.executeRaw<EmbeddingCandidate>(text, params);
   return rows.map(row => ({ ...row, attempts: Number(row.attempts), chars: Number(row.chars) }));
 }
+
+// Effect retry reads: the statements retryParkedEffects (persistence/effect-retry.ts) sent through executeRaw, unchanged.
+
+/** `readSourceRequestById`: $1 the source, $2 the journal id. */
+export const SOURCE_REQUEST_BY_ID_SQL = 'SELECT * FROM persistence_requests WHERE source_id=$1 AND id=$2::uuid';
+/** `listSourceRequestsByRequestId`: $1 the source, $2 the client request id; two rows mean the id is ambiguous. */
+export const SOURCE_REQUESTS_BY_REQUEST_ID_SQL = 'SELECT * FROM persistence_requests WHERE source_id=$1 AND request_id=$2::uuid LIMIT 2';
+/** `listRetryTrackedEffects`: $1 the request's journal id, $2 parked-only, $3 the failed Git codes a retry also takes. */
+export const RETRY_TRACKED_EFFECTS_SQL = `SELECT * FROM persistence_effects WHERE request_id=$1::uuid
+    AND ((kind IN ('git','withdrawal-mirror') AND (data ? 'parked' OR data ? 'retried'))
+      OR (NOT $2::boolean AND (state='failed' AND (kind<>'embedding' OR error_code='source_changed') OR kind='embedding' AND data ? 'parked'))
+      OR (kind='git' AND state='failed' AND error_code=ANY($3::text[]))) ORDER BY kind COLLATE "C"`;
+/** `lockEffectRow`: $1 the effect id. */
+export const LOCK_EFFECT_ROW_SQL = 'SELECT * FROM persistence_effects WHERE id=$1 FOR UPDATE';
+
+/** Request row `id` of `sourceId` (`SELECT *`), or null. */
+export async function readSourceRequestById<R>(exec: LegacyUnscopedRead, sourceId: string, id: string): Promise<R | null> {
+  const [row] = await exec.executeRaw<R>(SOURCE_REQUEST_BY_ID_SQL, [sourceId, id]);
+  return row ?? null;
+}
+
+/** At most two request rows of `sourceId` admitted under client request id `requestId` (`SELECT *`). */
+export function listSourceRequestsByRequestId<R>(exec: LegacyUnscopedRead, sourceId: string, requestId: string): Promise<R[]> {
+  return exec.executeRaw<R>(SOURCE_REQUESTS_BY_REQUEST_ID_SQL, [sourceId, requestId]);
+}
+
+/** The effects of request row `requestRowId` that a parked-effect retry tracks, by kind in byte order (`SELECT *`). */
+export function listRetryTrackedEffects<R>(exec: LegacyUnscopedRead, requestRowId: string, parkedOnly: boolean, failedCodes: readonly string[]): Promise<R[]> {
+  return exec.executeRaw<R>(RETRY_TRACKED_EFFECTS_SQL, [requestRowId, parkedOnly, [...failedCodes]]);
+}
+
+/** Effect `id` (`SELECT *`), locked FOR UPDATE until the transaction ends, or null. */
+export async function lockEffectRow<R>(exec: LegacyUnscopedRead, id: string | number): Promise<R | null> {
+  const [row] = await exec.executeRaw<R>(LOCK_EFFECT_ROW_SQL, [id]);
+  return row ?? null;
+}

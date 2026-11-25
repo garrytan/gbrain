@@ -759,6 +759,27 @@ export function readExtractRollup7d(raw: EngineRawRead, withExpected: boolean): 
   return raw<ExtractRollupRow>(withExpected ? EXTRACT_ROLLUP_SQL : EXTRACT_ROLLUP_NO_EXPECTED_SQL, []);
 }
 
+/** One kind's 7-day extract rollup aggregate (`extract --explain`): one row, every column null when the kind has none. */
+export interface ExtractKindRollupRow {
+  cost_7d_usd: number | null; eval_pass_count: string | null; eval_fail_count: string | null; halt_count: string | null;
+  round_completed_count: string | null; last_updated_at: Date | string | null;
+}
+
+const EXTRACT_KIND_ROLLUP_SQL = `SELECT
+         SUM(cost_usd) AS cost_7d_usd,
+         SUM(eval_pass_count)::text AS eval_pass_count,
+         SUM(eval_fail_count)::text AS eval_fail_count,
+         SUM(halt_count)::text AS halt_count,
+         SUM(round_completed_count)::text AS round_completed_count,
+         MAX(updated_at) AS last_updated_at
+       FROM extract_rollup_7d
+       WHERE day >= CURRENT_DATE - 7 AND kind = $1`;
+
+/** The 7-day extract rollup of one kind, the aggregate `extract --explain <kind>` prints (sums as text: see the caller). */
+export async function readExtractKindRollup7d(raw: EngineRawRead, kind: string): Promise<ExtractKindRollupRow | null> {
+  return (await raw<ExtractKindRollupRow>(EXTRACT_KIND_ROLLUP_SQL, [kind]))[0] ?? null;
+}
+
 export interface RecordedHaltReasonRow { kind: string; reason: string; n: number | string }
 
 const RECORDED_HALT_REASONS_SQL = `SELECT r.kind, e.key AS reason, SUM(e.value::int) AS n

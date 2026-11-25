@@ -221,6 +221,17 @@ impl Brain {
         self.run(env, move |s| s.list_inline_version_texts(page_id))
     }
 
+    /// `movePageVersions(fromPageId, toPageId)`: resolves the moved version ids in id order.
+    #[napi]
+    pub fn move_page_versions<'env>(
+        &self,
+        env: &'env Env,
+        from_page_id: i64,
+        to_page_id: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.move_page_versions(from_page_id, to_page_id))
+    }
+
     /// `listPurgeVersionBodies({ sourceId, pageIds, after, needle, escaped })`: one batch of the
     /// inline versions a fact purge redacts, in id order.
     #[napi]

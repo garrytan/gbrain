@@ -56,6 +56,7 @@ import { readHostBun } from '../core/bun-floor.ts';
 import { detectInstallMethod, readInstallTargetFloor } from './upgrade.ts';
 import { evaluateQuietHours } from '../core/minions/quiet-hours.ts';
 import { inspectLock } from '../core/db-lock.ts';
+import { isEngineCapabilityRefusal, rethrowCapabilityRefusal } from '../core/engine-capability-refusal.ts';
 import { relativeSourceLocalPathSkipWarning } from '../core/sources-load.ts';
 import { installRepoFallback } from './autopilot/install-repo.ts';
 // Path helpers live in a LEAF core module so other commands (gbrain migrate)
@@ -385,14 +386,12 @@ export async function computeAutopilotIdle(engine: BrainEngine, engineType: stri
     const cycle = await inspectLock(engine, 'gbrain-cycle');
     if (cycle) return false; // a cycle (sync/extract/embed/...) is running
     if (engineType === 'postgres') {
-      const rows = await (engine as any).executeRaw?.(
-        `SELECT count(*)::int AS n FROM minion_jobs WHERE status IN ('active','waiting')`,
-      );
-      const busy = Number((rows as Array<{ n: number }>)?.[0]?.n ?? 0);
-      return busy === 0;
+      const counts = await engine.countJobsByStatus({ statuses: ['active', 'waiting'] });
+      return counts.reduce((total, row) => total + Number(row.count), 0) === 0;
     }
     return true; // pglite: no separate worker queue; cycle-lock-free is the signal
-  } catch {
+  } catch (e) {
+    rethrowCapabilityRefusal(e); // an engine that cannot say what is running is not "not idle", it refuses
     return false;
   }
 }
@@ -546,8 +545,9 @@ export async function attemptAutopilotSelfUpgrade(
       /* already gone */
     }
     process.exit(0);
-  } catch {
-    /* the self-upgrade channel must never break the tick */
+  } catch (e) {
+    // The channel must never break the tick, but a brain whose engine cannot say whether it is idle is not "nothing to upgrade".
+    if (isEngineCapabilityRefusal(e)) console.error(`[autopilot] self-upgrade skipped this tick: ${(e as Error).message}`);
   }
 }
 

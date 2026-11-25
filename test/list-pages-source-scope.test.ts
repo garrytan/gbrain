@@ -26,8 +26,8 @@ function makeCtx(overrides: Partial<OperationContext> = {}): {
         return [];
       },
       // #4620: an explicit source_id is checked against the live registry
-      // (a point lookup on `sources`; every id this file names is live).
-      executeRaw: async () => [{ ok: 1 }],
+      // (one source's row; every id this file names is live).
+      readSourceRow: async (id: string) => ({ id, local_path: null, config: {}, archived: false }),
     } as any,
     config: {} as any,
     logger: console as any,

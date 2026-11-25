@@ -1,6 +1,7 @@
 /**
  * .gstack/pregate.json allowlists gstack's `env.kv` secrets finding on the PGLite snapshot cache-key lines of the
- * workflow files and on the generated operation-loader lines (an operation named like a secret, such as reveal_secret),
+ * workflow files, on the generated operation-loader lines (an operation named like a secret, such as reveal_secret),
+ * and on five Rust type annotations or match arms that read like `key: &RelationshipKey,` (each scoped to its own file),
  * and nothing else. gstack (lib/pregate/allowlist.ts) tests an entry's pattern anchored at the
  * finding's column in the added line, as `^(?:pattern)(?![\w-])`; for `env.kv` that column is the value after
  * `key: `. This file applies the same anchoring to every cache-key line in .github/workflows (each must be covered)
@@ -27,8 +28,8 @@ const cacheKeyValues = readdirSync(WORKFLOWS).filter(f => f.endsWith('.yml')).fl
   }));
 
 describe('pregate allowlist: workflow cache keys', () => {
-  test('two env.kv entries: this one, scoped to workflow files and a pattern, and the operation-loader one', () => {
-    expect(entries).toHaveLength(2);
+  test('seven env.kv entries: this one, scoped to workflow files and a pattern, the operation-loader one, and five Rust lines', () => {
+    expect(entries).toHaveLength(7);
     expect(entries[0]!.paths).toEqual(['.github/workflows/*.yml']);
     expect(typeof entries[0]!.pattern).toBe('string');
     expect(entries[1]).toEqual({ finding: 'env.kv', paths: [LOADERS], pattern: '\\[load_[a-z0-9_]+, "(?:[a-z][A-Za-z]*Operations|[a-z]+(?:_[a-z]+)+)"\\],?$', reason: expect.any(String) });
@@ -88,5 +89,59 @@ describe('pregate allowlist: generated operation loaders', () => {
       `[load_secrets, "${['AKIA', 'EXAMPLENOTREAL00'].join('')}"],`,
       `[load_secrets, "${['f8a7b6c5d4', 'e3f2a1b0c9'].join('')}"],`,
     ]) expect({ value, covered: coversLoader(value) }).toEqual({ value, covered: false });
+  });
+});
+
+describe('pregate allowlist: Rust type annotations the secrets check reads as keys', () => {
+  const RUST_SRC = 'rust/crates/gbrain-store/src/';
+  const secret = ['sk-live-', '0123456789abcdef', '0123456789abcdef'].join('');
+  // Each Rust entry covers one line shape in one file: what the check reads as the value, and values that must stay flagged.
+  const SHAPES: Array<{ path: string; covered: string[]; flagged: string[] }> = [
+    { path: 'link_queries/link_temporal.rs', covered: ['&RelationshipKey,'], flagged: [`"${secret}",`, '&RelationshipKeyX,', '&RelationshipKey, secret'] },
+    { path: 'persistence/effect_worker.rs', covered: ['Option<&str>,'], flagged: [`"${secret}",`, 'Option<&str>, x'] },
+    { path: 'occ_kv.rs', covered: ['Mutex<HashMap<Vec<u8>, u64>>,'], flagged: [`"${secret}",`, 'Mutex<HashMap<Vec<u8>, u64>>, x'] },
+    { path: 'write_attribution.rs', covered: ['Option<PrivacyPolicy>,'], flagged: [`"${secret}",`, 'Option<PrivacyPolicy>, x'] },
+    { path: 'cli_reads/reads.rs', covered: [':Char(c) => {'], flagged: [`"${secret}",`, ':Char(c) => { x'] },
+  ];
+  const rustEntries = entries.slice(2);
+
+  test('five entries, each for one exact file under the store crate, with no glob and no shared path', () => {
+    expect(rustEntries).toHaveLength(5);
+    expect(rustEntries.map(e => e.paths)).toEqual(SHAPES.map(s => [RUST_SRC + s.path]));
+    for (const e of rustEntries) {
+      expect(e.paths![0]).not.toContain('*');
+      expect(typeof e.pattern).toBe('string');
+      expect(e.reason.length).toBeGreaterThan(20);
+    }
+  });
+
+  // gstack tests an entry's pattern against the added line from the column where the flagged value starts, as
+  // `^(?:pattern)(?![\\w-])` (lib/pregate/allowlist.ts): the text before the value is never seen, so a pattern cannot name the
+  // key, and `^\\s*token: ...` would match nothing. Anchoring is therefore `^pattern$`: the value starts the match and the
+  // line ends it. One case per entry: a quoted credential followed by a comment that holds the annotation is still flagged,
+  // because its own finding starts at the quoted value, and the pattern does not match there.
+  const TAILS: Array<{ path: string; prefix: string; annotation: string; valueAt: (line: string) => number }> = [
+    { path: 'link_queries/link_temporal.rs', prefix: '    key: ', annotation: '&RelationshipKey,', valueAt: l => l.indexOf(': ') + 2 },
+    { path: 'persistence/effect_worker.rs', prefix: '    token: ', annotation: 'Option<&str>,', valueAt: l => l.indexOf(': ') + 2 },
+    { path: 'occ_kv.rs', prefix: '    by_key: ', annotation: 'Mutex<HashMap<Vec<u8>, u64>>,', valueAt: l => l.indexOf(': ') + 2 },
+    { path: 'write_attribution.rs', prefix: '        exclude_private: ', annotation: 'Option<PrivacyPolicy>,', valueAt: l => l.indexOf(': ') + 2 },
+    { path: 'cli_reads/reads.rs', prefix: '                    Token::Char(c) => ', annotation: 'Token::Char(c) => {', valueAt: l => l.indexOf(':') + 1 },
+  ];
+  for (const t of TAILS) {
+    test(`${t.path}: a line that only ends with the annotation is not covered at its credential`, () => {
+      const pattern = entryFor(RUST_SRC + t.path)!.pattern!;
+      expect(pattern.startsWith('^') && pattern.endsWith('$')).toBe(true);
+      const line = `${t.prefix}"${secret}", // ${t.annotation}`;
+      expect(anchored(pattern, line.slice(t.valueAt(line)))).toBe(false);
+      expect(new RegExp(pattern).test(line)).toBe(false);
+    });
+  }
+
+  test('each entry covers its own annotation and still flags a quoted credential on the same key', () => {
+    for (const shape of SHAPES) {
+      const entry = entryFor(RUST_SRC + shape.path);
+      for (const value of shape.covered) expect({ path: shape.path, value, covered: anchored(entry?.pattern, value) }).toEqual({ path: shape.path, value, covered: true });
+      for (const value of shape.flagged) expect({ path: shape.path, value, covered: anchored(entry?.pattern, value) }).toEqual({ path: shape.path, value, covered: false });
+    }
   });
 });

@@ -153,7 +153,7 @@ describe('access doctor checks list their keys by byte', () => {
   });
 
   parityTest('unscoped_multi_user_token lists the flagged OAuth clients by byte client id', {
-    methods: ['insertOauthClient', 'putPage', 'setConfig', 'listActiveOauthClientRows', 'listActiveAccessTokenRows', 'listChatChannelCensus'],
+    methods: ['insertOauthClient', 'putPage', 'setConfig', 'listActiveOauthClientRows', 'listActiveAccessTokenRows', 'readChatCensusRows'],
   }, async (engine, backend) => {
     for (const id of MIXED_IDS) await insertClient(engine, id, `reader ${id}`);
     await engine.setConfig('access.serves', 'several');

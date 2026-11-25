@@ -71,17 +71,4 @@ impl Brain {
             s.delete_volunteer_events_for_slugs(&source_id, &slugs)
         })
     }
-
-    /// `countVolunteerEventsForSlug(sourceId, slug)`.
-    #[napi]
-    pub fn count_volunteer_events_for_slug<'env>(
-        &self,
-        env: &'env Env,
-        source_id: String,
-        slug: String,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            s.count_volunteer_events_for_slug(&source_id, &slug)
-        })
-    }
 }

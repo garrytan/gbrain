@@ -19,8 +19,10 @@
  * (its member id and groups), a private-readable grant, and the folder rules it satisfies and the pending prefixes
  * its record holds: the member renders the page policy for a fresh record of just those, and when the caller's text
  * equals it, the store reads them from the policy (`readers_allowed`, `orPrivateReadableSource` and `FolderAccess` in
- * privacy.rs). Audiences, lineage, owner reads (whose text has no owner-only test), labelled-only grants and relaxed
- * reads still refuse.
+ * privacy.rs). An owner record (the local owner reading with privacy off, or a remote owner reading its own lineage)
+ * is served when its text equals the same record's rendering with the owner fields: that text has no owner-only test
+ * (`ownerOnly` off) and, for the local owner, no privacy part (`entityPrivacy` false, and `provenancePrivacyOff` for a
+ * fact policy). Lineage, labelled-only grants and relaxed reads still refuse.
  *
  * Every text the store serves ends with the owner-only test (access/owner-only.ts), in the `fn` or the `closed` form
  * by the schema version the context carries; `ownerOnly` sends the form the text holds (owner_only.rs).
@@ -91,6 +93,8 @@ export interface StorePrivacyPolicy {
    * renders no live conjunct), so a prefix the store holds pending that the record does not name hides nothing.
    */
   callerRecord?: boolean;
+  /** A local owner's fact policy with privacy off: the provenance page is judged with no privacy part. */
+  provenancePrivacyOff?: boolean;
 }
 
 /** `OwnerOnlyForm` (access/owner-only.ts), plus 'off' for a text with no owner-only test (`OwnerOnlyForm` in owner_only.rs). */
@@ -174,12 +178,22 @@ export function storePrivacyPolicy(
     }
     if (!opts.callerReaders) return undefined;
     const own = readers.identity.find(p => p.startsWith('member:'))?.slice('member:'.length);
-    for (const form of FACT_FORMS) {
-      const canonical = renderForStoreCaller({ ...readers, hidePrivate: true, restricted: !open }, () => form.sql('facts'));
-      if (text !== normalizeConceptInputs(canonical)) continue;
-      const memberPage = own === undefined ? undefined : `${MEMBER_PAGE_PREFIX}${own}`;
-      const judged = form.memberCase && memberPage !== undefined && canonical.includes(`pp.slug = '${memberPage}'`);
-      return { ...factPolicyFlags(canonical), ...readers, ...(judged ? { memberPage } : {}) };
+    // The reader record, then (for an owner) the same record with the owner fields; each compared by its exact text.
+    const access = currentCallerAccess();
+    const records: Array<Partial<CallerAccess>> = [{ ...readers, hidePrivate: true, restricted: !open }];
+    if (access.owner) {
+      records.push({ ...readers, hidePrivate: access.hidePrivate, restricted: !open, owner: true, ...(access.ownerReads ? { ownerReads: access.ownerReads } : {}) });
+    }
+    for (const record of records) {
+      for (const form of FACT_FORMS) {
+        const canonical = renderForStoreCaller(record, () => form.sql('facts'));
+        if (text !== normalizeConceptInputs(canonical)) continue;
+        const memberPage = own === undefined ? undefined : `${MEMBER_PAGE_PREFIX}${own}`;
+        const judged = form.memberCase && memberPage !== undefined && canonical.includes(`pp.slug = '${memberPage}'`);
+        // A local owner reading with privacy off renders no privacy part on the provenance page either.
+        const provenancePrivacyOff = record.owner === true && !canonical.includes(privateSnapshotFilterFragment('pp'));
+        return { ...factPolicyFlags(canonical), ...readers, ...(judged ? { memberPage } : {}), ...(provenancePrivacyOff ? { provenancePrivacyOff: true } : {}) };
+      }
     }
     return undefined;
   });
@@ -281,43 +295,23 @@ export function storePageTextPolicy(
       folderCoverage: access.folderCoverage.map(c => ({ source_id: c.source_id, prefix: c.prefix })),
     };
     const canonical = renderForStoreCaller({ ...callerReaders, ...folders, hidePrivate: true, restricted: !open }, () => privatePagesFilterForCaller('p'));
-    if (text !== normalizeConceptInputs(canonical)) return undefined;
     const stored = {
       ...(folders.satisfiedRuleIds.length ? { satisfiedRuleIds: folders.satisfiedRuleIds } : {}),
       ...(folders.folderCoverage.length ? { folderCoverage: folders.folderCoverage } : {}),
     };
-    return { ...pagePolicyFlags(canonical), ...callerReaders, ...stored, callerRecord: true };
+    if (text === normalizeConceptInputs(canonical)) return { ...pagePolicyFlags(canonical), ...callerReaders, ...stored, callerRecord: true };
+    // An owner record (the local owner, or a remote owner reading its own lineage): the same record with the owner
+    // fields, compared by its exact text. Its text holds no owner-only test, and the local owner's no privacy part, so
+    // the flags read off it (`owner_only` off, `entity_privacy` false) are what the text applies.
+    if (opts.callerReaders && access.owner) {
+      const owner = renderForStoreCaller({ ...callerReaders, ...folders, hidePrivate: access.hidePrivate, restricted: !open, owner: true,
+        ...(access.ownerReads ? { ownerReads: access.ownerReads } : {}) }, () => privatePagesFilterForCaller('p'));
+      if (text === normalizeConceptInputs(owner)) return { ...pagePolicyFlags(owner), ...callerReaders, ...stored, callerRecord: true };
+    }
+    return undefined;
   });
   if (policy) return { ...policy, ...openFlag };
   refuseMember(member, 'excludePrivate for a caller whose member pages, grants or lineage widen the policy');
-}
-
-/**
- * The store page policy for `privatePagesFilterFragmentFast('p')` (the chat census of shared-exposure.ts): the folder-rule
- * test with no satisfied rule, then a cheap test on constant frontmatter keys and page types, else the page policy
- * `privatePagesFilterFragment('p')`. The store applies the same three steps in that order (privacy.rs `census_hidden`), so an
- * owner-only page that passes the cheap test is counted, as the statement counts it.
- *
- * Served only when the whole text equals a canonical form: the page policy is served as the policy of a caller with no
- * readers (storePageTextPolicy), and the fast text equals the form rebuilt from that policy's honor-aliases flag and the
- * folder-rule test of the record it was served under (the live caller, or the fresh record of no readers). A caller whose
- * record adds folder coverage, or any other change of the text, refuses.
- */
-export function storeFastPageTextPolicy(member: string): StorePrivacyPolicy {
-  const policy = storePageTextPolicy(member, () => privatePagesFilterFragment('p'), { noReaders: true });
-  const open = currentCallerAccess().restricted === false;
-  const full = privatePagesFilterFragment('p');
-  const fast = privatePagesFilterFragmentFast('p');
-  const cheap = (honor: boolean): string => `((p.frontmatter->'visibility' IS NULL AND p.frontmatter->'derived_from' IS NULL${honor
-    ? `\n      AND p.frontmatter->'access' IS NULL AND p.frontmatter->'confidentiality' IS NULL` : ''}
-      AND p.frontmatter->'readable_by' IS NULL AND p.frontmatter->'pinned_question' IS NULL
-      AND p.type NOT IN ('atom', 'concept', 'event', 'question'))
-    OR ${full})`;
-  const records: Array<Partial<CallerAccess>> = [open ? { restricted: false } : {}, { identity: [], privateReadableSources: [], hidePrivate: true, restricted: !open }];
-  const canonical = records.some(record =>
-    fast === `(${renderForStoreCaller(record, () => folderRulesAllowedSql('p', []))} AND ${cheap(policy.honorAliases)})`);
-  if (!canonical) refuseMember(member, 'a fast page filter that is not the folder-rule test, the cheap key test and the page policy');
-  return policy;
 }
 
 /** The reader record a store policy carries for a widening caller (`identity` and `privateReadableSources` in privacy.rs). */

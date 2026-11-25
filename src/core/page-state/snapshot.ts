@@ -3,9 +3,9 @@ import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
 import type { ReadQuery } from '../search/read-enrichment.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { rowToPage } from '../utils.ts';
-import type { BrainEngine } from '../engine.ts';
-import { hasCapability } from '../engine-capabilities.ts';
 import type { GlobalPurgeMarker, PageSnapshot, PageSnapshotOptions, PageWithdrawal } from './types.ts';
+import type { BrainEngine } from '../engine.ts';
+import { GLOBAL_PURGES_SQL, GLOBAL_WORLD_PURGES_SQL } from '../engine-sql/segmented-mirror-effects.ts';
 import { PageSnapshotAmbiguousError, REVISION_BACKFILL_PENDING } from './types.ts';
 
 /**
@@ -25,43 +25,54 @@ export async function resolveGlobalPurges(query: ReadQuery, sourceId: string, ma
   if (!marker || marker.count <= 0) return [];
   const hashes = fenceClaimHashes(normalizedTexts);
   if (!hashes.length) return [];
-  const rows = await query<{ w: PageWithdrawal }>(`SELECT jsonb_build_object('visibility',visibility,'fact_hash',fact_hash,
-      'withdrawn_at',min(purged_at),'purged',true) AS w
-    FROM fact_purges WHERE source_id=$1 AND subject='*' AND fact_hash=ANY($2::text[]) ${marker.world_only ? "AND visibility='world'" : ''}
-    GROUP BY visibility,fact_hash ORDER BY visibility COLLATE "C",fact_hash COLLATE "C"`, [sourceId, hashes]);
+  const rows = await query<{ w: PageWithdrawal }>(marker.world_only ? GLOBAL_WORLD_PURGES_SQL : GLOBAL_PURGES_SQL, [sourceId, hashes]);
   return rows.map(r => typeof r.w === 'string' ? JSON.parse(r.w) as PageWithdrawal : r.w);
 }
 
-/** An engine the withdrawal overlay reads through: its typed fence normalization, and raw SQL only when it has it. */
-export type OverlayEngine = Pick<BrainEngine, 'normalizeFenceLines' | 'executeRaw' | 'capabilities'>;
-
 /**
  * Normalize filesystem bytes with the exact ledger fingerprint rules before comparing them. `global` names the
- * snapshot's source and '*' purge marker, resolved against this text's fence rows (not the stored page's). `source` is a
- * SQL query (a transaction's) or an engine, read through its typed normalizeFenceLines (OverlayEngine).
+ * snapshot's source and '*' purge marker, resolved against this text's fence rows (not the stored page's).
  */
-export async function overlayCanonicalBodies(source: ReadQuery | OverlayEngine, body: string, timeline: string, withdrawals: PageWithdrawal[],
+export async function overlayCanonicalBodies(query: ReadQuery, body: string, timeline: string, withdrawals: PageWithdrawal[],
+  global?: { sourceId: string; marker?: GlobalPurgeMarker }): Promise<{ compiled_truth: string; timeline: string }> {
+  return overlayWith({
+    normalize: async () => (await query<{ body: string; timeline: string }>(`SELECT
+    (SELECT string_agg(regexp_replace(lower(line),'[[:space:]]+',' ','g'),chr(10) ORDER BY ord)
+      FROM unnest(string_to_array($1::text,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS body,
+    (SELECT string_agg(regexp_replace(lower(line),'[[:space:]]+',' ','g'),chr(10) ORDER BY ord)
+      FROM unnest(string_to_array($2::text,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS timeline`, [body, timeline]))[0],
+    purges: (sourceId, marker, texts) => resolveGlobalPurges(query, sourceId, marker, texts),
+  }, body, timeline, withdrawals, global);
+}
+
+/**
+ * `overlayCanonicalBodies` through typed engine members: the line normalization is `normalizeFenceLines` and the `*`
+ * purge lookup is `listGlobalPurgeWithdrawals`, so an engine without raw SQL (the Rust engine) overlays the same way.
+ */
+export async function overlayCanonicalBodiesTyped(engine: Pick<BrainEngine, 'normalizeFenceLines' | 'listGlobalPurgeWithdrawals'>, body: string, timeline: string,
+  withdrawals: PageWithdrawal[], global?: { sourceId: string; marker?: GlobalPurgeMarker }): Promise<{ compiled_truth: string; timeline: string }> {
+  return overlayWith({
+    normalize: async () => (await engine.normalizeFenceLines([body], [timeline]))[0],
+    purges: async (sourceId, marker, texts) => {
+      if (!marker || marker.count <= 0) return [];
+      const hashes = fenceClaimHashes(texts);
+      return hashes.length ? engine.listGlobalPurgeWithdrawals(sourceId, hashes, marker.world_only === true) : [];
+    },
+  }, body, timeline, withdrawals, global);
+}
+
+interface OverlayReads {
+  normalize(): Promise<{ body: string | null; timeline: string | null } | undefined>;
+  purges(sourceId: string, marker: GlobalPurgeMarker, normalizedTexts: readonly string[]): Promise<PageWithdrawal[]>;
+}
+
+async function overlayWith(reads: OverlayReads, body: string, timeline: string, withdrawals: PageWithdrawal[],
   global?: { sourceId: string; marker?: GlobalPurgeMarker }): Promise<{ compiled_truth: string; timeline: string }> {
   const pending = global?.marker && global.marker.count > 0 ? global : undefined;
   if (!withdrawals.length && !pending) return { compiled_truth: body, timeline };
   if (!body.includes('gbrain:facts:begin') && !timeline.includes('gbrain:facts:begin')) return { compiled_truth: body, timeline };
-  if (typeof source !== 'function') {
-    // The typed form: the normalization through the engine; the '*' purge marker is a ledger only a SQL engine holds
-    // (the Rust store keeps no fact purge ledger rows of that shape).
-    const query: ReadQuery | undefined = hasCapability(source, 'raw_sql') ? source.executeRaw.bind(source) : undefined;
-    if (pending && !query) throw new Error(`overlayCanonicalBodies: source ${pending.sourceId} has a purge marker, which only a SQL engine records.`);
-    const [normalized] = await source.normalizeFenceLines([body], [timeline]);
-    const resolved = pending ? await resolveGlobalPurges(query!, pending.sourceId, pending.marker, [normalized?.body ?? '', normalized?.timeline ?? '']) : [];
-    const all = resolved.length ? [...withdrawals, ...resolved] : withdrawals;
-    return { compiled_truth: overlayWithdrawalBody(body, normalized?.body ?? '', all), timeline: overlayWithdrawalBody(timeline, normalized?.timeline ?? '', all) };
-  }
-  const query = source;
-  const [normalized] = await query<{ body: string; timeline: string }>(`SELECT
-    (SELECT string_agg(regexp_replace(lower(line),'[[:space:]]+',' ','g'),chr(10) ORDER BY ord)
-      FROM unnest(string_to_array($1::text,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS body,
-    (SELECT string_agg(regexp_replace(lower(line),'[[:space:]]+',' ','g'),chr(10) ORDER BY ord)
-      FROM unnest(string_to_array($2::text,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS timeline`, [body, timeline]);
-  const resolved = pending ? await resolveGlobalPurges(query, pending.sourceId, pending.marker, [normalized.body ?? '', normalized.timeline ?? '']) : [];
+  const normalized = (await reads.normalize()) ?? { body: '', timeline: '' };
+  const resolved = pending ? await reads.purges(pending.sourceId, pending.marker!, [normalized.body ?? '', normalized.timeline ?? '']) : [];
   const all = resolved.length ? [...withdrawals, ...resolved] : withdrawals;
   return { compiled_truth: overlayWithdrawalBody(body, normalized.body ?? '', all),
     timeline: overlayWithdrawalBody(timeline, normalized.timeline ?? '', all) };

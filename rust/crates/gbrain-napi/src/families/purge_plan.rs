@@ -11,10 +11,12 @@ use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
 use gbrain_store::facts::purge_plan::{
-    ClaimNeedleArgs, HoldingStagingsArgs, LivePageArgs, NeighbourArgs, PageIdsArgs, PurgeMatchArgs,
-    PurgeProbeArgs, PurgeSourceArgs, ReviewCountArgs, SegmentedBodiesArgs, SourcePageIdsArgs,
-    StagingNeedleArgs,
+    ClaimNeedleArgs, DerivationClaimsArgs, HoldingStagingsArgs, LivePageArgs, NeighbourArgs,
+    PageIdsArgs, PurgeMatchArgs, PurgeProbeArgs, PurgeSourceArgs, ReviewCountArgs,
+    SegmentedBodiesArgs, SourcePageIdsArgs, StagingNeedleArgs,
 };
+use gbrain_store::facts::purge_store_probe::StoreProbeArgs;
+use gbrain_store::page_body::purge_probe::DerivationProbeArgs;
 
 #[napi]
 impl Brain {
@@ -148,6 +150,32 @@ impl Brain {
         })
     }
 
+    /// `probePurgeDerivations(args)`: resolves one batch of the stored derivation results a fact purge's receipt probes.
+    #[napi]
+    pub fn probe_purge_derivations<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: DerivationProbeArgs = required(args, "probePurgeDerivations args")?;
+            s.probe_purge_derivations(&a)
+        })
+    }
+
+    /// `listDerivationClaimForms(args)`: resolves the claims' normalized, folded forms.
+    #[napi]
+    pub fn list_derivation_claim_forms<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: DerivationClaimsArgs = required(args, "listDerivationClaimForms args")?;
+            s.list_derivation_claim_forms(&a)
+        })
+    }
+
     /// `listPageSourcePaths(args)`: resolves the relative source paths.
     #[napi]
     pub fn list_page_source_paths<'env>(
@@ -197,6 +225,32 @@ impl Brain {
         self.run(env, move |s| {
             let a: PurgeProbeArgs = required(args, "listPurgeProbeItems args")?;
             s.list_purge_probe_items(&a)
+        })
+    }
+
+    /// `countPurgeStoreProbe(args)`: resolves the bounded row count of a page purge receipt's store probe.
+    #[napi]
+    pub fn count_purge_store_probe<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: StoreProbeArgs = required(args, "countPurgeStoreProbe args")?;
+            s.count_purge_store_probe(&a)
+        })
+    }
+
+    /// `listPurgeStoreProbeItems(args)`: resolves the first 20 items of an effect probe.
+    #[napi]
+    pub fn list_purge_store_probe_items<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: StoreProbeArgs = required(args, "listPurgeStoreProbeItems args")?;
+            s.list_purge_store_probe_items(&a)
         })
     }
 }

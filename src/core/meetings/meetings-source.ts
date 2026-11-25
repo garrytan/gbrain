@@ -138,8 +138,8 @@ async function runMeetingsSyncInner(engine: BrainEngine, sourceId: string, cfg: 
   }
   const resolved = meetingsConnectorAccount(cfg, account);
 
-  const [source] = await engine.executeRaw<{ incarnation: string; local_path: string | null; config: Record<string, unknown> }>(
-    'SELECT incarnation::text AS incarnation,local_path,config FROM sources WHERE id=$1', [sourceId]);
+  const row = await engine.readSourceState(sourceId);
+  const source = { incarnation: String(row!.incarnation), local_path: row!.local_path, config: row!.config };
   const identity = connectorIdentity('meetings', source.config, source.local_path);
   const cursorKey = connectorDbCursorKey(sourceId, source.incarnation, identity);
   let state: MeetingsState;
@@ -293,9 +293,9 @@ interface PublishCtx extends ConnectorPublishCtx {
   cfg: MeetingsSourceConfig; account: MeetingAccount; summary: Summary; now: () => number;
 }
 
-async function existingPath(engine: BrainEngine, sourceId: string, meetingId: string): Promise<string | null> {
-  const [row] = await engine.executeRaw<{ slug: string; source_path: string | null }>(
-    `SELECT slug,source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND frontmatter->>'meeting_id'=$2 ORDER BY id LIMIT 1`, [sourceId, meetingId]);
+/** The recorded path of the live page that holds the meeting (its slug's file when none is recorded), or null. */
+export async function existingPath(engine: Pick<BrainEngine, 'readMeetingPage'>, sourceId: string, meetingId: string): Promise<string | null> {
+  const row = await engine.readMeetingPage(sourceId, meetingId);
   return row ? row.source_path ?? `${row.slug}.md` : null;
 }
 

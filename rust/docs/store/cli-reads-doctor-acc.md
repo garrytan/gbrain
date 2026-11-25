@@ -24,25 +24,35 @@ is engine-specific.
 `hasMcpLogRowsPastWindow` follows `pruneMcpRequestLogBatch`: the cutoff is `now - days` (the day count read as an `int4`),
 and rows are visited in `created_at` order, so the scan stops at the first row inside the window.
 
-Two reads of the access checks are served from the page records as well (`crates/gbrain-store/src/cli_reads/doctor_acc.rs`):
+One read of the access checks is served from the page records as well (`crates/gbrain-store/src/cli_reads/doctor_acc.rs`):
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
 | `brain.listReaderPages(updatedWithinDays)` | `[{ id, source_id, slug, readers, updated_at, updated_us, writer, prior_names_readers }]` for every live page whose frontmatter has a `readable_by` key (a JSON null counts), by source then slug in byte order; `updatedWithinDays` (null keeps all) keeps the pages written after `now - days`. `readers` is `gbrain_access_readers(frontmatter)` (`["!nobody"]` when no valid reader), `updated_at` is `timestamptz::text`, `writer` is `principal_kind:principal_id` of the revision receipt (null without one), `prior_names_readers` whether the newest stored version (snapshot time, then id) has a `readable_by` key (null with no version) | the page columns the three statements of `listMalformedReaderPages`, `listUnknownReaders` and `listRecentReaderNarrowings` read |
-| `brain.listChatChannelCensus(sourceIds, chatTypes, dmTypes, policy)` | `[{ source_id, chat_pages, channels }]` per source in byte order for the live pages of `chatTypes` the policy does not hide (a null policy hides nothing); a `dmTypes` page is its own channel, any other takes its frontmatter `channel`, `chat` or `conversation`, else the lower-cased `#name` its title opens with | `listChatChannelCensus` (`chatChannelCensus` of `grants/shared-exposure.ts`) |
-
-`policy` is the page policy of `privatePagesFilterFragmentFast`: the folder-rule test with no satisfied rule, then a cheap test on constant frontmatter keys and page types, else the whole no-caller page policy (`fast_page_hidden` in `facts/privacy.rs`). A page in an owner-only source that passes the cheap test is counted, as the statement counts it. The TypeScript member (`storeFastPageTextPolicy`, `private-provenance.ts`) sends a policy only when the rendered text equals the canonical form rebuilt from the policy it serves, and refuses any other caller.
 
 The members built from it answer in TypeScript: `listMalformedReaderPages` (the pages whose readers are `["!nobody"]`, with the total), `listUnknownReaders` (each named reader that is no member, a removed member, no group or a group with no member, classified as the SQL does, with its page count and first page; members and groups from `readAccessMembers` and `readAccessGroups`) and `listRecentReaderNarrowings` (pages written in the window whose newest earlier version named no readers, newest first).
 
+## Credential reads
+
+`listActiveAccessTokenRows`, `listActiveOauthClientRows` and `listAttestCredentialRows` read the store's token and
+client records (`jobs/doctor_credentials.rs`). A token row names every `access_tokens` column, `token_hash` included, so
+it has the same columns and values as the SQL engines' `SELECT *` (the parity case in
+`test/engine-parity/doctor-acc.test.ts` compares every column); oldest first, a tie by id. A client row is
+`ClientRecord::to_row`, every client not deleted, by client id in byte order. The attest rows are the tokens not revoked
+and the clients not deleted with an attest actor: a token's `row` is `to_jsonb(t)` (times as `to_jsonb` text in a UTC
+session), a client's is `to_jsonb(c) - 'client_secret_hash'` (`to_grant_json`), by kind then name in byte order, a tie by id.
+
 ## Answered in TypeScript
+
+`listRawOnlyRules` reads each source's rules (`brain.listAccessRules`) and keeps those with `covers_derived` false, by (source, rule id) in byte order. `listAccessMemberRows` is `brain.readAccessMembers({ includeRemoved })`, by id with groups. `listAudienceMemberIds` and `listLabelledOnlyMemberIds` read the store's member records (`brain.readAccessMembers`): the enabled, unremoved members of kind `audience`, or with the labelled-only grant, by id in byte order.
 
 An answer the store cannot contradict, because it keeps no such state:
 
 | Members | Answer |
 | --- | --- |
-| `listPolicySourceIds`, `listRawOnlyRules`, `listAudienceMemberIds`, `listLabelledOnlyMemberIds`, `listAccessMemberRows`, `listBeliefCoveredSources` | no rows: no access state or coverage events are read from here |
-| `listActiveAccessTokenRows`, `listActiveOauthClientRows`, `listAttestCredentialRows`, `listOauthClientAuthShapes`, `listDanglingFederatedReads`, `listPrivilegedDcrClients` | composed from the token and OAuth client rows the store serves (`readLiveAccessTokenRows`, `listOauthClients`, `listOauthGrantAudit`, `listAllSources`): live tokens oldest first, live clients by id, credentials with an attest actor by kind then name, federated reads naming no source (an archived source is one), clients with grant revision 0 and no `register` audit row whose scope matches the pattern (`[[:space:]]` read as the POSIX space class). All byte order |
+| `listPolicySourceIds`, `listBeliefCoveredSources` | no rows: no access state or coverage events are read from here |
+| `listOauthClientAuthShapes`, `listDanglingFederatedReads`, `listPrivilegedDcrClients` | composed from the OAuth client rows the store serves (`listOauthClients`, `listOauthGrantAudit`, `listAllSources`): every client's auth shape, federated reads naming no source (an archived source is one), clients with grant revision 0 and no `register` audit row whose scope matches the pattern (`[[:space:]]` read as the POSIX space class). All byte order |
+| `listVolunteerChannels` | served by the store from the push-context log ([volunteer-events.md](volunteer-events.md)) |
 | `isAccessStateUnreadable` | false |
 | `readKnowledgeRevisionNotNull` | true: the revision is always set |
 | `readDriftSchema` | `current` |

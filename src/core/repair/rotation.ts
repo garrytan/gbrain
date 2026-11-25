@@ -8,13 +8,13 @@
 import type { BrainEngine } from '../engine.ts';
 
 export async function rotationAfter(engine: BrainEngine, op: string, brainId: string): Promise<string | null> {
-  const [first] = await engine.readOpCheckpointRecords(op, [brainId]);
-  const last = first !== null && typeof first === 'object' ? (first as { last?: unknown }).last : undefined;
-  return last === undefined || last === null ? null : String(last);
+  const record = await engine.readOpCheckpointRecord(op, brainId);
+  const last = Array.isArray(record?.completed_keys) ? (record.completed_keys[0] as { last?: unknown } | undefined)?.last : undefined;
+  return last == null ? null : String(last);
 }
 
 export async function saveRotation(engine: BrainEngine, op: string, brainId: string, last: string): Promise<void> {
-  await engine.writeOpCheckpointRecords(op, [{ fingerprint: brainId, record: { last } }]);
+  await engine.writeOpCheckpointRecord(op, brainId, [{ last }]);
 }
 
 /** The candidates after `rotation` first, then the rest, each part in its original order. */

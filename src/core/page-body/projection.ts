@@ -31,26 +31,26 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
+import { STALE_CHUNKS_SQL, type SegmentedProjectionPage } from '../engine-sql/segmented-writes.ts';
 import { isQuarantined } from '../quarantine.ts';
 import { faultPoint } from '../persistence/fault-points.ts';
 import { sealSegmentedPage } from '../persistence/segmented-apply.ts';
 import { SEGMENTED_PROJECTION_CLAIM, type ProjectionRebuildFailure } from '../page-state/projections.ts';
 import { occurrencesWithoutChunks, stageOccurrenceChunks } from './ingest.ts';
 import { PROJECTION_RETIRE_MAX_ROWS } from './limits.ts';
-import type { JsonObject } from './types.ts';
 import { assertGenerationTiles } from './body-tiling.ts';
 
 /** `claimLost`: another process took the page's claim over (or a write re-queued the page) during the build, which stopped unsealed. */
 export interface SegmentedProjectionResult { chunks: number; retired: number; sealed: boolean; claimLost?: true }
 
-interface ProjectionPage {
-  id: number; body_generation: number | string; body_bytes: number | string; knowledge_revision: string; text_projection_revision: string | null;
-  title: string; frontmatter: JsonObject | null; body_flags: JsonObject | null; timeline_lead: string | null;
-}
+type ProjectionPage = SegmentedProjectionPage;
 
 function readProjectionPage(engine: Pick<BrainEngine, 'readSegmentedProjectionPage'>, ref: { sourceId: string; slug: string }): Promise<ProjectionPage | null> {
   return engine.readSegmentedProjectionPage(ref.sourceId, ref.slug);
 }
+
+/** The statement the stale-chunk probe and retirement run on PGLite and Postgres (engine-sql/segmented-writes.ts). */
+export { STALE_CHUNKS_SQL };
 
 /** The occurrence ids of page $1's manifest at generation $2. */
 export async function liveOccurrenceIds(engine: Pick<BrainEngine, 'readBodyManifestRows'>, pageId: number, generation: number): Promise<number[]> {

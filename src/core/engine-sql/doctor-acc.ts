@@ -7,8 +7,6 @@
  */
 import type { EngineRawRead } from './cli-reads-ops.ts';
 import { isMissingSchemaObject } from '../utils.ts';
-import { privatePagesFilterFragmentFastSql } from '../search/private-visibility.ts';
-import { renderFragment, sqlFragment } from './fragment.ts';
 
 export type { EngineRawRead } from './cli-reads-ops.ts';
 
@@ -553,27 +551,4 @@ export function listRecentReaderNarrowings(raw: EngineRawRead, days: number, lim
       WHERE p.deleted_at IS NULL AND p.frontmatter->'readable_by' IS NOT NULL AND prev.frontmatter->'readable_by' IS NULL
         AND p.updated_at > now() - make_interval(days => $1::int)
       ORDER BY p.updated_at DESC, p.id LIMIT $2`, [days, limit]);
-}
-
-// ---- the shared-exposure chat census -------------------------------------------------------------------------------
-
-export interface ChatCensusRow { source_id: string; chat_pages: number | string; channels: number | string }
-
-/**
- * Per source (byte order), the live pages of `chatTypes` and the distinct channels they come from: a page of a `dmTypes` type
- * is its own channel, any other takes its frontmatter channel, chat or conversation, else its title's `#name`. With
- * `hidePrivate` the pages the caller's fast page policy hides are left out; call inside the caller's access record, where it renders.
- */
-export function listChatChannelCensus(raw: EngineRawRead, sourceIds: readonly string[], chatTypes: readonly string[], dmTypes: readonly string[],
-  hidePrivate: boolean): Promise<ChatCensusRow[]> {
-  const hide = hidePrivate ? sqlFragment`AND ${privatePagesFilterFragmentFastSql('p')}` : sqlFragment``;
-  const { text, params } = renderFragment(sqlFragment`SELECT p.source_id, count(*) AS chat_pages,
-            count(DISTINCT CASE WHEN p.type = ANY(${[...dmTypes]}::text[]) THEN 'dm:' || p.slug
-              ELSE COALESCE(NULLIF(p.frontmatter->>'channel', ''), NULLIF(p.frontmatter->>'chat', ''), NULLIF(p.frontmatter->>'conversation', ''),
-                lower(substring(p.title from '^#([A-Za-z0-9._-]+)')), '') END) AS channels
-       FROM pages p
-      WHERE p.deleted_at IS NULL AND p.type = ANY(${[...chatTypes]}::text[]) AND p.source_id = ANY(${[...sourceIds]}::text[])
-        ${hide}
-      GROUP BY p.source_id ORDER BY p.source_id COLLATE "C"`);
-  return raw<ChatCensusRow>(text, params);
 }

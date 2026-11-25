@@ -1,17 +1,15 @@
 /**
- * BrainEngine parity — the cycle, identity-downgrade, stale-mention and segmented-write reads that ran through
- * `executeRaw` and are typed members now (src/core/engine-sql/cycle-reads.ts and segmented-rewrite.ts).
+ * BrainEngine parity — the cycle, identity-downgrade, belief and segmented-write reads that ran through `executeRaw` and are
+ * typed members now (src/core/engine-sql/cycle-reads.ts and segmented-rewrite.ts).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: on every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1)
- *    each member answers the same: the propose_takes failure tombstones (recorded once, listed by slug bytes), the cycle's
- *    changed-page window (live pages after a cursor, by time then slug bytes), the identity-downgrade page reads (the
- *    latest soft-deleted page of a file, the live pages at a path, what a carry would move), the stale-mention scan's
- *    pages and links, the belief ledger's orphan lifetimes, and a segmented page's write statements (the rewrite's page
- *    read and deleted_at restore, the projection page, the chunk probes and retirement, the live page and the retired
- *    chunk vectors) over an inline page that holds no segmented rows.
- *  - Regression: each of these was raw SQL, so a Rust brain refused the cycle window, the stale-mention scan, the
- *    identity-downgrade record, the failure tombstones and the segmented fence rewrite.
+ *    each member answers the same: the cycle's changed-page window (live pages after a cursor, by time then slug bytes), the
+ *    identity-downgrade page reads (the latest soft-deleted page of a file, the live pages at a path, what a carry would
+ *    move), the belief ledger's orphan lifetimes, and a segmented page's write statements (the rewrite's page read and
+ *    deleted_at restore and the live page) over an inline page that holds no segmented rows.
+ *  - Regression: each of these was raw SQL, so a Rust brain refused the cycle window, the identity-downgrade record and the
+ *    segmented fence rewrite.
  *  - Why existing coverage misses it: the cases of collate-belief-cycle-walks, tie-break-stale-orphan-edge-downgrade and
  *    forget-whole reach the members through their callers; none calls one directly or covers its edges (an unknown source,
  *    a NUL byte, an empty list).
@@ -32,23 +30,7 @@ async function putTied(engine: BrainEngine, slugs: readonly string[]): Promise<v
   await engine.transaction(async tx => { for (const slug of slugs) await tx.putPage(slug, note(slug)); });
 }
 
-const TOMBSTONE = '(extraction failed: llm_error)';
-const tombstone = (slug: string, claimText = TOMBSTONE) =>
-  ({ sourceId: 'default', slug, contentHash: 'h', promptVersion: 'v1', proposalRunId: 'run', claimText, modelId: 'm' });
-
 describe('engine parity: cycle and sync reads', () => {
-  parityTest('failure tombstones record once and list by slug bytes', { methods: ['recordFailureTombstone', 'listFailureTombstones'] }, async (engine) => {
-    const first = await Promise.all(['ab', 'a0', 'a-z'].map(async slug => engine.recordFailureTombstone(tombstone(slug))));
-    const again = await engine.recordFailureTombstone(tombstone('ab'));
-    const other = await engine.recordFailureTombstone(tombstone('ab', 'a different claim'));
-    const listed = await engine.listFailureTombstones('default', '(extraction failed: ');
-    const answer = { first, again, other, slugs: listed.map(r => r.page_slug), claim: listed[0]?.claim_text, prompt: listed[0]?.prompt_version,
-      stamped: /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(\.\d+)?\+00$/.test(listed[0]?.proposed_at ?? ''),
-      noSource: await engine.listFailureTombstones('no-such-source', '(extraction failed: '), noMatch: await engine.listFailureTombstones('default', 'zzz') };
-    expect(answer).toEqual({ first: [true, true, true], again: false, other: true, slugs: ['a-z', 'a0', 'ab'], claim: TOMBSTONE, prompt: 'v1', stamped: true, noSource: [], noMatch: [] });
-    return answer;
-  });
-
   parityTest('the changed-page window lists live pages after a cursor by time then slug bytes', {
     methods: ['putPage', 'transaction', 'softDeletePage', 'readCycleListingInstant', 'listSourceChangedPagesAfter'],
   }, async (engine) => {
@@ -89,21 +71,6 @@ describe('engine parity: cycle and sync reads', () => {
       live: (await engine.listLivePagesAtOrigin('default', 'notes/new.md')).map(r => r.slug), noLive: await engine.listLivePagesAtOrigin('default', 'notes/old.md'),
       carry: await engine.countPageCarryRows('default', 'notes/b', ids['notes/b']!) };
     expect(answer).toEqual({ oldSlug: 'notes/m', oldIsLowest: true, bare: 'notes/bare', none: null, live: ['notes/b'], noLive: [], carry: { facts: 0, links: 3, aliases: 0 } });
-    return answer;
-  });
-
-  parityTest('the stale-mention reads scan pages with mention links by slug bytes', {
-    methods: ['putPage', 'addLinksBatch', 'listStaleMentionPages', 'listStaleMentionLinks'],
-  }, async (engine) => {
-    for (const slug of ['ab', 'a0', 'a-z', 'target', 'plain']) await engine.putPage(slug, note(slug));
-    const link = (from: string, source: string) => ({ from_slug: from, to_slug: 'target', link_type: 'mentions', context: '', link_source: source });
-    await engine.addLinksBatch([link('ab', 'mentions'), link('a0', 'mentions'), link('a-z', 'mentions'), link('plain', 'manual')]);
-    const pages = await engine.listStaleMentionPages(2);
-    const links = await engine.listStaleMentionLinks(2);
-    const answer = { pages: pages.map(p => [p.slug, p.body, p.body_storage]), links: links.map(l => [l.from_slug, l.to_slug, l.link_type]),
-      all: (await engine.listStaleMentionPages(10)).map(p => p.slug), none: await engine.listStaleMentionPages(0) };
-    expect(answer).toEqual({ pages: [['a-z', 'a-z\n\na-z body\n\n', 'inline'], ['a0', 'a0\n\na0 body\n\n', 'inline']], links: [['a-z', 'target', 'mentions'], ['a0', 'target', 'mentions']],
-      all: ['a-z', 'a0', 'ab'], none: [] });
     return answer;
   });
 

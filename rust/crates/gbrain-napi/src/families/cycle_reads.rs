@@ -1,8 +1,8 @@
-//! The cycle, belief and sync reads that ran raw SQL and are now typed members: the propose_takes
-//! failure tombstones (rust/docs/store/take-proposals.md), the cycle's changed-page window
-//! (cycle-window.md), the identity-downgrade page reads (identity-downgrades.md), the stale-mention
-//! scan's page and link reads (mention-scan-reads.md) and the belief ledger's orphan lifetimes
-//! (trust.md).
+//! The cycle, belief and sync reads that ran raw SQL and are now typed members: the cycle's
+//! changed-page window (cycle-window.md), the identity-downgrade page reads (identity-downgrades.md)
+//! and the belief ledger's orphan lifetimes (trust.md). The propose_takes failure tombstones are
+//! `insertTakeProposal` and `listTakeProposalTombstones` (takes/proposals.rs), and the stale-mention
+//! scan is `readStaleMentionScan` (list_reads.rs).
 //!
 //! One `#[napi] impl Brain` block; each method runs one `gbrain_store` call on the pool through
 //! `Brain::run` and resolves plain JSON.
@@ -10,41 +10,11 @@
 use napi::Env;
 use napi::bindgen_prelude::Object;
 use napi_derive::napi;
-use serde_json::Value;
 
-use crate::store_binding::{Brain, required};
-use gbrain_store::take_proposals::FailureTombstoneInput;
+use crate::store_binding::Brain;
 
 #[napi]
 impl Brain {
-    /// `recordFailureTombstone(input)`: resolves true when it inserted, false when the claim is
-    /// already recorded for the page, content hash and prompt version.
-    #[napi]
-    pub fn record_failure_tombstone<'env>(
-        &self,
-        env: &'env Env,
-        input: Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let input: FailureTombstoneInput = required(input, "recordFailureTombstone input")?;
-            s.record_failure_tombstone(&input)
-        })
-    }
-
-    /// `listFailureTombstones(sourceId, claimPrefix)`: `[{ page_slug, claim_text, prompt_version,
-    /// proposed_at }]` by page slug bytes.
-    #[napi]
-    pub fn list_failure_tombstones<'env>(
-        &self,
-        env: &'env Env,
-        source_id: String,
-        claim_prefix: String,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            s.list_failure_tombstones(&source_id, &claim_prefix)
-        })
-    }
-
     /// `readCycleListingInstant()`: UTC ISO text with microseconds.
     #[napi]
     pub fn read_cycle_listing_instant<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
@@ -105,26 +75,6 @@ impl Brain {
         self.run(env, move |s| {
             s.count_page_carry_rows(&source_id, &slug, u64::from(page_id))
         })
-    }
-
-    /// `listStaleMentionPages(limit)`: the scanned pages with their body text.
-    #[napi]
-    pub fn list_stale_mention_pages<'env>(
-        &self,
-        env: &'env Env,
-        limit: u32,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.list_stale_mention_pages(u64::from(limit)))
-    }
-
-    /// `listStaleMentionLinks(limit)`: the `mentions` links of the scanned pages.
-    #[napi]
-    pub fn list_stale_mention_links<'env>(
-        &self,
-        env: &'env Env,
-        limit: u32,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.list_stale_mention_links(u64::from(limit)))
     }
 
     /// `listOrphanLifetimes(sourceId, limit, deep)`: `{ count, samples: [{ slug, page_lifetime, reason }] }`.

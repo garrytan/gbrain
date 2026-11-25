@@ -461,6 +461,80 @@ fn slots(v: &Value) -> Vec<String> {
         .collect()
 }
 
+/// A clock that never moves: a receipt and every read after it share one tick, as a PGLite or
+/// Postgres read in the receipt's own transaction (or a PGLite read in its millisecond) does.
+struct Frozen;
+
+impl Env for Frozen {
+    fn now_micros(&self) -> i64 {
+        T0
+    }
+    fn new_uuid(&self) -> String {
+        "00000000-0000-4000-8000-000000000000".into()
+    }
+}
+
+#[test]
+fn a_zero_or_negative_window_holds_nothing_even_a_receipt_of_the_reads_own_tick() {
+    let dir = TempDir::new("decide-store");
+    let kv = RedbKv::open_path(&dir.path().join("records.redb")).unwrap();
+    let store = Store::open_kv(Arc::new(kv), Arc::new(Frozen), OpenOptions::default()).unwrap();
+    store
+        .insert_decide_receipts(&[
+            with_model(receipt("z1", "conflict", "kept"), "m-1"),
+            with_reason(
+                with_model(receipt("z2", "conflict", "error"), "m-2"),
+                "mixed_model",
+            ),
+            with_reason(receipt("z3", "conflict", "skipped"), "no_entity"),
+        ])
+        .unwrap();
+    // One hour holds all three, so the reads below see the rows.
+    assert_eq!(
+        store.decide_conflict_no_entity_counts(1.0).unwrap(),
+        json!({ "receipts": 3, "skipped": 1 })
+    );
+    assert_eq!(
+        store.list_decide_replay_receipts("conflict", 1.0).unwrap()[0]["decision_id"],
+        "z1"
+    );
+    for hours in [0.0, -0.0, -1.0, f64::from(i32::MIN)] {
+        let empty = json!([]);
+        assert_eq!(store.list_decide_receipt_stats(None, hours).unwrap(), empty);
+        assert_eq!(
+            store
+                .list_decide_receipt_stats(Some("conflict"), hours)
+                .unwrap(),
+            empty
+        );
+        assert_eq!(store.decide_slot_usage(hours).unwrap(), empty);
+        assert_eq!(
+            store.decide_conflict_no_entity_counts(hours).unwrap(),
+            json!({ "receipts": 0, "skipped": 0 })
+        );
+        assert_eq!(
+            store
+                .list_decide_replay_receipts("conflict", hours)
+                .unwrap(),
+            empty
+        );
+        assert_eq!(store.list_decide_resolved_models(hours).unwrap(), empty);
+        assert_eq!(
+            store.list_decide_mixed_model_decisions(hours).unwrap(),
+            empty
+        );
+    }
+    // A fraction, a window outside int4 or a NUL byte is still refused at or below zero hours.
+    for refused in [
+        store.decide_slot_usage(-0.5).err(),
+        store.decide_slot_usage(f64::from(i32::MIN) - 1.0).err(),
+        store.list_decide_receipt_stats(Some("a\0b"), 0.0).err(),
+        store.list_decide_replay_receipts("a\0b", 0.0).err(),
+    ] {
+        assert_eq!(refused.expect("refused").code, INVALID_ARGUMENT);
+    }
+}
+
 #[test]
 fn receipt_windows_follow_the_clock_in_every_read() {
     let dir = TempDir::new("decide-store");

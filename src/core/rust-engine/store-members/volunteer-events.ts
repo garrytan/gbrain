@@ -1,6 +1,6 @@
 /**
- * Context-volunteer event members (BrainEngine insertVolunteerEventRows, listVolunteerUsage, deleteVolunteerEventsOlderThan,
- * deleteVolunteerEventsForSlugs, countVolunteerEventsForSlug). The store keeps the `context_volunteer_events` rows and removes
+ * Context-volunteer event members (BrainEngine insertVolunteerEventRows, listVolunteerUsage, deleteVolunteerEventsOlderThan).
+ * The store keeps the `context_volunteer_events` rows and removes
  * them with their page or source (rust/docs/store/volunteer-events.md); the channel listing is in doctor-acc.ts. Counts cross
  * the binding as numbers or text and come back as the engine-sql rows read.
  */
@@ -20,9 +20,3 @@ export const listVolunteerUsage: Member<'listVolunteerUsage'> = (brain, sourceId
 
 export const deleteVolunteerEventsOlderThan: Member<'deleteVolunteerEventsOlderThan'> = (brain, ttlDays) =>
   storeCall({ member: 'deleteVolunteerEventsOlderThan' }, () => brain.deleteVolunteerEventsOlderThan(ttlDays));
-
-export const deleteVolunteerEventsForSlugs: Member<'deleteVolunteerEventsForSlugs'> = (brain, sourceId, slugs) =>
-  slugs.length === 0 ? Promise.resolve(0) : storeCall({ member: 'deleteVolunteerEventsForSlugs' }, () => brain.deleteVolunteerEventsForSlugs(sourceId, [...slugs]));
-
-export const countVolunteerEventsForSlug: Member<'countVolunteerEventsForSlug'> = (brain, sourceId, slug) =>
-  storeCall({ member: 'countVolunteerEventsForSlug' }, () => brain.countVolunteerEventsForSlug(sourceId, slug));

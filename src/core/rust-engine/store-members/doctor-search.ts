@@ -55,3 +55,8 @@ export const readProjectionBacklog: Member<'readProjectionBacklog'> = async (bra
 
 export const countAtomExtractionBacklog: Member<'countAtomExtractionBacklog'> = async (brain, query) =>
   storeCall({ member: 'countAtomExtractionBacklog' }, async () => Number(await brain.countAtomExtractionBacklog(query)));
+
+/** The sources with a live page: the store lists them by id in byte order (cli_reads/mention_reads.rs). */
+export const listAtomBacklogSourceIds: Member<'listAtomBacklogSourceIds'> = async (brain) =>
+  ((await storeCall({ member: 'listAtomBacklogSourceIds' }, () => brain.listLivePageSourceIds())) as Array<{ id: string }>)
+    .map(row => ({ source_id: row.id }));

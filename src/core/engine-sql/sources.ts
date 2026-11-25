@@ -11,6 +11,7 @@ import { jsonbParam, type SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 import { ANY_OWNER_ONLY_SQL, OWNER_ONLY_LINEAGE_PRESENT_SQL } from '../access/owner-only.ts';
+import { remoteReadFloorSql } from '../search/private-visibility.ts';
 import { quarantineFilterFragment } from '../quarantine.ts';
 
 export async function listAllSources(exec: LegacyUnscopedRead, opts?: {
@@ -83,6 +84,12 @@ export async function updateSourceConfig(exec: SqlExecutor, sourceId: string, pa
     return affectedRows > 0;
   }
 
+/** Sets the source's display `name` (`sources rename`). Returns whether the source exists; an unknown id changes nothing. */
+export async function renameSource(exec: SqlExecutor, sourceId: string, name: string): Promise<boolean> {
+  const { affectedRows } = await exec.run(sqlFragment`UPDATE sources SET name = ${name} WHERE id = ${sourceId}`);
+  return affectedRows > 0;
+}
+
 /** One source row with the columns a source check reads: its checkout path, raw config and archived flag. */
 export interface SourceCheckRow { id: string; local_path: string | null; config: unknown; archived: boolean }
 
@@ -96,6 +103,15 @@ export async function readSourceRow(exec: LegacyUnscopedRead, sourceId: string):
 export async function lockSourceRow(exec: SqlExecutor, sourceId: string): Promise<SourceCheckRow | null> {
   const [row] = await exec.executeRaw<SourceCheckRow>('SELECT id, local_path, config, archived FROM sources WHERE id=$1 FOR UPDATE', [sourceId]);
   return row ?? null;
+}
+
+/**
+ * Takes the source row's lock (`SELECT id FROM sources WHERE id=$1 FOR UPDATE`) for the rest of the caller's transaction,
+ * reading nothing back; an unknown source is a no-op. The publication transaction of a `sourceExclusive` mutation takes it
+ * before any other publication statement (persistence/coordinator.ts).
+ */
+export async function lockSourceForUpdate(exec: SqlExecutor, sourceId: string): Promise<void> {
+  await exec.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', [sourceId]);
 }
 
 /**
@@ -137,11 +153,14 @@ export async function writeSourceSyncHeartbeat(exec: SqlExecutor, sourceId: stri
 /** What sync observed of the checkout's Git upstream (`observeUpstream` in sync-upstream.ts). */
 export interface SourceUpstreamObservation { checkedAt: string; commit: string; behind: number | null }
 /** The statement `recordUpstreamObservation` (src/core/sync-upstream.ts) sends, verbatim. */
-export const SOURCE_UPSTREAM_OBSERVATION_SQL = 'UPDATE sources SET upstream_checked_at=$2::timestamptz,upstream_commit=$3,upstream_behind=$4 WHERE id=$1';
+export const SOURCE_UPSTREAM_OBSERVATION_SQL = `UPDATE sources SET upstream_checked_at = CASE WHEN upstream_commit = $3 AND upstream_checked_at > $2::timestamptz THEN upstream_checked_at ELSE $2::timestamptz END,
+  upstream_commit=$3,upstream_behind=$4 WHERE id=$1`;
 
 /**
  * The sync's upstream observation: sets `upstream_checked_at` (an ISO time), `upstream_commit` and `upstream_behind`
- * (null when the synced commit is unknown). An unknown source changes nothing.
+ * (null when the synced commit is unknown). A check time never moves back for the same upstream commit (#9933): a failed
+ * fetch empties FETCH_HEAD and the reflog can be older than the no-change fetch already recorded. An unknown source
+ * changes nothing.
  */
 export async function writeSourceUpstreamObservation(exec: SqlExecutor, sourceId: string, observed: SourceUpstreamObservation): Promise<void> {
   await exec.executeRaw(SOURCE_UPSTREAM_OBSERVATION_SQL, [sourceId, observed.checkedAt, observed.commit, observed.behind]);
@@ -236,8 +255,8 @@ export interface SyncCheckpointAdvance {
   sourceId: string;
   /** The source incarnation the run started under; another incarnation changes nothing. */
   incarnation: string;
-  /** The commit the checkpoint moves to (`last_commit`). */
-  commit: string;
+  /** The commit the checkpoint moves to (`last_commit`); null re-stamps a checkpoint still at a null `from` (a first sync's unfinished slice). */
+  commit: string | null;
   /** The `last_commit` the run started from (null before the first sync). */
   from: string | null;
   /** Also accept a checkpoint already at `commit` (an overtaken run, and every pass stamp). */
@@ -312,6 +331,9 @@ export async function countRepoBoundSources(exec: LegacyUnscopedRead): Promise<n
   return Number(rows[0]?.n ?? 0);
 }
 
+/** A source id and its local path (`listSourcePathRows`). */
+export interface SourcePathRow { id: string; local_path: string }
+
 /** A source with a local path and its archived flag (`listLocalPathSources`). */
 export interface LocalPathSourceRow { id: string; local_path: string; archived: boolean }
 
@@ -325,6 +347,12 @@ export interface DefaultSourceSplit { defaultPages: number; nonDefaultPages: num
  * Sources that have a local path, with `archived`, in no particular order. Unscoped on master (source resolution
  * tier 4 read it through `executeRaw`). Throws on a brain older than the `archived` column; the caller falls back.
  */
+/** Every source with a local path, archived ones included, as `{ id, local_path }`, in no particular order: the other
+ * sources' directories `sources add` checks an API-backed kind's --dir against (sources-ops.ts insertApiSource). */
+export async function listSourcePathRows(exec: LegacyUnscopedRead): Promise<SourcePathRow[]> {
+  return exec.executeRaw<SourcePathRow>('SELECT id,local_path FROM sources WHERE local_path IS NOT NULL');
+}
+
 export async function listLocalPathSources(exec: LegacyUnscopedRead): Promise<LocalPathSourceRow[]> {
   return exec.executeRaw<LocalPathSourceRow>(`SELECT id, local_path, archived FROM sources WHERE local_path IS NOT NULL`);
 }
@@ -524,6 +552,32 @@ export async function readLiveIdentityHolders(exec: LegacyUnscopedRead, sourceId
         WHERE source_id = $1 AND deleted_at IS NULL AND (frontmatter->>'id' = ANY($2::text[]) OR title = ANY($3::text[]))`,
     [sourceId, [...ids], [...titles]],
   );
+}
+
+/** What `readSourcesNotReadable` counts (sources-not-readable.ts): world facts too (recall, query), and the remote read floor. */
+export interface SourcesNotReadableOpts { facts: boolean; excludePrivate: boolean }
+
+/**
+ * Whether an unscoped remote read over `readable` reads nothing while other sources hold pages: no live, unquarantined
+ * page in `readable` (with `facts`, no active world fact either) and such a page in some other source that is not
+ * archived. `excludePrivate` adds the remote read floor (`remoteReadFloorSql('p')`) for the caller in context to both
+ * sides. Unscoped on master.
+ */
+export async function readSourcesNotReadable(exec: LegacyUnscopedRead, readable: readonly string[], opts: SourcesNotReadableOpts): Promise<boolean> {
+  const ids = [...readable];
+  const visible = opts.excludePrivate
+    ? sqlFragment` AND ${trustedSql(quarantineFilterFragment('p'))} AND ${trustedSql(remoteReadFloorSql('p'))}`
+    : sqlFragment` AND ${trustedSql(quarantineFilterFragment('p'))}`;
+  const facts = opts.facts
+    ? sqlFragment` OR EXISTS (SELECT 1 FROM facts WHERE source_id = ANY(${ids}::text[]) AND visibility = 'world'
+                       AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()))`
+    : sqlFragment``;
+  const { text, params } = renderFragment(sqlFragment`SELECT CASE WHEN EXISTS (SELECT 1 FROM pages p WHERE p.source_id = ANY(${ids}::text[]) AND p.deleted_at IS NULL${visible})${facts} THEN false
+                   ELSE EXISTS (SELECT 1 FROM pages p JOIN sources s ON s.id = p.source_id
+                                 WHERE p.deleted_at IS NULL AND s.archived IS NOT TRUE AND NOT (p.source_id = ANY(${ids}::text[]))${visible})
+              END AS refuse`);
+  const [row] = await exec.executeRaw<{ refuse: boolean }>(text, params);
+  return row?.refuse === true;
 }
 
 /** The columns `insertSource` writes; the table fills the rest with its defaults. */

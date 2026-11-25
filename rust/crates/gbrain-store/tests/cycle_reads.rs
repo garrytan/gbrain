@@ -1,13 +1,11 @@
-//! The cycle, identity-downgrade, stale-mention and segmented-rewrite reads that were raw SQL
-//! (rust/docs/store/take-proposals.md, cycle-window.md, identity-downgrades.md, mention-scan-reads.md,
-//! phantom-redirect.md, page_body.md), each against the rows the PGLite SQL of
+//! The cycle, identity-downgrade and segmented-rewrite reads that were raw SQL
+//! (rust/docs/store/cycle-window.md, identity-downgrades.md, phantom-redirect.md, page_body.md), each against the rows the PGLite SQL of
 //! src/core/engine-sql/cycle-reads.ts returns.
 
 mod memory_env;
 
 use gbrain_store::links::AddLinkOptions;
 use gbrain_store::pages::{PageInput, PutPageOptions};
-use gbrain_store::take_proposals::FailureTombstoneInput;
 use memory_env::{Brain, brain};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -24,49 +22,6 @@ fn page(b: &Brain, slug: &str, extra: Value) {
     let input: PageInput = de(input);
     let opts: PutPageOptions = de(json!({ "sourceId": "default", "index": false }));
     b.put_page(slug, &input, &opts).unwrap();
-}
-
-fn tombstone(slug: &str, claim: &str) -> FailureTombstoneInput {
-    de(json!({
-        "sourceId": "default", "slug": slug, "contentHash": "h", "promptVersion": "v1",
-        "proposalRunId": "run", "claimText": claim, "modelId": "m",
-    }))
-}
-
-#[test]
-fn failure_tombstones_record_once_and_list_by_slug_bytes() {
-    let b = brain("cycle-tombstones");
-    let claim = "(extraction failed: llm_error)";
-    for slug in ["ab", "a0", "a-z"] {
-        assert!(b.record_failure_tombstone(&tombstone(slug, claim)).unwrap());
-    }
-    // The same claim for the same page, hash and prompt version is left alone; another claim is a new row.
-    assert!(!b.record_failure_tombstone(&tombstone("ab", claim)).unwrap());
-    assert!(
-        b.record_failure_tombstone(&tombstone("ab", "other"))
-            .unwrap()
-    );
-    let rows = b
-        .list_failure_tombstones("default", "(extraction failed: ")
-        .unwrap();
-    let slugs: Vec<&str> = rows.iter().map(|r| r.page_slug.as_str()).collect();
-    assert_eq!(slugs, ["a-z", "a0", "ab"]);
-    assert_eq!(rows[0].claim_text, claim);
-    assert_eq!(rows[0].prompt_version, "v1");
-    assert!(rows[0].proposed_at.ends_with("+00"));
-    // Another source, an unknown source and a NUL byte.
-    assert!(
-        b.list_failure_tombstones("nope", "(extraction failed: ")
-            .unwrap()
-            .is_empty()
-    );
-    let mut unknown = tombstone("ab", claim);
-    unknown.source_id = "nope".into();
-    assert!(b.record_failure_tombstone(&unknown).is_err());
-    assert!(
-        b.record_failure_tombstone(&tombstone("a\0b", claim))
-            .is_err()
-    );
 }
 
 #[test]
@@ -180,46 +135,6 @@ fn the_identity_downgrade_reads_follow_the_old_files_pages() {
     let counts = b.count_page_carry_rows("default", "notes/b", 5).unwrap();
     assert_eq!((counts.facts, counts.aliases), (0, 0));
     assert_eq!(counts.links, 3);
-}
-
-#[test]
-fn the_stale_mention_reads_scan_pages_with_mention_links_by_slug_bytes() {
-    let b = brain("cycle-mentions");
-    for slug in ["ab", "a0", "a-z", "target", "plain"] {
-        page(
-            &b,
-            slug,
-            json!({ "title": format!("T {slug}"), "compiled_truth": format!("{slug} body") }),
-        );
-    }
-    let mention = AddLinkOptions {
-        link_type: Some("mentions".into()),
-        link_source: Some("mentions".into()),
-        ..AddLinkOptions::default()
-    };
-    for from in ["ab", "a0", "a-z"] {
-        b.add_link(from, "target", &mention).unwrap();
-    }
-    // A manual link does not make a page scanned.
-    let manual = AddLinkOptions {
-        link_type: Some("mentions".into()),
-        link_source: Some("manual".into()),
-        ..AddLinkOptions::default()
-    };
-    b.add_link("plain", "target", &manual).unwrap();
-    let pages = b.list_stale_mention_pages(2).unwrap();
-    let slugs: Vec<&str> = pages.iter().map(|p| p["slug"].as_str().unwrap()).collect();
-    assert_eq!(slugs, ["a-z", "a0"]);
-    assert_eq!(pages[0]["body"], "T a-z\n\na-z body\n\n");
-    assert_eq!(pages[0]["body_storage"], "inline");
-    let links = b.list_stale_mention_links(2).unwrap();
-    let from: Vec<&str> = links
-        .iter()
-        .map(|l| l["from_slug"].as_str().unwrap())
-        .collect();
-    assert_eq!(from, ["a-z", "a0"]);
-    assert_eq!(links[0]["to_slug"], "target");
-    assert_eq!(links[0]["link_type"], "mentions");
 }
 
 #[test]

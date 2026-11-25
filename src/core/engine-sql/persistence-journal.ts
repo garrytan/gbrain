@@ -10,6 +10,7 @@
  * Decisions (who may claim, whether a write fits, what a refusal says) stay with the callers.
  */
 import type { LegacyUnscopedRead } from './brands.ts';
+import { COVERAGE_COUNT_CAP } from '../search/retrieval-coverage.ts';
 import type { SqlExecutor, QueryOpts } from './executor.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import { JOURNAL_LIMITS_SQL } from '../persistence/limits.ts';
@@ -154,6 +155,31 @@ export const HELD_PAGES_SQL = `SELECT h.completed_keys->0 AS record, p.knowledge
 /** The current-incarnation hold rows naming these page ids, each with its page's revision, in fingerprint order. */
 export function readHeldPageRows<R>(exec: LegacyUnscopedRead, pageIds: string[]): Promise<Array<{ record: R; revision: string | null }>> {
   return exec.executeRaw<{ record: R; revision: string | null }>(HELD_PAGES_SQL, [GIT_HOLD_OP, pageIds]);
+}
+
+/** The query of `readHeldHitRows`: the hits' page ids, the read's live sources, and the relevance types and patterns. */
+export interface HeldHitQuery { pageIds: string[]; sourceIds: string[]; types: string[]; patterns: string[] }
+/** The hold rows of the hits (`record` and the page's `revision`), then one row with `could_affect` alone. */
+export interface HeldHitRow<R> { record: R | null; revision: string | null; could_affect: number | string | null }
+// moved from persistence/held-reads.ts stampHeldHits unchanged, with its HOLD_PAGE_JOIN and COVERAGE_COUNT_CAP (1000) written out
+const HELD_HIT_ROWS_SQL = `(SELECT h.completed_keys->0 AS record, p.knowledge_revision::text AS revision, NULL::int AS could_affect FROM op_checkpoints h
+      JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
+      LEFT JOIN pages p ON p.id=(h.completed_keys->0->>'page_id')::int
+        WHERE h.op=$1 AND (h.completed_keys->0->>'page_id')=ANY($2::text[]) ORDER BY h.fingerprint COLLATE "C")
+      UNION ALL
+      SELECT NULL, NULL, (SELECT count(*)::int FROM (SELECT 1 FROM op_checkpoints h
+      JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
+      LEFT JOIN pages p ON p.id=(h.completed_keys->0->>'page_id')::int
+        WHERE h.op=$1 AND s.archived IS NOT TRUE AND s.id=ANY($3::text[])
+          AND ((h.completed_keys->0->>'page_id')=ANY($2::text[]) OR p.type=ANY($4::text[])
+            OR lower(concat_ws(' ', h.completed_keys->0->>'path', h.completed_keys->0->>'slug', p.title)) ~ ANY($5::text[]))
+        LIMIT 1000) x)`;
+// The cap is the coverage count cap every engine applies; a change to one must change the other.
+if (!HELD_HIT_ROWS_SQL.includes(`LIMIT ${COVERAGE_COUNT_CAP}) x)`)) throw new Error('readHeldHitRows: the LIMIT is not COVERAGE_COUNT_CAP');
+
+/** The current-incarnation holds naming the hits' pages, in fingerprint order, then how many held files (capped) could affect the read. */
+export function readHeldHitRows<R>(exec: LegacyUnscopedRead, query: HeldHitQuery): Promise<Array<HeldHitRow<R>>> {
+  return exec.executeRaw<HeldHitRow<R>>(HELD_HIT_ROWS_SQL, [GIT_HOLD_OP, query.pageIds, query.sourceIds, query.types, query.patterns]);
 }
 
 /** One source's held-file counts from its summary row. */

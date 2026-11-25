@@ -8,6 +8,8 @@
  *    coverage on a linkable type and `type_not_linkable` on another; get_backlinks with `group: "page"` returns it; a
  *    search whose query names an entity, and an entity-names lookup whose entity has referrers, emit the
  *    `mention_index` notice for it.
+ *    The coverage counts a private page of a source like any live page (a count, never a slug), and a remote caller
+ *    who reads world pages only gets the same paged backlinks as PGLite, with the private referrer absent.
  *  - Regression: the Rust arm refused the read (raw SQL), so the card's references failed to `read_failed`, the
  *    paged backlinks call failed, and search and entity-names dropped the notice on a Rust brain.
  *  - Why existing coverage misses it: the mentions tests run PGLite only and seed status rows through executeRaw;
@@ -62,6 +64,20 @@ const PENDING_DEFAULT = { state: 'pending' as const, pending_pages: 4, last_pass
 function ctxFor(engine: BrainEngine, notices: Notice[]): OperationContext {
   return { engine, config: { engine: engine.kind }, remote: false, dryRun: false, sourceId: 'default',
     logger: { info() {}, warn() {}, error() {} }, emitNotice: (n: Notice) => { notices.push(n); } } as unknown as OperationContext;
+}
+
+/** Adds a private page that refers to Acme, and a private page that nobody refers to, in `default` (and one in `other`). */
+async function seedPrivate(engine: BrainEngine): Promise<void> {
+  await engine.putPage('notes/secret', page('Secret', { compiled_truth: 'Secret about Acme Example.', frontmatter: { visibility: 'private' } }));
+  await engine.putPage('notes/hidden', page('Hidden', { frontmatter: { visibility: 'private' } }));
+  await engine.putPage('notes/secret-elsewhere', page('Secret elsewhere', { frontmatter: { visibility: 'private' } }), { sourceId: 'other' });
+  await engine.addLinksBatch([{ from_slug: 'notes/secret', to_slug: ACME, link_type: 'mentions', context: 'Acme Example',
+    link_source: 'manual', from_source_id: 'default', to_source_id: 'default' }]);
+}
+
+/** A remote caller that reads world pages only: the read policy hides a private page from it. */
+function worldOnlyCtx(engine: BrainEngine, notices: Notice[]): OperationContext {
+  return { ...ctxFor(engine, notices), remote: true, transport: 'stdio', takesHoldersAllowList: ['world'] } as unknown as OperationContext;
 }
 
 const codes = (notices: Notice[]) => notices.map(n => n.code).sort();
@@ -123,6 +139,53 @@ describe('engine parity: mention-index coverage', () => {
       await engine.recountMentionIndexStatus('ghost', { pending: 9, fingerprint: 'h;v', expectedFingerprint: 'h;old' });
       const out = { rows: await engine.readMentionIndexStatus(['default', 'ghost']), coverage: await readMentionCoverage(engine, ['default']) };
       expect(out).toEqual({ rows: [], coverage: PENDING_DEFAULT });
+      return out;
+    },
+  );
+
+  parityTest(
+    'a private page counts in the live-page count and the written-since count exactly like any live page',
+    { methods: ['putPage', 'softDeletePage', 'setPageAliases', 'addLinksBatch', 'countLivePagesInSource', 'countMentionDueSince', 'readMentionIndexStatus'] },
+    async (engine: BrainEngine, backend) => {
+      await seed(engine, backend);
+      await seedPrivate(engine);
+      const past = '2000-01-01T00:00:00.000Z';
+      const out = {
+        live: { default: await engine.countLivePagesInSource('default'), other: await engine.countLivePagesInSource('other'), ghost: await engine.countLivePagesInSource('ghost') },
+        since: { default: await engine.countMentionDueSince('default', past, MENTION_EXTRACTOR_VERSION), other: await engine.countMentionDueSince('other', past, MENTION_EXTRACTOR_VERSION) },
+        coverage: await readMentionCoverage(engine, ['default', 'other']),
+      };
+      // 4 live + the 2 private pages in `default`; 2 live + 1 private in `other`. A count only: no slug is read.
+      expect(out).toEqual({
+        live: { default: 6, other: 3, ghost: 0 },
+        since: { default: 6, other: 3 },
+        coverage: { ...PENDING_DEFAULT, pending_pages: 9 },
+      });
+      return out;
+    },
+  );
+
+  parityTest(
+    'a world-only remote caller gets the same paged backlinks as a local one, minus the private referrer, and the same coverage',
+    { methods: ['putPage', 'softDeletePage', 'setPageAliases', 'addLinksBatch', 'listReferrerTargetSources', 'countReferrerRows', 'readReferrerRows'] },
+    async (engine: BrainEngine, backend) => {
+      await seed(engine, backend);
+      await seedPrivate(engine);
+      const op = operations.find(o => o.name === 'get_backlinks')!;
+      const read = async (ctx: OperationContext) => {
+        const r = await op.handler(ctx, { slug: ACME, group: 'page' }) as { rows: Array<{ slug: string }>; total: number; coverage: unknown };
+        return { slugs: r.rows.map(x => x.slug).sort(), total: r.total, coverage: r.coverage };
+      };
+      const localNotices: Notice[] = [];
+      const remoteNotices: Notice[] = [];
+      const out = { local: await read(ctxFor(engine, localNotices)), remote: await read(worldOnlyCtx(engine, remoteNotices)),
+        notices: { local: codes(localNotices), remote: codes(remoteNotices) } };
+      expect(out.local.slugs).toEqual(['notes/one', 'notes/secret', 'notes/two']);
+      expect(out.remote.slugs).toEqual(['notes/one', 'notes/two']);
+      expect([out.local.total, out.remote.total]).toEqual([3, 2]);
+      expect(JSON.stringify(out.remote)).not.toContain('secret');
+      expect(out.remote.coverage).toEqual({ ...PENDING_DEFAULT, pending_pages: 6 });
+      expect(out.notices).toEqual({ local: ['mention_index'], remote: ['mention_index'] });
       return out;
     },
   );

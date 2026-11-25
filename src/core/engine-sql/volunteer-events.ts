@@ -1,9 +1,9 @@
 /**
  * The context_volunteer_events statements (migration v117), each with the text and parameters its caller ran through
  * `executeRaw`; only their home moved: the insert of `logVolunteerEventsFireAndForget`
- * (src/core/context/volunteer-events.ts), the usage read of `volunteerUsageStats` (context/volunteer.ts), the 90-day
- * retention delete, the page purge's name-store scrub (persistence/purge-name-stores.ts) and the purge verification's
- * per-page check (facts/purge-verify.ts). The channel listing is `listVolunteerChannels` in doctor-acc.ts, and the source
+ * (src/core/context/volunteer-events.ts), the usage read of `volunteerUsageStats` (context/volunteer.ts) and the 90-day
+ * retention delete. The page purge's name-store scrub and its receipt's per-page check are in purge-stores.ts and
+ * purge-verify.ts. The channel listing is `listVolunteerChannels` in doctor-acc.ts, and the source
  * delete's scrub is `scrub_context_volunteer_events` in sources.ts. The Rust engine keeps the rows in its store
  * (rust/docs/store/volunteer-events.md) and removes them with their page or source, as these statements do.
  */
@@ -79,15 +79,4 @@ export async function deleteVolunteerEventsOlderThan(raw: VolunteerRaw, ttlDays:
     [String(ttlDays)],
   );
   return Number(rows[0]?.count ?? 0);
-}
-
-/** A page purge's name-store scrub (#9068): the rows naming these slugs of the source; how many went. */
-export async function deleteVolunteerEventsForSlugs(raw: VolunteerRaw, sourceId: string, slugs: readonly string[]): Promise<number> {
-  return (await raw.executeRaw('DELETE FROM context_volunteer_events WHERE source_id = $1 AND slug = ANY($2::text[]) RETURNING 1', [sourceId, [...slugs]])).length;
-}
-
-/** How many rows still name the slug of the source (the page purge receipt's check). */
-export async function countVolunteerEventsForSlug(raw: VolunteerRaw, sourceId: string, slug: string): Promise<number> {
-  const [row] = await raw.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM context_volunteer_events WHERE source_id=$1 AND slug=$2', [sourceId, slug]);
-  return Number(row?.n ?? 0);
 }

@@ -7,7 +7,7 @@
 //! `listAmbiguousExtractionInputs` and `listExtractionInputReceipts` read the rows through
 //! [`all_states`] (`cli_reads/doctor_derived_ledgers.rs`).
 //!
-//! Key: `2 <page id> <pipeline>` (`keys::PAGE_EXTRACTION_STATE`; the page id is 8 big-endian
+//! Key: `~e <page id> <pipeline>` (`keys::PAGE_EXTRACTION_STATE`, a two-byte family tag; the page id is 8 big-endian
 //! bytes, the pipeline its text) -> the row (JSON, [`StateRecord`]). One row per page and
 //! pipeline, as PGLite's primary key `(page_id, pipeline)`. The rows go with the page when it is
 //! deleted for good ([`remove_page_rows`], called by `cascade::remove_page_rows`, which a page
@@ -32,7 +32,7 @@ use serde_json::{Value, json};
 const PIPELINES: [&str; 3] = ["facts_backstop", "extract_atoms", "conversation_facts"];
 
 fn state_prefix(page_id: u64) -> Vec<u8> {
-    let mut key = vec![keys::PAGE_EXTRACTION_STATE];
+    let mut key = keys::PAGE_EXTRACTION_STATE.to_vec();
     key.extend_from_slice(&page_id.to_be_bytes());
     key
 }
@@ -85,7 +85,7 @@ pub(crate) fn all_states(read: &dyn KvRead) -> Result<Vec<State>> {
     let mut failure = None;
     scan_prefix(
         read,
-        &[keys::PAGE_EXTRACTION_STATE],
+        &keys::PAGE_EXTRACTION_STATE,
         false,
         &mut |key, value| {
             let record = match serde_json::from_slice::<StateRecord>(value) {
@@ -95,8 +95,8 @@ pub(crate) fn all_states(read: &dyn KvRead) -> Result<Vec<State>> {
                     return false;
                 }
             };
-            // `2 <page id, 8 bytes> <pipeline>`
-            let (Some(id), Some(pipeline)) = (key.get(1..9), key.get(9..)) else {
+            // `~e <page id, 8 bytes> <pipeline>`
+            let (Some(id), Some(pipeline)) = (key.get(2..10), key.get(10..)) else {
                 return true;
             };
             if let (Ok(id), Ok(pipeline)) = (<[u8; 8]>::try_from(id), std::str::from_utf8(pipeline))

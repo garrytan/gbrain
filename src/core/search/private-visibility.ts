@@ -26,7 +26,6 @@ import { embeddedKey, embeddedKeyInScope, engineScopeStore, unscopedWithOpenEmbe
 import { schemaVersionSeen } from '../migrate-pending.ts';
 import { requestConfigRows } from '../config-snapshot.ts';
 import { isValidSourceId } from '../source-id.ts';
-import { sqlFragment, trustedSql, type SqlFragment } from '../engine-sql/fragment.ts';
 import { asciiLower, asciiLowerSql, edgeTrimSql } from '../edge-whitespace.ts';
 import { ACCESS_ID_RE, hasReaders, MEMBER_PAGE_PREFIX, normalizePrincipal, readersAllow, validIdentity } from '../access/principals.ts';
 import { ruleCoversSql, validPrefix, validQualifiedRuleId } from '../access/folder-rules.ts';
@@ -310,11 +309,6 @@ export function privatePagesFilterFragmentFast(pageAlias: string): string {
       AND ${pageAlias}.frontmatter->'readable_by' IS NULL AND ${pageAlias}.frontmatter->'pinned_question' IS NULL
       AND ${pageAlias}.type NOT IN ('atom', 'concept', 'event', 'question'))
     OR ${privatePagesFilterFragment(pageAlias)}))`;
-}
-
-/** `privatePagesFilterFragmentFast` as a composable statement fragment (engine-sql/doctor-acc.ts `listChatChannelCensus`). */
-export function privatePagesFilterFragmentFastSql(pageAlias: string): SqlFragment {
-  return sqlFragment`${trustedSql(privatePagesFilterFragmentFast(pageAlias))}`;
 }
 
 /**

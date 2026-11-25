@@ -3,6 +3,7 @@
  * which derives its own (slot-history.ts slotWindows). No writes.
  */
 import type { BrainEngine } from '../engine.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { deriveSlotEnds, SLOT_DIMENSIONS } from '../facts/slots.ts';
 import { readSlotRows, type FactPoolScope } from './fact-relevance.ts';
 
@@ -26,7 +27,7 @@ export async function applySlotEnds<T extends { id: number; source_id: string; e
     keyed.set(key(e.source_id, s), { source_id: e.source_id, entity_slug: s });
   }
   const slots = [...keyed.values()].flatMap(k => [...SLOT_DIMENSIONS].map(dimension => ({ ...k, dimension })));
-  const slotRows = await readSlotRows(engine, scope, slots).catch(() => []);
+  const slotRows = await readSlotRows(engine, scope, slots).catch(e => { rethrowCapabilityRefusal(e); return []; });
   const ends = deriveSlotEnds(slotRows.map(r => ({ ...r, entity_slug: canonical.get(key(r.source_id, r.entity_slug)) ?? r.entity_slug })));
   if (!ends.size) return rows;
   const now = Date.now();

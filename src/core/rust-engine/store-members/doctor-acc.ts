@@ -7,46 +7,53 @@
 import type { BrainEngine } from '../../engine.ts';
 import { AVAILABLE_CHRONICLE_LEDGER_STATS } from '../../engine-sql/doctor-acc.ts';
 import { withDates } from '../store-codec.ts';
+import { normalizeOauthClientRow } from '../../engine-sql/oauth-clients.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { listOauthClients } from './jobs-oauth-clients.ts';
-import { listOauthGrantAudit, readLiveAccessTokenRows } from './jobs-client-grants.ts';
+import { listOauthGrantAudit } from './jobs-client-grants.ts';
 import { listAllSources } from './sources.ts';
 import { readAccessGroups, readAccessMembers } from './access-members.ts';
-import { storeFastPageTextPolicy } from './private-provenance.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
-// Access state: no folder rule, member or grant is read from here (isAccessStateUnreadable, listRawOnlyRules, ...).
+// Access state the rows below answer for (the member reads above read the store's member records).
 export const isAccessStateUnreadable: Member<'isAccessStateUnreadable'> = async () => false;
-export const listRawOnlyRules: Member<'listRawOnlyRules'> = async () => [];
-export const listAudienceMemberIds: Member<'listAudienceMemberIds'> = async () => [];
-export const listLabelledOnlyMemberIds: Member<'listLabelledOnlyMemberIds'> = async () => [];
-export const listAccessMemberRows: Member<'listAccessMemberRows'> = async () => [];
+/** The store's rules (access_rules.rs) that keep only raw pages (`covers_derived` false), by (source, rule id) in byte order. */
+export const listRawOnlyRules: Member<'listRawOnlyRules'> = async (brain) => {
+  const sources = (await storeCall({ member: 'listRawOnlyRules' }, () => brain.listSourceRoutingRows())) as Array<{ id: string }>;
+  const out: Array<{ source_id: string; rule_id: string; prefix: string }> = [];
+  for (const { id } of sources) {
+    const rules = (await storeCall({ member: 'listRawOnlyRules', sourceId: id }, () => brain.listAccessRules(id))) as Array<{ rule_id: string; prefix: string; covers_derived: boolean }>;
+    for (const r of rules) if (!r.covers_derived) out.push({ source_id: id, rule_id: r.rule_id, prefix: r.prefix });
+  }
+  const key = (r: { source_id: string; rule_id: string }) => [r.source_id, r.rule_id] as const;
+  return out.sort((a, b) => { const [x, y] = [key(a), key(b)]; return x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : x[1] < y[1] ? -1 : x[1] > y[1] ? 1 : 0; });
+};
+/** The store keeps access members (access_members.rs): the enabled, unremoved members of one kind or with one grant, by id in byte order. */
+async function liveMemberIds(brain: Parameters<StoreMember<[], string[]>>[0], member: string, keep: (row: { kind: string; labelled_only: boolean }) => boolean): Promise<string[]> {
+  const rows = (await storeCall({ member }, () => brain.readAccessMembers({}))) as
+    Array<{ id: string; kind: string; labelled_only: boolean; disabled_at: unknown; tombstoned_at: unknown }>;
+  return rows.filter(r => r.disabled_at == null && r.tombstoned_at == null && keep(r)).map(r => r.id).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+}
+export const listAudienceMemberIds: Member<'listAudienceMemberIds'> = async (brain) => liveMemberIds(brain, 'listAudienceMemberIds', r => r.kind === 'audience');
+export const listLabelledOnlyMemberIds: Member<'listLabelledOnlyMemberIds'> = async (brain) => liveMemberIds(brain, 'listLabelledOnlyMemberIds', r => r.labelled_only === true);
+/** The store's member records (access_members.rs) with their groups, by id; removed members only when asked. */
+export const listAccessMemberRows: Member<'listAccessMemberRows'> = async (brain, includeRemoved) =>
+  ((await storeCall({ member: 'listAccessMemberRows' }, () => brain.readAccessMembers({ includeRemoved }))) as Array<Record<string, unknown>>)
+    .map(row => withDates(row, ['disabled_at', 'tombstoned_at', 'created_at']));
+/** The store's live credentials with an attest actor (jobs/doctor_credentials.rs): a token's row is to_jsonb text, a client's leaves its secret hash out. */
+export const listAttestCredentialRows: Member<'listAttestCredentialRows'> = async (brain) =>
+  (await storeCall({ member: 'listAttestCredentialRows' }, () => brain.listAttestCredentialRows())) as Awaited<ReturnType<BrainEngine['listAttestCredentialRows']>>;
+/** The store's tokens not revoked, whole with their hash as `SELECT *` returns them, oldest first. */
+export const listActiveAccessTokenRows: Member<'listActiveAccessTokenRows'> = async (brain) =>
+  ((await storeCall({ member: 'listActiveAccessTokenRows' }, () => brain.listActiveAccessTokenRows())) as Array<Record<string, unknown>>)
+    .map(row => withDates(row, ['created_at', 'last_used_at', 'revoked_at', 'reads_unscoped']));
+/** The store's clients not deleted, whole as `SELECT *` returns them, by client id. */
+export const listActiveOauthClientRows: Member<'listActiveOauthClientRows'> = async (brain) =>
+  ((await storeCall({ member: 'listActiveOauthClientRows' }, () => brain.listActiveOauthClientRows())) as Array<Record<string, unknown>>)
+    .map(row => normalizeOauthClientRow(row) as unknown as Record<string, unknown>);
 
 const byteCmp = (a: string, b: string): number => Buffer.compare(Buffer.from(a), Buffer.from(b));
-
-/** A row as `to_jsonb` renders it: times and the like as text, a column left out of the store absent. */
-const asJsonb = (row: Record<string, unknown>): Record<string, unknown> => JSON.parse(JSON.stringify(row)) as Record<string, unknown>;
-
-/** Active (not revoked) API tokens, oldest first (a tie by id), from the store's live token rows. */
-export const listActiveAccessTokenRows: Member<'listActiveAccessTokenRows'> = async (brain) =>
-  (await readLiveAccessTokenRows(brain)).sort((a, b) =>
-    (a.created_at as Date).getTime() - (b.created_at as Date).getTime() || byteCmp(String(a.id), String(b.id)));
-
-/** OAuth clients not deleted, by client id in byte order. */
-export const listActiveOauthClientRows: Member<'listActiveOauthClientRows'> = async (brain) =>
-  (await listOauthClients(brain)).filter(c => c.deleted_at == null).sort((a, b) => byteCmp(a.client_id, b.client_id)) as unknown as Array<Record<string, unknown>>;
-
-/** Active tokens and live clients that carry an attest actor, as JSON rows (a client's secret hash left out), by kind then name. */
-export const listAttestCredentialRows: Member<'listAttestCredentialRows'> = async (brain) => {
-  const tokens = (await readLiveAccessTokenRows(brain)).filter(t => t.attest_actor != null)
-    .map(t => ({ kind: 'token' as const, id: String(t.id), name: String(t.name), row: asJsonb(t) }));
-  const clients = (await listOauthClients(brain)).filter(c => c.deleted_at == null && c.attest_actor != null).map(c => {
-    const { client_secret_hash: _hash, ...row } = c as unknown as Record<string, unknown>;
-    return { kind: 'client' as const, id: c.client_id, name: c.client_name ?? c.client_id, row: asJsonb(row) };
-  });
-  return [...tokens, ...clients].sort((a, b) => byteCmp(a.kind, b.kind) || byteCmp(a.name, b.name));
-};
 
 export const listOauthClientAuthShapes: Member<'listOauthClientAuthShapes'> = async (brain) =>
   (await listOauthClients(brain)).map(c => ({ client_id: c.client_id, method: c.token_endpoint_auth_method ?? null, hash: c.client_secret_hash ?? null }));
@@ -200,12 +207,3 @@ export const listRecentReaderNarrowings: Member<'listRecentReaderNarrowings'> = 
   return narrowed.slice(0, limit).map(p => ({ source_id: p.source_id, slug: p.slug, readers: p.readers, writer: p.writer, updated_at: p.updated_at, total: narrowed.length }));
 };
 
-/**
- * The chat census, from the store's page records. With `hidePrivate` the store reads the caller's fast page policy, and
- * only for the text it knows (storeFastPageTextPolicy); any other caller refuses.
- */
-export const listChatChannelCensus: Member<'listChatChannelCensus'> = async (brain, sourceIds, chatTypes, dmTypes, hidePrivate) => {
-  const policy = hidePrivate ? storeFastPageTextPolicy('listChatChannelCensus') : null;
-  return await storeCall({ member: 'listChatChannelCensus' }, () =>
-    brain.listChatChannelCensus([...sourceIds], [...chatTypes], [...dmTypes], policy)) as Array<{ source_id: string; chat_pages: number; channels: number }>;
-};
