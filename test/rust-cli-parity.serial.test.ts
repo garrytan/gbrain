@@ -282,6 +282,7 @@ const COMMANDS: string[][] = [
   ['whoami', '--json'],
   ['extraction-pending', '--json'],
   ['whoknows', 'search', '--json'],
+  ['questions', 'list', '--json'],
 ];
 
 /**
