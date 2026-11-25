@@ -3184,7 +3184,7 @@ export class PostgresEngine implements BrainEngine {
   private configRead<T>(run: (sql: ReturnType<typeof postgres>) => Promise<T>): Promise<T> {
     throwIfRequestAborted(); // a cancelled request starts no config read, as executeRaw refused it (R2)
     const deadlineAt = this._pageTransaction ? undefined : readDeadline();
-    if (deadlineAt === undefined) return this.connRetry(() => run(this.sql));
+    if (deadlineAt === undefined) return this.connRetry(() => { throwIfRequestAborted(); return run(this.sql); }); // every attempt: a request that aborts during the reconnect sends no retry
     return runDeadlineRead(this.sql, deadlineAt, run, this.checkoutGauge, cancelSettleMs(), readDeadlineSignal());
   }
 
