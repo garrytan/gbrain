@@ -1166,10 +1166,11 @@ function servesBound(flags: SetupFlags): boolean {
  * I1: OpenClaw's gbrain stdio entry (`mcp.servers.<name>` in openclaw.json) when it still serves the starter surface,
  * with the exact `openclaw mcp set` line that replaces it with `serve --surface full` listed whole (OpenClaw, like
  * Codex, never calls a tool request_tools unlocks). Reads the file only and never runs OpenClaw's CLI; null when the
- * file is absent or unreadable, or the entry is not a starter serve. Env values other than GBRAIN_* stay in the file:
- * the line names them as placeholders to copy.
+ * file is absent or unreadable, or the entry is not a starter serve. `openclaw mcp set` replaces the whole entry, so the
+ * line is printed only when every env key is one setup may echo (GBRAIN_HOME, GBRAIN_SOURCE); otherwise `command` is
+ * null and the detail names the args to put in the file, so no env value is printed or overwritten.
  */
-function openclawStarterEntry(name: string): { path: string; detail: string; command: string } | null {
+function openclawStarterEntry(name: string): { path: string; detail: string; args: string[]; command: string | null } | null {
   const path = openclawConfigPath();
   let entry: { command?: unknown; args?: unknown; env?: unknown } | undefined;
   try {
@@ -1186,10 +1187,11 @@ function openclawStarterEntry(name: string): { path: string; detail: string; com
     if (/^--(surface|advertise)=/.test(args[i]!)) continue;
     kept.push(args[i]!);
   }
-  const env = entry.env && typeof entry.env === 'object' ? Object.fromEntries(Object.entries(entry.env as Record<string, unknown>).map(([k, v]) => [k, k.startsWith('GBRAIN_') && typeof v === 'string' ? v : `<value of ${k} in openclaw.json>`])) : undefined;
-  const replaced = { ...entry, args: [...args.slice(0, serve + 1), '--surface', 'full', ...kept], ...(env ? { env } : {}) };
-  return { path, detail: `${path} registers '${name}' on serve ${profileFlags({ surface: 'starter', advertise: registeredAdvertise(args.join(' ')) }).join(' ')}; OpenClaw never calls a tool request_tools unlocks, so replace it with the full surface (setup does not run OpenClaw's CLI)`,
-    command: `openclaw mcp set ${name} ${shellQuote(JSON.stringify(replaced))}` };
+  const fullArgs = [...args.slice(0, serve + 1), '--surface', 'full', ...kept];
+  const echoable = entry.env === undefined || (!!entry.env && typeof entry.env === 'object' && Object.entries(entry.env as Record<string, unknown>).every(([k, v]) => (k === 'GBRAIN_HOME' || k === 'GBRAIN_SOURCE') && typeof v === 'string'));
+  const registered = `${path} registers '${name}' on serve ${profileFlags({ surface: 'starter', advertise: registeredAdvertise(args.join(' ')) }).join(' ')}; OpenClaw never calls a tool request_tools unlocks, so move it to the full surface (setup does not run OpenClaw's CLI)`;
+  if (!echoable) return { path, args: fullArgs, command: null, detail: `${registered}. Its env holds values setup does not print, and openclaw mcp set replaces the whole entry, so set its args in that file to ${JSON.stringify(fullArgs)} and keep its env as it is` };
+  return { path, args: fullArgs, detail: registered, command: `openclaw mcp set ${name} ${shellQuote(JSON.stringify({ ...entry, args: fullArgs }))}` };
 }
 
 /**
@@ -1275,7 +1277,7 @@ async function runInstructionsOnly(flags: SetupFlags, out: Out): Promise<number>
   if (skillPlugin) for (const line of describeOpenclawSkill(skillPlugin, flags.dryRun)) say(out, line);
   if (harness === 'openclaw' && turnHook && !off) say(out, `  note     ${'route'.padEnd(7)} the per-turn rule is OpenClaw's primary route to the brain. Skills from \`gbrain skillpack scaffold --harness openclaw\` are an optional fallback: agents seldom open a listed skill on their own.`);
   if (cursorPins) for (const line of describeCursorPins(cursorPins, flags.dryRun)) say(out, line);
-  if (openclawMcp) say(out, `  note     ${'MCP'.padEnd(7)} ${openclawMcp.detail}:\n    ${openclawMcp.command}`);
+  if (openclawMcp) say(out, `  note     ${'MCP'.padEnd(7)} ${openclawMcp.detail}${openclawMcp.command ? `:\n    ${openclawMcp.command}` : ''}`);
   if (check?.ok) say(out, `  verify   ${'turn hook'.padEnd(7)} ${check.message}`);
   if (mcp.setup === 'manual' && !flags.remove) say(out, `MCP: setup does not register ${adapter.label}'s MCP server. Follow ${adapter.guide} (one command), then start a new session.`);
   if (hermesMcp) say(out, `  ${hermesMcp.action.padEnd(8)} ${'MCP'.padEnd(7)} ${hermesMcp.detail}${hermesMcp.command && hermesMcp.action !== 'write' ? `:\n    ${hermesMcp.command}` : ''}`);

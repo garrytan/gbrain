@@ -88,8 +88,9 @@ the smaller list anyway, use `--arg --surface --arg starter --arg --advertise --
 (check `openclaw mcp add --help` for your version's `--arg` spelling). When the
 entry already exists on starter, `gbrain setup openclaw` reads `openclaw.json`
 (it never runs OpenClaw's CLI) and prints the exact `openclaw mcp set gbrain '<entry>'`
-line that replaces it with `--surface full`, keeping its command and env
-(an env value other than `GBRAIN_*` is shown as a placeholder to copy).
+line that replaces it with `--surface full`, keeping its command and env.
+When the env holds anything besides `GBRAIN_HOME` and `GBRAIN_SOURCE`, it prints
+the new `args` to put in the file instead, so no env value is printed or overwritten.
 
 Leave `GBRAIN_SOURCE` unset in the MCP env unless you deliberately want
 single-source retrieval: a pin scopes every tool (search, `get_brain_identity`
