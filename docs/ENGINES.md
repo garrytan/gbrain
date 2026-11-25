@@ -2115,8 +2115,8 @@ gbrain engine shadow drill [--backup] [--evals] [--json]   # restore drill on th
 - **Drill (swap criterion 10).** `gbrain engine shadow drill` runs on the shadow's host and never pauses the shadow.
   `--backup` asks the shadow's owner for one copy of the Rust store at one committed generation under
   `drills/scratch-<id>/` (the shadow keeps following), checks the copy without opening it normally, opens it once, runs
-  one keyword search on a word the copy stores, deletes the copy and writes `drills/backup.json` and `history.jsonl`. It
-  verifies and opens the copy with the addon whose SHA-256 equals the epoch's `rust_addon_sha256` (`addon_mismatch`
+  a keyword search on a word the copy stores (up to 24 words are tried until one gets a hit), deletes the copy and writes
+  `drills/backup.json` and `history.jsonl`. It verifies and opens the copy with the addon whose SHA-256 equals the epoch's `rust_addon_sha256` (`addon_mismatch`
   otherwise). A copy that has pages passes only after a keyword search ran on it, and while the copy's keyword index is
   complete that search must get a hit (`no_probe_term` otherwise); the probe drops the engine's stop words before it
   counts its 24 tries and leaves out pages under search-excluded slug prefixes. A shadow deleted or replaced during

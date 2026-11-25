@@ -71,7 +71,7 @@ never a pass. With no shadow running, every criterion is `missing`.
 9. Zero panics and zero child faults in the shadow.
 10. A passed backup and restore drill on the shadow store, and eval gates E1 to E3 in the release. Run both from
     the shadow's host with `gbrain engine shadow drill`: the drill copies the shadow's own store at one moment while
-    the shadow keeps following, checks the copy, opens it once, runs one keyword search on it and deletes it (a store
+    the shadow keeps following, checks the copy, opens it once, runs a keyword search on it and deletes it (a store
     over 8 GiB needs the separate physical-copy proof); `--evals` downloads the final eval file pinned to the release
     the shadow's evidence started on. `gbrain engine shadow status` and the swap read only what those commands kept
     (they never fetch), so a drill from an earlier evidence epoch, a drill whose scratch copy was not seen deleted, a
