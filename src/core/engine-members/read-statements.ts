@@ -7,6 +7,7 @@ import type { AmendmentNotAppliedRow, AmendmentsNotAppliedSpec, BeliefHistoryRow
 import type { BodyManifestMeta, BodyManifestOutline, BodyManifestRow, ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines, SegmentedPageHead } from '../engine-sql/export-reads.ts';
 import type { BriefEntityPageOpts, BriefEntityPageRow, ReflexPageMatch, ReflexPageRow, ReflexScope } from '../engine-sql/reflex-reads.ts';
 import type * as BriefReadsSql from '../engine-sql/brief-reads.ts';
+import type * as ConceptRebuildSql from '../engine-sql/concept-rebuild.ts';
 import type * as EmbeddingCatalogSql from '../engine-sql/embedding-catalog.ts';
 import type * as ChronicleReadsSql from '../engine-sql/chronicle-reads.ts';
 import type { EntityAnchoredPages, EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, FuzzyEntityCandidateRow, IgnoredLabelPageRow, InboundLinkerCountRow, LivePageTypeRow, MentionDueQuery, MentionIndexRecount, MentionIndexStatusRow, NameVariantCandidateQuery, NameVariantCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, SlugPatternPageRow, TextMentionPageRow, TrigramCandidateQuery, TrigramCandidateRow } from '../engine-sql/entity-reads.ts';
@@ -335,6 +336,12 @@ export interface ReadStatementMembers {
   carryConceptIncomingLinks(sourceId: string, slug: string, incoming: readonly unknown[], oldId: number): Promise<{ id: number; carried: number } | null>;
   /** When a tombstone's `hours` recovery window ends (ISO, UTC) and whether it has; null for a live or missing page. */
   readTombstoneWindow(pageId: number, hours: number): Promise<{ until: string; past: boolean } | null>;
+  /** What on or about the concept row synthesis did not write (the stated kinds), with its bounded lead and segmented mark. */
+  readConceptStatedKinds(pageId: number, sourceId: string, slug: string, lists: ConceptRebuildSql.StatedKindLists): Promise<ConceptRebuildSql.ConceptStatedRow>;
+  /** Who may read the page row with the id, live or deleted, as the read predicate decides it; null when no row has it. */
+  readRebuildAccess(pageId: number): Promise<ConceptRebuildSql.RebuildAccess | null>;
+  /** Every held concept, by source then slug, with whether it is private and whether a live member page is. */
+  readHeldConceptRows(): Promise<ConceptRebuildSql.HeldConceptRow[]>;
   /**
    * The engine graduation inventory's catalog reads (SQL in engine-sql/graduation-catalog.ts). listCatalogRelations
    * returns the SQL relations of the current schema, or on a store with no relations (the Rust engine) its keyspace

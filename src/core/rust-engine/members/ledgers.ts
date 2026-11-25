@@ -81,6 +81,9 @@ export const LEDGER_MEMBERS = {
   listConceptIncomingLinks: 'pages',
   carryConceptIncomingLinks: 'pages',
   readTombstoneWindow: 'pages',
+  readConceptStatedKinds: 'pages',
+  readRebuildAccess: 'pages',
+  readHeldConceptRows: 'pages',
   // the engine graduation inventory's catalog reads (engine-sql/graduation-catalog.ts)
   listCatalogRelations: 'schema',
   readCatalogSchemaVersion: 'schema',

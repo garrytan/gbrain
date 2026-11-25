@@ -163,6 +163,7 @@ import * as entityIdentities from './entity-identities.ts';
 import * as writeGuards from './write-guards.ts';
 import * as ownerOnlyMarks from './owner-only-marks.ts';
 import * as pageVisibility from './page-visibility.ts';
+import * as conceptRebuild from './concept-rebuild.ts';
 import * as largePage from './large-page.ts';
 import * as trustFence from './trust-fence.ts';
 import * as trustProposals from './trust-proposals.ts';
@@ -344,6 +345,8 @@ export const STORE_MEMBERS = {
   ...writeGuards, ...trustFence, ...trustProposals,
   // The page visibility guards a remote page write runs (rust/docs/store/page-visibility.md).
   ...pageVisibility,
+  // The held-concept rebuild's reads and link carry (rust/docs/store/concept_rebuild.md).
+  ...conceptRebuild,
   // The owner-only mark state; the store marks in code and has no SQL triggers (rust/docs/store/keyword.md).
   ...ownerOnlyMarks,
   // The large-page write guard's stored body size read (rust/docs/store/large-page.md).

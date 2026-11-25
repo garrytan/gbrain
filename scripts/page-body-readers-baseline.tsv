@@ -745,7 +745,7 @@ src/core/guests/promote.ts	promoteGuestNote	field	INLINE	assertInlineBody before
 src/core/guests/promote.ts	promoteGuestNote	call:serializeMarkdown	INLINE	assertInlineBody refuses a guest note stored in segments (page_body_segmented) before its body is copied into the owner page
 src/core/rust-engine/store-codec.ts	guardNullBody	field	META	reads only whether the Rust store sent compiled_truth/timeline as null (a segmented shell, PGLite pages_body_storage_chk), never the body text; a null body becomes the guarded segmented page of rowToPage
 src/core/rust-engine/store-members/write-guards.ts	readLiveStoredBody	field	SEGW	the Rust readLiveStoredBody: the inline columns of readLivePageBody, NULL for a segmented page, and every caller holds it
-src/core/persistence/concept-rebuild.ts	STATED_SQL	sql	INLINE	reads only an inline page timeline for emptiness; a segmented page counts as unread and stays hidden
+src/core/engine-sql/concept-rebuild.ts	STATED_SQL	sql	INLINE	reads only an inline page timeline for emptiness; a segmented page counts as unread and stays hidden (moved from persistence/concept-rebuild.ts statedKinds)
 src/core/engine-sql/purge-verify.ts	carriesClaim	sql	STREAM	moved from facts/purge-verify.ts verifyPagePurge unchanged: strpos over NULL never matches a segmented page; withSegmentedProse probes its segment texts
 src/core/engine-sql/take-proposals.ts	listProposeTakesCandidatePages	sql	STREAM	moved from cycle/propose-takes.ts listCandidatePages unchanged
 src/core/engine-sql/facts-repair.ts	listConceptLineageRows	sql	META	length(compiled_truth) only, the size the visibility preview prints; a segmented concept reads a NULL size

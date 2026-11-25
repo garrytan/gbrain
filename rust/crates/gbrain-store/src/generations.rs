@@ -69,7 +69,7 @@ use std::collections::BTreeSet;
 mod activations;
 mod atom_reads;
 mod chronicle_events;
-mod derivation_inputs;
+pub(crate) mod derivation_inputs;
 mod doctor_reads;
 mod fence_evidence;
 mod fence_restore;

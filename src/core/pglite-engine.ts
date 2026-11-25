@@ -5553,6 +5553,9 @@ export class PGLiteEngine implements BrainEngine {
   listConceptIncomingLinks(pageId: number) { return conceptRebuildSql.listConceptIncomingLinks(this, pageId); }
   carryConceptIncomingLinks(sourceId: string, slug: string, incoming: readonly unknown[], oldId: number) { return conceptRebuildSql.carryConceptIncomingLinks(this, sourceId, slug, incoming, oldId); }
   readTombstoneWindow(pageId: number, hours: number) { return conceptRebuildSql.readTombstoneWindow(this, pageId, hours); }
+  readConceptStatedKinds(pageId: number, sourceId: string, slug: string, lists: conceptRebuildSql.StatedKindLists) { return conceptRebuildSql.readConceptStatedKinds(this, pageId, sourceId, slug, lists); }
+  readRebuildAccess(pageId: number) { return conceptRebuildSql.readRebuildAccess(this, pageId); }
+  readHeldConceptRows() { return conceptRebuildSql.readHeldConceptRows(this); }
   listCatalogRelations() { return graduationCatalog.listCatalogRelations(this); }
   readCatalogSchemaVersion() { return graduationCatalog.readCatalogSchemaVersion(this); }
   listCatalogForeignKeys() { return graduationCatalog.listCatalogForeignKeys(this); }

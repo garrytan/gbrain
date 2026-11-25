@@ -90,6 +90,14 @@ mod lease_order_tests;
 mod noop_settle;
 mod notifier;
 mod op_checkpoint;
+
+/// Whether an `op_checkpoints` parent row (`op`, `fingerprint`) exists. A part holding NUL names no row.
+pub(crate) fn op_checkpoint_exists(read: &dyn KvRead, op: &str, fingerprint: &str) -> Result<bool> {
+    match op_checkpoint::parent_key(op, fingerprint) {
+        Ok(key) => Ok(read.get(&key)?.is_some()),
+        Err(_) => Ok(false),
+    }
+}
 mod origin_holds;
 mod owner_scans;
 pub(crate) mod projection_queue;

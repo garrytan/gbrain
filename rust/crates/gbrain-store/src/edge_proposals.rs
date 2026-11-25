@@ -339,6 +339,21 @@ fn non_employer(q: &EdgeCandidateQuery, target: &PageRecord) -> bool {
 /// The proposal counts of `edgeValidityCounts`: `proposed`, `undated_unresolved` and `applied`
 /// proposals whose source passes `in_scope` (`source_id = ANY(scope)`, every source when the scope
 /// is null).
+/// Whether a link edge proposal that names page `page_id` (as its from, either to, or its ending to) was decided by a person:
+/// rejected, undone or reverted (the concept rebuild's stated check).
+pub(crate) fn person_decided_proposal_names(read: &dyn KvRead, page_id: u64) -> Result<bool> {
+    Ok(all_proposals(read)?.iter().any(|p| {
+        (p.from_page_id == page_id
+            || p.a_to_page_id == page_id
+            || p.b_to_page_id == page_id
+            || p.ending_to_page_id == Some(page_id))
+            && matches!(
+                p.status.as_str(),
+                "rejected" | "undone" | "reverted_by_user"
+            )
+    }))
+}
+
 pub(crate) fn proposal_counts(
     read: &dyn KvRead,
     in_scope: impl Fn(&str) -> bool,
