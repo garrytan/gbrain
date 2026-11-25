@@ -6,9 +6,9 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2279/2293
+# covered: 2288/2305
 # lifecycle: 12/12
-# pages: 124/125
+# pages: 133/137
 # search: 8/8
 # search_reads: 9/9
 # link_reads: 15/15
@@ -178,7 +178,7 @@ listSourceIds	pages	yes	3	no	yes	yes	serves
 readSoleSourceId	pages	yes	1	no	yes	yes	serves
 readFirstSourceId	pages	yes	1	no	yes	yes	serves
 lockAllSourceRows	pages	yes	1	no	yes	yes	serves
-readSourceRow	pages	yes	8	no	yes	yes	serves
+readSourceRow	pages	yes	9	no	yes	yes	serves
 lockSourceRow	pages	yes	8	no	yes	yes	serves
 lockSourceForUpdate	pages	yes	4	no	yes	yes	serves
 advanceSourceCommit	pages	yes	8	no	yes	yes	serves
@@ -218,7 +218,7 @@ readLivePagesByIds	pages	yes	1	no	yes	yes	serves
 listStaleAtoms	pages	yes	2	no	yes	yes	serves
 getPageSealState	pages	yes	6	no	yes	yes	serves
 refreshPageOrigin	pages	yes	8	no	yes	yes	serves
-readLivePageIdBySlug	pages	yes	10	no	yes	yes	serves
+readLivePageIdBySlug	pages	yes	11	no	yes	yes	serves
 readPageTierRef	pages	yes	1	no	yes	yes	serves
 readPageTierRows	pages	yes	1	no	yes	yes	serves
 pageHasFrontmatterKey	pages	yes	1	no	yes	yes	serves
@@ -256,6 +256,18 @@ readPredictionLedgerEvents	pages	yes	2	no	yes	yes	serves
 readTakeHorizonRows	pages	yes	1	no	yes	yes	serves
 readLatestTakeGrades	pages	yes	2	no	yes	yes	serves
 readBeliefCoverageEvents	pages	yes	2	no	yes	yes	serves
+listQuestionCandidatePages	pages	yes	1	no	yes	yes	refuses:pages
+listPublishedQuestionAnswers	pages	yes	1	no	yes	yes	refuses:pages
+listQuestionEvidenceFacts	pages	yes	1	no	yes	yes	serves
+listQuestionEvidenceTimeline	pages	no	0	no	-	-	-
+listQuestionEvidenceTakes	pages	no	0	no	-	-	-
+readQuestionEvidenceClock	pages	yes	1	no	yes	yes	refuses:pages
+listPrefixAnchoredPages	pages	yes	2	no	yes	yes	serves
+readQuestionPageRow	pages	yes	1	no	yes	yes	refuses:pages
+listQuestionEvidenceJoin	pages	yes	1	no	yes	yes	refuses:pages
+hasNewQuestionPages	pages	no	0	no	-	-	-
+hasNewQuestionFacts	pages	yes	1	no	yes	yes	serves
+lockQuestionEvidenceRows	pages	yes	1	no	yes	yes	refuses:pages
 searchKeyword	search	yes	52	yes	yes	yes	serves
 countKeywordPages	search	yes	13	no	yes	yes	serves
 searchKeywordPages	search	yes	18	no	yes	yes	serves

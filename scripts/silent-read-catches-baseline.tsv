@@ -1299,7 +1299,6 @@ src/core/questions/phase.ts#numberConfig	promise_catch_empty	1
 src/core/questions/phase.ts#runPhaseStandingQuestions	promise_catch_empty	1
 src/core/questions/receipt.ts#scheduledRefreshAvailable	catch_empty	1
 src/core/questions/receipt.ts#scheduledRefreshAvailable	promise_catch_empty	1
-src/core/questions/refresh.ts#refreshPin	capability_refusal_swallowed	1
 src/core/questions/refresh.ts#resolveMaxOutputTokens	promise_catch_empty	1
 src/core/questions/refresh.ts#retrieveEvidence	promise_catch_empty	1
 src/core/raw-file-upload.ts#rawUploadRefusedFor	promise_catch_empty	1

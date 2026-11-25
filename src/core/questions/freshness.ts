@@ -8,7 +8,6 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import type { AnswerSentence, PinRow } from './store.ts';
-import { quarantinedProvenanceFilterFragment } from '../quarantine.ts';
 
 export type StaleReason =
   | 'page_missing' | 'page_deleted' | 'page_changed' | 'source_archived'
@@ -24,7 +23,10 @@ const FULL_RECOMPUTE_REASONS: ReadonlySet<StaleReason> = new Set([
 
 export type EvidenceKind = 'page' | 'fact' | 'timeline' | 'take' | 'owner';
 
-/** Content hashes computed in SQL, identically at capture and at read. */
+/**
+ * Content hashes computed in SQL, identically at capture and at read. The statements of engine-sql/question-reads.ts
+ * write them out; test/question-reads-sql-pin.test.ts pins that text to these fragments.
+ */
 export const FACT_HASH_SQL = (a: string) => `md5(${a}.fact || '|' || ${a}.visibility || '|' || COALESCE(${a}.entity_slug, '') || '|' || ${a}.kind)`;
 export const TIMELINE_HASH_SQL = (a: string) => `md5(${a}.date::text || '|' || ${a}.summary || '|' || ${a}.detail)`;
 /**
@@ -131,23 +133,7 @@ export async function evaluateAnswer(
   pin: Pick<PinRow, 'id' | 'answer' | 'answer_revision'>,
   opts: { readableSources: string[] | null },
 ): Promise<AnswerEvaluation> {
-  const rows = pin.answer.length === 0 ? [] : await engine.executeRaw<EvidenceJoinRow>(
-    `SELECT e.sentence_id, e.kind, e.source_id, e.page_id, e.page_generation, e.page_revision, e.content_hash,
-       p.id AS p_id, p.generation AS p_generation, p.knowledge_revision::text AS p_revision, p.deleted_at AS p_deleted,
-       s.archived AS p_source_archived, ${OWNER_BODY_HASH_SQL('p')} AS p_body_hash,
-       f.id AS f_id, f.expired_at AS f_expired, (f.valid_until IS NOT NULL AND f.valid_until <= now()) AS f_valid_until_passed,
-       f.superseded_by AS f_superseded, ${FACT_HASH_SQL('f')} AS f_hash,
-       (f.id IS NOT NULL AND NOT ${quarantinedProvenanceFilterFragment('f')}) AS f_source_quarantined,
-       t.id AS t_id, ${TIMELINE_HASH_SQL('t')} AS t_hash,
-       k.id AS k_id, k.active AS k_active, k.superseded_by AS k_superseded, ${TAKE_HASH_SQL('k')} AS k_hash
-     FROM question_evidence e
-     LEFT JOIN pages p ON p.id = e.page_id
-     LEFT JOIN sources s ON s.id = p.source_id
-     LEFT JOIN facts f ON e.kind = 'fact' AND f.id = e.item_id AND f.source_id = e.source_id
-     LEFT JOIN timeline_entries t ON e.kind = 'timeline' AND t.id = e.item_id
-     LEFT JOIN takes k ON e.kind = 'take' AND k.id = e.item_id
-     WHERE e.question_id = $1 AND e.answer_revision = $2`,
-    [pin.id, pin.answer_revision]);
+  const rows = pin.answer.length === 0 ? [] : await engine.listQuestionEvidenceJoin(pin.id, pin.answer_revision) as unknown as EvidenceJoinRow[];
   const bySentence = new Map<string, EvidenceJoinRow[]>();
   for (const r of rows) bySentence.set(r.sentence_id, [...(bySentence.get(r.sentence_id) ?? []), r]);
   const sentences = pin.answer.map((s): EvaluatedSentence => {
@@ -172,17 +158,7 @@ export async function evaluateAnswer(
  */
 export async function newEvidenceSinceWatermark(engine: BrainEngine, pin: PinRow): Promise<boolean> {
   if (pin.answer_revision === 0 || pin.watermark_generation === null) return false;
-  const params: unknown[] = [pin.source_id, pin.watermark_generation];
-  let prefix = '';
-  if (pin.scope_slug_prefix) { params.push(`${pin.scope_slug_prefix.replace(/[\\%_]/g, '\\$&')}%`); prefix = `AND p.slug LIKE $${params.length}`; }
-  const [pageHit] = await engine.executeRaw<{ hit: boolean }>(
-    `SELECT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = $1 AND p.generation > $2 AND p.deleted_at IS NULL
-       AND p.type NOT IN ('question', 'synthesis') AND NOT (p.frontmatter ? 'pinned_question') ${prefix}) AS hit`, params);
-  if (pageHit?.hit) return true;
+  if (await engine.hasNewQuestionPages(pin.source_id, pin.watermark_generation, pin.scope_slug_prefix || null)) return true;
   if (pin.watermark_fact_id === null) return false;
-  const [factHit] = await engine.executeRaw<{ hit: boolean }>(
-    `SELECT EXISTS (SELECT 1 FROM facts f WHERE f.source_id = $1 AND f.id > $2 AND f.expired_at IS NULL
-       ${pin.scope_entity ? 'AND f.entity_slug = $3' : ''}) AS hit`,
-    pin.scope_entity ? [pin.source_id, pin.watermark_fact_id, pin.scope_entity] : [pin.source_id, pin.watermark_fact_id]);
-  return factHit?.hit === true;
+  return engine.hasNewQuestionFacts(pin.source_id, pin.watermark_fact_id, pin.scope_entity || null);
 }

@@ -122,7 +122,7 @@ export async function buildReceipt(engine: BrainEngine, pin: PinRow, view: {
   readableSources: string[] | null; includeAnswer: boolean; remote: boolean; refresh?: RefreshOutcome;
 }): Promise<QuestionReceipt> {
   const evaluation = await evaluateAnswer(engine, pin, { readableSources: view.readableSources });
-  const [page] = await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL', [pin.source_id, pin.slug]);
+  const pageId = await engine.readLivePageIdBySlug(pin.slug, pin.source_id);
   const leaseLive = pin.lease_token !== null && pin.lease_expires_at !== null && pin.lease_expires_at.getTime() > Date.now();
   const freshness: Freshness = pin.state === 'archived' ? 'archived'
     : leaseLive ? 'refreshing'
@@ -142,7 +142,7 @@ export async function buildReceipt(engine: BrainEngine, pin: PinRow, view: {
   const id = pinId(pin);
   return {
     id, source_id: pin.source_id, slug: pin.slug, question: pin.question, scope: pinScope(pin), state: pin.state,
-    inactive_reason: pin.inactive_reason, publish_mode: pin.publish_mode, origin: pin.origin, page_materialized: !!page,
+    inactive_reason: pin.inactive_reason, publish_mode: pin.publish_mode, origin: pin.origin, page_materialized: pageId !== null,
     freshness, answer_revision: pin.answer_revision,
     sentences: { total: pin.answer.length, fresh: evaluation.fresh, stale: evaluation.stale, withheld: evaluation.hidden },
     ...(view.includeAnswer ? { answer: evaluation.sentences.filter(s => !s.hidden).map(s => ({ id: s.id, text: s.text, origin: s.origin, stale: s.stale, reasons: s.reasons })) } : {}),

@@ -2,9 +2,11 @@
  * Pinned-question rows: reads, idempotent pin, state changes and the durable
  * refresh lease. SQL runs through `engine.executeRaw` on the pinned_questions
  * table (not a canonical-writer table, so no coordinator capability is needed);
- * the question page itself is written by ./pages.ts through the coordinator.
+ * the question page itself is written by ./pages.ts through the coordinator. An engine without raw SQL (the Rust
+ * engine, whose store keeps no pin records yet) refuses each of them by name before any call (refusePinStore).
  */
 import type { BrainEngine } from '../engine.ts';
+import { refusePinStore } from '../rust-engine/question-stops.ts';
 import { formatQuestionId, type QuestionScope } from './identity.ts';
 
 export type PinState = 'active' | 'inactive' | 'archived';
@@ -101,12 +103,14 @@ export function pinScope(row: Pick<PinRow, 'source_id' | 'scope_slug_prefix' | '
 }
 
 export async function getPin(engine: BrainEngine, sourceId: string, slug: string, opts: { forUpdate?: boolean } = {}): Promise<PinRow | null> {
+  refusePinStore(engine, 'getPin');
   const rows = await engine.executeRaw<Record<string, unknown>>(
     `SELECT ${COLUMNS} FROM pinned_questions WHERE source_id = $1 AND slug = $2${opts.forUpdate ? ' FOR UPDATE' : ''}`, [sourceId, slug]);
   return rows[0] ? toPinRow(rows[0]) : null;
 }
 
 export async function listPins(engine: BrainEngine, opts: { sourceIds?: string[]; includeArchived?: boolean; states?: PinState[] } = {}): Promise<PinRow[]> {
+  refusePinStore(engine, 'listPins');
   const params: unknown[] = [];
   const where: string[] = [];
   if (opts.sourceIds) { params.push(opts.sourceIds); where.push(`source_id = ANY($${params.length}::text[])`); }
@@ -130,6 +134,7 @@ export interface PinInsert {
 
 /** Idempotent insert keyed on (source_id, slug). Returns the row and whether it was created. */
 export async function insertPin(engine: BrainEngine, p: PinInsert): Promise<{ row: PinRow; created: boolean }> {
+  refusePinStore(engine, 'insertPin');
   const inserted = await engine.executeRaw<Record<string, unknown>>(
     `INSERT INTO pinned_questions (source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, created_by)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -143,6 +148,7 @@ export async function insertPin(engine: BrainEngine, p: PinInsert): Promise<{ ro
 export async function updatePinState(engine: BrainEngine, id: number, patch: {
   state?: PinState; inactiveReason?: InactiveReason | null; publishMode?: PublishMode;
 }): Promise<PinRow> {
+  refusePinStore(engine, 'updatePinState');
   const rows = await engine.executeRaw<Record<string, unknown>>(
     `UPDATE pinned_questions SET
        state = COALESCE($2, state),
@@ -162,6 +168,7 @@ export async function updatePinState(engine: BrainEngine, id: number, patch: {
  * while a live lease exists; an expired lease (a crashed worker) is taken over.
  */
 export async function acquireLease(engine: BrainEngine, id: number, token: string, owner: string, ttlMs: number): Promise<PinRow | null> {
+  refusePinStore(engine, 'acquireLease');
   const rows = await engine.executeRaw<Record<string, unknown>>(
     `UPDATE pinned_questions SET lease_token = $2, lease_owner = $3,
        lease_expires_at = now() + ($4::double precision * interval '1 millisecond'),
@@ -173,6 +180,7 @@ export async function acquireLease(engine: BrainEngine, id: number, token: strin
 
 /** Ends a refresh attempt without publishing: keeps the previous answer, records the cause and spend. */
 export async function releaseLease(engine: BrainEngine, id: number, token: string, outcome: { error: string | null; spendUsd: number }): Promise<void> {
+  refusePinStore(engine, 'releaseLease');
   await engine.executeRaw(
     `UPDATE pinned_questions SET lease_token = NULL, lease_owner = NULL, lease_expires_at = NULL,
        last_error = $3, spend_usd = spend_usd + $4, updated_at = now()
@@ -180,5 +188,7 @@ export async function releaseLease(engine: BrainEngine, id: number, token: strin
 }
 
 export async function addSpend(engine: BrainEngine, id: number, usd: number): Promise<void> {
-  if (usd > 0) await engine.executeRaw('UPDATE pinned_questions SET spend_usd = spend_usd + $2 WHERE id = $1', [id, usd]);
+  if (usd <= 0) return;
+  refusePinStore(engine, 'addSpend');
+  await engine.executeRaw('UPDATE pinned_questions SET spend_usd = spend_usd + $2 WHERE id = $1', [id, usd]);
 }

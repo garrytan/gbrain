@@ -527,11 +527,7 @@ src/core/planner-stats.ts	execute_raw	14
 src/core/post-upgrade-reembed.ts	execute_raw	1
 src/core/quarantine-override.ts	execute_raw	1
 src/core/questions/auto-think-migration.ts	execute_raw	1
-src/core/questions/freshness.ts	execute_raw	3
-src/core/questions/pages.ts	execute_raw	1
-src/core/questions/receipt.ts	execute_raw	1
-src/core/questions/refresh.ts	execute_raw	14
-src/core/questions/service.ts	execute_raw	1
+src/core/questions/refresh.ts	execute_raw	5
 src/core/questions/store.ts	execute_raw	7
 src/core/reindex-consent.ts	execute_raw	1
 src/core/repair/attribution-backfill.ts	execute_raw	5
@@ -590,7 +586,6 @@ src/core/schema-pack/unify-types-handler.ts	execute_raw	1
 src/core/schema-verify.ts	execute_raw	2
 src/core/search-vector-backfill.ts	execute_raw	3
 src/core/search/dedup.ts	execute_raw	1
-src/core/search/entity-anchor.ts	execute_raw	1
 src/core/search/evidence-date.ts	execute_raw	3
 src/core/search/facts-arm.ts	execute_raw	2
 src/core/search/feedback-boost.ts	execute_raw	1

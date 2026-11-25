@@ -20,7 +20,7 @@
  *    #7306: a reply cut off at the output cap fails `refresh_failed:answer_too_long:<cap>` without the JSON retry;
  *    the cycle phase does not retry that pin until the cap is raised.
  */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import type { BudgetMeter } from '../cycle/budget-meter.ts';
 import { resolveModel } from '../model-config.ts';
@@ -28,14 +28,14 @@ import { normalizeModelId } from '../model-id.ts';
 import { canonicalLookup } from '../model-pricing.ts';
 import { chat as gatewayChat, probeChatModel } from '../ai/gateway.ts';
 import { classifyLlmCallFailure } from '../think/index.ts';
-import { PINNED_QUESTION_MARKER, normalizeQuestion, sentenceId } from './identity.ts';
+import { normalizeQuestion, sentenceId } from './identity.ts';
 import { entityAnchoredPages, prefixAnchoredPages } from '../search/entity-anchor.ts';
-import { quarantinedProvenanceFilterFragment, quarantineFilterFragment } from '../quarantine.ts';
-import { projectionEligibleSql } from '../eligibility/sql.ts';
-import { FACT_HASH_SQL, OWNER_BODY_HASH_SQL, TAKE_HASH_SQL, TIMELINE_HASH_SQL, evaluateAnswer, type EvidenceKind } from './freshness.ts';
+import { evaluateAnswer, type EvidenceKind } from './freshness.ts';
 import { ownerClaims, readQuestionPage } from './pages.ts';
 import { neutralizeForPrompt } from '../think/sanitize.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { acquireLease, getPin, pinId, releaseLease, type AnswerSentence, type PinRow } from './store.ts';
+import { refusePinStore } from '../rust-engine/question-stops.ts';
 
 export type BlockedReason = 'no_model_key' | 'budget_exhausted' | 'no_worker' | 'refresh_failed' | 'answer_too_long' | 'awaiting_consent';
 
@@ -79,9 +79,7 @@ export const MAX_OUTPUT_TOKENS_KEY = 'cycle.standing_questions.max_output_tokens
 export const ANSWER_TOO_LONG_ERROR = 'refresh_failed:answer_too_long';
 const OUTPUT_CAP_ERROR = /exceeded the \d+ output token maximum/i;
 const MAX_PAGES = 16;
-const MAX_FACTS = 30;
-const MAX_TIMELINE = 20;
-const MAX_TAKES = 20;
+// The evidence reads take at most 30 facts, 20 timeline entries and 20 takes (engine-sql/question-reads.ts).
 const PAGE_EXCERPT_CHARS = 1_500;
 const MAX_SENTENCES = 12;
 const NON_MONOTONIC = /\b(latest|current(ly)?|now|today|most recent|newest|recent(ly)?|cheapest|best|worst|top|highest|lowest|largest|smallest|only|still|last)\b/i;
@@ -138,6 +136,7 @@ function costUsd(model: string, usage: QuestionChatResponse['usage']): number {
 }
 
 async function recordBlocked(engine: BrainEngine, id: number, code: string): Promise<void> {
+  refusePinStore(engine, 'recordBlocked');
   await engine.executeRaw(
     `UPDATE pinned_questions SET last_attempt_at = now(), last_error = $2, updated_at = now()
      WHERE id = $1 AND (lease_token IS NULL OR lease_expires_at < now())`, [id, code]);
@@ -189,19 +188,14 @@ export async function retrieveEvidence(engine: BrainEngine, pin: PinRow): Promis
   try {
     const { hybridSearch } = await import('../search/hybrid.ts');
     for (const r of await hybridSearch(engine, pin.question, { sourceId: pin.source_id, limit: MAX_PAGES * 2, exclude_slug_prefixes: ['questions/'] })) slugs.add(r.slug);
-  } catch {
-    for (const r of await engine.searchKeyword(pin.question, { sourceId: pin.source_id, limit: MAX_PAGES * 2 }).catch(() => [])) slugs.add(r.slug);
+  } catch (e) {
+    // A capability refusal is not a search miss: it stops the refresh instead of answering from fewer pages.
+    rethrowCapabilityRefusal(e);
+    for (const r of await engine.searchKeyword(pin.question, { sourceId: pin.source_id, limit: MAX_PAGES * 2 })
+      .catch((err: unknown) => { rethrowCapabilityRefusal(err); return []; })) slugs.add(r.slug);
   }
-  const candidates = slugs.size === 0 ? [] : await engine.executeRaw<CandidatePage>(
-    `SELECT id, slug, source_id, generation, knowledge_revision::text AS revision, type, compiled_truth, updated_at,
-       (frontmatter ? '${PINNED_QUESTION_MARKER}') AS marker
-     FROM pages WHERE source_id = $1 AND slug = ANY($2::text[]) AND deleted_at IS NULL AND body_storage = 'inline'
-       AND ${quarantineFilterFragment('pages')}`, [pin.source_id, [...slugs]]);
-  const laundered = launderingIndex(await engine.executeRaw<PublishedAnswer>(
-    `SELECT q.answer, q.last_refresh_at AS published_at,
-       COALESCE(array_agg(e.page_id) FILTER (WHERE e.page_id IS NOT NULL), ARRAY[]::integer[]) AS cited
-     FROM pinned_questions q LEFT JOIN question_evidence e ON e.question_id = q.id AND e.answer_revision = q.answer_revision
-     WHERE q.source_id = $1 AND q.answer IS NOT NULL GROUP BY q.id, q.answer, q.last_refresh_at`, [pin.source_id]));
+  const candidates: CandidatePage[] = slugs.size === 0 ? [] : await engine.listQuestionCandidatePages(pin.source_id, [...slugs]);
+  const laundered = launderingIndex(await engine.listPublishedQuestionAnswers(pin.source_id));
   const order = [...slugs];
   const pages = candidates
     .filter(p => p.type !== 'question' && p.type !== 'synthesis' && !p.marker)
@@ -222,32 +216,19 @@ export async function retrieveEvidence(engine: BrainEngine, pin: PinRow): Promis
   const pageIds = pages.map(p => p.id);
   const entitySlugs = [...new Set([...pages.map(p => p.slug), ...(pin.scope_entity ? [pin.scope_entity] : [])])];
   if (entitySlugs.length > 0) {
-    const facts = await engine.executeRaw<{ id: string | number; fact: string; entity_slug: string | null; valid_from: unknown; hash: string }>(
-      `SELECT f.id, f.fact, f.entity_slug, f.valid_from, ${FACT_HASH_SQL('f')} AS hash FROM facts f
-       WHERE f.source_id = $1 AND f.entity_slug = ANY($2::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL
-         AND (f.valid_until IS NULL OR f.valid_until > now()) AND ${quarantinedProvenanceFilterFragment('f')}
-         AND ${projectionEligibleSql('facts', 'f', undefined)}
-         AND NOT EXISTS (SELECT 1 FROM pages fp WHERE fp.source_id = f.source_id AND fp.slug = f.source_markdown_slug
-           AND (fp.type IN ('question', 'synthesis') OR fp.frontmatter ? '${PINNED_QUESTION_MARKER}'))
-       ORDER BY (CASE WHEN f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC LIMIT ${MAX_FACTS}`, [pin.source_id, entitySlugs]);
+    const facts = await engine.listQuestionEvidenceFacts(pin.source_id, entitySlugs);
     for (const f of facts) {
       push({ kind: 'fact', source_id: pin.source_id, page_id: null, page_slug: f.entity_slug, page_generation: null, page_revision: null,
         item_id: Number(f.id), content_hash: f.hash, text: `[fact about ${f.entity_slug ?? 'unknown'}, from ${String(f.valid_from).slice(0, 10)}] ${neutralizeForPrompt(f.fact).text}` });
     }
   }
   if (pageIds.length > 0) {
-    const timeline = await engine.executeRaw<{ id: number; date: unknown; summary: string; detail: string; page_id: number; slug: string; generation: string | number; revision: string | null; hash: string }>(
-      `SELECT t.id, t.date, t.summary, t.detail, p.id AS page_id, p.slug, p.generation, p.knowledge_revision::text AS revision, ${TIMELINE_HASH_SQL('t')} AS hash
-       FROM timeline_entries t JOIN pages p ON p.id = t.page_id WHERE p.id = ANY($1::integer[]) AND ${projectionEligibleSql('timeline_entries', 't', undefined)} ORDER BY t.date DESC, t.id DESC LIMIT ${MAX_TIMELINE}`, [pageIds]);
+    const timeline = await engine.listQuestionEvidenceTimeline(pageIds);
     for (const t of timeline) {
       push({ kind: 'timeline', source_id: pin.source_id, page_id: t.page_id, page_slug: t.slug, page_generation: Number(t.generation),
         page_revision: t.revision, item_id: t.id, content_hash: t.hash, text: `[timeline ${t.slug} ${String(t.date).slice(0, 10)}] ${t.summary}${t.detail ? ` — ${t.detail.slice(0, 300)}` : ''}` });
     }
-    const takes = await engine.executeRaw<{ id: string | number; claim: string; holder: string; weight: number | null; page_id: number; slug: string; generation: string | number; revision: string | null; hash: string }>(
-      `SELECT k.id, k.claim, k.holder, k.weight, p.id AS page_id, p.slug, p.generation, p.knowledge_revision::text AS revision, ${TAKE_HASH_SQL('k')} AS hash
-       FROM takes k JOIN pages p ON p.id = k.page_id WHERE p.id = ANY($1::integer[]) AND k.active AND k.superseded_by IS NULL
-         AND ${projectionEligibleSql('takes', 'k', undefined)}
-       ORDER BY k.id DESC LIMIT ${MAX_TAKES}`, [pageIds]);
+    const takes = await engine.listQuestionEvidenceTakes(pageIds);
     for (const k of takes) {
       push({ kind: 'take', source_id: pin.source_id, page_id: k.page_id, page_slug: k.slug, page_generation: Number(k.generation),
         page_revision: k.revision, item_id: Number(k.id), content_hash: k.hash, text: `[take on ${k.slug}, held by ${k.holder}${k.weight !== null ? `, weight ${k.weight}` : ''}] ${k.claim}` });
@@ -347,9 +328,8 @@ async function revalidate(tx: BrainEngine, rows: EvidenceRow[]): Promise<string 
   const pageRows = rows.filter(r => r.page_id !== null && r.kind !== 'fact');
   const pageIds = [...new Set(pageRows.map(r => r.page_id!))];
   if (pageIds.length) {
-    const current = new Map((await tx.executeRaw<{ id: number; generation: string | number; revision: string | null; deleted: boolean; body: string }>(
-      `SELECT id, generation, knowledge_revision::text AS revision, deleted_at IS NOT NULL AS deleted, ${OWNER_BODY_HASH_SQL('pages')} AS body
-       FROM pages WHERE id = ANY($1::integer[]) FOR SHARE`, [pageIds])).map(r => [r.id, r]));
+    const current = new Map((await tx.lockQuestionEvidenceRows('page', pageIds) as Array<{ id: number; generation: string | number; revision: string | null; deleted: boolean; body: string }>)
+      .map(r => [r.id, r]));
     for (const r of pageRows) {
       const c = current.get(r.page_id!);
       if (!c || c.deleted) return `page ${r.page_slug ?? r.page_id} was removed`;
@@ -357,10 +337,10 @@ async function revalidate(tx: BrainEngine, rows: EvidenceRow[]): Promise<string 
       if (String(c.generation) !== String(r.page_generation) || (c.revision ?? null) !== (r.page_revision ?? null)) return `page ${r.page_slug ?? r.page_id} changed`;
     }
   }
-  const check = async (kind: EvidenceKind, sql: string) => {
+  const check = async (kind: 'fact' | 'timeline' | 'take') => {
     const want = rows.filter(r => r.kind === kind);
     if (!want.length) return null;
-    const current = new Map((await tx.executeRaw<{ id: string | number; ok: boolean; hash: string }>(sql, [[...new Set(want.map(r => r.item_id!))]]))
+    const current = new Map((await tx.lockQuestionEvidenceRows(kind, [...new Set(want.map(r => r.item_id!))]) as Array<{ id: string | number; ok: boolean; hash: string }>)
       .map(r => [Number(r.id), r]));
     for (const r of want) {
       const c = current.get(Number(r.item_id));
@@ -368,10 +348,7 @@ async function revalidate(tx: BrainEngine, rows: EvidenceRow[]): Promise<string 
     }
     return null;
   };
-  return (await check('fact', `SELECT id, (expired_at IS NULL AND superseded_by IS NULL AND (valid_until IS NULL OR valid_until > now())) AS ok,
-      ${FACT_HASH_SQL('facts')} AS hash FROM facts WHERE id = ANY($1::bigint[]) FOR SHARE`))
-    ?? (await check('timeline', `SELECT id, true AS ok, ${TIMELINE_HASH_SQL('timeline_entries')} AS hash FROM timeline_entries WHERE id = ANY($1::integer[]) FOR SHARE`))
-    ?? (await check('take', `SELECT id, (active AND superseded_by IS NULL) AS ok, ${TAKE_HASH_SQL('takes')} AS hash FROM takes WHERE id = ANY($1::bigint[]) FOR SHARE`));
+  return (await check('fact')) ?? (await check('timeline')) ?? (await check('take'));
 }
 
 export async function refreshPin(engine: BrainEngine, sourceId: string, slug: string, opts: RefreshOpts): Promise<RefreshOutcome> {
@@ -398,9 +375,7 @@ export async function refreshPin(engine: BrainEngine, sourceId: string, slug: st
   let spend = 0;
   let stage: 'retrieve' | 'model' | 'parse' | 'publish' = 'retrieve';
   try {
-    const [clock] = await engine.executeRaw<{ generation: string | number; fact_id: string | number }>(
-      `SELECT (SELECT COALESCE(MAX(generation), 0) FROM pages) AS generation,
-              (SELECT COALESCE(MAX(id), 0) FROM facts WHERE source_id = $1) AS fact_id`, [pin.source_id]);
+    const clock = await engine.readQuestionEvidenceClock(pin.source_id);
     const page = await readQuestionPage(engine, pin);
     const owner = page ? ownerClaims(page.compiled_truth) : [];
     const items = await retrieveEvidence(engine, leased);
@@ -440,12 +415,14 @@ export async function refreshPin(engine: BrainEngine, sourceId: string, slug: st
         page_slug: c.page_slug, page_generation: c.page_generation, page_revision: c.page_revision, item_id: c.item_id, content_hash: c.content_hash }))),
     ];
     if (page && ownerSentences.length) {
-      const [h] = await engine.executeRaw<{ body: string }>('SELECT md5($1::text) AS body', [page.compiled_truth]);
-      for (const e of evidence) if (e.kind === 'owner') e.content_hash = h!.body;
+      // md5 of the body's UTF-8 bytes, as Postgres `md5(text)` computes it (the revalidation read compares the two).
+      const body = createHash('md5').update(page.compiled_truth, 'utf8').digest('hex');
+      for (const e of evidence) if (e.kind === 'owner') e.content_hash = body;
     }
     stage = 'publish';
     await opts.hooks?.beforeCommit?.();
     opts.signal?.throwIfAborted();
+    refusePinStore(engine, 'publishAnswer');
     const conflict = await engine.transaction(async (tx) => {
       const [row] = await tx.executeRaw<{ revision: string | number; lease_token: string | null; state: string }>(
         'SELECT revision, lease_token, state FROM pinned_questions WHERE id = $1 FOR UPDATE', [pin.id]);
@@ -458,7 +435,7 @@ export async function refreshPin(engine: BrainEngine, sourceId: string, slug: st
            last_refresh_at = now(), last_error = NULL, watermark_generation = $4, watermark_fact_id = $5, watermark_at = now(),
            lease_token = NULL, lease_owner = NULL, lease_expires_at = NULL, spend_usd = spend_usd + $6, updated_at = now()
          WHERE id = $1`,
-        [pin.id, JSON.stringify([...ownerSentences, ...modelSentences]), response.model || model, Number(clock!.generation), Number(clock!.fact_id), spend]);
+        [pin.id, JSON.stringify([...ownerSentences, ...modelSentences]), response.model || model, clock.generation, clock.fact_id, spend]);
       await opts.hooks?.betweenPublicationStages?.();
       await tx.executeRaw('DELETE FROM question_evidence WHERE question_id = $1', [pin.id]);
       const revision = leased.answer_revision + 1;
@@ -477,6 +454,8 @@ export async function refreshPin(engine: BrainEngine, sourceId: string, slug: st
     return { status: 'published', mode: full ? 'full' : 'incremental', cost_usd: spend, sentences: ownerSentences.length + modelSentences.length,
       dropped_uncited: parsed.dropped, gaps: parsed.gaps };
   } catch (e) {
+    // An engine refusal is not a failed refresh: it surfaces as itself (the pin store refusals come before the lease).
+    rethrowCapabilityRefusal(e);
     if (opts.signal?.aborted) {
       await releaseLease(engine, pin.id, token, { error: leased.last_error, spendUsd: spend });
       return { status: 'timeout', cost_usd: spend };

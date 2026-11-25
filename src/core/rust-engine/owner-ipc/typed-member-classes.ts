@@ -350,6 +350,10 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'listVolunteerChannels', 'listWorktreeBlockerRequests', 'listWorktreeIds', 'lockActiveAccessTokens',
   'lockAllSourceRows', 'lockLegacyAccessTokens', 'lockSharedSkillBrainId', 'matchHeadStems',
   'oauthClientHoldsAuthorization', 'oauthClientLive', 'originIndexPresent', 'pagePrefixSamples', 'pageTypeTotals',
+  // The pinned-question reads (engine-sql/question-reads.ts).
+  'listQuestionCandidatePages', 'listPublishedQuestionAnswers', 'listQuestionEvidenceFacts', 'listQuestionEvidenceTimeline',
+  'listQuestionEvidenceTakes', 'readQuestionEvidenceClock', 'listPrefixAnchoredPages', 'readQuestionPageRow',
+  'listQuestionEvidenceJoin', 'hasNewQuestionPages', 'hasNewQuestionFacts', 'lockQuestionEvidenceRows',
   'pingStore', 'probePageTypes', 'readAccessGroups', 'readAccessMemberLink', 'readAccessTokenAttest', 'readAccessTokenMemberGrant',
   'readAccessTokenReceiptGrant', 'readActiveAccessTokenByHash', 'readActiveAccessTokenGrant', 'readAdmissionSample',
   'readAtomProvenanceCounts', 'readBriefEditPage', 'readBriefEmailAliasPages', 'readBriefEntityPages',

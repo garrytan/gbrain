@@ -505,7 +505,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'deleteRekeyLosers', 'restoreOntologyFact',
   'listVisiblePageSlugs', 'readPagesForVersionHistory',
   // `gbrain schema detect` page-shape reads (engine-sql/schema-detect.ts; test/engine-parity/schema-detect.test.ts)
-  'pageTypeTotals', 'pagePrefixSamples', 'countPagesByTypeForSource',
+  'pageTypeTotals', 'listQuestionCandidatePages', 'listPublishedQuestionAnswers', 'listQuestionEvidenceFacts', 'listQuestionEvidenceTimeline', 'listQuestionEvidenceTakes', 'readQuestionEvidenceClock', 'listPrefixAnchoredPages', 'readQuestionPageRow', 'listQuestionEvidenceJoin', 'hasNewQuestionPages', 'hasNewQuestionFacts', 'lockQuestionEvidenceRows', 'pagePrefixSamples', 'countPagesByTypeForSource',
   // Takes
   'addTakesBatch', 'listTakes', 'searchTakes', 'searchTakesVector', 'getTakeEmbeddings',
   'countStaleTakes', 'listStaleTakes', 'updateTake', 'supersedeTake', 'resolveTake',

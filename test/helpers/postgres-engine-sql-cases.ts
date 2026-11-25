@@ -189,6 +189,7 @@ const OOS = {
   withdrawalDiscovery: 'out-of-scope:withdrawal-discovery (born in engine-sql/withdrawal-discovery.ts; pinned by test/engine-parity/withdrawal-discovery-reads.test.ts and test/withdrawal-discovery-reads-sql-pin.test.ts)',
   withdrawalPages: 'out-of-scope:withdrawal-pages (born in engine-sql/withdrawal-pages.ts; pinned by test/engine-parity/withdrawal-forget.test.ts and test/withdrawal-pages-sql-pin.test.ts)',
   withdrawalFence: 'out-of-scope:withdrawal-fence (born in engine-sql/withdrawal-fence.ts; pinned by test/engine-parity/withdrawal-fence.test.ts and test/withdrawal-fence-sql-pin.test.ts)',
+  questionReads: 'out-of-scope:question-reads (the pinned-question reads, born in engine-sql/question-reads.ts; pinned by test/question-reads-sql-pin.test.ts and test/engine-parity/question-reads.test.ts)',
 } as const;
 
 export const DOMAIN_OF: Record<string, string> = {
@@ -1933,6 +1934,18 @@ export const DOMAIN_OF: Record<string, string> = {
   'countValidityLapsedFacts': OOS.doctorTallies,
   'countOrphanEventProjections': OOS.doctorTallies,
   'listReadablePageSlugs': OOS.factsQuotedReads,
+  'listQuestionCandidatePages': OOS.questionReads,
+  'listPublishedQuestionAnswers': OOS.questionReads,
+  'listQuestionEvidenceFacts': OOS.questionReads,
+  'listQuestionEvidenceTimeline': OOS.questionReads,
+  'listQuestionEvidenceTakes': OOS.questionReads,
+  'readQuestionEvidenceClock': OOS.questionReads,
+  'listPrefixAnchoredPages': OOS.questionReads,
+  'readQuestionPageRow': OOS.questionReads,
+  'listQuestionEvidenceJoin': OOS.questionReads,
+  'hasNewQuestionPages': OOS.questionReads,
+  'hasNewQuestionFacts': OOS.questionReads,
+  'lockQuestionEvidenceRows': OOS.questionReads,
 };
 
 /** Every own member of PostgresEngine.prototype (methods + accessors), sorted. */

@@ -242,6 +242,10 @@ src/core/engine-sql/pages.ts	revertToVersion	sql	SEGW	lane 1e: refuses a segment
 src/core/engine-sql/pages.ts	toDomainBankRow	field	LEAD	maps sampled rows; segmented pages are never sampled
 src/core/engine-sql/pages.ts	putPage	call:contentHash	META	hash of the incoming inline body
 src/core/engine-sql/pages.ts	putPage	field	SEGW	incoming PageInput body (a string); see putPage sql
+src/core/engine-sql/question-reads.ts	CANDIDATES_SQL	sql	LEAD	moved from questions/refresh.ts retrieveEvidence: segmented candidate pages excluded in SQL (skip): their excerpt and laundering check need the body
+src/core/engine-sql/question-reads.ts	EVIDENCE_JOIN_SQL	sql	META	moved from questions/freshness.ts evaluateAnswer: owner-evidence change signal (OWNER_BODY_HASH_SQL): content_hash for a segmented page, md5 of the body for inline
+src/core/engine-sql/question-reads.ts	LOCK_PAGES_SQL	sql	META	moved from questions/refresh.ts revalidate: owner-evidence change signal (OWNER_BODY_HASH_SQL): content_hash for a segmented page, md5 of the body for inline
+src/core/engine-sql/question-reads.ts	QUESTION_PAGE_SQL	sql	INLINE	moved from questions/pages.ts readQuestionPage: question pages are inline by construction; assertInlineBody refuses a segmented one
 src/core/engine-sql/reflex-reads.ts	reflexPagesStatement	sql	LEAD	moved from context/retrieval-reflex.ts resolveEntitiesToPointers and weakTitleHits (boundedBodyPrefixSql AS compiled_truth)
 src/core/engine-sql/salience.ts	listEnrichCandidates	sql	META	
 src/core/engine-sql/search-reads.ts	generatedPagesIn	sql	LEAD	moved from search/provenance-demotion.ts readGeneratedPages (same statement, typed engine method)
@@ -576,12 +580,10 @@ src/core/postgres-engine.ts	PostgresEngine.refreshPageBody	call:refreshPageBody	
 src/core/quarantine-override.ts	quarantineOverrideBinding	field	META	
 src/core/quarantine-override.ts	quarantineOverrideFor	field	META	
 src/core/questions/freshness.ts	OWNER_BODY_HASH_SQL	sql	META	owner-evidence change signal: content_hash for a segmented page, md5 of the body for inline (stored evidence unchanged)
-src/core/questions/pages.ts	readQuestionPage	sql	INLINE	question pages are inline by construction; assertInlineBody refuses a segmented one
 src/core/questions/pages.ts	renderPage	call:serializePageToMarkdown	INLINE	
 src/core/questions/pages.ts	syncQuestionPage	field	INLINE	
 src/core/questions/pages.ts	readQuestionPage	field	INLINE	see sql row
 src/core/questions/refresh.ts	refreshPin	field	INLINE	owner claims of the question page (readQuestionPage asserts inline)
-src/core/questions/refresh.ts	retrieveEvidence	sql	LEAD	segmented candidate pages excluded in SQL (skip): their excerpt and laundering check need the body
 src/core/questions/refresh.ts	retrieveEvidence	field	LEAD	inline candidates only
 src/core/reindex-consent.ts	estimateReindexSpend	sql	META	
 src/core/repair/accepted-takes.ts	archivedRow	field	SEGW	inline versions only: a segmented archived version counts as version_missing (the v0.60.253.0 accept refused segmented pages, so none exists)

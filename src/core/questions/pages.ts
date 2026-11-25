@@ -34,11 +34,8 @@ export interface QuestionPageState {
 
 /** A question page is inline by construction; one grown past the inline bound refuses with `page_body_segmented`. */
 export async function readQuestionPage(engine: BrainEngine, pin: Pick<PinRow, 'source_id' | 'slug'>): Promise<QuestionPageState | null> {
-  const [row] = await engine.executeRaw<{ id: number; generation: string | number; revision: string | null; compiled_truth: string; archived: boolean; body_storage: BodyStorage }>(
-    `SELECT id, generation, knowledge_revision::text AS revision, compiled_truth, body_storage,
-       COALESCE(frontmatter->>'status', '') = 'archived' AS archived
-     FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL`, [pin.source_id, pin.slug]);
-  if (row) assertInlineBody({ ...pin, body_storage: row.body_storage }, 'readQuestionPage');
+  const row = await engine.readQuestionPageRow(pin.source_id, pin.slug);
+  if (row) assertInlineBody({ ...pin, body_storage: row.body_storage as BodyStorage }, 'readQuestionPage');
   return row ? { page_id: row.id, generation: Number(row.generation), revision: row.revision ?? '', compiled_truth: row.compiled_truth ?? '', archived: row.archived } : null;
 }
 

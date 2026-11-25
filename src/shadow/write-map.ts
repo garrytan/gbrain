@@ -261,6 +261,8 @@ export const READ_ONLY_MEMBERS: ReadonlySet<string> = new Set([
   'purgeSubjectPageLive', 'rankEntities', 'recentWriterVersions', 'scanExactBatch', 'scanUnfencedFactRows',
   'selectClaimableEffect', 'selectClaimableWrite', 'selectProjectionWindowJobs', 'sourceIdExists',
   'staleLinkRelationshipKeys', 'wordLexemes',
+  // The pinned-question publication's FOR SHARE rereads (engine-sql/question-reads.ts), SELECTs only.
+  'lockQuestionEvidenceRows',
   // Lane 15 reads whose names carry no read prefix: the schema-pack retype probe and the explain-target probe.
   'probeRetypeRows', 'probeTargetRows',
   // Batch 12: row-lock and existence reads (SELECTs only) of the persistence, repair and secret-store lanes.

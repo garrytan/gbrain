@@ -458,4 +458,17 @@ export const PAGES_MEMBERS = {
   readPageNameText: 'pages',
   listFrontmatterAliasNorms: 'pages',
   listRejectedDeclarationPages: 'pages',
+  // The pinned-question reads (engine-sql/question-reads.ts); the unserved ones name their stop (rust-engine/question-stops.ts).
+  listQuestionCandidatePages: 'pages',
+  listPublishedQuestionAnswers: 'pages',
+  listQuestionEvidenceFacts: 'facts',
+  listQuestionEvidenceTimeline: 'timeline',
+  listQuestionEvidenceTakes: 'takes',
+  readQuestionEvidenceClock: 'pages',
+  listPrefixAnchoredPages: 'pages',
+  readQuestionPageRow: 'pages',
+  listQuestionEvidenceJoin: 'pages',
+  hasNewQuestionPages: 'pages',
+  hasNewQuestionFacts: 'facts',
+  lockQuestionEvidenceRows: 'pages',
 } as const satisfies Partial<Record<keyof BrainEngine, MemberClass>>;

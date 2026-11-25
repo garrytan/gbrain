@@ -411,6 +411,7 @@ import * as doctorFactsTrustImpl from './engine-sql/doctor-facts-trust.ts';
 import * as fenceCensusImpl from './engine-sql/fence-census.ts';
 import * as doctorSourcesImpl from './engine-sql/doctor-sources.ts';
 import * as schemaDetectImpl from './engine-sql/schema-detect.ts';
+import * as questionReadsImpl from './engine-sql/question-reads.ts';
 import * as sweepReadsImpl from './engine-sql/sweep-reads.ts';
 import * as sessionStateImpl from './engine-sql/session-state.ts';
 import type { DrainLeaseHolderRecord } from './engine-sql/cycle-locks.ts';
@@ -4858,6 +4859,19 @@ export class PostgresEngine implements BrainEngine {
   // The admin operations' statements (engine-sql/admin-reads.ts).
   listVisiblePageSlugs(slugs: string[], sourceIds: string[] | null, policy: adminReadsImpl.PagePolicyPart) { return adminReadsImpl.listVisiblePageSlugs(this.executeRaw.bind(this), slugs, sourceIds, policy); }
   readPagesForVersionHistory(pageIds: number[]) { return adminReadsImpl.readPagesForVersionHistory(this.executeRaw.bind(this), pageIds); }
+  // The pinned-question reads (engine-sql/question-reads.ts).
+  listQuestionCandidatePages(sourceId: string, slugs: readonly string[]) { return questionReadsImpl.listQuestionCandidatePages(this.executeRaw.bind(this), sourceId, slugs); }
+  listPublishedQuestionAnswers(sourceId: string) { return questionReadsImpl.listPublishedQuestionAnswers(this.executeRaw.bind(this), sourceId); }
+  listQuestionEvidenceFacts(sourceId: string, entitySlugs: readonly string[]) { return questionReadsImpl.listQuestionEvidenceFacts(this.executeRaw.bind(this), sourceId, entitySlugs); }
+  listQuestionEvidenceTimeline(pageIds: readonly number[]) { return questionReadsImpl.listQuestionEvidenceTimeline(this.executeRaw.bind(this), pageIds); }
+  listQuestionEvidenceTakes(pageIds: readonly number[]) { return questionReadsImpl.listQuestionEvidenceTakes(this.executeRaw.bind(this), pageIds); }
+  readQuestionEvidenceClock(sourceId: string) { return questionReadsImpl.readQuestionEvidenceClock(this.executeRaw.bind(this), sourceId); }
+  listPrefixAnchoredPages(sourceId: string, prefix: string) { return questionReadsImpl.listPrefixAnchoredPages(this.executeRaw.bind(this), sourceId, prefix); }
+  readQuestionPageRow(sourceId: string, slug: string) { return questionReadsImpl.readQuestionPageRow(this.executeRaw.bind(this), sourceId, slug); }
+  listQuestionEvidenceJoin(questionId: number, answerRevision: number) { return questionReadsImpl.listQuestionEvidenceJoin(this.executeRaw.bind(this), questionId, answerRevision); }
+  hasNewQuestionPages(sourceId: string, generation: number, prefix: string | null) { return questionReadsImpl.hasNewQuestionPages(this.executeRaw.bind(this), sourceId, generation, prefix); }
+  hasNewQuestionFacts(sourceId: string, factId: number, entitySlug: string | null) { return questionReadsImpl.hasNewQuestionFacts(this.executeRaw.bind(this), sourceId, factId, entitySlug); }
+  lockQuestionEvidenceRows(kind: questionReadsImpl.QuestionEvidenceLockKind, ids: readonly number[]) { return questionReadsImpl.lockQuestionEvidenceRows(this.executeRaw.bind(this), kind, ids); }
   // The `gbrain schema detect` page-shape reads (engine-sql/schema-detect.ts).
   pageTypeTotals(sourceId: string) { return schemaDetectImpl.pageTypeTotals(this.executeRaw.bind(this), sourceId); }
   pagePrefixSamples(sourceId: string, minPages: number, limit: number) { return schemaDetectImpl.pagePrefixSamples(this.executeRaw.bind(this), sourceId, minPages, limit); }

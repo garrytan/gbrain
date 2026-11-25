@@ -370,6 +370,7 @@
   "test/engine-parity/purge-slug-stores.test.ts": 8410,
   "test/engine-parity/purge-verify.test.ts": 8526,
   "test/engine-parity/purge-writes.test.ts": 8500,
+  "test/engine-parity/question-reads.test.ts": 8000,
   "test/engine-parity/put-source-fork.test.ts": 7700,
   "test/engine-parity/raw-sql.test.ts": 4944,
   "test/engine-parity/read-shared-revision.test.ts": 7400,

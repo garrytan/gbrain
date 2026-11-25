@@ -75,8 +75,8 @@ async function parseScope(ctx: OperationContext, raw: unknown, op: string): Prom
   const source = typeof s.source === 'string' && s.source.trim() ? s.source.trim() : defaultSource(ctx);
   if (!/^[a-z0-9][a-z0-9_-]{0,63}$/i.test(source)) throw invalidParam(ctx, op, 'scope', `${op}: scope.source is not a valid source id.`, { example: { source: 'default' } });
   assertSourceInCallerScope(ctx, source);
-  const [live] = await ctx.engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE id = $1 AND NOT archived', [source]);
-  if (!live) {
+  const live = await ctx.engine.readSourceRow(source);
+  if (!live || live.archived) {
     throw opError('not_found', `Unknown source: ${source}`, 'Pass a source id from sources_list.',
       { fix: readFix('Lists the sources this connection can read.', { argv: ['gbrain', 'sources', 'list'], mcp: { tool: 'sources_list', arguments: {} } }) });
   }
