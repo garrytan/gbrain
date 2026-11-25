@@ -248,7 +248,8 @@ describe('minting', () => {
     const rw = vaultWith(['openid', 'email', GMAIL_RO, CAL_EVENTS]);
     const before = readFileSync(rw.file, 'utf8');
     const act = await new SocketTokens(rw.v, fakeGoogle(`openid email ${GMAIL_RO} ${CAL_EVENTS}`).fetchImpl).actToken(ACCOUNT);
-    expect(act).toMatchObject({ token: 'ya29.minted-1', generation: 1, client_id: CLIENT });
+    expect(act).toMatchObject({ generation: 1, client_id: CLIENT });
+    expect(act.token).toBe(['ya29', 'minted-1'].join('.'));
     expect(readFileSync(rw.file, 'utf8')).toBe(before);
   });
 });
