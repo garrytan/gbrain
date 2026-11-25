@@ -376,17 +376,19 @@ const household_add: Operation = {
         'Record an event on the existing record with household_mark, or pass slug to name this one differently.',
         { fix: readFix('Shows the existing household records.', { argv: ['gbrain', 'household', 'list', '--json'], mcp: { tool: 'household_due', arguments: { include: 'all' } } }) });
     }
-    if (role && role !== 'child') for (const subject of about) {
+    if (role) for (const subject of about) {
       const snap = await ctx.engine.readPageSnapshot(subject, { sourceId });
       const live = snap && !snap.page.deleted_at ? snap.page : null;
-      if (String(live?.frontmatter?.household_role ?? '') !== role) {
-        await householdWriteAdmission(ctx.engine, sourceId, subject, { type: live?.type ?? 'note', frontmatter: { ...(live?.frontmatter ?? {}), household_role: role }, tags: [] }, live, ctx.remote !== false);
-      }
+      if (!live || String(live.frontmatter?.household_role ?? '') === role) continue;
+      if (await remoteTargetHidden(ctx.engine, ctx.remote, sourceId, subject)) throw opError('page_not_found', `Page not found: ${subject}`, 'Name a subject page this connection can read.');
+      assertInlineBody(live, 'household_add about_role');
+      if (role !== 'child') await householdWriteAdmission(ctx.engine, sourceId, subject, { type: live.type, frontmatter: { ...live.frontmatter, household_role: role }, tags: [] }, live, ctx.remote !== false);
     }
+    const widened = role && role !== 'child' ? await classifySubjectPages(ctx, sourceId, about, role) : null;
     const body = capText(p.note, 2_000) ?? `# ${title}`;
     const result = await submitPageMutation(ctx, { operation: 'put_page', params: { slug, source_id: sourceId, content: serializeRecord(fm, title, body, '', tags),
       ...(existing?.page.deleted_at ? { expected_revision: existing.revision } : {}), ...(typeof p.request_id === 'string' ? { request_id: p.request_id } : {}) } });
-    const { classified, pinned } = role ? await classifySubjectPages(ctx, sourceId, about, role) : { classified: [], pinned: [] };
+    const { classified, pinned } = widened ?? (role ? await classifySubjectPages(ctx, sourceId, about, role) : { classified: [], pinned: [] });
     const replaced = [...new Set([...pinned, ...(classified.length ? (await replaceHouseholdRecords(ctx, sourceId, classified)).replaced : [])])].filter(s => s !== slug).sort();
     return { ...result, slug, kind, audience: decision.audience, placement_basis: decision.basis, subjects_classified: classified, records_replaced: replaced };
   },
