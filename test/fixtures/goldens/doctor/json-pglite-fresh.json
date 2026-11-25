@@ -2935,6 +2935,13 @@
         {
           "category": "brain",
           "elapsed_ms": "<volatile>",
+          "message": "The nightly cycle has not recorded anything it learned yet.",
+          "name": "learning_note",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
           "message": "No memory proposals await the owner.",
           "name": "memory_proposals_pending",
           "status": "ok"
@@ -3943,6 +3950,17 @@
           "elapsed_ms": "<volatile>",
           "message": "No likely duplicate person or company pages.",
           "name": "entity_duplicates",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "classes": [],
+            "links": 0
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No person links made automatically in the last 24 hours.",
+          "name": "dedupe_auto_links",
           "status": "ok"
         },
         {

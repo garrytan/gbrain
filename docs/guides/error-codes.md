@@ -1684,7 +1684,15 @@ More: [docs/guides/repair.md#managed-sync-orphans](../../docs/guides/repair.md#m
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| gbrain dedupe confirm, reject or reconcile refused because this brain's duplicate decisions are kept in git in its home source and this host sees no git work tree for that source, so nothing was written. | On a brain with a repository git is the record of every duplicate decision and the database only its projection; a decision written to the database alone would be dropped by the next sync of the checkout and lost with the database. | Run the command on the host that holds the checkout, or restore the checkout and run gbrain dedupe reconcile there. Run: gbrain sources list --json | user | `gbrain doctor --json` | 1 | no |
+| gbrain dedupe confirm, reject, decide, undo or reconcile refused because this brain's duplicate decisions are kept in git in its home source and this host sees no git work tree for that source, so nothing was written. | On a brain with a repository git is the record of every duplicate decision and the database only its projection; a decision written to the database alone would be dropped by the next sync of the checkout and lost with the database. | Run the command on the host that holds the checkout, or restore the checkout and run gbrain dedupe reconcile there. Run: gbrain sources list --json | user | `gbrain doctor --json` | 1 | no |
+
+### dedupe_decision_unknown
+
+<a id="dedupe_decision_unknown"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain dedupe undo was given a decision id that no recorded duplicate decision has, so nothing was removed. | A decision id is a hash of the decision's member pages, printed by gbrain dedupe decide and stored as .gbrain/identity/<id>.md or a database row; removing only some of the ids given would leave a half-undone choice. | Pass the ids gbrain dedupe decide printed for the line to undo (each line prints its undo command). Run: gbrain entity-identity-list --json | agent | `repeat the read that failed` | 1 | no |
 
 ### dedupe_exa_off
 
@@ -5396,9 +5404,9 @@ More: [docs/guides/troubleshooting.md#runtime-build-skew](../../docs/guides/trou
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The Rust engine addon on this machine does not match what this gbrain release expects (checksum, engine_abi, engine_build or target), so it was not used and gbrain wrote nothing. | A different addon build could read or write the brain with a different on-disk format, so only the addon the running release names, with the checksum in its manifest, is loaded. A file that fails the check is left as it was. | Rebuild the addon with bun run rust:build and point GBRAIN_RUST_ENGINE_ADDON at the path it prints, or install the gbrain release that matches the addon, or switch engine in the gbrain config back to pglite or postgres. | user | `gbrain doctor --json` | 1 | no |
+| The Rust engine addon on this machine does not match what this gbrain release expects (checksum, engine_abi, engine_build or target), so it was not used and gbrain wrote nothing. | A different addon build could read or write the brain with a different on-disk format, so only the addon the running release names, with the checksum in its manifest, is loaded. A file that fails the check is left as it was. | Run gbrain engine install rust to replace it with the addon this release names. verification_failed means a downloaded addon or manifest did not match its checksum or build attestation: it was deleted, the installed addon was left as it was, and there is no bypass, so report it. For a build you made, rebuild it with bun run rust:build and point GBRAIN_RUST_ENGINE_ADDON at the path it prints. Or switch engine in the gbrain config back to pglite or postgres. | user | `gbrain doctor --json` | 1 | no |
 
-Reasons: `digest`, `engine_abi`, `engine_build`, `target`, `load_failed`.
+Reasons: `digest`, `engine_abi`, `engine_build`, `target`, `load_failed`, `verification_failed`.
 
 ### rust_engine_addon_missing
 
@@ -5406,9 +5414,19 @@ Reasons: `digest`, `engine_abi`, `engine_build`, `target`, `load_failed`.
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The Rust engine is selected (engine: rust), but no addon for this gbrain release is installed on this machine, or no addon is published for this platform, so gbrain opened nothing and wrote nothing. | The Rust engine ships as a separate addon file kept in the gbrain home, checked against the checksum in this release's manifest before it loads. Without a checked addon the engine cannot open, and gbrain refuses before touching the brain. | Point GBRAIN_RUST_ENGINE_ADDON at an addon you built with bun run rust:build, or switch engine in the gbrain config back to pglite or postgres. | user | `gbrain doctor --json` | 1 | yes |
+| The Rust engine is selected (engine: rust), but no addon for this gbrain release is installed on this machine, or no addon is published for this platform, so gbrain opened nothing and wrote nothing. | The Rust engine ships as a separate addon file kept in the gbrain home, checked against the checksum in this release's manifest before it loads. Without a checked addon the engine cannot open, and gbrain refuses before touching the brain. | Run gbrain engine install rust to download and check the addon this release names (not_published means this release has none: use a release that does, or keep pglite or postgres; unsupported_target means no release has one for this platform). For a build you made, point GBRAIN_RUST_ENGINE_ADDON at it (bun run rust:build). Or switch engine in the gbrain config back to pglite or postgres. | user | `gbrain doctor --json` | 1 | yes |
 
-Reasons: `unsupported_target`, `not_installed`, `override_not_found`.
+Reasons: `unsupported_target`, `not_installed`, `override_not_found`, `not_published`, `fetch_failed`.
+
+### rust_snapshot_stopped
+
+<a id="rust_snapshot_stopped"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A Rust brain's snapshot did not run or did not finish, and nothing of it remains; `reason` says why. | A snapshot copies the whole brain at one committed generation while writers keep going. The owner runs one at a time (`busy`), stops it when its caller has gone or cancelled it (`cancelled`), when the disk of the target or of the brain falls below max(2 GiB, 5 % of the filesystem) (`disk_pressure`: the copy holds old pages of the brain until it ends, so it can grow the brain's file on a busy brain), or when it has run past its age budget (`age_budget`, 2 hours). The call ends only after the owner has released its read of the brain and removed what the copy wrote, so a caller may delete its scratch space once it sees this error. | Wait for a running snapshot to end, free disk space, or start the snapshot again when the brain is quieter. Run: gbrain doctor --json | agent | `repeat the read that failed` | 1 | yes |
+
+Reasons: `busy`, `cancelled`, `disk_pressure`, `age_budget`.
 
 ### rust_store_locked
 

@@ -29,6 +29,7 @@ src/commands/doctor/checks/graph-health.ts	runGraphCoverage	field	NONE	not the p
 src/commands/doctor/checks/graph-health.ts	runGraphCoverage	sql	NONE	not the page body: timeline coverage count alias
 src/commands/enrich.ts	enrichOneLocked	call:serializeMarkdown	SEGW	
 src/commands/enrich.ts	enrichOneLocked	field	SEGW	
+src/commands/enrich.ts	readableEvidence	field	INLINE	segmented holding page: body never read, so its facts stay out of a labelled page's evidence (fail closed)
 src/commands/extract-mentions-explain.ts	explainMention	field	STREAM	
 src/commands/extract-mentions-explain.ts	explainMention	sql	STREAM	
 src/commands/extract-mentions-explain.ts	pageNames	sql	STREAM	

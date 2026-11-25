@@ -49,6 +49,8 @@ interface ReadRow { key: string[]; values: Record<string, string | null>; fp?: F
 export class ShadowFollower implements InvalidationSink {
   /** When this process last invalidated (or failed to deliver) coverage; reconcile compares it to a pass's start. */
   lastInvalidatedAt = 0;
+  /** Batches accepted by `publish` in this process: the stable rerun compares it before and after its primary read (checks.ts). */
+  published = 0;
   private readonly queue: InvalidationBatch[] = [];
   private draining: Promise<void> | null = null;
   private lastSeq: number | null = null;
@@ -63,11 +65,18 @@ export class ShadowFollower implements InvalidationSink {
 
   publish(batch: InvalidationBatch): void {
     try {
+      this.published++;
       if (this.queue.length >= FOLLOW_QUEUE_BOUND) { this.invalidate('queue_overflow'); return; }
       this.queue.push(batch);
       this.draining ??= new Promise<void>((resolve) => setImmediate(() => { void this.drain().finally(resolve); }));
     } catch { /* the follower never fails a write */ }
   }
+
+  /** Nothing published is still queued or being read and sent, and no lost send waits to be reported as an invalidation. */
+  idle(): boolean { return this.queue.length === 0 && this.draining === null && this.pendingInvalid === null; }
+
+  /** Why `idle()` cannot become true by waiting: a lost send is waiting to be reported with the next batch, and none is queued. */
+  blocked(): string | null { return this.queue.length === 0 && this.draining === null ? this.pendingInvalid : null; }
 
   /** Resolves when everything published so far has been read and sent (or shed). */
   async settle(): Promise<void> {

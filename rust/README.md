@@ -183,6 +183,7 @@ Errors from the addon are real `Error` objects with a `code`:
 | `store_io` | The file system or the storage engine failed; the write did not commit. |
 | `store_corrupt` | The records fail their integrity check, or `FORMAT` names another brain. |
 | `invalid_state` | The call does not fit the handle's state (`open` on an open handle), or `finishWrite` met a request that already ended. |
+| `snapshot_cancelled` | `snapshotTo` was cancelled with `snapshotCancel`. It removed what it wrote and released its read before it rejected. |
 | `read_only_transaction` | A write inside a read-only transaction (Postgres SQLSTATE `25006`). Nothing was written. |
 | `invalid_argument` | A malformed argument. |
 | `invalid_slug` | The slug failed `validateSlug`. |
@@ -220,8 +221,9 @@ can reach.
 - gbrain's addon loader (`src/core/rust-engine/addon-loader.ts`) uses `GBRAIN_RUST_ENGINE_ADDON`
   first, then an addon cached under `<gbrain home>/engines/rust/` whose SHA-256 matches this
   release's cached manifest. It does not download anything: with no cached addon it refuses with
-  `rust_engine_addon_missing`, reason `not_installed`. Nothing starts the loader yet (ENGINES.md,
-  "The Rust engine shell").
+  `rust_engine_addon_missing`, reason `not_installed`. `gbrain engine install rust` downloads, checks
+  and installs the addon a release publishes (ENGINES.md, "Installing the addon"); releases build it
+  with `rust/scripts/release-addon.ts` in `.github/workflows/release.yml`.
 - To go back to the normal gbrain path, `unset GBRAIN_RUST_ENGINE_ADDON`.
 - `GBRAIN_TEST_BACKEND=rust bun test <file>` arrives with the Rust test arm in a later change. It
   does not exist yet.

@@ -88,8 +88,8 @@ describe('#7360 token reuse across processes', () => {
       writeFileSync(join(cliHome, '.gbrain', 'config.json'), JSON.stringify(thinClientConfig(serve, client), null, 2));
       for (let i = 0; i < 3; i++) {
         const r = await runCli(['search', 'hello'], { home: cliHome, timeoutMs: 60_000 });
-        // The keyless host's degraded search adds the GBRA-200 stamp line (pinned in test/degraded-stamp-cli.test.ts); nothing else reaches stderr.
-        const stderr = r.stderr.split('\n').filter(line => !line.startsWith('[gbrain degraded: ')).join('\n');
+        // The keyless host's degraded search adds the GBRA-200 stamp line (pinned in test/degraded-stamp-cli.test.ts) and the keyword count line (pinned in test/cli-keyword-count-9412.test.ts); nothing else reaches stderr.
+        const stderr = r.stderr.split('\n').filter(line => !line.startsWith('[gbrain degraded: ') && !line.startsWith('Keyword matches: ')).join('\n');
         expect(`${r.exitCode}\n${stderr}`).toBe('0\n');
       }
       expect(await mintedTokens(client.clientId)).toBe(1);
