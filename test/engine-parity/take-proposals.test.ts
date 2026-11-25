@@ -359,7 +359,7 @@ describe('engine parity: the take proposal members called directly', () => {
     return got;
   });
 
-  parityTest('listPendingTakeProposals clamps an infinite or fractional limit like the SQL and refuses a NaN one', {
+  parityTest('listPendingTakeProposals clamps an infinite or fractional limit like the SQL and fails a NaN one with the bigint error', {
     methods: ['putPage', 'insertTakeProposal', 'listPendingTakeProposals'],
   }, async (engine) => {
     await putPages(engine, [{ slug: 'notes/l-a', body: 'A.' }]);
@@ -372,9 +372,9 @@ describe('engine parity: the take proposal members called directly', () => {
     const count = async (limit: number) => (await engine.listPendingTakeProposals({ limit })).length;
     const got = {
       infinite: await count(Infinity), negative: await count(-Infinity), fraction: await count(2.9), zero: await count(0),
-      nan: await engine.listPendingTakeProposals({ limit: NaN }).then(() => 'answered', () => 'rejected'),
+      nan: await engine.listPendingTakeProposals({ limit: NaN }).then(() => 'answered', (e: unknown) => (e instanceof Error ? e.message : String(e))),
     };
-    expect(got).toEqual({ infinite: 3, negative: 1, fraction: 2, zero: 1, nan: 'rejected' });
+    expect(got).toEqual({ infinite: 3, negative: 1, fraction: 2, zero: 1, nan: 'invalid input syntax for type bigint: "NaN"' });
     return got;
   });
 });
