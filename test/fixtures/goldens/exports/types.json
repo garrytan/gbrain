@@ -8152,6 +8152,7 @@
           "hasWithdrawnFenceClaim: (sourceId: string, claims: readonly withdrawalFence.FenceClaimRow[], subject: string | null) => Promise<boolean>",
           "holdsDatastoreLock: () => boolean",
           "initSchema: (opts?: { embedding?: { dimensions: number; model: string; }; }) => Promise<void>",
+          "insertCalibrationProfile: (row: CalibrationProfilesSql.CalibrationProfileInsert) => Promise<void>",
           "insertDecideCalibration: (row: decideStoreImpl.DecideCalibrationInsert) => Promise<number>",
           "insertDecideProposal: (p: decideProposals.NewProposal) => Promise<number | null>",
           "insertDecideReceipts: (rows: readonly decideStoreImpl.DecideReceiptInsert[]) => Promise<void>",
@@ -10054,7 +10055,7 @@
         "kind": "type",
         "name": "MatchStrength",
         "signature": [
-          "\"vector\" | \"body\" | \"name\" | \"description\" | \"named\" | \"picked\" | \"triggers\" | \"routing\""
+          "\"named\" | \"vector\" | \"body\" | \"name\" | \"description\" | \"picked\" | \"triggers\" | \"routing\""
         ]
       },
       {
