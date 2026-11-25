@@ -875,11 +875,22 @@ export function managedAtomCompletedSql(page: { sourceId: string; pageId: string
  * #6325: discovery and the backlog skip a page whose current content completed or is held after repeated failures.
  * #7391: given the current input cap, a partial checkpoint recorded below it (one `releasePartialDispositions` clears) is not skipped.
  */
-export function managedAtomDiscoverySql(maxInputChars?: string): string {
+export function managedAtomDiscoverySql(maxInputChars?: string, heldIds: readonly string[] = []): string {
   return `AND NOT EXISTS (SELECT 1 FROM op_checkpoints ac
   WHERE ${managedAtomIdentitySql({ sourceId: 'p.source_id', pageId: 'p.id', contentHash: 'p.content_hash' })}
     AND (ac.completed_keys->0->>'failure' IS NULL OR ac.completed_keys->0->>'held'='true')${maxInputChars ? `
-    AND (ac.completed_keys->0->>'partial' IS NULL OR (ac.completed_keys->0->>'partial')::integer >= ${maxInputChars})` : ''})`;
+    AND (ac.completed_keys->0->>'partial' IS NULL OR (ac.completed_keys->0->>'partial')::integer >= ${maxInputChars})` : ''})
+  ${heldAtomGenerationAbsentSql(heldIds)}`;
+}
+
+/** The phase skips a page whose held result is current for its input pin and policy (`heldForInput`: `heldIds` are those hold ids), so the backlog does not count it. */
+function heldAtomGenerationAbsentSql(heldIds: readonly string[]): string {
+  const ids = heldIds.filter(id => /^[0-9a-f]{32}$/.test(id));
+  if (!ids.length) return '';
+  return `AND NOT EXISTS (SELECT 1 FROM derived_generations dg
+  WHERE dg.source_id=p.source_id AND dg.kind='atom' AND dg.state='held' AND dg.owner_key='source_slug:' || p.slug
+    AND dg.hold_id IN (${ids.map(id => `'${id}'`).join(',')})
+    AND dg.input_pin IN (p.content_hash, p.content_hash || ':' || p.id::text || ':' || p.knowledge_revision::text))`;
 }
 
 export const MANAGED_ATOM_DISCOVERY_SQL = managedAtomDiscoverySql();

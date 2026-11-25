@@ -134,7 +134,7 @@ export function liveConflict(key: GenerationKey, wrong: readonly string[]) {
 }
 
 /** A held result's identity: key, input pin, policy, item set and reason. The attempts counter and `heldForInput` share it. */
-function holdIdFor(key: GenerationKey, pin: string | null, config: GenerationsConfig, setHash: string, reason: HeldReason): string {
+export function holdIdFor(key: GenerationKey, pin: string | null, config: GenerationsConfig, setHash: string, reason: HeldReason): string {
   return digest(['generation-hold-v1', key, pin, policyHash(config), setHash, reason]).slice(0, 32);
 }
 
@@ -160,6 +160,15 @@ export async function recordHeld(tx: BrainEngine, key: GenerationKey, config: Ge
     [key.sourceId, key.kind, key.ownerKey, request.runId ?? null, `held:${holdId}`, holdId, request.input?.pin ?? null, request.input?.size ?? null, setHash,
       reason, JSON.stringify({ ...context, partial: request.partial === true }), bytes <= HELD_PROPOSAL_MAX_BYTES ? JSON.stringify(proposal) : null, bytes]);
   return { state: 'held', reason, holdId, context };
+}
+
+/** The hold ids of held atom results whose policy is the current one: the rows `heldForInput` would match. */
+export async function currentAtomHoldIds(engine: BrainEngine): Promise<string[]> {
+  const config = await readGenerationsConfig(engine);
+  const rows = await engine.executeRaw<{ source_id: string; owner_key: string; input_pin: string | null; hold_id: string; item_set_hash: string; held_reason: string }>(
+    `SELECT source_id, owner_key, input_pin, hold_id, item_set_hash, held_reason FROM derived_generations WHERE kind='atom' AND state='held' AND input_pin IS NOT NULL`);
+  return rows.filter(r => r.hold_id === holdIdFor({ sourceId: r.source_id, kind: 'atom', ownerKey: r.owner_key } as GenerationKey, r.input_pin, config, r.item_set_hash, r.held_reason as HeldReason))
+    .map(r => r.hold_id);
 }
 
 /** Whether `key` holds a result for this same input and policy, so the producer can skip recomputing it (CEO-outside r3 F5). */

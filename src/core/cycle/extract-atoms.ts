@@ -90,7 +90,7 @@ import { atomSourceDate, transcriptAtomSourceDate } from './atom-source-date.ts'
 import { normalizeForGrounding, isGroundingQuoteMark } from './synthesize-verify.ts';
 import type { TranscriptPageIndex } from '../transcripts/discover.ts';
 import { atomOriginPin, atomWriteFailure, type AtomWriteFailure, concurrentAtomBatch, managedAtomSession, readAtomOrigin, resumeManagedAtoms, publishManagedAtoms, publishManagedAtomGeneration, resumeManagedGenerationMembers,
-  MANAGED_ATOM_DISCOVERY_SQL, managedAtomDiscoverySql, type AtomOrigin } from '../persistence/atom-maintenance.ts';
+  managedAtomDiscoverySql, type AtomOrigin } from '../persistence/atom-maintenance.ts';
 import { effectiveVisibility, folderRestricted } from '../search/private-visibility.ts';
 import { OperationError } from '../ops/contract.ts';
 import { isOpPageSlug } from '../ops/context.ts';
@@ -98,7 +98,7 @@ import type { WriteReceipt } from '../persistence/types.ts';
 import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
 import { AtomPageStateError, MAX_DETERMINISTIC_FAILURES, readAtomPageIdentity, writeAtomPageState, type AtomPageInput } from './extract-atoms-page-state.ts';
 import { atomGenerationOrigin, atomInputPin, heldLine, publishUnmanagedAtoms, resolveTranscriptAtomSlug, resolveTranscriptKeys, transcriptRoot } from './extract-atoms-generation.ts';
-import { heldForInput } from '../generations/publish.ts';
+import { currentAtomHoldIds, heldForInput } from '../generations/publish.ts';
 import { ATOM_TYPES, ATOMS_RESPONSE_SCHEMA } from './extract-atoms-schema.ts';
 import { parseAtomsOutcome } from './extract-atoms-parse.ts';
 export { parseAtomsOutcome, parseAtomsResponse, type AtomsParseOutcome } from './extract-atoms-parse.ts';
@@ -429,7 +429,7 @@ export async function discoverExtractablePages(
       AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
       ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
       AND ${minCompiledTruthChars('$3')}
-      ${MANAGED_ATOM_DISCOVERY_SQL}
+      ${managedAtomDiscoverySql(undefined, await currentAtomHoldIds(engine))}
       ${PAGE_SCAN_STATE_EXCLUSION_SQL}
       ${connectorExclusion}
       ${hasFilter ? "AND p.slug = ANY($5::text[])" : ''}
@@ -517,7 +517,7 @@ export async function countExtractAtomsBacklog(
            AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
            ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
            AND ${minCompiledTruthChars('$3')}
-           ${managedAtomDiscoverySql('$4::integer')}
+           ${managedAtomDiscoverySql('$4::integer', await currentAtomHoldIds(engine))}
            ${pageScanStateExclusionSql('$4::integer')}
            ${connectorExclusion}
            AND NOT EXISTS (
@@ -535,7 +535,7 @@ export async function countExtractAtomsBacklog(
            AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
            ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
            AND ${minCompiledTruthChars('$2')}
-           ${managedAtomDiscoverySql('$3::integer')}
+           ${managedAtomDiscoverySql('$3::integer', await currentAtomHoldIds(engine))}
            ${pageScanStateExclusionSql('$3::integer')}
            ${connectorExclusion}
            AND NOT EXISTS (
