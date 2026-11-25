@@ -92,7 +92,7 @@ const na = (why: string): MwCell => ({ status: 'n/a', why });
 const pending = (owner: string, why: string): MwCell => ({ status: 'pending', owner, why });
 
 /**
- * The rows: every id in MW_CASE_IDS appears exactly once, in order (multi-writer-cases.test.ts checks it, that each
+ * The rows: every id in MW_CASE_IDS appears exactly once, in order (test/multi-writer-cases.test.ts checks it, that each
  * title is the design table's, and that each row matches its parityTest declaration).
  *
  * Reading a row:

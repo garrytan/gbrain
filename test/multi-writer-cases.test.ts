@@ -20,9 +20,9 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import ts from 'typescript';
-import { MW_ARMS, MW_CASES, MW_CASE_IDS, MW_ENGINE_ARMS, MW_STORE_ARMS, MW_VARIANT_IDS, mwCase, mwCell, mwVariant, mwVariantCell } from './multi-writer-cases.ts';
+import { MW_ARMS, MW_CASES, MW_CASE_IDS, MW_ENGINE_ARMS, MW_STORE_ARMS, MW_VARIANT_IDS, mwCase, mwCell, mwVariant, mwVariantCell } from './engine-parity/multi-writer-cases.ts';
 
-const REPO = join(import.meta.dir, '..', '..');
+const REPO = join(import.meta.dir, '..');
 // test-reads-source-ok[structural]: the matrix must agree with the case file, the design table and the Rust suite it names.
 const read = (...path: string[]) => readFileSync(join(REPO, ...path), 'utf8');
 
@@ -33,7 +33,7 @@ interface Declaration { name: string; methods: string[]; mwCase: string | null }
 
 /** Every `parityTest(name, { methods: [...], mwCase: '...' }, fn)` of the conformance file, in source order. */
 function declarations(): Declaration[] {
-  const path = join(import.meta.dir, 'multi-writer-conformance.test.ts');
+  const path = join(import.meta.dir, 'engine-parity', 'multi-writer-conformance.test.ts');
   const sf = ts.createSourceFile(path, read('test', 'engine-parity', 'multi-writer-conformance.test.ts'), ts.ScriptTarget.Latest, true);
   const out: Declaration[] = [];
   const literal = (node: ts.Node | undefined): string => {

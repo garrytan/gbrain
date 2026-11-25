@@ -212,6 +212,7 @@ test/engine-parity/memory-proposal-reads.test.ts	3	0
 test/engine-parity/mention-coverage.test.ts	9	0
 test/engine-parity/mention-pass.test.ts	4	0
 test/engine-parity/migrate-engine-source.test.ts	2	0
+test/engine-parity/multi-writer-conformance.test.ts	15	0
 test/engine-parity/notifier-freshness.test.ts	3	0
 test/engine-parity/notifier-resident.test.ts	4	0
 test/engine-parity/notifier.test.ts	4	0

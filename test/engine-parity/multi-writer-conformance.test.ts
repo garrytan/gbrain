@@ -22,7 +22,7 @@
  *    the cases that only use it to widen the load fall back to the arm's own engine. Expired leases are made by negative
  *    durations, never by sleeping.
  *
- * The matrix row of each case (members, reference, cells) is multi-writer-cases.ts; multi-writer-cases.test.ts checks
+ * The matrix row of each case (members, reference, cells) is multi-writer-cases.ts; test/multi-writer-cases.test.ts checks
  * that this file and the matrix agree. A case whose every engine cell is pending still has a real scenario body: it is
  * skipped by the harness, never run, and is the edit that turns the case on when its owner lands.
  */
