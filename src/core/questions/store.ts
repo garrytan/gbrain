@@ -5,7 +5,9 @@
  * the question page itself is written by ./pages.ts through the coordinator.
  */
 import type { BrainEngine } from '../engine.ts';
-import { formatQuestionId, type QuestionScope } from './identity.ts';
+import { quarantineFilterFragment } from '../quarantine.ts';
+import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
+import { formatQuestionId, PINNED_QUESTION_MARKER, type QuestionScope } from './identity.ts';
 
 export type PinState = 'active' | 'inactive' | 'archived';
 export type InactiveReason = 'awaiting_consent' | 'migrated_disabled' | 'migrated_zero_budget' | 'migrated_enabled';
@@ -100,18 +102,30 @@ export function pinScope(row: Pick<PinRow, 'source_id' | 'scope_slug_prefix' | '
   };
 }
 
-export async function getPin(engine: BrainEngine, sourceId: string, slug: string, opts: { forUpdate?: boolean } = {}): Promise<PinRow | null> {
+/** Pins without a live page have no page policy to authorize an owner-bound remote read. */
+function readablePinPageSql(): string {
+  return `EXISTS (
+    SELECT 1 FROM pages p JOIN sources s ON s.id = p.source_id
+    WHERE p.source_id = pinned_questions.source_id AND p.slug = pinned_questions.slug
+      AND p.frontmatter->>'${PINNED_QUESTION_MARKER}' = p.source_id || ':' || p.slug
+      AND p.deleted_at IS NULL AND NOT s.archived AND ${quarantineFilterFragment('p')} AND ${privatePagesFilterForCaller('p')}
+  )`;
+}
+
+export async function getPin(engine: BrainEngine, sourceId: string, slug: string, opts: { forUpdate?: boolean; requireReadablePage?: boolean } = {}): Promise<PinRow | null> {
   const rows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT ${COLUMNS} FROM pinned_questions WHERE source_id = $1 AND slug = $2${opts.forUpdate ? ' FOR UPDATE' : ''}`, [sourceId, slug]);
+    `SELECT ${COLUMNS} FROM pinned_questions WHERE source_id = $1 AND slug = $2
+     ${opts.requireReadablePage ? `AND ${readablePinPageSql()}` : ''}${opts.forUpdate ? ' FOR UPDATE' : ''}`, [sourceId, slug]);
   return rows[0] ? toPinRow(rows[0]) : null;
 }
 
-export async function listPins(engine: BrainEngine, opts: { sourceIds?: string[]; includeArchived?: boolean; states?: PinState[] } = {}): Promise<PinRow[]> {
+export async function listPins(engine: BrainEngine, opts: { sourceIds?: string[]; includeArchived?: boolean; states?: PinState[]; requireReadablePage?: boolean } = {}): Promise<PinRow[]> {
   const params: unknown[] = [];
   const where: string[] = [];
   if (opts.sourceIds) { params.push(opts.sourceIds); where.push(`source_id = ANY($${params.length}::text[])`); }
   if (opts.states) { params.push(opts.states); where.push(`state = ANY($${params.length}::text[])`); }
   else if (!opts.includeArchived) where.push(`state <> 'archived'`);
+  if (opts.requireReadablePage) where.push(readablePinPageSql());
   const rows = await engine.executeRaw<Record<string, unknown>>(
     `SELECT ${COLUMNS} FROM pinned_questions ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY source_id, created_at, id`, params);
   return rows.map(toPinRow);

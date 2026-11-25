@@ -140,11 +140,17 @@ Pinned questions are owner-private:
 - The question page is private, and it never appears in search, query,
   recall or think results, for anyone.
 - Answers are never written to pages, chunks, page history, exports or git.
-- The `questions_*` tools and the `context_pack` fields answer only the local
-  CLI and MCP connections that can read private pages (the operator set
-  `search.remote_private_pages=visible`) and are not slug-fenced. Any other
-  connection gets `question_owner_only` with the command the owner runs
-  instead, and `context_pack` shows it nothing.
+- An unfenced MCP credential bound to the brain owner and speaking for itself
+  can use `questions_list` and `questions_status` for pins with a live page it
+  can read. The source grant and [reader rules](access-designations.md) apply
+  to the pin. Saved answers withhold sentences whose evidence has gone stale
+  or cannot be read in full by the credential.
+- Use the local CLI to manage pins and read pins that have no page yet. On a
+  brain without member restrictions, the existing
+  `search.remote_private_pages=visible` setting also enables unfenced MCP
+  access to the questions tools and the pinned-answer fields in
+  `context_pack`. Other connections get `question_owner_only` from the
+  questions tools and no pinned-answer fields in `context_pack`.
 
 ## Paid refresh and consent
 

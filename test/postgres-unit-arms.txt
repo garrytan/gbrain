@@ -704,6 +704,7 @@ test/qm-personal-sources.test.ts
 test/qm-personal-tools.test.ts
 test/qm-scope-read.test.ts
 test/qm-scope-writes.test.ts
+test/questions-owner-remote.test.ts
 test/read-meta-diag.test.ts
 test/readers-label-setter.test.ts
 test/readers-noncanonical-owner-reads.test.ts

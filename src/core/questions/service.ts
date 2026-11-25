@@ -12,8 +12,8 @@
 import type { OperationContext } from '../ops/contract.ts';
 import { opError } from '../ops/contract.ts';
 import { hostOnlyError, invalidParam, readFix } from '../ops/op-fix.ts';
-import { assertSourceInCallerScope, assertSourceInCallerWriteScope, enforceClientSlugFence, sourceScopeOpts } from '../ops/context.ts';
-import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { assertSourceInCallerScope, assertSourceInCallerWriteScope, enforceClientSlugFence, readHolders, sourceScopeOpts } from '../ops/context.ts';
+import { callerIsOwner, resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { readConsentPreapprovals } from '../consent-preapproval.ts';
 import { ALL_SOURCES } from '../source-id.ts';
 import { BudgetMeter, loadAllowUnpriced, loadPricingOverrides, parseBudgetUsd } from '../cycle/budget-meter.ts';
@@ -22,7 +22,7 @@ import { syncQuestionPage } from './pages.ts';
 import { buildReceipt, type QuestionReceipt } from './receipt.ts';
 import { refreshPin, type QuestionChatFn, type RefreshHooks, type RefreshOutcome } from './refresh.ts';
 import { getPin, insertPin, listPins, pinId, updatePinState, type PinRow } from './store.ts';
-import { evaluateAnswer } from './freshness.ts';
+import { evaluateAnswer, type AnswerReadScope } from './freshness.ts';
 
 export const DEFAULT_BUDGET_USD = 1.0;
 export const DEFAULT_PIN_WAIT_MS = 30_000;
@@ -32,30 +32,31 @@ const MAX_WAIT_MS = 300_000;
 /** Test seams: an injected chat function and publication hooks (production callers pass none). */
 export interface QuestionsDeps { chat?: QuestionChatFn; hooks?: RefreshHooks }
 
-export interface CallerAccess { readableSources: string[] | null; remote: boolean }
+export interface CallerAccess extends AnswerReadScope { remote: boolean }
 
 /**
- * Owner-capable callers: the trusted local CLI, or a remote grant that reads
- * private pages (the operator opted remote readers into private pages) and is
- * not slug-fenced or a delegated subagent. Everyone else is refused with the
- * CLI equivalent, so restricted grants never learn a question or answer.
+ * The owner can list and read pins under its normal page and evidence policy.
+ * The local CLI and the legacy private-pages opt-out keep their original
+ * access. Fenced, degraded and delegated grants cannot use either remote path.
  */
 export async function requireOwnerCapable(ctx: OperationContext, op: string, cli: string[]): Promise<CallerAccess> {
   if (ctx.remote === false) {
     const scope = sourceScopeOpts(ctx);
     return { readableSources: scope.sourceIds ?? null, remote: false };
   }
-  const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
-  const restricted = ctx.viaSubagent === true || (ctx.auth?.boundSlugPrefixes?.length ?? 0) > 0
+  const ownerRead = (op === 'questions_list' || op === 'questions_status') && callerIsOwner();
+  const excludePrivate = !ownerRead && await resolveExcludePrivatePages(ctx.engine, ctx.remote);
+  const fence = ctx.auth?.boundSlugPrefixes;
+  const restricted = ctx.viaSubagent === true || (ownerRead ? fence !== undefined : (fence?.length ?? 0) > 0)
     || ctx.auth?.fenceProjectionDegraded === true || ctx.auth?.grantProjectionDegraded === true;
   if (excludePrivate || restricted) {
     throw hostOnlyError(ctx, 'question_owner_only', `${op}: pinned questions are owner-private, and this connection cannot read private pages.`, cli,
       'Pinned questions and their answers are private to the brain owner in this version. This connection is a restricted grant (it cannot read private pages' +
-      `${restricted ? ', or it is slug-fenced or delegated' : ''}), so the owner runs the command on the brain host. An operator who wants this MCP connection to manage pins sets search.remote_private_pages=visible, which also shows it every private page.`);
+      `${restricted ? ', or it is slug-fenced or delegated' : ''}), so the owner runs the command on the brain host. An unfenced connection bound to the brain owner can list and read pins it can see.`);
   }
   const scope = sourceScopeOpts(ctx);
-  const readable = scope.sourceIds ?? (scope.sourceId !== undefined ? [scope.sourceId] : null);
-  return { readableSources: readable, remote: true };
+  const readable = scope.sourceIds ?? (scope.sourceId !== undefined ? [scope.sourceId] : ownerRead ? [defaultSource(ctx)] : null);
+  return { readableSources: readable, remote: true, ...(ownerRead ? { ownerRead: { takesHolders: readHolders(ctx) } } : {}) };
 }
 
 function defaultSource(ctx: OperationContext): string {
@@ -105,7 +106,7 @@ async function resolvePin(ctx: OperationContext, access: CallerAccess, rawId: un
     { fix: readFix('Lists the pinned questions this connection can read, with their ids.', { argv: ['gbrain', 'questions', 'list', '--json'], mcp: { tool: 'questions_list', arguments: {} } }) });
   if (!parsed) throw notFound();
   if (access.readableSources && !access.readableSources.includes(parsed.sourceId)) throw notFound();
-  const pin = await getPin(ctx.engine, parsed.sourceId, parsed.slug);
+  const pin = await getPin(ctx.engine, parsed.sourceId, parsed.slug, { requireReadablePage: access.ownerRead !== undefined });
   if (!pin) throw notFound();
   return pin;
 }
@@ -134,9 +135,8 @@ async function boundedRefresh(ctx: OperationContext, pin: PinRow, opts: { full: 
   }
 }
 
-async function receiptFor(ctx: OperationContext, access: CallerAccess, sourceId: string, slug: string, includeAnswer: boolean, refresh?: RefreshOutcome): Promise<QuestionReceipt> {
-  const pin = (await getPin(ctx.engine, sourceId, slug))!;
-  const receipt = await buildReceipt(ctx.engine, pin, { readableSources: access.readableSources, includeAnswer, remote: access.remote, refresh });
+async function receiptFor(ctx: OperationContext, access: CallerAccess, pin: PinRow, includeAnswer: boolean, refresh?: RefreshOutcome): Promise<QuestionReceipt> {
+  const receipt = await buildReceipt(ctx.engine, pin, { ...access, includeAnswer, refresh });
   if (receipt.blocked_reason || receipt.freshness === 'stale') {
     ctx.emitNotice?.({
       code: 'pinned_answer_stale', kind: 'degraded',
@@ -189,7 +189,8 @@ export async function pinQuestion(ctx: OperationContext, p: Record<string, unkno
   if (p.defer !== true && pin.state === 'active' && pin.answer_revision === 0) {
     refresh = await boundedRefresh(ctx, pin, { full: true, waitMs: waitMs(p.wait_ms, DEFAULT_PIN_WAIT_MS), trigger: 'pin' }, deps);
   }
-  return { created, activated, receipt: await receiptFor(ctx, access, pin.source_id, pin.slug, true, refresh) };
+  const latest = (await getPin(ctx.engine, pin.source_id, pin.slug))!;
+  return { created, activated, receipt: await receiptFor(ctx, access, latest, true, refresh) };
 }
 
 export async function listQuestions(ctx: OperationContext, p: Record<string, unknown>): Promise<{
@@ -203,9 +204,10 @@ export async function listQuestions(ctx: OperationContext, p: Record<string, unk
   } else if (access.remote && !sources) {
     sources = [defaultSource(ctx)];
   }
-  const pins = await listPins(ctx.engine, { ...(sources ? { sourceIds: sources } : {}), includeArchived: p.include_archived === true });
+  const pins = await listPins(ctx.engine, { sourceIds: sources, includeArchived: p.include_archived === true,
+    requireReadablePage: access.ownerRead !== undefined });
   const questions: QuestionReceipt[] = [];
-  for (const pin of pins) questions.push(await buildReceipt(ctx.engine, pin, { readableSources: access.readableSources, includeAnswer: false, remote: access.remote }));
+  for (const pin of pins) questions.push(await buildReceipt(ctx.engine, pin, { ...access, includeAnswer: false }));
   const count = (f: (r: QuestionReceipt) => boolean) => questions.filter(f).length;
   return {
     questions,
@@ -220,7 +222,7 @@ export async function listQuestions(ctx: OperationContext, p: Record<string, unk
 export async function questionStatus(ctx: OperationContext, p: Record<string, unknown>): Promise<QuestionReceipt> {
   const access = await requireOwnerCapable(ctx, 'questions_status', typeof p.id === 'string' ? ['gbrain', 'questions', 'status', p.id] : ['gbrain', 'questions', 'list']);
   const pin = await resolvePin(ctx, access, p.id, 'questions_status');
-  return receiptFor(ctx, access, pin.source_id, pin.slug, p.include_answer !== false);
+  return receiptFor(ctx, access, pin, p.include_answer !== false);
 }
 
 export async function refreshQuestion(ctx: OperationContext, p: Record<string, unknown>, deps: QuestionsDeps = {}): Promise<QuestionReceipt> {
@@ -232,7 +234,8 @@ export async function refreshQuestion(ctx: OperationContext, p: Record<string, u
   const refresh: RefreshOutcome = pin.state === 'archived' ? { status: 'skipped', reason: 'archived' }
     : pin.state === 'inactive' ? { status: 'blocked', blocked_reason: 'awaiting_consent', detail: `pin is inactive (${pin.inactive_reason ?? 'awaiting_consent'})` }
     : await boundedRefresh(ctx, pin, { full: p.full === true, waitMs: waitMs(p.wait_ms, DEFAULT_REFRESH_WAIT_MS), trigger: 'manual' }, deps);
-  return receiptFor(ctx, access, pin.source_id, pin.slug, true, refresh);
+  const latest = (await getPin(ctx.engine, pin.source_id, pin.slug))!;
+  return receiptFor(ctx, access, latest, true, refresh);
 }
 
 export async function unpinQuestion(ctx: OperationContext, p: Record<string, unknown>): Promise<{ unpinned: boolean; receipt: QuestionReceipt }> {
@@ -242,7 +245,8 @@ export async function unpinQuestion(ctx: OperationContext, p: Record<string, unk
   const unpinned = pin.state !== 'archived';
   if (unpinned) pin = await updatePinState(ctx.engine, pin.id, { state: 'archived' });
   await syncQuestionPage(ctx, pin);
-  return { unpinned, receipt: await receiptFor(ctx, access, pin.source_id, pin.slug, false) };
+  const latest = (await getPin(ctx.engine, pin.source_id, pin.slug))!;
+  return { unpinned, receipt: await receiptFor(ctx, access, latest, false) };
 }
 
 export interface PinnedForPack {

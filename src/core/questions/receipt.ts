@@ -10,7 +10,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { Action, McpCall } from '../agent-output.ts';
 import { autopilotInstallIdPath, autopilotPaused } from '../autopilot-paths.ts';
 import { chatKeyFix } from '../interop-notices.ts';
-import { evaluateAnswer, newEvidenceSinceWatermark, type EvaluatedSentence } from './freshness.ts';
+import { evaluateAnswer, newEvidenceSinceWatermark, type AnswerReadScope, type EvaluatedSentence } from './freshness.ts';
 import { ANSWER_TOO_LONG_ERROR, MAX_OUTPUT_TOKENS_KEY, answerTooLongCap, chatKeyAvailable, resolveMaxOutputTokens, resolveQuestionModel, type BlockedReason, type RefreshOutcome } from './refresh.ts';
 import { pinId, pinScope, type PinRow } from './store.ts';
 import type { QuestionScope } from './identity.ts';
@@ -118,10 +118,10 @@ export function fixFor(pin: PinRow, blocked: BlockedReason | null, freshness: Fr
   }
 }
 
-export async function buildReceipt(engine: BrainEngine, pin: PinRow, view: {
-  readableSources: string[] | null; includeAnswer: boolean; remote: boolean; refresh?: RefreshOutcome;
+export async function buildReceipt(engine: BrainEngine, pin: PinRow, view: AnswerReadScope & {
+  includeAnswer: boolean; remote: boolean; refresh?: RefreshOutcome;
 }): Promise<QuestionReceipt> {
-  const evaluation = await evaluateAnswer(engine, pin, { readableSources: view.readableSources });
+  const evaluation = await evaluateAnswer(engine, pin, view);
   const [page] = await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL', [pin.source_id, pin.slug]);
   const leaseLive = pin.lease_token !== null && pin.lease_expires_at !== null && pin.lease_expires_at.getTime() > Date.now();
   const freshness: Freshness = pin.state === 'archived' ? 'archived'
@@ -140,6 +140,12 @@ export async function buildReceipt(engine: BrainEngine, pin: PinRow, view: {
     else if ((needsRefresh || newEvidence) && !(await scheduledRefreshAvailable(engine))) blocked = 'no_worker';
   }
   const id = pinId(pin);
+  const fix = fixFor(pin, blocked, freshness, view.remote);
+  if (view.ownerRead && fix?.mcp?.tool === 'questions_refresh') {
+    delete fix.mcp;
+    fix.actor = 'user';
+    fix.why += ' Run the refresh on the brain host.';
+  }
   return {
     id, source_id: pin.source_id, slug: pin.slug, question: pin.question, scope: pinScope(pin), state: pin.state,
     inactive_reason: pin.inactive_reason, publish_mode: pin.publish_mode, origin: pin.origin, page_materialized: !!page,
@@ -153,7 +159,7 @@ export async function buildReceipt(engine: BrainEngine, pin: PinRow, view: {
     last_attempt_at: pin.last_attempt_at?.toISOString() ?? null,
     last_error: pin.last_error,
     blocked_reason: blocked,
-    fix: fixFor(pin, blocked, freshness, view.remote),
+    fix,
     verify: verifyStep(id),
     spend_usd: Number(pin.spend_usd.toFixed(6)),
     refresh_attempts: pin.refresh_attempts,
