@@ -173,7 +173,7 @@ describe('full CI on pull requests', () => {
     }
   });
 
-  test('tree.json lists the executed test files only from a complete manifest of the same run, attempt and commit', () => {
+  test('tree.json lists the executed test files only from a complete manifest of the same run and commit, from this attempt or an earlier one', () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-full-suite-files-'));
     try {
       const git = (...args: string[]) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { cwd: dir, encoding: 'utf8' });
@@ -204,9 +204,16 @@ describe('full CI on pull requests', () => {
       };
       const base = { tree: git('rev-parse', 'HEAD^{tree}').stdout.trim(), sha, workflow: 'Test', event: 'workflow_dispatch', run_id: 42, run_attempt: 2, profile: 'full' };
       expect(record(manifest()).tree).toEqual({ ...base, files: ['test/a.test.ts', 'test/b.test.ts', 'test/e2e/c.test.ts'], tests: 8 });
+      const earlier = record(manifest({ run_attempt: 1 }));
+      expect(earlier.stdout).not.toContain('::warning::');
+      expect(earlier.tree).toEqual({ ...base, files: ['test/a.test.ts', 'test/b.test.ts', 'test/e2e/c.test.ts'], tests: 8 });
       for (const [doc, why] of [
         [undefined, 'no ci-manifest.json from this run'],
-        [manifest({ run_attempt: 1 }), 'belongs to run 42 attempt 1, not run 42 attempt 2 (re-run the whole workflow, not only its failed jobs)'],
+        [manifest({ run_attempt: 3 }), 'belongs to run 42 attempt 3, newer than this attempt 2'],
+        [manifest({ run_attempt: null }), 'has run_attempt null, not an attempt number'],
+        [manifest({ run_attempt: 1, sha: 'f'.repeat(40) }), `belongs to commit ${'f'.repeat(40)}`],
+        [manifest({ run_attempt: 1, complete: false, problems: ['unit shard 3 has no receipt'] }), 'is incomplete: unit shard 3 has no receipt'],
+        [manifest({ run_attempt: 1, failures: [{ file: 'test/a.test.ts', lane: 'unit', name: 'a1' }] }), 'lists 1 failing test(s)'],
         [manifest({ run_id: 41 }), 'belongs to run 41 attempt 2'],
         [manifest({ sha: 'f'.repeat(40) }), `belongs to commit ${'f'.repeat(40)}`],
         [manifest({ complete: false, problems: ['unit shard 3 has no receipt'] }), 'is incomplete: unit shard 3 has no receipt'],

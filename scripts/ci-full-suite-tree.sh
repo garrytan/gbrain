@@ -14,11 +14,14 @@
 # `files` (every test file the run loaded, repo-relative, across lanes and
 # arms; a file whose tests all skipped counts, because the remote gate's
 # inventory lists the same env- and platform-gated files) and `tests` (its
-# executed test count) come only from a complete manifest of this run, attempt
-# and commit. Otherwise both are left out with a warning: the record still says
-# the full suite passed, but gstack cannot take it as run evidence. After a
-# re-run of only the failed jobs, each job's newest attempt counts (the manifest
-# covers every file across attempts), and the files whose newest receipt came
+# executed test count) come only from a complete manifest of this run and
+# commit, written in this attempt or an earlier one. Otherwise both are left out
+# with a warning: the record still says the full suite passed, but gstack cannot
+# take it as run evidence. A re-run of one job re-runs its dependents and the
+# manifest uploads with overwrite, so an earlier attempt's manifest is still the
+# newest when only full-suite re-ran. After a re-run of only the failed jobs,
+# each job's newest attempt counts (the manifest covers every file across
+# attempts), and the files whose newest receipt came
 # from the re-run are named in `rerun_files`, with the run's `attempts`. A
 # manifest that still lists a failing test is never evidence.
 set -euo pipefail
@@ -34,7 +37,9 @@ if [ -z "${MANIFEST:-}" ] || [ ! -s "$MANIFEST" ]; then
 else
   problem=$(jq -r --argjson id "$RUN_ID" --argjson attempt "$RUN_ATTEMPT" --arg sha "$sha" '
     if .schema != "gbrain-ci-manifest/v1" then "ci-manifest.json has schema \(.schema)"
-    elif .run_id != $id or .run_attempt != $attempt then "ci-manifest.json belongs to run \(.run_id) attempt \(.run_attempt), not run \($id) attempt \($attempt) (re-run the whole workflow, not only its failed jobs)"
+    elif .run_id != $id then "ci-manifest.json belongs to run \(.run_id) attempt \(.run_attempt), not run \($id)"
+    elif (.run_attempt | type) != "number" or .run_attempt < 1 then "ci-manifest.json has run_attempt \(.run_attempt | tojson), not an attempt number"
+    elif .run_attempt > $attempt then "ci-manifest.json belongs to run \(.run_id) attempt \(.run_attempt), newer than this attempt \($attempt)"
     elif .sha != $sha then "ci-manifest.json belongs to commit \(.sha), not \($sha)"
     elif .complete != true then "ci-manifest.json is incomplete: \(.problems | join("; "))"
     elif ((.failures // []) | length) > 0 then "ci-manifest.json lists \(.failures | length) failing test(s) in the newest attempt of each job"
