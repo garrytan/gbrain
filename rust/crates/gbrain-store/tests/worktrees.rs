@@ -304,6 +304,7 @@ fn a_rolled_back_claim_keeps_no_row() {
 
 fn lock(holder_pid: i64, token: &str) -> gbrain_store::jobs::LockAcquire {
     gbrain_store::jobs::LockAcquire {
+        fence: None,
         holder_pid,
         holder_host: Some("host-a".into()),
         acquisition_token: token.into(),

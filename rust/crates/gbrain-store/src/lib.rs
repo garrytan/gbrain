@@ -26,6 +26,7 @@ pub mod error;
 mod fingerprint_fixture;
 #[cfg(feature = "fjall")]
 pub mod fjall_kv;
+pub mod fence;
 pub mod format;
 pub mod git_gap_census;
 pub mod journal;
