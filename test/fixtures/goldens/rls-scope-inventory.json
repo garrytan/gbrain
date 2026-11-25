@@ -4738,6 +4738,17 @@
         ],
         "flagOnScopes": []
       },
+      "listTypedClaimFactsAtPages#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listUnboundClientIds#default": {
         "flagOffLanes": [
           "pool"
@@ -10439,6 +10450,7 @@
         "listTrustedPrivateCopies": "none",
         "listTwinMergeLosers": "none",
         "listTypeOrphanRows": "none",
+        "listTypedClaimFactsAtPages": "none",
         "listUnarchivedSourceRows": "none",
         "listUnattributedFacts": "none",
         "listUnbackedConversationRows": "none",

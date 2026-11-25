@@ -4140,6 +4140,13 @@ const PINS: Pin[] = [
         WHERE p.deleted_at IS NULL AND (p.type = ANY($1::text[]) OR p.slug LIKE ANY($2::text[])) AND p.source_id = $4 AND p.id > $5
         ORDER BY p.id LIMIT 500`],
   },
+  // The facts arm's superseded-claim read, copied verbatim from its caller.
+  {
+    from: 'src/core/search/facts-arm.ts:156 stampSupersededClaims, at f9592f7a7e',
+    case: { method: 'listTypedClaimFactsAtPages', variant: 'default', run: e => e.listTypedClaimFactsAtPages(['meetings/a'], ['people/a']) },
+    texts: [`SELECT f.id, f.source_markdown_slug, f.source_id, f.entity_slug, f.claim_metric, f.claim_period, f.valid_from FROM facts f
+     WHERE f.source_markdown_slug = ANY($1::text[]) AND f.entity_slug = ANY($2::text[]) AND f.claim_metric IS NOT NULL`],
+  },
 ];
 
 type PinPrivacy = 'none' | 'caller' | 'floor';

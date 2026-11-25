@@ -301,6 +301,7 @@ test/engine-parity/facts-quoted.test.ts
 test/engine-parity/facts-repair-sites.test.ts
 test/engine-parity/facts-repair.test.ts
 test/engine-parity/facts-rest-sites.test.ts
+test/engine-parity/facts-superseded-claims.test.ts
 test/engine-parity/facts-trust-owner.test.ts
 test/engine-parity/facts-trust.test.ts
 test/engine-parity/facts-unique-violation.test.ts

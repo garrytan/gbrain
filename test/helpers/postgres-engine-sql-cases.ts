@@ -1709,6 +1709,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readCredentialMemberId': OOS.callerRawSql,
   'listCredentialMemberBindings': OOS.callerRawSql,
   'listFactSourcePages': OOS.callerRawSql,
+  'listTypedClaimFactsAtPages': OOS.callerRawSql,
   'pingStore': OOS.callerRawSql,
   'readJobDataByIdempotencyKey': OOS.callerRawSql,
   'coalesceOnIdempotencyKey': OOS.callerRawSql,
@@ -2943,6 +2944,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('listPageRefsForSlugs', [['default', (e) => e.listPageRefsForSlugs(['a', 'b'])]]),
   ...variants('listCredentialMemberBindings', [['default', (e) => e.listCredentialMemberBindings(['alice-laptop', 'alice-agent'])]]),
   ...variants('listFactSourcePages', [['default', (e) => e.listFactSourcePages([1, 2])]]),
+  ...variants('listTypedClaimFactsAtPages', [['default', (e) => e.listTypedClaimFactsAtPages(['meetings/a'], ['people/a'])]]),
   ...variants('readJournalLimitRows', [['default', (e) => e.readJournalLimitRows()]]),
   ...variants('readHeldPageRows', [['default', (e) => e.readHeldPageRows(['1', '2'])]]),
   ...variants('readHeldCoverageRows', [

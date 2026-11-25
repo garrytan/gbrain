@@ -152,10 +152,7 @@ async function stampSupersededClaims(engine: BrainEngine, results: SearchResult[
   const typed = facts.filter(f => f.entity_slug && f.claim_metric);
   const pages = results.filter(r => !r.fact_row && r.slug);
   if (!typed.length || !pages.length) return;
-  const rows = await engine.executeRaw<{ id: number; source_markdown_slug: string; source_id: string; entity_slug: string; claim_metric: string; claim_period: string | null; valid_from: Date | string }>(
-    `SELECT f.id, f.source_markdown_slug, f.source_id, f.entity_slug, f.claim_metric, f.claim_period, f.valid_from FROM facts f
-     WHERE f.source_markdown_slug = ANY($1::text[]) AND f.entity_slug = ANY($2::text[]) AND f.claim_metric IS NOT NULL`,
-    [[...new Set(pages.map(r => r.slug))], [...new Set(typed.map(f => f.entity_slug!))]]);
+  const rows = await engine.listTypedClaimFactsAtPages([...new Set(pages.map(r => r.slug))], [...new Set(typed.map(f => f.entity_slug!))]);
   for (const r of pages) {
     for (const old of rows.filter(o => o.source_markdown_slug === r.slug && o.source_id === (r.source_id ?? o.source_id))) {
       const newer = typed.find(f => f.entity_slug === old.entity_slug && f.claim_metric === old.claim_metric
@@ -229,7 +226,7 @@ export async function applyFactsArm(engine: BrainEngine, query: string, results:
     }
     if (!rows.length) return results;
     const merged = [...pages, ...rows];
-    await stampSupersededClaims(engine, merged, facts).catch(() => undefined);
+    await stampSupersededClaims(engine, merged, facts).catch(unlessRefused(() => undefined));
     return merged;
   } catch (e) {
     // An engine that cannot serve a read refuses: the refusal is a typed stop, never a silently empty facts arm.
@@ -396,7 +393,7 @@ async function applyFactReserve(engine: BrainEngine, query: string, results: Sea
     let pages = (policy.rowShare === null ? results : results.slice(0, Math.max(0, Math.min(results.length, rowCap - rows.length)))).map(r => ({ ...r }));
     if (opts.tokenBudget) pages = enforceTokenBudget(pages, Math.max(1, opts.tokenBudget - rows.reduce((n, r) => n + resultTokens(r), 0))).results;
     const merged = policy.position === 'after' ? [...pages, ...rows] : [...rows, ...pages];
-    await stampSupersededClaims(engine, merged, placed.map(x => x.c)).catch(() => undefined);
+    await stampSupersededClaims(engine, merged, placed.map(x => x.c)).catch(unlessRefused(() => undefined));
     return merged;
   } catch (e) {
     // An engine that cannot serve a read refuses: the refusal is a typed stop, never a silently empty facts block.

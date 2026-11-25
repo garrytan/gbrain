@@ -2,7 +2,7 @@
  * Group 5 facts members, recall's candidate-pool reads (src/core/engine-sql/facts-recall.ts), served from the facts store
  * (rust/crates/gbrain-store/src/facts/recall.rs). A member not exported here refuses with `engine_capability_missing`.
  *
- * Served: `readFactsEmbeddingColumn`, `listNearestFacts`, `listSlotRows`, `listPoolUnbackedKeys`, `listCallOffCueFacts` and
+ * Served: `readFactsEmbeddingColumn`, `listNearestFacts`, `listTypedClaimFactsAtPages`, `listSlotRows`, `listPoolUnbackedKeys`, `listCallOffCueFacts` and
  * `listPoolEntityPairs`. Each reads under the pool's read policy, which `poolArgs` (fact-pool.ts) resolves as it does for
  * `listFactsForRelevance`: the store answers it exactly when the visibility and privacy policies are ones it serves;
  * anything else refuses. `listNearestFacts` also refuses a vector-typed
@@ -22,6 +22,10 @@ const rows = <T>(list: Row[]): T[] => list.map(row => withDates(row, POOL_DATES)
 
 export const readFactsEmbeddingColumn: Member<'readFactsEmbeddingColumn'> = async brain =>
   storeCall({ member: 'readFactsEmbeddingColumn' }, () => brain.readFactsEmbeddingColumn());
+
+/** The facts arm's superseded-claim read (BrainEngine listTypedClaimFactsAtPages), from the store's facts (facts/recall.rs). */
+export const listTypedClaimFactsAtPages: Member<'listTypedClaimFactsAtPages'> = async (brain, pageSlugs, entitySlugs) =>
+  rows(await storeCall({ member: 'listTypedClaimFactsAtPages' }, () => brain.listTypedClaimFactsAtPages([...pageSlugs], [...entitySlugs])) as Row[]);
 
 /** The facts arm's source-page read (BrainEngine listFactSourcePages), from the store's facts and pages (facts/recall.rs). */
 export const listFactSourcePages: Member<'listFactSourcePages'> = async (brain, ids) => {
