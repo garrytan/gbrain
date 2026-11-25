@@ -295,7 +295,8 @@ test/postgres-driver-vendor.test.ts	vendored Postgres driver packaging	5	readFil
 test/postgres-engine.test.ts	postgres-engine / search date filtering	2	source-surface-helper
 test/postgres-engine.test.ts	postgres-engine / search path timeout isolation	7	source-surface-helper
 test/postgres15-sql-compat-7112.test.ts	#7112: shipped SQL parses on every supported Postgres (15+)	2	readFileSync
-test/pregate-allowlist-cache-keys.test.ts	(file-level)	9	readFileSync
+test/pregate-allowlist-cache-keys.test.ts	pregate allowlist: Rust store lines the secrets check reads as keys, private-key headers and phone numbers	4	readFileSync
+test/pregate-allowlist-cache-keys.test.ts	pregate allowlist: the persistence journal claim statement (for the RP2 landing, rust-engine/land-rp2)	2	readFileSync
 test/private-visibility.test.ts	shared private predicate lives once (#4352 remediation)	1	readFileSync
 test/purge-root-metafile-7613.test.ts	(file-level)	3	readFileSync
 test/q2-typing-package.test.ts	(file-level)	3	readFileSync
@@ -304,8 +305,10 @@ test/redos-hardening.test.ts	#1569 --no-schema-pack + heartbeat wiring (structur
 test/redos-hardening.test.ts	megawave vm-watchdog removal (bootstrap-verify freeze)	5	readFileSync
 test/register-client-source-normalize.test.ts	register-client route wiring (structural)	1	readFileSync
 test/reindex-code-recovery.test.ts	CLI help line (#3970 surface 1)	1	source-surface-helper
+test/release-workflow.test.ts	release.yml addon_dry_run publishes nothing	3	readFileSync
 test/release-workflow.test.ts	release.yml publish-template skip is visible (D-10)	1	readFileSync
 test/release-workflow.test.ts	release.yml ↔ binary-self-update asset contract	12	readFileSync
+test/release-workflow.test.ts	release.yml ↔ gbrain engine install rust	3	readFileSync
 test/release-workflow.test.ts	which release GitHub calls Latest	3	readFileSync
 test/remediation-command-resolution.test.ts	#3697 — remediation text resolves against the live CLI surface	3	readFileSync
 test/reranker-default-seam.test.ts	DEFAULT_RERANKER_MODEL seam (#3657, flipped v0.48.2)	3	readFileSync
@@ -421,6 +424,8 @@ test/shared-skills-setup.test.ts	packaged default skills	2	readFileSync
 test/shared-skills-setup.test.ts	shared-skills migration recovery (#5569, #5476, A-NEW-4)	4	readFileSync
 test/shared-skills-setup.test.ts	staged skill migration	8	readFileSync
 test/shared-skills-writer-boundary.test.ts	(file-level)	7	readFileSync
+test/skill-resolver-contract.test.ts	build input (the --from-json catalog)	2	readFileSync
+test/skill-resolver-contract.test.ts	turn input	1	readFileSync
 test/skill-resolver-hook-lane.test.ts	skill-resolver lane: codex project catalog	2	readFileSync
 test/skill-resolver-hook-lane.test.ts	skill-resolver lane: compiled binaries	1	readFileSync
 test/skill-resolver-hook-lane.test.ts	skill-resolver lane: delivery per harness	4	readFileSync

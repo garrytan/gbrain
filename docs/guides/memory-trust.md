@@ -171,10 +171,11 @@ different buckets are history, so a monthly MRR series, a run of funding rounds
 or a forecast next to an actual (different metrics) are never flagged. A typed
 write never supersedes a typed fact in another bucket either.
 
-Finding conflicts is off by default. Turn it on, or run it once:
+The nightly dream cycle finds conflicts by default. It needs no key and only
+files proposals, so nothing changes until you decide. Turn it off, or run it now:
 
 ```bash
-gbrain config set dream.claim_conflicts.mode propose   # the nightly dream cycle files them
+gbrain config set dream.claim_conflicts.mode off       # the nightly dream cycle stops filing them
 gbrain decide sweep --claims --dry-run                 # preview; no key, nothing written
 gbrain decide sweep --claims [--source <id>]           # file them now
 ```

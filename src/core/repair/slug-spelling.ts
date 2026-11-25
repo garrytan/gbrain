@@ -333,7 +333,7 @@ const entryMessage = (sourceId: string, entry: SpellingEntry): string => {
       + `soft-delete the other with gbrain delete ${shellQuote([entry.slug])} --source-id ${sourceId}, then preview again.`;
   }
   if (entry.code === 'rename_file_first') {
-    return `Page ${entry.slug} (id ${entry.page_id}) is not moved because ${entry.reason}. git mv the file to ${entry.normal}${extname(entry.source_path ?? '') || '.md'}, commit and sync (sync carries the page identity), then preview again.`;
+    return `Page ${entry.slug} (id ${entry.page_id}) is not moved because ${entry.reason}. git mv the file to ${entry.evidence.to_path ?? `${entry.normal}${extname(entry.source_path ?? '') || '.md'}`}, commit and sync (sync carries the page identity), then preview again.`;
   }
   return `page ${entry.page_id} moves from ${entry.slug} to ${entry.normal}; its id, history, facts and attachments stay, and ${entry.slug} keeps resolving through an alias`;
 };

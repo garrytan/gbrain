@@ -172,7 +172,7 @@ src/commands/edges-backfill.ts	execute_raw	1
 src/commands/embed.ts	execute_raw	1
 src/commands/embeddings.ts	execute_raw	1
 src/commands/engine-status.ts	execute_raw	1
-src/commands/enrich.ts	execute_raw	1
+src/commands/enrich.ts	execute_raw	2	GST-3815: the reader-scope check on backlink and search evidence (pageReadsToReadersOfSql) sits beside the raw facts read it shares a predicate with; no typed engine method exists for either, and both convert together
 src/commands/eval-suspected-contradictions.ts	execute_raw	1
 src/commands/eval-whoknows.ts	execute_raw	1
 src/commands/export.ts	execute_raw	2
@@ -587,6 +587,7 @@ src/core/import-file.ts	execute_raw	1
 src/core/import-identity.ts	execute_raw	1
 src/core/ingestion/applied-captures.ts	execute_raw	5
 src/core/last-retrieved.ts	execute_raw	1
+src/commands/doctor/checks/learning-note.ts	execute_raw	3	nightly learning PR 4: the learning_items ledger (v334) has no typed engine methods yet; doctor learning_note reads the newest run, its items by kind and the 30-day kept and undone shares
 src/core/learning/decide.ts	execute_raw	3	nightly learning PR 2: the learning_items ledger (v334) has no typed engine methods yet; keep and undo read item states, mark decided items and list the page versions after an enrich write
 src/core/learning/derive.ts	execute_raw	6	nightly learning PR 1: the learning_items ledger (v334) is a new table with no typed engine methods yet; the derive pass records ledger pointers with INSERT ... SELECT per kind, prunes pointers whose target is gone and reads the watermark window; PR 2 expires unseen pointers after 7 days and closes answered conflict questions
 src/core/learning/kinds.ts	execute_raw	1	nightly learning PR 1: the learning_items ledger (v334) is a new table with no typed engine methods yet; learningTablePresent probes to_regclass so a brain behind the migration skips cleanly

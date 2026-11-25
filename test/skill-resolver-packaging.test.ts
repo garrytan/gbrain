@@ -87,7 +87,7 @@ describe('skill resolver packaging', () => {
 
   test('the release attaches the bundle with its sha256 and checks it before publishing', () => {
     const wf = readFileSync(join(ROOT, '.github/workflows/release.yml'), 'utf8');
-    expect(wf).toContain('gbrain-darwin-arm64,gbrain-linux-x64,gbrain-skill-resolver.mjs,gbrain-skill-resolver.mjs.sha256');
+    expect(wf).toContain('gbrain-darwin-arm64,gbrain-engine-rust-darwin-arm64.node,gbrain-engine-rust-linux-x64-glibc.node,gbrain-engine-rust.sha256.json,gbrain-linux-x64,gbrain-skill-resolver.mjs,gbrain-skill-resolver.mjs.sha256');
     expect(wf).toContain('bun scripts/build-skill-resolver-bundle.ts --out bundle/gbrain-skill-resolver.mjs --smoke');
     expect(wf).toContain('artifacts/gbrain-skill-resolver.mjs/gbrain-skill-resolver.mjs.sha256');
     const check = wf.indexOf('sha256sum -c gbrain-skill-resolver.mjs.sha256');
