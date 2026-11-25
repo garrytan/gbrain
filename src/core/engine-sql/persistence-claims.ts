@@ -10,6 +10,7 @@
 import type { LegacyUnscopedRead } from './brands.ts';
 import type { QueryOpts, SqlExecutor } from './executor.ts';
 import { renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
+import type { LeaseToken } from './lease-token.ts';
 
 /** `PERSISTENCE_PROTOCOL_PREDICATE` (protocol.ts): declares protocol 2 for the statement; always true. */
 export const PROTOCOL_PREDICATE_SQL = "set_config('gbrain.persistence_protocol','2',true)='2'";
@@ -120,13 +121,13 @@ export const EXPIRE_CLAIMS_SQL = `WITH expired AS (
 export interface SourceMembership { incarnation: string; archived: boolean }
 
 /** A claim renewal: request `id`, its claim `token`, the new lease and, optionally, the phase to record (claim-phase.ts `claimPhaseStamp`). */
-export interface ClaimRenewal { id: string; token: string; leaseMs: number; phaseJson: string | null }
+export interface ClaimRenewal { id: string; token: string; leaseMs: number; phaseJson: string | null; fence?: LeaseToken }
 
 /** A release of an unpublished claim: request `id`, its claim `token`, the blocked reason, and whether it counts a preparation attempt. */
-export interface ClaimRelease { id: string; token: string | null; reason: string; charge: boolean }
+export interface ClaimRelease { id: string; token: string | null; reason: string; charge: boolean; fence?: LeaseToken }
 
 /** An expired-claim release: this consumer's host id, whether a claim that expired while preparing counts an attempt, and the dead owners. */
-export interface ClaimExpiry { hostId: string; charge: boolean; deadOwners: string[] }
+export interface ClaimExpiry { hostId: string; charge: boolean; deadOwners: string[]; fence?: LeaseToken }
 
 /**
  * Source `sourceId`'s membership, or null; `lock` reads it FOR SHARE (admission holds it until the transaction ends),
@@ -411,6 +412,8 @@ export interface ClaimHeadSpec {
   priority: boolean | null;
   /** A non-resident consumer ranks a sync row whose drain lease another live process holds last: $7 the sync lock id prefix, $8 pid, $9 host. Null for a resident consumer. */
   leaseHolder: { lockPrefix: string; pid: number; host: string } | null;
+  /** The caller's host fence on a multi-user Rust brain; the SQL engines ignore it (here and on the three claim shapes above). */
+  fence?: LeaseToken;
 }
 
 /**

@@ -3595,6 +3595,18 @@ Reasons: `file_differs`, `label_line`.
 
 More: [docs/guides/write-refusals.md#label_edit_refused](../../docs/guides/write-refusals.md#label_edit_refused)
 
+### lease_lost
+
+<a id="lease_lost"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A multi-user Rust write carried a lease that no longer fences it (taken over, released, expired, missing, or from another claim epoch), so the store refused it at commit and nothing was written. | With GBRAIN_RUST_MULTIUSER on, writers on several machines share one Rust brain. Every ownership (a host registration, a job or write claim, a drain or cycle lease) is a lease with an epoch that rises on each takeover, and the store checks it inside the writing transaction, so a paused or partitioned holder cannot overwrite the new owner. Retrying the same write with the same lease always fails again. | Stop the work the lease protected, take the lease again (a new epoch), re-read the state, and redo the work only if it is still yours. Run: gbrain engine status --json | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `not_found`, `epoch_moved`, `released`, `expired`, `fence_missing`, `claim_epoch_mismatch`.
+
+More: [docs/designs/rust-engine/multi-user-server.md#m3-writers-on-many-machines](../../docs/designs/rust-engine/multi-user-server.md#m3-writers-on-many-machines)
+
 ### legacy_job_selection_invalid
 
 <a id="legacy_job_selection_invalid"></a>

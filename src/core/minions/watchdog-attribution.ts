@@ -23,6 +23,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { MinionQueue } from './queue.ts';
 import type { MinionJob } from './types.ts';
+import { fenceOpts } from '../persistence/host-fence.ts';
 
 /** The history entry that marks a job a watchdog drain or a dead worker could not clear: it runs alone from then on. */
 export const WATCHDOG_SUSPECT_MARK = 'rss_watchdog_suspect: an RSS watchdog drain or a worker kill could not be attributed to this job alone; it runs alone from now on';
@@ -45,7 +46,7 @@ export function unmarkedJobSql(param: string): string {
 
 /** A co-runner of a watchdog drain back to `waiting`, token-fenced, marked, no attempt burned. False when the claim moved on. */
 export function releaseWatchdogClaim(engine: BrainEngine, id: number, lockToken: string, errorText: string): Promise<boolean> {
-  return engine.releaseWatchdogClaim(id, lockToken, errorText);
+  return engine.releaseWatchdogClaim(id, lockToken, errorText, fenceOpts(engine));
 }
 
 /**

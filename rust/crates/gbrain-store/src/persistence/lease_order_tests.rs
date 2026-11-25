@@ -66,6 +66,7 @@ fn a_sync_row_whose_lease_another_process_holds_ranks_last() {
     assert_eq!(head(&s, me.clone()), sync, "no lease is held");
     let take = |pid: i64, host: &str| {
         let lock = LockAcquire {
+            fence: None,
             holder_pid: pid,
             holder_host: Some(host.into()),
             acquisition_token: "c0000000-0000-4000-8000-0000000000c1".into(),
@@ -84,6 +85,7 @@ fn a_sync_row_whose_lease_another_process_holds_ranks_last() {
         "a resident consumer ignores the lease"
     );
     let mine = LockHolder {
+        fence: None,
         holder_pid: 42,
         acquisition_token: "c0000000-0000-4000-8000-0000000000c1".into(),
         ttl_minutes: None,

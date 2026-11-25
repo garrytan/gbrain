@@ -136,6 +136,7 @@ fn claim(store: &Store, dead: &[String], token: &str) -> Option<Value> {
     let owner = json!({ "token": token, "owner": { "pid": 7, "nonce": "n", "start": "s" } });
     store
         .stamp_effect_claim(&EffectClaim {
+            fence: None,
             id: candidate["id"].as_str().unwrap().into(),
             token: token.into(),
             owner_json: owner.to_string(),
@@ -145,6 +146,7 @@ fn claim(store: &Store, dead: &[String], token: &str) -> Option<Value> {
 
 fn settle(id: &Value, token: &str) -> EffectSettle {
     EffectSettle {
+        fence: None,
         id: id.as_str().unwrap().into(),
         token: Some(token.into()),
         slug: None,
