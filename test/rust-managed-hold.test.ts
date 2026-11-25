@@ -127,7 +127,7 @@ describe.skipIf(!rustArmRequested())('a user\'s Rust brain keeps refusing manage
   /** The statements of the page-fault proofs, the older cursor's publication, `sync status`, the hold sweep and the freshness read (lane LM slice 2, part B). */
   const PART_B: SyncStatementName[] = ['page_revision_writer', 'request_writer', 'page_deleted_revision_writer', 'live_page_at_origin', 'manifest_entry', 'cursor_keys_locked', 'manifest_length',
     'cursor_mark_done', 'failure_supersession', 'source_company_brain', 'source_live_incarnation', 'knock_on_requests', 'live_cursor_rows', 'open_writer_requests', 'recorded_stop',
-    'freshness_aggregate', 'soak_counter_add', 'hold_needs_human_stamp', 'landing_binding', 'landing_receipts'];
+    'freshness_aggregate', 'soak_counter_add', 'hold_needs_human_stamp', 'landing_binding', 'landing_receipts', 'landing_live_slugs'];
 
   test('the page-fault proofs, the dry-run writer state, the stop record, the hold sweep and every part-B statement refuse as executeRaw did; nothing changed', () =>
     withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {

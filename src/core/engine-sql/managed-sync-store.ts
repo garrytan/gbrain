@@ -213,6 +213,7 @@ export const SYNC_STATEMENTS = {
       WHERE op=$1 AND fingerprint=$2 AND completed_keys->0->>'code'=$4 AND NOT (completed_keys->0->'meta' ? 'needs_human_at') RETURNING 1` },
   landing_binding: { kind: 'read', sql: `SELECT b.worktree_id::text AS worktree_id, b.source_incarnation::text AS incarnation
     FROM persistence_source_bindings b JOIN sources s ON s.id=b.source_id AND s.incarnation=b.source_incarnation WHERE b.source_id=$1` },
+  landing_live_slugs: { kind: 'read', sql: 'SELECT slug FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND slug = ANY($2::text[])' },
   landing_receipts: { kind: 'read', sql: `SELECT DISTINCT ON (w.slug COLLATE "C") w.slug, w.kind, w.completed_at, extract(epoch FROM now() - w.completed_at)::float8 AS age FROM (
         SELECT r.slug, r.sequence, r.completed_at, r.intent->>'kind' AS kind FROM persistence_requests r
          WHERE r.worktree_id=$1::uuid AND r.source_incarnation=$2::uuid AND r.state='committed' AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%'

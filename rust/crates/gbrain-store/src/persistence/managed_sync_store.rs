@@ -761,7 +761,7 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
         }
 
         // ---- the apply round and the folded stamp
-        "live_slugs" => {
+        "live_slugs" | "landing_live_slugs" => {
             let (source, slugs) = (text(p, 0)?, texts(p, 1)?);
             rows(all_pages(read)?
                 .into_iter()
