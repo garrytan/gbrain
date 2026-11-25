@@ -111,6 +111,13 @@ describe('reservation and engine guards', () => {
     const points = await rustFindTrajectory(brain as never, { entitySlug: 'memory/owner', sourceId: 'default', remote: false, limit: 2 } as never);
     expect(points.map(p => p.text)).toEqual(['mrr2', 'mrr3']);
   });
+  test('Rust trajectory: a profile.* metric that names no facet stays a point', async () => {
+    const row = (metric: string, i: number) => ({ fact_id: i, metric, text: metric + i, valid_from: '2026-01-0' + i, valid_until: null });
+    const native = [row('profile.views', 1), row('mrr', 2), row('profile.size.shoe', 3), row('profile.size.a.b', 4)];
+    const brain = { findTrajectory: async () => native };
+    const points = await rustFindTrajectory(brain as never, { entitySlug: 'memory/owner', sourceId: 'default', remote: false, limit: 10 } as never);
+    expect(points.map(p => p.text)).toEqual(['profile.views1', 'mrr2', 'profile.size.a.b4']);
+  });
   test('Rust trajectory: pages the native read past more profile rows than one native read returns', async () => {
     const at = (i: number) => new Date(Date.UTC(2026, 0, 1) + i * 60_000).toISOString();
     const row = (metric: string, i: number) => ({ fact_id: i, metric, text: metric + i, valid_from: at(i), valid_until: null });
@@ -204,6 +211,16 @@ describe('profile core on a single-user keyless brain (local CLI)', () => {
     expect(points.map(p => p.metric)).toContain('runway_months');
     expect(points.filter(p => String(p.metric).startsWith('profile.'))).toEqual([]);
     expect(points.some(p => p.text.includes('canarydiet'))).toBe(false);
+  }, 60_000);
+
+  test('find_trajectory keeps a hand-written profile.* metric that names no facet', async () => {
+    await engine.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source, claim_metric, claim_value)
+      VALUES ('default', 'memory/owner', 'Profile views reached 40 canaryviews', 'fact', 'world', 'legacy', 'profile.views', 40),
+             ('default', 'memory/owner', 'Shoe size 11 canarylegacyshoe', 'fact', 'world', 'legacy', 'profile.size.shoe', 11)`);
+    const points = await engine.findTrajectory({ entitySlug: 'memory/owner', sourceId: 'default', remote: false });
+    expect(points.filter(p => p.text.includes('canaryviews')).map(p => p.metric)).toEqual(['profile.views']);
+    expect(points.some(p => p.text.includes('canarylegacyshoe'))).toBe(false);
+    await engine.executeRaw("DELETE FROM facts WHERE fact LIKE '%canaryviews%' OR fact LIKE '%canarylegacyshoe%'");
   }, 60_000);
 
   test('context_pack {profile: true} applies the pack trust floor to profile rows', async () => {

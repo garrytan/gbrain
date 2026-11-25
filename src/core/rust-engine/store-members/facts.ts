@@ -24,6 +24,7 @@ import { refuseMember, storeCall, takeOptions, type StoreMember } from './common
 import { storePrivacyPolicy } from './private-provenance.ts';
 import { privateProvenanceFilterUnderPolicy } from '../../search/private-visibility.ts';
 import { withDates } from '../store-codec.ts';
+import { facetOfMetric } from '../../profile/facets.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 type FactRow = Awaited<ReturnType<BrainEngine['listFactsByEntity']>>[number];
@@ -285,7 +286,7 @@ export const findTrajectory: Member<'findTrajectory'> = async (brain, opts) => {
     const rows = await read(until);
     const fresh = first ? rows : rows.filter((row) => !seen.has(row.fact_id));
     for (const row of fresh) seen.add(row.fact_id);
-    points = [...fresh.filter((row) => !String(row.metric ?? '').startsWith('profile.')), ...points];
+    points = [...fresh.filter((row) => facetOfMetric(row.metric as string | null) === null), ...points];
     if (rows.length < TRAJECTORY_NATIVE_PAGE || points.length >= limit || fresh.length === 0) break;
     until = String(rows[0]!.valid_from);
   }
