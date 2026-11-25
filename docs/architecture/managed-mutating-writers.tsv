@@ -82,6 +82,9 @@ op	run_onboard	no_canonical_write	Runs remediation steps; each step keeps its ow
 op	run_skillopt	no_canonical_write	Skill files and proposals outside the brain database.
 op	loops_close	coordinator	open_loops state rows; the commitment fact is retired (expired, fence row struck) through the loop-fact-retirement coordinator mutation (#5869).
 op	loops_mute	no_canonical_write	Loop suppression rows.
+op	household_add	coordinator	Household record (and subject household_role) pages through put_page's coordinated mutation (submitPageMutation).
+op	household_mark	coordinator	One conditional put_page of the record (state and timeline line) through submitPageMutation.
+op	household_replace	coordinator	Rewrites household records whose placement changed, each through put_page's coordinated mutation.
 op	memory_conversation_mode	no_canonical_write	Returns the rule for the rest of the calling conversation; stores nothing.
 op	set_memory_writeback	no_canonical_write	memory.agent_writeback config row plus an mcp_request_log audit row; no page content.
 op	mute_notice	no_canonical_write	Notice mute list in <GBRAIN_HOME>/notices/muted.json; no brain table or canonical file.

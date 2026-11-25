@@ -23,6 +23,7 @@ const load_feedback = () => import('./ops/feedback.ts') as Promise<Record<string
 const load_files = () => import('./ops/files.ts') as Promise<Record<string, unknown>>;
 const load_find_pages = () => import('./ops/find-pages.ts') as Promise<Record<string, unknown>>;
 const load_graph_rank = () => import('./ops/graph-rank.ts') as Promise<Record<string, unknown>>;
+const load_household = () => import('./ops/household.ts') as Promise<Record<string, unknown>>;
 const load_image = () => import('./ops/image.ts') as Promise<Record<string, unknown>>;
 const load_ingest_log = () => import('./ops/ingest-log.ts') as Promise<Record<string, unknown>>;
 const load_insights = () => import('./ops/insights.ts') as Promise<Record<string, unknown>>;
@@ -269,6 +270,10 @@ export const OPERATION_LOADERS: Record<string, readonly [() => Promise<Record<st
   "loops_close": [load_loops, "loopsOperations"],
   "loops_mute": [load_loops, "loopsOperations"],
   "loops_unmute": [load_loops, "loopsOperations"],
+  "household_due": [load_household, "householdOperations"],
+  "household_add": [load_household, "householdOperations"],
+  "household_mark": [load_household, "householdOperations"],
+  "household_replace": [load_household, "householdOperations"],
   "questions_pin": [load_questions, "questionsOperations"],
   "questions_list": [load_questions, "questionsOperations"],
   "questions_status": [load_questions, "questionsOperations"],
