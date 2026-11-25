@@ -75,7 +75,8 @@ change it to a shared kind, or widen its `readable_by`. It also cannot delete a 
 many there are, for example when the brain starts
 serving several people. Run it right after you add the second person: until it runs, records written while the brain
 served one person carry no reader list. `household_due` leaves them out for remote callers and says so
-(`household_placement_stale`), but a direct page read still returns them.
+(`household_placement_stale`), but a direct page read still returns them, and making a subject a child counts them as
+shared with helpers, so it is refused until the replace runs.
 
 ## household_exists
 
@@ -114,5 +115,5 @@ A field, the body or the timeline of a household record looked like a full accou
 write: the household tools, `put_page`, `edit_page` or sync), so nothing was saved and the value is not repeated back.
 Leave the number out (the last four digits in a title are fine) and keep it in your bank or password manager.
 A frontmatter key shaped like a number counts too, and its name is not repeated back either. Calendar dates and date
-ranges (`2026-12-03 - 2027-01-03`) are never read as numbers, and a key such as `bank` or `card` only counts when it
-names the number (`card_number`, `account_no`, `iban`).
+ranges (`2026-12-03 - 2027-01-03`) are never read as numbers. Keys named `account`, `acct`, `iban` or `routing`
+count on their own; a plain `bank` or `card` key only counts when it names the number (`card_number`, `bank_no`).
