@@ -101,6 +101,8 @@ export interface WaiterOnlyConsumerOpts {
   singleConsumer?: () => Promise<boolean>;
   ceilingMs?: () => Promise<number>;
   heartbeatEveryMs?: number;
+  /** The host registration lease's time to live (ms; default HOST_FENCE_TTL_MS): multi-user Rust only, a test seam. */
+  hostLeaseTtlMs?: number;
   pool?: () => ConsumerPool | null;
   log?: (line: string) => void;
 }
@@ -235,7 +237,7 @@ export class WaiterOnlyConsumer implements PersistenceConsumerLike {
       this.inner = inner;
       this.heartbeat = startConsumerHeartbeat(this.engine, this.opts.hostId, { kind: this.opts.kind, mode: () => this._mode, everyMs: this.opts.heartbeatEveryMs, deadlineMs: this.opts.phaseMs, identity: this.self,
         report: () => ({ restart_required: inner.restartRequired(), root_barrier_age_ms: inner.oldestRootBarrierAgeMs(), pool: this.opts.pool?.() ?? null }) });
-      this.registration = startHostRegistration(this.engine, { hostId: this.opts.hostId, everyMs: this.opts.heartbeatEveryMs,
+      this.registration = startHostRegistration(this.engine, { hostId: this.opts.hostId, everyMs: this.opts.heartbeatEveryMs, ttlMs: this.opts.hostLeaseTtlMs,
         origin: { host_id: this.opts.hostId, incarnation: this.self.nonce, writer_id: `local_consumer:${this.opts.kind}` },
         ...(reason.startsWith('forced:') ? { forcedNonce: this.self.nonce } : {}) });
       inner.start();
