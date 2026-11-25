@@ -25,7 +25,7 @@ export async function callerIsInstallOwner(ctx: OperationContext): Promise<boole
   const member = identity.find(p => p.startsWith('member:'))?.slice('member:'.length);
   if (localStdio && !member) {
     const { stdioMemberId } = await import('../access/caller.ts');
-    return (ctx.stdioMember ?? await stdioMemberId(ctx.engine)) === null;
+    return (ctx.stdioMember ?? await stdioMemberId(ctx.engine, { strict: true }).catch(() => 'unreadable')) === null;
   }
   return !!member && member === await ownerMemberId(ctx.engine);
 }

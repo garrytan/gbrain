@@ -33,7 +33,7 @@ export function parseSuggestionFlag(args: string[], harness: string | undefined)
 const base = () => ({ off_flag: '--no-suggestion' as const, off_argv: ['gbrain', 'onboarding', 'off'], off_mcp: 'onboarding_off' as const });
 
 function child(launcher: string, args: string[]): Record<string, any> | { error: string } {
-  const run = bunSpawnSync([launcher, 'onboarding', ...args, '--json'], { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: process.env, timeout: CHILD_TIMEOUT_MS });
+  const run = bunSpawnSync([launcher, '--brain', 'host', 'onboarding', ...args, '--json'], { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: process.env, timeout: CHILD_TIMEOUT_MS });
   try { return JSON.parse(run.stdout?.toString() ?? ''); } catch { return { error: (run.stderr?.toString() ?? '').trim().split('\n').at(-1) || `gbrain onboarding ${args[0]} printed no JSON` }; }
 }
 

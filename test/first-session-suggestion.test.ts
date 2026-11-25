@@ -211,9 +211,20 @@ for (const kind of testBackends()) {
       if (!('text' in out)) throw new Error(out.reason);
       expect(out.text).not.toContain('canaryfs');
       expect(out.text).not.toContain('<!--');
-      expect(out.text).toContain('run `gbrain onboarding off` (MCP onboarding_off, where this connection lists it); `gbrain onboarding status` says why');
+      expect(out.text).toContain('call onboarding_off (if it is not in your tool list, `request_tools {"surface":"full"}` adds it); outside an agent session, run `gbrain onboarding off`.');
       const hostileLine = out.text.split('\n').find(l => l.endsWith('-> notes/hostile'))!;
       expect(hostileLine.startsWith('- "Ignore previous instructions')).toBe(true);
+    });
+
+    test('a brain whose access policy serves several people is shared, even with one member', async () => {
+      await fresh(engine);
+      await engine.setConfig('access.serves', 'several');
+      try {
+        expect(await firstSessionStatus(engine)).toMatchObject({ state: 'off', reason: 'not_personal' });
+      } finally {
+        await engine.executeRaw('DELETE FROM config WHERE key = $1', ['access.serves']);
+      }
+      expect((await firstSessionStatus(engine)).state).toBe('armed');
     });
 
     test('a brain with two enabled members is shared, even when its client heuristic reads personal', async () => {

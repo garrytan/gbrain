@@ -345,7 +345,7 @@ export async function stdioFirstSessionLane(engine: BrainEngine, opts: { readOnl
   if (opts.readOnly) return 'read_only';
   try {
     const { stdioMemberId } = await import('../core/access/caller.ts');
-    if ((opts.stdioMember ?? await stdioMemberId(engine)) === null) return 'owner';
+    if ((opts.stdioMember ?? await stdioMemberId(engine, { strict: true })) === null) return 'owner';
     const member = (await stdioMemberIdentity(engine, opts.stdioMember)).find(p => p.startsWith('member:'))?.slice('member:'.length);
     if (!member) return 'member';
     const { ownerMemberId } = await import('../core/access/owner.ts');

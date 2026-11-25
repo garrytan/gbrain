@@ -101,6 +101,18 @@ describe('stdioFirstSessionLane', () => {
     expect(await stdioFirstSessionLane(engine, { readOnly: true })).toBe('read_only');
   });
 
+  test('a binding that cannot be read is never the owner lane', async () => {
+    const e = engine;
+    const unreadable = new Proxy(e, {
+  get(t, k) {
+    if (k === 'getConfig') return async (key: string) => { if (key === STDIO_MEMBER_KEY) throw new Error('config read failed'); return t.getConfig(key); };
+    const v = (t as unknown as Record<PropertyKey, unknown>)[k];
+    return typeof v === 'function' ? v.bind(t) : v;
+  },
+}) as PGLiteEngine;
+    expect(await stdioFirstSessionLane(unreadable, { readOnly: false })).toBe('member');
+  });
+
   test('a member binding is the owner lane only when that member is the brain owner and enabled', async () => {
     await engine.setConfig(STDIO_MEMBER_KEY, 'bob-example');
     expect(await stdioFirstSessionLane(engine, { readOnly: false })).toBe('member');

@@ -10,7 +10,7 @@
  * 2. Fails when: the marker is missing, claims off without a verified stop, or names a live serve as an error.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { runCli } from './helpers/cli-spawn.ts';
@@ -43,7 +43,7 @@ async function setup(b: { home: string; bin: string }, args: string[]) {
 function fakeLauncher(outputs: { status: string; off?: string }): string {
   const b = box();
   const path = join(b.root, 'fake-gbrain');
-  writeFileSync(path, '#!/bin/sh\nif [ "$2" = off ]; then printf \'%s\\n\' \'' + (outputs.off ?? '') + '\'; else printf \'%s\\n\' \'' + outputs.status + '\'; fi\n');
+  writeFileSync(path, '#!/bin/sh\nif [ "$4" = off ]; then printf \'%s\\n\' \'' + (outputs.off ?? '') + '\'; else printf \'%s\\n\' \'' + outputs.status + '\'; fi\n');
   chmodSync(path, 0o755);
   return path;
 }
@@ -72,7 +72,7 @@ describe('gbrain setup reports the first-session suggestion', () => {
   test('--no-suggestion that cannot be confirmed exits 1 and says so on stderr', async () => {
     const b = box();
     const wrapped = join(b.root, 'bin', 'gbrain-no-stop');
-    writeFileSync(wrapped, '#!/bin/sh\nif [ "$1" = onboarding ] && [ "$2" = off ]; then printf \'%s\\n\' \'{"verified":false}\'; exit 1; fi\nexec \'' + b.bin + '\' "$@"\n');
+    writeFileSync(wrapped, '#!/bin/sh\nif [ "$3" = onboarding ] && [ "$4" = off ]; then printf \'%s\\n\' \'{"verified":false}\'; exit 1; fi\nexec \'' + b.bin + '\' "$@"\n');
     chmodSync(wrapped, 0o755);
     const r = await setup({ home: b.home, bin: wrapped }, ['claude-code', '--history', 'none', '--no-suggestion']);
     expect(r.doc?.suggestion).toMatchObject({ state: 'unknown', reason: 'stop_unverified' });
@@ -104,6 +104,17 @@ describe('suggestion marker when setup cannot read the record', () => {
     expect(off.marker.why).toContain('onboarding_off');
     expect(off.failed).toBe(true);
     expect(got.failed).toBeUndefined();
+  });
+
+  test('both children read and stop the host brain setup wired, never a mount the cwd or env selects', () => {
+    const b = box();
+    const log = join(b.root, 'argv.log');
+    const path = join(b.root, 'argv-gbrain');
+    writeFileSync(path, '#!/bin/sh\necho "$@" >> \'' + log + '\'\nif [ "$4" = off ]; then printf \'%s\\n\' \'{"verified":true}\'; else printf \'%s\\n\' \'{"state":"off","reason":"stopped","why":"stopped"}\'; fi\n');
+    chmodSync(path, 0o755);
+    const got = suggestionFor({ launcher: path, noSuggestion: true, dryRun: false, liveServe: null })!;
+    expect(got.marker).toMatchObject({ state: 'off', reason: 'stopped' });
+    expect(readFileSync(log, 'utf8').trim().split('\n')).toEqual(['--brain host onboarding off --by setup --json', '--brain host onboarding status --json']);
   });
 
   test('a dry run reports nothing', () => {

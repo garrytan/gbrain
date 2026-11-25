@@ -20,6 +20,7 @@ import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { mintLegacyToken } from '../src/core/token-mint.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { addMember, bindCredential } from '../src/core/access/members.ts';
+import { STDIO_MEMBER_KEY } from '../src/core/access/caller.ts';
 import { OWNER_MEMBER_KEY } from '../src/core/search/private-visibility.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { INSTALL_RECEIPT_KEY } from '../src/core/onboard/setup-history.ts';
@@ -74,10 +75,10 @@ for (const kind of testBackends()) {
       await withEnv({ GBRAIN_HOME: home }, async () => {
         recordFirstSessionOutcome({ harness: 'codex', sessionId: 's1', outcome: 'not_due', reason: 'not_startup' });
         const stdio = await call('onboarding_status', {});
-        expect(stdio.json).toMatchObject({ state: 'armed', max_sessions: 3, off: { mcp: 'onboarding_off' } });
+        expect(stdio.json).toMatchObject({ state: 'off', reason: 'not_personal', max_sessions: 3, off: { mcp: 'onboarding_off' } });
         expect(stdio.json.last_session).toMatchObject({ harness: 'codex', outcome: 'not_due' });
         const http = await call('onboarding_status', { token: 'bob' });
-        expect(http.json.state).toBe('armed');
+        expect(http.json).toMatchObject({ state: 'off', reason: 'not_personal' });
         expect('last_session' in http.json).toBe(false);
       });
     });
@@ -87,6 +88,21 @@ for (const kind of testBackends()) {
       expect(r.isError).toBe(false);
       expect(r.json).toMatchObject({ stopped: true, verified: true, already: false, status: { state: 'off', reason: 'stopped' } });
       expect((await firstSessionStatus(engine)).stopped?.by).toBe('mcp');
+    });
+
+    test('a stdio server whose binding cannot be read is refused and nothing changes', async () => {
+      const e = engine;
+      const unreadable = new Proxy(e, {
+  get(t, k) {
+    if (k === 'getConfig') return async (key: string) => { if (key === STDIO_MEMBER_KEY) throw new Error('config read failed'); return t.getConfig(key); };
+    const v = (t as unknown as Record<PropertyKey, unknown>)[k];
+    return typeof v === 'function' ? v.bind(t) : v;
+  },
+}) as BrainEngine;
+      const out = await dispatchToolCall(unreadable, 'onboarding_off', {}, { remote: true, transport: 'stdio', sourceId: 'default' });
+      expect(out.isError).toBe(true);
+      expect(out.content.map(c => c.text).join('\n')).toContain('onboarding_owner_only');
+      expect(await engine.getConfig(FIRST_SESSION_KEY)).toBeNull();
     });
 
     test('a stdio server bound to the owner member may turn it off', async () => {
@@ -102,7 +118,7 @@ for (const kind of testBackends()) {
         const r = await call('onboarding_off', via);
         expect(r.isError).toBe(true);
         expect(r.text).toContain('onboarding_owner_only');
-        expect((await firstSessionStatus(engine)).state).toBe('armed');
+        expect(await firstSessionStatus(engine)).toMatchObject({ state: 'off', reason: 'not_personal' });
         expect(await engine.getConfig(FIRST_SESSION_KEY)).toBeNull();
       }
     });
@@ -114,7 +130,7 @@ for (const kind of testBackends()) {
       try {
         await withEnv({ GBRAIN_HOME: home }, async () => {
           await runOnboarding(engine, ['status', '--json']);
-          expect(JSON.parse(lines.join('\n'))).toMatchObject({ state: 'armed', off: { argv: ['gbrain', 'onboarding', 'off'] } });
+          expect(JSON.parse(lines.join('\n'))).toMatchObject({ state: 'off', reason: 'not_personal', off: { argv: ['gbrain', 'onboarding', 'off'] } });
           lines.length = 0;
           await runOnboarding(engine, ['off', '--by', 'setup', '--json']);
           expect(JSON.parse(lines.join('\n'))).toMatchObject({ verified: true });
