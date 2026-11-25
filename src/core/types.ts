@@ -403,6 +403,8 @@ export interface PageFilters {
    * read none of those fields (list_pages).
    */
   listColumnsOnly?: boolean;
+  /** The listing columns plus frontmatter: `compiled_truth` and `timeline` come back as '', so a frontmatter scan never ships page bodies. */
+  omitBodies?: boolean;
   /** #7159: frontmatter equality (search/frontmatter-where.ts). */
   where?: import('./search/frontmatter-where.ts').FrontmatterWhere;
 }

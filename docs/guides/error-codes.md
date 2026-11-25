@@ -205,6 +205,16 @@ More: [docs/guides/write-refusals.md#access_rule_invalid](../../docs/guides/writ
 |---|---|---|---|---|---|---|
 | gbrain setup --serves several or gbrain access serves several was given no people (no --members, an empty --members-file), so nothing was written. | Each person gets a member, a folder only they read and a key bound to them; the installer never guesses who they are. | Name every person: --members alice-example,bob-example, or --members-file <file> with one id per line. | agent | `repeat the read that failed` | 1 | no |
 
+### account_number_key
+
+<a id="account_number_key"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A household write was refused because a field looks like a full account or card number; the value is never echoed, and nothing was written. | Household records are read by every connected agent at the caller's scope and some are shared with helpers; a full account or card number has no reason to be there and would spread with them. | Leave the number out (the last four digits in the title are fine) and submit again. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/household.md#account_number_key](../../docs/guides/household.md#account_number_key)
+
 ### acknowledgment_unavailable
 
 <a id="acknowledgment_unavailable"></a>
@@ -3276,6 +3286,46 @@ More: [docs/guides/page-history.md#host_upgrade_required](../../docs/guides/page
 Reasons: `source_bound`, `source_has_pages`, `source_has_path`, `source_archived`, `dir_not_empty`.
 
 More: [docs/designs/GIT_CANONICAL_MEMORY.md#remote-and-hosted-writes](../../docs/designs/GIT_CANONICAL_MEMORY.md#remote-and-hosted-writes)
+
+### household_exists
+
+<a id="household_exists"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| household_add refused because a page already exists at the slug the placement table picked, so nothing was written. | A household record is added once and then changed by events; a second add at the same slug would replace the first record and its history. | Record what happened on the existing record with household_mark, or pass slug to add this one under another name. Run: gbrain household list --json | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/household.md#household_exists](../../docs/guides/household.md#household_exists)
+
+### household_reclassify
+
+<a id="household_reclassify"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A write or delete was refused because it would let more people read household records than the placement table allows: a remote caller retyping a household record, moving one from adults to shared (dropping a child from about, removing audience: adults, a shared kind) or widening its readable_by; a remote caller taking a subject out of child, retyping it, or deleting it while records are about it; or anyone narrowing or deleting a subject while records about it are still shared with helpers. Nothing was written. | A household record's readers are written from its subject's role and its own fields when the record is written; a change that skipped that step would leave readers wider than the table, so these changes run on the brain host, where gbrain household replace --about changes a subject and its records together. | Keep the record or subject as stored, or run the command in fix on the brain host (gbrain household replace --about <slug>, with --role <role> to reclassify); a remote agent asks the brain's owner. Run: gbrain household list --json | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/household.md#household_reclassify](../../docs/guides/household.md#household_reclassify)
+
+### household_scale
+
+<a id="household_scale"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| household_due found more household records in scope than it ranks in one call (2,000), so it returned state partial with no items and no counts. | A partial ranking presented as whole would hide the records it skipped; the answer names the filters that narrow the read instead. | Call household_due again with kinds, about, handled_by or source_id so fewer records are in scope. Run: gbrain household due --kinds bill --json | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/household.md#household_scale](../../docs/guides/household.md#household_scale)
+
+### household_transition
+
+<a id="household_transition"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A write to a household record was refused because it moves the record's status in a way the household transition table does not allow (archived is final; a paused record goes back to active before done); nothing was written. | household_mark records each status change with its event in the record's timeline; a generic page write that moved the status around it would leave a state with no event, so every write path checks the same table. | Record what happened with household_mark (gbrain household mark <slug> <event>), or add a new record with household_add when the old one is archived. Run: gbrain household list --json | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/household.md#household_transition](../../docs/guides/household.md#household_transition)
 
 ### idempotency_conflict
 
