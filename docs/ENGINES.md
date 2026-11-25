@@ -2135,6 +2135,8 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   (`docs/designs/RUST_ENGINE.md`, Phase S). Until the Rust engine serves reads, comparisons record
   `capability_missing`.
 
+To record every engine call, writes included, into private files on this machine for a later replay, see [Shadow capture](guides/shadow-capture.md).
+
 ## Adding a new engine
 
 1. Create `src/core/<name>-engine.ts` implementing `BrainEngine`
