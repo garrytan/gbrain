@@ -42,7 +42,7 @@ test/engine-parity/chunks.test.ts	21	0
 test/engine-parity/cli-capabilities.test.ts	2	0
 test/engine-parity/cli-reads-export.test.ts	16	0
 test/engine-parity/cli-reads-import.test.ts	20	0
-test/engine-parity/cli-reads-ops.test.ts	22	2
+test/engine-parity/cli-reads-ops.test.ts	24	0
 test/engine-parity/code-eval-salience.test.ts	13	0
 test/engine-parity/collate-aggregated-lists.test.ts	5	0
 test/engine-parity/collate-belief-cycle-walks.test.ts	0	6
