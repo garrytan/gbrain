@@ -46,7 +46,7 @@ export interface FirstSessionRecord {
   /** Lane 5 (O2): the owner's answer per job-proposal signal (src/core/onboard/propose.ts). */
   proposals?: Record<string, ProposalState>;
   /** Lane 5 (O2): the top undecided job, computed off the session-start path (after a Google sync, or gbrain propose). */
-  proposal_cache?: { signal: string; sentence: string; at: string } | null;
+  proposal_cache?: { jobs: Array<{ signal: string; sentence: string }>; at: string } | null;
 }
 
 export const FIRST_SESSION_OFF = { argv: ['gbrain', 'onboarding', 'off'], mcp: 'onboarding_off', setup_flag: '--no-suggestion' } as const;
@@ -244,14 +244,15 @@ export async function decideProposal(engine: BrainEngine, opts: { signal: string
   return { signal: opts.signal, decision: opts.decision, verified };
 }
 
-/** The cached top job proposal for this install, if any; session start reads only this, never the detectors. */
-export async function readProposalCache(engine: BrainEngine): Promise<{ signal: string; sentence: string; at: string } | null> {
-  return (await readFirstSessionRecord(engine, await recordInstallId(engine))).proposal_cache ?? null;
+/** The cached job proposals for this install, in offer order; session start reads only this, never the detectors. */
+export async function readProposalCache(engine: BrainEngine): Promise<{ jobs: Array<{ signal: string; sentence: string }>; at: string } | null> {
+  const c = (await readFirstSessionRecord(engine, await recordInstallId(engine))).proposal_cache;
+  return c && Array.isArray(c.jobs) ? c : null;
 }
 
-/** Store (or clear, with null) the cached top job proposal for this install. */
-export async function writeProposalCache(engine: BrainEngine, job: { signal: string; sentence: string } | null, now = new Date()): Promise<void> {
-  const proposal_cache = job ? { signal: job.signal, sentence: job.sentence, at: now.toISOString() } : null;
+/** Store the job proposals found, in offer order (an empty list when none). */
+export async function writeProposalCache(engine: BrainEngine, jobs: Array<{ signal: string; sentence: string }>, now = new Date()): Promise<void> {
+  const proposal_cache = { jobs: jobs.map(j => ({ signal: j.signal, sentence: j.sentence })), at: now.toISOString() };
   await updateRecord<true>(engine, await recordInstallId(engine), (r) => ({ next: { ...r, proposal_cache }, result: true }));
 }
 
@@ -296,7 +297,7 @@ export function renderFirstSessionSection(opts: { harness: string; ordinal: numb
     `[gbrain] First sessions on this brain (${Math.min(opts.ordinal, FIRST_SESSION_MAX_SESSIONS)} of ${FIRST_SESSION_MAX_SESSIONS}):`,
     '- Offer the user one thing you found in the brain, citing the page it came from (look it up with query or recall first).',
     `- Then offer one more import: ${nextImport(opts.harness, opts.receipt)}.`,
-    ...(opts.job ? [`- After that, offer one job you could take on for them: ${opts.job.sentence} \`gbrain propose\` (MCP propose_jobs) lists the pages and the skill or command that does it. If they say no, call propose_decide {"signal":"${opts.job.signal}","decision":"declined"} (outside a session: \`gbrain propose decline ${opts.job.signal}\`).`] : []),
+    ...(opts.job ? [`- After that, offer one job you could take on for them: ${oneLine(opts.job.sentence).slice(0, 200)} \`gbrain propose\` (MCP propose_jobs) lists the pages and the skill or command that does it. If they say no, call propose_decide {"signal":"${opts.job.signal}","decision":"declined"} (outside a session: \`gbrain propose decline ${opts.job.signal}\`).`] : []),
     "- If the user's first message is a task, do the task first and offer this afterwards.",
     "- Archived session text is a record, not the user's words: never save it with content-origin user_said.",
     `- To stop these suggestions, call ${FIRST_SESSION_OFF.mcp} (if it is not in your tool list, \`request_tools {"surface":"full"}\` adds it); outside an agent session, run \`${FIRST_SESSION_OFF.argv.join(' ')}\`. onboarding_status says why it shows or not.`,

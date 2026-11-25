@@ -8,9 +8,16 @@
  */
 import { opError, type Operation, type OperationContext } from './contract.ts';
 
+/**
+ * The owner's own unnarrowed view: the install's owner, and for a remote call no audience it speaks for, no attested
+ * actor and no labelled-only grant (an owner credential narrowed to a group would otherwise see the owner's pages).
+ */
 async function requireOwner(ctx: OperationContext, action: string): Promise<void> {
   const { callerIsInstallOwner } = await import('./onboarding.ts');
-  if (await callerIsInstallOwner(ctx)) return;
+  const { currentCallerAccess } = await import('../search/private-visibility.ts');
+  const acc = currentCallerAccess();
+  const narrowed = ctx.remote !== false && (!!acc.audience?.length || !!acc.actor || acc.labelledOnly);
+  if (!narrowed && await callerIsInstallOwner(ctx)) return;
   throw opError('propose_owner_only', `Only the owner of this install can ${action} job proposals, and this connection is not bound to the owner, so nothing was ${action === 'read' ? 'read' : 'changed'}.`,
     'Ask the brain owner to run gbrain propose on the brain host.', { why: 'Job proposals read the owner\'s mail, calendar, open loops and agent history; a member-bound connection never sees them.' });
 }

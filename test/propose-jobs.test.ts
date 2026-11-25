@@ -30,9 +30,9 @@ import { proposeOperations } from '../src/core/ops/propose.ts';
 import { __setEmbedTransportForTests } from '../src/core/skills/resolver/embed-http.ts';
 import { __setPickerTransportForTests } from '../src/core/skills/resolver/router-http.ts';
 import { buildSkillIndex } from '../src/core/skills/resolver/index.ts';
-import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
+import { __resetPrivateVisibilityCacheForTests, withCallerAccess } from '../src/core/search/private-visibility.ts';
 
-const NOW = new Date('2026-11-25T12:00:00Z');
+const NOW = new Date();
 const day = (offset: number) => new Date(NOW.getTime() + offset * 86_400_000).toISOString();
 const scratch: string[] = [];
 const tmp = (p: string) => { const d = mkdtempSync(join(tmpdir(), p)); scratch.push(d); return d; };
@@ -176,6 +176,15 @@ describe('gbrain propose (repo-less PGLite)', () => {
     expect(out.jobs.length).toBeGreaterThan(0);
   });
 
+  test('an owner connection narrowed to an audience is refused like a member', async () => {
+    const jobs = proposeOperations.find(o => o.name === 'propose_jobs')!;
+    const stdioOwner = { engine, remote: true, transport: 'stdio' } as never;
+    expect(((await jobs.handler(stdioOwner, { days: 7 })) as { jobs: unknown[] }).jobs.length).toBeGreaterThan(0);
+    await withCallerAccess({ audience: ['group:team-a'] } as never, async () => {
+      await expect(jobs.handler(stdioOwner, { days: 7 })).rejects.toMatchObject({ code: 'propose_owner_only' });
+    });
+  });
+
   test('every signal takes accept and decline, stored in the first-session record and shown by propose', async () => {
     const decide = proposeOperations.find(o => o.name === 'propose_decide')!;
     for (const signal of PROPOSE_SIGNALS) for (const decision of ['accepted', 'declined'] as const) {
@@ -255,10 +264,7 @@ describe('gbrain propose (repo-less PGLite)', () => {
       expect(stored.proposals.waiting_on_you).toMatchObject({ decision: 'declined', by: 'cli' });
       const second = await section('s-2');
       expect(second).not.toContain('waiting on you');
-      expect(second).not.toContain('propose_decide');
-      await refreshProposalCache(engine, { now: NOW });
-      const third = await section('s-3');
-      expect(third).toContain('gbrain propose decline owe_reply');
+      expect(second).toContain('gbrain propose decline owe_reply');
 
       const r = await proposeJobs(engine, { days: 7, now: NOW, resolver: { home } });
       expect(r.jobs.find(j => j.signal === 'waiting_on_you')!.decision).toBe('declined');

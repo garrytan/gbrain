@@ -139,8 +139,9 @@ async function meetingPrep(engine: BrainEngine, scope: Scope, now: Date, days: n
           AND lower(q.title) LIKE '%' || $2 || '%' ESCAPE '\\'
        UNION ALL
        SELECT 1 AS one FROM links k JOIN pages f ON f.id = k.from_page_id JOIN pages t ON t.id = k.to_page_id
-        WHERE f.deleted_at IS NULL AND f.type NOT IN ('meeting', 'email', 'conversation') AND ${srcSql('f', 1)} AND t.slug = ANY(string_to_array($3::text, ','))
-       LIMIT 1`, [srcParam(scope), likeEscape(s.title), s.pages.map(p => p.slug).join(',')]);
+        WHERE f.deleted_at IS NULL AND t.deleted_at IS NULL AND f.type NOT IN ('meeting', 'email', 'conversation') AND ${srcSql('f', 1)}
+          AND (t.source_id || '/' || t.slug) = ANY(string_to_array($3::text, ','))
+       LIMIT 1`, [srcParam(scope), likeEscape(s.title), s.pages.map(p => `${p.source_id}/${p.slug}`).join(',')]);
     if (prep.length) continue;
     count++;
     addCite(cites, s.pages[0]!);
@@ -302,29 +303,29 @@ export async function refreshProposalCache(engine: BrainEngine, opts: { now?: Da
   const now = opts.now ?? new Date();
   if ((await firstSessionStatus(engine, { now })).state !== 'armed') return 'not_armed';
   const decisions = await proposalDecisions(engine);
-  let top: { signal: ProposeSignal; sentence: string } | null = null;
+  const jobs: Array<{ signal: ProposeSignal; sentence: string }> = [];
   if (opts.jobs) {
-    const j = opts.jobs.find(x => !decisions[x.signal]);
-    top = j ? { signal: j.signal, sentence: j.sentence } : null;
+    for (const j of opts.jobs) if (!decisions[j.signal]) jobs.push({ signal: j.signal, sentence: j.sentence });
   } else {
     for (const signal of PROPOSE_SIGNALS) {
       if (decisions[signal]) continue;
       const f = await detect(engine, signal, null, now, PROPOSE_DEFAULT_DAYS);
-      if (f.count > 0) { top = { signal, sentence: sentenceFor(signal, f.count, PROPOSE_DEFAULT_DAYS) }; break; }
+      if (f.count > 0) jobs.push({ signal, sentence: sentenceFor(signal, f.count, PROPOSE_DEFAULT_DAYS) });
     }
   }
-  await writeProposalCache(engine, top, now);
-  return top;
+  await writeProposalCache(engine, jobs, now);
+  return jobs[0] ?? null;
 }
 
-/** The session-start read: the cached job, if fresh, still unanswered, and a Google source has synced. No detector runs. */
+/** The session-start read: the first cached job still unanswered, if the cache is fresh and a Google source has synced. No detector runs. */
 export async function cachedProposalForFirstSession(engine: BrainEngine, opts: { now?: Date } = {}): Promise<{ signal: string; sentence: string } | null> {
   const cached = await readProposalCache(engine);
   const now = (opts.now ?? new Date()).getTime();
-  if (!cached || !isProposeSignal(cached.signal) || !(now - Date.parse(cached.at) <= PROPOSAL_CACHE_MAX_AGE_MS)) return null;
-  if ((await proposalDecisions(engine))[cached.signal]) return null;
-  if (!await googleSynced(engine)) return null;
-  return { signal: cached.signal, sentence: cached.sentence };
+  if (!cached || !(now - Date.parse(cached.at) <= PROPOSAL_CACHE_MAX_AGE_MS)) return null;
+  const decisions = await proposalDecisions(engine);
+  const job = cached.jobs.find(j => isProposeSignal(j.signal) && !decisions[j.signal]);
+  if (!job || !await googleSynced(engine)) return null;
+  return { signal: job.signal, sentence: job.sentence };
 }
 
 export function isProposeSignal(s: unknown): s is ProposeSignal {

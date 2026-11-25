@@ -1234,7 +1234,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
       } catch { /* best-effort */ }
     }
 
-    await import('../onboard/propose.ts').then(m => m.refreshProposalCache(engine)).catch(() => null); // lane 5 O2: the first-session job, cached off the session-start path (no-op unless armed)
+    if (!opts.signal?.aborted) await import('../onboard/propose.ts').then(m => m.refreshProposalCache(engine)).catch(() => null); // lane 5 O2: the first-session job, cached off the session-start path (no-op unless armed)
 
     const changed = summary.added + summary.modified + summary.deleted > 0;
     if (activeServices.includes('gmail')) {
