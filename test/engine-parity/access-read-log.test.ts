@@ -177,7 +177,7 @@ describe('engine parity: access read log', () => {
         .insertAccessReadLogRows([logRow('fine', 0), logRow('broken', 0, { result_code: null as unknown as string })])
         .then(() => false, () => true);
       const after = await engine.readAccessReadLog({ since: ago(2), member: null, limit: 10 });
-      const result = { ops: before.map((e) => e.operation), audiences: before.map((e) => e.audience), atEqual: new Set(before.map((e) => e.at)).size, refused, after: after.map((e) => e.operation) };
+      const result = { ops: before.map((e) => e.operation), audiences: before.map((e) => e.audience), atEqual: new Set(before.map((e) => new Date(e.created_at).getTime())).size, refused, after: after.map((e) => e.operation) };
       expect(result).toEqual({
         ops: ['third', 'second', 'first'], audiences: [['member:ada-example'], ['member:ada-example'], ['member:ada-example']], atEqual: 1,
         refused: true, after: ['third', 'second', 'first'],
