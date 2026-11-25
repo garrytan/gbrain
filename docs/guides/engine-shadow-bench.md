@@ -1,6 +1,12 @@
 # Engine shadow speed receipt (criterion 8)
 
-How `gbrain engine shadow bench --import` loads an engine-bench speed receipt and how its numbers are counted. This is the detail behind the "Speed" item of [Rust engine shadow mode](../ENGINES.md) in `docs/ENGINES.md`; it lives here so the engines page stays small.
+How `gbrain engine shadow bench --import` loads an engine-bench speed receipt and how its numbers are counted. This page holds the whole Speed item of [Rust engine shadow mode](../ENGINES.md); it lives here so the engines page and `llms-full.txt` stay under their size cap.
+
+The command, as it was listed with the other `gbrain engine shadow` commands:
+
+```
+gbrain engine shadow bench --import <receipt.json> [--json]   # load an engine-bench speed receipt as criterion 8's evidence
+```
 
 - **Speed (criterion 8, reported and never gating).** `bench --import <receipt.json>` reads the engine-bench speed
   receipt (gbrain-evals `eval/runner/engine-bench/perf.ts`: `benchmark: "engine-bench"`, `stage: "speed"`,

@@ -1910,7 +1910,6 @@ gbrain engine shadow start --plan                  # preview the plan and its pl
 gbrain engine shadow start --yes --expect <hash>   # turn it on (loads the Rust addon first; refuses without it)
 gbrain engine shadow reconcile [--full] [--json]   # compare the whole brain with the Rust store and repair differences
 gbrain engine shadow status [--json]
-gbrain engine shadow bench --import <receipt.json> [--json]   # load an engine-bench speed receipt as criterion 8's evidence
 gbrain engine shadow report [--json]               # prints the report; writes reports/provisional.{json,md} only once the shadow directory exists
 gbrain engine shadow stop [--delete]               # turn it off; --delete removes the shadow directory
 ```
@@ -2188,7 +2187,6 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   differing code points so a swap report can name them. A probe that errors is `not_run`. A glibc `en_US.utf8` host differs
   (U+0085, U+1680, circled letters and more); a C-ctype host differs on every cased non-ASCII letter, so it fails once a fact
   holds one.
-- **Speed (criterion 8, reported and never gating).** `bench --import <receipt.json>` loads an engine-bench speed receipt as criterion 8's evidence; what it accepts, how a row counts as worse, better or not measured, and what it never does are in [`docs/guides/engine-shadow-bench.md`](guides/engine-shadow-bench.md).
 - **Provisional report.** The verdict is always `NOT READY`: this phase compares reads only, write comparisons
   are not built yet, and the readiness decision come in later phases of the plan
   (`docs/designs/RUST_ENGINE.md`, Phase S). Until the Rust engine serves reads, comparisons record
