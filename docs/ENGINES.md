@@ -2168,7 +2168,6 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   `ranking_differences`, `privacy_checks_unsettled_7d` and the counting rules). A count with no evidence is left out, never zero, and the swap reads it as `NOT READY`. The follower and evidence
   fields are read from one epoch; if the epoch keeps changing while the document is built, `epoch_id` is `null`, the
   evidence fields are left out and `evidence_epoch_unstable` is `true`. `gbrain engine swap --plan` reads this same document.
-- **Drill:** [engine-shadow-drill](guides/engine-shadow-drill.md)
 - **Fingerprint probe.** Withdrawals and purge tombstones key on the fact fingerprint, so a primary whose `lower()` or
   `[[:space:]]` answers differ from PGLite's (and Rust's) for some code point would fingerprint a claim holding it
   differently, and a withdrawn fact would not match on Rust. At follower start and on each full pass the probe reads, in
