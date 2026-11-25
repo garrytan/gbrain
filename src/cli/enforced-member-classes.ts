@@ -35,7 +35,7 @@ const WRITE_OPS = [
 /** Operations the mode refuses: admin and local-only surfaces, label and batch writes, and reads without a leak test. */
 const REFUSED_OPS = [
   // reads not yet covered by a no-trace test (each can move to READ_OPS with one)
-  'assemble_evidence', 'chronicle_day', 'chronicle_last_seen', 'chronicle_on_this_day', 'chronicle_since', 'context_pack',
+  'assemble_evidence', 'check_claims', 'chronicle_day', 'chronicle_last_seen', 'chronicle_on_this_day', 'chronicle_since', 'context_pack',
   'delta', 'entity_identity_list', 'extraction_pending', 'fetch', 'find_contradictions', 'find_trajectory',
   'get_active_schema_pack', 'get_brain_health', 'get_brain_identity', 'get_calibration_profile', 'get_chunks',
   'get_ingest_log', 'get_memory_settings', 'get_raw_data', 'get_skill', 'get_skill_asset', 'join_brain', 'learned', 'leave_brain',
@@ -119,7 +119,7 @@ export const CLI_COMMAND_CLASSES: Readonly<Record<string, EnforcedClass | Enforc
     'transcripts', 'models', 'takes', 'onboard', 'founder', 'profile', 'think', 'notability-eval', 'waiting', 'loops', 'household',
     'questions', 'edge-proposals', 'memory-proposals', 'core', 'connectors', 'wakeshift', 'pages', 'quarantine', 'beliefs',
     'trust', 'guests', 'dedupe', 'watch', 'storage', 'code-def', 'code-refs', 'reindex-code', 'reindex-search-vector', 'reindex-frontmatter',
-    'backfill', 'code-callers', 'code-callees', 'repos', 'secrets', 'apple-contacts', 'policy', 'ledger',
+    'backfill', 'code-callers', 'code-callees', 'repos', 'secrets', 'apple-contacts', 'policy', 'claims', 'ledger',
   ].map(n => [n, 'refused' as const])),
 };
 

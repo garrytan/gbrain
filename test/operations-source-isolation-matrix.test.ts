@@ -166,6 +166,8 @@ const MATRIX: Row[] = [
   { name: 'household_due', mode: 'skip', reason: 'reads only type household pages, which this fixture does not seed; test/household-remote.test.ts pins its source posture (a token granted another source reads no record, an out-of-grant source_id is refused) and member scoping' },
   { name: 'find_pages', mode: 'isolated', args: { pattern: '*', limit: 100 } },
   { name: 'search', mode: 'isolated', args: { query: 'BETAMARKER', limit: 20 } },
+  // check_claims cites an allowed-claims line only from a source the caller reads (C3).
+  { name: 'check_claims', mode: 'isolated', args: { text: 'We have 77 widgets.' } },
   { name: 'query', mode: 'isolated', args: { query: 'BETAMARKER', limit: 20 } },
   // search_exact echoes its phrase, so the probe reads the matches and the unreadable-page sample.
   { name: 'search_exact', mode: 'isolated', args: { phrase: 'BETAMARKER' },
@@ -261,6 +263,11 @@ beforeAll(async () => {
       type: 'note', title: `${MARK} Note`, compiled_truth: `${name}-secret-content ${MARK}`,
       timeline: `- ${TODAY}: ${MARK} timeline entry`, frontmatter: { marker: MARK },
     }, { sourceId: src });
+    if (name === 'beta') {
+      await engine.putPage('facts/beta-claims', {
+        type: 'facts', title: `${MARK} Facts`, compiled_truth: `- 2026-01-01: 77 ${MARK} widgets.`, frontmatter: { claims: 'allowed' },
+      }, { sourceId: src });
+    }
     // Typeless page: schema_review_orphans lists pages with NULL/empty type.
     await engine.putPage(`misc/${name}-orphan`, {
       type: 'note', title: `${MARK} Orphan`, compiled_truth: `${MARK} orphan`, frontmatter: {},
