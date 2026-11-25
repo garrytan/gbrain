@@ -68,7 +68,8 @@ gbrain profile --budget-tokens 400   # pack into 400 tokens; the rest is counted
 
 An agent calls `context_pack {profile: true}` (add `budget_tokens` to cap it). The response's `profile` block has:
 
-- `entity`: your page's slug and how it was found (`basis`), never the email or account that identified you;
+- `entity`: your page's slug and how it was found (`basis`), never the email or account that identified you; the slug
+  is `null` when your page is in a source this credential cannot read;
 - `constraints`: `allergy` and `constraint` facts;
 - `facets`: every other faceted fact;
 - `preferences`: facts on your page saved with `kind: preference` and no facet;

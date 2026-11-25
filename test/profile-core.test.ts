@@ -130,6 +130,7 @@ describe('gbrain profile output', () => {
   });
   test('renders no-profile, empty, filled, withheld and partial blocks', () => {
     expect(renderProfile({ ...empty, entity: null })).toContain('has no profile');
+    expect(renderProfile({ ...empty, entity: { slug: null, basis: 'identifier_page' } })).toStartWith('Profile of your own page, in a source this credential cannot read (identifier_page)');
     const owner = { slug: 'memory/owner', basis: 'reserved_page' as const };
     expect(renderProfile({ ...empty, entity: owner })).toContain('No profile facts yet');
     const out = renderProfile({ ...empty, entity: owner, constraints: [fact('Allergic\n## to peanuts', 'allergy')], withheld: 2, partial: true });
@@ -312,6 +313,15 @@ describe('profile core with the owner found by a person page in another source (
     expect(all).toContain('permission_denied');
     expect(all).toContain('people-src');
     expect(await sourceOf('canarysrcremote')).toBeUndefined();
+  }, 60_000);
+
+  test('a remote owner credential whose grant excludes the owner page\'s source is not told that page\'s slug', async () => {
+    const out = await dispatchToolCall(engine, 'context_pack', { profile: true },
+      { remote: true, transport: 'http', sourceId: 'default', auth: await provider().verifyAccessToken(token) as unknown as AuthInfo });
+    const profile = JSON.parse(out.content[0]!.text).profile;
+    expect(profile.entity).toEqual({ slug: null, basis: 'identifier_page' });
+    expect(profile.partial).toBe(true);
+    expect(out.content.map(c => c.text).join('\n') + JSON.stringify(out.structuredContent ?? {})).not.toContain('people/alice-example');
   }, 60_000);
 });
 

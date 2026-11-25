@@ -30,8 +30,11 @@ export interface ProfileFact {
 }
 export interface ProfileRelationship { type: string; direction: 'out' | 'in'; slug: string; context: string | null }
 export interface ProfileBlock {
-  /** The caller's own entity and how it was found (never the identifiers used to find it); null when the caller has none. */
-  entity: Pick<ProfileSelf, 'slug' | 'basis'> | null;
+  /**
+   * The caller's own entity and how it was found (never the identifiers used to find it); null when the caller has none.
+   * slug is null when the entity's page is in a source this caller cannot read.
+   */
+  entity: { slug: string | null; basis: ProfileSelf['basis'] } | null;
   facets: ProfileFact[];
   constraints: ProfileFact[];
   relationships: ProfileRelationship[];
@@ -113,7 +116,7 @@ export async function readProfile(ctx: OperationContext, readable: string[], eli
   const relationships = (card?.card?.edges ?? []).map(e => ({ type: e.type, direction: e.direction, slug: e.slug, context: e.context }));
   const faceted = items.filter(i => i.facet !== null);
   return {
-    entity: { slug: self.slug, basis: self.basis },
+    entity: { slug: self.source_id && sources.length === 0 ? null : self.slug, basis: self.basis },
     facets: faceted.filter(i => !CONSTRAINT_FACETS.includes(facetKind(i.facet!))),
     constraints: faceted.filter(i => CONSTRAINT_FACETS.includes(facetKind(i.facet!))),
     relationships,

@@ -45,7 +45,7 @@ const line = (f: ProfileFact, label: string) =>
 
 export function renderProfile(block: ProfileBlock): string {
   if (!block.entity) return 'This credential has no profile: it speaks for no member and is not the brain owner.';
-  const out = [`Profile of ${block.entity.slug} (${block.entity.basis})`];
+  const out = [`Profile of ${block.entity.slug ?? 'your own page, in a source this credential cannot read'} (${block.entity.basis})`];
   const section = (title: string, rows: string[]) => { if (rows.length) out.push('', title, ...rows); };
   section('Constraints:', block.constraints.map(f => line(f, f.facet!)));
   section('Facets:', block.facets.map(f => line(f, f.facet!)));
