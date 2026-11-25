@@ -29,7 +29,7 @@ import {
   RECURS, readHouseholdRecord, strictDate, strictMonthDay, type HouseholdIssue, type HouseholdKind, type HouseholdRecord,
 } from '../household/record.ts';
 import { assessHouseholdRecord, calendarDay, rankAssessments, type HouseholdAssessment, type HouseholdState } from '../household/assess.ts';
-import { aboutOf, classifySubjects, placeHouseholdFrontmatter, placeRecord, refuseAccountNumbers, roleClass, type SubjectClass } from '../household/placement.ts';
+import { aboutOf, classifySubjects, placeHouseholdFrontmatter, placeRecord, readersWiderThanTable, refuseAccountNumbers, roleClass, type SubjectClass } from '../household/placement.ts';
 
 /** Records one household_due call reads at most; past it the answer is partial with no counts. */
 export const HOUSEHOLD_SCAN_CAP = 2_000;
@@ -166,7 +166,7 @@ const household_due: Operation = {
       assessed.push(assessHouseholdRecord(r, day, { windowDays }));
     }
     if (stale.length) ctx.emitNotice?.({ code: 'household_placement_stale', kind: 'degraded',
-      why: `${stale.length} household record(s) were left out: a subject they are about was reclassified after they were last written, so their readers are being recomputed. Ask the brain's owner to run the fix.`,
+      why: `${stale.length} household record(s) were left out: their stored readers are wider than the placement table now allows (a subject was reclassified, or they were written before the brain served several people). Ask the brain's owner to run the fix.`,
       fix: { argv: ['gbrain', 'household', 'replace'], consent: [], actor: 'host_admin', requires_exclusive: false, why: 'Recomputes every household record\'s readers from the placement table.' } });
     const counts: Record<HouseholdState | 'invalid', number> = { overdue: 0, at_risk: 0, upcoming: 0, ok: 0, unknown: 0, invalid: invalid.length };
     for (const a of assessed) counts[a.state]++;
@@ -186,6 +186,7 @@ const SCAN_BATCH = 500;
 async function scanRecords(ctx: OperationContext, opts: { excludePrivate: boolean; kinds: string[] | null | undefined; about?: string; handledBy?: string;
   scope: Awaited<ReturnType<typeof requestSourceScope>> }): Promise<HouseholdPage[]> {
   const kept: HouseholdPage[] = [];
+  if (opts.kinds && !opts.kinds.length) return kept;
   for (let offset = 0; ; offset += SCAN_BATCH) {
     const batch = await ctx.engine.listPages({ type: HOUSEHOLD_TYPE as never, limit: SCAN_BATCH, offset, excludePrivate: opts.excludePrivate, sort: 'slug', omitBodies: true,
       ...(opts.kinds ? { where: { kind: opts.kinds } } : {}), ...opts.scope }) as unknown as HouseholdPage[];
@@ -202,21 +203,23 @@ async function scanRecords(ctx: OperationContext, opts: { excludePrivate: boolea
 }
 
 /**
- * Records whose stored audience is wider than the placement table now says (a subject became a child, or lost its
- * classification, after the record's last write). A remote read leaves them out until `gbrain household replace`
+ * Records whose stored audience or readers are wider than the placement table now says (a subject became a child, or
+ * lost its classification, after the record's last write; or the record was written with no reader list while the brain
+ * served one person, and it now serves several). A remote read leaves them out until `gbrain household replace`
  * rewrites them, so a reclassification never leaks through a stale readers list.
  */
 async function stalePlacements(ctx: OperationContext, records: HouseholdRecord[], rows: HouseholdPage[]): Promise<string[]> {
   const stored = new Map(rows.map(r => [`${r.source_id}:${r.slug}`, r.frontmatter]));
   const out: string[] = [];
   const bySource = new Map<string, HouseholdRecord[]>();
-  for (const r of records) if (r.about.length) bySource.set(r.source_id, [...(bySource.get(r.source_id) ?? []), r]);
+  const wider = await readersWiderThanTable(ctx.engine);
+  for (const r of records) bySource.set(r.source_id, [...(bySource.get(r.source_id) ?? []), r]);
   for (const [sourceId, list] of bySource) {
     const classes = await classifySubjects(ctx.engine, sourceId, [...new Set(list.flatMap(r => r.about))]);
     for (const r of list) {
       const fm = stored.get(`${r.source_id}:${r.slug}`) ?? {};
       const decision = placeRecord({ kind: r.kind, school: r.tags.includes('school'), subjects: r.about.map(s => classes.get(s) ?? 'unclassified'), requested: fm.audience });
-      if (decision.audience === 'adults' && fm.household_audience !== 'adults') out.push(`${r.source_id}:${r.slug}`);
+      if ((decision.audience === 'adults' && fm.household_audience !== 'adults') || await wider(fm, decision.audience)) out.push(`${r.source_id}:${r.slug}`);
     }
   }
   return out;
@@ -394,7 +397,7 @@ function applyEvent(ctx: OperationContext, record: HouseholdRecord, fm: Record<s
     const oneOff = record.kind === 'appointment' && record.cadence_days === null;
     if (oneOff && event === 'skip') refuse('skip applies only to an appointment with a cadence.');
     fm.last_done = event === 'skip' ? (now.next_due ?? day) : day;
-    if (typeof fm.due === 'string' && fm.due <= String(fm.last_done)) delete fm.due;
+    if (typeof fm.due === 'string' && fm.due <= String(fm.last_done) && !oneOff) delete fm.due;
     if (oneOff) fm.status = 'done';
     return;
   }
@@ -442,7 +445,7 @@ const household_mark: Operation = {
     }
     const requestId = typeof p.request_id === 'string' ? parseWriteRequestId(p.request_id) : null;
     const prior = requestId ? await getWriteRequest(ctx.engine, await requestPrincipalForContext(ctx), requestId) : null;
-    if (prior && !prior.error_code && prior.slug === slug && prior.source_id === sourceId) {
+    if (prior && prior.state === 'committed' && prior.operation === 'put_page' && prior.slug === slug && prior.source_id === sourceId && (snap.page.timeline ?? '').includes(timelineLine(day, event, note))) {
       return { replayed: true, request_id: p.request_id, slug, event, on: day, status: snap.page.frontmatter?.status ?? 'active' };
     }
     assertInlineBody(snap.page, 'household_mark');

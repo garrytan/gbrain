@@ -96,10 +96,27 @@ export function subjectClass(page: { type?: string | null; frontmatter?: Record<
   return !page || page.type === HOUSEHOLD_TYPE ? 'unclassified' : roleClass(page.frontmatter?.household_role);
 }
 
-/** Live household records about `slug` in `sourceId` whose stored readers include the helpers or family chats groups. */
-export async function sharedRecordsAbout(engine: Pick<BrainEngine, 'listPages'>, sourceId: string, slug: string): Promise<string[]> {
-  const groups = [HOUSEHOLD_GROUPS.helpers, HOUSEHOLD_GROUPS.chats].map(g => 'group:' + g);
-  return (await recordsAbout(engine, sourceId, slug)).filter(row => readerList(row.frontmatter?.readable_by)?.some(r => groups.includes(r))).map(row => row.slug);
+/**
+ * Live household records about `slug` in `sourceId` that someone outside the adults audience can read: a stored reader
+ * the adults readers do not cover (the helpers or family chats group, or a member named directly).
+ */
+export async function sharedRecordsAbout(engine: Pick<BrainEngine, 'listPages' | 'executeRaw' | 'getConfig'>, sourceId: string, slug: string): Promise<string[]> {
+  const adults = tableReaders('adults', await ownerMemberId(engine));
+  const shared: string[] = [];
+  for (const row of await recordsAbout(engine, sourceId, slug)) {
+    if (await readersWiden(engine, readerList(row.frontmatter?.readable_by) ?? [], adults)) shared.push(row.slug);
+  }
+  return shared;
+}
+
+/**
+ * A check for records whose stored readers are wider than the table's readers for their audience, on a brain that
+ * serves several people (no stored list reads as everyone); on a brain that serves one person nothing is wider.
+ */
+export async function readersWiderThanTable(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig'>): Promise<(frontmatter: Record<string, unknown>, audience: HouseholdAudience) => Promise<boolean>> {
+  if ((await brainServes(engine as BrainEngine)).serves !== 'several') return async () => false;
+  const owner = await ownerMemberId(engine);
+  return (frontmatter, audience) => readersWiden(engine, readerList(frontmatter.readable_by), tableReaders(audience, owner));
 }
 
 async function recordsAbout(engine: Pick<BrainEngine, 'listPages'>, sourceId: string, slug: string) {

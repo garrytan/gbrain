@@ -71,7 +71,9 @@ tools, sync and imports (a household page too large for the streamed import is h
 agent cannot widen a record: it cannot change its type, drop a child from its `about`, remove `audience: adults`,
 change it to a shared kind, or widen its `readable_by`. It also cannot delete a subject that records are about.
 `gbrain household replace` with no `--about` recomputes every record's readers, for example when the brain starts
-serving several people.
+serving several people. Run it right after you add the second person: until it runs, records written while the brain
+served one person carry no reader list. `household_due` leaves them out for remote callers and says so
+(`household_placement_stale`), but a direct page read still returns them.
 
 ## household_exists
 

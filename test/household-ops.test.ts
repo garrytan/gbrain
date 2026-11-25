@@ -161,7 +161,26 @@ describe('one write admission on every path, and writes that keep their state (H
     const add = await call('household_add', { kind: 'appointment', title: 'Piano tuning', due: '2026-12-05' });
     const done = await call('household_mark', { slug: add.slug, event: 'done', on: '2026-12-05' });
     expect(done.status).toBe('done');
-    expect((await engine.getPage(add.slug))!.frontmatter.status).toBe('done');
+    expect((await engine.getPage(add.slug))!.frontmatter).toMatchObject({ status: 'done', due: '2026-12-05' });
+    const all = await call('household_due', { as_of: AS_OF, include: 'all', limit: 100, window_days: 366 });
+    expect(all.invalid.map((i: any) => i.slug)).not.toContain(add.slug);
+    expect((await call('household_mark', { slug: add.slug, event: 'archive', on: '2026-12-06' })).status).toBe('archived');
+  });
+
+  test('an empty kinds list reads nothing instead of failing (final review B2)', async () => {
+    const due = await call('household_due', { as_of: AS_OF, kinds: [] });
+    expect(due.state).toBe('complete');
+    expect(due.items).toEqual([]);
+  });
+
+  test('a request_id reused for a different mark is not reported as replayed (final review B3)', async () => {
+    const add = await call('household_add', { kind: 'bill', title: 'Recycling pickup', due: '2026-12-11', recurs: 'monthly' });
+    await call('household_mark', { slug: add.slug, event: 'paid', on: AS_OF, request_id: 'recycling-mark-1' });
+    const other = await call('household_mark', { slug: add.slug, event: 'skip', on: AS_OF, request_id: 'recycling-mark-1' }).catch(caught);
+    expect(other.replayed).toBeUndefined();
+    expect(other.code).toBe('idempotency_conflict');
+    const page = await engine.getPage(add.slug);
+    expect(page!.timeline).not.toContain('household — skip');
   });
 
   test('a household_add whose record write fails leaves its subjects as they were (outside#6)', async () => {
