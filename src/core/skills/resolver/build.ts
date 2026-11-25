@@ -99,7 +99,7 @@ const bodyHash = (s: SkillRecord) => sha(s.body);
 
 /** sha256 over every effective input that affects ranking, eligibility or loading. */
 export function catalogHash(skills: readonly SkillRecord[], skipped: readonly SkippedSkill[], routingRows: number, scope: string): string {
-  const rows = skills.map(s => [s.id, s.name, s.description, s.whenToUse ?? '', s.triggers, s.routing, bodyHash(s), s.path ?? '', s.namespace ?? '']);
+  const rows = skills.map(s => [s.id, s.name, s.description, s.whenToUse ?? '', s.triggers, s.routing, bodyHash(s), s.path ?? '', s.namespace ?? '', ...(s.deprecated ? [{ deprecated: s.replacedBy ?? true }] : [])]);
   const skips = skipped.map(k => [k.reason, k.id ?? '', k.path ?? '', k.kept ?? '']).sort((a, b) => (JSON.stringify(a) < JSON.stringify(b) ? -1 : 1));
   return sha(JSON.stringify({ v: 1, skills: rows, skipped: skips, routing_rows: routingRows, scope }));
 }

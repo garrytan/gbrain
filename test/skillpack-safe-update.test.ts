@@ -15,7 +15,7 @@ import { spawn, spawnSync } from 'child_process';
 
 import { runScaffold } from '../src/core/skillpack/scaffold.ts';
 import {
-  DIFF_LINE_CAP, recordScaffoldBases, runSkillpackRestore, runSkillpackUpdate, setSkillPinned, skillsRootKey, type UpdateOptions,
+  DIFF_LINE_CAP, defaultValidator, recordScaffoldBases, runSkillpackRestore, runSkillpackUpdate, setSkillPinned, skillsRootKey, type UpdateOptions,
 } from '../src/core/skillpack/safe-update.ts';
 import { journalDir, listJournals, sha256 } from '../src/core/skillpack/update-journal.ts';
 import { loadState, saveState } from '../src/core/skillpack/state.ts';
@@ -81,6 +81,17 @@ function update(env: Env, extra: Partial<UpdateOptions> = {}) {
 const read = (env: Env, rel: string) => readFileSync(join(env.ws, 'skills', rel), 'utf-8');
 const write = (env: Env, rel: string, body: string) => writeFileSync(join(env.ws, 'skills', rel), body);
 const outcome = (result: Awaited<ReturnType<typeof update>>, slug: string) => result.skills.find(s => s.slug === slug)!;
+
+describe('the default validator', () => {
+  test('a deprecated skill that keeps its triggers passes the trigger check: it is out of the trigger index by design and loads by name', () => {
+    const root = tmp('sp-safe-validate-');
+    const files = { 'demo/SKILL.md': skill('demo', 'v1').replace('name: demo\n', 'name: demo\ndeprecated: true\n'), 'other/SKILL.md': skill('other', 'v1') };
+    for (const [rel, body] of Object.entries(files)) { mkdirSync(dirname(join(root, rel)), { recursive: true }); writeFileSync(join(root, rel), body); }
+    const validate = defaultValidator(root);
+    expect(validate(root, 'demo').filter(p => p.startsWith('trigger check'))).toEqual([]);
+    expect(validate(root, 'other').filter(p => p.startsWith('trigger check'))).toEqual([]);
+  });
+});
 
 describe('base recording and whole-skill update', () => {
   test('scaffold: a state file that cannot be read warns after the files are written instead of failing', async () => {

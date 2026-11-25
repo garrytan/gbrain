@@ -1051,6 +1051,10 @@
       },
       {
         "category": "brain",
+        "name": "learning_note"
+      },
+      {
+        "category": "brain",
         "name": "memory_proposals_pending"
       },
       {
