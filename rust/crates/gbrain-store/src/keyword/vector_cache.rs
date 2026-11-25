@@ -337,4 +337,42 @@ mod tests {
         })
         .unwrap();
     }
+
+    /// A deep query runs its walk on its own thread (`tsearch::with_query_stack`): the store call's
+    /// cache goes with it, so the worker reuses the caller's vectors and caches into the caller's
+    /// store, never another brain's.
+    #[test]
+    fn a_deep_query_worker_reuses_and_fills_the_callers_cache() {
+        let (a, b) = (
+            Arc::new(KeywordVectors::default()),
+            Arc::new(KeywordVectors::default()),
+        );
+        let _scope = scope::open(&a);
+        let builds = std::sync::atomic::AtomicUsize::new(0);
+        let first = cached(VectorKind::Chunk, &["heron"], build("heron")).unwrap();
+        let deep = super::super::tsearch::DEEP_QUERY_ITEMS + 1;
+        for _ in 0..2 {
+            let hit = super::super::tsearch::with_query_stack(deep, || {
+                cached(VectorKind::Chunk, &["heron"], || {
+                    panic!("the deep thread rebuilt a cached vector")
+                })
+                .unwrap()
+            });
+            assert!(Arc::ptr_eq(&first, &hit));
+            super::super::tsearch::with_query_stack(deep, || {
+                cached(VectorKind::Chunk, &["egret"], || {
+                    builds.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    to_tsvector("egret")
+                })
+                .unwrap()
+            });
+        }
+        assert_eq!(
+            builds.load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "the second deep call reused the first one's vector"
+        );
+        assert!(a.bytes() > 0);
+        assert_eq!(b.bytes(), 0, "another brain's cache stays empty");
+    }
 }

@@ -45,7 +45,7 @@ const STACKDEPTH: usize = 32;
 /// `MAXSTRPOS` check never bounds them.
 const MAX_QUERY_ITEMS: usize = 1 << 17;
 /// A query of more items than this is walked on a thread with `DEEP_STACK_BYTES` of stack.
-const DEEP_QUERY_ITEMS: usize = 1024;
+pub(super) const DEEP_QUERY_ITEMS: usize = 1024;
 /// Stack of the thread that walks a deep query. The address space is reserved, not committed.
 const DEEP_STACK_BYTES: usize = 256 << 20;
 
