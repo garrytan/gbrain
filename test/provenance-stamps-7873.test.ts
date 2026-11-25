@@ -85,11 +85,11 @@ for (const kind of testBackends()) {
       const fileFrontmatter = (slug: string) => parseMarkdown(fs.readFileSync(path.join(brainDir, `${slug}.md`), 'utf8'), slug).frontmatter;
       const page = async (slug: string) => (await engine.readPageSnapshot(slug, { sourceId: 'default' }))!;
       /** A page as an ingestion capture left it: stamped external, and unclassified (stored tier unknown) or classified. */
-      const seed = async (slug: string, frontmatter: Record<string, unknown>, tier: string) => {
+      const seed = async (slug: string, frontmatter: Record<string, unknown>, tier: string, ingestedAt = STORED.ingested_at) => {
         const write = async (tx: BrainEngine) => {
           await tx.putPage(slug, { type: 'note', title: 'Seeded', compiled_truth: 'Captured body', timeline: '', frontmatter,
             source_kind: 'webhook', ingested_via: 'webhook' } as never);
-          await tx.executeRaw('UPDATE pages SET trust_tier = $1, ingested_at = $4::timestamptz WHERE source_id = $2 AND slug = $3', [tier, 'default', slug, STORED.ingested_at]);
+          await tx.executeRaw('UPDATE pages SET trust_tier = $1, ingested_at = $4::timestamptz WHERE source_id = $2 AND slug = $3', [tier, 'default', slug, ingestedAt]);
         };
         await (repo && kind === 'postgres' ? withManagedFixtureWrite(engine, ['default'], write) : write(engine));
         const snapshot = await page(slug);
@@ -109,7 +109,8 @@ for (const kind of testBackends()) {
 
       test('a remote edit_page keeps the stored stamps in the file and the database, and the page does not re-derive higher', async () => {
         const slug = 'inbox/edit-stamps';
-        const before = await seed(slug, STORED, 'unknown');
+        const preciseFirstIngest = '2026-01-02T03:04:05.000123Z';
+        const before = await seed(slug, STORED, 'unknown', preciseFirstIngest);
         const prior = ownerPageTrust({ frontmatter: before.page.frontmatter, channel: 'sync' }).tier;
         expect(prior).toBe('external_untrusted');
         expect((await read(slug)).content).toContain(`ingested_at: '${STORED.ingested_at}'`);
@@ -118,6 +119,15 @@ for (const kind of testBackends()) {
         const after = await page(slug);
         expect(after.page.compiled_truth).toContain('edited');
         expect(stampsOf(after.page.frontmatter)).toEqual(STORED);
+        expect({
+          source_kind: after.page.source_kind,
+          ingested_via: after.page.ingested_via,
+          ingested_at: after.page.ingested_at?.toISOString(),
+        }).toEqual(STORED);
+        const [ingest] = await engine.executeRaw<{ exact: boolean }>(`
+          SELECT ingested_at = $1::timestamptz AS exact FROM pages WHERE source_id = 'default' AND slug = $2
+        `, [preciseFirstIngest, slug]);
+        expect(ingest?.exact).toBe(true);
         expect(lowest(after.page.frontmatter)).toBe('external_untrusted');
         if (repo) {
           const file = fileFrontmatter(slug);
