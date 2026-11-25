@@ -345,7 +345,11 @@ fn a_target_swapped_for_a_link_to_the_brain_is_not_cleaned_through() {
         brain_dir.join(format::FORMAT_FILE).exists(),
         "the brain's FORMAT"
     );
-    assert!(moved.join(RECORDS_FILE).exists(), "the moved copy is left");
+    // The copy's own files are removed through the open handle, wherever its directory went.
+    assert!(
+        !moved.join(RECORDS_FILE).exists(),
+        "the moved copy is emptied"
+    );
     drop(store);
     let _ = fs::remove_dir_all(root);
 }
@@ -358,6 +362,64 @@ fn a_directory_that_cannot_be_synced_is_an_error() {
     assert!(sync_dir(&root).is_ok());
     let error = sync_dir(&root.join("missing")).unwrap_err();
     assert_eq!(error.code, STORE_IO, "{error:?}");
+    drop(store);
+    let _ = fs::remove_dir_all(root);
+}
+
+/// What a test runs on the calling thread at a point inside `Reservation::cleanup`.
+type Hook = Box<dyn Fn(&Path)>;
+
+thread_local! {
+    /// What a test runs on the calling thread at the point where `Reservation::cleanup` has checked
+    /// the target and is about to remove its files.
+    static AFTER_VALIDATION: std::cell::RefCell<Option<Hook>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Called by `Reservation::cleanup` after its checks.
+pub(super) fn after_validation(root: &Path) {
+    AFTER_VALIDATION.with(|hook| {
+        if let Some(hook) = hook.borrow().as_ref() {
+            hook(root);
+        }
+    });
+}
+
+/// The race a reader found: the target is checked, then swapped for a link to a directory that
+/// is not the copy's, and only then are the files removed. Nothing in the other directory may go,
+/// and the report names the path that was left.
+#[cfg(unix)]
+#[test]
+fn a_target_swapped_after_the_check_leaves_the_other_directory_untouched() {
+    let (store, root) = brain("snap-swap-after-check");
+    let victim = root.join("victim");
+    fs::create_dir_all(&victim).unwrap();
+    for name in [RECORDS_FILE, format::FORMAT_FILE, MANIFEST_FILE] {
+        fs::write(victim.join(name), b"must survive").unwrap();
+    }
+    let target = root.join("copy");
+    let (moved, link_to) = (root.join("moved"), victim.clone());
+    AFTER_VALIDATION.with(|hook| {
+        *hook.borrow_mut() = Some(Box::new(move |path: &Path| {
+            fs::rename(path, &moved).unwrap();
+            std::os::unix::fs::symlink(&link_to, path).unwrap();
+        }));
+    });
+    let error = cancelled_with(&store, &target, || {});
+    AFTER_VALIDATION.with(|hook| *hook.borrow_mut() = None);
+    for name in [RECORDS_FILE, format::FORMAT_FILE, MANIFEST_FILE] {
+        assert!(
+            victim.join(name).exists(),
+            "{name} of the other directory survives"
+        );
+    }
+    assert_eq!(error.code, STORE_IO, "{error:?}");
+    assert!(error.message.contains("copy"), "{}", error.message);
+    assert!(
+        error.message.contains("was not removed"),
+        "{}",
+        error.message
+    );
     drop(store);
     let _ = fs::remove_dir_all(root);
 }

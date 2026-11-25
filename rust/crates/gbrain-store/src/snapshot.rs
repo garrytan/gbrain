@@ -363,12 +363,17 @@ pub(crate) fn relation_digests(
 }
 
 /// The target directory this call made. `cleanup` (and, as a fallback, dropping the claim) removes
-/// the files it names and the directory, and nothing else, and only while the path still names the
-/// directory this call created.
+/// the files it names and then the directory, and nothing else. On Unix the call keeps the directory
+/// open (`O_DIRECTORY | O_NOFOLLOW`) from the moment it creates it and removes the files relative to
+/// that handle, so a path that is renamed or replaced by a link afterwards cannot send a removal
+/// anywhere else. Where that is not available it removes nothing and reports the target left behind.
 struct Reservation {
     root: PathBuf,
     kept: bool,
-    /// Device and inode of the directory this call created.
+    /// The open directory this call created.
+    #[cfg(unix)]
+    dir: fs::File,
+    /// Device and inode of that directory.
     #[cfg(unix)]
     identity: (u64, u64),
 }
@@ -409,21 +414,51 @@ impl Reservation {
             }
             Err(e) => return Err(io("creating it", e)),
         }
-        let reservation = Reservation {
-            #[cfg(unix)]
-            identity: identity(&fs::symlink_metadata(&root).map_err(|e| io("reading it", e))?),
-            root,
-            kept: false,
+        // From here the directory exists: a failure removes it again, and only if it is still the
+        // one just made (the handle and the path agree).
+        #[cfg(unix)]
+        let reservation = {
+            use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+            let opened = fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+                .open(&root);
+            let made = opened.and_then(|dir| {
+                let meta = dir.metadata()?;
+                let named = fs::symlink_metadata(&root)?;
+                if named.file_type().is_symlink()
+                    || (named.dev(), named.ino()) != (meta.dev(), meta.ino())
+                {
+                    return Err(std::io::ErrorKind::PermissionDenied.into());
+                }
+                Ok((dir, (meta.dev(), meta.ino())))
+            });
+            match made {
+                Ok((dir, identity)) => Reservation {
+                    root,
+                    kept: false,
+                    dir,
+                    identity,
+                },
+                Err(e) => {
+                    let _ = fs::remove_dir(&root);
+                    return Err(io("opening it", e));
+                }
+            }
         };
+        #[cfg(not(unix))]
+        let reservation = Reservation { root, kept: false };
         // The new entry is durable in its parent before anything is written into it; a parent that
         // cannot be synced fails the call, and the drop of `reservation` removes the directory.
         sync_dir(reservation.root.parent().unwrap_or(Path::new(".")))?;
         Ok(reservation)
     }
 
-    /// Removes what this call made. It leaves the path alone when it no longer names the directory
-    /// this call created (it was renamed away or replaced, for example by a link), and it reports a
-    /// removal that did not finish, naming the target that remains.
+    /// Removes what this call made. The files go relative to the open directory handle; the
+    /// directory entry goes only while the path still has the device and inode of that directory.
+    /// A path that names something else is left alone, and so is anything that did not finish: the
+    /// error names the target that remains. Platforms without directory-relative removal remove
+    /// nothing and say so.
     fn cleanup(&mut self) -> Result<()> {
         if self.kept {
             return Ok(());
@@ -435,47 +470,64 @@ impl Reservation {
                 self.root.display()
             ))
         };
-        let meta = match fs::symlink_metadata(&self.root) {
-            Ok(meta) => meta,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(e) => return Err(left(&format!("{}", e.kind()))),
-        };
-        #[cfg(unix)]
-        let same = identity(&meta) == self.identity;
         #[cfg(not(unix))]
-        let same = true;
-        if !meta.is_dir() || meta.file_type().is_symlink() || !same {
-            return Err(left("it no longer names the directory this call made"));
-        }
-        let mut failure = None;
-        for name in [
-            RECORDS_FILE,
-            format::FORMAT_FILE,
-            "FORMAT.tmp",
-            MANIFEST_FILE,
-            "SNAPSHOT.json.tmp",
-        ] {
-            match fs::remove_file(self.root.join(name)) {
-                Ok(()) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => failure = failure.or(Some(format!("{name}: {}", e.kind()))),
+        return Err(left("this platform has no directory-relative removal"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            #[cfg(test)]
+            tests::after_validation(&self.root);
+            let mut failure = None;
+            for name in [
+                RECORDS_FILE,
+                format::FORMAT_FILE,
+                "FORMAT.tmp",
+                MANIFEST_FILE,
+                "SNAPSHOT.json.tmp",
+            ] {
+                match unlink_in(&self.dir, name) {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => failure = failure.or(Some(format!("{name}: {}", e.kind()))),
+                }
+            }
+            if let Some(what) = failure {
+                return Err(left(&what));
+            }
+            match fs::symlink_metadata(&self.root) {
+                Ok(meta)
+                    if meta.is_dir()
+                        && !meta.file_type().is_symlink()
+                        && (meta.dev(), meta.ino()) == self.identity =>
+                {
+                    fs::remove_dir(&self.root)
+                        .map_err(|e| left(&format!("the directory: {}", e.kind())))
+                }
+                Ok(_) => Err(left(
+                    "the path no longer names the directory this call made, and it was left in place",
+                )),
+                // The path is gone; the directory this call made is empty, and nothing else was touched.
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(e) => Err(left(&format!("{}", e.kind()))),
             }
         }
-        match fs::remove_dir(&self.root) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => failure = failure.or(Some(format!("the directory: {}", e.kind()))),
-        }
-        failure.map_or(Ok(()), |what| Err(left(&what)))
     }
 }
 
+/// Removes `name` from the open directory `dir` (`unlinkat`), never following a path.
 #[cfg(unix)]
-fn identity(meta: &fs::Metadata) -> (u64, u64) {
-    (
-        std::os::unix::fs::MetadataExt::dev(meta),
-        std::os::unix::fs::MetadataExt::ino(meta),
-    )
+fn unlink_in(dir: &fs::File, name: &str) -> std::io::Result<()> {
+    use std::os::fd::AsRawFd;
+    let name = std::ffi::CString::new(name)
+        .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+    // SAFETY: `dir` is an open descriptor for the duration of the call and `name` is a
+    // NUL-terminated string that outlives it.
+    let rc = unsafe { libc::unlinkat(dir.as_raw_fd(), name.as_ptr(), 0) };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
 }
 
 impl Drop for Reservation {

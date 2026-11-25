@@ -34,9 +34,12 @@ file is closed, so a caller that sees the return may delete its scratch space. `
 reports `pinned`, false from that moment on. A cancel is checked for every entry of the source pass,
 including the relation digests of a seeded store, so the read is not held for the relations that remain.
 
-The removal is checked: it runs only while the path still names the directory the call created (same
-device and inode, not a link), and a removal that does not finish is a `store_io` error that names the
-target that remains, never a clean cancel. The new directory entry and the finished files are made
+The removal is anchored: on Unix the call keeps the directory it created open (`O_DIRECTORY | O_NOFOLLOW`)
+and unlinks the files relative to that handle, so a path renamed or replaced by a link afterwards cannot
+send a removal elsewhere. The directory entry is removed only while the path still has that directory's
+device and inode. A removal that does not finish, or a path that names something else, is a `store_io`
+error that names the target that remains, never a clean cancel. A platform without directory-relative
+removal removes nothing and reports the target left behind. The new directory entry and the finished files are made
 durable by syncing their directories; a directory that cannot be synced fails the call (a platform
 that cannot open a directory skips the step).
 
