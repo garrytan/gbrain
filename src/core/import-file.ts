@@ -30,7 +30,7 @@ import { sanitizeRemoteBody } from './remote-body.ts';
 import { continueDeferredProjection, DEFERRED_CHUNK_REPLACEMENT, installPageEmbeddings, installPageProjection, preparePageProjection, projectionBelowSafeFence, queuePageProjection,
   readProjectionSnapshot, resealSafeChunks, sealPageTextProjection, stampEmbeddingInputs, type ProjectionSnapshot } from './page-state/projections.ts';
 import { sanitizeText } from './batch-rows.ts';
-import { hasProtectedBody, OCR_REQUIRED_ERROR, provenanceDistrusted, safeChunksFilter } from './search/safe-chunks.ts';
+import { hasProtectedBody, OCR_REQUIRED_ERROR, provenanceDistrusted } from './search/safe-chunks.ts';
 import { planEmbeddingReuse } from './embed-reuse.ts';
 import { reuseStoredChunkVectors, type KeptChunkRow } from './import-chunk-reuse.ts';
 import { applyMoveWaves, planImportChunkWrites } from './page-state/chunk-moves.ts';
@@ -1893,10 +1893,8 @@ export async function importImageFile(
     // OCR text this run would build (--no-embed, OCR budget skip, provider
     // error). Legacy rows without `ocr_status` count as OCR'd when they hold
     // OCR text.
-    const sealed = await engine.executeRaw<{ has_visual: boolean }>(
-      `SELECT EXISTS (SELECT 1 FROM content_chunks c WHERE c.page_id = p.id AND c.embedding_image IS NOT NULL) AS has_visual
-         FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND ${safeChunksFilter('p')}`,
-      [sourceOpts.sourceId, imageSlug]);
+    const seal = await engine.readImageSealProbe(sourceOpts.sourceId, imageSlug);
+    const sealed = seal ? [seal] : [];
     const ocrWanted = !opts.noEmbed && process.env.GBRAIN_EMBEDDING_IMAGE_OCR === 'true';
     const ocrDone = (existing.frontmatter as Record<string, unknown>)?.ocr_status === 'done' || existing.compiled_truth.trim() !== '';
     const indexComplete = !!sealed[0] && (opts.noEmbed || sealed[0].has_visual) && (!ocrWanted || ocrDone);

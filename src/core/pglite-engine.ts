@@ -2783,6 +2783,10 @@ export class PGLiteEngine implements BrainEngine {
   readLivePageFrontmatter(sourceId: string, slug: string, opts?: { timeoutMs?: number }) { return entityReadsImpl.readLivePageFrontmatter(this.untimedRead, sourceId, slug, opts); }
   readEntityAnchoredPages(sourceId: string, entitySlug: string) { return entityReadsImpl.readEntityAnchoredPages(this.untimedRead, sourceId, entitySlug); }
   readPageTitlesById(ids: readonly number[]) { return entityReadsImpl.readPageTitlesById(this.untimedRead, ids); }
+  readImageSealProbe(sourceId: string, slug: string) { return entityReadsImpl.readImageSealProbe(this.untimedRead, sourceId, slug); }
+  readPageChunkerVersion(pageId: number) { return entityReadsImpl.readPageChunkerVersion(this.untimedRead, pageId); }
+  readPrefixAnchoredPages(sourceId: string, prefix: string) { return entityReadsImpl.readPrefixAnchoredPages(this.untimedRead, sourceId, prefix); }
+  readPrivateOnlySlugs(slugs: readonly string[], scope?: pageVisibilityImpl.PrivateOnlySlugScope, opts?: { includeDeleted?: boolean }) { return pageVisibilityImpl.readPrivateOnlySlugs(this.untimedRead, slugs, scope, opts); }
   readTextMentionPages(sourceIds: readonly string[], slugs: readonly string[]) { return entityReadsImpl.readTextMentionPages(this.untimedRead, sourceIds, slugs); }
   listLocalPathSources() { return sourcesImpl.listLocalPathSources(unscopedExecutor(this.engineSql, 'sources: source resolution read it unscoped through executeRaw')); }
   listSourcePathRows() { return sourcesImpl.listSourcePathRows(unscopedExecutor(this.engineSql, 'sources: sources add read it unscoped through executeRaw')); }

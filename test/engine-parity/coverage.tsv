@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2279/2293
+# covered: 2283/2297
 # lifecycle: 12/12
 # pages: 124/125
 # search: 8/8
@@ -36,7 +36,7 @@
 # label_door: 6/6
 # page_purge: 46/46
 # mention_pass: 40/40
-# entity_reads: 29/29
+# entity_reads: 32/32
 # cycle_locks: 10/10
 # minion_jobs: 10/10
 # minion_queue: 137/140
@@ -83,7 +83,7 @@
 # field_usage: 1/1
 # alias_fanout_reads: 8/8
 # write_guards: 16/16
-# page_visibility: 5/5
+# page_visibility: 6/6
 # remote_links: 5/5
 # facts_backstop: 2/2
 # large_page: 2/2
@@ -131,17 +131,17 @@ withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 listCatalogRelations	lifecycle	yes	1	no	yes	yes	serves
 readCatalogSchemaVersion	lifecycle	yes	1	no	yes	yes	serves
 listCatalogForeignKeys	lifecycle	yes	1	no	yes	yes	serves
-getPage	pages	yes	246	yes	yes	yes	serves
-readPageSnapshot	pages	yes	94	no	yes	yes	serves
+getPage	pages	yes	248	yes	yes	yes	serves
+readPageSnapshot	pages	yes	95	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	3	no	yes	yes	serves
 lockPageKeys	pages	yes	15	no	yes	yes	serves
-putPage	pages	yes	1255	yes	yes	yes	serves
+putPage	pages	yes	1260	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	42	yes	yes	yes	serves
 deletePages	pages	yes	4	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	316	yes	yes	yes	serves
+softDeletePage	pages	yes	318	yes	yes	yes	serves
 softDeletePages	pages	yes	4	yes	yes	yes	serves
 restorePage	pages	yes	14	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	8	no	yes	yes	serves
@@ -151,7 +151,7 @@ countPagesBy	pages	yes	1	no	yes	yes	serves
 pageTypeTotals	pages	yes	2	no	yes	yes	serves
 pagePrefixSamples	pages	yes	2	no	yes	yes	serves
 countPagesByTypeForSource	pages	yes	2	no	yes	yes	serves
-resolveSlugs	pages	yes	7	no	yes	yes	serves
+resolveSlugs	pages	yes	8	no	yes	yes	serves
 getAllSlugs	pages	yes	4	no	yes	yes	serves
 listEntityKeyRows	pages	yes	9	no	yes	yes	serves
 listIdentityDecisions	pages	yes	10	no	yes	yes	serves
@@ -1116,6 +1116,9 @@ readIgnoredPrivacyLabelPages	entity_reads	yes	2	no	yes	yes	serves
 readLivePageFrontmatter	entity_reads	yes	2	no	yes	yes	serves
 readEntityAnchoredPages	entity_reads	yes	2	no	yes	yes	serves
 readPageTitlesById	entity_reads	yes	2	no	yes	yes	serves
+readImageSealProbe	entity_reads	yes	1	no	yes	yes	serves
+readPageChunkerVersion	entity_reads	yes	2	no	yes	yes	serves
+readPrefixAnchoredPages	entity_reads	yes	2	no	yes	yes	serves
 readTextMentionPages	entity_reads	yes	2	no	yes	yes	serves
 acquireCycleLock	cycle_locks	yes	17	no	yes	yes	serves
 refreshCycleLock	cycle_locks	yes	1	no	yes	yes	serves
@@ -2066,6 +2069,7 @@ readCallerPageAccess	page_visibility	yes	3	no	yes	yes	serves
 readWriteVisibilityProbe	page_visibility	yes	4	no	yes	yes	serves
 readPagePrivacyHidden	page_visibility	yes	3	no	yes	yes	serves
 readWriterSlugFence	page_visibility	yes	2	no	yes	yes	serves
+readPrivateOnlySlugs	page_visibility	yes	1	no	yes	yes	serves
 setEffectTransactionLimits	remote_links	yes	1	no	yes	yes	serves
 readOwnedLinks	remote_links	yes	1	no	yes	yes	serves
 deleteOwnedLinks	remote_links	yes	1	no	yes	yes	serves

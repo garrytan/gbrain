@@ -19,7 +19,6 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import type { PageReadScope, SearchResult } from '../types.ts';
-import { PINNED_QUESTION_MARKER } from '../questions/identity.ts';
 import { isFactEntityPage } from '../entities/resolve.ts';
 import { ENTITY_ANCHORED_LIMIT } from '../engine-sql/entity-reads.ts';
 import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
@@ -38,14 +37,9 @@ export async function entityAnchoredPages(engine: BrainEngine, sourceId: string,
   return { entity: entity ? { id: entity.id, slug: entitySlug } : null, pages };
 }
 
-/** The newest pages under a slug prefix (question and synthesis pages excluded). */
-export async function prefixAnchoredPages(engine: BrainEngine, sourceId: string, prefix: string, limit = MAX_ANCHORED): Promise<AnchoredPage[]> {
-  const rows = await engine.executeRaw<{ id: number; slug: string }>(
-    `SELECT id, slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND slug LIKE $2
-       AND type NOT IN ('question', 'synthesis') AND NOT (frontmatter ? '${PINNED_QUESTION_MARKER}')
-     ORDER BY COALESCE(effective_date, updated_at) DESC, id DESC LIMIT ${limit}`,
-    [sourceId, `${prefix.replace(/[\\%_]/g, '\\$&')}%`]);
-  return rows.map(r => ({ id: Number(r.id), slug: r.slug }));
+/** The newest pages under a slug prefix (question and synthesis pages excluded), at most MAX_ANCHORED. */
+export async function prefixAnchoredPages(engine: BrainEngine, sourceId: string, prefix: string): Promise<AnchoredPage[]> {
+  return engine.readPrefixAnchoredPages(sourceId, prefix);
 }
 
 /** Asks for the present state of something: "now", "currently", "latest", "these days" and similar. */

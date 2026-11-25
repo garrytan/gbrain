@@ -57,6 +57,14 @@ import { EFFECT_BYTES_SQL } from '../src/core/persistence/receipt-bytes.ts';
 import { ruleCoversSql } from '../src/core/access/folder-rules.ts';
 import { exactIdentityStatement } from '../src/core/engine-sql/exact-identity.ts';
 
+/** findPrivateOnlySlugs' statement, as the caller built it at f9592f7a7e (private-visibility.ts:1162). */
+const privateOnlySlugsSql = (scopeClause: string, includeDeleted: boolean) => `SELECT p.slug FROM pages p
+      WHERE p.slug = ANY($1::text[])
+        ${includeDeleted ? '' : 'AND p.deleted_at IS NULL'}
+        ${scopeClause}
+      GROUP BY p.slug
+      HAVING bool_and(NOT (${privatePagesFilterForCaller('p')}))`;
+
 const memberSql = (member: string) => `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
   FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
   WHERE m.id = (${member}) AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL
@@ -2679,6 +2687,41 @@ const PINS: Pin[] = [
     from: 'src/core/search/entity-anchor.ts:116 applyEntityAnchoring (the anchored page titles; at efeb078093)',
     case: { method: 'readPageTitlesById', variant: 'default', run: e => e.readPageTitlesById([1, 2]) },
     texts: ['SELECT id, title FROM pages WHERE id = ANY($1::int[])'],
+  },
+  {
+    from: 'src/core/search/safe-chunks.ts:192 provenanceDistrusted (the stored chunker version; at f9592f7a7e)',
+    case: { method: 'readPageChunkerVersion', variant: 'default', run: e => e.readPageChunkerVersion(7) },
+    texts: ['SELECT chunker_version FROM pages WHERE id = $1'],
+  },
+  {
+    from: 'src/core/import-file.ts:1896 importImageFile (the unchanged image\'s seal probe; at f9592f7a7e)',
+    case: { method: 'readImageSealProbe', variant: 'default', run: e => e.readImageSealProbe('default', 'images/a.png') },
+    // The fence test is written out in engine-sql; it is rebuilt here from the caller's builder, so a drift in either fails.
+    texts: () => [`SELECT EXISTS (SELECT 1 FROM content_chunks c WHERE c.page_id = p.id AND c.embedding_image IS NOT NULL) AS has_visual
+         FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND ${safeChunksFilter('p')}`],
+  },
+  {
+    from: 'src/core/search/entity-anchor.ts:43 prefixAnchoredPages (the newest pages under a slug prefix; at f9592f7a7e)',
+    case: { method: 'readPrefixAnchoredPages', variant: 'default', run: e => e.readPrefixAnchoredPages('default', 'projects/widget_') },
+    // The marker and the limit are written out in engine-sql; the caller's interpolations are rebuilt from their constants.
+    texts: () => [`SELECT id, slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND slug LIKE $2
+       AND type NOT IN ('question', 'synthesis') AND NOT (frontmatter ? '${PINNED_QUESTION_MARKER}')
+     ORDER BY COALESCE(effective_date, updated_at) DESC, id DESC LIMIT ${MAX_ANCHORED}`],
+  },
+  {
+    from: 'src/core/search/private-visibility.ts:1162 findPrivateOnlySlugs (no scope, live rows; at f9592f7a7e)',
+    case: { method: 'readPrivateOnlySlugs', variant: 'default', run: e => e.readPrivateOnlySlugs(['notes/a'], {}) },
+    texts: () => [privateOnlySlugsSql('', false)],
+  },
+  {
+    from: 'src/core/search/private-visibility.ts:1162 findPrivateOnlySlugs (a federated scope; at f9592f7a7e)',
+    case: { method: 'readPrivateOnlySlugs', variant: 'federated', run: e => e.readPrivateOnlySlugs(['notes/a'], { sourceId: 'x', sourceIds: ['default', 'work'] }) },
+    texts: () => [privateOnlySlugsSql('AND p.source_id = ANY($2::text[])', false)],
+  },
+  {
+    from: 'src/core/search/private-visibility.ts:1162 findPrivateOnlySlugs (one source, deleted rows too; at f9592f7a7e)',
+    case: { method: 'readPrivateOnlySlugs', variant: 'scalar-deleted', run: e => e.readPrivateOnlySlugs(['notes/a'], { sourceId: 'default' }, { includeDeleted: true }) },
+    texts: () => [privateOnlySlugsSql('AND p.source_id = $2', true)],
   },
   {
     from: 'src/core/verbs/entity-text-mentions.ts:103 probe (the text-mention pages; at efeb078093)',
