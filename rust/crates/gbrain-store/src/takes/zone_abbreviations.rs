@@ -1,7 +1,7 @@
 //! PostgreSQL 16's `timezone_abbreviations = 'Default'` set, fixed-offset entries only
 //! (`share/timezonesets/Default`, the abbreviations whose meaning is a number of seconds east of
 //! UTC; generated from that file). The 50 entries the file defines by a zone name (`MSK`, `SGT`,
-//! ...) have an offset that depends on the date, and are not here.
+//! ...) have an offset that depends on the date; they are in `zone_transitions.rs`.
 
 /// (abbreviation in lower case, seconds east of UTC), in byte order of the abbreviation.
 pub(super) const FIXED_ZONE_ABBREVIATIONS: [(&str, i64); 145] = [

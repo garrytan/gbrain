@@ -482,7 +482,7 @@ listTakeRowNums	takes	yes	1	no	yes	yes	serves
 readTakeRowTierByClaim	takes	yes	1	no	yes	yes	serves
 addTakesBatch	takes	yes	119	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	10	no	yes	yes	serves
-listTakes	takes	yes	61	no	yes	yes	serves
+listTakes	takes	yes	62	no	yes	yes	serves
 searchTakes	takes	yes	7	no	yes	yes	serves
 searchTakesVector	takes	yes	7	no	yes	yes	serves
 getTakeEmbeddings	takes	yes	1	no	yes	yes	serves

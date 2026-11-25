@@ -14,18 +14,34 @@
 //! - A time `h:m[:s[.fraction]]`, with `am`/`pm`, an ISO `T` before it, and `24:00`.
 //! - A zone `Z`, `zulu`, `UTC`, `GMT`, `UT`, one of the 145 fixed-offset abbreviations of Postgres's
 //!   `Default` abbreviation set (`PST`, `EST`, `CET`, `CEST`, `BST`, `IST`, `JST`, ...; `zone_abbreviations.rs`),
-//!   or a numeric offset `+hh`, `+hhmm`, `+hh:mm`.
+//!   one of its 50 date-dependent abbreviations (`MSK`, `SGT`, ...; `zone_offset.rs`), a numeric
+//!   offset `+hh`, `+hhmm`, `+hh:mm`, or a zone name of the tzdata after the date (`America/New_York`,
+//!   `Etc/GMT+3`, `EST5EDT`) or, all letters, anywhere (`Japan`).
 //! - `epoch`, `now`, `today`, `tomorrow` and `yesterday` on their own.
 //!
 //! Two-digit years are 2000-2069 and 1970-1999, as Postgres reads them. A field out of range is
 //! Postgres's `date/time field value out of range`; text with no digit and no special word is its
-//! `invalid input syntax`. Zone names, the 50 date-dependent abbreviations of that set (`MSK`, `SGT`, ...), BC dates,
-//! infinities, Julian and ISO week dates are not read.
+//! `invalid input syntax`. A zone name the tzdata does not have, a zone followed by an offset
+//! (`PST+1`), BC dates, infinities, Julian and ISO week dates are not read, nor a zone name or
+//! date-dependent abbreviation at an instant past the zone's last listed transition (late 2037) when
+//! the zone's daylight rules go on (`zone_offset.rs`).
 
 use super::zone_abbreviations::fixed_abbreviation;
+use super::zone_offset::{abbreviation_instant, dynamic_abbreviation, local_instant, named_zone};
+use super::zone_transitions::ZoneRules;
 use crate::env::{days_from_civil, days_in_month};
 
 const DAY_US: i64 = 86_400_000_000;
+
+/// The zone a resolved date is written in.
+enum Zone {
+    /// Seconds east of UTC.
+    Fixed(i64),
+    /// A date-dependent abbreviation (lower case) and the zone it names.
+    Dynamic(&'static ZoneRules, String),
+    /// A zone name.
+    Named(&'static ZoneRules),
+}
 
 /// Why a resolved cell is not a time the store writes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +80,31 @@ enum Tok {
     Date(Vec<String>),
     Word(String),
     Offset(bool, String),
+    /// A field that starts with a letter and runs on with punctuation or digits (Postgres's
+    /// alphabetic `DTK_DATE`): a date such as `mar-01-2026`, or a zone name such as
+    /// `america/new_york`, `etc/gmt+3` or `est5edt`.
+    Name(String),
+}
+
+/// Words of Postgres's core date token table (`datetktbl`) this module reads: a letter run that
+/// is one of them stays a word when a digit or `+` follows it.
+fn core_word(w: &str) -> bool {
+    month(w).is_some()
+        || WEEKDAYS.contains(&w)
+        || [
+            "am",
+            "pm",
+            "at",
+            "on",
+            "t",
+            "epoch",
+            "now",
+            "today",
+            "tomorrow",
+            "yesterday",
+            "infinity",
+        ]
+        .contains(&w)
 }
 
 const MONTHS: [(&str, u32); 24] = [
@@ -170,15 +211,19 @@ fn tokens(text: &str) -> std::result::Result<Vec<Tok>, ResolvedAtError> {
             }
         } else if c.is_ascii_alphabetic() {
             let head = run(&mut i, &|x: u8| x.is_ascii_alphabetic());
-            match (b.get(i), b.get(i + 1)) {
-                (Some(&d @ (b'-' | b'/' | b'.')), Some(n)) if n.is_ascii_alphanumeric() => {
-                    let rest = run(&mut i, &|x: u8| x == d || x.is_ascii_alphanumeric());
-                    let whole = head + &rest;
-                    out.push(Tok::Date(
-                        whole.split(d as char).map(str::to_owned).collect(),
-                    ));
-                }
-                _ => out.push(Tok::Word(head)),
+            let name = match (b.get(i), b.get(i + 1)) {
+                (Some(b'-' | b'/' | b'.'), Some(n)) => n.is_ascii_alphanumeric(),
+                (Some(&n), _) => (n == b'+' || n.is_ascii_digit()) && !core_word(&head),
+                _ => false,
+            };
+            if name {
+                // Postgres runs the field on over these characters.
+                let rest = run(&mut i, &|x: u8| {
+                    x.is_ascii_alphanumeric() || b"+-/_.:".contains(&x)
+                });
+                out.push(Tok::Name(head + &rest));
+            } else {
+                out.push(Tok::Word(head));
             }
         } else if (c == b'+' || c == b'-') && b.get(i + 1).is_some_and(u8::is_ascii_digit) {
             i += 1;
@@ -326,7 +371,7 @@ pub(crate) fn parse(text: &str, now_us: i64) -> Parsed {
     let mut nums: Vec<String> = Vec::new();
     let mut time: Option<(i64, i64, i64, i64)> = None;
     let mut pm: Option<bool> = None;
-    let mut zone: Option<i64> = None;
+    let mut zone: Option<Zone> = None;
     let mut iso_t = false;
     for tok in &toks {
         if iso_t && !matches!(tok, Tok::Time(_)) {
@@ -339,6 +384,28 @@ pub(crate) fn parse(text: &str, now_us: i64) -> Parsed {
                     return Err(Unmodeled);
                 }
                 date = Some(date_field(parts)?);
+            }
+            // After a date, Postgres reads the field as a zone name.
+            Tok::Name(name) if date.is_some() => {
+                if zone.is_some() {
+                    return Err(Unmodeled);
+                }
+                zone = Some(Zone::Named(named_zone(name).ok_or(Unmodeled)?));
+            }
+            // Before one, as a date: a month name and numbers with one kind of delimiter.
+            Tok::Name(name) => {
+                let Some(d) = name.bytes().find(|x| !x.is_ascii_alphanumeric()) else {
+                    return Err(Unmodeled);
+                };
+                if !matches!(d, b'-' | b'/' | b'.')
+                    || !name.bytes().all(|x| x == d || x.is_ascii_alphanumeric())
+                    || named_month.is_some()
+                    || !nums.is_empty()
+                {
+                    return Err(Unmodeled);
+                }
+                let parts: Vec<String> = name.split(d as char).map(str::to_owned).collect();
+                date = Some(date_field(&parts)?);
             }
             Tok::Num(n)
                 if n.len() == 8 && date.is_none() && named_month.is_none() && nums.is_empty() =>
@@ -362,9 +429,14 @@ pub(crate) fn parse(text: &str, now_us: i64) -> Parsed {
                 "t" => iso_t = true,
                 "at" | "on" => {}
                 "am" | "pm" if pm.is_none() => pm = Some(w == "pm"),
-                "z" | "zulu" | "utc" | "gmt" | "ut" if zone.is_none() => zone = Some(0),
+                "z" | "zulu" | "utc" | "gmt" | "ut" if zone.is_none() => {
+                    zone = Some(Zone::Fixed(0))
+                }
                 w if zone.is_none() && fixed_abbreviation(w).is_some() => {
-                    zone = fixed_abbreviation(w)
+                    zone = fixed_abbreviation(w).map(Zone::Fixed)
+                }
+                w if zone.is_none() && dynamic_abbreviation(w).is_some() => {
+                    zone = dynamic_abbreviation(w).map(|z| Zone::Dynamic(z, w.to_owned()))
                 }
                 w if WEEKDAYS.contains(&w) => {}
                 w => match month(w) {
@@ -372,14 +444,18 @@ pub(crate) fn parse(text: &str, now_us: i64) -> Parsed {
                         named_month = Some(i64::from(m));
                         shape.push('M');
                     }
-                    _ => return Err(Unmodeled),
+                    // Postgres tries a word it does not know as a zone name.
+                    _ => match named_zone(w) {
+                        Some(z) if zone.is_none() => zone = Some(Zone::Named(z)),
+                        _ => return Err(Unmodeled),
+                    },
                 },
             },
             Tok::Offset(west, s) => {
                 if zone.is_some() {
                     return Err(Unmodeled);
                 }
-                zone = Some(offset_field(*west, s)?);
+                zone = Some(Zone::Fixed(offset_field(*west, s)?));
             }
         }
     }
@@ -419,9 +495,14 @@ pub(crate) fn parse(text: &str, now_us: i64) -> Parsed {
             h = 0;
         }
     }
-    let day_us = days_from_civil(y, mo, d) * DAY_US;
-    let clock = ((h * 60 + mi) * 60 + s) * 1_000_000 + us;
-    Ok(day_us + clock - zone.unwrap_or(0) * 1_000_000)
+    let local = days_from_civil(y, mo, d) * (DAY_US / 1_000_000) + (h * 60 + mi) * 60 + s;
+    let instant = match zone {
+        None => local,
+        Some(Zone::Fixed(east)) => local - east,
+        Some(Zone::Dynamic(rules, word)) => abbreviation_instant(rules, &word, local)?,
+        Some(Zone::Named(rules)) => local_instant(rules, local)?,
+    };
+    Ok(instant * 1_000_000 + us)
 }
 
 #[cfg(test)]
@@ -504,16 +585,107 @@ mod tests {
             ("2026-03", "Syntax"),
             ("03/01", "Syntax"),
             ("soon", "Syntax"),
-            ("2026-03-01 10:00 MSK", "Unmodeled"),
+            ("2050-07-01 10:00 CLT", "Unmodeled"),
+            ("2038-02-01 10:00 EASST", "Unmodeled"),
             ("2026-03-01 10:00 PST+1", "Unmodeled"),
-            ("2026-03-01 10:00 EST5EDT", "Unmodeled"),
-            ("2026-03-01 10:00 America/New_York", "Unmodeled"),
+            ("2026-03-01 10:00 Europe/Moscow+1", "Unmodeled"),
+            ("2026-03-01 10:00 Mars/Olympus_Mons", "Unmodeled"),
+            ("America/New_York 2026-03-01 10:00", "Unmodeled"),
+            ("2050-07-01 10:00 America/New_York", "Unmodeled"),
             ("1 Mar 2026 10pm", "Unmodeled"),
             ("March 1", "Unmodeled"),
             ("1 2026 March", "Unmodeled"),
             ("infinity", "Unmodeled"),
             ("1.5", "Syntax"),
             ("2026-03-01 10:00 ñ", "Unmodeled"),
+        ] {
+            assert_eq!(at(text), want, "{text}");
+        }
+    }
+
+    #[test]
+    fn a_date_dependent_abbreviation_reads_its_zone_at_the_date() {
+        // What PostgreSQL 16 gave (TimeZone UTC, DateStyle ISO, MDY; tzdata 2026a, the same transitions
+        // for these zones as PGLite's). `MSK` meant +04 from 2011 to 2014; in July 1985 Moscow kept
+        // `MSD`, so `MSK` reads its last earlier meaning, +03. `SGT` is no abbreviation of
+        // Asia/Singapore's tzdata, so it reads the zone's offset at the date (+07:30 in 1980).
+        for (text, want) in [
+            ("2026-03-01 10:00 MSK", "2026-03-01T07:00:00.000000Z"),
+            ("2026-03-01 10:00 msk", "2026-03-01T07:00:00.000000Z"),
+            ("2012-03-01 10:00 MSK", "2012-03-01T06:00:00.000000Z"),
+            ("2014-10-26 00:30 MSK", "2014-10-25T20:30:00.000000Z"),
+            ("2014-10-26 01:30 MSK", "2014-10-25T22:30:00.000000Z"),
+            ("1985-07-01 12:00 MSK", "1985-07-01T09:00:00.000000Z"),
+            ("2026-03-01 10:00 SGT", "2026-03-01T02:00:00.000000Z"),
+            ("1980-03-01 10:00 SGT", "1980-03-01T02:30:00.000000Z"),
+            ("2026-07-01 10:00 CLT", "2026-07-01T14:00:00.000000Z"),
+            ("2026-01-15 10:00 EASST", "2026-01-15T15:00:00.000000Z"),
+            ("2026-01-15 10:00 LHDT", "2026-01-14T23:00:00.000000Z"),
+            ("2026-03-01 10:00 PYT", "2026-03-01T13:00:00.000000Z"),
+            ("March 1, 2026 MSK", "2026-02-28T21:00:00.000000Z"),
+            ("2026-03-01 MSK", "2026-02-28T21:00:00.000000Z"),
+            ("2026-03-01 10:00 pm Novt", "2026-03-01T15:00:00.000000Z"),
+            ("1900-01-01 00:00 VET", "1900-01-01T04:27:40.000000Z"),
+        ] {
+            assert_eq!(at(text), want, "{text}");
+        }
+    }
+
+    #[test]
+    fn a_zone_name_after_the_date_reads_the_zone_at_the_date() {
+        // What PostgreSQL 16 gave, as above. A local time the spring change skips takes the offset
+        // before it; one the autumn change repeats takes the offset after it.
+        for (text, want) in [
+            (
+                "2026-03-01 10:00 America/New_York",
+                "2026-03-01T15:00:00.000000Z",
+            ),
+            (
+                "2026-03-01 10:00 america/new_york",
+                "2026-03-01T15:00:00.000000Z",
+            ),
+            (
+                "2026-07-01 10:00 America/New_York",
+                "2026-07-01T14:00:00.000000Z",
+            ),
+            (
+                "2026-03-08 02:30 America/New_York",
+                "2026-03-08T07:30:00.000000Z",
+            ),
+            (
+                "2026-11-01 01:30 America/New_York",
+                "2026-11-01T06:30:00.000000Z",
+            ),
+            (
+                "2026-03-01 10:00 Europe/Moscow",
+                "2026-03-01T07:00:00.000000Z",
+            ),
+            (
+                "2012-03-01 10:00 Europe/Moscow",
+                "2012-03-01T06:00:00.000000Z",
+            ),
+            ("2026-03-01 10:00 EST5EDT", "2026-03-01T15:00:00.000000Z"),
+            ("2026-03-01 10:00 Etc/GMT+3", "2026-03-01T13:00:00.000000Z"),
+            ("2026-03-01 10:00 Japan", "2026-03-01T01:00:00.000000Z"),
+            ("Japan 2026-03-01 10:00", "2026-03-01T01:00:00.000000Z"),
+            ("2026-03-01 10:00 US/Pacific", "2026-03-01T18:00:00.000000Z"),
+            (
+                "2026-03-01 10:00 Asia/Kolkata",
+                "2026-03-01T04:30:00.000000Z",
+            ),
+            (
+                "2026-03-01 10:00 America/Port-au-Prince",
+                "2026-03-01T15:00:00.000000Z",
+            ),
+            (
+                "2026-07-01 10:00 Australia/Lord_Howe",
+                "2026-06-30T23:30:00.000000Z",
+            ),
+            ("2026-03-01 Europe/London", "2026-03-01T00:00:00.000000Z"),
+            (
+                "2026-03-01T10:00 Europe/Paris",
+                "2026-03-01T09:00:00.000000Z",
+            ),
         ] {
             assert_eq!(at(text), want, "{text}");
         }
