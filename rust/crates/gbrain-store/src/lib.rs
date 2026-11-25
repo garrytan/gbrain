@@ -9,7 +9,6 @@
 //! addon method and each `StoreError::code` into a JavaScript `Error.code`.
 
 pub mod access_derive;
-pub mod scope;
 mod access_flag;
 mod access_key_split;
 pub mod access_member_links;
@@ -22,9 +21,12 @@ mod cascade;
 pub mod chronicle_reads;
 pub mod chunks;
 pub mod cli_reads;
+pub mod clock_floor;
 pub mod config;
+pub mod consumers;
 pub mod env;
 pub mod error;
+pub mod fence;
 #[cfg(test)]
 mod fingerprint_fixture;
 #[cfg(feature = "fjall")]
@@ -36,6 +38,7 @@ pub(crate) mod jsonb;
 pub mod keys;
 pub mod keyspaces;
 pub mod kv;
+pub mod leases;
 pub mod link_slug_reads;
 pub mod links;
 pub mod occ_kv;
@@ -49,6 +52,7 @@ pub mod pages;
 pub mod read_shared;
 pub mod redb_kv;
 pub mod retrieval_feedback;
+pub mod scope;
 pub mod search;
 pub mod seed;
 pub mod shared_skill_catalog;
@@ -492,6 +496,13 @@ impl Store {
                     .as_deref()
                     .map(str::as_bytes),
             );
+        // Multi-user mode: the store's clock never runs below the last committed time (`clock_floor.rs`).
+        let env: Arc<dyn Env> = if multiuser {
+            let floor = clock_floor::read_high_water(&*kv.snapshot()?)?;
+            Arc::new(clock_floor::ClockFloor::new(env, floor))
+        } else {
+            env
+        };
         Ok(Store {
             kv,
             env,
@@ -700,7 +711,13 @@ impl Store {
             // A bound store's env is the transaction's clock (`transactions.rs`, "Time").
             let _clock = crate::env::transaction_clock::open(self.env.clone());
             let _trust = crate::write_trust::stamp_context::open(stamp_trust()?);
-            return tx.statement(|w| write_chain(w, &mut f));
+            return tx.statement(|w| {
+                let value = write_chain(w, &mut f)?;
+                if self.multiuser {
+                    clock_floor::raise_high_water(w, self.env.now_micros())?;
+                }
+                Ok(value)
+            });
         }
         let mut locked: std::collections::BTreeSet<Vec<u8>> = std::collections::BTreeSet::new();
         let mut attempt = 0u32;
@@ -718,6 +735,12 @@ impl Store {
                 let _clock = crate::env::transaction_clock::open(self.env.clone());
                 let _trust = crate::write_trust::stamp_context::open(stamp_trust()?);
                 match write_chain(&mut *tx, &mut f) {
+                    Ok(value) if self.multiuser => {
+                        match clock_floor::raise_high_water(&mut *tx, self.env.now_micros()) {
+                            Ok(()) => tx.commit().map(|_| value),
+                            Err(e) => Err(e),
+                        }
+                    }
                     Ok(value) => tx.commit().map(|_| value),
                     Err(e) => Err(e),
                 }

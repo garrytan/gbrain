@@ -264,3 +264,41 @@ fn a_serialized_counter_error_keeps_its_message() {
     assert_eq!(err.message, "bad counter record");
     t.rollback_transaction().unwrap();
 }
+
+fn origin(host: &str) -> crate::write_origin::WriteOrigin {
+    crate::write_origin::WriteOrigin {
+        host_id: format!("host-{host}"),
+        incarnation: "0190a000-0000-7000-8000-000000000001".into(),
+        writer_id: format!("local_cli:{host}"),
+    }
+}
+
+/// I-1 / I-5: `Transaction::assert_lease` checks the lease inside the transaction, so an optimistic
+/// commit after a takeover is refused; a serialized transaction keeps its own view and the takeover
+/// waits for it.
+#[test]
+fn transaction_assert_lease_is_checked_again_at_commit() {
+    let s = Arc::new(mu_store());
+    let a = s.acquire_lease("job-runner", &origin("a"), 60_000).unwrap().unwrap();
+    let t = s.begin_with(optimistic()).unwrap();
+    t.assert_lease(&a).unwrap();
+    t.store().write(|w| w.put(b"yprotected", b"under epoch 1")).unwrap();
+    s.release_lease(&a).unwrap();
+    let b = s.acquire_lease("job-runner", &origin("b"), 60_000).unwrap().unwrap();
+    assert!(b.epoch > a.epoch);
+    assert_eq!(t.commit().unwrap_err().code, WRITE_CONFLICT);
+    assert_eq!(get(&s, b"yprotected"), None);
+
+    let x = s.begin_with(TxnOptions::default()).unwrap();
+    x.assert_lease(&b).unwrap();
+    let store = s.clone();
+    let old = b.clone();
+    let takeover = std::thread::spawn(move || store.release_lease(&old));
+    std::thread::sleep(Duration::from_millis(50));
+    assert!(!takeover.is_finished(), "a takeover landed inside a serialized transaction");
+    x.store().write(|w| w.put(b"yprotected", b"under epoch 2")).unwrap();
+    x.assert_lease(&b).unwrap();
+    x.commit().unwrap();
+    takeover.join().unwrap().unwrap();
+    assert_eq!(get(&s, b"yprotected").as_deref(), Some(&b"under epoch 2"[..]));
+}

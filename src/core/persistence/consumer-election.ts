@@ -49,6 +49,7 @@ import {
 import { DEFAULT_PREPARATION_POLICY } from './preparation-budget.ts';
 import { consumerConnectionRoute, consumerOnDirectLane, consumerStatementEngine } from './consumer-lane.ts';
 import { readWriteSwitchSnapshot } from './switches.ts';
+import { rustMultiuserEngine, startHostRegistration, type HostRegistrationHandle } from './host-registration.ts';
 
 export type ConsumerMode = 'probing' | 'full' | 'waiter_only' | 'promoted';
 /** Consecutive ticks a recovered owner must look healthy before a promoted consumer drains back. */
@@ -108,6 +109,8 @@ export class WaiterOnlyConsumer implements PersistenceConsumerLike {
   private _mode: ConsumerMode = 'probing';
   private inner: PersistenceConsumer | undefined;
   private heartbeat: ConsumerHeartbeat | undefined;
+  /** The host registration of a full consumer on a multi-user Rust brain (host-registration.ts); none elsewhere. */
+  private registration: HostRegistrationHandle | undefined;
   private owner: ListedConsumer | null = null;
   private healthyOwnerTicks = 0;
   private probeTimeouts = 0;
@@ -130,7 +133,9 @@ export class WaiterOnlyConsumer implements PersistenceConsumerLike {
   electedOwner(): ElectedOwner | null { return this.owner ? ownerOf(this.owner) : null; }
   start(): void {
     this.stopping = false;
-    if (this.engine.kind !== 'postgres' || ownConsumerForced !== null) { this.becomeFull('full', this.engine.kind !== 'postgres' ? 'single_process_engine' : `forced:${ownConsumerForced}`); return; }
+    // A Rust brain in multi-user mode has clients on several hosts, so it elects like Postgres (audit row B8).
+    const elects = this.engine.kind === 'postgres' || rustMultiuserEngine(this.engine);
+    if (!elects || ownConsumerForced !== null) { this.becomeFull('full', !elects ? 'single_process_engine' : `forced:${ownConsumerForced}`); return; }
     this.schedule(0);
   }
   private schedule(ms: number): void {
@@ -230,6 +235,9 @@ export class WaiterOnlyConsumer implements PersistenceConsumerLike {
       this.inner = inner;
       this.heartbeat = startConsumerHeartbeat(this.engine, this.opts.hostId, { kind: this.opts.kind, mode: () => this._mode, everyMs: this.opts.heartbeatEveryMs, deadlineMs: this.opts.phaseMs, identity: this.self,
         report: () => ({ restart_required: inner.restartRequired(), root_barrier_age_ms: inner.oldestRootBarrierAgeMs(), pool: this.opts.pool?.() ?? null }) });
+      this.registration = startHostRegistration(this.engine, { hostId: this.opts.hostId, everyMs: this.opts.heartbeatEveryMs,
+        origin: { host_id: this.opts.hostId, incarnation: this.self.nonce, writer_id: `local_consumer:${this.opts.kind}` },
+        ...(reason.startsWith('forced:') ? { forcedNonce: this.self.nonce } : {}) });
       inner.start();
       if (mode === 'full') { if (this.timer) clearTimeout(this.timer); this.timer = undefined; }
       if (reason !== 'no_live_owner' && reason !== 'single_consumer_off' && reason !== 'single_process_engine') this.log(`phase=consumer_probe reason=${mode} message="${reason}"`);
@@ -255,7 +263,8 @@ export class WaiterOnlyConsumer implements PersistenceConsumerLike {
       // stop() finishes in-flight tasks and claims nothing new; the heartbeat row goes with it.
       await inner.stop();
       await this.heartbeat?.stop();
-      if (this.inner === inner) { this.inner = undefined; this.heartbeat = undefined; this._mode = 'waiter_only'; this.owner = owner; this.healthyOwnerTicks = 0; }
+      await this.registration?.stop();
+      if (this.inner === inner) { this.inner = undefined; this.heartbeat = undefined; this.registration = undefined; this._mode = 'waiter_only'; this.owner = owner; this.healthyOwnerTicks = 0; }
     })().finally(() => { this.transition = undefined; });
     return this.transition;
   }
@@ -290,5 +299,6 @@ export class WaiterOnlyConsumer implements PersistenceConsumerLike {
     await this.overlapRead;
     await this.inner?.stop();
     await this.heartbeat?.stop();
+    await this.registration?.stop();
   }
 }

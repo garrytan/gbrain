@@ -19,6 +19,7 @@ import { COMPACTED_RECEIPT_BYTES_SQL, EFFECT_BYTES_SQL } from '../persistence/re
 import { TOKEN_GRANT_ROW_COLUMNS, type TokenGrantRow } from '../grants/model.ts';
 import { sqlFragment, trustedSql } from './fragment.ts';
 import { GIT_HOLD_SUMMARY_OP } from './sync-hold-op.ts';
+import type { LeaseToken } from './lease-token.ts';
 
 /** The op of a held file's checkpoint row (sync-holds.ts re-exports it). */
 export const GIT_HOLD_OP = 'sync-hold';
@@ -121,6 +122,8 @@ export interface WriteCompletion {
   id: string; state: 'committed' | 'conflict' | 'failed' | 'cancelled'; outcome: unknown; errorCode: string | null; errorMessage: string | null;
   consumerVersion: string; consumerHostId: string | null; errorDetail: unknown; resultBytes: number; counterKeys: string[]; intentBytes: number;
   retainedBytes: number; terminalReservation: number; probePurges: boolean;
+  /** The caller's host fence on a multi-user Rust brain; the SQL engines ignore it. */
+  fence?: LeaseToken;
 }
 
 /**

@@ -175,6 +175,12 @@ impl Transaction {
     pub fn rollback(self) -> Result<()> {
         self.store.rollback_transaction()
     }
+
+    /// Checks that `token` holds its lease now, and again at commit: the lease record is read inside
+    /// the transaction (interface I-1 / I-5; `Store::assert_lease`).
+    pub fn assert_lease(&self, token: &crate::leases::LeaseToken) -> Result<()> {
+        self.store.assert_lease(token)
+    }
 }
 
 /// The error a single-flight refusal returns.

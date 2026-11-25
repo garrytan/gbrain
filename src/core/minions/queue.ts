@@ -10,11 +10,10 @@
 
 import { APPLICATION_AUTHORITY, assertNoUnreviewedJobs, authorizeJobExecution, currentSubmissionAuthority, parseSubmissionAuthority, type SubmissionAuthority } from './submission-authority.ts';
 import type { BrainEngine } from '../engine.ts';
-import type {
-  MinionJob, MinionJobInput, MinionJobStatus, InboxMessage, TokenUpdate,
-  MinionQueueOpts, ChildDoneMessage, Attachment, AttachmentInput,
+import { rowToMinionJob, rowToInboxMessage, rowToAttachment, NO_JOB_ACTOR, type JobActor,
+  type MinionJob, type MinionJobInput, type MinionJobStatus, type InboxMessage, type TokenUpdate,
+  type MinionQueueOpts, type ChildDoneMessage, type Attachment, type AttachmentInput,
 } from './types.ts';
-import { rowToMinionJob, rowToInboxMessage, rowToAttachment, NO_JOB_ACTOR, type JobActor } from './types.ts';
 export { WATCHDOG_SUSPECT_MARK } from './watchdog-attribution.ts';
 import { decideCoalesce } from './idempotency-coalesce.ts';
 import type { CoalesceAuditEvent } from '../engine-sql/jobs.ts';
@@ -28,6 +27,7 @@ import { isProtectedJobName } from './protected-names.ts';
 import { jsonbSafeJson } from '../text-safe.ts';
 import { assertEmbedBackfillQueueAdmission } from './embed-backfill-admission.ts';
 import { lockDelegatedSubmission, checkDelegatedCapacity, prepareDelegatedReplay, admitDelegatedRetry } from './delegated-admission.ts';
+import { fenceOpts, withFence } from '../persistence/host-fence.ts';
 import {
   computeParamHash,
   resolveAdmissionPolicy,
@@ -881,7 +881,7 @@ export class MinionQueue {
       ...(opts.suspectWaitMs !== undefined ? { suspectWaitMs: opts.suspectWaitMs } : {}),
       handlerTimeouts: HANDLER_DEFAULT_TIMEOUT_MS,
       handlerLockDurations: HANDLER_DEFAULT_LOCK_DURATION_MS,
-      legacySpend: { groupId, capUsd },
+      legacySpend: { groupId, capUsd }, ...fenceOpts(this.engine),
     });
     return row ? rowToMinionJob(row) : null;
   }
@@ -894,7 +894,7 @@ export class MinionQueue {
   }
 
   /** A co-runner of a watchdog drain back to waiting, marked, no attempt burned (token-fenced). */
-  releaseWatchdogClaim(id: number, lockToken: string, errorText: string): Promise<boolean> { return this.engine.releaseWatchdogClaim(id, lockToken, errorText); }
+  releaseWatchdogClaim(id: number, lockToken: string, errorText: string): Promise<boolean> { return this.engine.releaseWatchdogClaim(id, lockToken, errorText, fenceOpts(this.engine)); }
 
   /**
    * Dead-letter active jobs whose timeout_at has passed.
@@ -943,7 +943,7 @@ export class MinionQueue {
    * stranding the parent in waiting-children forever.
    */
   async completeJob(id: number, lockToken: string, result?: Record<string, unknown>): Promise<MinionJob | null> {
-    const row = await retryOnStalePlan(() => this.engine.completeJob(id, lockToken, result));
+    const row = await retryOnStalePlan(() => this.engine.completeJob(id, lockToken, result, fenceOpts(this.engine)));
     return row ? rowToMinionJob(row) : null;
   }
 
@@ -969,7 +969,7 @@ export class MinionQueue {
     backoffMs?: number,
     result?: Record<string, unknown>,
   ): Promise<MinionJob | null> {
-    const row = await retryOnStalePlan(() => this.engine.failJob(id, lockToken, errorText, newStatus, backoffMs, result));
+    const row = await retryOnStalePlan(() => this.engine.failJob(id, lockToken, errorText, newStatus, backoffMs, result, fenceOpts(this.engine)));
     return row ? rowToMinionJob(row) : null;
   }
 
@@ -1003,7 +1003,7 @@ export class MinionQueue {
     errorText: string,
     backoffMs: number,
   ): Promise<MinionJob | null> {
-    const row = await this.engine.delayActiveJob(id, lockToken, { errorText, delayMs: backoffMs, appendStack: true, clearTimeout: false });
+    const row = await this.engine.delayActiveJob(id, lockToken, { errorText, delayMs: backoffMs, appendStack: true, clearTimeout: false }, fenceOpts(this.engine));
     return row ? rowToMinionJob(row) : null;
   }
 
@@ -1013,7 +1013,7 @@ export class MinionQueue {
    * a key for weeks must not accumulate one stack entry per retry).
    */
   async deferJob(id: number, lockToken: string, note: string, delayMs: number): Promise<MinionJob | null> {
-    const row = await this.engine.delayActiveJob(id, lockToken, { errorText: note, delayMs: Math.max(0, delayMs), appendStack: false, clearTimeout: true });
+    const row = await this.engine.delayActiveJob(id, lockToken, { errorText: note, delayMs: Math.max(0, delayMs), appendStack: false, clearTimeout: true }, fenceOpts(this.engine));
     return row ? rowToMinionJob(row) : null;
   }
 
@@ -1032,7 +1032,7 @@ export class MinionQueue {
       const release = this.engine.delayActiveJob(
         id, lockToken,
         { errorText: 'worker_configuration_blocked', delayMs: 30_000, appendStack: false, clearTimeout: true },
-        { signal },
+        { signal, ...fenceOpts(this.engine) },
       ).then(row => signal.aborted ? 'unconfirmed' as const : row ? 'released' as const : 'no_op' as const);
       return await Promise.race([release, cancelled]);
     } catch {
@@ -1068,7 +1068,7 @@ export class MinionQueue {
     // Direct (session-mode) pool — see claim(). The heartbeat that keeps a job
     // alive for minutes cannot run on the transaction pooler without periodic
     // CONNECTION_ENDED drops that look like lock-expiry and orphan the job.
-    return this.engine.renewJobLease(id, lockToken, lockDurationMs, opts);
+    return this.engine.renewJobLease(id, lockToken, lockDurationMs, withFence(this.engine, opts));
   }
 
   /**
@@ -1131,7 +1131,7 @@ export class MinionQueue {
     const graceMs = graceMsOverride ?? resolveStallReclaimGraceMs();
     // GBRA-133 (drain-lease holder records) and GBRA-130 A-30 (a multi-claim worker's co-runners requeue marked, no
     // stall counted) live in the engine statement; stall-deaths notify and unblock parents like every terminal kill.
-    return this.engine.reclaimStalledJobs(graceMs).then(r => ({ requeued: r.requeued.map(rowToMinionJob), dead: r.dead.map(rowToMinionJob) })).then(async (result) => {
+    return this.engine.reclaimStalledJobs(graceMs, fenceOpts(this.engine)).then(r => ({ requeued: r.requeued.map(rowToMinionJob), dead: r.dead.map(rowToMinionJob) })).then(async (result) => {
       // W0 ship-review (data-migration): the per-kill unblock above is
       // forward-only — parents stranded in 'waiting-children' by PRE-upgrade
       // stall-deaths (children already status='dead') are never revisited by

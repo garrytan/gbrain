@@ -15,7 +15,9 @@ use super::{all_requests, is_uuid, json_text};
 use crate::Store;
 use crate::env::Env;
 use crate::error::{Result, StoreError};
+use crate::fence;
 use crate::kv::{KvRead, KvWrite};
+use crate::leases::{CLAIM_EFFECT, LeaseToken};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
@@ -209,6 +211,9 @@ pub struct EffectClaim {
     pub token: String,
     /// The `claim_owner` stamp as JSON text (`$3::text::jsonb`).
     pub owner_json: String,
+    /// The caller's host registration (lane L5). The claim records its lease name and epoch.
+    #[serde(default)]
+    pub fence: Option<LeaseToken>,
 }
 
 pub(crate) fn stamp_effect_claim_in(
@@ -257,6 +262,9 @@ pub struct EffectSettle {
     /// `retryEffectRow` / `retryBusyEffectRow` / `requeueEffectRow`: the wait before the next claim.
     #[serde(default)]
     pub delay_ms: Option<f64>,
+    /// The caller's host registration (lane L5): a claimed effect settles only under the epoch it was claimed under.
+    #[serde(default)]
+    pub fence: Option<LeaseToken>,
 }
 
 fn json_param(text: Option<&str>, what: &str) -> Result<Value> {
@@ -488,13 +496,37 @@ impl Store {
 
     /// `stampEffectClaim(claim)`: the claimed row, or null when no effect has the id.
     pub fn stamp_effect_claim(&self, claim: &EffectClaim) -> Result<Option<Value>> {
-        self.write(|tx| stamp_effect_claim_in(tx, &*self.env, claim))
+        self.write(|tx| {
+            fence::begin(self, tx, claim.fence.as_ref(), "stamp_effect_claim")?;
+            let row = stamp_effect_claim_in(tx, &*self.env, claim)?;
+            if row.is_some() {
+                let id = effect_id(&claim.id)?.to_string();
+                fence::claim_taken(tx, CLAIM_EFFECT, &id, claim.fence.as_ref())?;
+            }
+            Ok(row)
+        })
     }
 
     /// One settle statement (`renewEffectClaim`, `advanceEffectRow`, `completeEffectRow`, ...):
     /// `true` when it matched the claim.
     pub fn settle_effect(&self, action: Settle, spec: &EffectSettle) -> Result<bool> {
-        self.write(|tx| settle_effect_in(tx, &*self.env, action, spec))
+        let fence = spec.fence.as_ref();
+        self.write(|tx| {
+            fence::begin(self, tx, fence, "settle_effect")?;
+            let id = effect_id(&spec.id)?.to_string();
+            let no_recovery = !matches!(action, Settle::Retry | Settle::RetryBusy);
+            if fence.is_some()
+                && claimed(&*tx, &spec.id, spec.token.as_deref(), no_recovery)?.is_some()
+            {
+                fence::claim_held(tx, CLAIM_EFFECT, &id, fence)?;
+            }
+            let settled = settle_effect_in(tx, &*self.env, action, spec)?;
+            // Every settle but a renewal ends the claim (it releases the execution token).
+            if settled && action != Settle::Renew {
+                fence::claim_ended(self, tx, CLAIM_EFFECT, &id, fence)?;
+            }
+            Ok(settled)
+        })
     }
 }
 

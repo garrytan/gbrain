@@ -16,6 +16,7 @@ import type { RustEngine } from '../../rust-engine.ts';
 import { withDates } from '../store-codec.ts';
 import type { StoreBrain } from '../store.ts';
 import { storeCall, type StoreMember } from './common.ts';
+import type { FenceOpts } from '../../engine-sql/lease-token.ts';
 
 /** The `timestamptz` columns of `minion_jobs`, `minion_inbox` and `minion_attachments`. */
 const JOB_DATES = ['lock_until', 'delay_until', 'timeout_at', 'private_queue_lease_until', 'created_at', 'started_at', 'finished_at', 'updated_at'] as const;
@@ -61,22 +62,27 @@ export const addJobTokens: StoreMember<[id: number, lockToken: string, tokens: J
   call('addJobTokens', () => brain.addJobTokens(id, lockToken, tokens));
 
 /** The store's write is not interrupted, as a write already sent to the database is not; a signal is ignored. */
-export const delayActiveJob: StoreMember<[id: number, lockToken: string, spec: DelayActiveJobSpec, opts?: { signal?: AbortSignal }], JobRow | null> =
-  async (brain, id, lockToken, spec) => jobRow(await call('delayActiveJob', () => brain.delayActiveJob(id, lockToken, spec)));
+export const delayActiveJob: StoreMember<[id: number, lockToken: string, spec: DelayActiveJobSpec, opts?: { signal?: AbortSignal } & FenceOpts], JobRow | null> =
+  async (brain, id, lockToken, spec, opts) =>
+    jobRow(await call('delayActiveJob', () => brain.delayActiveJob(id, lockToken, opts?.fence ? { ...spec, fence: opts.fence } : spec)));
 
-export const releaseWatchdogClaim: StoreMember<[id: number, lockToken: string, errorText: string], boolean> = (brain, id, lockToken, errorText) =>
-  call('releaseWatchdogClaim', () => brain.releaseWatchdogClaim(id, lockToken, errorText, WATCHDOG_SUSPECT_MARK));
+export const releaseWatchdogClaim: StoreMember<[id: number, lockToken: string, errorText: string, opts?: FenceOpts], boolean> = (brain, id, lockToken, errorText, opts) =>
+  call('releaseWatchdogClaim', () => opts?.fence
+    ? brain.releaseWatchdogClaim(id, lockToken, errorText, WATCHDOG_SUSPECT_MARK, opts.fence)
+    : brain.releaseWatchdogClaim(id, lockToken, errorText, WATCHDOG_SUSPECT_MARK));
 
 /** How long the worker's two un-run hand-backs delay a claim: the `interval` each SQL statement writes (engine-sql/jobs-queue.ts). */
 const PAUSE_RELEASE_DELAY_MS = 60_000;
 const QUIET_HOURS_DEFER_DELAY_MS = 15 * 60_000;
 
-export const releaseClaimForPause: StoreMember<[id: number, lockToken: string], void> = async (brain, id, lockToken) => {
-  await call('releaseClaimForPause', () => brain.delayHeldClaim(id, lockToken, PAUSE_RELEASE_DELAY_MS));
+export const releaseClaimForPause: StoreMember<[id: number, lockToken: string, opts?: FenceOpts], void> = async (brain, id, lockToken, opts) => {
+  await call('releaseClaimForPause', () =>
+    opts?.fence ? brain.delayHeldClaim(id, lockToken, PAUSE_RELEASE_DELAY_MS, opts.fence) : brain.delayHeldClaim(id, lockToken, PAUSE_RELEASE_DELAY_MS));
 };
 
-export const deferClaimForQuietHours: StoreMember<[id: number, lockToken: string], void> = async (brain, id, lockToken) => {
-  await call('deferClaimForQuietHours', () => brain.delayHeldClaim(id, lockToken, QUIET_HOURS_DEFER_DELAY_MS));
+export const deferClaimForQuietHours: StoreMember<[id: number, lockToken: string, opts?: FenceOpts], void> = async (brain, id, lockToken, opts) => {
+  await call('deferClaimForQuietHours', () =>
+    opts?.fence ? brain.delayHeldClaim(id, lockToken, QUIET_HOURS_DEFER_DELAY_MS, opts.fence) : brain.delayHeldClaim(id, lockToken, QUIET_HOURS_DEFER_DELAY_MS));
 };
 
 export const markJobWatchdogSuspect: StoreMember<[id: number], void> = async (brain, id) => {

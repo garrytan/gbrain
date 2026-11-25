@@ -2,6 +2,7 @@
 //! guarded `UPDATE ... RETURNING *`: the guard reads the row, a miss is `None`/`false`.
 
 use super::*;
+use crate::leases::{CLAIM_JOB, LeaseToken};
 
 /// What `delayActiveJob` does to the row (the three `delayed` releases of the worker).
 #[derive(Debug, Clone, Deserialize)]
@@ -15,6 +16,9 @@ pub struct DelayOpts {
     /// `timeout_at = NULL` (otherwise it is kept).
     #[serde(default)]
     pub clear_timeout: bool,
+    /// The caller's host registration (lane L5): a claim ends only under the epoch it was taken under.
+    #[serde(default)]
+    pub fence: Option<LeaseToken>,
 }
 
 /// `TokenUpdate`: what `updateTokens` adds.
@@ -234,7 +238,13 @@ impl Store {
         lock_token: &str,
         opts: &DelayOpts,
     ) -> Result<Option<Value>> {
+        let fence = opts.fence.as_ref();
         self.write(|tx| {
+            fence::begin(self, tx, fence, "delay_active_job")?;
+            if load(tx, id)?.is_some_and(|r| held_by(lock_token)(&r)) {
+                fence::claim_held(tx, CLAIM_JOB, &id.to_string(), fence)?;
+                fence::claim_ended(self, tx, CLAIM_JOB, &id.to_string(), fence)?;
+            }
             let now = self.env.now_micros();
             let row = update(tx, id, held_by(lock_token), |r| {
                 r.status = "delayed".into();
@@ -261,7 +271,23 @@ impl Store {
     /// The SQL statement has no status guard (only a claim holds a token), so neither has this one.
     /// Whether a row matched (the members return nothing).
     pub fn delay_held_claim(&self, id: i64, lock_token: &str, delay_ms: f64) -> Result<bool> {
+        self.delay_held_claim_fenced(id, lock_token, delay_ms, None)
+    }
+
+    /// `delay_held_claim` under the caller's host fence (see `complete_job_fenced`).
+    pub fn delay_held_claim_fenced(
+        &self,
+        id: i64,
+        lock_token: &str,
+        delay_ms: f64,
+        fence: Option<&LeaseToken>,
+    ) -> Result<bool> {
         self.write(|tx| {
+            fence::begin(self, tx, fence, "delay_held_claim")?;
+            if load(tx, id)?.is_some_and(|r| r.lock_token.as_deref() == Some(lock_token)) {
+                fence::claim_held(tx, CLAIM_JOB, &id.to_string(), fence)?;
+                fence::claim_ended(self, tx, CLAIM_JOB, &id.to_string(), fence)?;
+            }
             let now = self.env.now_micros();
             let row = update(
                 tx,
@@ -288,7 +314,24 @@ impl Store {
         error_text: &str,
         suspect_mark: &str,
     ) -> Result<bool> {
+        self.release_watchdog_claim_fenced(id, lock_token, error_text, suspect_mark, None)
+    }
+
+    /// `release_watchdog_claim` under the caller's host fence (see `complete_job_fenced`).
+    pub fn release_watchdog_claim_fenced(
+        &self,
+        id: i64,
+        lock_token: &str,
+        error_text: &str,
+        suspect_mark: &str,
+        fence: Option<&LeaseToken>,
+    ) -> Result<bool> {
         self.write(|tx| {
+            fence::begin(self, tx, fence, "release_watchdog_claim")?;
+            if load(tx, id)?.is_some_and(|r| held_by(lock_token)(&r)) {
+                fence::claim_held(tx, CLAIM_JOB, &id.to_string(), fence)?;
+                fence::claim_ended(self, tx, CLAIM_JOB, &id.to_string(), fence)?;
+            }
             let now = self.env.now_micros();
             let row = update(tx, id, held_by(lock_token), |r| {
                 r.status = "waiting".into();

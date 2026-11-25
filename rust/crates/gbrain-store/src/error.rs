@@ -70,6 +70,11 @@ pub const UNMODELED_INPUT: &str = "unmodeled_input";
 /// (`src/core/rust-engine/store-errors.ts`). Only multi-user mode sets a deadline, so no other path returns it.
 pub const TIMEOUT: &str = "timeout";
 
+/// A lease fence failed (`leases.rs`): the lease's epoch or token moved, it was released or expired, a protected
+/// entry point on a multi-user store had no fence, or the claim was taken under another epoch. Nothing was written.
+/// The message is JSON: `{ reason, name, epoch, current_epoch }`.
+pub const LEASE_LOST: &str = "lease_lost";
+
 /// A store snapshot was cancelled (`snapshot.rs`). It removed what it had written and released
 /// its read before this error returned.
 pub const SNAPSHOT_CANCELLED: &str = "snapshot_cancelled";
