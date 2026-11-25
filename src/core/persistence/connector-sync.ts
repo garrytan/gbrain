@@ -20,7 +20,7 @@ import { registerEngineView } from './switches.ts';
 import { materializeTimeline, prepareCanonicalProjections } from './canonical-projections.ts';
 import { digest, sha256 } from './digest.ts';
 import { admitWriteInTransaction, assertReplayIntent, getWriteRequest, getWriteRequestById, intentDigest, receiptFor } from './journal.ts';
-import { acquireWorktree, containsPath, getWorktreeBinding, probeWorktreeWriter, readManagedMode, WORKTREE_BINDING_SQL, type WorktreeBinding } from './ownership.ts';
+import { acquireWorktree, containsPath, getWorktreeBinding, probeWorktreeWriter, readManagedMode, sharedWorktreeBinding, WORKTREE_BINDING_SQL, type WorktreeBinding } from './ownership.ts';
 import { hostIdFor } from './identity.ts';
 import { assertPersistenceAccepting, startPersistenceConsumer, waitForWrite, writeResponse } from './service.ts';
 import { maintenancePublishWaitMs } from './maintenance-wait.ts';
@@ -113,6 +113,14 @@ function callReads(engine: BrainEngine): BrainEngine {
     };
     // The typed form of the local writer read master memoized as a statement (authority.ts `sharedWriterRow`): once per call, a missing row read again.
     if (key === 'readLocalWriterRow') return sharedWriterRow(target, typedReads, once);
+    // The typed forms of the owner binding, mirror-mode and slug-root-mode reads master memoized as statements
+    // (WORKTREE_BINDING_SQL, MIRROR_READ_ONLY_SQL, SLUG_ROOT_MODE_SQL): once per call, each caller gets its own copy.
+    if (key === 'getWorktreeBinding') return sharedWorktreeBinding(typedReads, once, (sourceId, hostId) => target.getWorktreeBinding(sourceId, hostId));
+    if (key === 'readSourceState') return (sourceId: string, opts?: Parameters<BrainEngine['readSourceState']>[1]) => opts?.lock
+      ? target.readSourceState(sourceId, opts)
+      : once(JSON.stringify(['readSourceState', sourceId]), () => target.readSourceState(sourceId)).then(row => structuredClone(row));
+    if (key === 'getSource') return (sourceId: string) =>
+      once(JSON.stringify(['getSource', sourceId]), () => target.getSource(sourceId)).then(row => structuredClone(row));
     const value = Reflect.get(target, key, target);
     return typeof value === 'function' ? value.bind(target) : value;
   } }), engine);
