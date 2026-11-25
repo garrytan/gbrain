@@ -12,9 +12,8 @@
 //! - `worldOnly`: `visibility = 'world'`, or a private row `widen` admits (`facts/widen.rs`);
 //! - `excludePrivate`: the private-provenance policy (`facts/privacy.rs`);
 //! - `projectionEligibleSql('facts')`: a soft-deleted page hides the row. The quarantine clause
-//!   of that predicate is the live-page case of the check above. Its `needs_rederive` clause is
-//!   not modelled: the store has no re-derive queue, so no row is ever hidden by it (the takes
-//!   family does the same, rust/docs/store/takes.md). Its trust floor (`minTrust`) and flagged-fact
+//!   of that predicate is the live-page case of the check above. Its `needs_rederive` clause hides a
+//!   row a purge marked (`generations/needs_rederive.rs`). Its trust floor (`minTrust`) and flagged-fact
 //!   filter (`suppressFlagged`) read the row's stamped `trust_tier` and its write-gate receipts
 //!   (`trust::TrustPolicy`).
 //!
@@ -168,7 +167,10 @@ impl<'a> Pool<'a> {
         if a.world_only && !world_admits(read, &a.widen, row)? {
             return Ok(false);
         }
-        if hidden_by_policy(read, row, &a.exclude_private)? || hidden_by_deleted_page(read, row)? {
+        if hidden_by_policy(read, row, &a.exclude_private)?
+            || hidden_by_deleted_page(read, row)?
+            || super::hidden_by_rederive(read, row)?
+        {
             return Ok(false);
         }
         if !self.trust.admits(read, "facts", row.id, row.tier())? {

@@ -303,7 +303,7 @@ async function subjectsOf(engine: BrainEngine, q: BeliefChangesQuery, at: Awaite
     const [live] = at.page_id == null ? [] : await engine.executeRaw<{ frontmatter: Record<string, unknown> | null }>('SELECT frontmatter FROM pages WHERE id = $1', [at.page_id]);
     if (isQuarantined(interval.page.frontmatter) || isQuarantined(live?.frontmatter) || !await remoteMayRead(engine, at.page_id, interval)) return null;
   }
-  const { subjects } = await bodySubjects(engine, interval.lifetime, `${interval.page.compiled_truth}\n${interval.page.timeline ?? ''}`, interval.event.visibility);
+  const { subjects } = await bodySubjects(engine, q.sourceId, interval.lifetime, `${interval.page.compiled_truth}\n${interval.page.timeline ?? ''}`, interval.event.visibility);
   const holders = new Set(q.takesHolders ?? ['world']);
   const readable = subjects.filter(s => !q.remote || s.visibility === 'world' && (s.kind !== 'take' || holders.has(String(s.value.holder))));
   if (!readable.length) return new Map<string, Record<string, unknown>>();

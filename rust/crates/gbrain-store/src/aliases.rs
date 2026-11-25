@@ -797,14 +797,14 @@ pub(crate) fn stamp_contextual_retrieval(
     put_json(tx, &cr_key(page_id), &state)
 }
 
-/// The page's `corpus_generation` column: `None` when it has no state or the state has none (NULL).
-pub(crate) fn corpus_generation(read: &dyn KvRead, page_id: u64) -> Result<Option<String>> {
-    Ok(read_cr(read, page_id)?.and_then(|state| state.corpus_generation))
-}
-
 /// The page's `contextual_retrieval_mode` column: `None` when it has no state (NULL).
 pub(crate) fn contextual_retrieval_mode(read: &dyn KvRead, page_id: u64) -> Result<Option<String>> {
     Ok(read_cr(read, page_id)?.map(|state| state.mode))
+}
+
+/// The page's `corpus_generation` column: `None` when it has no state or no generation (NULL).
+pub(crate) fn corpus_generation(read: &dyn KvRead, page_id: u64) -> Result<Option<String>> {
+    Ok(read_cr(read, page_id)?.and_then(|state| state.corpus_generation))
 }
 
 /// Deletes this family's records of a page that is deleted for good (`cascade::remove_page_rows`):

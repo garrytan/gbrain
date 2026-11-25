@@ -34,6 +34,7 @@ import { pageTypesForAllowed } from '../facts/conversation-types.ts';
 import type { PrincipalGrant } from './model.ts';
 import { expandReadShared } from './read-shared.ts';
 import { brainServes } from '../access/serves.ts';
+import { memberFloorScope } from '../access/member-sources.ts';
 
 export const NOTICE_CODE = 'unscoped_multi_user_token';
 export const BOT_HARNESSES: readonly string[] = ['openclaw', 'hermes', 'grok-bot', 'muse'];
@@ -64,7 +65,9 @@ export interface ChatCensus { sources: string[]; chat_pages: number; channels: n
 /**
  * The sources a credential reads with no per-call source_ids, as dispatch
  * resolves them: an unscoped legacy token reads the default source plus every
- * federated source (serve-http's noGrantFederatedScope); an unscoped OAuth
+ * federated source (serve-http's noGrantFederatedScope), minus other members'
+ * personal sources when it is bound to a member other than the owner
+ * (GST-3747, memberFloorScope); an unscoped OAuth
  * client reads `default`; a scalar grant its source; a federated grant its
  * read set. A credential without read scope reads nothing.
  *
@@ -77,16 +80,19 @@ export interface ChatCensus { sources: string[]; chat_pages: number; channels: n
  */
 export async function credentialReadSources(engine: BrainEngine, grant: Pick<PrincipalGrant, 'principal' | 'scopes' | 'sources' | 'readShared'>, member: string | null = null): Promise<string[]> {
   if (!hasScope(grant.scopes, 'read')) return [];
-  const stored = await storedReadSources(engine, grant);
+  const stored = await storedReadSources(engine, grant, member);
   if (grant.readShared !== true || grant.sources.kind === 'none' || (grant.sources.kind === 'default' && grant.principal.kind === 'legacy_token')) return stored;
   return (await expandReadShared(engine, stored, member)).sources;
 }
 
-async function storedReadSources(engine: BrainEngine, grant: Pick<PrincipalGrant, 'principal' | 'sources'>): Promise<string[]> {
+async function storedReadSources(engine: BrainEngine, grant: Pick<PrincipalGrant, 'principal' | 'sources'>, member: string | null): Promise<string[]> {
   switch (grant.sources.kind) {
-    case 'default': return grant.principal.kind === 'legacy_token'
-      ? await localFederatedSourceIds(engine, 'default', 'seed_default').catch(() => undefined) ?? ['default']
-      : ['default'];
+    case 'default': {
+      if (grant.principal.kind !== 'legacy_token') return ['default'];
+      const floor = await localFederatedSourceIds(engine, 'default', 'seed_default').catch(() => undefined);
+      if (!floor) return ['default'];
+      return (await memberFloorScope(engine, { sourceId: 'default', localFederatedSourceIds: floor }, async () => member)).localFederatedSourceIds ?? floor;
+    }
     case 'scalar': return [grant.sources.writeSource];
     case 'federated': return [...grant.sources.readSources];
     case 'none': return [];

@@ -29,6 +29,7 @@ const PLAIN: Record<string, string> = {
   'src/core/rust-engine/store-members/list-reads.ts readChatCensusRows privatePagesFilterFragment': 'maintenance: the Rust member of the chat-channel census serves the no-caller page policy the SQL fast filter is (a credential install warning, never a remote read)',
   'src/core/rust-engine/store-members/facts-held.ts (module) privatePagesFilterFragment': 'write-side: the Rust member of the held-fact move plan read names the no-caller page policy it serves',
   'src/core/rust-engine/store-members/facts-held.ts readHeldRowVisibility privatePagesFilterFragment': 'write-side: whether the target page is world (the held-fact move plan read, on the Rust engine)',
+  'src/core/rust-engine/store-members/dream-cycle.ts atomPolicy privatePagesFilterFragment': 'dream cycle: marks a concept private when an input is (the Rust member of listDreamAtomPages)',
   'src/core/persistence/change-reason.ts pageWorldVisible privatePagesFilterFragment': 'write-side: whether a change reason may be published',
   'src/core/persistence/concept-rebuild.ts ACCESS_SQL privatePagesFilterFragment': 'maintenance: compares a hidden concept\'s access with its rebuild\'s, to refuse a wider one',
   'src/core/persistence/concept-rebuild.ts readHeldConceptRows privatePagesFilterFragment': 'maintenance: classifies a held concept\'s members as private for the purge preview; callers get a count or the local CLI',

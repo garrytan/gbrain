@@ -1115,9 +1115,12 @@ pub(crate) fn append_segment_chunks(
                     .map(str::to_string),
                 pending_since_us: None,
             },
-            // A segment chunk written without a vector carries no pending stamp, which
-            // `readEmbeddingStateCounts` reports as `unstamped_pending`.
-            None => EmbedState::default(),
+            // A segment chunk written without a vector is pending from now, as the Postgres
+            // insert stamps `embedding_pending_since` when the vector is null.
+            None => EmbedState {
+                pending_since_us: Some(now_us),
+                ..EmbedState::default()
+            },
         };
         let record = ChunkRecord {
             id: next_chunk_id(tx)?,
@@ -1755,6 +1758,22 @@ mod segment_tests {
             .unwrap_err();
         assert_eq!(err.code, INVALID_ARGUMENT);
         assert_eq!(store.count_chunks().unwrap(), 4);
+    }
+
+    #[test]
+    fn an_appended_chunk_without_a_vector_is_pending_from_the_write() {
+        let store = crate::test_support::store();
+        let id = page(&store);
+        store
+            .write(|tx| append_segment_chunks(tx, id, 1, &[seg(7, 0, "x")], 1_700_000_000_000_000))
+            .unwrap();
+        let records = read_chunks(&*store.read().unwrap(), id).unwrap();
+        assert_eq!(
+            records[1].embed.pending_since_us,
+            Some(1_700_000_000_000_000)
+        );
+        assert_eq!(records[1].embed.embedded_at_us, None);
+        assert_eq!(records[1].embed.dims, 0);
     }
 
     #[test]

@@ -1,7 +1,8 @@
-/** Source members (BrainEngine listAllSources, updateSourceConfig, replaceSourceConfig, renameSource, markSourceSynced, advanceSyncCheckpoint, readLiveSlugAliases, readSourceSlugProbe, getSource, listSourceLocalPaths, countRepoBoundSources, getSourceStrictness). */
+/** Source members (BrainEngine listAllSources, updateSourceConfig, replaceSourceConfig, renameSource, markSourceSynced, advanceSyncCheckpoint, readLiveSlugAliases, readSourceSlugProbe, readStoredSlugSpellings, getSource, listSourceLocalPaths, countRepoBoundSources, getSourceStrictness). */
 import type { SourceDetailRow, SourceRow } from '../../engine.ts';
 import type { SourceSyncStampOptions, SyncCheckpointAdvance } from '../../engine-sql/sources.ts';
 import type { LiveSlugAliasRow, SourceSlugProbe } from '../../engine-sql/link-slug-reads.ts';
+import type { StoredSpellingScope } from '../../engine-sql/slug-spellings.ts';
 import type { FederationExposedRow } from '../../engine-sql/federation-exposure.ts';
 import { privacyAliasSql, privateSnapshotFilterFragment } from '../../search/private-visibility.ts';
 import { toSource, withDates } from '../store-codec.ts';
@@ -36,6 +37,11 @@ export const readLiveSlugAliases: StoreMember<[sourceId: string, targets: readon
 /** Link preparation's slug fingerprint; the store's hash is its own (a sum of per-slug FNV-1a hashes), as the caller only compares it with itself. */
 export const readSourceSlugProbe: StoreMember<[sourceId: string, afterId: number], SourceSlugProbe> = (brain, sourceId, afterId) =>
   storeCall({ member: 'readSourceSlugProbe', sourceId }, () => brain.readSourceSlugProbe(sourceId, afterId)) as Promise<SourceSlugProbe>;
+
+/** A scalar slug read's stored-spelling scan; the store keys each stored slug as `SPELLING_KEY_SQL` does (slug_spellings.rs). */
+export const readStoredSlugSpellings: StoreMember<[key: string, scope: StoredSpellingScope, after: string], string[]> = (brain, key, scope, after) =>
+  storeCall({ member: 'readStoredSlugSpellings', ...(scope.sourceId !== undefined ? { sourceId: scope.sourceId } : {}) }, () =>
+    brain.readStoredSlugSpellings(key, scope.sourceId ?? null, scope.sourceIds ? [...scope.sourceIds] : null, after)) as Promise<string[]>;
 
 /** Sets the source's last sync time to the store clock; false for an unknown source (or another incarnation), which changes nothing. */
 export const markSourceSynced: StoreMember<[sourceId: string, opts?: SourceSyncStampOptions], boolean> = (brain, sourceId, opts) =>

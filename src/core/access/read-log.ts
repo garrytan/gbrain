@@ -28,15 +28,8 @@ const MAX_BUFFERED = 5_000;
 const MAX_PAGES_PER_ROW = 500;
 const PRUNE_EVERY_MS = 3_600_000;
 
-export interface ReadLogRow {
-  created_at: string;
-  member: string | null;
-  audience: string[] | null;
-  operation: string;
-  transport: string;
-  result_code: string;
-  page_ids: number[];
-}
+export type { ReadLogRow } from '../engine-sql/access-read-log.ts';
+import type { ReadLogRow } from '../engine-sql/access-read-log.ts';
 
 /** Whether this read is logged: a non-mutating read by a caller that is not the owner and speaks as a member or an audience. */
 export function readLogged(access: Partial<CallerAccess>, enforcedMember?: boolean): boolean {
@@ -76,16 +69,10 @@ export function resultCode(out: { isError?: boolean; content?: Array<{ text?: st
   } catch { return 'error'; }
 }
 
-const INSERT_SQL = `INSERT INTO access_read_log (created_at, member, audience, operation, transport, result_code, page_ids)
-  SELECT (r->>'created_at')::timestamptz, r->>'member',
-    CASE WHEN jsonb_typeof(r->'audience') = 'array' THEN ARRAY(SELECT jsonb_array_elements_text(r->'audience')) END,
-    r->>'operation', r->>'transport', r->>'result_code', ARRAY(SELECT jsonb_array_elements_text(r->'page_ids')::int)
-  FROM jsonb_array_elements($1::text::jsonb) r`;
 
 /** Retention: rows past the window by time, then rows beyond the cap by id (oldest first). */
 export async function pruneAccessReadLog(engine: BrainEngine, days = RETENTION_DAYS, maxRows = MAX_ROWS): Promise<void> {
-  await engine.executeRaw('DELETE FROM access_read_log WHERE created_at < now() - make_interval(days => $1::int)', [days]);
-  await engine.executeRaw('DELETE FROM access_read_log WHERE id <= (SELECT max(id) FROM access_read_log) - $1::bigint', [maxRows]);
+  await engine.pruneAccessReadLog(days, maxRows);
 }
 
 let dropped = 0;
@@ -115,7 +102,7 @@ class ReadLogWriter {
     const batch = this.rows.splice(0);
     this.inFlight = (async () => {
       try {
-        await this.engine.executeRaw(INSERT_SQL, [JSON.stringify(batch)]);
+        await this.engine.insertAccessReadLogRows(batch);
         if (Date.now() - this.lastPrune >= PRUNE_EVERY_MS) {
           this.lastPrune = Date.now();
           await pruneAccessReadLog(this.engine);

@@ -153,11 +153,9 @@ export async function setRowTier(engine: BrainEngine, input: {
   const changed = await engine.transaction(async tx => {
     const run = async () => {
       if (input.expect && !(await input.expect(tx))) return false;
-      const [prior] = await tx.executeRaw<{ trust_tier: string }>(`SELECT trust_tier FROM ${input.table} WHERE id = $1`, [input.id]);
-      const update = () => tx.executeRaw<{ id: number }>(
-        `UPDATE ${input.table} SET trust_tier = $2,
-            write_origin = COALESCE(write_origin, '{}'::jsonb) || jsonb_build_object('owner_decision', $3::text::jsonb)
-          WHERE id = $1 RETURNING id`, [input.id, input.tier, JSON.stringify({ tier: input.tier, at: new Date().toISOString(), publication_id: publicationId, ...input.note })]);
+      const prior = await tx.readRowTrustTier(input.table, input.id);
+      const update = () => tx.setRowTrustTier(input.table, input.id, input.tier,
+        JSON.stringify({ tier: input.tier, at: new Date().toISOString(), publication_id: publicationId, ...input.note }));
       const rows = input.ceiling ? await withTrustPromotion(tx, input.ceiling, update) : await update();
       if (rows.length !== 1) return false;
       await queueTierProjection(tx, input.table, input.id);

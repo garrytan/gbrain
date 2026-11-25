@@ -38,6 +38,7 @@ import { appendBeliefEvents, type BeliefEventDraft, type RedactionRelease } from
 import { coverageActive, noteBelief, readLedgerSource } from './ledger.ts';
 import { bodySubjects } from './backfill.ts';
 import { privatePagesFilterFragment } from '../search/private-visibility.ts';
+import { legacySubjectKeysSql, mayHaveLegacyFingerprint } from './legacy-fingerprint.ts';
 
 const SCAN_BATCH = 1000;
 
@@ -94,11 +95,17 @@ async function registerRedaction(tx: Pick<BrainEngine, 'registerPurgeRedaction'>
 }
 
 /** Pass 1: purged keys lose their values. Returns the events marked. */
-export async function redactPurgedKeys(tx: Pick<BrainEngine, 'executeRaw'>, input: { sourceId: string; claimFps: readonly string[]; lifetimes: readonly string[] }): Promise<number> {
+export async function redactPurgedKeys(tx: Pick<BrainEngine, 'executeRaw'>, input: { sourceId: string; claimFps: readonly string[]; lifetimes: readonly string[];
+  /** The purged claim texts: their history recorded under a pre-v339 fingerprint (legacy-fingerprint.ts) is redacted too. */
+  claims?: readonly string[] }): Promise<number> {
   if ((!input.claimFps.length && !input.lifetimes.length) || redactionFault === 'skip_purged_keys') return 0;
-  const rows = await tx.executeRaw(`UPDATE belief_events SET value = NULL, value_hash = NULL, prior_hash = NULL, purged = true
-    WHERE source_id = $1 AND ((subject_kind IN ('fact','take') AND claim_fp = ANY($2::text[])) OR page_lifetime = ANY($3::uuid[]))
-      AND (purged = false OR value IS NOT NULL OR prior_hash IS NOT NULL) RETURNING id`, [input.sourceId, [...input.claimFps], [...input.lifetimes]]);
+  const legacy = (input.claims ?? []).filter(mayHaveLegacyFingerprint);
+  const params: unknown[] = [input.sourceId, [...input.claimFps], [...input.lifetimes]];
+  if (legacy.length) params.push(legacy);
+  const rows = await tx.executeRaw(`${legacy.length ? `WITH legacy AS (${legacySubjectKeysSql('$4::text[]')})\n` : ''}UPDATE belief_events SET value = NULL, value_hash = NULL, prior_hash = NULL, purged = true
+    WHERE source_id = $1 AND ((subject_kind IN ('fact','take') AND (claim_fp = ANY($2::text[])${legacy.length ? ' OR subject_key IN (SELECT subject_key FROM legacy)' : ''}))
+        OR page_lifetime = ANY($3::uuid[]))
+      AND (purged = false OR value IS NOT NULL OR prior_hash IS NOT NULL) RETURNING id`, params);
   return rows.length;
 }
 
@@ -217,7 +224,7 @@ export async function registerVersionCarriers(tx: BrainEngine, input: { sourceId
     const pages = new Map(versions.map(v => [Number(v.page_id), v.slug]));
     const lifetimes = await resolveLifetimes(tx, [...pages].map(([pageId, slug]) => ({ sourceId: input.sourceId, incarnation: source.incarnation, slug, pageId })));
     for (const v of versions) {
-      const { subjects } = await bodySubjects(tx, lifetimes.get(Number(v.page_id))!, `${v.compiled_truth ?? ''}\n${v.timeline ?? ''}`, v.visible === true ? 'world' : 'private');
+      const { subjects } = await bodySubjects(tx, input.sourceId, lifetimes.get(Number(v.page_id))!, `${v.compiled_truth ?? ''}\n${v.timeline ?? ''}`, v.visible === true ? 'world' : 'private');
       for (const subject of subjects) for (const field of CARRYING_FIELDS[subject.kind] ?? []) {
         const text = subject.value[field];
         if (typeof text !== 'string' || !quotes(text, forms)) continue;

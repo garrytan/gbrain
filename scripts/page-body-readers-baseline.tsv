@@ -258,6 +258,7 @@ src/core/engine-sql/segmented-purge-writes.ts	PURGE_VERSION_BODY_SQL	sql	SEGW	th
 src/core/engine-sql/sweep-reads.ts	FACTS_FENCE_PAGES_SQL	sql	STREAM	moved from sweep.ts runMaintenanceSweep (listFactsFencePages): LIKE over NULL never matches a segmented page (skip)
 src/core/engine-sql/timeline-reads.ts	listTimelineOrphanPages	sql	STREAM	the orphan prune's page list, moved from timeline-extract.ts pruneTimelineOrphans: compiled_truth and timeline of inline pages
 src/core/engine-sql/timeline.ts	getTimeline	sql	NONE	not the page body: SELECT * FROM pages inside a LATERAL used for the page id only
+src/core/engine-sql/unwithdrawn-restore.ts	PAGE_INLINE_BODY_SQL	sql	INLINE	moved from src/core/repair/unwithdrawn-facts.ts classifyUnwithdrawnFacts: reads compiled_truth and timeline of inline pages only (NULL for a segmented page, whose fence pageFenceRowKeys reads from its segments)
 src/core/engine-sql/withdrawal-discovery.ts	INLINE_FENCE_PAGES_SQL	sql	STREAM	moved from discoverWithdrawalTargets: the inline page scan reads inline bodies (NULL never matches); segmented pages are found by SEGMENT_FENCE_ROWS_SQL and SPLIT_FENCE_SLOTS_SQL from their facts slots
 src/core/engine-sql/write-guards.ts	readInlinePageRegions	sql	INLINE	moved from page-body/tail-digest.ts inlineRegions: callers branch on storage: inline pages only, within the segmented threshold
 src/core/engine-sql/write-guards.ts	readLivePageBody	sql	INLINE	moved from valid-time-advisory.ts withValidTimeAdvisory: reads the written page's body columns, NULL for a segmented page (bodyKey then compares content_hash)
@@ -599,7 +600,6 @@ src/core/repair/contact-rows.ts	plannedChange	field	SEGW	SQL exclusion in scan: 
 src/core/repair/contact-rows.ts	plannedChange	call:serializePageToMarkdown	SEGW	SQL exclusion in scan: body_storage='inline' only
 src/core/repair/duplicate-facts.ts	strikeFencedCopies	field	INLINE	inline pages only: a segmented page returns before the read, and its fenced copies stay active (listed as segmented_page)
 src/core/repair/duplicate-facts.ts	strikeFencedCopies	call:serializePageToMarkdown	INLINE	inline pages only: a segmented page returns before the read, and its fenced copies stay active (listed as segmented_page)
-src/core/repair/extractor-facts.ts	restorePageFacts	sql	STREAM	
 src/core/repair/extractor-facts.ts	restorePageFacts	field	STREAM	
 src/core/repair/fact-claim-dates.ts	movePage	call:serializePageToMarkdown	SEGW	refuses a segmented page: the plan lists it segmented_page and movePage keeps one as changed_since_preview
 src/core/repair/fences.ts	afterBytes	field	STREAM	
@@ -641,15 +641,13 @@ src/core/repair/timeline.ts	classifyTimelinePage	field	STREAM
 src/core/repair/timeline.ts	removedRowIds	field	STREAM	
 src/core/repair/timeline.ts	timelineRepair	field	STREAM	
 src/core/repair/timeline.ts	timelineRepair	call:serializePageToMarkdown	SEGW	
-src/core/repair/unwithdrawn-facts.ts	classifyUnwithdrawnFacts	sql	INLINE	reads compiled_truth and timeline of inline pages only (NULL for a segmented page, whose fence pageFenceRowKeys reads from its segments)
 src/core/repair/visibility.ts	applyFactItem	field	INLINE	inline pages only: a segmented page returns before the read and its fenced fact is left for the owner
-src/core/repair/visibility.ts	planAliases	sql	META	
-src/core/repair/visibility.ts	planEvents	sql	META	
-src/core/repair/visibility.ts	planLineage	sql	META	
 src/core/repair/visibility.ts	visibilityWrite	call:serializePageToMarkdown	SEGW	
 src/core/repair/visibility.ts	applyFactItem	call:serializePageToMarkdown	INLINE	inline pages only: a segmented page returns before the read and its fenced fact is left for the owner
-src/core/rust-engine/snapshot-overlay.ts	overlayStoreSnapshot	field	STREAM	the Rust arm of readSnapshotStatement's withdrawal overlay (page-state/snapshot.ts): the Rust store keeps every body inline; the body strike skips a segmented page as readSnapshotStatement does (per-window overlay in PR 2)
+src/core/rust-engine/snapshot-overlay.ts	overlayStoreLead	field	STREAM	the Rust arm of readSnapshotStatement's withdrawal overlay (page-state/snapshot.ts): the Rust store keeps every body inline; the seal lead of a segmented page (a bounded timeline prefix), overlaid as PGLite's seal overlays it
+src/core/rust-engine/snapshot-overlay.ts	overlayStoreSnapshots	field	STREAM	the Rust arm of readSnapshotStatement's withdrawal overlay (page-state/snapshot.ts): the Rust store keeps every body inline; the body strike skips a segmented page as readSnapshotStatement does (per-window overlay in PR 2)
 src/core/rust-engine/store-members/chunks.ts	sealChunks	field	STREAM	mirrors sealPageTextProjection (text-seal.ts): sends sanitizeRemoteBody(timeline) with the seal for the page keyword vector; a segmented page (null timeline from the Rust store) sends none
+src/core/rust-engine/store-members/fence-projection.ts	readPageInlineBody	field	INLINE	the Rust arm of engine-sql/unwithdrawn-restore.ts readPageInlineBody: passes the store's inline compiled_truth and timeline through; a segmented page reads null columns
 src/core/rust-engine/store-members/field-usage.ts	readFieldUsageSamples	field	LEAD	the Rust arm of engine-sql/field-usage.ts readFieldUsageSamples: passes the store's sampled compiled_truth through; a segmented page samples a null body (TODOS.md)
 src/core/rust-engine/store-members/page-body.ts	refreshPageBody	call:refreshPageBody	SEGW	forwards to the Rust store, which refuses a segmented page as the body-storage CHECK does; callers assert first
 src/core/rust-engine/store-members/page-ops.ts	toDomainBankRow	field	INLINE	copies the domain-bank body the Rust store returned; the store keeps every body inline
@@ -660,6 +658,7 @@ src/core/schema-migrations/v123-configurable-fts-language.ts	v123	sql	NONE	not t
 src/core/schema-migrations/v124-page-search-vector-drop-compiled-truth.ts	v124	sql	NONE	not the page body: historical search-vector trigger
 src/core/schema-migrations/v189-pages-credential-projection-pending.ts	v189	sql	NONE	not a live reader: historical migration over inline pages (segmented pages did not exist)
 src/core/schema-migrations/v248-segmented-page-storage.ts	COMMON_SQL	sql	NONE	not a live reader: migration DDL for the segmented body columns and their CHECK
+src/core/schema-migrations/v339-fact-fingerprint-v3.ts	FACT_FINGERPRINT_V3_SQL	sql	NONE	not a live reader: one-shot migration that reads inline bodies from pages and segmented bodies from page_segment_texts to find fence cells needing a twin withdrawal row
 src/core/schema-pack/field-usage.ts	runFieldUsage	field	LEAD	
 src/core/schema-pack/page-to-alias.ts	resolveValue	field	LEAD	
 src/core/schema-pack/page-to-alias.ts	runPageToAliasCore	field	LEAD	
@@ -777,3 +776,8 @@ src/core/persistence/twin-merge.ts	twinMergeConflicts	field	NONE	losers.timeline
 src/core/engine-sql/list-reads.ts	listAliasCandidatePages	sql	LEAD	moved from src/core/schema-pack/page-to-alias.ts runPageToAliasCore, same statement
 src/core/engine-sql/list-reads.ts	listLinkCandidatePages	sql	LEAD	moved from src/core/schema-pack/page-to-link.ts runPageToLinkCore, same statement
 src/core/engine-sql/list-reads.ts	readStaleMentionScan	sql	STREAM	moved from src/core/by-mention.ts scanStaleMentions, same statement
+src/core/engine-sql/repair-applies.ts	readFactRestorePage	field	STREAM	moved from src/core/repair/extractor-facts.ts restorePageFacts: the body passes through to the caller, which parses its fence
+src/core/engine-sql/repair-applies.ts	readFactRestorePage	sql	STREAM	moved from src/core/repair/extractor-facts.ts restorePageFacts, same statement
+src/core/engine-sql/visibility-scans.ts	listAliasOnlyPrivatePages	sql	META	moved from src/core/repair/visibility.ts planAliases, same statement
+src/core/engine-sql/visibility-scans.ts	listAtomLineageRows	sql	META	moved from src/core/repair/visibility.ts planLineage, same statement
+src/core/engine-sql/visibility-scans.ts	listChronicleEventVisibilityRows	sql	META	moved from src/core/repair/visibility.ts planEvents, same statement

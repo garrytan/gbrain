@@ -49,7 +49,6 @@ import { TAKES_FENCE_BEGIN, parseTakesFence, type ParsedTake } from '../takes-fe
 import { countOutsideCode } from '../fence-scan.ts';
 import { takesPreparation } from '../takes-write.ts';
 import { afterCursor, repairRequestId, type RepairCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairScope } from './core.ts';
-import { requireRawSql } from '../rust-engine/errors.ts';
 
 export type SupersessionEvidence = 'journal' | 'database' | 'fence_structure';
 
@@ -299,8 +298,6 @@ export const takeSupersessionRepair: RepairHandler = {
     if (!state || 'skipped' in state) return { applied: false, outcome: 'unchanged', reason: 'the page or its takes fence is no longer readable' };
     if (state.analysis.ambiguous.length) return { applied: false, outcome: 'ambiguous', reason: ambiguityFix(page, state.analysis.ambiguous) };
     if (state.analysis.fence_changed) {
-      // The relinked fence goes through put_page, lane 7's page write, which the Rust engine does not serve yet.
-      requireRawSql(ctx.engine, 'repair take-supersession page write');
       await submitPageMutation(ctx, { operation: 'put_page', params: { slug: page.slug, source_id: page.source_id,
         content: takesPreparation.replaceFence(state.content, state.analysis.takes), expected_revision: state.revision,
         request_id: await repairRequestId(ctx, 'take-supersession', entry, state.revision) } });

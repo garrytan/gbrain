@@ -142,6 +142,41 @@ async function strictBrain<T>(engine: BrainEngine, body: (root: string) => Promi
 }
 
 describe('engine parity: repair kind previews of batch 4.3a', () => {
+  parityTest('the visibility, open-facts, open-twins and label-write members answer the same rows on every arm', {
+    methods: ['putPage', 'insertFacts', 'insertSource', 'listAtomLineageRows', 'listChronicleEventVisibilityRows', 'listAliasOnlyPrivatePages',
+      'listOpenTwinRows', 'listCheckoutFiles', 'listPageAccessKeys', 'tightenDatabaseFactVisibility', 'listLinkCandidatePages', 'listOpenFactsWindow',
+      'countOpenFactReasons', 'listContextualRetrievalModes', 'listUnembeddedChunkPages'], timeout: 60_000,
+  }, async (engine) => {
+    const origin = await engine.putPage('notes/origin', note('Origin', { visibility: 'private' }), { sourceId: 'default' });
+    await engine.putPage('notes/aliased', note('Aliased', { access: 'private' }), { sourceId: 'default' });
+    const atom = await engine.putPage('atoms/one', note('Atom', { source_slug: 'notes/origin' }, 'atom'), { sourceId: 'default' });
+    await engine.putPage('events/one', note('Event', { captured_via: 'life-chronicle:example', event: { depth: 'notes/origin' } }, 'event'), { sourceId: 'default' });
+    await engine.insertSource({ id: 'other-example', name: 'other-example', local_path: null, config: {} });
+    await engine.putPage('notes/origin', note('Twin', { visibility: 'world' }), { sourceId: 'other-example' });
+    const ids = await insert(engine, [
+      { fact: 'A world fact on the private origin', visibility: 'world', row_num: null, source_markdown_slug: 'notes/origin' },
+      { fact: 'A private fact on an open page', visibility: 'private', row_num: null, source_markdown_slug: 'notes/aliased' },
+    ]);
+    const drop = (rows: object[]) => rows.map(r => { const { id, origin_id, ...rest } = r as Record<string, unknown>; void id; return { ...rest, origin: origin_id === null ? null : typeof origin_id }; });
+    const scans = {
+      atoms: drop(await engine.listAtomLineageRows(['default'], null, 60_000)),
+      oneAtom: drop(await engine.listAtomLineageRows(['default'], [atom.id], 60_000)),
+      events: drop(await engine.listChronicleEventVisibilityRows(['default'], null, 60_000)),
+      aliases: drop(await engine.listAliasOnlyPrivatePages(['default'], null, 60_000)),
+      twins: await engine.listOpenTwinRows([{ source_id: 'default', slug: 'notes/origin' }], [{ identity: [], satisfied: [] }]),
+      checkout: await engine.listCheckoutFiles([origin.id, atom.id]),
+      access: (await engine.listPageAccessKeys([origin.id, atom.id])).map(r => ({ ...r, id: r.id === origin.id ? 'origin' : 'atom' })),
+      typePages: (await engine.listLinkCandidatePages('atom', undefined, 10)).map(r => r.slug),
+      modes: await engine.listContextualRetrievalModes([origin.id, atom.id], 60_000),
+      unembedded: (await engine.listUnembeddedChunkPages([origin.id, atom.id], 60_000)).map(id => (id === origin.id ? 'origin' : 'atom')),
+    };
+    const sel = { sourceId: 'default', createdBefore: '2999-01-01T00:00:00Z', ids: null };
+    const window = (await engine.listOpenFactsWindow(sel, 0, null, ['fenced', 'unfenced'], 10, 60_000)).map(r => ({ ...r, id: ids.indexOf(Number(r.id)) }));
+    const reasons = await engine.countOpenFactReasons(sel, 60_000);
+    const tightened = (await engine.tightenDatabaseFactVisibility('default', ids)).map(id => ids.indexOf(id));
+    return { scans, window, reasons, tightened };
+  });
+
   /** The facts of a strict source that need no access read: an ontology observation, an entity with a page, with a deleted page, and no entity. */
   async function seedHome(engine: BrainEngine) {
     await engine.putPage('people/alive-example', note('Alive'), { sourceId: 'default' });
@@ -173,8 +208,8 @@ describe('engine parity: repair kind previews of batch 4.3a', () => {
     return byOrder({ rows: rows.map(row => ({ ...row, id: Number(row.id), valid_from: row.valid_from.toISOString() })), preview: shaped }, ids);
   }));
 
-  parityTest('facts-home applies on the SQL arms, and the Rust engine refuses the holding-page write by name', {
-    methods: ['insertFacts', 'getWorktreeBinding', 'updateSourceConfig', 'attachSourcePath', 'putPage', 'softDeletePage', 'listFactsHomeCandidates', 'listHeldHomeRows', 'listOrphanedFenceRows', 'readFactSnapshots'], requires: 'raw_sql', timeout: 90_000,
+  parityTest('facts-home applies the holding-page write the same way on every arm', {
+    methods: ['insertFacts', 'getWorktreeBinding', 'updateSourceConfig', 'attachSourcePath', 'putPage', 'softDeletePage', 'listFactsHomeCandidates', 'listHeldHomeRows', 'listOrphanedFenceRows', 'readFactSnapshots'], timeout: 90_000,
   }, async (engine, backend) => strictBrain(engine, async root => {
     const ids = await seedHome(engine);
     const out = await previewThenApply(engine, backend, 'facts-home', 'repair facts-home page write', {}, root);
@@ -224,8 +259,8 @@ describe('engine parity: repair kind previews of batch 4.3a', () => {
     return byOrder(shaped, ids);
   }));
 
-  parityTest('visibility applies the facts class on the SQL arms, and the Rust engine refuses the write by name', {
-    methods: ['putPage', 'insertFacts', 'listWorldFactsFromPrivateSources', 'getConfig', 'writeOpCheckpointRecord'], requires: 'raw_sql', timeout: 90_000,
+  parityTest('visibility applies the facts class to a database-only fact the same way on every arm', {
+    methods: ['putPage', 'insertFacts', 'listWorldFactsFromPrivateSources', 'getConfig', 'writeOpCheckpointRecord'], timeout: 90_000,
   }, async (engine, backend) => withHome(async () => {
     const ids = await seedWorldFacts(engine);
     const out = await previewThenApply(engine, backend, 'visibility', 'repair visibility page write', { driftClass: 'facts' });
@@ -233,8 +268,8 @@ describe('engine parity: repair kind previews of batch 4.3a', () => {
     return byOrder(out, ids);
   }));
 
-  parityTest('visibility stops on Rust before any read when its default preview would scan events, aliases or atom lineage', {
-    methods: ['putPage', 'insertFacts', 'listWorldFactsFromPrivateSources'], requires: 'raw_sql', timeout: 60_000,
+  parityTest('visibility previews its default classes (events, aliases, atom lineage) the same way on every arm', {
+    methods: ['putPage', 'insertFacts', 'listWorldFactsFromPrivateSources'], timeout: 60_000,
   }, async (engine, backend) => withHome(async () => {
     const ids = await seedWorldFacts(engine);
     const { shaped } = await previewOrStop(engine, backend, 'visibility', 'repair visibility privacy scan');
@@ -242,8 +277,8 @@ describe('engine parity: repair kind previews of batch 4.3a', () => {
     return byOrder(shaped, ids);
   }));
 
-  parityTest('visibility lists a synthesized concept of the lineage class on the SQL arms, and the Rust engine stops at the privacy scan', {
-    methods: ['putPage', 'listConceptLineageRows', 'listConceptInputRows'], requires: 'raw_sql', timeout: 60_000,
+  parityTest('visibility lists a synthesized concept of the lineage class the same way on every arm', {
+    methods: ['putPage', 'listConceptLineageRows', 'listConceptInputRows'], timeout: 60_000,
   }, async (engine, backend) => withHome(async () => {
     await engine.putPage('concepts/lineage-example', note('Lineage', { synthesized_by: 'dream' }, 'concept'), { sourceId: 'default' });
     const { shaped } = await previewOrStop(engine, backend, 'visibility', 'repair visibility privacy scan', { driftClass: 'lineage' });
@@ -253,8 +288,8 @@ describe('engine parity: repair kind previews of batch 4.3a', () => {
     return shaped;
   }));
 
-  parityTest('visibility lists a named page on the SQL arms, and the Rust engine stops at the privacy scan before the named read', {
-    methods: ['putPage', 'listNamedVisibilityRows'], requires: 'raw_sql', timeout: 60_000,
+  parityTest('visibility lists a named page the same way on every arm', {
+    methods: ['putPage', 'listNamedVisibilityRows'], timeout: 60_000,
   }, async (engine, backend) => withHome(async () => {
     await engine.putPage('notes/named-example', note('Named', { visibility: 'world' }), { sourceId: 'default' });
     const { shaped } = await previewOrStop(engine, backend, 'visibility', 'repair visibility privacy scan', { slugs: ['notes/named-example'] });
@@ -263,8 +298,8 @@ describe('engine parity: repair kind previews of batch 4.3a', () => {
     return shaped;
   }));
 
-  parityTest('open-facts lists the private facts a legacy default opened on the SQL arms, and the Rust engine stops at the privacy scan', {
-    methods: ['putPage', 'insertFacts', 'writeOpCheckpointRecord'], requires: 'raw_sql', timeout: 60_000,
+  parityTest('open-facts lists the private facts a legacy default opened the same way on every arm', {
+    methods: ['putPage', 'insertFacts', 'writeOpCheckpointRecord'], timeout: 60_000,
   }, async (engine, backend) => withHome(async home => {
     await engine.putPage('notes/open-holder', note('Holder'), { sourceId: 'default' });
     const ids = await insert(engine, [
