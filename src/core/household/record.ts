@@ -12,6 +12,10 @@ export const HOUSEHOLD_KINDS = ['supply', 'birthday', 'bill', 'deadline', 'appoi
 export type HouseholdKind = typeof HOUSEHOLD_KINDS[number];
 export const HOUSEHOLD_STATUSES = ['active', 'paused', 'done', 'archived'] as const;
 export type HouseholdStatus = typeof HOUSEHOLD_STATUSES[number];
+/** The status moves any write may make (household_mark's events are a subset); archived is final. */
+export const HOUSEHOLD_TRANSITIONS: Readonly<Record<HouseholdStatus, readonly HouseholdStatus[]>> = {
+  active: ['paused', 'done', 'archived'], paused: ['active', 'archived'], done: ['archived'], archived: [],
+};
 export const RECURS = ['none', 'weekly', 'monthly', 'quarterly', 'yearly'] as const;
 export type Recurs = typeof RECURS[number];
 export const GIFT_STATES = ['none', 'ideas', 'bought', 'given'] as const;

@@ -341,6 +341,7 @@
     "hosted_repo_refused",
     "household_exists",
     "household_scale",
+    "household_transition",
     "idempotency_conflict",
     "identity_link_owned_by_dedupe",
     "identity_member_in_other_group",

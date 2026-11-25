@@ -73,6 +73,13 @@ its row allows. If a subject is reclassified by hand, records about it drop out 
 partial ranking. Narrow the read with `kinds`, `about`, `handled_by` or `source_id`, and archive records you no
 longer need (`gbrain household mark <slug> archive`).
 
+## household_transition
+
+A write tried to move a record's status in a way households do not allow, so nothing was saved. An archived record
+is final, a paused record is resumed before it can be done, and a done record can only be archived. Record what
+happened with `gbrain household mark <slug> <event>` (it keeps the event in the record's timeline), or add a new record
+when the old one is archived. This applies to every write, `put_page` and `edit_page` included.
+
 ## account_number_key
 
 A field looked like a full account, card or routing number, so nothing was saved and the value is not repeated back.

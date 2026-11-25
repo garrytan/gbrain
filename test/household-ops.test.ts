@@ -81,3 +81,39 @@ describe('household_add refusals', () => {
     expect(err.code).toBe('household_exists');
   });
 });
+
+describe('status transitions are enforced in write admission, not only in household_mark', () => {
+  async function rewriteStatus(title: string, status: string): Promise<any> {
+    const slug = slugs.get(title)!;
+    const page = await call('get_page', { slug, include_content: true });
+    const content = String(page.content).replace(/^status: .*$/m, 'status: ' + status);
+    expect(content).toContain('status: ' + status);
+    return call('put_page', { slug, expected_revision: page.revision, content }).catch(e => e);
+  }
+
+  test('put_page cannot revive an archived record', async () => {
+    const err = await rewriteStatus('Old supply', 'active');
+    expect(err.code).toBe('household_transition');
+    expect((await engine.getPage(slugs.get('Old supply')!))!.frontmatter.status).toBe('archived');
+  });
+
+  test('put_page cannot take a paused record straight to done', async () => {
+    const err = await rewriteStatus('Gym membership', 'done');
+    expect(err.code).toBe('household_transition');
+    expect((await engine.getPage(slugs.get('Gym membership')!))!.frontmatter.status).toBe('paused');
+  });
+
+  test('edit_page cannot revive an archived record either', async () => {
+    const slug = slugs.get('Old birthday')!;
+    const page = await call('get_page', { slug, include_content: true });
+    const err = await call('edit_page', { slug, expected_revision: page.revision, edits: [{ old_text: 'status: archived', new_text: 'status: active' }] }).catch(e => e);
+    expect(err.code).toBe('household_transition');
+    expect((await engine.getPage(slug))!.frontmatter.status).toBe('archived');
+  });
+
+  test('an allowed move (active to paused) still goes through put_page', async () => {
+    const out = await rewriteStatus('Olive oil', 'paused');
+    expect(out.code).toBeUndefined();
+    expect((await engine.getPage(slugs.get('Olive oil')!))!.frontmatter.status).toBe('paused');
+  });
+});

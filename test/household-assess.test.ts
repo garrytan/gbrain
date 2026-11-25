@@ -138,7 +138,7 @@ describe('due assessment', () => {
 
 describe('household error codes', () => {
   const guide = readFileSync(join(import.meta.dir, '..', 'docs', 'guides', 'household.md'), 'utf8');
-  for (const code of ['household_exists', 'household_scale', 'account_number_key']) {
+  for (const code of ['household_exists', 'household_scale', 'household_transition', 'account_number_key']) {
     test(code + ' is registered with a why, a suggestion and a docs anchor that resolves', () => {
       const entry = codeEntry(code) as { class: string; why: string; suggestion: string; docs: string } | undefined;
       expect(entry).toBeDefined();

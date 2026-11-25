@@ -3304,6 +3304,16 @@ More: [docs/guides/household.md#household_exists](../../docs/guides/household.md
 
 More: [docs/guides/household.md#household_scale](../../docs/guides/household.md#household_scale)
 
+### household_transition
+
+<a id="household_transition"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A write to a household record was refused because it moves the record's status in a way the household transition table does not allow (archived is final; a paused record goes back to active before done); nothing was written. | household_mark records each status change with its event in the record's timeline; a generic page write that moved the status around it would leave a state with no event, so every write path checks the same table. | Record what happened with household_mark (gbrain household mark <slug> <event>), or add a new record with household_add when the old one is archived. Run: gbrain household list --json | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/household.md#household_transition](../../docs/guides/household.md#household_transition)
+
 ### idempotency_conflict
 
 <a id="idempotency_conflict"></a>

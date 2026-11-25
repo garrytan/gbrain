@@ -19,7 +19,8 @@
 import type { BrainEngine } from '../engine.ts';
 import { brainServes } from '../access/serves.ts';
 import { ownerMemberId } from '../access/owner.ts';
-import { HOUSEHOLD_KINDS, HOUSEHOLD_ROLES, type HouseholdKind } from './record.ts';
+import { opError } from '../ops/contract.ts';
+import { HOUSEHOLD_KINDS, HOUSEHOLD_ROLES, HOUSEHOLD_STATUSES, HOUSEHOLD_TRANSITIONS, HOUSEHOLD_TYPE, type HouseholdKind, type HouseholdStatus } from './record.ts';
 
 export type HouseholdAudience = 'adults' | 'shared';
 export type SubjectClass = 'child' | 'not_child' | 'unclassified';
@@ -91,13 +92,30 @@ function aboutOf(value: unknown): string[] {
   return [...new Set(list.filter((v): v is string => typeof v === 'string').map(v => v.trim().toLowerCase()).filter(Boolean))];
 }
 
+/** Refuses a status move HOUSEHOLD_TRANSITIONS does not allow, from the stored record (a live household page) to the new one. */
+export function assertHouseholdTransition(previous: { type?: string | null; frontmatter?: Record<string, unknown> | null; deleted_at?: unknown } | null | undefined,
+  frontmatter: Record<string, unknown>, slug: string): void {
+  if (!previous || previous.deleted_at || previous.type !== HOUSEHOLD_TYPE) return;
+  const statusOf = (v: unknown): string => (typeof v === 'string' && v.trim() ? v.trim().toLowerCase() : 'active');
+  const from = statusOf(previous.frontmatter?.status);
+  const to = statusOf(frontmatter.status);
+  if (from === to || !(HOUSEHOLD_STATUSES as readonly string[]).includes(from)) return;
+  if (HOUSEHOLD_TRANSITIONS[from as HouseholdStatus].includes(to as HouseholdStatus)) return;
+  const allowed = HOUSEHOLD_TRANSITIONS[from as HouseholdStatus];
+  throw opError('household_transition', `${slug}: a household record cannot move from status ${from} to ${to}, so nothing was written.`,
+    allowed.length ? `From ${from} a record can move to ${allowed.join(' or ')}; record what happened with household_mark (gbrain household mark ${slug} <event>).`
+      : `An archived record is final; add a new one with household_add (gbrain household add <kind> --title <title>).`);
+}
+
 /**
- * Write admission for a household record: recomputes `household_audience` and `readable_by` from the table (server
- * owned; whatever the caller sent for them is replaced). Runs on every import of a `type: household` page, so put_page,
+ * Write admission for a household record: refuses a status move the transition table does not allow (against
+ * `previous`, the stored page), then recomputes `household_audience` and `readable_by` from the table (server owned;
+ * whatever the caller sent for them is replaced). Runs on every import of a `type: household` page, so put_page,
  * edit_page, household_add, household_mark and sync projection all apply it. Mutates `frontmatter`.
  */
 export async function placeHouseholdFrontmatter(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig' | 'getPage'>, sourceId: string,
-  frontmatter: Record<string, unknown>, tags: readonly string[]): Promise<PlacementDecision> {
+  frontmatter: Record<string, unknown>, tags: readonly string[], previous?: { slug?: string; type?: string | null; frontmatter?: Record<string, unknown> | null; deleted_at?: unknown } | null): Promise<PlacementDecision> {
+  assertHouseholdTransition(previous, frontmatter, previous?.slug ?? 'this page');
   const about = aboutOf(frontmatter.about);
   const classes = await classifySubjects(engine, sourceId, about);
   const decision = placeRecord({ kind: frontmatter.kind, school: tags.map(t => t.toLowerCase()).includes('school'), subjects: [...classes.values()], requested: frontmatter.audience });
