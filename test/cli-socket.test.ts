@@ -113,6 +113,8 @@ const NOT_READ_BEHAVIOR = new Set([
   'GBRAIN_RUST_ENGINE_ADDON',
   // Set by the shadow supervisor for its own child process so the child never shadows (and, as the session nonce, binds the child's asks to it); no caller exports either and no read reads them.
   'GBRAIN_SHADOW_CHILD', 'GBRAIN_SHADOW_SESSION',
+  // Shadow capture's kill switch only stops recording; an answer never changes.
+  'GBRAIN_SHADOW_CAPTURE',
   'GBRAIN_SCHEMA_AUDIT_VERBOSE', 'GBRAIN_SCHEMA_LOCK_TIMEOUT_SECONDS', 'GBRAIN_SCHEMA_PACK_MAX_BYTES', 'GBRAIN_SCHEMA_PACK_WARN_BYTES',
   'GBRAIN_INITSCHEMA_LOCK_TIMEOUT_SECONDS', 'GBRAIN_INIT_SKIP_EMBED_CHECK', 'GBRAIN_IN_AGENT_SETUP', 'GBRAIN_INTERACTIVE', 'GBRAIN_NON_INTERACTIVE',
   'GBRAIN_BOOTSTRAP_ABORT_AFTER', 'GBRAIN_SEAT', 'GBRAIN_CORE', 'GBRAIN_PRESSURE', 'GBRAIN_PAYLOAD', 'GBRAIN_DESCRIPTION', 'GBRAIN_HARNESS_MARKER_VALUE',
