@@ -15,6 +15,7 @@
  * view of one (a test double, a bounded read view) runs the same text.
  */
 import type { BrainEngine } from '../engine.ts';
+import { KERNEL_PAGE_BY_ID_SQL, KERNEL_PAGE_BY_ID_UNMANIFESTED_SQL, KERNEL_PAGES_BY_SLUG_SQL, KERNEL_PAGES_BY_SLUG_UNMANIFESTED_SQL, REFUSED_CHECKPOINT_SQL, UNFINISHED_PAGE_REQUEST_SQL } from '../persistence/sync-run-sql.ts';
 
 /** A statement: `read` leaves the rows alone, `write` may change them (its `RETURNING` rows come back as rows). */
 interface SyncStatement { readonly kind: 'read' | 'write'; readonly sql: string }
@@ -295,6 +296,48 @@ export const SYNC_STATEMENTS = {
   // The refresh fence a managed sync checks before discovery (worktree-refresh.ts assertManagedSyncAllowed).
   blocking_refresh: { kind: 'read', sql: `SELECT id,state FROM persistence_worktree_refreshes
     WHERE worktree_id=$1::uuid AND state IN ('draining','fenced','merged','recovery_required')` },
+  // The managed sync's run, waiver, cursor-key, window, lane, drain and fold statements (sync-run.ts, sync-waivers.ts,
+  // sync-cursor-key.ts, sync-window.ts, sync-lanes.ts, sync-drain.ts, sync-pass-fold.ts, noop-kernel.ts). A Rust brain reaches
+  // them only through a company or dry-run cursor, a legacy cursor row a pass retires, a failed entry's hold, a waiver, a
+  // stall probe or a folded stamp; the bulk-group and lane sites (Postgres-only) stay on `executeRaw` in sync-run.ts.
+  cursor_manifest_insert: { kind: 'write', sql: `INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb) ON CONFLICT DO NOTHING` },
+  cursor_insert: { kind: 'write', sql: `INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb) ON CONFLICT DO NOTHING RETURNING fingerprint` },
+  cursor_swap: { kind: 'write', sql: `UPDATE op_checkpoints SET completed_keys=$4::text::jsonb,updated_at=now()
+      WHERE op=$1 AND fingerprint=$2 AND completed_keys=$3::text::jsonb RETURNING fingerprint` },
+  checkpoint_touch: { kind: 'write', sql: 'UPDATE op_checkpoints SET updated_at=now() WHERE op=$1 AND fingerprint=$2' },
+  cursor_head_locked: { kind: 'read', sql: `SELECT completed_keys->0->>'runId' AS run_id,
+    completed_keys->0->'index' AS index,completed_keys->0->'pending'->>'requestId' AS request_id FROM op_checkpoints WHERE op='managed-sync' AND fingerprint=$1 FOR UPDATE` },
+  pending_intent_held: { kind: 'read', sql: `SELECT completed_keys->0->'pending'->>'requestId' AS request_id,
+        completed_keys->0->'pending'->'intent' = $3::text::jsonb AS same FROM op_checkpoints WHERE op=$1 AND fingerprint=$2 FOR SHARE` },
+  unfinished_page_request: { kind: 'read', sql: UNFINISHED_PAGE_REQUEST_SQL },
+  stale_page_requests: { kind: 'read', sql: `SELECT request_id::text AS request_id FROM persistence_requests WHERE worktree_id=$1::uuid AND intent->>'runId'=$2
+        AND intent->>'kind' IN ('managed_sync_import','managed_sync_delete') AND intent->>'index'=$3 AND state IN ('failed','cancelled','conflict')` },
+  waiver_settings: { kind: 'read', sql: "SELECT set_config('lock_timeout','2s',true),set_config('statement_timeout','10s',true)" },
+  waiver_pages: { kind: 'read', sql: 'SELECT id,slug,deleted_at IS NOT NULL AS deleted,knowledge_revision FROM pages WHERE source_id=$1 AND slug=ANY($2::text[])' },
+  kernel_pages_by_slug: { kind: 'read', sql: KERNEL_PAGES_BY_SLUG_SQL },
+  kernel_pages_by_slug_unmanifested: { kind: 'read', sql: KERNEL_PAGES_BY_SLUG_UNMANIFESTED_SQL },
+  kernel_page_by_id: { kind: 'read', sql: KERNEL_PAGE_BY_ID_SQL },
+  kernel_page_by_id_unmanifested: { kind: 'read', sql: KERNEL_PAGE_BY_ID_UNMANIFESTED_SQL },
+  finished_cursor_delete: { kind: 'write', sql: `DELETE FROM op_checkpoints WHERE op='managed-sync' AND fingerprint=$1
+    AND COALESCE(completed_keys->0->>'done','false')='true' RETURNING completed_keys->0->>'runId' AS run_id` },
+  manifest_delete_unshared: { kind: 'write', sql: `DELETE FROM op_checkpoints WHERE op='managed-sync-manifest' AND fingerprint=$1
+    AND NOT EXISTS (SELECT 1 FROM op_checkpoints c WHERE c.op='managed-sync' AND c.completed_keys->0->>'runId'=$1)` },
+  prefix_delete: { kind: 'write', sql: 'DELETE FROM op_checkpoints WHERE op=$1 AND left(fingerprint, length($2))=$2' },
+  cursor_open_requests: { kind: 'read', sql: `SELECT * FROM persistence_requests WHERE source_id=$1 AND intent->>'cursorKey'=$2
+    AND (state IN ('queued','running','recovering') OR recovery IS NOT NULL) ORDER BY sequence` },
+  request_for_update: { kind: 'read', sql: 'SELECT * FROM persistence_requests WHERE id=$1::uuid FOR UPDATE' },
+  group_predecessor: { kind: 'read', sql: `SELECT state, request_id::text AS request_id FROM persistence_requests WHERE principal_kind=$1 AND principal_id=$2
+      AND sequence<$3 AND intent->>'group'=$4 ORDER BY sequence DESC LIMIT 1` },
+  request_state_by_principal: { kind: 'read', sql: 'SELECT state FROM persistence_requests WHERE principal_kind=$1 AND principal_id=$2 AND request_id=$3::uuid' },
+  stall_probe: { kind: 'read', sql: `SELECT r.state, r.blocked_reason, r.recovery IS NOT NULL AS recovering, r.worktree_id::text,
+         h.id::text AS head_id, h.state AS head_state, h.claim_phase AS head_claim_phase, h.execution_token::text AS head_token,
+         (h.claim_expires_at IS NOT NULL AND h.claim_expires_at < now()) AS head_lapsed, h.intent->>'kind' AS head_kind, w.owner_host_id::text
+       FROM persistence_requests r
+       LEFT JOIN persistence_worktrees w ON w.id = r.worktree_id
+       LEFT JOIN LATERAL (SELECT e.id, e.state, e.claim_phase, e.execution_token, e.claim_expires_at, e.intent FROM persistence_requests e WHERE e.worktree_id = r.worktree_id
+         AND (e.state IN ('queued','running','recovering') OR e.recovery IS NOT NULL) ORDER BY e.sequence LIMIT 1) h ON r.worktree_id IS NOT NULL
+       WHERE r.id = $1::uuid` },
+  refused_checkpoint: { kind: 'read', sql: REFUSED_CHECKPOINT_SQL },
 } as const satisfies Record<string, SyncStatement>;
 
 export type SyncStatementName = keyof typeof SYNC_STATEMENTS;

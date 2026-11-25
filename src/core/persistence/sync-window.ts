@@ -12,6 +12,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import type { WriteRequest } from './model.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
 
 /** The window cancel text older builds wrote (no producer since #6712); the legacy knock-on predicate matches it. */
 export const WINDOW_CANCEL_MESSAGE = 'An earlier page of the same sync did not commit; this page was not published and is re-frozen after that failure is resolved.';
@@ -49,14 +50,12 @@ function groupMember(row: Pick<WriteRequest, 'intent' | 'request_id'>): string |
 export async function claimedPredecessor(engine: Pick<BrainEngine, 'executeRaw'>, row: OrderedRow): Promise<{ state: string; requestId: string | null } | null> {
   const group = groupMember(row);
   if (group) {
-    const [previous] = await engine.executeRaw<{ state: string; request_id: string }>(`SELECT state, request_id::text AS request_id FROM persistence_requests WHERE principal_kind=$1 AND principal_id=$2
-      AND sequence<$3 AND intent->>'group'=$4 ORDER BY sequence DESC LIMIT 1`, [row.principal_kind, row.principal_id, row.sequence, group]);
+    const [previous] = await syncRows<{ state: string; request_id: string }>(engine, 'group_predecessor', [row.principal_kind, row.principal_id, row.sequence, group]);
     if (previous) return { state: previous.state, requestId: previous.request_id };
   }
   const after = windowPredecessor(row);
   if (!after) return null;
-  const [prior] = await engine.executeRaw<{ state: string }>('SELECT state FROM persistence_requests WHERE principal_kind=$1 AND principal_id=$2 AND request_id=$3::uuid',
-    [row.principal_kind, row.principal_id, after]);
+  const [prior] = await syncRows<{ state: string }>(engine, 'request_state_by_principal', [row.principal_kind, row.principal_id, after]);
   return { state: prior?.state ?? 'missing', requestId: after };
 }
 
