@@ -180,7 +180,7 @@ readFirstSourceId	pages	yes	1	no	yes	yes	serves
 lockAllSourceRows	pages	yes	1	no	yes	yes	serves
 readSourceRow	pages	yes	8	no	yes	yes	serves
 lockSourceRow	pages	yes	8	no	yes	yes	serves
-lockSourceForUpdate	pages	yes	3	no	yes	yes	serves
+lockSourceForUpdate	pages	yes	4	no	yes	yes	serves
 advanceSourceCommit	pages	yes	8	no	yes	yes	serves
 writeSourceSyncHeartbeat	pages	yes	1	no	yes	yes	serves
 writeSourceUpstreamObservation	pages	yes	1	no	yes	yes	serves
