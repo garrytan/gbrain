@@ -158,8 +158,9 @@ describe('SessionStart first-session section', () => {
   test('an older hook (no sections declared) gets no section and reserves nothing', async () => {
     const cfg = config();
     await serve(cfg);
+    const secret = ensureIpcSecretForConfig(cfg)!;
     const res = await requestContextPack(resolveSocketPathForConfig(cfg, 'resolve')!, {
-      secret: ensureIpcSecretForConfig(cfg)!, sessionId: 'old-hook', sourceId: 'default', trigger: 'session-start:startup',
+      secret, sessionId: 'old-hook', sourceId: 'default', trigger: 'session-start:startup',
     });
     if (typeof res === 'symbol' || 'degraded' in res || !res.ok) throw new Error('pack failed');
     expect(res.block?.sections).toBeUndefined();

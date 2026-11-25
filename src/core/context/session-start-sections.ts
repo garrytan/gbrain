@@ -53,6 +53,7 @@ export interface FirstSessionOutcomeEntry { ts: string; harness: string; session
 
 export const FIRST_SESSION_OUTCOME_MAX_LINES = 50;
 const REASON_RE = /^[a-z0-9_]{1,40}$/;
+const hashedSession = (id: string) => createHash('sha256').update(id).digest('hex').slice(0, 12);
 
 export function firstSessionOutcomePath(): string {
   return gbrainPath('onboarding', 'first-session-hook.jsonl');
@@ -66,7 +67,7 @@ export function recordFirstSessionOutcome(entry: { harness: string; sessionId: s
     const line: FirstSessionOutcomeEntry = {
       ts: (entry.now ?? new Date()).toISOString(),
       harness: /^[a-z-]{1,20}$/.test(entry.harness) ? entry.harness : 'unknown',
-      session: createHash('sha256').update(entry.sessionId).digest('hex').slice(0, 12),
+      session: hashedSession(entry.sessionId),
       outcome: entry.outcome,
       ...(entry.reason && REASON_RE.test(entry.reason) ? { reason: entry.reason } : {}),
       ...(entry.retried ? { retried: true as const } : {}),
