@@ -98,9 +98,9 @@ export function insideCoordinatedWrite(): boolean {
  * names the next request as the actor of the rows it writes. One statement; the
  * enclosing coordinated write restores the outer values when it ends.
  */
-export async function setMemberAttribution(engine: Pick<BrainEngine, 'executeRaw'>, attribution: WriteAttribution): Promise<void> {
-  // The member's trust declaration replaces the previous member's (an undeclared member resets to none: `unknown`).
-  await engine.executeRaw(`SELECT ${[...ATTRIBUTION_SETTINGS, ...TRUST_SETTINGS].map((name, index) => `set_config('${name}',$${index + 1},true)`).join(',')}`,
+export async function setMemberAttribution(engine: Pick<BrainEngine, 'applyTransactionSettings'>, attribution: WriteAttribution): Promise<void> {
+  // The member's trust declaration replaces the previous member's (an undeclared member resets to none: `unknown`). The typed settings member sets them in one statement.
+  await engine.applyTransactionSettings([...ATTRIBUTION_SETTINGS, ...TRUST_SETTINGS],
     [attribution.requestId ?? '', attribution.principal.kind, attribution.principal.id, ...trustValues(attribution.trust ?? null)]);
 }
 /** Attribution without coordinator capability, for unmanaged legacy transactions. */

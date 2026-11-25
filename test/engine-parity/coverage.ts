@@ -440,7 +440,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'readAdmittedWriteRequests', 'readPageRevisionWriter', 'readRevisionWriterRequest', 'writeSyncAdmissionStamp', 'readSyncAdmissionEffects',
     'readHealthMemoClock', 'listSynopsisSourceIds', 'readSynopsisTierSources', 'setSourceContextualMode',
     'revokeAccessTokensNamed', 'revokeAccessToken', 'deleteOAuthClient', 'readAccessGroups', 'listPagesNamingReader', 'countOpenPages', 'hasSynopsisFrontmatterOverride',
-    'readWorktreeManifest', 'writerReleaseStore', 'addPersistenceCounters', 'publicationJournalStore', 'gitDurabilityStore', 'gitEffectStore', 'topologyStore', 'manualLinkStore', 'refreshStore', 'persistenceUpkeepStore',
+    'readWorktreeManifest', 'writerReleaseStore', 'addPersistenceCounters', 'publicationJournalStore', 'gitDurabilityStore', 'gitEffectStore', 'topologyStore', 'manualLinkStore', 'refreshStore', 'groupPublishStore', 'persistenceUpkeepStore',
     // the write-time chronicle decision (engine-sql/chronicle-ledger.ts) and the chronicle executor (engine-sql/chronicle-executor.ts)
     'upsertChronicleRow', 'readChronicleRow', 'hasPendingAutoChronicleRow', 'countRecentChronicleReservations', 'reserveChronicleJudgeSlot', 'pruneChronicleReservations', 'chronicleStore', 'insertConfigIfAbsent', 'readPageTruthLead',
     // the reads a page write makes before admission (engine-sql/page-mutation-reads.ts)

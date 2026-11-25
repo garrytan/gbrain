@@ -9,8 +9,8 @@
 <<<<<<< HEAD
 # covered: 2443/2470
 =======
-# covered: 2404/2430
->>>>>>> 30bd9c934a (A Rust brain runs the managed clone, topology recovery, owner facts and parked-push retry through typed store members (hold kept for users))
+# covered: 2403/2432
+>>>>>>> 0e8e0545d1 (A Rust brain publishes a group of bound writes and imports files into a managed checkout (hold kept for users))
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -84,8 +84,8 @@
 <<<<<<< HEAD
 # write_misc: 124/139
 =======
-# write_misc: 123/137
->>>>>>> 30bd9c934a (A Rust brain runs the managed clone, topology recovery, owner facts and parked-push retry through typed store members (hold kept for users))
+# write_misc: 122/139
+>>>>>>> 0e8e0545d1 (A Rust brain publishes a group of bound writes and imports files into a managed checkout (hold kept for users))
 # repair_bookkeeping: 59/59
 # write_attribution: 5/5
 # telemetry: 14/14
@@ -143,9 +143,10 @@ listCatalogForeignKeys	lifecycle	yes	1	no	yes	yes	serves
 <<<<<<< HEAD
 getPage	pages	yes	288	yes	yes	yes	serves
 readPageSnapshot	pages	yes	103	no	yes	yes	serves
-=======
->>>>>>> 30bd9c934a (A Rust brain runs the managed clone, topology recovery, owner facts and parked-push retry through typed store members (hold kept for users))
 getPage	pages	yes	284	yes	yes	yes	serves
+=======
+getPage	pages	yes	285	yes	yes	yes	serves
+>>>>>>> 0e8e0545d1 (A Rust brain publishes a group of bound writes and imports files into a managed checkout (hold kept for users))
 readPageSnapshot	pages	yes	100	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
@@ -949,7 +950,7 @@ readWorktreeAdmission	persistence_journal	yes	2	no	yes	yes	serves
 completeSyncedRefresh	persistence_journal	yes	2	no	yes	yes	serves
 hasDeferralRoom	persistence_journal	yes	2	no	yes	yes	serves
 readRefreshTiming	persistence_journal	yes	2	no	yes	yes	serves
-countHeldBehindImport	persistence_journal	yes	2	no	yes	yes	serves
+countHeldBehindImport	persistence_journal	yes	3	no	yes	yes	serves
 ownsSchemaTables	persistence_journal	yes	1	no	yes	yes	serves
 readOAuthClientWriteGrant	persistence_journal	yes	4	no	yes	yes	serves
 readAccessTokenWriteGrant	persistence_journal	yes	4	no	yes	yes	serves
@@ -1017,11 +1018,7 @@ moveTwinPageChildren	persistence_journal	yes	4	no	yes	yes	serves
 moveTwinFacts	persistence_journal	yes	3	no	yes	yes	serves
 recordRenameAlias	persistence_journal	yes	3	no	yes	yes	serves
 movePageVersions	persistence_journal	yes	1	no	yes	yes	serves
-<<<<<<< HEAD
 readSourceMembership	persistence_journal	yes	147	no	yes	yes	serves
-=======
-readSourceMembership	persistence_journal	yes	139	no	yes	yes	serves
->>>>>>> 30bd9c934a (A Rust brain runs the managed clone, topology recovery, owner facts and parked-push retry through typed store members (hold kept for users))
 findTopologyChanges	persistence_journal	yes	3	no	yes	yes	serves
 readTopologyChangeDigest	persistence_journal	yes	2	no	yes	yes	serves
 listTopologyRecoveries	persistence_journal	yes	7	no	yes	yes	serves
@@ -1062,13 +1059,8 @@ deleteProjectionJob	persistence_journal	yes	11	no	yes	yes	serves
 markProjectionRebuildFailed	persistence_journal	yes	5	no	yes	yes	serves
 listGatedMirrorRequests	persistence_journal	yes	2	no	yes	yes	serves
 listEffectRecoveries	persistence_journal	yes	1	no	yes	yes	serves
-<<<<<<< HEAD
 selectClaimableEffect	persistence_journal	yes	11	no	yes	yes	serves
 readRequestEffects	persistence_journal	yes	14	no	yes	yes	serves
-=======
-selectClaimableEffect	persistence_journal	yes	8	no	yes	yes	serves
-readRequestEffects	persistence_journal	yes	13	no	yes	yes	serves
->>>>>>> 30bd9c934a (A Rust brain runs the managed clone, topology recovery, owner facts and parked-push retry through typed store members (hold kept for users))
 readSourceRequestById	persistence_journal	yes	1	no	yes	yes	serves
 listSourceRequestsByRequestId	persistence_journal	yes	2	no	yes	yes	serves
 listRetryTrackedEffects	persistence_journal	yes	2	no	yes	yes	serves
@@ -2013,12 +2005,8 @@ listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
 getWorktreeBinding	write_misc	yes	31	no	yes	yes	serves
 listHostTopologyRows	write_misc	yes	2	no	yes	yes	serves
 listWorktreeMembers	write_misc	yes	2	no	yes	yes	serves
-<<<<<<< HEAD
 worktreeClaimStore	write_misc	yes	43	no	yes	yes	serves
 readWriterAdminState	write_misc	yes	12	no	yes	yes	serves
-=======
-worktreeClaimStore	write_misc	yes	47	no	yes	yes	serves
->>>>>>> 30bd9c934a (A Rust brain runs the managed clone, topology recovery, owner facts and parked-push retry through typed store members (hold kept for users))
 readWriterAdminState	write_misc	yes	10	no	yes	yes	serves
 readWorktreeManifest	write_misc	yes	1	no	yes	yes	serves
 writerAdminStore	write_misc	yes	3	no	yes	yes	serves
@@ -2073,12 +2061,8 @@ attachSourcePath	write_misc	yes	14	no	yes	yes	serves
 readAtomGeneration	write_misc	yes	2	no	yes	yes	serves
 recordAtomGenerationBump	write_misc	yes	2	no	yes	yes	serves
 addPersistenceCounters	write_misc	yes	4	no	yes	yes	serves
-<<<<<<< HEAD
 persistenceUpkeepStore	write_misc	yes	2	no	yes	yes	serves
 gitDurabilityStore	write_misc	no	0	no	-	-	-
-=======
-gitDurabilityStore	write_misc	yes	1	no	yes	yes	serves
->>>>>>> 30bd9c934a (A Rust brain runs the managed clone, topology recovery, owner facts and parked-push retry through typed store members (hold kept for users))
 gitEffectStore	write_misc	no	0	no	-	-	-
 topologyStore	write_misc	yes	6	no	yes	yes	serves
 manualLinkStore	write_misc	no	0	no	-	-	-

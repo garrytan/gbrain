@@ -154,6 +154,7 @@ import * as gitDurability from './git-durability.ts';
 import * as gitEffects from './git-effects.ts';
 import * as topologyStore from './topology-store.ts';
 import * as refreshStore from './refresh-store.ts';
+import * as groupPublishStore from './group-publish-store.ts';
 import * as manualLinks from './manual-links.ts';
 import * as writerStatus from './writer-status.ts';
 import * as collateStoreReads from './collate-store-reads.ts';
@@ -333,6 +334,7 @@ export const STORE_MEMBERS = {
   ...gitEffects,
   ...topologyStore,
   ...refreshStore,
+  ...groupPublishStore,
   ...manualLinks,
   ...writerStatus,
   // Reads callers once ran through executeRaw: feedback, pins, credentials (rust/docs/store).

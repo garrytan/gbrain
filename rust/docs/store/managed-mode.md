@@ -15,6 +15,8 @@ on this engine one tagged read call and one tagged write call (`{ kind, ...args 
 | `gitDurabilityStore()` | `engine-sql/git-durability.ts` | `persistence/git_durability.rs` | `gitDurabilityRows`, `gitDurabilityWrite` |
 | `gitEffectStore()` | `engine-sql/git-effects.ts` | `persistence/git_effects.rs` | `gitEffectRows`, `gitEffectWrite` |
 | `topologyStore()` | `engine-sql/topology-store.ts` | `persistence/topology_store.rs` | `topologyRows`, `topologyWrite` |
+| `refreshStore()` | `engine-sql/refresh-store.ts` | `persistence/refresh_store.rs` | `refreshRows`, `refreshWrite` |
+| `groupPublishStore()` | `engine-sql/group-publish-store.ts` | `persistence/group_publish_store.rs` | `groupRows`, `groupWrite` |
 | `manualLinkStore()` | `engine-sql/manual-links.ts` | `link_queries/manual_links.rs` | `manualLinkRows`, `manualLinkWrite` |
 | `claimCoalescedGitEffects(input)` | `engine-sql/persistence-effect-worker.ts` | `persistence/effect_worker.rs` | `claimCoalescedGitEffects` |
 
@@ -69,3 +71,17 @@ takes none of them and adds no lock of its own (no file lock, no process-wide mu
   database-only only when no producer is managed), the fence projection's link and transition
   writes (an existing fenced edge keeps its id; a transition with the same identity is not
   inserted again). The link-transition identity always carries the link source here.
+- Refresh: the refresh row (every column of `persistence_worktree_refreshes`, state transitions that stamp
+  `completed_at` and, on the first move into `completed` or `aborted`, `released_at`, as the release trigger
+  does), the one active refresh per worktree (a second insert answers the `23505` violation), the drain counts
+  (requests including released deferred ones, checkout effects, recovery records), the publication and topology
+  recovery probe, unfinished managed-sync cursors, the held-for-import move of a running claim, the later-write and
+  backlog reads of the barrier, the owner-activity evidence (no consumer row exists, so no consumer is live), and the
+  active, resumable and stuck refresh lists. `sources.last_commit` is stored: `completeSyncedRefresh` and the import
+  hold's landing compare it. `hasDeferralRoom` stays true while no consumer row exists. The claim stamp's
+  `passed_sync` is true when an earlier queued sync row of the worktree exists.
+- Group publication: the claim of a group's followers (the group key of each request, the prefix that ends at a
+  non-member, a recovering, backed-off or charged member), claim renewal and dispatch marks by token, the group's
+  recovery check, the publication mark, the completion applied member by member in the caller's transaction (it stops
+  at the first member that does not fit and the caller rolls the group back), and the import path check's source
+  roots and pending-import checkpoints.

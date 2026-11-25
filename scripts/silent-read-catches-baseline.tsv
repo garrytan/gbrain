@@ -1104,13 +1104,11 @@ src/core/persistence/graduation-inventory.ts#schemaVersion	catch_empty	1
 src/core/persistence/graduation-serve-guard.ts#readGraduationManifestSummary	catch_empty	1
 src/core/persistence/graduation-target.ts#probeTarget<anon@1>	catch_empty	1
 src/core/persistence/graduation-verify.ts#replayProbe	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
-src/core/persistence/group-publish.ts#publishGroup	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/group-publish.ts#publishGroup<anon@5>	promise_catch_empty	1
 src/core/persistence/head-blocker.ts#readHeadBlockers	promise_catch_empty	1
 src/core/persistence/head-blocker.ts#readQueuedHeadBlockers	promise_catch_empty	1
 src/core/persistence/identity.ts#readMachineId	catch_empty	1
 src/core/persistence/identity.ts#rotateLocalWriter	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
-src/core/persistence/import-mutations.ts#importPlanned	capability_refusal_swallowed	2
 src/core/persistence/import-mutations.ts#importPlanned	promise_catch_empty	1
 src/core/persistence/index-lock-reclaim.ts#owner	catch_empty	1
 src/core/persistence/index-lock-reclaim.ts#readIndexLockReclaims	catch_empty	1
@@ -1141,7 +1139,6 @@ src/core/persistence/purge-deleted.ts#expireRecordedTombstones	capability_refusa
 src/core/persistence/put-page-screen.ts#unchangedPutPage	capability_refusal_swallowed	1
 src/core/persistence/put-page-screen.ts#unchangedPutPage	catch_empty	1
 src/core/persistence/recovery-resolve.ts#scanStuckRecoveries	promise_catch_empty	1
-src/core/persistence/refresh-barrier.ts#deferredWaiting	capability_refusal_swallowed	1
 src/core/persistence/refresh-retry-hint.ts#refreshRetryHint	promise_catch_empty	1
 src/core/persistence/resolve-paths.ts#resolveSourcePaths	promise_catch_empty	1
 src/core/persistence/root-registry.ts#isGitDirectory	catch_empty	1
@@ -1223,8 +1220,6 @@ src/core/persistence/unbound-source.ts#readDatabaseOnlyActivatedSources	catch_em
 src/core/persistence/unsourced-put-fork.ts#noteSuppressedSourceFlip	catch_empty	1	landed on master (#9915, #9939) after this guard was written; known debt, fix by a typed degraded marker
 src/core/persistence/worktree-lease.ts#foreignWaiterAhead	catch_empty	1
 src/core/persistence/worktree-refresh.ts#boundedMemberSync>drain	promise_catch_empty	1
-src/core/persistence/worktree-refresh.ts#fenceAndMerge	capability_refusal_swallowed	2	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
-src/core/persistence/worktree-refresh.ts#fenceDraining	capability_refusal_swallowed	1	sync 13b: the trunk's capability-refusal rule also follows a promise a transaction callback returns; this managed-persistence path never runs on a Rust brain, which refuses managed mode (managed_persistence) before it
 src/core/persistence/worktree-refresh.ts#ownCommits	catch_empty	1
 src/core/persistence/worktree-refresh.ts#reachedTargetSince	catch_empty	1
 src/core/persistence/worktree-refresh.ts#underMemberLeases>held	promise_catch_empty	1

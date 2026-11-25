@@ -81,6 +81,7 @@ mod freshness;
 mod git_durability;
 mod git_effects;
 mod git_holds;
+mod group_publish_store;
 mod head_blocker;
 mod housekeeping;
 mod identity_downgrade;
@@ -174,6 +175,7 @@ pub use purge_effects::{
 };
 pub use receipt_list::{IncarnationRequestFilter, WriteRequestListFilter};
 pub use refresh_store::{RefreshRead, RefreshWrite};
+pub use group_publish_store::{GroupRead, GroupWrite};
 pub use sync_pass_pages::{SyncImportPageQuery, SyncImportPageWindow};
 pub use sync_run_reads::SyncAdmissionEffectsQuery;
 pub use topology::TopologyChangeInsert;
@@ -703,7 +705,7 @@ pub(crate) fn read_counter(read: &dyn KvRead, key: &str) -> Result<Option<Counte
     get_json(read, &counter_key(key)?)
 }
 
-fn write_counter(tx: &mut dyn KvWrite, key: &str, counter: &CounterRecord) -> Result<()> {
+pub(crate) fn write_counter(tx: &mut dyn KvWrite, key: &str, counter: &CounterRecord) -> Result<()> {
     counter.check(key)?;
     put_json(tx, &counter_key(key)?, counter)
 }

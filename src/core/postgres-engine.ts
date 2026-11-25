@@ -181,6 +181,7 @@ import * as gitDurabilityImpl from './engine-sql/git-durability.ts';
 import * as gitEffectsImpl from './engine-sql/git-effects.ts';
 import * as topologyStoreImpl from './engine-sql/topology-store.ts';
 import * as refreshStoreImpl from './engine-sql/refresh-store.ts';
+import * as groupPublishStoreImpl from './engine-sql/group-publish-store.ts';
 import * as manualLinksImpl from './engine-sql/manual-links.ts';
 import * as writerStatusImpl from './engine-sql/writer-status.ts';
 import * as labelDoorImpl from './engine-sql/label-door.ts';
@@ -2897,6 +2898,7 @@ export class PostgresEngine implements BrainEngine {
   gitEffectStore() { return gitEffectsImpl.gitEffectStore(this); }
   topologyStore() { return topologyStoreImpl.topologyStore(this); }
   refreshStore() { return refreshStoreImpl.refreshStore(this); }
+  groupPublishStore() { return groupPublishStoreImpl.groupPublishStore(this); }
   manualLinkStore() { return manualLinksImpl.manualLinkStore(this); }
   chronicleStore() { return chronicleExecutorImpl.chronicleStore(this); }
   addPersistenceCounters(key: string, delta: Partial<Record<CounterColumn, number>>): Promise<void> { return writerReleaseImpl.addPersistenceCounters(this, key, delta); }

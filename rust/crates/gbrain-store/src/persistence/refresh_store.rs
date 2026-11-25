@@ -654,3 +654,110 @@ impl Store {
         self.write(|tx| refresh_write_in(tx, &*self.env, what))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::persistence::TopologyWrite;
+    use crate::test_support::store;
+
+    const WT: &str = "d0000000-0000-4000-8000-0000000000d1";
+    const HOST: &str = "a0000000-0000-4000-8000-0000000000a1";
+    const PRINCIPAL: &str = "b0000000-0000-4000-8000-0000000000b1";
+
+    fn fenced_store() -> Store {
+        let s = store();
+        s.topology_write(&TopologyWrite::InsertWorktree { id: WT.into(), host_id: HOST.into() }).unwrap();
+        s
+    }
+
+    fn draining(s: &Store) -> Value {
+        s.refresh_write(&RefreshWrite::InsertDraining {
+            worktree_id: WT.into(),
+            source_ids: vec!["default".into()],
+            principal_id: PRINCIPAL.into(),
+            owner_epoch: "1".into(),
+            topology_generation: "1".into(),
+            old_head: "aaa".into(),
+            target_head: "bbb".into(),
+            upstream_ref: "origin/main".into(),
+            preserved: vec![],
+            outcome: json!({ "holder": { "pid": 1 } }),
+        })
+        .unwrap()
+    }
+
+    fn transition(s: &Store, id: &str, from: &[&str], to: &str, terminal: bool) -> bool {
+        s.refresh_write(&RefreshWrite::Transition {
+            id: id.into(),
+            from: from.iter().map(|f| f.to_string()).collect(),
+            to: to.into(),
+            outcome: json!({}),
+            terminal,
+        })
+        .unwrap()
+        .as_bool()
+        .unwrap()
+    }
+
+    #[test]
+    fn a_worktree_has_one_active_refresh_and_a_terminal_move_releases_the_barrier() {
+        let s = fenced_store();
+        let row = draining(&s);
+        assert_eq!(row["state"], "draining");
+        assert_eq!(row["released_at"], Value::Null);
+        assert_eq!(draining(&s), json!({ "conflict": true }), "the active index admits one");
+        let id = row["id"].as_str().unwrap().to_owned();
+        assert!(!transition(&s, &id, &["fenced"], "merged", false), "a row not in `from` stays");
+        assert!(transition(&s, &id, &["draining"], "aborted", true));
+        let done = s.refresh_rows(&RefreshRead::Row { id: id.clone() }).unwrap();
+        assert_eq!(done["state"], "aborted");
+        assert!(done["released_at"].is_string(), "the first terminal move releases the barrier");
+        assert!(done["completed_at"].is_string());
+        assert_eq!(draining(&s)["state"], "draining", "the next refresh may start");
+        let none = s.refresh_rows(&RefreshRead::Active { worktree_id: "e0000000-0000-4000-8000-0000000000e1".into() }).unwrap();
+        assert_eq!(none, Value::Null);
+    }
+
+    #[test]
+    fn a_refresh_of_no_worktree_is_a_constraint_violation() {
+        let s = store();
+        let err = s
+            .refresh_write(&RefreshWrite::InsertDraining {
+                worktree_id: WT.into(),
+                source_ids: vec![],
+                principal_id: PRINCIPAL.into(),
+                owner_epoch: "1".into(),
+                topology_generation: "1".into(),
+                old_head: "a".into(),
+                target_head: "b".into(),
+                upstream_ref: "o".into(),
+                preserved: vec![],
+                outcome: json!({}),
+            })
+            .unwrap_err();
+        assert_eq!(err.code, CONSTRAINT_VIOLATION);
+    }
+
+    #[test]
+    fn replan_moves_only_a_fenced_row_whose_merge_has_not_started() {
+        let s = fenced_store();
+        let id = draining(&s)["id"].as_str().unwrap().to_owned();
+        let replan = |s: &Store| s.refresh_write(&RefreshWrite::Replan { id: id.clone(), old_head: "ccc".into(), target_head: "ddd".into() }).unwrap();
+        assert_eq!(replan(&s), Value::Null, "a draining row is not replanned");
+        assert!(transition(&s, &id, &["draining"], "fenced", false));
+        assert!(s.refresh_write(&RefreshWrite::MarkMergeStarted { id: id.clone(), at_ms: 5.0 }).unwrap().as_bool().unwrap());
+        assert_eq!(replan(&s), Value::Null, "a started merge is not replanned");
+    }
+
+    #[test]
+    fn the_unfinished_sync_cursor_and_the_members_commits_read_the_stored_sources() {
+        let s = fenced_store();
+        s.upsert_source(&crate::sources::SourceInput { id: "alpha".into(), name: None, local_path: None, last_sync_at: None, config: None }).unwrap();
+        s.advance_source_commit("alpha", "abc123", None).unwrap();
+        let commits = s.refresh_rows(&RefreshRead::SourceCommits { source_ids: vec!["alpha".into(), "gone".into()] }).unwrap();
+        assert_eq!(commits, json!([{ "id": "alpha", "last_commit": "abc123" }]));
+        let cursor = s.refresh_rows(&RefreshRead::UnfinishedSyncCursor { members: vec!["alpha".into()] }).unwrap();
+        assert_eq!(cursor, Value::Null);
+    }
+}

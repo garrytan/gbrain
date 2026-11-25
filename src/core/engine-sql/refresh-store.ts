@@ -52,7 +52,7 @@ export interface RefreshStore {
   /** Marks the merge started on a still fenced row; whether it did. */
   markMergeStarted(id: string, atMs: number): Promise<boolean>;
   /** The caller becomes the active row's holder; `previous_holder` keeps the first holder replaced. */
-  setHolder(id: string, holder: Record<string, unknown>): Promise<void>;
+  setHolder(id: string, holder: object): Promise<void>;
   /** The members' upstream observation after the merge: checked now, at the target, none behind. */
   recordMergedUpstream(sourceIds: readonly string[], targetHead: string): Promise<void>;
   /** The target heads of the worktree's last 100 completed refreshes of `upstreamRef`, newest first. */

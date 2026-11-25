@@ -334,7 +334,7 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'expireFactWithNote', 'expireFactsByIds', 'expireFactsByWithdrawal', 'expireFactsOfGonePages', 'expirePageFactsBySource',
   'expireSourceFactNow', 'expireSpendReservations', 'expireStaleWriteClaims', 'expireSupersededFact', 'failEffectRow',
   'failJob', 'failParentJob', 'failSubagentToolExecution', 'fetchSyncImportPageCursor', 'finishAccessRestamp',
-  'forgetWakeCredential', 'forgetWakeMember', 'gitDurabilityStore', 'gitEffectStore', 'holdPageEmbedding', 'insertAccessMember', 'insertAccessMemberLink',
+  'forgetWakeCredential', 'forgetWakeMember', 'gitDurabilityStore', 'gitEffectStore', 'groupPublishStore', 'holdPageEmbedding', 'insertAccessMember', 'insertAccessMemberLink',
   'insertAccessMigration', 'insertAccessPolicyRevision', 'insertAccessReadLogRows', 'insertAccessToken', 'insertBeliefEvents',
   'insertBeliefRedaction', 'insertCalibrationProfile', 'insertCanonicalTimelineRows', 'insertDerivedAliasRows',
   'insertFactPurge', 'insertFactWithdrawal', 'insertHoldingPagePurges', 'insertJobAttachment', 'insertLeasePressure',
