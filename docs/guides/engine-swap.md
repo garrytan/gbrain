@@ -71,8 +71,12 @@ never a pass. With no shadow running, every criterion is `missing`.
    transaction, another write landed in between, or it touched too many rows) is `uncomparable` and never counts. Every
    sampled write of any other kind (tags, chunks, timeline, facts, raw SQL and so on) is counted `capability_missing` under
    its family, so `gbrain engine shadow status` and the swap plan name every family still unchecked. With no verdict yet the
-   row stays `missing`; below 1,000 comparable writes it fails and says how many it has. The sample share is the shadow's
-   `sample_rate`. A sampled write outside a transaction waits for one small read of the rows it touches before it runs.
+   row stays `missing`; below 1,000 comparable writes it fails and says how many it has. The sample share is the write sample
+   rate, 0.05 unless `gbrain engine shadow start --write-sample-rate <0..1>` sets another; it is separate from the read
+   sample rate. A sampled write outside a transaction waits (at most 2 seconds) for one small read of the rows it touches
+   before it runs; if that read is slow, the write goes ahead and the sample is `uncomparable`. `put_page` and import run
+   their page write inside a transaction, so those are `uncomparable` today: only link operations outside a transaction
+   (`add_link`, `remove_link`, a by-mention extract batch) can make a write `comparable`.
 6. Zero `privacy_diverged` events (the field is absent, not zero, while any privacy check of the last 7 days is unsettled, so criterion 6 has no evidence until it settles).
 7. Zero fingerprint mismatches, a passed fingerprint probe and a passed allocator verification.
 8. Speed: paired bench samples. **Reported, not gating.** D23 (the maintainer's C1 ruling of 2026-11-19) makes the
