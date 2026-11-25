@@ -84,6 +84,8 @@ const VALID_UNTIL_WRITE_ALLOWLIST: ReadonlySet<string> = new Set([
   'src/core/cycle/extract-facts.ts',
   'src/core/cycle/phases/consolidate.ts',
   'src/core/engine-sql/facts.ts', // #7214: insertFact's supersede closes the retired interval at the replacement's valid_from
+  'src/core/engine-sql/facts-purge.ts', // the withdrawal expiry statement (expireFactsByWithdrawal), the same explicit user retraction as facts/withdrawal.ts
+  'src/core/engine-sql/facts-trust.ts', // the decide supersede and its undo and the forget expiries, the same user-run writes as facts/proposal-supersede.ts and facts/forget.ts
   'src/core/facts/forget.ts',
   'src/core/facts/insert-guard-schema.ts',
   'src/core/facts/proposal-supersede.ts',

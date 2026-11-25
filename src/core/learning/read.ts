@@ -64,15 +64,15 @@ function liveFactSql(a: string, f: CallerFilters): string {
     AND ${projectionEligibleSql('facts', a, undefined)}`;
 }
 
-/** Window: $1 source ids (null: every source), $2 start, $3 unseen pending only, $4 row cap. */
+/** Window: $1 source ids (null: every source), $2 start, $3 unseen pending only, $4 row cap, $5 item ids (null: any). */
 const WINDOW_SQL = `($1::text[] IS NULL OR li.source_id = ANY($1::text[])) AND li.created_at >= $2::timestamptz
-  AND ($3::boolean = false OR (li.state = 'pending' AND li.shown_at IS NULL))`;
+  AND ($3::boolean = false OR (li.state = 'pending' AND li.shown_at IS NULL)) AND ($5::bigint[] IS NULL OR li.id = ANY($5::bigint[]))`;
 
 /**
  * Duplicate questions hold one of the five open slots until they are answered, so the default note keeps showing a
  * pending one whether or not it was shown or is older than the window; `since` still bounds them by date.
  */
-const QUESTION_WINDOW_SQL = `($1::text[] IS NULL OR li.source_id = ANY($1::text[]))
+const QUESTION_WINDOW_SQL = `($1::text[] IS NULL OR li.source_id = ANY($1::text[])) AND ($5::bigint[] IS NULL OR li.id = ANY($5::bigint[]))
   AND (CASE WHEN $3::boolean THEN li.state = 'pending' ELSE li.created_at >= $2::timestamptz END)`;
 
 /**
@@ -143,8 +143,8 @@ const read = (slug: unknown) => (typeof slug === 'string' && slug ? ['gbrain', '
 
 /** The pointers in the window whose live target the caller can read, rendered, best first. */
 export async function liveItems(engine: BrainEngine, ctx: OperationContext, f: CallerFilters,
-  window: { sourceIds: string[] | null; since: Date; unseenOnly: boolean; limit: number }): Promise<LearnedItem[]> {
-  const params = [window.sourceIds, window.since.toISOString(), window.unseenOnly, window.limit];
+  window: { sourceIds: string[] | null; since: Date; unseenOnly: boolean; limit: number; ids?: number[] }): Promise<LearnedItem[]> {
+  const params = [window.sourceIds, window.since.toISOString(), window.unseenOnly, window.limit, window.ids ?? null];
   const rows = await withLiveDuplicates(engine, f, window.sourceIds, ctx.remote !== false, (await Promise.all(queries(f).map(q => engine.executeRaw<Row>(q.sql, params)))).flat());
   const facts = rows.filter(r => r.kind === 'fact_added' || r.kind === 'you_wrote').map(r => ({ id: Number(r.fact_id), fact: String(r.fact), source: r.source as string | null }));
   const conflictFacts = rows.filter(r => r.kind === 'conflict_found').flatMap(r => [
