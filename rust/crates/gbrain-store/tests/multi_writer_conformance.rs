@@ -22,8 +22,9 @@ mod common;
 mod memory_env;
 
 use common::mu::{
-    self, CLAIM_JOB, CLAIM_WRITE, CommitPosition, L1_TXN, L2_LOG, L3_SERVER, L5_HOSTS, LEASE_LOST,
-    LeaseToken, LostReason, MuStore, MuTxn, SingleFlightKey, TxnMode, TxnOptions, WriteOrigin,
+    self, CLAIM_EFFECT, CLAIM_JOB, CLAIM_WRITE, CommitPosition, L1_TXN, L2_LOG, L3_SERVER,
+    L5_HOSTS, LEASE_LOST, LeaseToken, LostReason, MuStore, MuTxn, SingleFlightKey, TxnMode,
+    TxnOptions, WriteOrigin,
 };
 use common::{StoreMode, TempDir, clock, open, open_in};
 use gbrain_store::chunks::{ChunkInput, UpsertChunksOptions};
@@ -996,9 +997,11 @@ fn the_lease_lost_reasons_round_trip_through_the_error_message() {
 
 /// C07 scenario: one effect, eight claimants; the owner dies after the action and before it records, and the
 /// effect is claimed again; no duplicate row.
-fn effect_claimed_once_then_rerun(store: Arc<Store>) {
-    const HOST: &str = "d0000000-0000-4000-8000-0000000000d1";
-    let id = queued_write(&store, "b0000000-0000-4000-8000-0000000000b1");
+const EFFECT_HOST: &str = "d0000000-0000-4000-8000-0000000000d1";
+
+/// A queued write with one embedding effect; returns the request id.
+fn queued_effect(store: &Store) -> String {
+    let id = queued_write(store, "b0000000-0000-4000-8000-0000000000b1");
     let incarnation =
         store.read_source_membership("default").unwrap().unwrap()["incarnation"].clone();
     let effects: PublicationEffectsSpec = serde_json::from_value(json!({
@@ -1008,6 +1011,12 @@ fn effect_claimed_once_then_rerun(store: Arc<Store>) {
     }))
     .unwrap();
     store.insert_publication_effects(&effects).unwrap();
+    id
+}
+
+fn effect_claimed_once_then_rerun(store: Arc<Store>) {
+    const HOST: &str = EFFECT_HOST;
+    let id = queued_effect(&store);
     let claim = |s: &Store, token: &str, dead: &[String]| -> Option<Value> {
         let tx = s.begin_transaction(false).unwrap();
         let next = tx.select_claimable_effect(HOST, dead).unwrap();
@@ -1066,15 +1075,82 @@ fn c07_effect_claimed_once_rerun_after_owner_crash() {
     effect_claimed_once_then_rerun(Arc::new(open(&dir)));
 }
 
-/// C07, `claim_effects`: the same rule when the crashed owner and the claimants are different hosts; a host's death is its lease
-/// expiring (I-5).
+/// C07, `claim_effects`: a host's death is its lease expiring (I-5). The effect is claimed under host A's lease, the lease expires
+/// on the injected clock, host B takes it under epoch + 1 and takes the effect back, and A's stale fence cannot settle it
+/// (`lease_lost`: `expired` before the takeover, `epoch_moved` after, and its claim is `claim_epoch_mismatch`). One effect row, once.
 #[test]
 #[ignore = "multi_writer"]
 fn c07_effect_claimed_once_rerun_after_owner_crash_multi_writer() {
-    let dir = TempDir::new("c07m");
-    let store = Arc::new(open_optimistic(&dir));
-    require_host_lease(&store);
-    effect_claimed_once_then_rerun(store);
+    const TTL_MS: u64 = 1_000;
+    const NAME: &str = "effects-host";
+    let b = brain_in("c07m", memory_env::StoreMode::Optimistic);
+    let id = queued_effect(&b);
+    let settle = |token: &str, effect: &Value| EffectSettle {
+        id: effect["id"].as_str().unwrap().into(),
+        token: Some(token.into()),
+        slug: None,
+        outcome_json: Some("{}".into()),
+        data_json: None,
+        reason: None,
+        delay_ms: None,
+    };
+    // Host A takes its lease and claims the effect under it. Another claimant under the same fence finds nothing.
+    let a = b
+        .acquire_lease(NAME, &origin(1), TTL_MS)
+        .unwrap_or_else(|e| panic!("{e}"))
+        .expect("host A takes the lease");
+    let effect = b
+        .claim_effect_with_fence(EFFECT_HOST, &a)
+        .unwrap_or_else(|e| panic!("{e}"))
+        .expect("host A claims the effect");
+    assert!(
+        b.claim_effect_with_fence(EFFECT_HOST, &a)
+            .unwrap()
+            .is_none(),
+        "one effect was claimed twice under a live lease"
+    );
+    // A pauses: its lease expires on the injected clock. It cannot settle (expired), though nobody took the lease yet.
+    b.clock.advance((TTL_MS as i64 + 1) * 1000);
+    assert_lost(
+        &b.settle_effect_with_fence(Settle::Complete, &settle("a", &effect), &a)
+            .unwrap_err(),
+        LostReason::Expired,
+        "A settles after its lease expired",
+    );
+    // Host B takes the lease under epoch + 1 and takes the effect back; it runs again under B.
+    let taken = b
+        .acquire_lease(NAME, &origin(2), TTL_MS)
+        .unwrap_or_else(|e| panic!("{e}"))
+        .expect("host B takes the expired lease");
+    assert_eq!(taken.epoch, a.epoch + 1);
+    let again = b
+        .claim_effect_with_fence(EFFECT_HOST, &taken)
+        .unwrap_or_else(|e| panic!("{e}"))
+        .expect("a dead host's effect is claimed again");
+    assert_eq!(again["id"], effect["id"], "another effect was claimed");
+    // A's stale fence can no longer settle: the lease moved, and the claim is B's.
+    assert_lost(
+        &b.settle_effect_with_fence(Settle::Complete, &settle("a", &effect), &a)
+            .unwrap_err(),
+        LostReason::EpochMoved,
+        "A settles after the takeover",
+    );
+    assert_lost(
+        &b.check_claim_epoch(CLAIM_EFFECT, effect["id"].as_str().unwrap(), &a)
+            .unwrap_err(),
+        LostReason::ClaimEpochMismatch,
+        "A's fence against B's claim",
+    );
+    // B settles once; the effect has one row.
+    assert!(
+        b.settle_effect_with_fence(Settle::Complete, &settle("b", &again), &taken)
+            .unwrap_or_else(|e| panic!("{e}"))
+    );
+    assert_eq!(
+        b.read_request_effects(&id).unwrap().len(),
+        1,
+        "a duplicate effect row"
+    );
 }
 
 /// C08 scenario: `reserve_capacity` (admission counters) never over-admits and loses no update.
@@ -1810,8 +1886,10 @@ fn c18_sixty_four_writers_no_busy_error() {
     sixty_four_writers_no_busy_error(Arc::new(open(&dir)));
 }
 
-/// C18, all rows from 64 writers in 8 processes: the same, with one store handle per process. Waits for an opener that is
-/// not `store_locked` (C17).
+/// C18, all rows from 64 writers in 8 processes. PARTIAL: after its pending probe this runs the one-process 64-thread helper
+/// (so it does not by itself show the eight-process rule). The eight-process half (8 children of this test binary, one store
+/// handle each, as C19 does) is not written because a second open of a live brain is `store_locked` until C17 lands, so there is
+/// nothing yet to run it against. Waits for an opener that is not `store_locked` (C17).
 #[test]
 #[ignore = "multi_writer"]
 fn c18_sixty_four_writers_no_busy_error_multi_writer() {
@@ -2393,50 +2471,74 @@ fn page_created_us(s: &Store, slug: &str) -> i64 {
 }
 
 /// C22, log replay by a follower (I-4.v2, I-4.v2.1): the log's commit times strictly rise in position order and the newest equals
-/// `last_commit_time()`; every row time written after an open is at or above the floor read at that open; a follower promoted
-/// from the log opens its clock at `max(its M\0ctime, the last applied record's commit_time)` and writes no row time below it.
+/// `last_commit_time()`. The primary reopens on a clock BELOW its persisted floor and every row time it then writes is at or above
+/// that floor. A follower is given the log's actual records (not just its newest position), on a clock below the applied floor, and
+/// is promoted: its floor is `max(its M\0ctime, the last applied commit_time)` and every row time it writes is at or above it. Row
+/// times are compared with the floor only, never with each other as commit order.
 #[test]
 #[ignore = "multi_writer"]
 fn c22_follower_replay_keeps_commit_times_rising_and_row_times_above_the_floor_multi_writer() {
-    let dir = TempDir::new("c22-follower");
-    let store = open_optimistic(&dir);
-    store
+    use memory_env::{Clock, T0, open_at};
+    let mode = memory_env::StoreMode::Optimistic;
+    let (primary_dir, follower_dir) = (TempDir::new("c22-primary"), TempDir::new("c22-follower"));
+    let (primary_at, follower_at) = (
+        primary_dir.path().join("brain"),
+        follower_dir.path().join("brain"),
+    );
+    let write_rows = |s: &Store| -> Vec<i64> {
+        for n in 0..4 {
+            put(s, &format!("rows/{n}"), "a row written after open");
+        }
+        (0..4)
+            .map(|n| page_created_us(s, &format!("rows/{n}")))
+            .collect()
+    };
+
+    // The primary commits through explicit optimistic transactions; the log it keeps is the replay input.
+    let primary = open_at(&primary_at, Clock::at(T0), mode);
+    primary
         .read_commit_log(None, 1)
         .unwrap_or_else(|e| panic!("{e}"));
-    let page_n = |s: &Store, n: usize| put(s, &format!("rows/{n}"), "a row written after open");
     for i in 0..8 {
-        let tx = begin_host(&store, i);
+        let tx = begin_host(&primary, i);
         put(&tx, &format!("c22f/{i}"), "primary commit");
-        commit_host(&store, tx);
+        commit_host(&primary, tx);
     }
-    let log = store
+    let log = primary
         .read_commit_log(None, 10_000)
         .unwrap_or_else(|e| panic!("{e}"));
-    let last = store.last_commit_time().unwrap_or_else(|e| panic!("{e}"));
+    let last = primary.last_commit_time().unwrap_or_else(|e| panic!("{e}"));
     clock::replay_clock_checks(&log.records, last, None, &[]).unwrap_or_else(|e| panic!("{e}"));
-    // The floor at open: the store reopens, reads `last_commit_time()`, and every row it then writes is at or above it.
-    drop(store);
-    let store = open_optimistic(&dir);
-    let floor = store
-        .last_commit_time()
-        .unwrap_or_else(|e| panic!("{e}"))
-        .expect("a commit time after commits");
-    assert_eq!(Some(floor), log.records.last().map(|r| r.commit_time_us));
-    for n in 0..4 {
-        page_n(&store, n);
-    }
-    let times: Vec<i64> = (0..4)
-        .map(|n| page_created_us(&store, &format!("rows/{n}")))
-        .collect();
-    clock::row_times_at_or_above_floor(floor, &times).unwrap_or_else(|e| panic!("{e}"));
-    // A follower that applied the log and is promoted: its floor is the larger of its own time and the last applied record's.
-    let other = TempDir::new("c22-promoted");
-    let promoted = open_optimistic(&other);
-    let promoted_floor = promoted
-        .promote_from_log(log.newest)
+    let floor = last.expect("a commit time after commits");
+
+    // Reopen the primary on a clock below the persisted floor: the floor read at open is the persisted one, and the rows written
+    // after open sit at or above it.
+    drop(primary);
+    let reopened = open_at(&primary_at, Clock::at(floor - 5_000_000), mode);
+    assert_eq!(
+        reopened
+            .last_commit_time()
+            .unwrap_or_else(|e| panic!("{e}")),
+        Some(floor),
+        "the floor at open is not the persisted commit time"
+    );
+    clock::row_times_at_or_above_floor(floor, &write_rows(&reopened))
+        .unwrap_or_else(|e| panic!("{e}"));
+
+    // The follower: its clock reads far below the applied floor. It is given every record, applies them in order, and is promoted.
+    let follower = open_at(&follower_at, Clock::at(floor - 10_000_000), mode);
+    let applied = follower
+        .apply_log(&log.records)
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(
+        applied, log.newest,
+        "the follower did not apply the whole log"
+    );
+    let promoted_floor = follower
+        .promote_from_log(applied)
         .unwrap_or_else(|e| panic!("{e}"))
         .expect("a floor after a promotion from a non-empty log");
-    let own = promoted
+    let own = follower
         .last_commit_time()
         .unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(
@@ -2444,14 +2546,17 @@ fn c22_follower_replay_keeps_commit_times_rising_and_row_times_above_the_floor_m
         clock::floor_of(own, log.records.last()),
         "the floor is not max(local M\\0ctime, last applied commit_time)"
     );
-    assert!(promoted_floor >= log.records.last().unwrap().commit_time_us);
-    for n in 0..4 {
-        page_n(&promoted, n);
-    }
-    let times: Vec<i64> = (0..4)
-        .map(|n| page_created_us(&promoted, &format!("rows/{n}")))
-        .collect();
-    clock::row_times_at_or_above_floor(promoted_floor, &times).unwrap_or_else(|e| panic!("{e}"));
+    assert!(
+        promoted_floor >= floor,
+        "the promoted floor is below the applied commit time"
+    );
+    clock::row_times_at_or_above_floor(promoted_floor, &write_rows(&follower))
+        .unwrap_or_else(|e| panic!("{e}"));
+    // Reopening the promoted follower on a clock below the floor keeps the floor.
+    drop(follower);
+    let again = open_at(&follower_at, Clock::at(floor - 10_000_000), mode);
+    clock::row_times_at_or_above_floor(promoted_floor, &write_rows(&again))
+        .unwrap_or_else(|e| panic!("{e}"));
 }
 
 /// The clock checks fail what they claim to: a repeated or falling commit time, records out of position order, a stale

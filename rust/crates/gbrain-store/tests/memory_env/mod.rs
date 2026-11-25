@@ -30,6 +30,13 @@ pub struct Clock {
 }
 
 impl Clock {
+    /// A clock that reads `micros` until it is moved.
+    pub fn at(micros: i64) -> Arc<Clock> {
+        Arc::new(Clock {
+            now: AtomicI64::new(micros),
+            ids: AtomicU64::new(1),
+        })
+    }
     pub fn set(&self, micros: i64) {
         self.now.store(micros, Ordering::SeqCst);
     }
@@ -115,4 +122,17 @@ fn brain_with(name: &str, concurrent: bool) -> Brain {
     };
     let store = Store::open_kv(kv, clock.clone(), OpenOptions::default()).unwrap();
     Brain { store, clock, dir }
+}
+
+/// Opens (or reopens) the brain whose record file is `<dir>/records.redb` on `clock`, in `mode`. The clock is the store's:
+/// a test sets it below a persisted floor before a reopen to see that written times never go under it.
+pub fn open_at(dir: &std::path::Path, clock: Arc<Clock>, mode: StoreMode) -> Store {
+    std::fs::create_dir_all(dir).unwrap();
+    let base = RedbKv::open_path(&dir.join("records.redb")).unwrap();
+    let kv: Arc<dyn Kv> = if mode.optimistic() {
+        Arc::new(OccKv::new(base).unwrap())
+    } else {
+        Arc::new(base)
+    };
+    Store::open_kv(kv, clock, OpenOptions::default()).unwrap()
 }

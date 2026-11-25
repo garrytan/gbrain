@@ -10,6 +10,7 @@
 //!
 //! Nothing here touches product code, and nothing in the product reads these types.
 
+use gbrain_store::persistence::{EffectSettle, Settle};
 use gbrain_store::{Store, StoreError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -421,6 +422,21 @@ pub trait MuStore {
     /// protected entry point (`what`) called with no fence fails `lease_lost` / `fence_missing`; with one it asserts it.
     /// The real function takes a read handle no public member lends, so this is the member the claims lane exposes.
     fn check_fence(&self, fence: Option<&LeaseToken>, what: &str) -> MuResult<()>;
+    /// `claim_effects` under a fence: claims the next claimable effect of `host` and records the claim under `fence`
+    /// (`record_claim_epoch`, family `CLAIM_EFFECT`), and takes back an effect whose claiming lease has expired or moved
+    /// to another epoch (the dead host's claim). `None` when nothing is claimable. The claims lane exposes the member.
+    fn claim_effect_with_fence(&self, host: &str, fence: &LeaseToken) -> MuResult<Option<Value>>;
+    /// `settle_effect` under a fence: first `check_fence` (a stale fence is `lease_lost`), then the claim's epoch
+    /// (`claim_epoch_mismatch`), then the settle itself. The claims lane exposes the member.
+    fn settle_effect_with_fence(
+        &self,
+        kind: Settle,
+        settle: &EffectSettle,
+        fence: &LeaseToken,
+    ) -> MuResult<bool>;
+    /// A follower applies the given commit records, in order, to its own brain and returns the position of the last one
+    /// (`None` for no records). Stand-in for the log-apply step; owner: L2.
+    fn apply_log(&self, records: &[CommitRecord]) -> MuResult<Option<CommitPosition>>;
     /// `leases::check_claim_epoch`: fails `lease_lost` / `claim_epoch_mismatch` unless claim `id` of `family` was taken
     /// under `fence`'s lease name and epoch (a claim with no record refuses too).
     fn check_claim_epoch(&self, family: u8, id: &str, fence: &LeaseToken) -> MuResult<()>;
@@ -468,6 +484,23 @@ impl MuStore for Store {
     }
     fn record_claim_epoch(&self, _family: u8, _id: &str, _fence: &LeaseToken) -> MuResult<()> {
         pending(L5_HOSTS, "leases::record_claim_epoch (claim under a fence)")
+    }
+    fn claim_effect_with_fence(&self, _host: &str, _fence: &LeaseToken) -> MuResult<Option<Value>> {
+        pending(
+            L5_HOSTS,
+            "claim_effects under a fence (a claim of an expired lease is taken back)",
+        )
+    }
+    fn settle_effect_with_fence(
+        &self,
+        _kind: Settle,
+        _settle: &EffectSettle,
+        _fence: &LeaseToken,
+    ) -> MuResult<bool> {
+        pending(L5_HOSTS, "settle_effect under a fence")
+    }
+    fn apply_log(&self, _records: &[CommitRecord]) -> MuResult<Option<CommitPosition>> {
+        pending(L2_LOG, "apply commit records to a follower")
     }
     fn check_fence(&self, _fence: Option<&LeaseToken>, _what: &str) -> MuResult<()> {
         pending(
