@@ -29,6 +29,8 @@ import { transactionAborted } from './postgres-engine/transaction-abort.ts';
 import { mapStoreError } from './rust-engine/store-errors.ts';
 import { STORE_MEMBERS } from './rust-engine/store-members/index.ts';
 import { servedCapabilities } from './rust-engine/store-capabilities.ts';
+import { rustMultiuserRequested } from './rust-engine/multiuser.ts';
+import { hostIdFor } from './persistence/identity.ts';
 import { RECEIPT_STOP_OWNERS } from './rust-engine/receipt-stops.ts';
 import { electOwner, type OwnerRole } from './rust-engine/owner-ipc/election.ts';
 import { callEndCheck, installOwnerClient, untilCallEnds } from './rust-engine/owner-ipc/client.ts';
@@ -247,13 +249,17 @@ export class RustEngine implements BrainEngine {
           this._claiming = true;
           let store: RustStore;
           try {
-            store = await openRustStore(this.addon, this.databasePath, await seedEmbeddingIdentity(this));
+            store = await openRustStore(
+              this.addon, this.databasePath, await seedEmbeddingIdentity(this),
+              rustMultiuserRequested() ? { hostId: hostIdFor(this) } : undefined,
+            );
             if (generation !== this._generation) {
               await store.close().catch(() => undefined);
               throw abandoned();
             }
             opened = store;
             this._store = store;
+            if (store.commitLog) (this.capabilities as Set<Capability>).add('commit_log');
           } catch (error) {
             storeFailure = { error };
             throw error;
@@ -307,6 +313,7 @@ export class RustEngine implements BrainEngine {
       // The members of the owner that went away give way to this engine's own, which run on the store opened above.
       prior();
       for (const capability of servedCapabilities()) (this.capabilities as Set<Capability>).add(capability);
+      if (this._store?.commitLog) (this.capabilities as Set<Capability>).add('commit_log');
     }
     this._connected = true;
   }
@@ -319,6 +326,7 @@ export class RustEngine implements BrainEngine {
     leave();
     // Leaving the owner empties the capability set; this engine reports what its own store serves again.
     for (const capability of servedCapabilities()) (this.capabilities as Set<Capability>).add(capability);
+    if (this._store?.commitLog) (this.capabilities as Set<Capability>).add('commit_log');
   }
 
   async disconnect(): Promise<void> {

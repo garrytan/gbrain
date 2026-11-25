@@ -35,6 +35,21 @@ pub trait KvWrite: KvRead + Send {
     /// may or may not have reached the disk; after a reopen it is all or nothing.
     fn commit(self: Box<Self>) -> Result<u64>;
 
+    /// [`KvWrite::commit`] with the commit's own position (`commit_log.rs`): the sequence and the
+    /// transaction's place in its group commit (0 on a single-writer store). A write that commits
+    /// nothing reports the position it saw (`CommitPosition::end_of`). `commit` is this call's
+    /// sequence on every store.
+    fn commit_position(self: Box<Self>) -> Result<crate::commit_log::CommitPosition> {
+        self.commit()
+            .map(|sequence| crate::commit_log::CommitPosition::new(sequence, 0))
+    }
+
+    /// What the commit says about itself (origin, write ids) when the store keeps a commit log.
+    /// A store without a log ignores it.
+    fn set_commit_meta(&mut self, meta: crate::commit_log::CommitMeta) {
+        let _ = meta;
+    }
+
     /// Takes `count` ids from the sequence kept under `key` (8-byte big-endian, the next id to
     /// hand out, 1 when absent) and returns the first. Like Postgres `nextval`: two transactions
     /// never get the same id, and ids taken by a transaction that does not commit may be lost.
@@ -119,6 +134,20 @@ pub trait Kv: Send + Sync {
     }
     /// The commit sequence of the latest commit (0 on a database nothing was committed to).
     fn version(&self) -> Result<u64>;
+    /// Starts writing a commit record for every later commit (`commit_log.rs`). The log's meta
+    /// record must already be stored (`commit_log::write_activation`). Called only while nothing
+    /// else writes (a brain's open). A store that keeps no log refuses.
+    fn enable_commit_log(&self, settings: crate::commit_log::LogSettings) -> Result<()> {
+        let _ = settings;
+        Err(crate::error::StoreError::new(
+            crate::error::INVALID_STATE,
+            "this record store cannot keep a commit log",
+        ))
+    }
+    /// True once [`Kv::enable_commit_log`] succeeded.
+    fn commit_log_enabled(&self) -> bool {
+        false
+    }
     /// What a store with concurrent writers did since open; `None` for a single-writer store.
     fn occ_stats(&self) -> Option<crate::occ_kv::OccStatsSnapshot> {
         None

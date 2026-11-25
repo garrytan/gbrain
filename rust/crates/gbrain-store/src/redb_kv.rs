@@ -7,7 +7,11 @@
 use crate::error::{
     READ_ONLY_TRANSACTION, Result, STORE_CLOSED, STORE_CORRUPT, STORE_IO, STORE_LOCKED, StoreError,
 };
+use crate::commit_log::{CommitMeta, CommitPosition, LogOpRef, LogSettings, LogState};
 use crate::kv::{FileBackend, Kv, KvRead, KvWrite};
+use std::collections::BTreeMap;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use redb::{
     Database, Durability, ReadOnlyDatabase, ReadTransaction, ReadableDatabase, ReadableTable,
     StorageBackend, TableDefinition, WriteTransaction,
@@ -69,6 +73,18 @@ impl StorageBackend for Backend {
 
 pub struct RedbKv {
     db: Arc<Database>,
+    /// The commit log, once enabled (`Kv::enable_commit_log`); `None` keeps every commit as it
+    /// was before the log existed. Only a writer, which holds redb's write lock, takes it.
+    log: Arc<CommitLog>,
+}
+
+/// The single-writer store's commit log state.
+#[derive(Default)]
+struct CommitLog {
+    state: Mutex<Option<LogState>>,
+    on: AtomicBool,
+    /// A commit failed after its log bookkeeping was planned: the next writer reloads it.
+    dirty: AtomicBool,
 }
 
 impl RedbKv {
@@ -96,7 +112,10 @@ impl RedbKv {
             tx.open_table(TABLE).map_err(map)?;
             tx.commit().map_err(map)?;
         }
-        Ok(Self { db: Arc::new(db) })
+        Ok(Self {
+            db: Arc::new(db),
+            log: Arc::new(CommitLog::default()),
+        })
     }
 }
 
@@ -329,6 +348,15 @@ impl KvRead for Snapshot {
 
 struct Writer {
     tx: WriteTransaction,
+    /// Set when the store keeps a commit log: the final value (`None`: deleted) of each key this
+    /// write changed, and what it says about itself.
+    logged: Option<Logged>,
+}
+
+struct Logged {
+    log: Arc<CommitLog>,
+    ops: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
+    meta: CommitMeta,
 }
 
 impl KvRead for Writer {
@@ -355,6 +383,9 @@ impl KvWrite for Writer {
         reject_reserved(key)?;
         let mut table = self.tx.open_table(TABLE).map_err(map)?;
         table.insert(key, value).map_err(map)?;
+        if let Some(logged) = &mut self.logged {
+            logged.ops.insert(key.to_vec(), Some(value.to_vec()));
+        }
         Ok(())
     }
 
@@ -362,10 +393,83 @@ impl KvWrite for Writer {
         reject_reserved(key)?;
         let mut table = self.tx.open_table(TABLE).map_err(map)?;
         table.remove(key).map_err(map)?;
+        if let Some(logged) = &mut self.logged {
+            logged.ops.insert(key.to_vec(), None);
+        }
         Ok(())
     }
 
-    fn commit(mut self: Box<Self>) -> Result<u64> {
+    fn set_commit_meta(&mut self, meta: CommitMeta) {
+        if let Some(logged) = &mut self.logged {
+            logged.meta = meta;
+        }
+    }
+
+    fn commit(self: Box<Self>) -> Result<u64> {
+        self.commit_position().map(|p| p.sequence)
+    }
+
+    fn commit_position(mut self: Box<Self>) -> Result<CommitPosition> {
+        let logged = self.logged.take();
+        // With the log on: the record of this commit, its trims and the meta record go into the
+        // same redb transaction as the records (`commit_log.rs`).
+        let log = match logged {
+            None => None,
+            Some(Logged { log, ops, meta }) => {
+                let mut guard = log.state.lock().unwrap_or_else(|p| p.into_inner());
+                let Some(state) = guard.as_mut() else {
+                    return Err(StoreError::new(
+                        STORE_CORRUPT,
+                        "the commit log was enabled but holds no state",
+                    ));
+                };
+                if log.dirty.load(Ordering::Acquire) {
+                    *state = LogState::load(&*self, state.settings.clone())?;
+                    log.dirty.store(false, Ordering::Release);
+                }
+                let (current, _) = read_seq(&mut |key| self.get(key))?;
+                let position = CommitPosition::new(current + 1, 0);
+                let origin = state.origin_for(&meta);
+                let value = crate::commit_log::encode_record(
+                    &origin,
+                    &meta.write_ids,
+                    ops.iter().map(|(k, v)| {
+                        (
+                            k.as_slice(),
+                            match v {
+                                Some(v) => LogOpRef::Put(v),
+                                None => LogOpRef::Delete,
+                            },
+                        )
+                    }),
+                );
+                let append = state.write(&mut *self, &[(position, value)])?;
+                drop(guard);
+                Some((log, append))
+            }
+        };
+        let next = self.bump_and_commit();
+        match (next, log) {
+            (Ok(next), Some((log, append))) => {
+                let mut guard = log.state.lock().unwrap_or_else(|p| p.into_inner());
+                if let Some(state) = guard.as_mut() {
+                    state.applied(append);
+                }
+                Ok(CommitPosition::new(next, 0))
+            }
+            (Ok(next), None) => Ok(CommitPosition::new(next, 0)),
+            (Err(e), Some((log, _))) => {
+                log.dirty.store(true, Ordering::Release);
+                Err(e)
+            }
+            (Err(e), None) => Err(e),
+        }
+    }
+}
+
+impl Writer {
+    /// Bumps the commit sequence in this transaction and commits it durably.
+    fn bump_and_commit(mut self: Box<Self>) -> Result<u64> {
         let next = {
             let mut table = self.tx.open_table(TABLE).map_err(map)?;
             let (current, legacy) = read_seq(&mut |key| {
@@ -411,7 +515,12 @@ impl Kv for RedbKv {
 
     fn begin_write(&self) -> Result<Box<dyn KvWrite>> {
         let tx = self.db.begin_write().map_err(map)?;
-        Ok(Box::new(Writer { tx }))
+        let logged = self.log.on.load(Ordering::Acquire).then(|| Logged {
+            log: self.log.clone(),
+            ops: BTreeMap::new(),
+            meta: CommitMeta::default(),
+        });
+        Ok(Box::new(Writer { tx, logged }))
     }
 
     fn version(&self) -> Result<u64> {
@@ -419,6 +528,18 @@ impl Kv for RedbKv {
             tx: self.db.begin_read().map_err(map)?,
         };
         Ok(read_seq(&mut |key| snapshot.get(key))?.0)
+    }
+
+    fn enable_commit_log(&self, settings: LogSettings) -> Result<()> {
+        let state = LogState::load(&*self.snapshot()?, settings)?;
+        *self.log.state.lock().unwrap_or_else(|p| p.into_inner()) = Some(state);
+        self.log.dirty.store(false, Ordering::Release);
+        self.log.on.store(true, Ordering::Release);
+        Ok(())
+    }
+
+    fn commit_log_enabled(&self) -> bool {
+        self.log.on.load(Ordering::Acquire)
     }
 }
 

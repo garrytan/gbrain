@@ -71,6 +71,37 @@ pub struct BrainOpenOptions {
     /// A fresh brain records the write gate's scan baseline under this detector version (the
     /// TypeScript `WRITE_GATE_DETECTOR_VERSION`).
     pub write_gate_detector_version: Option<u32>,
+    /// Multi-user mode (I-0): on when this is true, or when it is absent and
+    /// `GBRAIN_RUST_MULTIUSER=1` is set. It implies concurrent writes, keeps a commit log
+    /// (`GBRAIN_RUST_COMMIT_LOG=0` turns that off) and stamps write origins
+    /// (`GBRAIN_RUST_WRITE_ORIGIN=0` turns that off). The sub-switches are read only while it is
+    /// on. Off, the brain opens exactly as before.
+    pub multiuser: Option<bool>,
+    /// This machine's host id (`host.json`), stamped as the write origin in multi-user mode.
+    pub host_id: Option<String>,
+}
+
+/// `name=value` of one environment switch, read by name.
+fn switch(name: &str) -> Option<String> {
+    std::env::var(name).ok()
+}
+
+/// The multi-user options of an open (I-0): `None` while the mode is off.
+fn multiuser_options(
+    requested: Option<bool>,
+    host_id: Option<String>,
+) -> Option<gbrain_store::MultiUserOptions> {
+    let on = requested.unwrap_or_else(|| switch("GBRAIN_RUST_MULTIUSER").as_deref() == Some("1"));
+    if !on {
+        return None;
+    }
+    let sub = |name: &str| switch(name).as_deref() != Some("0");
+    Some(gbrain_store::MultiUserOptions {
+        commit_log: sub("GBRAIN_RUST_COMMIT_LOG"),
+        write_origin: sub("GBRAIN_RUST_WRITE_ORIGIN"),
+        host_id,
+        log_retention_bytes: None,
+    })
 }
 
 #[napi]
@@ -178,7 +209,9 @@ impl Brain {
                     .is_ok_and(|v| v == "1"),
                 ..OpenOptions::default()
             };
+            let mut multiuser_request = (None, None);
             if let Some(options) = options {
+                multiuser_request = (options.multiuser, options.host_id);
                 if let Some(on) = options.concurrent_writes {
                     opts.concurrent_writes = on;
                 }
@@ -200,6 +233,11 @@ impl Brain {
                         .push(("chunk_strategy".into(), strategy));
                 }
                 opts.write_gate_detector_version = options.write_gate_detector_version;
+            }
+            if let Some(multiuser) = multiuser_options(multiuser_request.0, multiuser_request.1) {
+                // Multi-user mode implies the optimistic store (I-0).
+                opts.concurrent_writes = true;
+                opts.multiuser = multiuser;
             }
             // Holding the slot while opening makes a second `open` on this handle wait, then see
             // the brain open.

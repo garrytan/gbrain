@@ -8,6 +8,8 @@ import { embeddedSchemaEmbedding } from '../embedded-engine.ts';
 import { DEFAULT_EMBEDDING_DIMENSIONS, DEFAULT_EMBEDDING_MODEL } from '../ai/defaults.ts';
 import { WRITE_GATE_DETECTOR_VERSION } from '../write-gate-schema.ts';
 import { mapStoreError } from './store-errors.ts';
+import { rustMultiuserRequested } from './multiuser.ts';
+import { localHostId } from '../persistence/identity.ts';
 
 /** Worker threads the store's pool runs its calls on. One write runs at a time; reads overlap. */
 const STORE_POOL_THREADS = 4;
@@ -23,6 +25,10 @@ export interface StoreOpenOptions {
   chunkStrategy?: string;
   /** A fresh brain records the write gate's scan baseline under this detector version. */
   writeGateDetectorVersion?: number;
+  /** Multi-user mode (./multiuser.ts): set only while it is on, so an open with it off sends what it always sent. */
+  multiuser?: boolean;
+  /** This machine's host id, the write origin multi-user mode stamps. */
+  hostId?: string;
 }
 
 /** The strategy the SQL engines' schema seeds as config `chunk_strategy` (src/schema.sql). */
@@ -59,6 +65,8 @@ interface StoreAddon { Pool: new (threads: number) => StorePool; Brain: new (poo
 /** An open store: the brain and the pool it runs on. */
 export interface RustStore {
   readonly brain: StoreBrain;
+  /** True when the store keeps a commit log (multi-user mode): the engine then reports `commit_log`. */
+  readonly commitLog: boolean;
   /**
    * Copies one batch of a primary relation into this store for the shadow seed (rust/docs/store/seed.md).
    * Every value is the column's text form (`::text`, UTC) or null. Not a BrainEngine member.
@@ -272,16 +280,27 @@ export interface SeedImportResult {
  * Opens (or creates) the brain store at `databasePath`. A second open of the same directory rejects `rust_store_locked`.
  * A created brain records `embedding` as its embedding identity; an existing brain keeps its own.
  */
-export async function openRustStore(addon: object, databasePath: string, embedding?: { model: string; dimensions: number }): Promise<RustStore> {
+export async function openRustStore(
+  addon: object,
+  databasePath: string,
+  embedding?: { model: string; dimensions: number },
+  origin?: { hostId: string },
+): Promise<RustStore> {
   const { Pool, Brain } = addon as StoreAddon;
   const pool = new Pool(STORE_POOL_THREADS);
   const brain = new Brain(pool);
+  let commitLog = false;
   try {
-    await brain.open(databasePath, {
+    // Multi-user mode sends the host id the write origin needs (the engine's own, else this machine's); off, the
+    // options are exactly what they were, and host.json is not read.
+    const multiuser = rustMultiuserRequested() ? { multiuser: true, hostId: origin?.hostId ?? localHostId() } : {};
+    const info = await brain.open(databasePath, {
       schemaVersion: LATEST_SCHEMA_VERSION, createdBy: 'gbrain', chunkStrategy: SEED_CHUNK_STRATEGY,
       writeGateDetectorVersion: WRITE_GATE_DETECTOR_VERSION,
       ...(embedding ? { embeddingModel: embedding.model, embeddingDimensions: embedding.dimensions } : {}),
+      ...multiuser,
     });
+    commitLog = (info as { commit_log?: unknown } | null)?.commit_log === true;
   } catch (error) {
     await pool.shutdown(0).catch(() => undefined);
     throw mapStoreError(error, { member: 'connect' });
@@ -296,6 +315,7 @@ export async function openRustStore(addon: object, databasePath: string, embeddi
   };
   return {
     brain,
+    commitLog,
     importRelation: (seedId, relation, rows, digests) => call('importRelation', () => brain.importRelation(seedId, relation, rows, digests ?? null)),
     replaceRelationRows: (seedId, relation, generation, keys, rows, digests) =>
       call('replaceRelationRows', () => brain.replaceRelationRows(seedId, relation, generation, keys, rows, digests)),
