@@ -273,6 +273,55 @@ describe('engine parity: files commands and file operations statements', () => {
     return out;
   });
 
+  parityTest('an upload binds the live page at its slug, a rename moves the file with the page, and an upload racing a rename takes the new slug (#10235, #10294)', {
+    methods: ['upsertCliFileRow', 'upsertRawFileRow', 'upsertOpFileRow', 'updateSlug', 'softDeletePage', 'listFiles', 'readFileOwner', 'readPageIdInSource'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    await engine.putPage('people/old', note('Old'));
+    await engine.putPage('people/old', note('Old'), { sourceId: 'other' });
+    await engine.putPage('people/gone', note('Gone'));
+    await engine.softDeletePage('people/gone');
+    const here = await pageId(engine, 'people/old');
+    const there = await pageId(engine, 'people/old', 'other');
+    const bound = async (path: string) => {
+      const o = await engine.readFileOwner(path);
+      const f = (await engine.listFiles({ limit: 100 })).find(r => r.storage_path === path);
+      return o === null ? null : { page: o.page_id === null ? null : o.page_id === here ? 'here' : o.page_id === there ? 'there' : 'unknown', slug: f?.page_slug ?? null, source_id: o.source_id };
+    };
+    // A command upload binds the live page at its slug in its source: none when the page is deleted or absent.
+    await engine.upsertCliFileRow(row('c/cli.png', { page_slug: 'people/old' }), { storage: 'local' });
+    await engine.upsertRawFileRow({ ...row('c/raw.png', { page_slug: 'people/old' }), source_id: 'other' }, { storage: 'git' });
+    await engine.upsertCliFileRow(row('c/gone.png', { page_slug: 'people/gone' }), { storage: 'local' });
+    await engine.upsertCliFileRow(row('c/none.png', { page_slug: 'people/nobody' }), { storage: 'local' });
+    const out: Record<string, unknown> = {
+      cli: await bound('c/cli.png'), raw: await bound('c/raw.png'), deleted: await bound('c/gone.png'), absent: await bound('c/none.png'),
+    };
+    // The rename moves the files bound to the page by id and named by the old slug; another source's file stays.
+    out.renamed = await engine.updateSlug('people/old', 'people/new', { sourceId: 'default' });
+    out.afterRename = { cli: await bound('c/cli.png'), raw: await bound('c/raw.png') };
+    // An operation upload that still carries the old slug is recorded under the page's slug as it is now, new row or repeat.
+    const op = { ...row('o/op.png', { page_slug: 'people/old' }), source_id: 'default', page_id: here };
+    await engine.upsertOpFileRow(op, { storage: 'local' });
+    out.opNew = await bound('o/op.png');
+    await engine.upsertCliFileRow(row('o/op.png', { page_slug: 'people/old', content_hash: 'h2' }), { storage: 'local' });
+    await engine.upsertOpFileRow({ ...op, content_hash: 'h3' }, { storage: 'local' });
+    out.opRepeat = await bound('o/op.png');
+    // A repeat that binds the page takes its id and slug together; one that binds no page keeps the row's pair.
+    await engine.upsertCliFileRow(row('c/none.png', { page_slug: 'people/new', content_hash: 'h4' }), { storage: 'local' });
+    out.bindsOnRepeat = await bound('c/none.png');
+    await engine.upsertCliFileRow(row('c/none.png', { page_slug: 'people/nobody', content_hash: 'h5' }), { storage: 'local' });
+    out.keepsPair = await bound('c/none.png');
+    expect(out).toEqual({
+      cli: { page: 'here', slug: 'people/old', source_id: 'default' }, raw: { page: 'there', slug: 'people/old', source_id: 'other' },
+      deleted: { page: null, slug: 'people/gone', source_id: 'default' }, absent: { page: null, slug: 'people/nobody', source_id: 'default' },
+      renamed: 1,
+      afterRename: { cli: { page: 'here', slug: 'people/new', source_id: 'default' }, raw: { page: 'there', slug: 'people/old', source_id: 'other' } },
+      opNew: { page: 'here', slug: 'people/new', source_id: 'default' }, opRepeat: { page: 'here', slug: 'people/new', source_id: 'default' },
+      bindsOnRepeat: { page: 'here', slug: 'people/new', source_id: 'default' }, keepsPair: { page: 'here', slug: 'people/new', source_id: 'default' },
+    });
+    return out;
+  });
+
   parityTest('a write that names a source or page that does not exist writes nothing, and a claim on a missing path is a no-op', {
     methods: ['upsertRawFileRow', 'upsertOpFileRow', 'registerFileRow', 'claimFilePage', 'readFileOwner', 'upsertCliFileRow', 'listFiles'],
   }, async (engine, backend) => {

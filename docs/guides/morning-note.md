@@ -51,3 +51,15 @@ gbrain config set learning.note.push false
 ```
 
 The note itself stays available with `gbrain learned`.
+
+## What runs by default
+
+Facts that disagree are found without any setup. Each dream cycle compares typed facts (a metric with a value, unit and
+period) and files a "which one is right?" question when two disagree. It needs no key and changes no fact until you
+answer. Turn it off with `gbrain config set dream.claim_conflicts.mode off`. A value you already set is kept.
+
+Filling in thin pages stays off until you turn it on with `gbrain config set cycle.enrich_thin.enabled true` (it needs
+a chat model key). Each cycle run then fills up to 3 thin person and company pages per source, at about $0.01 a page,
+and stops at $0.50 per run. `gbrain config set cycle.enrich_thin.max_daily_cost_usd <usd>` caps a whole day.
+
+`gbrain doctor` reports the newest run and how much of the note you kept or undid (`learning_note`).

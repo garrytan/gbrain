@@ -59,7 +59,7 @@ export async function bodySubjects(engine: BrainEngine, sourceId: string, lifeti
   const active = facts.facts.filter(f => f.active);
   const fps = active.length ? await engine.executeRaw<{ fp: string }>('SELECT gbrain_fact_fingerprint(c) AS fp FROM unnest($1::text[]) WITH ORDINALITY AS t(c, n) ORDER BY n',
     [active.map(f => f.claim)]) : [];
-  // A claim recorded under its pre-v339 fingerprint keeps it (legacy-fingerprint.ts), as the stream reads do.
+  // A claim recorded under its pre-v341 fingerprint keeps it (legacy-fingerprint.ts), as the stream reads do.
   const legacy = await legacyClaimFingerprints(engine, sourceId, [...active.map(f => f.claim), ...takes.takes.map(t => t.claim)]);
   const subject = lifetimeRef(lifetime);
   const groups = new Map<string, { raw: Parameters<typeof factValue>[0]; count: number }>();
