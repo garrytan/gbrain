@@ -22,7 +22,7 @@ import { loadRustAddon, type RustAddon } from '../src/core/rust-engine/addon-loa
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
 import { openRustEngine, type RustEngine } from '../src/core/rust-engine.ts';
 import { rustLeases, type LeaseToken, type WriteOrigin } from '../src/core/rust-engine/store-members/leases.ts';
-import { clearHostRegistration, effectInstallClaim, fenceOpts, hostRegistrationOf, setHostRegistration } from '../src/core/persistence/host-fence.ts';
+import { clearHostRegistration, effectInstallClaim, fenceOpts, hostRegistrationOf, setHostRegistration, type HostRegistration } from '../src/core/persistence/host-fence.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 import { tryAcquireDbLock } from '../src/core/db-lock.ts';
 import { withDrainLease } from '../src/core/persistence/sync-lease.ts';
@@ -69,9 +69,14 @@ function claimSpec(lockToken: string, fence?: LeaseToken) {
   };
 }
 
+/** Stands in for one holder on this engine that re-registers: a new registration replaces the one it held before. */
+const held = new WeakMap<object, HostRegistration>();
 function register(engine: RustEngine, fence: LeaseToken, host = 'a') {
   const registration = { hostId: `${host}-host`, origin: holder(host), fence };
+  const before = held.get(engine);
+  if (before) clearHostRegistration(engine, before);
   setHostRegistration(engine, registration);
+  held.set(engine, registration);
   return registration;
 }
 
