@@ -63,6 +63,7 @@ engine by `src/commands/serve-http.ts`) and `validateToken` in `src/mcp/http-tra
 `writeAccessTokenGrant` and `writeAccessTokenPrivateGrant` for the grant flags; the active-source check is
 `listUnarchivedSourceIds` and the scope-source check reads the token's own `attest_sources` through
 `readCredentialBindingForUpdate`. `migrateLegacyTokens` (`auth rescope --migrate-legacy`) calls `lockLegacyAccessTokens`.
+The bare-name form's target lookup (`resolveRescopeTarget`) calls `readLiveAccessToken` and `readLiveOauthClients`.
 
 ## Member binding
 

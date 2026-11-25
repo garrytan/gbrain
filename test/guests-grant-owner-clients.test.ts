@@ -72,7 +72,7 @@ describe('gbrain guests grant-owner-clients', () => {
     expect(await grantOf(member)).toEqual(before.member);
   }, 60_000);
 
-  test('the owner credential rows carry no token hash or client secret, whatever the typed read loaded', async () => {
+  test('the owner credential rows hold no token hash or client secret, whatever the typed read loaded', async () => {
     const { token } = await brain();
     const [{ token_hash: stored }] = await engine.executeRaw<{ token_hash: string }>('SELECT token_hash FROM access_tokens WHERE id = $1::uuid', [token]);
     const rows = await ownerCredentialRows(engine, OWNER);

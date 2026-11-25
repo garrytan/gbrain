@@ -174,7 +174,7 @@ describe('store listings come out by byte', () => {
       expect(byBytes).not.toEqual([...OWNER_NAMES].sort());
       expect(names).toEqual([...byBytes.map(n => `client:${n}`), 'token:Tok-c', 'token:tok-a', 'token:tok-b']);
       expect(JSON.stringify(credentials)).not.toContain(secret);
-      // The rows the credentials are built from carry no hash either (a token's, a client's secret).
+      // The rows the credentials are built from hold no hash either (a token's, a client's secret).
       const rows = await ownerCredentialRows(engine, 'owner-example');
       expect(rows.length).toBe(credentials.length);
       for (const { row } of rows) expect(Object.keys(row).filter(k => k === 'token_hash' || k === 'client_secret_hash')).toEqual([]);
