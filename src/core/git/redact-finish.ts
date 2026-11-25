@@ -23,6 +23,7 @@ import { drainSpool, undrainedCount } from '../secret-store/spool.ts';
 import { ledgerLocation } from './commit-ledger.ts';
 import { relativeEscapesRoot } from '../path-confine.ts';
 import { BACKUP_KEEP_DAYS, BACKUP_REF_PREFIX, onPushMode, REDACTIONS_FILE } from './redact-unpushed.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 const canonical = (path: string) => { try { return realpathSync(path); } catch { return resolve(path); } };
 const inside = (child: string, parent: string) => child === parent || child.startsWith(parent.endsWith(sep) ? parent : parent + sep);
@@ -30,7 +31,7 @@ const inside = (child: string, parent: string) => child === parent || child.star
 /** Sources whose checkout is `root`, inside it, or holds it (the sources table and this host's worktree bindings), nearest first. */
 async function sourceRoots(engine: BrainEngine, root: string): Promise<Array<{ id: string; path: string }>> {
   const target = canonical(root);
-  const rows = await engine.executeRaw<{ id: string; local_path: string }>('SELECT id, local_path FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE ORDER BY id');
+  const rows = await engine.executeRaw<{ id: string; local_path: string }>('SELECT id, local_path FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE ORDER BY id COLLATE "C"');
   try {
     rows.push(...await engine.executeRaw<{ id: string; local_path: string }>(`SELECT s.source_id AS id, h.local_path FROM persistence_host_bindings h
       JOIN persistence_source_bindings s ON s.worktree_id=h.worktree_id WHERE h.local_path IS NOT NULL ORDER BY s.source_id`));
@@ -163,9 +164,9 @@ export async function secretPublishMaintenance(engine: BrainEngine): Promise<Rec
   try { if (await (await import('../secret-store/backup.ts')).backupIfDue(engine)) add('secret_store_backups', 1); } catch { /* a store migration not applied yet */ }
   let roots: string[] = [];
   try {
-    roots = [...new Set((await engine.executeRaw<{ local_path: string }>('SELECT local_path FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE')).map(r => r.local_path))];
+    roots = [...new Set((await engine.listAllSources()).map(r => r.local_path).filter((p): p is string => typeof p === 'string' && p !== ''))];
     roots.push(...(await engine.executeRaw<{ local_path: string }>('SELECT local_path FROM persistence_host_bindings WHERE local_path IS NOT NULL').catch(() => [])).map(r => r.local_path));
-  } catch { /* no sources table yet */ }
+  } catch (e) { rethrowCapabilityRefusal(e); /* no sources table yet */ }
   const seen = new Set<string>();
   for (const root of roots) {
     const loc = ledgerLocation(root);

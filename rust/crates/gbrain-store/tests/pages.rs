@@ -8,7 +8,7 @@ use gbrain_store::cli_reads::import::{PageTrustKey, PageTrustLookup};
 use gbrain_store::error::*;
 use gbrain_store::pages::{
     PageFilters, PageInput, PageTrustRestore, PutPageOptions, ReadScope, VersionReasonStamp,
-    VersionsOptions,
+    VersionsOptions, validate_slug,
 };
 use gbrain_store::{Store, sources::SourceInput};
 use serde_json::{Value, json};
@@ -1161,5 +1161,27 @@ fn an_alias_read_follows_a_rename_alias_and_an_exact_slug_wins() {
     assert_eq!(
         read("notes/old", json!({"resolveAlias": true})).as_deref(),
         Some("notes/old")
+    );
+}
+
+#[test]
+fn a_decomposed_slug_is_stored_composed_and_read_by_its_composed_spelling() {
+    let dir = TempDir::new("pages-nfc-slug");
+    let store = open(&dir);
+    // "people/zoe\u{308}-example" (e + combining diaeresis), and an uppercase "E\u{301}" that lowercases then composes.
+    let stored = put(&store, "people/zoe\u{308}-example", "Zoe.");
+    assert_eq!(stored["slug"], json!("people/zo\u{eb}-example"));
+    let snapshot = store
+        .read_page_snapshot("people/zo\u{eb}-example", &ReadScope::default())
+        .unwrap()
+        .unwrap();
+    assert_eq!(snapshot["page"]["slug"], json!("people/zo\u{eb}-example"));
+    assert_eq!(
+        validate_slug("Notes/CAFE\u{301}").unwrap(),
+        "notes/caf\u{e9}"
+    );
+    assert_eq!(
+        validate_slug("Unicode/I\u{307}").unwrap(),
+        "unicode/i\u{307}"
     );
 }

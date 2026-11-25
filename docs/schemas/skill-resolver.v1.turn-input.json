@@ -62,13 +62,15 @@
     "min_match_strength": {
       "enum": [
         "named",
+        "picked",
         "name",
         "triggers",
         "routing",
         "description",
+        "vector",
         "body"
       ],
-      "description": "The weakest match_strength to suggest (strongest first: named, name, triggers, routing, description, body). Weaker matches are dropped before the cut to top_k, so stronger ones still fill the block: it filters candidates and never empties the block. Omit it to keep every match."
+      "description": "The weakest match_strength to suggest (strongest first: named, picked, name, triggers, routing, description, vector, body). Weaker matches are dropped before the cut to top_k, so stronger ones still fill the block: it filters candidates and never empties the block. Omit it to keep every match."
     },
     "top_gate": {
       "type": "number",

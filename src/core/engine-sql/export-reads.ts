@@ -7,6 +7,9 @@
 import type { BrainEngine } from '../engine.ts';
 import type { Page } from '../types.ts';
 import { rowToPage } from '../utils.ts';
+import { FACT_SPACE_CLASS } from '../facts/withdrawal-schema.ts';
+import { liveTilingSql, untiledSql } from '../page-body/schema.ts';
+import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 
 type Raw = Pick<BrainEngine, 'executeRaw'>;
 
@@ -53,10 +56,11 @@ export interface ExportWithdrawalRow { visibility: string; fact_hash: string; wi
 
 /** The source's withdrawals and purge tombstones, by visibility, fact hash and subject. */
 export async function listExportWithdrawals(tx: Raw, sourceId: string): Promise<ExportWithdrawalRow[]> {
-  return tx.executeRaw<ExportWithdrawalRow>(`SELECT visibility,fact_hash,withdrawn_at,subject,false AS purged
+  // A UNION's ORDER BY takes only output column names, so the byte order sorts the wrapped union.
+  return tx.executeRaw<ExportWithdrawalRow>(`SELECT * FROM (SELECT visibility,fact_hash,withdrawn_at,subject,false AS purged
     FROM fact_withdrawals WHERE source_id=$1
-    UNION ALL SELECT visibility,fact_hash,purged_at,subject,true FROM fact_purges WHERE source_id=$1
-    ORDER BY visibility,fact_hash,subject`, [sourceId]);
+    UNION ALL SELECT visibility,fact_hash,purged_at,subject,true FROM fact_purges WHERE source_id=$1) w
+    ORDER BY visibility COLLATE "C",fact_hash COLLATE "C",subject COLLATE "C"`, [sourceId]);
 }
 
 /** A page the export writes, with its tags in tag order. */
@@ -70,7 +74,7 @@ export async function readExportPageRows(tx: Raw, ids: readonly string[]): Promi
   const rows = await tx.executeRaw<Record<string, unknown>>(`WITH export_page AS MATERIALIZED (
     SELECT * FROM pages WHERE id = ANY($1::bigint[])
   ) SELECT p.*,
-    COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS export_tags
+    COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag COLLATE "C") FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS export_tags
     FROM export_page p WHERE p.deleted_at IS NULL`,
   [ids]);
   return rows.map(row => ({ page: rowToPage(row), tags: row.export_tags as string[] }));
@@ -80,17 +84,17 @@ export async function readExportPageRows(tx: Raw, ids: readonly string[]): Promi
 export interface NormalizedFenceLines { i: number; body: string | null; timeline: string | null }
 
 /**
- * Each body and timeline lower-cased with every run of `[[:space:]]` made one space, line by line (overlayCanonicalBodies'
- * rule), so a withdrawal overlay can match fact rows the way Postgres compares them.
+ * Each body and timeline lower-cased with every run of FACT_SPACE_CLASS made one space, line by line (overlayCanonicalBodies'
+ * rule), so a withdrawal overlay can match fact rows the way gbrain_fact_fingerprint folds them on every engine.
  */
 export async function normalizeFenceLines(tx: Raw, bodies: readonly string[], timelines: readonly string[]): Promise<NormalizedFenceLines[]> {
   return tx.executeRaw<NormalizedFenceLines>(`SELECT t.i::int AS i,
-    (SELECT string_agg(regexp_replace(lower(line),'[[:space:]]+',' ','g'),chr(10) ORDER BY ord)
+    (SELECT string_agg(regexp_replace(lower(line),$3::text,' ','g'),chr(10) ORDER BY ord)
       FROM unnest(string_to_array(t.body,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS body,
-    (SELECT string_agg(regexp_replace(lower(line),'[[:space:]]+',' ','g'),chr(10) ORDER BY ord)
+    (SELECT string_agg(regexp_replace(lower(line),$3::text,' ','g'),chr(10) ORDER BY ord)
       FROM unnest(string_to_array(t.timeline,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS timeline
     FROM unnest($1::text[], $2::text[]) WITH ORDINALITY AS t(body, timeline, i)`,
-  [bodies, timelines]);
+  [bodies, timelines, `${FACT_SPACE_CLASS}+`]);
 }
 
 /** A segmented page's head row. Bigint columns come back as numbers on PGLite and strings on Postgres. */
@@ -191,7 +195,10 @@ export async function readSegmentedVersionBodyBytes(tx: Raw, pageId: number, gen
   return row ? Number(row.body_bytes) : null;
 }
 
+
+
+
 /** The sources with an access policy (folder rules or pending coverage), in id order: the rulebooks an export of every source carries. */
 export async function listAccessPolicySourceIds(tx: Raw): Promise<string[]> {
-  return (await tx.executeRaw<{ source_id: string }>('SELECT source_id FROM access_policy_state ORDER BY source_id')).map(r => r.source_id);
+  return (await tx.executeRaw<{ source_id: string }>('SELECT source_id FROM access_policy_state ORDER BY source_id COLLATE "C"')).map(r => r.source_id);
 }

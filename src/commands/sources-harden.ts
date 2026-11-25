@@ -59,10 +59,10 @@ async function loadSourceRows(engine: BrainEngine, id: string | undefined, all: 
     // deliberate (recovery ops may target archived rows).
     try {
       return await engine.executeRaw<SourceRow>(
-        `SELECT id, local_path, config FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE ORDER BY id`,
+        `SELECT id, local_path, config FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE ORDER BY id COLLATE "C"`,
       );
     } catch {
-      return engine.executeRaw<SourceRow>(`SELECT id, local_path, config FROM sources WHERE local_path IS NOT NULL ORDER BY id`);
+      return engine.executeRaw<SourceRow>(`SELECT id, local_path, config FROM sources WHERE local_path IS NOT NULL ORDER BY id COLLATE "C"`);
     }
   }
   if (!id) throw hardenUsageError();

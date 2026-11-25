@@ -1,6 +1,8 @@
 //! The count and list reads of takes, salience and code edges: `countOffGridTakeWeights`, `countTakes`,
-//! `planFactPurgeTakes`, `listTakeRowsForPage`, `countMcpResolvedTakes`, `listTakeSupersessionCandidates`,
-//! `countZeroWeightWithTakes` and `hasCodeEdgesSymbol`, matched to the SQL in
+//! `planFactPurgeTakes`, `listTakeRowsForPage`, `readTakeRowTrust`, `readTakeTrustRef`,
+//! `countMcpResolvedTakes`, `listTakeSupersessionCandidates`, `countZeroWeightWithTakes`,
+//! `hasCodeEdgesSymbol`, `readTakePreimages`, `listTopResolvedTakesForHolder` and `listAbandonedTakes`,
+//! matched to the SQL in
 //! `src/core/engine-sql/takes-reads.ts`.
 
 mod memory_env;
@@ -12,7 +14,9 @@ use gbrain_store::facts::purge::PurgeTargetArgs;
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::salience::EmotionalWeightRow;
 use gbrain_store::sources::SourceInput;
-use gbrain_store::takes::{McpResolvedInput, PurgeTakesInput, ResolveTakeInput, TakeInput};
+use gbrain_store::takes::{
+    McpResolvedInput, PurgeTakesInput, ResolveTakeInput, TakeInput, TakePreimageInput,
+};
 use memory_env::{Brain, brain};
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
@@ -529,4 +533,385 @@ fn a_source_owns_symbol_edges_only_when_one_of_its_edges_is_unresolved() {
     assert!(!b.has_code_edges_symbol("other").unwrap());
     assert!(!b.has_code_edges_symbol("empty").unwrap());
     assert!(!b.has_code_edges_symbol("nowhere").unwrap());
+}
+
+/// `[(claim, gone)]` of a `readTakePreimages` answer.
+fn preimage_claims(b: &Brain, read: Value) -> Vec<(String, bool)> {
+    b.read_take_preimages(&de::<TakePreimageInput>(read))
+        .unwrap()
+        .iter()
+        .map(|r| {
+            (
+                r["preimage"]["claim"].as_str().unwrap().to_string(),
+                r["gone"].as_bool().unwrap(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn take_preimages_list_the_gone_and_replaced_takes_once_per_joined_row() {
+    let b = brain("takes-reads-preimages");
+    let a = page(&b, "default", "a");
+    let other = page(&b, "default", "other");
+    add(
+        &b,
+        &[
+            take(a, 3, "third", json!({"weight": 0.7})),
+            take(a, 1, "first", json!({})),
+            take(a, 2, "second", json!({"kind": "bet"})),
+            take(other, 1, "elsewhere", json!({})),
+        ],
+    );
+    resolve(&b, a, 2, Some("garry"));
+    let first = take_id(&b, a, 1) as i64;
+    // By id: the named take is gone; an incoming row of another claim replaces row 3, the same row
+    // keeps row 2, and a row with no stored take adds nothing.
+    let by_id = preimage_claims(
+        &b,
+        json!({"pageId": a, "by": "id", "gone": [first], "incoming": [
+            {"row_num": 3, "claim": "changed", "kind": "take", "holder": "garry"},
+            {"row_num": 2, "claim": "second", "kind": "bet", "holder": "garry"},
+            {"row_num": 9, "claim": "new", "kind": "take", "holder": "garry"},
+        ]}),
+    );
+    assert_eq!(by_id, vec![("first".into(), true), ("third".into(), false)]);
+    // By row number, with two incoming rows at a gone number and a missing holder (NULL differs).
+    let by_row = preimage_claims(
+        &b,
+        json!({"pageId": a, "by": "row_num", "gone": [1], "incoming": [
+            {"row_num": 1, "claim": "first", "kind": "take", "holder": "garry"},
+            {"row_num": 1, "claim": "x", "kind": "take", "holder": "garry"},
+            {"row_num": 2, "claim": "second", "kind": "bet"},
+        ]}),
+    );
+    assert_eq!(
+        by_row,
+        vec![
+            ("first".into(), true),
+            ("first".into(), true),
+            ("second".into(), false)
+        ]
+    );
+    let full = b
+        .read_take_preimages(&de::<TakePreimageInput>(
+            json!({"pageId": a, "by": "row_num", "gone": [2, 3], "incoming": []}),
+        ))
+        .unwrap();
+    assert_eq!(full[0]["preimage"]["kind"], json!("bet"));
+    assert_eq!(full[0]["preimage"]["resolved_quality"], json!("correct"));
+    assert_eq!(full[0]["preimage"]["resolved_by"], json!("garry"));
+    assert!(
+        full[0]["preimage"]["resolved_at"]
+            .as_str()
+            .unwrap()
+            .ends_with("+00:00")
+    );
+    assert_eq!(full[1]["preimage"]["weight"], json!(0.7));
+    assert_eq!(full[1]["preimage"]["resolved_at"], Value::Null);
+    let none = json!({"pageId": 9999, "by": "id", "gone": [first], "incoming": []});
+    assert!(b.read_take_preimages(&de(none)).unwrap().is_empty());
+    let bad = json!({"pageId": a, "by": "slug", "gone": [], "incoming": []});
+    assert!(b.read_take_preimages(&de(bad)).is_err());
+}
+
+/// Takes written in one transaction under a declared tier and origin.
+fn add_declared(b: &Brain, tier: &str, origin: Value, rows: &[TakeInput]) {
+    let tx = b.begin_transaction(false).unwrap();
+    let names = ["gbrain.write_trust_tier", "gbrain.write_origin"].map(String::from);
+    tx.apply_write_trust(&names, &[tier.into(), origin.to_string()])
+        .unwrap();
+    tx.add_takes_batch(rows).unwrap();
+    tx.commit_transaction().unwrap();
+}
+
+#[test]
+fn a_take_row_reads_back_its_id_claim_and_stored_tier() {
+    let b = brain("takes-reads-row-trust");
+    let p = page(&b, "default", "people/a-example");
+    add_declared(
+        &b,
+        "agent_written",
+        json!({"channel": "agent"}),
+        &[take(p, 1, "agent claim", json!({}))],
+    );
+    add(&b, &[take(p, 2, "undeclared claim", json!({}))]);
+    let one = b.read_take_row_trust(p as i64, 1).unwrap().unwrap();
+    assert_eq!(
+        one,
+        json!({"id": take_id(&b, p, 1), "claim": "agent claim", "trust_tier": "agent_written"})
+    );
+    let two = b.read_take_row_trust(p as i64, 2).unwrap().unwrap();
+    assert_eq!(two["trust_tier"], "unknown");
+    assert_eq!(b.read_take_row_trust(p as i64, 9).unwrap(), None);
+    assert_eq!(b.read_take_row_trust(p as i64 + 1000, 1).unwrap(), None);
+    assert_eq!(b.read_take_row_trust(-1, 1).unwrap(), None);
+    assert_eq!(
+        b.read_take_row_trust(p as i64, i64::from(i32::MAX) + 1)
+            .unwrap(),
+        None
+    );
+}
+
+#[test]
+fn a_take_trust_ref_reads_its_page_source_origin_in_jsonb_order_activity_and_quarantine() {
+    let b = brain("takes-reads-trust-ref");
+    source(&b, "other");
+    let p = page(&b, "other", "people/a-example");
+    let q = page_with(
+        &b,
+        "default",
+        "people/b-example",
+        json!({"quarantine": {"reason": "test"}}),
+    );
+    add_declared(
+        &b,
+        "agent_written",
+        json!({"zz": 1, "a": {"y": 1, "x": 2}, "mm": 3}),
+        &[
+            take(p, 1, "agent claim", json!({})),
+            take(p, 2, "inactive", json!({"active": false})),
+        ],
+    );
+    add(&b, &[take(q, 1, "quarantined claim", json!({}))]);
+    let id = take_id(&b, p, 1);
+    let agent = b.read_take_trust_ref(id as i64).unwrap().unwrap();
+    assert_eq!(agent["source_id"], "other");
+    assert_eq!(agent["claim"], "agent claim");
+    assert_eq!(agent["trust_tier"], "agent_written");
+    assert_eq!(agent["active"], true);
+    assert_eq!(agent["quarantined"], false);
+    let keys: Vec<&String> = agent["write_origin"].as_object().unwrap().keys().collect();
+    assert_eq!(keys, ["a", "mm", "zz"]);
+    let inner: Vec<&String> = agent["write_origin"]["a"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .collect();
+    assert_eq!(inner, ["x", "y"]);
+    let inactive = b
+        .read_take_trust_ref(take_id(&b, p, 2) as i64)
+        .unwrap()
+        .unwrap();
+    assert_eq!(inactive["active"], false);
+    let quarantined = b
+        .read_take_trust_ref(take_id(&b, q, 1) as i64)
+        .unwrap()
+        .unwrap();
+    assert_eq!(quarantined["quarantined"], true);
+    assert_eq!(quarantined["trust_tier"], "unknown");
+    assert_eq!(quarantined["write_origin"], Value::Null);
+    assert_eq!(b.read_take_trust_ref(987_654_321).unwrap(), None);
+    assert_eq!(b.read_take_trust_ref(-1).unwrap(), None);
+}
+
+#[test]
+fn top_resolved_takes_are_the_holders_heaviest_with_a_null_or_newer_date_first() {
+    let b = brain("top-resolved");
+    source(&b, "s1");
+    let p = page(&b, "s1", "calibration-a");
+    let q = page(&b, "s1", "calibration-b");
+    add(
+        &b,
+        &[
+            take(
+                p,
+                1,
+                "older",
+                json!({"weight": 0.9, "since_date": "2024-01"}),
+            ),
+            take(p, 2, "undated", json!({"weight": 0.9})),
+            take(
+                q,
+                1,
+                "newer",
+                json!({"weight": 0.9, "since_date": "2025-01-15"}),
+            ),
+            take(
+                q,
+                2,
+                "light",
+                json!({"weight": 0.5, "since_date": "2026-01"}),
+            ),
+            take(q, 3, "open", json!({"weight": 1.0})),
+            take(
+                q,
+                4,
+                "someone else",
+                json!({"weight": 1.0, "holder": "alice-example"}),
+            ),
+        ],
+    );
+    for (pg, row) in [(p, 1), (p, 2), (q, 1), (q, 2), (q, 4)] {
+        resolve(&b, pg, row, None);
+    }
+    let rows = b.list_top_resolved_takes_for_holder("garry").unwrap();
+    let claims: Vec<&str> = rows.iter().map(|r| r["claim"].as_str().unwrap()).collect();
+    assert_eq!(claims, vec!["undated", "newer", "older", "light"]);
+    assert_eq!(rows[1]["page_slug"], "calibration-b");
+    assert_eq!(
+        rows[1]["id"],
+        json!(take_id(&b, q, 1).to_string()),
+        "the id is text"
+    );
+    assert_eq!(rows[1]["weight"], json!(0.9));
+    assert_eq!(rows[1]["row_num"], 1);
+    assert_eq!(rows[1]["resolved_quality"], "correct");
+    assert_eq!(rows[0]["since_date"], Value::Null);
+
+    let many: Vec<TakeInput> = (10..40)
+        .map(|row| take(p, row, "bulk", json!({"weight": 0.1})))
+        .collect();
+    add(&b, &many);
+    for row in 10..40 {
+        resolve(&b, p, row, None);
+    }
+    assert_eq!(
+        b.list_top_resolved_takes_for_holder("garry").unwrap().len(),
+        25
+    );
+    assert!(
+        b.list_top_resolved_takes_for_holder("nobody")
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn abandoned_takes_are_the_oldest_unresolved_convictions_past_a_year() {
+    let b = brain("abandoned");
+    // 2026-11-20T00:00:00Z: the cutoff is 2025-11-20T00:00:00Z.
+    b.clock.set(1_795_132_800_000_000);
+    source(&b, "s1");
+    let p = page(&b, "s1", "threads");
+    add(
+        &b,
+        &[
+            take(
+                p,
+                1,
+                "month",
+                json!({"weight": 0.75, "since_date": "2020-01"}),
+            ),
+            take(
+                p,
+                2,
+                "at the floor",
+                json!({"weight": 0.7, "since_date": "2019-01"}),
+            ),
+            take(
+                p,
+                3,
+                "a day inside",
+                json!({"weight": 0.9, "since_date": "2025-11-19"}),
+            ),
+            take(
+                p,
+                4,
+                "on the cutoff",
+                json!({"weight": 0.9, "since_date": "2025-11-20"}),
+            ),
+            take(
+                p,
+                5,
+                "resolved",
+                json!({"weight": 0.9, "since_date": "2021-05-05"}),
+            ),
+            take(
+                p,
+                6,
+                "superseded",
+                json!({"weight": 0.9, "since_date": "2018-01", "superseded_by": 1}),
+            ),
+            take(
+                p,
+                7,
+                "inactive",
+                json!({"weight": 0.9, "since_date": "2018-01", "active": false}),
+            ),
+            take(p, 8, "undated", json!({"weight": 0.8})),
+            take(
+                p,
+                9,
+                "light and bad",
+                json!({"weight": 0.5, "since_date": "not a date"}),
+            ),
+        ],
+    );
+    resolve(&b, p, 5, None);
+    let rows = b.list_abandoned_takes().unwrap();
+    let claims: Vec<&str> = rows.iter().map(|r| r["claim"].as_str().unwrap()).collect();
+    assert_eq!(
+        claims,
+        vec!["month", "a day inside"],
+        "a stored 0.7 is below the 0.7 floor"
+    );
+    assert_eq!(rows[0]["id"], take_id(&b, p, 1));
+    assert_eq!(rows[0]["page_slug"], "threads");
+    assert_eq!(rows[0]["weight"], json!(0.75));
+    assert_eq!(rows[0]["since_date"], "2020-01");
+
+    let more: Vec<TakeInput> = (10..14)
+        .map(|row| {
+            take(
+                p,
+                row,
+                "old",
+                json!({"weight": 0.8, "since_date": format!("2022-0{}", row - 9)}),
+            )
+        })
+        .collect();
+    add(&b, &more);
+    let dates: Vec<String> = b
+        .list_abandoned_takes()
+        .unwrap()
+        .iter()
+        .map(|r| r["since_date"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(
+        dates,
+        vec!["2020-01", "2022-01", "2022-02", "2022-03", "2022-04"]
+    );
+
+    add(
+        &b,
+        &[take(
+            p,
+            20,
+            "bad month",
+            json!({"weight": 0.9, "since_date": "2020-13"}),
+        )],
+    );
+    let err = b.list_abandoned_takes().unwrap_err();
+    assert_eq!(err.code, gbrain_store::error::INVALID_ARGUMENT);
+    assert!(err.message.contains("2020-13-01"), "{}", err.message);
+}
+
+#[test]
+fn abandoned_takes_on_29_february_look_back_to_28_february() {
+    let b = brain("abandoned-leap");
+    // 2028-02-29T12:00:00Z: the cutoff is 2027-02-28T12:00:00Z, so 2027-02-28 (midnight) is before it.
+    b.clock.set(1_835_438_400_000_000);
+    source(&b, "s1");
+    let p = page(&b, "s1", "leap");
+    add(
+        &b,
+        &[
+            take(
+                p,
+                1,
+                "the 28th",
+                json!({"weight": 0.9, "since_date": "2027-02-28"}),
+            ),
+            take(
+                p,
+                2,
+                "march",
+                json!({"weight": 0.9, "since_date": "2027-03-01"}),
+            ),
+        ],
+    );
+    let rows = b.list_abandoned_takes().unwrap();
+    let claims: Vec<&str> = rows.iter().map(|r| r["claim"].as_str().unwrap()).collect();
+    assert_eq!(claims, vec!["the 28th"]);
 }

@@ -71,7 +71,8 @@ impl Brain {
         })
     }
 
-    /// `holdPageEmbedding(pageId, reason)`: sets the page's embedding hold; resolves null.
+    /// `holdPageEmbedding(pageId, reason)`: sets the page's ledger row to held (an upsert that keeps
+    /// its spend columns); resolves null.
     #[napi]
     pub fn hold_page_embedding<'env>(
         &self,
@@ -113,6 +114,27 @@ impl Brain {
             let pairs: Vec<ReasonTombstone> = required(pairs, "writeReasonPurgeTombstones pairs")?;
             s.write_reason_purge_tombstones(&source_id, &pairs)
         })
+    }
+
+    /// `advanceSourcePurgeEpoch(sourceId)`: the source's new purge epoch, or null for an unknown
+    /// source.
+    #[napi]
+    pub fn advance_source_purge_epoch<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.advance_source_purge_epoch(&source_id))
+    }
+
+    /// `readSourcePurgeEpoch(sourceId)`: the source's purge epoch, or null for an unknown source.
+    #[napi]
+    pub fn read_source_purge_epoch<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_source_purge_epoch(&source_id))
     }
 
     /// `listSourcePathPages(sourceId)`: the source's live pages that have a `source_path`.
@@ -165,6 +187,45 @@ impl Brain {
         })
     }
 
+    /// `readPageIdentity(pageId)`: `{ fm_id, title }` of a live page, or `null`.
+    #[napi]
+    pub fn read_page_identity<'env>(
+        &self,
+        env: &'env Env,
+        page_id: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let page_id: u64 = required(page_id, "readPageIdentity pageId")?;
+            s.read_page_identity(page_id)
+        })
+    }
+
+    /// `writeSourceSyncHeartbeat(sourceId)`: the 0-change sync heartbeat (`last_sync_at` only).
+    #[napi]
+    pub fn write_source_sync_heartbeat<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.write_source_sync_heartbeat(&source_id))
+    }
+
+    /// `writeSourceUpstreamObservation(sourceId, checkedAt, commit, behind)`: the sync's upstream
+    /// observation of the source's checkout.
+    #[napi]
+    pub fn write_source_upstream_observation<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        checked_at: String,
+        commit: String,
+        behind: Option<i64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.write_source_upstream_observation(&source_id, &checked_at, &commit, behind)
+        })
+    }
+
     /// `insertSource(id, name, localPath, config)`: the new `SourceRow`; `constraint_violation`
     /// when the id or the name is taken.
     #[napi]
@@ -179,6 +240,30 @@ impl Brain {
         self.run(env, move |s| {
             let config: Map<String, Value> = required(config, "insertSource config")?;
             s.insert_source(&id, &name, local_path.as_deref(), &config)
+        })
+    }
+
+    /// `readSourcesNotReadable(readable, facts, policy)`: whether an unscoped remote read over
+    /// `readable` reads nothing while another live source holds a page; a `null` policy reads
+    /// every page.
+    #[napi]
+    pub fn read_sources_not_readable<'env>(
+        &self,
+        env: &'env Env,
+        readable: Vec<String>,
+        facts: bool,
+        policy: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let policy = policy
+                .map(|v| {
+                    required::<gbrain_store::facts::PrivacyPolicy>(
+                        v,
+                        "readSourcesNotReadable policy",
+                    )
+                })
+                .transpose()?;
+            s.read_sources_not_readable(&readable, facts, policy.as_ref())
         })
     }
 }

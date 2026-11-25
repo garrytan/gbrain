@@ -10,17 +10,20 @@
  * Decisions (who may claim, whether a write fits, what a refusal says) stay with the callers.
  */
 import type { LegacyUnscopedRead } from './brands.ts';
+import { COVERAGE_COUNT_CAP } from '../search/retrieval-coverage.ts';
 import type { SqlExecutor, QueryOpts } from './executor.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import { JOURNAL_LIMITS_SQL } from '../persistence/limits.ts';
+import { MANAGED_SYNC_PASS_OP } from '../persistence/sync-pass-row.ts';
 import { COMPACTED_RECEIPT_BYTES_SQL, EFFECT_BYTES_SQL } from '../persistence/receipt-bytes.ts';
 import { TOKEN_GRANT_ROW_COLUMNS, type TokenGrantRow } from '../grants/model.ts';
 import { sqlFragment, trustedSql } from './fragment.ts';
+import { GIT_HOLD_SUMMARY_OP } from './sync-hold-op.ts';
 
 /** The op of a held file's checkpoint row (sync-holds.ts re-exports it). */
 export const GIT_HOLD_OP = 'sync-hold';
 /** The op of a source's held-file summary row (sync-holds.ts re-exports it). */
-export const GIT_HOLD_SUMMARY_OP = 'sync-hold-summary';
+export { GIT_HOLD_SUMMARY_OP };
 
 /** Creates missing counter rows; takes no lock on existing ones. Keys sorted. */
 export const ENSURE_COUNTERS_SQL = 'INSERT INTO persistence_counters(key) SELECT k FROM unnest($1::text[]) WITH ORDINALITY AS u(k,n) ORDER BY n ON CONFLICT DO NOTHING';
@@ -147,11 +150,36 @@ export const HELD_PAGES_SQL = `SELECT h.completed_keys->0 AS record, p.knowledge
       JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
       LEFT JOIN pages p ON p.id=(h.completed_keys->0->>'page_id')::int
       WHERE h.op=$1 AND (h.completed_keys->0->>'page_id')=ANY($2::text[])
-      ORDER BY h.fingerprint`;
+      ORDER BY h.fingerprint COLLATE "C"`;
 
 /** The current-incarnation hold rows naming these page ids, each with its page's revision, in fingerprint order. */
 export function readHeldPageRows<R>(exec: LegacyUnscopedRead, pageIds: string[]): Promise<Array<{ record: R; revision: string | null }>> {
   return exec.executeRaw<{ record: R; revision: string | null }>(HELD_PAGES_SQL, [GIT_HOLD_OP, pageIds]);
+}
+
+/** The query of `readHeldHitRows`: the hits' page ids, the read's live sources, and the relevance types and patterns. */
+export interface HeldHitQuery { pageIds: string[]; sourceIds: string[]; types: string[]; patterns: string[] }
+/** The hold rows of the hits (`record` and the page's `revision`), then one row with `could_affect` alone. */
+export interface HeldHitRow<R> { record: R | null; revision: string | null; could_affect: number | string | null }
+// moved from persistence/held-reads.ts stampHeldHits unchanged, with its HOLD_PAGE_JOIN and COVERAGE_COUNT_CAP (1000) written out
+const HELD_HIT_ROWS_SQL = `(SELECT h.completed_keys->0 AS record, p.knowledge_revision::text AS revision, NULL::int AS could_affect FROM op_checkpoints h
+      JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
+      LEFT JOIN pages p ON p.id=(h.completed_keys->0->>'page_id')::int
+        WHERE h.op=$1 AND (h.completed_keys->0->>'page_id')=ANY($2::text[]) ORDER BY h.fingerprint COLLATE "C")
+      UNION ALL
+      SELECT NULL, NULL, (SELECT count(*)::int FROM (SELECT 1 FROM op_checkpoints h
+      JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
+      LEFT JOIN pages p ON p.id=(h.completed_keys->0->>'page_id')::int
+        WHERE h.op=$1 AND s.archived IS NOT TRUE AND s.id=ANY($3::text[])
+          AND ((h.completed_keys->0->>'page_id')=ANY($2::text[]) OR p.type=ANY($4::text[])
+            OR lower(concat_ws(' ', h.completed_keys->0->>'path', h.completed_keys->0->>'slug', p.title)) ~ ANY($5::text[]))
+        LIMIT 1000) x)`;
+// The cap is the coverage count cap every engine applies; a change to one must change the other.
+if (!HELD_HIT_ROWS_SQL.includes(`LIMIT ${COVERAGE_COUNT_CAP}) x)`)) throw new Error('readHeldHitRows: the LIMIT is not COVERAGE_COUNT_CAP');
+
+/** The current-incarnation holds naming the hits' pages, in fingerprint order, then how many held files (capped) could affect the read. */
+export function readHeldHitRows<R>(exec: LegacyUnscopedRead, query: HeldHitQuery): Promise<Array<HeldHitRow<R>>> {
+  return exec.executeRaw<HeldHitRow<R>>(HELD_HIT_ROWS_SQL, [GIT_HOLD_OP, query.pageIds, query.sourceIds, query.types, query.patterns]);
 }
 
 /** One source's held-file counts from its summary row. */
@@ -167,7 +195,7 @@ export function readHeldCoverageRows(exec: LegacyUnscopedRead, sourceIds: string
       FROM op_checkpoints h JOIN sources s ON h.fingerprint=s.id||':'||s.incarnation::text
       WHERE h.op=$1 AND s.archived IS NOT TRUE AND ($2::text[] IS NULL OR s.id=ANY($2::text[]))
         AND COALESCE((h.completed_keys->0->>'count')::int,0)>0
-      ORDER BY s.id`, [GIT_HOLD_SUMMARY_OP, sourceIds]);
+      ORDER BY s.id COLLATE "C"`, [GIT_HOLD_SUMMARY_OP, sourceIds]);
 }
 
 /** The request a principal admitted under `requestId`, or null. */
@@ -188,6 +216,14 @@ export async function readOwnerHostBinding(exec: LegacyUnscopedRead, worktreeId:
   const [binding] = await exec.executeRaw<{ local_path: string | null }>(`SELECT h.local_path FROM persistence_host_bindings h
       JOIN persistence_worktrees w ON w.id=h.worktree_id AND w.owner_host_id=h.host_id WHERE w.id=$1::uuid`, [worktreeId]);
   return binding?.local_path ?? null;
+}
+
+/**
+ * At most two request rows with this request_id, whoever submitted them (ops/persistence.ts hostOperatorReceipt): the
+ * trusted local CLI reads a receipt by request_id alone only when exactly one row has it.
+ */
+export async function readWriteRequestsByRequestId(exec: LegacyUnscopedRead, requestId: string): Promise<WriteRequest[]> {
+  return exec.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE request_id=$1::uuid LIMIT 2', [requestId]);
 }
 
 /**
@@ -227,6 +263,12 @@ export function listWriteRequestRows(exec: LegacyUnscopedRead, principalKind: st
 export async function readWriteRequestById(exec: LegacyUnscopedRead, id: string, opts?: QueryOpts): Promise<WriteRequest | null> {
   const [row] = await exec.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid', [id], opts);
   return row ?? null;
+}
+
+/** The requests admitted under any of the client request ids `requestIds`, any principal, by sequence. */
+export async function listWriteRequestsByRequestIds(exec: LegacyUnscopedRead, requestIds: readonly string[]): Promise<WriteRequest[]> {
+  if (!requestIds.length) return [];
+  return exec.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE request_id=ANY($1::uuid[]) ORDER BY sequence', [[...requestIds]]);
 }
 
 /** #5984: the columns a waiter needs while a request is unfinished; the full row is read once it is terminal. */
@@ -405,12 +447,61 @@ export async function lockWriteRequest(exec: SqlExecutor, id: string): Promise<W
   return row ?? null;
 }
 
+/** The requests with these ids, locked FOR UPDATE until the transaction ends, in id order (an unknown id reads nothing). */
+export async function lockWriteRequestsById(exec: SqlExecutor, ids: readonly string[]): Promise<WriteRequest[]> {
+  return exec.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE', [ids]);
+}
+
+/**
+ * A terminal request's compaction once its stored intent carried purged content (journal.ts finishTerminal). `left` is
+ * what the receipt keeps without its intent, `reservation` the terminal reservation the completion left, `counterKeys`
+ * the counters it charged.
+ */
+export interface TerminalIntentCompaction { id: string; left: number; reservation: number; counterKeys: readonly string[] }
+
+/** journal.ts finishTerminal's compaction at b220b0df91, with EFFECT_BYTES_SQL written out (see the module header). */
+export const COMPACT_TERMINAL_INTENT_SQL = `WITH effects AS (SELECT COALESCE(SUM(octet_length(data::text)+octet_length(kind)+1024),0) AS bytes,
+        COALESCE(bool_or(state<>'committed'),false) AS unfinished FROM persistence_effects WHERE request_id=$1::uuid),
+      r AS (UPDATE persistence_requests SET intent=NULL,compacted=true,terminal_reservation=CASE WHEN (SELECT unfinished FROM effects) THEN terminal_reservation
+        ELSE LEAST(terminal_reservation,$2::bigint+(SELECT bytes FROM effects)) END WHERE id=$1::uuid RETURNING *),
+      released AS (UPDATE persistence_counters c SET terminal_bytes=c.terminal_bytes-LEAST($3::bigint-r.terminal_reservation,c.terminal_bytes)
+        FROM r WHERE c.key=ANY($4::text[]))
+      SELECT * FROM r`;
+
+/**
+ * Drops the request's intent and marks it compacted. Its terminal reservation shrinks to `left` plus its effect bytes
+ * once no effect is unfinished, and the counters release what it gave up. The compacted row, or null for an unknown id.
+ */
+export async function compactTerminalIntent(exec: SqlExecutor, c: TerminalIntentCompaction): Promise<WriteRequest | null> {
+  const [redacted] = await exec.executeRaw<WriteRequest>(COMPACT_TERMINAL_INTENT_SQL, [c.id, c.left, c.reservation, c.counterKeys]);
+  return redacted ?? null;
+}
+
 /** Records a request's terminal state and releases its counters; null when the result exceeds the reservation (nothing changed). */
 export async function completeWriteRow(exec: SqlExecutor, c: WriteCompletion): Promise<CompletedWriteRow | null> {
   const [done] = await exec.executeRaw<CompletedWriteRow>(c.probePurges ? COMPLETE_WRITE_PURGE_PROBE_SQL : COMPLETE_WRITE_SQL, [c.id, c.state,
     JSON.stringify(c.outcome), c.errorCode, c.errorMessage, c.consumerVersion, c.consumerHostId,
     c.errorDetail ? JSON.stringify(c.errorDetail) : null, c.resultBytes, c.counterKeys, c.intentBytes, c.retainedBytes, c.terminalReservation]);
   return done ?? null;
+}
+
+/** Whether a locked request may still be cancelled under the caller's expectation (the same test the Rust store runs). */
+function cancellable(row: WriteRequest, c: WriteCancellation): boolean {
+  return !['committed', 'conflict', 'failed', 'cancelled'].includes(row.state) && row.state === c.expectState
+    && (row.execution_token ?? null) === c.expectExecutionToken && !row.publication_started && row.recovery == null;
+}
+
+/**
+ * Cancels request `c.id`: durable commit on, the row locked FOR UPDATE, the check, then the completion statement.
+ * Null when the row does not exist.
+ */
+export async function cancelWriteRow(exec: SqlExecutor, c: WriteCancellation): Promise<WriteCancelResult | null> {
+  const current = await lockWriteRequest(exec, c.id);
+  if (!current) return null;
+  if (!cancellable(current, c)) return { status: 'kept', row: current };
+  await exec.executeRaw("SELECT set_config('synchronous_commit','on',true)");
+  const done = await completeWriteRow(exec, c);
+  return done ? { status: 'cancelled', row: done } : { status: 'too_large', row: current };
 }
 
 /** The config key that turns a remote write's mention links off (effect-model.ts `REMOTE_AUTO_LINKS_KEY`; the statement test pins the two). */
@@ -485,21 +576,22 @@ export async function insertWithdrawalEffects(exec: SqlExecutor, spec: Withdrawa
   await exec.executeRaw(WITHDRAWAL_EFFECTS_SQL, withdrawalEffectsParams(spec));
 }
 
-/** Whether a locked request may still be cancelled under the caller's expectation (the same test the Rust store runs). */
-function cancellable(row: WriteRequest, c: WriteCancellation): boolean {
-  return !['committed', 'conflict', 'failed', 'cancelled'].includes(row.state) && row.state === c.expectState
-    && (row.execution_token ?? null) === c.expectExecutionToken && !row.publication_started && row.recovery == null;
-}
+/** The raw progress row of a drain lease's holder (`readDrainHolderProgress`). */
+export interface DrainHolderProgressRow { committed: number | string; last_committed_at: Date | string | null; last_saved_at: Date | string | null }
 
 /**
- * Cancels request `c.id`: durable commit on, the row locked FOR UPDATE, the check, then the completion statement.
- * Null when the row does not exist.
+ * The source's managed-sync commits since `since` (ISO), its last managed-sync commit, and its last cursor save, pass
+ * row write or hold summary write, through the source's writer binding; null when no binding exists.
  */
-export async function cancelWriteRow(exec: SqlExecutor, c: WriteCancellation): Promise<WriteCancelResult | null> {
-  const current = await lockWriteRequest(exec, c.id);
-  if (!current) return null;
-  if (!cancellable(current, c)) return { status: 'kept', row: current };
-  await exec.executeRaw("SELECT set_config('synchronous_commit','on',true)");
-  const done = await completeWriteRow(exec, c);
-  return done ? { status: 'cancelled', row: done } : { status: 'too_large', row: current };
+export async function readDrainHolderProgress(exec: LegacyUnscopedRead, sourceId: string, since: string): Promise<DrainHolderProgressRow | null> {
+  const [row] = await exec.executeRaw<DrainHolderProgressRow>(`
+    SELECT (SELECT count(*) FROM persistence_requests r WHERE r.worktree_id=b.worktree_id AND r.state='committed'
+        AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%' AND r.completed_at >= $2::timestamptz) AS committed,
+      (SELECT max(r.completed_at) FROM persistence_requests r WHERE r.worktree_id=b.worktree_id AND r.source_incarnation=b.source_incarnation
+        AND r.state='committed' AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%') AS last_committed_at,
+      GREATEST((SELECT max(c.updated_at) FROM op_checkpoints c WHERE c.op='managed-sync' AND c.completed_keys->0->>'sourceId'=$1),
+        (SELECT c.updated_at FROM op_checkpoints c WHERE c.op=$3 AND c.fingerprint=b.source_id||':'||b.source_incarnation::text),
+        (SELECT c.updated_at FROM op_checkpoints c WHERE c.op='sync-hold-summary' AND c.fingerprint=b.source_id||':'||b.source_incarnation::text)) AS last_saved_at
+    FROM persistence_source_bindings b WHERE b.source_id=$1`, [sourceId, since, MANAGED_SYNC_PASS_OP]);
+  return row ?? null;
 }

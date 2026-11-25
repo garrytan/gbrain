@@ -6,12 +6,13 @@ import {
   getEmbeddingColumnRegistry,
   validateColumnKey,
   validateColumnConfig,
-  quoteIdentifier,
   EmbeddingColumnNotRegisteredError,
   EmbeddingColumnConfigError,
 } from '../core/search/embedding-column.ts';
 
 import { redactPgUrl } from '../core/url-redact.ts';
+import { rethrowCapabilityMissing } from '../core/rust-engine/errors.ts';
+import { isDefaultSurfaceKey } from '../core/mcp-registration.ts';
 import { PUBLISH_GATE_KEYS } from '../mcp/publish-gates.ts';
 import { isConsentConfigKey, setConsentPreapproval, unsetConsentPreapproval } from '../core/consent-preapproval.ts';
 import { WRITER_ADMIN_LOCK_KEY } from '../core/persistence/admin-contract.ts';
@@ -76,6 +77,7 @@ const FILE_PLANE_DOTTED_KEYS: ReadonlySet<string> = new Set([
   // Engine graduation opt-out: the pre-connect migrate router reads it engine-free.
   'migrate.graduation', 'doctor.default_budget_ms', // #6803: the CLI doctor reads it pre-connect (commands/doctor/default-budget.ts)
   'minions.terminal_hook', // #7242: a command the worker runs; local file plane only, never the shared DB plane (minions/terminal-hook.ts)
+  'mcp.default_surface_claude_code', 'mcp.default_surface_codex', 'mcp.default_surface_hermes', // I1: gbrain setup reads them engine-free (registrationProfile)
 ]);
 
 /** #5489: every self_upgrade.* reader (cli.ts startup check, autopilot,
@@ -606,6 +608,14 @@ async function setFilePlaneKey(key: string, value: string, tail: string[]): Prom
     cfg.backup = { ...(cfg.backup ?? {}), check_interval_days: n };
     saveConfig(cfg);
     console.log(`Set ${key} = ${n} (file plane: ~/.gbrain/config.json)`);
+  } else if (isDefaultSurfaceKey(key)) {
+    if (value !== 'full' && value !== 'starter') {
+      console.error(`[config] ${key} must be full (serve --surface full) or starter (serve --surface starter --advertise verbs); nothing was written`);
+      process.exit(1);
+    }
+    cfg.mcp = { ...(cfg.mcp ?? {}), [key.slice('mcp.'.length)]: value };
+    saveConfig(cfg);
+    console.log(`Set ${key} = ${value} (file plane: ~/.gbrain/config.json). gbrain setup uses it for new entries${key === 'mcp.default_surface_codex' ? ', and its next run moves Codex entries that follow the default; an entry pinned with --surface stays as it is' : '; an existing entry keeps its surface until you re-run setup with --surface'}.`);
   } else if (key === 'mcp.instructions') {
     // #4748: deployment identity appended to the MCP initialize contract.
     // Takes effect on the next `gbrain serve` start (the response is
@@ -1431,16 +1441,10 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
         // coverage < 90% unless `--coverage-override` or `--yes` is
         // present.
         try {
-          const covRows = await engine.executeRaw<{ pct: number; total: number }>(
-            `SELECT (
-               COUNT(*) FILTER (WHERE ${quoteIdentifier(value)} IS NOT NULL)::float
-               / NULLIF(COUNT(*), 0) * 100
-             )::float AS pct,
-             COUNT(*)::int AS total
-             FROM content_chunks`,
-          );
-          const pct = covRows[0]?.pct ?? 0;
-          const total = covRows[0]?.total ?? 0;
+          // The typed coverage read (engine-sql/embedding-catalog.ts), so a Rust brain answers it.
+          const coverage = await engine.countChunkColumnCoverage(value);
+          const pct = coverage.pct ?? 0;
+          const total = coverage.total;
           if (total > 0 && pct < 90 && !coverageOverride) {
             console.error(
               `[config] Column "${value}" is ${pct.toFixed(1)}% populated (${total} total chunks).`,
@@ -1461,7 +1465,8 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
           // is otherwise valid (e.g. the column was JUST added, no chunks
           // yet, NULLIF guard returns NULL → pct=0 BUT total=0 short-
           // circuits above). If the SQL itself errors (column ALTER race,
-          // permission), warn but proceed.
+          // permission), warn but proceed. An engine that cannot read it refuses.
+          rethrowCapabilityMissing(err);
           console.error(
             `[config] WARN: coverage probe failed (${(err as Error).message}); proceeding.`,
           );

@@ -17,17 +17,21 @@
 //!
 //! Ids are lower-case UUID text. A source binding has no foreign key to its source, as on
 //! Postgres: a removed or re-created source leaves its binding, and the readers compare the
-//! binding's incarnation with the source's. Rows are not deleted on this engine yet (no rebind or
-//! source purge runs here).
+//! binding's incarnation with the source's. A writer deactivation or a pre-activation release
+//! retires worktrees (the rows are kept) and deletes their bindings (worktrees/release.rs, which
+//! also keeps the brain mode).
 //!
 //! The writer admin members (`src/core/engine-sql/writer-admin.ts`) read and change the same rows:
 //! `writer_admin_state_text` is the topology document `--expected-state` hashes, and a writer
-//! transfer's prepare and cancel move one worktree between `active` and `draining`.
+//! transfer's prepare and cancel move one worktree between `active` and `draining`. An accept
+//! records the successor's host binding, rebinds the sources' content receipts
+//! (`content_receipt_rows` and `swap_config_value`) and gives the worktree to the successor at
+//! the next epoch.
 
 use super::effects::all_effects;
 use super::{all_requests, extra_is_null, uuid_param, violation};
 use crate::cli_reads::pg_text::jsonb_text;
-use crate::config::read_config;
+use crate::config::{config_key, read_config};
 use crate::env::{Env, iso};
 use crate::error::{Result, StoreError};
 use crate::facts::jsonb_time;
@@ -39,56 +43,59 @@ use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+mod release;
+pub use release::{CounterDelta, ReleaseRead};
+
 /// `persistence_worktrees.state` CHECK.
-const WORKTREE_STATES: &[&str] = &["active", "draining", "recovering"];
+const WORKTREE_STATES: &[&str] = &["active", "draining", "recovering", "retired"];
 /// `persistence_host_bindings.git_durability` CHECK (null is allowed).
 const GIT_DURABILITY: &[&str] = &["enabled", "disabled"];
 
-const WORKTREE: u8 = 0x01;
-const HOST_BINDING: u8 = 0x02;
-const SOURCE_BINDING: u8 = 0x03;
+pub(super) const WORKTREE: u8 = 0x01;
+pub(super) const HOST_BINDING: u8 = 0x02;
+pub(super) const SOURCE_BINDING: u8 = 0x03;
 
 /// One stored worktree.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct WorktreeRecord {
-    id: String,
+pub(super) struct WorktreeRecord {
+    pub(super) id: String,
     #[serde(default)]
-    owner_host_id: Option<String>,
+    pub(super) owner_host_id: Option<String>,
     #[serde(default)]
-    owner_epoch: i64,
+    pub(super) owner_epoch: i64,
     #[serde(default = "one")]
-    topology_generation: i64,
+    pub(super) topology_generation: i64,
     #[serde(default = "active")]
-    state: String,
+    pub(super) state: String,
     #[serde(default)]
-    manifest: Option<Value>,
+    pub(super) manifest: Option<Value>,
     #[serde(default)]
-    heartbeat_at_us: Option<i64>,
+    pub(super) heartbeat_at_us: Option<i64>,
     #[serde(default)]
-    created_at_us: i64,
+    pub(super) created_at_us: i64,
 }
 
 /// One stored host binding: where a worktree is on one host.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct HostBindingRecord {
-    worktree_id: String,
-    host_id: String,
-    local_path: String,
-    coordination_path: String,
+pub(super) struct HostBindingRecord {
+    pub(super) worktree_id: String,
+    pub(super) host_id: String,
+    pub(super) local_path: String,
+    pub(super) coordination_path: String,
     #[serde(default)]
-    git_durability: Option<String>,
+    pub(super) git_durability: Option<String>,
 }
 
 /// One stored source binding: the worktree a source lives in.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct SourceBindingRecord {
-    source_id: String,
-    source_incarnation: String,
-    worktree_id: String,
+pub(super) struct SourceBindingRecord {
+    pub(super) source_id: String,
+    pub(super) source_incarnation: String,
+    pub(super) worktree_id: String,
     #[serde(default)]
-    relative_path: String,
+    pub(super) relative_path: String,
     #[serde(default = "one")]
-    topology_generation: i64,
+    pub(super) topology_generation: i64,
 }
 
 fn one() -> i64 {
@@ -166,7 +173,7 @@ fn source_binding_key(source_id: &str) -> Vec<u8> {
 }
 
 /// Every record under one tag, in key order.
-fn scan_records<T: for<'de> Deserialize<'de>>(
+pub(super) fn scan_records<T: for<'de> Deserialize<'de>>(
     read: &dyn KvRead,
     tag: u8,
     what: &str,
@@ -300,6 +307,48 @@ pub(crate) fn host_worktrees_in(read: &dyn KvRead, host_id: &str) -> Result<Vec<
     Ok(out)
 }
 
+/// The topology lock's local read (`listHostTopologyRows`): every host binding of `host_id` with
+/// its worktree's owner, epoch, state and topology generation. A binding whose worktree row is
+/// gone is left out, as the SQL join leaves it out.
+pub(crate) fn host_topology_rows_in(read: &dyn KvRead, host_id: &str) -> Result<Vec<Value>> {
+    let host = uuid_param(host_id, "hostId")?;
+    let mut out = Vec::new();
+    for h in scan_records::<HostBindingRecord>(read, HOST_BINDING, "host binding")? {
+        if h.host_id != host {
+            continue;
+        }
+        let Some(w) = read_worktree_record(read, &h.worktree_id)? else {
+            continue;
+        };
+        out.push(json!({
+            "worktree_id": w.id,
+            "owner_host_id": w.owner_host_id,
+            "owner_epoch": w.owner_epoch,
+            "state": w.state,
+            "topology_generation": w.topology_generation,
+            "local_path": h.local_path,
+            "coordination_path": h.coordination_path,
+        }));
+    }
+    Ok(out)
+}
+
+/// The source bindings of one worktree (`listWorktreeMembers`): `{ source_id, relative_path }` by
+/// byte source id.
+pub(crate) fn worktree_members_in(read: &dyn KvRead, worktree_id: &str) -> Result<Vec<Value>> {
+    let id = uuid_param(worktree_id, "worktreeId")?;
+    let mut rows: Vec<SourceBindingRecord> =
+        scan_records::<SourceBindingRecord>(read, SOURCE_BINDING, "source binding")?
+            .into_iter()
+            .filter(|b| b.worktree_id == id)
+            .collect();
+    rows.sort_by(|a, b| a.source_id.as_bytes().cmp(b.source_id.as_bytes()));
+    Ok(rows
+        .into_iter()
+        .map(|b| json!({ "source_id": b.source_id, "relative_path": b.relative_path }))
+        .collect())
+}
+
 /// One worktree's owner and state, or None.
 pub(crate) fn worktree_in(read: &dyn KvRead, id: &str) -> Result<Option<Value>> {
     let id = uuid_param(id, "worktreeId")?;
@@ -413,6 +462,96 @@ pub(crate) fn insert_source_binding_in(
     put_json(tx, &key, &record)
 }
 
+/// The `unbound` step of the source delete (engine-sql/sources.ts `deleteSourceRecord`): the
+/// source's binding goes when it binds `incarnation`, the deleted row's; a binding of another
+/// incarnation stays for `gbrain repair orphan-bindings`. The worktree and host rows stay.
+/// The request states `listOrphanBindings` counts as pending and `deleteOrphanBinding` refuses on.
+const PENDING_REQUEST_STATES: [&str; 4] = ["queued", "deferred", "running", "recovering"];
+
+fn pending_requests(read: &dyn KvRead, source_id: &str, incarnation: &str) -> Result<i64> {
+    Ok(all_requests(read)?
+        .iter()
+        .filter(|r| {
+            r.source_id == source_id
+                && r.source_incarnation.eq_ignore_ascii_case(incarnation)
+                && PENDING_REQUEST_STATES.contains(&r.state.as_str())
+        })
+        .count() as i64)
+}
+
+/// `listOrphanBindings({ limit })` (engine-sql/repair-bookkeeping.ts ORPHANS): each source binding whose source is gone
+/// (`source_removed`) or holds another incarnation (`incarnation_replaced`), with its pending requests, in byte order of
+/// source id, at most `limit` when given. The store's source delete removes its binding in the same write, so a binding
+/// written straight through `insertSourceBinding` is the way one shows up here.
+pub(crate) fn list_orphan_bindings_in(
+    read: &dyn KvRead,
+    limit: Option<usize>,
+) -> Result<Vec<Value>> {
+    let mut out = Vec::new();
+    let mut bindings = scan_records::<SourceBindingRecord>(read, SOURCE_BINDING, "source binding")?;
+    bindings.sort_by(|a, b| a.source_id.cmp(&b.source_id));
+    for b in bindings {
+        let reason = match read_source(read, &b.source_id)? {
+            None => "source_removed",
+            Some(s) if !s.incarnation.eq_ignore_ascii_case(&b.source_incarnation) => {
+                "incarnation_replaced"
+            }
+            Some(_) => continue,
+        };
+        out.push(json!({
+            "source_id": b.source_id,
+            "source_incarnation": b.source_incarnation,
+            "worktree_id": b.worktree_id,
+            "reason": reason,
+            "pending_requests": pending_requests(read, &b.source_id, &b.source_incarnation)?,
+        }));
+        if limit.is_some_and(|n| out.len() >= n) {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+/// `deleteOrphanBinding({ source_id, source_incarnation })`: deletes the binding when it is still that incarnation's,
+/// still orphaned and has no pending request; true when it deleted one.
+pub(crate) fn delete_orphan_binding_in(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    incarnation: &str,
+) -> Result<bool> {
+    let key = source_binding_key(source_id);
+    let Some(binding) = get_json::<SourceBindingRecord>(&*tx, &key)? else {
+        return Ok(false);
+    };
+    if !binding.source_incarnation.eq_ignore_ascii_case(incarnation) {
+        return Ok(false);
+    }
+    if read_source(&*tx, source_id)?
+        .is_some_and(|s| s.incarnation.eq_ignore_ascii_case(incarnation))
+    {
+        return Ok(false);
+    }
+    if pending_requests(&*tx, source_id, incarnation)? > 0 {
+        return Ok(false);
+    }
+    tx.delete(&key)?;
+    Ok(true)
+}
+
+pub(crate) fn remove_source_binding_in(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    incarnation: &str,
+) -> Result<()> {
+    let key = source_binding_key(source_id);
+    if let Some(binding) = get_json::<SourceBindingRecord>(&*tx, &key)?
+        && binding.source_incarnation.eq_ignore_ascii_case(incarnation)
+    {
+        tx.delete(&key)?;
+    }
+    Ok(())
+}
+
 /// `stampWorktreeHeartbeats(hostId)`: `heartbeat_at = now()` on every worktree `host_id` owns.
 pub(crate) fn stamp_worktree_heartbeats_in(
     tx: &mut dyn KvWrite,
@@ -471,7 +610,7 @@ pub(crate) fn worktree_heartbeat_in(read: &dyn KvRead, id: &str) -> Result<Optio
 }
 
 /// `config->>'kind'`: a string as itself, another JSON value as its jsonb text, null as null.
-fn kind_text(config: &serde_json::Map<String, Value>) -> Value {
+pub(super) fn kind_text(config: &serde_json::Map<String, Value>) -> Value {
     match config.get("kind") {
         None | Some(Value::Null) => Value::Null,
         Some(Value::String(s)) => json!(s),
@@ -489,19 +628,20 @@ fn agg(rows: Vec<Value>) -> Value {
 }
 
 /// `WRITER_ADMIN_STATE_SQL` (`engine-sql/writer-admin.ts`): the writer topology as jsonb text,
-/// read in one snapshot. This engine keeps no `persistence_brain` columns besides the brain id,
-/// so `enabled`, `skill_bundles_enabled`, `writer_protocol_floor` and `mode_epoch` hold their
-/// column defaults; a store with no brain id has no brain row (null).
+/// read in one snapshot. `enabled` and `mode_epoch` are the stored brain mode
+/// (worktrees/release.rs); `skill_bundles_enabled` and `writer_protocol_floor` hold their column
+/// defaults. A store with no brain id has no brain row (null).
 pub(crate) fn writer_admin_state_text_in(read: &dyn KvRead, brain_id: &str) -> Result<String> {
     let brain = if brain_id.is_empty() {
         Value::Null
     } else {
+        let mode = release::brain_mode_in(read)?;
         json!({
             "id": brain_id,
-            "enabled": false,
+            "enabled": mode.enabled,
             "skill_bundles_enabled": false,
             "writer_protocol_floor": 1,
-            "mode_epoch": 1,
+            "mode_epoch": mode.mode_epoch,
         })
     };
     let mut sources = all_sources(read)?;
@@ -576,7 +716,8 @@ pub(crate) fn prepared_transfer_worktree_in(read: &dyn KvRead) -> Result<Option<
         .map(|w| w.id))
 }
 
-/// The `lockWorktree(id)` read: `{ owner_host_id, owner_epoch (text), state }`, or None.
+/// The `lockWorktree(id)` read: `{ owner_host_id, owner_epoch (text), state, manifest }`, or
+/// None.
 pub(crate) fn worktree_owner_in(read: &dyn KvRead, id: &str) -> Result<Option<Value>> {
     let id = uuid_param(id, "worktreeId")?;
     Ok(read_worktree_record(read, &id)?.map(|w| {
@@ -584,8 +725,15 @@ pub(crate) fn worktree_owner_in(read: &dyn KvRead, id: &str) -> Result<Option<Va
             "owner_host_id": w.owner_host_id,
             "owner_epoch": w.owner_epoch.to_string(),
             "state": w.state,
+            "manifest": w.manifest,
         })
     }))
+}
+
+/// `readWorktreeManifest(id)`: the worktree's manifest, or None when it has none or is missing.
+pub(crate) fn worktree_manifest_in(read: &dyn KvRead, id: &str) -> Result<Option<Value>> {
+    let id = uuid_param(id, "worktreeId")?;
+    Ok(read_worktree_record(read, &id)?.and_then(|w| w.manifest))
 }
 
 /// `publicationPending(worktreeId)`: a request on the worktree that is running, recovering or
@@ -645,7 +793,152 @@ pub(crate) fn reactivate_worktree_in(tx: &mut dyn KvWrite, id: &str) -> Result<(
     put_json(tx, &worktree_key(&id), &w)
 }
 
+/// `upsertHostBinding(row)`: the accepting host's paths for the worktree. An existing binding
+/// keeps its Git durability; a new one has none. Refuses an unknown worktree, as the foreign key
+/// does.
+pub(crate) fn upsert_host_binding_in(
+    tx: &mut dyn KvWrite,
+    input: &HostBindingInsert,
+) -> Result<()> {
+    let worktree_id = uuid_param(&input.worktree_id, "worktreeId")?;
+    let host_id = uuid_param(&input.host_id, "hostId")?;
+    if read_worktree_record(&*tx, &worktree_id)?.is_none() {
+        return Err(violation(format!("worktree {worktree_id} does not exist")));
+    }
+    let git_durability =
+        read_host_record(&*tx, &worktree_id, &host_id)?.and_then(|h| h.git_durability);
+    let record = HostBindingRecord {
+        local_path: input.local_path.clone(),
+        coordination_path: input.coordination_path.clone(),
+        worktree_id,
+        host_id,
+        git_durability,
+    };
+    put_json(
+        tx,
+        &host_binding_key(&record.worktree_id, &record.host_id),
+        &record,
+    )
+}
+
+/// `acceptWorktreeOwner(id, hostId)`: `hostId` owns the worktree at the next epoch, `active`,
+/// heartbeat now; the manifest is kept. A missing worktree changes nothing.
+pub(crate) fn accept_worktree_owner_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    id: &str,
+    host_id: &str,
+) -> Result<()> {
+    let id = uuid_param(id, "worktreeId")?;
+    let host_id = uuid_param(host_id, "hostId")?;
+    let Some(mut w) = read_worktree_record(&*tx, &id)? else {
+        return Ok(());
+    };
+    w.owner_host_id = Some(host_id);
+    w.owner_epoch += 1;
+    w.state = "active".into();
+    w.heartbeat_at_us = Some(env.now_micros());
+    put_json(tx, &worktree_key(&id), &w)
+}
+
+/// `contentReceiptRows(worktreeIds, hostId, sourceIds)`: for each source bound to one of
+/// `worktree_ids` (only `source_ids` when given) at its current, unarchived incarnation, with a
+/// host binding on `host_id` and a content receipt config row, `{ source_id, incarnation,
+/// relative_path, local_path, brain_id, key, value }`; source ids in byte order. A brain without
+/// an id has none.
+pub(crate) fn content_receipt_rows_in(
+    read: &dyn KvRead,
+    brain_id: &str,
+    worktree_ids: &[String],
+    host_id: &str,
+    source_ids: Option<&[String]>,
+) -> Result<Vec<Value>> {
+    let host = uuid_param(host_id, "hostId")?;
+    let worktrees = worktree_ids
+        .iter()
+        .map(|w| uuid_param(w, "worktreeIds"))
+        .collect::<Result<Vec<_>>>()?;
+    if brain_id.is_empty() {
+        return Ok(Vec::new());
+    }
+    let sources = all_sources(read)?;
+    let mut bindings = scan_records::<SourceBindingRecord>(read, SOURCE_BINDING, "source binding")?;
+    bindings.sort_by(|a, b| a.source_id.as_bytes().cmp(b.source_id.as_bytes()));
+    let mut out = Vec::new();
+    for b in &bindings {
+        if !worktrees.contains(&b.worktree_id)
+            || source_ids.is_some_and(|ids| !ids.contains(&b.source_id))
+        {
+            continue;
+        }
+        let current = sources.iter().any(|s| {
+            s.id == b.source_id
+                && !s.archived
+                && s.incarnation.eq_ignore_ascii_case(&b.source_incarnation)
+        });
+        if !current {
+            continue;
+        }
+        let Some(h) = read_host_record(read, &b.worktree_id, &host)? else {
+            continue;
+        };
+        let key = format!(
+            "shared_skills.content.v1.{}.{}",
+            b.source_id, b.source_incarnation
+        );
+        let Some(value) = read_config(read, &key)? else {
+            continue;
+        };
+        out.push(json!({
+            "source_id": b.source_id,
+            "incarnation": b.source_incarnation,
+            "relative_path": b.relative_path,
+            "local_path": h.local_path,
+            "brain_id": brain_id,
+            "key": key,
+            "value": value,
+        }));
+    }
+    Ok(out)
+}
+
+/// `swapConfigValue(key, value, expected)`: sets config `key` to `value` only while it holds
+/// `expected`; whether it was set.
+pub(crate) fn swap_config_value_in(
+    tx: &mut dyn KvWrite,
+    key: &str,
+    value: &str,
+    expected: &str,
+) -> Result<bool> {
+    if read_config(&*tx, key)?.as_deref() != Some(expected) {
+        return Ok(false);
+    }
+    tx.put(&config_key(key)?, value.as_bytes())?;
+    Ok(true)
+}
+
 impl Store {
+    /// `listOrphanBindings({ limit })`.
+    pub fn list_orphan_bindings(&self, limit: Option<usize>) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        list_orphan_bindings_in(&*read, limit)
+    }
+
+    /// `deleteOrphanBinding({ source_id, source_incarnation })`.
+    pub fn delete_orphan_binding(&self, source_id: &str, incarnation: &str) -> Result<bool> {
+        self.write(|tx| delete_orphan_binding_in(tx, source_id, incarnation))
+    }
+
+    /// `listHostTopologyRows(hostId)`.
+    pub fn list_host_topology_rows(&self, host_id: &str) -> Result<Vec<Value>> {
+        host_topology_rows_in(&*self.read()?, host_id)
+    }
+
+    /// `listWorktreeMembers(worktreeId)`.
+    pub fn list_worktree_members(&self, worktree_id: &str) -> Result<Vec<Value>> {
+        worktree_members_in(&*self.read()?, worktree_id)
+    }
+
     /// `readWriterAdminState()`: the writer topology as jsonb text.
     pub fn writer_admin_state_text(&self) -> Result<String> {
         writer_admin_state_text_in(&*self.read()?, self.brain_id())
@@ -656,9 +949,45 @@ impl Store {
         prepared_transfer_worktree_in(&*self.read()?)
     }
 
-    /// One worktree's `{ owner_host_id, owner_epoch, state }`, or None.
+    /// One worktree's `{ owner_host_id, owner_epoch, state, manifest }`, or None.
     pub fn read_worktree_owner(&self, id: &str) -> Result<Option<Value>> {
         worktree_owner_in(&*self.read()?, id)
+    }
+
+    /// One worktree's manifest, or None.
+    pub fn read_worktree_manifest(&self, id: &str) -> Result<Option<Value>> {
+        worktree_manifest_in(&*self.read()?, id)
+    }
+
+    /// Records the accepting host's paths for a worktree, keeping its Git durability.
+    pub fn upsert_host_binding(&self, input: &HostBindingInsert) -> Result<()> {
+        self.write(|tx| upsert_host_binding_in(tx, input))
+    }
+
+    /// Gives a worktree to `host_id` at the next epoch, `active`.
+    pub fn accept_worktree_owner(&self, id: &str, host_id: &str) -> Result<()> {
+        self.write(|tx| accept_worktree_owner_in(tx, &*self.env, id, host_id))
+    }
+
+    /// The content receipt rows a transfer accept or a set-path rebind may move.
+    pub fn content_receipt_rows(
+        &self,
+        worktree_ids: &[String],
+        host_id: &str,
+        source_ids: Option<&[String]>,
+    ) -> Result<Vec<Value>> {
+        content_receipt_rows_in(
+            &*self.read()?,
+            self.brain_id(),
+            worktree_ids,
+            host_id,
+            source_ids,
+        )
+    }
+
+    /// Sets config `key` to `value` only while it holds `expected`; whether it was set.
+    pub fn swap_config_value(&self, key: &str, value: &str, expected: &str) -> Result<bool> {
+        self.write(|tx| swap_config_value_in(tx, key, value, expected))
     }
 
     /// Whether a publication on the worktree is still running or recovering.

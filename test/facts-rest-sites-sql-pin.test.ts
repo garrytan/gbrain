@@ -12,9 +12,33 @@
  *    `listNearestFacts` sends the same statement with its placeholders renumbered, because the old text bound the model, the
  *    dimensions and the vector literal once and referenced them from two places, while the member binds each twice
  *    (the pool WHERE placeholders now follow the similarity expression's). The statement means the same; its params are
- *    [model, dims, literal, ...pool params, model, dims, literal, limit], and dims bind only once when the column has declared
+ *    [model, dims, literal, literal, ...pool params, model, dims, literal, limit] since the ANN read became an inner
+ *    distance-ordered query with an outer id tie-break (the literal is bound once more), and dims bind only once when the column has declared
  *    dimensions (the pool then skips its vector_dims filter). This is the same shape listFactsForRelevance
  *    has used since lane 4's first batch.
+ *    The three quote-read members (listFactsFromQuotedPages, listOwnerTierFacts, listReadablePageSlugs) are pinned
+ *    to their callers at c33606182c (search/transcript-quote.ts, search/slot-history.ts),
+ *    captured the same way. readClaimWithdrawal is pinned to factWithdrawnRefusal (facts/single-prepare.ts) at 8a5229aa8c,
+ *    captured the same way.
+ *    The digests of readClaimWithdrawal and of the remote listReadablePageSlugs case were re-captured at the merge of
+ *    8d2e667543: the shared owner-only fragment gained the owner_only_held guard there, the same change that moved the
+ *    readMemberPageWithdrawal digest from 15378 to 16084 characters. No other text changed.
+ *  - Main join (da99c637a7): the cli-members line's callers (fact-relevance.ts at de72811022) sorted the pool keys and
+ *    entity pairs with `COLLATE "C"` (`SELECT DISTINCT f.source_id COLLATE "C", f.entity_slug COLLATE "C"` and the same
+ *    ORDER BY), and read the nearest facts in an inner query ordered by distance alone with an outer
+ *    `ORDER BY f.distance, f.id` tie-break. The join kept main's members and re-applied both, so those pins carry them:
+ *    the pool texts differ from 2eb69f4613 only by `COLLATE "C"` (four per statement; the two digest pins grew by 48
+ *    characters, 4 x ` COLLATE "C"`), and `listNearestFacts` now selects `f.embedding <=> $4 AS distance` in the inner
+ *    query, which binds the vector literal once more as $4 (params [model, dims, literal, literal, ...pool params, model,
+ *    dims, literal, limit]) and shifts every later placeholder up by one.
+ *    Three later changes are pinned on purpose: the owner-only read predicates also check the owner_only_held catalog
+ *    mark, listCallOffCueFacts orders a future-dated fact by its created_at, and listFactProvenance is the facts-cycle
+ *    member (it orders by id). Those pins hold the merged text, not the text at 2eb69f4613.
+ *  - Trust floor (master sync 18, #10276): a floor that names no tier is refused (`TrustFloorError`), so the "trust floor"
+ *    fixtures name `user_confirmed`, the strictest real tier, which admits one tier. They named `verified_user` before, which
+ *    is not a tier and rendered `trust_tier IN ()`; the texts and digests below differ from the old ones only by that
+ *    list (`IN ('user_confirmed')`, 16 characters longer each time it appears; checked by restoring `IN ()` and matching
+ *    the old digests).
  *  - Regression: a member that reorders a clause, renumbers a placeholder, binds a value differently, drops a cast or
  *    sends the iterative-scan settings in another order changes what Postgres answers while the parity cases may still
  *    pass on a small fixture.
@@ -56,7 +80,7 @@ interface Pin {
 }
 
 const scopeA = { sourceId: 's1', worldOnly: false, excludePrivate: false } as never;
-const scopeB = { sourceIds: ['s1', 's2'], worldOnly: true, excludePrivate: true, minTrust: 'verified_user', suppressFlagged: true } as never;
+const scopeB = { sourceIds: ['s1', 's2'], worldOnly: true, excludePrivate: true, minTrust: 'user_confirmed', suppressFlagged: true } as never;
 const VEC = { literal: '[0,0.1,0.2,0.3]', type: 'vector', model: 'openai:text-embedding-3-large', dims: 4 } as const;
 /** The call-off cue regex the old laterRetractions bound (saved-facts-match.ts RETRACTION plus the cancellation words). */
 const CALL_OFF_REGEX = "\\m(retract(s|ed|ing|ion)?|disregard|scratch that|i misspoke|i was wrong|not what (i|we) (posted|said|wrote)|ignore (the|my|that|what)|rumour|rumor|called off|cancelled|canceled|fell through|not happening|never happened|no longer planned)\\M";
@@ -89,6 +113,9 @@ const PINS: Pin[] = [
   AND NOT EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id
     AND w.visibility=f.visibility AND w.subject = ANY(CASE WHEN starts_with(COALESCE(f.source_markdown_slug, ''), 'memory/members/') THEN ARRAY[f.source_markdown_slug] ELSE ARRAY['*', f.entity_slug] END)
     AND w.fact_hash = gbrain_fact_fingerprint_v1(f.fact))
+  AND NOT EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id
+    AND w.visibility=f.visibility AND w.subject = ANY(CASE WHEN starts_with(COALESCE(f.source_markdown_slug, ''), 'memory/members/') THEN ARRAY[f.source_markdown_slug] ELSE ARRAY['*', f.entity_slug] END)
+    AND w.fact_hash = gbrain_fact_fingerprint_v2(f.fact))
   AND EXISTS (SELECT 1 FROM sources s WHERE s.id=f.source_id AND NOT s.archived)
   AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id
     AND p.slug=f.source_markdown_slug AND p.deleted_at IS NOT NULL) AND (f.embedding IS NULL OR f.embedding_model IS DISTINCT FROM $3
@@ -110,6 +137,9 @@ const PINS: Pin[] = [
   AND NOT EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id
     AND w.visibility=f.visibility AND w.subject = ANY(CASE WHEN starts_with(COALESCE(f.source_markdown_slug, ''), 'memory/members/') THEN ARRAY[f.source_markdown_slug] ELSE ARRAY['*', f.entity_slug] END)
     AND w.fact_hash = gbrain_fact_fingerprint_v1(f.fact))
+  AND NOT EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id
+    AND w.visibility=f.visibility AND w.subject = ANY(CASE WHEN starts_with(COALESCE(f.source_markdown_slug, ''), 'memory/members/') THEN ARRAY[f.source_markdown_slug] ELSE ARRAY['*', f.entity_slug] END)
+    AND w.fact_hash = gbrain_fact_fingerprint_v2(f.fact))
   AND EXISTS (SELECT 1 FROM sources s WHERE s.id=f.source_id AND NOT s.archived)
   AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id
     AND p.slug=f.source_markdown_slug AND p.deleted_at IS NOT NULL) AND (f.embedding IS NULL OR f.embedding_model IS DISTINCT FROM $3
@@ -222,18 +252,18 @@ const PINS: Pin[] = [
     from: "src/core/facts/contested-claims.ts:36 withDecideContested",
     member: 'listContestedProposalPairs',
     label: "remote, trust floor",
-    run: e => e.listContestedProposalPairs([1, 2], { remote: true, excludePrivate: false, eligibility: { floor: 'verified_user', suppressFlagged: true } as never }),
+    run: e => e.listContestedProposalPairs([1, 2], { remote: true, excludePrivate: false, eligibility: { floor: 'user_confirmed', suppressFlagged: true } as never }),
     statements: [{ text: `SELECT p.id, x.id AS delivered, p.new_fact_id, p.old_fact_id FROM unnest($1::bigint[]) AS x(id)
   JOIN decide_proposals p ON p.status = 'pending' AND (p.new_fact_id = x.id OR p.old_fact_id = x.id)
   JOIN facts n ON n.id = p.new_fact_id AND n.source_id = p.source_id
   JOIN facts o ON o.id = p.old_fact_id AND o.source_id = p.source_id
  WHERE n.expired_at IS NULL AND (n.valid_until IS NULL OR n.valid_until > now()) AND n.visibility = 'world' AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = n.source_id
       AND elig_dp.slug = ANY(ARRAY[n.source_markdown_slug, n.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM pages elig_qp WHERE elig_qp.source_id = n.source_id AND elig_qp.slug = n.source_markdown_slug
-      AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = n.id::text) AND n.trust_tier IN () AND NOT ((CASE n.trust_tier WHEN 'user_confirmed' THEN 6 WHEN 'operator_curated' THEN 5 WHEN 'tool_observed' THEN 4 WHEN 'agent_written' THEN 3 WHEN 'unknown' THEN 2 WHEN 'external_untrusted' THEN 1 ELSE 0 END) <= 3
+      AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = n.id::text) AND n.trust_tier IN ('user_confirmed') AND NOT ((CASE n.trust_tier WHEN 'user_confirmed' THEN 6 WHEN 'operator_curated' THEN 5 WHEN 'tool_observed' THEN 4 WHEN 'agent_written' THEN 3 WHEN 'unknown' THEN 2 WHEN 'external_untrusted' THEN 1 ELSE 0 END) <= 3
     AND EXISTS (SELECT 1 FROM write_gate_receipts elig_r WHERE elig_r.target_table = 'facts' AND elig_r.target_id = n.id::text
       AND elig_r.verdict = 'flag' AND elig_r.reason_families && ARRAY['standing_instruction','override','exfiltration','credential']::text[])) AND o.expired_at IS NULL AND (o.valid_until IS NULL OR o.valid_until > now()) AND o.visibility = 'world' AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = o.source_id
       AND elig_dp.slug = ANY(ARRAY[o.source_markdown_slug, o.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM pages elig_qp WHERE elig_qp.source_id = o.source_id AND elig_qp.slug = o.source_markdown_slug
-      AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = o.id::text) AND o.trust_tier IN () AND NOT ((CASE o.trust_tier WHEN 'user_confirmed' THEN 6 WHEN 'operator_curated' THEN 5 WHEN 'tool_observed' THEN 4 WHEN 'agent_written' THEN 3 WHEN 'unknown' THEN 2 WHEN 'external_untrusted' THEN 1 ELSE 0 END) <= 3
+      AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = o.id::text) AND o.trust_tier IN ('user_confirmed') AND NOT ((CASE o.trust_tier WHEN 'user_confirmed' THEN 6 WHEN 'operator_curated' THEN 5 WHEN 'tool_observed' THEN 4 WHEN 'agent_written' THEN 3 WHEN 'unknown' THEN 2 WHEN 'external_untrusted' THEN 1 ELSE 0 END) <= 3
     AND EXISTS (SELECT 1 FROM write_gate_receipts elig_r WHERE elig_r.target_table = 'facts' AND elig_r.target_id = o.id::text
       AND elig_r.verdict = 'flag' AND elig_r.reason_families && ARRAY['standing_instruction','override','exfiltration','credential']::text[]))
  ORDER BY p.id`, params: [[1, 2]] }],
@@ -242,7 +272,7 @@ const PINS: Pin[] = [
     from: "src/core/ops/facts.ts:706 withProvenance",
     member: 'listFactProvenance',
     run: e => e.listFactProvenance('s1', [1, 2]),
-    statements: [{ text: `SELECT id, source FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[])`, params: ['s1', [1, 2]] }],
+    statements: [{ text: `SELECT id, source FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[]) ORDER BY id`, params: ['s1', [1, 2]] }],
   },
   {
     from: "src/core/facts/derivation-inputs.ts:39 recordDerivationInputs",
@@ -284,17 +314,35 @@ const PINS: Pin[] = [
   {
     from: "src/core/facts/derivation-inputs.ts:95 hideDerivedRows",
     member: 'markNeedsRederive',
-    run: e => e.markNeedsRederive('pages', ['1', '2'], 's1', null, 'why', ['2']),
+    run: e => e.markNeedsRederive('facts', ['1', '2'], 's1', null, 'why', ['2']),
     statements: [{ text: `INSERT INTO needs_rederive(derived_table,derived_id,source_id,request_id,reason,marked_at)
       SELECT $1,d.id,$3,$4::uuid,$5,COALESCE((SELECT p.deleted_at FROM pages p WHERE d.id=ANY($6::text[]) AND p.id::text=d.id),now()) FROM unnest($2::text[]) AS d(id)
       ON CONFLICT (derived_table,derived_id) DO UPDATE SET reason=EXCLUDED.reason,request_id=EXCLUDED.request_id,
-        marked_at=CASE WHEN EXCLUDED.derived_id=ANY($6::text[]) THEN EXCLUDED.marked_at ELSE ${KEEP_HIDDEN_AT} END`, params: ['pages', ['1', '2'], 's1', null, 'why', ['2']] }],
+        marked_at=CASE WHEN EXCLUDED.derived_id=ANY($6::text[]) THEN EXCLUDED.marked_at ELSE CASE WHEN needs_rederive.derived_table='pages' AND EXISTS (SELECT 1 FROM pages hp
+  WHERE hp.id::text=needs_rederive.derived_id AND hp.deleted_at=needs_rederive.marked_at) THEN needs_rederive.marked_at ELSE now() END END`, params: ['facts', ['1', '2'], 's1', null, 'why', ['2']] }],
   },
   {
     from: "src/core/facts/single-prepare.ts:97 memberPageWithdrawal",
     member: 'readMemberPageWithdrawal',
     run: e => e.readMemberPageWithdrawal({ sourceId: 's1', visibility: 'world', fact: 'F', entitySlug: 'people/x', page: 'memory/members/m1', owner: false, identity: [], satisfied: [] }),
-    statements: [{ digest: { length: 16084, sha256: 'c8b42eacf1f3b3db6638a34fa8ab1c73273a2cd98e2c09631a08e279c1c6d335' }, params: ['s1', 'world', 'F', 'people/x', 'memory/members/m1'] }],
+    statements: [{ digest: { length: 16115, sha256: '36f1c0b304fba2d114da48c460bf21a3308d8fc08b8ab332a01739055d73f5d0' }, params: ['s1', 'world', 'F', 'people/x', 'memory/members/m1'] }],
+  },
+  {
+    from: "src/core/facts/single-prepare.ts:106,117 factWithdrawnRefusal (at 8a5229aa8c)",
+    member: 'readClaimWithdrawal',
+    label: 'remote',
+    run: e => e.readClaimWithdrawal({ sourceId: 's1', visibility: 'world', fact: 'F', entitySlug: 'people/x', ownPage: 'memory/members/m1', excludePrivate: true }),
+    statements: [
+      { digest: { length: 17340, sha256: 'e6494bb95c3c4571460c0da4300f24bd781aae82ab00501c263ea0454533bd4d' }, params: ['s1', 'world', 'F', 'people/x', 'memory/members/m1'] },
+      { digest: { length: 9396, sha256: '65a9fd8216e195f50edf644623a55189274a5b8e74c7f20fbc27ff28d949b128' }, params: ['s1', 'world', 'F', 'people/x', true, 'memory/members/m1'] },
+    ],
+  },
+  {
+    from: "src/core/facts/single-prepare.ts:117 factWithdrawnRefusal (at 8a5229aa8c)",
+    member: 'readClaimWithdrawal',
+    label: 'local',
+    run: e => e.readClaimWithdrawal({ sourceId: 's1', visibility: 'world', fact: 'F', entitySlug: 'people/x', ownPage: 'memory/members/m1', excludePrivate: false }),
+    statements: [{ digest: { length: 9396, sha256: '65a9fd8216e195f50edf644623a55189274a5b8e74c7f20fbc27ff28d949b128' }, params: ['s1', 'world', 'F', 'people/x', false, 'memory/members/m1'] }],
   },
   {
     from: "src/core/facts/single-prepare.ts:215 replacementVisibility",
@@ -309,7 +357,7 @@ const PINS: Pin[] = [
     run: e => e.readReplacementTarget({ targetId: 7, sourceId: 's1', ownPage: null }),
     statements: [{ text: `SELECT f.*,
       EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id AND w.visibility=f.visibility
-        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact))
+        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v2(f.fact),gbrain_fact_fingerprint_v1(f.fact))
         AND (CASE WHEN starts_with(COALESCE(f.source_markdown_slug, ''), 'memory/members/') THEN w.subject = f.source_markdown_slug
     ELSE (w.subject = '*' OR w.subject = COALESCE(f.entity_slug, '*') OR (COALESCE(strpos(f.entity_slug, '/') = 0 AND NOT EXISTS (SELECT 1 FROM pages unbacked_page
     WHERE unbacked_page.source_id = f.source_id AND unbacked_page.slug = f.entity_slug AND unbacked_page.deleted_at IS NULL), false) AND NOT (starts_with(w.subject, 'memory/members/') OR w.subject = 'memory/scope')) OR ((starts_with(COALESCE(f.source_markdown_slug, ''), 'memory/members/') OR COALESCE(f.source_markdown_slug, '') = 'memory/scope') AND w.subject = f.source_markdown_slug)) END)) AS withdrawn
@@ -320,14 +368,14 @@ const PINS: Pin[] = [
     member: 'readReplacementTarget',
     label: "excludePrivate",
     run: e => e.readReplacementTarget({ targetId: 7, sourceId: 's1', excludePrivate: true, ownPage: null }),
-    statements: [{ digest: { length: 9054, sha256: '9e5efe7e8e12cc32aa211a21fc0bd969d5058f3b9d90d5cf5b4fb4551d2097dc' }, params: [7, 's1'] }],
+    statements: [{ digest: { length: 9089, sha256: '248f12b958390ecc43c4db78815aa26cc5cf41224ae2de3cedafa276177e82b1' }, params: [7, 's1'] }],
   },
   {
     from: "src/core/facts/single-prepare.ts:231 decideReplacement",
     member: 'readReplacementTarget',
     label: "excludePrivate, own member page",
     run: e => e.readReplacementTarget({ targetId: 7, sourceId: 's1', excludePrivate: true, ownPage: 'p1' }),
-    statements: [{ digest: { length: 9087, sha256: '9c5231313ee534ac46f7b620ec4c5ee69af98c40d88b9439cf82b285c46d0a5c' }, params: [7, 's1', 'p1'] }],
+    statements: [{ digest: { length: 9122, sha256: '68ae3aa57f657017bfd032c2cee9af7b9d84e115945a546318349e66b7fd8f84' }, params: [7, 's1', 'p1'] }],
   },
   {
     from: "src/core/facts/single-prepare.ts:231 decideReplacement",
@@ -336,7 +384,7 @@ const PINS: Pin[] = [
     run: e => e.readReplacementTarget({ targetId: 7, sourceId: 's1', ownPage: null, lock: true }),
     statements: [{ text: `SELECT f.*,
       EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id AND w.visibility=f.visibility
-        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact))
+        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v2(f.fact),gbrain_fact_fingerprint_v1(f.fact))
         AND (CASE WHEN starts_with(COALESCE(f.source_markdown_slug, ''), 'memory/members/') THEN w.subject = f.source_markdown_slug
     ELSE (w.subject = '*' OR w.subject = COALESCE(f.entity_slug, '*') OR (COALESCE(strpos(f.entity_slug, '/') = 0 AND NOT EXISTS (SELECT 1 FROM pages unbacked_page
     WHERE unbacked_page.source_id = f.source_id AND unbacked_page.slug = f.entity_slug AND unbacked_page.deleted_at IS NULL), false) AND NOT (starts_with(w.subject, 'memory/members/') OR w.subject = 'memory/scope')) OR ((starts_with(COALESCE(f.source_markdown_slug, ''), 'memory/members/') OR COALESCE(f.source_markdown_slug, '') = 'memory/scope') AND w.subject = f.source_markdown_slug)) END)) AS withdrawn
@@ -347,7 +395,7 @@ const PINS: Pin[] = [
     member: 'readReplacementTarget',
     label: "excludePrivate, own member page, row lock",
     run: e => e.readReplacementTarget({ targetId: 7, sourceId: 's1', excludePrivate: true, ownPage: 'p1', lock: true }),
-    statements: [{ digest: { length: 9103, sha256: '7fd54d799d924fc8f4bd5e00fb42f487e5f2431976014baa4633808ea8393a90' }, params: [7, 's1', 'p1'] }],
+    statements: [{ digest: { length: 9138, sha256: '23dd72adc38f957927ff402acb5695fb399160a1731331b763854e86037299a8' }, params: [7, 's1', 'p1'] }],
   },
   {
     from: "src/core/facts/proposal-supersede.ts:107 loadPairFact",
@@ -405,7 +453,7 @@ const PINS: Pin[] = [
     member: 'readWithdrawalAnchor',
     run: e => e.readWithdrawalAnchor(7, 's1'),
     statements: [{ text: `SELECT EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = f.source_id AND w.visibility = f.visibility
-        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact))
+        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v2(f.fact), gbrain_fact_fingerprint_v1(f.fact))
         AND (CASE WHEN starts_with(COALESCE(f.source_markdown_slug, ''), 'memory/members/') THEN w.subject = f.source_markdown_slug
     ELSE (w.subject = '*' OR w.subject = COALESCE(f.entity_slug, '*') OR (COALESCE(strpos(f.entity_slug, '/') = 0 AND NOT EXISTS (SELECT 1 FROM pages unbacked_page
     WHERE unbacked_page.source_id = f.source_id AND unbacked_page.slug = f.entity_slug AND unbacked_page.deleted_at IS NULL), false) AND NOT (starts_with(w.subject, 'memory/members/') OR w.subject = 'memory/scope')) OR ((starts_with(COALESCE(f.source_markdown_slug, ''), 'memory/members/') OR COALESCE(f.source_markdown_slug, '') = 'memory/scope') AND w.subject = f.source_markdown_slug)) END)) AS withdrawn
@@ -452,6 +500,38 @@ const PINS: Pin[] = [
     statements: [{ text: `SELECT * FROM facts WHERE source_id = ANY($1::text[]) AND id = ANY($2::bigint[])`, params: [['s1', 's2'], [1, 2]] }],
   },
   {
+    from: 'src/core/search/transcript-quote.ts:135 factsFromQuotedPages (at c33606182c)',
+    member: 'listFactsFromQuotedPages',
+    run: e => e.listFactsFromQuotedPages({ ids: [3, 1, 3], pageTypes: ['chat', 'transcript'], backstop: [['sync:import', 'sync:'], ['mcp:put_page', 'put_page:']] }),
+    statements: [{ text: `SELECT f.id FROM facts f WHERE f.id = ANY($1::bigint[]) AND (
+       EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.source_markdown_slug AND p.type = ANY($2::text[]))
+       OR EXISTS (SELECT 1 FROM derivation_inputs d JOIN pages p ON p.id = (CASE WHEN d.input_id ~ '^[0-9]{1,18}$' THEN d.input_id::bigint END)
+         WHERE d.derived_table = 'facts' AND d.derived_id = f.id::text AND d.input_table = 'pages' AND p.type = ANY($2::text[]))
+       OR EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.type = ANY($2::text[]) AND p.slug = (CASE
+         WHEN f.source = $3::text AND left(f.source_session, length($4::text)) = $4::text THEN substr(f.source_session, length($4::text) + 1)
+         WHEN f.source = $5::text AND left(f.source_session, length($6::text)) = $6::text THEN substr(f.source_session, length($6::text) + 1) END)))`, params: [[3, 1], ['chat', 'transcript'], 'sync:import', 'sync:', 'mcp:put_page', 'put_page:'] }],
+  },
+  {
+    from: 'src/core/search/transcript-quote.ts:510 ownerTierFacts (at c33606182c)',
+    member: 'listOwnerTierFacts',
+    run: e => e.listOwnerTierFacts({ ids: [3, 1, 3], floor: 'agent_written' }),
+    statements: [{ text: `SELECT id FROM facts WHERE id = ANY($1::bigint[]) AND (CASE trust_tier WHEN 'user_confirmed' THEN 6 WHEN 'operator_curated' THEN 5 WHEN 'tool_observed' THEN 4 WHEN 'agent_written' THEN 3 WHEN 'unknown' THEN 2 WHEN 'external_untrusted' THEN 1 ELSE 0 END) >= $2::int`, params: [[3, 1], 3] }],
+  },
+  {
+    from: 'src/core/search/slot-history.ts:88 entityKeys (at c33606182c)',
+    member: 'listReadablePageSlugs',
+    label: 'local scope',
+    run: e => e.listReadablePageSlugs('s1', ['people/carol', 'companies/carol'], { sourceId: 's1', worldOnly: false, excludePrivate: false } as never, 2),
+    statements: [{ text: `SELECT p.slug FROM pages p WHERE p.source_id = $1 AND p.slug = ANY($2::text[]) AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) LIMIT 2`, params: ['s1', ['people/carol', 'companies/carol']] }],
+  },
+  {
+    from: 'src/core/search/slot-history.ts:88 entityKeys (at c33606182c)',
+    member: 'listReadablePageSlugs',
+    label: 'remote scope, trust floor, two sources (the source filter is not applied)',
+    run: e => e.listReadablePageSlugs('s1', ['people/carol', 'companies/carol'], scopeB, 2),
+    statements: [{ digest: { length: 8110, sha256: 'cb5872de62eaaa5fd673b6c3afdfab503b21e5ea298a969d8c2f032ab455b7df' }, params: ['s1', ['people/carol', 'companies/carol']] }],
+  },
+  {
     from: "src/core/search/fact-relevance.ts:277 readSlotRows",
     member: 'listSlotRows',
     label: "one source",
@@ -468,25 +548,25 @@ const PINS: Pin[] = [
     member: 'listSlotRows',
     label: "remote, trust floor, two sources",
     run: e => e.listSlotRows(scopeB, [{ source_id: 's1', entity_slug: 'people/x', dimension: 'role' }, { source_id: 's1', entity_slug: 'people/y', dimension: 'city' }]),
-    statements: [{ digest: { length: 26298, sha256: '6d68e6a114dc145fd9f13043e3b7c4366df945810c7028234506a8c713b86985' }, params: [['s1', 's2'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], ['s1', 's1'], ['people/x', 'people/y'], ['role', 'city']] }],
+    statements: [{ digest: { length: 26314, sha256: '566a0d10f739436b1ebf4c5e1c3c55683dbe83b740b3cf88f5a95a514e2a56bf' }, params: [['s1', 's2'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], ['s1', 's1'], ['people/x', 'people/y'], ['role', 'city']] }],
   },
   {
     from: "src/core/search/fact-relevance.ts:293 poolUnbackedKeys",
     member: 'listPoolUnbackedKeys',
     label: "one source",
     run: e => e.listPoolUnbackedKeys(scopeA, ['people/x', 'people/y'], 5),
-    statements: [{ text: `SELECT DISTINCT f.source_id, f.entity_slug FROM facts f WHERE f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL AND (f.valid_until IS NULL OR f.valid_until > now()) AND f.source != ALL($2::text[]) AND NOT EXISTS (SELECT 1 FROM pages qp WHERE qp.source_id = f.source_id AND qp.slug = f.source_markdown_slug AND NOT NOT (COALESCE(qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = f.source_id
+    statements: [{ text: `SELECT DISTINCT f.source_id COLLATE "C", f.entity_slug COLLATE "C" FROM facts f WHERE f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL AND (f.valid_until IS NULL OR f.valid_until > now()) AND f.source != ALL($2::text[]) AND NOT EXISTS (SELECT 1 FROM pages qp WHERE qp.source_id = f.source_id AND qp.slug = f.source_markdown_slug AND NOT NOT (COALESCE(qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = f.source_id
       AND elig_dp.slug = ANY(ARRAY[f.source_markdown_slug, f.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM pages elig_qp WHERE elig_qp.source_id = f.source_id AND elig_qp.slug = f.source_markdown_slug
       AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = f.id::text) AND f.entity_slug = ANY($3::text[])
        AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.entity_slug AND p.deleted_at IS NULL)
-     ORDER BY f.source_id, f.entity_slug LIMIT $4`, params: [['s1'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], ['people/x', 'people/y'], 5] }],
+     ORDER BY f.source_id COLLATE "C", f.entity_slug COLLATE "C" LIMIT $4`, params: [['s1'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], ['people/x', 'people/y'], 5] }],
   },
   {
     from: "src/core/search/fact-relevance.ts:293 poolUnbackedKeys",
     member: 'listPoolUnbackedKeys',
     label: "remote, trust floor, two sources",
     run: e => e.listPoolUnbackedKeys(scopeB, ['people/x'], 3),
-    statements: [{ digest: { length: 26065, sha256: '532d317d198af42cd491314b04df4a72f1e683b41da8bb29366018f48601ee5b' }, params: [['s1', 's2'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], ['people/x'], 3] }],
+    statements: [{ digest: { length: 26129, sha256: '9a3b8ac9c1f38568d08233187437c829ff3bf12c375e3464ee9309b617b2d29f' }, params: [['s1', 's2'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], ['people/x'], 3] }],
   },
   {
     from: "src/core/search/fact-relevance.ts:324 laterRetractions",
@@ -505,53 +585,59 @@ const PINS: Pin[] = [
     member: 'listCallOffCueFacts',
     label: "remote, trust floor, two sources",
     run: e => e.listCallOffCueFacts(scopeB, [{ source_id: 's1', entity_slug: 'people/x' }]),
-    statements: [{ digest: { length: 26374, sha256: '64060f4f6ef93975d217e653706a146d76d809441bb1607f5452bc598f546738' }, params: [['s1', 's2'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], CALL_OFF_REGEX, ['s1'], ['people/x'], 50] }],
+    statements: [{ digest: { length: 26390, sha256: '84a0e5de167c674105336f8a3d56f4641ae07f1f4231afbb18ce870bf63dc208' }, params: [['s1', 's2'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], CALL_OFF_REGEX, ['s1'], ['people/x'], 50] }],
   },
   {
     from: "src/core/search/fact-relevance.ts:355 poolEntityPairs",
     member: 'listPoolEntityPairs',
     label: "no filters",
     run: e => e.listPoolEntityPairs(scopeA, {}),
-    statements: [{ text: `SELECT DISTINCT f.source_id, f.entity_slug FROM facts f WHERE f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL AND (f.valid_until IS NULL OR f.valid_until > now()) AND f.source != ALL($2::text[]) AND NOT EXISTS (SELECT 1 FROM pages qp WHERE qp.source_id = f.source_id AND qp.slug = f.source_markdown_slug AND NOT NOT (COALESCE(qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = f.source_id
+    statements: [{ text: `SELECT DISTINCT f.source_id COLLATE "C", f.entity_slug COLLATE "C" FROM facts f WHERE f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL AND (f.valid_until IS NULL OR f.valid_until > now()) AND f.source != ALL($2::text[]) AND NOT EXISTS (SELECT 1 FROM pages qp WHERE qp.source_id = f.source_id AND qp.slug = f.source_markdown_slug AND NOT NOT (COALESCE(qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = f.source_id
       AND elig_dp.slug = ANY(ARRAY[f.source_markdown_slug, f.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM pages elig_qp WHERE elig_qp.source_id = f.source_id AND elig_qp.slug = f.source_markdown_slug
-      AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = f.id::text) AND f.entity_slug IS NOT NULL ORDER BY f.source_id, f.entity_slug`, params: [['s1'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal']] }],
+      AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = f.id::text) AND f.entity_slug IS NOT NULL ORDER BY f.source_id COLLATE "C", f.entity_slug COLLATE "C"`, params: [['s1'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal']] }],
   },
   {
     from: "src/core/search/fact-relevance.ts:355 poolEntityPairs",
     member: 'listPoolEntityPairs',
     label: "remote, trust floor, every filter",
     run: e => e.listPoolEntityPairs(scopeB, { entities: [{ sourceId: 's1', slug: 'people/x' }], sessionId: 'sess', since: new Date('2026-01-02T03:04:05Z'), grep: 'a_b', includeExpired: true }),
-    statements: [{ digest: { length: 26015, sha256: '21597cce64ebd800e933e5a565325e751dd8c5740fa4995e7b5b9a95d336d133' }, params: [['s1', 's2'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], ['s1'], ['people/x'], 'sess', '2026-01-02T03:04:05.000Z', '%a\\_b%'] }],
+    statements: [{ digest: { length: 26079, sha256: '949066e0f24ccf7c220c4ff813c1afa15ff6a0e335d58ff6558f1ed930e4b2ce' }, params: [['s1', 's2'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], ['s1'], ['people/x'], 'sess', '2026-01-02T03:04:05.000Z', '%a\\_b%'] }],
   },
   {
     from: 'src/core/search/fact-relevance.ts:224 collectFactCandidates (nearest); the text is the NEW renumbered one, see the header',
     member: 'listNearestFacts',
     label: "column without declared dimensions",
     run: e => e.listNearestFacts({ scope: scopeA, vector: VEC, declared: false, limit: 7 }),
-    statements: [{ text: `SELECT f.id, f.fact, f.kind, f.entity_slug, f.source_id, f.source, f.valid_from, f.valid_until, f.created_at, f.claim_metric, f.claim_period, f.source_markdown_slug, f.visibility, f.attributed_to, f.dimension, f.value_hash, CASE WHEN f.embedding IS NOT NULL AND f.embedding_model = $1 AND f.embedded_text_hash = md5(f.fact) AND vector_dims(f.embedding) = $2 THEN 1 - (f.embedding <=> $3::vector) END AS similarity FROM facts f WHERE f.source_id = ANY($4::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL AND (f.valid_until IS NULL OR f.valid_until > now()) AND f.source != ALL($5::text[]) AND NOT EXISTS (SELECT 1 FROM pages qp WHERE qp.source_id = f.source_id AND qp.slug = f.source_markdown_slug AND NOT NOT (COALESCE(qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = f.source_id
+    statements: [{ text: `SELECT f.id, f.fact, f.kind, f.entity_slug, f.source_id, f.source, f.valid_from, f.valid_until, f.created_at, f.claim_metric, f.claim_period, f.source_markdown_slug, f.visibility, f.attributed_to, f.dimension, f.value_hash, f.similarity FROM (
+       SELECT f.id, f.fact, f.kind, f.entity_slug, f.source_id, f.source, f.valid_from, f.valid_until, f.created_at, f.claim_metric, f.claim_period, f.source_markdown_slug, f.visibility, f.attributed_to, f.dimension, f.value_hash, CASE WHEN f.embedding IS NOT NULL AND f.embedding_model = $1 AND f.embedded_text_hash = md5(f.fact) AND vector_dims(f.embedding) = $2 THEN 1 - (f.embedding <=> $3::vector) END AS similarity, f.embedding <=> $4::vector AS distance FROM facts f WHERE f.source_id = ANY($5::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL AND (f.valid_until IS NULL OR f.valid_until > now()) AND f.source != ALL($6::text[]) AND NOT EXISTS (SELECT 1 FROM pages qp WHERE qp.source_id = f.source_id AND qp.slug = f.source_markdown_slug AND NOT NOT (COALESCE(qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = f.source_id
       AND elig_dp.slug = ANY(ARRAY[f.source_markdown_slug, f.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM pages elig_qp WHERE elig_qp.source_id = f.source_id AND elig_qp.slug = f.source_markdown_slug
-      AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = f.id::text) AND f.embedding IS NOT NULL AND f.embedding_model = $6 AND vector_dims(f.embedding) = $7
-       ORDER BY f.embedding <=> $8::vector LIMIT $9`, params: ['openai:text-embedding-3-large', 4, '[0,0.1,0.2,0.3]', ['s1'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], 'openai:text-embedding-3-large', 4, '[0,0.1,0.2,0.3]', 7] }],
+      AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = f.id::text) AND f.embedding IS NOT NULL AND f.embedding_model = $7 AND vector_dims(f.embedding) = $8
+        ORDER BY f.embedding <=> $9::vector LIMIT $10) f
+       ORDER BY f.distance, f.id`, params: ['openai:text-embedding-3-large', 4, '[0,0.1,0.2,0.3]', '[0,0.1,0.2,0.3]', ['s1'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], 'openai:text-embedding-3-large', 4, '[0,0.1,0.2,0.3]', 7] }],
   },
   {
     from: 'src/core/search/fact-relevance.ts:224 collectFactCandidates (nearest); the text is the NEW renumbered one, see the header',
     member: 'listNearestFacts',
     label: "column with declared dimensions",
     run: e => e.listNearestFacts({ scope: scopeA, vector: VEC, declared: true, limit: 7 }),
-    statements: [{ text: `SELECT f.id, f.fact, f.kind, f.entity_slug, f.source_id, f.source, f.valid_from, f.valid_until, f.created_at, f.claim_metric, f.claim_period, f.source_markdown_slug, f.visibility, f.attributed_to, f.dimension, f.value_hash, CASE WHEN f.embedding IS NOT NULL AND f.embedding_model = $1 AND f.embedded_text_hash = md5(f.fact) AND vector_dims(f.embedding) = $2 THEN 1 - (f.embedding <=> $3::vector) END AS similarity FROM facts f WHERE f.source_id = ANY($4::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL AND (f.valid_until IS NULL OR f.valid_until > now()) AND f.source != ALL($5::text[]) AND NOT EXISTS (SELECT 1 FROM pages qp WHERE qp.source_id = f.source_id AND qp.slug = f.source_markdown_slug AND NOT NOT (COALESCE(qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = f.source_id
+    statements: [{ text: `SELECT f.id, f.fact, f.kind, f.entity_slug, f.source_id, f.source, f.valid_from, f.valid_until, f.created_at, f.claim_metric, f.claim_period, f.source_markdown_slug, f.visibility, f.attributed_to, f.dimension, f.value_hash, f.similarity FROM (
+       SELECT f.id, f.fact, f.kind, f.entity_slug, f.source_id, f.source, f.valid_from, f.valid_until, f.created_at, f.claim_metric, f.claim_period, f.source_markdown_slug, f.visibility, f.attributed_to, f.dimension, f.value_hash, CASE WHEN f.embedding IS NOT NULL AND f.embedding_model = $1 AND f.embedded_text_hash = md5(f.fact) AND vector_dims(f.embedding) = $2 THEN 1 - (f.embedding <=> $3::vector) END AS similarity, f.embedding <=> $4::vector AS distance FROM facts f WHERE f.source_id = ANY($5::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL AND (f.valid_until IS NULL OR f.valid_until > now()) AND f.source != ALL($6::text[]) AND NOT EXISTS (SELECT 1 FROM pages qp WHERE qp.source_id = f.source_id AND qp.slug = f.source_markdown_slug AND NOT NOT (COALESCE(qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = f.source_id
       AND elig_dp.slug = ANY(ARRAY[f.source_markdown_slug, f.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM pages elig_qp WHERE elig_qp.source_id = f.source_id AND elig_qp.slug = f.source_markdown_slug
-      AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = f.id::text) AND f.embedding IS NOT NULL AND f.embedding_model = $6
-       ORDER BY f.embedding <=> $7::vector LIMIT $8`, params: ['openai:text-embedding-3-large', 4, '[0,0.1,0.2,0.3]', ['s1'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], 'openai:text-embedding-3-large', '[0,0.1,0.2,0.3]', 7] }],
+      AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = f.id::text) AND f.embedding IS NOT NULL AND f.embedding_model = $7
+        ORDER BY f.embedding <=> $8::vector LIMIT $9) f
+       ORDER BY f.distance, f.id`, params: ['openai:text-embedding-3-large', 4, '[0,0.1,0.2,0.3]', '[0,0.1,0.2,0.3]', ['s1'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], 'openai:text-embedding-3-large', '[0,0.1,0.2,0.3]', 7] }],
   },
   {
     from: 'src/core/search/fact-relevance.ts:224 collectFactCandidates (nearest); the text is the NEW renumbered one, see the header',
     member: 'listNearestFacts',
     label: "halfvec column",
     run: e => e.listNearestFacts({ scope: scopeA, vector: { ...VEC, type: 'halfvec' }, declared: false, limit: 7 }),
-    statements: [{ text: `SELECT f.id, f.fact, f.kind, f.entity_slug, f.source_id, f.source, f.valid_from, f.valid_until, f.created_at, f.claim_metric, f.claim_period, f.source_markdown_slug, f.visibility, f.attributed_to, f.dimension, f.value_hash, CASE WHEN f.embedding IS NOT NULL AND f.embedding_model = $1 AND f.embedded_text_hash = md5(f.fact) AND vector_dims(f.embedding) = $2 THEN 1 - (f.embedding <=> $3::halfvec) END AS similarity FROM facts f WHERE f.source_id = ANY($4::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL AND (f.valid_until IS NULL OR f.valid_until > now()) AND f.source != ALL($5::text[]) AND NOT EXISTS (SELECT 1 FROM pages qp WHERE qp.source_id = f.source_id AND qp.slug = f.source_markdown_slug AND NOT NOT (COALESCE(qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = f.source_id
+    statements: [{ text: `SELECT f.id, f.fact, f.kind, f.entity_slug, f.source_id, f.source, f.valid_from, f.valid_until, f.created_at, f.claim_metric, f.claim_period, f.source_markdown_slug, f.visibility, f.attributed_to, f.dimension, f.value_hash, f.similarity FROM (
+       SELECT f.id, f.fact, f.kind, f.entity_slug, f.source_id, f.source, f.valid_from, f.valid_until, f.created_at, f.claim_metric, f.claim_period, f.source_markdown_slug, f.visibility, f.attributed_to, f.dimension, f.value_hash, CASE WHEN f.embedding IS NOT NULL AND f.embedding_model = $1 AND f.embedded_text_hash = md5(f.fact) AND vector_dims(f.embedding) = $2 THEN 1 - (f.embedding <=> $3::halfvec) END AS similarity, f.embedding <=> $4::halfvec AS distance FROM facts f WHERE f.source_id = ANY($5::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL AND (f.valid_until IS NULL OR f.valid_until > now()) AND f.source != ALL($6::text[]) AND NOT EXISTS (SELECT 1 FROM pages qp WHERE qp.source_id = f.source_id AND qp.slug = f.source_markdown_slug AND NOT NOT (COALESCE(qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = f.source_id
       AND elig_dp.slug = ANY(ARRAY[f.source_markdown_slug, f.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM pages elig_qp WHERE elig_qp.source_id = f.source_id AND elig_qp.slug = f.source_markdown_slug
-      AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = f.id::text) AND f.embedding IS NOT NULL AND f.embedding_model = $6 AND vector_dims(f.embedding) = $7
-       ORDER BY f.embedding <=> $8::halfvec LIMIT $9`, params: ['openai:text-embedding-3-large', 4, '[0,0.1,0.2,0.3]', ['s1'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], 'openai:text-embedding-3-large', 4, '[0,0.1,0.2,0.3]', 7] }],
+      AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = f.id::text) AND f.embedding IS NOT NULL AND f.embedding_model = $7 AND vector_dims(f.embedding) = $8
+        ORDER BY f.embedding <=> $9::halfvec LIMIT $10) f
+       ORDER BY f.distance, f.id`, params: ['openai:text-embedding-3-large', 4, '[0,0.1,0.2,0.3]', '[0,0.1,0.2,0.3]', ['s1'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], 'openai:text-embedding-3-large', 4, '[0,0.1,0.2,0.3]', 7] }],
   },
   {
     from: 'src/core/search/fact-relevance.ts:224 collectFactCandidates (nearest); the text is the NEW renumbered one, see the header',
@@ -562,10 +648,12 @@ const PINS: Pin[] = [
     statements: [{ text: `SELECT extversion FROM pg_extension WHERE extname = 'vector'`, params: [] },
       { text: `SELECT name, current_setting(name, true) AS value FROM unnest($1::text[]) AS settings(name)`, params: [['hnsw.ef_search','hnsw.iterative_scan','hnsw.max_scan_tuples']] },
       { text: `SELECT set_config(name, value, true) FROM unnest($1::text[], $2::text[]) AS settings(name, value)`, params: [['hnsw.ef_search','hnsw.iterative_scan','hnsw.max_scan_tuples'],['40','strict_order','20000']] },
-      { text: `SELECT f.id, f.fact, f.kind, f.entity_slug, f.source_id, f.source, f.valid_from, f.valid_until, f.created_at, f.claim_metric, f.claim_period, f.source_markdown_slug, f.visibility, f.attributed_to, f.dimension, f.value_hash, CASE WHEN f.embedding IS NOT NULL AND f.embedding_model = $1 AND f.embedded_text_hash = md5(f.fact) AND vector_dims(f.embedding) = $2 THEN 1 - (f.embedding <=> $3::vector) END AS similarity FROM facts f WHERE f.source_id = ANY($4::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL AND (f.valid_until IS NULL OR f.valid_until > now()) AND f.source != ALL($5::text[]) AND NOT EXISTS (SELECT 1 FROM pages qp WHERE qp.source_id = f.source_id AND qp.slug = f.source_markdown_slug AND NOT NOT (COALESCE(qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = f.source_id
+      { text: `SELECT f.id, f.fact, f.kind, f.entity_slug, f.source_id, f.source, f.valid_from, f.valid_until, f.created_at, f.claim_metric, f.claim_period, f.source_markdown_slug, f.visibility, f.attributed_to, f.dimension, f.value_hash, f.similarity FROM (
+       SELECT f.id, f.fact, f.kind, f.entity_slug, f.source_id, f.source, f.valid_from, f.valid_until, f.created_at, f.claim_metric, f.claim_period, f.source_markdown_slug, f.visibility, f.attributed_to, f.dimension, f.value_hash, CASE WHEN f.embedding IS NOT NULL AND f.embedding_model = $1 AND f.embedded_text_hash = md5(f.fact) AND vector_dims(f.embedding) = $2 THEN 1 - (f.embedding <=> $3::vector) END AS similarity, f.embedding <=> $4::vector AS distance FROM facts f WHERE f.source_id = ANY($5::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL AND (f.valid_until IS NULL OR f.valid_until > now()) AND f.source != ALL($6::text[]) AND NOT EXISTS (SELECT 1 FROM pages qp WHERE qp.source_id = f.source_id AND qp.slug = f.source_markdown_slug AND NOT NOT (COALESCE(qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = f.source_id
       AND elig_dp.slug = ANY(ARRAY[f.source_markdown_slug, f.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM pages elig_qp WHERE elig_qp.source_id = f.source_id AND elig_qp.slug = f.source_markdown_slug
-      AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = f.id::text) AND f.embedding IS NOT NULL AND f.embedding_model = $6 AND vector_dims(f.embedding) = $7
-       ORDER BY f.embedding <=> $8::vector LIMIT $9`, params: ['openai:text-embedding-3-large', 4, '[0,0.1,0.2,0.3]', ['s1'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], 'openai:text-embedding-3-large', 4, '[0,0.1,0.2,0.3]', 7] },
+      AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = f.id::text) AND f.embedding IS NOT NULL AND f.embedding_model = $7 AND vector_dims(f.embedding) = $8
+        ORDER BY f.embedding <=> $9::vector LIMIT $10) f
+       ORDER BY f.distance, f.id`, params: ['openai:text-embedding-3-large', 4, '[0,0.1,0.2,0.3]', '[0,0.1,0.2,0.3]', ['s1'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], 'openai:text-embedding-3-large', 4, '[0,0.1,0.2,0.3]', 7] },
       { text: `SELECT set_config(name, value, true) FROM unnest($1::text[], $2::text[]) AS settings(name, value)`, params: [[],[]] }],
   },
   {
@@ -576,11 +664,27 @@ const PINS: Pin[] = [
     responder: s => /pg_extension/.test(s.text) ? [{ extversion: '0.8.0' }] : undefined,
     statements: [{ text: `SELECT name, current_setting(name, true) AS value FROM unnest($1::text[]) AS settings(name)`, params: [['hnsw.ef_search']] },
       { text: `SELECT set_config(name, value, true) FROM unnest($1::text[], $2::text[]) AS settings(name, value)`, params: [['hnsw.ef_search'],['40']] },
-      { text: `SELECT f.id, f.fact, f.kind, f.entity_slug, f.source_id, f.source, f.valid_from, f.valid_until, f.created_at, f.claim_metric, f.claim_period, f.source_markdown_slug, f.visibility, f.attributed_to, f.dimension, f.value_hash, CASE WHEN f.embedding IS NOT NULL AND f.embedding_model = $1 AND f.embedded_text_hash = md5(f.fact) AND vector_dims(f.embedding) = $2 THEN 1 - (f.embedding <=> $3::vector) END AS similarity FROM facts f WHERE f.source_id = ANY($4::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL AND (f.valid_until IS NULL OR f.valid_until > now()) AND f.source != ALL($5::text[]) AND NOT EXISTS (SELECT 1 FROM pages qp WHERE qp.source_id = f.source_id AND qp.slug = f.source_markdown_slug AND NOT NOT (COALESCE(qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = f.source_id
+      { text: `SELECT f.id, f.fact, f.kind, f.entity_slug, f.source_id, f.source, f.valid_from, f.valid_until, f.created_at, f.claim_metric, f.claim_period, f.source_markdown_slug, f.visibility, f.attributed_to, f.dimension, f.value_hash, f.similarity FROM (
+       SELECT f.id, f.fact, f.kind, f.entity_slug, f.source_id, f.source, f.valid_from, f.valid_until, f.created_at, f.claim_metric, f.claim_period, f.source_markdown_slug, f.visibility, f.attributed_to, f.dimension, f.value_hash, CASE WHEN f.embedding IS NOT NULL AND f.embedding_model = $1 AND f.embedded_text_hash = md5(f.fact) AND vector_dims(f.embedding) = $2 THEN 1 - (f.embedding <=> $3::vector) END AS similarity, f.embedding <=> $4::vector AS distance FROM facts f WHERE f.source_id = ANY($5::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL AND (f.valid_until IS NULL OR f.valid_until > now()) AND f.source != ALL($6::text[]) AND NOT EXISTS (SELECT 1 FROM pages qp WHERE qp.source_id = f.source_id AND qp.slug = f.source_markdown_slug AND NOT NOT (COALESCE(qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = f.source_id
       AND elig_dp.slug = ANY(ARRAY[f.source_markdown_slug, f.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM pages elig_qp WHERE elig_qp.source_id = f.source_id AND elig_qp.slug = f.source_markdown_slug
-      AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = f.id::text) AND f.embedding IS NOT NULL AND f.embedding_model = $6 AND vector_dims(f.embedding) = $7
-       ORDER BY f.embedding <=> $8::vector LIMIT $9`, params: ['openai:text-embedding-3-large', 4, '[0,0.1,0.2,0.3]', ['s1'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], 'openai:text-embedding-3-large', 4, '[0,0.1,0.2,0.3]', 7] },
+      AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = f.id::text) AND f.embedding IS NOT NULL AND f.embedding_model = $7 AND vector_dims(f.embedding) = $8
+        ORDER BY f.embedding <=> $9::vector LIMIT $10) f
+       ORDER BY f.distance, f.id`, params: ['openai:text-embedding-3-large', 4, '[0,0.1,0.2,0.3]', '[0,0.1,0.2,0.3]', ['s1'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], 'openai:text-embedding-3-large', 4, '[0,0.1,0.2,0.3]', 7] },
       { text: `SELECT set_config(name, value, true) FROM unnest($1::text[], $2::text[]) AS settings(name, value)`, params: [[],[]] }],
+  },
+  {
+    from: 'src/core/search/slot-history.ts:88 entityKeys (at c33606182c)',
+    member: 'listReadablePageSlugs',
+    label: 'local scope',
+    run: e => e.listReadablePageSlugs('s1', ['people/carol', 'companies/carol'], { sourceId: 's1', worldOnly: false, excludePrivate: false } as never, 2),
+    statements: [{ text: `SELECT p.slug FROM pages p WHERE p.source_id = $1 AND p.slug = ANY($2::text[]) AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) LIMIT 2`, params: ['s1', ['people/carol', 'companies/carol']] }],
+  },
+  {
+    from: 'src/core/search/slot-history.ts:88 entityKeys (at c33606182c)',
+    member: 'listReadablePageSlugs',
+    label: 'remote scope, trust floor, two sources (the source filter is not applied)',
+    run: e => e.listReadablePageSlugs('s1', ['people/carol', 'companies/carol'], scopeB, 2),
+    statements: [{ digest: { length: 8110, sha256: 'cb5872de62eaaa5fd673b6c3afdfab503b21e5ea298a969d8c2f032ab455b7df' }, params: ['s1', ['people/carol', 'companies/carol']] }],
   },
 ];
 

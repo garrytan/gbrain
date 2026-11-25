@@ -108,6 +108,71 @@ describe('A2 url_credentials: http(s) userinfo carrying a password', () => {
   });
 });
 
+// A raw `@` inside a password: URL parsers and database drivers split the userinfo at the LAST `@` of the
+// authority, so such a URL connects. A rule that stops at the first `@` redacts only the start of the password
+// and leaves the rest of it in the text after the marker.
+describe('a raw @ inside a URL password is redacted whole', () => {
+  const at = '@';
+  test('db_url_credentials covers the whole password and keeps the host', () => {
+    for (const scheme of ['postgresql', 'postgres', 'mysql', 'redis', 'mongodb+srv']) {
+      const parts = [rand(10), rand(10), rand(10)];
+      const url = userinfoUrl(scheme, 'alice-example', parts.join(at), 'db.example:5432/app');
+      const { text } = redactFindings(`DATABASE_URL=${url}`);
+      expect(text).toBe(`DATABASE_URL=${REDACTED('db_url_credentials')}db.example:5432/app`);
+      for (const part of parts) expect(text.includes(part)).toBe(false);
+    }
+  });
+
+  test('db_url_credentials still ends at the userinfo when an @ sits in the path or query', () => {
+    const pw = rand(16);
+    const url = userinfoUrl('postgresql', 'u', pw, ['db.example:5432/app?application_name=a', 'b'].join(at));
+    expect(redactFindings(url).text).toBe(`${REDACTED('db_url_credentials')}${['db.example:5432/app?application_name=a', 'b'].join(at)}`);
+  });
+
+  test('url_credentials covers the whole password and keeps the host and path', () => {
+    const parts = [rand(10), rand(10)];
+    const url = userinfoUrl('https', 'x-access-token', parts.join(at));
+    const { text } = redactFindings(`git clone ${url}.git`);
+    expect(text).toBe(`git clone ${REDACTED('url_credentials')}host.example/path.git`);
+    for (const part of parts) expect(text.includes(part)).toBe(false);
+  });
+
+  test('url_credentials redacts a password that reads as a placeholder only when its pieces are joined', () => {
+    for (const [open, close] of [['<', '>'], ['${', '}']]) {
+      const parts = [rand(10), rand(10)];
+      const url = userinfoUrl('https', 'u', `${open}${parts.join(at)}${close}`);
+      const { text } = redactFindings(url);
+      expect(text).toBe(`${REDACTED('url_credentials')}host.example/path`);
+      for (const part of parts) expect(text.includes(part)).toBe(false);
+    }
+  });
+
+  test('url_credentials redacts a password whose first piece reads as a mask', () => {
+    for (const first of ['***', 'xxx']) {
+      const rest = rand(12);
+      const url = userinfoUrl('https', 'u', [first, rest].join(at));
+      const { text } = redactFindings(url);
+      expect(text).toBe(`${REDACTED('url_credentials')}host.example/path`);
+      expect(text.includes(rest)).toBe(false);
+    }
+  });
+
+  test('url_credentials redacts a password whose first piece reads as a $VARIABLE', () => {
+    for (const first of [`$${'A'}${rand(6)}`, `$${'Summer'}2024`]) {
+      const rest = rand(12);
+      const url = userinfoUrl('https', 'u', [first, rest].join(at));
+      const { text } = redactFindings(url);
+      expect(text).toBe(`${REDACTED('url_credentials')}host.example/path`);
+      expect(text.includes(rest)).toBe(false);
+    }
+  });
+
+  test('url_credentials still leaves a whole placeholder password alone', () => {
+    const url = userinfoUrl('https', 'u', '<password>');
+    expect(redactFindings(url).text).toBe(url);
+  });
+});
+
 describe('A3 basic_auth: a Basic credential that decodes to user:pass', () => {
   test('header form, any case, including the short u:p encoding', () => {
     const short = basic('u:p');

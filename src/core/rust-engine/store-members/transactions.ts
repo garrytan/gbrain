@@ -14,7 +14,8 @@
  * the stamp will read; the attribution, source-scope and quiescence settings stay on the transaction
  * (`RustTransactionScope.settings`), and so does the one planner setting the belief batch switches (`plan_cache_mode`;
  * the store has no planner, so it changes nothing else, and an unset one reads PGLite's default). Both end with the
- * transaction; a savepoint rollback restores both. Any other name refuses.
+ * transaction; a savepoint rollback restores both. Any other custom `gbrain.*` name Postgres accepts stays on the
+ * transaction too, unless schema SQL reads it; any other name refuses.
  *
  * Export only BrainEngine members from this file: index.ts spreads the whole module into STORE_MEMBERS.
  */
@@ -25,6 +26,7 @@ import { transactionAborted } from '../../postgres-engine/transaction-abort.ts';
 import { validateSlug } from '../../utils.ts';
 import type { RustEngine, RustTransactionScope } from '../../rust-engine.ts';
 import { opError } from '../../ops/contract.ts';
+import { capabilityMissing } from '../errors.ts';
 import { mapStoreError, storeErrorCode } from '../store-errors.ts';
 import type { RustStore, StoreBrain } from '../store.ts';
 import { storeCall } from './common.ts';
@@ -66,11 +68,26 @@ function seen(engine: RustEngine): Set<string> {
   return (engine._txScope?.root ?? engine)._seenSettings;
 }
 
+/**
+ * The `gbrain.*` settings schema triggers and functions read (`current_setting('gbrain.<name>'` in src) that no store
+ * writer reads yet. Kept in the transaction's map, one would change what Postgres does and nothing on Rust, so each
+ * refuses until the store reads it (`gbrain.writer_quiesced` is not here: SCOPE_SETTINGS keeps it on the transaction). test/rust-engine-shell.test.ts fails on a schema-read name outside the kept sets
+ * and this one.
+ */
+const SCHEMA_READ_SETTINGS: ReadonlySet<string> = new Set([
+  'gbrain.materializing_revision', 'gbrain.topology_change', 'gbrain.refresh_barrier',
+  'gbrain.trust_generation_bumped', 'gbrain.guest_note', 'gbrain.graduation_run',
+]);
+/** Postgres's custom setting name: two or more simple identifiers separated by dots, here under `gbrain`. */
+const CUSTOM_SETTING_NAME = /^gbrain(\.[a-z_][a-z0-9_]*)+$/;
+/** A custom name no writer or schema SQL reads: the transaction keeps it in its own map, as Postgres keeps it. */
+const keepsCustomSetting = (name: string) => CUSTOM_SETTING_NAME.test(name) && !TRUST_SETTINGS.has(name) && !SCHEMA_READ_SETTINGS.has(name);
+
 /** Checks every name before any work: the alphabet first (PGLite's error), then the names this engine keeps. */
 function checkSettingNames(member: string, names: readonly string[]): void {
   for (const name of names) if (!SETTING_NAME.test(name)) throw new Error(`Invalid transaction setting name: ${name}`);
   for (const name of names) {
-    if (TRUST_SETTINGS.has(name) || SCOPE_SETTINGS.has(name) || PLANNER_SETTINGS.has(name)) continue;
+    if (TRUST_SETTINGS.has(name) || SCOPE_SETTINGS.has(name) || keepsCustomSetting(name) || PLANNER_SETTINGS.has(name)) continue;
     throw opError('engine_capability_missing',
       `This brain's engine does not keep the transaction setting ${name} yet (${member} needs the transactions capability for it), so nothing ran.`,
       'Run it on a pglite or postgres brain, or wait for a gbrain release whose Rust engine keeps that setting.',
@@ -118,7 +135,7 @@ export const applyTransactionSettings = async function applyTransactionSettings(
     if (trust.length) {
       await storeCall({ member: 'applyTransactionSettings' }, () => brain.applyWriteTrust(trust.map(([n]) => n), trust.map(([, v]) => v)));
     }
-    names.forEach((name, index) => { if (SCOPE_SETTINGS.has(name)) scope.settings.set(name, values[index] ?? ''); });
+    names.forEach((name, index) => { if (SCOPE_SETTINGS.has(name) || keepsCustomSetting(name)) scope.settings.set(name, values[index] ?? ''); });
     for (const [name, value] of planner) scope.settings.set(name, value);
   }
   const known = seen(this);
@@ -150,7 +167,16 @@ interface BoundEngine extends RustEngine {
 
 /** A clone of `parent` whose served members run on the transaction's store handle. */
 function boundEngine(parent: RustEngine, scope: RustTransactionScope, held: HeldPageKeys): BoundEngine {
-  const store: RustStore = { brain: scope.brain, close: async () => undefined };
+  // The shadow seed and a store snapshot copy into or out of the engine's own store, never through a transaction's handle.
+  const refuseSeed = (member: string) => async (): Promise<never> => { throw capabilityMissing('transactions', member); };
+  const store: RustStore = {
+    brain: scope.brain, close: async () => undefined,
+    importRelation: refuseSeed('importRelation'), replaceRelationRows: refuseSeed('replaceRelationRows'), replaceInterval: refuseSeed('replaceInterval'),
+    relationDigest: refuseSeed('relationDigest'), relationEntries: refuseSeed('relationEntries'), allocatorCheck: refuseSeed('allocatorCheck'),
+    factFingerprints: refuseSeed('factFingerprints'), seedPlan: refuseSeed('seedPlan'),
+    // A snapshot copies the whole store at one committed generation, so it never runs through a transaction's handle either.
+    snapshotTo: refuseSeed('snapshotTo'), snapshotCancel: () => { throw capabilityMissing('transactions', 'snapshotCancel'); },
+  };
   return Object.create(parent, {
     _txScope: { value: scope, writable: false, enumerable: false },
     _heldPageKeys: { value: held, writable: false, enumerable: false },

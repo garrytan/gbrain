@@ -1,3 +1,4 @@
+import { alsoPrefixes } from './slug-params.ts';
 import { funnelPassThrough } from '../funnel.ts';
 import { suffixedSlugDryRun } from '../persistence/suffixed-slug.ts';
 import { AGENT_CONTENT_PARAMS, PAGE_MUTATION_PARAMS, CAPTURE_EVENT_PARAMS, CAPTURE_CLI_PROVENANCE_PARAMS, REASON_PARAM, WRITE_WAIT_PARAM } from '../persistence/params.ts';
@@ -45,6 +46,7 @@ import { WHERE_PARAM, whereOpParam } from './where-param.ts';
 import { parseSourceIdsParam, requestSourceScope, SOURCE_IDS_PARAM } from './search-source-scope.ts';
 import { isDatetimeInputError } from '../utils.ts';
 import { rethrowNamingRevisionSource } from './put-page-revision-source.ts';
+import { guardUnsourcedPutEarly, noteSuppressedSourceFlip } from '../persistence/unsourced-put-fork.ts';
 import {
   assertExplicitSourceLive,
   enforceSubagentSlugFence,
@@ -185,8 +187,8 @@ const get_page: Operation = {
       // should say WHERE the slug actually lives. Trusted local callers only
       // (`ctx.remote === false`) — for a remote caller the probe would be a
       // cross-source existence oracle outside its grant. Only when the lookup
-      // was actually scoped (an unscoped read already spanned every source).
-      if (ctx.remote === false && (sourceOpts.sourceId !== undefined || sourceOpts.sourceIds !== undefined)) {
+      // was actually scoped (an unscoped read already spanned every source). GST-3747: never under --as, which answers as the member.
+      if (ctx.remote === false && !ctx.applyRemoteReadPolicy && (sourceOpts.sourceId !== undefined || sourceOpts.sourceIds !== undefined)) {
         try {
           // gbrain-allow-unscoped-getpage: read-only diagnostic existence probe —
           // deliberately spans all sources to name where the slug lives.
@@ -377,6 +379,7 @@ const put_page: Operation = {
   handler: async (ctx, p) => {
     const { pageMutationSource, submitPageMutation } = await pageMutations();
     const sourceId = pageMutationSource(ctx, p, 'put_page');
+    await guardUnsourcedPutEarly(ctx, sourceId, p); // a real put is checked in admission (after the write authority and a request_id replay)
     if (ctx.dryRun) {
       if (typeof p.slug === 'string') {
         validatePageSlug(p.slug);
@@ -390,7 +393,7 @@ const put_page: Operation = {
     if (forwarded) return forwarded.result; // a second process on a Rust brain: the whole write ran in the brain's owner
     if (ctx.remote !== false && typeof p.slug === 'string') await assertLargePageAdmission(ctx.engine, p.slug, sourceId, p);
     (await import('../persistence/page-visibility.ts')).assertSubmittedReaders(ctx.remote, p.slug, p.content);
-    return submitPageMutation(ctx, { operation: 'put_page', params: p }).then(funnelPassThrough('save')).catch(error => rethrowNamingRevisionSource(ctx, sourceId, p, error)).then(result => withIgnoredPrivacyLabelNotice(ctx, sourceId, p, result)).then(result => withImplicitPlacement(ctx, sourceId, p, result));
+    return submitPageMutation(ctx, { operation: 'put_page', params: p, unsourcedForkGuard: true }).then(async result => (await noteSuppressedSourceFlip(ctx, sourceId, p), result)).then(funnelPassThrough('save')).catch(error => rethrowNamingRevisionSource(ctx, sourceId, p, error)).then(result => withIgnoredPrivacyLabelNotice(ctx, sourceId, p, result)).then(result => withImplicitPlacement(ctx, sourceId, p, result));
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
 };
@@ -642,7 +645,7 @@ const list_pages: Operation = {
       excludePrivate,
       listColumnsOnly: true,
       where: whereOpParam(ctx, 'list_pages', p.where),
-      ...(typeof p.slug_prefix === 'string' && p.slug_prefix ? { slugPrefix: p.slug_prefix } : {}),
+      ...(typeof p.slug_prefix === 'string' && p.slug_prefix ? { slugPrefix: p.slug_prefix, ...alsoPrefixes('slugPrefixAlso', p.slug_prefix) } : {}),
       ...scope,
     }).catch((e: unknown) => {
       // #6103: an updated_after the database cannot parse is the caller's input, not a server fault.

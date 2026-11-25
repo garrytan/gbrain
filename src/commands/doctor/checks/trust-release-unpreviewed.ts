@@ -11,6 +11,7 @@ import type { Check } from '../../doctor.ts';
 import { agentFix, checkError } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { isMissingSchemaObject } from '../../../core/utils.ts';
+import { holdAppliesToPageSql } from '../../../core/write-gate-binding.ts';
 
 const LIMIT = 50;
 

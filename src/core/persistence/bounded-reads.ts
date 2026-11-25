@@ -101,12 +101,24 @@ export const TYPED_PREPARATION_READS: ReadonlySet<string> = new Set(['getSource'
   'readPersistenceBrainId', 'readLocalWriterRow', 'readLedgerSource', 'isFolderRestricted', 'listSourceLocalPaths', 'getChunkReuseRows', 'getPageSealState',
   'readJournalLimitRows', 'readWriteRequest', 'readWriteRequestById', 'readHeldPageRows', 'readHeldCoverageRows',
   'readSourceState', 'readAdmissionSource', 'listLinkEndpointPages', 'sharedSkillPackTablePresent', 'listSharedSkillPackRoots',
-  'readSourceMembership', 'getWorktreeBinding', 'readLiveMember', 'readFolderAccess',
+  'readSourceMembership', 'getWorktreeBinding', 'readLiveMember', 'readCredentialMemberId', 'readAccessTokenAttest', 'readOauthClientAttest', 'readLinkedMember', 'readFolderAccess',
   'listGuestSourceIds', 'readDatabaseClock', 'listStoredTimelineRowsOrdered', 'matchTakeRows',
   'listFactWithdrawalDates', 'listCorePageRows', 'lockRegisteredSourceIds',
-  'getConfig', 'getAllConfig', 'listConfigKeys', 'readPageSnapshot', 'getPage',
+  'getConfig', 'getAllConfig', 'listConfigKeys', 'readStoredConfigValue', 'readPageSnapshot', 'getPage',
   'findDuplicatePage', 'findByTitleFuzzy', 'searchKeyword',
-  'readSegmentTexts', 'readManifest', 'readSegmentedGateEvidence', 'hasLabelledOnlyMember', 'readSegmentedPageHead', 'readSourceIncarnation', 'readStoredPageTier']);
+  'readSegmentTexts', 'readManifest', 'readSegmentedGateEvidence', 'readJobSourceState', 'readJobPrincipal', 'readOauthClient', 'hasLabelledOnlyMember', 'hasLabelledOnlyMemberAmong', 'readSegmentedPageHead', 'readSourceIncarnation', 'readStoredPageTier', 'readFactSnapshots', 'readLabelGuardTiers',
+  'readJournalCeiling', 'sweepJournalChunk',
+  'listPurgeClaimFacts', 'listPurgeClaimTakes', 'listQueuedPagePurges', 'listPageLinkStreams', 'listPagePurgeTombstones',
+  'listForcedCutSeqs', 'readSegmentedVersionBodyBytes',
+  'listChunkedOccurrences', 'readRetiredChunkVectors', 'hasStaleSegmentChunks', 'readLiveSlugAliases', 'readSourceSlugProbe', 'readSegmentedLivePage', 'normalizeFenceLines', 'listGlobalPurgeWithdrawals',
+  'readPagePrivacyHidden', 'readLinkTargetPages', 'readWriteVisibilityProbe',
+  'hasPositionedPageFacts', 'hasFenceAbsentHold', 'listPageTakeRowNums', 'readPageInlineBody']);
+
+/**
+ * Engine members that return a store over the engine. The view binds them to itself, so the store's raw statements go
+ * through the view's `executeRaw` and end at the deadline, as the raw statements they replaced did.
+ */
+export const VIEW_BOUND_STORES: ReadonlySet<string> = new Set(['publicationJournalStore']);
 
 /** Test seam (test/e2e/typed-preparation-reads-guard-postgres.test.ts): told of every engine method a bounded view hands out. */
 type PreparationMemberObserver = (member: string, typed: boolean, engineReads: boolean) => void;
@@ -117,7 +129,7 @@ export function observePreparationMembers(observer: PreparationMemberObserver | 
 export function boundedReads(engine: BrainEngine, clock: ClaimPhaseClock | undefined, opts: { engineReads?: boolean } = {}): BrainEngine {
   const deadlineAt = clock?.deadlineAt;
   if (deadlineAt === undefined || engine.kind !== 'postgres') return engine;
-  return registerEngineView(new Proxy(engine, { get(target, key) {
+  return registerEngineView(new Proxy(engine, { get(target, key, view) {
     if (key === 'executeRaw') return async (sql: string, params?: unknown[], opts?: { signal?: AbortSignal; timeoutMs?: number }) => {
       recordClaimSql(clock, sql);
       if (opts?.signal) return target.executeRaw(sql, params, opts);
@@ -139,6 +151,10 @@ export function boundedReads(engine: BrainEngine, clock: ClaimPhaseClock | undef
     };
     const value = Reflect.get(target, key, target);
     if (typeof value !== 'function') return value;
+    if (typeof key === 'string' && VIEW_BOUND_STORES.has(key)) {
+      memberObserver?.(key, true, opts.engineReads === true);
+      return value.bind(view);
+    }
     const typedRead = typeof key === 'string' && TYPED_PREPARATION_READS.has(key);
     if (memberObserver && typeof key === 'string') memberObserver(key, typedRead, opts.engineReads === true);
     if (!opts.engineReads && !typedRead) return value.bind(target);

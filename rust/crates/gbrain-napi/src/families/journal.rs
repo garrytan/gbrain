@@ -193,6 +193,19 @@ impl Brain {
         })
     }
 
+    /// `readWriteRequestsByRequestId(requestId)`: at most two `persistence_requests` rows with this
+    /// request id, from any principal.
+    #[napi]
+    pub fn read_write_requests_by_request_id<'env>(
+        &self,
+        env: &'env Env,
+        request_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_write_requests_by_request_id(&request_id)
+        })
+    }
+
     /// `listWriteRequestRows(principal, sourceId, filter)`: the principal's request rows in one live
     /// source, newest sequence first, through the filter's cursor and fences.
     #[napi]
@@ -233,6 +246,18 @@ impl Brain {
         id: String,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.read_write_request_by_id(&id))
+    }
+
+    /// `listWriteRequestsByRequestIds(requestIds)`: the request rows by sequence.
+    #[napi]
+    pub fn list_write_requests_by_request_ids<'env>(
+        &self,
+        env: &'env Env,
+        request_ids: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_write_requests_by_request_ids(&request_ids)
+        })
     }
 
     /// `insertWriteRequest(row)`: the stored row (`WriteRequestInsert`).
@@ -287,6 +312,18 @@ impl Brain {
         })
     }
 
+    /// `compactTerminalIntent(compaction)`: the compacted row, or `null` for an unknown id.
+    #[napi]
+    pub fn compact_terminal_intent<'env>(
+        &self,
+        env: &'env Env,
+        compaction: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.compact_terminal_intent(&required(compaction, "compactTerminalIntent compaction")?)
+        })
+    }
+
     /// `cancelWriteRow(cancellation)`: `{ status, row }`, or `null` when the row does not exist.
     #[napi]
     pub fn cancel_write_row<'env>(
@@ -333,6 +370,29 @@ impl Brain {
         self.run(env, move |s| {
             s.insert_withdrawal_effects(&required(spec, "insertWithdrawalEffects spec")?)
         })
+    }
+
+    /// `insertRemirrorEffects({ requestId, sourceId, data })`: the kinds inserted, in insert order.
+    #[napi]
+    pub fn insert_remirror_effects<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.insert_remirror_effects(&required(spec, "insertRemirrorEffects spec")?)
+        })
+    }
+
+    /// `readRemirrorEffects(requestId)`: the request's effect states the segmented-mirror apply waits
+    /// on, in kind order.
+    #[napi]
+    pub fn read_remirror_effects<'env>(
+        &self,
+        env: &'env Env,
+        request_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_remirror_effects(&request_id))
     }
 
     /// `releaseUnpublishedClaim({ id, token, reason, charge })`: `true` when the claim was released.
@@ -560,6 +620,37 @@ impl Brain {
         self.run(env, move |s| s.list_reservations_after(&after, limit))
     }
 
+    /// `listLaterPersistenceRequests(sourceId, incarnation, slug, sequence)`: the live and committed
+    /// request rows on the slug after the sequence (decimal text), in sequence order.
+    #[napi]
+    pub fn list_later_persistence_requests<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        incarnation: String,
+        slug: String,
+        sequence: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_later_persistence_requests(&source_id, &incarnation, &slug, &sequence)
+        })
+    }
+
+    /// `listCommittedOutputRequests(requestIds, sourceId, incarnation)`: `{ request }` per committed
+    /// `put_page` row, newest sequence first.
+    #[napi]
+    pub fn list_committed_output_requests<'env>(
+        &self,
+        env: &'env Env,
+        request_ids: Vec<String>,
+        source_id: String,
+        incarnation: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_committed_output_requests(&request_ids, &source_id, &incarnation)
+        })
+    }
+
     #[napi]
     pub fn list_true_up_requests<'env>(
         &self,
@@ -627,6 +718,44 @@ impl Brain {
         })
     }
 
+    /// `readStaleEmbeddingCounts(sourceIds | null)`: `{ count, failed, requeued }` over doctor's stale embedding effects.
+    #[napi]
+    pub fn read_stale_embedding_counts<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Option<Vec<String>>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_stale_embedding_counts(source_ids.as_deref())
+        })
+    }
+
+    /// `listStaleEmbeddingEffects(sourceIds | null)`: the first 10 of them by effect id.
+    #[napi]
+    pub fn list_stale_embedding_effects<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Option<Vec<String>>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_stale_embedding_effects(source_ids.as_deref())
+        })
+    }
+
+    /// `listEmbeddingCandidates(sourceIds, neverRetried)`: the stale queued and failed embedding
+    /// effects `gbrain repair embedding-effects` settles, in effect id order.
+    #[napi]
+    pub fn list_embedding_candidates<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Vec<String>,
+        never_retried: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_embedding_candidates(&source_ids, &never_retried)
+        })
+    }
+
     /// `selectClaimableEffect(hostId, deadOwners)`: the next effect to claim as its row, or `null`.
     #[napi]
     pub fn select_claimable_effect<'env>(
@@ -672,6 +801,121 @@ impl Brain {
         code: String,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.has_rearmable_targets(&request_ids, &code))
+    }
+
+    /// `readHeadBlockerRows({ ids, priority })`: one head-blocker probe row per queued request
+    /// asked about (`src/core/engine-sql/head-blocker.ts`).
+    #[napi]
+    pub fn read_head_blocker_rows<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_head_blocker_rows(&required(spec, "readHeadBlockerRows spec")?)
+        })
+    }
+
+    /// `readIncompleteSyncReceipt(spec)`: the request id of a receipt that blocks a managed sync
+    /// run's checkpoint, or null (`src/core/engine-sql/checkpoint-validation.ts`).
+    #[napi]
+    pub fn read_incomplete_sync_receipt<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_incomplete_sync_receipt(&required(spec, "readIncompleteSyncReceipt spec")?)
+        })
+    }
+
+    /// `readOpenPassWork(spec)`: the request id of the work that blocks a pass stamp, or null.
+    #[napi]
+    pub fn read_open_pass_work<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_open_pass_work(&required(spec, "readOpenPassWork spec")?)
+        })
+    }
+
+    /// `readIncompleteSyncReceiptRows(spec)`: up to 20 receipts that block the run's checkpoint.
+    #[napi]
+    pub fn read_incomplete_sync_receipt_rows<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_incomplete_sync_receipt_rows(&required(
+                spec,
+                "readIncompleteSyncReceiptRows spec",
+            )?)
+        })
+    }
+
+    /// `readIdentityDowngradeRows({ op, sourceIds })`: the open identity-downgrade records, oldest
+    /// first, each with the live slugs at its new path (`src/core/engine-sql/sync-status-reads.ts`).
+    #[napi]
+    pub fn read_identity_downgrade_rows<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_identity_downgrade_rows(&required(spec, "readIdentityDowngradeRows spec")?)
+        })
+    }
+
+    /// `readIdentityDowngradeOldPage(sourceId, path, slug)`: the soft-deleted page an identity
+    /// downgrade record names, or null.
+    #[napi]
+    pub fn read_identity_downgrade_old_page<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        path: String,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_identity_downgrade_old_page(&source_id, &path, &slug)
+        })
+    }
+
+    /// `countIdentityDowngradeCarry(sourceId, slug, pageId)`: the facts, links and aliases an old
+    /// page carries.
+    #[napi]
+    pub fn count_identity_downgrade_carry<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+        page_id: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.count_identity_downgrade_carry(&source_id, &slug, page_id.max(0.0) as u64)
+        })
+    }
+
+    /// `readIdentityRemedySide(sourceId, pageId, slug)`: one page of the source by id (when given)
+    /// or slug, deleted or not, or null.
+    #[napi]
+    pub fn read_identity_remedy_side<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        page_id: Option<f64>,
+        slug: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_identity_remedy_side(
+                &source_id,
+                page_id.filter(|id| *id >= 1.0).map(|id| id as u64),
+                slug.as_deref(),
+            )
+        })
     }
 
     /// `probeIdleWork(spec)`: whether any worker of this host has work, and where the resident
@@ -822,6 +1066,37 @@ impl Brain {
         retention_days: f64,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.list_compactable_receipts(retention_days))
+    }
+
+    #[napi]
+    pub fn read_receipt_compaction_window<'env>(
+        &self,
+        env: &'env Env,
+        hours: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_receipt_compaction_window(hours))
+    }
+
+    #[napi]
+    pub fn list_receipt_compaction_candidates<'env>(
+        &self,
+        env: &'env Env,
+        states: Vec<String>,
+        cutoff: String,
+        max_sequence: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_receipt_compaction_candidates(&states, &cutoff, &max_sequence)
+        })
+    }
+
+    #[napi]
+    pub fn count_kept_failed_receipts<'env>(
+        &self,
+        env: &'env Env,
+        cutoff: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.count_kept_failed_receipts(&cutoff))
     }
 
     /// `readWriterVersionCutoff()`: the brain's creation time as ISO text, or `null`.
@@ -1027,8 +1302,14 @@ impl Brain {
 
     /// `hasDrainableProjectionJob()`: whether a drainable job is queued.
     #[napi]
-    pub fn has_drainable_projection_job<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.has_drainable_projection_job())
+    pub fn has_drainable_projection_job<'env>(
+        &self,
+        env: &'env Env,
+        media: Option<bool>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.has_drainable_projection_job(media.unwrap_or(false))
+        })
     }
 
     /// `readChunkRowsFingerprint(pageId)`: the store's opaque value of the page's chunk rows.
@@ -1149,21 +1430,7 @@ impl Brain {
         })
     }
 
-    /// `readProjectionBacklog(scope)`: the class counts, `oldest`, `as_of` and `undecided`.
-    #[napi]
-    pub fn read_projection_backlog<'env>(
-        &self,
-        env: &'env Env,
-        scope: Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let scope: gbrain_store::persistence::BacklogScope =
-                required(scope, "readProjectionBacklog scope")?;
-            s.read_projection_backlog(&scope)
-        })
-    }
-
-    /// `listProjectionDrainPreview(limit)`: `{ rows, undecided }`.
+    /// `listProjectionDrainPreview(limit)`: the preview rows.
     #[napi]
     pub fn list_projection_drain_preview<'env>(
         &self,
@@ -1175,8 +1442,84 @@ impl Brain {
 
     /// `hasQueuedProjectionWork()`.
     #[napi]
-    pub fn has_queued_projection_work<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.has_queued_projection_work())
+    pub fn has_queued_projection_work<'env>(
+        &self,
+        env: &'env Env,
+        media: Option<bool>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.has_queued_projection_work(media.unwrap_or(false))
+        })
+    }
+
+    /// `listImageSealWindow(afterIncarnation, afterSlug, limit, notAfter)`.
+    #[napi]
+    pub fn list_image_seal_window<'env>(
+        &self,
+        env: &'env Env,
+        after_incarnation: String,
+        after_slug: String,
+        limit: f64,
+        not_after: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_image_seal_window(&after_incarnation, &after_slug, limit, not_after.as_deref())
+        })
+    }
+
+    /// `readImageSealPages(rows)`.
+    #[napi]
+    pub fn read_image_seal_pages<'env>(
+        &self,
+        env: &'env Env,
+        rows: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let rows: Vec<gbrain_store::persistence::ImageSealRow> =
+                required(rows, "readImageSealPages rows")?;
+            s.read_image_seal_pages(&rows)
+        })
+    }
+
+    /// `listImageSealChunks(pageIds, provenanceModel)`.
+    #[napi]
+    pub fn list_image_seal_chunks<'env>(
+        &self,
+        env: &'env Env,
+        page_ids: Vec<f64>,
+        provenance_model: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_image_seal_chunks(&page_ids, provenance_model.as_deref())
+        })
+    }
+
+    /// `clearImageSealVectors(chunks)`.
+    #[napi]
+    pub fn clear_image_seal_vectors<'env>(
+        &self,
+        env: &'env Env,
+        chunks: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let chunks: Vec<gbrain_store::persistence::ImageSealChunkRef> =
+                required(chunks, "clearImageSealVectors chunks")?;
+            s.clear_image_seal_vectors(&chunks)
+        })
+    }
+
+    /// `sealImagePages(pages)`.
+    #[napi]
+    pub fn seal_image_pages<'env>(
+        &self,
+        env: &'env Env,
+        pages: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let pages: Vec<gbrain_store::persistence::ImageSealPageRef> =
+                required(pages, "sealImagePages pages")?;
+            s.seal_image_pages(&pages)
+        })
     }
 
     /// `readDrainRunStart()`: the store clock as `now()::text`.
@@ -1346,6 +1689,19 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.find_topology_changes(&principal_id, &request_ids)
+        })
+    }
+
+    /// `readTopologyChangeDigest(requestId, sourceId)`: the digest text, or `null`.
+    #[napi]
+    pub fn read_topology_change_digest<'env>(
+        &self,
+        env: &'env Env,
+        request_id: String,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_topology_change_digest(&request_id, &source_id)
         })
     }
 }

@@ -24,7 +24,6 @@ mutating: true
 writes_pages: true
 writes_to:
   - people/
-upstream: draft-in-voice@fc834ee
 when_to_use: "Use when the user asks: \"draft in voice\", \"write this as\", \"make this sound like\", \"ghostwrite\", \"draft a tweet as\"."
 ---
 
@@ -187,7 +186,7 @@ of the profile page:
 
 File at `people/<slug>-voice` (person-subject page per
 `_brain-filing-rules.md`), via `gbrain put people/<slug>-voice` with the page
-content on stdin. Required top-of-page metadata block:
+content on stdin. If the put is refused with `slug_in_other_source`, the voice page already lives in another source: run the retry the error names (`--source-id <holder>`). Required top-of-page metadata block:
 
 ````markdown
 # Alice Example — Voice Profile
@@ -261,8 +260,7 @@ This skill guarantees:
   approval-gated path.
 - The only brain write this skill performs is the voice-profile page (and
   its back-link) under `people/`, per `writes_to:`.
-- Privacy contract preserved: no real names in examples, no fork-specific
-  filesystem path literals, no upstream-fork references; drafts never
+- Examples use placeholder names and paths; drafts never
   surface private details the subject hasn't made public.
 
 ## Output Format

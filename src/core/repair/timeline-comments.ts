@@ -27,8 +27,6 @@ import { repairRequestId, type RepairHandler, type RepairItem, type RepairScope,
 
 interface MarkupRow { id: number; page_id: number; source_id: string; slug: string; date: string; source: string; summary: string; detail: string; body_storage: string }
 
-const MARKUP_SQL = `(t.summary LIKE '%<!--%' OR t.summary LIKE '%-->%' OR t.source LIKE '%<!--%' OR t.source LIKE '%-->%'
-  OR t.detail LIKE '%<!--%' OR t.detail LIKE '%-->%')`;
 const clean = (text: string) => stripHtmlComments(text).replace(/\s+/g, ' ').trim();
 
 /** The body without materialized bullets (marker, bullet, indented detail) whose bullet line carries comment markup. */
@@ -46,24 +44,17 @@ export function dropCommentBullets(body: string): string {
   return kept.join('\n');
 }
 
-async function markupRows(engine: BrainEngine, where: string, params: unknown[]): Promise<MarkupRow[]> {
-  return engine.executeRaw<MarkupRow>(`SELECT t.id, t.page_id, p.source_id, p.slug, t.date::text AS date, t.source, t.summary, t.detail, p.body_storage
-    FROM timeline_entries t JOIN pages p ON p.id=t.page_id
-    WHERE t.event_page_id IS NULL AND p.deleted_at IS NULL AND ${MARKUP_SQL} AND ${where} ORDER BY t.page_id, t.id`, params);
-}
-
 /** Rows of one page still carrying markup, fixed under the page lock: deleted, or rewritten to their stripped tuple. */
 async function cleanRows(engine: BrainEngine, page: { id: number; slug: string; source_id: string }): Promise<number> {
   const run = async (tx: BrainEngine) => {
     await tx.lockPageKeys([{ sourceId: page.source_id, slug: page.slug }]);
     let fixed = 0;
-    for (const row of await markupRows(tx, 't.page_id=$1', [page.id])) {
+    for (const row of await tx.listTimelineMarkupRows({ pageId: page.id })) {
       const next = { source: clean(row.source), summary: clean(row.summary), detail: clean(row.detail ?? '') };
-      const [twin] = next.summary ? await tx.executeRaw<{ id: number }>(`SELECT id FROM timeline_entries
-        WHERE page_id=$1 AND event_page_id IS NULL AND date=$2::date AND source=$3 AND summary=$4 AND id<>$5 LIMIT 1`,
-      [page.id, row.date, next.source, next.summary, row.id]) : [];
-      if (!next.summary || twin) await tx.executeRaw('DELETE FROM timeline_entries WHERE id=$1', [row.id]);
-      else await tx.executeRaw('UPDATE timeline_entries SET source=$2, summary=$3, detail=$4 WHERE id=$1', [row.id, next.source, next.summary, next.detail]);
+      const twin = next.summary && (await tx.listStoredTimelineRowsOrdered(page.id))
+        .some(other => other.id !== row.id && other.date === row.date && other.source === next.source && other.summary === next.summary);
+      if (!next.summary || twin) await tx.removeTimelineRows(page.id, [{ id: row.id, date: row.date, source: row.source, summary: row.summary, detail: row.detail, removed: false }]);
+      else await tx.rewriteTimelineRow(page.id, { id: row.id, ...next });
       fixed++;
     }
     return fixed;
@@ -76,12 +67,10 @@ async function cleanRows(engine: BrainEngine, page: { id: number; slug: string; 
 export const timelineCommentsRepair: RepairHandler = {
   kind: 'timeline-comments',
   async plan(engine: BrainEngine, scope: RepairScope, after: RepairCursor | null) {
-    const all = await markupRows(engine, 'p.source_id=ANY($1::text[]) AND p.id>$2', [scope.source_ids, after?.id ?? 0]);
+    const all = await engine.listTimelineMarkupRows({ sourceIds: scope.source_ids, afterId: after?.id ?? 0 });
     const rows = all.filter(row => row.body_storage !== 'segmented');
     const segmented = [...new Map(all.filter(row => row.body_storage === 'segmented').map(row => [row.page_id, `${row.source_id}:${row.slug}`])).values()];
-    const pages = await engine.executeRaw<{ id: number; source_id: string; slug: string; compiled_truth: string; timeline: string | null }>(
-      `SELECT id, source_id, slug, compiled_truth, timeline FROM pages WHERE source_id=ANY($1::text[]) AND deleted_at IS NULL AND id>$2
-         AND (compiled_truth LIKE '%gbrain:materialized%' OR timeline LIKE '%gbrain:materialized%') ORDER BY id`, [scope.source_ids, after?.id ?? 0]);
+    const pages = await engine.listMaterializedMarkerPages(scope.source_ids, after?.id ?? 0);
     const bullets = new Map(pages.map(p => [p.id, p] as const));
     const byPage = new Map<number, { id: number; source_id: string; slug: string; rows: MarkupRow[]; bullets: boolean; chars: number }>();
     for (const page of pages) {

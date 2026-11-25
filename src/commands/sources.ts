@@ -37,6 +37,7 @@ import { writeFileSync, unlinkSync, existsSync } from 'fs';
 import { join } from 'path';
 import { createHash } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
+import { sqlQueryForEngine } from '../core/sql-query.ts';
 import {
   assessDestructiveImpact,
   checkDestructiveConfirmation,
@@ -59,7 +60,8 @@ import {
 } from '../core/sources-ops.ts';
 import { isValidRepoName } from '../core/github-source.ts';
 import { ALL_GOOGLE_SERVICES, DEFAULT_CALENDAR_ID } from '../core/google/types.ts';
-import { defaultGoogleAddTuning, parseGoogleAddFlag } from './sources-google-flags.ts';
+import { rethrowCapabilityRefusal } from '../core/engine-capability-refusal.ts';
+import { defaultGoogleAddTuning, parseGoogleAddFlag, preflightGoogleAccess } from './sources-google-flags.ts';
 import { noGrantFloorNext, reportAddOutcome } from './sources-add-next.ts';
 import {
   resolveSourceWithTier,
@@ -73,8 +75,8 @@ import {
   sourceFederationState,
   type SourceRow as LoadedSourceRow,
 } from '../core/sources-load.ts';
-import { sqlQueryForEngine } from '../core/sql-query.ts';
 import { preflightOauthClientColumns } from './auth.ts';
+import { hasCapability } from '../core/engine-capabilities.ts';
 import { deleteSourceRow } from '../core/source-delete.ts';
 import { USAGE_EXIT_CODE } from '../core/exit-codes.ts';
 import { isSyncStrategy } from '../core/sync.ts';
@@ -138,6 +140,35 @@ async function fetchSource(engine: BrainEngine, id: string): Promise<SourceRow |
 
 // ── Subcommand: add ─────────────────────────────────────────
 
+/**
+ * The active source that already syncs `account` for an overlapping slice of `services` (and `overlap`, the shared
+ * services in order), or null. Two calendar sources pointing at DIFFERENT calendars never collide — one calendar per
+ * source is how secondary calendars are ingested. Read through the typed listAllSources, which every engine serves.
+ * @internal Exported for test/engine-parity/refusal-blocker-sites.test.ts.
+ */
+export async function findDuplicateGoogleSource(
+  engine: BrainEngine,
+  account: string,
+  services: readonly string[],
+  calendarId: string,
+): Promise<{ id: string; overlap: string } | null> {
+  for (const row of await engine.listAllSources()) {
+    const c = (row.config ?? {}) as Record<string, unknown>;
+    if (c.kind !== 'google' || c.g_account !== account) continue;
+    const existingServices =
+      typeof c.g_services === 'string'
+        ? c.g_services.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
+        : ['gmail', 'calendar', 'contacts'];
+    let overlap = services.filter((s) => existingServices.includes(s));
+    const existingCal =
+      typeof c.g_calendar_id === 'string' && c.g_calendar_id.trim() ? c.g_calendar_id.trim() : DEFAULT_CALENDAR_ID;
+    if (existingCal !== calendarId) overlap = overlap.filter((s) => s !== 'calendar');
+    if (overlap.length === 0) continue;
+    return { id: row.id, overlap: overlap.join(', ') };
+  }
+  return null;
+}
+
 async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   const apiKind = args.includes('--kind') ? args[args.indexOf('--kind') + 1] : undefined;
   if (args[0] && (apiKind === 'meetings' || apiKind === 'slack' || apiKind === 'imessage' || apiKind === 'apple-contacts')) return (await import('./sources-add-api.ts')).runApiSourceAdd(engine, args);
@@ -152,6 +183,8 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
         '       google kind: --account <email> [--services gmail,calendar,contacts] ' +
         '[--history-days <n>] [--future-days <n>] [--loops-exclude-labels <a,b>] [--contacts-dir <dir>] [--calendar-id <id>] [--dir <path>]   (connect first: gbrain google connect)\n' +
         '                    [--access vault|command|env] [--token-command "<cmd>"] [--token-env <VAR>]   (non-vault Google access: gog/gcloud/gateway)\n' +
+        '                    [--access gbrainio] [--gbrainio-command <path>]   (Gmail read through a gbrain.io terminal)\n' +
+        '                    [--private-senders-file <path>]   (threads with these addresses or @domains become owner-only pages)\n' +
         '       apple-contacts kind: --helper-host <host> --token-file <0600 json> [--helper-port <port>] [--proxy socks5h://host:port] [--contacts-dir <dir>] [--record git|database] [--dir <path>]',
     );
     process.exit(2);
@@ -302,79 +335,18 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     // via --calendar-id, or calendar-only next to gmail-only) is the
     // supported topology, not duplication.
     try {
-      const dupRows = await engine.executeRaw<{ id: string; config: unknown }>(
-        `SELECT id, config FROM sources WHERE archived IS NOT TRUE`,
-        [],
-      );
-      let overlapNote = '';
-      const dup = dupRows.find((r) => {
-        const c = typeof r.config === 'string' ? (JSON.parse(r.config) as Record<string, unknown>) : ((r.config ?? {}) as Record<string, unknown>);
-        if (c.kind !== 'google' || c.g_account !== gAccount) return false;
-        const existingServices =
-          typeof c.g_services === 'string'
-            ? c.g_services.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
-            : ['gmail', 'calendar', 'contacts'];
-        let overlap = gServices.filter((s) => existingServices.includes(s));
-        // Two calendar sources pointing at DIFFERENT calendars never collide —
-        // one calendar per source is how secondary calendars are ingested.
-        const existingCal =
-          typeof c.g_calendar_id === 'string' && c.g_calendar_id.trim() ? c.g_calendar_id.trim() : DEFAULT_CALENDAR_ID;
-        if (existingCal !== gTuning.calendarId) overlap = overlap.filter((s) => s !== 'calendar');
-        if (overlap.length === 0) return false;
-        overlapNote = overlap.join(', ');
-        return true;
-      });
+      const dup = await findDuplicateGoogleSource(engine, gAccount!, gServices, gTuning.calendarId);
       if (dup) {
         console.error(
-          `Warning: source "${dup.id}" already syncs ${gAccount} (${overlapNote}) — a second source for the same account and services duplicates its pages and loops in federated reads.`,
+          `Warning: source "${dup.id}" already syncs ${gAccount} (${dup.overlap}) — a second source for the same account and services duplicates its pages and loops in federated reads.`,
         );
       }
-    } catch { /* preflight is best-effort */ }
-    // Access-mode validation (default vault). command/env let a stack that
-    // already holds Google access (gog, gcloud, a credential gateway) drive
-    // this source without gbrain's OAuth flow; --account stays required as
-    // the IDENTITY (From/To matching, deep-link authuser).
-    if (gAccess !== undefined && !['vault', 'command', 'env'].includes(gAccess)) {
-      console.error(`Error: unknown --access "${gAccess}". Valid: vault, command, env.`);
-      process.exit(2);
+    } catch (e) {
+      // A Rust brain's typed refusal is not "no duplicate": let it surface. Any other failure: the preflight is best-effort.
+      rethrowCapabilityRefusal(e);
     }
-    if (gAccess === 'command' && !gTokenCommand?.trim()) {
-      console.error('Error: --access command requires --token-command "<cmd that prints an access token>".');
-      process.exit(2);
-    }
-    if (gAccess === 'env' && !gTokenEnv?.trim()) {
-      console.error('Error: --access env requires --token-env <ENV_VAR_NAME>.');
-      process.exit(2);
-    }
-    if ((gTokenCommand || gTokenEnv) && (gAccess === undefined || gAccess === 'vault')) {
-      console.error('Error: --token-command/--token-env require --access command or --access env.');
-      process.exit(2);
-    }
-    if (gAccess === undefined || gAccess === 'vault') {
-      // Fail fast at registration when the account has no vault entry — the
-      // alternative is a source that errors on every sync.
-      const { openVault, credentialId } = await import('../core/creds/vault.ts');
-      const entry = await openVault().get(credentialId('google', gAccount!));
-      if (!entry) {
-        console.error(
-          `Error: no connected Google account "${gAccount}" in the credential vault.\n` +
-            `Connect it first: gbrain google connect --account ${gAccount}\n` +
-            `(or use another access mode: --access command --token-command "<cmd>" | --access env --token-env <VAR>)`,
-        );
-        process.exit(2);
-      }
-    } else if (gAccess === 'command') {
-      // Probe the command once at registration so a typo fails HERE, not on
-      // every future sync. Best-effort: a transient failure only warns.
-      try {
-        const { CommandAccessProvider } = await import('../core/google/access.ts');
-        await new CommandAccessProvider(gTokenCommand!).getAccessToken();
-      } catch (e) {
-        console.error(`Warning: token command probe failed (${e instanceof Error ? e.message.split('\n')[0] : String(e)}) — the source is registered, but sync will fail until the command works.`);
-      }
-    } else if (gAccess === 'env' && !(process.env[gTokenEnv!] ?? '').trim()) {
-      console.error(`Warning: $${gTokenEnv} is not set in this shell — sync will fail until it carries a live access token.`);
-    }
+    await preflightGoogleAccess({ access: gAccess, tokenCommand: gTokenCommand, tokenEnv: gTokenEnv, account: gAccount!,
+      services: args.includes('--services') ? gServices : null, tuning: gTuning });
   }
   if (ghKind && ghScope === 'repos' && ghRepos.length === 0) {
     console.error('Error: --scope repos requires --repos owner/name,owner/name.');
@@ -423,10 +395,10 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
       ? {
           google: {
             account: gAccount!,
-            services: gServices,
+            services: gAccess === 'gbrainio' ? ['gmail'] : gServices,
             ...gTuning,
             dir: ghDir ?? defaultCloneDir(`${id}-google`),
-            access: (gAccess ?? 'vault') as 'vault' | 'command' | 'env',
+            access: (gAccess ?? 'vault') as 'vault' | 'command' | 'env' | 'gbrainio',
             tokenCommand: gTokenCommand,
             tokenEnv: gTokenEnv,
           },
@@ -841,14 +813,11 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
   class SourceReferencedError extends Error {}
   try {
     await (await import('../core/owned-folder/remove.ts')).removeOwnedFolderThen(engine, id, { keep: keepStorage }, () => engine.transaction(async (tx) => {
-      const cols = await preflightOauthClientColumns(sqlQueryForEngine(tx));
-      if (cols.has('source_id')) {
+      // The oauth_clients.source_id column is read through the typed readOauthClientColumns member (a Rust store always has it).
+      const hasSourceColumn = (await preflightOauthClientColumns(tx)).has('source_id');
+      if (hasSourceColumn) {
         // PHYSICAL count (no deleted_at filter): the FK ignores soft-deletion.
-        const rows = await tx.executeRaw<{ n: string }>(
-          `SELECT COUNT(*)::text AS n FROM oauth_clients WHERE source_id = $1`,
-          [id],
-        );
-        if (Number(rows[0]?.n ?? 0) > 0) throw new SourceReferencedError();
+        if ((await tx.listOauthClients()).some(c => c.source_id === id)) throw new SourceReferencedError();
       }
       await deleteSourceRow(tx, id);
     }));
@@ -964,11 +933,7 @@ async function runArchive(engine: BrainEngine, args: string[]): Promise<void> {
     // the impact check above) and for "already archived" (UPDATE matched no
     // `archived = false` row). Distinguish them: already-archived is a
     // friendly idempotent no-op, not a reasonless failure.
-    const rows = await engine.executeRaw<{ archived: boolean }>(
-      `SELECT archived FROM sources WHERE id = $1`,
-      [id],
-    );
-    if (rows[0]?.archived) {
+    if ((await engine.listArchivedSourceRows()).some((r) => r.id === id)) {
       console.log(`Source "${id}" is already archived — nothing to do.`);
       console.log(`  'gbrain sources archived' shows its purge expiry; 'gbrain sources restore ${id}' un-archives it.`);
       return;
@@ -1115,7 +1080,7 @@ async function runRename(engine: BrainEngine, args: string[]): Promise<void> {
     console.error(`Source "${id}" not found.`);
     process.exit(4);
   }
-  await engine.executeRaw(`UPDATE sources SET name = $1 WHERE id = $2`, [newName, id]);
+  await engine.renameSource(id, newName);
   console.log(`Renamed source "${id}" display: ${src.name} → ${newName} (id is immutable).`);
 }
 
@@ -1179,14 +1144,11 @@ async function runFederate(engine: BrainEngine, args: string[], value: boolean):
   // GST-1113: the mark check and the config write hold the source row, so a concurrent --attest-sources mark commits
   // before (and federate refuses) or after (and sees federated, so it refuses), never between them.
   const wasFederated = await engine.transaction(async tx => {
-    const [row] = await tx.executeRaw<{ config: unknown }>('SELECT config FROM sources WHERE id = $1 FOR UPDATE', [id]);
+    const row = await tx.lockSourceRow(id);
     if (value) await (await import('../core/access/attest-sources.ts')).assertNotScopeSource(tx, id);
     const config = parseConfig(row?.config ?? src.config), before = isFederated(config);
     config.federated = value;
-    await tx.executeRaw(
-      `UPDATE sources SET config = $1::text::jsonb WHERE id = $2`,
-      [JSON.stringify(normalizeSourceConfig(config)), id],
-    );
+    await tx.replaceSourceConfig(id, normalizeSourceConfig(config));
     return before;
   });
   say(`Source "${id}" is now ${value ? 'federated (appears in cross-source default search)' : 'isolated (only searched when explicitly named)'}.`);
@@ -1440,10 +1402,7 @@ async function runWebhookSet(engine: BrainEngine, args: string[]): Promise<void>
   const cfg = parseConfig(src.config);
   cfg.webhook_secret = secret;
   if (githubRepo) cfg.github_repo = githubRepo;
-  await engine.executeRaw(
-    `UPDATE sources SET config = $1::text::jsonb WHERE id = $2`,
-    [JSON.stringify(normalizeSourceConfig(cfg)), id],
-  );
+  await engine.replaceSourceConfig(id, normalizeSourceConfig(cfg));
 
   console.log(`Webhook configured for source "${id}":`);
   if (githubRepo) console.log(`  github_repo:    ${githubRepo}`);
@@ -1502,10 +1461,7 @@ async function runWebhookRotate(engine: BrainEngine, args: string[]): Promise<vo
   const secret = randomBytes(32).toString('hex');
   const cfg = parseConfig(src.config);
   cfg.webhook_secret = secret;
-  await engine.executeRaw(
-    `UPDATE sources SET config = $1::text::jsonb WHERE id = $2`,
-    [JSON.stringify(normalizeSourceConfig(cfg)), id],
-  );
+  await engine.replaceSourceConfig(id, normalizeSourceConfig(cfg));
   console.log(`New webhook secret for source "${id}":`);
   console.log(`  ${secret}`);
   console.log('');
@@ -1526,10 +1482,7 @@ async function runWebhookClear(engine: BrainEngine, args: string[]): Promise<voi
   const cfg = parseConfig(src.config);
   delete cfg.webhook_secret;
   delete cfg.github_repo;
-  await engine.executeRaw(
-    `UPDATE sources SET config = $1::text::jsonb WHERE id = $2`,
-    [JSON.stringify(normalizeSourceConfig(cfg)), id],
-  );
+  await engine.replaceSourceConfig(id, normalizeSourceConfig(cfg));
   console.log(`Webhook configuration cleared for source "${id}".`);
 }
 
@@ -1551,10 +1504,7 @@ async function runTrackedBranch(engine: BrainEngine, args: string[]): Promise<vo
 
   if (setArg) {
     cfg.tracked_branch = setArg;
-    await engine.executeRaw(
-      `UPDATE sources SET config = $1::text::jsonb WHERE id = $2`,
-      [JSON.stringify(normalizeSourceConfig(cfg)), id],
-    );
+    await engine.replaceSourceConfig(id, normalizeSourceConfig(cfg));
     console.log(`Tracked branch for source "${id}" set to "${setArg}".`);
     return;
   }
@@ -1567,10 +1517,7 @@ async function runTrackedBranch(engine: BrainEngine, args: string[]): Promise<vo
       const { execFileSync } = await import('../core/spawn.ts');
       const branch = execFileSync('git', ['-C', src.local_path, 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8' }).trim();
       cfg.tracked_branch = branch;
-      await engine.executeRaw(
-        `UPDATE sources SET config = $1::text::jsonb WHERE id = $2`,
-        [JSON.stringify(normalizeSourceConfig(cfg)), id],
-      );
+      await engine.replaceSourceConfig(id, normalizeSourceConfig(cfg));
       console.log(`Detected branch "${branch}" for source "${id}"; persisted to config.tracked_branch.`);
     } catch (e) {
       console.error(`git rev-parse failed: ${e instanceof Error ? e.message : String(e)}`);

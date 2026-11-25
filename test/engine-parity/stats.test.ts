@@ -210,17 +210,17 @@ describe('engine parity: stats without vectors', () => {
   );
 
   parityTest(
-    'countBrainLivePages counts the live pages of every source and skips soft-deleted ones',
-    { methods: ['putPage', 'softDeletePage', 'countBrainLivePages'] },
+    'countLivePages counts the live pages of every source and skips soft-deleted ones (backup coverage\'s count)',
+    { methods: ['putPage', 'softDeletePage', 'countLivePages'] },
     async (engine, backend) => {
       await createSource(engine, backend, 'live-b');
-      const empty = await engine.countBrainLivePages();
+      const empty = await engine.countLivePages();
       await engine.putPage('notes/l-a', { type: 'note', title: 'A', compiled_truth: 'A.', timeline: '' });
       await engine.putPage('notes/l-b', { type: 'note', title: 'B', compiled_truth: 'B.', timeline: '' });
       await engine.putPage('notes/l-c', { type: 'note', title: 'C', compiled_truth: 'C.', timeline: '' }, { sourceId: 'live-b' });
-      const three = await engine.countBrainLivePages();
+      const three = await engine.countLivePages();
       await engine.softDeletePage('notes/l-b');
-      return { empty, three, afterDelete: await engine.countBrainLivePages() };
+      return { empty, three, afterDelete: await engine.countLivePages() };
     },
   );
 

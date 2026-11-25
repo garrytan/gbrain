@@ -14,9 +14,7 @@
  *    refused at admission on the Rust engine (rust-engine/errors.ts `requireRawSqlPublication`). Fail-first: with that
  *    gate removed and the sites still raw, the Rust arm commits the stdio put_page with no mention edge (its links effect
  *    refuses raw_sql) and never publishes the stdio put_pages batch (the batch re-arm refuses raw_sql); 0 of 4 pass.
- *  - HTTP on Rust: the store keeps no OAuth clients until lane 8 (bound-write-rust) serves the write grant, so an http
- *    write is refused at admission (permission_denied). Those cases declare `oauth_write_grant` and are n/a on Rust
- *    (arm-capabilities.ts); they still run on PGLite and Postgres.
+ *  - HTTP on Rust: the store keeps OAuth clients and serves the write grant, so an http write is admitted on every arm.
  *    The facts backstop effect the same writes queue (persistence/effect-facts.ts) also read through executeRaw; with
  *    the links sites typed and those still raw, the Rust stdio cases committed the right edges but caught 4 and 7
  *    raw_sql refusals (effect-facts.ts dispatchFactsBackstopEffect and the projection rebuild). A remote capture (which
@@ -36,7 +34,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect } from 'bun:test';
-import { parityArms } from './harness.ts';
+import { parityArms, restrictFolder } from './harness.ts';
 import { isCapabilityRefusal } from './arm-capabilities.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
@@ -140,6 +138,21 @@ describe('engine parity: remote mention links', () => {
       .sort((a, b) => a.slug.localeCompare(b.slug));
   });
 
+  // A writer with no identity reads in a record of its own folder coverage: a page under a prefix the record names is
+  // not readable, and a prefix pending only in the store's state does not hide a page from it (the record's coverage is
+  // the whole pending test, as coverageSql reads it inside a record). The Rust arm once refused this writer.
+  parityTest('readLinkTargetPages judges an empty writer whose record names folder coverage like the SQL engines', {
+    methods: ['addLinksBatch', 'readLinkTargetPages'],
+  }, async (engine, backend) => {
+    await seed(engine);
+    await restrictFolder(engine, backend, 'default', 'companies/', 'pending');
+    const policy = { identities: [], satisfiedRuleIds: [], folderCoverage: [{ source_id: 'default', prefix: 'people/' }], owner: false, labelledOnly: false };
+    const rows = (await engine.readLinkTargetPages('default', ['people/alice-example', 'companies/acme-example', 'notes/links-origin'], policy))
+      .sort((a, b) => a.slug.localeCompare(b.slug));
+    expect(rows.map(r => `${r.slug}:${r.readable}`)).toEqual(['companies/acme-example:true', 'notes/links-origin:true', 'people/alice-example:false']);
+    return rows;
+  });
+
   parityTest('the facts backstop extraction reads see a page\'s waiting and finished facts-absorb jobs', {
     methods: ['hasPendingFactsExtraction', 'hasCompletedFactsExtraction', 'admitJob', 'claimNextJob', 'completeJob'],
   }, async (engine) => {
@@ -193,7 +206,6 @@ describe('engine parity: remote mention links', () => {
       parityTest(`a remote ${grouped ? 'put_pages batch' : 'put_page'} over ${transport} commits its mention links`, {
         methods: ['getLinks', 'addLinksBatch', 'insertOauthClient'],
         timeout: 90_000,
-        ...(transport === 'http' ? { requires: 'oauth_write_grant' as const } : {}),
       }, async (recorded) => withHome(async () => {
         const refusals: unknown[] = [];
         const engine = keepingRefusals(recorded, refusals);

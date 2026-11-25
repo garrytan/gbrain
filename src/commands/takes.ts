@@ -17,10 +17,18 @@
  * retains read/maintenance command parsing and presentation.
  */
 
+import { normalizeSlug } from '../core/utils.ts';
+import { isWriteTargetContained, isHostAbsolutePath, msysToNativePath } from '../core/path-confine.ts';
+import { resolveSourceLocalFilePath } from '../core/markdown.ts';
+import { scannerSlugRootMode } from '../core/write-through.ts';
+import { readOnlyCheckout } from '../core/persistence/mirror-read-only.ts';
+import { withNormalizedSlugParams } from '../core/ops/slug-params.ts';
+import { storedWriteSlug } from '../core/persistence/legacy-slug-put.ts';
 import { resolve as resolvePath } from 'node:path';
 import { existsSync } from 'node:fs';
 import type { BrainEngine } from '../core/engine.ts';
-import type { OperationError } from '../core/ops/contract.ts';
+import type { Page } from '../core/types.ts';
+import type { Operation, OperationContext, OperationError } from '../core/ops/contract.ts';
 import { usageError } from '../cli/cli-error.ts';
 import {
   TakesWriteError,
@@ -82,13 +90,40 @@ async function resolveTakesSourceId(engine: BrainEngine): Promise<string> {
   return resolveSourceId(engine, null);
 }
 
+/**
+ * The stored slug of the page a typed name reads, chosen as `takes_list` (and `get_page`) choose it: the name as typed, then
+ * its lowercase, then its normal form, a live page before a deleted one, and where none of those holds a page the one other
+ * stored spelling that normalizes to the same slug. It reads every source, as `takes list` does. A name already in normal form
+ * is returned as it is. Two pages stored under spellings of one slug, with neither typed, are refused and named on stderr.
+ */
+async function readSlug(engine: BrainEngine, typed: string): Promise<string> {
+  let chosen = normalizeSlug(typed);
+  const pick = withNormalizedSlugParams(
+    { name: 'takes_list', mutating: false } as Operation,
+    async (_ctx, params) => { chosen = String(params.page_slug); return null; },
+  );
+  const ctx = {
+    engine, config: loadConfig() ?? { engine: engine.kind },
+    logger: { info: console.error, warn: console.error, error: console.error }, dryRun: false, remote: false,
+  } as OperationContext;
+  try {
+    await pick(ctx, { page_slug: typed });
+  } catch (err) {
+    const e = err as { message?: string; suggestion?: string; detail?: string };
+    if (e.detail !== 'ambiguous_slug') throw err;
+    console.error(`${e.message}${e.suggestion ? ` ${e.suggestion}` : ''}`);
+    process.exit(1);
+  }
+  return chosen;
+}
+
 // --- Subcommands ---
 
 async function cmdList(engine: BrainEngine, args: string[]): Promise<void> {
   // #2079: slug is optional. `gbrain takes list` (no slug) lists ALL active
   // takes — CLI parity with the takes_list operation. A leading flag is not
   // a slug.
-  const slug = args[0] && !args[0].startsWith('-') ? args[0] : undefined;
+  const typed = args[0] && !args[0].startsWith('-') ? args[0] : undefined;
   // #7271: there is no status filter here; an ignored --status read as a filtered list.
   if (args.includes('--status')) {
     console.error('takes list has no --status filter: it lists active takes, and --expired lists superseded ones. Proposed takes wait in the proposal queue: gbrain takes propose --json');
@@ -128,6 +163,8 @@ async function cmdList(engine: BrainEngine, args: string[]): Promise<void> {
     process.exit(1);
   }
 
+  // The page stored under the name as typed (capitals, decomposed accents) is the page asked for; see readSlug.
+  const slug = typed === undefined ? undefined : await readSlug(engine, typed);
   const takes = await engine.listTakes({
     page_slug: slug,
     holder,
@@ -143,7 +180,7 @@ async function cmdList(engine: BrainEngine, args: string[]): Promise<void> {
     return;
   }
 
-  const scope = slug ?? 'this brain';
+  const scope = typed ?? 'this brain';
   if (takes.length === 0) {
     console.log(`No takes on ${scope}.`);
     return;
@@ -365,33 +402,10 @@ async function cmdGrades(engine: BrainEngine, args: string[]): Promise<void> {
   }
 
   const { gradeJudgeMeasured } = await import('../core/cycle/grade-takes-measured.ts');
-  const rows = await engine.executeRaw<{
-    take_id: number; source_id: string; page_slug: string; row_num: number; claim: string; holder: string; since_date: string | null;
-    verdict: string; confidence: number; applied: boolean; judge_model_id: string; prompt_version: string; graded_at: string | Date;
-  }>(
-    `SELECT * FROM (
-       SELECT DISTINCT ON (g.take_id)
-              g.take_id, p.source_id, p.slug AS page_slug, t.row_num, t.claim, t.holder, t.since_date,
-              g.verdict, g.confidence, g.applied, g.judge_model_id, g.prompt_version, g.graded_at
-         FROM take_grade_cache g
-         JOIN takes t ON t.id = g.take_id
-         JOIN pages p ON p.id = t.page_id
-        WHERE p.deleted_at IS NULL
-        ORDER BY g.take_id, g.graded_at DESC
-     ) latest
-     WHERE ($1::text IS NULL OR verdict = $1)
-       AND ($2::real IS NULL OR confidence >= $2)
-       AND ($3::boolean IS NULL OR applied = $3)
-     ORDER BY graded_at DESC, take_id DESC
-     LIMIT $4`,
-    [verdict ?? null, minConfidence ?? null, applied ? true : unapplied ? false : null, limit],
-  );
-  const grades = rows.map(r => ({
-    ...r,
-    confidence: Number(r.confidence),
-    graded_at: r.graded_at instanceof Date ? r.graded_at.toISOString() : String(r.graded_at),
-    judge_measured: gradeJudgeMeasured(r.judge_model_id, r.prompt_version),
-  }));
+  const rows = await engine.listLatestTakeGrades({
+    verdict: verdict ?? null, minConfidence: minConfidence ?? null, applied: applied ? true : unapplied ? false : null, limit,
+  });
+  const grades = rows.map(r => ({ ...r, judge_measured: gradeJudgeMeasured(r.judge_model_id, r.prompt_version) }));
 
   if (json) {
     console.log(JSON.stringify(grades, null, 2));
@@ -839,6 +853,41 @@ export function parseTakesBeforeCursor(rest: readonly string[]): { updatedAt: st
 }
 
 /**
+ * The Markdown file `takes revisit` opens for the page stored as `slug`. A page that records a file (`pages.source_path`, a
+ * `.md` or `.mdx` path) opens that file, placed under its source's root the way sync and `gbrain repair` place it: the source's
+ * own checkout, else the configured brain repo (`.sources/<id>` for a source other than `default`); a name-only path from an
+ * older import is looked for under the slug's folder. A page that records none opens `<repo>/<slug>.md`. Either path must stay
+ * inside that root, symlinks followed; one that does not is refused, never opened and never created. A page in a read-only
+ * checkout (a mirror, or a clone gbrain pulls) is refused too, since the revisit marker would change a file gbrain never writes.
+ */
+type RevisitTarget = { ok: true; filePath: string } | { ok: false; why: 'outside_root' } | { ok: false; why: 'read_only'; sourceId: string; reason: string };
+
+async function revisitFile(engine: BrainEngine, repoPath: string, slug: string): Promise<RevisitTarget> {
+  const { join } = await import('node:path');
+  const { existsSync, statSync } = await import('node:fs');
+  // The page in the `default` source first, then any source; a live page before a deleted one.
+  let row: Page | null = null;
+  for (const includeDeleted of [false, true]) {
+    row = await engine.getPage(slug, { sourceId: 'default', includeDeleted }) ?? await engine.getPage(slug, { includeDeleted });
+    if (row) break;
+  }
+  if (row) {
+    const reason = await readOnlyCheckout(engine, row.source_id);
+    if (reason) return { ok: false, why: 'read_only', sourceId: row.source_id, reason };
+  }
+  const recorded = row?.source_path?.trim();
+  if (!row || !recorded) {
+    const filePath = join(repoPath, `${slug}.md`);
+    return isWriteTargetContained(filePath, repoPath) ? { ok: true, filePath } : { ok: false, why: 'outside_root' };
+  }
+  const local = (await engine.getSource(row.source_id))?.local_path;
+  const sourceRoot = local ? msysToNativePath(local) : row.source_id === 'default' ? repoPath : join(repoPath, '.sources', row.source_id);
+  const usable = !local || isHostAbsolutePath(sourceRoot) && existsSync(sourceRoot) && statSync(sourceRoot).isDirectory();
+  const filePath = usable ? resolveSourceLocalFilePath(sourceRoot, recorded, slug, await scannerSlugRootMode(engine, row.source_id, sourceRoot)) : null;
+  return filePath && isWriteTargetContained(filePath, sourceRoot) ? { ok: true, filePath } : { ok: false, why: 'outside_root' };
+}
+
+/**
  * v0.36.1.0 (TD4 / D30) — `gbrain takes revisit <slug>` opens $EDITOR on
  * the source page so the user can write a follow-up immediately. The
  * action the admin SPA's "revisit now" link triggers (via a small
@@ -847,9 +896,9 @@ export function parseTakesBeforeCursor(rest: readonly string[]): { updatedAt: st
  * Inserts a `<!-- gbrain:revisit -->` cursor marker at the bottom of the
  * page body so the editor opens with intent visible.
  */
-async function cmdRevisit(_engine: BrainEngine, rest: string[]): Promise<void> {
-  const slug = rest[0];
-  if (!slug) {
+async function cmdRevisit(engine: BrainEngine, rest: string[]): Promise<void> {
+  const typed = rest[0];
+  if (!typed) {
     process.stderr.write('Usage: gbrain takes revisit <slug>\n');
     process.exit(1);
   }
@@ -863,7 +912,16 @@ async function cmdRevisit(_engine: BrainEngine, rest: string[]): Promise<void> {
     process.stderr.write('No brain repo configured. Run `gbrain config set sync.repo_path /path/to/brain`.\n');
     process.exit(1);
   }
-  const filePath = join(repoPath, `${slug}.md`);
+  // The page the typed name selects (see readSlug) owns the file: its recorded file when it has one, else `<slug>.md`.
+  const slug = await readSlug(engine, typed);
+  const target = await revisitFile(engine, repoPath, slug);
+  if (!target.ok) {
+    process.stderr.write(target.why === 'read_only'
+      ? `Refusing to open ${typed}: its source ${target.sourceId} is a read-only checkout (${target.reason}), and the revisit marker would change a file gbrain does not write. Open the file in your editor directly.\n`
+      : `Refusing to open the file recorded for ${typed}: it is not a Markdown file inside the source root.\n`);
+    process.exit(1);
+  }
+  const filePath = target.filePath;
   if (!existsSync(filePath)) {
     process.stderr.write(`Page not found: ${filePath}\n`);
     process.exit(1);
@@ -915,17 +973,16 @@ async function cmdHorizon(engine: BrainEngine, args: string[]): Promise<void> {
   }
 
   if (sub !== 'set' && sub !== 'clear') fail(usage);
-  const slug = rest[0] && !rest[0].startsWith('-') ? rest[0] : fail(usage);
+  const typed = rest[0] && !rest[0].startsWith('-') ? rest[0] : fail(usage);
   const rowRaw = flagValue(rest, '--row');
   const row = rowRaw === undefined ? NaN : Number(rowRaw);
   if (!Number.isSafeInteger(row) || row < 1) fail(`--row requires the take's row number (a positive integer), e.g. --row 1.\n${usage}`);
   const sourceId = await resolveSourceId(engine, flagValue(rest, '--source-id') ?? null);
-  const [take] = await engine.executeRaw<{ id: number | string }>(
-    `SELECT t.id FROM takes t JOIN pages p ON p.id = t.page_id
-      WHERE p.source_id = $1 AND p.slug = $2 AND t.row_num = $3 AND p.deleted_at IS NULL`,
-    [sourceId, slug, row]);
-  if (!take) fail(`No take ${slug}#${row} on source ${sourceId}. List the page's takes with: gbrain takes ${slug}`);
-  const takeId = Number(take!.id);
+  // The page stored under the exact spelling typed (or its lowercase) first, then the normal form, as an existing-page write resolves it.
+  const slug = await storedWriteSlug(engine, sourceId, typed, normalizeSlug(typed)) ?? normalizeSlug(typed);
+  const pageId = await engine.readLivePageIdBySlug(slug, sourceId);
+  const takeId = pageId === null ? null : await engine.findTakeId(pageId, row);
+  if (takeId === null) return fail(`No take ${slug}#${row} on source ${sourceId}. List the page's takes with: gbrain takes ${slug}`);
 
   if (sub === 'set') {
     const date = flagValue(rest, '--date') ?? fail(`--date YYYY-MM-DD is required.\n${usage}`);

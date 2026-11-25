@@ -14,15 +14,16 @@ import * as spendLog from '../../src/core/engine-sql/spend-log.ts';
 import * as oauthClients from '../../src/core/engine-sql/oauth-clients.ts';
 import * as accessTokens from '../../src/core/engine-sql/access-tokens.ts';
 import * as jobsSpend from '../../src/core/engine-sql/jobs-spend.ts';
+import { pingStore } from '../../src/core/engine-sql/health.ts';
 
 const MEMBERS = [
   'deleteTerminalJob', 'pauseJob', 'resumeJob', 'failParentJob', 'resolveParentJob', 'resolveStrandedParents', 'detachChildJob',
-  'updateJobProgress', 'addJobTokens', 'delayActiveJob', 'releaseWatchdogClaim', 'markJobWatchdogSuspect',
+  'updateJobProgress', 'addJobTokens', 'delayActiveJob', 'releaseWatchdogClaim', 'releaseClaimForPause', 'deferClaimForQuietHours', 'markJobWatchdogSuspect',
   'promoteDelayedJobs', 'cancelJobs', 'killTimedOutJobs', 'killWallClockJobs', 'pruneJobs', 'retryJob',
   'listSynthesisCompletionKeys', 'listRecentSynthesisCompletions',
   'postInboxMessage', 'readJobInbox', 'readChildCompletions',
   'listOpenJobIdsInQueue', 'renewPrivateQueueLease', 'listOwnedPrivateQueues', 'readPrivateQueueState',
-  'listStaleWaitingJobIds', 'countTtlExpiredWaiting', 'readJobStats', 'readQueueFamilyStats', 'hasOverdueWatchdogSuspect',
+  'listStaleWaitingJobIds', 'listUnfinishedJobsByName', 'countTtlExpiredWaiting', 'readJobStats', 'readQueueFamilyStats', 'hasOverdueWatchdogSuspect',
   'listUnreviewedJobs', 'getFailedJobForRetry', 'countOpenJobsByOwner', 'readJobSourceState', 'lockOAuthClient', 'listJobPage',
   'listJobAttachmentNames', 'insertJobAttachment', 'listJobAttachments', 'getJobAttachment', 'deleteJobAttachment',
 ] as const satisfies ReadonlyArray<keyof typeof jobsQueue>;
@@ -35,7 +36,7 @@ const HEALTH_MEMBERS = [
 
 /** The status reads (engine-sql/jobs-status.ts), added the same way. */
 const STATUS_MEMBERS = [
-  'readLastAutopilotCycles', 'countJobsByStatus', 'readWaitingQueueDepths', 'readLastCompletedJobAt', 'countTtlCancelledByName',
+  'listRecentSourceCycleFailures', 'readLastAutopilotCycles', 'countJobsByStatus', 'readWaitingQueueDepths', 'readLastCompletedJobAt', 'countTtlCancelledByName',
   'readWaitingScopeState', 'countRecentCompletedJobs', 'listRecentFailedJobErrors', 'readQueuedPageChars', 'readSourceJobCounts',
   'readEmbedBackfillBySource',
 ] as const satisfies ReadonlyArray<keyof typeof jobsStatus>;
@@ -56,7 +57,7 @@ const SPEND_LOG_MEMBERS = [
 const OAUTH_CLIENT_MEMBERS = ['readOauthClient', 'listOauthClients', 'patchOauthClient'] as const satisfies ReadonlyArray<keyof typeof oauthClients>;
 
 /** The `access_tokens` rows (engine-sql/access-tokens.ts), added the same way. */
-const ACCESS_TOKEN_MEMBERS = ['insertAccessToken', 'findActiveAccessTokens', 'setAccessTokenMinTrust'] as const satisfies ReadonlyArray<keyof typeof accessTokens>;
+const ACCESS_TOKEN_MEMBERS = ['insertAccessToken', 'findActiveAccessTokens', 'setAccessTokenMinTrust', 'readLiveAccessTokenScope'] as const satisfies ReadonlyArray<keyof typeof accessTokens>;
 
 /** `fake` with every queue member it lacks, each running the shared statement on `fake`. */
 export function withQueueMembers<T extends object>(fake: T): T {
@@ -65,6 +66,12 @@ export function withQueueMembers<T extends object>(fake: T): T {
     if (name in target) continue;
     const member = jobsQueue[name] as (tx: unknown, ...args: unknown[]) => unknown;
     target[name] = (...args: unknown[]) => member(fake, ...args);
+  }
+  // The worker's health probe (`pingStore`): the shared `SELECT 1` on `fake`'s executeRaw, or its executeRawDirect on the direct lane.
+  if (!('pingStore' in target)) {
+    target.pingStore = (opts?: { signal?: AbortSignal; direct?: boolean }) => pingStore(opts?.direct
+      ? { executeRaw: (sql, params, o) => (target.executeRawDirect as (...a: unknown[]) => Promise<never[]>)(sql, params, o) }
+      : fake as never, opts);
   }
   for (const name of HEALTH_MEMBERS) {
     if (name in target) continue;

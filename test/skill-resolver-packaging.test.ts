@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { VERSION } from '../src/version.ts';
+import { envWithoutDatabaseUrl } from './helpers/cli-spawn.ts';
 
 const ROOT = resolve(import.meta.dir, '..');
 const NODE = Bun.which('node');
@@ -50,7 +51,7 @@ describe('skill resolver packaging', () => {
       const sum = createHash('sha256').update(readFileSync(out)).digest('hex');
       expect(readFileSync(`${out}.sha256`, 'utf8')).toBe(`${sum}  gbrain-skill-resolver.mjs\n`);
       const home = join(dir, 'home');
-      const cli = Bun.spawnSync([process.execPath, 'src/cli.ts', 'skills', 'library', '--json'], { cwd: ROOT, stdout: 'pipe', stderr: 'pipe', env: { ...process.env, GBRAIN_HOME: home } });
+      const cli = Bun.spawnSync([process.execPath, 'src/cli.ts', 'skills', 'library', '--json'], { cwd: ROOT, stdout: 'pipe', stderr: 'pipe', env: { ...envWithoutDatabaseUrl(), GBRAIN_HOME: home } });
       expect(cli.exitCode, cli.stderr.toString()).toBe(0);
       const lib = JSON.parse(cli.stdout.toString()) as { path: string; sha256: string; bytes: number; gbrain_version: string };
       expect(lib.path).toBe(join(home, '.gbrain', 'lib', 'gbrain-skill-resolver.mjs'));
@@ -87,7 +88,7 @@ describe('skill resolver packaging', () => {
 
   test('the release attaches the bundle with its sha256 and checks it before publishing', () => {
     const wf = readFileSync(join(ROOT, '.github/workflows/release.yml'), 'utf8');
-    expect(wf).toContain('gbrain-darwin-arm64,gbrain-linux-x64,gbrain-skill-resolver.mjs,gbrain-skill-resolver.mjs.sha256');
+    expect(wf).toContain('gbrain-darwin-arm64,gbrain-engine-rust-darwin-arm64.node,gbrain-engine-rust-linux-x64-glibc.node,gbrain-engine-rust.sha256.json,gbrain-linux-x64,gbrain-skill-resolver.mjs,gbrain-skill-resolver.mjs.sha256');
     expect(wf).toContain('bun scripts/build-skill-resolver-bundle.ts --out bundle/gbrain-skill-resolver.mjs --smoke');
     expect(wf).toContain('artifacts/gbrain-skill-resolver.mjs/gbrain-skill-resolver.mjs.sha256');
     const check = wf.indexOf('sha256sum -c gbrain-skill-resolver.mjs.sha256');

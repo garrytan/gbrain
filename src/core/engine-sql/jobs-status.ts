@@ -8,6 +8,7 @@
  * so every engine lists ties the same way.
  */
 import type { BrainEngine } from '../engine.ts';
+import { renderFragment, sqlFragment } from './fragment.ts';
 
 type Raw = Pick<BrainEngine, 'executeRaw'>;
 
@@ -117,6 +118,33 @@ export async function readWaitingQueueDepths(tx: Raw): Promise<QueueDepth[]> {
   }));
 }
 
+/** One source's recent whole-cycle failures (`listRecentSourceCycleFailures`). */
+export interface SourceCycleFailureRow { source_id: string; fail_count: number; last_failed_at: Date }
+
+/**
+ * Dead or failed `autopilot-cycle` jobs that finished after `cutoff` (an ISO instant), grouped by `data->>'source_id'`: how
+ * many, and when the last one finished. A cycle that ran but had a failed phase (`job_outcome: 'phase_failed'`) and a job
+ * with no source id do not count. `sourceId` narrows to one source. Rows by source id, bytewise (the statement has no order).
+ */
+export async function listRecentSourceCycleFailures(tx: Raw, spec: { cutoff: string; sourceId?: string | null }): Promise<SourceCycleFailureRow[]> {
+  const only = spec.sourceId ? sqlFragment` AND data->>'source_id' = ${spec.sourceId}` : sqlFragment``;
+  // The statement's bytes are the old inline text (pinned in test/engine-sql-cycle-failures-pins.test.ts); sqlFragment only numbers its parameters.
+  const { text, params } = renderFragment(sqlFragment`SELECT data->>'source_id' AS source_id,
+              count(*)::int AS fail_count,
+              max(finished_at) AS last_failed_at
+         FROM minion_jobs
+        WHERE name = 'autopilot-cycle'
+          AND status IN ('dead','failed')
+          AND (result->>'job_outcome' IS NULL OR result->>'job_outcome' <> 'phase_failed')
+          AND data->>'source_id' IS NOT NULL
+          AND finished_at IS NOT NULL
+          AND finished_at > ${spec.cutoff}${only} GROUP BY data->>'source_id'`);
+  const rows = await tx.executeRaw<{ source_id: string; fail_count: number | string; last_failed_at: Timestamp }>(text, params);
+  return rows
+    .map(r => ({ source_id: r.source_id, fail_count: Number(r.fail_count), last_failed_at: date(r.last_failed_at) }))
+    .sort((a, b) => (a.source_id < b.source_id ? -1 : a.source_id > b.source_id ? 1 : 0));
+}
+
 /** The freshest `updated_at` among completed jobs, or null when none completed. */
 export async function readLastCompletedJobAt(tx: Raw): Promise<Date | null> {
   const [row] = await tx.executeRaw<{ last_completed: Timestamp | null }>(
@@ -184,6 +212,26 @@ export async function listRecentFailedJobErrors(tx: Raw, withinSeconds: number):
       ORDER BY id`,
     [withinSeconds]);
   return rows.map(r => ({ id: Number(r.id), last_error: r.last_error }));
+}
+
+/** A live budget-owning job: its remaining cents and the cents its budget log reserved. */
+export interface BudgetOwnerRow { owner_id: number; remaining_cents: number | null; total_spent_cents: number | null }
+
+/** The newest five jobs that own a budget and are not finished, with their reserved spend, newest id first. */
+export async function listBudgetOwners(tx: Raw): Promise<BudgetOwnerRow[]> {
+  return tx.executeRaw<BudgetOwnerRow>(
+    `SELECT
+         mj.id AS owner_id,
+         mj.budget_remaining_cents AS remaining_cents,
+         COALESCE((SELECT SUM(ABS(cents_delta)) FROM minion_budget_log
+                    WHERE owner_id = mj.id AND event_type = 'reserved'), 0) AS total_spent_cents
+       FROM minion_jobs mj
+       WHERE mj.budget_remaining_cents IS NOT NULL
+         AND mj.budget_owner_job_id = mj.id
+         AND mj.status NOT IN ('completed', 'failed', 'dead', 'cancelled')
+       ORDER BY mj.id DESC
+       LIMIT 5`,
+  );
 }
 
 /**

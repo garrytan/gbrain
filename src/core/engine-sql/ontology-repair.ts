@@ -20,7 +20,7 @@ export type { EngineRawRead };
 export interface RekeyMove { where: string; entity: string; sms: string; params: [unknown, unknown] }
 
 const REKEY_WHERE_BY_ID = 'f.id = $2::bigint AND ';
-const REKEY_WHERE_SHAPES: readonly string[] = [
+export const REKEY_WHERE_SHAPES: readonly string[] = [
   'f.entity_slug = $2 AND f.row_num IS NULL',
   REKEY_WHERE_BY_ID + UNBACKED_FACT_SQL,
   'f.entity_slug = $2 AND f.source_markdown_slug IS DISTINCT FROM $2',
@@ -28,8 +28,8 @@ const REKEY_WHERE_SHAPES: readonly string[] = [
   'f.source_markdown_slug = $2',
   'f.source_markdown_slug = $3 AND f.expired_at IS NULL',
 ];
-const REKEY_ENTITY_SHAPES: readonly string[] = ['$3::text', 'f.entity_slug', '$2::text'];
-const REKEY_SMS_SHAPES: readonly string[] = ['f.source_markdown_slug', '$3::text', '$2::text'];
+export const REKEY_ENTITY_SHAPES: readonly string[] = ['$3::text', 'f.entity_slug', '$2::text'];
+export const REKEY_SMS_SHAPES: readonly string[] = ['f.source_markdown_slug', '$3::text', '$2::text'];
 
 /** A re-key move's text, when it is one of the closed shapes; the move never carries a value. */
 function rekeyMoveSql(text: string, shapes: readonly string[]): string {
@@ -103,27 +103,8 @@ const DUPLICATE_F = `EXISTS (SELECT 1 FROM facts d WHERE d.source_id=f.source_id
 /** The test that a row is not a conversation fact; no values. */
 function ontologyConversationSlotSql(): string { return NOT_CONVERSATION_SLOT_SQL; }
 
-export interface OntologyFactCandidateRow {
-  id: number | string; source_id: string; entity_slug: string; dimension: string; source: string; page: string | null;
-  row_num: number | string | null; expired_at: string | null; withdrawn: boolean; consolidated: boolean; duplicate: boolean;
-}
-
-/** The ontology rows of these sources that carry the fence step's signature, with whether each was withdrawn, consolidated or would duplicate another observation. */
-export async function listOntologyFactCandidates(raw: EngineRawRead, sourceIds: string[]): Promise<OntologyFactCandidateRow[]> {
-  const sql = renderFragment(sqlFragment`
-    SELECT f.id, f.source_id, f.entity_slug, f.dimension, f.source, f.source_markdown_slug AS page, f.row_num,
-           ${trustedSql(EXPIRY_TEXT_F)} AS expired_at,
-           EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id AND w.visibility=f.visibility
-             AND (w.subject='*' OR w.subject=f.entity_slug)
-             AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact))) AS withdrawn,
-           f.consolidated_into IS NOT NULL AS consolidated,
-           ${trustedSql(DUPLICATE_F)} AS duplicate
-      FROM facts f
-     WHERE f.source_id=ANY(${sourceIds}::text[]) AND f.dimension IS NOT NULL AND f.entity_slug IS NOT NULL AND f.source IS NOT NULL
-       AND (f.row_num IS NOT NULL OR f.source_markdown_slug IS DISTINCT FROM f.source) AND ${trustedSql(ontologyConversationSlotSql())}
-     ORDER BY f.id`);
-  return raw<OntologyFactCandidateRow>(sql.text, sql.params);
-}
+/** The candidate row of `listOntologyFactCandidates`, which lives in facts-repair.ts with the other repair previews. */
+export type { OntologyCandidateRow as OntologyFactCandidateRow } from './facts-repair.ts';
 
 export interface OntologyFactRestore { id: number; source_id: string; row_num: number | null; page: string | null; expired_at: string | null }
 

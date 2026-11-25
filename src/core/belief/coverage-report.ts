@@ -50,9 +50,7 @@ const field = (row: CoverageRow, name: string) => obj(row.value)[name] ?? obj(ro
 
 /** Coverage intervals of the source's current incarnation, oldest first. */
 export async function coverageIntervals(engine: BrainEngine, sourceId: string): Promise<CoverageInterval[]> {
-  const rows = await engine.executeRaw<CoverageRow>(`SELECT e.id, e.event_type, e.recorded_at, e.value, e.cause, e.source_incarnation::text AS incarnation
-    FROM belief_events e JOIN sources s ON s.id = e.source_id AND s.incarnation = e.source_incarnation
-    WHERE e.source_id = $1 AND e.subject_kind = 'coverage' AND e.subject_key = $2 ORDER BY e.id`, [sourceId, COVERAGE_KEY]);
+  const rows: CoverageRow[] = await engine.readBeliefCoverageEvents(sourceId);
   const intervals: CoverageInterval[] = [];
   for (const row of rows) {
     const id = Number(row.id);
@@ -89,7 +87,7 @@ export async function coverageIntervals(engine: BrainEngine, sourceId: string): 
         AND ($4::timestamptz IS NULL OR recorded_at <= $4::timestamptz) ORDER BY id`,
     [sourceId, interval.incarnation, interval.started_id, interval.stopped_at]);
     interval.drift = drift.map(d => ({ slug: d.slug, event_id: Number(d.id), from: d.from ? iso(d.from) : null, to: iso(d.recorded_at) }));
-    const walks = await engine.executeRaw<{ request: string }>(`SELECT DISTINCT cause->>'purge_request' AS request FROM belief_events
+    const walks = await engine.executeRaw<{ request: string }>(`SELECT DISTINCT cause->>'purge_request' COLLATE "C" AS request FROM belief_events
       WHERE source_id = $1 AND event_type = 'derived.hidden' AND cause->>'derived_walk' = 'truncated' AND source_incarnation = $2::uuid AND id > $3
         AND ($4::timestamptz IS NULL OR recorded_at <= $4::timestamptz) ORDER BY 1`, [sourceId, interval.incarnation, interval.started_id, interval.stopped_at]);
     interval.truncated_walks = walks.map(w => w.request);
@@ -197,7 +195,7 @@ export async function scanBeliefDrift(engine: BrainEngine, sourceId: string, opt
       SELECT p.slug, p.updated_at AS at FROM pages p WHERE p.source_id = $1
       UNION ALL SELECT f.entity_slug, max(f.created_at) FROM facts f WHERE f.source_id = $1 AND f.source_markdown_slug IS NULL AND f.entity_slug IS NOT NULL GROUP BY f.entity_slug
       UNION ALL SELECT l.slug, l.started_at FROM belief_page_lifetimes l WHERE l.source_id = $1 AND l.source_incarnation = $2::uuid AND l.ended_at IS NULL
-    ) c GROUP BY slug ORDER BY max(at) DESC NULLS LAST, slug`, [sourceId, source.incarnation]);
+    ) c GROUP BY slug ORDER BY max(at) DESC NULLS LAST, slug COLLATE "C"`, [sourceId, source.incarnation]);
   const limit = opts.deep ? candidates.length : Math.min(candidates.length, opts.limit ?? DRIFT_SAMPLE_PAGES);
   const drifted: DriftFinding[] = [];
   for (const { slug } of candidates.slice(0, limit)) {
@@ -313,7 +311,7 @@ export async function orphanLifetimes(engine: BrainEngine, sourceId: string, lim
       WHERE l.source_id = $1 AND l.ended_at IS NULL AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = l.source_id AND p.slug = l.slug)
       UNION ALL SELECT DISTINCT e.slug, e.page_lifetime::text, 'no_lifetime' FROM belief_events e
       WHERE $2::boolean AND e.source_id = $1 AND e.page_lifetime IS NOT NULL AND NOT EXISTS (SELECT 1 FROM belief_page_lifetimes l WHERE l.page_lifetime = e.page_lifetime)
-    ) o ORDER BY slug LIMIT ${Math.max(1, Math.floor(limit))}`, [sourceId, opts.deep === true]);
+    ) o ORDER BY slug COLLATE "C", page_lifetime COLLATE "C" LIMIT ${Math.max(1, Math.floor(limit))}`, [sourceId, opts.deep === true]);
   return { count: Number(rows[0]?.total ?? 0), samples: rows.map(r => ({ slug: r.slug, page_lifetime: r.page_lifetime, reason: r.reason })) };
 }
 

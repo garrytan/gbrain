@@ -10,12 +10,13 @@
  * 3. Seam: test/helpers/json-schema-lite.ts (no new dependency).
  */
 import { afterAll, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildSkillIndex, normalizeTurnInput, resolveSkills, ResolverError } from '../src/core/skills/resolver/index.ts';
 import { readJsonSource } from '../src/core/skills/resolver/sources.ts';
 import { loadSchema, validate } from './helpers/json-schema-lite.ts';
+import { __setPickerTransportForTests } from '../src/core/skills/resolver/router-http.ts';
 
 const dirs: string[] = [];
 afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
@@ -47,14 +48,21 @@ describe('turn input', () => {
 });
 
 describe('build input (the --from-json catalog)', () => {
+  test('the build-input schema types the optional fields the reader checks', () => {
+    const schema = JSON.parse(readFileSync(join(import.meta.dir, '..', 'docs/schemas/skill-resolver.v1.build-input.json'), 'utf8')) as { $defs: { skill: { properties: Record<string, { type?: string }> } } };
+    const props = schema.$defs.skill.properties;
+    const fields = ['eligible', 'disable_model_invocation', 'deprecated', 'replaced_by', 'when_to_use'];
+    expect(Object.fromEntries(fields.map(f => [f, props[f]?.type]))).toEqual({ eligible: 'boolean', disable_model_invocation: 'boolean', deprecated: 'boolean', replaced_by: 'string', when_to_use: 'string' });
+  });
   test('accepted catalogs validate; refused ones do not', () => {
     const openclaw = { workspaceDir: '/work/acme-example', managedSkillsDir: '/work/acme-example/skills', skills: [{ name: 'deploy', description: 'Ship it', eligible: true, disabled: false, modelVisible: true, emoji: 'x' }] };
-    for (const g of [SKILLS, { skills: SKILLS }, [], openclaw]) { expect(validate(CATALOG, g)).toEqual([]); expect(() => readJsonSource(JSON.stringify(g))).not.toThrow(); }
+    const deprecated = [...SKILLS, { id: 'x:old', name: 'old', deprecated: true, replaced_by: 'gbrain:reports' }];
+    for (const g of [SKILLS, { skills: SKILLS }, [], openclaw, deprecated]) { expect(validate(CATALOG, g)).toEqual([]); expect(() => readJsonSource(JSON.stringify(g))).not.toThrow(); }
     for (const b of [{ workspaceDir: '/w', skills: [{ description: 'no name' }] }, { workspaceDir: '/w', skills: [{ name: 'a', disabled: 'yes' }] }]) {
       expect(validate(CATALOG, b).length).toBeGreaterThan(0);
       expect(() => readJsonSource(JSON.stringify(b))).toThrow();
     }
-    for (const b of [[{ id: 'a' }], [{ id: '', name: 'b' }], [{ id: 'a', name: 'b', triggers: 'x' }], [{ id: 'a', name: 'b', eligible: 'no' }], { list: [] }, 'x']) {
+    for (const b of [[{ id: 'a' }], [{ id: '', name: 'b' }], [{ id: 'a', name: 'b', triggers: 'x' }], [{ id: 'a', name: 'b', eligible: 'no' }], [{ id: 'a', name: 'b', deprecated: 'yes' }], [{ id: 'a', name: 'b', replaced_by: 3 }], { list: [] }, 'x']) {
       expect(validate(CATALOG, b).length).toBeGreaterThan(0);
       expect(() => readJsonSource(JSON.stringify(b))).toThrow();
     }
@@ -91,6 +99,21 @@ describe('turn output and build receipt', () => {
     expect(results[0]!.output.suggestions[0]!.path).toBe('/skills/deploy/SKILL.md');
     expect(results[4]!.output.ranker.variant).toBe('T+D');
     expect(results[5]!.output.error!.code).toBe('skill_index_missing');
+  });
+
+  test('a turn the model picker answered, and one it fell back on, validate', async () => {
+    const home = tmp();
+    await buildSkillIndex({ catalog: 'one', fromJson: JSON.stringify(SKILLS), fromJsonStdin: true }, { home });
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ skills: { resolver: { router: true } } }));
+    try {
+      __setPickerTransportForTests(async () => ({ text: JSON.stringify({ needed: true, skills: [SKILLS[0]!.id] }), refused: false, usage: { input: 100, cacheRead: 0, cacheWrite: 0, output: 10 } }));
+      const picked = (await resolveSkills({ message: 'zzqxv' }, { home, router: true })).output;
+      expect(picked.suggestions[0]!.match_strength).toBe('picked');
+      __setPickerTransportForTests(async () => { throw new Error('down'); });
+      const fell = (await resolveSkills({ message: 'deploy' }, { home, router: true })).output;
+      expect(fell.router!.fallback).toEqual({ code: 'provider_error' });
+      for (const d of [picked, fell]) expect(validate(OUTPUT, JSON.parse(JSON.stringify(d)))).toEqual([]);
+    } finally { __setPickerTransportForTests(null); }
   });
 
   test('the schemas reject a document with an extra or missing field', async () => {

@@ -48,6 +48,42 @@ async function seed(engine: BrainEngine, backend: Parameters<typeof createSource
 }
 
 describe('engine parity: projection drain reads', () => {
+  // Loss row 41: the image classes. A sealable image (safe fence, one image_asset chunk at index 0 holding the page's
+  // text) is counted, previewed and sealed by a media drain; an image whose chunk no longer holds its text needs a
+  // re-import; a protected image is never sealed. The drain's statistics refresh follows the row estimate.
+  parityTest('the backlog, preview and a media drain class image pages as sealable, reimport or protected, and report the statistics refresh',
+    { methods: ['putPage', 'upsertChunks', 'setChunkerVersion', 'readProjectionBacklog', 'listProjectionDrainPreview', 'hasDrainableProjectionJob',
+      'hasQueuedProjectionWork', 'listImageSealWindow', 'readImageSealPages', 'listImageSealChunks', 'sealImagePages', 'readPagesRowEstimate',
+      'readDrainRunStart', 'isDrainClockPast', 'getPage', 'transaction', 'lockPageKeys'] },
+    async (engine) => {
+      const image = async (slug: string, body: string, chunkText: string, version = 4) => {
+        await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: body, timeline: '', page_kind: 'image' } as never);
+        await engine.upsertChunks(slug, [{ chunk_index: 0, chunk_text: chunkText, chunk_source: 'image_asset', modality: 'image' } as never]);
+        await engine.setChunkerVersion(slug, version);
+      };
+      await image('images/sealable', 'Photo of a heron', 'Photo of a heron');
+      await image('images/changed', 'Photo of an ibex', 'an older caption');
+      await image('images/pre-fence', 'Photo of a lynx', 'Photo of a lynx', 3);
+      await image('images/receipt', PROTECTED_BODY, PROTECTED_BODY);
+      await engine.putPage('notes/a', PAGE('A', 'a queued note.'));
+      const before = shape(await projectionBacklog(engine));
+      const preview = (await previewProjectionDrain(engine)).rows.map(r => ({ slug: r.slug, page_kind: r.page_kind }));
+      const probes = { drainable: await engine.hasDrainableProjectionJob({ media: true }), work: await engine.hasQueuedProjectionWork({ media: true }) };
+      const first = await drainProjections(engine, { media: true });
+      const sealedPage = await engine.getPage('images/sealable');
+      await image('images/second', 'Photo of an otter', 'Photo of an otter');
+      const second = await drainProjections(engine, { media: true });
+      const view = (r: typeof first) => ({ rebuilt: r.rebuilt, sealed: r.sealed, sealed_with_visual: r.sealed_with_visual, sealed_text_only: r.sealed_text_only,
+        statistics_refreshed: r.statistics_refreshed, remaining: r.remaining, left: r.remaining_by_class && shape(r.remaining_by_class) });
+      const out = { before, preview, probes, first: view(first), second: view(second),
+        sealed: sealedPage?.text_projection_revision === sealedPage?.knowledge_revision };
+      expect(out.before).toMatchObject({ pending: 1, sealable: 1, reimport: 2, protected: 1 });
+      expect(out.preview.map(r => r.slug)).toEqual(['notes/a', 'images/sealable']);
+      expect(out.first).toMatchObject({ rebuilt: 1, sealed: 1, statistics_refreshed: true });
+      expect(out.second).toMatchObject({ sealed: 1, statistics_refreshed: false });
+      return out;
+    });
+
   parityTest('projectionBacklog counts the queue by class, within a source scope',
     { methods: ['putPage', 'listQueuedPageProjections', 'markProjectionRebuildFailed', 'readProjectionBacklog'] },
     async (engine, backend) => {

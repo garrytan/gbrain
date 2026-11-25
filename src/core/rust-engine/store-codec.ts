@@ -13,6 +13,18 @@ function reviveDate(value: unknown): unknown {
   return typeof value === 'string' ? new Date(value) : value;
 }
 
+/**
+ * The lowercase hyphenated text of a uuid, read as Postgres reads `$1::uuid`: optional braces, a hyphen optional after
+ * any group of four hex digits, any case. Anything else throws Postgres's own message, so a Rust member keyed by a
+ * token id refuses the ids a SQL engine refuses and finds the ones it finds.
+ */
+export function uuidText(value: string): string {
+  const bare = value.startsWith('{') && value.endsWith('}') ? value.slice(1, -1) : value;
+  if (!/^[0-9a-f]{4}(?:-?[0-9a-f]{4}){7}$/i.test(bare)) throw new Error(`invalid input syntax for type uuid: "${value}"`);
+  const hex = bare.replace(/-/g, '').toLowerCase();
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 /** A copy of `row` with the named date fields turned into `Date`. A field the row lacks stays absent. */
 export function withDates<T extends object>(row: T, fields: readonly string[]): T {
   const out: Row = { ...(row as Row) };
@@ -157,7 +169,7 @@ function versionHash(version: object): Row {
 export function toVersion<T extends object>(version: T): T {
   const rest = versionHash(version);
   const frontmatter = (rest.frontmatter ?? {}) as Row;
-  return { ...rest, replaced_because: rest.replaced_because ?? null, valid_from: validDate(frontmatter.valid_from), valid_until: validDate(frontmatter.valid_until) } as T;
+  return { ...rest, replaced_because: (rest as Row).replaced_because ?? null, valid_from: validDate(frontmatter.valid_from), valid_until: validDate(frontmatter.valid_until) } as T;
 }
 
 /**

@@ -7,7 +7,7 @@
  * answer engine-free, or fall through to connectEngine and fail. The routing
  * rows pin the route-then-refuse split (takes/cache/quarantine/jobs/search)
  * and the pre-connect subcommand rules (sources, capture, forget, call,
- * agent register, eval whoknows, doctor, status).
+ * agent register, eval whoknows, doctor, status, waiting).
  * Fails when: W4's command table loses a refusal (a command runs locally
  * against a remote brain), routes a host-bound subcommand, changes a hint or
  * exit code, or moves a check across the connectEngine terminator.
@@ -57,6 +57,7 @@ const ROUTING_ROWS: string[][] = [
   ['agent', 'register', 'alice-example'],
   ['eval', 'whoknows'],
   ['doctor'],
+  ['waiting'],
   ['think', 'q'],
   ['recall', 'q'],
   ['query', 'q'],

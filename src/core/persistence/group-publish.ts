@@ -36,6 +36,7 @@
 import { relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { SourceStateOptions } from '../engine-sql/write-misc.ts';
+import { PAGE_PURGE_TOMBSTONES_SQL } from '../engine-sql/page-purge.ts';
 import { SOURCE_PURGE_EPOCH_SQL } from '../engine-sql/sync-reason-reads.ts';
 import { OperationError } from '../ops/contract.ts';
 import { withoutReadDeadline } from '../read-deadline.ts';
@@ -194,6 +195,13 @@ const STABLE_IN_PREPARATION = new Set([
   MANAGED_MODE_SQL,
 ]);
 /**
+ * Typed members whose one statement is a plain read a caller can name in `also` by its text: when that text is stable,
+ * the member is answered once per argument list, as its text was while it ran through `executeRaw`.
+ */
+const TYPED_STABLE_READS: Readonly<Record<string, string>> = {
+  listPagePurgeTombstones: PAGE_PURGE_TOMBSTONES_SQL,
+};
+/**
  * #5984: the engine a claimed group's members are prepared with. The reads
  * above, source rows (`getSource`), worktree bindings (`getWorktreeBinding`) and config values (`getConfig`, `getAllConfig`) are answered once for
  * the whole preparation, as if every member were prepared at the same moment;
@@ -223,6 +231,10 @@ export function preparationReads(engine: BrainEngine, imports?: ImportGroupReads
       once<{ purge_epoch: string | number }[]>(JSON.stringify([flat(SOURCE_PURGE_EPOCH_SQL), [sourceId]]),
         () => target.readSourcePurgeEpoch(sourceId).then(epoch => epoch === null ? [] : [{ purge_epoch: epoch }]))
         .then(rows => rows[0]?.purge_epoch ?? null);
+    if (typeof key === 'string' && Object.hasOwn(TYPED_STABLE_READS, key) && stable.has(flat(TYPED_STABLE_READS[key]!))) {
+      const member = Reflect.get(target, key, target) as ((...args: unknown[]) => Promise<unknown>) | undefined;
+      if (typeof member === 'function') return (...args: unknown[]) => once(JSON.stringify([key, ...args]), () => member.apply(target, args));
+    }
     // GBRA-75 wave 10: every config key a member reads comes from one config read for the group (the same value per key).
     if (key === 'getConfig') return (name: string) => once('config:*', () => target.getAllConfig()).then(all => Object.hasOwn(all, name) ? all[name]! : null);
     if (key === 'readLocalWriterRow') return sharedWriterRow(target, reads, once);
@@ -232,6 +244,10 @@ export function preparationReads(engine: BrainEngine, imports?: ImportGroupReads
     // The source's unlocked state and the shared skill packs (engine-sql/write-misc.ts), once for the group.
     if (key === 'readSourceState') return (sourceId: string, opts?: SourceStateOptions) =>
       opts?.lock ? target.readSourceState(sourceId, opts) : once(JSON.stringify([key, sourceId]), () => target.readSourceState(sourceId));
+    // The source's purge epoch (cachedSyncReasonScan) is the typed form of SOURCE_PURGE_EPOCH_SQL: a caller that names
+    // that statement stable (sync-convergence.ts's screen) has it answered once per source too.
+    if (key === 'readSourcePurgeEpoch' && stable.has(flat(SOURCE_PURGE_EPOCH_SQL))) return (sourceId: string) =>
+      once(JSON.stringify([key, sourceId]), () => target.readSourcePurgeEpoch(sourceId));
     if (key === 'sharedSkillPackTablePresent') return () => once(key, () => target.sharedSkillPackTablePresent());
     if (key === 'listSharedSkillPackRoots') return (hostId: string) => once(JSON.stringify([key, hostId]), () => target.listSharedSkillPackRoots(hostId));
     // The worktree binding, once per source and host for the group, taking no member's deadline or signal (an absence is read again).
@@ -350,9 +366,11 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
       const members = [...recorded.values()].map(member => member.row);
       const keys = rows.flatMap((row, i) => [{ sourceId: row.source_id, slug: row.slug, incarnation: row.source_incarnation },
         ...(prepared[i]!.additionalPageKeys ?? []).map(key => key.sourceId === row.source_id ? { ...key, incarnation: row.source_incarnation } : key)]);
+      // Opened before the pipeline, so guardOwnership sends its worktree lock ahead of lockPageKeys' source locks.
+      const journal = await tx.publicationJournalStore();
       const ready = pipelined(tx, [
         () => declarePublication(tx, opened),
-        () => guardOwnership(tx, head, hostId),
+        () => guardOwnership(tx, journal, head, hostId),
         // A published file needs recovery even if this transaction rolls back; claims are verified first.
         () => members.length ? tx.executeRaw(`UPDATE persistence_requests r SET publication_started=true FROM unnest($1::uuid[],$2::uuid[]) AS t(id,token)
           WHERE r.id=t.id AND r.execution_token=t.token AND r.state='running' RETURNING r.id`, [members.map(row => row.id), members.map(row => row.execution_token)]) : Promise.resolve([]),

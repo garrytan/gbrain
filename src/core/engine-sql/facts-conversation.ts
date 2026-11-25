@@ -156,7 +156,7 @@ export async function listPurgeTombstoneMatches(raw: EngineRawRead, sourceId: st
   return raw<{ ord: number | string }>(`SELECT n.ord FROM unnest($2::text[], $3::text[], $4::text[], $5::text[]) WITH ORDINALITY AS n(fact, visibility, entity_slug, source, ord)
     WHERE NOT (n.source IN ('cli:extract-conversation-facts:terminal:v2','cli:extract-conversation-facts:non-extractable:v2','cli:extract-conversation-facts:terminal') AND n.fact IN ('EXTRACTION_COMPLETE','EXTRACTION_NOT_APPLICABLE')) AND EXISTS (SELECT 1 FROM fact_purges p WHERE p.source_id=$1 AND p.visibility=n.visibility
       AND (p.subject IN ('*', n.entity_slug) OR COALESCE(strpos(n.entity_slug, '/') = 0 AND NOT EXISTS (SELECT 1 FROM pages unbacked_page
-    WHERE unbacked_page.source_id = $1 AND unbacked_page.slug = n.entity_slug AND unbacked_page.deleted_at IS NULL), false)) AND p.fact_hash=gbrain_fact_fingerprint(n.fact))`,
+    WHERE unbacked_page.source_id = $1 AND unbacked_page.slug = n.entity_slug AND unbacked_page.deleted_at IS NULL), false)) AND p.fact_hash IN (gbrain_fact_fingerprint(n.fact), gbrain_fact_fingerprint_v2(n.fact)))`,
   [sourceId, claims.facts, claims.visibilities, claims.entitySlugs, claims.sources]);
 }
 
@@ -294,7 +294,7 @@ export interface UnlinkedConversationRow {
 export async function listUnbackedConversationRows(raw: EngineRawRead, sourceId: string, slugs: string[]): Promise<UnbackedConversationRow[]> {
   const { text, params } = renderFragment(sqlFragment`SELECT f.id, f.fact, f.context, f.visibility, f.source_markdown_slug AS slug, f.attributed_to, f.entity_slug FROM facts f
       WHERE f.source_id = ${sourceId} AND f.source_markdown_slug = ANY(${slugs}::text[]) AND ${trustedSql(UNBACKED_FACT_SQL)} AND ${derivedConversationFragment()}
-      ORDER BY f.source_markdown_slug, f.id`);
+      ORDER BY f.source_markdown_slug COLLATE "C", f.id`);
   return raw<UnbackedConversationRow>(text, params);
 }
 
@@ -302,7 +302,7 @@ export async function listUnbackedConversationRows(raw: EngineRawRead, sourceId:
 export async function listUnlinkedConversationRows(raw: EngineRawRead, sourceId: string, slugs: string[]): Promise<UnlinkedConversationRow[]> {
   const { text, params } = renderFragment(sqlFragment`SELECT f.id, f.fact, f.context, f.visibility, f.source_markdown_slug AS slug, f.attributed_to FROM facts f
       WHERE f.source_id = ${sourceId} AND f.source_markdown_slug = ANY(${slugs}::text[]) AND ${trustedSql(ACTIVE_UNLINKED_FACT_SQL)} AND ${derivedConversationFragment()}
-      ORDER BY f.source_markdown_slug, f.id`);
+      ORDER BY f.source_markdown_slug COLLATE "C", f.id`);
   return raw<UnlinkedConversationRow>(text, params);
 }
 

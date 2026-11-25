@@ -50,6 +50,8 @@ import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { primeRelationSemantics } from '../../src/core/link-semantics-pack.ts';
 import { setPackRelationSemantics } from '../../src/core/link-validity.ts';
 import { EXAMPLE_PACK, useExamplePack } from '../helpers/amends-ranking-scenarios.ts';
+import type { OperationContext } from '../../src/core/ops/contract.ts';
+import { operations } from '../../src/core/operations.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -185,6 +187,31 @@ describe('engine parity: link temporal state', () => {
     },
   );
 
+  // link_transitions.origin_page_id references pages(id): a transition whose origin page does not exist is refused
+  // by the foreign key and nothing is written; a soft-deleted origin page still exists, so its transition is kept.
+  parityTest(
+    'link-temporal-apply: a transition is refused when its origin page does not exist, and kept when the origin is only soft-deleted',
+    { methods: ['putPage', 'softDeletePage', 'applyLinkTemporalRows', 'linkRelationshipKeysForOrigin'] },
+    async (engine) => {
+      await seedCompanies(engine);
+      const alice = await engine.putPage(ALICE, page('Alice', { type: 'person' }));
+      const note = await engine.putPage('notes/origin-example', page('Origin'));
+      await engine.softDeletePage('notes/origin-example');
+      const missing = Number(alice.id) + Number(note.id) + 100000;
+      const transition = { from_slug: ALICE, to_slug: ACME, link_type: 'works_at', kind: 'start' as const, occurred_on: '2020-01-01',
+        date_precision: 'day', producer: 'explicit', line_hash: 'line-a' };
+      const apply = (pageId: number) => engine.applyLinkTemporalRows({ pageId, sourceId: 'default', tenseRows: [], transitions: [transition], explicitTargets: [] })
+        .then(r => ({ inserted: r.inserted.length }), (e: Error) => /link_transitions_origin_page_id_fkey/.test(e.message) ? 'origin_page_fk' : e.message);
+      const refused = await apply(missing);
+      const kept = await apply(Number(note.id));
+      return {
+        refused, kept,
+        missingKeys: await keyView(engine, await engine.linkRelationshipKeysForOrigin(missing)),
+        keptKeys: await keyView(engine, await engine.linkRelationshipKeysForOrigin(Number(note.id))),
+      };
+    },
+  );
+
   parityTest(
     'link-temporal-apply: manual dated transitions write and remove the relationship\'s state',
     { methods: ['putPage', 'addLink', 'writeManualLinkTransitions', 'removeManualLinkTransitions', 'listRelationshipNoteRows'] },
@@ -303,6 +330,94 @@ describe('engine parity: link temporal state', () => {
       const elsewhere = await readRecordMetadata(engine, [...ids.keys()], { referrerSources: ['other'], excludePrivate: false });
       expect(status).toEqual([['default:decisions/first', 'superseded'], ['default:decisions/second', 'accepted']]);
       return { status, meta: metaView, elsewhere: sorted([...elsewhere.values()].map(m => JSON.stringify(m))) };
+    },
+  );
+
+  parityTest(
+    'mentions/referrers: referrer group rows map pack aliases, cap each group and honor the caller scope',
+    { methods: ['putPage', 'addLink', 'readReferrerGroupRows'] },
+    async (engine) => {
+      const on = (date: string, extra: Partial<PageInput> = {}): Partial<PageInput> =>
+        ({ ...extra, effective_date: new Date(`${date}T00:00:00Z`), effective_date_source: 'date' });
+      await engine.putPage('companies/acme-example', page('Acme', { type: 'company' }));
+      await engine.putPage('meetings/standup', page('Standup', on('2026-02-01', { type: 'call' })));
+      await engine.putPage('meetings/review', page('Review', on('2026-04-01', { type: 'meeting' })));
+      await engine.putPage('notes/loose', page('Loose', on('2026-01-15', { type: '' as PageInput['type'] })));
+      for (const n of [1, 2, 3]) await engine.putPage(`notes/n0${n}`, page(`N${n}`, on(`2026-01-0${n}`)));
+      await engine.putPage('notes/secret', page('Secret', on('2026-05-01', { frontmatter: { visibility: 'private' } })));
+      await engine.putPage('notes/held', page('Held', on('2026-05-02', { frontmatter: { quarantine: { reason: 'test' } } })));
+      for (const from of ['meetings/standup', 'meetings/review', 'notes/loose', 'notes/n01', 'notes/n02', 'notes/n03', 'notes/secret', 'notes/held']) {
+        await engine.addLink(from, 'companies/acme-example', 'mentions acme', 'mentions', 'manual');
+      }
+      const read = async (scope: { excludePrivate: boolean; includeQuarantined?: boolean; perGroup: number }) =>
+        (await engine.readReferrerGroupRows({ sources: ['default'], slugs: ['companies/acme-example'] }, {
+          referrerSources: ['default'], storedTypes: ['call'], canonicalTypes: ['meeting'], ...scope,
+        })).map(({ id, ...r }) => ({ ...r, idType: typeof id }));
+      const local = await read({ excludePrivate: false, perGroup: 2 });
+      const remote = await read({ excludePrivate: true, perGroup: 10 });
+      const quarantined = await read({ excludePrivate: false, includeQuarantined: true, perGroup: 1 });
+      expect(local.map(r => `${r.canonical_type}:${r.slug}:${r.gtotal}`)).toEqual(
+        ['meeting:meetings/review:2', 'meeting:meetings/standup:2', 'note:notes/secret:4', 'note:notes/n03:4', 'untyped:notes/loose:1']);
+      expect(local[1]).toMatchObject({ type: 'call', canonical_type: 'meeting', d: '2026-02-01T00:00:00.000000Z', idType: 'number' });
+      expect(remote.filter(r => r.canonical_type === 'note').map(r => r.slug)).toEqual(['notes/n03', 'notes/n02', 'notes/n01']);
+      expect(quarantined.find(r => r.canonical_type === 'note')).toMatchObject({ slug: 'notes/held', gtotal: 5 });
+      return { local, remote, quarantined };
+    },
+  );
+
+  parityTest(
+    'mentions/referrers: referrer page details bound the body, name the date source and keep soft-deleted pages',
+    { methods: ['putPage', 'softDeletePage', 'readReferrerPageDetails'] },
+    async (engine) => {
+      await engine.putPage('notes/long', page('Long', { compiled_truth: 'é'.repeat(4100), frontmatter: { quarantine: { reason: 'test' } } }));
+      await engine.putPage('notes/dated', page('Dated', { effective_date: new Date('2026-02-01T00:00:00Z'), effective_date_source: 'event_date' }));
+      await engine.putPage('notes/undated', page('Undated'));
+      await engine.putPage('notes/gone', page('Gone', { effective_date: new Date('2026-03-01T00:00:00Z'), effective_date_source: 'date' }));
+      const ids = await slugsById(engine, ['notes/long', 'notes/dated', 'notes/undated', 'notes/gone']);
+      await engine.softDeletePage('notes/gone');
+      const rows = await engine.readReferrerPageDetails([...ids.keys(), 999999]);
+      const view = sorted(rows.map(({ id, body, ...r }) => ({ slug: ids.get(id), chars: [...(body ?? '')].length, head: body?.slice(0, 12), ...r })),
+        r => String(r.slug));
+      expect(view.map(r => `${r.slug}:${r.date_source}:${r.chars}`)).toEqual(
+        ['notes/dated:event_date:10', 'notes/gone:date:9', 'notes/long:updated_at:4000', 'notes/undated:updated_at:12']);
+      expect(await engine.readReferrerPageDetails([])).toEqual([]);
+      return view;
+    },
+  );
+
+  parityTest(
+    'mentions/referrers: batched referrer counts per target index exclude only that index\'s own pages and count record types',
+    { methods: ['putPage', 'addLink', 'softDeletePage', 'readReferrerTargetCounts'] },
+    async (engine) => {
+      await engine.putPage('companies/acme-example', page('Acme', { type: 'company' }));
+      await engine.putPage('companies/acme-alt', page('Acme alt', { type: 'company' }));
+      await engine.putPage('people/alice-example', page('Alice', { type: 'person' }));
+      await engine.putPage('meetings/standup', page('Standup', { type: 'call' }));
+      await engine.putPage('meetings/review', page('Review', { type: 'meeting' }));
+      await engine.putPage('notes/n1', page('N1'));
+      await engine.putPage('notes/secret', page('Secret', { frontmatter: { visibility: 'private' } }));
+      await engine.putPage('notes/held', page('Held', { frontmatter: { quarantine: { reason: 'test' } } }));
+      await engine.putPage('notes/gone', page('Gone'));
+      const links: Array<[string, string]> = [
+        ['meetings/standup', 'companies/acme-example'], ['meetings/review', 'companies/acme-example'],
+        ['notes/n1', 'companies/acme-example'], ['notes/n1', 'companies/acme-alt'], ['notes/secret', 'companies/acme-example'],
+        ['notes/held', 'companies/acme-example'], ['notes/gone', 'companies/acme-example'], ['people/alice-example', 'companies/acme-example'],
+        ['companies/acme-alt', 'companies/acme-example'], ['companies/acme-example', 'people/alice-example'], ['meetings/review', 'people/alice-example'],
+      ];
+      for (const [from, to] of links) await engine.addLink(from, to, 'mentions', 'mentions', 'manual');
+      await engine.softDeletePage('notes/gone');
+      const target = { sources: ['default', 'default', 'default', 'default'],
+        slugs: ['companies/acme-example', 'companies/acme-alt', 'people/alice-example', 'people/nobody-example'], indexes: [0, 0, 1, 2] };
+      const read = async (scope: { excludePrivate: boolean; includeQuarantined?: boolean; recordTypes: string[] }) =>
+        sorted((await engine.readReferrerTargetCounts(target, { referrerSources: ['default'], storedTypes: ['call'], canonicalTypes: ['meeting'], ...scope }))
+          .map(r => `${r.i}:${r.canonical_type ?? '*'}:${r.n}:${typeof r.i}${typeof r.n}`));
+      const local = await read({ excludePrivate: false, recordTypes: ['meeting', 'person'] });
+      const remote = await read({ excludePrivate: true, recordTypes: ['meeting', 'person'] });
+      const quarantined = await read({ excludePrivate: false, includeQuarantined: true, recordTypes: [] });
+      expect(local).toEqual(['0:*:5:numbernumber', '0:meeting:2:numbernumber', '0:person:1:numbernumber', '1:*:2:numbernumber', '1:meeting:1:numbernumber']);
+      expect(remote).toEqual(['0:*:4:numbernumber', '0:meeting:2:numbernumber', '0:person:1:numbernumber', '1:*:2:numbernumber', '1:meeting:1:numbernumber']);
+      expect(quarantined).toEqual(['0:*:6:numbernumber', '1:*:2:numbernumber']);
+      return { local, remote, quarantined };
     },
   );
 
@@ -566,6 +681,42 @@ describe('engine parity: link temporal state', () => {
       let bad: unknown = null;
       try { await hop(ALICE, 'object', { status: 'live', asOf: '2020-13-45' }); } catch (e) { bad = e instanceof TypeError ? 'TypeError' : String(e); }
       expect(bad).toBe('TypeError');
+      return out;
+    },
+  );
+
+  // The bench attendance stage's read shape (GBrain-Evals N12): get_links and get_backlinks with only a slug, which read
+  // with the default live relationship filter, a keyset page and a count of the hidden rows; then the same operations
+  // with status and as_of over Alice's dated works_at links. The pages are written through engine members: the bench
+  // writes them with put_page, whose automatic link preparation (src/core/persistence/links-preparation.ts) still reads
+  // through executeRaw and stops on raw_sql on Rust before any link is read.
+  parityTest(
+    'get_links and get_backlinks with only a slug, status all and as_of answer the same on every engine',
+    { methods: ['putPage', 'addLink', 'getLinks', 'getBacklinks', 'replaceDerivedLinks', 'readPageSnapshot'] },
+    async (engine) => {
+      const ctx = { engine, config: { engine: engine.kind }, remote: false, dryRun: false, sourceId: 'default',
+        logger: { info() {}, warn() {}, error() {}, debug() {} } } as unknown as OperationContext;
+      const op = async (name: string, p: Record<string, unknown>) => operations.find(o => o.name === name)!.handler(ctx, p);
+      type Row = { from_slug?: string; to_slug?: string; link_type?: string; status?: string };
+      const view = (rows: unknown) => sorted((rows as Row[]).map(l => `${l.from_slug}>${l.to_slug}:${l.link_type}:${l.status ?? '-'}`));
+      await engine.putPage('people/bob-example', page('Bob Example', { type: 'person' }));
+      await engine.putPage('meetings/2026-04-03', page('Weekly sync', { type: 'meeting' }));
+      await engine.addLink('people/bob-example', 'meetings/2026-04-03', 'attended the weekly sync', 'attended', 'manual');
+      await publishAlice(engine);
+      const out = {
+        meetingOut: view(await op('get_links', { slug: 'meetings/2026-04-03' })),
+        meetingIn: view(await op('get_backlinks', { slug: 'meetings/2026-04-03' })),
+        bobIn: view(await op('get_backlinks', { slug: 'people/bob-example' })),
+        aliceLive: view(await op('get_links', { slug: ALICE })),
+        aliceAll: view(await op('get_links', { slug: ALICE, status: 'all' })),
+        alice2020: view(await op('get_links', { slug: ALICE, as_of: '2020-06-01' })),
+        acmeIn: view(await op('get_backlinks', { slug: ACME, status: 'all' })),
+      };
+      // The bench reads the attendee's edge as a backlink of the meeting.
+      expect(out.meetingIn).toEqual(['people/bob-example>meetings/2026-04-03:attended:-']);
+      expect(out.aliceLive).toEqual([`${ALICE}>${WIDGET}:works_at:-`]);
+      expect(out.aliceAll).toEqual([`${ALICE}>${ACME}:works_at:ended`, `${ALICE}>${WIDGET}:works_at:live`]);
+      expect(out.alice2020).toEqual([`${ALICE}>${ACME}:works_at:live`]);
       return out;
     },
   );

@@ -65,6 +65,8 @@ export const ENGINE_CAPABILITIES = [
   'dream_verdicts',
   'contradictions',
   'ontology',
+  /** The session cursor and checkpoint manifest of context_pack and delta (`session_context_state`, key tag `y`). */
+  'session_state',
 ] as const;
 
 export type Capability = (typeof ENGINE_CAPABILITIES)[number];

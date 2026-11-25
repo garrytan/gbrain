@@ -17,8 +17,8 @@
  * The chunk-reads members model the source filter, the page privacy policy (storePagePolicy, a caller's reader identity
  * and private-readable grant included) and the live test of the
  * read policy (src/core/search/read-policy-sql.ts); resolveFrozenHits also models the trust floor and flag suppression
- * (`minTrust`, `suppressFlagged`). A safe-chunk policy on a chunk-reads member refuses with `engine_capability_missing`.
- * The other chunk-reads members refuse a trust or flag option: no production caller passes one, so no store read was
+ * (`minTrust`, `suppressFlagged`). A safe-chunk read applies the chunker-version fence of `codeReadFilter` on the code
+ * reads and `currentCodeChunksExist`, and of the frozen-hit read on resolveFrozenHits. The other chunk-reads members refuse a trust or flag option: no production caller passes one, so no store read was
  * built. getChunkPage and getChunkWindows ignore both, as their SQL does. See rust/docs/store/chunk_queries.md.
  */
 import { mapChunkWindowRows, type ChunkWindowOpts, type ChunkWindowPage, type ChunkWindowRequest } from '../../search/chunk-windows.ts';
@@ -31,6 +31,7 @@ import type {
 import { requiresSafeChunks } from '../../search/safe-chunks.ts';
 import { storePagePolicy } from './private-provenance.ts';
 import { toChunk } from '../store-codec.ts';
+import { TrustFloorError } from '../../engine-errors.ts';
 import { namedSourceIds, refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 
 // The SQL engines never read these read-policy keys in these statements, so the store ignores them too. An MCP
@@ -117,10 +118,13 @@ function int32Ids(member: string, ids: readonly number[]): number[] {
 
 /**
  * The wire scope of `pageReadFilter`: the source filter (`codeReadFilter` drops `sourceId` under `allSources` when no
- * `sourceIds` is given) and, under `excludePrivate`, the store page policy. A safe-chunk scope refuses.
+ * `sourceIds` is given), under `excludePrivate` the store page policy, and under a safe-chunk read
+ * (`requiresSafeChunks`) the chunker-version fence.
  */
 function wireScope(member: string, o: Record<string, unknown>, code: boolean) {
-  if (requiresSafeChunks(o as PageReadScope)) refuseMember(member, 'a safe-chunk read (the store records no chunker-version fence)');
+  // A floor that is not text names no trust tier (the store's own refusal covers a text one): refuse it here the same way,
+  // before the napi call turns a number into a decoding error (#10276).
+  if (o.minTrust && typeof o.minTrust !== 'string') throw new TrustFloorError(o.minTrust);
   const dropSource = code && !!o.allSources && o.sourceIds === undefined;
   return {
     sourceId: dropSource ? undefined : o.sourceId,
@@ -128,6 +132,7 @@ function wireScope(member: string, o: Record<string, unknown>, code: boolean) {
     excludePrivate: storePagePolicy(member, o.excludePrivate, { callerReaders: true }) ?? null,
     minTrust: (o.minTrust as string | undefined) || null,
     suppressFlagged: o.suppressFlagged === true,
+    requireSafeChunks: requiresSafeChunks(o as PageReadScope),
   };
 }
 

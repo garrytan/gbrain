@@ -643,6 +643,16 @@
       "stdout": []
     },
     {
+      "argv": "profile",
+      "exitCode": 1,
+      "stderr": [
+        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
+        "Fix: gbrain remote doctor",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
+      ],
+      "stdout": []
+    },
+    {
       "argv": "think",
       "exitCode": 0,
       "stderr": [],
@@ -713,16 +723,6 @@
         "Error [requires_local_engine]: `gbrain sources` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
         "Fix: gbrain sources",
         "Why: sources commands manage local DB + config rows. Per-subcommand thin-client routing lands in v0.31.x. For now: use `sources_list` / `sources_status` MCP tools, or run on the host.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
-      ],
-      "stdout": []
-    },
-    {
-      "argv": "waiting",
-      "exitCode": 1,
-      "stderr": [
-        "Error [requires_local_engine]: `gbrain waiting` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Fix: gbrain waiting",
         "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []

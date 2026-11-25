@@ -33,6 +33,7 @@
 
 import { readFileSync, existsSync } from 'fs';
 import type { BrainEngine } from '../core/engine.ts';
+import { rethrowCapabilityRefusal } from '../core/engine-capability-refusal.ts';
 import { findExperts, type WhoknowsResult } from './whoknows.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
@@ -247,40 +248,20 @@ interface ReplayRow {
  * last 200 rows for tractable runtime; the regression layer is a
  * sanity check, not exhaustive scoring.
  */
-async function loadReplayRows(engine: BrainEngine): Promise<ReplayRow[]> {
+/** @internal Exported for test/engine-parity/refusal-blocker-sites.test.ts. */
+export async function loadReplayRows(engine: BrainEngine): Promise<ReplayRow[]> {
   try {
-    const rows = await engine.executeRaw<{
-      query: string;
-      retrieved_slugs: string[] | string;
-    }>(
-      `SELECT query, retrieved_slugs
-         FROM eval_candidates
-         WHERE tool_name = 'query'
-           AND query IS NOT NULL
-           AND query <> ''
-         ORDER BY id DESC
-         LIMIT 200`,
-    );
-    return rows.map((r) => ({
-      query: String(r.query),
-      retrieved_slugs: Array.isArray(r.retrieved_slugs)
-        ? r.retrieved_slugs
-        : typeof r.retrieved_slugs === 'string'
-          ? safeJsonArray(r.retrieved_slugs)
-          : [],
-    }));
+    // listEvalCandidates answers newest first on every engine (PGLite, Postgres, Rust); the Rust brain keeps no SQL
+    // table to read, so the typed member is the only read that reaches its captured rows.
+    const candidates = await engine.listEvalCandidates({ tool: 'query', limit: 200 });
+    return candidates
+      .filter((c) => typeof c.query === 'string' && c.query !== '')
+      .map((c) => ({ query: c.query, retrieved_slugs: Array.isArray(c.retrieved_slugs) ? c.retrieved_slugs : [] }));
   } catch (e) {
+    // A Rust brain's typed refusal is not "no replay data": let it surface.
+    rethrowCapabilityRefusal(e);
     // Table may not exist on installs where CONTRIBUTOR_MODE was never on.
     // Treat as "no replay data" for sparseness fallback.
-    return [];
-  }
-}
-
-function safeJsonArray(s: string): string[] {
-  try {
-    const v = JSON.parse(s);
-    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
-  } catch {
     return [];
   }
 }

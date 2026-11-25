@@ -73,14 +73,6 @@ const REMOTE_PREPARED_KEYS = ['source_kind', 'source_uri', 'ingested_via'];
 const PAGE_REMOVALS = PAGE_REMOVAL_OPERATIONS;
 const GUARD_REFUSAL = GUARD_REFUSAL_SQL('r');
 const DRIFT_REFUSAL = DRIFT_REFUSAL_SQL('r');
-/** #7602: a managed fact request refused because its entity page moved; extraction re-admits these since, but older ones stayed refused. */
-const FACTS_MOVED_REFUSAL = `(r.operation='extract_facts' AND r.state='conflict' AND r.error_code='revision_conflict'
-  AND r.error_message IN (${FACTS_ENTITY_MOVED_MESSAGES.map(message => `'${message.replaceAll("'", "''")}'`).join(',')}))`;
-/** #7602: a refused fact request whose retained facts a later request of the same extraction committed on the same page. */
-const FACTS_RECOVERED = `EXISTS (SELECT 1 FROM persistence_requests c WHERE r.operation='extract_facts' AND c.operation='extract_facts'
-  AND c.source_id=r.source_id AND c.slug=r.slug AND c.state='committed' AND c.sequence>r.sequence
-  AND COALESCE(c.intent->>'inputDigest', c.outcome->>'input_digest')=r.intent->>'inputDigest'
-  AND COALESCE(c.intent->>'batchKey', c.outcome->>'batch_key') IS DISTINCT FROM r.intent->>'batchKey')`;
 
 /** One managed fact entity request of an extraction (every request sharing its source and input digest). */
 interface ExtractionRequest { source_id: string; input_digest: string; slug: string; state: string; error_code: string | null; error_message: string | null; batch_key: string | null }
@@ -173,27 +165,16 @@ function producerCommand(producer: string, sourceId: string): string {
 /** `facts` (the preview only) adds refused fact requests, without the ones a later request of the same extraction recovered. */
 async function failedWrites(engine: BrainEngine, sourceIds: string[], opts: { id?: string; facts?: boolean } = {}): Promise<FailedWrite[]> {
   const { id, facts } = opts;
-  const rows = await engine.executeRaw<FailedWrite>(`SELECT r.id::text, r.request_id::text, r.sequence::text, r.operation, r.source_id, r.slug, r.digest, r.state, r.intent, r.authority,
-      to_char(r.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at, r.error_detail->>'origin' AS origin, r.error_code, r.page_id::text AS page_id,
-      CASE WHEN r.operation = ANY($2::text[]) AND NOT (r.operation='put_page' AND r.intent ? 'kind') THEN NULL
-        ELSE r.operation || COALESCE(':' || (r.intent->>'kind'), '') END AS producer
-    FROM persistence_requests r
-    WHERE r.source_id = ANY($1::text[]) AND NOT r.compacted AND r.intent IS NOT NULL AND (${GUARD_REFUSAL} OR ${DRIFT_REFUSAL}${facts ? ` OR ${FACTS_MOVED_REFUSAL}` : ''})
-      ${id ? 'AND r.id=$3::uuid' : ''}
-    ORDER BY r.sequence`, id ? [sourceIds, REPLAYABLE, id] : [sourceIds, REPLAYABLE]);
+  // The journal stores each request's admitted WriteAuthority; the engine row types it as plain JSON.
+  const rows = await engine.listFailedWriteRequests(sourceIds, { replayable: REPLAYABLE, ...(facts ? { factsMovedMessages: FACTS_ENTITY_MOVED_MESSAGES } : {}),
+    ...(id ? { id } : {}) }) as unknown as FailedWrite[];
   if (id) return rows;
-  // #8707: the recovery check reads only the refused fact requests, in one statement. Correlated into the selection above it
-  // ran for every candidate, and the planner walked the request table from each candidate's sequence to the end.
-  const factIds = rows.filter(row => row.operation === 'extract_facts').map(row => row.id);
-  const recovered = new Set(factIds.length ? (await engine.executeRaw<{ id: string }>(
-    `SELECT r.id::text FROM persistence_requests r WHERE r.id = ANY($1::uuid[]) AND ${FACTS_RECOVERED}`, [factIds])).map(row => row.id) : []);
-  const live = rows.filter(row => !recovered.has(row.id));
   // #6429: a replay this command submitted that was refused source_changed is itself a conflict row; the original
   // write stays the candidate (its attempts are read through replayAttempt), so the attempt rows are not listed twice.
   const replays = new Set<string>();
-  const requestIds = new Set(live.map(row => row.request_id));
-  for (const row of live) for (let attempt = 0; requestIds.has(replayId(row.id, attempt)); attempt++) replays.add(replayId(row.id, attempt));
-  return live.filter(row => !replays.has(row.request_id));
+  const requestIds = new Set(rows.map(row => row.request_id));
+  for (const row of rows) for (let attempt = 0; requestIds.has(replayId(row.id, attempt)); attempt++) replays.add(replayId(row.id, attempt));
+  return rows.filter(row => !replays.has(row.request_id));
 }
 
 /**
@@ -211,26 +192,13 @@ Promise<{ lost: { source_id: string; operation: string; reason: 'source_changed'
   not_replayable: { unpinned_target: number; revision_superseded: number } }> {
   type Lost = { id: string; request_id: string; source_id: string; slug: string; operation: string; digest: string; sequence: string; reason: 'source_changed' | 'writer_guard';
     unpinned: boolean; stale_revision: boolean };
-  const caller = `r.operation = ANY($2::text[]) AND NOT (r.operation='put_page' AND r.intent ? 'kind')`;
-  const refused = `(${GUARD_REFUSAL} OR ${DRIFT_REFUSAL})`;
-  const [rows, [compacted]] = await Promise.all([
-    engine.executeRaw<Lost>(
-      `SELECT r.id::text, r.request_id::text, r.source_id, r.slug, r.operation, r.digest, r.sequence::text,
-        CASE WHEN r.state='conflict' THEN 'source_changed' ELSE 'writer_guard' END AS reason,
-        (r.operation='remember' AND jsonb_typeof(r.intent->'entity_slug') IS DISTINCT FROM 'string') AS unpinned,
-        (r.operation='put_page' AND jsonb_typeof(r.intent->'expected_revision')='string' AND r.intent->>'expected_revision' IS DISTINCT FROM
-          (SELECT p.knowledge_revision::text FROM pages p WHERE p.source_id=r.source_id AND p.slug=r.slug AND p.deleted_at IS NULL)) AS stale_revision
-      FROM persistence_requests r
-      WHERE r.source_id = ANY($1::text[]) AND NOT r.compacted AND r.intent IS NOT NULL AND ${refused} AND ${caller}
-      ORDER BY r.sequence`, [sourceIds, REPLAYABLE]),
+  const [rows, compacted] = await Promise.all([
+    engine.listCallerRefusalRows(sourceIds, [...REPLAYABLE]) as Promise<Lost[]>,
     // A compacted receipt keeps no intent, so an owner-produced put_page cannot be told from a caller's; remember and
     // add_timeline_entry are always caller writes.
-    engine.executeRaw<{ count: number }>(
-      `SELECT count(*)::int AS count FROM persistence_requests r
-      WHERE r.source_id = ANY($1::text[]) AND r.compacted AND (${GUARD_REFUSAL} OR ${DRIFT_REFUSAL}) AND r.operation = ANY($2::text[])`,
-      [sourceIds, REPLAYABLE.filter(operation => operation !== 'put_page')]),
+    engine.countCompactedCallerRefusals(sourceIds, REPLAYABLE.filter(operation => operation !== 'put_page')),
   ]);
-  if (!rows.length) return { lost: [], compacted: Number(compacted?.count ?? 0), not_replayable: { unpinned_target: 0, revision_superseded: 0 } };
+  if (!rows.length) return { lost: [], compacted, not_replayable: { unpinned_target: 0, revision_superseded: 0 } };
   // Attempt rows this command submitted belong to their original (walked below), not to the listing.
   const requestIds = new Set(rows.map(row => row.request_id));
   const replays = new Set<string>();
@@ -287,7 +255,7 @@ Promise<{ lost: { source_id: string; operation: string; reason: 'source_changed'
     groups.set(key, group);
   }
   const sorted = [...groups.values()].sort((a, b) => a.source_id.localeCompare(b.source_id) || a.operation.localeCompare(b.operation) || a.reason.localeCompare(b.reason));
-  return { lost: sorted.map(group => ({ source_id: group.source_id, operation: group.operation, reason: group.reason, count: group.digests.size })), compacted: Number(compacted?.count ?? 0),
+  return { lost: sorted.map(group => ({ source_id: group.source_id, operation: group.operation, reason: group.reason, count: group.digests.size })), compacted,
     not_replayable: { unpinned_target: unpinned.size, revision_superseded: stale.size } };
 }
 
@@ -508,8 +476,7 @@ export const failedWritesRepair: RepairHandler = {
           else residuals[verdict.class] = (residuals[verdict.class] ?? 0) + 1;
           listing.push({ item: label, class: verdict.class, ...(verdict.detail ? { detail: verdict.detail } : {}) });
         }
-        const sources = await engine.executeRaw<{ id: string; incarnation: string }>(
-          'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+        const sources = await engine.listSourceIncarnations(scope.source_ids);
         const hash = previewHash({ kind: 'failed-writes-v1', brain_id: scope.brain_id, sources, selection: { source_ids: scope.source_ids },
           replay: replay.map(write => ({ id: write.id, digest: write.digest, revision: write.revision })) });
         if (replay.length) await saveApprovedSet<ApprovedWrite>(engine, { command: 'failed-writes', hash }, replay);
@@ -526,7 +493,7 @@ export const failedWritesRepair: RepairHandler = {
         'docs/guides/repair.md#failed-writes');
     }
     const approved = await loadApprovedSet<ApprovedWrite>(engine, { command: 'failed-writes', hash: opts.expect, previewCommand: command,
-      emptyHash: async () => previewHash({ kind: 'failed-writes-v1', brain_id: scope.brain_id, sources: (await engine.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids])), selection: { source_ids: scope.source_ids }, replay: [] }) });
+      emptyHash: async () => previewHash({ kind: 'failed-writes-v1', brain_id: scope.brain_id, sources: (await engine.listSourceIncarnations(scope.source_ids)), selection: { source_ids: scope.source_ids }, replay: [] }) });
     if (approved.items.some(write => JSON.stringify(write.selection) !== JSON.stringify(scope.source_ids))) throw previewChangedError(opts.expect, command);
     const items = approved.items.map((write, index) => item(write, opts.expect!, index === approved.items.length - 1));
     return { items: items.filter(entry => afterCursor(entry.cursor, after)), preview_hash: opts.expect, residuals: {} };

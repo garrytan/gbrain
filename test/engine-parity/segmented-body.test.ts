@@ -132,6 +132,25 @@ describe('engine parity: segmented page bodies', () => {
   );
 
   parityTest(
+    'a published segmented page with no chunks counts as chunkless with content; an empty shell does not',
+    { methods: ['createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'openBodyStaging', 'stageSegmentTexts', 'stageManifestRows',
+      'flipBodyGeneration', 'setBodyStagingState', 'countChunklessPagesWithContent', 'listChunklessPagesWithContent', 'transaction'] },
+    async (engine) => {
+      await engine.createSegmentedPageShell('notes/shell', pageMeta('Shell'), { sourceId: 'default' });
+      const shellCount = await engine.countChunklessPagesWithContent();
+      await publish(engine);
+      const count = await engine.countChunklessPagesWithContent();
+      const rows = (await engine.listChunklessPagesWithContent()).map((r) => ({ slug: r.slug, source_id: r.source_id,
+        compiled_truth: r.compiled_truth, timeline: r.timeline }));
+      const scoped = await engine.countChunklessPagesWithContent({ sourceId: 'default' });
+      // The shell's body_bytes is 0; the published page's is the byte length of its segments.
+      expect([shellCount, count, scoped]).toEqual([0, 1, 1]);
+      expect(rows.map((r) => r.slug)).toEqual(['notes/big']);
+      return { shellCount, count, rows, scoped };
+    },
+  );
+
+  parityTest(
     'a replace flips to generation 2, closes retired rows and refuses a stale generation',
     { methods: ['flipBodyGeneration', 'readManifest', 'stageSegmentChunks', 'getChunks'] },
     async (engine) => {
@@ -626,7 +645,9 @@ describe('engine parity: segmented page bodies, one call at a time', () => {
       await engine.flipBodyGeneration(flipInput(pageId, 0, stagingId, [LONG]));
       await engine.setBodyStagingState(stagingId, 'committed');
       const inline = await engine.putPage('notes/short', { type: 'note', title: 'Short', compiled_truth: 'a short inline body', timeline: '' });
-      const rows = await engine.pageCollapseFacts([pageId, inline.id], [pageId, inline.id]);
+      // The SQL has no ORDER BY, so PGLite and Postgres may return the two rows in either order: compare them by page.
+      const rows = (await engine.pageCollapseFacts([pageId, inline.id], [pageId, inline.id]))
+        .sort((a, b) => Number(a.id !== pageId) - Number(b.id !== pageId));
       const view = rows.map((r) => ({ page: r.id === pageId ? 'segmented' : 'inline', body_chars: r.body_chars, hashed: r.body !== null,
         lead: r.lead?.slice(0, 30) ?? null }));
       const segmented = view.find((r) => r.page === 'segmented');

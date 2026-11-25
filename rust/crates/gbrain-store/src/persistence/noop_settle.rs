@@ -43,7 +43,7 @@ pub struct NoopSettleCandidateSpec {
 
 /// `(e.data->>'page_id')::int`: null when absent or JSON null; a number or string the integer
 /// cast accepts; anything else refuses as the cast does.
-fn page_id_of(data: &Value) -> Result<Option<i64>> {
+pub(super) fn page_id_of(data: &Value) -> Result<Option<i64>> {
     let text = match data.get("page_id") {
         None | Some(Value::Null) => return Ok(None),
         Some(Value::String(s)) => s.clone(),

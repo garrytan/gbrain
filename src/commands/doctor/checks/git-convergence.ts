@@ -105,8 +105,8 @@ function publishableRemote(top: string, branch: string | null): boolean {
  * access policy files.
  */
 async function markReadOnlyMirrors(engine: BrainEngine, reports: RootReport[], now: number): Promise<void> {
-  const sources = new Map((await engine.executeRaw<{ id: string; local_path: string | null; config: unknown }>('SELECT id, local_path, config FROM sources')
-    .catch(() => [])).map(row => [row.id, row]));
+  // The typed source rows, so a Rust brain answers them; a failed read fails the check (no quiet empty roster).
+  const sources = new Map((await engine.listSourceRecords()).map(row => [row.id, row]));
   for (const report of reports) {
     const rows = report.source_ids.map(id => sources.get(id));
     if (!rows.length || rows.some(row => !row)) continue;
@@ -171,8 +171,7 @@ function probe(root: string, sourceIds: string[], now: number, tracked: Map<stri
 
 /** Every non-archived filesystem source root plus `sync.repo_path`, with the source ids that name each root. */
 export async function sourceRoots(engine: BrainEngine): Promise<Map<string, string[]>> {
-  const sources = await engine.executeRaw<{ id: string; local_path: string | null; config: unknown }>(
-    'SELECT id, local_path, config FROM sources WHERE archived IS NOT TRUE AND local_path IS NOT NULL ORDER BY id');
+  const sources = await engine.readDoctorSources('roots_live_ordered');
   const roots = new Map<string, string[]>();
   for (const source of sources) {
     if (!source.local_path || isConnectorSourceKind(parseSourceConfig(source.config).kind)) continue;

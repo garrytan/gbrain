@@ -29,6 +29,7 @@
 
 import type { BrainEngine } from '../engine.ts';
 import { isMissingSchemaObject } from '../utils.ts';
+import type { ExtractRollupDelta } from '../engine-sql/extract-bookkeeping.ts';
 
 /**
  * #5495: why a round halted, as a closed vocabulary stored per reason in
@@ -82,14 +83,10 @@ export function haltReasonsWithUnknown(haltCount: number, recorded: Record<strin
  * whose schema is behind v239 has no column: every halt then reads as
  * `unknown` (a backfill never runs; `unknown` is computed on read).
  */
-export async function readRecordedHaltReasons7d(engine: Pick<BrainEngine, 'executeRaw'>): Promise<Map<string, Record<string, number>>> {
+export async function readRecordedHaltReasons7d(engine: Pick<BrainEngine, 'listRecordedHaltReasons7d'>): Promise<Map<string, Record<string, number>>> {
   const recorded = new Map<string, Record<string, number>>();
   try {
-    const rows = await engine.executeRaw<{ kind: string; reason: string; n: number | string }>(
-      `SELECT r.kind, e.key AS reason, SUM(e.value::int) AS n
-         FROM extract_rollup_7d r, jsonb_each_text(r.halt_reasons) e
-        WHERE r.day >= CURRENT_DATE - 7
-        GROUP BY r.kind, e.key`, []);
+    const rows = await engine.listRecordedHaltReasons7d();
     for (const row of rows) {
       const perKind = recorded.get(row.kind) ?? {};
       perKind[row.reason] = Number(row.n) || 0;
@@ -199,29 +196,13 @@ export async function upsertExtractRollup(
   // cast to jsonb (the #2339 class), and only vocabulary words reach the table.
   const reason = halts > 0 && input.halt_reason && (HALT_REASONS as readonly string[]).includes(input.halt_reason) ? input.halt_reason : null;
 
+  const delta: ExtractRollupDelta = {
+    kind: input.kind, source_id: input.source_id, day, cost_usd: cost, halt_count: halts, eval_fail_count: evalFails,
+    eval_pass_count: evalPasses, round_completed_count: completed, expected_limit_count: expectedLimits,
+    rollup_write_failures: failures, halt_reason: reason,
+  };
   try {
-    await engine.executeRaw(
-      `INSERT INTO extract_rollup_7d (
-         kind, source_id, day,
-         cost_usd, halt_count, eval_fail_count, eval_pass_count,
-         round_completed_count, expected_limit_count, rollup_write_failures, halt_reasons, updated_at
-       )
-       VALUES ($1, $2, $3::date, $4, $5, $6, $7, $8, $9, $10,
-         CASE WHEN $11::text IS NULL THEN '{}'::jsonb ELSE jsonb_build_object($11::text, $5::int) END, now())
-       ON CONFLICT (kind, source_id, day) DO UPDATE SET
-         cost_usd               = extract_rollup_7d.cost_usd               + EXCLUDED.cost_usd,
-         halt_count             = extract_rollup_7d.halt_count             + EXCLUDED.halt_count,
-         eval_fail_count        = extract_rollup_7d.eval_fail_count        + EXCLUDED.eval_fail_count,
-         eval_pass_count        = extract_rollup_7d.eval_pass_count        + EXCLUDED.eval_pass_count,
-         round_completed_count  = extract_rollup_7d.round_completed_count  + EXCLUDED.round_completed_count,
-         expected_limit_count   = extract_rollup_7d.expected_limit_count   + EXCLUDED.expected_limit_count,
-         rollup_write_failures  = extract_rollup_7d.rollup_write_failures  + EXCLUDED.rollup_write_failures,
-         halt_reasons           = CASE WHEN $11::text IS NULL THEN extract_rollup_7d.halt_reasons
-           ELSE jsonb_set(extract_rollup_7d.halt_reasons, ARRAY[$11::text],
-             to_jsonb(COALESCE((extract_rollup_7d.halt_reasons->>$11::text)::int, 0) + $5::int)) END,
-         updated_at             = now()`,
-      [input.kind, input.source_id, day, cost, halts, evalFails, evalPasses, completed, expectedLimits, failures, reason],
-    );
+    await engine.upsertExtractRollupDay(delta);
     return { ok: true };
   } catch (err) {
     const msg = (err as Error).message || String(err);
@@ -239,23 +220,7 @@ export async function upsertExtractRollup(
     // migration runs.
     if (isMissingSchemaObject(err, 'column', 'expected_limit_count')) {
       try {
-        await engine.executeRaw(
-          `INSERT INTO extract_rollup_7d (
-             kind, source_id, day,
-             cost_usd, halt_count, eval_fail_count, eval_pass_count,
-             round_completed_count, rollup_write_failures, updated_at
-           )
-           VALUES ($1, $2, $3::date, $4, $5, $6, $7, $8, $9, now())
-           ON CONFLICT (kind, source_id, day) DO UPDATE SET
-             cost_usd               = extract_rollup_7d.cost_usd               + EXCLUDED.cost_usd,
-             halt_count             = extract_rollup_7d.halt_count             + EXCLUDED.halt_count,
-             eval_fail_count        = extract_rollup_7d.eval_fail_count        + EXCLUDED.eval_fail_count,
-             eval_pass_count        = extract_rollup_7d.eval_pass_count        + EXCLUDED.eval_pass_count,
-             round_completed_count  = extract_rollup_7d.round_completed_count  + EXCLUDED.round_completed_count,
-             rollup_write_failures  = extract_rollup_7d.rollup_write_failures  + EXCLUDED.rollup_write_failures,
-             updated_at             = now()`,
-          [input.kind, input.source_id, day, cost, halts + expectedLimits, evalFails, evalPasses, completed, failures],
-        );
+        await engine.upsertExtractRollupDay(delta, { preV141: true });
         return { ok: true };
       } catch { /* fall through to the normal failure record */ }
     }

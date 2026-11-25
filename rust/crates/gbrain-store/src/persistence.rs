@@ -27,6 +27,7 @@
 //!
 //! `d 0x05` and `d 0x06` are the `persistence_effects` rows and their claim-order index (`effects.rs`); no other
 //! family here uses them.
+
 //!
 //! A resumable op's checkpoint parent (`op_checkpoint.rs`) is an `op_checkpoints` row, so it is
 //! stored under `d 0x02` with the housekeeping turns, as Postgres keeps both in one table.
@@ -64,23 +65,45 @@ use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
+mod binding_reads;
 mod checkpoint_rows;
+mod checkpoint_validation;
+mod connector_attempts;
+mod connector_orphans;
+mod diagnostic_checkpoints;
+mod dream_reads;
+mod effect_retry_reads;
 mod effect_scans;
 mod effect_worker;
-mod effects;
+pub(crate) mod effects;
+mod embedding_candidates;
+mod freshness;
+mod git_holds;
+mod head_blocker;
 mod housekeeping;
+mod identity_downgrade;
 mod idle_probe;
+mod image_seal;
+mod journal_redaction;
 #[cfg(test)]
 mod lease_order_tests;
 mod noop_settle;
 mod notifier;
 mod op_checkpoint;
+mod origin_holds;
 mod owner_scans;
 pub(crate) mod projection_queue;
 mod projection_rebuild;
+mod publication;
 mod purge_effects;
+mod receipt_compaction;
 mod receipt_list;
-mod topology;
+mod retained_sources;
+mod sync_conversions;
+mod sync_orphan_reads;
+mod sync_pass_pages;
+mod sync_run_reads;
+pub(crate) mod topology;
 pub(crate) use topology::purge_probe_rows as purge_probe_topology_rows;
 mod worktree_admission;
 #[cfg(test)]
@@ -88,32 +111,59 @@ mod worktree_claim_tests;
 mod worktree_rows;
 mod worktrees;
 mod write_claim_terms;
+mod writer_status;
+mod writer_status_queue;
 mod writer_versions;
+pub use checkpoint_validation::{IncompleteSyncReceiptSpec, OpenPassWorkSpec};
+pub use connector_orphans::OrphanBounds;
+pub use diagnostic_checkpoints::HeldHitQuery;
 pub use effect_worker::{EffectClaim, EffectSettle, LinksRearm, Settle};
-pub(crate) use effects::all_effects;
 pub use effects::{PublicationEffectsSpec, QueuedEffect, WithdrawalEffectsSpec};
+pub(crate) use effects::{all_effects, request_effects};
+pub use head_blocker::HeadBlockerSpec;
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn, TrueUpReservation};
+pub(crate) use housekeeping::{HousekeepingRow, turn_key};
+pub use identity_downgrade::IdentityDowngradeSpec;
 pub use idle_probe::IdleProbeSpec;
+pub use image_seal::{ImageSealChunkRef, ImageSealPageRef, ImageSealRow};
+pub use journal_redaction::{RedactRequestArgs, SweepChunkArgs};
 pub use noop_settle::NoopSettleCandidateSpec;
 pub(crate) use notifier::remove_source_rows as remove_notifier_source_rows;
 pub use notifier::{
     NotifierCoverage, NotifierLeaseClaim, NotifierStateError, NotifierStatePatch, WantedMarkerInput,
 };
+pub use op_checkpoint::AtomGenerationBump;
+mod trust_scan_cursor;
+
+pub(crate) use op_checkpoint::{
+    delete_op_checkpoint_in, list_op_checkpoint_records_in, op_checkpoint_completed_keys,
+};
+pub use origin_holds::PurgeOrigin;
+#[cfg(test)]
+pub(crate) use projection_queue::{JobRecord, read_page_job};
 pub use projection_queue::{
     ProjectionJobRef, ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
 };
-pub(crate) use projection_queue::{activation_started_us, queue_page_projection};
-pub use projection_rebuild::{
-    BacklogScope, ProjectionJobKey, ProjectionWindowCandidate, QueuedProjectionFilter,
-    QueuedProjectionKey, QueuedProjectionPages,
+pub(crate) use projection_queue::{
+    SeedJob, activation_started_us, parse_timestamptz, queue_page_projection, queued_jobs, seed_job,
 };
+pub use projection_rebuild::{
+    ProjectionJobKey, ProjectionWindowCandidate, QueuedProjectionFilter, QueuedProjectionKey,
+    QueuedProjectionPages,
+};
+pub use publication::{PublicationRead, PublicationWrite, RecoveryTable};
 pub use purge_effects::{
     GitEffectsCarryingArgs, PageGitEffectsArgs, PurgeEffectDataArgs, PurgeGitEffectRow,
 };
 pub use receipt_list::{IncarnationRequestFilter, WriteRequestListFilter};
+pub use sync_pass_pages::{SyncImportPageQuery, SyncImportPageWindow};
+pub use sync_run_reads::SyncAdmissionEffectsQuery;
 pub use topology::TopologyChangeInsert;
 pub use worktree_admission::WorktreeAdmissionKey;
-pub use worktrees::{HostBindingInsert, SourceBindingInsert, WorktreeInsert};
+pub(crate) use worktrees::remove_source_binding_in;
+pub use worktrees::{
+    CounterDelta, HostBindingInsert, ReleaseRead, SourceBindingInsert, WorktreeInsert,
+};
 
 /// The byte after `keys::PERSISTENCE` of a counter row.
 const COUNTER: u8 = 0x01;
@@ -148,7 +198,7 @@ const REQUEST_STATES: &[&str] = &[
 const FOREGROUND_PRIORITY_KEY: &str = "sync.foreground_priority";
 
 /// The config row the completion counts clamped true-ups in (`TRUE_UP_CLAMP_SQL`).
-const TRUE_UP_CLAMPED_KEY: &str = "persistence.true_up.clamped";
+pub(crate) const TRUE_UP_CLAMPED_KEY: &str = "persistence.true_up.clamped";
 
 /// The `persistence_requests` columns `RequestRecord` keeps in `extra`, each with its column
 /// default. `to_row` fills every one, so a row read here has the column set Postgres returns.
@@ -202,7 +252,7 @@ pub(crate) fn fill_request_columns(row: &mut Map<String, Value>, extra: &Map<Str
 
 /// `->>`: a JSON value as text. A JSON null (or a missing key) is SQL NULL; a string is its text
 /// unquoted; anything else is its JSON text.
-fn json_text(v: Option<&Value>) -> Option<String> {
+pub(crate) fn json_text(v: Option<&Value>) -> Option<String> {
     match v? {
         Value::Null => None,
         Value::String(s) => Some(s.clone()),
@@ -211,7 +261,7 @@ fn json_text(v: Option<&Value>) -> Option<String> {
 }
 
 /// SQL `LIKE` with `%` and `_` and no escape character.
-fn sql_like(text: &str, pattern: &str) -> bool {
+pub(crate) fn sql_like(text: &str, pattern: &str) -> bool {
     fn go(t: &[char], p: &[char]) -> bool {
         match p.split_first() {
             None => t.is_empty(),
@@ -234,7 +284,7 @@ fn sync_kind(intent: &Value) -> bool {
 }
 
 /// Three-valued AND / OR / NOT (`None` is SQL NULL).
-fn and3(a: Option<bool>, b: Option<bool>) -> Option<bool> {
+pub(crate) fn and3(a: Option<bool>, b: Option<bool>) -> Option<bool> {
     match (a, b) {
         (Some(false), _) | (_, Some(false)) => Some(false),
         (Some(true), Some(true)) => Some(true),
@@ -255,7 +305,7 @@ fn not3(a: Option<bool>) -> Option<bool> {
 }
 
 /// A timestamp stored in `extra`, in microseconds.
-fn extra_time(record: &RequestRecord, column: &str) -> Option<i64> {
+pub(crate) fn extra_time(record: &RequestRecord, column: &str) -> Option<i64> {
     record
         .extra
         .get(column)
@@ -263,7 +313,7 @@ fn extra_time(record: &RequestRecord, column: &str) -> Option<i64> {
         .and_then(parse_iso)
 }
 
-fn extra_i64(record: &RequestRecord, column: &str) -> i64 {
+pub(crate) fn extra_i64(record: &RequestRecord, column: &str) -> i64 {
     record
         .extra
         .get(column)
@@ -271,11 +321,11 @@ fn extra_i64(record: &RequestRecord, column: &str) -> i64 {
         .unwrap_or(0)
 }
 
-fn extra_is_null(record: &RequestRecord, column: &str) -> bool {
+pub(crate) fn extra_is_null(record: &RequestRecord, column: &str) -> bool {
     record.extra.get(column).is_none_or(Value::is_null)
 }
 
-fn extra_bool(record: &RequestRecord, column: &str) -> bool {
+pub(crate) fn extra_bool(record: &RequestRecord, column: &str) -> bool {
     record
         .extra
         .get(column)
@@ -314,7 +364,7 @@ fn violation(message: impl Into<String>) -> StoreError {
 }
 
 /// Every request record, in key order. Requests are never deleted on this engine.
-fn all_requests(read: &dyn KvRead) -> Result<Vec<RequestRecord>> {
+pub(crate) fn all_requests(read: &dyn KvRead) -> Result<Vec<RequestRecord>> {
     let mut out = Vec::new();
     let mut bad = false;
     scan_prefix(read, &[keys::REQUEST], false, &mut |_, v| {
@@ -334,7 +384,7 @@ fn all_requests(read: &dyn KvRead) -> Result<Vec<RequestRecord>> {
 }
 
 /// The states that hold an outstanding slot (`persistence/journal.ts` `outstandingRefusal`).
-const OUTSTANDING_STATES: [&str; 4] = ["queued", "deferred", "running", "recovering"];
+pub(crate) const OUTSTANDING_STATES: [&str; 4] = ["queued", "deferred", "running", "recovering"];
 
 pub(crate) fn count_outstanding_by_source_in(
     read: &dyn KvRead,
@@ -476,7 +526,104 @@ pub(crate) fn read_counter_rows_in(read: &dyn KvRead, names: &[String]) -> Resul
     Ok(rows)
 }
 
-fn request_by_id(read: &dyn KvRead, id: &str) -> Result<Option<RequestRecord>> {
+/// `state IN ('queued','deferred','running','recovering') OR recovery IS NOT NULL`: a request that
+/// keeps a brain from quiescing.
+fn blocks_quiescence(r: &RequestRecord) -> bool {
+    matches!(
+        r.state.as_str(),
+        "queued" | "deferred" | "running" | "recovering"
+    ) || !extra_is_null(r, "recovery")
+}
+
+/// What keeps shared-skill activation from passing, in the order the SQL engines check it
+/// (activation.ts, then skill-activation.ts): the first blocking request by sequence, then the
+/// first effect holding a recovery record (both `managed`), then the first queued or running
+/// effect (`skill`). Effects come in id order; `source_id` is the effect's, else its request's.
+pub(crate) fn activation_blocker(read: &dyn KvRead) -> Result<Option<Value>> {
+    let mut requests: Vec<RequestRecord> = all_requests(read)?
+        .into_iter()
+        .filter(blocks_quiescence)
+        .collect();
+    requests.sort_by_key(|r| r.sequence);
+    if let Some(r) = requests.first() {
+        return Ok(Some(json!({
+            "phase": "managed",
+            "kind": "request",
+            "request_id": r.request_id,
+            "source_id": r.source_id,
+            "slug": r.slug,
+            "operation": r.operation,
+            "state": r.state,
+        })));
+    }
+    let effects = effects::all_effects(read)?;
+    let blocking = |recovering_only: bool| -> Result<Option<Value>> {
+        for e in &effects {
+            let recovering = e.recovery.is_some();
+            if !(recovering || !recovering_only && matches!(e.state.as_str(), "queued" | "running"))
+            {
+                continue;
+            }
+            let Some(r) = request_by_id(read, &e.request_id)? else {
+                continue;
+            };
+            return Ok(Some(json!({
+                "kind": "effect",
+                "effect_id": e.id.to_string(),
+                "effect_kind": e.kind,
+                "state": e.state,
+                "recovering": recovering,
+                "source_id": e.source_id.clone().unwrap_or(r.source_id),
+                "slug": r.slug,
+                "request_id": r.request_id,
+                "attempts": e.attempts,
+                "next_attempt_at": iso(e.next_attempt_at_us),
+            })));
+        }
+        Ok(None)
+    };
+    if let Some(mut v) = blocking(true)? {
+        v["phase"] = json!("managed");
+        return Ok(Some(v));
+    }
+    Ok(blocking(false)?.map(|mut v| {
+        v["phase"] = json!("skill");
+        v
+    }))
+}
+
+/// The revisions a pending shared-skill publication of the source incarnation names
+/// (retention.ts `publication_revisions`): each skill_bundle request that is queued, running or
+/// recovering, or holds a recovery record, gives its `intent.expected_revision` and every
+/// `intent.affected[].revision`.
+pub(crate) fn pending_skill_revisions(
+    read: &dyn KvRead,
+    source_id: &str,
+    incarnation: &str,
+) -> Result<std::collections::BTreeSet<String>> {
+    let mut out = std::collections::BTreeSet::new();
+    for r in all_requests(read)? {
+        let target = r.extra.get("target_kind").and_then(Value::as_str);
+        if r.source_id != source_id
+            || r.source_incarnation != incarnation
+            || target != Some("skill_bundle")
+            || !(matches!(r.state.as_str(), "queued" | "running" | "recovering")
+                || !extra_is_null(&r, "recovery"))
+        {
+            continue;
+        }
+        let text = |v: Option<&Value>| v.and_then(Value::as_str).map(str::to_string);
+        if let Some(rev) = text(r.intent.get("expected_revision")) {
+            out.insert(rev);
+        }
+        if let Some(Value::Array(affected)) = r.intent.get("affected") {
+            out.extend(affected.iter().filter_map(|a| text(a.get("revision"))));
+        }
+    }
+    Ok(out)
+}
+
+pub(crate) fn request_by_id(read: &dyn KvRead, id: &str) -> Result<Option<RequestRecord>> {
     get_json(read, &keys::request(&uuid_param(id, "id")?))
 }
 
@@ -889,6 +1036,19 @@ pub struct WriteCompletion {
     pub probe_purges: bool,
 }
 
+/// `TerminalIntentCompaction` of `src/core/engine-sql/persistence-journal.ts`: the compaction of a
+/// terminal request whose stored intent carried purged content (`journal.ts` finishTerminal).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalIntentCompaction {
+    pub id: String,
+    /// What the receipt keeps without its intent.
+    pub left: i64,
+    /// The terminal reservation the completion left.
+    pub reservation: i64,
+    pub counter_keys: Vec<String>,
+}
+
 /// `TRUE_UP_CLAMP_SQL`: adds `clamped` counters to `persistence.true_up.clamped` (a value that is
 /// not digits counts as 0); nothing is written when none clamped.
 fn add_true_up_clamped(tx: &mut dyn KvWrite, clamped: u64) -> Result<()> {
@@ -908,6 +1068,49 @@ fn add_true_up_clamped(tx: &mut dyn KvWrite, clamped: u64) -> Result<()> {
 /// committed the reservation is kept whole. `None`, with nothing changed, when the result does not fit the
 /// terminal reservation. A source has no fact or page purge rows here, so the purge probe answers
 /// false.
+/// `compactTerminalIntent(compaction)`, as the SQL member's one statement: drops the request's
+/// intent and marks it compacted; its terminal reservation shrinks to `left` plus its effect bytes
+/// unless an effect is unfinished; each named counter (once) releases `reservation` minus what is
+/// kept, never below zero. The compacted row, or `None` for an unknown id (nothing changes). The
+/// row's `updated_at` stays as it was.
+pub(crate) fn compact_terminal_intent_in(
+    tx: &mut dyn KvWrite,
+    c: &TerminalIntentCompaction,
+) -> Result<Option<Value>> {
+    let Some(mut record) = request_by_id(&*tx, &c.id)? else {
+        return Ok(None);
+    };
+    let (effect_bytes, unfinished) = effects::effect_totals(&*tx, &c.id)?;
+    let current = extra_i64(&record, "terminal_reservation");
+    let out_of_range = || {
+        StoreError::invalid("compactTerminalIntent: a byte count is out of range for type bigint")
+    };
+    let kept = if unfinished {
+        current
+    } else {
+        let left = c.left.checked_add(effect_bytes).ok_or_else(out_of_range)?;
+        current.min(left)
+    };
+    record.intent = Value::Null;
+    record.extra.insert("compacted".into(), json!(true));
+    record
+        .extra
+        .insert("terminal_reservation".into(), json!(kept));
+    write_request(tx, &record)?;
+    let released = c.reservation.checked_sub(kept).ok_or_else(out_of_range)?;
+    for key in distinct_keys(&c.counter_keys) {
+        let Some(mut counter) = read_counter(&*tx, &key)? else {
+            continue;
+        };
+        counter.terminal_bytes = counter
+            .terminal_bytes
+            .checked_sub(released.min(counter.terminal_bytes))
+            .ok_or_else(out_of_range)?;
+        write_counter(tx, &key, &counter)?;
+    }
+    Ok(Some(record.to_row()))
+}
+
 pub(crate) fn complete_write_row_in(
     tx: &mut dyn KvWrite,
     env: &dyn Env,
@@ -1466,9 +1669,48 @@ impl Store {
         Ok(read_request(&*read, principal, &request_id)?.map(|r| r.to_row()))
     }
 
+    /// `readWriteRequestsByRequestId(requestId)`: at most two request rows with this request id,
+    /// from any principal, in key order. The trusted local CLI answers a receipt by request id
+    /// alone only when exactly one row has it, so two rows is enough to know it is ambiguous.
+    pub fn read_write_requests_by_request_id(&self, request_id: &str) -> Result<Vec<Value>> {
+        let request_id = uuid_param(request_id, "requestId")?;
+        Ok(all_requests(&*self.read()?)?
+            .into_iter()
+            .filter(|r| r.request_id == request_id)
+            .take(2)
+            .map(|r| r.to_row())
+            .collect())
+    }
+
+    /// `listWriteRequestsByRequestId(requestId)`: every request admitted under `requestId`, whichever
+    /// principal admitted it, in key order (the SQL names no order).
+    pub fn list_write_requests_by_request_id(&self, request_id: &str) -> Result<Vec<Value>> {
+        let request_id = uuid_param(request_id, "requestId")?;
+        Ok(all_requests(&*self.read()?)?
+            .into_iter()
+            .filter(|r| r.request_id == request_id)
+            .map(|r| r.to_row())
+            .collect())
+    }
+
     /// `readWriteRequestById(id)` and `lockWriteRequest(id)`: the request row or `None`.
     pub fn read_write_request_by_id(&self, id: &str) -> Result<Option<Value>> {
         Ok(request_by_id(&*self.read()?, id)?.map(|r| r.to_row()))
+    }
+
+    /// `listWriteRequestsByRequestIds(requestIds)`: the request rows whose client request id is
+    /// one of `request_ids`, by sequence. A malformed id refuses, as the SQL's `::uuid[]` cast does.
+    pub fn list_write_requests_by_request_ids(&self, request_ids: &[String]) -> Result<Vec<Value>> {
+        let mut wanted = std::collections::BTreeSet::new();
+        for id in request_ids {
+            wanted.insert(uuid_param(id, "requestIds")?);
+        }
+        let mut rows: Vec<RequestRecord> = all_requests(&*self.read()?)?
+            .into_iter()
+            .filter(|r| wanted.contains(&r.request_id.to_lowercase()))
+            .collect();
+        rows.sort_by_key(|r| r.sequence);
+        Ok(rows.iter().map(RequestRecord::to_row).collect())
     }
 
     /// `insertWriteRequest(row)`: the stored request row.
@@ -1496,6 +1738,14 @@ impl Store {
     /// `completeWriteRow(completion)`: the completed row, or `None` when it does not fit.
     pub fn complete_write_row(&self, completion: &WriteCompletion) -> Result<Option<Value>> {
         self.write(|tx| complete_write_row_in(tx, &*self.env, completion))
+    }
+
+    /// `compactTerminalIntent(compaction)`: the compacted row, or `None` for an unknown id.
+    pub fn compact_terminal_intent(
+        &self,
+        compaction: &TerminalIntentCompaction,
+    ) -> Result<Option<Value>> {
+        self.write(|tx| compact_terminal_intent_in(tx, compaction))
     }
 
     /// `cancelWriteRow(cancellation)`: `{ status, row }`, or `None` when the row does not exist.

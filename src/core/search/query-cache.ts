@@ -245,18 +245,23 @@ export class SemanticQueryCache {
         distance: number;
         age_seconds: number;
       }>(
-        `SELECT qc.id, qc.query_text,
-                qc.embedding <=> $1::vector AS distance,
-                EXTRACT(EPOCH FROM (now() - qc.created_at))::int AS age_seconds
-         FROM query_cache qc
-         WHERE qc.source_id = $2
-           AND qc.knobs_hash = $4
-           AND qc.embedding IS NOT NULL
-           AND qc.embedding <=> $1::vector < $3
-           AND qc.created_at + (qc.ttl_seconds || ' seconds')::interval > now()
-           AND ${CACHE_GATE_WHERE_CLAUSE}
-         ORDER BY qc.embedding <=> $1::vector
-         LIMIT 5`,
+        // The inner query orders by distance alone so the HNSW index serves it; the outer query breaks
+        // distance ties by id (byte order) inside the 5 rows, so every engine picks the same winner.
+        `SELECT * FROM (
+           SELECT qc.id, qc.query_text,
+                  qc.embedding <=> $1::vector AS distance,
+                  EXTRACT(EPOCH FROM (now() - qc.created_at))::int AS age_seconds
+           FROM query_cache qc
+           WHERE qc.source_id = $2
+             AND qc.knobs_hash = $4
+             AND qc.embedding IS NOT NULL
+             AND qc.embedding <=> $1::vector < $3
+             AND qc.created_at + (qc.ttl_seconds || ' seconds')::interval > now()
+             AND ${CACHE_GATE_WHERE_CLAUSE}
+           ORDER BY qc.embedding <=> $1::vector
+           LIMIT 5
+         ) q
+         ORDER BY q.distance, q.id COLLATE "C"`,
         [vec, sourceId, distanceThreshold, knobsHash],
       );
 
@@ -297,8 +302,9 @@ export class SemanticQueryCache {
         similarity,
         ageSeconds: row.age_seconds,
       };
-    } catch {
-      // Table missing, vector column missing, or any other failure: miss.
+    } catch (e) {
+      // Table missing, vector column missing, or any other failure: miss. An engine that cannot run the probe refuses.
+      rethrowCapabilityRefusal(e);
       return { hit: false };
     }
   }
@@ -375,28 +381,19 @@ export class SemanticQueryCache {
           snapshot.max_generation_at_store,
         ],
       );
-    } catch {
-      // swallow \u2014 cache write must never break the search hot path.
+    } catch (e) {
+      // A failed cache write must never break the search hot path; an engine that cannot run it refuses.
+      rethrowCapabilityRefusal(e);
     }
   }
 
-  /** Clear ALL cache rows (optionally scoped by source). Returns rows deleted. */
+  /** Clear ALL cache rows (optionally scoped by source). Returns rows deleted (BrainEngine.clearQueryCache). */
   async clear(opts: { sourceId?: string } = {}): Promise<number> {
     try {
-      if (opts.sourceId) {
-        const rows = await this.engine.executeRaw<{ n: number }>(
-          `WITH deleted AS (DELETE FROM query_cache WHERE source_id = $1 RETURNING 1)
-           SELECT COUNT(*)::int AS n FROM deleted`,
-          [opts.sourceId],
-        );
-        return rows[0]?.n ?? 0;
-      }
-      const rows = await this.engine.executeRaw<{ n: number }>(
-        `WITH deleted AS (DELETE FROM query_cache RETURNING 1)
-         SELECT COUNT(*)::int AS n FROM deleted`,
-      );
-      return rows[0]?.n ?? 0;
-    } catch {
+      return (await this.engine.clearQueryCache(opts.sourceId || undefined)) ?? 0;
+    } catch (e) {
+      // A brain before the query_cache table has nothing to clear; an engine that cannot run the clear refuses.
+      rethrowCapabilityRefusal(e);
       return 0;
     }
   }

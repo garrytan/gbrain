@@ -7,7 +7,8 @@
  * plan or a result on Postgres alone, which PGLite parity cannot see.
  *
  * Protects: each member's recorded text and params equal the old raw statement byte for byte (the texts below were
- * recorded from the raw callers before the move), and the whole plan plus dry run still sends the same 99 statements,
+ * recorded from the raw callers before the move, with the byte-order sorts and the nearest-fact tie-break the main join added
+ * to the page-body scan, the nearest-fact read and the probe item list), and the whole plan plus dry run still sends the same 101 statements,
  * in the same order and on the same lane (pool or transaction), as a sha256 of their texts, params and lanes.
  * Fails when a member reorders a clause, renumbers a placeholder, binds a value as text or moves a probe off the
  * transaction.
@@ -74,7 +75,7 @@ const OLD = {
     params: ["src-a", "acme \"raised\" a seed", "acme \\\"raised\\\" a seed"] },
   s94: { text: "SELECT DISTINCT source_path FROM (\n      SELECT source_path FROM pages WHERE id=ANY($1::int[]) UNION ALL SELECT source_path FROM page_versions WHERE page_id=ANY($1::int[])) s\n    WHERE source_path IS NOT NULL AND source_path<>'' AND source_path NOT LIKE '/%' AND source_path NOT LIKE '%..%' LIMIT 64",
     params: [[9]] },
-  s95: { text: "SELECT id,(1-(embedding <=> $1::halfvec))::float8 AS similarity,\n        strpos(gbrain_fact_normalize(fact),gbrain_fact_normalize($4))>0 AS contains_claim\n      FROM facts WHERE source_id=$2 AND embedding_model=$3 AND embedding IS NOT NULL\n      ORDER BY embedding <=> $1::halfvec LIMIT 5",
+  s95: { text: "SELECT id, similarity, contains_claim FROM (\n        SELECT id,(1-(embedding <=> $1::halfvec))::float8 AS similarity, embedding <=> $1::halfvec AS distance,\n          strpos(gbrain_fact_normalize(fact),gbrain_fact_normalize($4))>0 AS contains_claim\n        FROM facts WHERE source_id=$2 AND embedding_model=$3 AND embedding IS NOT NULL\n        ORDER BY embedding <=> $1::halfvec LIMIT 5) nearest\n      ORDER BY distance, id",
     params: ["[1,0]", "src-a", "m", "Acme \"raised\" a Seed"] },
 };
 
@@ -126,18 +127,23 @@ test('listPurgeMatchCandidates sends the old --match statement', async () => {
   params: ['src-a', 'Raised'] });
 });
 
-test('listPurgeProbeItems names the rows of a named probe, 20 at most, ordered by item', async () => {
+test('listPurgeProbeItems names the rows of a named probe, 20 at most, in byte order of the item', async () => {
   const { engine, last } = recordingEngine();
   await engine.listPurgeProbeItems({ kind: 'named', table: 'links', sourceId: 'src-a', needles: [CLAIM] });
   const count = OLD.s49.text;
   const select = count.slice('SELECT count(*)::int AS n FROM ('.length, count.lastIndexOf(' LIMIT '));
-  expect(last()).toEqual({ text: `${select} ORDER BY 1 LIMIT 20`, params: OLD.s49.params });
+  expect(last()).toEqual({ text: `SELECT item FROM (${select}) probe_items ORDER BY item COLLATE "C" LIMIT 20`, params: OLD.s49.params });
 });
 
-/** sha256 of the 99 statements (text, params, lane) the plan and dry run below sent before the move. */
-const SEQUENCE_SHA256 = "8908cee5d01c1e287bfcc6231e9af133d812f957675cd10357570780a9c4f57e";
+/**
+ * sha256 of the 101 statements (text, params, lane) the plan and dry run below send: the 99 recorded before the move, plus
+ * the learning_items.subject_slug probe (its statement_timeout and its bounded count, on the transaction, after ingest_log)
+ * that master #10193 added to src/core/deletion-inventory.ts. The withdrawal-discovery key read also matches
+ * gbrain_fact_fingerprint_v2 (migration v341, segment-pending-stamp), which changes the digest.
+ */
+const SEQUENCE_SHA256 = "cfd632242d68cb5af88173307fdf3d06ff5ff6f8c50e141f3ca62682012d95cc";
 
-test('the plan, dry run and request finders send the same 99 statements as before, in order, on the same lanes', async () => {
+test('the plan, dry run and request finders send the same 101 statements as before (99 plus the learning_items probe), in order, on the same lanes', async () => {
   const { engine, fake } = recordingEngine(stmt => {
     const t = stmt.text;
     if (t.startsWith('SELECT DISTINCT k.id,k.page_id FROM takes')) return [{ id: 1, page_id: 9 }];
@@ -153,6 +159,6 @@ test('the plan, dry run and request finders send the same 99 statements as befor
   await findRequestsHoldingStagings(engine, 'src-a', ['00000000-0000-0000-0000-0000000000aa']);
   await derivedRowsFrom(engine, [{ table: 'facts', id: '7' }]);
   const sent = fake.statements().map(s => ({ text: s.text, params: s.params, lane: s.lane }));
-  expect(sent.length).toBe(99);
+  expect(sent.length).toBe(101);
   expect(createHash('sha256').update(JSON.stringify(sent)).digest('hex')).toBe(SEQUENCE_SHA256);
 });

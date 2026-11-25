@@ -5,8 +5,8 @@
  * (relationalFanout, relationalChainHop), orphan detection (findOrphanPages), rewriteLinks (a no-op on every engine)
  * and the link reads of hybrid search's ranking stage (hasSupersedeEdges, supersedingPageSlugs, pagesLinkingTo; the
  * SQL is src/core/engine-sql/search-reads.ts), and the link reads of src/core/engine-sql/link-reads.ts (inboundLinkCoverage,
- * listJunkEntityHubs, countEntityPages, entityGraphCoverage, countForeignEdges, listLivePageSummaries, countInboundLinks, readEntityInboundEdges,
- * listLinkEndpointPages, listPagesTitledIn, wordLexemes, readLinkContextMatches, readLinkContextOriginPages).
+ * listJunkEntityHubs, countEntityPages, entityGraphCoverage, entityFeatureCoverage, countDatedMeetingPages, countForeignEdges, listLivePageSummaries, countInboundLinks, readEntityInboundEdges,
+ * listLinkEndpointPages, listPagesTitledIn, probePageTypes, readLongPageSizes, wordLexemes, readLinkContextMatches, readLinkContextOriginPages).
  *
  * Export only BrainEngine members from this file, each a `StoreMember` named after the member it serves (see tags.ts):
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay
@@ -41,6 +41,8 @@ import type {
   EntityInboundEdgeRow, JunkEntityHubRow, LinkContextAsk, LinkContextMatch, LinkContextOriginPage, LinkEndpointPage, LivePageSummary,
   TitledPage,
 } from '../../engine-sql/link-reads.ts';
+import type { PageTypeProbe } from '../../engine-sql/cli-reads-ops.ts';
+import type { LongPageSizeRow } from '../../search/long-page-sizes.ts';
 import { getFtsLanguage } from '../../fts-language.ts';
 import { CONNECTOR_SOURCE_KINDS } from '../../persistence/connector-kinds.ts';
 import type { EntityTypeFilter } from '../../schema-pack/entity-types.ts';
@@ -470,6 +472,29 @@ export const entityGraphCoverage: StoreMember<[filter: EntityTypeFilter], { enti
     return { entities: Number(r.entities), connected: Number(r.connected), withTimeline: Number(r.withTimeline) };
   };
 
+/**
+ * How many live unquarantined entity pages there are and how many have an inbound link or a timeline entry. The store
+ * reads every page. A 100 percent sample draws every row (TABLESAMPLE BERNOULLI (100)), so it is served as the whole
+ * population; a lower percent is a random draw no other engine can match, so it refuses by name. Doctor and onboard
+ * ask for a sample only on Postgres. A malformed percent fails with the SQL engines' message (engine-sql/link-reads.ts).
+ */
+export const entityFeatureCoverage: StoreMember<[filter: EntityTypeFilter, feature: 'links' | 'timeline', opts?: { samplePercent?: number }], { sampleSize: number; matched: number }> =
+  async (brain, filter, feature, opts) => {
+    if (feature !== 'links' && feature !== 'timeline') refuseMember('entityFeatureCoverage', `the feature ${String(feature)}`);
+    const pct = opts?.samplePercent;
+    if (pct !== undefined && !(Number.isFinite(pct) && pct > 0 && pct <= 100)) {
+      throw new Error(`entityFeatureCoverage: samplePercent must be a number in (0, 100], got ${String(pct)}`);
+    }
+    if (pct !== undefined && pct !== 100) refuseMember('entityFeatureCoverage', `a TABLESAMPLE of ${pct} percent (a random draw; the store reads every page)`);
+    const r: { sampleSize: number; matched: number } = await storeCall({ member: 'entityFeatureCoverage' },
+      () => brain.entityFeatureCoverage({ filter, feature }));
+    return { sampleSize: Number(r.sampleSize), matched: Number(r.matched) };
+  };
+
+/** Live meeting pages with an effective date. */
+export const countDatedMeetingPages: StoreMember<[], number> =
+  async (brain) => Number(await storeCall({ member: 'countDatedMeetingPages' }, () => brain.countDatedMeetingPages()));
+
 /** Links of the page whose other end is in another source. */
 export const countForeignEdges: StoreMember<[slug: string, sourceId: string, direction: 'in' | 'out' | 'both'], number> =
   async (brain, slug, sourceId, direction) => Number(await storeCall({ member: 'countForeignEdges' },
@@ -515,6 +540,30 @@ export const listPagesTitledIn: StoreMember<[queryLower: string, scope: PageRead
     const rows: TitledPage[] = await storeCall({ member: 'listPagesTitledIn' },
       () => brain.listPagesTitledIn({ queryLower, scope: { ...scopeOf('listPagesTitledIn', options), scoped: true } }));
     return rows.map(r => ({ ...r, id: Number(r.id) }));
+  };
+
+/** search's type-filter probe: each set's presence among the live pages `scope` reads, and their types when one has none. */
+export const probePageTypes: StoreMember<[sets: readonly (readonly string[])[], scope: PageReadScope], PageTypeProbe> =
+  async (brain, sets, scope) => {
+    const options = takeOptions('probePageTypes', scope, READ_SCOPE_KEYS, UNREAD_BY_FILTER);
+    const out: { present: boolean[]; available: string[] | null } = await storeCall({ member: 'probePageTypes' },
+      () => brain.probePageTypes({ sets: sets.map(set => [...set]), scope: { ...scopeOf('probePageTypes', options), scoped: true } }));
+    return { present: out.present.map(Boolean), available: out.available ?? null };
+  };
+
+/**
+ * The long-page size preflight: each page in `ids` that the scope serves (live, served projection, safe chunks when the
+ * scope requires them), with its stored body length. An id the SQL's int[] cast rejects is an error there, not a refusal.
+ */
+export const readLongPageSizes: StoreMember<[ids: readonly number[], scope: PageReadScope, opts: { includeTimeline: boolean }], LongPageSizeRow[]> =
+  async (brain, ids, scope, opts) => {
+    const options = takeOptions('readLongPageSizes', scope, [...READ_SCOPE_KEYS, 'requireSafeChunks'], ['takesHoldersAllowList']);
+    for (const id of ids) if (!Number.isInteger(id) || Math.abs(id) > INT32_MAX) throw new TypeError(`readLongPageSizes: page id ${String(id)} is not a 32-bit integer`);
+    const rows: LongPageSizeRow[] = await storeCall({ member: 'readLongPageSizes' }, () => brain.readLongPageSizes({
+      ids: [...ids], includeTimeline: opts.includeTimeline === true, safeChunks: requiresSafeChunks(options),
+      scope: { ...scopeOf('readLongPageSizes', options), scoped: true },
+    }));
+    return rows.map(r => ({ id: Number(r.id), chars: Number(r.chars), bytes: Number(r.bytes) }));
   };
 
 /** Each word to its English lexemes; another full-text configuration refuses (the store has only English). */

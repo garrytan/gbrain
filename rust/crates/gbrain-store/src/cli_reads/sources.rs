@@ -1,11 +1,14 @@
 //! Source-resolution reads: `listLocalPathSources`, `listSourceRoutingRows`,
-//! `countDefaultSourceSplit` and `countSourcePages` (SQL in `src/core/engine-sql/sources.ts`).
+//! `countDefaultSourceSplit`, `countSourcePages` and `readSourcesNotReadable` (SQL in
+//! `src/core/engine-sql/sources.ts`).
 //! Each reads one snapshot. `insertSource` is the CLI's plain source insert.
 //! `listSourcePathPages` and `readRenameIdentityRows` are the page reads of a git sync: the live
 //! pages a full sync reconciles, and the stored side a rename's identity check compares.
 //! `listQuarantinedSlugs` names the live pages its link and timeline extraction skips.
 
+use crate::cli_reads::pg_text::fm_text;
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
+use crate::facts::{OwnerOnlyCache, PrivacyPolicy};
 use crate::kv::{KvRead, scan_prefix};
 use crate::pages::PageRecord;
 use crate::sources::{
@@ -15,6 +18,9 @@ use crate::{Store, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
+
+/// The frontmatter key that marks a quarantined page (`QUARANTINE_KEY`).
+const QUARANTINE_KEY: &str = "quarantine";
 
 /// The source a plain-directory sync reads (`PlainSyncSourceRow`). `last_commit` is the one
 /// `advance_source_commit` stored.
@@ -63,7 +69,7 @@ struct PageLiveness {
 }
 
 /// Calls `f` with the source of each live page under `prefix` until it returns false.
-fn scan_live_pages(
+pub(super) fn scan_live_pages(
     read: &dyn KvRead,
     prefix: &[u8],
     f: &mut dyn FnMut(&str) -> bool,
@@ -83,6 +89,49 @@ fn scan_live_pages(
         },
     )?;
     failure.map_or(Ok(()), Err)
+}
+
+/// Whether the source holds a live page with no `quarantine` frontmatter key that `policy`
+/// (when given) does not hide.
+fn any_visible_page(
+    read: &dyn KvRead,
+    source_id: &str,
+    policy: Option<&PrivacyPolicy>,
+    owner_only: &mut OwnerOnlyCache,
+) -> Result<bool> {
+    let mut found = false;
+    let mut failure: Option<StoreError> = None;
+    scan_prefix(
+        read,
+        &keys::text(keys::PAGE, &[source_id, ""]),
+        false,
+        &mut |_, v| {
+            let page = match serde_json::from_slice::<PageRecord>(v) {
+                Ok(page) => page,
+                Err(e) => {
+                    failure = Some(e.into());
+                    return false;
+                }
+            };
+            if page.deleted_at_us.is_some() || page.frontmatter.contains_key(QUARANTINE_KEY) {
+                return true;
+            }
+            match policy.map_or(Ok(false), |policy| {
+                owner_only.page_hidden(read, &page, policy)
+            }) {
+                Ok(true) => true,
+                Ok(false) => {
+                    found = true;
+                    false
+                }
+                Err(e) => {
+                    failure = Some(e);
+                    false
+                }
+            }
+        },
+    )?;
+    failure.map_or(Ok(found), Err)
 }
 
 fn default_has_live_pages(read: &dyn KvRead) -> Result<bool> {
@@ -181,9 +230,9 @@ fn scan_live_origins(
 impl Store {
     /// `readPageSizeRows(sourceId, maxBytes, slugs)`: the live pages of one source (only the listed
     /// slugs when `slugs` is Some) that carry `embed_skip`, have a body over `max_bytes` or are
-    /// segmented or have an embedding hold (`embedding_holds.rs`, the `page_embedding_budget` row),
+    /// segmented or have a ledger row (`page_embedding_budget.rs`, the `page_embedding_budget` row),
     /// in slug order. `bytes` is a segmented page's `body_bytes`, else the UTF-8 length of its
-    /// compiled truth plus its timeline; `state` and `reason` are the hold's, else null.
+    /// compiled truth plus its timeline; `state` and `reason` are the ledger row's, else null.
     pub fn read_page_size_rows(
         &self,
         source_id: &str,
@@ -230,9 +279,10 @@ impl Store {
                 None => i64::try_from(page.compiled_truth.len() + page.timeline.len()).ok(),
             };
             let skip = page.frontmatter.contains_key("embed_skip");
-            let hold = crate::embedding_holds::read_hold(&*read, page.id)?;
+            let hold = crate::page_embedding_budget::read_state_reason(&*read, page.id)?;
             if skip || segmented || bytes.is_some_and(|b| b > max_bytes) || hold.is_some() {
-                let (state, reason) = hold.map_or((None, None), |h| (Some(h.state), h.reason));
+                let (state, reason) =
+                    hold.map_or((None, None), |(state, reason)| (Some(state), reason));
                 rows.push(PageSizeRow {
                     slug: page.slug,
                     bytes,
@@ -264,7 +314,7 @@ impl Store {
 
     /// `readLiveIdentityHolders(sourceId, ids, titles)`: the live pages of one source whose
     /// frontmatter `id` is in `ids` or whose title is in `titles`, in slug order. `fm_id` is the
-    /// id as Postgres `frontmatter->>'id'` reads it. The SQL engines return them in no set order.
+    /// id as Postgres `frontmatter->>'id'` reads it: a non-string value in jsonb's text form. The SQL engines return them in no set order.
     pub fn read_live_identity_holders(
         &self,
         source_id: &str,
@@ -279,11 +329,7 @@ impl Store {
         let read = self.read()?;
         let mut rows = Vec::new();
         scan_live_origins(&*read, source_id, &mut |page| {
-            let fm_id = match page.frontmatter.get("id") {
-                None | Some(Value::Null) => None,
-                Some(Value::String(id)) => Some(id.clone()),
-                Some(other) => Some(other.to_string()),
-            };
+            let fm_id = fm_text(&page.frontmatter, "id");
             let by_id = fm_id.as_deref().is_some_and(|id| ids.contains(id));
             let by_title = page
                 .title
@@ -443,6 +489,53 @@ impl Store {
         failure.map_or(Ok(n), Err)
     }
 
+    /// `readSourcesNotReadable(readable, { facts, excludePrivate })`: whether an unscoped remote
+    /// read over `readable` reads nothing while other sources hold pages. True when no live,
+    /// unquarantined page of `readable` passes `policy` (with `facts`, and no active world fact
+    /// of `readable` exists) and such a page lives in a source outside `readable` that is not
+    /// archived. A `None` policy judges every page visible.
+    pub fn read_sources_not_readable(
+        &self,
+        readable: &[String],
+        facts: bool,
+        policy: Option<&PrivacyPolicy>,
+    ) -> Result<bool> {
+        let read = self.read()?;
+        let mut owner_only = OwnerOnlyCache::default();
+        for source_id in readable {
+            if source_id.contains('\0') {
+                continue;
+            }
+            if any_visible_page(&*read, source_id, policy, &mut owner_only)? {
+                return Ok(false);
+            }
+        }
+        if facts {
+            let now = self.env.now_micros();
+            for source_id in readable {
+                if source_id.contains('\0') {
+                    continue;
+                }
+                let rows = crate::facts::source_rows(&*read, source_id)?;
+                if rows
+                    .iter()
+                    .any(|f| f.visibility == "world" && f.active(now))
+                {
+                    return Ok(false);
+                }
+            }
+        }
+        for source in all_sources(&*read)? {
+            if source.archived || readable.contains(&source.id) {
+                continue;
+            }
+            if any_visible_page(&*read, &source.id, policy, &mut owner_only)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// `insertSource(row)`: creates a source with this name, path and config. Like the SQL
     /// primary key and the unique name, a source that already has the id or the name refuses
     /// `constraint_violation` and nothing is written. Source ids are 1 to 32 characters of
@@ -485,8 +578,13 @@ impl Store {
                 archived: false,
                 created_at_us: self.env.now_micros(),
                 chunker_version: None,
+                archived_at_us: None,
+                archive_expires_at_us: None,
                 last_commit: None,
                 newest_content_at_us: None,
+                upstream_checked_at_us: None,
+                upstream_commit: None,
+                upstream_behind: None,
                 purge_epoch: 0,
             };
             put_json(tx, &keys::text(keys::SOURCE, &[id]), &record)?;

@@ -103,6 +103,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   signal?.throwIfAborted();
   // The first read is a typed keyed read (its rows ordered by key, as this statement orders them); the re-check under
   // lock keeps the statement, for its FOR SHARE.
+  // The row order never reaches output: the two keys sort the same by byte and by locale, and the rows fold into one signature text.
   const embeddingConfigSql = "SELECT key,value FROM config WHERE key IN ('embedding_model','embedding_dimensions') ORDER BY key";
   const observedEmbeddingConfig = embeddingConfigText(await readConfigRows(engine, EMBEDDING_CONFIG_KEYS));
   const { embedding, embedding_model, degraded } = await prepareFactEmbedding(input.fact, signal, await factEmbeddingDisabled(engine, config), clock?.deadlineAt);
@@ -165,7 +166,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
     confidence: 1, embedding, embedding_model, source_session: typeof p.session_id === 'string' ? p.session_id : null,
     ...(context ? { context } : {}), ...claimColumns(p) };
   // #5575 B3: the row-level write gate at the request's declared tier (ENG-18); a held fact inserts nothing.
-  const gate = decideFactWrite({ fact: input.fact, context: context ?? null, source: fact.source }, { sourceId: row.source_id, slug: row.slug,
+  const gate = decideFactWrite({ fact: input.fact, context: context ?? null, source: fact.source }, { sourceId: row.source_id, slug: row.slug, pageId: snapshot?.page.id ?? row.page_id,
     payload: { fact: input.fact, kind: input.kind, visibility: input.visibility, entity_slug: input.entity_slug, source: fact.source, context: context ?? null,
       valid_from: validFrom.toISOString(), valid_until: validUntil?.toISOString() ?? null, source_session: fact.source_session, ...claimColumns(p) },
     input: gateInput(requestChannelTrust(row) ?? { tier: 'unknown', origin: null }, row.id), cfg: await loadWriteGateConfig(engine) });
@@ -204,8 +205,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
       id = inserted.id;
     }
     if (status === 'superseded') {
-      await tx.executeRaw(`UPDATE facts SET expired_at=now(),superseded_by=$3,valid_until=COALESCE($4::timestamptz,valid_until)
-      WHERE id=$1 AND source_id=$2 AND expired_at IS NULL`, [decision.candidate!.id, row.source_id, id, retiredUntil]);
+      await tx.retireSupersededFact({ oldId: decision.candidate!.id, sourceId: row.source_id, newId: id, until: retiredUntil });
       noteBelief({ kind: 'superseded', oldId: Number(decision.candidate!.id), newId: id });
     }
     const contestedBy = contestedOld ? await recordContestedFact(tx, { sourceId: row.source_id, oldId: contestedOld.id,

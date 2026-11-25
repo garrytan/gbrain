@@ -61,12 +61,9 @@ test('an enabled source still syncs on a freshness job', async () => {
 });
 
 test('a failed source lookup falls through to syncing', async () => {
-  const original = engine.executeRaw.bind(engine);
+  // The sync-off check reads the source through getSource (handlers/sync.ts queuedSyncDisabled).
   const failing = Object.create(engine) as PGLiteEngine;
-  failing.executeRaw = (async (sql: string, params?: unknown[]) => {
-    if (/FROM sources WHERE id = \$1/.test(sql) && /config/.test(sql)) throw new Error('lookup failed');
-    return original(sql, params);
-  }) as PGLiteEngine['executeRaw'];
+  failing.getSource = (async () => { throw new Error('lookup failed'); }) as PGLiteEngine['getSource'];
   const result = await makeSyncHandler(failing)(job(freshness)).catch((error: unknown) => ({ threw: String(error) }));
   expect(result).not.toMatchObject({ skipped: true, reason: 'sync_disabled' });
 });

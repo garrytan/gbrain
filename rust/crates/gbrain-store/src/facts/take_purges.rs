@@ -29,8 +29,9 @@ use crate::{get_json, put_json};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-/// The byte after `keys::FACT` that marks a take purge tombstone.
-const TAKE_PURGE: u8 = 0x10;
+/// The byte after `keys::FACT` that marks a take purge tombstone. It stays `0x10`: the loop mutes,
+/// which shared it before store format 7, moved to `0x11` (`facts/loops/mutes.rs`).
+pub(crate) const TAKE_PURGE: u8 = 0x10;
 
 const PURGED_TAKE_MESSAGE: &str =
     "purged_content: this take claim was purged from this source and cannot be saved again";
@@ -160,6 +161,28 @@ pub(crate) fn refuse_purged_take(
     Ok(())
 }
 
+/// Adds to `out` the request id of every take tombstone purged after `since_us`, the `take_purges`
+/// arm of `listRecentPurgeRequests` (`request_id IS NOT NULL AND purged_at > now() - make_interval(...)`).
+pub(crate) fn recent_request_ids(
+    read: &dyn KvRead,
+    since_us: i64,
+    out: &mut BTreeSet<String>,
+) -> Result<()> {
+    let mut failure = None;
+    scan_prefix(read, &[keys::FACT, TAKE_PURGE], false, &mut |_, v| {
+        match serde_json::from_slice::<TakePurgeRecord>(v) {
+            Ok(r) => {
+                if let (Some(request), true) = (r.request_id, r.purged_at_us > since_us) {
+                    out.insert(request);
+                }
+            }
+            Err(e) => failure = Some(StoreError::from(e)),
+        }
+        failure.is_none()
+    })?;
+    failure.map_or(Ok(()), Err)
+}
+
 /// Removes every take tombstone of a source, for the source delete.
 pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
     let mut doomed = Vec::new();
@@ -220,6 +243,53 @@ impl Store {
             }
         }
         Ok(rows.into_iter().collect())
+    }
+
+    /// `deleteTakePurgesByRequests`: removes the source's take tombstones of these purge requests; how many.
+    pub fn delete_take_purges_by_requests(
+        &self,
+        source_id: &str,
+        request_ids: &[String],
+    ) -> Result<u64> {
+        let op = "deleteTakePurgesByRequests";
+        no_nul(op, &[("sourceId", source_id)])?;
+        let mut wanted = BTreeSet::new();
+        for id in request_ids {
+            if !is_uuid(id) {
+                return Err(StoreError::invalid(format!(
+                    "{op}: requestIds holds a value that is not a UUID"
+                )));
+            }
+            wanted.insert(id.to_lowercase());
+        }
+        self.write(|tx| {
+            let mut doomed = Vec::new();
+            let mut failed = None;
+            scan_prefix(&*tx, &key(&[source_id]), false, &mut |k, v| {
+                match serde_json::from_slice::<TakePurgeRecord>(v) {
+                    Ok(r) => {
+                        if r.request_id.as_ref().is_some_and(|id| wanted.contains(id)) {
+                            doomed.push(k.to_vec());
+                        }
+                    }
+                    Err(e) => {
+                        failed = Some(e);
+                        return false;
+                    }
+                }
+                true
+            })?;
+            if let Some(e) = failed {
+                return Err(StoreError::invalid(format!(
+                    "{op}: corrupt take purge record: {e}"
+                )));
+            }
+            let count = doomed.len() as u64;
+            for k in doomed {
+                tx.delete(&k)?;
+            }
+            Ok(count)
+        })
     }
 
     /// `insertTakePurge`, either form: false when no tombstone was new.

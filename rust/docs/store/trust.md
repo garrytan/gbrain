@@ -56,13 +56,15 @@ The `fact_withdrawals` ledger (src/core/facts/withdrawal-schema.ts). One record 
 `t 0x01 source \0 visibility \0 subject \0 fact_hash` -> `{"withdrawn_at_us": <i64>}`
 
 `fact_hash` is `gbrain_fact_fingerprint(claim)` (`trust::fingerprint::fact_fingerprint`). Rows written before v174
-hold `gbrain_fact_fingerprint_v1(claim)`, and every read matches both. Deleting a source removes its rows (the table's
+hold `gbrain_fact_fingerprint_v1(claim)`, and every read matches both. Postgres rows written before v341 can hold
+`gbrain_fact_fingerprint_v2(claim)` (whitespace by the database locale); the SQL reads match that hash too. The store
+never wrote one: it folds the explicit `is_pg_space` list, which `gbrain_fact_fingerprint` folds on every engine. Deleting a source removes its rows (the table's
 `ON DELETE CASCADE`, through `cascade::remove_source_rows`). A slug rename (`updateSlug`) moves them in its own
 transaction (`move_subject_in`, the same move `moveFactWithdrawalSubject` makes).
 
 | Member | Store method | PGLite statement |
 | --- | --- | --- |
-| `hasCoveringFactWithdrawal` | `has_covering_fact_withdrawal`: four point reads (`*` and the subject, the hash and the v1 hash of the claim) | `SELECT 1 … fact_hash IN ($3, v1($5)) AND (subject='*' OR subject=$4)` |
+| `hasCoveringFactWithdrawal` | `has_covering_fact_withdrawal`: four point reads (`*` and the subject, the hash and the v1 hash of the claim) | `SELECT 1 … fact_hash IN ($3, v2($5), v1($5)) AND (subject='*' OR subject=$4)` |
 | `isFactWithdrawn` | `is_fact_withdrawn`: point reads for each visibility (the given one, or both when null), the hash and the v1 hash of the claim, and subject `*`, the entity and the member page; then the purge tombstones (hash only; `*` and the entity). A null entity or member page matches nothing | `SELECT 1 FROM fact_withdrawals … UNION ALL SELECT 1 FROM fact_purges … LIMIT 1` |
 | `isFactPurged` | `is_fact_purged` (facts/purge_ledger.rs): point reads for subject `*` and the entity; a visibility outside the CHECK matches nothing | `SELECT 1 FROM fact_purges … AND (subject='*' OR subject=$4) LIMIT 1` |
 | `insertFactWithdrawal` | `insert_fact_withdrawal`: false when the key exists, which keeps its time | `INSERT … COALESCE($5::timestamptz, now()) ON CONFLICT DO NOTHING RETURNING` |
@@ -70,7 +72,7 @@ transaction (`move_subject_in`, the same move `moveFactWithdrawalSubject` makes)
 | `moveFactWithdrawalSubject` | `move_fact_withdrawal_subject`: same slugs do nothing; otherwise each row moves unless the new subject already has the key | `MOVE_WITHDRAWAL_SUBJECT_SQL` |
 | `hasFactWithdrawalForSubject` | `has_fact_withdrawal_for_subject`: a scan of the source | `SELECT 1 … subject=$2 LIMIT 1` |
 | `listFactWithdrawalKeys` | `list_fact_withdrawal_keys`: sorted by visibility, fact_hash and subject in byte order, then cut to `limit` | `ORDER BY visibility, fact_hash, subject LIMIT $2` |
-| `readFactCacheWatermark` | `read_fact_cache_watermark`: a scan of the source's withdrawals for the count and the newest time (ISO, microseconds); the access digest is `md5('')` twice, because the store keeps no folder access rules or pending coverage | `SELECT count(*)::int, to_char(max(withdrawn_at) AT TIME ZONE 'UTC', …), md5(… access_rules) \|\| ':' \|\| md5(… access_pending_coverage) FROM fact_withdrawals WHERE source_id = $1` |
+| `readFactCacheWatermark` | `read_fact_cache_watermark`: a scan of the source's withdrawals for the count and the newest time (ISO, microseconds); the access digest is `md5` of every folder rule (`source_id/rule_id/prefix/readers/revision`, by source and rule id in byte order) and `md5` of every pending or invalid prefix (`source_id/prefix/reason/revision`, by source, prefix and reason), joined by `:` | `SELECT count(*)::int, to_char(max(withdrawn_at) AT TIME ZONE 'UTC', …), md5(… access_rules) \|\| ':' \|\| md5(… access_pending_coverage) FROM fact_withdrawals WHERE source_id = $1` |
 | `readTrustGeneration` | `read_trust_generation`: the store's commit sequence as decimal text; it moves on every commit, a superset of the trigger events that bump the SQL generation, so a cache keyed on it rebuilds after any write | `SELECT generation::text AS generation FROM trust_policy_state WHERE id = 1`, bumped by deferred WHEN-guarded triggers (eligibility/generation-schema.ts) |
 | `readSourcePurgeFlags` | `read_source_purge_flags`: `facts` from the fact purge ledger (any tombstone of the source, [facts.md](facts.md) "The fact purge ledger"); `takes` from the take purge ledger (any tombstone of the source, [facts.md](facts.md) "The take purge ledger"), read in the same snapshot | `EXISTS (… fact_purges …), EXISTS (… take_purges …)` |
 | `listPurgedTakeRows` | `list_purged_take_rows` (facts/take_purges.rs): per take row, the claim's fingerprint, then point reads for subject `*` and the subject, or one scan of the source's take tombstones when the subject is null; each matched row number once, ascending. The TS member refuses a row number outside 32 bits, which the SQL's `row_num integer` column refuses | `SELECT DISTINCT i.row_num FROM jsonb_to_recordset($2…) JOIN take_purges p …` (no set order) |
@@ -128,6 +130,7 @@ through `cascade::remove_source_rows`).
 | --- | --- | --- |
 | `insertTrustProposal` | `insert_trust_proposal`: takes an id first, then returns the pending proposal of the same key with `created: false`, so a refused insert uses up an id as BIGSERIAL does | `INSERT … ON CONFLICT DO NOTHING RETURNING id`, then `SELECT id … status = 'pending'` |
 | `getTrustProposal` | `get_trust_proposal`: a point read (the `FOR UPDATE` lock is the store's one writer) | `SELECT * … WHERE id = $1` |
+| `listUnreadablePrivacyHoldIds` | `list_unreadable_privacy_hold_ids`: each listed id once, ascending; a `supersede_fact` proposal whose before state names `visibility` whose target fact is missing (or not in `facts`) or one `VisibilityWidening::admits` refuses (the caller's member page and private-facts grant, sent by `storeVisibility`); a caller the member cannot model refuses | `SELECT tp.id FROM trust_proposals tp LEFT JOIN facts f … AND (f.id IS NULL OR NOT (<memberFactAdmitSql> OR <grantedPrivateFactSql>))` |
 | `listTrustProposals` | `list_trust_proposals`: filters on status (`all`), source, action and `since`; sorted by `created_at` then id, cut to the limit | `… ORDER BY created_at, id LIMIT $5` |
 | `pendingTrustProposalsFor` | `pending_trust_proposals_for`: the pending proposals naming the row, by id | `… WHERE status = 'pending' AND (target … OR related …) ORDER BY id` |
 | `updatePendingTrustProposalAfter` | `update_pending_trust_proposal_after`: a pending proposal only | `UPDATE … WHERE id = $1 AND status = 'pending'` |
@@ -146,11 +149,12 @@ Rust guesses and gaps (1x parity):
 Not built (they still run through `executeRaw`, which the Rust engine refuses): the reads that also read `fact_purges`
 (the store keeps that table now, rust/docs/store/facts.md "The fact purge ledger", but these reads do not read it yet:
 the ambiguous-fence check, the export snapshot), the reads that join `facts` (the effect-target
-request, the single-fact prepare, the repair and review lanes), and the meta-hook watermark. The `facts` insert guard
-`gbrain_preserve_fact_withdrawal` is built: every fact write (`write_fact`) saves a row that is not expired and matches a
-withdrawal of its claim as expired at the earliest such withdrawal, with `valid_until` no later than it
-(`facts::purge::earliest_withdrawal`; a member-page row matches only its page's withdrawals, an unbacked name key any
-subject but an owned memory page).
+request, the single-fact prepare, the repair and review lanes) and the meta-hook watermark. The `facts` guard
+`gbrain_preserve_fact_withdrawal` is built (`facts/withdrawal_guard.rs`): every fact write (`write_fact`) saves a row
+that is not expired and matches a withdrawal of its claim as expired at the earliest such withdrawal, with
+`valid_until` no later than it (`facts::purge::earliest_withdrawal`; a member-page row matches only its page's
+withdrawals, an unbacked name key any subject but an owned memory page). Every update member that sets a watched
+column on a row it can leave active runs it too (facts.md, "Captured-facts and rehome repair").
 
 Rust guesses and gaps (1x parity):
 
@@ -162,6 +166,34 @@ Rust guesses and gaps (1x parity):
 - A negative `limit` refuses with `invalid_argument`; Postgres raises `LIMIT must not be negative`.
 - The fingerprint is a copy of the facts family's (facts.rs on the facts-sites line). `pg_lower_char` follows the code
   points probed on PGLite (`LOWER_KEEP`); a Postgres built with a different Unicode table can differ.
+
+`listPendingContradictions` (the `trust review` read of a pending `decide_proposals` pair of two active facts) is the
+decide-proposals family's `list_pending_contradictions` (eval-capture, `eval_capture/decide_proposals.rs`): the pending
+proposals whose two facts both sit in the proposal's source and are active (not expired, `valid_until` unset or in the
+future), oldest first, at most 1000, with the new fact's tier, entity and claim, the slug of either fact and both claim
+values. An optional source and an ISO `since` filter by the proposal.
+
+## Derivation trust (`trust::derivation`)
+
+The derived-row trust writes and counts. They read and write the page, take, timeline and fact records and keep no
+key of their own. The `derivation_inputs` edges are kept by `generations/derivation_inputs.rs` (facts.md, "Derivation
+inputs"): `recordDerivationEdges` writes them and `listDerivedRows` reads one hop of `derivedRowsFrom`.
+
+| Member | Store method | PGLite statement (src/core/engine-sql/derivation-trust.ts) |
+| --- | --- | --- |
+| `lowerTrustTier` | `lower_trust_tier`: pages only (the member refuses `takes` and `timeline_entries`); lowers each listed page, soft-deleted included, whose stored rank is above the tier; keeps the revision; returns the ids lowered by id | `UPDATE pages SET trust_tier=$2,write_origin=$3::text::jsonb WHERE id=ANY($1::bigint[]) AND rank > rank RETURNING id` |
+| `countDerivedRowTaint` | `count_derived_row_taint`: pages, takes or timeline entries whose `write_origin` holds a `taint_inputs` key (jsonb `?`), and of those the ones stored `external_untrusted` | `SELECT count(*) FILTER (…) … FROM <table>` |
+| `countDerivedFactTaint` | served by `facts/trust_owner.rs` `count_derived_fact_taint` (rust/docs/store/facts.md) | `SELECT count(*) FILTER (…) … FROM facts` |
+| `countDerivedFactTaint` | `count_derived_fact_taint` in `facts/trust_owner.rs` (rust/docs/store/facts.md): the same count on facts | `SELECT count(*) FILTER (…) … FROM facts` |
+| `stampPageFrontmatter` | `stamp_page_frontmatter`: merges `retired_by`/`retired_at` into soft-deleted pages, or `source_hash` into live `atom` pages; a page the merge leaves unchanged is not written | `UPDATE pages SET frontmatter=frontmatter\|\|jsonb_build_object(…) WHERE …` |
+
+Rust guesses and gaps (1x parity):
+
+- A frontmatter stamp that changes a page moves its revision, as the `gbrain_advance_page_revision` trigger does; a
+  stamp that changes nothing keeps it (Postgres runs the `UPDATE` and the trigger sees no content change either).
+- `propagateTierLowering` (src/core/trust/propagation.ts) walks the rows derived from a lowered row through
+  `derivedRowsFrom`, lowers them and queues `needs_rederive` through `executeRaw`, so on a Rust brain every
+  `lowerToDerivedTier` that lowers a row then stops with `raw_sql`.
 
 `listPendingContradictions` (the `trust review` read of a pending `decide_proposals` pair of two active facts) is the
 decide-proposals family's `list_pending_contradictions` (eval-capture, `eval_capture/decide_proposals.rs`): the pending
@@ -214,23 +246,25 @@ Rust guesses and gaps (1x parity):
 ## Tier reads (`trust::tier_reads`)
 
 Typed reads of the stamped tier and write origin that core memory, the trust scan and page history made through
-`executeRaw` (src/core/engine-sql/trust-tier-reads.ts). They read fields of the page, fact and version records, so
+`executeRaw` (src/core/engine-sql/trust-tier-reads.ts). They read fields of the page, fact, take, timeline and version records, so
 the family adds no key prefix. Versions have no by-id index: the version reads scan the `V` keys once per call.
 
 | Member | Store method | PGLite statement |
 | --- | --- | --- |
 | `listCorePageRows` | `list_core_page_rows`: live pages with `always_load: true` under the source, exclude and page-policy (`facts/privacy.rs`) filters; with an eligibility, less pages with a `quarantine` key and pages below the floor (`TrustPolicy`), plus the tier, origin and `suppressed` mark. `withdrawn` is a withdrawal of the source with subject `*` or the slug. By source then slug, bytewise | `SELECT … FROM pages p WHERE p.frontmatter @> '{"always_load": true}' … ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C"` |
-| `listTrustScanRows` | `list_trust_scan_rows`: live pages, or facts, above `afterId` whose stored tier is listed, by id | `SELECT … WHERE p.id > $1 AND p.trust_tier = ANY($2) ORDER BY p.id LIMIT n` |
+| `listTrustScanRows` | `list_trust_scan_rows`: live pages, facts, takes or timeline entries (those of a page that exists, deleted or not; each row carries its page's source) above `afterId` whose stored tier is listed, by id; a take's or timeline entry's `write_origin` keeps Postgres's jsonb key order | `SELECT … WHERE p.id > $1 AND p.trust_tier = ANY($2) ORDER BY p.id LIMIT n` |
 | `countUnscannedTrustRows` | `count_unscanned_trust_rows`: the same rows, at or below `until` when set | `SELECT count(*) …` |
 | `listVersionTrustTiers` | `list_version_trust_tiers`: the snapshot tier of each listed version, by id | `SELECT pv.id, pv.trust_tier FROM page_versions pv WHERE pv.id = ANY($1)` |
 | `listVersionReasonWriters` | `list_version_reason_writers`: the type and tier of the page's next snapshot, else of the page (deleted or not) | `LEFT JOIN LATERAL (… ORDER BY n.id LIMIT 1)` |
 | `listPageRefsByIds` | `list_page_refs_by_ids`: the source, slug and type of each listed page record (deleted or not), by id, once each; an unknown or negative id answers nothing | `SELECT id, source_id, slug, type FROM pages WHERE id = ANY($1::bigint[]) ORDER BY id` |
+| `listPageQuoteTiers` | `list_page_quote_tiers`: the type and tier of each listed page record (deleted or not) by id, or of the live pages with the slug in the listed sources, by id, once each; both forms or neither is an invalid argument | `SELECT id, type, trust_tier FROM pages WHERE id = ANY($1::bigint[])` / `… WHERE slug = $1 AND source_id = ANY($2::text[]) AND deleted_at IS NULL ORDER BY id` |
 | `listValidTimeIdentities` | `list_valid_time_identities` (`trust/valid_time.rs`): the live pages with the slug in the source scope, by source in byte order, at most six, with the source's checkout and the no-caller page policy's verdict | `… ORDER BY p.source_id COLLATE "C" LIMIT 6` |
 | `pickValidTimeEdition` | `pick_valid_time_edition`: the edition in force on a date over the page and its `V` version records, the competing ordinals, the history counts and the prune marks (`successor_pruned`, the page's `version_history_gap_at`) | the `WITH rows AS (…)` pick |
+
 | `listAmendmentsNotApplied` | `list_amendments_not_applied` (`link_queries/link_temporal.rs`): the live pages with an `amends` link to the page whose relationship start in the scope is after the edition and on or before the date, or absent; under the source and page-policy filters, by slug then source, bytewise | `SELECT f.slug, … min(lr.first_start) … GROUP BY f.slug, f.source_id ORDER BY f.slug COLLATE "C" …` |
 | `readPageVersionEdition` | `read_page_version_edition` (`trust/valid_time.rs`): the page's `V` version record with the fields an edition reads, `body_storage` `inline` unless the snapshot is segmented; null for another page or an unknown id | `SELECT id, title, … FROM page_versions WHERE id = $1 AND page_id = $2` |
 | `readCursorEdition` | `read_cursor_edition` (`trust/valid_time.rs`): whether the page record (deleted or not) is still at the revision, and the newest `V` version record at it; null when the page is gone | `SELECT (p.knowledge_revision::text = $2) AS current, (SELECT max(v.id) …) FROM pages p WHERE p.id = $1` |
-| `pageAwaitsRederive` | none: the store keeps no `needs_rederive` queue (only a raw-SQL purge writes one, and `executeRaw` refuses), so the member answers false | `SELECT count(*)::int AS n FROM pages p WHERE p.id = $1 AND NOT NOT EXISTS (… needs_rederive …)` |
+| `pageAwaitsRederive` | served: true when a page with the id exists and the store's `needs_rederive` queue (`generations/needs_rederive.rs`, written by `markNeedsRederive`) names it | `SELECT count(*)::int AS n FROM pages p WHERE p.id = $1 AND NOT NOT EXISTS (… needs_rederive …)` |
 | `listHeldRows` | `list_held_rows` (`trust/held_rows.rs`): the page's take or timeline records among the ids whose stored tier ranks above the writer (the named `writer`, else the declared tier of the write trust context; a name that is no tier ranks 0) or, with `pending`, that a pending `forget` proposal targets; `{ id, trust_tier }` by id. A take or timeline record stored before its tier reads `unknown`; any other table refuses with `invalid_argument`. The `FOR UPDATE` lock adds nothing under the store's one writer | `SELECT x.id, x.trust_tier FROM takes|timeline_entries x WHERE x.page_id = $1 AND x.id = ANY($2) AND (rank > writer OR OPEN_CONTEST) ORDER BY x.id FOR UPDATE` |
 | `listGuardedTakeRows` | `list_guarded_take_rows` (`trust/held_rows.rs`): the batch guard of `gbrain extract takes` (`guardTakeRows`). The stored takes on the batch's pages that a `gone` entry deletes or an incoming row of the same page and number changes (another claim, kind or holder, or deactivates an active take), and that rank above the declared tier of the write trust context or, with `pending`, that a pending `forget` proposal targets; `{ id, page_id, row_num, trust_tier, change }` by page then row, once per matching entry, `change` `removed`, `replaced` or `deactivated`. An empty batch reads nothing | `SELECT x.id, … CASE … END AS change FROM takes x LEFT JOIN jsonb_to_recordset($1) n … LEFT JOIN jsonb_to_recordset($2) g … WHERE x.page_id = ANY($3) AND (rank > writer OR OPEN_CONTEST) … ORDER BY x.page_id, x.row_num FOR UPDATE OF x` |
 
@@ -247,8 +281,8 @@ the family adds no key prefix. Versions have no by-id index: the version reads s
   the canonical one for those readers: a version that names readers is visible when one of them is in the policy's
   identity, and a private version when the page's source is a private-readable source and the page is not a pinned
   question. Both pinned by `test/engine-parity/valid-time-member-reads.test.ts` and `tests/valid_time.rs`.
-- The other TypeScript members refuse a caller page policy that is not the no-caller one, the `takes` and
-  `timeline_entries` scan tables, and a cursor, limit or id that is not an integer. The store refuses any other
+- The other TypeScript members refuse a caller page policy that is not the no-caller one and a cursor, limit or id that is
+  not an integer; the trust scan reads pages, facts, takes and timeline entries. The store refuses any other
   table and a NUL byte with `invalid_argument`.
 - The belief history reads (`readBeliefHistoryRows`, `listVisibleBeliefLifetimes`) are store members over the
   ledger's rows (`trust::belief_history`, "The belief ledger", below). Their members refuse only a labelled-only
@@ -261,9 +295,32 @@ the family adds no key prefix. Versions have no by-id index: the version reads s
   the reason of the edition before, unless that edition's successor was pruned; under `excludePrivate` a reason reads
   only when the version that replaced it is visible and was not pruned, as on PGLite. `gap_at` is the page's
   `version_history_gap_at`.
+
 - Pinned by `test/engine-parity/trust-tier-reads.test.ts` on every arm and by `tests/trust_tier_reads.rs` and `tests/valid_time.rs`.
 
 ## The belief ledger (`trust::belief_events`, `trust::belief_lifetimes`, `trust::belief_redactions`, `trust::belief_history`, `trust::belief_coverage`, `trust::belief_state`)
+## Trust scan state (`trust::scan_state`, `persistence::trust_scan_cursor`)
+
+The statements `gbrain trust scan` (src/core/eligibility/scan.ts) ran through `executeRaw`, now typed members in
+src/core/engine-sql/trust-scan.ts. A scan on a Rust brain saves its cursor, stops after `maxBatches` and resumes where
+it stopped, as on PGLite; doctor `trust_scan` reads the same cursor. No new key prefix.
+
+| Member | Store method | PGLite statement |
+| --- | --- | --- |
+| `readTrustScanCursor` | `read_trust_scan_cursor`: the `completed_keys` of the `op_checkpoints` row (`trust_scan`, `v1`), or null | `SELECT completed_keys AS keys FROM op_checkpoints WHERE op = $1 AND fingerprint = $2` |
+| `writeTrustScanCursor` | `write_trust_scan_cursor`: the row's keys replaced with the array, in jsonb key order, stamped now | `INSERT INTO op_checkpoints … ON CONFLICT (op, fingerprint) DO UPDATE SET completed_keys = EXCLUDED.completed_keys, updated_at = now()` |
+| `listClaimPendingSourceIds` | `list_claim_pending_source_ids`: the sources whose config has a `trust_claimed_at` key, `trust_tier` `operator_curated`, a `kind` (`''` when absent) that is not a connector kind and no `trust_claim_lifted_at` key, archived ones included, by id | `SELECT s.id FROM sources s WHERE <claimPendingSql> ORDER BY s.id` |
+| `readTrustScanCeilings` | `read_trust_scan_ceilings`: each of pages, facts, takes and timeline entries' max id over every stored row (soft-deleted pages included), 0 when empty | `SELECT max(id) AS n FROM <table>`, once per table |
+
+- The cursor row is the parent row of the resumable-op checkpoints (rust/docs/store/persistence.md, "Op checkpoints"):
+  the same key and value, so `readOpCheckpointKeys`, `writeOpCheckpointKeys` and `purgeStaleCheckpoints` see it as
+  they see the Postgres row. The SQL texts are scan.ts's, not those members' (they read child paths and return text).
+- The TypeScript member sends the connector kinds (`CONNECTOR_SOURCE_KINDS`), so the list stays in one place.
+- The SQL orders by `s.id COLLATE "C"` and the store sorts the ids by bytes, so every engine lists them in one order
+  whatever the database collation. The order only names the ids in the scan's refusal.
+- Pinned by `test/engine-parity/trust-tier-reads.test.ts` (a scan that stops and resumes; doctor `trust_scan`) on every
+  arm, by `tests/trust_scan_state.rs` and by the `persistence::trust_scan_cursor` unit tests.
+
 
 The store keeps the belief ledger's four tables (src/core/belief/schema.ts) and serves the eleven statements of
 src/core/engine-sql/belief-ledger.ts as store members (src/core/rust-engine/store-members/belief-ledger.ts), the
@@ -317,6 +374,9 @@ because enable refused on this engine before it, so no store could hold a baseli
 - `readBeliefTombstones` reads the fact half from the fact purge ledger (`F 0x0F`, any visibility and any subject)
   and the take half from the take purge ledger (`facts.md`, "The take purge ledger"). A fingerprint found in both
   halves, or asked twice, is answered once.
+- `readLegacyClaimFingerprints` and `readLegacyBeliefTombstones` make no store call and answer none: they find a claim
+  recorded or purged under the pre-v341 Postgres fingerprint, which the store never held (it folds the explicit
+  `is_pg_space` list).
 - `readBeliefHistoryRows` reads the source's current incarnation by id, ascending or descending, in batches, with
   the slug, subject key, recorded-time window, subject key list and `beforeId` filters. Each row carries
   `stream_visible` (the stream lifetime is open, its page live at the same source and slug, the same page when the
@@ -370,3 +430,28 @@ The store serves the purge statements of src/core/engine-sql/belief-purge.ts
 - `readPurgeReplaySchema` makes no store call: the store always has the live schema, so it answers every listed store
   and every probed table and column as present.
 - Pinned by `test/engine-parity/belief-purge-probes.test.ts` on every arm and by the unit tests in each module.
+
+## Tier-only row changes (`trust::row_tier`)
+
+`setRowTier` (trust/page-handlers.ts) and `queueTierProjection` (trust/page-write.ts) through typed members
+(`src/core/engine-sql/row-tier.ts`), for a fact, a take or a page:
+
+- `readRowTrustTier(table, id)`: `{ trust_tier }`, or null for no row.
+- `setRowTrustTier(table, id, tier, decision)`: the tier by name, and `owner_decision` merged into `write_origin`
+  (`COALESCE(write_origin, '{}') || jsonb_build_object('owner_decision', decision)`); `[id]`, or `[]` for no row. The
+  stamp runs as an UPDATE that names both columns: a raise needs the promotion the caller opens, an undeclared writer's
+  raise is refused, a lowering is kept. A page goes through the page trust restore (`pages.rs`).
+- `readTierProjectionPage(table, id)`: `{ source_id, slug }` of a fact's markdown page (none without one), a take's page
+  or the page itself, in any state.
+
+The members add no keys.
+
+## Label guards (`trust::label_guards`)
+
+The `page_label_guards` table (GST-2521): the trust tier an owner label write set on a page. One record per page:
+
+`t 0x0e page_id` (8 bytes, big-endian; `t 0x0a` is the belief ledger's page lifetimes) -> `{"tier": <tier>, "set_at_us": <i64>}`
+
+`writePageLabelGuard` ([label_door.md](label_door.md)) writes and deletes it. A hard page delete removes it (the
+table's `ON DELETE CASCADE`, through `cascade::remove_page_rows`). The guard's readers (`labelGuardTier` and the
+deletion and graduation inventories) still read the table through `executeRaw`, which the Rust engine refuses.

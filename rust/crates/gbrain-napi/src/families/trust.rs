@@ -69,6 +69,21 @@ impl Brain {
         })
     }
 
+    /// `listGlobalPurgeWithdrawals(sourceId, hashes, worldOnly)`: the source's subject `*` purges of
+    /// the fingerprints `hashes` as withdrawals, in (visibility, fact_hash) order.
+    #[napi]
+    pub fn list_global_purge_withdrawals<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        hashes: Vec<String>,
+        world_only: bool,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_global_purge_withdrawals(&source_id, &hashes, world_only)
+        })
+    }
+
     /// `insertFactWithdrawal(sourceId, visibility, claim, subject, withdrawnAt | null)`: resolves
     /// true when it recorded the withdrawal, false when it was already recorded.
     #[napi]

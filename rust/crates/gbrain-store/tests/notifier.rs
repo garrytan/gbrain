@@ -527,7 +527,7 @@ fn marker_reads_order_by_first_due_then_source_then_intent_and_filter_by_source(
         order(store.read_wanted_markers(Some(&alpha)).unwrap()),
         vec![json!(["alpha", "full"]), json!(["alpha", "freshness"])]
     );
-    // No source here has synced (no last_commit), so a freshness marker naming a head is due too.
+    // No source here has a last_commit yet, so a freshness marker naming a head is due too.
     assert_eq!(order(store.read_due_wanted_markers(None).unwrap()).len(), 3);
     assert_eq!(
         order(store.read_due_wanted_markers(Some(&alpha)).unwrap()).len(),
@@ -565,6 +565,216 @@ fn marker_reads_order_by_first_due_then_source_then_intent_and_filter_by_source(
         .map(|r| json!([r["id"], r["due_markers"]]))
         .collect();
     assert_eq!(due, vec![json!(["alpha", 2]), json!(["beta", 1])]);
+}
+
+#[test]
+fn attach_clear_and_settle_act_only_at_the_generation_read_and_prune_deletes_nothing_before_a_last_commit()
+ {
+    let dir = TempDir::new("notifier-marker-generation");
+    let store = open(&dir);
+    source(&store, "alpha");
+    mark(&store, "alpha", "pull", None, "webhook", None).unwrap();
+    mark(&store, "alpha", "pull", None, "webhook", None).unwrap();
+    store
+        .attach_wanted_marker_job("alpha", "pull", 1, 11)
+        .unwrap();
+    assert_eq!(
+        store.read_wanted_markers(None).unwrap()[0]["job_id"],
+        Value::Null
+    );
+    store
+        .attach_wanted_marker_job("alpha", "pull", 2, 12)
+        .unwrap();
+    assert_eq!(
+        store.read_wanted_markers(None).unwrap()[0]["job_id"],
+        json!(12)
+    );
+    assert!(!store.clear_wanted_marker("alpha", "pull", 1).unwrap());
+    assert!(!store.clear_wanted_marker("alpha", "full", 2).unwrap());
+    assert!(store.clear_wanted_marker("alpha", "pull", 2).unwrap());
+    assert!(!store.clear_wanted_marker("alpha", "pull", 2).unwrap());
+    // A freshness marker that names no head settles at its generation only.
+    mark(&store, "alpha", "freshness", None, "webhook", None).unwrap();
+    store.settle_freshness_marker("alpha", 2, None).unwrap();
+    assert_eq!(store.read_wanted_markers(None).unwrap().len(), 1);
+    store
+        .settle_freshness_marker("alpha", 1, Some("h"))
+        .unwrap();
+    assert!(store.read_wanted_markers(None).unwrap().is_empty());
+    // One that names a head stays: the source has no last_commit yet to equal it.
+    mark(&store, "alpha", "freshness", Some("h"), "webhook", None).unwrap();
+    store
+        .settle_freshness_marker("alpha", 1, Some("h"))
+        .unwrap();
+    mark(&store, "alpha", "pull", Some("h"), "webhook", None).unwrap();
+    store
+        .prune_satisfied_wanted_markers(&[String::from("alpha")])
+        .unwrap();
+    assert_eq!(store.read_wanted_markers(None).unwrap().len(), 2);
+}
+
+#[test]
+fn the_sync_shape_is_a_live_sources_path_with_no_binding_and_none_for_a_missing_or_archived_source()
+{
+    let dir = TempDir::new("notifier-sync-shape");
+    let store = open(&dir);
+    source(&store, "alpha");
+    source(&store, "gone");
+    store.set_source_archived("gone", true).unwrap();
+    assert_eq!(
+        store.read_source_sync_shape("alpha").unwrap(),
+        Some(json!({ "local_path": "/repos/alpha", "root": null, "bound": false }))
+    );
+    assert_eq!(store.read_source_sync_shape("gone").unwrap(), None);
+    assert_eq!(store.read_source_sync_shape("missing").unwrap(), None);
+}
+
+#[test]
+fn the_first_due_clock_is_the_earlier_of_a_busy_row_and_a_due_freshness_marker_per_existing_source()
+{
+    let dir = TempDir::new("notifier-first-due");
+    let store = open(&dir);
+    for id in ["alpha", "beta", "gamma", "delta", "gone"] {
+        source(&store, id);
+    }
+    store.set_source_archived("gone", true).unwrap();
+    state(
+        &store,
+        "beta",
+        json!({ "state": "due", "reason": "commit", "firstDue": "keep" }),
+    )
+    .unwrap();
+    coverage(&store, "beta", Some("b"), HOST, 1);
+    std::thread::sleep(Duration::from_millis(5));
+    mark(&store, "beta", "freshness", None, "lock_busy", None).unwrap();
+    coverage(&store, "gamma", Some("c"), HOST, 2);
+    mark(&store, "gamma", "freshness", Some("c"), "notifier", None).unwrap();
+    state(
+        &store,
+        "delta",
+        json!({ "state": "idle", "firstDue": "clear" }),
+    )
+    .unwrap();
+    mark(&store, "delta", "pull", None, "sync_trigger", None).unwrap();
+    state(
+        &store,
+        "gone",
+        json!({ "state": "retry", "reason": "sync_failed", "firstDue": "keep" }),
+    )
+    .unwrap();
+    let markers = store.read_wanted_markers(None).unwrap();
+    let marker_due = |id: &str| {
+        markers
+            .iter()
+            .find(|m| m["source_id"] == json!(id) && m["intent"] == json!("freshness"))
+            .unwrap()["first_due_at"]
+            .clone()
+    };
+    let ids: Vec<String> = ["gone", "beta", "missing", "alpha", "gamma", "delta", "beta"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let got = store.read_notifier_first_due(&ids).unwrap();
+    assert_eq!(
+        got,
+        vec![
+            json!({ "source_id": "alpha", "observed_head": null, "first_due_at": null }),
+            json!({ "source_id": "beta", "observed_head": "b", "first_due_at": row(&store, "beta")["first_due_at"] }),
+            json!({ "source_id": "delta", "observed_head": null, "first_due_at": null }),
+            json!({ "source_id": "gamma", "observed_head": "c", "first_due_at": marker_due("gamma") }),
+            json!({ "source_id": "gone", "observed_head": null, "first_due_at": row(&store, "gone")["first_due_at"] }),
+        ]
+    );
+    for clock in [row(&store, "beta"), row(&store, "gone")] {
+        assert!(clock["first_due_at"].is_string(), "{clock}");
+    }
+    assert!(marker_due("gamma").is_string());
+    assert!(row(&store, "beta")["first_due_at"].as_str() < marker_due("beta").as_str());
+    assert!(store.read_notifier_first_due(&[]).unwrap().is_empty());
+}
+
+#[test]
+fn a_last_commit_advance_stamps_the_source_and_due_prune_and_settle_compare_markers_with_it() {
+    let dir = TempDir::new("notifier-last-commit");
+    let store = open(&dir);
+    source(&store, "alpha");
+    assert_eq!(store.read_source_last_commit("alpha").unwrap(), None);
+    store.advance_source_commit("nobody", "aaa", None).unwrap();
+    assert!(
+        store.get_source("nobody").unwrap().is_none(),
+        "an unknown source is not made"
+    );
+    store
+        .advance_source_commit("alpha", "aaa", Some(Some("2026-01-02T03:04:05.000Z")))
+        .unwrap();
+    let got = store.get_source("alpha").unwrap().unwrap();
+    assert_eq!(got.last_commit.as_deref(), Some("aaa"));
+    assert_eq!(
+        store.read_source_last_commit("alpha").unwrap().as_deref(),
+        Some("aaa")
+    );
+    assert_eq!(store.read_source_last_commit("nobody").unwrap(), None);
+    assert!(got.last_sync_at.is_some());
+    let record = |store: &Store| {
+        store
+            .list_source_records()
+            .unwrap()
+            .into_iter()
+            .find(|r| r.id == "alpha")
+            .unwrap()
+    };
+    assert_eq!(
+        record(&store).newest_content_at.as_deref(),
+        Some("2026-01-02T03:04:05.000000Z")
+    );
+    // No newest time keeps the stored one; null clears it.
+    store.advance_source_commit("alpha", "bbb", None).unwrap();
+    assert_eq!(record(&store).last_commit.as_deref(), Some("bbb"));
+    assert_eq!(
+        record(&store).newest_content_at.as_deref(),
+        Some("2026-01-02T03:04:05.000000Z")
+    );
+    store
+        .advance_source_commit("alpha", "bbb", Some(None))
+        .unwrap();
+    assert_eq!(record(&store).newest_content_at, None);
+    assert!(
+        store
+            .advance_source_commit("alpha", "bbb", Some(Some("not a time")))
+            .is_err()
+    );
+    // The host and status rows read it.
+    let host = store.list_notifier_host_source_rows().unwrap();
+    assert_eq!(
+        host.iter().find(|r| r["id"] == json!("alpha")).unwrap()["last_commit"],
+        json!("bbb")
+    );
+    // A freshness marker naming the source's head is not due; one naming another head is.
+    mark(&store, "alpha", "freshness", Some("bbb"), "webhook", None).unwrap();
+    mark(&store, "alpha", "pull", Some("bbb"), "webhook", None).unwrap();
+    assert_eq!(store.read_due_wanted_markers(None).unwrap().len(), 1);
+    let status = store.read_notifier_status_rows(None).unwrap();
+    let alpha = status.iter().find(|r| r["id"] == json!("alpha")).unwrap();
+    assert_eq!(alpha["last_commit"], json!("bbb"));
+    assert_eq!(alpha["due_markers"], json!(1));
+    // The prune deletes both markers that name the source's head.
+    store
+        .prune_satisfied_wanted_markers(&[String::from("alpha")])
+        .unwrap();
+    assert!(store.read_wanted_markers(None).unwrap().is_empty());
+    // The settle keeps a marker naming another head, unless the checkout head equals last_commit.
+    mark(&store, "alpha", "freshness", Some("ccc"), "webhook", None).unwrap();
+    store
+        .settle_freshness_marker("alpha", 1, Some("ccc"))
+        .unwrap();
+    assert_eq!(store.read_wanted_markers(None).unwrap().len(), 1);
+    store
+        .settle_freshness_marker("alpha", 1, Some("bbb"))
+        .unwrap();
+    assert!(store.read_wanted_markers(None).unwrap().is_empty());
+    mark(&store, "alpha", "freshness", Some("bbb"), "webhook", None).unwrap();
+    store.settle_freshness_marker("alpha", 1, None).unwrap();
+    assert!(store.read_wanted_markers(None).unwrap().is_empty());
 }
 
 #[test]

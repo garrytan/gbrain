@@ -241,3 +241,50 @@ fn the_claim_checks_read_both_ledgers_for_their_subjects() {
         .unwrap_err();
     assert_eq!(nul.code, INVALID_ARGUMENT);
 }
+
+#[test]
+fn the_global_purge_lookup_answers_the_asked_star_tombstones_in_order() {
+    let b = brain("purge-global");
+    for (vis, subject, hash) in [
+        ("world", "*", "bb"),
+        ("private", "*", "bb"),
+        ("world", "*", "aa"),
+        ("world", SLUG, "cc"),
+        ("world", "*", "zz"),
+    ] {
+        assert!(b.insert_fact_purge(&tombstone(vis, subject, hash)).unwrap());
+    }
+    let asked = ["aa", "bb", "cc"].map(String::from);
+    let every = b
+        .list_global_purge_withdrawals("default", &asked, false)
+        .unwrap();
+    let keys: Vec<(String, String)> = every
+        .iter()
+        .map(|w| {
+            (
+                w["visibility"].as_str().unwrap().into(),
+                w["fact_hash"].as_str().unwrap().into(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        keys,
+        [("private", "bb"), ("world", "aa"), ("world", "bb")]
+            .map(|(v, h)| (v.to_string(), h.to_string()))
+    );
+    assert!(every.iter().all(|w| w["purged"] == true && w["withdrawn_at"].as_str().unwrap().ends_with("+00:00")));
+    let world = b
+        .list_global_purge_withdrawals("default", &asked, true)
+        .unwrap();
+    assert_eq!(world.len(), 2);
+    assert!(
+        b.list_global_purge_withdrawals("default", &[], false)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        b.list_global_purge_withdrawals("other", &asked, false)
+            .unwrap()
+            .is_empty()
+    );
+}

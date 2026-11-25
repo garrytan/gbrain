@@ -31,6 +31,7 @@ import { formatFenceDate, type ParsedFact } from '../facts-fence.ts';
 import { strikeFenceRow } from '../facts/forget.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import type { WriteRequest } from './model.ts';
+import type { LoopFactState } from '../engine-sql/repair-bookkeeping.ts';
 
 /** The coordinator operation: the MCP op the caller was granted, so remote grants authorize it unchanged. */
 export const LOOP_FACT_RETIREMENT_OPERATION = 'loops_close';
@@ -43,27 +44,9 @@ export interface LoopFactRetirement {
   fence_struck?: boolean;
 }
 
-interface LoopFactState {
-  loop: { id: number; source_id: string; status: string; fact_id: number | null } | null;
-  fact: { id: number; source_id: string; expired_at: string | null; row_num: number | null; source_markdown_slug: string | null; fact: string } | null;
-  shared: boolean;
-}
-
 /** The loop, its fact and whether another open loop references that fact; `lock` takes row locks for the publication. */
 export async function loopFactState(db: BrainEngine, loopId: number, lock = false): Promise<LoopFactState> {
-  const suffix = lock ? ' FOR UPDATE' : '';
-  const [loop] = await db.executeRaw<{ id: number; source_id: string; status: string; fact_id: number | null }>(
-    `SELECT id, source_id, status, fact_id FROM open_loops WHERE id=$1${suffix}`, [loopId]);
-  if (!loop || loop.fact_id === null) return { loop: loop ? { ...loop, id: Number(loop.id), fact_id: null } : null, fact: null, shared: false };
-  const [fact] = await db.executeRaw<{ id: number; source_id: string; expired_at: string | null; row_num: number | null; source_markdown_slug: string | null; fact: string }>(
-    `SELECT id, source_id, expired_at, row_num, source_markdown_slug, fact FROM facts WHERE id=$1${suffix}`, [loop.fact_id]);
-  const others = await db.executeRaw(`SELECT 1 FROM open_loops WHERE fact_id=$1 AND id<>$2 AND status='open' LIMIT 1`, [loop.fact_id, loop.id]);
-  return {
-    loop: { ...loop, id: Number(loop.id), fact_id: Number(loop.fact_id) },
-    fact: fact ? { ...fact, id: Number(fact.id), row_num: fact.row_num === null ? null : Number(fact.row_num),
-      expired_at: fact.expired_at === null ? null : new Date(fact.expired_at).toISOString() } : null,
-    shared: others.length > 0,
-  };
+  return db.readLoopFactState(loopId, lock ? { lock: true } : undefined);
 }
 
 /** Why the loop's fact is not retired now, or null when it should be. */
@@ -119,9 +102,7 @@ export async function prepareLoopFactRetirement(engine: BrainEngine, row: WriteR
     await page?.validate?.(tx);
   };
   const apply = async (tx: BrainEngine): Promise<Record<string, unknown>> => {
-    const expired = await tx.executeRaw(`UPDATE facts SET expired_at=now(), valid_until=LEAST(COALESCE(valid_until, now()), now())
-      WHERE id=$1 AND source_id=$2 AND expired_at IS NULL RETURNING id`, [fact.id, fact.source_id]);
-    if (expired.length !== 1) throw retirementRefusal('revision_conflict', 'The commitment fact changed during publication.', row, `Fact ${fact.id} changed during publication, so the transaction rolled back.`);
+    if (!(await tx.expireSourceFactNow(fact.id, fact.source_id))) throw retirementRefusal('revision_conflict', 'The commitment fact changed during publication.', row, `Fact ${fact.id} changed during publication, so the transaction rolled back.`);
     const published = page ? await page.apply(tx) : {};
     return { ...published, fact_expired: true, retryable: false, fence_struck: page !== undefined, fact_id: fact.id, loop_id: loopId };
   };
@@ -151,8 +132,7 @@ export async function retireLoopFact(ctx: OperationContext, loopId: number): Pro
     const scoped = { ...ctx, sourceId } as OperationContext;
     await initializeLocalPersistence(scoped);
     const principal = await requestPrincipalForContext(scoped);
-    const [source] = await engine.executeRaw<{ incarnation: string; archived: boolean; local_path: string | null; kind: string | null }>(
-      "SELECT incarnation, archived, local_path, config->>'kind' AS kind FROM sources WHERE id=$1", [sourceId]);
+    const source = await engine.readSourceWriteRow(sourceId);
     if (!source || source.archived) return { fact_expired: false, retryable: false, reason: 'source_changed' };
     const slug = fact.source_markdown_slug ?? 'memory/unattributed';
     const snapshot = await engine.readPageSnapshot(slug, { sourceId });

@@ -5,6 +5,7 @@ import { WRITER_ADMIN_LOCK_KEY } from './admin-contract.ts';
 import { hostIdFor, existingHostIdFor } from './identity.ts';
 import type { SqlEngine } from './model.ts';
 import type { WriterAdminStore } from '../engine-sql/writer-admin.ts';
+import type { WriterReleaseStore } from '../engine-sql/writer-release.ts';
 
 export { WRITER_ADMIN_LOCK_KEY };
 export interface WriterAdminLock { locked: boolean; set_at: string | null; host_id: string | null; generation: number; }
@@ -13,7 +14,8 @@ export const WRITER_ADMIN_LOCKED_SUGGESTION = 'Stop. The operator locked writer 
   + 'ask the operator to review and perform the claim, activation or transfer. Ordinary page and memory writes continue. '
   + `See ${WRITER_ADMIN_LOCKED_DOCS}.`;
 
-function parseLock(value: string | null | undefined): WriterAdminLock {
+/** The lock a stored `WRITER_ADMIN_LOCK_KEY` value names (null when unset); an unreadable value reads locked. */
+export function parseWriterAdminLock(value: string | null | undefined): WriterAdminLock {
   const unlocked: WriterAdminLock = { locked: false, set_at: null, host_id: null, generation: 0 };
   if (!value) return unlocked;
   let parsed: Partial<WriterAdminLock>;
@@ -27,21 +29,35 @@ function parseLock(value: string | null | undefined): WriterAdminLock {
 
 export async function readWriterAdminLock(engine: SqlEngine): Promise<WriterAdminLock> {
   const [row] = await engine.executeRaw<{ value: string }>('SELECT value FROM config WHERE key=$1', [WRITER_ADMIN_LOCK_KEY]);
-  return parseLock(row?.value);
+  return parseWriterAdminLock(row?.value);
+}
+
+/**
+ * The operator lock, read through the typed config read every engine serves (writer status, graduation and
+ * deactivation blockers, and the in-transaction refusal below).
+ */
+export async function readWriterAdminLockTyped(engine: Pick<BrainEngine, 'getConfig'>): Promise<WriterAdminLock> {
+  return parseWriterAdminLock(await engine.getConfig(WRITER_ADMIN_LOCK_KEY));
 }
 
 /**
  * Runs inside claim, activation and transfer transactions for every caller, reviewed or internal.
  * FOR SHARE serializes with lock/unlock (FOR UPDATE) without blocking admission, which also shares this row.
  */
-export async function assertWriterAdminUnlocked(tx: SqlEngine): Promise<void> {
+export async function assertWriterAdminUnlocked(tx: SqlEngine & Pick<BrainEngine, 'getConfig'>): Promise<void> {
   await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR SHARE');
-  refuseWriterAdminLocked(await readWriterAdminLock(tx));
+  refuseWriterAdminLocked(await readWriterAdminLockTyped(tx));
+}
+
+/** `assertWriterAdminUnlocked` over the writer release store (engine-sql/writer-release.ts), inside its transaction. */
+export async function assertStoreAdminUnlocked(store: Pick<WriterReleaseStore, 'shareBrain' | 'adminLockValue'>): Promise<void> {
+  await store.shareBrain();
+  refuseWriterAdminLocked(parseWriterAdminLock(await store.adminLockValue()));
 }
 
 /** The same refusal from the stored config value of `WRITER_ADMIN_LOCK_KEY` (null when unset), for a typed config read. */
 export function assertWriterAdminLockValue(value: string | null | undefined): void {
-  refuseWriterAdminLocked(parseLock(value));
+  refuseWriterAdminLocked(parseWriterAdminLock(value));
 }
 
 function refuseWriterAdminLocked(lock: WriterAdminLock): void {
@@ -57,7 +73,7 @@ function refuseWriterAdminLocked(lock: WriterAdminLock): void {
  */
 export async function writeWriterAdminLock(store: WriterAdminStore, tx: BrainEngine, locked: boolean): Promise<{ admin_lock: WriterAdminLock; changed: boolean }> {
   await store.lockBrain();
-  const current = parseLock(await store.adminLockValue());
+  const current = parseWriterAdminLock(await store.adminLockValue());
   if (current.locked === locked) return { admin_lock: current, changed: false };
   if (locked) {
     const pending = await store.preparedTransferWorktree();

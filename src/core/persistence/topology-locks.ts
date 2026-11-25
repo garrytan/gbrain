@@ -27,7 +27,7 @@ export async function topologyPrincipal(engine: BrainEngine): Promise<string> {
   return writer.principal.id;
 }
 export async function lockTopologyPrincipal(engine: BrainEngine, id: string): Promise<void> {
-  const [writer] = await engine.executeRaw<{ lane: string; revoked_at: unknown }>('SELECT lane,revoked_at FROM persistence_local_writers WHERE id=$1::uuid FOR SHARE', [id]);
+  const writer = await engine.readLocalWriterRow(id, { lock: true });
   if (!writer || writer.lane !== 'cli' || writer.revoked_at != null) throw opError('permission_denied', 'The administering CLI registration was revoked.',
     `CLI writer registration ${id}, which started this source lifecycle change, was revoked, so nothing changed. Replacing it is the user's decision: review the registrations with the command in fix; the user stops any running owner and runs gbrain auth local-writer register cli --replace with the complete intended grant, then starts the lifecycle command again.`,
     {reason:'trusted_cli_required',fix:readFix('Lists the local writer registrations with their lane, grant and revocation state, read-only.',{argv:['gbrain','auth','local-writer','list','--json']})});
@@ -42,7 +42,8 @@ export async function lockTopologyPrincipal(engine: BrainEngine, id: string): Pr
  */
 export async function withTopologyLocks<T>(engine: BrainEngine, sourceId: string,
   run: (bindings: TopologyBinding[]) => Promise<T>, additionalRoot?: string, waitMs=5000, opts: { relocation?: boolean } = {}): Promise<T> {
-  const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
+  const brainId = await engine.readPersistenceBrainId();
+  if (brainId === null) throw new Error('The persistence brain row is missing, so no topology lock was taken and nothing changed.');
   const handles: NativeLockHandle[] = [];
   const take = async (path: string) => {
     const handle = waitMs===0?await tryAcquireNativeLock(path):await acquireNativeLock(path, { timeoutMs: waitMs });
@@ -54,15 +55,14 @@ export async function withTopologyLocks<T>(engine: BrainEngine, sourceId: string
   try {
     // Serializes discovery of new/unbound paths on this host. Worktree locks
     // remain the actual publication authority and never live in the checkout.
-    await take(join(persistenceHome(), 'locks', `topology-${brain.brain_id}.lock`));
+    await take(join(persistenceHome(), 'locks', `topology-${brainId}.lock`));
     const binding = await getWorktreeBinding(engine, sourceId);
     const bindings:TopologyBinding[] = binding ? [binding] : [];
     if (additionalRoot) {
-      const local = await engine.executeRaw<TopologyBinding>(`SELECT w.id AS worktree_id,w.owner_host_id,w.owner_epoch,w.state,w.topology_generation,
-        h.local_path,h.coordination_path FROM persistence_host_bindings h JOIN persistence_worktrees w ON w.id=h.worktree_id WHERE h.host_id=$1::uuid`,[hostIdFor(engine)]);
+      const local = await engine.listHostTopologyRows(hostIdFor(engine));
       for (const row of local) if (row.local_path&&(containsPath(row.local_path,additionalRoot) || containsPath(additionalRoot,row.local_path))) {
-        const [member]=await engine.executeRaw<{source_id:string}>('SELECT source_id FROM persistence_source_bindings WHERE worktree_id=$1::uuid ORDER BY source_id LIMIT 1',[row.worktree_id]);
-        const other = member?await getWorktreeBinding(engine,member.source_id):{...row,source_id:'',source_incarnation:'00000000-0000-0000-0000-000000000000',relative_path:'',unbound:true};
+        const [member]=await engine.listWorktreeMembers(row.worktree_id);
+        const other = member?await getWorktreeBinding(engine,member.source_id):{...row,source_id:'',source_incarnation:'00000000-0000-0000-0000-000000000000',relative_path:'',unbound:true} as TopologyBinding;
         if (other && !bindings.some(item=>item.worktree_id===other.worktree_id)) bindings.push(other);
       }
     }
@@ -135,8 +135,10 @@ export async function lockTopologyRows(tx: BrainEngine, sourceId: string, bindin
   if (refresh) throw catalogueError('refresh_in_progress',
     `Refresh ${refresh.id} of the worktree holding source ${refresh.source_ids[0]} is ${refresh.state}; source topology cannot change until it finishes.`,
     `gbrain sources refresh ${refresh.source_ids[0]} --resume, then retry this source command with the same request_id.`);
+  // The member order never reaches output: the members are re-sorted in JS on the next line and only name the source rows to lock.
   const members = await tx.executeRaw<{ source_id: string }>('SELECT source_id FROM persistence_source_bindings WHERE worktree_id=ANY($1::uuid[]) ORDER BY source_id', [ids]);
   const sources = [...new Set([sourceId,...members.map(row => row.source_id)])].sort();
+  // Plain ORDER BY id on purpose, not COLLATE "C": this only sets the lock order, the same as lockAllSourceRows (engine-sql/sources.ts), so no deadlock.
   await tx.executeRaw('SELECT id FROM sources WHERE id=ANY($1::text[]) ORDER BY id FOR UPDATE', [sources]);
   for (const before of bindings) {
     if(before.unbound){

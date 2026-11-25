@@ -160,15 +160,15 @@ describe('link_resolution_opportunity names its sample on every verdict', () => 
     await engine.executeRaw("INSERT INTO pages(source_id, slug, type, title, compiled_truth, timeline, frontmatter) VALUES ('default', 'notes/refused', 'note', 'r', 'see [[n-1]]', '', '{}'::jsonb) ON CONFLICT DO NOTHING");
     const throwing = (error: Error) => new Proxy(engine, {
       get(target, prop, receiver) {
-        if (prop === 'executeRaw') return async () => { throw error; };
+        if (prop === 'listRecentPageBodies' || prop === 'countSegmentedRecentPages') return async () => { throw error; };
         const value = Reflect.get(target, prop, receiver);
         return typeof value === 'function' ? value.bind(target) : value;
       },
     }) as unknown as BrainEngine;
-    const refused = await checkLinkResolutionOpportunity(throwing(capabilityMissing('raw_sql', 'executeRaw')));
+    const refused = await checkLinkResolutionOpportunity(throwing(capabilityMissing('raw_sql', 'listRecentPageBodies')));
     expect(refused).toMatchObject({ name: 'link_resolution_opportunity', status: 'warn',
       details: { health: 'unknown', reason: 'engine_capability_missing', capability: 'raw_sql' } });
-    expect(refused.message).toMatch(/^Health unknown: .*does not support executeRaw yet \(it needs the raw_sql capability\)/);
+    expect(refused.message).toMatch(/^Health unknown: .*does not support listRecentPageBodies yet \(it needs the raw_sql capability\)/);
     const failed = await checkLinkResolutionOpportunity(throwing(new Error('disk full')));
     expect(failed).toEqual({ name: 'link_resolution_opportunity', status: 'ok', message: 'Skipped (disk full)' });
   }, 60_000);

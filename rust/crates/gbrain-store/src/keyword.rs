@@ -53,6 +53,7 @@ mod chunk_search;
 mod cjk;
 mod entity_fuzzy;
 mod filters;
+mod frontmatter_ids;
 mod index;
 mod index_build;
 mod index_writer;
@@ -68,7 +69,6 @@ mod vector_cache;
 mod walk;
 
 pub use cjk::{CjkBound, CjkKeywordResult, CjkRun, CjkTerm};
-pub(crate) use filters::served;
 pub use filters::{AfterKey, DateBound, KeywordOptions};
 pub(crate) use filters::{DateWindow, frontmatter_holds, parse_trust_floor};
 pub(crate) use index::read_state as read_index_state;
@@ -95,7 +95,8 @@ pub(crate) use stem::pg_lower;
 #[allow(unused_imports)]
 pub(crate) use tsearch::{
     TsQuery, TsVector, Weight, concat, fts_input, or_of_lexemes, phraseto_tsquery, plainto_tsquery,
-    setweight, to_tsvector, ts_matches, websearch_to_tsquery, with_query_stack,
+    plainto_tsquery_simple, setweight, to_tsvector, to_tsvector_simple, ts_matches,
+    websearch_to_tsquery, with_query_stack,
 };
 #[cfg(test)]
 pub(crate) use tsearch::{deep_spawns, reset_deep_spawns};

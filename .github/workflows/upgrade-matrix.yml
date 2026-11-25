@@ -206,14 +206,24 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
           name: upgrade-matrix-plan
-      - name: Restore old-release archives and the Bun package cache
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4
+      # Restore and save are separate bounded steps (GST-3494): a restore took about 37 minutes and the combined action's
+      # post-step save then ran into the job timeout, cancelling cells whose own run had passed. A slow or failed cache
+      # only costs fresh downloads, so neither step can fail or cancel a cell; a restore that did not finish is deleted
+      # before the cells run, so a half-extracted archive is never used or saved.
+      - id: cache
+        name: Restore old-release archives and the Bun package cache
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4
+        timeout-minutes: 8
+        continue-on-error: true
         with:
           path: ~/.cache/upgrade-matrix
           key: ${{ format('upgrade-matrix-v1-{0}-{1}', matrix.from, needs.plan.outputs.candidate_sha) }}
           restore-keys: |
             upgrade-matrix-v1-${{ matrix.from }}-
             upgrade-matrix-v1-
+      - name: Drop a cache the restore did not finish
+        if: steps.cache.outcome != 'success'
+        run: rm -rf "$HOME/.cache/upgrade-matrix"
       - name: Run the cells
         env:
           FROM: ${{ matrix.from }}
@@ -239,6 +249,14 @@ jobs:
             ${{ runner.temp }}/upgrade-matrix/cells/*/logs/
           retention-days: 30
           if-no-files-found: warn
+      - name: Save old-release archives and the Bun package cache
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684  # v4
+        timeout-minutes: 5
+        continue-on-error: true
+        with:
+          path: ~/.cache/upgrade-matrix
+          key: ${{ format('upgrade-matrix-v1-{0}-{1}', matrix.from, needs.plan.outputs.candidate_sha) }}
 
   summary:
     name: upgrade-matrix

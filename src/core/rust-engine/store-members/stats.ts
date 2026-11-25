@@ -26,9 +26,9 @@ import { loadOrphanPolicyOverrides, shouldExcludeFromOrphanReporting } from '../
 import { resolveEntityTypes, type EntityTypeFilter, type TypeFilterEngine } from '../../schema-pack/entity-types.ts';
 import { loadTimelineGradedPredicate } from '../../timeline-grading.ts';
 import { withDates } from '../store-codec.ts';
-import type { StoreBrain } from '../store.ts';
-import type { RustEngine } from '../../rust-engine.ts';
 import { writerStamp } from '../../persistence/writer-versions.ts';
+import type { RustEngine } from '../../rust-engine.ts';
+import type { StoreBrain } from '../store.ts';
 import { refuseMember, requireTextColumn, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
 import { getConfig, listConfigKeys } from './config.ts';
@@ -225,8 +225,10 @@ export const getIngestLog: StoreMember<[opts?: { limit?: number; sourceIds?: str
 };
 
 export const listEnrichCandidates: StoreMember<[opts: EnrichCandidatesOpts], EnrichCandidate[]> = async (brain, opts) => {
+  // The store has no owner-contact ranking yet; refusing beats a silent inbound-links answer.
+  if (opts?.order === 'owner-contact') refuseMember('listEnrichCandidates', 'order owner-contact');
   const o = takeOptions('listEnrichCandidates', opts,
-    ['types', 'thinThreshold', 'order', 'limit', 'reenrichAfterMs', 'sourceId', 'sourceIds']);
+    ['types', 'thinThreshold', 'order', 'limit', 'reenrichAfterMs', 'sourceId', 'sourceIds'], ['ownerSlug', 'ownerSourceId']);
   const types = o.types as string[] | undefined;
   if (!types || types.length === 0) return [];
   const limit = Math.max(1, Math.min((o.limit as number | undefined) ?? 50, 5000));
@@ -287,4 +289,10 @@ export const findAnomalies: StoreMember<[opts: AnomaliesOpts], AnomalyResult[]> 
     }
   }
   return computeAnomaliesFromBuckets(baseline, found.today, sigma);
+};
+
+/** The liveness round trip (engine-sql/health.ts pingStore): the store opens a read snapshot. An aborted `signal` rejects first. */
+export const pingStore: StoreMember<[opts?: { signal?: AbortSignal; direct?: boolean }], void> = async (brain, opts) => {
+  throwIfQueryAborted(opts);
+  await storeCall({ member: 'pingStore' }, () => brain.pingStore());
 };

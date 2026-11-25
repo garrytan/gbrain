@@ -10,6 +10,8 @@
  *    can implement or refuse.
  *  - Why existing coverage misses it: these statements ran through `executeRaw`, which the parity cases cannot call
  *    (D18), so no case compared them across engines (docs/research/rust-cli-executeraw-map.md).
+ *  - The phone cases pin the phone arm (every stored value shape) and the whole whois op by phone, country code
+ *    setting and remote privacy included, so a store that drops or widens the phone arm shows up on its own arm.
  *  - Seam: none; wanted rows are seeded through the typed `replaceWantedLinkRows` on every arm. Generated values
  *    (page ids, timestamps) are compared by relation or shape, never by value.
  */
@@ -18,9 +20,10 @@ import { archiveSource, createSource, parityArms, sorted } from './harness.ts';
 import { chunk, installChunks, seedPage } from './chunk-fixtures.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import type { ExactScanOpts } from '../../src/core/search/exact-scan.ts';
 import type { RankEntitiesStatementOpts } from '../../src/core/engine-sql/graph-rank.ts';
-import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
+import { operationsByName, type OperationContext } from '../../src/core/operations.ts';
 import { EXTRACTION_PROVENANCE_KEY, EXTRACTION_STATUS_KEY, PROVENANCE_AUTO_EXTRACTED, STATUS_UNVERIFIED } from '../../src/core/extraction-review.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -258,6 +261,85 @@ describe('engine parity: read-command statements', () => {
     expect(member).toEqual(['other:people/erin-example', 'other:team/erin-example']);
     expect(granted).toEqual(['default:people/erin-example', 'other:team/erin-example']);
     return { local, hidden, limited, member, granted };
+  });
+
+  parityTest('listExactIdentityCandidates finds a page by its phone digits in every value shape, and emailsOnly drops the phone and title arms', { methods: ['listExactIdentityCandidates'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    await createSource(engine, backend, 'old');
+    await engine.putPage('people/alice-example', note('Alice Example', 'p', { phone: '+1 (415) 555-0100', email: 'alice@example.com' }, 'person'));
+    await engine.putPage('people/bob-example', note('Bob Example', 'p', { phones: ['415.555.0199', 4155550142] }, 'person'));
+    await engine.putPage('people/carol-example', note('Carol Example', 'p', { phone: 4155550123 }, 'person'));
+    await engine.putPage('people/dan-example', note('Dan Example', 'p', { phones: [['415 555 0177'], { work: '415 555 0188' }, null, true] }, 'person'));
+    await engine.putPage('people/erin-example', note('Erin Example', 'p', { phone: null, phones: [] }, 'person'));
+    await engine.putPage('people/held-example', note('Held Example', 'p', { phone: '415-555-0166', quarantine: 'yes' }, 'person'));
+    await engine.putPage('notes/alice-phone', note('Alice Phone', 'a note', { phone: '+1 (415) 555-0100' }));
+    await engine.putPage('companies/alice-example', note('Alice Co', 'c', { phone: '(415) 555-0100' }, 'company'), { sourceId: 'other' });
+    await engine.putPage('people/alice-example', note('Alice Old', 'p', { phone: '415 555 0100' }, 'person'), { sourceId: 'old' });
+    await archiveSource(engine, backend, 'old');
+    const read = (probes: Partial<Parameters<BrainEngine['listExactIdentityCandidates']>[0]['probes']>, extra: Partial<Parameters<BrainEngine['listExactIdentityCandidates']>[0]> = {}) =>
+      engine.listExactIdentityCandidates({
+        probes: { titleKeys: [], titleRaw: '', basenames: [], aliasKeys: [], emails: [], ...probes },
+        sourceIds: ['default', 'other', 'old'], types: { types: ['person'], per_source: [{ source_id: 'other', types: ['company'] }] }, limit: 10, ...extra,
+      });
+    const slugs = (rows: Awaited<ReturnType<typeof read>>) => rows.map(r => `${r.source_id}:${r.slug}`);
+    const scalar = await read({ phones: ['14155550100', '4155550100'] });
+    expect(slugs(scalar)).toEqual(['default:people/alice-example', 'other:companies/alice-example']);
+    expect(slugs(await read({ phones: ['4155550142'] }))).toEqual(['default:people/bob-example']);
+    expect(slugs(await read({ phones: ['5550100', '0100'] }))).toEqual([]);
+    return {
+      scalar,
+      listString: await read({ phones: ['4155550199'] }),
+      listNumber: await read({ phones: ['4155550142'] }),
+      scalarNumber: await read({ phones: ['4155550123'] }),
+      nestedList: await read({ phones: ['4155550177'] }),
+      nestedObject: await read({ phones: ['4155550188'] }),
+      partial: await read({ phones: ['5550100', '0100'] }),
+      empty: await read({ phones: [''] }),
+      limited: await read({ phones: ['4155550100'] }, { limit: 1 }),
+      local: await read({ phones: ['4155550166'] }),
+      remote: await read({ phones: ['4155550166'] }, { remote: { excludePrivate: false } }),
+      withTitle: await read({ phones: ['4155550199'], titleKeys: ['alice example'], titleRaw: 'Alice Example' }),
+      emailsOnly: await read({ phones: ['4155550199'], titleKeys: ['alice example'], titleRaw: 'Alice Example', emails: ['alice@example.com'] }, { emailsOnly: true }),
+      emailsOnlyPhone: await read({ phones: ['4155550199'] }, { emailsOnly: true }),
+    };
+  });
+
+  parityTest('whois by a phone number matches the canonical number, honours the country code setting and hides private pages from a remote caller', { methods: ['listExactIdentityCandidates', 'getConfig', 'setConfig'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    await engine.putPage('people/alice-example', note('Alice Example', 'p', { phone: '(555) 555-0100' }, 'person'));
+    await engine.putPage('people/bob-example', note('Bob Example', 'p', { phones: ['+1 555-555-0101', '555.555.0102'] }, 'person'));
+    await engine.putPage('people/carol-example', note('Carol Example', 'p', { phones: ['+44 20 7946 0958'] }, 'person'), { sourceId: 'other' });
+    await engine.putPage('people/dana-example', note('Dana Example', 'p', { phone: '555-555-0103', visibility: 'private' }, 'person'));
+    await engine.putPage('people/erin-example', note('Erin Example', 'p', { phone: '555-555-0104' }, 'person'));
+    await engine.putPage('people/frank-example', note('Frank Example', 'p', { phone: '+1 (555) 555-0104' }, 'person'), { sourceId: 'other' });
+    const quiet = { info() {}, warn() {}, error() {}, debug() {} };
+    const local = { engine, config: { engine: engine.kind }, logger: quiet, dryRun: false, remote: false } as unknown as OperationContext;
+    const remote = { ...local, remote: true, transport: 'stdio', sourceId: 'default', auth: { allowedSources: ['default'] } } as unknown as OperationContext;
+    type Whois = { query_kind: string; matches: Array<{ slug: string; source_id: string; match: string }>; ambiguous: boolean };
+    // Every call spans all sources: a named source_id first runs assertExplicitSourceLive, whose typed read is lane
+    // rust-engine/source-scope-reads' work (da0b428b7d), not this case's.
+    const whois = async (ctx: OperationContext, query: string) => {
+      const r = await operationsByName.whois!.handler(ctx, { query, types: ['person'], source_id: '__all__' }) as Whois;
+      return { kind: r.query_kind, ambiguous: r.ambiguous, hits: r.matches.map(m => `${m.source_id}:${m.slug}:${m.match}`) };
+    };
+    const formats = await Promise.all(['+1 555 555 0100', '555-555-0100', '15555550100', '001 555 555 0100'].map(q => whois(local, q)));
+    for (const f of formats) expect(f).toEqual({ kind: 'phone', ambiguous: false, hits: ['default:people/alice-example:phone'] });
+    const answers = {
+      formats,
+      listValue: await whois(local, '555 555 0102'),
+      ownCountry: await whois(local, '+44 20 7946 0958'),
+      ambiguous: await whois(local, '555-555-0104'),
+      partial: await Promise.all(['555-0100', '0100', '555-555-0109'].map(q => whois(local, q))),
+      privateLocal: await whois(local, '555-555-0103'),
+      privateRemote: await whois(remote, '555-555-0103'),
+      ungrantedRemote: await whois(remote, '+44 20 7946 0958'),
+    };
+    expect(answers.ambiguous.hits).toEqual(['default:people/erin-example:phone', 'other:people/frank-example:phone']);
+    expect(answers.privateRemote.hits).toEqual([]);
+    await engine.setConfig('identity.phone_country_code', '44');
+    const uk = { national: await whois(local, '020 7946 0958'), usNational: await whois(local, '555-555-0100') };
+    expect(uk.national.hits).toEqual(['other:people/carol-example:phone']);
+    return { ...answers, uk };
   });
 
   parityTest('rankEntities folds retired pages along their redirect chains and counts distinct edges', { methods: ['rankEntities'] }, async (engine, backend) => {

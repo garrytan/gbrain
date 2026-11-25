@@ -8,10 +8,10 @@
  * the drain's clock, work probe, backlog and preview are served too. The
  * fingerprint is the store's own opaque value: a caller only compares two of them.
  *
- * The store keeps one vector column, `embedding`, so the keep-plan and vector members refuse any other column. The drained probe
- * refuses `media`, as the work probe does: the store does not decide which image pages are sealable, so the backlog and
- * preview refuse a queue that holds an image page that is neither protected nor archived. The row estimate is 0: the
- * store keeps no planner statistics. `setProjectionChunkerVersion` is the
+ * The store keeps one vector column, `embedding`, so the keep-plan and vector members refuse any other column. The store
+ * classes image pages as projectionClassSql does (sealable or reimport), so the drained and work probes serve `media` and
+ * the backlog and preview count image pages. The row estimate is the live page count (the store keeps no planner
+ * statistics; reltuples tracks the table's rows). `setProjectionChunkerVersion` is the
  * store's `setChunkerVersion`, which stamps the same column.
  */
 import type { BrainEngine } from '../../engine.ts';
@@ -54,8 +54,7 @@ export const setProjectionChunkerVersion: Member<'setProjectionChunkerVersion'> 
 };
 
 export const hasDrainableProjectionJob: Member<'hasDrainableProjectionJob'> = (brain, opts) => {
-  if (opts?.media) refuseMember('hasDrainableProjectionJob', 'option media; the store does not decide which image pages are sealable');
-  return storeCall({ member: 'hasDrainableProjectionJob' }, () => brain.hasDrainableProjectionJob());
+  return storeCall({ member: 'hasDrainableProjectionJob' }, () => brain.hasDrainableProjectionJob(opts?.media === true));
 };
 
 export const readChunkRowsFingerprint: Member<'readChunkRowsFingerprint'> = (brain, pageId) =>
@@ -99,39 +98,18 @@ export const releaseDeferredReplacementClaim: Member<'releaseDeferredReplacement
   await storeCall({ member: 'releaseDeferredReplacementClaim', slug }, () => brain.releaseDeferredReplacementClaim(slug, claim));
 };
 
-/**
- * `readProjectionBacklog`: the store reads a source or sources (`pageReadFilter`'s source clause); a privacy, trust or
- * flag filter refuses. An image page that is neither protected nor archived is sealable or reimport, which the store
- * cannot tell apart, so a backlog that holds one refuses.
- */
-export const readProjectionBacklog: Member<'readProjectionBacklog'> = async (brain, scope) => {
-  const member = 'readProjectionBacklog';
-  const opts = takeOptions(member, scope, ['sourceId', 'sourceIds'], ['requireSafeChunks', 'takesHoldersAllowList']);
-  const sourceIds = Array.isArray(opts.sourceIds) && opts.sourceIds.length ? [...opts.sourceIds as string[]] : undefined;
-  const sourceId = sourceIds === undefined && typeof opts.sourceId === 'string' && opts.sourceId ? opts.sourceId : undefined;
-  const row: Record<string, unknown> & { undecided: number } = await storeCall({ member }, () => brain.readProjectionBacklog({ sourceId, sourceIds }));
-  if (row.undecided > 0) refuseMember(member, 'an image page that is sealable or needs a re-import; the store does not tell them apart');
-  const { undecided: _undecided, ...backlog } = row;
-  return backlog as Awaited<ReturnType<BrainEngine['readProjectionBacklog']>>;
-};
-
-/** `listProjectionDrainPreview`: a queue that holds an image page the store cannot class refuses, as the backlog does. */
 export const listProjectionDrainPreview: Member<'listProjectionDrainPreview'> = async (brain, limit) => {
   const member = 'listProjectionDrainPreview';
   if (!Number.isSafeInteger(limit)) refuseMember(member, 'a limit that is not an integer');
-  const out: { rows: Awaited<ReturnType<BrainEngine['listProjectionDrainPreview']>>; undecided: number } =
-    await storeCall({ member }, () => brain.listProjectionDrainPreview(limit));
-  if (out.undecided > 0) refuseMember(member, 'an image page that may be sealable; the store does not decide which image pages are sealable');
-  return out.rows;
+  return storeCall({ member }, () => brain.listProjectionDrainPreview(limit));
 };
 
-export const hasQueuedProjectionWork: Member<'hasQueuedProjectionWork'> = (brain, opts) => {
-  if (opts?.media) refuseMember('hasQueuedProjectionWork', 'option media; the store does not decide which image pages are sealable');
-  return storeCall({ member: 'hasQueuedProjectionWork' }, () => brain.hasQueuedProjectionWork());
-};
+export const hasQueuedProjectionWork: Member<'hasQueuedProjectionWork'> = (brain, opts) =>
+  storeCall({ member: 'hasQueuedProjectionWork' }, () => brain.hasQueuedProjectionWork(opts?.media === true));
 
-/** The store keeps no planner statistics, so the drain's statistics debt starts from no rows. */
-export const readPagesRowEstimate: Member<'readPagesRowEstimate'> = async () => 0;
+/** The store keeps no planner statistics; the live page count stands in for the pages table's row estimate. */
+export const readPagesRowEstimate: Member<'readPagesRowEstimate'> = async (brain) =>
+  Number(await storeCall({ member: 'readPagesRowEstimate' }, () => brain.countBrainLivePages()) ?? 0);
 
 export const readDrainRunStart: Member<'readDrainRunStart'> = (brain) =>
   storeCall({ member: 'readDrainRunStart' }, () => brain.readDrainRunStart());
@@ -165,3 +143,29 @@ export const deferProjectionJob: Member<'deferProjectionJob'> = (brain, job) =>
 function jobKey(job: ProjectionJobKey): ProjectionJobKey {
   return { sourceIncarnation: job.sourceIncarnation, slug: job.slug, revision: job.revision };
 }
+
+/*
+ * The image seal (page-state/image-seal.ts sealImageProjections), served from persistence/image_seal.rs. The store keeps
+ * no image vector, so a sealed page never has a visual one.
+ */
+export const listImageSealWindow: Member<'listImageSealWindow'> = (brain, after, limit, notAfter) => {
+  const member = 'listImageSealWindow';
+  if (!Number.isSafeInteger(limit)) refuseMember(member, 'a limit that is not an integer');
+  return storeCall({ member }, () => brain.listImageSealWindow(after.sourceIncarnation, after.slug, limit, notAfter ?? null));
+};
+
+export const readImageSealPages: Member<'readImageSealPages'> = (brain, rows) =>
+  storeCall({ member: 'readImageSealPages' }, () => brain.readImageSealPages(rows.map(({ source_id, slug, revision }) => ({ source_id, slug, revision }))));
+
+export const listImageSealChunks: Member<'listImageSealChunks'> = (brain, pageIds, column, provenanceModel) => {
+  keepColumn('listImageSealChunks', column);
+  return storeCall({ member: 'listImageSealChunks' }, () => brain.listImageSealChunks([...pageIds], provenanceModel));
+};
+
+export const clearImageSealVectors: Member<'clearImageSealVectors'> = async (brain, column, chunks) => {
+  keepColumn('clearImageSealVectors', column);
+  await storeCall({ member: 'clearImageSealVectors' }, () => brain.clearImageSealVectors(chunks.map(({ id, page_id }) => ({ id, page_id }))));
+};
+
+export const sealImagePages: Member<'sealImagePages'> = (brain, pages) =>
+  storeCall({ member: 'sealImagePages' }, () => brain.sealImagePages(pages.map(({ id, revision }) => ({ id, revision }))));

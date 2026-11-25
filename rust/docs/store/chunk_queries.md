@@ -14,14 +14,15 @@ methods in `rust/crates/gbrain-napi/src/families/chunk_queries.rs` and the membe
 | `countChunklessPagesWithContent({ sourceId? })` | served |
 | `listChunklessPagesWithContent({ sourceId?, batchSize?, afterPageId? })` | served |
 | `deleteChunksExcept(slug, keepIds, { sourceId? })` | served |
-| `findCodeDefinitions`, `listSymbolTypesForName`, `findCodeRefChunks` | served; a safe-chunk, trust or flag scope refuses |
-| `codeChunksExist`, `currentCodeChunksExist` | served; `currentCodeChunksExist` under a safe-chunk scope refuses |
+| `findCodeDefinitions`, `listSymbolTypesForName`, `findCodeRefChunks` | served; a trust or flag scope refuses |
+| `codeChunksExist`, `currentCodeChunksExist` | served |
 | `listQualifiedSymbolNames(sourceId, symbol, { match, limit })` | served |
 | `countOversizedEmbedSkips`, `countOrphanChunks`, `countCodeChunkPages` | served |
 | `listWithdrawalChunks`, `deleteChunksForPages` | served |
 | `listContextualModeCandidates(sourceIds)` | served |
 | `resolveFrozenHits(hits, scope)` | served; a safe-chunk, trust or flag scope refuses |
 | `readSegmentRegions(hits)` | served; Rust-only optional member (search dedup's `segmentRegions`) |
+| `resolveFrozenHits(hits, scope)` | served |
 | `hasUnsealedPages({ sourceId?, sourceIds?, excludePrivate?, types?, excludeSlugPrefixes? })` | served; true when a live page in scope is below the safe-chunk fence (`chunker_version < 4`, or none recorded) |
 
 On `getChunkPage` and `getChunkWindows`, `excludePrivate: true` applies the store page policy (`storePagePolicy`, the
@@ -30,8 +31,12 @@ else `excludePrivate`) applies the chunker-version fence, `chunker_version >= 4`
 fails, as NULL fails the SQL comparison. A page either test drops reads as a page with no chunks in `getChunkPage` and is
 absent from the `getChunkWindows` rows. Both reads serve a caller whose record holds only a reader identity and a
 private-readable grant (the `callerReaders` opt-in of `storePagePolicy`); any other caller whose policy differs refuses.
-The code chunk reads in the table (`findCodeDefinitions` and the others) still refuse a safe-chunk read.
 `minTrust` and `suppressFlagged` are ignored, because those SQL statements ignore them too.
+
+The code chunk reads, `currentCodeChunksExist` and `resolveFrozenHits` apply the same fence under a safe-chunk read, as
+`codeReadFilter` and the frozen-hit SQL do; `codeChunksExist` reads no safe-chunk key, as `pageReadFilter` does not.
+The parity case `code reads, code readiness and frozen hits under a safe-chunk scope serve only pages at or above the
+chunker-version fence` (test/engine-parity/chunk-reads.test.ts) pins it.
 
 ## Keys
 
@@ -90,7 +95,8 @@ the store does not guess at that cast.
 ## The chunkless reads
 
 A page counts when it is live, has a non-empty `compiled_truth` or `timeline` (or is segmented with `body_bytes > 0`;
-`body_bytes` is the size the page's last flip published, read from the page_body family's body state), has no `quarantine` frontmatter key,
+`body_bytes` is the size the page's last flip published, read from the page_body family's body state through `segmented_body_bytes`; parity case: "a published
+segmented page with no chunks ..." in `test/engine-parity/segmented-body.test.ts`), has no `quarantine` frontmatter key,
 has no chunk rows, and either is not sealed or carries `embed_skip`. A page sealed with no chunks does not count.
 `sourceId` scopes the read only when it is a non-empty string, as the SQL truthiness test does.
 
@@ -135,7 +141,8 @@ the page projection, repair contextual-mode and evidence delivery. Each answers 
   of their chunks.
 - `resolveFrozenHits` answers one row per hit in scope and per joined chunk, in hit order. A positive chunk id joins
   that chunk, any other id joins chunk index 0, and a page that holds no such chunk gives a row with NULL chunk
-  columns.
+  columns. Only a chunk of the live body joins (`chunkGenerationFilter`): a chunk whose occurrence a deferred retire
+  closed has no live manifest row, so a hit on it reads no chunk.
 - `readSegmentRegions` takes `{ pageId, chunkId }` hits and answers `{ chunk_id, byte_start }` per hit whose chunk is
   visible at its page's live body generation on a segmented page that is sealed or carries the activation projection
   revision, with `byte_start` the stored start of the chunk's live occurrence, in chunk-id order. Each hit names its
@@ -152,20 +159,6 @@ the page projection, repair contextual-mode and evidence delivery. Each answers 
   `sealChunks` of sanitized chunks. An `upsertChunks`
   that changes a chunk (text, source or modality, a given metadata value, or an added or dropped index) stamps -1,
   and one that repeats the stored chunks leaves the stamp, as `chunkWriteInvalidations` does.
-- The activation sentinel revision (`ACTIVATION_SERVED_REVISION`) of the served-projection filter does not exist in
-  the store.
-
-## Follow-ups
-
-- `code-chunk-safe-fence`: the code chunk reads and `resolveFrozenHits` refuse a safe-chunk read, and so an
-  `excludePrivate` read that does not pass `requireSafeChunks: false`. The store records `chunker_version`, so they
-  can apply the same fence as `getChunkPage`.
-- `frozen-hit-manifest-liveness`: for a segmented chunk the SQL engines also require a live `page_body_manifest`
-  row. The manifest is the page_body family's private state, so `resolveFrozenHits` joins a segmented chunk at or
-  below the page's body generation instead.
-
-- `chunkless-segmented-body-bytes`: the page_body family (lane 3) stores a segmented page's `body_bytes` in its
-  private body state under the page_body tag, not as a page column. This family reads `body_bytes` as NULL today, so
-  a segmented page never counts as chunkless with content. After core lands the combined branch, read `body_bytes`
-  through a `pub(crate)` accessor in `page_body.rs` (ask the Rust BrainEngine owner for it) and add one unit test
-  where a segmented page with `body_bytes > 0` counts.
+- The store recognizes the activation sentinel revision (`ACTIVATION_SERVED_REVISION`,
+  `00000000-0000-0000-0000-000000000153`) as served for the chunk reads; the chunkless reads still require the
+  projection and knowledge revisions to match.

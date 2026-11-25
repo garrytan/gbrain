@@ -10,8 +10,10 @@
 //! rename does not move them; the rename callers move them with `moveFactWithdrawalSubject`.
 
 use super::fingerprint::{fact_fingerprint, fact_fingerprint_v1};
+use crate::access_rules::{AccessRuleRecord, COVERAGE, PendingCoverageRecord, RULE, each};
 use crate::env::{iso, parse_iso};
 use crate::error::{Result, StoreError};
+use crate::facts::md5_hex;
 use crate::facts::purge_ledger::purged_claim;
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
@@ -21,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// The byte after `keys::TRUST` that marks a withdrawal.
-const WITHDRAWAL: u8 = 0x01;
+pub(crate) const WITHDRAWAL: u8 = 0x01;
 
 /// The two values of the table's `visibility` CHECK.
 const VISIBILITIES: [&str; 2] = ["private", "world"];
@@ -56,9 +58,6 @@ pub struct WithdrawalKey {
     pub subject: String,
 }
 
-/// `md5('')`: the digest of an empty folder access table.
-const EMPTY_TABLE_DIGEST: &str = "d41d8cd98f00b204e9800998ecf8427e";
-
 /// `readFactCacheWatermark`: the hot-memory cache watermark of a source.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct FactCacheWatermark {
@@ -74,6 +73,21 @@ fn key(parts: &[&str]) -> Vec<u8> {
     let mut key = keys::text(keys::TRUST, parts);
     key.insert(1, WITHDRAWAL);
     key
+}
+
+/// Whether any withdrawal of the source has this subject (`hasFactWithdrawalForSubject`), read from one snapshot.
+pub(crate) fn has_subject_withdrawal(
+    read: &dyn KvRead,
+    source_id: &str,
+    subject: &str,
+) -> Result<bool> {
+    let prefix = source_prefix(source_id);
+    let mut found = false;
+    scan_prefix(read, &prefix, false, &mut |k, _| {
+        found = split(k, prefix.len()).is_some_and(|(_, s, _)| s == subject);
+        !found
+    })?;
+    Ok(found)
 }
 
 /// `t 0x01 source \0`: every withdrawal of a source.
@@ -108,6 +122,18 @@ pub(super) fn check_visibility(op: &str, visibility: &str) -> Result<()> {
 /// The time (micros) of the withdrawal `[source, visibility, subject, fact_hash]`, if any.
 pub(super) fn at(read: &dyn KvRead, parts: &[&str]) -> Result<Option<i64>> {
     Ok(get_json::<WithdrawalRecord>(read, &key(parts))?.map(|r| r.withdrawn_at_us))
+}
+
+/// The time of the ledger row `(source, visibility, subject, fact_hash)`, or `None`: the one-row read
+/// `readMemberPageWithdrawal` (`facts/remember_reads.rs`) makes for each candidate subject and fingerprint.
+pub(crate) fn withdrawal_time(
+    read: &dyn KvRead,
+    source_id: &str,
+    visibility: &str,
+    subject: &str,
+    fact_hash: &str,
+) -> Result<Option<i64>> {
+    at(read, &[source_id, visibility, subject, fact_hash])
 }
 
 /// One stored withdrawal of a source (`fact_withdrawals` row).
@@ -202,6 +228,33 @@ pub(crate) fn withdrawn_claim(
         }
     }
     Ok(false)
+}
+
+/// The shadow seed (`seed.rs`): stores a withdrawal copied from another engine, with the primary's `fact_hash` and
+/// `withdrawn_at` as they are (the hash is not computed again). `false` when the row is already stored.
+pub(crate) fn seed_withdrawal(
+    tx: &mut dyn KvWrite,
+    parts: [&str; 4],
+    withdrawn_at_us: i64,
+) -> Result<bool> {
+    let [source_id, visibility, subject, fact_hash] = parts;
+    let op = "seed fact_withdrawals";
+    no_nul(
+        op,
+        &[
+            ("source_id", source_id),
+            ("visibility", visibility),
+            ("subject", subject),
+            ("fact_hash", fact_hash),
+        ],
+    )?;
+    check_visibility(op, visibility)?;
+    let k = key(&parts);
+    if tx.get(&k)?.is_some() {
+        return Ok(false);
+    }
+    put_json(tx, &k, &WithdrawalRecord { withdrawn_at_us })?;
+    Ok(true)
 }
 
 /// `EXISTS (SELECT 1 FROM fact_withdrawals WHERE source_id = $source AND visibility = $visibility
@@ -516,13 +569,7 @@ impl Store {
             &[("sourceId", source_id), ("subject", subject)],
         )?;
         let read = self.read()?;
-        let prefix = source_prefix(source_id);
-        let mut found = false;
-        scan_prefix(&*read, &prefix, false, &mut |k, _| {
-            found = split(k, prefix.len()).is_some_and(|(_, s, _)| s == subject);
-            !found
-        })?;
-        Ok(found)
+        has_subject_withdrawal(&*read, source_id, subject)
     }
 
     /// `readSourcePurgeFlags`: whether the source has a fact purge tombstone (the fact purge
@@ -546,8 +593,8 @@ impl Store {
     }
 
     /// `readFactCacheWatermark`: the source's withdrawal count and newest withdrawal time, and the
-    /// folder access digest. The store keeps no folder access rules or pending coverage (only raw
-    /// SQL writes them, and `executeRaw` refuses), so the digest is that of two empty tables.
+    /// folder access digest of every source: `md5` of the rules and `md5` of the pending prefixes,
+    /// joined by `:` ([`folder_access_digest`]).
     pub fn read_fact_cache_watermark(&self, source_id: &str) -> Result<FactCacheWatermark> {
         no_nul("readFactCacheWatermark", &[("sourceId", source_id)])?;
         let read = self.read()?;
@@ -577,7 +624,7 @@ impl Store {
         Ok(FactCacheWatermark {
             withdrawals,
             latest_withdrawn_at: latest.map(iso),
-            access_rules: format!("{EMPTY_TABLE_DIGEST}:{EMPTY_TABLE_DIGEST}"),
+            access_rules: folder_access_digest(&*read)?,
         })
     }
 
@@ -625,6 +672,53 @@ impl Store {
     }
 }
 
+/// The watermark's folder access digest, as the SQL renders it: `md5` of every folder rule as
+/// `source_id/rule_id/prefix/readers/revision` (readers joined by `,`) in byte order of source and
+/// rule id, joined by `|`, then `:`, then `md5` of every pending or invalid prefix as
+/// `source_id/prefix/reason/revision` (an empty revision when none) in byte order of source, prefix
+/// and reason. No rows digest as `md5('')`.
+fn folder_access_digest(read: &dyn KvRead) -> Result<String> {
+    let mut rules: Vec<(String, String, String)> = Vec::new();
+    each(read, &[keys::ACCESS_RULES, RULE], |r: AccessRuleRecord| {
+        let row = format!(
+            "{}/{}/{}/{}/{}",
+            r.source_id,
+            r.rule_id,
+            r.prefix,
+            r.readable_by.join(","),
+            r.revision
+        );
+        rules.push((r.source_id, r.rule_id, row));
+        true
+    })?;
+    rules.sort_by(|a, b| (a.0.as_bytes(), a.1.as_bytes()).cmp(&(b.0.as_bytes(), b.1.as_bytes())));
+    let mut pending: Vec<(String, String, String, String)> = Vec::new();
+    each(
+        read,
+        &[keys::ACCESS_RULES, COVERAGE],
+        |c: PendingCoverageRecord| {
+            let revision = c.revision.map(|r| r.to_string()).unwrap_or_default();
+            let row = format!("{}/{}/{}/{}", c.source_id, c.prefix, c.reason, revision);
+            pending.push((c.source_id, c.prefix, c.reason, row));
+            true
+        },
+    )?;
+    pending.sort_by(|a, b| {
+        (a.0.as_bytes(), a.1.as_bytes(), a.2.as_bytes()).cmp(&(
+            b.0.as_bytes(),
+            b.1.as_bytes(),
+            b.2.as_bytes(),
+        ))
+    });
+    let rules: Vec<&str> = rules.iter().map(|r| r.2.as_str()).collect();
+    let pending: Vec<&str> = pending.iter().map(|c| c.3.as_str()).collect();
+    Ok(format!(
+        "{}:{}",
+        md5_hex(&rules.join("|")),
+        md5_hex(&pending.join("|"))
+    ))
+}
+
 /// Moves `source_id`'s withdrawals of subject `old_slug` to `new_slug` inside `tx`: a withdrawal `new_slug` already has
 /// keeps its time (`MOVE_WITHDRAWAL_SUBJECT_SQL`). A page rename runs it with the fact rows (`facts::rename_slug_rows`),
 /// so a claim withdrawn about the old slug stays withdrawn about the new one.
@@ -655,6 +749,20 @@ pub(crate) fn move_subject_in(
         }
     }
     Ok(())
+}
+
+/// The shadow follow (`seed/follow.rs`): removes the withdrawal `parts` (`source_id`, `visibility`,
+/// `subject`, `fact_hash`). Facts that its seed expired stay expired. `false` when there is none.
+pub(crate) fn remove_withdrawal(tx: &mut dyn KvWrite, parts: [&str; 4]) -> Result<bool> {
+    if parts.iter().any(|p| p.contains('\0')) {
+        return Ok(false);
+    }
+    let k = key(&parts);
+    if tx.get(&k)?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&k)?;
+    Ok(true)
 }
 
 #[cfg(test)]

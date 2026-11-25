@@ -6,8 +6,10 @@
  * suppressions apply, when a lifetime is ended or minted) stay with the callers.
  */
 import { COVERAGE_KEY } from '../belief/keys.ts';
+import { factFingerprintV2Sql, legacyFingerprintV2Sql } from '../facts/withdrawal-schema.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import type { SqlExecutor } from './executor.ts';
+import { sqlFragment, trustedSql } from './fragment.ts';
 
 /** One `belief_redactions` row an append can apply: never the redacted text, only its hash. */
 export interface BeliefSuppression { id: number; subject_key: string; field: string; purge_request: string; field_hash: string; released_hash: string | null }
@@ -34,6 +36,43 @@ export async function readBeliefTombstones(exec: LegacyUnscopedRead, sourceId: s
   const rows = await exec.executeRaw<{ fp: string }>(`SELECT fact_hash AS fp FROM fact_purges WHERE source_id = $1 AND fact_hash = ANY($2::text[])
     UNION SELECT claim_hash AS fp FROM take_purges WHERE source_id = $1 AND claim_hash = ANY($3::text[])`,
   [sourceId, [...factFps], [...takeFps]]);
+  return rows.map(r => r.fp);
+}
+
+/** A claim the ledger recorded under a fingerprint the current fold no longer gives it (belief/legacy-fingerprint.ts): its text and that fingerprint. */
+export interface LegacyClaimFingerprintRow { claim: string; fingerprint: string }
+
+/**
+ * For each of `claims` whose pre-v341 Postgres fingerprint (gbrain_fact_fingerprint before fact_fingerprint_v3, which folded
+ * whitespace by the locale's `[[:space:]]`) differs from the current one and names an event of `sourceId` that recorded
+ * this claim (the event's fact or claim text has the claim's current fingerprint, so a new claim never joins an older,
+ * different claim that shares the old fold), the claim and its pre-v341 fingerprint. A claim with none is absent.
+ */
+export async function readLegacyClaimFingerprints(exec: LegacyUnscopedRead, sourceId: string, claims: readonly string[]): Promise<LegacyClaimFingerprintRow[]> {
+  if (!claims.length) return [];
+  const rows = (await exec.run<{ c: string; v2: string }>(sqlFragment`SELECT x.c, x.v2
+    FROM (SELECT c, gbrain_fact_fingerprint(c) AS fp, ${trustedSql(factFingerprintV2Sql('c'))} AS v2 FROM unnest(${[...claims]}::text[]) AS c) x
+    WHERE x.v2 <> x.fp AND EXISTS (SELECT 1 FROM belief_events e WHERE e.source_id = ${sourceId} AND e.claim_fp = x.v2 AND e.value IS NOT NULL
+      AND gbrain_fact_fingerprint(COALESCE(e.value->>'fact', e.value->>'claim')) = x.fp)`)).rows;
+  return rows.map(r => ({ claim: r.c, fingerprint: r.v2 }));
+}
+
+/** One draft event's claim the tombstone check found no purge for under the draft's own fingerprint: its kind, that fingerprint and its text. */
+export interface LegacyTombstoneProbe { kind: 'fact' | 'take'; claimFp: string; claim: string }
+
+/**
+ * The `claimFp` of each probe whose claim text a purge of the source tombstoned under the claim's current fingerprint or a
+ * pre-v341 one no current fingerprint can equal (legacyFingerprintV2Sql): a purge recorded before v341 matches a draft keyed
+ * by the current fingerprint, and a purge recorded after matches a draft keyed by the claim's old one. A fact probe reads
+ * `fact_purges`, a take probe `take_purges`. No set order.
+ */
+export async function readLegacyBeliefTombstones(exec: LegacyUnscopedRead, sourceId: string, probes: readonly LegacyTombstoneProbe[]): Promise<string[]> {
+  if (!probes.length) return [];
+  const legacy = trustedSql(legacyFingerprintV2Sql('d.claim'));
+  const rows = (await exec.run<{ fp: string }>(sqlFragment`SELECT d.fp FROM unnest(${probes.map(p => p.kind)}::text[], ${probes.map(p => p.claimFp)}::text[], ${probes.map(p => p.claim)}::text[]) AS d(kind, fp, claim)
+    WHERE CASE WHEN d.kind = 'fact'
+      THEN EXISTS (SELECT 1 FROM fact_purges p WHERE p.source_id = ${sourceId} AND p.fact_hash IN (gbrain_fact_fingerprint(d.claim), ${legacy}))
+      ELSE EXISTS (SELECT 1 FROM take_purges p WHERE p.source_id = ${sourceId} AND p.claim_hash IN (gbrain_fact_fingerprint(d.claim), ${legacy})) END`)).rows;
   return rows.map(r => r.fp);
 }
 
@@ -162,4 +201,14 @@ export async function readMovedBeliefLifetimes(exec: LegacyUnscopedRead, pageIds
       l.page_lifetime::text AS page_lifetime FROM belief_page_lifetimes l JOIN pages p ON p.id = l.page_id AND p.slug = l.slug
       WHERE l.page_id = ANY($1::int[]) AND l.ended_at IS NULL`, [[...pageIds]]);
   return rows.map(r => ({ ...r, page_id: Number(r.page_id) }));
+}
+
+/** One coverage event of a source (belief/coverage-report.ts coverageIntervals). */
+export interface BeliefCoverageEventRow { id: number; event_type: string; recorded_at: string; value: unknown; cause: unknown; incarnation: string }
+
+/** The coverage events of the source's current incarnation, in id order (belief/coverage-report.ts coverageIntervals and coverageAt). */
+export async function readBeliefCoverageEvents(exec: Pick<SqlExecutor, 'executeRaw'>, sourceId: string): Promise<BeliefCoverageEventRow[]> {
+  return exec.executeRaw<BeliefCoverageEventRow>(`SELECT e.id, e.event_type, e.recorded_at, e.value, e.cause, e.source_incarnation::text AS incarnation
+    FROM belief_events e JOIN sources s ON s.id = e.source_id AND s.incarnation = e.source_incarnation
+    WHERE e.source_id = $1 AND e.subject_kind = 'coverage' AND e.subject_key = $2 ORDER BY e.id`, [sourceId, COVERAGE_KEY]);
 }

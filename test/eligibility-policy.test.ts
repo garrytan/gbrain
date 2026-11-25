@@ -58,6 +58,26 @@ describe('SQL predicates', () => {
     expect(trustFloorSql('p', 'external_untrusted')).toBe('TRUE');
     expect(trustFloorSql('p', undefined)).toBe('TRUE');
   });
+  test('every tier builds the same SQL text as the tier list it admits, and a floor that names no tier throws before any SQL', () => {
+    expect(Object.fromEntries(['user_confirmed', 'operator_curated', 'tool_observed', 'agent_written', 'unknown', 'external_untrusted']
+      .map((tier) => [tier, trustFloorSql('p', tier as never)]))).toEqual({
+      user_confirmed: `p.trust_tier IN ('user_confirmed')`,
+      operator_curated: `p.trust_tier IN ('user_confirmed','operator_curated')`,
+      tool_observed: `p.trust_tier IN ('user_confirmed','operator_curated','tool_observed')`,
+      agent_written: `p.trust_tier IN ('user_confirmed','operator_curated','tool_observed','agent_written')`,
+      unknown: `p.trust_tier IN ('user_confirmed','operator_curated','tool_observed','agent_written','unknown')`,
+      external_untrusted: 'TRUE',
+    });
+    expect(trustFloorSql('p', '' as never)).toBe('TRUE');
+    for (const floor of [0.5, 'trusted', 'toString', 'UNKNOWN']) {
+      let thrown: unknown;
+      try { trustFloorSql('p', floor as never); } catch (e) { thrown = e; }
+      expect({ code: (thrown as { code?: string })?.code, message: (thrown as Error)?.message })
+        .toEqual({ code: 'invalid_argument', message: `minTrust: "${floor}" names no trust tier` });
+      expect(() => pageEligibleSql('p', { floor: floor as never })).toThrow('names no trust tier');
+      expect(() => projectionEligibleSql('facts', 'f', { floor: floor as never })).toThrow('names no trust tier');
+    }
+  });
   test('label mode leaves the search visibility clause and page filter byte-identical', () => {
     const legacy = buildVisibilityClause('p', 's', { excludePrivate: true });
     expect(buildVisibilityClause('p', 's', { excludePrivate: true, minTrust: undefined, suppressFlagged: undefined })).toBe(legacy);

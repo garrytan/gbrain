@@ -13,6 +13,8 @@
  *   skill-index/<catalog>/stale.stamp   a resolve saw a stale index
  *   skill-index/<catalog>/stat-check    last turn-path stat check
  *   skill-index/<catalog>/build.log     last failed build
+ *   skill-index/<catalog>/picker.json   the model picker's skill descriptions
+ *   skill-index/<catalog>/vectors.bin   one vector per skill (vectors.ts), when the brain has an embedder
  *   skill-index/sessions/<key>.json     per-session dedupe and budget state
  *   skill-index/logs/                   scrubbed traces of unexpected failures
  */
@@ -59,6 +61,6 @@ export function catalogDir(home: string, name: string): string {
   return dir;
 }
 
-export const catalogFile = (home: string, name: string, file: 'index.bin' | 'receipt.json' | 'source.json' | 'fingerprint.json' | 'lock' | 'stale.stamp' | 'stat-check' | 'build.log') => join(catalogDir(home, name), file);
+export const catalogFile = (home: string, name: string, file: 'index.bin' | 'receipt.json' | 'source.json' | 'fingerprint.json' | 'lock' | 'stale.stamp' | 'stat-check' | 'build.log' | 'picker.json' | 'vectors.bin') => join(catalogDir(home, name), file);
 export const sessionsDir = (home: string) => join(skillIndexRoot(home), 'sessions');
 export const logsDir = (home: string) => join(skillIndexRoot(home), 'logs');

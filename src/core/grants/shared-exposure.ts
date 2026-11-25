@@ -29,12 +29,12 @@ import { renderCliNotices } from '../agent-markers.ts';
 import { isInteractive } from '../interaction.ts';
 import { hasScope } from '../scope.ts';
 import { localFederatedSourceIds, resolveSourceWithTier } from '../source-resolver.ts';
-import { privatePagesFilterFragmentFast, resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { pageTypesForAllowed } from '../facts/conversation-types.ts';
 import type { PrincipalGrant } from './model.ts';
 import { expandReadShared } from './read-shared.ts';
-import { sqlQueryForEngine } from '../sql-query.ts';
 import { brainServes } from '../access/serves.ts';
+import { memberFloorScope } from '../access/member-sources.ts';
 
 export const NOTICE_CODE = 'unscoped_multi_user_token';
 export const BOT_HARNESSES: readonly string[] = ['openclaw', 'hermes', 'grok-bot', 'muse'];
@@ -65,7 +65,9 @@ export interface ChatCensus { sources: string[]; chat_pages: number; channels: n
 /**
  * The sources a credential reads with no per-call source_ids, as dispatch
  * resolves them: an unscoped legacy token reads the default source plus every
- * federated source (serve-http's noGrantFederatedScope); an unscoped OAuth
+ * federated source (serve-http's noGrantFederatedScope), minus other members'
+ * personal sources when it is bound to a member other than the owner
+ * (GST-3747, memberFloorScope); an unscoped OAuth
  * client reads `default`; a scalar grant its source; a federated grant its
  * read set. A credential without read scope reads nothing.
  *
@@ -78,16 +80,19 @@ export interface ChatCensus { sources: string[]; chat_pages: number; channels: n
  */
 export async function credentialReadSources(engine: BrainEngine, grant: Pick<PrincipalGrant, 'principal' | 'scopes' | 'sources' | 'readShared'>, member: string | null = null): Promise<string[]> {
   if (!hasScope(grant.scopes, 'read')) return [];
-  const stored = await storedReadSources(engine, grant);
+  const stored = await storedReadSources(engine, grant, member);
   if (grant.readShared !== true || grant.sources.kind === 'none' || (grant.sources.kind === 'default' && grant.principal.kind === 'legacy_token')) return stored;
-  return (await expandReadShared(sqlQueryForEngine(engine), stored, member)).sources;
+  return (await expandReadShared(engine, stored, member)).sources;
 }
 
-async function storedReadSources(engine: BrainEngine, grant: Pick<PrincipalGrant, 'principal' | 'sources'>): Promise<string[]> {
+async function storedReadSources(engine: BrainEngine, grant: Pick<PrincipalGrant, 'principal' | 'sources'>, member: string | null): Promise<string[]> {
   switch (grant.sources.kind) {
-    case 'default': return grant.principal.kind === 'legacy_token'
-      ? await localFederatedSourceIds(engine, 'default', 'seed_default').catch(() => undefined) ?? ['default']
-      : ['default'];
+    case 'default': {
+      if (grant.principal.kind !== 'legacy_token') return ['default'];
+      const floor = await localFederatedSourceIds(engine, 'default', 'seed_default').catch(() => undefined);
+      if (!floor) return ['default'];
+      return (await memberFloorScope(engine, { sourceId: 'default', localFederatedSourceIds: floor }, async () => member)).localFederatedSourceIds ?? floor;
+    }
     case 'scalar': return [grant.sources.writeSource];
     case 'federated': return [...grant.sources.readSources];
     case 'none': return [];
@@ -100,15 +105,29 @@ async function storedReadSources(engine: BrainEngine, grant: Pick<PrincipalGrant
  * not. Tokens with no source list and switched keys read it; clients with no source list and explicit lists without
  * the switch do not, unless they name it.
  */
+/** Byte order of two column values read as text, as the C collation compares them. */
+const byText = (a: unknown, b: unknown): number => {
+  const x = String(a ?? ''), y = String(b ?? '');
+  return x < y ? -1 : x > y ? 1 : 0;
+};
+
 export async function federateReaders(engine: BrainEngine, sourceId: string): Promise<{ tokens: { read: string[]; not: string[] }; clients: { read: string[]; not: string[] } }> {
   const { grantFromTokenRow, grantFromRow, grantFromClient } = await import('./model.ts');
   const out = { tokens: { read: [] as string[], not: [] as string[] }, clients: { read: [] as string[], not: [] as string[] } };
   const member = (row: Record<string, unknown>) => typeof row.member_id === 'string' ? row.member_id : null;
-  for (const row of await engine.executeRaw<Record<string, unknown>>('SELECT * FROM access_tokens WHERE revoked_at IS NULL ORDER BY name, id')) {
+  // The live tokens by name then id (`WHERE revoked_at IS NULL ORDER BY name, id`), through the typed token listing.
+  const tokens = (await engine.listAccessTokens() as unknown as Array<Record<string, unknown>>)
+    .filter(row => row.revoked_at == null)
+    .sort((a, b) => byText(a.name, b.name) || byText(a.id, b.id));
+  for (const row of tokens) {
     const reads = await credentialReadSources(engine, grantFromTokenRow(row), member(row));
     out.tokens[reads.includes(sourceId) ? 'read' : 'not'].push(String(row.name));
   }
-  for (const row of await engine.executeRaw<Record<string, unknown>>("SELECT * FROM oauth_clients WHERE (to_jsonb(oauth_clients)->>'deleted_at') IS NULL ORDER BY client_name, client_id")) {
+  // The clients not deleted, by name then id, through the typed client listing.
+  const clients = (await engine.listOauthClients() as unknown as Array<Record<string, unknown>>)
+    .filter(row => row.deleted_at == null)
+    .sort((a, b) => byText(a.client_name, b.client_name) || byText(a.client_id, b.client_id));
+  for (const row of clients) {
     const grant = grantFromRow(row);
     const reads = await credentialReadSources(engine, grantFromClient(grant), member(row));
     out.clients[reads.includes(sourceId) ? 'read' : 'not'].push(grant.clientName || grant.clientId);
@@ -133,17 +152,7 @@ export async function chatChannelCensus(engine: BrainEngine, sourceIds: readonly
   const empty: ChatCensus = { sources: [...sourceIds], chat_pages: 0, channels: 0, chat_sources: [] };
   if (sourceIds.length === 0) return empty;
   const hidePrivate = await resolveExcludePrivatePages(engine, true);
-  const rows = await engine.executeRaw<{ source_id: string; chat_pages: number | string; channels: number | string }>(
-    `SELECT p.source_id, count(*) AS chat_pages,
-            count(DISTINCT CASE WHEN p.type = ANY($3::text[]) THEN 'dm:' || p.slug
-              ELSE COALESCE(NULLIF(p.frontmatter->>'channel', ''), NULLIF(p.frontmatter->>'chat', ''), NULLIF(p.frontmatter->>'conversation', ''),
-                lower(substring(p.title from '^#([A-Za-z0-9._-]+)')), '') END) AS channels
-       FROM pages p
-      WHERE p.deleted_at IS NULL AND p.type = ANY($1::text[]) AND p.source_id = ANY($2::text[])
-        ${hidePrivate ? `AND ${privatePagesFilterFragmentFast('p')}` : ''}
-      GROUP BY p.source_id ORDER BY p.source_id`,
-    [[...CHAT_PAGE_TYPES], [...sourceIds], [...DM_PAGE_TYPES]],
-  );
+  const rows = await engine.readChatCensusRows(sourceIds, CHAT_PAGE_TYPES, DM_PAGE_TYPES, hidePrivate);
   return rows.reduce((c, r) => ({ ...c, chat_pages: c.chat_pages + Number(r.chat_pages), channels: c.channels + Number(r.channels), chat_sources: [...c.chat_sources, r.source_id] }), empty);
 }
 

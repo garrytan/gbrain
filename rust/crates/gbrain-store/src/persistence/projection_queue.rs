@@ -265,6 +265,59 @@ pub(crate) fn queue_page_projection(
     Ok(())
 }
 
+/// The shadow seed's job columns of one page (`page_projection_jobs` joined on the page's source
+/// incarnation and slug): each null when the primary queued no job.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct SeedJob {
+    pub revision: Option<String>,
+    pub reason: Option<String>,
+    pub updated_at_us: Option<i64>,
+}
+
+/// Stores the primary's projection job of `page` after the seed wrote the page. A job row keeps
+/// its revision, reason and time as the primary stored them. Returns false when the stored job
+/// has the seed transaction's time instead of the primary's: the primary row gave no time (no
+/// job row, or a job row without `updated_at`) while the page write queued a job.
+pub(crate) fn seed_job(tx: &mut dyn KvWrite, page: &PageRecord, primary: SeedJob) -> Result<bool> {
+    let key = job_key(&incarnation_of(&*tx, &page.source_id)?, &page.slug);
+    let stored = read_job(&*tx, &key)?;
+    if primary.revision.is_none() && primary.reason.is_none() && primary.updated_at_us.is_none() {
+        return Ok(stored.is_none());
+    }
+    let has_time = primary.updated_at_us.is_some();
+    let updated_at_us = match (primary.updated_at_us, &stored) {
+        (Some(time), _) => time,
+        (None, Some(job)) => job.updated_at_us,
+        (None, None) => transaction_clock::transaction_now().ok_or_else(|| {
+            StoreError::invalid("a seed job write ran outside a store write transaction")
+        })?,
+    };
+    let job = JobRecord {
+        revision: primary
+            .revision
+            .or_else(|| stored.as_ref().map(|j| j.revision.clone()))
+            .unwrap_or_else(|| page.knowledge_revision.clone()),
+        reason: primary
+            .reason
+            .or_else(|| stored.as_ref().map(|j| j.reason.clone()))
+            .unwrap_or_else(|| CANONICAL_CHANGE.into()),
+        updated_at_us,
+    };
+    put_job(tx, &key, &job)?;
+    Ok(has_time)
+}
+
+/// The job of `(source_id, slug)`, if the queue holds one.
+#[cfg(test)]
+pub(crate) fn read_page_job(
+    read: &dyn KvRead,
+    source_id: &str,
+    slug: &str,
+) -> Result<Option<JobRecord>> {
+    let key = job_key(&incarnation_of(read, source_id)?, slug);
+    read_job(read, &key)
+}
+
 /// Every job, in key order.
 pub(super) fn all_jobs(read: &dyn KvRead) -> Result<Vec<Job>> {
     let mut out = Vec::new();
@@ -287,14 +340,61 @@ pub(super) fn all_jobs(read: &dyn KvRead) -> Result<Vec<Job>> {
     failure.map_or(Ok(out), Err)
 }
 
-/// `min(updated_at)` over the jobs with reason `protocol_activation`: when an upgrade's index rebuild
-/// began, or none when no such job is queued (`projectionRebuildProgress`).
-pub(crate) fn activation_started_us(read: &dyn KvRead) -> Result<Option<i64>> {
+/// A queued job joined to its source (`page_projection_jobs j JOIN sources s ON s.incarnation = j.source_incarnation`).
+pub(crate) struct QueuedJob {
+    pub source_id: String,
+    pub archived: bool,
+    pub slug: String,
+    pub reason: String,
+    pub updated_at_us: i64,
+}
+
+/// Every job whose source incarnation names a present source, in key order.
+pub(crate) fn queued_jobs(read: &dyn KvRead) -> Result<Vec<QueuedJob>> {
+    let sources = sources_by_incarnation(read)?;
     Ok(all_jobs(read)?
-        .iter()
-        .filter(|job| job.record.reason == PROTOCOL_ACTIVATION)
-        .map(|job| job.record.updated_at_us)
-        .min())
+        .into_iter()
+        .filter_map(|job| {
+            let source = sources.get(&job.incarnation)?;
+            Some(QueuedJob {
+                source_id: source.id.clone(),
+                archived: source.archived,
+                slug: job.slug,
+                reason: job.record.reason,
+                updated_at_us: job.record.updated_at_us,
+            })
+        })
+        .collect())
+}
+
+/// `min(updated_at)` over the jobs with reason `protocol_activation` whose page passes `waits`
+/// (`projectionRebuildProgress`'s `started`: a live page of the job's source): when an upgrade's index
+/// rebuild began, or none when no such job is queued. `waits` sees the job's page and its source.
+pub(crate) fn activation_started_us(
+    read: &dyn KvRead,
+    mut waits: impl FnMut(&PageRecord, &SourceRecord) -> Result<bool>,
+) -> Result<Option<i64>> {
+    let sources = sources_by_incarnation(read)?;
+    let mut started: Option<i64> = None;
+    for job in all_jobs(read)? {
+        if job.record.reason != PROTOCOL_ACTIVATION {
+            continue;
+        }
+        let Some(source) = sources.get(&job.incarnation) else {
+            continue;
+        };
+        let Some(page) =
+            read_page(read, &source.id, &job.slug)?.filter(|p| p.deleted_at_us.is_none())
+        else {
+            continue;
+        };
+        if waits(&page, source)? {
+            started = Some(started.map_or(job.record.updated_at_us, |s| {
+                s.min(job.record.updated_at_us)
+            }));
+        }
+    }
+    Ok(started)
 }
 
 /// True when the queue holds no job: one key read.
@@ -1158,13 +1258,31 @@ mod tests {
         assert_eq!((progress.done, progress.total), (1, 2));
         let rate = progress.pages_per_second.unwrap();
         assert!(rate > 0.05 && rate <= 0.1, "{rate}");
+        // #10000: an activation row outside the scope starts no clock in it.
         let elsewhere: CoverageScope =
             serde_json::from_value(json!({ "sourceId": "elsewhere" })).unwrap();
-        let none = store
-            .projection_rebuild_progress(&elsewhere)
-            .unwrap()
+        assert_eq!(store.projection_rebuild_progress(&elsewhere).unwrap(), None);
+    }
+
+    #[test]
+    fn an_activation_row_on_an_image_page_starts_no_rebuild_clock() {
+        use crate::link_queries::CoverageScope;
+        let store = crate::test_support::store();
+        put(&store, "photo");
+        store
+            .write(|tx| {
+                let mut page = read_page(&*tx, "default", "photo")?.unwrap();
+                page.page_kind = "image".into();
+                crate::pages::write_page(tx, &page)
+            })
             .unwrap();
-        assert_eq!((none.done, none.total, none.pages_per_second), (0, 0, None));
+        set_job(&store, "photo", PROTOCOL_ACTIVATION, 10_000_000);
+        let every = CoverageScope::default();
+        assert_eq!(store.projection_rebuild_progress(&every).unwrap(), None);
+        // The same row on a segmented image shell is a `text` page, so its clock runs.
+        segment(&store, "photo");
+        set_job(&store, "photo", PROTOCOL_ACTIVATION, 10_000_000);
+        assert!(store.projection_rebuild_progress(&every).unwrap().is_some());
     }
 
     #[test]

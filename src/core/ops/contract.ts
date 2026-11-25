@@ -804,6 +804,11 @@ export interface OperationContext {
    */
   localSourceImplicit?: boolean;
   /**
+   * pages-02 — true when the trusted local CLI's source came from the cwd checkout tier (local_path), which names a
+   * source as a flag does: an unsourced put there is not a silent fork. Set only with `localSourceImplicit`.
+   */
+  localSourceFromCheckout?: boolean;
+  /**
    * #5081 — explicit-read admission for a stdio connection bound by an
    * explicit tier (`GBRAIN_SOURCE` or a `.gbrain-source` pin). Set ONLY by
    * the stdio transport (src/mcp/server.ts), never from caller params and

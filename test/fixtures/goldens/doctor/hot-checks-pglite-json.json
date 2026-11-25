@@ -501,6 +501,15 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
+            "message": "Not applicable: Rust engine shadow mode is off for this brain.",
+            "name": "rust_engine_addon",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "elapsed_ms": "<volatile>",
             "message": "Connected, 20 pages",
             "name": "connection",
             "status": "ok"
@@ -641,6 +650,20 @@
             "elapsed_ms": "<volatile>",
             "message": "sync.admission is normal: managed sync admits everything it classifies.",
             "name": "sync_admission_restricted",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
+              "count": 0,
+              "docs": "docs/ENGINES.md#topology-recovery-on-the-rust-engine",
+              "more": false,
+              "recovering": [],
+              "stop": null
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No topology change is recovering on this host.",
+            "name": "topology_recovery_stopped",
             "status": "ok"
           },
           {
@@ -798,16 +821,16 @@
               "actor": "user",
               "argv": [
                 "gbrain",
-                "init",
-                "--force",
+                "embeddings",
+                "enable",
                 "--embedding-model",
                 "voyage:voyage-4",
                 "--embedding-dimensions",
                 "1024",
-                "--path",
-                "<home>/.gbrain/brain.pglite"
+                "--brain",
+                "host"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
+              "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
               "consent": [
                 "credentials",
                 "paid"
@@ -1387,6 +1410,25 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
+            "message": "Not applicable: this brain serves one person, so no source has to be shared with members.",
+            "name": "access_shared_source_unread",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "count": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No live token or OAuth client is bound to a disabled or removed member.",
+            "name": "access_disabled_member_credentials",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
             "message": "Not applicable: no attest credential reads named sources as the person (--attest-read person).",
             "name": "attest_read_shared_scope",
             "readiness_state": "not_applicable",
@@ -1450,14 +1492,14 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "1393 column(s) verified against live schema",
+            "message": "1416 column(s) verified against live schema",
             "name": "schema_columns",
             "status": "ok"
           },
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 191 table(s) the applied migrations create exist.",
+            "message": "All 197 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -1482,16 +1524,16 @@
               "actor": "user",
               "argv": [
                 "gbrain",
-                "init",
-                "--force",
+                "embeddings",
+                "enable",
                 "--embedding-model",
                 "voyage:voyage-4",
                 "--embedding-dimensions",
                 "1024",
-                "--path",
-                "<home>/.gbrain/brain.pglite"
+                "--brain",
+                "host"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
+              "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
               "consent": [
                 "credentials",
                 "paid"
@@ -1532,16 +1574,16 @@
               "actor": "user",
               "argv": [
                 "gbrain",
-                "init",
-                "--force",
+                "embeddings",
+                "enable",
                 "--embedding-model",
                 "voyage:voyage-4",
                 "--embedding-dimensions",
                 "1024",
-                "--path",
-                "<home>/.gbrain/brain.pglite"
+                "--brain",
+                "host"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
+              "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
               "consent": [
                 "credentials",
                 "paid"
@@ -1844,6 +1886,10 @@
                 },
                 {
                   "name": "persistence_requests_slug_sequence",
+                  "state": "valid"
+                },
+                {
+                  "name": "persistence_requests_source_slug_c",
                   "state": "valid"
                 }
               ],
@@ -3458,6 +3504,13 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
+            "message": "The nightly cycle has not recorded anything it learned yet.",
+            "name": "learning_note",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
             "message": "No memory proposals await the owner.",
             "name": "memory_proposals_pending",
             "status": "ok"
@@ -3993,6 +4046,36 @@
           {
             "category": "brain",
             "details": {
+              "items": [],
+              "total": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Every held write is tied to one page, or waits for its page to be created.",
+            "name": "write_gate_hold_ambiguous",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "by_source": {},
+              "complete": true,
+              "items": [],
+              "items_truncated": false,
+              "row_budget": 5000,
+              "scanned": 0,
+              "stranded": {
+                "no_page": 0,
+                "page_deleted": 0
+              }
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No held write is without a live page (0 held write(s) read).",
+            "name": "write_gate_holds_stranded",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
               "bad_config": [],
               "chars_limit": 4000,
               "chars_used": 0,
@@ -4205,6 +4288,19 @@
             "elapsed_ms": "<volatile>",
             "message": "No rename that lost its page identity is waiting for a disposition.",
             "name": "rename_identity_downgrades",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "by_source": [],
+              "count": 0,
+              "docs": "docs/guides/repair.md#slug-spelling",
+              "truncated": false
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No page is stored under an older spelling of its name.",
+            "name": "legacy_slug_spellings",
             "status": "ok"
           },
           {
@@ -4468,6 +4564,17 @@
             "elapsed_ms": "<volatile>",
             "message": "No likely duplicate person or company pages.",
             "name": "entity_duplicates",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "classes": [],
+              "links": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No person links made automatically in the last 24 hours.",
+            "name": "dedupe_auto_links",
             "status": "ok"
           },
           {
@@ -5082,7 +5189,7 @@
             "category": "meta",
             "details": {
               "counts": {
-                "global": 18,
+                "global": 19,
                 "mixed": 2,
                 "source": 12
               },
@@ -5105,6 +5212,7 @@
                 "facts_drain": "global",
                 "fence_repair": "global",
                 "grade_takes": "global",
+                "learning_derive": "global",
                 "lint": "source",
                 "orphans": "global",
                 "patterns": "mixed",
@@ -5122,7 +5230,7 @@
               }
             },
             "elapsed_ms": "<volatile>",
-            "message": "Phase taxonomy: 12 source-scoped, 18 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [fence_repair, content_repair, unindexed_files, resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, edge_contradictions, claim_conflicts, drift, standing_questions, chronicle, facts_drain, skillopt, embed, orphans, purge, bookkeeping_gc]. Mixed: [synthesize, patterns].",
+            "message": "Phase taxonomy: 12 source-scoped, 19 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [fence_repair, content_repair, unindexed_files, resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, edge_contradictions, claim_conflicts, drift, standing_questions, chronicle, facts_drain, skillopt, embed, orphans, learning_derive, purge, bookkeeping_gc]. Mixed: [synthesize, patterns].",
             "name": "cycle_phase_scope",
             "status": "ok"
           },
@@ -5133,16 +5241,16 @@
               "actor": "user",
               "argv": [
                 "gbrain",
-                "init",
-                "--force",
+                "embeddings",
+                "enable",
                 "--embedding-model",
                 "voyage:voyage-4",
                 "--embedding-dimensions",
                 "1024",
-                "--path",
-                "<home>/.gbrain/brain.pglite"
+                "--brain",
+                "host"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
+              "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
               "consent": [
                 "credentials",
                 "paid"
@@ -6066,6 +6174,15 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
+            "message": "Not applicable: Rust engine shadow mode is off for this brain.",
+            "name": "rust_engine_addon",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "elapsed_ms": "<volatile>",
             "message": "Connected, 20 pages",
             "name": "connection",
             "status": "ok"
@@ -6206,6 +6323,20 @@
             "elapsed_ms": "<volatile>",
             "message": "sync.admission is normal: managed sync admits everything it classifies.",
             "name": "sync_admission_restricted",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
+              "count": 0,
+              "docs": "docs/ENGINES.md#topology-recovery-on-the-rust-engine",
+              "more": false,
+              "recovering": [],
+              "stop": null
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No topology change is recovering on this host.",
+            "name": "topology_recovery_stopped",
             "status": "ok"
           },
           {
@@ -6363,16 +6494,16 @@
               "actor": "user",
               "argv": [
                 "gbrain",
-                "init",
-                "--force",
+                "embeddings",
+                "enable",
                 "--embedding-model",
                 "voyage:voyage-4",
                 "--embedding-dimensions",
                 "1024",
-                "--path",
-                "<home>/.gbrain/brain.pglite"
+                "--brain",
+                "host"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
+              "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
               "consent": [
                 "credentials",
                 "paid"
@@ -6952,6 +7083,25 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
+            "message": "Not applicable: this brain serves one person, so no source has to be shared with members.",
+            "name": "access_shared_source_unread",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "count": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No live token or OAuth client is bound to a disabled or removed member.",
+            "name": "access_disabled_member_credentials",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
             "message": "Not applicable: no attest credential reads named sources as the person (--attest-read person).",
             "name": "attest_read_shared_scope",
             "readiness_state": "not_applicable",
@@ -7015,14 +7165,14 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "1393 column(s) verified against live schema",
+            "message": "1416 column(s) verified against live schema",
             "name": "schema_columns",
             "status": "ok"
           },
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 191 table(s) the applied migrations create exist.",
+            "message": "All 197 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -7047,16 +7197,16 @@
               "actor": "user",
               "argv": [
                 "gbrain",
-                "init",
-                "--force",
+                "embeddings",
+                "enable",
                 "--embedding-model",
                 "voyage:voyage-4",
                 "--embedding-dimensions",
                 "1024",
-                "--path",
-                "<home>/.gbrain/brain.pglite"
+                "--brain",
+                "host"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
+              "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
               "consent": [
                 "credentials",
                 "paid"
@@ -7097,16 +7247,16 @@
               "actor": "user",
               "argv": [
                 "gbrain",
-                "init",
-                "--force",
+                "embeddings",
+                "enable",
                 "--embedding-model",
                 "voyage:voyage-4",
                 "--embedding-dimensions",
                 "1024",
-                "--path",
-                "<home>/.gbrain/brain.pglite"
+                "--brain",
+                "host"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
+              "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
               "consent": [
                 "credentials",
                 "paid"
@@ -7409,6 +7559,10 @@
                 },
                 {
                   "name": "persistence_requests_slug_sequence",
+                  "state": "valid"
+                },
+                {
+                  "name": "persistence_requests_source_slug_c",
                   "state": "valid"
                 }
               ],
@@ -9035,6 +9189,13 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
+            "message": "The nightly cycle has not recorded anything it learned yet.",
+            "name": "learning_note",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
             "message": "No memory proposals await the owner.",
             "name": "memory_proposals_pending",
             "status": "ok"
@@ -9570,6 +9731,36 @@
           {
             "category": "brain",
             "details": {
+              "items": [],
+              "total": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Every held write is tied to one page, or waits for its page to be created.",
+            "name": "write_gate_hold_ambiguous",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "by_source": {},
+              "complete": true,
+              "items": [],
+              "items_truncated": false,
+              "row_budget": 5000,
+              "scanned": 0,
+              "stranded": {
+                "no_page": 0,
+                "page_deleted": 0
+              }
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No held write is without a live page (0 held write(s) read).",
+            "name": "write_gate_holds_stranded",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
               "bad_config": [],
               "chars_limit": 4000,
               "chars_used": 0,
@@ -9782,6 +9973,19 @@
             "elapsed_ms": "<volatile>",
             "message": "No rename that lost its page identity is waiting for a disposition.",
             "name": "rename_identity_downgrades",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "by_source": [],
+              "count": 0,
+              "docs": "docs/guides/repair.md#slug-spelling",
+              "truncated": false
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No page is stored under an older spelling of its name.",
+            "name": "legacy_slug_spellings",
             "status": "ok"
           },
           {
@@ -10045,6 +10249,17 @@
             "elapsed_ms": "<volatile>",
             "message": "No likely duplicate person or company pages.",
             "name": "entity_duplicates",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "classes": [],
+              "links": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No person links made automatically in the last 24 hours.",
+            "name": "dedupe_auto_links",
             "status": "ok"
           },
           {
@@ -10659,7 +10874,7 @@
             "category": "meta",
             "details": {
               "counts": {
-                "global": 18,
+                "global": 19,
                 "mixed": 2,
                 "source": 12
               },
@@ -10682,6 +10897,7 @@
                 "facts_drain": "global",
                 "fence_repair": "global",
                 "grade_takes": "global",
+                "learning_derive": "global",
                 "lint": "source",
                 "orphans": "global",
                 "patterns": "mixed",
@@ -10699,7 +10915,7 @@
               }
             },
             "elapsed_ms": "<volatile>",
-            "message": "Phase taxonomy: 12 source-scoped, 18 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [fence_repair, content_repair, unindexed_files, resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, edge_contradictions, claim_conflicts, drift, standing_questions, chronicle, facts_drain, skillopt, embed, orphans, purge, bookkeeping_gc]. Mixed: [synthesize, patterns].",
+            "message": "Phase taxonomy: 12 source-scoped, 19 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [fence_repair, content_repair, unindexed_files, resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, edge_contradictions, claim_conflicts, drift, standing_questions, chronicle, facts_drain, skillopt, embed, orphans, learning_derive, purge, bookkeeping_gc]. Mixed: [synthesize, patterns].",
             "name": "cycle_phase_scope",
             "status": "ok"
           },
@@ -10710,16 +10926,16 @@
               "actor": "user",
               "argv": [
                 "gbrain",
-                "init",
-                "--force",
+                "embeddings",
+                "enable",
                 "--embedding-model",
                 "voyage:voyage-4",
                 "--embedding-dimensions",
                 "1024",
-                "--path",
-                "<home>/.gbrain/brain.pglite"
+                "--brain",
+                "host"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
+              "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
               "consent": [
                 "credentials",
                 "paid"

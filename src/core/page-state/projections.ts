@@ -8,7 +8,7 @@ import { prepareMarkdownChunks } from '../markdown-chunks.ts';
 import { loadFenceChunkOverlay, type FenceChunkOverlay } from '../eligibility/fence-overlay.ts';
 import { prepareCodeChunks, installCodeChunkEdges } from '../code-chunks.ts';
 import { resolveMaxChunkTokens } from '../embedding-input-limit.ts';
-import { assertPageRevision, PageRevisionConflictError, type PageSnapshot } from './types.ts';
+import { assertPageRevision, PageProjectionConflictError, PageRevisionConflictError, type PageSnapshot, type ProjectionConflictField } from './types.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { digest } from '../persistence/digest.ts';
 import { resolveWriteColumnFromConfigRows } from '../search/embedding-column.ts';
@@ -56,16 +56,7 @@ export interface ProjectionSnapshot {
   fenceOverlay?: FenceChunkOverlay;
 }
 
-export type ProjectionConflictField = 'text_projection_revision' | 'chunk_digest' | 'indexing_context';
-
-/** Canonical state can stay unchanged while another worker replaces its projection. */
-export class PageProjectionConflictError extends PageRevisionConflictError {
-  constructor(expected: string, current: string, readonly changed: readonly ProjectionConflictField[], readonly slug: string, readonly sourceId: string) {
-    super(expected, current);
-    this.name = 'PageProjectionConflictError';
-    this.message = `The search projection of ${slug} (source ${sourceId}) changed during preparation (${changed.join(', ')}) at the same page revision; nothing was installed. Re-read its current snapshot before retrying.`;
-  }
-}
+export { PageProjectionConflictError, type ProjectionConflictField } from './types.ts';
 
 /**
  * The loser of a concurrent projection installation re-reads and prepares
@@ -660,13 +651,9 @@ export interface ProjectionBacklog {
   as_of?: string;
 }
 
-/** Every class of the queue in one aggregate; `scope` narrows to the pages a caller may read. */
-export async function projectionBacklog(engine: Pick<BrainEngine, 'readProjectionBacklog'>, scope: PageReadScope = {}): Promise<Required<ProjectionBacklog>> {
-  const row = await engine.readProjectionBacklog(scope);
-  const oldest = row?.oldest === null || row?.oldest === undefined ? null : Math.max(0, Math.floor(Number(row.oldest)));
-  const n = (key: 'pending' | 'failed' | 'sealable' | 'sealable_with_visual' | 'reimport' | 'ocr_required' | 'protected' | 'archived') => Number(row?.[key] ?? 0);
-  return { pending: n('pending'), failed: n('failed'), oldest_age_seconds: oldest, sealable: n('sealable'), sealable_with_visual: n('sealable_with_visual'),
-    reimport: n('reimport'), ocr_required: n('ocr_required'), protected: n('protected'), archived: n('archived'), as_of: String(row?.as_of ?? '') };
+/** Every class of the queue in one aggregate; `scope` narrows to the pages a caller may read (the engine's `readProjectionBacklog`). */
+export function projectionBacklog(engine: Pick<BrainEngine, 'readProjectionBacklog'>, scope: PageReadScope = {}): Promise<Required<ProjectionBacklog>> {
+  return engine.readProjectionBacklog(scope);
 }
 
 /**

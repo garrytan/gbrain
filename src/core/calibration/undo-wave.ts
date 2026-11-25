@@ -102,81 +102,26 @@ export async function undoWave(
   // wave_version match. Cross-check resolved_by to ensure we're not
   // un-resolving a take a manual `gbrain takes resolve` operation
   // overrode after grade_takes wrote it.
-  const targetTakeRows = await engine.executeRaw<{ take_id: number }>(
-    `SELECT DISTINCT take_id FROM take_grade_cache
-     WHERE wave_version = $1 AND applied = true`,
-    [waveVersion],
-  );
-  // Postgres returns bigint ids as BigInt, which a `$1::bigint[]` parameter cannot bind.
-  const targetTakeIds = targetTakeRows.map(r => Number(r.take_id));
+  const targetTakeIds = await engine.listWaveAppliedTakeIds(waveVersion);
 
   if (targetTakeIds.length > 0) {
-    if (dryRun) {
-      const counted = await engine.executeRaw<{ count: number }>(
-        `SELECT COUNT(*)::int AS count FROM takes
-         WHERE id = ANY($1::bigint[])
-           AND resolved_by = $2`,
-        [targetTakeIds, resolvedByLabel],
-      );
-      result.resolutions_reverted = counted[0]?.count ?? 0;
-    } else {
-      const reverted = await maintenanceTransaction(engine, tx => tx.executeRaw<{ id: number }>(
-        `UPDATE takes
-           SET resolved_at = NULL,
-               resolved_outcome = NULL,
-               resolved_quality = NULL,
-               resolved_value = NULL,
-               resolved_unit = NULL,
-               resolved_source = NULL,
-               resolved_by = NULL
-         WHERE id = ANY($1::bigint[])
-           AND resolved_by = $2
-         RETURNING id`,
-        [targetTakeIds, resolvedByLabel],
-      ));
-      result.resolutions_reverted = reverted.length;
-    }
+    const spec = { takeIds: targetTakeIds, resolvedBy: resolvedByLabel, dryRun };
+    result.resolutions_reverted = dryRun
+      ? await engine.revertWaveTakeResolutions(spec)
+      : await maintenanceTransaction(engine, tx => tx.revertWaveTakeResolutions(spec));
   }
 
   // Step 1b: mark take_grade_cache rows applied=false so the audit trail
   // shows they WERE applied but this wave was reverted. Useful for the
   // confidence-drift check (CDX-11 mitigation) so the historical
   // applied=true rows aren't counted in confidence-vs-accuracy.
-  if (!dryRun) {
-    const cacheUnset = await engine.executeRaw<{ take_id: number }>(
-      `UPDATE take_grade_cache
-         SET applied = false
-       WHERE wave_version = $1 AND applied = true
-       RETURNING take_id`,
-      [waveVersion],
-    );
-    result.grade_cache_unapplied = cacheUnset.length;
-  } else {
-    const cacheCount = await engine.executeRaw<{ count: number }>(
-      `SELECT COUNT(*)::int AS count FROM take_grade_cache
-       WHERE wave_version = $1 AND applied = true`,
-      [waveVersion],
-    );
-    result.grade_cache_unapplied = cacheCount[0]?.count ?? 0;
-  }
+  result.grade_cache_unapplied = await engine.unapplyWaveTakeGrades({ waveVersion, dryRun });
 
   // Step 2: delete calibration_profiles rows.
   result.profiles_deleted = await engine.purgeCalibrationProfilesByWave({ waveVersion, dryRun });
 
   // Step 3: purge take_nudge_log rows.
-  if (dryRun) {
-    const counted = await engine.executeRaw<{ count: number }>(
-      `SELECT COUNT(*)::int AS count FROM take_nudge_log WHERE wave_version = $1`,
-      [waveVersion],
-    );
-    result.nudges_purged = counted[0]?.count ?? 0;
-  } else {
-    const purged = await engine.executeRaw<{ id: number }>(
-      `DELETE FROM take_nudge_log WHERE wave_version = $1 RETURNING id`,
-      [waveVersion],
-    );
-    result.nudges_purged = purged.length;
-  }
+  result.nudges_purged = await engine.purgeTakeNudgesByWave({ waveVersion, dryRun });
 
   // Step 4: optional gstack-learnings scrub.
   if (opts.scrubGstack && !dryRun) {

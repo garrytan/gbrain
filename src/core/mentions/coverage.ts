@@ -38,13 +38,13 @@ const toIso = (v: unknown): string | null => {
 };
 
 /** Coverage over `sourceIds` (the caller's permitted sources). */
-export async function readMentionCoverage(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig' | 'countPagesDueForMentions'>, sourceIds: string[]): Promise<MentionCoverage> {
+export async function readMentionCoverage(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig' | 'countPagesDueForMentions' | 'readMentionIndexStatus' | 'countLivePagesInSource' | 'countMentionDueSince' | 'recountMentionIndexStatus'>, sourceIds: string[]): Promise<MentionCoverage> {
   const policy = await readMentionPolicy(engine);
-  const rows = await engine.executeRaw<{ source_id: string; state: string; pending: number; counted_at: unknown; last_pass_at: unknown; policy_fingerprint: string | null }>(
-    `SELECT source_id, state, pending, counted_at, last_pass_at, policy_fingerprint FROM mention_index_status WHERE source_id = ANY($1::text[])`, [sourceIds]);
+  const rows = await engine.readMentionIndexStatus(sourceIds);
   const bySource = new Map(rows.map(r => [r.source_id, r]));
   let pending = 0;
   let failed = false;
+  let unsettled = false;
   let last: string | null = null;
   for (const sourceId of sourceIds) {
     const row = bySource.get(sourceId);
@@ -52,37 +52,33 @@ export async function readMentionCoverage(engine: Pick<BrainEngine, 'executeRaw'
     if (lastPass && (!last || lastPass > last)) last = lastPass;
     if (!policy.enabled) continue;
     if (!row || row.state === 'disabled') {
-      const [n] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE source_id = $1 AND deleted_at IS NULL', [sourceId]);
-      pending += Number(n?.n ?? 0);
+      pending += await engine.countLivePagesInSource(sourceId);
       continue;
     }
     if (row.state === 'failed') failed = true;
+    // A pass that had no time to save a changed name list leaves the row pending with no page counted due yet.
+    if (row.state === 'pending') unsettled = true;
     const stored = splitStoredFingerprint(row.policy_fingerprint);
     if (stored.versions !== INDEX_VERSION_STAMP) {
       // Counted by another binary: recount once (pages behind this binary's versions are due whatever their updated_at) and save it.
       const due = await countIndexDuePages(engine, sourceId, linkableTypesFor(await loadSourcePack(engine, sourceId), policy));
-      await engine.executeRaw(
-        `UPDATE mention_index_status SET pending = $2, counted_at = now(), policy_fingerprint = $3, updated_at = now(),
-                state = CASE WHEN state = 'complete' AND $2::int > 0 THEN 'pending' ELSE state END
-          WHERE source_id = $1 AND policy_fingerprint IS NOT DISTINCT FROM $4`,
-        [sourceId, due, `${stored.hash ?? ''};${INDEX_VERSION_STAMP}`, row.policy_fingerprint]).catch(() => undefined);
+      await engine.recountMentionIndexStatus(sourceId, { pending: due, fingerprint: `${stored.hash ?? ''};${INDEX_VERSION_STAMP}`, expectedFingerprint: row.policy_fingerprint })
+        .catch(() => undefined);
       pending += due;
       continue;
     }
     // Pages written at or after the last count that are not scanned at their current content (the index on updated_at keeps it small).
-    const [since] = await engine.executeRaw<{ n: number }>(
-      `SELECT count(*)::int AS n FROM pages p LEFT JOIN page_mention_state s ON s.page_id = p.id
-        WHERE p.source_id = $1 AND p.updated_at >= $2::timestamptz AND p.deleted_at IS NULL
-          AND (s.page_id IS NULL OR s.mention_revision IS DISTINCT FROM p.knowledge_revision OR s.mention_version IS DISTINCT FROM $3)`,
-      [sourceId, toIso(row.counted_at) ?? '-infinity', MENTION_EXTRACTOR_VERSION]);
-    pending += Number(row.pending ?? 0) + Number(since?.n ?? 0);
+    const since = await engine.countMentionDueSince(sourceId, toIso(row.counted_at) ?? '-infinity', MENTION_EXTRACTOR_VERSION);
+    pending += Number(row.pending ?? 0) + since;
   }
-  const state: CoverageState = !policy.enabled ? 'disabled' : failed ? 'failed' : pending > 0 ? 'pending' : 'complete';
+  const state: CoverageState = !policy.enabled ? 'disabled' : failed ? 'failed' : pending > 0 || unsettled ? 'pending' : 'complete';
   return { state, pending_pages: policy.enabled ? pending : 0, last_pass_at: last, ...(state === 'complete' ? {} : { degraded: true as const }) };
 }
 
 const WHY: Record<Exclude<CoverageState, 'complete'>, (c: MentionCoverage) => string> = {
-  pending: c => `${c.pending_pages} page(s) have not been scanned for entity names yet, so references from them are missing; ` +
+  pending: c => (c.pending_pages > 0
+    ? `${c.pending_pages} page(s) have not been scanned for entity names yet, so references from them are missing; `
+    : 'The entity name list changed and pages have not been checked against it yet, so references may be missing; ') +
     'a short or empty list is not proof that nothing else mentions this entity.',
   disabled: () => 'Mention linking is off (auto_link or mentions.auto_link is false), so only explicit links are listed, not pages that name this entity.',
   type_not_linkable: () => 'This page type is not a linkable entity type, so pages that only name it are not listed; explicit links are. ' +

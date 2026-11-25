@@ -145,13 +145,7 @@ async function runExtractionBacklogs(ctx: DoctorContext): Promise<Check[]> {
   if (engine) {
     try {
       const { hasMalformedPathSegment, isPoisonedPath } = await import('../../../core/sync.ts');
-      const candidates = await engine.executeRaw<{ slug: string; source_id: string; source_path: string }>(
-        `SELECT slug, source_id, source_path FROM pages
-          WHERE source_path IS NOT NULL AND deleted_at IS NULL
-            AND (source_path LIKE '%[%' OR source_path LIKE '%]%'
-                 OR source_path ~ '[[:cntrl:]]')`,
-        [],
-      );
+      const candidates = await engine.listBracketPathPages();
       const malformed = candidates.filter(r => hasMalformedPathSegment(r.source_path));
       if (malformed.length > 0) {
         const poisoned = malformed.filter(r => isPoisonedPath(r.source_path)).length;

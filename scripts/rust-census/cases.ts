@@ -20,12 +20,19 @@ export interface CliCase {
   skip?: string;
   /** Text fed to stdin, when the command reads it. */
   stdin?: string;
+  /** CLI steps run on each arm's copy before the case, untraced (the state the case writes over, such as a member). */
+  before?: string[][];
 }
 
 const PUT_BODY = '---\ntype: note\ntitle: Census put\ntags: [census]\n---\nCensus body that links [[people/alice-example]].\n';
 
 const c = (cmd: string, ...args: string[]): CliCase => ({ cmd, args: [cmd, ...args] });
 const skip = (cmd: string, why: string): CliCase => ({ cmd, args: [cmd], skip: why });
+const after = (before: string[][], cmd: string, ...args: string[]): CliCase => ({ ...c(cmd, ...args), before });
+
+/** The member the access member write cases add, then disable, enable, edit and remove. */
+const ADD_MEMBER = ['access', 'member', 'add', 'census-member', '--name', 'Census Member', '--email', 'member@example.com', '--groups', 'census-team', '--json'];
+const DISABLE_MEMBER = ['access', 'member', 'disable', 'census-member', '--json'];
 
 /** Hot paths first (put, import, sync, search, query, get, links), then every other command A-Z. */
 export const CLI_CASES: CliCase[] = [
@@ -51,6 +58,27 @@ export const CLI_CASES: CliCase[] = [
   c('link-add', 'people/charlie-example', 'companies/harbor-example', '--json'),
   c('link-rm', 'people/alice-example', 'companies/acme-example', '--json'),
   c('get_links', 'people/alice-example', '--json'),
+  // ---- fail-soft reads on the hot paths: each case turns on the setting or input that reaches a read whose catch
+  // returns a default, so the report shows whether Rust takes that fallback (Hidden refusals) ----
+  after([['config', 'set', 'search.entity_anchoring', 'true']], 'search', 'where does Alice Example work now', '--json'),
+  after([['config', 'set', 'search.entity_anchoring', 'true']], 'query', 'where does Alice Example work now', '--no-expand', '--json'),
+  after([['config', 'set', 'search.long_page_unit', 'window']], 'search', 'keyword ranking', '--json'),
+  c('search', 'show me photos of Alice Example', '--json'),
+  c('search', 'alice example', '--types', 'nosuchtype', '--json'),
+  c('put', 'notes/census-label', '--content', '---\ntype: note\ntitle: Census label\naccess: maybe\n---\nCensus body.\n', '--json'),
+  c('volunteer-context', '--window', 'user: what is Example shipping this week', '--json'),
+  c('volunteer-context', '--window', 'user: ask a-example about Brain Index', '--json'),
+  c('volunteer-context', '--window', 'user: 爱丽丝 said hi', '--json'),
+  after([['put', 'people/quinn-zorvexample', '--content', '---\ntype: person\ntitle: Quinn Zorvexample\n---\nCensus person.\n', '--json']],
+    'volunteer-context', '--window', 'user: did Zorvexample reply', '--json'),
+  after([['put', 'people/ailisi-example', '--content', '---\ntype: person\ntitle: 爱丽丝\n---\nCensus person.\n', '--json']],
+    'volunteer-context', '--window', 'user: 爱丽丝 said hi', '--json'),
+  c('volunteer-context', '--window', 'user: ask about acme example today', '--json'),
+  after([['config', 'set', 'context.proactive_brief', 'on']],
+    'context-pack', '--entities', 'people/alice-example', '--counterparty', 'Alice Example', '--session-id', 'census', '--json'),
+  after([['put', 'notes/census-mention', '--content', '---\ntype: note\ntitle: Census mention\n---\nWe met Zelda Example at the summit.\n', '--json']],
+    'entity', 'Zelda Example', '--json'),
+  c('links', 'people/frank-example'),
   c('list', '--json'),
   c('list', '--type', 'person', '--json'),
   c('find', 'people/*', '--json'),
@@ -90,6 +118,13 @@ export const CLI_CASES: CliCase[] = [
   c('revert', 'people/alice-example', '1', '--force', '--json'),
   // ---- every other command, A-Z ----
   c('access', 'member', 'list', '--json'),
+  c('access', ...ADD_MEMBER.slice(1)),
+  after([ADD_MEMBER], 'access', ...DISABLE_MEMBER.slice(1)),
+  after([ADD_MEMBER, DISABLE_MEMBER], 'access', 'member', 'enable', 'census-member', '--json'),
+  after([ADD_MEMBER], 'access', 'member', 'set', 'census-member', '--email', 'other@example.com', '--json'),
+  after([ADD_MEMBER], 'access', 'member', 'kind', 'census-member', 'audience', '--json'),
+  after([ADD_MEMBER], 'access', 'member', 'rm', 'census-member', '--json'),
+  after([ADD_MEMBER], 'access', 'member', 'rm', 'census-member', '--yes', '--json'),
   c('advisor', '--json'),
   c('agent', 'logs', '1', '--json'),
   c('anomalies', '--json'),

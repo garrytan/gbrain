@@ -18,7 +18,7 @@ import { hostOnlyError } from '../ops/op-fix.ts';
 import { ACCESS_ID_RE } from './principals.ts';
 import { assertAccessId, boundCredentials, existingMember, getMember, type MemberRecord } from './members.ts';
 import { labelledOnlyOwnerError, ownerMemberId } from './owner.ts';
-import { OWNER_MEMBER_KEY } from '../search/private-visibility.ts';
+import { isEngineCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 /**
  * Marks a member labelled-only or clears it. Only the trusted local operator may (remote strictly false), and never on the
@@ -38,20 +38,18 @@ export async function setMemberLabelledOnly(engine: BrainEngine, rawId: unknown,
   }
   if (on && await ownerMemberId(engine) === member.id) throw labelledOnlyOwnerError(member.id, 'grant');
   if (member.labelled_only === on) return { member, changed: false };
-  await engine.executeRaw('UPDATE access_members SET labelled_only = $2, updated_at = now() WHERE id = $1 AND tombstoned_at IS NULL', [member.id, on]);
+  await engine.setAccessMemberLabelledOnly(member.id, on);
   return { member: (await getMember(engine, member.id))!, changed: true };
 }
 
 /** The enabled labelled-only members, sorted; empty when none. */
-export async function labelledOnlyMemberIds(engine: Pick<BrainEngine, 'executeRaw'>): Promise<string[]> {
-  const rows = await engine.executeRaw<{ id: string }>(
-    'SELECT id FROM access_members WHERE labelled_only AND disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id');
-  return rows.map(r => r.id);
+export async function labelledOnlyMemberIds(engine: Pick<BrainEngine, 'listEnabledLabelledOnlyMemberIds'>): Promise<string[]> {
+  return engine.listEnabledLabelledOnlyMemberIds();
 }
 
 /** The enabled labelled-only members, sorted, each with how many credentials are bound to it (doctor's audit list). */
 export async function labelledOnlyMembers(engine: BrainEngine): Promise<Array<{ id: string; credentials: number }>> {
-  return Promise.all((await labelledOnlyMemberIds(engine)).map(async id => ({ id, credentials: (await boundCredentials(engine, id)).length })));
+  return Promise.all((await engine.listLabelledOnlyMemberIds()).map(async id => ({ id, credentials: (await boundCredentials(engine, id)).length })));
 }
 
 /** Whether any member carries the grant: the one cheap test a write runs before resolving its writer. Unreadable counts as yes. */
@@ -68,13 +66,14 @@ export async function anyLabelledOnlyMember(engine: Pick<BrainEngine, 'hasLabell
  * cannot be read counts as yes (fail closed: it only narrows). Identities without a member (unbound, a group, a guest)
  * are never labelled-only, and neither is the configured owner (access.owner_member), whichever door the call came in by.
  */
-export async function labelledOnlyFor(engine: Pick<BrainEngine, 'executeRaw'>, identities: readonly (readonly string[])[]): Promise<boolean> {
+export async function labelledOnlyFor(engine: Pick<BrainEngine, 'hasLabelledOnlyMemberAmong'>, identities: readonly (readonly string[])[]): Promise<boolean> {
   const members = [...new Set(identities.flat().filter(p => p.startsWith('member:')).map(p => p.slice('member:'.length)).filter(id => ACCESS_ID_RE.test(id)))];
   if (!members.length) return false;
   try {
-    return (await engine.executeRaw(`SELECT 1 FROM access_members WHERE labelled_only AND id = ANY($1::text[])
-      AND id IS DISTINCT FROM (SELECT btrim(value) FROM config WHERE key = $2) LIMIT 1`, [members, OWNER_MEMBER_KEY])).length > 0;
-  } catch {
+    return await engine.hasLabelledOnlyMemberAmong(members);
+  } catch (e) {
+    // An engine that refuses the read is reported, never read as labelled-only for every member.
+    if (isEngineCapabilityRefusal(e)) throw e;
     return true;
   }
 }

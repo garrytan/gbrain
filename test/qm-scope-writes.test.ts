@@ -400,18 +400,21 @@ for (const kind of testBackends()) {
       tokens[name] = (await provider().exchangeClientCredentials(c.id, c.secret)).access_token;
       return c;
     };
-    const raceWhile = (matches: (sql: string, params: unknown[]) => boolean, racer: () => Promise<unknown>) => {
-      const original = engine.executeRaw;
+    // Runs `racer` when the matching call reaches `method` (executeRaw by default; an engine member such as
+    // writeCredentialBinding gets the member's arguments), then lets the call continue.
+    const raceWhile = (matches: (sql: string, params: unknown[]) => boolean, racer: () => Promise<unknown>, method: 'executeRaw' | 'writeCredentialBinding' = 'executeRaw') => {
+      const target = engine as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
+      const original = target[method]!;
       let race: Promise<Error | null> | null = null;
-      engine.executeRaw = (async function (this: BrainEngine, ...args: Parameters<typeof engine.executeRaw>) {
+      target[method] = async function (this: BrainEngine, ...args: unknown[]) {
         if (!race && matches(String(args[0]), (args[1] ?? []) as unknown[])) {
           let settled = false;
           race = refusal(racer()).finally(() => { settled = true; });
           for (let i = 0; i < 30 && !settled; i++) await new Promise(r => setTimeout(r, 50));
         }
         return original.apply(this, args);
-      }) as typeof engine.executeRaw;
-      return { restore: () => { engine.executeRaw = original; }, result: () => race };
+      };
+      return { restore: () => { target[method] = original; }, result: () => race };
     };
 
     test('a stored scope write is refused once its OAuth client or legacy token is rescoped to no sources', async () => {
@@ -442,8 +445,19 @@ for (const kind of testBackends()) {
       await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [FED]);
       const racer = await register('fedracer', HOME);
       await bindCredential(engine, { kind: 'client', id: racer.id }, { attestActor: 'qm', attestOps: MEMORY_OPS });
-      const race = raceWhile((sql, params) => sql.includes('UPDATE sources SET config = $1::text::jsonb WHERE id = $2') && params[1] === FED,
-        () => bindCredential(engine, { kind: 'client', id: racer.id }, { attestSources: [FED] }));
+      // The config write is the typed replaceSourceConfig (engine-sql/sources.ts): the mark races it there, while
+      // federate holds the source row (lockSourceRow) in the same transaction.
+      const original = engine.replaceSourceConfig;
+      let pending: Promise<Error | null> | null = null;
+      engine.replaceSourceConfig = (async function (this: BrainEngine, id: string, config: Record<string, unknown>) {
+        if (!pending && id === FED) {
+          let settled = false;
+          pending = refusal(bindCredential(engine, { kind: 'client', id: racer.id }, { attestSources: [FED] })).finally(() => { settled = true; });
+          for (let i = 0; i < 30 && !settled; i++) await new Promise(r => setTimeout(r, 50));
+        }
+        return original.call(this, id, config);
+      }) as typeof engine.replaceSourceConfig;
+      const race = { restore: () => { engine.replaceSourceConfig = original; }, result: () => pending };
       try {
         await runSources(engine, ['federate', FED]);
       } finally {
@@ -460,8 +474,8 @@ for (const kind of testBackends()) {
     test('a read grant widened while --attest-sources drops that source never leaves the credential reading an unlisted scope', async () => {
       const [D1, D2] = ['qm-scope-drop-1', 'qm-scope-drop-2'];
       const c = await scopeClient('droprace', [D1, D2], [HOME, D1]);
-      const race = raceWhile(sql => sql.includes('UPDATE oauth_clients SET member_id'),
-        () => rescopeClientGrant(engine, c.id, { federatedRead: [HOME, D1, D2] }, { actor: 'test' }));
+      const race = raceWhile(() => true,
+        () => rescopeClientGrant(engine, c.id, { federatedRead: [HOME, D1, D2] }, { actor: 'test' }), 'writeCredentialBinding');
       let dropped: Error | null;
       try {
         dropped = await refusal(bindCredential(engine, { kind: 'client', id: c.id }, { attestSources: [D1] }));

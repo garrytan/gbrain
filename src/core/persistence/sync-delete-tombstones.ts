@@ -43,14 +43,9 @@ export const syncDeleteOrigin = (alias: string): string => `(EXISTS (SELECT 1 FR
  * Every tombstone a managed sync made whose content no live page of its source holds (`expired`: older than the cutoff),
  * whatever its age, so a purge that excludes them cannot race a tombstone across its cutoff.
  */
-export async function readUnreviewedSyncTombstones(engine: Pick<BrainEngine, 'executeRaw'>, olderThanHours: number):
+export async function readUnreviewedSyncTombstones(engine: Pick<BrainEngine, 'listUnreviewedSyncTombstones'>, olderThanHours: number):
   Promise<Array<{ id: number; source_id: string; slug: string; expired: boolean }>> {
-  const rows = await engine.executeRaw<{ id: number | string; source_id: string; slug: string; expired: boolean }>(
-    `SELECT p.id, p.source_id, p.slug, p.deleted_at < now() - ($1 || ' hours')::interval AS expired FROM pages p
-      WHERE p.deleted_at IS NOT NULL AND ${syncDeleteOrigin('p')}
-        AND NOT EXISTS (SELECT 1 FROM pages tw WHERE tw.source_id = p.source_id AND tw.deleted_at IS NULL AND tw.content_hash = p.content_hash)
-      ORDER BY p.deleted_at ASC, p.source_id ASC, p.slug ASC`, [String(Math.max(0, Math.floor(olderThanHours)))]);
-  return rows.map(row => ({ ...row, id: Number(row.id) }));
+  return engine.listUnreviewedSyncTombstones(olderThanHours);
 }
 
 /** The `blocked` entry of a tombstone an automatic purge keeps. */

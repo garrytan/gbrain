@@ -29,7 +29,7 @@ export function startProjectionStatusCache(engine: Pick<BrainEngine, 'executeRaw
   const refresh = (): Promise<void> => inflight ??= (async () => {
     const [row] = await engine.executeRaw<{ signal: string }>(`SELECT (SELECT count(*) FROM page_projection_jobs)::text || '/'
       || COALESCE((SELECT max(updated_at) FROM page_projection_jobs)::text,'') || '/'
-      || md5(COALESCE((SELECT string_agg(id || ':' || archived::text, ',' ORDER BY id) FROM sources),'')) AS signal`);
+      || md5(COALESCE((SELECT string_agg(id || ':' || archived::text, ',' ORDER BY id COLLATE "C") FROM sources),'')) AS signal`);
     const signal = String(row?.signal ?? '');
     if (counted && counted.signal === signal && now() - counted.at < PROJECTION_STATUS_MAX_AGE_MS) return;
     counted = { at: now(), signal, value: await projectionBacklog(engine) };

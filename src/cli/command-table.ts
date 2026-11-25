@@ -386,6 +386,7 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   { name: 'takes', phase: 'post-connect', thinClient: 'route-then-refuse', selfHelp: true, load: () => import('./commands/takes.ts') },
   { name: 'onboard', phase: 'post-connect', thinClient: 'none', help: () => import('./help/onboard.ts'), load: () => import('./commands/onboard.ts') },
   { name: 'founder', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/founder.ts') },
+  { name: 'profile', phase: 'post-connect', thinClient: 'none', selfHelp: true, json: 'document', read_only: true, load: () => import('./commands/profile.ts') },
   { name: 'think', phase: 'post-connect', thinClient: 'none', selfHelp: true, routes_source: true, load: () => import('./commands/think.ts') },
   { name: 'recall', phase: 'post-connect', thinClient: 'none', selfHelp: true, routes_source: true, load: () => import('./commands/recall.ts') },
   // CLI_ONLY: v0.42.58 (#2035 class, caught by the handleCliOnly reachability sweep): full handler
@@ -400,7 +401,7 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   { name: 'sources', phase: 'post-connect', thinClient: 'route-then-refuse', selfHelp: true,
     slowRead: args => args[0] === 'status' ? `source status for ${positional(args.slice(1)) ?? 'every source'}` : null, load: () => import('./commands/sources.ts') },
   // CLI_ONLY: Open-loop engine CLI (engine-bound; trusted-local op dispatch).
-  { name: 'waiting', phase: 'post-connect', thinClient: 'none', selfHelp: true, routes_source: true, load: () => import('./commands/waiting.ts') },
+  { name: 'waiting', phase: 'pre-connect-own-engine', thinClient: 'none', selfHelp: true, routes_source: true, load: () => import('./commands/waiting.ts') },
   { name: 'loops', phase: 'post-connect', thinClient: 'none', selfHelp: true, routes_source: true, load: () => import('./commands/loops.ts') },
   // CLI_ONLY: pinned questions (C4); trusted-local op dispatch of the questions_* ops.
   { name: 'questions', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, routes_source: true, load: () => import('./commands/questions.ts') },

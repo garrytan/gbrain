@@ -1,7 +1,6 @@
 ---
 name: brain-ops
 version: 1.2.0
-upstream: brain-ops@fc834ee
 description: |
   Brain knowledge base operations. The core read/write cycle: brain-first lookup,
   read-enrich-write loop, source attribution, ambient enrichment, back-linking.
@@ -93,6 +92,7 @@ fact (CLI: `gbrain remember "<fact>" --entity <slug> --provenance "<who, date>"`
 `forget(id)` (`gbrain forget <fact-id>`) withdraws a fact from active memory;
 history, source material and backups may remain, so never promise erasure.
 `put_page` / `add_link` / `add_timeline_entry` stay the page and graph path.
+The user's own sizes, diet, allergies and constraints: `remember` with `facet` and no entity; read them with `context_pack {profile: true}` (`docs/guides/profile.md`).
 Contract: `docs/protocol/MEMORY_VERBS_v1.md`.
 
 **Keyless brains:** when `extract_facts` returns `skipped: extraction_unavailable`

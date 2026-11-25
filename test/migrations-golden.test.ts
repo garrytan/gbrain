@@ -28,13 +28,16 @@ describe('migrations full-record golden', () => {
     expectGolden('migrations/records', golden, normalizer);
   }, 60_000);
 
-  test('versions are unique and the runner applies them ascending; gaps 17-19, 100 and 331-333 stay gaps', () => {
+  test('versions are unique and the runner applies them ascending; gaps 17-19 and 100 stay gaps', () => {
     const versions = MIGRATIONS.map((m) => m.version);
     expect(new Set(versions).size).toBe(versions.length);
     const sorted = [...versions].sort((a, b) => a - b);
     const golden = buildMigrationsGolden(MIGRATIONS);
-    // 331 is master's next migration, 332 and 333 sit on lane branches: the trunk's v334 leaves them free.
-    expect(golden.gaps).toEqual([17, 18, 19, 100, 331, 332, 333]);
+    // 331 is master's access_read_log (sync 11); 332 is master's engine_writer_observations, 333 its hold-page-id and 334 its
+    // learning_items (#10193), 335 its pages_spelling_key_index (#10168), 336 its files_follow_page_slug (#10294) and 337 its
+    // write_gate_hold_rechecks (#10317); 338 is the cli-members line's byte-order slug indexes, 339 the trunk's projection-jobs
+    // index, 340 the pages projection-waiting words index and 341 fact_fingerprint_v3: renumbered above master's v337 (sync 18).
+    expect(golden.gaps).toEqual([17, 18, 19, 100]);
     expect(sorted[0]).toBe(2);
     expect(sorted[sorted.length - 1]).toBe(LATEST_VERSION);
   }, 60_000);

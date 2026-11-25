@@ -60,6 +60,7 @@ import { findGbrainOrDie, resolveAbs, resolveWorkspace } from './shared.ts';
 import { installSharedBrainBridge } from '../../core/skillpack/shared-brain-bridge.ts';
 import { nativeSharedSkillsDirectory } from '../../core/harness/native-router.ts';
 import { confinedSkillChildWrite } from '../../core/skillpack/writer-guard.ts';
+import { movedSkillNotices } from '../../core/skillpack/moved.ts';
 
 /** OpenClaw's default: the brain-first core. OpenClaw lists every workspace
  * skill's description in every prompt, so the full bundle (`all`) cost about
@@ -419,6 +420,7 @@ export async function cmdScaffoldHarness(args: string[]): Promise<void> {
       });
       // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- the operator's own workspace root, where runScaffold just wrote.
       if (!a.dryRun) await recordScaffoldBases(join(targetWorkspace, 'skills'), result.files);
+      for (const notice of movedSkillNotices(deliverable)) console.error(notice);
       if (a.json) {
         console.log(
           JSON.stringify(
@@ -466,6 +468,7 @@ export async function cmdScaffoldHarness(args: string[]): Promise<void> {
       nowIso: new Date().toISOString(),
     });
     if (!result.dryRun) await recordScaffoldBases(dest, result.files.filter(file => file.slug !== null));
+    for (const notice of movedSkillNotices(slugs)) console.error(notice);
 
     // Coexistence: these same skills may also load from the gbrain plugin
     // snapshot (marketplace install) — duplicate names in one session.
@@ -563,6 +566,7 @@ export async function cmdReferenceHarness(args: string[]): Promise<void> {
         : ownedBridgeSlugs(entry).length > 0
           ? ownedBridgeSlugs(entry)
           : resolveSlugs(gbrainRoot, a).slugs;
+    for (const notice of movedSkillNotices(slugs)) console.error(notice);
 
     if (a.applyCleanHunks) {
       if ((!positional && a.skills.length !== 1) || (positional && a.skills.length > 0) || slugs.length !== 1) {
@@ -702,6 +706,8 @@ export interface BridgesStatusEntry {
   /** Set when the currency lens itself failed (moved dest, deleted skills) —
    *  zeros next to it mean "could not judge", not "all healthy". */
   lens_error?: string;
+  /** Notices for the owned skills (stub pointers included) that moved; absent while none did. */
+  moved?: string[];
 }
 
 /**
@@ -736,6 +742,7 @@ export function collectBridgesStatus(gbrainRoot: string): BridgesStatusEntry[] {
       // would read as healthy.
       lensError = (err as Error).message;
     }
+    const moved = movedSkillNotices(slugs);
     out.push({
       harness: entry.harness,
       dest: entry.dest,
@@ -746,6 +753,7 @@ export function collectBridgesStatus(gbrainRoot: string): BridgesStatusEntry[] {
       differs,
       missing,
       ...(lensError ? { lens_error: lensError } : {}),
+      ...(moved.length ? { moved } : {}),
     });
   }
   return out;
@@ -763,6 +771,7 @@ export function printBridgesStatus(gbrainRoot: string): void {
             ? `currency unavailable (${e.lens_error})`
             : `identical:${e.identical} differs:${e.differs} missing:${e.missing}`),
     );
+    for (const notice of e.moved ?? []) console.log(`    moved: ${notice}`);
   }
 }
 

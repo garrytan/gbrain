@@ -1,3 +1,4 @@
+import { nullUnlessCapabilityRefusal } from '../core/engine-capability-refusal.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { execSync, execFileSync, spawnSync } from '../core/spawn.ts';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, realpathSync } from 'fs';
@@ -856,6 +857,15 @@ async function applySelfUpgradeSetup(noAutopilotInstall: boolean): Promise<void>
   }
 }
 
+/**
+ * The host label of the post-upgrade recovery banner: `host (<engine>, id <brain id>)`. A schema without
+ * persistence_brain has no id to show; a refused read is rethrown (the banner's caller says the checks were skipped).
+ */
+export async function recoveryBannerHost(engine: BrainEngine): Promise<string> {
+  const brainId = await engine.readPersistenceBrainIdText().catch(nullUnlessCapabilityRefusal);
+  return `host (${engine.kind}${brainId ? `, id ${brainId}` : ''})`;
+}
+
 export async function runPostUpgrade(args: string[] = []): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log('Usage: gbrain post-upgrade [--no-autopilot-install] [--json]');
@@ -913,6 +923,8 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
   (await import('../core/setup/brain-first-upgrade-notice.ts')).printBrainFirstUpgradeNotice(); // GBRA-188: the command that writes a missing brain-first block
   await (await import('../core/setup/hook-launcher-refresh.ts')).refreshHookLaunchers(); // #8424: hooks that start gbrain in the session's directory move onto the launcher
   (await import('../core/post-upgrade-notice.ts')).writePostUpgradeCliNotice(); // F7: safety notice ([AGENT] block for agents)
+  const addonWarning = await (await import('./rust-addon-upgrade.ts')).refreshRustAddonForConfiguredBrain(); // Rust brain or shadow on only; best effort
+  if (addonWarning) report.warnings.push(addonWarning);
   // Mechanical: run every outstanding migration. Idempotent; exits 0 quickly
   // when nothing is pending. Stays inside the same process so a long Phase F
   // (autopilot install) doesn't hit a subprocess boundary.
@@ -1090,8 +1102,7 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
         // preview-only recovery banner; applying stays the user's decision.
         try {
           const { postUpgradeRecoveryBanner } = await import('./doctor/upgrade-banner.ts');
-          const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1').catch(() => []);
-          for (const line of await postUpgradeRecoveryBanner(engine, `host (${engine.kind}${brain ? `, id ${brain.brain_id}` : ''})`)) console.log(line);
+          for (const line of await postUpgradeRecoveryBanner(engine, await recoveryBannerHost(engine))) console.log(line);
         } catch (be) {
           console.warn(`\nRecovery checks skipped: ${be instanceof Error ? be.message : String(be)}. Run \`gbrain doctor --remediation-plan\` to preview.`);
         }

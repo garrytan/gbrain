@@ -290,9 +290,11 @@ for a file that is laned, has no arm or is gone fails.
 #### Engine parity arms
 
 `test/engine-parity/` runs each case on PGLite, then on Postgres when
-`DATABASE_URL` is set, then on Rust when `GBRAIN_TEST_RUST_ARM=1`. To run the
-Postgres arm locally, use the CI image with its default `en_US.utf8` locale
-(a C-locale server hides text-order differences):
+`DATABASE_URL` is set, then on Rust when `GBRAIN_TEST_RUST_ARM=1`. The harness
+creates each Postgres arm database from `template0` with the `en_US.utf8`
+locale, whatever the server's default is, because a C-locale database hides
+text-order differences. A server without that locale fails the file with one
+line naming it; there is no fall back to C. The CI image has it:
 
 ```bash
 docker run -d --name parity-pg -e POSTGRES_PASSWORD=postgres -p 127.0.0.1:55432:5432 pgvector/pgvector:pg16
@@ -305,7 +307,7 @@ docker rm -f parity-pg
 ```
 
 The database name must contain `test`, or the guard refuses it. The harness
-creates one fresh database per file from that URL and empties it between
+creates one fresh en_US database per file from that URL and empties it between
 cases without restarting its sequences. A case must not compare or pass raw
 generated ids: count them from the case's first row, or compare by name.
 For the Rust arm, run `bun run rust:build`, then add
@@ -315,7 +317,9 @@ the Rust arm answers equal to PGLite and how many stop on a typed refusal. A
 file with fewer equal or more stopped cases than its pin fails, so a member
 that falls back to a refusal cannot pass. A file that does better prints the
 new counts. After a change to Rust coverage, or at each merge, regenerate the
-pin with `bun test/engine-parity/rust-tally.ts --write` and commit it.
+pin with `bun test/engine-parity/rust-tally.ts --write` and commit it. A row can end in a
+one-line reason its stopped cases stop by design; the regenerate keeps it while
+the file still has stopped cases.
 
 With the same `DATABASE_URL` set, also run the Postgres SQL goldens:
 
@@ -477,6 +481,7 @@ Test command tiers, each with a clear scope:
 | `bun run test:e2e` | Real Postgres E2E. Requires Docker + `DATABASE_URL`. Sequential within a shard; `SHARD=N/M` fans out against separate databases (ci-local runs 4 containers). Activates the PGLite snapshot like every other runner (per-file cold-path opt-outs where the test asserts the path TO post-initSchema state), exporting it as an ABSOLUTE path so CLI children spawned with varying cwd still find it. | ~5-10min | Pre-ship; nightly. |
 | `bun run test:compile-smoke` | Self-update integrity verify under a REAL `bun build --compile` binary, offline; also runs unconditionally in the serial lane. The unit suite mocks the network seams; this proves the dependency-free crypto/base64/JSON verify path survives compilation — the failure mode `sigstore-js` would have hit. | under 1s (one small compile) | When touching `src/core/binary-self-update.ts`; pre-ship on self-update changes. |
 | `bun run regen:all` | Regenerates every generated artifact (schema, migrations registry, error-code docs, protocol blocks, tool catalog, skills manifest, structural suites, `llms.txt` last, and the others in `scripts/regen-all.ts`) offline and keyless, and lists what changed; a second run changes nothing. `--check` is read-only and runs in `verify` as `check:regen-all`. `--goldens` also regenerates the offline contract goldens, a deliberate act each PR justifies; Postgres goldens are named with their own commands. | about a minute | After any change a freshness check flags; before `/ship`. |
+| `bun scripts/check-bytecode-parity.ts` | Builds the release compile line (read from `.github/workflows/release.yml`) for this host twice, as written and without `--bytecode --format=esm`, then runs a fixed command set (version, help, init, put, get, list, search, embed, query against a loopback embeddings stub, doctor, a `serve` MCP `tools/list`, `setup claude-code`, the skill-resolver hook) on a temporary PGLite brain with each binary. stdout, stderr and exit code must match and every command must succeed; only clock, ids, ports and timings are masked (`BYTECODE_PARITY_RAW=1` compares raw text, `--keep` keeps the work directory). CI runs it as a step of test.yml's verify job, not through `verify`'s CHECKS; `test/scripts/check-bytecode-parity.test.ts` pins the flags on every shipped compile line. | ~40s | When changing the compile line or anything the compiled binary prints. |
 | `bun run test:agent-voice` | The agent-voice recipe's vitest unit suite (`recipes/agent-voice/tests/unit`), via `scripts/test-agent-voice.sh`: installs pinned vitest + ws into a temporary prefix and links it as the recipe's `node_modules` for the run. Needs node + npm and registry access. CI runs it in test.yml's verify job. | ~10s | When touching `recipes/agent-voice/`. |
 | `scripts/ship-remote-tests.sh` | Pushes the branch, dispatches `test.yml` (or `--workflow`) on GitHub's runners for that branch or `--ref`, and waits with `gh run watch --exit-status`, so its exit code is the run's. Needs an authenticated `gh`; unlike `ci:ubicloud` it needs no Ubicloud credential and runs the workflow's own job inventory. | one CI run | Offloading the suite from a saturated local machine. |
 | `bun run test:profile` | Reads a captured `bun test` log on stdin and prints the N slowest tests (`-n N`, default 10): `bun test 2>&1 \| bun run test:profile`. | seconds | Finding slow tests to fix or demote to `*.slow.test.ts`. |
@@ -596,7 +601,7 @@ above, and each E2E file keeps a PGLite arm in the unit lane.
 ### Rust parity arm (opt-in)
 
 Every `test/engine-parity/` file can add a Rust engine to its arms, next to PGLite and (with `DATABASE_URL`) Postgres.
-Nothing selects the Rust engine outside the test, and without the flag the suite runs as before.
+Without the flag the suite runs as before, on PGLite and (with `DATABASE_URL`) Postgres.
 
 ```bash
 bun run rust:build                                              # writes the addon under rust/target/addon
@@ -608,12 +613,24 @@ GBRAIN_TEST_RUST_ARM=1 bun test test/engine-parity/search.test.ts   # one file; 
   `GBRAIN_RUST_ENGINE_ADDON` from a test run, so that name does nothing here).
 - A case that reaches a member or an option the Rust engine refuses must end on the typed `engine_capability_missing`
   refusal. Every other case must return what PGLite returns.
+- A known Rust stop takes one of two forms; there is no third. A capability refusal uses the in-test pin: the case
+  catches the error, asserts that its code is `engine_capability_missing` on the Rust arm, and rethrows it. Any other
+  refusal code uses `rustStop: { code, pin }`: the Rust run must throw an Error with that code whose message carries
+  the pin (why, the owner, how to unpin), after it calls every member in `methods`. It counts as stopped. With a pin,
+  that stop is the only Rust outcome accepted: a case that returns, or ends on a capability refusal, fails until the
+  pin is removed.
 - A case that differs on purpose gets a row in `test/rust-expected-divergence/<family>.tsv` (parity file, case name,
   normaliser from `DIVERGENCE_NORMALIZERS` in `test/engine-parity/rust-arm.ts`, reason). Rust must still return a value, both
   answers must be equal after the normaliser, and when the case starts to match PGLite the run fails until the row is
   removed. A thrown error never passes. `search.tsv` is empty today.
 - Rules: `test/engine-parity/rust-arm.ts` header; what the engine serves and refuses: `docs/ENGINES.md` ("What a Rust
   brain serves now").
+- CLI parity: `test/rust-cli-parity.serial.test.ts` runs each read command through the real CLI on a PGLite brain and on
+  a brain whose config says `engine: 'rust'`, both filled from `test/fixtures/rust-cli-parity-brain/`. A command ends
+  `equal`, `refused` with the typed `engine_capability_missing`, or `diverged` (another answer or an untyped error),
+  and only `diverged` fails. It needs the addon from `bun run rust:build` and skips without it;
+  `GBRAIN_TEST_REQUIRE_RUST_ADDON=1` makes a missing addon an error, which the Rust engine workflow sets for this test
+  and `test/rust-cli-source-target.test.ts`.
 
 ### Native writer locks
 

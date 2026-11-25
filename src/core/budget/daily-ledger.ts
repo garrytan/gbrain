@@ -26,8 +26,11 @@ import { CANONICAL_PRICING, type ModelPricing } from '../model-pricing.ts';
 import type { CapSource } from '../consent.ts';
 import { priceFor, type PricingOverrides, type PricingSource } from './reservation-cost.ts';
 import { noPricingGuidance, type NoPricingGuidance } from './no-pricing.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
-type Exec = Pick<BrainEngine, 'executeRaw'>;
+/** The day read is readBudgetLedgerDay (the fence census members); the writes are typed members (engine-sql/budget-ledger-writes.ts). */
+type Exec = Pick<BrainEngine, 'executeRaw' | 'readBudgetLedgerDay' | 'reclaimBudgetReservations' | 'reserveBudgetReservation' | 'dispatchBudgetReservation'
+  | 'settleBudgetReservation' | 'releaseBudgetReservation'>;
 
 export interface LedgerKey { scope: string; resolver: string }
 export const FENCE_REPAIR_LEDGER: LedgerKey = Object.freeze({ scope: 'llm_repair', resolver: 'fences' });
@@ -71,78 +74,20 @@ export function nextUtcMidnight(at: Date): string {
   return new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), at.getUTCDate() + 1)).toISOString();
 }
 
-const RESERVE_SQL = `WITH up AS (
-  INSERT INTO budget_ledger AS l (scope, resolver_id, local_date, reserved_usd, committed_usd, cap_usd)
-  SELECT $1, $2, $3::date, $4::numeric, 0, $5::numeric WHERE $4::numeric <= $5::numeric
-  ON CONFLICT (scope, resolver_id, local_date) DO UPDATE
-    SET reserved_usd = l.reserved_usd + EXCLUDED.reserved_usd, cap_usd = EXCLUDED.cap_usd, updated_at = now()
-    WHERE l.reserved_usd + l.committed_usd + EXCLUDED.reserved_usd <= EXCLUDED.cap_usd
-  RETURNING l.local_date
-), ins AS (
-  INSERT INTO budget_reservations (reservation_id, scope, resolver_id, local_date, estimate_usd, reserved_at, expires_at, status)
-  SELECT $6, $1, $2, up.local_date, $4::numeric, $7::timestamptz, $8::timestamptz, 'held' FROM up
-  RETURNING reservation_id
-)
-SELECT reservation_id FROM ins`;
-
-const RECLAIM_SQL = `WITH expired AS (
-  UPDATE budget_reservations SET status = CASE status WHEN 'held' THEN 'released' ELSE 'settled_uncertain' END
-  WHERE scope = $1 AND resolver_id = $2 AND status IN ('held', 'dispatched') AND expires_at <= $3::timestamptz
-  RETURNING local_date, estimate_usd, status
-), per_day AS (
-  SELECT local_date, sum(estimate_usd) AS freed,
-    sum(CASE WHEN status = 'settled_uncertain' THEN estimate_usd ELSE 0 END) AS charged,
-    count(*) FILTER (WHERE status = 'released') AS released, count(*) FILTER (WHERE status = 'settled_uncertain') AS uncertain
-  FROM expired GROUP BY local_date
-), applied AS (
-  UPDATE budget_ledger l SET reserved_usd = l.reserved_usd - d.freed, committed_usd = l.committed_usd + d.charged, updated_at = now()
-  FROM per_day d WHERE l.scope = $1 AND l.resolver_id = $2 AND l.local_date = d.local_date
-  RETURNING 1
-)
-SELECT COALESCE(sum(released), 0)::int AS released, COALESCE(sum(uncertain), 0)::int AS uncertain FROM per_day`;
-
-const SETTLE_SQL = `WITH prior AS (
-  SELECT reservation_id, status, estimate_usd, local_date FROM budget_reservations
-  WHERE reservation_id = $3 AND scope = $1 AND resolver_id = $2 FOR UPDATE
-), r AS (
-  UPDATE budget_reservations b SET status = CASE WHEN $4::numeric > p.estimate_usd THEN 'overrun' ELSE 'settled' END
-  FROM prior p WHERE b.reservation_id = p.reservation_id AND p.status IN ('held', 'dispatched', 'released', 'settled_uncertain')
-  RETURNING p.status AS prior, p.estimate_usd, p.local_date
-), applied AS (
-  UPDATE budget_ledger l SET
-    reserved_usd = l.reserved_usd - CASE WHEN r.prior IN ('held', 'dispatched') THEN r.estimate_usd ELSE 0 END,
-    committed_usd = l.committed_usd + $4::numeric - CASE WHEN r.prior = 'settled_uncertain' THEN r.estimate_usd ELSE 0 END,
-    updated_at = now()
-  FROM r WHERE l.scope = $1 AND l.resolver_id = $2 AND l.local_date = r.local_date
-  RETURNING 1
-)
-SELECT r.prior, r.estimate_usd::text AS estimate, r.local_date::text AS day, (SELECT status FROM prior) AS current FROM r
-UNION ALL SELECT NULL, NULL, NULL, (SELECT status FROM prior) WHERE NOT EXISTS (SELECT 1 FROM r)`;
-
-const RELEASE_SQL = `WITH r AS (
-  UPDATE budget_reservations SET status = 'released'
-  WHERE reservation_id = $3 AND scope = $1 AND resolver_id = $2 AND status = 'held'
-  RETURNING local_date, estimate_usd
-)
-UPDATE budget_ledger l SET reserved_usd = l.reserved_usd - r.estimate_usd, updated_at = now()
-FROM r WHERE l.scope = $1 AND l.resolver_id = $2 AND l.local_date = r.local_date
-RETURNING 1`;
-
 /** The ledger for one (scope, resolver); `now` is injectable so tests control the UTC day and expiry. */
 export function dailyLedger(engine: Exec, key: LedgerKey, opts: { now?: () => Date } = {}): DailyLedger {
   const now = opts.now ?? (() => new Date());
   const params = (...rest: unknown[]) => [key.scope, key.resolver, ...rest];
 
   const readDay = async (day = utcDay(now())): Promise<LedgerDay> => {
-    const [row] = await engine.executeRaw<{ reserved: string; committed: string; cap: string | null }>(
-      'SELECT reserved_usd::text AS reserved, committed_usd::text AS committed, cap_usd::text AS cap FROM budget_ledger WHERE scope = $1 AND resolver_id = $2 AND local_date = $3::date',
-      params(day));
+    // engine-sql/fence-census.ts: the same SELECT, served by the Rust store as no row.
+    const row = await engine.readBudgetLedgerDay(key.scope, key.resolver, day);
     return { day, reservedUsd: Number(row?.reserved ?? 0), committedUsd: Number(row?.committed ?? 0), capUsd: row?.cap == null ? null : Number(row.cap) };
   };
 
   const reclaimExpired = async () => {
-    const [row] = await engine.executeRaw<{ released: number; uncertain: number }>(RECLAIM_SQL, params(now().toISOString()));
-    return { released: Number(row?.released ?? 0), settledUncertain: Number(row?.uncertain ?? 0) };
+    const row = await engine.reclaimBudgetReservations(key, now().toISOString());
+    return { released: row.released, settledUncertain: row.uncertain };
   };
 
   const reserve = async (estimateUsd: number, o: { capUsd: number; ttlMs?: number }): Promise<ReserveResult> => {
@@ -154,8 +99,7 @@ export function dailyLedger(engine: Exec, key: LedgerKey, opts: { now?: () => Da
     try {
       await reclaimExpired();
       const expiresAt = new Date(at.getTime() + (o.ttlMs ?? DEFAULT_RESERVATION_TTL_MS)).toISOString();
-      const rows = await engine.executeRaw<{ reservation_id: string }>(RESERVE_SQL, params(day, estimate, cap, id, at.toISOString(), expiresAt));
-      if (rows.length === 1) return { ok: true, reservation: { id, day, estimateUsd: Number(estimate), expiresAt } };
+      if (await engine.reserveBudgetReservation(key, { day, estimate, cap, id, at: at.toISOString(), expiresAt })) return { ok: true, reservation: { id, day, estimateUsd: Number(estimate), expiresAt } };
       const totals = await readDay(day);
       return { ok: false, reason: 'budget_exhausted', day, estimateUsd: Number(estimate), capUsd: Number(cap),
         committedUsd: totals.committedUsd, reservedUsd: totals.reservedUsd, resetsAt: nextUtcMidnight(at) };
@@ -166,24 +110,22 @@ export function dailyLedger(engine: Exec, key: LedgerKey, opts: { now?: () => Da
 
   const dispatch = async (id: string): Promise<boolean> => {
     try {
-      const rows = await engine.executeRaw(
-        "UPDATE budget_reservations SET status = 'dispatched' WHERE reservation_id = $3 AND scope = $1 AND resolver_id = $2 AND status = 'held' AND expires_at > $4::timestamptz RETURNING 1",
-        params(id, now().toISOString()));
-      return rows.length === 1;
+      return await engine.dispatchBudgetReservation(key, id, now().toISOString());
     } catch { return false; }
   };
 
   const settle = async (id: string, actualUsd: number): Promise<SettleResult> => {
     const actual = ledgerUsd(actualUsd);
-    let row: { prior: ReservationStatus | null; estimate: string | null; day: string | null; current: ReservationStatus | null } | undefined;
-    try { [row] = await engine.executeRaw(SETTLE_SQL, params(id, actual)); } catch { return { settled: false, reason: 'ledger_unavailable' }; }
+    let row: { prior: ReservationStatus | null; estimate: string | null; day: string | null; current: ReservationStatus | null } | null;
+    try { row = await engine.settleBudgetReservation(key, id, actual) as typeof row; } catch { return { settled: false, reason: 'ledger_unavailable' }; }
     if (!row?.prior) return row?.current ? { settled: false, reason: 'already_settled', prior: row.current } : { settled: false, reason: 'unknown_reservation' };
     const overrun = Math.max(0, Number(actual) - Number(row.estimate));
     return { settled: true, day: row.day!, actualUsd: Number(actual), overrunUsd: Number(overrun.toFixed(4)), prior: row.prior };
   };
 
   const release = async (id: string): Promise<boolean> => {
-    try { return (await engine.executeRaw(RELEASE_SQL, params(id))).length === 1; } catch { return false; }
+    // An engine that cannot run the ledger refuses; false would leave the hold in place with no reason.
+    try { return await engine.releaseBudgetReservation(key, id); } catch (e) { rethrowCapabilityRefusal(e); return false; }
   };
 
   return { reserve, dispatch, settle, release, reclaimExpired, readDay };

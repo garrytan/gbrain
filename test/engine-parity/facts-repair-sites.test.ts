@@ -18,14 +18,14 @@
  *  - Why existing coverage misses it: these statements ran through `executeRaw`, which the parity cases cannot call (D18), so
  *    no case compared them across engines (docs/research/rust-cli-executeraw-map.md).
  *  - Seam: sources are created through createSource/archiveSource (harness.ts), as the other facts parity files do. Every
- *    fact, page, take, alias and consolidation is seeded through typed members. A page stored in segments has no typed
- *    writer, so countSegmentedCensusPages is compared on a brain with none (its filters are pinned in the Postgres text pin,
- *    test/facts-repair-sites-sql-pin.test.ts). Generated values (ids, timestamps, the brain id, a source incarnation) are
+ *    fact, page, take, alias and consolidation is seeded through typed members. A page stored in segments comes from
+ *    createSegmentedPageShell, so countSegmentedCensusPages and listFactsPageBodies are compared with segmented pages too. Generated values (ids, timestamps, the brain id, a source incarnation) are
  *    compared by relation or by shape, never by value.
  */
 import { describe, expect } from 'bun:test';
 import { archiveSource, createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { pageMeta } from '../helpers/page-body-fixtures.ts';
 import type { BrainEngine, NewFact } from '../../src/core/engine.ts';
 import { AUDIT_ROW_SOURCES } from '../../src/core/facts/audit-sources.ts';
 
@@ -80,8 +80,11 @@ describe('engine parity: facts repair, doctor and trust statements that left exe
     return { active, unarchived };
   });
 
-  parityTest('readRepairBrainId reads the brain id the repair preview hashes, or null', { methods: ['readRepairBrainId'] }, async (engine) => {
+  parityTest('readRepairBrainId reads the brain id the repair preview hashes, the one readPersistenceBrainId reads, or null', {
+    methods: ['readRepairBrainId', 'readPersistenceBrainId'],
+  }, async (engine) => {
     const id = await engine.readRepairBrainId();
+    expect(id).toBe(await engine.readPersistenceBrainId());
     const shape = { string: typeof id === 'string', length: typeof id === 'string' ? id.length : null };
     expect(shape.string || id === null).toBe(true);
     return shape;
@@ -163,8 +166,8 @@ describe('engine parity: facts repair, doctor and trust statements that left exe
     return { changed, none, read, empty };
   });
 
-  parityTest('listFenceRewriteRows, listOtherAttributedFactIds, expireCapturedFacts and listExpiredFactIds answer for the named facts of one source', {
-    methods: ['insertFact', 'insertFacts', 'expireFact', 'listFactsByEntity', 'listFenceRewriteRows', 'listOtherAttributedFactIds', 'expireCapturedFacts', 'listExpiredFactIds'],
+  parityTest('listFenceRewriteRows, expireCapturedFacts and listExpiredFactIds answer for the named facts of one source', {
+    methods: ['insertFact', 'insertFacts', 'expireFact', 'listFactsByEntity', 'listFenceRewriteRows', 'expireCapturedFacts', 'listExpiredFactIds'],
   }, async (engine, backend) => {
     await createSource(engine, backend, 'other');
     const f1 = await fenced(engine, 'fence one', { source_markdown_slug: 'notes/a', entity_slug: 'people/x', attributed_to: 'other' });
@@ -184,8 +187,6 @@ describe('engine parity: facts repair, doctor and trust statements that left exe
       { id: 'f1', fact: 'fence one', row_num: 1 }, { id: 'f2', fact: 'fence two', row_num: 1 },
       { id: 'g1', fact: 'db one', row_num: null }, { id: 'g2', fact: 'db two', row_num: null }, { id: 'g3', fact: 'db three', row_num: null },
     ]);
-    const other = (await engine.listOtherAttributedFactIds('default', all)).map(r => name(r.id)).sort();
-    expect(other).toEqual(['f1', 'g3']);
     const expired = (await engine.expireCapturedFacts('default', [g1, g2, f2, away, g3], 'expired by repair')).map(r => name(r.id)).sort();
     expect(expired).toEqual(['g1', 'g2', 'g3']);
     const again = await engine.expireCapturedFacts('default', [g1, g2], 'expired by repair');
@@ -197,7 +198,22 @@ describe('engine parity: facts repair, doctor and trust statements that left exe
     expect(listed).toEqual(['f4', 'g1', 'g2', 'g3']);
     const none = await engine.listExpiredFactIds('default', []);
     expect(none).toEqual([]);
-    return { rewrite, other, expired, again, contexts, listed, none };
+    return { rewrite, expired, again, contexts, listed, none };
+  });
+
+  parityTest('listOtherAttributedFactIds names the named facts of one source that another speaker holds', {
+    methods: ['insertFact', 'insertFacts', 'listOtherAttributedFactIds'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const f1 = await fenced(engine, 'fence one', { source_markdown_slug: 'notes/a', entity_slug: 'people/x', attributed_to: 'other' });
+    const f2 = await fenced(engine, 'fence two', { source_markdown_slug: 'notes/a', entity_slug: 'people/x' });
+    const g1 = await fact(engine, 'db one', { entity_slug: 'people/x', context: 'was' });
+    const g3 = await fact(engine, 'db three', { entity_slug: 'people/x', attributed_to: 'other' });
+    const away = await fact(engine, 'db away', { entity_slug: 'people/x', attributed_to: 'other' }, 'other');
+    const name = namer({ f1, f2, g1, g3, away });
+    const other = (await engine.listOtherAttributedFactIds('default', [f1, f2, g1, g3, away])).map(r => name(r.id)).sort();
+    expect(other).toEqual(['f1', 'g3']);
+    return { other };
   });
 
   parityTest('listPagelessEntityFacts, listSourceIncarnations, readEntityRehomeState and rehomeEntityFacts move the database-only facts of a page-less entity', {
@@ -251,6 +267,49 @@ describe('engine parity: facts repair, doctor and trust statements that left exe
     return { pageless, scoped, noSources, incarnations, before, live, removedTarget, moved, left };
   });
 
+  parityTest('rehomeEntityFacts refuses a move that would give two facts one ontology key, and moves none of them', {
+    methods: ['putPage', 'insertFact', 'mergeOntologyFact', 'listFactsByEntity', 'rehomeEntityFacts'],
+  }, async (engine) => {
+    await engine.putPage('people/new', note('New'));
+    const observe = async (entity: string) => Number((await engine.mergeOntologyFact({
+      entitySlug: entity, dimension: 'location', value: 'Lisbon', source: 'meetings/a', validFrom: '2026-01-01T00:00:00.000Z',
+    } as never)).factId);
+    const held = await observe('people/new');
+    const free = await fact(engine, 'free', { entity_slug: 'people/old' });
+    const colliding = await observe('people/old');
+    const name = namer({ held, free, colliding });
+    let rejected: string | null = null;
+    try { await engine.rehomeEntityFacts('default', 'people/old', 'people/new'); } catch (error) { rejected = String((error as Error).message); }
+    expect(rejected).toContain('idx_facts_ontology_stint_dedup');
+    const at = async (slug: string) => (await engine.listFactsByEntity('default', slug, { activeOnly: false })).map(r => name(r.id)).sort();
+    const stayed = { old: await at('people/old'), new: await at('people/new') };
+    expect(stayed).toEqual({ old: ['colliding', 'free'], new: ['held'] });
+    return { rejected: rejected !== null, stayed };
+  });
+
+  parityTest('rehomeEntityFacts expires a moved fact a withdrawal reaches on the new entity, and moves the others open', {
+    methods: ['putPage', 'insertFact', 'insertFactWithdrawal', 'listFactsByEntity', 'rehomeEntityFacts'],
+  }, async (engine) => {
+    await engine.putPage('people/real', note('Real'));
+    const reached = await fact(engine, 'Ghost likes tea', { entity_slug: 'people/ghost' });
+    const otherClaim = await fact(engine, 'Ghost likes jam', { entity_slug: 'people/ghost' });
+    const otherTier = await fact(engine, 'Ghost likes tea', { entity_slug: 'people/ghost', visibility: 'world' });
+    const when = '2026-03-01T12:34:56.000Z';
+    expect(await engine.insertFactWithdrawal('default', 'private', 'Ghost likes tea', 'people/real', when)).toBe(true);
+    expect(await engine.insertFactWithdrawal('default', 'private', 'Ghost likes jam', 'people/elsewhere', when)).toBe(true);
+    await engine.rehomeEntityFacts('default', 'people/ghost', 'people/real');
+    const name = namer({ reached, otherClaim, otherTier });
+    const moved = (await engine.listFactsByEntity('default', 'people/real', { activeOnly: false }))
+      .map(r => ({ fact: name(r.id), expired: r.expired_at !== null, until: r.valid_until ? new Date(r.valid_until).toISOString() : null }))
+      .sort((a, b) => a.fact.localeCompare(b.fact));
+    expect(moved).toEqual([
+      { fact: 'otherClaim', expired: false, until: null },
+      { fact: 'otherTier', expired: false, until: null },
+      { fact: 'reached', expired: true, until: when },
+    ]);
+    return { moved };
+  });
+
   parityTest('countSegmentedCensusPages counts none on a brain that stores no page in segments', { methods: ['putPage', 'countSegmentedCensusPages'] }, async (engine) => {
     await engine.putPage('notes/whole', note('Whole'));
     const counted = await engine.countSegmentedCensusPages(['default'], []);
@@ -275,6 +334,45 @@ describe('engine parity: facts repair, doctor and trust statements that left exe
       { source_id: 'default', slug: 'company/facts', segmented: false, body: '- 2026-02-02 founded' },
       { source_id: 'default', slug: 'me/facts', segmented: false, body: '- 2026-01-01 born\n- undated line' },
       { source_id: 'other', slug: 'me/facts', segmented: false, body: '- elsewhere line' },
+    ]);
+    return listed;
+  });
+
+  parityTest('countSegmentedCensusPages counts the live segmented markdown pages of the sources that no walked file covers', {
+    methods: ['putPage', 'createSegmentedPageShell', 'softDeletePage', 'countSegmentedCensusPages'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    await engine.putPage('notes/whole', note('Whole'));
+    await engine.createSegmentedPageShell('notes/seg-a', pageMeta('Seg A'), { sourceId: 'default' });
+    await engine.createSegmentedPageShell('notes/seg-b', pageMeta('Seg B'), { sourceId: 'default' });
+    await engine.createSegmentedPageShell('notes/seg-c', pageMeta('Seg C'), { sourceId: 'other' });
+    const counts = {
+      unwalked: await engine.countSegmentedCensusPages(['default'], []),
+      walked: await engine.countSegmentedCensusPages(['default'], ['default']),
+      both: await engine.countSegmentedCensusPages(['default', 'other'], ['other']),
+      none: await engine.countSegmentedCensusPages([], ['default']),
+    };
+    await engine.softDeletePage('notes/seg-a');
+    const afterDelete = await engine.countSegmentedCensusPages(['default'], []);
+    // A shell has no source path, so a walked source still counts it.
+    expect(counts).toEqual({ unwalked: { n: 2 }, walked: { n: 2 }, both: { n: 3 }, none: { n: 0 } });
+    expect(afterDelete).toEqual({ n: 1 });
+    return { counts, afterDelete };
+  });
+
+  parityTest('listFactsPageBodies lists a segmented facts page with no published body as segmented with a null body', {
+    methods: ['putPage', 'createSegmentedPageShell', 'listFactsPageBodies'],
+  }, async (engine) => {
+    await engine.putPage('me/facts', note('Me', '- 2026-01-01 born', 'facts'));
+    await engine.createSegmentedPageShell('seg/facts', { ...pageMeta('Seg facts'), type: 'facts' }, { sourceId: 'default' });
+    await engine.putPage('company-x/facts', note('Company X', '- dash sorts before slash', 'facts'));
+    await engine.putPage('company/facts', note('Company', '- slash', 'facts'));
+    const listed = (await engine.listFactsPageBodies()).map(r => ({ slug: r.slug, segmented: r.segmented, body: r.body }));
+    expect(listed).toEqual([
+      { slug: 'company-x/facts', segmented: false, body: '- dash sorts before slash' },
+      { slug: 'company/facts', segmented: false, body: '- slash' },
+      { slug: 'me/facts', segmented: false, body: '- 2026-01-01 born' },
+      { slug: 'seg/facts', segmented: true, body: null },
     ]);
     return listed;
   });
@@ -408,5 +506,68 @@ describe('engine parity: facts repair, doctor and trust statements that left exe
     const otherSource = view(await engine.listClaimConflictPairs('other', audits, 50));
     expect(otherSource).toEqual([]);
     return { pairs, capped, counted: Number(counted?.n), withAudit, otherSource };
+  });
+  parityTest('listClaimConflictPairs buckets claims by cadence, keeps owned pages apart from other pages and leaves out the pairs a proposal covers', {
+    methods: ['insertFact', 'insertFacts', 'insertDecideProposal', 'insertTrustProposal', 'transitionTrustProposal', 'listClaimConflictPairs', 'countClaimConflictPairs'],
+  }, async (engine) => {
+    const claim = (text: string, entity: string, value: number, from: string, extra: Record<string, unknown> = {}) =>
+      fact(engine, text, { entity_slug: entity, visibility: 'world', source: 'mcp:remember', claim_metric: 'arr', claim_value: value, claim_unit: 'usd', valid_from: new Date(from), ...extra });
+    const filed = (text: string, entity: string, value: number, slug: string) =>
+      fenced(engine, text, { entity_slug: entity, claim_metric: 'arr', claim_value: value, claim_unit: 'usd', claim_period: 'annual', source_markdown_slug: slug, valid_from: new Date('2026-03-01T00:00:00Z') });
+    // Days: the UTC day decides, not the clock time.
+    const dayA = await claim('day a', 'companies/day', 1, '2026-03-01T00:30:00Z');
+    const dayB = await claim('day b', 'companies/day', 2, '2026-03-01T23:30:00Z');
+    const dayC = await claim('day c', 'companies/day', 3, '2026-03-02T00:30:00Z');
+    // Weeks: Monday and Thursday of one ISO week pair up; the next Monday does not; a week that crosses the year pairs up too.
+    const weekA = await claim('week a', 'companies/week', 1, '2026-03-02T09:00:00Z', { claim_period: 'weekly' });
+    const weekB = await claim('week b', 'companies/week', 2, '2026-03-05T09:00:00Z', { claim_period: 'weekly' });
+    const weekC = await claim('week c', 'companies/week', 3, '2026-03-09T09:00:00Z', { claim_period: 'weekly' });
+    const yearA = await claim('year a', 'companies/year', 1, '2024-12-30T09:00:00Z', { claim_period: 'weekly' });
+    const yearB = await claim('year b', 'companies/year', 2, '2025-01-02T09:00:00Z', { claim_period: 'weekly' });
+    // Months and quarters.
+    const monthA = await claim('month a', 'companies/month', 1, '2026-03-01T09:00:00Z', { claim_period: 'monthly' });
+    const monthB = await claim('month b', 'companies/month', 2, '2026-03-31T09:00:00Z', { claim_period: 'monthly' });
+    const monthC = await claim('month c', 'companies/month', 3, '2026-04-01T09:00:00Z', { claim_period: 'monthly' });
+    const quarterA = await claim('quarter a', 'companies/quarter', 1, '2026-01-05T09:00:00Z', { claim_period: 'quarterly' });
+    const quarterB = await claim('quarter b', 'companies/quarter', 2, '2026-03-25T09:00:00Z', { claim_period: 'quarterly' });
+    const quarterC = await claim('quarter c', 'companies/quarter', 3, '2026-04-02T09:00:00Z', { claim_period: 'quarterly' });
+    // An owned memory page keeps its claims apart from any other page's, and pairs the claims of the same page.
+    const aliceA = await filed('alice a', 'companies/owned', 1, 'memory/members/alice');
+    const aliceB = await filed('alice b', 'companies/owned', 2, 'memory/members/alice');
+    const bobA = await filed('bob a', 'companies/owned', 3, 'memory/members/bob');
+    const plainA = await filed('plain a', 'companies/plain', 1, 'notes/one');
+    const plainB = await filed('plain b', 'companies/plain', 2, 'notes/two');
+    // A decide proposal covers a pair in any status; a pending supersede proposal covers its pair; a rejected one does not.
+    const decided = [await claim('decided a', 'companies/decided', 1, '2026-03-01T01:00:00Z'), await claim('decided b', 'companies/decided', 2, '2026-03-01T02:00:00Z')];
+    const pending = [await claim('pending a', 'companies/pending', 1, '2026-03-01T01:00:00Z'), await claim('pending b', 'companies/pending', 2, '2026-03-01T02:00:00Z')];
+    const rejected = [await claim('rejected a', 'companies/rejected', 1, '2026-03-01T01:00:00Z'), await claim('rejected b', 'companies/rejected', 2, '2026-03-01T02:00:00Z')];
+    expect(await engine.insertDecideProposal({
+      source_id: 'default', sweep_id: 'claim_conflicts:parity', pair_index: 0, new_fact_id: decided[1]!, old_fact_id: decided[0]!,
+      direction: 'new_supersedes_old', p_supersede: 0.9, threshold: 0.8, proposal_floor: 0.5, model_resolved: 'model-a',
+    })).not.toBeNull();
+    const supersede = (older: number, newer: number) => ({ action: 'supersede_fact' as const, sourceId: 'default', target: { table: 'facts' as const, id: older },
+      related: { table: 'facts' as const, id: newer }, before: { trust_tier: 'operator_curated' }, proposer: 'parity' });
+    await engine.insertTrustProposal(supersede(pending[0]!, pending[1]!));
+    const rejectedProposal = await engine.insertTrustProposal(supersede(rejected[0]!, rejected[1]!));
+    expect(await engine.transitionTrustProposal(rejectedProposal.id, 'pending', 'rejected', { decidedBy: { kind: 'operator', id: 'cli' } })).toBeTruthy();
+    const name = namer({ dayA, dayB, dayC, weekA, weekB, weekC, yearA, yearB, monthA, monthB, monthC, quarterA, quarterB, quarterC, aliceA, aliceB, bobA, plainA, plainB,
+      decidedA: decided[0]!, decidedB: decided[1]!, pendingA: pending[0]!, pendingB: pending[1]!, rejectedA: rejected[0]!, rejectedB: rejected[1]! });
+    const list = await engine.listClaimConflictPairs('default', [...AUDIT_ROW_SOURCES], 100);
+    const pairs = list.map(r => ({ pair: `${name(Number(r.new_fact_id))}>${name(Number(r.old_fact_id))}`, bucket: r.bucket, new: Number(r.new_value), old: Number(r.old_value), entity: r.entity_slug }));
+    const counted = Number((await engine.countClaimConflictPairs('default', [...AUDIT_ROW_SOURCES]))?.n);
+    expect(counted).toBe(pairs.length);
+    const byPair = new Map(pairs.map(p => [p.pair, p.bucket]));
+    expect(byPair.get('dayB>dayA')).toBe('2026-03-01');
+    expect(byPair.get('weekB>weekA')).toBe('2026-W10');
+    expect(byPair.get('yearB>yearA')).toBe('2025-W01');
+    expect(byPair.get('monthB>monthA')).toBe('2026-03');
+    expect(byPair.get('quarterB>quarterA')).toBe('2026-Q1');
+    for (const absent of ['dayC>dayB', 'weekC>weekB', 'monthC>monthB', 'quarterC>quarterB', 'bobA>aliceA', 'aliceB>bobA', 'decidedB>decidedA', 'pendingB>pendingA']) {
+      expect(byPair.has(absent), absent).toBe(false);
+    }
+    expect(byPair.has('aliceB>aliceA')).toBe(true);
+    expect(byPair.has('plainB>plainA')).toBe(true);
+    expect(byPair.has('rejectedB>rejectedA')).toBe(true);
+    return { pairs, counted };
   });
 });

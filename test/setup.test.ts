@@ -21,7 +21,7 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { createServer, type Server } from 'node:net';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { runCli, type CliResult } from './helpers/cli-spawn.ts';
 import { hookEntryHash, removeClaudeHooksAt, writeClaudeHooksAt } from '../src/core/bootstrap/hooks.ts';
 import { GBRAIN_HOOK_MARKER_VALUE } from '../src/core/bootstrap/host-specs.ts';
@@ -481,16 +481,19 @@ describe('gbrain setup: consent and refusals', () => {
   });
 
   for (const [harness, guide] of [['openclaw', 'docs/mcp/OPENCLAW.md'], ['hermes', 'docs/mcp/HERMES.md']] as const) {
-    test(`${harness}: setup writes only the brain-first block and names its guide for the MCP step`, async () => {
+    test(`${harness}: setup writes the brain-first block and names its guide for the MCP step`, async () => {
       const b = box();
       if (harness === 'hermes') {
         // Hermes seeds SOUL.md on first run; setup never creates one (it would replace the default identity).
         mkdirSync(join(b.home, '.hermes'), { recursive: true });
         writeFileSync(join(b.home, '.hermes', 'SOUL.md'), 'You are Hermes.\n');
       }
-      const r = await setup(b, [harness, '--json'], { OPENCLAW_STATE_DIR: undefined, OPENCLAW_WORKSPACE_DIR: undefined, OPENCLAW_PROFILE: undefined, HERMES_HOME: undefined });
+      const r = await setup(b, [harness, '--json'], { OPENCLAW_STATE_DIR: undefined, OPENCLAW_WORKSPACE_DIR: undefined, OPENCLAW_PROFILE: undefined, HERMES_HOME: undefined,
+        // No host hermes on PATH, so the MCP step's outcome does not depend on the machine.
+        PATH: [dirname(process.execPath), '/usr/bin', '/bin'].join(':') });
       expect(r.exitCode).toBe(0);
-      expect(r.doc).toMatchObject({ harness, instructions_only: true, mcp: { setup: 'manual', docs: guide }, instructions: { action: 'write' } });
+      // Hermes's MCP step runs through its own CLI (test/setup-hermes-mcp.test.ts); with no hermes here it prints the command.
+      expect(r.doc).toMatchObject({ harness, instructions_only: true, mcp: { setup: harness === 'hermes' ? 'print' : 'manual', docs: guide }, instructions: { action: 'write' } });
       expect(r.doc.instructions.path).toBe(harness === 'openclaw' ? join(b.home, '.openclaw', 'workspace', 'AGENTS.md') : join(b.home, '.hermes', 'SOUL.md'));
       expect(existsSync(claudeJson(b))).toBe(false);
     });
@@ -566,7 +569,7 @@ describe('gbrain setup codex: install lifecycle', () => {
     expect(first.doc.consent.capture).toMatchObject({ value: 'declined', source: 'default' });
     expect(first.doc.notices.find((n: any) => n.code === 'first_run_decisions').user_message).toContain('Report back (Wakeshift): off. gbrain wakeshift enable turns it on.');
     expect(readJson(join(b.gbrainHome, '.gbrain', 'config.json')).embedding_disabled).toBe(true);
-    expect(toml(b).mcp_servers.gbrain).toEqual({ command: launcher(b), args: [b.bin, 'serve', '--surface', 'starter', '--advertise', 'verbs'], env: { GBRAIN_HOME: b.gbrainHome },
+    expect(toml(b).mcp_servers.gbrain).toEqual({ command: launcher(b), args: [b.bin, 'serve', '--surface', 'full'], env: { GBRAIN_HOME: b.gbrainHome },
       env_vars: [...CODEX_FORWARDED_PROVIDER_ENV] });
     expect(Object.keys(readJson(hooksJson(b)).hooks).sort()).toEqual(['SessionStart', 'UserPromptSubmit']);
     expect(groups(b, 'UserPromptSubmit')).toEqual([{ hooks: [{ type: 'command', timeout: 15,

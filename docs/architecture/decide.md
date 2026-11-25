@@ -133,7 +133,12 @@ requests.
 
 ## Receipts, spend and state
 
-`store.ts` reads and writes through `engine.executeRaw` (no engine method).
+`store.ts` holds no SQL: receipts, spend, calibrations and `decide_state` go
+through the typed decide-store engine members (`insertDecideReceipts`,
+`insertDecideSpend`, `readDecideState`, `upsertDecideState`,
+`ensureDecideState`, the calibration and receipt-stats members and so on),
+whose SQL lives once in `src/core/engine-sql/decide-store.ts` and which a
+non-SQL engine serves natively (`rust/docs/store/decide-store.md`).
 `decision_receipts` rows hold hashes only (`subject_ref`, `state_hash`,
 `question_hash` are HMAC-SHA256 under a per-brain salt kept in `decide_state`,
 which no config surface reads), the thresholded number, the outcome, and the

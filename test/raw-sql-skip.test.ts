@@ -4,7 +4,8 @@
  * "nothing to analyze" on it without one `executeRaw` call, instead of refusing
  * the command. The graduation connect row and the retired-marker cleanup read
  * through typed members (engine-sql/connect-gate.ts; the Rust arm runs them in
- * test/engine-parity/connect-gate.test.ts). PGLite reports `raw_sql`, so each
+ * test/engine-parity/connect-gate.test.ts), and so does the segmented-gate writer
+ * evidence (engine-sql/writer-versions.ts; test/engine-parity/writer-versions.test.ts). PGLite reports `raw_sql`, so each
  * control below runs its SQL as before. Synthetic names only.
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';

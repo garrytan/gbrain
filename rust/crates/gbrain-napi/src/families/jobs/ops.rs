@@ -140,6 +140,21 @@ impl Brain {
         })
     }
 
+    /// `delayHeldClaim(id, lockToken, delayMs)`: whether a row held by this token went back to
+    /// `delayed` (the worker's pause release and quiet-hours deferral).
+    #[napi]
+    pub fn delay_held_claim<'env>(
+        &self,
+        env: &'env Env,
+        id: f64,
+        lock_token: String,
+        delay_ms: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.delay_held_claim(job_id(id, "delayHeldClaim")?, &lock_token, delay_ms)
+        })
+    }
+
     /// `releaseWatchdogClaim(id, lockToken, errorText, mark)`: whether the claim was released.
     #[napi]
     pub fn release_watchdog_claim<'env>(
@@ -370,6 +385,16 @@ impl Brain {
         })
     }
 
+    /// `listUnfinishedJobsByName(names)`: `{ id, name, status }` of every unfinished job of those names, by id.
+    #[napi]
+    pub fn list_unfinished_jobs_by_name<'env>(
+        &self,
+        env: &'env Env,
+        names: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_unfinished_jobs_by_name(&names))
+    }
+
     /// `countTtlExpiredWaiting(name, hours)`: a count.
     #[napi]
     pub fn count_ttl_expired_waiting<'env>(
@@ -444,7 +469,7 @@ impl Brain {
         self.run(env, move |s| s.count_open_jobs_by_owner(&client_id))
     }
 
-    /// `readJobSourceState(sourceId)`: `{ archived, created_at }` or null.
+    /// `readJobSourceState(sourceId)`: `{ archived, created_at, local_path, config }` or null.
     #[napi]
     pub fn read_job_source_state<'env>(
         &self,

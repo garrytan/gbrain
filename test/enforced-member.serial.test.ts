@@ -246,6 +246,19 @@ for (const kind of testBackends()) {
       expect({ exit: human.exitCode, pending: /page\(s\) pending/.test(human.stdout) }).toEqual({ exit: 0, pending: false });
     }, 300_000);
 
+    // A failed lookup read is not a miss: under the mode, `entity` still says so (the degraded marker survives the in-process
+    // dispatch) and GBRAIN_FAIL_ON_EMPTY=1 does not turn it into exit 12. Fails one real read of the CLI with a preload.
+    test('entity: a failed lookup read carries the marker and is not exit 12', async () => {
+      if (kind !== 'pglite') return; // the preload patches PGlite; the marker path is engine-agnostic
+      const fault = { preload: join(import.meta.dir, 'helpers', 'pglite-sql-fault-preload.ts'), env: { GBRAIN_FAIL_ON_EMPTY: '1', GBRAIN_TEST_FAIL_SQL: 'lower\\(title\\) = \\$2' } };
+      const failed = await brain.cli(['entity', 'Nobody Example', '--json'], fault);
+      const out = JSON.parse(failed.stdout);
+      expect({ exit: failed.exitCode, found: out.found, degraded: out.degraded }).toEqual({ exit: 0, found: false, degraded: { reasons: ['entity_lookup_failed'] } });
+      expect(failed.stdout).not.toContain('injected_entity_lookup'); // the raw read error stays on the operator's stderr only
+      const healthy = await brain.cli(['entity', 'Nobody Example', '--json'], { env: { GBRAIN_FAIL_ON_EMPTY: '1' } });
+      expect({ exit: healthy.exitCode, found: JSON.parse(healthy.stdout).found, degraded: JSON.parse(healthy.stdout).degraded }).toEqual({ exit: 12, found: false, degraded: undefined });
+    }, 300_000);
+
     test('variable unset: output is unchanged', async () => {
       for (const args of [['list', '--json'], ['get', PAGES.other.slug], ['stats', '--json']]) {
         const a = await cli(args, { member: null });

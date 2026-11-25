@@ -19,6 +19,7 @@
 //! `createSegmentedPageShell` leaves. Its `body_bytes` lives in the page_body family's private
 //! body state, which this family reads through `page_body::segmented_body_bytes`; a NULL
 //! `body_bytes` fails `body_bytes > 0` as it does in SQL. A page's chunks are served when its
+
 //! `text_projection_revision` equals its `knowledge_revision`, the same test the SQL engines'
 //! served-projection filter makes. See rust/docs/store/chunk_queries.md.
 
@@ -29,7 +30,6 @@ use crate::chunks::{
 };
 use crate::error::Result;
 use crate::facts::{OwnerOnlySources, PrivacyPolicy, page_hidden, page_hidden_with};
-use crate::keyword::served;
 use crate::kv::KvRead;
 use crate::pages::{PageRecord, all_pages, find_in_scope, read_page_by_id};
 use crate::sources::read_source;
@@ -44,6 +44,7 @@ pub use site_reads::{
     ChunkReadScope, CodeChunksExistInput, CodeSymbolInput, DeleteChunksExceptInput, FrozenHit,
     FrozenHitsInput, QualifiedNamesInput, UnsealedPagesInput, WithdrawalChunksInput, WithdrawalKey,
 };
+pub(crate) use site_reads::{Policy as PageReadPolicy, served};
 
 /// `listChunklessPagesWithContent`'s default batch size.
 const DEFAULT_CHUNKLESS_BATCH: u64 = 50;
@@ -460,6 +461,7 @@ mod tests {
         // This shell has no body state (`make_shell` only nulls the columns), so its body_bytes is NULL and it is not
         // chunkless-with-content. A published body reads through `page_body::segmented_body_bytes`
         // (test/engine-parity/chunk-page-segmented.test.ts).
+
         let options = ChunklessOptions::default();
         assert_eq!(
             store.count_chunkless_pages_with_content(&options).unwrap(),

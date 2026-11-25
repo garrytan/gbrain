@@ -10,7 +10,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { PersistenceConsumer } from './consumer.ts';
 import { disposePersistenceConsumer, preparePersistedMutation } from './service.ts';
-import { readWriterAdminLock } from './admin-lock.ts';
+import { readWriterAdminLockTyped } from './admin-lock.ts';
 import type { GraduationBlocker } from './engine-graduation.types.ts';
 
 const PENDING_REQUESTS_SQL = `SELECT r.request_id::text AS request_id, r.source_id, r.operation, r.state,
@@ -39,7 +39,7 @@ const stuckRecoveryPreview = (sourceId: string, requestId: string) => ['gbrain',
  */
 export async function graduationBlockers(source: BrainEngine, hostId: string): Promise<readonly GraduationBlocker[]> {
   const blockers: GraduationBlocker[] = [];
-  const lock = await readWriterAdminLock(source);
+  const lock = await readWriterAdminLockTyped(source);
   if (lock.locked) {
     blockers.push({ kind: 'writer_admin_lock', id: 'persistence.writer_admin_lock', detail: `writer administration locked at ${lock.set_at ?? 'unknown time'}`,
       argv: ['gbrain', 'sources', 'writer', 'unlock'], needsUser: true });
@@ -80,7 +80,7 @@ export async function graduationBlockers(source: BrainEngine, hostId: string): P
   }
   const bindings = await source.executeRaw<{ worktree_id: string; host_id: string; source_id: string | null }>(
     `SELECT b.worktree_id::text AS worktree_id, b.host_id::text AS host_id,
-       (SELECT s.source_id FROM persistence_source_bindings s WHERE s.worktree_id = b.worktree_id ORDER BY s.source_id LIMIT 1) AS source_id
+       (SELECT s.source_id FROM persistence_source_bindings s WHERE s.worktree_id = b.worktree_id ORDER BY s.source_id COLLATE "C" LIMIT 1) AS source_id
      FROM persistence_host_bindings b WHERE b.host_id <> $1::uuid ORDER BY b.worktree_id, b.host_id`, [hostId]);
   for (const b of bindings) {
     blockers.push({ kind: 'foreign_host_binding', id: `${b.worktree_id}:${b.host_id}`, detail: `worktree ${b.worktree_id} has a binding on host ${b.host_id}`,
@@ -90,7 +90,7 @@ export async function graduationBlockers(source: BrainEngine, hostId: string): P
     WHERE table_schema = current_schema() AND table_name = 'oauth_clients' AND column_name = 'bound_source_id') AS present`);
   if (boundColumn?.present) {
     const dangling = await source.executeRaw<{ client_id: string; client_name: string; bound_source_id: string }>(`SELECT c.client_id, c.client_name, c.bound_source_id
-      FROM oauth_clients c WHERE c.bound_source_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sources s WHERE s.id = c.bound_source_id) ORDER BY c.client_id`);
+      FROM oauth_clients c WHERE c.bound_source_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sources s WHERE s.id = c.bound_source_id) ORDER BY c.client_id COLLATE "C"`);
     for (const c of dangling) {
       blockers.push({ kind: 'dangling_reference', id: `oauth_clients.${c.client_id}`,
         detail: `OAuth client ${c.client_name} is bound to source ${c.bound_source_id}, which no longer exists; Postgres enforces this binding, and clearing it would widen the client's access. Restore the source, or revoke the client and register a replacement`,

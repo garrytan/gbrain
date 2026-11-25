@@ -25,7 +25,7 @@
  */
 import type { GBrainConfig } from './config.ts';
 import type { McpSurface } from '../mcp/surface.ts';
-import { REGISTRATION_SURFACE, registrationAdvertise, stdioServeArgv } from './mcp-registration.ts';
+import { registrationAdvertise, registrationProfile, stdioServeArgv } from './mcp-registration.ts';
 import { gbrainPath } from './config.ts';
 import { hookLauncherPath } from './setup/hook-launcher.ts';
 import { localSetupRecords } from './setup/local-receipts.ts';
@@ -180,17 +180,18 @@ function keyInput(recipe: Recipe): ActionInput[] {
   }));
 }
 
-/** The datastore the enable command must target, resolved before any argv is built. */
-export function enableArgv(cfg: GBrainConfig, model: string, width: number): string[] {
+/**
+ * The enable command. `gbrain embeddings enable` opens the configured datastore itself (or the mounted brain named by
+ * `--brain`), so the argv names no path and is the same on every engine; `_cfg` stays for callers that pass it.
+ */
+export function enableArgv(_cfg: GBrainConfig, model: string, width: number): string[] {
   const brainId = brainIdInMemory();
   if (brainId !== 'host') {
     return ['gbrain', 'embeddings', 'enable', '--brain', brainId, '--embedding-model', model, '--embedding-dimensions', String(width)];
   }
-  // A Rust brain turns vectors on in place: `embeddings enable` keeps the Rust engine (init --force would rebuild it).
-  if (cfg.engine === 'rust') return ['gbrain', 'embeddings', 'enable', '--embedding-model', model, '--embedding-dimensions', String(width)];
-  const base = ['gbrain', 'init', '--force', '--embedding-model', model, '--embedding-dimensions', String(width)];
-  if (cfg.engine === 'postgres') return base;
-  return [...base, '--path', cfg.database_path ?? gbrainPath('brain.pglite')];
+  // Every engine turns vectors on in place with the same command, so a fix copied between brains stays right.
+  // `init --force ... --path` would rewrite a Rust brain's config to an empty PGLite brain, so no engine prints it.
+  return ['gbrain', 'embeddings', 'enable', '--embedding-model', model, '--embedding-dimensions', String(width)];
 }
 
 function datastoreLabel(cfg: GBrainConfig): string {
@@ -403,8 +404,10 @@ function lockOwnerFor(cfg: GBrainConfig): LockOwner | null {
 export type ReadinessHarness = 'claude-code' | 'codex' | 'opencode';
 export interface HarnessWiringInput {
   transport: Transport;
-  /** The surface the registration pins; default REGISTRATION_SURFACE (`gbrain init --surface` overrides). */
+  /** The surface the registration pins; default the harness's registrationProfile (`gbrain init --surface` overrides). */
   surface?: McpSurface;
+  /** The config whose `mcp.default_surface_<harness>` knob registrationProfile reads; absent = the shipped defaults. */
+  config?: GBrainConfig | null;
   /** Harnesses detected on this machine (config plane: from process-scoped agent markers). */
   harnesses: readonly ReadinessHarness[];
   lockOwner: LockOwner | null;
@@ -428,9 +431,10 @@ const SURFACE_GLOSS: Record<McpSurface, string> = {
   full: 'every operation',
 };
 
-function stdioRegistration(h: ReadinessHarness, bin: string, chosen?: McpSurface): Action {
-  const surface = chosen ?? REGISTRATION_SURFACE;
-  const advertise = registrationAdvertise({ userChoseSurface: chosen !== undefined });
+function stdioRegistration(h: ReadinessHarness, bin: string, chosen?: McpSurface, config?: GBrainConfig | null): Action {
+  const profile = registrationProfile(h, config);
+  const surface = chosen ?? profile.surface;
+  const advertise = registrationAdvertise({ userChoseSurface: chosen !== undefined, profile });
   // A setup install's hooks decision lives in its receipt, so a --no-hooks rerun would turn its hooks off: rerun with what it recorded.
   const record = h === 'opencode' ? undefined : localSetupRecords().find((r) => r.harness === h && r.name === 'gbrain' && r.status === 'installed' && r.scope !== 'project');
   const receipt = record && (() => { try { return (h === 'claude-code' ? readSetupReceipt(record.path) : readCodexSetupReceipt(record.path)).setup; } catch { return null; } })();
@@ -494,7 +498,7 @@ export function harnessWiringEntry(input: HarnessWiringInput): ReadinessEntry {
   if (harnesses.length === 0) {
     return { ...base, state: 'missing', reason: 'no_harness_detected', why: 'No agent harness was detected.',
       fix: { consent: ['persistent_install'], actor: 'user', requires_exclusive: false, docs: MEMORY_VERBS_INSTALL,
-        why: `For Claude Code or Codex, run \`gbrain setup claude-code\` or \`gbrain setup codex\` (it registers serve behind gbrain's launcher, so the session directory's bunfig.toml and .env never load). For any other host, register \`${stdioServeArgv('<absolute path to gbrain>', input.surface ?? REGISTRATION_SURFACE, registrationAdvertise({ userChoseSurface: input.surface !== undefined })).join(' ')}\` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw).`,
+        why: `For Claude Code or Codex, run \`gbrain setup claude-code\` or \`gbrain setup codex\` (it registers serve behind gbrain's launcher, so the session directory's bunfig.toml and .env never load). For any other host, register \`${stdioServeArgv('<absolute path to gbrain>', input.surface ?? registrationProfile('other').surface, registrationAdvertise({ userChoseSurface: input.surface !== undefined, profile: registrationProfile('other') })).join(' ')}\` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw).`,
         user_message: 'Which agent app should get gbrain memory? The install guide has a one-line command for each.' } };
   }
   if (lockOwner?.transport === 'http') {
@@ -512,7 +516,7 @@ export function harnessWiringEntry(input: HarnessWiringInput): ReadinessEntry {
       fix: { consent: ['persistent_install'], actor: 'user', requires_exclusive: false, docs: 'INSTALL_FOR_AGENTS.md',
         why: 'Install gbrain globally (`bun install -g github:garrytan/gbrain`) so `gbrain` resolves to an absolute path, then re-run readiness.' } };
   }
-  return { ...base, state: 'unknown', reason: 'registration_unverified', why: `${HARNESS_LABEL[h]} is the active harness; its gbrain registration has not been verified from this process.`, fix: stdioRegistration(h, input.gbrainBin, input.surface) };
+  return { ...base, state: 'unknown', reason: 'registration_unverified', why: `${HARNESS_LABEL[h]} is the active harness; its gbrain registration has not been verified from this process.`, fix: stdioRegistration(h, input.gbrainBin, input.surface, input.config) };
 }
 
 const MARKER_HARNESS: Record<string, ReadinessHarness> = {
@@ -521,12 +525,12 @@ const MARKER_HARNESS: Record<string, ReadinessHarness> = {
 
 let cachedBin: { value: string | null } | null = null;
 
-function harnessConfigEntry(transport: Transport, lockOwner: LockOwner | null, surface?: McpSurface): ReadinessEntry {
+function harnessConfigEntry(transport: Transport, lockOwner: LockOwner | null, surface: McpSurface | undefined, config: GBrainConfig): ReadinessEntry {
   if (transport !== 'cli') return harnessWiringEntry({ transport, harnesses: [], lockOwner, gbrainBin: null });
   const marker = agentProcessMarker();
   const harness = marker ? MARKER_HARNESS[marker] : undefined;
   cachedBin ??= { value: resolveGbrainBin() };
-  return harnessWiringEntry({ transport, harnesses: harness ? [harness] : [], lockOwner, gbrainBin: cachedBin.value, httpStatusServer: liveStatusMarkers()[0] ?? null, ...(surface ? { surface } : {}) });
+  return harnessWiringEntry({ transport, harnesses: harness ? [harness] : [], lockOwner, gbrainBin: cachedBin.value, httpStatusServer: liveStatusMarkers()[0] ?? null, ...(surface ? { surface } : {}), config });
 }
 
 // ── config plane ───────────────────────────────────────────────────────────
@@ -553,7 +557,7 @@ export function configReadiness(cfg: GBrainConfig, ctx: { transport: Transport; 
   const entries: ReadinessEntry[] = [embeddingsEntry(cfg), chatEntry(cfg), writebackEntry(cfg), toolSurfaceEntry(cfg)];
   const sync = syncConfigEntry(cfg);
   if (sync) entries.push(sync);
-  entries.push(harnessConfigEntry(ctx.transport, lockOwner, ctx.surface));
+  entries.push(harnessConfigEntry(ctx.transport, lockOwner, ctx.surface, cfg));
   const result: ConfigReadiness = ctx.transport === 'http'
     ? { entries: readinessHttpView(entries), lock_owner: null }
     : { entries: entries.map(e => (e.fix ? { ...e, fix: exclusiveFix(e.fix, lockOwner) } : e)), lock_owner: lockOwner };

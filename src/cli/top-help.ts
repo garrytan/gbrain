@@ -21,6 +21,7 @@ SETUP
                                      Postgres-first install ladder (env URL >
                                      Supabase token > local PG > docker > PGLite)
   engine status [--json] [--probe]   Which engine + URL source, engine-free
+  engine swap --to rust --plan       Preview moving the brain to the Rust engine (read only)
   db-repair [--yes] [--json]         Diagnose/fix Postgres access, engine-free
                                      (--yes --apply-rewrites for config rewrites)
   migrate --to <postgres|pglite>     Move the brain between engines (PGLite -> Postgres graduates: plan, then --yes --expect)
@@ -40,6 +41,7 @@ MEMORY (facts agents recall; MEMORY_VERBS v1)
                                      facts are pushed into new agent sessions (private: recall only)
   recall [<entity>] [--query <q>]    Find saved facts
   forget <fact-id>                   Withdraw a fact
+  profile [--json]                   Your own profile: facts saved with remember --facet
   identity [--member <id>] [--json]  Who gbrain takes the owner to be, and the signals behind it
 
 PAGES

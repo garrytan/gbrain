@@ -20,6 +20,7 @@ export async function preparationConfigView(engine: BrainEngine): Promise<BrainE
   return registerEngineView(new Proxy(engine, { get(target, key) {
     if (key === 'getConfig') return async (name: string) => value(name);
     if (key === 'getAllConfig') return async () => Object.fromEntries(values);
+    if (key === 'readStoredConfigValue') return async (name: string) => value(name);
     if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) =>
       flat(sql) === KEY_READ && typeof params?.[0] === 'string'
         ? Promise.resolve(values.has(params[0]) ? [{ value: values.get(params[0]) }] : [])

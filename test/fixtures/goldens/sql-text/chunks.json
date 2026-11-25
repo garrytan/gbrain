@@ -29,8 +29,8 @@
             "params": [
               "array<string>"
             ],
-            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
-            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key COLLATE \"C\"",
+            "textSha256": "769515d449bec39db673162dca548d0e70ad07f725759d310db258d735b83f99"
           },
           {
             "lane": "pool",
@@ -45,8 +45,8 @@
             "params": [
               "array<string>"
             ],
-            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
-            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key COLLATE \"C\"",
+            "textSha256": "769515d449bec39db673162dca548d0e70ad07f725759d310db258d735b83f99"
           },
           {
             "lane": "pool",
@@ -63,8 +63,8 @@
             "params": [
               "array<string>"
             ],
-            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
-            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key COLLATE \"C\"",
+            "textSha256": "769515d449bec39db673162dca548d0e70ad07f725759d310db258d735b83f99"
           },
           {
             "lane": "pool",
@@ -97,8 +97,8 @@
             "params": [
               "array<string>"
             ],
-            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
-            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key COLLATE \"C\"",
+            "textSha256": "769515d449bec39db673162dca548d0e70ad07f725759d310db258d735b83f99"
           },
           {
             "lane": "pool",
@@ -133,8 +133,8 @@
             "params": [
               "array<string>"
             ],
-            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
-            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key COLLATE \"C\"",
+            "textSha256": "769515d449bec39db673162dca548d0e70ad07f725759d310db258d735b83f99"
           },
           {
             "lane": "pool",
@@ -220,8 +220,8 @@
             "params": [
               "array<string>"
             ],
-            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
-            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key COLLATE \"C\"",
+            "textSha256": "769515d449bec39db673162dca548d0e70ad07f725759d310db258d735b83f99"
           },
           {
             "lane": "pool",
@@ -245,8 +245,8 @@
             "params": [
               "array<string>"
             ],
-            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
-            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key COLLATE \"C\"",
+            "textSha256": "769515d449bec39db673162dca548d0e70ad07f725759d310db258d735b83f99"
           },
           {
             "lane": "pool",
@@ -270,8 +270,8 @@
             "params": [
               "array<string>"
             ],
-            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
-            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key COLLATE \"C\"",
+            "textSha256": "769515d449bec39db673162dca548d0e70ad07f725759d310db258d735b83f99"
           },
           {
             "lane": "pool",
@@ -295,8 +295,8 @@
             "params": [
               "array<string>"
             ],
-            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
-            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key COLLATE \"C\"",
+            "textSha256": "769515d449bec39db673162dca548d0e70ad07f725759d310db258d735b83f99"
           },
           {
             "lane": "pool",
@@ -320,8 +320,8 @@
             "params": [
               "array<string>"
             ],
-            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
-            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key COLLATE \"C\"",
+            "textSha256": "769515d449bec39db673162dca548d0e70ad07f725759d310db258d735b83f99"
           },
           {
             "lane": "pool",
@@ -345,8 +345,8 @@
             "params": [
               "array<string>"
             ],
-            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
-            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key COLLATE \"C\"",
+            "textSha256": "769515d449bec39db673162dca548d0e70ad07f725759d310db258d735b83f99"
           },
           {
             "lane": "pool",
@@ -417,8 +417,8 @@
             "params": [
               "array<string>"
             ],
-            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
-            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key COLLATE \"C\"",
+            "textSha256": "769515d449bec39db673162dca548d0e70ad07f725759d310db258d735b83f99"
           },
           {
             "event": "begin",
@@ -452,8 +452,8 @@
             "params": [
               "array<string>"
             ],
-            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
-            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key COLLATE \"C\"",
+            "textSha256": "769515d449bec39db673162dca548d0e70ad07f725759d310db258d735b83f99"
           },
           {
             "event": "begin",
@@ -490,8 +490,8 @@
             "params": [
               "array<string>"
             ],
-            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
-            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key COLLATE \"C\"",
+            "textSha256": "769515d449bec39db673162dca548d0e70ad07f725759d310db258d735b83f99"
           },
           {
             "event": "begin",
@@ -528,8 +528,8 @@
             "params": [
               "array<string>"
             ],
-            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
-            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key COLLATE \"C\"",
+            "textSha256": "769515d449bec39db673162dca548d0e70ad07f725759d310db258d735b83f99"
           },
           {
             "event": "begin",
@@ -593,8 +593,8 @@
             "params": [
               "array<string>"
             ],
-            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
-            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key COLLATE \"C\"",
+            "textSha256": "769515d449bec39db673162dca548d0e70ad07f725759d310db258d735b83f99"
           },
           {
             "lane": "pool",
@@ -603,8 +603,8 @@
               "array<string>",
               "number"
             ],
-            "sql": "SELECT r.slug, r.source_id, r.state, r.chunks, r.bytes, r.embed_skip_reason, r.marker_bytes, r.quarantine_reason, r.deleted_at, r.overdue FROM ( SELECT p.slug, p.source_id, CASE WHEN p.deleted_at IS NOT NULL THEN 'deleted_page_chunks' WHEN NOT NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') THEN 'quarantined' WHEN cc.\"embedding\" IS NOT NULL THEN 'embedded' WHEN p.deleted_at IS NULL AND ((cc.body_generation IS NULL AND p.body_storage <> 'segmented') OR (cc.body_generation <= p.body_generation AND EXISTS (SELECT 1 FROM page_body_manifest lm WHERE lm.page_id = cc.page_id AND lm.occurrence_id = cc.occurrence_id AND lm.staging_id IS NULL AND lm.gen_from <= p.body_generation AND (lm.gen_to IS NULL OR lm.gen_to > p.body_generation)))) AND cc.\"embedding\" IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') AND NOT EXISTS (SELECT 1 FROM page_embedding_budget peb WHERE peb.page_id = p.id AND peb.state <> 'open' AND ((CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > 1048576 OR peb.reason IN ('archive_backfill', 'archive_open_day', 'call_import'))) THEN 'pending' ELSE 'keyword_only' END AS state, count(*)::bigint AS chunks, COALESCE(sum(octet_length(cc.chunk_text)), 0)::bigint AS bytes, p.frontmatter -> 'embed_skip' ->> 'reason' AS embed_skip_reason, CASE WHEN jsonb_typeof(p.frontmatter -> 'embed_skip' -> 'bytes') = 'number' THEN (p.frontmatter -> 'embed_skip' ->> 'bytes')::numeric::bigint END AS marker_bytes, p.frontmatter -> 'quarantine' ->> 'reason' AS quarantine_reason, p.deleted_at, COALESCE(p.deleted_at < now() - make_interval(hours => $1::int), false) AS overdue FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE ((cc.body_generation IS NULL AND p.body_storage <> 'segmented') OR (cc.body_generation <= p.body_generation AND EXISTS (SELECT 1 FROM page_body_manifest lm WHERE lm.page_id = cc.page_id AND lm.occurrence_id = cc.occurrence_id AND lm.staging_id IS NULL AND lm.gen_from <= p.body_generation AND (lm.gen_to IS NULL OR lm.gen_to > p.body_generation)))) GROUP BY p.id, 3 UNION ALL SELECT p.slug, p.source_id, CASE WHEN NOT NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') THEN 'quarantined' WHEN p.deleted_at IS NULL AND (p.compiled_truth <> '' OR p.timeline <> '' OR (p.body_storage = 'segmented' AND p.body_bytes > 0)) AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND (p.text_projection_revision IS DISTINCT FROM p.knowledge_revision OR COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') AND NOT EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id = p.id) THEN 'chunkless_healable' ELSE 'empty' END, 0::bigint, (octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')))::bigint, p.frontmatter -> 'embed_skip' ->> 'reason', CASE WHEN jsonb_typeof(p.frontmatter -> 'embed_skip' -> 'bytes') = 'number' THEN (p.frontmatter -> 'embed_skip' ->> 'bytes')::numeric::bigint END, p.frontmatter -> 'quarantine' ->> 'reason', p.deleted_at, false FROM pages p WHERE p.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id = p.id) ) r WHERE r.state = ANY($2::text[]) ORDER BY r.state, r.source_id, r.slug LIMIT $3",
-            "textSha256": "2567175a7dec0303306389a8e98d1e48bf83b152789215f015b310583aec3c80"
+            "sql": "SELECT r.slug, r.source_id, r.state, r.chunks, r.bytes, r.embed_skip_reason, r.marker_bytes, r.quarantine_reason, r.deleted_at, r.overdue FROM ( SELECT p.slug, p.source_id, CASE WHEN p.deleted_at IS NOT NULL THEN 'deleted_page_chunks' WHEN NOT NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') THEN 'quarantined' WHEN cc.\"embedding\" IS NOT NULL THEN 'embedded' WHEN p.deleted_at IS NULL AND ((cc.body_generation IS NULL AND p.body_storage <> 'segmented') OR (cc.body_generation <= p.body_generation AND EXISTS (SELECT 1 FROM page_body_manifest lm WHERE lm.page_id = cc.page_id AND lm.occurrence_id = cc.occurrence_id AND lm.staging_id IS NULL AND lm.gen_from <= p.body_generation AND (lm.gen_to IS NULL OR lm.gen_to > p.body_generation)))) AND cc.\"embedding\" IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') AND NOT EXISTS (SELECT 1 FROM page_embedding_budget peb WHERE peb.page_id = p.id AND peb.state <> 'open' AND ((CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > 1048576 OR peb.reason IN ('archive_backfill', 'archive_open_day', 'call_import'))) THEN 'pending' ELSE 'keyword_only' END AS state, count(*)::bigint AS chunks, COALESCE(sum(octet_length(cc.chunk_text)), 0)::bigint AS bytes, p.frontmatter -> 'embed_skip' ->> 'reason' AS embed_skip_reason, CASE WHEN jsonb_typeof(p.frontmatter -> 'embed_skip' -> 'bytes') = 'number' THEN (p.frontmatter -> 'embed_skip' ->> 'bytes')::numeric::bigint END AS marker_bytes, p.frontmatter -> 'quarantine' ->> 'reason' AS quarantine_reason, p.deleted_at, COALESCE(p.deleted_at < now() - make_interval(hours => $1::int), false) AS overdue FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE ((cc.body_generation IS NULL AND p.body_storage <> 'segmented') OR (cc.body_generation <= p.body_generation AND EXISTS (SELECT 1 FROM page_body_manifest lm WHERE lm.page_id = cc.page_id AND lm.occurrence_id = cc.occurrence_id AND lm.staging_id IS NULL AND lm.gen_from <= p.body_generation AND (lm.gen_to IS NULL OR lm.gen_to > p.body_generation)))) GROUP BY p.id, 3 UNION ALL SELECT p.slug, p.source_id, CASE WHEN NOT NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') THEN 'quarantined' WHEN p.deleted_at IS NULL AND (p.compiled_truth <> '' OR p.timeline <> '' OR (p.body_storage = 'segmented' AND p.body_bytes > 0)) AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND (p.text_projection_revision IS DISTINCT FROM p.knowledge_revision OR COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') AND NOT EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id = p.id) THEN 'chunkless_healable' ELSE 'empty' END, 0::bigint, (octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')))::bigint, p.frontmatter -> 'embed_skip' ->> 'reason', CASE WHEN jsonb_typeof(p.frontmatter -> 'embed_skip' -> 'bytes') = 'number' THEN (p.frontmatter -> 'embed_skip' ->> 'bytes')::numeric::bigint END, p.frontmatter -> 'quarantine' ->> 'reason', p.deleted_at, false FROM pages p WHERE p.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id = p.id) ) r WHERE r.state = ANY($2::text[]) ORDER BY r.state COLLATE \"C\", r.source_id COLLATE \"C\", r.slug COLLATE \"C\" LIMIT $3",
+            "textSha256": "ba734aac0a7ac1b49ee73ea767ed00597e780567ca0f8cc0df20954b8b94273b"
           }
         ],
         "sourceIds": [
@@ -613,8 +613,8 @@
             "params": [
               "array<string>"
             ],
-            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
-            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key COLLATE \"C\"",
+            "textSha256": "769515d449bec39db673162dca548d0e70ad07f725759d310db258d735b83f99"
           },
           {
             "lane": "pool",
@@ -625,8 +625,8 @@
               "array<string>",
               "number"
             ],
-            "sql": "SELECT r.slug, r.source_id, r.state, r.chunks, r.bytes, r.embed_skip_reason, r.marker_bytes, r.quarantine_reason, r.deleted_at, r.overdue FROM ( SELECT p.slug, p.source_id, CASE WHEN p.deleted_at IS NOT NULL THEN 'deleted_page_chunks' WHEN NOT NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') THEN 'quarantined' WHEN cc.\"embedding\" IS NOT NULL THEN 'embedded' WHEN p.deleted_at IS NULL AND ((cc.body_generation IS NULL AND p.body_storage <> 'segmented') OR (cc.body_generation <= p.body_generation AND EXISTS (SELECT 1 FROM page_body_manifest lm WHERE lm.page_id = cc.page_id AND lm.occurrence_id = cc.occurrence_id AND lm.staging_id IS NULL AND lm.gen_from <= p.body_generation AND (lm.gen_to IS NULL OR lm.gen_to > p.body_generation)))) AND cc.\"embedding\" IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') AND NOT EXISTS (SELECT 1 FROM page_embedding_budget peb WHERE peb.page_id = p.id AND peb.state <> 'open' AND ((CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > 1048576 OR peb.reason IN ('archive_backfill', 'archive_open_day', 'call_import'))) THEN 'pending' ELSE 'keyword_only' END AS state, count(*)::bigint AS chunks, COALESCE(sum(octet_length(cc.chunk_text)), 0)::bigint AS bytes, p.frontmatter -> 'embed_skip' ->> 'reason' AS embed_skip_reason, CASE WHEN jsonb_typeof(p.frontmatter -> 'embed_skip' -> 'bytes') = 'number' THEN (p.frontmatter -> 'embed_skip' ->> 'bytes')::numeric::bigint END AS marker_bytes, p.frontmatter -> 'quarantine' ->> 'reason' AS quarantine_reason, p.deleted_at, COALESCE(p.deleted_at < now() - make_interval(hours => $1::int), false) AS overdue FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE ((cc.body_generation IS NULL AND p.body_storage <> 'segmented') OR (cc.body_generation <= p.body_generation AND EXISTS (SELECT 1 FROM page_body_manifest lm WHERE lm.page_id = cc.page_id AND lm.occurrence_id = cc.occurrence_id AND lm.staging_id IS NULL AND lm.gen_from <= p.body_generation AND (lm.gen_to IS NULL OR lm.gen_to > p.body_generation)))) AND p.source_id = ANY($2::text[]) GROUP BY p.id, 3 UNION ALL SELECT p.slug, p.source_id, CASE WHEN NOT NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') THEN 'quarantined' WHEN p.deleted_at IS NULL AND (p.compiled_truth <> '' OR p.timeline <> '' OR (p.body_storage = 'segmented' AND p.body_bytes > 0)) AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND (p.text_projection_revision IS DISTINCT FROM p.knowledge_revision OR COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') AND NOT EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id = p.id) THEN 'chunkless_healable' ELSE 'empty' END, 0::bigint, (octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')))::bigint, p.frontmatter -> 'embed_skip' ->> 'reason', CASE WHEN jsonb_typeof(p.frontmatter -> 'embed_skip' -> 'bytes') = 'number' THEN (p.frontmatter -> 'embed_skip' ->> 'bytes')::numeric::bigint END, p.frontmatter -> 'quarantine' ->> 'reason', p.deleted_at, false FROM pages p WHERE p.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id = p.id) AND p.source_id = ANY($3::text[]) ) r WHERE r.state = ANY($4::text[]) ORDER BY r.state, r.source_id, r.slug LIMIT $5",
-            "textSha256": "9ba132a7239b5b886dbded0f9266b1a038cf22c9961fdec1c6821c1591f6cad9"
+            "sql": "SELECT r.slug, r.source_id, r.state, r.chunks, r.bytes, r.embed_skip_reason, r.marker_bytes, r.quarantine_reason, r.deleted_at, r.overdue FROM ( SELECT p.slug, p.source_id, CASE WHEN p.deleted_at IS NOT NULL THEN 'deleted_page_chunks' WHEN NOT NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') THEN 'quarantined' WHEN cc.\"embedding\" IS NOT NULL THEN 'embedded' WHEN p.deleted_at IS NULL AND ((cc.body_generation IS NULL AND p.body_storage <> 'segmented') OR (cc.body_generation <= p.body_generation AND EXISTS (SELECT 1 FROM page_body_manifest lm WHERE lm.page_id = cc.page_id AND lm.occurrence_id = cc.occurrence_id AND lm.staging_id IS NULL AND lm.gen_from <= p.body_generation AND (lm.gen_to IS NULL OR lm.gen_to > p.body_generation)))) AND cc.\"embedding\" IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') AND NOT EXISTS (SELECT 1 FROM page_embedding_budget peb WHERE peb.page_id = p.id AND peb.state <> 'open' AND ((CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > 1048576 OR peb.reason IN ('archive_backfill', 'archive_open_day', 'call_import'))) THEN 'pending' ELSE 'keyword_only' END AS state, count(*)::bigint AS chunks, COALESCE(sum(octet_length(cc.chunk_text)), 0)::bigint AS bytes, p.frontmatter -> 'embed_skip' ->> 'reason' AS embed_skip_reason, CASE WHEN jsonb_typeof(p.frontmatter -> 'embed_skip' -> 'bytes') = 'number' THEN (p.frontmatter -> 'embed_skip' ->> 'bytes')::numeric::bigint END AS marker_bytes, p.frontmatter -> 'quarantine' ->> 'reason' AS quarantine_reason, p.deleted_at, COALESCE(p.deleted_at < now() - make_interval(hours => $1::int), false) AS overdue FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE ((cc.body_generation IS NULL AND p.body_storage <> 'segmented') OR (cc.body_generation <= p.body_generation AND EXISTS (SELECT 1 FROM page_body_manifest lm WHERE lm.page_id = cc.page_id AND lm.occurrence_id = cc.occurrence_id AND lm.staging_id IS NULL AND lm.gen_from <= p.body_generation AND (lm.gen_to IS NULL OR lm.gen_to > p.body_generation)))) AND p.source_id = ANY($2::text[]) GROUP BY p.id, 3 UNION ALL SELECT p.slug, p.source_id, CASE WHEN NOT NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') THEN 'quarantined' WHEN p.deleted_at IS NULL AND (p.compiled_truth <> '' OR p.timeline <> '' OR (p.body_storage = 'segmented' AND p.body_bytes > 0)) AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND (p.text_projection_revision IS DISTINCT FROM p.knowledge_revision OR COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') AND NOT EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id = p.id) THEN 'chunkless_healable' ELSE 'empty' END, 0::bigint, (octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')))::bigint, p.frontmatter -> 'embed_skip' ->> 'reason', CASE WHEN jsonb_typeof(p.frontmatter -> 'embed_skip' -> 'bytes') = 'number' THEN (p.frontmatter -> 'embed_skip' ->> 'bytes')::numeric::bigint END, p.frontmatter -> 'quarantine' ->> 'reason', p.deleted_at, false FROM pages p WHERE p.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id = p.id) AND p.source_id = ANY($3::text[]) ) r WHERE r.state = ANY($4::text[]) ORDER BY r.state COLLATE \"C\", r.source_id COLLATE \"C\", r.slug COLLATE \"C\" LIMIT $5",
+            "textSha256": "ab328aca341efc35a772474a1b7b2151a7293800f2fa7094dcb4992649cb5e2a"
           }
         ]
       },
@@ -637,8 +637,8 @@
             "params": [
               "array<string>"
             ],
-            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
-            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key COLLATE \"C\"",
+            "textSha256": "769515d449bec39db673162dca548d0e70ad07f725759d310db258d735b83f99"
           },
           {
             "lane": "pool",
@@ -657,8 +657,8 @@
             "params": [
               "array<string>"
             ],
-            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
-            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key COLLATE \"C\"",
+            "textSha256": "769515d449bec39db673162dca548d0e70ad07f725759d310db258d735b83f99"
           },
           {
             "lane": "pool",
@@ -678,8 +678,8 @@
             "params": [
               "array<string>"
             ],
-            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
-            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key COLLATE \"C\"",
+            "textSha256": "769515d449bec39db673162dca548d0e70ad07f725759d310db258d735b83f99"
           },
           {
             "lane": "pool",
@@ -696,8 +696,8 @@
             "params": [
               "array<string>"
             ],
-            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
-            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key COLLATE \"C\"",
+            "textSha256": "769515d449bec39db673162dca548d0e70ad07f725759d310db258d735b83f99"
           },
           {
             "lane": "pool",
@@ -720,8 +720,8 @@
             "params": [
               "array<string>"
             ],
-            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
-            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key COLLATE \"C\"",
+            "textSha256": "769515d449bec39db673162dca548d0e70ad07f725759d310db258d735b83f99"
           },
           {
             "lane": "pool",
@@ -739,8 +739,8 @@
             "params": [
               "array<string>"
             ],
-            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
-            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key COLLATE \"C\"",
+            "textSha256": "769515d449bec39db673162dca548d0e70ad07f725759d310db258d735b83f99"
           },
           {
             "lane": "pool",
@@ -766,8 +766,8 @@
             "params": [
               "array<string>"
             ],
-            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
-            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key COLLATE \"C\"",
+            "textSha256": "769515d449bec39db673162dca548d0e70ad07f725759d310db258d735b83f99"
           },
           {
             "lane": "pool",
@@ -796,8 +796,8 @@
             "params": [
               "array<string>"
             ],
-            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
-            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key COLLATE \"C\"",
+            "textSha256": "769515d449bec39db673162dca548d0e70ad07f725759d310db258d735b83f99"
           },
           {
             "lane": "pool",
@@ -831,8 +831,8 @@
             "params": [
               "array<string>"
             ],
-            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
-            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key COLLATE \"C\"",
+            "textSha256": "769515d449bec39db673162dca548d0e70ad07f725759d310db258d735b83f99"
           },
           {
             "lane": "pool",
@@ -893,8 +893,8 @@
               "string",
               "string"
             ],
-            "sql": "WITH chosen AS ( SELECT p.* FROM pages p WHERE p.slug=$1 AND p.source_id=$2 AND p.deleted_at IS NULL AND EXISTS (SELECT 1 FROM sources s WHERE s.id=p.source_id AND NOT s.archived) ORDER BY (p.slug=$3) DESC, (p.source_id=$4) DESC, p.source_id ASC LIMIT 1 ) SELECT p.*, (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags, wd.snapshot_withdrawals, wd.snapshot_global_purges, CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.compiled_truth,chr(10))) WITH ORDINALITY AS lines(line,ord)) END AS fingerprint_body, CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.timeline,chr(10))) WITH ORDINALITY AS lines(line,ord)) END AS fingerprint_timeline FROM chosen p CROSS JOIN LATERAL (SELECT COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',w.visibility,'fact_hash',w.fact_hash,'withdrawn_at',w.withdrawn_at) ORDER BY w.visibility,w.fact_hash) FROM (SELECT visibility,fact_hash,min(withdrawn_at) AS withdrawn_at FROM fact_withdrawals WHERE source_id=p.source_id AND (subject='*' OR subject=p.slug) GROUP BY visibility,fact_hash) w), '[]'::jsonb) || COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',x.visibility,'fact_hash',x.fact_hash,'withdrawn_at',x.purged_at,'purged',true) ORDER BY x.visibility,x.fact_hash) FROM (SELECT visibility,fact_hash,min(purged_at) AS purged_at FROM fact_purges WHERE source_id=p.source_id AND subject=p.slug GROUP BY visibility,fact_hash) x), '[]'::jsonb) AS snapshot_withdrawals, (SELECT jsonb_build_object('count',count(*),'latest',max(g.purged_at)) FROM fact_purges g WHERE g.source_id=p.source_id AND g.subject='*' ) AS snapshot_global_purges) wd",
-            "textSha256": "51974c9b58998a0c2601892313e337c96b72c1ffdff0dc8697a98fa91c175192"
+            "sql": "WITH chosen AS ( SELECT p.* FROM pages p WHERE p.slug=$1 AND p.source_id=$2 AND p.deleted_at IS NULL AND EXISTS (SELECT 1 FROM sources s WHERE s.id=p.source_id AND NOT s.archived) ORDER BY (p.slug=$3) DESC, (p.source_id=$4) DESC, p.source_id COLLATE \"C\" ASC LIMIT 1 ) SELECT p.*, (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag COLLATE \"C\") FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags, wd.snapshot_withdrawals, wd.snapshot_global_purges, CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '[\\x09-\\x0d \\u0085\\u2000-\\u2006\\u2008-\\u200a\\u2028\\u2029\\u205f\\u3000]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.compiled_truth,chr(10))) WITH ORDINALITY AS lines(line,ord)) END AS fingerprint_body, CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '[\\x09-\\x0d \\u0085\\u2000-\\u2006\\u2008-\\u200a\\u2028\\u2029\\u205f\\u3000]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.timeline,chr(10))) WITH ORDINALITY AS lines(line,ord)) END AS fingerprint_timeline FROM chosen p CROSS JOIN LATERAL (SELECT COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',w.visibility,'fact_hash',w.fact_hash,'withdrawn_at',w.withdrawn_at) ORDER BY w.visibility COLLATE \"C\",w.fact_hash COLLATE \"C\") FROM (SELECT visibility,fact_hash,min(withdrawn_at) AS withdrawn_at FROM fact_withdrawals WHERE source_id=p.source_id AND (subject='*' OR subject=p.slug) GROUP BY visibility,fact_hash) w), '[]'::jsonb) || COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',x.visibility,'fact_hash',x.fact_hash,'withdrawn_at',x.purged_at,'purged',true) ORDER BY x.visibility COLLATE \"C\",x.fact_hash COLLATE \"C\") FROM (SELECT visibility,fact_hash,min(purged_at) AS purged_at FROM fact_purges WHERE source_id=p.source_id AND subject=p.slug GROUP BY visibility,fact_hash) x), '[]'::jsonb) AS snapshot_withdrawals, (SELECT jsonb_build_object('count',count(*),'latest',max(g.purged_at)) FROM fact_purges g WHERE g.source_id=p.source_id AND g.subject='*' ) AS snapshot_global_purges) wd",
+            "textSha256": "93e217cd1bcc57896767f4177e4a434d49a1f96d0a29ff494a7559a9f5e5b41c"
           },
           {
             "lane": "tx",
@@ -1004,8 +1004,8 @@
               "string",
               "string"
             ],
-            "sql": "WITH chosen AS ( SELECT p.* FROM pages p WHERE p.slug=$1 AND p.source_id=$2 AND p.deleted_at IS NULL AND EXISTS (SELECT 1 FROM sources s WHERE s.id=p.source_id AND NOT s.archived) ORDER BY (p.slug=$3) DESC, (p.source_id=$4) DESC, p.source_id ASC LIMIT 1 ) SELECT p.*, (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags, wd.snapshot_withdrawals, wd.snapshot_global_purges, CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.compiled_truth,chr(10))) WITH ORDINALITY AS lines(line,ord)) END AS fingerprint_body, CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.timeline,chr(10))) WITH ORDINALITY AS lines(line,ord)) END AS fingerprint_timeline FROM chosen p CROSS JOIN LATERAL (SELECT COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',w.visibility,'fact_hash',w.fact_hash,'withdrawn_at',w.withdrawn_at) ORDER BY w.visibility,w.fact_hash) FROM (SELECT visibility,fact_hash,min(withdrawn_at) AS withdrawn_at FROM fact_withdrawals WHERE source_id=p.source_id AND (subject='*' OR subject=p.slug) GROUP BY visibility,fact_hash) w), '[]'::jsonb) || COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',x.visibility,'fact_hash',x.fact_hash,'withdrawn_at',x.purged_at,'purged',true) ORDER BY x.visibility,x.fact_hash) FROM (SELECT visibility,fact_hash,min(purged_at) AS purged_at FROM fact_purges WHERE source_id=p.source_id AND subject=p.slug GROUP BY visibility,fact_hash) x), '[]'::jsonb) AS snapshot_withdrawals, (SELECT jsonb_build_object('count',count(*),'latest',max(g.purged_at)) FROM fact_purges g WHERE g.source_id=p.source_id AND g.subject='*' ) AS snapshot_global_purges) wd",
-            "textSha256": "51974c9b58998a0c2601892313e337c96b72c1ffdff0dc8697a98fa91c175192"
+            "sql": "WITH chosen AS ( SELECT p.* FROM pages p WHERE p.slug=$1 AND p.source_id=$2 AND p.deleted_at IS NULL AND EXISTS (SELECT 1 FROM sources s WHERE s.id=p.source_id AND NOT s.archived) ORDER BY (p.slug=$3) DESC, (p.source_id=$4) DESC, p.source_id COLLATE \"C\" ASC LIMIT 1 ) SELECT p.*, (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag COLLATE \"C\") FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags, wd.snapshot_withdrawals, wd.snapshot_global_purges, CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '[\\x09-\\x0d \\u0085\\u2000-\\u2006\\u2008-\\u200a\\u2028\\u2029\\u205f\\u3000]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.compiled_truth,chr(10))) WITH ORDINALITY AS lines(line,ord)) END AS fingerprint_body, CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '[\\x09-\\x0d \\u0085\\u2000-\\u2006\\u2008-\\u200a\\u2028\\u2029\\u205f\\u3000]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.timeline,chr(10))) WITH ORDINALITY AS lines(line,ord)) END AS fingerprint_timeline FROM chosen p CROSS JOIN LATERAL (SELECT COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',w.visibility,'fact_hash',w.fact_hash,'withdrawn_at',w.withdrawn_at) ORDER BY w.visibility COLLATE \"C\",w.fact_hash COLLATE \"C\") FROM (SELECT visibility,fact_hash,min(withdrawn_at) AS withdrawn_at FROM fact_withdrawals WHERE source_id=p.source_id AND (subject='*' OR subject=p.slug) GROUP BY visibility,fact_hash) w), '[]'::jsonb) || COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',x.visibility,'fact_hash',x.fact_hash,'withdrawn_at',x.purged_at,'purged',true) ORDER BY x.visibility COLLATE \"C\",x.fact_hash COLLATE \"C\") FROM (SELECT visibility,fact_hash,min(purged_at) AS purged_at FROM fact_purges WHERE source_id=p.source_id AND subject=p.slug GROUP BY visibility,fact_hash) x), '[]'::jsonb) AS snapshot_withdrawals, (SELECT jsonb_build_object('count',count(*),'latest',max(g.purged_at)) FROM fact_purges g WHERE g.source_id=p.source_id AND g.subject='*' ) AS snapshot_global_purges) wd",
+            "textSha256": "93e217cd1bcc57896767f4177e4a434d49a1f96d0a29ff494a7559a9f5e5b41c"
           },
           {
             "lane": "tx",
@@ -1074,8 +1074,8 @@
             "params": [
               "array<string>"
             ],
-            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
-            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key COLLATE \"C\"",
+            "textSha256": "769515d449bec39db673162dca548d0e70ad07f725759d310db258d735b83f99"
           },
           {
             "lane": "pool",
@@ -1090,8 +1090,8 @@
             "params": [
               "array<string>"
             ],
-            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key",
-            "textSha256": "184bc3b55be10660dc0cf831756fdf4e0a734cefe0a38cb7ce84466d69bb6ce8"
+            "sql": "SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key COLLATE \"C\"",
+            "textSha256": "769515d449bec39db673162dca548d0e70ad07f725759d310db258d735b83f99"
           },
           {
             "lane": "pool",
@@ -1514,8 +1514,8 @@
               "string",
               "string"
             ],
-            "sql": "WITH chosen AS ( SELECT p.* FROM pages p WHERE p.slug=$1 AND p.source_id=$2 AND p.deleted_at IS NULL ORDER BY (p.slug=$3) DESC, (p.source_id=$4) DESC, p.source_id ASC LIMIT 1 ) SELECT p.*, (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags, wd.snapshot_withdrawals, wd.snapshot_global_purges, CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.compiled_truth,chr(10))) WITH ORDINALITY AS lines(line,ord)) END AS fingerprint_body, CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.timeline,chr(10))) WITH ORDINALITY AS lines(line,ord)) END AS fingerprint_timeline FROM chosen p CROSS JOIN LATERAL (SELECT COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',w.visibility,'fact_hash',w.fact_hash,'withdrawn_at',w.withdrawn_at) ORDER BY w.visibility,w.fact_hash) FROM (SELECT visibility,fact_hash,min(withdrawn_at) AS withdrawn_at FROM fact_withdrawals WHERE source_id=p.source_id AND (subject='*' OR subject=p.slug) GROUP BY visibility,fact_hash) w), '[]'::jsonb) || COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',x.visibility,'fact_hash',x.fact_hash,'withdrawn_at',x.purged_at,'purged',true) ORDER BY x.visibility,x.fact_hash) FROM (SELECT visibility,fact_hash,min(purged_at) AS purged_at FROM fact_purges WHERE source_id=p.source_id AND subject=p.slug GROUP BY visibility,fact_hash) x), '[]'::jsonb) AS snapshot_withdrawals, (SELECT jsonb_build_object('count',count(*),'latest',max(g.purged_at)) FROM fact_purges g WHERE g.source_id=p.source_id AND g.subject='*' ) AS snapshot_global_purges) wd",
-            "textSha256": "993c9cf80610982d62aaa83f0b1f333abd84a5c9e2783cece6875b37787c1e45"
+            "sql": "WITH chosen AS ( SELECT p.* FROM pages p WHERE p.slug=$1 AND p.source_id=$2 AND p.deleted_at IS NULL ORDER BY (p.slug=$3) DESC, (p.source_id=$4) DESC, p.source_id COLLATE \"C\" ASC LIMIT 1 ) SELECT p.*, (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag COLLATE \"C\") FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags, wd.snapshot_withdrawals, wd.snapshot_global_purges, CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '[\\x09-\\x0d \\u0085\\u2000-\\u2006\\u2008-\\u200a\\u2028\\u2029\\u205f\\u3000]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.compiled_truth,chr(10))) WITH ORDINALITY AS lines(line,ord)) END AS fingerprint_body, CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '[\\x09-\\x0d \\u0085\\u2000-\\u2006\\u2008-\\u200a\\u2028\\u2029\\u205f\\u3000]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.timeline,chr(10))) WITH ORDINALITY AS lines(line,ord)) END AS fingerprint_timeline FROM chosen p CROSS JOIN LATERAL (SELECT COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',w.visibility,'fact_hash',w.fact_hash,'withdrawn_at',w.withdrawn_at) ORDER BY w.visibility COLLATE \"C\",w.fact_hash COLLATE \"C\") FROM (SELECT visibility,fact_hash,min(withdrawn_at) AS withdrawn_at FROM fact_withdrawals WHERE source_id=p.source_id AND (subject='*' OR subject=p.slug) GROUP BY visibility,fact_hash) w), '[]'::jsonb) || COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',x.visibility,'fact_hash',x.fact_hash,'withdrawn_at',x.purged_at,'purged',true) ORDER BY x.visibility COLLATE \"C\",x.fact_hash COLLATE \"C\") FROM (SELECT visibility,fact_hash,min(purged_at) AS purged_at FROM fact_purges WHERE source_id=p.source_id AND subject=p.slug GROUP BY visibility,fact_hash) x), '[]'::jsonb) AS snapshot_withdrawals, (SELECT jsonb_build_object('count',count(*),'latest',max(g.purged_at)) FROM fact_purges g WHERE g.source_id=p.source_id AND g.subject='*' ) AS snapshot_global_purges) wd",
+            "textSha256": "1801046a492d74d81c99b886a52f3b2c2a2e59434b4c7908a2943a2af22d5a66"
           },
           {
             "lane": "tx",

@@ -28,8 +28,7 @@ const NULL_SCOPE_DOCS = 'docs/mcp/ADMIN.md#tokens-without-scopes';
 
 async function runLegacyTokenGrants(ctx: DoctorContext): Promise<Check[]> {
   const checks: Check[] = [];
-  const rows = await connectedEngine(ctx).executeRaw<Record<string, unknown>>(
-    'SELECT * FROM access_tokens WHERE revoked_at IS NULL ORDER BY created_at, id');
+  const rows = await connectedEngine(ctx).listActiveAccessTokenRows();
   const legacy: Array<{ name: string; id: string; malformed: boolean }> = [];
   const drift: Array<{ name: string; id: string; axes: LegacyGrantAxis[] }> = [];
   const nullScope: Array<{ name: string; id: string; argv: string[] }> = [];

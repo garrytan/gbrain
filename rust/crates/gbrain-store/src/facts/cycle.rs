@@ -3,21 +3,23 @@
 //! fence-repair and entity-card paths ran through `executeRaw`.
 //!
 //! Members: listActiveFactsForEntity, listFreshExtractionOutcomes, listFenceRowGroups, readFactSubject,
-//! listFactsForPage, countLegacyFactsPending, countUnconsolidatedFactsBySource, findBulkFactDays, maxFenceRowNum,
+//! listFactProvenance, factsOrAliasesMayMatch, readFactForForget, listFactsForPage, countLegacyFactsPending, countUnconsolidatedFactsBySource, findBulkFactDays, maxFenceRowNum,
 //! listStoredFenceFactRows, countWorldFacts.
 //!
 //! Each member reads the rows its statement reads, through the indexes `facts.rs` keeps, and returns the columns the
 //! statement selects. A statement with no `ORDER BY` returns its rows in key order here (the TypeScript callers do
 //! not depend on an order). Each fact row keeps its stamped `trust_tier`, and the write gate keeps its receipts
-//! (`trust/write_gate.rs`), so `countWorldFacts` applies the read eligibility (`trust::TrustPolicy`). The facts store
-//! keeps no `needs_rederive` state (`takes.rs` reads it as empty), and no folder rule or `page_readers` column
-//! (`privacy.rs`): a page names readers here only through a `readable_by` key. rust/docs/store/facts.md, "Group 5", lists what each member answers.
+//! (`trust/write_gate.rs`), so `countWorldFacts` applies the read eligibility (`trust::TrustPolicy`) and hides a row a
+//! purge marked in `needs_rederive` (`generations/needs_rederive.rs`). The facts store keeps no `page_readers` column
+//! (`privacy.rs`): a page names readers here only through a `readable_by` key, and sits under a folder through the store's folder rules. rust/docs/store/facts.md, "Group 5", lists what each member answers.
 
+use super::repair::folder_restricted;
 use super::{
-    FactRecord, PrivacyPolicy, ROW, bigint, count_arg, fact_by_number, hidden_by_deleted_page,
-    hidden_by_policy, hidden_by_quarantine, page_rows, real,
+    FactRecord, PrivacyPolicy, ROW, any_entity_slug, bigint, count_arg, fact_by_number,
+    hidden_by_deleted_page, hidden_by_policy, hidden_by_quarantine, page_rows, real,
 };
 use crate::Store;
+use crate::alias_fanout_reads::alias_row_exists;
 use crate::env::iso;
 use crate::error::Result;
 use crate::kv::{KvRead, scan_prefix};
@@ -85,6 +87,34 @@ pub struct ExtractionOutcomeQuery {
 pub struct PageCoordinate {
     pub source_id: String,
     pub slug: String,
+}
+
+/// `readPageFileOrigin` arguments: a page coordinate, and whether a soft-deleted page still answers.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct PageFileOriginQuery {
+    pub source_id: String,
+    pub slug: String,
+    pub include_deleted: bool,
+}
+
+/// `factsOrAliasesMayMatch` arguments: a source, slug tokens and normalised aliases.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MayMatchQuery {
+    pub source_id: String,
+    pub slug_tokens: Vec<String>,
+    pub alias_norms: Vec<String>,
+}
+
+/// `entity_slug ~ '(^|/)token(-|$)'`: `token` starts the slug or follows a `/`, and ends it or is followed by a `-`.
+/// A token is slugify output, so it holds no regex metacharacter.
+fn slug_segment_match(slug: &str, token: &str) -> bool {
+    slug.match_indices(token).any(|(i, _)| {
+        let before = i == 0 || slug.as_bytes()[i - 1] == b'/';
+        let after = slug.as_bytes().get(i + token.len());
+        before && after.is_none_or(|b| *b == b'-')
+    })
 }
 
 /// `readFenceRowOccupant` arguments: a page coordinate and a row number.
@@ -297,6 +327,49 @@ impl Store {
         )
     }
 
+    /// `factsOrAliasesMayMatch` (src/commands/recall.ts `splitMayMatch`): whether a fact of the source is keyed under a
+    /// slug a token matches (`slug_segment_match`), or a page alias row of the source is a listed alias.
+    pub fn facts_or_aliases_may_match(&self, q: &MayMatchQuery) -> Result<bool> {
+        let texts = q.slug_tokens.iter().chain(&q.alias_norms);
+        let mut items = vec![("sourceId", q.source_id.as_str())];
+        items.extend(texts.map(|t| ("token", t.as_str())));
+        no_nul("factsOrAliasesMayMatch", &items)?;
+        let read = self.read()?;
+        if !q.slug_tokens.is_empty()
+            && any_entity_slug(&*read, &q.source_id, &|slug| {
+                q.slug_tokens.iter().any(|t| slug_segment_match(slug, t))
+            })?
+        {
+            return Ok(true);
+        }
+        for alias in &q.alias_norms {
+            if alias_row_exists(&*read, &q.source_id, alias)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// `readFactForForget` (src/core/facts/forget.ts): `{ id, source_id, entity_slug, row_num, source_markdown_slug,
+    /// expired_at, visibility }` of fact `id`, `expired_at` as `iso` text the TypeScript member turns into a `Date`, or
+    /// null for no such row.
+    pub fn read_fact_for_forget(&self, id: f64) -> Result<Value> {
+        let read = self.read()?;
+        Ok(
+            fact_by_number(&*read, "readFactForForget", "id", id)?.map_or(Value::Null, |r| {
+                json!({
+                    "id": r.id,
+                    "source_id": r.source_id,
+                    "entity_slug": r.entity_slug,
+                    "row_num": r.row_num,
+                    "source_markdown_slug": r.source_markdown_slug,
+                    "expired_at": r.expired_at_us.map(iso),
+                    "visibility": r.visibility,
+                })
+            }),
+        )
+    }
+
     /// `listFactsForPage` (src/core/cycle/extract-facts.ts): the fence-owned rows of a page coordinate, by
     /// `row_num` (rows without one last) then id. Each row carries the 17 columns the statement selects and
     /// `has_embedding`; the times are `iso` text, which the TypeScript member turns into `Date`s.
@@ -384,10 +457,15 @@ impl Store {
             {
                 continue;
             }
-            // `readersSourcedFactSql`: the row's own page (deleted or not) names readers.
+            // `readersSourcedFactSql`: the row's own page (deleted or not) names readers or sits
+            // under a folder rule or a pending prefix.
             let readers = match &row.source_markdown_slug {
-                Some(slug) => read_page(&*read, &row.source_id, slug)?
-                    .is_some_and(|p| p.frontmatter.contains_key("readable_by")),
+                Some(slug) => match read_page(&*read, &row.source_id, slug)? {
+                    Some(p) => {
+                        p.frontmatter.contains_key("readable_by") || folder_restricted(&*read, &p)?
+                    }
+                    None => false,
+                },
                 None => false,
             };
             if !readers {
@@ -483,6 +561,39 @@ impl Store {
             .max(0))
     }
 
+    /// `readPageFileOrigin` (src/core/facts/unfenced-facts.ts, facts-home.ts, write-through.ts): `{ source_path,
+    /// source_uri }` of the coordinate's page, or null for no page. A soft-deleted page answers only with
+    /// `includeDeleted`.
+    pub fn read_page_file_origin(&self, q: &PageFileOriginQuery) -> Result<Value> {
+        no_nul(
+            "readPageFileOrigin",
+            &[("sourceId", &q.source_id), ("slug", &q.slug)],
+        )?;
+        let read = self.read()?;
+        Ok(read_page(&*read, &q.source_id, &q.slug)?
+            .filter(|p| q.include_deleted || p.deleted_at_us.is_none())
+            .map_or(
+                Value::Null,
+                |p| json!({ "source_path": p.source_path, "source_uri": p.source_uri }),
+            ))
+    }
+
+    /// `readLiveStoredBody` (src/core/facts/file-body-guard.ts `readStoredBody`): `{ compiled_truth, timeline }` of
+    /// the live page, or null for a deleted or missing page. A segmented page reads null columns, as PGLite's do. The
+    /// caller's row lock is the store's writer gate, which a `transaction` already holds, so the read takes no lock.
+    pub fn read_live_stored_body(&self, q: &PageCoordinate) -> Result<Value> {
+        no_nul(
+            "readLiveStoredBody",
+            &[("sourceId", &q.source_id), ("slug", &q.slug)],
+        )?;
+        let read = self.read()?;
+        Ok(read_page(&*read, &q.source_id, &q.slug)?
+            .filter(|p| p.deleted_at_us.is_none())
+            .map_or(Value::Null, |p| {
+                json!({ "compiled_truth": p.compiled_truth.as_deref(), "timeline": p.timeline.as_deref() })
+            }))
+    }
+
     /// `readFenceRowOccupant` (src/core/facts/fence-fact-append.ts): the id of the row of a page
     /// coordinate that holds `rowNum`, the oldest when several do, or none.
     pub fn read_fence_row_occupant(&self, q: &FenceRowOccupantQuery) -> Result<Option<u64>> {
@@ -533,6 +644,7 @@ impl Store {
                     && !hidden_by_policy(&*read, &row, &q.exclude_private)?
                     && !hidden_by_deleted_page(&*read, &row)?
                     && !hidden_by_quarantine(&*read, &row)?
+                    && !super::hidden_by_rederive(&*read, &row)?
                     && trust.admits(&*read, "facts", row.id, row.tier())?
                 {
                     count += 1;
@@ -540,5 +652,24 @@ impl Store {
             }
         }
         Ok(count)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::slug_segment_match;
+
+    #[test]
+    fn a_token_matches_a_slug_segment_start_as_the_regex_does() {
+        // `(^|/)token(-|$)`, as recall's split pre-check reads entity_slug.
+        assert!(slug_segment_match("companies/acme-example", "acme-example"));
+        assert!(slug_segment_match("companies/acme-example", "acme"));
+        assert!(slug_segment_match("acme-example", "acme"));
+        assert!(slug_segment_match("companies/acme", "acme"));
+        assert!(!slug_segment_match("companies/acme-example", "example"));
+        assert!(!slug_segment_match("companies/acme-example", "acme-ex"));
+        assert!(!slug_segment_match("companies/acmes", "acme"));
+        // A later occurrence counts when the first does not.
+        assert!(slug_segment_match("x-acme/acme-y", "acme"));
     }
 }

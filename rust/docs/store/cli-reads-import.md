@@ -3,7 +3,7 @@
 Part of the store contract in [rust/README.md](../../README.md) ("The brain store"): the rules there apply to every method here.
 
 These are the reads that the CLI import and extract paths ran through `executeRaw`
-([docs/research/rust-cli-executeraw-map.md](../../../docs/research/rust-cli-executeraw-map.md)).
+(the `executeRaw` map in the Rust engine branch's research notes; it is not on master).
 PGLite and Postgres run the same SQL as before, now in `src/core/engine-sql/cli-reads-import.ts`.
 The store answers from its source, page and timeline records (`crates/gbrain-store/src/cli_reads/import.rs`)
 and has no keys of its own.
@@ -27,8 +27,6 @@ and has no keys of its own.
 
 Each answer below is what Postgres gives for a brain that never wrote the missing data.
 
-- **Commit columns.** `last_commit` and `newest_content_at` are the values `advanceSourceCommit`
-  stored, or `null` before the first git sync.
 - **Ingestion receipts.** The store keeps no `source_ingestion_receipts`, so `hasCompanyBrainReceipt` is `false`.
   The company-brain profile then reads the source as one that has not finished an ingestion.
 - **Guest sources.** The store has no `guest_sources` table and no row-level security. A guest source is a source
@@ -50,7 +48,8 @@ Each answer below is what Postgres gives for a brain that never wrote the missin
   the same activation test as a page, on the row's own receipts. A fact or take is `contested` when a pending
   `supersede_fact` or `supersede_take` proposal names it (`trust::proposals::contested_ref`, the lowest id first):
   `tp<id>:challenger` when it is the proposal's related row, `tp<id>:challenged` otherwise. A timeline row is never
-  contested.
+  contested. Each row's `write_origin` reads in jsonb key order (`pg_text::jsonb_value`), as the column
+  returns it.
 - **Knowledge revision.** Every stored page has a UUID `knowledge_revision`; it is never `null`. The extract stamp's
   "no revision" sentinel therefore never matches a store page, as it never matches a Postgres page written since the
   column became `NOT NULL`.

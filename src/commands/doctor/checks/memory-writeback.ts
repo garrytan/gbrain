@@ -53,6 +53,7 @@ import {
   codexAgentsOverridePath,
   codexGlobalAgentsPath,
 } from '../../../core/bootstrap/host-specs.ts';
+import { capabilityRefusal } from '../budget.ts';
 
 export const MEMORY_WRITEBACK_CHECK_NAME = 'memory_writeback';
 
@@ -129,8 +130,8 @@ async function sessionCorpusDir(engine: BrainEngine, fileCfg: ReturnType<typeof 
  * preview command. Records `details.corpus_source_holds`.
  */
 async function corpusSourceHoldProblem(engine: BrainEngine, fileCfg: ReturnType<typeof loadConfig>, details: Record<string, unknown>): Promise<string | null> {
-  const sources = await engine.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id LIMIT 2');
-  const holds = listCorpusSourceHolds(await sessionCorpusDir(engine, fileCfg), sources.length === 1, { includeIngested: true });
+  const sole = (await engine.readSoleSourceId()) !== null;
+  const holds = listCorpusSourceHolds(await sessionCorpusDir(engine, fileCfg), sole, { includeIngested: true });
   details.corpus_source_holds = { legacy_unstamped: holds.legacy_unstamped, unresolved: holds.unresolved, sessions: holds.sessions.length };
   const held = holds.legacy_unstamped + holds.unresolved;
   if (held === 0) return null;
@@ -210,6 +211,20 @@ const CORPUS_RETRY_FIX = {
   user_message: 'Some captured session text stopped being turned into memory because extracting it kept failing (gbrain doctor names the error). Once the cause is fixed, retrying costs model calls. OK to retry them?',
   verify: { argv: ['gbrain', 'doctor', '--only', MEMORY_WRITEBACK_CHECK_NAME, '--json'] },
 };
+
+/**
+ * details.validity_lapsed_facts: facts past their valid_until that nothing expired (read-time TTL, WP5), from the typed
+ * count (engine-sql/doctor-tallies.ts), so a Rust brain answers it. A pre-facts brain omits it (undefined); an engine
+ * that cannot count reports it unknown instead of omitting it.
+ */
+export async function validityLapsedFactsDetail(engine: BrainEngine): Promise<number | Record<string, unknown> | undefined> {
+  try {
+    return await engine.countValidityLapsedFacts();
+  } catch (e) {
+    const refusal = capabilityRefusal(e);
+    return refusal ? { health: 'unknown', reason: 'engine_capability_missing', capability: refusal.reason ?? null } : undefined;
+  }
+}
 
 export async function buildMemoryWritebackCheck(engine: BrainEngine | null): Promise<Check> {
   try {
@@ -407,12 +422,8 @@ export async function buildMemoryWritebackCheck(engine: BrainEngine | null): Pro
     } catch { /* receipt probe is best-effort */ }
 
     // Validity-lapsed facts (read-time TTL, WP5) — informational.
-    try {
-      const rows = await engine.executeRaw<{ n: number | string }>(
-        `SELECT count(*)::int AS n FROM facts WHERE valid_until <= now() AND expired_at IS NULL`,
-      );
-      details.validity_lapsed_facts = Number(rows[0]?.n ?? 0);
-    } catch { /* pre-facts brains */ }
+    const lapsed = await validityLapsedFactsDetail(engine);
+    if (lapsed !== undefined) details.validity_lapsed_facts = lapsed;
 
     // remember outcomes over MCP (ALL callers) — verbs usage sidecar.
     try {

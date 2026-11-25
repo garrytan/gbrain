@@ -26,15 +26,19 @@
  *    readings are compared only as present or absent. Submissions are 2 ms apart so created_at never ties.
  */
 import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { AdmitJobPolicy, AdmitJobSpec, ClaimJobSpec, JobInsertValues, JobRow } from '../../src/core/engine-sql/jobs.ts';
 import type { JobAttachmentInsert, JobStatsRead, RetryJobPolicy } from '../../src/core/engine-sql/jobs-queue.ts';
-import { APPLICATION_AUTHORITY, authorityDigest, coalesceDecision, parseSubmissionAuthority, type SubmissionAuthority } from '../../src/core/minions/submission-authority.ts';
+import { APPLICATION_AUTHORITY, authorityDigest, authorizeJobExecution, coalesceDecision, parseSubmissionAuthority, prepareRemoteJob, type SubmissionAuthority } from '../../src/core/minions/submission-authority.ts';
+import type { OperationContext } from '../../src/core/ops/contract.ts';
 import { WATCHDOG_SUSPECT_MARK } from '../../src/core/minions/watchdog-attribution.ts';
 import { admitDelegatedRetry, checkDelegatedCapacity } from '../../src/core/minions/delegated-admission.ts';
 import { MinionQueue } from '../../src/core/minions/queue.ts';
-import { parityArms, sorted } from './harness.ts';
+import { archiveSource, createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -645,8 +649,7 @@ describe('engine parity: minion queue', () => {
       };
     });
 
-  // The retry policy runs on a handle that serves the job reads and the open-job count; any other read, like this
-  // listJobs, makes the Rust arm stop on the typed refusal before the store writes.
+  // The retry policy runs in the retry's transaction on every arm, so any engine read it makes (this listJobs) answers.
   parityTest('retryJob runs a delegated client\'s retry policy through the retry transaction',
     { methods: ['admitJob', 'claimNextJob', 'failJob', 'retryJob'] }, async (engine) => {
       const id = await finished(engine, 'failed', 'failed');
@@ -697,6 +700,48 @@ describe('engine parity: minion queue', () => {
         sameStamp: !!state && !!created && state.created_at.toISOString() === new Date(created).toISOString(),
         unknown: await engine.readJobSourceState('no-such-source'),
       };
+    });
+
+  // A generic remote submit (sync, import, lint) reads its source's registration (archived, root, config, creation
+  // stamp) through readJobSourceState, at acceptance and again when the job runs; a Rust brain answers it from its store.
+  parityTest('a remote import submit by an OAuth client reads its source registration through readJobSourceState, and refuses an archived, connector, relative or missing source',
+    { methods: ['readJobSourceState', 'readOauthClient', 'insertOauthClient', 'getSource'] }, async (engine, backend) => {
+      const scratch = mkdtempSync(join(tmpdir(), 'gbrain-remote-submit-'));
+      try {
+        const root = join(scratch, 'checkout');
+        mkdirSync(root);
+        await createSource(engine, backend, 'job-src', {}, root);
+        await createSource(engine, backend, 'job-connector', { kind: 'example-connector' }, root);
+        await createSource(engine, backend, 'job-relative', {}, 'relative/checkout');
+        await createSource(engine, backend, 'job-archived', {}, root);
+        await archiveSource(engine, backend, 'job-archived');
+        const ctx = (sourceId: string) => {
+          const clientId = `submit-${sourceId}`;
+          return { engine, remote: true, sourceId,
+            auth: { token: 'fixture-token', clientId, principal: { kind: 'oauth_client', id: clientId }, scopes: ['admin'], sourceId } } as unknown as OperationContext;
+        };
+        for (const id of ['job-src', 'job-connector', 'job-relative', 'job-archived']) {
+          await engine.insertOauthClient({ client_id: `submit-${id}`, client_name: `submit-${id}`, grant_types: ['client_credentials'], scope: 'admin', source_id: id });
+        }
+        const canonical = realpathSync(root);
+        const scrub = (v: unknown) => JSON.parse(JSON.stringify(v).split(canonical).join('<root>')) as unknown;
+        const accepted = await prepareRemoteJob(ctx('job-src'), 'import', {});
+        const created = (await engine.getSource('job-src'))?.created_at;
+        const grant = accepted.authority.grant as unknown as Record<string, unknown>;
+        const rechecked = await denied(() => authorizeJobExecution(engine, { name: 'import', data: accepted.data, submission_authority: accepted.authority } as never));
+        return {
+          data: scrub(accepted.data),
+          grant: scrub({ ...grant, sourceCreatedAt: undefined }),
+          sameStamp: !!created && grant.sourceCreatedAt === new Date(created).toISOString(),
+          rechecked,
+          connector: await denied(() => prepareRemoteJob(ctx('job-connector'), 'import', {})),
+          relative: await denied(() => prepareRemoteJob(ctx('job-relative'), 'lint', {})),
+          archived: await denied(() => prepareRemoteJob(ctx('job-archived'), 'import', {})),
+          missing: await denied(() => prepareRemoteJob(ctx('job-missing'), 'import', {})),
+        };
+      } finally {
+        rmSync(scratch, { recursive: true, force: true });
+      }
     });
 
   /** A failed agent (`remote_agent`) job accepted against `sourceId` as created at `sourceCreatedAt`. */
@@ -874,14 +919,74 @@ describe('engine parity: minion queue', () => {
       // S1 is touched last, so it sorts after S2 and S3 despite being created first.
       await engine.pauseJob(s1);
       await engine.resumeJob(s1);
+      // The hours=0 cut-off is now(): PGLite's clock ticks in milliseconds, so a read in the resume's millisecond saw
+      // S1's updated_at equal to now() and left it out, while Postgres and Rust (microseconds) kept it. Let the clock
+      // move past the resume, so every arm reads S1 as older than the cut-off.
+      await Bun.sleep(20);
       const r$ = (ids: number[]) => ids.map(id => id - s1);
-      return {
+      const out = {
         all: r$(await engine.listStaleWaitingJobIds('stale', -1, 10)), limited: r$(await engine.listStaleWaitingJobIds('stale', -1, 2)),
         now: r$(await engine.listStaleWaitingJobIds('stale', 0, 10)), fresh: await engine.listStaleWaitingJobIds('stale', 24, 10),
         other: r$(await engine.listStaleWaitingJobIds('other', -1, 10)), nobody: await engine.listStaleWaitingJobIds('nobody', -1, 10), zero: await engine.listStaleWaitingJobIds('stale', -1, 0),
         counts: [await engine.countTtlExpiredWaiting('stale', -1), await engine.countTtlExpiredWaiting('stale', 0), await engine.countTtlExpiredWaiting('stale', 24), await engine.countTtlExpiredWaiting('other', -1), await engine.countTtlExpiredWaiting('nobody', -1)],
         ids: r$([s2, s3, other, running]),
       };
+      const [d2, d3] = out.ids;
+      expect({ now: out.now, countNow: out.counts[1] }).toEqual({ now: [d2, d3, 0], countNow: 3 });
+      return out;
+    });
+
+  parityTest('the hours=0 stale read and count include a waiting job resumed just before them, round after round',
+    { methods: ['admitJob', 'pauseJob', 'resumeJob', 'listStaleWaitingJobIds', 'countTtlExpiredWaiting'], timeout: 120_000 }, async (engine) => {
+      // Ten resume-then-read rounds: before the clock moved past the resume, PGLite left the resumed job out of about
+      // half of them, so this failed on PGLite on almost every run.
+      const rounds: Array<{ listed: boolean; counted: number }> = [];
+      for (let i = 0; i < 10; i++) {
+        const name = `tie-${i}`;
+        await add(engine, name);
+        const resumed = await add(engine, name);
+        await engine.pauseJob(resumed);
+        await engine.resumeJob(resumed);
+        await Bun.sleep(20);
+        rounds.push({ listed: (await engine.listStaleWaitingJobIds(name, 0, 10)).includes(resumed), counted: await engine.countTtlExpiredWaiting(name, 0) });
+      }
+      expect(rounds).toEqual(Array(10).fill({ listed: true, counted: 2 }));
+      return rounds;
+    });
+
+  parityTest('listUnfinishedJobsByName lists every unfinished job of the names by id, whatever its status, and no finished one',
+    { methods: ['admitJob', 'claimNextJob', 'completeJob', 'failJob', 'pauseJob', 'cancelJobs', 'listUnfinishedJobsByName'] }, async (engine) => {
+      const waiting = await add(engine, 'm-waiting');
+      const running = await active(engine, 'm-active', 'w1:a');
+      const delayed = await add(engine, 'm-delayed', { status: 'delayed', delay_until: FAR });
+      const paused = await add(engine, 'm-paused');
+      await engine.pauseJob(paused);
+      // A parent waiting on children is inserted directly; the insert type lists only the two statuses a submission makes.
+      const children = await add(engine, 'm-children', { status: 'waiting-children' as unknown as 'waiting' });
+      const done = await finished(engine, 'm-done', 'completed');
+      const failed = await finished(engine, 'm-failed', 'failed');
+      const dead = await finished(engine, 'm-dead', 'dead');
+      const cancelled = await add(engine, 'm-cancelled');
+      await engine.cancelJobs([cancelled]);
+      const second = await add(engine, 'm-waiting');
+      const outside = await add(engine, 'm-elsewhere');
+      const names = ['m-waiting', 'm-active', 'm-delayed', 'm-paused', 'm-children', 'm-done', 'm-failed', 'm-dead', 'm-cancelled'];
+      const view = (rows: Array<{ id: number; name: string; status: string }>) => rows.map(r => ({ id: r.id - waiting, name: r.name, status: r.status }));
+      return {
+        all: view(await engine.listUnfinishedJobsByName(names)),
+        some: view(await engine.listUnfinishedJobsByName(['m-paused', 'm-done', 'm-waiting'])),
+        finishedOnly: await engine.listUnfinishedJobsByName(['m-done', 'm-failed', 'm-dead', 'm-cancelled']),
+        nobody: await engine.listUnfinishedJobsByName(['nobody']), none: await engine.listUnfinishedJobsByName([]),
+        ids: [waiting, running, delayed, paused, children, done, failed, dead, cancelled, second, outside].map(id => id - waiting),
+      };
+    });
+
+  parityTest('listUnfinishedJobsByName reads every matching job in one go: 1,001 waiting jobs of one name come back whole, by id',
+    { methods: ['admitJob', 'listUnfinishedJobsByName'], timeout: 180_000 }, async (engine) => {
+      const first = await add(engine, 'm-many');
+      for (let i = 1; i < 1001; i++) await admit(engine, { insert: values('m-many') });
+      const rows = await engine.listUnfinishedJobsByName(['m-many']);
+      return { count: rows.length, ordered: rows.every((r, i) => i === 0 || rows[i - 1]!.id < r.id), first: rows[0]!.id - first, last: rows[1000]!.id - first, statuses: [...new Set(rows.map(r => r.status))] };
     });
 
   parityTest('readJobStats counts by status, name, drain and queue depth, the stalled leases and one queue\'s wedge signature',
@@ -999,8 +1104,8 @@ describe('engine parity: minion queue', () => {
       return { atLimit: await outcome(2), under: await outcome(3), unlimited: await outcome(null) };
     });
 
-  // PGLite and Postgres lock the client's oauth_clients row (none here, so nothing is locked); the Rust store keeps no
-  // OAuth rows and does not serve the member, so the Rust arm stops on the typed refusal.
+  // PGLite and Postgres lock the client's oauth_clients row (none here, so nothing is locked); the Rust store admits one
+  // write at a time, so the lock holds nothing more and the call resolves the same way.
   parityTest('lockOAuthClient resolves for a client with no OAuth row',
     { methods: ['lockOAuthClient'] }, async (engine) => ({ locked: (await engine.lockOAuthClient('nobody-example')) ?? null }));
 

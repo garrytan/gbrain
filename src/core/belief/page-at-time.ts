@@ -241,7 +241,7 @@ async function withBodies(engine: BrainEngine, lifetimes: Array<{ lifetime: stri
 async function livePage(engine: BrainEngine, pageId: number, withText: boolean) {
   const [row] = await engine.executeRaw<Record<string, unknown>>(`SELECT p.title, p.type, p.frontmatter, p.body_storage, ${withText ? 'p.compiled_truth, p.timeline' : 'NULL::text AS compiled_truth, NULL::text AS timeline'}, p.trust_tier,
       COALESCE(p.body_bytes, octet_length(COALESCE(p.compiled_truth, '')) + octet_length(COALESCE(p.timeline, ''))) AS body_bytes,
-      COALESCE((SELECT json_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id = p.id), '[]'::json) AS tags
+      COALESCE((SELECT json_agg(t.tag ORDER BY t.tag COLLATE "C") FROM tags t WHERE t.page_id = p.id), '[]'::json) AS tags
     FROM pages p WHERE p.id = $1`, [pageId]);
   const segmented = row!.body_storage === 'segmented';
   return { segmented, view: { title: (row!.title as string | null) ?? null, type: (row!.type as string | null) ?? null,

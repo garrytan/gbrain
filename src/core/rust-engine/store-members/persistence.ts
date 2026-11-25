@@ -1,14 +1,14 @@
 /**
  * The write-journal members the Rust store answers: the state reads (readManagedModeRows, readLocalWriterRow,
- * insertLocalWriterRow, readJournalLimitRows; the held-file reads are in sync-hold-store.ts), the request rows the put path
+ * insertLocalWriterRow, revokeLocalWriterRow, readJournalLimitRows; the held-file reads are in sync-hold-store.ts), the request rows the put path
  * reads and writes (readWriteRequest, readWriteRequestById, listWriteRequestRows, readWriteRequestProgress, countOutstandingBySource, ownsSchemaTables, readOAuthClientWriteGrant, readAccessTokenWriteGrant, shareLockWriteCredential, readCounterRows, readAdmissionRate, lockPersistenceCounters, insertWriteRequest,
  * insertWriteRequestGroup, readWriteRequestsByRequestIds, readOwnerHostBinding,
  * stampWriteClaim, lockWriteRequest, completeWriteRow, cancelWriteRow), the claim upkeep (renewWriteClaim, expireStaleWriteClaims,
  * hasClaimableWrite), the consumer rows (listHostConsumerRows, probeLiveConsumerRows, renewConsumerRow,
  * deleteConsumerRow, stampWorktreeHeartbeats), the admission reads (readSourceMembership, findTopologyChanges), the topology recovery scan (listTopologyRecoveries), the lifecycle receipts
  * (readTopologyChange, insertTopologyChange) and readLedgerSource, and the effects a publication or a managed-request
- * withdrawal queues (insertPublicationEffects, insertWithdrawalEffects), and the dream cycle's journal reads
- * (readDreamDeferralReceipt, listLaterPersistenceRequests, listCommittedOutputRequests).
+ * withdrawal queues (insertPublicationEffects, insertWithdrawalEffects). The dream cycle's journal reads
+ * (readDreamDeferralReceipt, listLaterPersistenceRequests, listCommittedOutputRequests) are in dream-journal.ts.
  *
  * Each store call is one store write transaction, so the row locks PGLite takes (FOR SHARE, FOR UPDATE, the counter
  * lock) change nothing here: no other write can run between the read and the write that follows it. The callers that
@@ -17,25 +17,30 @@
  * What each member answers and why: rust/docs/store/journal.md ("TypeScript journal members") and
  * rust/docs/store/persistence.md.
  */
+import type { RemirrorEffectState } from '../../engine-sql/segmented-mirror-effects.ts';
 import type { LocalWriterInsert, LocalWriterRow } from '../../engine-sql/persistence-state.ts';
-import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestGroupInsert, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress } from '../../engine-sql/persistence-journal.ts';
+import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestGroupInsert, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress, HeldCoverageRow, TerminalIntentCompaction } from '../../engine-sql/persistence-journal.ts';
 import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from '../../engine-sql/persistence-claims.ts';
 import type { LedgerSource } from '../../engine-sql/belief.ts';
 import type { SourceStateRow } from '../../engine-sql/write-misc.ts';
 import type { SourceCheckoutRoot, UnembeddedPageSummary, WriteWatermarkRow } from '../../engine-sql/applied-watermark-reads.ts';
 import type { SourceDetailRow } from '../../engine.ts';
 import type { WriteRequest } from '../../persistence/model.ts';
+import type { DreamDeferralReceipt } from '../../engine-sql/dream-cycle.ts';
 import { PAGE_BODY_CONFIG_KEYS } from '../../page-body/limits.ts';
-import { requestJsonRow, requestRow, topologyRow } from '../store-codec.ts';
+import { requestRow, topologyRow, uuidText, withDates } from '../store-codec.ts';
 import { withdrawalEffectsData } from '../../engine-sql/persistence-journal.ts';
 import { requireTextColumn, storeCall, type StoreMember } from './common.ts';
 import type { RustEngine } from '../../rust-engine.ts';
 import type { StoreBrain } from '../store.ts';
+import { readOauthClient } from './jobs-oauth-clients.ts';
+import { readBrainMode } from './writer-release.ts';
 // The managed-worktree admission members (managed_persistence), served beside the journal's.
 export * from './persistence-admission.ts';
 
-/** The store keeps no managed brains: a brain on this engine is always unmanaged, one singleton row. */
-export const readManagedModeRows: StoreMember<[], Array<{ enabled: unknown }>> = async () => [{ enabled: false }];
+/** The one singleton row with the stored brain mode (gbrain-store `persistence::worktrees::release`; classic until activated). */
+export const readManagedModeRows: StoreMember<[], Array<{ enabled: unknown }>> = async (brain) =>
+  [{ enabled: (await readBrainMode(brain, 'readManagedModeRows')).enabled }];
 
 /**
  * The registration row of a local writer, or undefined. `lock` asks PGLite for FOR SHARE so a revocation waits; the
@@ -55,6 +60,10 @@ export const insertLocalWriterRow: StoreMember<[row: LocalWriterInsert], boolean
   storeCall({ member: 'insertLocalWriterRow' }, () => brain.insertLocalWriterRow({
     id: row.id, lane: row.lane, credentialHash: row.credentialHash, grantCeiling: row.grant,
   }));
+
+/** Revokes a local writer, keeping an earlier revocation time; true when the store holds the registration. */
+export const revokeLocalWriterRow: StoreMember<[id: string], boolean> = (brain, id) =>
+  storeCall({ member: 'revokeLocalWriterRow' }, () => brain.revokeLocalWriter(id));
 
 /** `config` keys `LIKE 'persistence.limits.%'`: the prefix, then anything (no `_` in it, so no single-character wildcard). */
 const LIMITS_PREFIX = 'persistence.limits.';
@@ -111,36 +120,16 @@ export const listWriteRequestRows: StoreMember<[principalKind: string, principal
     return rows.map(row => requestRow<WriteRequest>(row)!);
   };
 
-/** The dream write deferral's receipt (state and recorded error) by journal id, or null (engine-sql/dream-cycle.ts). */
-export const readDreamDeferralReceipt: StoreMember<[receiptId: string], { state: string; error_code: string | null; error_message: string | null } | null> =
-  async (brain, receiptId) => {
-    const row = await storeCall({ member: 'readDreamDeferralReceipt' }, () => brain.readWriteRequestById(receiptId)) as WriteRequest | null;
-    return row ? { state: row.state, error_code: row.error_code ?? null, error_message: row.error_message ?? null } : null;
-  };
-
-const LATER_REQUEST_STATES = ['queued', 'running', 'recovering', 'committed'];
-
-/** Queued, running, recovering or committed requests on `slug` after `sequence` in one source incarnation, oldest first. */
-export const listLaterPersistenceRequests: StoreMember<[sourceId: string, incarnation: string, slug: string, sequence: number | string], WriteRequest[]> =
-  async (brain, sourceId, incarnation, slug, sequence) => {
-    const rows = await storeCall({ member: 'listLaterPersistenceRequests' }, () => brain.listIncarnationRequests({
-      sourceId, incarnation, slug, afterSequence: String(sequence), states: LATER_REQUEST_STATES, newestFirst: false,
-    })) as unknown[];
-    return rows.map(row => requestRow<WriteRequest>(row)!);
-  };
-
-/** The committed put_page rows of `requestIds` in one source incarnation, newest first, each as `row_to_json` prints it. */
-export const listCommittedOutputRequests: StoreMember<[requestIds: string[], sourceId: string, incarnation: string], Array<{ request: WriteRequest }>> =
-  async (brain, requestIds, sourceId, incarnation) => {
-    const rows = await storeCall({ member: 'listCommittedOutputRequests' }, () => brain.listIncarnationRequests({
-      sourceId, incarnation, requestIds, states: ['committed'], operation: 'put_page', newestFirst: true,
-    })) as unknown[];
-    return rows.map(row => ({ request: requestJsonRow<WriteRequest>(row) }));
-  };
-
 /** The request with journal id `id`, or null. `signal` changes nothing: the read does not wait on anything. */
 export const readWriteRequestById: StoreMember<[id: string, opts?: { signal?: AbortSignal }], WriteRequest | null> =
   async (brain, id) => requestRow(await storeCall({ member: 'readWriteRequestById' }, () => brain.readWriteRequestById(id)));
+
+/** The requests admitted under any of the client request ids `requestIds`, by sequence. */
+export const listWriteRequestsByRequestIds: StoreMember<[requestIds: readonly string[]], WriteRequest[]> = async (brain, requestIds) => {
+  if (!requestIds.length) return [];
+  const rows = await storeCall({ member: 'listWriteRequestsByRequestIds' }, () => brain.listWriteRequestsByRequestIds([...requestIds])) as unknown[];
+  return rows.map(row => requestRow<WriteRequest>(row)!);
+};
 
 /**
  * The progress columns of request `id`, or null: the columns PGLite's WRITE_PROGRESS_SQL selects, taken from the
@@ -161,12 +150,21 @@ export const countOutstandingBySource: StoreMember<[principalKind: string, princ
 export const ownsSchemaTables: StoreMember<[], boolean> = async () => true;
 
 /**
- * The Rust store keeps no OAuth clients or legacy access tokens (its writers are local_cli and local_stdio), so a
- * write owned by either finds no live grant row, as a Postgres or PGLite brain without that credential does.
+ * The grant row of the OAuth client or legacy access token that owns a write, deleted or revoked rows included (the
+ * caller reads `deleted_at` and `revoked_at`, as Dates), or null; gbrain-store `jobs::credential_binding`. `lock`
+ * changes nothing: the store runs one write transaction at a time, so no revocation can land between the read and the
+ * write.
  */
-export const readOAuthClientWriteGrant: StoreMember<[clientId: string, opts?: { lock?: boolean }], OAuthClientWriteGrant | null> = async () => null;
-export const readAccessTokenWriteGrant: StoreMember<[tokenId: string, opts?: { lock?: boolean }], AccessTokenWriteGrant | null> = async () => null;
-/** No credential row exists to hold, so the lock holds nothing (a missing row locks nothing on Postgres either). */
+export const readOAuthClientWriteGrant: StoreMember<[clientId: string, opts?: { lock?: boolean }], OAuthClientWriteGrant | null> = async (brain, clientId) => {
+  const row = await storeCall({ member: 'readOAuthClientWriteGrant' }, () => brain.readOauthClientWriteGrant(clientId)) as OAuthClientWriteGrant | null;
+  return row ? withDates(row, ['deleted_at']) : null;
+};
+export const readAccessTokenWriteGrant: StoreMember<[tokenId: string, opts?: { lock?: boolean }], AccessTokenWriteGrant | null> = async (brain, tokenId) => {
+  const id = uuidText(tokenId);
+  const row = await storeCall({ member: 'readAccessTokenWriteGrant' }, () => brain.readAccessTokenWriteGrant(id)) as AccessTokenWriteGrant | null;
+  return row ? withDates(row, ['revoked_at']) : null;
+};
+/** The store runs one write transaction at a time, so the share lock has nothing to hold off. */
 export const shareLockWriteCredential: StoreMember<[kind: 'oauth_client' | 'legacy_token', id: string], void> = async () => {};
 
 /** The existing counter rows of `keys` in key byte order (`COLLATE "C"`), unlocked; a missing key has no row. */
@@ -242,6 +240,30 @@ export const stampWriteClaim: StoreMember<[id: string, token: string, leaseMs: n
 export const completeWriteRow: StoreMember<[completion: WriteCompletion], CompletedWriteRow | null> = async (brain, completion) =>
   requestRow<CompletedWriteRow>(await storeCall({ member: 'completeWriteRow' }, () => brain.completeWriteRow(completion)));
 
+/** The cancellation in one store write: the read, the check and the completion; null when the row does not exist. */
+export const cancelWriteRow: StoreMember<[cancel: WriteCancellation], WriteCancelResult | null> = async (brain, cancel) => {
+  const result = await storeCall({ member: 'cancelWriteRow' }, () => brain.cancelWriteRow(cancel)) as { status: WriteCancelResult['status']; row: unknown } | null;
+  return result ? { status: result.status, row: requestRow<CompletedWriteRow>(result.row)! } as WriteCancelResult : null;
+};
+
+/**
+ * The requests with these ids in id order (uuid order is the order of their lowercase text), each once; an unknown id reads
+ * nothing. FOR UPDATE changes nothing in one store write (see the header).
+ */
+export const lockWriteRequestsById: StoreMember<[ids: readonly string[]], WriteRequest[]> = async (brain, ids) => {
+  const ordered = [...new Set(ids.map(id => id.toLowerCase()))].sort();
+  const rows: WriteRequest[] = [];
+  for (const id of ordered) {
+    const row = requestRow<WriteRequest>(await storeCall({ member: 'lockWriteRequestsById' }, () => brain.readWriteRequestById(id)));
+    if (row) rows.push(row);
+  }
+  return rows;
+};
+
+/** The compaction of a terminal request whose intent carried purged content, in one store write; null for an unknown id. */
+export const compactTerminalIntent: StoreMember<[compaction: TerminalIntentCompaction], WriteRequest | null> = async (brain, compaction) =>
+  requestRow<WriteRequest>(await storeCall({ member: 'compactTerminalIntent' }, () => brain.compactTerminalIntent({ ...compaction, counterKeys: [...compaction.counterKeys] })));
+
 /**
  * Synchronous commit for the current transaction: nothing to set. A store commit makes every write durable before it
  * returns (gbrain-store kv.rs `commit`), so each commit already waits for the flush.
@@ -266,11 +288,17 @@ export const insertWithdrawalEffects: StoreMember<[spec: WithdrawalEffectsSpec],
     data: withdrawalEffectsData(spec) }));
 };
 
-/** The cancellation in one store write: the read, the check and the completion; null when the row does not exist. */
-export const cancelWriteRow: StoreMember<[cancel: WriteCancellation], WriteCancelResult | null> = async (brain, cancel) => {
-  const result = await storeCall({ member: 'cancelWriteRow' }, () => brain.cancelWriteRow(cancel)) as { status: WriteCancelResult['status']; row: unknown } | null;
-  return result ? { status: result.status, row: requestRow<CompletedWriteRow>(result.row)! } as WriteCancelResult : null;
+/**
+ * Queues a segmented-mirror re-mirror's `withdrawal-mirror` and `git` effects (engine-sql/segmented-mirror-effects.ts), the
+ * withdrawal insert with two kinds; inside `transaction` it is one more statement of the re-mirror's store write.
+ */
+export const insertRemirrorEffects: StoreMember<[requestId: string, sourceId: string, data: Record<string, unknown>], void> = async (brain, requestId, sourceId, data) => {
+  await storeCall({ member: 'insertRemirrorEffects', sourceId }, () => brain.insertRemirrorEffects({ requestId, sourceId, data }));
 };
+
+/** The effects of a re-mirror's request row in kind order, as its apply waits on them. */
+export const readRemirrorEffects: StoreMember<[requestId: string], RemirrorEffectState[]> = (brain, requestId) =>
+  storeCall({ member: 'readRemirrorEffects' }, () => brain.readRemirrorEffects(requestId)) as Promise<RemirrorEffectState[]>;
 
 /** Extends a claim's lease; true while request `id` is running under `token`. */
 export const renewWriteClaim: StoreMember<[renewal: ClaimRenewal, opts?: { signal?: AbortSignal }], boolean> = (brain, renewal) =>
@@ -322,7 +350,7 @@ export const stampWorktreeHeartbeats: StoreMember<[hostId: string, opts?: { sign
 };
 
 /** A source's incarnation and archive flag, or null. FOR SHARE changes nothing in one store write. */
-export const readSourceMembership: StoreMember<[sourceId: string, opts?: { lock?: boolean }], SourceMembership | null> = (brain, sourceId) =>
+export const readSourceMembership: StoreMember<[sourceId: string, opts?: { lock?: boolean | 'update' }], SourceMembership | null> = (brain, sourceId) =>
   storeCall({ member: 'readSourceMembership' }, () => brain.readSourceMembership(sourceId));
 
 /** The first of `requestIds` a lifecycle change of local writer `principalId` used, as `[{ request_id }]`, or []. */
@@ -334,6 +362,9 @@ export const listTopologyRecoveries: StoreMember<[hostId: string, after: string 
   ((await storeCall({ member: 'listTopologyRecoveries' }, () => brain.listTopologyRecoveries(hostId, after, limit))) as unknown[]).map(row => topologyRow(row)!);
 
 /** The lifecycle receipt of (principal, request id), or null; its two timestamps as Dates, as PGLite returns them. */
+export const readTopologyChangeDigest: StoreMember<[requestId: string, sourceId: string], string | null> = async (brain, requestId, sourceId) =>
+  (await storeCall({ member: 'readTopologyChangeDigest' }, () => brain.readTopologyChangeDigest(requestId, sourceId))) as string | null;
+
 export const readTopologyChange: StoreMember<[principalId: string, requestId: string], TopologyChange | null> = async (brain, principalId, requestId) =>
   topologyRow(await storeCall({ member: 'readTopologyChange' }, () => brain.readTopologyChange(principalId, requestId)));
 

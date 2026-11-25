@@ -10,6 +10,9 @@
  *
  * Identity decisions (listEntityKeyRows, listIdentityDecisions, listRestrictedIdentityMembers, applyIdentityDecisions;
  * SQL in engine-sql/entity-keys.ts and engine-sql/identity-decisions.ts) live in gbrain-store `identity_reviews`.
+ * The store keeps no decision evidence and no automatic company groups yet, and its key rows carry no page id,
+ * generation, creation time or group: listEntityKeyRows refuses, listIdentityDecisions reads every decision's evidence
+ * as null (none kept), and applyIdentityDecisions refuses an upsert that carries evidence or a company sweep's plan.
  */
 import { identityPageNotFound, type CanonicalTwinRow, type EntityIdentityFilter, type EntityIdentityLinkInput, type EntityIdentityPageRow, type EntityIdentityRow, type EntityIdentityUnlinkInput } from '../../engine-sql/entity-identities.ts';
 import type { SourceRoutingRow } from '../../engine-sql/sources.ts';
@@ -22,10 +25,17 @@ import type {
 import { privatePagesFilterFragment } from '../../search/private-visibility.ts';
 import { pagePolicyFlags, storePagePolicy } from './private-provenance.ts';
 
+/**
+ * `confidence` is DOUBLE PRECISION on the SQL engines, which keep NaN and ±Infinity and read them back as numbers.
+ * JSON has no number for those three, so they cross the store boundary as the text Postgres prints for them.
+ */
+const toStoreFloat = (value: number): number | string => Number.isFinite(value) ? value : String(value);
+const fromStoreFloat = (value: number | string): number => typeof value === 'string' ? Number(value) : value;
+
 /** Links the live page into the group; the identity page-not-found error with no live page. */
 export const linkEntityIdentityRow: StoreMember<[input: EntityIdentityLinkInput], void> = async (brain, input) => {
   const linked = await storeCall({ member: 'linkEntityIdentityRow', slug: input.slug, sourceId: input.sourceId }, () => brain.linkEntityIdentity({
-    entity_id: input.entityId, slug: input.slug, source_id: input.sourceId, confidence: input.confidence,
+    entity_id: input.entityId, slug: input.slug, source_id: input.sourceId, confidence: toStoreFloat(input.confidence),
     established_by: input.establishedBy, canonical: input.canonical,
   }));
   if (linked !== true) throw identityPageNotFound(input.slug, input.sourceId);
@@ -50,8 +60,8 @@ export const listEntityIdentityRows: StoreMember<[filter: EntityIdentityFilter],
     slug_source_id: (filter.slug && filter.slugSourceId) || null,
     allowed_sources: filter.allowedSources?.length ? [...filter.allowedSources] : null,
     exclude_private: policy ?? null,
-  }))) as Array<Omit<EntityIdentityRow, 'established_at'> & { established_at: string }>;
-  return found.map((r) => ({ ...r, established_at: new Date(r.established_at) }));
+  }))) as Array<Omit<EntityIdentityRow, 'established_at' | 'confidence'> & { established_at: string; confidence: number | string }>;
+  return found.map((r) => ({ ...r, confidence: fromStoreFloat(r.confidence), established_at: new Date(r.established_at) }));
 };
 
 /** The group of each live member of the cross product of the pages' sources and slugs, by source then slug. */
@@ -68,16 +78,23 @@ export const readCanonicalTwin: StoreMember<[sourceId: string, slug: string], Ca
   storeCall({ member: 'readCanonicalTwin', slug, sourceId }, () => brain.readCanonicalTwin(sourceId, slug)) as Promise<CanonicalTwinRow[]>;
 
 /**
- * Duplicate finder read. Refused: each row carries the page's `generation`, which the company sweep's automatic links
- * check before they write, and the store keeps no page generation; the store read also has no `members` or `tokens`
- * filter. The store method stays for the serve that adds them.
+ * Duplicate finder read: live, unretired pages of the types in unarchived sources, the named keys only, keyset-paged,
+ * narrowed to `members` and to pages with a `tokens` value. A row's `generation` is an equality token the store derives
+ * from the page's knowledge revision (rust/docs/store/entity_identities.md): it changes when the page does, but does not grow.
  */
-export const listEntityKeyRows: StoreMember<[opts: EntityKeyRowsOpts], EntityKeyRow[]> = async () =>
-  refuseMember('listEntityKeyRows', 'the store keeps no page generation');
+export const listEntityKeyRows: StoreMember<[opts: EntityKeyRowsOpts], EntityKeyRow[]> = (brain, opts) =>
+  storeCall({ member: 'listEntityKeyRows' }, () => brain.listEntityKeyRows({
+    types: [...opts.types], keys: [...opts.keys], after: opts.after ? { source_id: opts.after.source_id, slug: opts.after.slug } : null,
+    limit: opts.limit,
+    members: opts.members ? opts.members.map(m => ({ source_id: m.source_id, slug: m.slug })) : null,
+    tokens: opts.tokens ? { values: [...opts.tokens.values], fields: [...opts.tokens.fields] } : null,
+  }));
 
-/** The owner's identity decisions by id, the members still pending, and the revision an apply can pin. */
-export const listIdentityDecisions: StoreMember<[], IdentityDecisionsRead> = (brain) =>
-  storeCall({ member: 'listIdentityDecisions' }, () => brain.listIdentityDecisions());
+/** The owner's identity decisions by id, the members still pending, and the revision an apply can pin. No evidence is kept. */
+export const listIdentityDecisions: StoreMember<[], IdentityDecisionsRead> = async (brain) => {
+  const read = await storeCall({ member: 'listIdentityDecisions' }, () => brain.listIdentityDecisions()) as IdentityDecisionsRead;
+  return { ...read, decisions: read.decisions.map(d => ({ ...d, evidence: d.evidence ?? null })) };
+};
 
 /** The members whose page the no-caller page policy (`privatePagesFilterFragment`) hides. */
 export const listRestrictedIdentityMembers: StoreMember<[members: ReadonlyArray<IdentityMemberRef>], IdentityMemberRef[]> = async (brain, members) => {
@@ -86,15 +103,9 @@ export const listRestrictedIdentityMembers: StoreMember<[members: ReadonlyArray<
     members.map(m => ({ source_id: m.source_id, slug: m.slug })), pagePolicyFlags(privatePagesFilterFragment('p'))));
 };
 
-/**
- * Writes and removes decisions and reconciles the 'dedupe:confirm' identity rows in one store write. The company
- * sweep's automatic links (`auto`) refuse: they are checked against page generations, which the store does not keep.
- * With them refused no 'dedupe:auto' row exists on this engine, so the SQL engines' automatic-row cleanup has nothing
- * to remove here.
- */
-export const applyIdentityDecisions: StoreMember<[input: ApplyIdentityDecisionsInput], ApplyIdentityDecisionsResult> = async (brain, input) => {
-  if (input.auto) refuseMember('applyIdentityDecisions', 'option auto');
-  return storeCall({ member: 'applyIdentityDecisions' }, () => brain.applyIdentityDecisions({
+/** Writes and removes decisions and reconciles the 'dedupe:auto' and 'dedupe:confirm' identity rows in one store write. */
+export const applyIdentityDecisions: StoreMember<[input: ApplyIdentityDecisionsInput], ApplyIdentityDecisionsResult> = (brain, input) =>
+  storeCall({ member: 'applyIdentityDecisions' }, () => brain.applyIdentityDecisions({
     upsert: (input.upsert ?? []).map(d => ({
       decision_id: d.decision_id, verdict: d.verdict, members: d.members, group_id: d.group_id ?? null, entity_id: d.entity_id ?? null,
       canonical: d.canonical ? { source_id: d.canonical.source_id, slug: d.canonical.slug } : null, decided_by: d.decided_by,
@@ -103,5 +114,11 @@ export const applyIdentityDecisions: StoreMember<[input: ApplyIdentityDecisionsI
     })),
     remove: [...(input.remove ?? [])],
     expect_revision: input.expectRevision ?? null,
+    auto: input.auto ? {
+      link: input.auto.link.map(g => ({
+        entity_id: g.entity_id, canonical_page_id: g.canonical_page_id,
+        members: g.members.map(m => ({ source_id: m.source_id, page_id: m.page_id, generation: m.generation })),
+      })),
+      unlink: [...input.auto.unlink],
+    } : null,
   }));
-};

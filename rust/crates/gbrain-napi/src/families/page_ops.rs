@@ -150,6 +150,16 @@ impl Brain {
         })
     }
 
+    /// `listMarkdownPageSlugs(sourceId)`: `string[]`.
+    #[napi]
+    pub fn list_markdown_page_slugs<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_markdown_page_slugs(&source_id))
+    }
+
     /// `listAllPageRefs()`: `[{ slug, source_id, updated_at }]`.
     #[napi]
     pub fn list_all_page_refs<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
@@ -306,5 +316,39 @@ impl Brain {
         self.run(env, move |s| {
             s.revert_to_version(&slug, version_id, &arg(options, "revertToVersion options")?)
         })
+    }
+
+    /// `listRestorableAtoms(sourceIds, atomId)`: resolves the restorable re-extraction retirements of the sources (or
+    /// the one atom), by id (`gbrain repair atoms-restore`).
+    #[napi]
+    pub fn list_restorable_atoms<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Vec<String>,
+        atom_id: Option<i64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_restorable_atoms(&source_ids, atom_id))
+    }
+
+    /// `countKeptAtomRetirements(sourceIds)`: resolves `{ origin_gone, replaced, older_generation }`.
+    #[napi]
+    pub fn count_kept_atom_retirements<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.count_kept_atom_retirements(&source_ids))
+    }
+
+    /// `listStaleAtoms(sourceIds, atomId)`: resolves the stale atoms of the sources (or the one atom), origin-gone
+    /// first, then by id (`gbrain repair stale-atoms`).
+    #[napi]
+    pub fn list_stale_atoms<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Vec<String>,
+        atom_id: Option<i64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_stale_atoms(&source_ids, atom_id))
     }
 }

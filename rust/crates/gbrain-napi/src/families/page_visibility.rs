@@ -1,4 +1,5 @@
-//! The page visibility guards a remote page write runs (`src/core/engine-sql/page-visibility.ts`).
+//! The page visibility guards a remote page write runs (`src/core/engine-sql/page-visibility.ts`), and the owner-only
+//! mark state (`src/core/engine-sql/owner-only-marks.ts`).
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
 
@@ -13,6 +14,12 @@ use crate::store_binding::{Brain, required};
 
 #[napi]
 impl Brain {
+    /// `ownerOnlyMarkTriggers` (the store side): `{ closed, rowSecurity, held, closedLogins }`.
+    #[napi]
+    pub fn owner_only_mark_state<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.owner_only_mark_state())
+    }
+
     /// `readPageHiddenFromCaller(sourceId, slug, policy)`: whether the page row fails `policy`.
     #[napi]
     pub fn read_page_hidden_from_caller<'env>(
@@ -46,6 +53,20 @@ impl Brain {
                 &slug,
                 &required(policy, "readWriteVisibilityProbe policy")?,
             )
+        })
+    }
+
+    /// `readPagePrivacyHidden(sourceId, slug, honorAliases)`: whether the live page fails the privacy part alone.
+    #[napi]
+    pub fn read_page_privacy_hidden<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+        honor_aliases: bool,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_page_privacy_hidden(&source_id, &slug, honor_aliases)
         })
     }
 

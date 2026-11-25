@@ -124,6 +124,11 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "type": "string",
         "description": "Typed claim period, e.g. monthly.",
         "fullSurfaceOnly": true
+      },
+      "facet": {
+        "type": "string",
+        "description": "Profile facet (diet, allergy, size.shoe, brand, style, constraint, schedule, household, other); no entity: your own profile.",
+        "fullSurfaceOnly": true
       }
     },
     "mutating": true,
@@ -1699,7 +1704,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "autocut": {
         "type": "boolean",
-        "description": "Default on (never empty); false: full top-K for breadth.",
+        "description": "Off by default in every mode. true (or config search.autocut true) trims at the steepest score drop; can drop relevant hits on multi-part questions.",
         "fullSurfaceOnly": true
       },
       "relational": {
@@ -6573,6 +6578,11 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "type": "string",
         "description": "Source to try first (thin clients send .gbrain-source here); never narrows.",
         "fullSurfaceOnly": true
+      },
+      "profile": {
+        "type": "boolean",
+        "description": "true: add your own profile (facets, constraints, relationships, preferences).",
+        "fullSurfaceOnly": true
       }
     },
     "scope": "read",
@@ -7168,7 +7178,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "mutating": false,
     "idempotent": true,
     "outputRedaction": "retrieval",
-    "description": "Return the chronological claim trajectory for an entity (typed metric values over time, plus auto-detected regressions and narrative drift). Use this when the user asks 'how has Acme's MRR trended', 'show me what alice-example said about runway over time', 'is this founder consistent', 'find regressions for fund-a's portfolio', or wants a time-series view of an entity's structured claims. Returns `{points: [{fact_id, valid_from, metric, value, unit, period, text, source_session, source_markdown_slug}], regressions: [{metric, from_value, from_date, to_value, to_date, delta_pct}], drift_score: number|null, schema_version: 1}`. Drift score 0 = stable narrative, 1 = every consecutive claim is unrelated; null when fewer than 3 typed points exist. Visibility-filtered for remote callers (world-only); source-scoped by the caller's OAuth source binding. Pair with `gbrain founder scorecard <slug>` for an aggregated rollup of the same data.",
+    "description": "Return the chronological claim trajectory for an entity (typed metric values over time, plus auto-detected regressions and narrative drift). Use this when the user asks 'how has Acme's MRR trended', 'show me what alice-example said about runway over time', 'is this founder consistent', 'find regressions for fund-a's portfolio', or wants a time-series view of an entity's structured claims. Returns `{points: [{fact_id, valid_from, metric, value, unit, period, text, source_session, source_markdown_slug}], regressions: [{metric, from_value, from_date, to_value, to_date, delta_pct, direction: 'down'|'up'}], drift_score: number|null, schema_version: 1}`. A regression is a 10% drop, or a 10% rise for a lower-is-better metric (burn, churn, cac, cost, expense, loss, latency, payback, debt; not a name that also says savings, recovered, reduction or avoided). Drift score 0 = stable narrative, 1 = every consecutive claim is unrelated; null when fewer than 3 typed points exist. Visibility-filtered for remote callers (world-only); source-scoped by the caller's OAuth source binding. Pair with `gbrain founder scorecard <slug>` for an aggregated rollup of the same data.",
     "scope": "read",
     "params": {
       "entity_slug": {
@@ -8061,5 +8071,89 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     },
     "scope": "write",
     "area": "admin"
+  },
+  {
+    "name": "learned",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": "retrieval",
+    "description": "What the brain learned since you last looked: new facts its extractors saved, facts that disagree (which one is right?), promises people made to you, people who may be the same person (with the gbrain dedupe confirm and reject commands, run on the brain host), thin pages it filled in, and rows you typed into Facts fences (shown, never counted). Default: the items you have not been shown yet from the last 7 days; with since, every item since that date. Grouped by kind, questions first, 15 by default; each item carries a stable id and evidence links (the page or loop it came from). Reading stamps the items as shown. With stats: per-night counts (a night ends at 06:00 in brain.timezone) of items shown, kept, undone and expired, and the share of nights with at least 5 counted items.",
+    "params": {
+      "since": {
+        "type": "string",
+        "description": "ISO date or timestamp (e.g. 2026-11-20). Lists every item recorded since then, shown or not. Default: unseen items of the last 7 days (stats: the last 30 days)."
+      },
+      "limit": {
+        "type": "number",
+        "description": "Most items to return (default 15, at most 100). Every item returned is shown and stamped."
+      },
+      "stats": {
+        "type": "boolean",
+        "description": "Return the per-night stats instead of the items. Shows nothing, so it stamps nothing."
+      }
+    },
+    "scope": "read",
+    "annotations": {
+      "readOnlyHint": true
+    },
+    "cliHints": {
+      "name": "learned"
+    },
+    "area": "insights"
+  },
+  {
+    "name": "learned_keep",
+    "mutating": true,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Keep items from the learned note: mark what the brain learned as right. Writes only the note's own record (no page or fact changes). Takes item ids from learned (comma separated), or all for every pending change you can read from the last 7 days (up to 100). Questions (facts that disagree, possible duplicate people) are answered, not kept.",
+    "params": {
+      "ids": {
+        "type": "string",
+        "required": true,
+        "description": "Item ids from learned, comma separated (e.g. 12,15), or all."
+      }
+    },
+    "scope": "write",
+    "annotations": {
+      "idempotentHint": true
+    },
+    "cliHints": {
+      "name": "learned-keep",
+      "positional": [
+        "ids"
+      ]
+    },
+    "area": "insights"
+  },
+  {
+    "name": "learned_undo",
+    "mutating": true,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Undo items from the learned note through the operation that owns each change: a new fact is forgotten (withdrawn; history kept), a promise is dropped, a filled-in page is reverted to the version before it was filled (refused when the page was edited since, with the commands to choose a version). For facts that disagree it rejects the newer fact on the brain host; for possible duplicate people it returns the gbrain dedupe reject command for the brain host. Each result says what happened.",
+    "params": {
+      "ids": {
+        "type": "string",
+        "required": true,
+        "description": "Item ids from learned, comma separated (e.g. 12,15)."
+      },
+      "reason": {
+        "type": "string",
+        "description": "Why it was wrong; recorded on the reversal (forget reason, loop note or revert reason)."
+      }
+    },
+    "scope": "write",
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": true
+    },
+    "cliHints": {
+      "name": "learned-undo",
+      "positional": [
+        "ids"
+      ]
+    },
+    "area": "insights"
   }
 ];

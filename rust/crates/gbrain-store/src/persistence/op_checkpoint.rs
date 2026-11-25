@@ -1,5 +1,6 @@
 //! Resumable-op checkpoints: the statements of `src/core/engine-sql/op-checkpoint.ts` and the
-//! read `readOpCheckpointKeys` of `engine-sql/write-misc.ts` (rust/docs/store/persistence.md,
+//! reads `readOpCheckpointKeys` and `readOpCheckpointRecord` of `engine-sql/write-misc.ts`
+//! (rust/docs/store/persistence.md,
 //! "Op checkpoints").
 //!
 //! - The parent: one `op_checkpoints` row per (op, fingerprint), key
@@ -27,6 +28,7 @@ use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::pages::read_page_by_id;
 use crate::sources::read_source;
 use crate::{Store, get_json, keys, put_json};
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 /// Refuses NUL, which Postgres text cannot hold, so a key part cannot run into the next one.
@@ -90,12 +92,13 @@ pub(crate) fn read_op_checkpoint_keys_in(
         match &row.completed_keys {
             Value::Array(items) => {
                 // `jsonb_array_elements_text`: a string element is its text; any other element is
-                // its JSON text, and a JSON null is SQL NULL, which the caller skips.
+                // its jsonb text (keys by length then bytes, `", "` and `": "`), and a JSON null is
+                // SQL NULL, which the caller skips.
                 for item in items {
                     match item {
                         Value::String(s) => push(s.clone()),
                         Value::Null => {}
-                        other => push(other.to_string()),
+                        other => push(crate::cli_reads::pg_text::jsonb_text(other)),
                     }
                 }
             }
@@ -182,6 +185,259 @@ pub(crate) fn delete_op_checkpoint_paths_in(
     Ok(())
 }
 
+/// Whether a string or object key anywhere in `value` holds NUL: Postgres `jsonb` refuses the
+/// `\u0000` escape anywhere in a document.
+fn json_has_nul(value: &Value) -> bool {
+    match value {
+        Value::String(s) => s.contains('\0'),
+        Value::Array(items) => items.iter().any(json_has_nul),
+        Value::Object(map) => map.iter().any(|(k, v)| k.contains('\0') || json_has_nul(v)),
+        _ => false,
+    }
+}
+
+/// `readOpCheckpointRecords(op, fingerprints)`: each found parent's first completed key
+/// (`completed_keys->0`), null when its array is empty, in the order named; a missing parent adds
+/// nothing. Postgres answers in no stated order, and the caller keys the records by page.
+pub(crate) fn read_op_checkpoint_records_in(
+    read: &dyn KvRead,
+    op: &str,
+    fingerprints: &[String],
+) -> Result<Value> {
+    let mut out = Vec::new();
+    // `fingerprint = ANY($2)` matches a parent once, however often the list names it.
+    let mut seen = std::collections::HashSet::new();
+    for fingerprint in fingerprints {
+        if !seen.insert(fingerprint.as_str()) {
+            continue;
+        }
+        if let Some(row) = get_json::<HousekeepingRow>(read, &parent_key(op, fingerprint)?)? {
+            out.push(row.completed_keys.get(0).cloned().unwrap_or(Value::Null));
+        }
+    }
+    Ok(Value::Array(out))
+}
+
+/// The parent's `completed_keys` of `(op, fingerprint)`, or `None` when there is no parent row.
+pub(crate) fn op_checkpoint_completed_keys(
+    read: &dyn KvRead,
+    op: &str,
+    fingerprint: &str,
+) -> Result<Option<Value>> {
+    Ok(
+        get_json::<HousekeepingRow>(read, &parent_key(op, fingerprint)?)?
+            .map(|row| row.completed_keys),
+    )
+}
+
+/// `readOpCheckpointRecord(op, fingerprint, { freshWithinDays })`: the parent as
+/// `{ completed_keys, updated_at, fresh }`, or null. `updated_at` is ISO 8601 with milliseconds,
+/// truncated as `to_char(.., 'MS')` truncates; `fresh` compares the stamp with the store clock
+/// less `fresh_days` days, null when not asked.
+pub(crate) fn read_op_checkpoint_record_in(
+    read: &dyn KvRead,
+    env: &dyn Env,
+    op: &str,
+    fingerprint: &str,
+    fresh_days: Option<f64>,
+) -> Result<Value> {
+    let Some(row) = get_json::<HousekeepingRow>(read, &parent_key(op, fingerprint)?)? else {
+        return Ok(Value::Null);
+    };
+    let full = crate::env::iso(row.updated_at_us);
+    let updated_at = format!("{}Z", &full[..full.len() - 4]);
+    let fresh = fresh_days.map(|days| {
+        // Days to microseconds as Postgres reads `'<days> days'::interval`.
+        let window = (days * 86_400_000_000.0).round() as i64;
+        row.updated_at_us >= env.now_micros().saturating_sub(window)
+    });
+    Ok(json!({ "completed_keys": row.completed_keys, "updated_at": updated_at, "fresh": fresh }))
+}
+
+/// `listOpCheckpointRecords(op)`: every parent of `op` as `{ fingerprint, completed_keys,
+/// updated_at, updated_at_us }`, in fingerprint byte order. `updated_at` is formatted as
+/// `read_op_checkpoint_record_in` formats it; `updated_at_us` keeps the full stamp, so a caller can
+/// compare two stamps as Postgres compares `updated_at` (the managed-sync orphan classification).
+pub(crate) fn list_op_checkpoint_records_in(read: &dyn KvRead, op: &str) -> Result<Value> {
+    let mut prefix = vec![keys::PERSISTENCE, super::HOUSEKEEPING];
+    prefix.extend_from_slice(text(op, "op")?.as_bytes());
+    prefix.push(0);
+    let mut out = Vec::new();
+    let mut bad = false;
+    scan_prefix(read, &prefix, false, &mut |k, v| {
+        let fingerprint = std::str::from_utf8(&k[prefix.len()..]).map(str::to_owned);
+        match (fingerprint, serde_json::from_slice::<HousekeepingRow>(v)) {
+            (Ok(fingerprint), Ok(row)) => {
+                let full = crate::env::iso(row.updated_at_us);
+                out.push(json!({
+                    "fingerprint": fingerprint,
+                    "completed_keys": row.completed_keys,
+                    "updated_at": format!("{}Z", &full[..full.len() - 4]),
+                    "updated_at_us": row.updated_at_us,
+                }));
+            }
+            _ => bad = true,
+        }
+        !bad
+    })?;
+    if bad {
+        return Err(StoreError::new(
+            crate::error::STORE_CORRUPT,
+            "an op checkpoint row is not readable",
+        ));
+    }
+    Ok(Value::Array(out))
+}
+
+/// `writeOpCheckpointRecords(op, rows)`: each row's parent set to `[record]`, stamped now; the
+/// children stay. Every row is checked before any is written, so a refused batch writes nothing.
+pub(crate) fn write_op_checkpoint_records_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    op: &str,
+    rows: &[(String, Value)],
+) -> Result<()> {
+    let mut parents = Vec::with_capacity(rows.len());
+    for (fingerprint, record) in rows {
+        if json_has_nul(record) {
+            return Err(StoreError::invalid(
+                "an op checkpoint record cannot contain NUL",
+            ));
+        }
+        parents.push((parent_key(op, fingerprint)?, record));
+    }
+    let now = env.now_micros();
+    for (parent, record) in parents {
+        put_json(
+            tx,
+            &parent,
+            &HousekeepingRow {
+                completed_keys: json!([record]),
+                updated_at_us: now,
+            },
+        )?;
+    }
+    Ok(())
+}
+
+/// `writeOpCheckpointRecord(op, fingerprint, completedKeys)`: the parent's records replaced and
+/// stamped now; `None` deletes the parent and its paths. The records must be a JSON array, as the
+/// Postgres CHECK `op_checkpoints_completed_keys_array` requires.
+pub(crate) fn write_op_checkpoint_record_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    op: &str,
+    fingerprint: &str,
+    completed: Option<&Value>,
+) -> Result<()> {
+    let Some(completed) = completed else {
+        return delete_op_checkpoint_in(tx, op, fingerprint);
+    };
+    if !completed.is_array() {
+        return Err(StoreError::invalid(
+            "an op checkpoint's completed keys must be a JSON array (op_checkpoints_completed_keys_array)",
+        ));
+    }
+    if json_has_nul(completed) {
+        return Err(StoreError::invalid(
+            "an op checkpoint's completed keys cannot contain NUL",
+        ));
+    }
+    put_json(
+        tx,
+        &parent_key(op, fingerprint)?,
+        &HousekeepingRow {
+            completed_keys: completed.clone(),
+            updated_at_us: env.now_micros(),
+        },
+    )
+}
+
+/// `insertOpCheckpointIfAbsent(op, fingerprint, completedKeys)`: `INSERT ... ON CONFLICT (op,
+/// fingerprint) DO NOTHING RETURNING 1`. True when this call stored the parent; an existing parent
+/// is kept as it is.
+pub(crate) fn insert_op_checkpoint_if_absent_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    op: &str,
+    fingerprint: &str,
+    completed: &Value,
+) -> Result<bool> {
+    if get_json::<HousekeepingRow>(&*tx, &parent_key(op, fingerprint)?)?.is_some() {
+        return Ok(false);
+    }
+    write_op_checkpoint_record_in(tx, env, op, fingerprint, Some(completed))?;
+    Ok(true)
+}
+
+/// `upsertFenceTrendRunRecord(op, fingerprint, record)`: `INSERT ... ON CONFLICT (op, fingerprint) DO
+/// UPDATE SET completed_keys = jsonb_build_array((EXCLUDED.completed_keys->0) ||
+/// jsonb_build_object('day', op_checkpoints.completed_keys->0->'day'))`. A new parent stores
+/// `[record]`; an existing one is rewritten as `[record]` carrying the `day` of its first record
+/// (null when it has none), so a sync run's rewrite keeps the day of its first write.
+pub(crate) fn upsert_fence_trend_run_record_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    op: &str,
+    fingerprint: &str,
+    record: &Value,
+) -> Result<()> {
+    let Some(mut next) = record.as_object().cloned() else {
+        return Err(StoreError::invalid(
+            "a fence trend run record must be a JSON object",
+        ));
+    };
+    if let Some(row) = get_json::<HousekeepingRow>(&*tx, &parent_key(op, fingerprint)?)? {
+        let day = row
+            .completed_keys
+            .get(0)
+            .and_then(|first| first.get("day"))
+            .cloned()
+            .unwrap_or(Value::Null);
+        next.insert("day".to_owned(), day);
+    }
+    write_op_checkpoint_record_in(
+        tx,
+        env,
+        op,
+        fingerprint,
+        Some(&json!([Value::Object(next)])),
+    )
+}
+
+/// `replaceOpCheckpointAtVersion(op, fingerprint, completedKeys, expected)`: `UPDATE ... WHERE op=$1
+/// AND fingerprint=$2 AND (completed_keys->0->>'v')::int = $4 RETURNING 1`. True when the parent's
+/// first record held `v` = `expected` and this call replaced the records. A `v` that is not an
+/// integer refuses, as the `::int` cast does; a missing `v` matches nothing.
+pub(crate) fn replace_op_checkpoint_at_version_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    op: &str,
+    fingerprint: &str,
+    completed: &Value,
+    expected: i64,
+) -> Result<bool> {
+    let Some(row) = get_json::<HousekeepingRow>(&*tx, &parent_key(op, fingerprint)?)? else {
+        return Ok(false);
+    };
+    let version = match row.completed_keys.get(0).and_then(|first| first.get("v")) {
+        None | Some(Value::Null) => return Ok(false),
+        Some(Value::Number(n)) => n.to_string(),
+        Some(Value::String(s)) => s.clone(),
+        Some(other) => other.to_string(),
+    };
+    let Ok(version) = version.trim().parse::<i32>() else {
+        return Err(StoreError::invalid(format!(
+            "invalid input syntax for type integer: \"{version}\""
+        )));
+    };
+    if i64::from(version) != expected {
+        return Ok(false);
+    }
+    write_op_checkpoint_record_in(tx, env, op, fingerprint, Some(completed))?;
+    Ok(true)
+}
+
 const DAY_US: f64 = 86_400_000_000.0;
 
 /// The ops the purge never deletes (`op NOT IN (...)` and each `op<>'...'` of the statement).
@@ -202,13 +458,14 @@ const NEVER_PURGED: &[&str] = &[
     "managed-sync-failure",
 ];
 
-/// The ops kept while their source incarnation lives: the Git sync holds and their records, the
+/// The ops kept while their source incarnation lives: the Git sync holds and their records, the plain-directory agreement rows (`PLAIN_DIRECTORY_AGREED_OP`), the
 /// fence census and repair rows (`FENCE_CANDIDATE_OP`, `FENCE_SCAN_OP`, `FENCE_REPAIR_ATTEMPT_OP`,
 /// `FENCE_UNCOMMITTED_OP`) and the managed sync pass rows (`SYNC_PASS_ROW_OPS`).
 const KEPT_WITH_INCARNATION: &[&str] = &[
     "sync-hold",
     "sync-hold-retry",
     "sync-import-provenance",
+    "plain-directory-agreed",
     "sync-hold-summary",
     "sync-conversions",
     "fence-candidate",
@@ -370,7 +627,214 @@ pub(crate) fn purge_stale_checkpoints_in(
     Ok(stale.len() as i64)
 }
 
+/// The op of a page's atom generation ledger (`ATOM_GENERATION_OP`).
+const ATOM_GENERATION_OP: &str = "managed-atoms-generation";
+/// The op of a completed managed atom run.
+const MANAGED_ATOMS_OP: &str = "managed-atoms";
+
+/// `recordAtomGenerationBump(sourceId, incarnation, pageId, keepContentHash, keepGeneration)`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AtomGenerationBump {
+    pub source_id: String,
+    pub incarnation: String,
+    pub page_id: i64,
+    pub keep_content_hash: Option<String>,
+    pub keep_generation: Option<i64>,
+}
+
+/// `completed_keys->0->>field` of a checkpoint row.
+fn first_key_text(row: &HousekeepingRow, field: &str) -> Option<String> {
+    row.completed_keys
+        .get(0)
+        .and_then(|first| first.get(field))
+        .and_then(crate::timeline_queries::jsonb_field_text)
+}
+
 impl Store {
+    /// `readAtomGeneration(pageId, contentHash)`: of the page's `managed-atoms-generation` ledger row, `keep_generation`
+    /// when `keep` is `contentHash`, else `generation`, as a number (`Number(text ?? 0)`); 0 with no row.
+    pub fn read_atom_generation(&self, page_id: i64, content_hash: &str) -> Result<f64> {
+        let read = self.read()?;
+        let Some(row) = get_json::<HousekeepingRow>(
+            &*read,
+            &parent_key(ATOM_GENERATION_OP, &page_id.to_string())?,
+        )?
+        else {
+            return Ok(0.0);
+        };
+        let field = if first_key_text(&row, "keep").as_deref() == Some(content_hash) {
+            "keep_generation"
+        } else {
+            "generation"
+        };
+        Ok(match first_key_text(&row, field) {
+            None => 0.0,
+            Some(text) => text.trim().parse::<f64>().unwrap_or(f64::NAN),
+        })
+    }
+
+    /// `recordAtomGenerationBump(...)`: upserts the page's ledger row `[{ generation, keep, keep_generation }]`
+    /// (generation 1, or the stored one plus 1), stamped now, and deletes the `managed-atoms` checkpoints of the source's
+    /// page whose `contentHash` is not the kept one. The store keeps no `extract_atoms_page_state` rows, so that
+    /// statement deletes nothing here.
+    pub fn record_atom_generation_bump(&self, a: &AtomGenerationBump) -> Result<()> {
+        let _ = &a.incarnation;
+        let fingerprint = a.page_id.to_string();
+        self.write(|tx| {
+            let key = parent_key(ATOM_GENERATION_OP, &fingerprint)?;
+            let generation = match get_json::<HousekeepingRow>(&*tx, &key)? {
+                None => 1,
+                Some(row) => match first_key_text(&row, "generation") {
+                    None => 1,
+                    Some(text) => text.trim().parse::<i64>().map_err(|_| {
+                        StoreError::invalid(format!("invalid input syntax for type integer: \"{text}\""))
+                    })? + 1,
+                },
+            };
+            let record = crate::jsonb::order(json!({
+                "generation": generation, "keep": a.keep_content_hash, "keep_generation": a.keep_generation,
+            }));
+            write_op_checkpoint_record_in(tx, &*self.env, ATOM_GENERATION_OP, &fingerprint, Some(&json!([record])))?;
+            let mut prefix = vec![keys::PERSISTENCE, super::HOUSEKEEPING];
+            prefix.extend_from_slice(MANAGED_ATOMS_OP.as_bytes());
+            prefix.push(0);
+            let mut gone: Vec<String> = Vec::new();
+            let mut bad = false;
+            scan_prefix(&*tx, &prefix, false, &mut |k, v| {
+                match (std::str::from_utf8(&k[prefix.len()..]), serde_json::from_slice::<HousekeepingRow>(v)) {
+                    (Ok(fp), Ok(row)) => {
+                        if first_key_text(&row, "sourceId").as_deref() == Some(a.source_id.as_str())
+                            && first_key_text(&row, "kind").as_deref() == Some("page")
+                            && first_key_text(&row, "pageId").as_deref() == Some(fingerprint.as_str())
+                            && first_key_text(&row, "contentHash") != a.keep_content_hash
+                        {
+                            gone.push(fp.to_string());
+                        }
+                    }
+                    _ => bad = true,
+                }
+                !bad
+            })?;
+            if bad {
+                return Err(StoreError::new(crate::error::STORE_CORRUPT, "an op checkpoint row is not readable"));
+            }
+            for fp in gone {
+                delete_op_checkpoint_in(tx, MANAGED_ATOMS_OP, &fp)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// `readOpCheckpointDoc(op, fingerprint)`: the one JSON document the parent holds
+    /// (`completed_keys -> 0`), or JSON null when there is no parent, its keys are not an array or
+    /// the array is empty. The propose_takes failure ledger keeps its record this way.
+    pub fn read_op_checkpoint_doc(&self, op: &str, fingerprint: &str) -> Result<Value> {
+        let row = get_json::<HousekeepingRow>(&*self.read()?, &parent_key(op, fingerprint)?)?;
+        Ok(row
+            .and_then(|r| match r.completed_keys {
+                Value::Array(mut items) if !items.is_empty() => Some(items.swap_remove(0)),
+                _ => None,
+            })
+            .unwrap_or(Value::Null))
+    }
+
+    /// `writeOpCheckpointDoc(op, fingerprint, doc)`: the parent's keys replaced by `[doc]`, its
+    /// stamp now (`ON CONFLICT ... DO UPDATE`). The children stay.
+    pub fn write_op_checkpoint_doc(&self, op: &str, fingerprint: &str, doc: &Value) -> Result<()> {
+        let key = parent_key(op, fingerprint)?;
+        fn has_nul(v: &Value) -> bool {
+            match v {
+                Value::String(t) => t.contains('\0'),
+                Value::Array(items) => items.iter().any(has_nul),
+                Value::Object(map) => map.iter().any(|(k, v)| k.contains('\0') || has_nul(v)),
+                _ => false,
+            }
+        }
+        // jsonb refuses `\u0000`, as the SQL's `$3::jsonb` parse does.
+        if has_nul(doc) {
+            return Err(StoreError::invalid(
+                "an op checkpoint document cannot contain NUL",
+            ));
+        }
+        self.write(|tx| {
+            put_json(
+                tx,
+                &key,
+                &HousekeepingRow {
+                    completed_keys: json!([crate::jsonb::ordered(doc)]),
+                    updated_at_us: self.env.now_micros(),
+                },
+            )
+        })
+    }
+    /// `readOpCheckpointRecord(op, fingerprint, { freshWithinDays })`.
+    pub fn read_op_checkpoint_record(
+        &self,
+        op: &str,
+        fingerprint: &str,
+        fresh_days: Option<f64>,
+    ) -> Result<Value> {
+        read_op_checkpoint_record_in(&*self.read()?, &*self.env, op, fingerprint, fresh_days)
+    }
+
+    /// `listOpCheckpointRecords(op)`.
+    pub fn list_op_checkpoint_records(&self, op: &str) -> Result<Value> {
+        list_op_checkpoint_records_in(&*self.read()?, op)
+    }
+
+    /// `writeOpCheckpointRecord(op, fingerprint, completedKeys)`.
+    pub fn write_op_checkpoint_record(
+        &self,
+        op: &str,
+        fingerprint: &str,
+        completed: Option<&Value>,
+    ) -> Result<()> {
+        self.write(|tx| write_op_checkpoint_record_in(tx, &*self.env, op, fingerprint, completed))
+    }
+
+    /// `insertOpCheckpointIfAbsent(op, fingerprint, completedKeys)`.
+    pub fn insert_op_checkpoint_if_absent(
+        &self,
+        op: &str,
+        fingerprint: &str,
+        completed: &Value,
+    ) -> Result<bool> {
+        self.write(|tx| {
+            insert_op_checkpoint_if_absent_in(tx, &*self.env, op, fingerprint, completed)
+        })
+    }
+
+    /// `upsertFenceTrendRunRecord(op, fingerprint, record)`.
+    pub fn upsert_fence_trend_run_record(
+        &self,
+        op: &str,
+        fingerprint: &str,
+        record: &Value,
+    ) -> Result<()> {
+        self.write(|tx| upsert_fence_trend_run_record_in(tx, &*self.env, op, fingerprint, record))
+    }
+
+    /// `replaceOpCheckpointAtVersion(op, fingerprint, completedKeys, expected)`.
+    pub fn replace_op_checkpoint_at_version(
+        &self,
+        op: &str,
+        fingerprint: &str,
+        completed: &Value,
+        expected: i64,
+    ) -> Result<bool> {
+        self.write(|tx| {
+            replace_op_checkpoint_at_version_in(
+                tx,
+                &*self.env,
+                op,
+                fingerprint,
+                completed,
+                expected,
+            )
+        })
+    }
+
     /// `readOpCheckpointKeys(op, fingerprint)`.
     pub fn read_op_checkpoint_keys(&self, op: &str, fingerprint: &str) -> Result<Value> {
         read_op_checkpoint_keys_in(&*self.read()?, op, fingerprint)
@@ -394,6 +858,16 @@ impl Store {
         paths: &[String],
     ) -> Result<()> {
         self.write(|tx| append_op_checkpoint_paths_in(tx, &*self.env, op, fingerprint, paths))
+    }
+
+    /// `readOpCheckpointRecords(op, fingerprints)`.
+    pub fn read_op_checkpoint_records(&self, op: &str, fingerprints: &[String]) -> Result<Value> {
+        read_op_checkpoint_records_in(&*self.read()?, op, fingerprints)
+    }
+
+    /// `writeOpCheckpointRecords(op, rows)`.
+    pub fn write_op_checkpoint_records(&self, op: &str, rows: &[(String, Value)]) -> Result<()> {
+        self.write(|tx| write_op_checkpoint_records_in(tx, &*self.env, op, rows))
     }
 
     /// `deleteOpCheckpoint(op, fingerprint)`.
@@ -791,6 +1265,169 @@ mod tests {
             store
                 .write_op_checkpoint_keys("embed", "f", &strings(&["a\0b"]))
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn a_checkpoint_document_reads_back_and_keeps_the_paths() {
+        let s = store();
+        assert_eq!(s.read_op_checkpoint_doc("op", "fp").unwrap(), json!(null));
+        s.append_op_checkpoint_paths("op", "fp", &strings(&["a"]))
+            .unwrap();
+        assert_eq!(s.read_op_checkpoint_doc("op", "fp").unwrap(), json!(null));
+        s.write_op_checkpoint_doc("op", "fp", &json!({"pages": {"x": 3}}))
+            .unwrap();
+        assert_eq!(
+            s.read_op_checkpoint_doc("op", "fp").unwrap(),
+            json!({"pages": {"x": 3}})
+        );
+        assert!(
+            s.write_op_checkpoint_doc("op", "fp", &json!({"k": "a\u{0}b"}))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn a_record_write_replaces_the_parent_keeps_the_paths_and_reads_back_its_first_key() {
+        let store = store();
+        let rows = |items: &[(&str, serde_json::Value)]| -> Vec<(String, serde_json::Value)> {
+            items
+                .iter()
+                .map(|(f, v)| (f.to_string(), v.clone()))
+                .collect()
+        };
+        store
+            .append_op_checkpoint_paths("prov", "p1", &strings(&["kept.md"]))
+            .unwrap();
+        store
+            .write_op_checkpoint_records(
+                "prov",
+                &rows(&[
+                    ("p1", json!({ "page_id": 1 })),
+                    ("p2", json!({ "page_id": 2 })),
+                ]),
+            )
+            .unwrap();
+        store
+            .write_op_checkpoint_records("prov", &rows(&[("p1", json!({ "page_id": 11 }))]))
+            .unwrap();
+        store
+            .write_op_checkpoint_keys("prov", "empty", &[])
+            .unwrap();
+        let read = store
+            .read_op_checkpoint_records("prov", &strings(&["p1", "p2", "p1", "empty", "absent"]))
+            .unwrap();
+        assert_eq!(read, json!([{ "page_id": 11 }, { "page_id": 2 }, null]));
+        // The paths stay, as the Postgres upsert leaves `op_checkpoint_paths` alone.
+        assert_eq!(
+            store.read_op_checkpoint_keys("prov", "p1").unwrap()["keys"],
+            json!(["kept.md", "{\"page_id\": 11}"])
+        );
+        // A NUL anywhere in a record refuses the whole batch.
+        assert!(
+            store
+                .write_op_checkpoint_records(
+                    "prov",
+                    &rows(&[("p3", json!({ "ok": 1 })), ("p4", json!({ "k\u{0}": 1 }))]),
+                )
+                .is_err()
+        );
+        assert_eq!(
+            store
+                .read_op_checkpoint_records("prov", &strings(&["p3"]))
+                .unwrap(),
+            json!([])
+        );
+    }
+
+    #[test]
+    fn a_record_reads_back_with_its_stamp_and_freshness_and_a_null_write_deletes_it() {
+        let store = store();
+        assert_eq!(
+            store
+                .read_op_checkpoint_record("repair", "f", Some(7.0))
+                .unwrap(),
+            serde_json::Value::Null
+        );
+        let records = json!([{ "kind": "k", "cursor": { "id": 3 }, "run_id": "r" }]);
+        store
+            .write_op_checkpoint_record("repair", "f", Some(&records))
+            .unwrap();
+        let row = store
+            .read_op_checkpoint_record("repair", "f", Some(7.0))
+            .unwrap();
+        assert_eq!(row["completed_keys"], records);
+        assert_eq!(row["fresh"], json!(true));
+        let stamp = row["updated_at"].as_str().unwrap();
+        assert_eq!(stamp.len(), "2026-01-01T00:00:00.000Z".len(), "{stamp}");
+        assert!(stamp.ends_with('Z'));
+        assert_eq!(
+            store
+                .read_op_checkpoint_record("repair", "f", None)
+                .unwrap()["fresh"],
+            serde_json::Value::Null
+        );
+        // A record element reads back through `readOpCheckpointKeys` as its jsonb text.
+        assert_eq!(
+            store.read_op_checkpoint_keys("repair", "f").unwrap()["keys"],
+            json!([r#"{"kind": "k", "cursor": {"id": 3}, "run_id": "r"}"#])
+        );
+        // Another fingerprint and another op read nothing.
+        assert_eq!(
+            store
+                .read_op_checkpoint_record("repair", "g", None)
+                .unwrap(),
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            store.read_op_checkpoint_record("embed", "f", None).unwrap(),
+            serde_json::Value::Null
+        );
+        store
+            .append_op_checkpoint_paths("repair", "f", &strings(&["p"]))
+            .unwrap();
+        store
+            .write_op_checkpoint_record("repair", "f", None)
+            .unwrap();
+        assert_eq!(
+            store
+                .read_op_checkpoint_record("repair", "f", None)
+                .unwrap(),
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            store.read_op_checkpoint_keys("repair", "f").unwrap()["keys"],
+            json!([])
+        );
+        // A second delete is a no-op.
+        store
+            .write_op_checkpoint_record("repair", "f", None)
+            .unwrap();
+    }
+
+    #[test]
+    fn a_record_that_is_not_an_array_or_holds_nul_is_refused() {
+        let store = store();
+        assert!(
+            store
+                .write_op_checkpoint_record("repair", "f", Some(&json!({ "a": 1 })))
+                .is_err()
+        );
+        assert!(
+            store
+                .write_op_checkpoint_record("repair", "f", Some(&json!([{ "a\0": 1 }])))
+                .is_err()
+        );
+        assert!(
+            store
+                .write_op_checkpoint_record("repair", "f", Some(&json!(["x\0"])))
+                .is_err()
+        );
+        assert_eq!(
+            store
+                .read_op_checkpoint_record("repair", "f", None)
+                .unwrap(),
+            serde_json::Value::Null
         );
     }
 }

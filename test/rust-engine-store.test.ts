@@ -9,7 +9,7 @@
  */
 import { afterEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadRustAddon, type RustAddon } from '../src/core/rust-engine/addon-loader.ts';
@@ -25,13 +25,15 @@ import { PageRevisionConflictError } from '../src/core/page-state/types.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { ENGINE_CAPABILITIES } from '../src/core/engine-capabilities.ts';
 import { withCallerAccess } from '../src/core/search/private-visibility.ts';
+import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+import { addGroup, addMember, audienceMemberIds, bindCredential, boundCredentials, getMember, legacyTokenByName, listGroups, listMembers, memberByEmail } from '../src/core/access/members.ts';
+import { memberIdentityFor, stdioMemberIdentity } from '../src/core/access/caller.ts';
+import { rescopeArchiveBefore } from '../src/commands/archive-rescope.ts';
+import { rescopeArchiveOnShared } from '../src/core/transcripts/archive.ts';
 import { readSourceFreshness } from '../src/core/notifier/status.ts';
 import { startResidentNotifier } from '../src/core/notifier/resident.ts';
-import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { segmentRegions } from '../src/core/search/dedup.ts';
 import { OWNER_IPC_ROUTES } from '../src/core/rust-engine/owner-ipc/routes.ts';
-import { audienceMemberIds, boundCredentials, getMember, legacyTokenByName, listMembers, memberByEmail } from '../src/core/access/members.ts';
-import { memberIdentityFor, stdioMemberIdentity } from '../src/core/access/caller.ts';
 
 const TARGET = detectAddonTarget();
 const BUILT = join(import.meta.dir, '..', 'rust', 'target', 'addon', `gbrain_engine.${TARGET ?? 'unsupported'}.node`);
@@ -109,6 +111,17 @@ describe('Rust engine on the store', () => {
     await made.engine.connect({ engine: 'pglite', database_path: made.dir } as never);
     await made.engine.disconnect();
     expect(await code(() => made.engine.getPage('notes/a'))).toBe('engine_closed');
+  });
+
+  withAddon('the store directory is private (0700) even when the owner socket path is too long to live in it', async () => {
+    if (process.platform === 'win32') return;
+    const base = mkdtempSync(join(tmpdir(), 'gbrain-rust-store-long-'));
+    dirs.push(base);
+    // Over the unix socket byte budget, so the owner socket moves to a private fallback outside the store.
+    const dir = join(base, 'x'.repeat(120), 'brain');
+    const { engine } = await open(dir);
+    await engine.putPage('notes/a', page);
+    expect(statSync(dir).mode & 0o777).toBe(0o700);
   });
 
   withAddon('pages stay in their source: the same slug in two sources is two pages', async () => {
@@ -344,6 +357,66 @@ describe('Rust engine on the store', () => {
     expect((await engine.getFile('default', 'f/a.png'))?.page_id).toBe(created.id);
   });
 
+  withAddon('access members: a token bind and every credential binding member serve; a bind to a missing token writes nothing', async () => {
+    const { engine } = await open();
+    // gbrain access member add --bind-token looks the token up first. With no token of that name the command refuses
+    // before it writes.
+    expect(await code(() => addMember(engine, 'alice-example', { groups: ['team-a'], bindToken: 'laptop' }))).toBe('invalid_params');
+    expect(await getMember(engine, 'alice-example')).toBeNull();
+    expect(await engine.getConfig('access.restrictions_present')).toBeNull();
+    // With the token kept, the same command writes the member and binds the token to it.
+    const { id: tokenId } = await engine.insertAccessToken({ name: 'laptop', token_hash: 'hash-laptop', scopes: ['read'], permissions: {}, source_grant: null,
+      source_id: null, federated_read: null, allowed_operations: null, takes_holders: null });
+    expect((await addMember(engine, 'alice-example', { groups: ['team-a'], bindToken: 'laptop' })).member.id).toBe('alice-example');
+    expect(await engine.listActiveAccessMembers()).toEqual(['alice-example']);
+    const target = { kind: 'token' as const, id: tokenId };
+    const read = () => engine.transaction(tx => tx.readCredentialBindingForUpdate(target, { readsUnscoped: false }));
+    expect((await read())?.member_id).toBe('alice-example');
+    // gbrain auth rescope --member none: the locked read, then the write, clear the binding.
+    await bindCredential(engine, target, { member: null });
+    expect((await read())?.member_id).toBeNull();
+    await engine.transaction(tx => tx.writeCredentialReadsUnscoped(target, true));
+    expect((await engine.transaction(tx => tx.readCredentialBindingForUpdate(target, { readsUnscoped: true })))?.reads_unscoped).not.toBeNull();
+  });
+
+  withAddon('access members: a token binds on a member insert and through the binding members, and an id no token has binds nothing', async () => {
+    const { engine } = await open();
+    const grant = { source_grant: 'default', source_id: null, federated_read: null, allowed_operations: null, takes_holders: null };
+    const { id: tokenId } = await engine.insertAccessToken({ name: 'laptop', token_hash: 'hash-laptop', scopes: ['read'], permissions: {}, ...grant });
+    const spec = { id: 'alice-example', displayName: null, email: null, kind: 'person' as const, groups: ['team-a'], bindTokenId: tokenId };
+    // A bind to an id no token has writes the member and binds nothing, as the UPDATE finding no row does.
+    expect(await engine.insertAccessMember({ ...spec, id: 'zed-example', bindTokenId: 'c0000000-0000-4000-8000-0000000000e9' })).toEqual({ groupsCreated: ['team-a'] });
+    expect(await engine.readLiveMember('legacy_token', tokenId)).toBeNull();
+    // gbrain access member add --bind-token finds the token by name and binds it in the member's own write.
+    expect((await addMember(engine, 'alice-example', { groups: ['team-a'], bindToken: 'laptop' })).bound).toEqual({ kind: 'token', id: tokenId, name: 'laptop' });
+    expect(await engine.readLiveMember('legacy_token', tokenId)).toEqual({ id: 'alice-example', groups: ['team-a'] });
+    expect(await engine.readAccessCredentials({ memberId: 'alice-example' })).toEqual([{ kind: 'token', id: tokenId, name: 'laptop' }]);
+    // The binding members lock, write and clear the token's columns, and a binding to no token finds none.
+    const target = { kind: 'token' as const, id: tokenId };
+    expect(await engine.transaction(tx => tx.readCredentialBindingForUpdate(target, { readsUnscoped: false }))).toMatchObject({ member_id: 'alice-example' });
+    expect((await bindCredential(engine, target, { member: null })).member).toBeNull();
+    expect(await engine.readLiveMember('legacy_token', tokenId)).toBeNull();
+    expect(await code(() => bindCredential(engine, { kind: 'token', id: 'c0000000-0000-4000-8000-0000000000e9' }, { member: null }))).toBe('invalid_params');
+    // A member that is not live ends the binding's reach, and the token keeps the binding.
+    await bindCredential(engine, target, { member: 'alice-example' });
+    await engine.setAccessMemberDisabled('alice-example', true);
+    expect(await engine.readLiveMember('legacy_token', tokenId)).toBeNull();
+    expect(await engine.transaction(tx => tx.readCredentialBindingForUpdate(target, { readsUnscoped: false }))).toMatchObject({ member_id: 'alice-example' });
+  });
+
+  withAddon('access members: gbrain access member add keeps the archive pages to the owner first, then adds the member', async () => {
+    const { engine } = await open();
+    // The command's beforeWrite and its follow-up read the archive audience keys through typed config reads.
+    const add = (id: string) => addMember(engine, id, { groups: ['team-a'], remote: false, beforeWrite: () => rescopeArchiveBefore(engine, id, 'add') });
+    expect((await add('census-owner')).member.status).toBe('enabled');
+    expect(await rescopeArchiveOnShared(engine)).toEqual([]);
+    await engine.setConfig('transcripts.archive.audience.default', 'shared');
+    expect((await add('bob-example')).member.id).toBe('bob-example');
+    expect(await rescopeArchiveOnShared(engine)).toEqual([]);
+    expect((await listMembers(engine)).map(m => m.id)).toEqual(['bob-example', 'census-owner']);
+    expect(await engine.getConfig('access.restrictions_present')).toBe('1');
+  });
+
   withAddon('a brain on a partial capability set reports exactly what the store serves', async () => {
     const { engine } = await open();
     expect([...engine.capabilities].sort()).toEqual([...servedCapabilities()].sort());
@@ -552,7 +625,7 @@ describe('MCP dispatch caller access on a Rust brain', () => {
 // `gbrain access member add|list` and `access owner set` read members first (access/members.ts getMember, listMembers).
 // On a Rust brain that read is a typed member, so it answers "no members" instead of stopping on raw SQL.
 describe('access member reads on a Rust brain', () => {
-  withAddon('getMember, memberByEmail and listMembers read no raw SQL and find no member: the store keeps none', async () => {
+  withAddon('getMember, memberByEmail and listMembers read no raw SQL and find no member on a brain with none', async () => {
     const { engine } = await open();
     const raw: string[] = [];
     const executeRaw = engine.executeRaw.bind(engine);
@@ -567,7 +640,7 @@ describe('access member reads on a Rust brain', () => {
     expect(raw).toEqual([]);
   });
 
-  withAddon('legacyTokenByName and boundCredentials read no raw SQL and find no credential: the store keeps no tokens or clients', async () => {
+  withAddon('legacyTokenByName and boundCredentials read no raw SQL and find no credential: the fresh store has no token or client', async () => {
     const { engine } = await open();
     const raw: string[] = [];
     const executeRaw = engine.executeRaw.bind(engine);
@@ -580,7 +653,7 @@ describe('access member reads on a Rust brain', () => {
     expect(raw).toEqual([]);
   });
 
-  withAddon('audienceMemberIds reads no raw SQL and finds no audience member: the store keeps none', async () => {
+  withAddon('audienceMemberIds reads no raw SQL and finds no audience member on a brain with no members', async () => {
     const { engine } = await open();
     const raw: string[] = [];
     const executeRaw = engine.executeRaw.bind(engine);
@@ -595,7 +668,7 @@ describe('access member reads on a Rust brain', () => {
     expect({ raw, listed }).toEqual({ raw: [], listed: [[]] });
   });
 
-  withAddon('memberIdentityFor and stdioMemberIdentity read no raw SQL and find an empty identity: the store keeps no members', async () => {
+  withAddon('memberIdentityFor and stdioMemberIdentity read no raw SQL and find an empty identity on a brain with no members', async () => {
     const { engine } = await open();
     const raw: string[] = [];
     const executeRaw = engine.executeRaw.bind(engine);
@@ -618,6 +691,175 @@ describe('access member reads on a Rust brain', () => {
       read: [['legacy_token', '00000000-0000-4000-8000-0000000000c1', null], ['oauth_client', 'client-alice', null],
         ['stdio_config', 'mcp.stdio_member', null], ['member', 'alice-example', null]],
     });
+  });
+
+  withAddon('listGroups reads no raw SQL and finds no group: the store keeps none', async () => {
+    const { engine } = await open();
+    const raw: string[] = [];
+    const executeRaw = engine.executeRaw.bind(engine);
+    (engine as unknown as { executeRaw: typeof executeRaw }).executeRaw = (async (sql: string, params?: unknown[]) => {
+      raw.push(sql);
+      return executeRaw(sql as never, params as never);
+    }) as typeof executeRaw;
+    const read: unknown[][] = [];
+    const groups = engine.readAccessGroups.bind(engine);
+    (engine as unknown as { readAccessGroups: typeof groups }).readAccessGroups = async (id) => { const rows = await groups(id); read.push([id, rows]); return rows; };
+    const listed = { all: await listGroups(engine as never), byId: await listGroups(engine as never, 'team-a'), emptyId: await listGroups(engine as never, '') };
+    expect(listed).toEqual({ all: [], byId: [], emptyId: [] });
+    expect({ raw, read }).toEqual({ raw: [], read: [[null, []], ['team-a', []], [null, []]] });
+  });
+
+  withAddon('listPagesNamingReader reads the stored pages, not raw SQL: readers name the principal exactly', async () => {
+    const { engine } = await open();
+    const raw: string[] = [];
+    const executeRaw = engine.executeRaw.bind(engine);
+    (engine as unknown as { executeRaw: typeof executeRaw }).executeRaw = (async (sql: string, params?: unknown[]) => {
+      raw.push(sql);
+      return executeRaw(sql as never, params as never);
+    }) as typeof executeRaw;
+    const put = (slug: string, frontmatter: Record<string, unknown>) =>
+      engine.putPage(slug, { type: 'note', title: slug, compiled_truth: 'body', frontmatter });
+    await put('notes/b', { readable_by: ['alice-example', 'group:team-a'] });
+    await put('notes/a', { readable_by: ' Member:Alice-Example ' });
+    await put('notes/open', { owner: 'alice-example' });
+    raw.length = 0;
+    const answers = {
+      member: await engine.listPagesNamingReader('member:alice-example'),
+      group: await engine.listPagesNamingReader('group:team-a'),
+      bare: await engine.listPagesNamingReader('alice-example'),
+    };
+    expect(answers).toEqual({
+      member: [{ slug: 'notes/a', source_id: 'default' }, { slug: 'notes/b', source_id: 'default' }],
+      group: [{ slug: 'notes/b', source_id: 'default' }], bare: [],
+    });
+    expect(raw).toEqual([]);
+  });
+
+  withAddon('forgetting a removed member writes its Wakeshift forget on the store, not through raw SQL', async () => {
+    const { engine } = await open();
+    const raw: string[] = [];
+    const executeRaw = engine.executeRaw.bind(engine);
+    (engine as unknown as { executeRaw: typeof executeRaw }).executeRaw = (async (sql: string, params?: unknown[]) => {
+      raw.push(sql);
+      return executeRaw(sql as never, params as never);
+    }) as typeof executeRaw;
+    const wakeUser = 'a'.repeat(32);
+    const id = await engine.openWakeWatch({
+      event: 'gbrain.job.finished', target: '1', targetRef: null, principalKind: 'oauth_client', principalId: 'client-a',
+      memberId: 'alice-example', wakeUser, wsSubscriptionId: 'ws-1', expiresAt: '2099-01-01T00:00:00.000Z',
+    });
+    const version = 'b'.repeat(16);
+    await engine.recordWakeTermsAcceptance('member:alice-example', version);
+    const errors: string[] = [];
+    const error = console.error;
+    console.error = (...args: unknown[]) => { errors.push(args.join(' ')); };
+    let result: unknown;
+    try {
+      const { forgetWakeMember } = await import('../src/core/wakeshift/forget.ts') as Record<string, unknown> as {
+        forgetWakeMember: (e: typeof engine, memberId: string) => Promise<{ ended: number; queued: number }>;
+      };
+      result = await forgetWakeMember(engine, 'alice-example');
+    } finally {
+      console.error = error;
+    }
+    const [watch] = await engine.listWakeWatches({
+      principalKind: 'oauth_client', principalId: 'client-a', memberId: 'alice-example', scope: 'open_or_recent', id,
+    });
+    expect({
+      result, errors, raw,
+      watch: [watch?.state, watch?.last_error],
+      forgets: (await engine.claimWakeForgets({ leaseSeconds: 60, limit: 10 })).map(c => c.wake_user),
+      terms: await engine.hasWakeTermsAcceptance('member:alice-example', version),
+    }).toEqual({
+      result: { ended: 1, queued: 1 }, errors: [], raw: [],
+      watch: ['ended', 'principal_revoked'], forgets: [wakeUser], terms: false,
+    });
+  });
+
+  withAddon('forgetting a revoked token or a deleted OAuth client writes its Wakeshift forget on the store, not through raw SQL', async () => {
+    const { engine } = await open();
+    const raw: string[] = [];
+    const executeRaw = engine.executeRaw.bind(engine);
+    (engine as unknown as { executeRaw: typeof executeRaw }).executeRaw = (async (sql: string, params?: unknown[]) => {
+      raw.push(sql);
+      return executeRaw(sql as never, params as never);
+    }) as typeof executeRaw;
+    const tokenId = 'abcdef01-2345-6789-abcd-ef0123456789';
+    const watched = async (n: number, principalKind: 'oauth_client' | 'legacy_token', principalId: string) => engine.openWakeWatch({
+      event: 'gbrain.job.finished', target: String(n), targetRef: null, principalKind, principalId,
+      memberId: null, wakeUser: String(n).repeat(32), wsSubscriptionId: `ws-${n}`, expiresAt: '2099-01-01T00:00:00.000Z',
+    });
+    const client = await watched(1, 'oauth_client', 'client-a');
+    const token = await watched(2, 'legacy_token', tokenId);
+    const version = 'b'.repeat(16);
+    await engine.recordWakeTermsAcceptance('oauth_client:client-a', version);
+    await engine.recordWakeTermsAcceptance(`legacy_token:${tokenId}`, version);
+    const errors: string[] = [];
+    const error = console.error;
+    console.error = (...args: unknown[]) => { errors.push(args.join(' ')); };
+    const results: unknown[] = [];
+    try {
+      const { forgetWakePrincipal } = await import('../src/core/wakeshift/forget.ts') as Record<string, unknown> as {
+        forgetWakePrincipal: (e: typeof engine, who: { kind: 'oauth_client' | 'legacy_token'; id: string }) => Promise<{ ended: number; queued: number }>;
+      };
+      results.push(await forgetWakePrincipal(engine, { kind: 'oauth_client', id: 'client-a' }));
+      results.push(await forgetWakePrincipal(engine, { kind: 'legacy_token', id: tokenId.toUpperCase() }));
+    } finally {
+      console.error = error;
+    }
+    const stateOf = async (principalKind: 'oauth_client' | 'legacy_token', principalId: string, id: number) => {
+      const [row] = await engine.listWakeWatches({ principalKind, principalId, memberId: null, scope: 'open_or_recent', id });
+      return [row?.state, row?.last_error];
+    };
+    expect({
+      results, errors, raw,
+      watches: [await stateOf('oauth_client', 'client-a', client), await stateOf('legacy_token', tokenId, token)],
+      forgets: (await engine.claimWakeForgets({ leaseSeconds: 60, limit: 10 })).map(c => c.wake_user),
+      terms: [await engine.hasWakeTermsAcceptance('oauth_client:client-a', version), await engine.hasWakeTermsAcceptance(`legacy_token:${tokenId}`, version)],
+    }).toEqual({
+      results: [{ ended: 1, queued: 1 }, { ended: 1, queued: 1 }], errors: [], raw: [],
+      watches: [['ended', 'principal_revoked'], ['ended', 'principal_revoked']],
+      forgets: ['1'.repeat(32), '2'.repeat(32)], terms: [false, false],
+    });
+  });
+});
+
+describe('access member reads on a Rust brain with members', () => {
+  withAddon('the member commands and the caller identity read the members and groups the typed writes made, with no raw SQL', async () => {
+    const { engine } = await open();
+    const raw: string[] = [];
+    const executeRaw = engine.executeRaw.bind(engine);
+    (engine as unknown as { executeRaw: typeof executeRaw }).executeRaw = (async (sql: string, params?: unknown[]) => {
+      raw.push(sql);
+      return executeRaw(sql as never, params as never);
+    }) as typeof executeRaw;
+    await addMember(engine, 'zed-example', { kind: 'audience', email: 'zed@example.com', groups: ['team-b', 'team-a'], remote: false });
+    await addMember(engine, 'alice-example', { kind: 'audience', groups: ['team-a'], remote: false });
+    await addMember(engine, 'dave-example', { groups: ['team-c'] });
+    await engine.setAccessMemberDisabled('dave-example', true);
+    expect((await addGroup(engine, 'team-c', ['alice-example'])).created).toBe(false);
+    await engine.setConfig('mcp.stdio_member', ' zed-example ');
+    const out = {
+      byEmail: (await memberByEmail(engine, 'ZED@example.com')).id,
+      audience: await audienceMemberIds(engine),
+      groups: await listGroups(engine),
+      teamA: await listGroups(engine, 'team-a'),
+      stdioConfig: await memberIdentityFor(engine, { principal: { kind: 'local_stdio', id: 'stdio' } }),
+      stdioMember: await stdioMemberIdentity(engine, 'alice-example'),
+      disabled: await stdioMemberIdentity(engine, 'dave-example'),
+      token: await memberIdentityFor(engine, { principal: { kind: 'legacy_token', id: '00000000-0000-4000-8000-0000000000c1' } }),
+    };
+    expect(out).toEqual({
+      byEmail: 'zed-example',
+      audience: ['alice-example', 'zed-example'],
+      groups: [{ id: 'team-a', members: ['alice-example', 'zed-example'] }, { id: 'team-b', members: ['zed-example'] }, { id: 'team-c', members: ['alice-example', 'dave-example'] }],
+      teamA: [{ id: 'team-a', members: ['alice-example', 'zed-example'] }],
+      stdioConfig: ['group:team-a', 'group:team-b', 'member:zed-example'],
+      stdioMember: ['group:team-a', 'group:team-c', 'member:alice-example'],
+      disabled: [],
+      token: [],
+    });
+    expect(raw).toEqual([]);
   });
 });
 

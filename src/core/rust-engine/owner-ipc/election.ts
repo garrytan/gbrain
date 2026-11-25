@@ -5,11 +5,11 @@
  * there as a client instead of failing with `store_locked`.
  *
  * Election retries for a bounded time: an owner that holds the lock but has not bound its socket yet, or one that just
- * exited, is waited for; once the lock is free this process takes it. When an owner goes away, the calls it had not
- * answered end with `owner_unavailable` (`outcome_unknown`) and are never sent again; the client's next call runs this
- * election again (rust-engine.ts), so one of the remaining processes becomes the owner.
+ * exited, is waited for; once the lock is free this process takes it. A client whose owner exits runs the election
+ * again on its next call (client.ts `rejoin`, RustEngine `_takeOver`); its calls in flight end `owner_unavailable`
+ * (routes.ts `ownerGone`, `outcome_unknown`) and are never sent again, since the owner may have started them.
  */
-import { mkdirSync } from 'node:fs';
+import { chmodSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { BrainEngine } from '../../engine.ts';
 import { opError } from '../../ops/contract.ts';
@@ -17,7 +17,7 @@ import { tryAcquireNativeLock, type NativeLockHandle } from '../../persistence/n
 import { parseGlobalFlags } from '../../cli-options.ts';
 import { connectOwner, type OwnerConnection } from './client.ts';
 import { recordOwnedRustBrain } from '../owned-brains.ts';
-import { ownerLockPath, ownerSocketPath } from './protocol.ts';
+import { canonicalDatabasePath, ownerLockPath, ownerSocketPath } from './protocol.ts';
 import { serveOwnerEngine, type OwnerEngineServer, type OwnerServerOptions } from './server.ts';
 
 /** How long a process keeps trying to become the owner or reach it before it reports `owner_unavailable`. */
@@ -56,6 +56,11 @@ export async function electOwner(engine: BrainEngine, databasePath: string, opts
   const lockPath = ownerLockPath(databasePath);
   const socketPath = ownerSocketPath(databasePath);
   mkdirSync(dirname(lockPath), { recursive: true });
+  // The store directory is private whatever the socket length: a short socket path hardens it to 0700 as the socket's
+  // parent, but a long one moves the socket elsewhere, so the store's own files would keep the umask's mode.
+  const storeDir = canonicalDatabasePath(databasePath);
+  mkdirSync(storeDir, { recursive: true, mode: 0o700 });
+  if (process.platform !== 'win32') chmodSync(storeDir, 0o700);
   const deadline = Date.now() + (opts.waitMs ?? OWNER_ELECTION_WAIT_MS);
   let lastError: unknown;
   for (;;) {

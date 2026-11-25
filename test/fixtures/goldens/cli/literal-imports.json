@@ -159,6 +159,9 @@
       "pricing": [
         "./commands/pricing.ts"
       ],
+      "profile": [
+        "./commands/profile.ts"
+      ],
       "quarantine": [
         "./commands/trust.ts",
         "./commands/quarantine.ts"
@@ -245,9 +248,6 @@
         "./core/eligibility/scan.ts",
         "./core/trust/label-lowerings.ts",
         "./core/trust/backfill.ts"
-      ],
-      "waiting": [
-        "./commands/loops.ts"
       ],
       "wakeshift": [
         "./commands/wakeshift.ts"

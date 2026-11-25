@@ -10,13 +10,19 @@
  *  - `read_only_transaction` is Postgres's refusal of a write in a READ ONLY transaction: code `25006`
  *    (`read_only_sql_transaction`), message `cannot execute <member> in a read-only transaction`.
  *  - `page_ambiguous` is `PageSnapshotAmbiguousError`, what readPageSnapshot throws under `requireUnambiguous`.
+ *  - A `constraint_violation` that names a unique index of the facts table (`idx_facts_ontology_stint_dedup`,
+ *    `idx_facts_fence_key`) is the error Postgres and PGLite raise for it: SQLSTATE `23505` in `code`, the same message,
+ *    and the constraint, table and schema names. The Postgres `detail` line (the key values) is not reproduced.
  *  - Every other code stays on the original error, which already carries it (`invalid_slug`, `empty_overwrite`, ...).
  */
+import type { Capability } from '../engine-capabilities.ts';
 import { opError } from '../ops/contract.ts';
 import { originAlreadyClaimed } from '../persistence/origin-guard.ts';
 import { PageMissingError } from '../engine-errors.ts';
 import { PageRevisionConflictError, PageSnapshotAmbiguousError } from '../page-state/types.ts';
 import { READ_ONLY_SQLSTATE } from '../postgres-engine/read-write-transactions.ts';
+import { capabilityMissing } from './errors.ts';
+import { RUST_ENGINE_MEMBERS } from './members.ts';
 
 export interface StoreErrorContext {
   member: string;
@@ -65,9 +71,34 @@ export function mapStoreError(error: unknown, ctx: StoreErrorContext): unknown {
       return Object.assign(new Error(`cannot execute ${ctx.member} in a read-only transaction`), { code: READ_ONLY_SQLSTATE });
     case 'page_ambiguous':
       return new PageSnapshotAmbiguousError();
+    case 'constraint_violation':
+      return factsUniqueViolation(error);
+    case 'unmodeled_input':
+      // An input the store does not read as Postgres does: refused by name, before anything is written.
+      return refusalFor(ctx.member, detail);
     default:
       return error;
   }
+}
+
+/** `engine_capability_missing` for `member`, under the capability the member table gives it, naming what was refused. */
+function refusalFor(member: string, what: string): Error {
+  return capabilityMissing((RUST_ENGINE_MEMBERS as Record<string, string>)[member] as Capability, `${member} (${what})`);
+}
+
+/** The unique indexes of the facts table the store enforces, by the name Postgres reports. */
+const FACTS_UNIQUE_INDEXES: ReadonlySet<string> = new Set(['idx_facts_ontology_stint_dedup', 'idx_facts_fence_key']);
+
+/** SQLSTATE `unique_violation`. */
+export const UNIQUE_VIOLATION_SQLSTATE = '23505';
+
+function factsUniqueViolation(error: unknown): unknown {
+  const message = error instanceof Error ? error.message : '';
+  const named = /^duplicate key value violates unique constraint "(.+)"$/s.exec(message);
+  if (!named || !FACTS_UNIQUE_INDEXES.has(named[1]!)) return error;
+  return Object.assign(new Error(message), {
+    severity: 'ERROR', code: UNIQUE_VIOLATION_SQLSTATE, schema_name: 'public', table_name: 'facts', constraint_name: named[1],
+  });
 }
 
 function pageNotFound(error: unknown, ctx: StoreErrorContext): unknown {

@@ -28,7 +28,6 @@ writes_to:
   - daily/
   - projects/
   - analysis/
-upstream: company-brainify@fc834ee
 # Brain-first in its native form: Phase-1 discovery runs through gbrain
 # retrieval (query/search/takes search/recall), and every edit is grounded
 # in a full read of the actual page. writes_to lists the scan scope the
@@ -158,6 +157,10 @@ cd "$BRAIN"
 
 4. Count: `wc -l /tmp/brainify-scope.txt`
 
+The scope list is also the export list. On the staging path only its files
+inside the six scanned folders are copied, read and shipped, so a file Phase 1
+doesn't find never reaches the team.
+
 ### Phase 2: Triage sensitivity
 
 Prioritize by hit density (portable `grep -E`; no `\b` — BSD and GNU disagree):
@@ -192,16 +195,37 @@ and deletes fact rows. Two rules govern it.
   # Durable staging dir (NOT /tmp — same reasoning as the mirror backup).
   STAGING="$HOME/.gbrain/backups/brainify-staging-$(date +%Y%m%d-%H%M%S)"
   mkdir -p "$STAGING" && chmod 700 "$STAGING"
-  for d in people meetings daily companies projects analysis; do
-    [ -d "$d" ] && rsync -a "$d/" "$STAGING/$d/"
-  done
+  # The export list: scope-list files inside the six scanned folders and
+  # nothing else. It sits beside $STAGING, not in it, so it never ships.
+  grep -E '^(people|meetings|daily|companies|projects|analysis)/' /tmp/brainify-scope.txt \
+    | LC_ALL=C sort -u > "$STAGING.export-list"
+  rsync -a --files-from="$STAGING.export-list" ./ "$STAGING/"
   cd "$STAGING"   # all edits below happen here, not in sync.repo_path
   ```
+
+  Copy only the export list, never whole folders: only its files get the
+  per-file read below. On a personal brain, `people/` and `daily/` also hold
+  family, friends and private days that no retrieval or keyword hit flags, so
+  a folder copy ships pages nobody read. To ship another file, append its path
+  to `$STAGING.export-list`, copy it in the same way, and give it the full
+  read and the Phase 4 checks.
 
 - **Re-auditing an EXISTING shared brain:** the shared brain IS the target, so
   edits are in place on the SHARED repo (cd into the shared repo, never the
   personal `sync.repo_path`). Fact-row removal + re-sync applies to the shared
-  source's DB.
+  source's DB. Before Phase 5's history purge, once Phase 4 passes, run this
+  in your sanitized checkout of the shared repo. The purge clones the remote
+  fresh and takes the sanitized tree only from `$STAGING`, so copy the six
+  folders there. The team can already read every page in them, so the export
+  list is every file they now hold:
+
+  ```bash
+  STAGING="$HOME/.gbrain/backups/brainify-reaudit-$(date +%Y%m%d-%H%M%S)"
+  mkdir -p "$STAGING" && chmod 700 "$STAGING"
+  for d in people meetings daily companies projects analysis; do [ -d "$d" ] && rsync -a "$d/" "$STAGING/$d/"; done
+  for d in people meetings daily companies projects analysis; do [ -d "$d" ] && find "$d" -type f; done \
+    | LC_ALL=C sort > "$STAGING.export-list"
+  ```
 
 **Fire the [data-loss-gate](../data-loss-gate/SKILL.md) confirmation card
 BEFORE the bulk destructive edits begin.** Both targets are destructive (the
@@ -231,7 +255,8 @@ Require a typed "yes"/"do it" per data-loss-gate; "ok"/"sure" are not consent.
 
 Per test-before-bulk: do 3-5 files first, read the results, then ramp. For
 large sets (50+ files), batch into groups of 10-12 and spawn parallel
-subagents. Per file:
+subagents. Per file, for every file on the export list (zero-hit files
+included: the export ships exactly that list):
 
 1. Read the file completely
 2. Remove all content matching the "Always strip" categories
@@ -274,8 +299,14 @@ Re-run the Phase 2 triage — the count of flagged files should drop to
 # Rating fields remaining in frontmatter
 grep -rn -E '^[a-z_]*(score|rating|skill)[a-z_]*: *[0-9]' people/ --include="*.md"
 
-# Phone numbers
-grep -rn -E '\+1[0-9]{10}|\([0-9]{3}\) [0-9]{3}-[0-9]{4}' people/ --include="*.md"
+# Phone numbers (every scanned folder, US and international shapes)
+grep -rn -E '\+[0-9][0-9 ().-]{7,}[0-9]|\(?[0-9]{3}\)?[ .-][0-9]{3}[-. ][0-9]{4}' people/ meetings/ daily/ companies/ projects/ analysis/ --include="*.md" 2>/dev/null
+
+# Email addresses outside the company's work domain (replace acme-example.com)
+grep -rn -o -E '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' people/ meetings/ daily/ companies/ projects/ analysis/ --include="*.md" 2>/dev/null | grep -v -i '@acme-example\.com$'
+
+# Home addresses, family, medical, legal and personal-life details
+grep -rin -E 'home address|[0-9]+ [A-Za-z]+ (street|st|avenue|ave|road|rd|lane|ln|drive|dr|blvd)([ ,.]|$)|apt [0-9]|wife|husband|girlfriend|boyfriend|kids|daughter|son is|pregnan|divorce|diagnos|medical|therap|surgery|hospital|illness|rehab|lawsuit|custody|arrest' people/ meetings/ daily/ companies/ projects/ analysis/ --include="*.md" 2>/dev/null
 
 # Comp keywords (full scan scope, not just people/)
 grep -rin -E 'carry|comp change|equity|salary' people/ meetings/ daily/ companies/ projects/ analysis/ --include="*.md" 2>/dev/null
@@ -299,6 +330,7 @@ shared source is mounted alongside personal content):
 gbrain query "what is alice-example's compensation" --limit 10
 gbrain query "who is underperforming or at risk of leaving" --limit 10
 gbrain takes search "weakness" --limit 20
+gbrain query "family, health, home address or personal life" --limit 10
 ```
 
 Every one of these must come back empty or with only keep-category content.
@@ -313,8 +345,9 @@ team repo, skip history rewriting entirely: the sanitized STAGING tree from
 Phase 3 becomes a fresh repo with fresh history. The personal repo keeps its
 full history AND its full working tree, untouched.
 
-**Export rule: nothing unscanned ships.** Phase 3 copied ONLY the scanned
-directories into `$STAGING`, so it holds nothing the pass didn't read. Never
+**Export rule: nothing unread ships.** Phase 3 copied ONLY the export list
+into `$STAGING` and gave every file on it the per-file read, and the commit
+below refuses any file that is not on that list. Never
 copy other directories in (`conversations/`, `originals/`, `sources/`,
 `inbox/`): a whole-repo copy is the classic leak. To ship a new directory, add
 it to the scan scope first (Phases 1-4).
@@ -328,7 +361,12 @@ cd "$STAGING"
 # ... Phase 4 greps against $STAGING ...
 
 git init -b main
-git add -A && git commit -m "Initial import — sanitized team brain"  # gbrain-allow-shared-tree-git: first commit of a fresh single-writer export repo
+git add -A  # gbrain-allow-shared-tree-git: first commit of a fresh single-writer export repo holding only the export list
+# Refuse anything staged that is not on the export list: it got no read.
+[ -s "$STAGING.export-list" ] || { echo "no export list at $STAGING.export-list — ABORT"; exit 1; }
+unread=$(git -c core.quotePath=false diff --cached --name-only | LC_ALL=C sort | LC_ALL=C comm -23 - "$STAGING.export-list")
+[ -z "$unread" ] || { echo "not on the export list, never read: $unread — ABORT"; exit 1; }
+git commit -m "Initial import — sanitized team brain"
 git remote add origin <TEAM_REPO_URL>
 gbrain git commit-push --push-only
 ```
@@ -340,157 +378,13 @@ the error: usually `git_push_unavailable` (fix the URL or credentials, rerun),
 or a team repo that already has commits (this export needs an empty one; ask
 the user). Never force-push it.
 
-Only when a shared repo ALREADY exists with sensitive history in it do you
-need the purge below.
-
-**Step 1 — target the SHARED repo, commit the clean tree, then mirror-clone.**
-The purge runs on the SHARED repo, NEVER `sync.repo_path` (the personal
-brain). Clone it to a durable work dir, stay there for every step below, and
-assert the target is not the personal repo first.
-
-```bash
-PERSONAL="$(gbrain config get sync.repo_path)"
-mkdir -p "$HOME/.gbrain/backups" && chmod 700 "$HOME/.gbrain/backups"
-WORK="$HOME/.gbrain/backups/brainify-purge-$(date +%Y%m%d-%H%M%S)"
-git clone <SHARED_REPO_URL> "$WORK/shared"
-cd "$WORK/shared"
-[ "$(git rev-parse --show-toplevel)" != "$PERSONAL" ] \
-  || { echo "target IS sync.repo_path (personal brain) — ABORT"; exit 1; }
-
-# Commit the sanitized tree BEFORE the mirror clone: a mirror captures
-# committed state only, and pushing it stops the remote serving the sensitive
-# current versions even if the purge is declined. Commit only the sanitized
-# dirs. Non-zero exit: retry once on commit_lock_busy; on integrate_conflict
-# ask the user before going on.
-for d in people meetings daily companies projects analysis; do
-  [ -d "$STAGING/$d" ] && rsync -a "$STAGING/$d/" "./$d/"   # or sanitize in place here
-done
-SANITIZED=""
-for d in people meetings daily companies projects analysis; do [ -d "$d" ] && SANITIZED="$SANITIZED $d"; done
-gbrain git commit-push -m "Sanitize: strip sensitive content before history purge" -- $SANITIZED
-
-# Mirror-clone backup = the card's recoverability line. Capture the path NOW
-# and reuse it verbatim: never recompute $(date) later.
-BACKUP_PATH="$HOME/.gbrain/backups/shared-brain-history-backup-$(date +%Y%m%d-%H%M%S).git"
-git clone --mirror "$WORK/shared" "$BACKUP_PATH"
-git -C "$BACKUP_PATH" log -1 >/dev/null || { echo "backup unreadable — ABORT"; exit 1; }
-```
-
-Verify the mirror exists and reads before presenting the card — it is the
-card's recoverability line.
-
-**Step 2 — STOP. Present the [data-loss-gate](../data-loss-gate/SKILL.md)
-confirmation card and wait.** History rewrite + force-push is the most
-destructive operation in this skill: it permanently discards every prior
-version of the purged paths from the remote. Never run it without the card
-answered. Pre-filled for this operation:
-
-```
-⚠️ DATA DELETION — Confirmation Required
-
-What: rewrite git history to remove all prior versions of [purged paths]
-      from the SHARED repo, then force-push to [remote/branch]
-Count: [N commits rewritten; M files with history purged]
-Size: [repo size before → expected after]
-Location: [SHARED repo work dir; remote URL; branch]
-Target check: this is the SHARED repo, verified ≠ personal sync.repo_path
-      ($PERSONAL) — the personal brain's history is never rewritten
-
-Why: prior commits contain pre-sanitization versions of pages that were
-     just cleaned — team access to the repo means team access to history
-
-Recoverable?
-- [x] Mirror-clone backup at $BACKUP_PATH
-      (verified: exists, `git -C "$BACKUP_PATH" log` works)
-- [ ] NOT recoverable from the rewritten remote — old SHAs become unreachable
-
-What we'd lose:
-- all pre-sanitization history for the purged paths (edit trail, blame,
-  old versions)
-- every existing clone breaks — all collaborators must re-clone
-
-Alternative to deletion:
-- fresh-history export to a NEW team repo (Step 0) — personal repo untouched
-
-Proceed? (yes/no)
-```
-
-Per data-loss-gate: require a typed **"yes"** or **"do it"** ("ok", "sure",
-"go ahead" are not consent). If the user asks a question, answer and re-present
-the card. Nothing in gbrain mechanically blocks `git filter-repo`, so the
-agent must never skip this gate.
-
-**Step 3 — purge (only after the explicit typed yes).** Requires
-`git filter-repo` (not bundled with git; install separately). **Run this ONLY
-in the shared-repo work dir from Step 1 (`cd "$WORK/shared"`). NEVER run
-`git filter-repo` or `git push --force` in `sync.repo_path` — the personal <!-- gbrain-allow-shared-tree-git: warns against a force push in the personal brain -->
-brain's history must stay intact.** The commands below reuse `$WORK` and
-`$BACKUP_PATH` from Step 1; they never recompute a date-stamped path.
-
-```bash
-cd "$WORK/shared"
-[ "$(git rev-parse --show-toplevel)" != "$PERSONAL" ] \
-  || { echo "target IS sync.repo_path — ABORT, do not filter-repo"; exit 1; }
-
-# The purge list is the COMPLETE set of scanned dirs (Phases 1-4); a narrower
-# list leaves old history alive. Backed-up, filtered and re-added sets match.
-PURGE_DIRS="people meetings daily companies projects analysis"
-
-# Back up the clean tree of every purged path to a DURABLE carrier (never /tmp).
-CLEAN="$WORK/clean"
-mkdir -p "$CLEAN"
-for d in $PURGE_DIRS; do
-  [ -d "$d" ] || continue
-  mkdir -p "$CLEAN/$d" && cp -r "$d/." "$CLEAN/$d/"
-done
-
-# Rewrite history: one --path per purged directory
-rm -rf .git/filter-repo
-git filter-repo --invert-paths $(for d in $PURGE_DIRS; do printf -- '--path %s/ ' "$d"; done) --force
-
-# Restore clean files and re-commit as a single new commit — same $PURGE_DIRS
-for d in $PURGE_DIRS; do
-  [ -d "$CLEAN/$d" ] || continue
-  mkdir -p "$d" && cp -r "$CLEAN/$d/." "$d/"
-done
-git remote add origin <SHARED_REPO_URL>   # filter-repo removes remotes
-for d in $PURGE_DIRS; do [ -d "$d" ] && git add "$d/"; done
-git commit -m "Re-add sanitized directories"
-
-# VERIFY RESTORE COMPLETENESS before the irreversible push.
-before=$(find "$CLEAN" -type f | wc -l | tr -d ' ')
-after=$(for d in $PURGE_DIRS; do [ -d "$d" ] && find "$d" -type f; done | wc -l | tr -d ' ')
-[ "$before" = "$after" ] \
-  || { echo "restore incomplete ($before → $after files) — ABORT, do not force-push"; exit 1; }
-# Optional stronger check: diff -r "$CLEAN/<d>" "<d>" for each purged dir.
-
-# RE-VERIFY the backup right before the irreversible step (reuse $BACKUP_PATH).
-git -C "$BACKUP_PATH" log -1 >/dev/null \
-  || { echo "backup missing/unreadable — ABORT, do not force-push"; exit 1; }
-
-git push --force origin main  # gbrain-allow-shared-tree-git: the confirmed history purge of a private single-writer clone (data-loss-gate answered)
-```
-
-**Step 4 — log it (to the PERSONAL brain, NEVER the shared repo).** Per
-data-loss-gate, append the deletion under `## Data Deletions` in
-`$PERSONAL/daily/notes/YYYY-MM-DD.md` (or a local ops log): timestamp, purged
-paths, commit counts, and `$BACKUP_PATH` as the recovery line. In the shared
-repo it would show the team which paths held sensitive content and where the
-backup lives.
-
-**After the force push:**
-
-- All existing clones must re-clone
-- Hosts may cache unreachable commits for months; use the provider's
-  sensitive-data removal process for immediate removal (for private repos,
-  unreachable from every ref is usually enough)
-- A sync cursor on a rewritten-away SHA makes the next `gbrain sync` error or
-  rescan fully; run `gbrain doctor` if it doesn't settle
-- **Backup retention:** once the team has re-cloned and sync settled, keep the
-  mirror backup ~30 days, then delete it (it holds the pre-sanitization
-  history): `rm -rf ~/.gbrain/backups/shared-brain-history-backup-<date>.git`,
-  with the exact name Step 1 created (a mismatched name deletes nothing)
-- Re-verify remotes and any push hooks survived the rewrite before handoff
+**Existing shared repo with sensitive history: follow
+[HISTORY-PURGE.md](HISTORY-PURGE.md), read whole before its Step 1.** Only
+then do you purge. It commits the clean tree, records every remote branch and
+tag, takes a mirror backup, presents the data-loss-gate card (refs, leases,
+risk) and waits for a typed "yes", then rewrites history and pushes every
+branch and tag in one atomic push, each leased to its Step 1 sha. Never
+improvise it.
 
 **Hand the repo to the team — stamp it shared first.** On either path, run
 `gbrain config set brain.audience shared` against the TEAM brain (never the
@@ -502,9 +396,11 @@ brain classifies personal and the fire-once nudge would ask the wrong question.
 ### Phase 6: Ongoing hygiene — periodic re-audit
 
 Sensitive data re-accumulates (meeting transcripts, enrichment, candid
-writes); one clean pass is a snapshot, not a state. Schedule a monthly re-audit
+writes); one clean pass is a snapshot, not a state. Offer a monthly re-audit
 (weekly for high-ingest brains) that re-runs Phases 1, 2 and 4 report-only
-(scan and flag, no edits) for human review. Wire it per
+(scan and flag, no edits) for human review, as its own yes/no: say how often
+it runs, which phases it runs, and any model spend they incur, and schedule
+it only if the user says yes. Wire it per
 [conventions/cron-via-minions.md](../conventions/cron-via-minions.md) (`gbrain jobs submit`;
 `skills/cron-scheduler/SKILL.md`, `skills/minion-orchestrator/SKILL.md`). A
 human or a gated follow-up run does the removal.
@@ -555,10 +451,13 @@ This skill guarantees:
 - The history purge runs only on the SHARED repo in a work dir, never
   `sync.repo_path`, after a verified mirror-clone backup and before the
   force-push a restore-completeness check. Its filter list and restore set are
-  the complete sanitized scope.
+  the complete sanitized scope. It pushes every branch and tag the remote held
+  at Step 1 in one atomic push, each with a lease on its recorded sha, and
+  the card lists those refs.
 - The scan covers people, meetings, dailies, companies, projects, analysis,
-  takes, facts and back-links; the export ships only scanned directories,
-  verified (Phase 4 greps + retrieval) before the first push.
+  takes, facts and back-links; the export ships only the export list (the
+  scope-list files in those folders, each given the per-file read), verified
+  (Phase 4 greps + retrieval) before the first push.
 - Sensitive fact rows are deleted from the Facts fence and, in place,
   re-synced and reconciled (verified with `gbrain recall --grep`); `forget`
   never certifies clean.
@@ -609,7 +508,10 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 - ❌ Scanning only `people/`, or purging history for a subset of the sanitized
   paths
 - ❌ Calling clean working-tree files done: history keeps every version
-- ❌ Exporting the whole repo: nothing unscanned ships
+- ❌ Exporting the whole repo, or whole folders: only files that got the
+  per-file read ship
+- ❌ A force push without a lease on the sha recorded in Step 1, or a purge
+  that pushes main and leaves other branches and tags on the old history
 - ❌ Using `gbrain forget` as sanitization: delete the fence row and re-sync
 - ❌ `git filter-repo` / force-push without the verified mirror backup and the
   typed confirmation, or in `sync.repo_path`

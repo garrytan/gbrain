@@ -50,6 +50,7 @@ import type { UnwithdrawnFactRow } from '../engine-sql/facts-repair.ts';
 import { attributionCompatible } from '../facts/attribution.ts';
 import type { FactPreimage } from '../generations/adapters/fact-rows.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
+import { requireRawSql } from '../rust-engine/errors.ts';
 
 export const UNWITHDRAWN_FACTS_INTENT = 'managed_maintenance_restore_unwithdrawn_facts';
 const previewFix = (sourceId: string) => readFix('Previews the unwithdrawn-facts repair without changing anything.',
@@ -101,9 +102,7 @@ export async function classifyUnwithdrawnFacts(db: BrainEngine, sourceIds: strin
     const key = `${row.source_id}\u0000${row.slug}`;
     if (evidence.has(key) || row.page_id === null) continue;
     const page = rows.filter(other => other.source_id === row.source_id && other.slug === row.slug);
-    const [current] = await db.executeRaw<{ id: number; compiled_truth: string | null; timeline: string | null; body_storage: string | null }>(
-      `SELECT id, CASE WHEN body_storage = 'segmented' THEN NULL ELSE compiled_truth END AS compiled_truth,
-        CASE WHEN body_storage = 'segmented' THEN NULL ELSE timeline END AS timeline, body_storage FROM pages WHERE id = $1`, [row.page_id]);
+    const current = await db.readPageInlineBody(row.page_id);
     const prior = current ? await pageFenceRowKeys(db, current, row.slug, row.source_id) : null;
     const held = await factsFenceHeld(db, { sourceId: row.source_id, slug: row.slug, prior,
       rows: page.map(other => ({ id: Number(other.id), row_num: Number(other.preimage.row_num), fact: other.preimage.fact, visibility: other.preimage.visibility })) });
@@ -168,7 +167,7 @@ function detail(fact: UnwithdrawnFactCandidate): string {
 }
 
 async function previewCommand(engine: BrainEngine, scope: RepairScope, includeAmbiguous: boolean): Promise<string> {
-  const [{ n }] = await engine.executeRaw<{ n: number | string }>('SELECT count(*)::int AS n FROM sources WHERE archived IS NOT TRUE');
+  const n = (await engine.listAllSources()).length;
   const narrowed = scope.source_ids.length === 1 && Number(n) > 1;
   return `gbrain repair unwithdrawn-facts${narrowed ? ` --source ${scope.source_ids[0]}` : ''}${includeAmbiguous ? ' --include-ambiguous' : ''}`;
 }
@@ -179,8 +178,7 @@ function requestIdFor(hash: string, page: Pick<UnwithdrawnFactsPage, 'source_id'
 }
 
 async function hashParts(engine: BrainEngine, scope: RepairScope, includeAmbiguous: boolean, facts: UnwithdrawnFactCandidate[], revisions: Record<string, string>) {
-  const sources = await engine.executeRaw<{ id: string; incarnation: string }>(
-    'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+  const sources = await engine.listSourceIncarnations(scope.source_ids);
   return { kind: 'unwithdrawn-facts-v1', brain_id: scope.brain_id, sources, selection: { source_ids: scope.source_ids, include_ambiguous: includeAmbiguous },
     facts: facts.map(({ preimage: _preimage, ...fact }) => fact), revisions };
 }
@@ -241,6 +239,8 @@ export const unwithdrawnFactsRepair: RepairHandler = {
     return { items, preview_hash: opts.expect, residuals: { already_passed_pages: approved.items.length - items.length } };
   },
   async apply(ctx, entry): Promise<RepairItemOutcome> {
+    // The restore locks and rewrites facts through raw SQL, so a Rust brain stops here by name, before its first write.
+    requireRawSql(ctx.engine, 'repair unwithdrawn-facts fact write');
     const { page, hash, last } = entry as PageItem;
     const result = await managedPersistenceEnabled(ctx.engine)
       ? await restoreManaged(ctx.engine, page, hash)

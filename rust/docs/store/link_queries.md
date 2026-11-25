@@ -30,12 +30,16 @@ Code: `rust/crates/gbrain-store/src/link_queries.rs`, the napi methods in
 | `listJunkEntityHubs({ edgeThreshold, maxChunks, limit })` | served |
 | `countEntityPages(filter, { sourceId?, excludeQuarantined? })` | served |
 | `entityGraphCoverage(filter)` | served |
+| `entityFeatureCoverage(filter, feature, { samplePercent? })` | served; a `samplePercent` of 100 reads every page, a lower one refuses |
+| `countDatedMeetingPages()` | served |
 | `countForeignEdges(slug, sourceId, direction)` | served |
 | `listLivePageSummaries(scope?)` | served |
 | `countInboundLinks(slug, sourceId, { excludePrivate, originSameSource })` | served |
 | `readEntityInboundEdges(slug, sourceId, { excludePrivate, originSameSource })` | served |
 | `listLinkEndpointPages(sourceId, slugs, crossSourceSlugs)` | served |
 | `listPagesTitledIn(queryLower, scope)` | served |
+| `probePageTypes(sets, scope)` | served |
+| `readLongPageSizes(ids, scope, { includeTimeline })` | served |
 | `wordLexemes(words)` | served under the English text search configuration |
 | `readLinkContextMatches(asks)` | served |
 | `readLinkContextOriginPages(ids)` | served |
@@ -44,7 +48,7 @@ Code: `rust/crates/gbrain-store/src/link_queries.rs`, the napi methods in
 
 - The temporal read option (`temporal`) on every member but `relationalFanout` and `relationalChainHop`. `minTrust` and `suppressFlagged` are served wherever `pageReadFilter` reads
   them (`getBacklinkCounts`, `getAdjacencyBoosts`, `supersedingPageSlugs`, `relationalFanout`, `relationalChainHop`,
-  `listLivePageSummaries`, `listPagesTitledIn`): `GraphScope` applies `trust::TrustPolicy` to the page's stamped tier
+  `listLivePageSummaries`, `listPagesTitledIn`, `probePageTypes`, `readLongPageSizes`): `GraphScope` applies `trust::TrustPolicy` to the page's stamped tier
   and its write-gate receipts. `findOrphanPages` and `listLinkSources` still refuse them: their SQL does not read
   them through `pageReadFilter`, and no caller passes them. `takesHoldersAllowList` is accepted: it turns the live
   filter on in `relationalFanout` and is ignored by `getBacklinkCounts` and `getAdjacencyBoosts`, as in the SQL
@@ -85,7 +89,7 @@ policy hides fails the filter, live or not, in `getBacklinkCounts`, `getAdjacenc
 from a hidden page or with a hidden origin (`privateLinkOriginFilterForCaller` tests the origin's privacy only, not
 whether it is live). The origin clause (`originFilter`) passes a link with no origin, or one whose origin page passes the
 live filter. The policy carries a caller's reader identity and private-readable grant (the `callerReaders`
-opt-in), in these reads and in `listLivePageSummaries`, `listPagesTitledIn` and `countInboundLinks`; any other caller
+opt-in), in these reads and in `listLivePageSummaries`, `listPagesTitledIn`, `probePageTypes`, `readLongPageSizes` and `countInboundLinks`; any other caller
 whose policy differs (folder grants, lineage, an owner read) refuses. The owner-only part of the policy (`ownerOnly`: a
 page of an owner-only source, a concept synthesized from one, or every page under the closed form) applies to each page
 the read judges, with the owner-only sources read once per call, on the first page the call judges (`OwnerOnlyCache`).
@@ -157,6 +161,12 @@ alone unless the statement also applies `pageReadFilter(.., live)`.
   (the SQL ignores `sourceId` there); otherwise a non-empty `sourceId` filters.
 - `entityGraphCoverage`: `{ entities, connected, withTimeline }` over live, unquarantined entity pages that are not test
   fixtures (`tools/gbrain/test/`) or the person template. `withTimeline` counts pages with a timeline row.
+- `entityFeatureCoverage`: `{ sampleSize, matched }` over live, unquarantined entity pages in every source: the page
+  count, and how many are the target of a link (`links`) or have a timeline row (`timeline`). PGLite and Postgres take
+  an optional `TABLESAMPLE BERNOULLI` percent. The store reads every page: a `samplePercent` of 100 draws every row,
+  so it is served as the whole population; a lower one is a random draw and refuses with `engine_capability_missing`
+  (doctor and onboard sample only on Postgres). A percent outside (0, 100] fails with the SQL engines' message.
+- `countDatedMeetingPages`: live pages of type `meeting` with an effective date.
 - `countForeignEdges`: links of one page, whose other end is in another source; `in`, `out` or `both` (each link once).
 - `listLivePageSummaries`: `{ slug, type, quarantined }` for pages that are not soft-deleted and pass
   `pageReadFilter(.., scope)`, in page id order.
@@ -170,6 +180,17 @@ alone unless the statement also applies `pageReadFilter(.., live)`.
   leaves the row order to the plan.
 - `listPagesTitledIn`: pages whose lowercased title (three characters or more) occurs in `queryLower` and that pass
   `pageReadFilter(.., scope, live)`, by source then slug in byte order, at most 50.
+- `probePageTypes`: search's type-filter probe (engine-sql/cli-reads-ops.ts). `present[i]` is whether a page that
+  passes `pageReadFilter(.., scope, live)` has a type in `sets[i]` (false for an empty set). `available` is null unless
+  a non-empty set has no such page; then it lists at most 500 distinct types of those pages. The SQL leaves which 500
+  and their order to the plan; the store returns the first 500 in byte order, and the caller sorts them.
+- `readLongPageSizes`: search's long-page size preflight (search/long-page-sizes.ts). One row `{ id, chars, bytes }`
+  per page in `ids` that passes `pageReadFilter(.., scope, live)` and `servedTextProjectionFilter`, and
+  `safeChunksFilter` when `requiresSafeChunks(scope)`. `chars` and `bytes` are the compiled truth's `char_length` and
+  `octet_length` (NULL counts 0); with `includeTimeline`, a timeline that holds a character outside `[[:space:]]` adds
+  `TIMELINE_SEPARATOR` (21) and its own length. The SQL leaves the row order to the plan; the store returns rows in
+  first-ask order, once per id, and the caller reads them into a map. An id that is not a 32-bit integer throws a
+  `TypeError` before the store is called, as the SQL's `int[]` cast fails.
 - `wordLexemes`: each word's `tsvector_to_array(to_tsvector('english', w))`, in tsvector order. The member returns a
   `Map` from word to lexemes.
 - `readLinkContextMatches`: for each ask (a returned link context and its stored edge: from page, to page, link type;
@@ -188,8 +209,6 @@ alone unless the statement also applies `pageReadFilter(.., live)`.
 - `lockPageKeys` is not needed: the store's write transaction is serial.
 - `PageSourceMissingError` and the `REVISION_BACKFILL_PENDING` path do not occur: every store page has a source and a
   revision.
-- Chronicle-style dates in the SQL engines read the host time zone; the store reads UTC (follow-up
-  `chronicle-reads-host-time-zone`).
 - The derived-link insert repeats the core `add_links_batch` checks locally (`check_link`, `insert_row`).
 
 ## Follow-ups

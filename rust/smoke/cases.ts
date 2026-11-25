@@ -57,6 +57,195 @@ async function withBrainDir(body: (dir: string) => Promise<void>): Promise<void>
   }
 }
 
+
+// ---------------------------------------------------------------------------------------------
+// Boundary fuzz: hostile input must never panic the engine or end the process.
+// ---------------------------------------------------------------------------------------------
+
+/** A small seeded random generator (mulberry32), so a failing run can be replayed exactly. */
+function mulberry32(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+type Rng = () => number;
+const pick = <T>(rng: Rng, items: readonly T[]): T => items[Math.floor(rng() * items.length)]!;
+
+/** Strings that break parsers and escapers. Several are not valid Unicode (lone surrogates). */
+const NASTY_STRINGS: readonly string[] = [
+  '',
+  '\u0000',
+  'a\u0000b',
+  'people/\u0000alice',
+  '\uD800',
+  '\uDC00',
+  'x\uD83Dy',
+  '\uD83D\uDE00',
+  '\uDBFF\uDFFF\uD800',
+  '\uFFFE\uFFFF\uFDD0',
+  '\u202Eevil',
+  '\u2028\u2029\u0085',
+  '../../etc/passwd',
+  'C:\\Windows\\System32',
+  "'; DROP TABLE pages; --",
+  '%s%n%x',
+  '*',
+  '"',
+  '{"a":',
+  'people/alice',
+  'default',
+  'version',
+  'sync.repo',
+];
+
+/** A hostile JavaScript value of any shape. `depth` bounds nesting. */
+function hostileValue(rng: Rng, depth = 0): unknown {
+  const kinds = depth >= 3 ? 14 : 22;
+  switch (Math.floor(rng() * kinds)) {
+    case 0: return null;
+    case 1: return undefined;
+    case 2: return rng() < 0.5;
+    case 3: return pick(rng, [0, -0, NaN, Infinity, -Infinity, 1e308, -1e308, 5e-324, 2 ** 53, 2 ** 53 + 2, -1, 1.5, 1e21, 2 ** 31, -(2 ** 31) - 1, 4294967296, Number.MAX_SAFE_INTEGER]);
+    case 4: return Math.floor((rng() - 0.5) * 2 ** 40);
+    case 5:
+    case 6: return pick(rng, NASTY_STRINGS);
+    case 7: return 'z'.repeat(1 + Math.floor(rng() * 50_000));
+    case 8: return Array.from({ length: 1 + Math.floor(rng() * 8) }, () => String.fromCharCode(Math.floor(rng() * 0x10000))).join('');
+    case 9: return Symbol('hostile');
+    case 10: return () => 1;
+    case 11: return new Uint8Array(Math.floor(rng() * 64));
+    case 12: return new Float64Array([NaN, Infinity, -0]);
+    case 13: return new Date(pick(rng, [0, NaN, 8.64e15, -8.64e15]));
+    case 14:
+    case 15:
+    case 16: return Array.from({ length: Math.floor(rng() * 5) }, () => hostileValue(rng, depth + 1));
+    case 17:
+    case 18:
+    case 19: {
+      const object: Record<string, unknown> = {};
+      for (let i = Math.floor(rng() * 5); i > 0; i--) {
+        object[pick(rng, ['sourceId', 'slug', 'id', 'limit', 'input', 'fact', 'config', 'type', 'where', 'constructor', 'prototype', ...NASTY_STRINGS])] = hostileValue(rng, depth + 1);
+      }
+      return object;
+    }
+    case 20: return JSON.parse('{"__proto__":{"polluted":1},"constructor":{"prototype":{"x":1}}}');
+    default: return pick(rng, [new Map([[1, 2]]), new Set([1]), /x/g, new Error('hostile'), Object.create(null), new ArrayBuffer(8)]);
+  }
+}
+
+/** A copy of a valid argument with one thing wrong: a field dropped, retyped or added. */
+function mangle(rng: Rng, valid: unknown): unknown {
+  const copy = structuredClone(valid) as any;
+  const paths: Array<Array<string | number>> = [[]];
+  const walk = (node: unknown, here: Array<string | number>) => {
+    if (Array.isArray(node)) node.forEach((child, i) => { paths.push([...here, i]); walk(child, [...here, i]); });
+    else if (node && typeof node === 'object') {
+      for (const [key, child] of Object.entries(node)) { paths.push([...here, key]); walk(child, [...here, key]); }
+    }
+  };
+  walk(copy, []);
+  const path = pick(rng, paths);
+  if (path.length === 0) return hostileValue(rng);
+  let parent = copy;
+  for (const step of path.slice(0, -1)) parent = parent[step];
+  const last = path[path.length - 1]!;
+  const op = rng();
+  if (op < 0.25) {
+    if (Array.isArray(parent)) parent.splice(Number(last), 1);
+    else delete parent[last];
+  } else if (op < 0.85) {
+    parent[last] = hostileValue(rng);
+  } else if (parent && typeof parent === 'object' && !Array.isArray(parent)) {
+    parent[pick(rng, ['extra', '__proto__x', 'constructor', '\u0000', 'sourceId'])] = hostileValue(rng);
+  }
+  return copy;
+}
+
+/** One sampled Brain method and what each argument position is. */
+type Slot = 'str' | 'num' | { valid: unknown };
+interface FuzzMethod { name: string; slots: Slot[] }
+
+const jobInsert = {
+  name: 'work', queue: 'default', status: 'waiting', priority: 0, data: {}, max_attempts: 3,
+  backoff_type: 'exponential', backoff_delay: 1000, backoff_jitter: 0.2, on_child_fail: 'fail_parent',
+  remove_on_complete: false, remove_on_fail: false, submission_authority: { version: 1, kind: 'application' },
+};
+const scope = { valid: { sourceId: 'default', includeDeleted: true } };
+const searchOptions = { valid: { limit: 5, type: 'note', sources: ['default'] } };
+
+/** About 30 methods across pages, facts (insert, list, withdraw, purge), search, config, sources and jobs. */
+const fuzzMethods: FuzzMethod[] = [
+  { name: 'readPageSnapshot', slots: ['str', scope] },
+  { name: 'putPage', slots: ['str', { valid: { type: 'note', title: 'T', compiled_truth: 'body zebra' } }, { valid: { sourceId: 'default', force: true } }] },
+  { name: 'listPages', slots: [{ valid: { limit: 10, type: 'note' } }] },
+  { name: 'countPages', slots: [{ valid: { sourceId: 'default' } }] },
+  { name: 'softDeletePage', slots: ['str', scope] },
+  { name: 'resolveSlugs', slots: ['str', scope] },
+  { name: 'lockPageKeys', slots: [{ valid: [{ sourceId: 'default', slug: 'people/alice' }] }] },
+  { name: 'insertFact', slots: [{ valid: { input: { fact: 'Alice likes zebras', entity_slug: 'people/alice', source: 's' }, sourceId: 'default' } }] },
+  { name: 'listFactsByEntity', slots: [{ valid: { sourceId: 'default', entitySlug: 'people/alice', activeOnly: true, limit: 10 } }] },
+  { name: 'expireFact', slots: [{ valid: { id: 1, at: '2026-01-01T00:00:00.000Z' } }] },
+  { name: 'expireFactsByWithdrawal', slots: [{ valid: { sourceId: 'default', visibility: 'world', fact: 'Alice likes zebras', subject: 'people/alice' } }] },
+  { name: 'planFactPurgeIds', slots: [{ valid: { sourceId: 'default', visibility: 'world', factHash: 'abc', subject: '*' } }] },
+  { name: 'insertFactPurge', slots: [{ valid: { sourceId: 'default', visibility: 'world', subject: 'people/alice', factHash: 'abc', requestId: '00000000-0000-4000-8000-000000000002', actor: 't', reason: 'fuzz' } }] },
+  { name: 'searchKeyword', slots: ['str', searchOptions] },
+  { name: 'searchKeywordChunks', slots: ['str', searchOptions] },
+  { name: 'countKeywordPages', slots: ['str', searchOptions] },
+  { name: 'getConfig', slots: ['str'] },
+  { name: 'setConfig', slots: ['str', 'str'] },
+  { name: 'listConfigKeys', slots: ['str'] },
+  { name: 'getConfigValues', slots: [{ valid: ['version', 'sync.repo'] }] },
+  { name: 'upsertSource', slots: [{ valid: { id: 'notes', name: 'Notes', config: { federated: true } } }] },
+  { name: 'updateSourceConfig', slots: ['str', { valid: { federated: false } }] },
+  { name: 'getSourceById', slots: ['str'] },
+  { name: 'admitJob', slots: [{ valid: { insert: jobInsert, maxSpawnDepth: 5 } }] },
+  { name: 'listJobs', slots: [{ valid: { status: 'waiting', limit: 10 } }] },
+  { name: 'claimNextJob', slots: [{ valid: { lockToken: 'w:1', lockDurationMs: 30000, queue: 'default', names: ['work'], suspectMark: 'watchdog_suspect', handlerTimeouts: {}, handlerLockDurations: {}, legacySpend: { groupId: '00000000-0000-4000-8000-000000000001', capUsd: 5 } } }] },
+  { name: 'getJob', slots: ['num'] },
+  { name: 'completeJob', slots: ['num', 'str', { valid: { ok: true } }] },
+  { name: 'renewJobLease', slots: ['num', 'str', 'num'] },
+];
+
+/** The codes a hostile call may end with: the engine's snake_case codes (never internal_error) and napi's own argument-type codes. */
+const NAPI_ARGUMENT_CODES = new Set(['InvalidArg', 'StringExpected', 'NumberExpected', 'ObjectExpected', 'BooleanExpected', 'ArrayExpected']);
+function isTypedCode(code: unknown): boolean {
+  if (typeof code !== 'string') return false;
+  if (code === 'internal_error') return false;
+  return /^[a-z]+(_[a-z]+)*$/.test(code) || NAPI_ARGUMENT_CODES.has(code);
+}
+
+/** Builds the arguments for one fuzz call. */
+function fuzzArgs(rng: Rng, method: FuzzMethod, call: number): unknown[] {
+  return method.slots.map(slot => {
+    // The first call to each method is its valid sample, so the method is known to work.
+    if (slot === 'str') return call === 0 ? 'people/alice' : rng() < 0.7 ? pick(rng, NASTY_STRINGS) : hostileValue(rng);
+    if (slot === 'num') return call === 0 ? 1 : rng() < 0.7 ? hostileNumber(rng) : hostileValue(rng);
+    if (call === 0) return slot.valid;
+    return rng() < 0.7 ? mangle(rng, slot.valid) : hostileValue(rng);
+  });
+}
+
+function hostileNumber(rng: Rng): number {
+  return pick(rng, [0, -0, NaN, Infinity, -Infinity, 1e308, -1e308, 5e-324, 2 ** 53, 2 ** 53 + 2, -1, 0.5, 1e21, 2 ** 31, 4294967296, Number.MAX_SAFE_INTEGER, 1, 2]);
+}
+
+/** Runs one call and returns how it ended: 'ok', or the error it threw or rejected with. */
+async function settle(call: () => Promise<unknown>): Promise<'ok' | (Error & Record<string, unknown>)> {
+  try {
+    await call();
+    return 'ok';
+  } catch (error) {
+    assert.ok(error instanceof Error, `a failure must be a real Error, got ${String(error)}`);
+    return error as Error & Record<string, unknown>;
+  }
+}
+
 export const cases: Case[] = [
   {
     name: 'metadata: target, abi, build hash, catalog version, format versions',
@@ -65,7 +254,7 @@ export const cases: Case[] = [
       assert.equal(addon.engineAbi, 1);
       assert.match(addon.engineBuild, /^[0-9a-f]{64}$/);
       assert.equal(addon.catalogVersion, 0);
-      assert.deepEqual(addon.formatVersions, [1, 2, 3, 4, 5]);
+      assert.deepEqual(addon.formatVersions, [1, 2, 3, 4, 5, 6, 7, 8]);
     },
   },
   {
@@ -376,7 +565,7 @@ export const cases: Case[] = [
         assert.equal(first.isOpen, false);
         const opened = await first.open(dir, { schemaVersion: 319 });
         assert.equal(opened.created, true);
-        assert.equal(opened.format_version, 5);
+        assert.equal(opened.format_version, addon.formatVersions.at(-1)); // the store's current format, from the addon's own list (line 257 pins the whole list)
         assert.match(opened.brain_id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
         assert.equal(first.isOpen, true);
 
@@ -475,8 +664,11 @@ export const cases: Case[] = [
         assert.equal(version.compiled_truth, 'Wrote the first program.');
         assert.equal((await brain.getVersions('people/ada')).length, 1);
         assert.deepEqual(await brain.resolveSlugs('people/ada'), ['people/ada']);
+        // A partial name resolves the way pg_trgm does on PGLite and Postgres: an exact slug first, else a similar
+        // title or a slug that contains the name (engine-sql/pages.ts resolveSlugs).
         assert.deepEqual(await brain.resolveSlugs('ada'), ['people/ada'], 'resolveSlugs falls back to a pg_trgm-style partial match');
         assert.deepEqual(await brain.resolveSlugs('zzqx'), [], 'resolveSlugs finds nothing for a name no page resembles');
+        assert.deepEqual(await brain.resolveSlugs('zzz'), [], 'resolveSlugs finds nothing for a name no page has');
         assert.deepEqual(await brain.softDeletePage('people/ada'), { slug: 'people/ada' });
         assert.equal(await brain.readPageSnapshot('people/ada'), null);
         assert.equal(await brain.countPages(), 0);
@@ -586,6 +778,96 @@ export const cases: Case[] = [
         assert.deepEqual((await brain.getTimeline('g/a')).map(e => [e.date, e.summary]), [['2026-01-03', 'again'], ['2026-01-02', 'met']]);
         assert.equal((await rejection(brain.addTimelineEntry('g/a', { date: 'soon', summary: 'x' }))).code, 'invalid_argument');
         assert.equal((await brain.searchKeyword('zebra')).find(r => r.slug === 'g/a')!.stale, true, 'an entry after the last write');
+        await brain.close();
+        await pool.shutdown(1000);
+      });
+    },
+  },
+  {
+    name: 'boundary: hostile input never panics, aborts or ends in internal_error, and the brain keeps working',
+    async run(addon) {
+      await withBrainDir(async dir => {
+        const pool = new addon.Pool(2);
+        const brain = new addon.Brain(pool);
+        await brain.open(dir);
+        await brain.putPage('people/alice', { type: 'note', title: 'Alice', compiled_truth: 'Alice likes zebra stripes.' });
+        // A fixed seed keeps CI repeatable; set GBRAIN_FUZZ_SEED and GBRAIN_FUZZ_ROUNDS to hunt harder by hand.
+        const rng = mulberry32(Number(process.env.GBRAIN_FUZZ_SEED ?? 0x6b72ae1f));
+        const seen = new Map<string, number>();
+        const failures: string[] = [];
+        let ok = 0;
+        let calls = 0;
+        const callMethod = async (method: FuzzMethod, args: unknown[], label: string) => {
+          calls++;
+          const outcome = await settle(() => (brain as any)[method.name](...args));
+          if (outcome === 'ok') {
+            ok++;
+            seen.set('ok', (seen.get('ok') ?? 0) + 1);
+            return;
+          }
+          const code = String(outcome.code);
+          seen.set(code, (seen.get(code) ?? 0) + 1);
+          // A valid sample may be refused for its state (no such job), never for its shape.
+          if (label === 'round 0' && (code === 'invalid_argument' || NAPI_ARGUMENT_CODES.has(code))) {
+            failures.push(`${method.name}: its valid sample was refused as malformed: ${outcome.message.slice(0, 120)}`);
+          }
+          if (!isTypedCode(outcome.code)) {
+            failures.push(`${method.name} ${label}: code ${String(outcome.code)}: ${outcome.message.slice(0, 120)}`);
+          }
+        };
+
+        // 1. About 10 seeded hostile calls for each sampled method (the first is its valid sample).
+        const perMethod = Number(process.env.GBRAIN_FUZZ_ROUNDS ?? 10);
+        for (let round = 0; round < perMethod; round++) {
+          for (const method of fuzzMethods) await callMethod(method, fuzzArgs(rng, method, round), `round ${round}`);
+        }
+
+        // 2. Fixed hostile inputs that a seeded draw may not reach: a multi-MB string and deep nesting.
+        const huge = 'q'.repeat(4 * 1024 * 1024);
+        const hugeUnicode = '漢\uD800'.repeat(1024 * 1024);
+        const nested = (depth: number, leaf: unknown, asObject: boolean) => {
+          let value = leaf;
+          for (let i = 0; i < depth; i++) value = asObject ? { x: value } : [value];
+          return value;
+        };
+        const byName = (name: string) => fuzzMethods.find(m => m.name === name)!;
+        await callMethod(byName('getConfig'), [huge], 'multi-MB key');
+        await callMethod(byName('setConfig'), ['k', huge], 'multi-MB value');
+        await callMethod(byName('setConfig'), [hugeUnicode, hugeUnicode], 'multi-MB unpaired surrogates');
+        await callMethod(byName('searchKeyword'), [huge, { limit: 5 }], 'multi-MB query');
+        await callMethod(byName('putPage'), ['big/page', { type: 'note', title: huge, compiled_truth: hugeUnicode }, {}], 'multi-MB page');
+        await callMethod(byName('readPageSnapshot'), [huge, {}], 'multi-MB slug');
+        for (const asObject of [false, true]) {
+          for (const depth of [100, 127, 129, 20000]) {
+            const label = `${asObject ? 'object' : 'array'} nested ${depth} deep`;
+            for (const name of ['putPage', 'listPages', 'insertFact', 'admitJob', 'updateSourceConfig', 'getConfigValues']) {
+              const method = byName(name);
+              await callMethod(method, method.slots.map(slot => (slot === 'str' ? 'x' : slot === 'num' ? 1 : nested(depth, 1, asObject))), label);
+            }
+          }
+        }
+
+        // One array of many small elements: napi allows up to a million nodes per argument.
+        await callMethod(byName('getConfigValues'), [Array.from({ length: 200_000 }, (_, i) => `key${i}`)], '200k-element array');
+        await callMethod(byName('getConfigValues'), [Array.from({ length: 1_100_000 }, () => 'k')], 'over a million nodes');
+
+        assert.deepEqual(failures, [], `calls that ended without a typed engine code:\n${failures.join('\n')}`);
+        assert.ok(calls >= 200, `only ${calls} calls`);
+        assert.ok(ok > 0, 'no call succeeded, so the valid samples are wrong');
+        assert.ok(
+          [...seen.keys()].some(code => /^[a-z]+(_[a-z]+)*$/.test(code) && code !== 'ok'),
+          `hostile input never reached an engine error code: ${[...seen.keys()].join(',')}`,
+        );
+        console.log(`        ${calls} hostile calls, outcomes: ${[...seen].sort().map(([code, n]) => `${code}=${n}`).join(' ')}`);
+
+        // 3. The brain still works after all of it.
+        assert.equal((await brain.info()).format_version, addon.formatVersions.at(-1));
+        await brain.setConfig('fuzz.after', 'fine');
+        assert.equal(await brain.getConfig('fuzz.after'), 'fine');
+        // (The fuzz may have soft-deleted people/alice, so write and read a new page.)
+        await brain.putPage('after/fuzz', { type: 'note', title: 'After', compiled_truth: 'still here' });
+        assert.equal((await brain.readPageSnapshot('after/fuzz'))!.page.title, 'After');
+        assert.equal((await rejection(brain.getJob(0.5))).code, 'invalid_argument', 'errors are still typed');
         await brain.close();
         await pool.shutdown(1000);
       });

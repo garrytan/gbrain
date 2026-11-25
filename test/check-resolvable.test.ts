@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { join } from "path";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import {
   checkResolvable,
@@ -797,6 +797,24 @@ describe("checkResolvable — fixture trees", () => {
       ]);
       expect(report.summary.overlaps).toBe(1);
       expect(report.issues.filter(i => i.type === "mece_gap")).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("checkResolvable — deprecated skills", () => {
+  test("a deprecated manifest skill with no trigger is not unreachable: it loads by name only", () => {
+    const dir = writeSkillTree([
+      { name: "alpha-notes", triggers: ["file an alpha note"] },
+      { name: "old-notes", triggers: ["file an old note"], resolverRow: "old note row" },
+    ]);
+    try {
+      const md = join(dir, "old-notes", "SKILL.md");
+      writeFileSync(md, readFileSync(md, "utf8").replace("description: fixture\n", "description: fixture\ndeprecated: true\n"));
+      const report = checkResolvable(dir);
+      expect(report.issues.filter(i => i.type === "unreachable")).toEqual([]);
+      expect(report.summary).toMatchObject({ total_skills: 2, reachable: 2, unreachable: 0 });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

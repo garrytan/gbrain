@@ -1,6 +1,8 @@
 import { assertUnmanagedCanonicalWriter } from './persistence/maintenance.ts';
+import { legacyImportHold } from './persistence/legacy-slug-put.ts';
 import { suffixedFrontmatterSlugHold } from './persistence/suffixed-slug.ts';
 import { noncanonicalPrivateHold } from './persistence/visibility-request.ts';
+import { noncanonicalReadersHold } from './persistence/readers-request.ts';
 import { maintenanceBeliefTransaction } from './belief/writers.ts';
 import { withUnmanagedBeliefs } from './belief/projection-point.ts';
 import { maintenanceTransaction, ownerSourceGateInput, suppliedTrustMarkerView, trustMarkerChanged, writeTrustOfGate } from './persistence/attribution.ts';
@@ -321,7 +323,10 @@ export async function importFromContent(
   // Normalize BEFORE any tx write: putPage lowercases via validateSlug but upsertChunks used to query by the
   // caller's raw slug, so a mixed-case slug created the page row then failed the chunk upsert with "Page not found",
   // rolling back the whole import (#430).
+  const rawSlug = slug;
   slug = validateSlug(slug);
+  const legacyHold = await legacyImportHold(engine, opts.sourceId, rawSlug, slug); // held, never written to a composed twin (legacy-slug-put.ts)
+  if (legacyHold !== null) return { slug, status: 'error', chunks: 0, error: legacyHold };
 
   // v0.18.0+ multi-source: when caller is syncing under a non-default source,
   // every per-page tx call must carry `sourceId` so writes target the right
@@ -1054,7 +1059,7 @@ export async function importFromFile(
   if (preInferenceHold) {
     return { slug: slugifyPath(relativePath), status: 'skipped', chunks: 0, error: preInferenceHold.message, refusal: preInferenceHold, skip_reason: preInferenceHold.code };
   }
-  const privateHold = noncanonicalPrivateHold(content, preInferenceParsed.frontmatter);
+  const privateHold = noncanonicalPrivateHold(content, preInferenceParsed.frontmatter) ?? noncanonicalReadersHold(content, preInferenceParsed.frontmatter);
   if (privateHold) return { slug: slugifyPath(relativePath), status: 'skipped', chunks: 0, error: privateHold.message, refusal: privateHold, skip_reason: privateHold.code };
   const recovery = { quoted: !!preInferenceParsed.errors?.some(e => e.code === 'YAML_PARSE' && e.recoverable),
     comment_value: !!preInferenceParsed.warnings?.some(w => w.code === 'FRONTMATTER_COMMENT_VALUE') };

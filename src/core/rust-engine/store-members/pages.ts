@@ -3,7 +3,7 @@ import type { PageSnapshot } from '../../page-state/types.ts';
 import type { PageWriteOptions, PageSnapshotOptions } from '../../page-state/types.ts';
 import type { GetPageOpts, Page, PageFilters, PageInput, PageReadScope } from '../../types.ts';
 import { toGetPage, toListPage, toPutPage, withIsoDates } from '../store-codec.ts';
-import { overlayStoreSnapshot, type StoreSnapshot } from '../snapshot-overlay.ts';
+import { overlayStoreSnapshot, storeNormalizer, type StoreSnapshot } from '../snapshot-overlay.ts';
 import { sourceOriginScope } from '../../persistence/origin-guard.ts';
 import { isRevisionRejection, mapStoreError } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
@@ -26,7 +26,7 @@ function pageScope(member: string, opts: object | undefined, allowed: readonly s
 export const readPageSnapshot: StoreMember<[slug: string, opts?: PageSnapshotOptions], PageSnapshot | null> = async (brain, slug, opts) => {
   const scope = pageScope('readPageSnapshot', opts, READ_SCOPE);
   const snapshot: StoreSnapshot | null = await storeCall({ member: 'readPageSnapshot', slug }, () => brain.readPageSnapshot(slug, scope));
-  return snapshot === null ? null : overlayStoreSnapshot({ ...snapshot, page: toGetPage(snapshot.page) });
+  return snapshot === null ? null : overlayStoreSnapshot(storeNormalizer(brain), { ...snapshot, page: toGetPage(snapshot.page) });
 };
 
 /**
@@ -39,7 +39,7 @@ const GET_PAGE_UNREAD = ['requireSafeChunks', 'takesHoldersAllowList'] as const;
 export const getPage: StoreMember<[slug: string, opts?: GetPageOpts], Page | null> = async (brain, slug, opts) => {
   const scope = pageScope('getPage', opts, READ_SCOPE, GET_PAGE_UNREAD);
   const snapshot: StoreSnapshot | null = await storeCall({ member: 'getPage', slug }, () => brain.readPageSnapshot(slug, scope));
-  return snapshot === null ? null : overlayStoreSnapshot({ ...snapshot, page: toGetPage(snapshot.page) }).page;
+  return snapshot === null ? null : (await overlayStoreSnapshot(storeNormalizer(brain), { ...snapshot, page: toGetPage(snapshot.page) })).page;
 };
 
 /** The revision the page has now, for the error a rejected revision check throws. `null` when there is no page. */
@@ -95,8 +95,8 @@ function listColumns(page: Page): Page {
   const { id, source_id, slug, type, title, created_at, updated_at, updated_at_iso, deleted_at, effective_date,
     effective_date_source, body_storage, body_bytes } = page;
   return {
-    id, source_id, slug, type, title, compiled_truth: '', timeline: '', frontmatter: {}, created_at, updated_at,
-    content_hash: undefined, emotional_weight: undefined,
+    id, source_id, slug, type, title, compiled_truth: '', timeline: '', frontmatter: {}, content_hash: undefined,
+    emotional_weight: undefined, created_at, updated_at,
     ...(updated_at_iso !== undefined && { updated_at_iso }),
     ...(deleted_at !== undefined && { deleted_at }),
     ...(effective_date !== undefined && { effective_date }),

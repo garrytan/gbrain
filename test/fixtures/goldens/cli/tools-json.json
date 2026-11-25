@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 301562,
-    "stdoutSha256": "a64c392b8c1aa49d823429c8a5e2598b01ee694c449d0d25b889b4b7e7b4856e",
+    "stdoutBytes": 306079,
+    "stdoutSha256": "0c45634644936c8817095a266fee6f2feece4d713baa5587538a049b0cd0dd98",
     "toolNames": [
       "remember",
       "entity",
@@ -209,7 +209,10 @@
       "questions_status",
       "questions_refresh",
       "questions_unpin",
-      "mute_notice"
+      "mute_notice",
+      "learned",
+      "learned_keep",
+      "learned_undo"
     ],
     "tools": [
       {
@@ -226,6 +229,7 @@
           "content_origin": "string?",
           "entity": "string?",
           "expected_revision": "string?",
+          "facet": "string?",
           "fact": "string?",
           "force": "boolean?",
           "infer_entity": "boolean?",
@@ -274,6 +278,10 @@
             },
             "expected_revision": {
               "description": "Revision read; omit to create.",
+              "type": "string"
+            },
+            "facet": {
+              "description": "Profile facet (diet, allergy, size.shoe, brand, style, constraint, schedule, household, other); no entity: your own profile.",
               "type": "string"
             },
             "fact": {
@@ -1923,7 +1931,7 @@
               "type": "boolean"
             },
             "autocut": {
-              "description": "Default on (never empty); false: full top-K for breadth.",
+              "description": "Off by default in every mode. true (or config search.autocut true) trims at the steepest score drop; can drop relevant hits on multi-part questions.",
               "type": "boolean"
             },
             "cross_modal": {
@@ -7510,6 +7518,7 @@
           "intent": "string?",
           "min_trust": "string?",
           "prefer_source_id": "string?",
+          "profile": "boolean?",
           "session_id": "string?",
           "since": "string?",
           "source_id": "string?"
@@ -7577,6 +7586,10 @@
             "prefer_source_id": {
               "description": "Source to try first (thin clients send .gbrain-source here); never narrows.",
               "type": "string"
+            },
+            "profile": {
+              "description": "true: add your own profile (facets, constraints, relationships, preferences).",
+              "type": "boolean"
             },
             "session_id": {
               "description": "Opaque session id.",
@@ -8233,7 +8246,7 @@
         "scope": "read"
       },
       {
-        "description": "Return the chronological claim trajectory for an entity (typed metric values over time, plus auto-detected regressions and narrative drift). Use this when the user asks 'how has Acme's MRR trended', 'show me what alice-example said about runway over time', 'is this founder consistent', 'find regressions for fund-a's portfolio', or wants a time-series view of an entity's structured claims. Returns `{points: [{fact_id, valid_from, metric, value, unit, period, text, source_session, source_markdown_slug}], regressions: [{metric, from_value, from_date, to_value, to_date, delta_pct}], drift_score: number|null, schema_version: 1}`. Drift score 0 = stable narrative, 1 = every consecutive claim is unrelated; null when fewer than 3 typed points exist. Visibility-filtered for remote callers (world-only); source-scoped by the caller's OAuth source binding. Pair with `gbrain founder scorecard <slug>` for an aggregated rollup of the same data.",
+        "description": "Return the chronological claim trajectory for an entity (typed metric values over time, plus auto-detected regressions and narrative drift). Use this when the user asks 'how has Acme's MRR trended', 'show me what alice-example said about runway over time', 'is this founder consistent', 'find regressions for fund-a's portfolio', or wants a time-series view of an entity's structured claims. Returns `{points: [{fact_id, valid_from, metric, value, unit, period, text, source_session, source_markdown_slug}], regressions: [{metric, from_value, from_date, to_value, to_date, delta_pct, direction: 'down'|'up'}], drift_score: number|null, schema_version: 1}`. A regression is a 10% drop, or a 10% rise for a lower-is-better metric (burn, churn, cac, cost, expense, loss, latency, payback, debt; not a name that also says savings, recovered, reduction or avoided). Drift score 0 = stable narrative, 1 = every consecutive claim is unrelated; null when fewer than 3 typed points exist. Visibility-filtered for remote callers (world-only); source-scoped by the caller's OAuth source binding. Pair with `gbrain founder scorecard <slug>` for an aggregated rollup of the same data.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -9339,6 +9352,91 @@
           },
           "required": [
             "code"
+          ],
+          "type": "object"
+        },
+        "scope": "write"
+      },
+      {
+        "description": "What the brain learned since you last looked: new facts its extractors saved, facts that disagree (which one is right?), promises people made to you, people who may be the same person (with the gbrain dedupe confirm and reject commands, run on the brain host), thin pages it filled in, and rows you typed into Facts fences (shown, never counted). Default: the items you have not been shown yet from the last 7 days; with since, every item since that date. Grouped by kind, questions first, 15 by default; each item carries a stable id and evidence links (the page or loop it came from). Reading stamps the items as shown. With stats: per-night counts (a night ends at 06:00 in brain.timezone) of items shown, kept, undone and expired, and the share of nights with at least 5 counted items.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": false,
+        "name": "learned",
+        "parameters": {
+          "limit": "number?",
+          "since": "string?",
+          "stats": "boolean?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "limit": {
+              "description": "Most items to return (default 15, at most 100). Every item returned is shown and stamped.",
+              "type": "number"
+            },
+            "since": {
+              "description": "ISO date or timestamp (e.g. 2026-11-20). Lists every item recorded since then, shown or not. Default: unseen items of the last 7 days (stats: the last 30 days).",
+              "type": "string"
+            },
+            "stats": {
+              "description": "Return the per-night stats instead of the items. Shows nothing, so it stamps nothing.",
+              "type": "boolean"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "scope": "read"
+      },
+      {
+        "description": "Keep items from the learned note: mark what the brain learned as right. Writes only the note's own record (no page or fact changes). Takes item ids from learned (comma separated), or all for every pending change you can read from the last 7 days (up to 100). Questions (facts that disagree, possible duplicate people) are answered, not kept.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": true,
+        "name": "learned_keep",
+        "parameters": {
+          "ids": "string"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "ids": {
+              "description": "Item ids from learned, comma separated (e.g. 12,15), or all.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "ids"
+          ],
+          "type": "object"
+        },
+        "scope": "write"
+      },
+      {
+        "description": "Undo items from the learned note through the operation that owns each change: a new fact is forgotten (withdrawn; history kept), a promise is dropped, a filled-in page is reverted to the version before it was filled (refused when the page was edited since, with the commands to choose a version). For facts that disagree it rejects the newer fact on the brain host; for possible duplicate people it returns the gbrain dedupe reject command for the brain host. Each result says what happened.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": true,
+        "name": "learned_undo",
+        "parameters": {
+          "ids": "string",
+          "reason": "string?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "ids": {
+              "description": "Item ids from learned, comma separated (e.g. 12,15).",
+              "type": "string"
+            },
+            "reason": {
+              "description": "Why it was wrong; recorded on the reversal (forget reason, loop note or revert reason).",
+              "type": "string"
+            }
+          },
+          "required": [
+            "ids"
           ],
           "type": "object"
         },

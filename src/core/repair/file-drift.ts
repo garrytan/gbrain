@@ -89,7 +89,7 @@ import { DETACHED_REASON } from '../persistence/detached-pages.ts';
 import { DELETION_PROVENANCES, readDeletionProvenance, type DeletionProvenance } from '../persistence/sync-origin-evidence.ts';
 import { ghostPageNow, scanGhostSource, type GhostOwner, type GhostPage } from '../ghost-pages.ts';
 import { MASS_RECONCILE_MIN_PAGES, MASS_RECONCILE_RATIO, massReconcileAllowed } from '../sync-reconcile.ts';
-import { DATABASE_AHEAD_CODE, databaseAheadDetail, ghostFileBacked, GHOST_PURGE_FUSE_HOURS, GHOST_REPAIR_LIMIT, ghostScanRefusal, massGhosts, massRefusal, retireGhost } from './ghost-pages.ts';
+import { ghostBacking, ghostKeptDetail, ghostMoveVeto, GHOST_PURGE_FUSE_HOURS, GHOST_REPAIR_LIMIT, ghostScanRefusal, massGhosts, massRefusal, retireGhost } from './ghost-pages.ts';
 import { prepareReconcileResult } from '../persistence/reconcile-prepare.ts';
 import { canonicalOriginPage, originConflictMessage, originTwinsFix } from '../persistence/origin-guard.ts';
 import { assertReconcileOutputPath, assertReconcileSize } from '../persistence/reconcile-backup.ts';
@@ -159,7 +159,6 @@ const DELETED_CHANGES: Record<DeletedDriftChange, string> = {
   file_gone: 'the file is gone now, so nothing is left to resolve',
   live_page: 'a live page records the file again, so it is no longer a deleted-side Decision',
   no_deletion: 'no deleted page or deletion marker is left at its origin; the next sync re-classifies it',
-  deleted_same: 'the file holds the bytes the deleted page had, so the deletion already stands',
 };
 
 const ALL_DRIFTED_LIMIT = 1000;
@@ -585,7 +584,10 @@ async function fileGonePage(engine: BrainEngine, sourceId: string, slug: string,
     return { page: { slug, prefer: 'database', exceptions: [], detach_page: { path: now.ghost.path, page_id: now.ghost.page_id, revision: now.ghost.revision, observed_at: target.hold.observed_at } },
       detail: `keeps the page database-only: no commit ever held ${now.ghost.path}, so the page holds the only copy; no file is written and the page forgets that path` };
   }
-  if (opts.prefer === 'file' && !await ghostFileBacked(engine, now.ghost, now.owner)) return { skip: DATABASE_AHEAD_CODE, detail: databaseAheadDetail(now.ghost) };
+  const backing = opts.prefer === 'file' ? await ghostBacking(engine, now.ghost, now.owner, deletedBy) : 'file_backed';
+  if (backing !== 'file_backed') return { skip: backing, detail: ghostKeptDetail(backing, now.ghost, root) };
+  const veto = opts.prefer === 'file' ? await ghostMoveVeto(engine, now.ghost, now.owner) : null;
+  if (veto) return { skip: veto.reason, detail: veto.detail.message };
   if (opts.prefer === 'file') return { page: { slug, prefer: 'file', exceptions: [], soft_delete: { ghost: now.ghost, owner: now.owner } },
     detail: `soft-deletes the page: its file ${now.ghost.path} is gone from the last commit (purged after ${GHOST_PURGE_FUSE_HOURS} h; gbrain restore ${slug} --force undoes it until then)` };
   // GST-2579: recreating the file undoes the commit that deleted it; in bulk the deletion is kept, an exact --slug names the commit and needs consent.
@@ -653,7 +655,7 @@ async function applyKeepDeleted(ctx: OperationContext, page: ApprovedPage, artif
     if (error instanceof OperationError && error.code === 'changed_since_preview') return changed(error.message);
     throw error;
   }
-  const [source] = await ctx.engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [page.source_id]);
+  const source = await ctx.engine.readSourceIncarnation(page.source_id);
   const recorded = await ctx.engine.transaction(tx => recordKeepDeleted(tx, { sourceId: page.source_id, incarnation: source!.incarnation, path: pin.path, observedAt: pin.observed_at,
     state: pin.state, decision: { request_id: requestId, decided_at: new Date().toISOString(), page_id: pin.page_id, revision: pin.revision } }));
   if (!recorded) return changed('its hold was re-checked or cleared');
@@ -722,7 +724,7 @@ export async function prepareDriftDetach(engine: BrainEngine, row: WriteRequest)
   return { observedRevision: pin.revision, databaseOnlyReason: 'detached',
     validate: async tx => { await locked(tx); },
     apply: async tx => {
-      await tx.executeRaw('UPDATE pages SET source_path=NULL, source_uri=NULL, database_only_reason=$2 WHERE id=$1', [pin.page_id, DETACHED_REASON]);
+      await tx.detachPageOrigin(pin.page_id, DETACHED_REASON);
       return { status: 'detached', slug: row.slug, source_id: row.source_id, path: pin.path,
         hold_cleared: await clearGitHold(tx, { sourceId: row.source_id, incarnation: row.source_incarnation, path: pin.path, observedAt: pin.observed_at }) };
     } };
@@ -755,7 +757,7 @@ async function applyDeletedSide(ctx: OperationContext, page: ApprovedPage, artif
       const live = await assertDeletedPin(ctx.engine, page.source_id, pin);
       await asLocalCli(ctx.engine, () => submitManagedFileRepair(ctx, { sourceId: page.source_id, requestId, slug: artifact.slug, path: pin.path, sourcePath: pin.source_path,
         content: live.raw.toString('utf8'), beforeHash: pin.raw_file_hash, resultDigest: artifact.import_file.result_digest, ...(pin.revision ? { expected_revision: pin.revision } : {}),
-        noEmbed: !embed, holdObservedAt: pin.observed_at }));
+        noEmbed: !embed, holdObservedAt: pin.observed_at, repairKind: 'file-drift' }));
     }
     return { applied: true, outcome: 'repaired', detail: { request_id: requestId, prefer: artifact.prefer, action, state: pin.state } };
   } catch (error) {
@@ -967,7 +969,7 @@ export const fileDriftRepair: RepairHandler = {
     const targets: Array<{ slug: string | null; held?: HeldTarget }> = held ? held.targets.slice(0, HELD_WINDOW_PAGES).map(target => ({ slug: target.hold.slug, held: target })) : slugs.map(slug => ({ slug }));
     const windowEnd = Math.min(Date.now() + HELD_WINDOW_BUDGET_MS, opts.deadline ?? Infinity);
     let previewed = 0;
-    const [source] = held ? [] : await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]);
+    const source = held ? null : await engine.readSourceIncarnation(sourceId);
     const newerPages: string[] = [];
     opts.progress?.start('repair.file_drift.preview', targets.length);
     await asLocalCli(engine, async () => {
@@ -1148,6 +1150,7 @@ export const fileDriftRepair: RepairHandler = {
     else if ('soft_delete' in artifact) {
       const retired = await retireGhost(ctx, artifact.soft_delete.ghost, artifact.soft_delete.owner, async () => requestId);
       outcome = retired.applied ? { applied: true, outcome: 'repaired', detail: { request_id: requestId, prefer: 'file', action: 'soft_delete' } }
+        : retired.outcome === 'refused' ? { applied: false, outcome: 'refused', reason: retired.reason, detail: { request_id: requestId, ...(retired.detail ?? {}) } }
         : { applied: false, outcome: 'changed_since_preview', reason: retired.outcome === 'file_restored' ? 'file_restored' : 'revision_conflict', detail: { request_id: requestId, message: retired.reason } };
     } else try {
       await asLocalCli(ctx.engine, () => runReconcileApply(ctx.engine, { source_id: page.source_id, slug: page.slug, preview: artifact.preview, request_id: requestId,

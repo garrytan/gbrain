@@ -12,6 +12,14 @@
  *    revision installs a rulebook no revision records.
  *  - Why existing coverage misses it: policy.ts ran every statement through `executeRaw`, which the Rust engine refuses
  *    and the parity cases cannot call (D18), so only PGLite and Postgres changed rules and no case compared them.
+ *    The salience, salience-score and anomaly reads serve a reader a rule names the folder and hide it from a reader it
+ *    does not name, and hide it from both while the prefix is pending, the same on every arm. The write visibility probe
+ *    says an identity could open a page that only a folder rule hides, and a world fact held by a page under a folder
+ *    rule (applied or pending) counts as derived from a private page and stays out of the consolidate buckets. The fact cache watermark digests the rules and
+ *    the pending prefixes, so it moves when either changes.
+ *    A rule removed before its restamp leaves the pages the rule covered stamped with the deleted id, which no caller
+ *    satisfies: getPage and listPages under excludePrivate read them as missing (for a former reader too) until the restamp,
+ *    on every arm. The Rust store read the folder rules live and served them in that window.
  *  - Seam: `policySeams.afterInstall` reads the pending coverage between the install and the restamp. Generated values
  *    (timestamps, the local actor) are compared by presence, never by value.
  */
@@ -178,6 +186,40 @@ describe('access policy members (engine-sql/access-policy.ts)', () => {
     return { written, renamed, carol };
   });
 
+  // installRulebook removes a rule with applyAccessRuleChanges and restamps afterwards. In between, SQL pages keep the
+  // deleted rule id in folder_rule_ids, which no caller satisfies, so the page stays hidden from every caller until the
+  // restamp. The Rust store read the folder rules live, so it served the page in that window (fail-open on Rust only).
+  parityTest('a page stamped with a folder rule that was removed reads as missing to a caller until the restamp', { methods: ['getPage', 'listPages', 'applyAccessRuleChanges', 'lockAccessPolicy', 'restampAccessWindow', 'finishAccessRestamp', 'readFolderAccess'] }, async (engine, backend) => {
+    await seed(engine, backend);
+    await proposeRevision(engine, SRC, [DIARY], { origin: 'cli', store: 'database' });
+    const read = async (member: string) => {
+      const identity = [`member:${member}`];
+      const access = await folderAccessFor(engine, identity);
+      return withCallerAccess({ identity, hidePrivate: true, ...access }, async () => ({
+        diary: (await engine.getPage('private/acme-diary', { sourceId: SRC, excludePrivate: true }))?.slug ?? null,
+        open: (await engine.getPage('notes/acme-open', { sourceId: SRC, excludePrivate: true }))?.slug ?? null,
+        listed: (await engine.listPages({ sort: 'slug', sourceId: SRC, excludePrivate: true })).map(p => p.slug),
+      }));
+    };
+    const both = async () => ({ carol: await read('carol-example'), alice: await read('alice-example') });
+    const ruled = await both();
+    // Remove the rule alone, as installRulebook does before its restamp: the pages keep the deleted id.
+    await engine.transaction(async tx => {
+      await tx.lockAccessPolicy(SRC);
+      await tx.applyAccessRuleChanges(SRC, { remove: ['diary'], insert: [], pending: [], revision: 2, actor: 'parity' });
+    });
+    const retired = await both();
+    const restamped = await restampSource(engine, SRC);
+    const after = await both();
+    const hidden = { diary: null, open: 'notes/acme-open', listed: ['notes/acme-open'] };
+    const shown = { diary: 'private/acme-diary', open: 'notes/acme-open', listed: ['notes/acme-open', 'private/acme-diary'] };
+    expect(ruled).toEqual({ carol: hidden, alice: shown });
+    expect(retired).toEqual({ carol: hidden, alice: hidden });
+    expect(restamped).toEqual({ pages_scanned: 2, pages_restamped: 1 });
+    expect(after).toEqual({ carol: shown, alice: shown });
+    return { ruled, retired, restamped, after };
+  });
+
   parityTest('a reader the rule names is served the folder, except while its prefix is still pending', { methods: ['findPagesByTitles', 'readFolderAccess', 'applyAccessRuleChanges'] }, async (engine, backend) => {
     await seed(engine, backend);
     const pending: unknown[] = [];
@@ -193,5 +235,156 @@ describe('access policy members (engine-sql/access-policy.ts)', () => {
     expect(pending).toEqual([{ alice: { satisfiedRuleIds: [`${SRC}:diary`], folderCoverage: [{ source_id: SRC, prefix: 'private/' }] }, served: ['notes/acme-open'] }]);
     expect(applied).toEqual({ alice: { satisfiedRuleIds: [`${SRC}:diary`], folderCoverage: [] }, served: ['notes/acme-open', 'private/acme-diary'], carol: ['notes/acme-open'] });
     return { pending, applied };
+  });
+
+  parityTest('the salience, salience-score and anomaly reads serve a rule-named reader the folder, except while its prefix is pending', { methods: ['getRecentSalience', 'getSalienceScores', 'findAnomalies', 'readFolderAccess', 'applyAccessRuleChanges'] }, async (engine, backend) => {
+    await seed(engine, backend);
+    await engine.putPage('notes/acme-plan', { type: 'note', title: 'Acme Plan', compiled_truth: 'body of notes/acme-plan', timeline: '' }, { sourceId: SRC });
+    // Two open pages: a tag cohort reaches the anomaly floor of two pages even for a reader the folder hides.
+    const refs = ['private/acme-diary', 'notes/acme-open', 'notes/acme-plan'].map(slug => ({ slug, source_id: SRC }));
+    for (const ref of refs) await engine.addTag(ref.slug, 'probe', { sourceId: SRC });
+    await engine.setEmotionalWeightBatch(refs.map(ref => ({ ...ref, weight: 0.5 })));
+    const today = new Date((await engine.getPage('notes/acme-open', { sourceId: SRC }))!.updated_at).toISOString().slice(0, 10);
+    const reads = async (member: string) => {
+      const identity = [`member:${member}`];
+      const access = await folderAccessFor(engine, identity);
+      return withCallerAccess({ identity, hidePrivate: true, ...access }, async () => ({
+        satisfied: access.satisfiedRuleIds,
+        recent: (await engine.getRecentSalience({ days: 30, limit: 10, excludePrivate: true, sourceIds: [SRC] })).map(r => r.slug).sort(),
+        scores: [...(await engine.getSalienceScores(refs, { sourceIds: [SRC], excludePrivate: true })).keys()].sort(),
+        anomalies: (await engine.findAnomalies({ since: today, lookback_days: 1, sourceIds: [SRC], excludePrivate: true }))
+          .filter(r => r.cohort_kind === 'tag').map(r => `${r.cohort_value}:${r.count}:${[...r.page_slugs].sort().join(',')}`),
+      }));
+    };
+    const pending: unknown[] = [];
+    policySeams.afterInstall = async () => {
+      pending.push({ alice: await reads('alice-example') });
+    };
+    try {
+      await proposeRevision(engine, SRC, [DIARY], { origin: 'cli', store: 'database' });
+    } finally {
+      policySeams.afterInstall = undefined;
+    }
+    const applied = { alice: await reads('alice-example'), carol: await reads('carol-example') };
+    const open = ['notes/acme-open', 'notes/acme-plan'];
+    const both = ['notes/acme-open', 'notes/acme-plan', 'private/acme-diary'];
+    expect(pending).toEqual([{ alice: expect.objectContaining({ satisfied: [`${SRC}:diary`], recent: open }) }]);
+    expect(applied.alice).toMatchObject({ satisfied: [`${SRC}:diary`], recent: both });
+    expect(applied.alice.scores).toHaveLength(3);
+    expect(applied.alice.anomalies).toEqual(['probe:3:notes/acme-open,notes/acme-plan,private/acme-diary']);
+    expect(applied.carol).toMatchObject({ satisfied: [], recent: open });
+    expect(applied.carol.scores).toHaveLength(2);
+    expect(applied.carol.anomalies).toEqual(['probe:2:notes/acme-open,notes/acme-plan']);
+    return { pending, applied };
+  });
+
+  parityTest('the write visibility probe says a reader identity could open a page that only a folder rule hides', { methods: ['readWriteVisibilityProbe', 'applyAccessRuleChanges'] }, async (engine, backend) => {
+    await seed(engine, backend);
+    const probe = async () => {
+      const out: Record<string, boolean | null | undefined> = {};
+      for (const slug of ['private/acme-diary', 'notes/acme-open', 'private/acme-missing']) out[slug] = (await engine.readWriteVisibilityProbe(SRC, slug))?.identity_may_open;
+      return out;
+    };
+    const before = await probe();
+    await proposeRevision(engine, SRC, [DIARY], { origin: 'cli', store: 'database' });
+    const after = await probe();
+    expect(before).toEqual({ 'private/acme-diary': null, 'notes/acme-open': null, 'private/acme-missing': null });
+    // The diary names no readers: only its folder rule hides it, and an identity the rule names opens it.
+    expect(after).toEqual({ 'private/acme-diary': true, 'notes/acme-open': null, 'private/acme-missing': null });
+    return { before, after };
+  });
+
+  parityTest('a world fact held by a page under a folder rule counts as a world fact from a private page, pending or applied', { methods: ['insertFacts', 'listWorldFactsFromPrivateSources', 'applyAccessRuleChanges'] }, async (engine, backend) => {
+    await seed(engine, backend);
+    const res = await engine.insertFacts([
+      { fact: 'held by the diary', entity_slug: null, kind: 'fact', visibility: 'world', source: 'fence', row_num: 1, source_markdown_slug: 'private/acme-diary' },
+      { fact: 'held by the open page', entity_slug: null, kind: 'fact', visibility: 'world', source: 'fence', row_num: 2, source_markdown_slug: 'notes/acme-open' },
+    ] as never, { source_id: SRC });
+    const diary = Number(res.ids[0]);
+    const listed = async () => (await engine.listWorldFactsFromPrivateSources([SRC], null)).map(r => Number(r.id));
+    const before = await listed();
+    const pending: number[][] = [];
+    policySeams.afterInstall = async () => { pending.push(await listed()); };
+    try {
+      await proposeRevision(engine, SRC, [DIARY], { origin: 'cli', store: 'database' });
+    } finally {
+      policySeams.afterInstall = undefined;
+    }
+    const applied = await listed();
+    expect(before).toEqual([]);
+    expect(pending).toEqual([[diary]]);
+    expect(applied).toEqual([diary]);
+    return { before: before.length, pending: pending.map(p => p.length), applied: applied.length };
+  });
+
+  parityTest('the fact cache watermark moves when a folder rule is pending, applied and removed, the same digest on every arm', { methods: ['readFactCacheWatermark', 'applyAccessRuleChanges', 'markAccessRevisionsApplied'] }, async (engine, backend) => {
+    await seed(engine, backend);
+    const mark = async () => (await engine.readFactCacheWatermark(SRC)).access_rules;
+    const before = await mark();
+    const pending: string[] = [];
+    policySeams.afterInstall = async () => { pending.push(await mark()); };
+    try {
+      await proposeRevision(engine, SRC, [DIARY, rule('team', 'notes/', ['alice-example', 'carol-example'])], { origin: 'cli', store: 'database' });
+    } finally {
+      policySeams.afterInstall = undefined;
+    }
+    const applied = await mark();
+    await proposeRevision(engine, SRC, [DIARY], { origin: 'cli' });
+    const preview = await previewApply(engine, SRC);
+    await applyApproved(engine, SRC, { expect: preview.plan_hash! });
+    const narrowed = await mark();
+    const marks = [before, ...pending, applied, narrowed];
+    expect(pending).toHaveLength(1);
+    expect(new Set(marks).size).toBe(marks.length);
+    for (const m of marks) expect(m).toMatch(/^[0-9a-f]{32}:[0-9a-f]{32}$/);
+    expect(before).toBe('d41d8cd98f00b204e9800998ecf8427e:d41d8cd98f00b204e9800998ecf8427e');
+    return { marks };
+  });
+
+  parityTest('the consolidate buckets leave out a fact whose own page sits under a folder rule, pending or applied', { methods: ['insertFacts', 'countUnconsolidatedFactsBySource', 'applyAccessRuleChanges'] }, async (engine, backend) => {
+    await seed(engine, backend);
+    await engine.putPage('people/acme-founder', { type: 'person', title: 'Acme Founder', compiled_truth: 'a founder', timeline: '' }, { sourceId: SRC });
+    await engine.insertFacts([
+      { fact: 'from the diary', entity_slug: 'people/acme-founder', kind: 'fact', visibility: 'world', source: 'fence', row_num: 1, source_markdown_slug: 'private/acme-diary' },
+      { fact: 'from the open page', entity_slug: 'people/acme-founder', kind: 'fact', visibility: 'world', source: 'fence', row_num: 2, source_markdown_slug: 'notes/acme-open' },
+    ] as never, { source_id: SRC });
+    const buckets = async () => (await engine.countUnconsolidatedFactsBySource({ sourceId: SRC, worldOnly: false, minPerBucket: 1 })).map(r => `${r.entity_slug}=${Number(r.count)}`);
+    const before = await buckets();
+    const pending: string[][] = [];
+    policySeams.afterInstall = async () => { pending.push(await buckets()); };
+    try {
+      await proposeRevision(engine, SRC, [DIARY], { origin: 'cli', store: 'database' });
+    } finally {
+      policySeams.afterInstall = undefined;
+    }
+    const applied = await buckets();
+    expect({ before, pending, applied }).toEqual({ before: ['people/acme-founder=2'], pending: [['people/acme-founder=1']], applied: ['people/acme-founder=1'] });
+    return { before, pending, applied };
+  });
+
+  parityTest('a caller record with no folder coverage reads a pending prefix as its record says, not as the store holds it', { methods: ['findPagesByTitles', 'getRecentSalience', 'applyAccessRuleChanges'] }, async (engine, backend) => {
+    await seed(engine, backend);
+    // The record was read before the narrowing: it names no pending prefix, so PGLite and Postgres render no coverage
+    // conjunct and judge the page by its readers and stamped rules alone, while the store holds the prefix pending.
+    const stale = async (member: string, satisfiedRuleIds: string[]) => {
+      const identity = [`member:${member}`];
+      return withCallerAccess({ identity, hidePrivate: true, satisfiedRuleIds, folderCoverage: [] }, async () => ({
+        titles: (await engine.findPagesByTitles(['acme example'], [SRC], ['note'], { excludePrivate: true })).map(r => r.slug).sort(),
+        salience: (await engine.getRecentSalience({ days: 30, limit: 10, excludePrivate: true, sourceIds: [SRC] })).map(r => r.slug).sort(),
+      }));
+    };
+    const pending: unknown[] = [];
+    policySeams.afterInstall = async () => {
+      pending.push({ coverage: await coverageRows(engine, SRC), alice: await stale('alice-example', [`${SRC}:diary`]), carol: await stale('carol-example', []) });
+    };
+    try {
+      await proposeRevision(engine, SRC, [DIARY], { origin: 'cli', store: 'database' });
+    } finally {
+      policySeams.afterInstall = undefined;
+    }
+    expect(pending).toHaveLength(1);
+    expect((pending[0] as { coverage: unknown[] }).coverage).toHaveLength(1);
+    expect((pending[0] as { alice: { titles: string[] } }).alice.titles).toContain('private/acme-diary');
+    return { pending };
   });
 });

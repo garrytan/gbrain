@@ -97,6 +97,71 @@ describe('engine parity: link reads', () => {
   );
 
   parityTest(
+    'entityFeatureCoverage and countDatedMeetingPages: the doctor coverage population, its linked and dated pages',
+    { methods: ['putPage', 'addLink', 'addTimelineEntry', 'softDeletePage', 'entityFeatureCoverage', 'countDatedMeetingPages'] },
+    async (engine, backend) => {
+      const empty = {
+        links: await engine.entityFeatureCoverage(FILTER, 'links'),
+        timeline: await engine.entityFeatureCoverage(FILTER, 'timeline'),
+        meetings: await engine.countDatedMeetingPages(),
+      };
+      await createSource(engine, backend, 'other');
+      await put(engine, 'people/alice-example', 'person');
+      await put(engine, 'people/bob-example', 'person');
+      await put(engine, 'people/quarantined', 'person', { quarantine: true });
+      await put(engine, 'people/gone', 'person');
+      await put(engine, 'companies/acme-example', 'company');
+      await put(engine, 'notes/plain', 'note');
+      await put(engine, 'people/carol-example', 'person', {}, 'other');
+      await put(engine, 'companies/widget-co', 'company', {}, 'other');
+      const dated = (slug: string, date: string | null) => engine.putPage(slug, page(slug, {
+        type: 'meeting', ...(date === null ? {} : { frontmatter: { date }, effective_date: new Date(`${date}T00:00:00Z`), effective_date_source: 'date' }),
+      }));
+      await dated('meetings/2026-04-03', '2026-04-03');
+      await dated('meetings/2026-04-04', '2026-04-04');
+      await dated('meetings/undated', null);
+      await dated('meetings/2026-04-05', '2026-04-05');
+      await engine.softDeletePage('meetings/2026-04-05');
+      await engine.addLink('notes/plain', 'people/alice-example', '', 'mentions', 'manual');
+      await engine.addLink('people/alice-example', 'companies/acme-example', '', 'works_at', 'manual');
+      await engine.addLink('notes/plain', 'people/quarantined', '', 'mentions', 'manual');
+      await engine.addLink('people/gone', 'people/bob-example', '', 'cites', 'manual');
+      await engine.addLink('people/carol-example', 'companies/widget-co', '', 'cites', 'manual', undefined, undefined, { fromSourceId: 'other', toSourceId: 'other' });
+      await engine.addTimelineEntry('people/bob-example', { date: '2026-01-02', summary: 'Met.' });
+      await engine.addTimelineEntry('people/bob-example', { date: '2026-01-03', summary: 'Met again.' });
+      await engine.addTimelineEntry('people/quarantined', { date: '2026-01-02', summary: 'Hidden.' });
+      await engine.addTimelineEntry('people/carol-example', { date: '2026-01-04', summary: 'Called.' }, { sourceId: 'other' });
+      await engine.softDeletePage('people/gone');
+      const filled = {
+        links: await engine.entityFeatureCoverage(FILTER, 'links'),
+        timeline: await engine.entityFeatureCoverage(FILTER, 'timeline'),
+        noTypes: await engine.entityFeatureCoverage({ types: [], per_source: [] }, 'links'),
+        meetings: await engine.countDatedMeetingPages(),
+      };
+      expect(empty).toEqual({ links: { sampleSize: 0, matched: 0 }, timeline: { sampleSize: 0, matched: 0 }, meetings: 0 });
+      // alice, bob, acme (default) and carol, widget-co (other, where only person is an entity: widget-co is not).
+      expect(filled.links).toEqual({ sampleSize: 4, matched: 3 });
+      expect(filled.timeline).toEqual({ sampleSize: 4, matched: 2 });
+      expect(filled.noTypes).toEqual({ sampleSize: 0, matched: 0 });
+      expect(filled.meetings).toBe(2);
+      return { empty, filled };
+    },
+  );
+
+  parityTest(
+    'entityFeatureCoverage: a 100 percent sample is the whole population',
+    { methods: ['putPage', 'addLink', 'entityFeatureCoverage'] },
+    async (engine) => {
+      await put(engine, 'people/alice-example', 'person');
+      await put(engine, 'people/bob-example', 'person');
+      await engine.addLink('people/bob-example', 'people/alice-example', '', 'knows', 'manual');
+      const sampled = await engine.entityFeatureCoverage(FILTER, 'links', { samplePercent: 100 });
+      expect(sampled).toEqual({ sampleSize: 2, matched: 1 });
+      return sampled;
+    },
+  );
+
+  parityTest(
     'listJunkEntityHubs: high-degree live pages with few chunks, their connector marks and canonical twin, most edges first',
     { methods: ['putPage', 'addLink', 'sealChunks', 'softDeletePage', 'listJunkEntityHubs'] },
     async (engine, backend) => {
