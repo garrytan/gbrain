@@ -22,7 +22,6 @@ import type { PageReadScope, SearchResult } from '../types.ts';
 import { resolveExcludePrivatePages, worldOnlyFacts } from './private-visibility.ts';
 import { admitted, collectFactCandidates, FACTS_ARM_COSINE_MIN, laterRetractions, queryTerms, scoreFactCandidates, type FactCandidate as PoolCandidate, type FactPoolScope } from './fact-relevance.ts';
 import { readSlotHistory, slotWindows } from './slot-history.ts';
-import { pageReadFilter } from './read-policy-sql.ts';
 import { enforceTokenBudget, resultTokens } from './token-budget.ts';
 import { configFlagOn, factDateHeader, factObservationDates } from './evidence-date.ts';
 import { collapseFactReads } from '../facts/capture-dedup.ts';
@@ -167,13 +166,16 @@ async function stampSupersededClaims(engine: BrainEngine, results: SearchResult[
   }
 }
 
-/** `source\0slug` keys of the facts' entity pages (page slug = fact entity_slug, same source) the caller may read. */
+/**
+ * `source\0slug` keys of the facts' entity pages (page slug = fact entity_slug, same source) the caller may read: the
+ * live pages the caller's read scope admits (`readAdmittedPageRefs`, the typed member every engine serves). A refused
+ * read propagates; it is never read as "no readable page".
+ */
 async function readableEntityPages(engine: BrainEngine, facts: FactCandidate[], scope: PageReadScope | undefined): Promise<Set<string>> {
-  const slugs = [...new Set(facts.flatMap(f => f.entity_slug ? [f.entity_slug] : []))];
-  if (!slugs.length) return new Set();
-  const params: unknown[] = [slugs];
-  const filter = pageReadFilter('p', scope, params, true);
-  const rows = await engine.executeRaw<{ slug: string; source_id: string }>(`SELECT p.slug, p.source_id FROM pages p WHERE p.slug = ANY($1::text[]) AND ${filter}`, params);
+  const refs = new Map<string, { source_id: string; slug: string }>();
+  for (const f of facts) if (f.entity_slug) refs.set(`${f.source_id}\u0000${f.entity_slug}`, { source_id: f.source_id, slug: f.entity_slug });
+  if (!refs.size) return new Set();
+  const rows = await engine.readAdmittedPageRefs([...refs.values()], scope ?? {});
   return new Set(rows.map(r => `${r.source_id}\u0000${r.slug}`));
 }
 
@@ -212,7 +214,7 @@ export async function applyFactsArm(engine: BrainEngine, query: string, results:
     const pages = results.map(r => ({ ...r }));
     const floor = pages.reduce((m, r) => (Number.isFinite(r.score) && r.score < m ? r.score : m), pages[0]?.score ?? 1);
     const shown = facts.slice(0, free);
-    const pageSlugs = await readableEntityPages(engine, shown, opts.readScope).catch(() => new Set<string>());
+    const pageSlugs = await readableEntityPages(engine, shown, opts.readScope);
     const fromQuoted = await factsFromQuotedPages(engine, shown.map(f => Number(f.id)));
     const { dates } = await observedDates(engine, shown, opts.readScope);
     let rows = shown.map((f, i) => factRow(f, floor - (i + 1) * 1e-6, f.entity_slug && pageSlugs.has(`${f.source_id}\u0000${f.entity_slug}`) ? f.entity_slug : undefined, fromQuoted.has(Number(f.id)), dates));
@@ -319,7 +321,7 @@ async function applyFactReserve(engine: BrainEngine, query: string, results: Sea
     // GBRA-574 B2/G4 and F: a slot value's window ends at read time, from the rows the caller may read under every key of its entity (slot-history.ts).
     const ends = await slotWindows(engine, scope, readScope, shown, history?.keys ?? null)
       .catch(unlessRefused(() => { historyUnavailable ||= history !== null; return new Map<number, Date>(); }));
-    const pageSlugs = await readableEntityPages(engine, shown, opts.readScope).catch(() => new Set<string>());
+    const pageSlugs = await readableEntityPages(engine, shown, opts.readScope);
     const fromQuoted = await factsFromQuotedPages(engine, [...shown, ...retracting].map(c => Number(c.id)));
     const asked = policy.dated ? questionDate(query) : null;
     const lookup: ContestedLookup = {};
