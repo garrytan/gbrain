@@ -135,7 +135,7 @@ getPage	pages	yes	278	yes	yes	yes	serves
 readPageSnapshot	pages	yes	100	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1320	yes	yes	yes	serves
+putPage	pages	yes	1321	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	43	yes	yes	yes	serves
@@ -780,7 +780,7 @@ applyTransactionSettings	import_guards	yes	110	no	yes	yes	serves
 beginSnapshotRead	import_guards	yes	3	no	yes	yes	serves
 readCurrentWriteTrust	import_guards	yes	1	no	yes	yes	serves
 setWriteContext	import_guards	yes	4	no	yes	yes	serves
-readLedgerSource	import_guards	yes	24	no	yes	yes	serves
+readLedgerSource	import_guards	yes	25	no	yes	yes	serves
 listCoveredSources	import_guards	yes	3	no	yes	yes	serves
 isFolderRestricted	import_guards	yes	5	no	yes	yes	serves
 claimNotifierLease	persistence_journal	yes	4	no	yes	yes	serves
@@ -1802,11 +1802,11 @@ countBeliefBaselineSlugs	belief_ledger	yes	2	no	yes	yes	serves
 readBeliefRedactions	belief_ledger	yes	4	no	yes	yes	serves
 insertBeliefRedaction	belief_ledger	yes	2	no	yes	yes	serves
 releaseBeliefRedactions	belief_ledger	yes	2	no	yes	yes	serves
-insertBeliefEvents	belief_ledger	yes	7	no	yes	yes	serves
+insertBeliefEvents	belief_ledger	yes	8	no	yes	yes	serves
 markBeliefCommits	belief_ledger	yes	5	no	yes	yes	serves
 readOpenBeliefLifetimes	belief_ledger	yes	2	no	yes	yes	serves
-endBeliefLifetime	belief_ledger	yes	2	no	yes	yes	serves
-mintBeliefLifetime	belief_ledger	yes	2	no	yes	yes	serves
+endBeliefLifetime	belief_ledger	yes	3	no	yes	yes	serves
+mintBeliefLifetime	belief_ledger	yes	3	no	yes	yes	serves
 renameBeliefLifetime	belief_ledger	yes	2	no	yes	yes	serves
 readMovedBeliefLifetimes	belief_ledger	yes	2	no	yes	yes	serves
 readBeliefStateRows	belief_ledger	yes	1	no	yes	yes	serves
