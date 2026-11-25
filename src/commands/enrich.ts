@@ -80,6 +80,7 @@ import {
 } from '../core/enrich/thin.ts';
 import { restoreNeutralized } from '../core/think/sanitize.ts';
 import { sanitizeRemoteBody } from '../core/remote-body.ts';
+import { rethrowCapabilityRefusal } from '../core/engine-capability-refusal.ts';
 import { withEngineScope } from '../core/engine-scope.ts';
 import { heldRowsForCaller, storedEdge, worldFenceRows, worldLinkContexts } from '../core/eligibility/fence-overlay.ts';
 
@@ -362,6 +363,8 @@ async function retrieveEvidence(
       factIds.push(Number(r.id));
     }
   } catch (err) {
+    // A brain with no raw SQL (the Rust engine: the readable-evidence reads are executeRaw) refuses the page, never fills it from less evidence.
+    rethrowCapabilityRefusal(err);
     // Pre-facts brains / column drift → no facts evidence; fails closed, but say so.
     process.stderr.write(`[enrich] WARN: fact evidence for ${slug} unavailable: ${(err as Error).message}\n`);
   }
@@ -386,6 +389,7 @@ async function retrieveEvidence(
       n++;
     }
   } catch (err) {
+    rethrowCapabilityRefusal(err);
     process.stderr.write(`[enrich] WARN: link evidence for ${slug} unavailable: ${(err as Error).message}\n`);
   }
 
@@ -409,7 +413,8 @@ async function retrieveEvidence(
         pages.push(h.slug);
       }
     }
-  } catch {
+  } catch (err) {
+    rethrowCapabilityRefusal(err);
     // Search unavailable (no embeddings) → fall through to other signals.
   }
 
