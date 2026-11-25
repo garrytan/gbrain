@@ -151,7 +151,7 @@ test/engine-parity/fence-overlay.test.ts	2	0
 test/engine-parity/fence-row-trust.test.ts	4	0
 test/engine-parity/fenced-import-purge.test.ts	1	0
 test/engine-parity/field-usage.test.ts	3	0
-test/engine-parity/files-ops-sites.test.ts	8	0
+test/engine-parity/files-ops-sites.test.ts	9	0
 test/engine-parity/first-due.test.ts	1	0
 test/engine-parity/floor-folder-rule.test.ts	1	0
 test/engine-parity/forget-commit.test.ts	3	0
@@ -412,6 +412,7 @@ test/engine-parity/transaction-settings.test.ts	12	0
 test/engine-parity/traversal-cache.test.ts	7	0
 test/engine-parity/trust-backfill.test.ts	0	1
 test/engine-parity/trust-fence.test.ts	7	0
+test/engine-parity/trust-floor-refusal.test.ts	1	0
 test/engine-parity/trust-proposals.test.ts	5	0
 test/engine-parity/trust-reads.test.ts	13	0
 test/engine-parity/trust-tier-reads.test.ts	27	0
@@ -426,7 +427,7 @@ test/engine-parity/unrestricted-fact-list-reads.test.ts	2	0
 test/engine-parity/unrestricted-member-page-reads.test.ts	1	0
 test/engine-parity/valid-time-member-reads.test.ts	3	0
 test/engine-parity/vector-options.test.ts	4	0
-test/engine-parity/versions-raw.test.ts	19	0
+test/engine-parity/versions-raw.test.ts	22	0
 test/engine-parity/wanted-links.test.ts	5	0
 test/engine-parity/wanted-markers.test.ts	4	0
 test/engine-parity/wedged-reservation.test.ts	2	0

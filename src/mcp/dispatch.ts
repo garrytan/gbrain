@@ -453,7 +453,7 @@ export function summarizeMcpParams(opName: string, params: unknown): ParamSummar
  * facts that match the query, search's keyword count line, the remote page cap line and the row-date label. Each rides as its own text block after the
  * results (content[0] stays the bare result array for thin clients).
  */
-export function retrievalNoticeBlocks(result: unknown, retrieval: unknown): string[] {
+export function retrievalNoticeBlocks(result: unknown, retrieval: unknown, tool = 'search'): string[] {
   if (retrieval === null || typeof retrieval !== 'object') return [];
   const empty = Array.isArray(result) && result.length === 0 ? buildEmptyRetrievalBlock(retrieval) : null;
   const r = retrieval as {
@@ -473,7 +473,7 @@ export function retrievalNoticeBlocks(result: unknown, retrieval: unknown): stri
   const factsBlock = savedFactsNoticeBlock(r.saved_facts);
   if (factsBlock) blocks.push(factsBlock);
   // F2: which set the rows are and which set the keyword count covers, on every search call.
-  const countLine = searchCountLine(result, retrieval);
+  const countLine = searchCountLine(result, retrieval, tool);
   if (countLine) blocks.push(countLine);
   const capLine = pageCapLine(retrieval);
   if (capLine) blocks.push(capLine);
@@ -1435,7 +1435,7 @@ async function dispatchResolvedCall(
     if (emptyBlock) notices.push({ code: 'empty_retrieval', kind: emptyBlock.includes('degraded:') ? 'degraded' : 'info', why: emptyBlock });
     // Cat 40 (#5932) evidence blocks (type-filter notice, other names, saved facts) are retrieval
     // data, not advice: they stay plain extra text blocks right after content[0], as measured.
-    const evidence = (retrieval: unknown) => retrievalNoticeBlocks(result, retrieval).slice(emptyBlock ? 1 : 0);
+    const evidence = (retrieval: unknown) => retrievalNoticeBlocks(result, retrieval, name).slice(emptyBlock ? 1 : 0);
     // Lane F (F3): degraded recall and a source binding that narrowed an empty read.
     const rerankDegradedCalls = recordRerankDegradation(responseMeta, opts);
     notices.push(...recallInteropNotices(name, result, responseMeta, safeParams,

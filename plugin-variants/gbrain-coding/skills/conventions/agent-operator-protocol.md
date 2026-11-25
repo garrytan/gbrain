@@ -892,8 +892,8 @@ emit nothing.
 stays on; they ask for nothing and their delivery is never consent.
 `behavior_changes` lists what an upgrade turned on for an existing brain: a
 live `chat_fallback_chain` (its entries, the providers that receive traffic,
-and that it falls back on refusals unless `chat_fallback_on_refusal` is
-false), managed-brain lint writing repairs (`gbrain config set cycle.lint_fix
+and whether it also falls back on refusals, which only an explicit
+`chat_fallback_on_refusal` true turns on), managed-brain lint writing repairs (`gbrain config set cycle.lint_fix
 false` opts out), smaller transcript parts re-embedded once, and a one-time
 mention-linker rescan. It arrives once per brain on each local channel and
 once per authenticated HTTP client, and a fresh install never sees it; it is

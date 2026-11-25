@@ -333,7 +333,7 @@ const entryMessage = (sourceId: string, entry: SpellingEntry): string => {
       + `soft-delete the other with gbrain delete ${shellQuote([entry.slug])} --source-id ${sourceId}, then preview again.`;
   }
   if (entry.code === 'rename_file_first') {
-    return `Page ${entry.slug} (id ${entry.page_id}) is not moved because ${entry.reason}. git mv the file to ${entry.normal}${extname(entry.source_path ?? '') || '.md'}, commit and sync (sync carries the page identity), then preview again.`;
+    return `Page ${entry.slug} (id ${entry.page_id}) is not moved because ${entry.reason}. git mv the file to ${entry.evidence.to_path ?? `${entry.normal}${extname(entry.source_path ?? '') || '.md'}`}, commit and sync (sync carries the page identity), then preview again.`;
   }
   return `page ${entry.page_id} moves from ${entry.slug} to ${entry.normal}; its id, history, facts and attachments stay, and ${entry.slug} keeps resolving through an alias`;
 };
@@ -470,10 +470,13 @@ async function movePageUnderStoredSlug(engine: BrainEngine, sourceId: string, pa
     if (taken) throw changedSincePreview(sourceId, page.slug, `another page now prints the same name, ${taken.slug} (id ${taken.page_id}) (slug_spelling_collision)`);
     let attachments = 0, guards: Awaited<ReturnType<typeof carryGuards>> = { fact_purges: 0, take_purges: 0 };
     await lockedBeliefBatch(tx, { sourceId, slugs: [page.slug, page.normal], publicationId, op: 'slug_spelling', remote: false, report }, async () => {
+      // The page's attachments (bound to it, or naming the old spelling with no page id), counted first for the report.
+      const [own] = await tx.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM files WHERE source_id = $1 AND page_slug = $2 AND (page_id = $3 OR page_id IS NULL)', [sourceId, page.slug, page.page_id]);
+      // updateSlug moves the bound ones (moveSlugBindings); the rows with no page id stay there, but the older spelling
+      // names exactly this one page under the page locks, so this repair moves those itself.
       if (await tx.updateSlug(page.slug, page.normal, { sourceId }) !== 1) throw changedSincePreview(sourceId, page.slug, `page ${page.slug} could not move to ${page.normal}`);
-      // Attachments carry the page's slug beside its id: this source's rows of the page, and rows with no page id that name the old slug.
-      const files = await tx.executeRaw('UPDATE files SET page_slug = $3 WHERE source_id = $1 AND page_slug = $2 AND (page_id = $4 OR page_id IS NULL) RETURNING id', [sourceId, page.slug, page.normal, page.page_id]);
-      attachments = files.length;
+      await tx.executeRaw('UPDATE files SET page_slug = $3 WHERE source_id = $1 AND page_slug = $2 AND page_id IS NULL', [sourceId, page.slug, page.normal]);
+      attachments = Number(own?.n ?? 0);
       guards = await carryGuards(tx, sourceId, page.slug, page.normal);
     });
     return { applied: true, outcome: 'moved', detail: { page_id: page.page_id, from: page.slug, to: page.normal, attachments_moved: attachments, kept_source_path: page.source_path, guards_carried: guards } } satisfies RepairItemOutcome;

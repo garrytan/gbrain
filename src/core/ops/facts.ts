@@ -733,6 +733,7 @@ const context_pack: Operation = {
     entity_refs: { type: 'array', items: { type: 'object', properties: { source_id: { type: 'string' }, slug: { type: 'string' } } },
       description: 'Source-qualified entities: [{"source_id":"wiki","slug":"people/alice-example"}].', fullSurfaceOnly: true },
     prefer_source_id: { type: 'string', description: 'Source to try first (thin clients send .gbrain-source here); never narrows.', fullSurfaceOnly: true },
+    profile: { type: 'boolean', description: 'true: add your own profile (facets, constraints, relationships, preferences).', fullSurfaceOnly: true },
   },
   scope: 'read',
   verb: true,
@@ -847,10 +848,11 @@ const context_pack: Operation = {
     const threadsOf = (c: (typeof cards)[number]) =>
       (c.open_threads ?? []).filter((t) => !since || (t.date !== null && isAfter(t.date, since)));
     let droppedCount: number | undefined;
+    const profilePack = p.profile === true ? await (await import('../profile/read.ts')).contextPackProfile(ctx, walk.sources, budgetTokens === null ? null : budgetTokens - packHeaderCost() - coreTokens - (pullBrief?.text ? estimateTokens(pullBrief.text) : 0), eligibility) : null;
     if (budgetTokens !== null) {
       // #4761: reserve the envelope + headers, then price each card as its
       // rendered line plus its rendered (since-filtered) thread lines.
-      const itemBudget = budgetTokens - packHeaderCost() - coreTokens - (pullBrief?.text ? estimateTokens(pullBrief.text) : 0);
+      const itemBudget = budgetTokens - packHeaderCost() - coreTokens - (pullBrief?.text ? estimateTokens(pullBrief.text) : 0) - (profilePack?.used ?? 0);
       const cardCost = (c: (typeof cards)[number]) =>
         lineCost(renderCardLine(c, walk.home, ctx.remote !== false)) + threadsOf(c).reduce((n, t) => n + lineCost(renderThreadLine(t)), 0);
       const cardPack = itemBudget > 0 ? packToBudget(cards, cardCost, itemBudget) : dropAll(cards);
@@ -891,7 +893,7 @@ const context_pack: Operation = {
     const recordLines = cards.flatMap(renderRecordLines);
     const basePack = entities.length === 0 ? '' : budgetTokens !== null ? renderPack(cards, open_threads, facts, undefined, walk.home, entityFacts, ctx.remote !== false) : res.text;
     const packText = recordLines.length ? [basePack, ['', RECORDS_HEADER, ...recordLines].join('\n')].filter(Boolean).join('\n') : basePack;
-    const text = [coreText, pullBrief?.text ?? '', packText].filter(Boolean).join('\n\n');
+    const text = [coreText, pullBrief?.text ?? '', profilePack?.text ?? '', packText].filter(Boolean).join('\n\n');
     const budgetUsed = budgetTokens !== null ? estimateTokens(text) : undefined;
 
     return {
@@ -938,7 +940,7 @@ const context_pack: Operation = {
         ...(f.trust_tier ? { trust_tier: f.trust_tier, origin: f.origin } : {}),
         ...(f.quoted ? { quoted: f.quoted } : {}),
       })),
-      text,
+      text, ...(profilePack ? { profile: profilePack.block } : {}),
       ...(pullBrief ? { brief: pullBrief.view } : {}),
       ...(withheld ? { suppressed: suppressionSummary(withheld) } : {}),
       ...(core && core.enabled ? { core: { text: core.text, chars_used: core.chars_used, chars_limit: core.chars_limit, pages: core.pages,

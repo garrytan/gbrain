@@ -215,7 +215,7 @@ src/commands/embed.ts#preflightDimMismatch	catch_empty	2
 src/commands/embed.ts#runEmbedCore	catch_empty	1
 src/commands/engine-shadow.ts#seedFrom	promise_catch_empty	1	added on the shadow seed branch (rust-engine/shadow-s3) before it merged this guard; known debt, fix by a typed degraded marker
 src/commands/engine-status.ts#mountFor	catch_empty	1
-src/commands/enrich.ts#retrieveEvidence	catch_empty	3
+src/commands/enrich.ts#retrieveEvidence	catch_empty	1
 src/commands/eval-cross-modal.ts#runBatchMode	catch_empty	1
 src/commands/eval-cross-modal.ts#substituteUnavailableDefaultSlots	catch_empty	1
 src/commands/eval-longmemeval.ts#resolvePins	catch_empty	1
@@ -804,7 +804,6 @@ src/core/extraction-watermark.ts#readPageWatermark	capability_refusal_swallowed	
 src/core/extraction-watermark.ts#setExtractionReceipt	capability_refusal_swallowed	1
 src/core/facts/absorb-log.ts#pendingReceipt	catch_empty	1
 src/core/facts/capture-dedup.ts#entityNames	catch_empty	1
-src/core/facts/claim-conflicts.ts#claimConflictsMode	promise_catch_empty	1
 src/core/facts/dead-absorb-retry.ts#loadMaxResubmits	promise_catch_empty	1
 src/core/facts/dead-absorb-retry.ts#readState	catch_empty	1
 src/core/facts/drain.ts#estimateBacklogUsd	promise_catch_empty	1	sync 13b: the read is a typed engine member on the Rust trunk; master's tree reads it through the sql tag or executeRaw, which this guard counts under another metric or not at all; the handler is unchanged from master
@@ -1531,7 +1530,6 @@ src/core/skillpack/rubric.ts#walkGlob>walk	catch_empty	1
 src/core/skillpack/scrub-legacy.ts#skillHasFrontmatterTriggers	catch_empty	1
 src/core/skillpack/shared-brain-bridge.ts#sharedBrainBridgePlan	capability_refusal_swallowed	1
 src/core/skillpack/update-journal.ts#listJournals	catch_empty	1
-src/core/skills/resolver/build.ts#buildSkillIndex	catch_empty	1
 src/core/skills/resolver/build.ts#catalogStatus	catch_empty	2
 src/core/skills/resolver/build.ts#gbrainCommit	catch_empty	1
 src/core/skills/resolver/catalog-files.ts#listCatalogs	catch_empty	1

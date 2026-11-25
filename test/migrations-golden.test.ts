@@ -34,9 +34,9 @@ describe('migrations full-record golden', () => {
     const sorted = [...versions].sort((a, b) => a - b);
     const golden = buildMigrationsGolden(MIGRATIONS);
     // 331 is master's access_read_log (sync 11); 332 is master's engine_writer_observations, 333 its hold-page-id and 334 its
-    // learning_items (#10193); 336 is the cli-members line's byte-order slug indexes, 337 the trunk's projection-jobs index and
-    // 338 the pages projection-waiting words index: renumbered above master's v334 and PR 10168's v335, which sync 17 brought in
-    // (pages_spelling_key_index), so 335 is no longer a gap.
+    // learning_items (#10193), 335 its pages_spelling_key_index (#10168), 336 its files_follow_page_slug (#10294) and 337 its
+    // write_gate_hold_rechecks (#10317); 338 is the cli-members line's byte-order slug indexes, 339 the trunk's projection-jobs
+    // index, 340 the pages projection-waiting words index and 341 fact_fingerprint_v3: renumbered above master's v337 (sync 18).
     expect(golden.gaps).toEqual([17, 18, 19, 100]);
     expect(sorted[0]).toBe(2);
     expect(sorted[sorted.length - 1]).toBe(LATEST_VERSION);

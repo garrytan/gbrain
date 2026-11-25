@@ -93,6 +93,11 @@ export interface GazetteerEntry {
   /** Spelling being matched (the alias, not the display title, for aliases). */
   matchText?: string;
   /**
+   * Set only on the mention pass's scan entries for retired names, whose saved form lost the written
+   * spacing: a Hangul name matches however its words are spaced.
+   */
+  anySpacing?: true;
+  /**
    * Set on a name two or three identity siblings claim (mentions/siblings.ts):
    * a match links to every sibling with the same tokens instead of one.
    */
@@ -814,8 +819,9 @@ function hasHangulMatchBoundary(
   if (first.offset > 0 && /[가-힣]/u.test(text[first.offset - 1]!)) return false;
   const last = tokens[start + entry.tokens.length - 1]!;
   const end = last.offset + last.length;
-  const actual = text.slice(first.offset, end).replace(/\s+/gu, ' ');
-  const expected = (entry.matchText ?? entry.tokens.join('')).trim().replace(/\s+/gu, ' ');
+  const space = entry.anySpacing ? '' : ' ';
+  const actual = text.slice(first.offset, end).replace(/\s+/gu, space);
+  const expected = (entry.matchText ?? entry.tokens.join('')).trim().replace(/\s+/gu, space);
   return actual === expected && HANGUL_NAME_SUFFIX_RE.test(text.slice(end, end + 12));
 }
 

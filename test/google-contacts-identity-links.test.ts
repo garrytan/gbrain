@@ -44,7 +44,7 @@ describe('gbrain dedupe link-contacts (Google Contacts)', () => {
     await page('people/alice-example', 'Alice Example', { email: 'alice@example.invalid' });
     await page('people/bob-example', 'Bob Example', { phones: ['+1 555-555-0100'] });
     await page('people/carol-example', 'Carol Example', { email: 'carol@example.invalid' });
-    await page('people/carol-example', 'Carol Example', { email: 'carol@example.invalid' }, 'people-b');
+    await page('people/carol-sample', 'Carol Example', { email: 'carol@example.invalid' }, 'people-b');
     await page('people/dana-example', 'Dana Example', { email: 'dana@example.invalid' });
     await contact('c-alice', 'Alice Example', ['Alice@Example.invalid']);
     await contact('c-bob', 'Bob E', [], ['(555) 555-0100']);

@@ -65,6 +65,7 @@ mod seed;
 mod session_state;
 mod shared_skill_members;
 mod shared_skill_publication;
+mod snapshot;
 mod sources;
 mod sync_run_reads;
 mod tags;

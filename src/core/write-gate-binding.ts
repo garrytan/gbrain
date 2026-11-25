@@ -46,9 +46,55 @@ export function holdReachCte(h: string): string {
  * instead, and deletes it only when no candidate is left.
  */
 export function holdOwnedByDeletedPageSql(h: string, pageId: string, slug: string): string {
-  const named = `(${h}.slug = ${slug} OR EXISTS (${holdReachCte(h)} SELECT 1 FROM reach WHERE reach.s = ${slug}))`;
-  const survivor = `EXISTS (${holdReachCte(h)} SELECT 1 FROM reach JOIN pages q ON q.source_id = ${h}.source_id AND q.slug = reach.s WHERE q.id IS DISTINCT FROM ${pageId}::bigint)`;
-  return `((${pageId}::bigint IS NOT NULL AND ${h}.page_id = ${pageId}::bigint) OR (${h}.page_id IS NULL AND ${h}.page_candidates IS NULL AND ${named} AND NOT ${survivor}))`;
+  return `((${pageId}::bigint IS NOT NULL AND ${h}.page_id = ${pageId}::bigint) OR (${h}.page_id IS NULL AND ${h}.page_candidates IS NULL AND ${namedByPurgedSlug(h, slug)} AND NOT ${survivorOf(h, pageId)}))`;
+}
+
+/** An unbound hold's own slug is the purged slug, or leads to it through the same source's rename record. */
+function namedByPurgedSlug(h: string, slug: string): string {
+  return `(${h}.slug = ${slug} OR EXISTS (${holdReachCte(h)} SELECT 1 FROM reach WHERE reach.s = ${slug}))`;
+}
+
+/** Some page row other than the purged one (live or soft-deleted) is at a slug the hold's own slug leads to. */
+function survivorOf(h: string, pageId: string): string {
+  return `EXISTS (${holdReachCte(h)} SELECT 1 FROM reach JOIN pages q ON q.source_id = ${h}.source_id AND q.slug = reach.s WHERE q.id IS DISTINCT FROM ${pageId}::bigint)`;
+}
+
+/**
+ * The other half of `holdOwnedByDeletedPageSql`: SQL true for the unbound, candidate-free holds a purge of page `pageId`
+ * names but keeps, because another page row is still reachable from the hold's slug. The purge notes these in
+ * `write_gate_hold_rechecks` (`noteKeptHoldsSql`): when two such pages are purged side by side, each keeps the hold for
+ * the other, and only the maintenance sweep (write-gate-recheck.ts) sees that no page is left.
+ */
+export function holdKeptForSurvivorSql(h: string, pageId: string, slug: string): string {
+  return `(${h}.page_id IS NULL AND ${h}.page_candidates IS NULL AND ${namedByPurgedSlug(h, slug)} AND ${survivorOf(h, pageId)})`;
+}
+
+/**
+ * A hold's version: an md5 of what a later write or an owner decision changes (status, sightings, last sighting, payload,
+ * binding, slug and tier). A purge's note records it; the sweep deletes a hold only while it is unchanged, so a hold
+ * re-opened after the purge is a later write and stays. The time is taken as epoch seconds, independent of the session
+ * time zone.
+ */
+export function holdVersionSql(h: string): string {
+  return `md5(concat_ws('|', ${h}.status, ${h}.seen_count::text, extract(epoch FROM ${h}.last_seen_at)::text, md5(${h}.payload::text),
+    COALESCE(${h}.page_id::text, '-'), COALESCE(${h}.page_candidates::text, '-'), ${h}.slug, ${h}.tier))`;
+}
+
+/**
+ * A data-modifying CTE named `noted` for the purge statement that deletes holds: it notes, in the same statement and so
+ * the same snapshot as the delete decision, the holds `holdKeptForSurvivorSql` keeps for the purged page(s), with the
+ * ids of the surviving pages it saw (`purged(q)` is SQL true for a page row the statement purges, so those are left
+ * out): the purge's own scrub of the rename record can cut the route to them, so the sweep checks them by id. `from` is
+ * the FROM clause binding the purged page's `pageId` and `slug` expressions (and `extra`, an AND-ed time rule). No hold
+ * row is locked and no unique key is touched, so a purge never waits on another purge's note.
+ */
+export function noteKeptHoldsCte(sourceParam: string, pageId: string, slug: string, purged: (q: string) => string, from = '', extra = 'true'): string {
+  return `noted AS (INSERT INTO write_gate_hold_rechecks (source_id, hold_id, observed_version, survivor_ids)
+      SELECT h.source_id, h.id, ${holdVersionSql('h')},
+             ARRAY(${holdReachCte('h')} SELECT DISTINCT q.id FROM reach JOIN pages q ON q.source_id = h.source_id AND q.slug = reach.s WHERE NOT ${purged('q')})
+        FROM write_gate_holds h
+       WHERE h.source_id = ${sourceParam} AND EXISTS (SELECT 1 ${from} WHERE ${holdKeptForSurvivorSql('h', pageId, slug)} AND ${extra})
+      RETURNING 1)`;
 }
 
 /** What a purge verifier counts as left behind: the holds the purge deletes outright, and any candidate-marked hold still naming the page. */

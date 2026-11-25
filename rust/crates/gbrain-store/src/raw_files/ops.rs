@@ -33,9 +33,10 @@ const VERIFY_LIMIT: usize = 1000;
 /// Which write a files statement is, by what its conflict clause changes.
 #[derive(Clone, Copy, PartialEq)]
 enum Lane {
-    /// The command upserts: a repeat of a path takes the hash, size, type and merged metadata.
+    /// The command upserts: a repeat of a path takes the hash, size, type and merged metadata, and the live page
+    /// at the slug in the row's source (its id and slug) when there is one.
     Command,
-    /// `upsertOpFileRow`: also the source and page, when the new row names a page.
+    /// `upsertOpFileRow`: also the source, page and the page's current slug, when the new row names a page.
     Operation,
     /// `registerFileRow`: the same, only when the page slug, name, source and page id all match.
     Register,
@@ -195,6 +196,7 @@ impl Store {
     fn write_file_row(&self, op: &str, lane: Lane, spec: &FileSpec) -> Result<bool> {
         const TABLE: &str = "files";
         no_nul(op, &spec_texts(spec))?;
+        // The command lanes name no page id: their page is bound inside the write, by slug.
         let page_id = if lane == Lane::Command {
             None
         } else {
@@ -240,63 +242,99 @@ impl Store {
             .ok_or_else(|| not_null(TABLE, "content_hash"))?;
         let metadata = metadata.ok_or_else(|| not_null(TABLE, "metadata"))?;
 
-        self.write(|tx| match read_file(&*tx, &storage_path)? {
-            Some(mut file) => {
-                match lane {
-                    Lane::Command => {}
-                    Lane::Operation => {
-                        if page_id.is_some() {
-                            relink(tx, &mut file, source_id, page_id)?;
+        self.write(|tx| {
+            // The page a row binds to. A command upload binds the live page at its slug in its source (the
+            // statement's `(SELECT id FROM pages WHERE source_id = .. AND slug = .. AND deleted_at IS NULL)`); the
+            // operation upload names its page by id and takes that page's slug as it is now
+            // (`COALESCE((SELECT p.slug FROM pages p WHERE p.id = $8 FOR SHARE), $1)`), so a page renamed while the
+            // bytes uploaded is recorded under its new slug. A register binds nothing it was not given.
+            let (page_id, page_slug) = match lane {
+                Lane::Command => {
+                    let bound = match spec.page_slug.as_deref() {
+                        Some(slug) => read_page(&*tx, source_id, slug)?
+                            .filter(|page| page.deleted_at_us.is_none())
+                            .map(|page| page.id as i64),
+                        None => None,
+                    };
+                    (bound, spec.page_slug.clone())
+                }
+                Lane::Operation => {
+                    let current = match page_id {
+                        Some(id) if id > 0 => {
+                            read_page_by_id(&*tx, id as u64)?.map(|page| page.slug)
+                        }
+                        _ => None,
+                    };
+                    (page_id, current.or_else(|| spec.page_slug.clone()))
+                }
+                Lane::Register => (page_id, spec.page_slug.clone()),
+            };
+            match read_file(&*tx, &storage_path)? {
+                Some(mut file) => {
+                    match lane {
+                        Lane::Command | Lane::Operation => {
+                            if page_id.is_some() {
+                                // A conflict that binds a page takes its id and slug together; one that binds none
+                                // keeps the row's pair. A command upload keeps the row's source.
+                                let keep_source = file.source_id.clone();
+                                let target_source = if lane == Lane::Command {
+                                    keep_source.as_str()
+                                } else {
+                                    source_id
+                                };
+                                relink(tx, &mut file, target_source, page_id)?;
+                                file.page_slug = page_slug.clone();
+                            }
+                        }
+                        Lane::Register => {
+                            let same = file.page_slug == spec.page_slug
+                                && file.filename == filename
+                                && file.source_id == source_id
+                                && file.page_id == page_id.map(|id| id as u64);
+                            if !same {
+                                return Ok(false);
+                            }
                         }
                     }
-                    Lane::Register => {
-                        let same = file.page_slug == spec.page_slug
-                            && file.filename == filename
-                            && file.source_id == source_id
-                            && file.page_id == page_id.map(|id| id as u64);
-                        if !same {
-                            return Ok(false);
-                        }
+                    file.content_hash = content_hash.clone();
+                    file.size_bytes = size_bytes;
+                    file.mime_type = spec.mime_type.clone();
+                    file.metadata = merged_metadata(&file.metadata, &metadata);
+                    put_file(tx, &file)?;
+                    Ok(true)
+                }
+                None => {
+                    if read_source(&*tx, source_id)?.is_none() {
+                        return Err(foreign_key("source_id"));
                     }
+                    if let Some(id) = page_id
+                        && !page_exists(&*tx, id)?
+                    {
+                        return Err(foreign_key("page_id"));
+                    }
+                    let id = next_id(tx, NEXT_FILE_ID)?;
+                    let file = FileRecord {
+                        id,
+                        source_id: source_id.to_string(),
+                        page_slug: page_slug.clone(),
+                        page_id: page_id.map(|id| id as u64),
+                        filename: filename.clone(),
+                        storage_path: storage_path.clone(),
+                        mime_type: spec.mime_type.clone(),
+                        size_bytes,
+                        content_hash: content_hash.clone(),
+                        metadata: merged_metadata(&json!({}), &metadata),
+                        created_at_us: self.env.now_micros(),
+                    };
+                    if let Some(page) = file.page_id {
+                        tx.put(
+                            &file_page_key(page, id),
+                            &serde_json::to_vec(&storage_path)?,
+                        )?;
+                    }
+                    put_file(tx, &file)?;
+                    Ok(true)
                 }
-                file.content_hash = content_hash.clone();
-                file.size_bytes = size_bytes;
-                file.mime_type = spec.mime_type.clone();
-                file.metadata = merged_metadata(&file.metadata, &metadata);
-                put_file(tx, &file)?;
-                Ok(true)
-            }
-            None => {
-                if read_source(&*tx, source_id)?.is_none() {
-                    return Err(foreign_key("source_id"));
-                }
-                if let Some(id) = page_id
-                    && !page_exists(&*tx, id)?
-                {
-                    return Err(foreign_key("page_id"));
-                }
-                let id = next_id(tx, NEXT_FILE_ID)?;
-                let file = FileRecord {
-                    id,
-                    source_id: source_id.to_string(),
-                    page_slug: spec.page_slug.clone(),
-                    page_id: page_id.map(|id| id as u64),
-                    filename: filename.clone(),
-                    storage_path: storage_path.clone(),
-                    mime_type: spec.mime_type.clone(),
-                    size_bytes,
-                    content_hash: content_hash.clone(),
-                    metadata: merged_metadata(&json!({}), &metadata),
-                    created_at_us: self.env.now_micros(),
-                };
-                if let Some(page) = file.page_id {
-                    tx.put(
-                        &file_page_key(page, id),
-                        &serde_json::to_vec(&storage_path)?,
-                    )?;
-                }
-                put_file(tx, &file)?;
-                Ok(true)
             }
         })
     }

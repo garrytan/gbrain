@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "skill-resolver.v1.turn-output.json",
   "title": "gbrain skill resolver: turn output (schema_version 1)",
-  "description": "The result of one turn (`gbrain skills resolve --json`, resolveSkills().output). Everything outside `meta` is byte-identical for the same index, input and session state, except on a turn the model picker answered or was asked (router). Within v1, changes are additive only.",
+  "description": "The result of one turn (`gbrain skills resolve --json`, resolveSkills().output). Everything outside `meta` is byte-identical for the same index, input and session state, except on a turn the model picker answered or was asked (router), or a turn whose catalog has skill vectors (vectors). Within v1, changes are additive only.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -81,9 +81,10 @@
             "triggers",
             "routing",
             "description",
+            "vector",
             "body"
           ],
-          "description": "The strongest way it matched: named in the turn, picked by the model picker (skills.resolver.router), else the first matched field of name, triggers, routing, description, body. An adapter that wants a floor drops body-only (or description-only) suggestions."
+          "description": "The strongest way it matched: named in the turn, picked by the model picker (skills.resolver.router), else the first matched field of name, triggers, routing, description, then vector (it matched on meaning alone: its cosine to the message is at or above the cosine floor), then body. An adapter that wants a floor drops body-only (or description-only) suggestions."
         },
         "path": {
           "type": "string",
@@ -301,6 +302,65 @@
         }
       }
     },
+    "vectors": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Present when a catalog of the turn has skill vectors (its receipt lists them), except on an acknowledgement turn, which neither embeds nor ranks. used says whether the turn ranked with them; model is the brain's embedder (null when none is configured); ms is how long the turn waited for the message's vector; fallback says why the turn did without them (not_needed: the model picker answered first).",
+      "required": [
+        "used",
+        "model",
+        "ms",
+        "fallback"
+      ],
+      "properties": {
+        "used": {
+          "type": "boolean"
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fallback": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "code"
+              ],
+              "properties": {
+                "code": {
+                  "enum": [
+                    "no_embedder",
+                    "embedding_disabled",
+                    "unsupported_provider",
+                    "missing_key",
+                    "provider_error",
+                    "timeout",
+                    "bad_reply",
+                    "not_this_harness",
+                    "project_scope",
+                    "too_many_skills",
+                    "stale_vectors",
+                    "not_needed",
+                    "unmeasured_model"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
     "explain": {
       "type": "object",
       "description": "Present only with --explain-target under --json.",
@@ -367,6 +427,23 @@
             "string",
             "null"
           ]
+        },
+        "vector": {
+          "type": "object",
+          "description": "Present only when skill vectors ranked the turn: the target's cosine with the message and its catalog's floor; rank and score stay the word ranking's.",
+          "additionalProperties": false,
+          "required": [
+            "cosine",
+            "floor"
+          ],
+          "properties": {
+            "cosine": {
+              "type": "number"
+            },
+            "floor": {
+              "type": "number"
+            }
+          }
         },
         "session": {
           "type": [

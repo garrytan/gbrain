@@ -1,9 +1,0 @@
----
-important: data-loss
----
-**A source whose ownership reservation file was deleted by something outside gbrain can be written again: every refusal now names the self-transfer that restores it.**
-
-### Fixed
-- When the reservation beside a checkout (`.gbrain-owner-<hash>.json` in its parent folder) was deleted, for example by a file-sync client, while the stamp inside the checkout survived, every write, repair and `gbrain sources writer activate --shared-skills` refused `recovery_required` with a generic message and no way out, and the documented `--confirm-relocated-root` self-transfer refused too. When the stamp still identifies that exact directory, the refusal now carries detail `ownership_reservation_missing` and a `fix`: `gbrain sources writer transfer prepare <source> --self-transfer` (preview with `--dry-run`), then `transfer accept ... --self-transfer`, which checks the stamp against this brain and the worktree this host owns under the worktree lock and re-creates the reservation. `gbrain sources writer status` shows the same fix as `physical_fix`, a claim of the same path refuses the same way, and `--confirm-relocated-root` now points at the plain self-transfer.
-- That self-transfer no longer re-creates a lost reservation over a checkout whose `.git` is also gone, or was replaced by a fresh one, when sync imported an active source there from Git. Prepare and accept now check that the repository Git finds from the source's folder (as sync does, so one above the checkout counts) still holds the commit sync last imported, and otherwise refuse with detail `checkout_git_missing`, change nothing and say how to restore the folder first. A folder that never was a Git repository recovers as before.
-- Shared-skill activation still needs every canonical root verified (its database guard registers each owner under its own lock), so one unverified root is not skipped; its refusal now names that source and the fix.

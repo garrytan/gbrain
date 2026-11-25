@@ -159,6 +159,9 @@
       "pricing": [
         "./commands/pricing.ts"
       ],
+      "profile": [
+        "./commands/profile.ts"
+      ],
       "quarantine": [
         "./commands/trust.ts",
         "./commands/quarantine.ts"

@@ -22,7 +22,7 @@
  *
  * Engine-free: setup never opens the database itself.
  */
-import { realpathSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { removeHermesTurnHook, syncHermesTurnHook } from '../core/setup/hermes-turn-hook.ts';
 import { hermesMcpStep } from './setup-hermes-mcp.ts';
@@ -32,7 +32,7 @@ import { describePiSkill, readPiSkillState, removePiSkillExtension, syncPiSkillE
 import { hasTurnRuleHook, isTurnRuleHarness, removeTurnRuleHook, syncTurnRuleHook, type TurnHookOutcome, type TurnRuleHarness } from '../core/setup/turn-hook.ts';
 import { inspectTurnHook, TURN_HOOK_NATIVE_INSPECT, turnHookFix, verifyTurnHook, type TurnHookVerdict } from '../core/setup/turn-hook-check.ts';
 import { opError, OperationError } from '../core/ops/contract.ts';
-import { cliRenderContext, docsUrl, renderCliError, renderNotice, shellQuote, type Action, type Notice } from '../core/agent-output.ts';
+import { cliRenderContext, docsUrl, renderCliError, renderNotice, shellQuote as shellQuoteArgv, type Action, type Notice } from '../core/agent-output.ts';
 import { writeCliNotices } from '../core/interop-notices.ts';
 import { BOT_HARNESSES, renderedExposure, sharedTokenNotice, writeExposureNotice, type ExposureServes } from '../core/grants/shared-exposure.ts';
 import { claudeCodeChannelPlugins } from './shared-exposure-local.ts';
@@ -43,12 +43,14 @@ import { requireConsent } from '../core/consent.ts';
 import { writeCliError } from '../cli/cli-error.ts';
 import { hostedOptionMuted, hostedOptionNotice, writeHostedOption } from '../core/onboard/hosted-option.ts';
 import { writeJsonDocument } from '../core/cli-force-exit.ts';
-import { configDir, gbrainPath, isThinClient, loadConfig, type GBrainConfig } from '../core/config.ts';
+import { configDir, gbrainPath, isThinClient, loadConfig, loadConfigFileOnly, type GBrainConfig } from '../core/config.ts';
 import { resolveGbrainBin } from '../core/gbrain-bin.ts';
 import { exitCodeForCode } from '../core/error-catalogue.ts';
 import { parseStdioMemberFlag } from '../core/stdio-member-flag.ts';
-import { isRegistrationSurface, isValidName, REGISTRATION_SURFACE, registrationAdvertise, stdioServeArgv } from '../core/mcp-registration.ts';
-import { hookLauncherPath } from '../core/setup/hook-launcher.ts';
+import { isRegistrationSurface, isValidName, profileFlags, registeredAdvertise, registeredSurface, registrationAdvertise, registrationProfile, sameProfile, shellQuote, STARTER_PROFILE, stdioServeArgv, type RegistrationProfile } from '../core/mcp-registration.ts';
+import { harnessDefaultProfile } from './setup-codex-default.ts';
+import { HOOK_LAUNCHER_NAME, hookLauncherPath } from '../core/setup/hook-launcher.ts';
+import { setupRerunArgv } from '../core/setup/launcher-lanes.ts';
 import { readResolverConfig, resolverHarnesses } from '../core/setup/skill-resolver-config.ts';
 import { describeCursorPins, readCursorPinsState, removeCursorSkillPins, syncCursorSkillPins, type CursorPinsResult } from '../core/setup/cursor-skill-pins.ts';
 import { describeResolverSetup, removeSkillResolverSetup, syncSkillResolverSetup, type ResolverSetupResult } from '../core/setup/skill-resolver-setup.ts';
@@ -116,6 +118,8 @@ import {
   brainFirstTarget,
   describeBrainFirstOutcome,
   isBrainFirstHarness,
+  openclawConfigPath,
+  parseJson5ish,
   priorBrainFirst,
   readBrainFirstLedger,
   removeBrainFirst,
@@ -149,11 +153,17 @@ and the hook trust entries in $CODEX_HOME/config.toml, the hooks in hooks.json.
 Flags:
   --dry-run            Print the target and every step; write nothing.
   --json               One JSON document on stdout (target, decisions, steps, states).
-  --surface S          MCP tool surface: verbs, starter or full, listed in full (default:
-                       GBRAIN_SURFACE, then the surface already registered, then starter
-                       with only the memory verbs and request_tools listed:
-                       serve --surface starter --advertise verbs; full is the opt-in for
-                       every operation).
+  --surface S          MCP tool surface: verbs, starter or full, listed in full; pins the
+                       entry (default: GBRAIN_SURFACE, then the surface already registered,
+                       then the harness default. Claude Code and Hermes: starter with only the
+                       memory verbs and request_tools listed (serve --surface starter
+                       --advertise verbs). Codex: full, because Codex does not reload its tool
+                       list; a Codex entry that follows the default moves with it on a re-run,
+                       a pinned one stays. config mcp.default_surface_<harness> full|starter
+                       turns a harness's default).
+  --advertise A        With --surface: list only A's tools (verbs, starter or full, no wider
+                       than the surface). --surface starter --advertise verbs pins the
+                       starter registration exactly (claude-code, codex).
   --scope user|project Wiring scope: every Claude Code session (user, default) or only
                        sessions in this directory (project: ~/.claude.json projects
                        entry + .claude/settings.local.json). Codex: user only.
@@ -292,6 +302,8 @@ improves an existing brain's content.
 `;
 
 type SetupHarnessId = 'claude-code' | 'codex';
+
+/** Why Codex registers full by default (decision I1), named wherever setup moves or keeps a Codex entry. */
 const HARNESS_LABEL: Record<SetupHarnessId, string> = { 'claude-code': 'Claude Code', codex: 'Codex' };
 
 interface SetupFlags {
@@ -304,6 +316,8 @@ interface SetupFlags {
   providers?: boolean;
   scope?: WiringScope;
   surface?: McpSurface;
+  /** --advertise with --surface: the listing the pinned registration writes (claude-code, codex). */
+  advertise?: McpSurface;
   name: string;
   source?: string;
   gbrainBin?: string;
@@ -344,7 +358,7 @@ interface SetupFlags {
   team?: boolean;
 }
 
-export const VALUE_FLAGS = new Set(['--shape', '--notes', '--docs', '--transcripts', '--surface', '--scope', '--name', '--source', '--gbrain-bin', '--workspace', '--skill-loading', '--agent', '--live-fraction', '--pins-route', '--owner-sender', '--serves', '--members', '--members-file', '--stdio-member', '--owner']);
+export const VALUE_FLAGS = new Set(['--shape', '--notes', '--docs', '--transcripts', '--surface', '--advertise', '--scope', '--name', '--source', '--gbrain-bin', '--workspace', '--skill-loading', '--agent', '--live-fraction', '--pins-route', '--owner-sender', '--serves', '--members', '--members-file', '--stdio-member', '--owner']);
 
 function parseFlags(args: string[]): SetupFlags | string {
   const value = (flag: string): string | undefined => {
@@ -354,6 +368,13 @@ function parseFlags(args: string[]): SetupFlags | string {
   const positionals = args.filter((a, i) => !a.startsWith('-') && !VALUE_FLAGS.has(args[i - 1] ?? ''));
   const surface = value('--surface');
   if (surface !== undefined && !isRegistrationSurface(surface)) return `unknown --surface '${surface}'; pass verbs, starter or full`;
+  const advertise = value('--advertise');
+  if (advertise !== undefined) {
+    if (!isRegistrationSurface(advertise)) return `unknown --advertise '${advertise}'; pass verbs, starter or full`;
+    if (surface === undefined) return '--advertise narrows the listing of the surface --surface pins; pass both (for example --surface starter --advertise verbs)';
+    if (!['claude-code', 'codex'].includes(positionals[0] ?? '')) return '--advertise applies to the MCP entry setup writes for claude-code or codex';
+    if (['verbs', 'starter', 'full'].indexOf(advertise) > ['verbs', 'starter', 'full'].indexOf(surface)) return `--advertise ${advertise} lists more than --surface ${surface} serves; pass a listing no wider than the surface`;
+  }
   const scope = value('--scope');
   if (scope !== undefined && scope !== 'user' && scope !== 'project') return `unknown --scope '${scope}'; pass user or project`;
   const name = value('--name') ?? 'gbrain';
@@ -420,6 +441,7 @@ function parseFlags(args: string[]): SetupFlags | string {
     providers: args.includes('--providers') ? true : args.includes('--no-providers') ? false : undefined,
     scope: scope as WiringScope | undefined,
     surface: surface as McpSurface | undefined,
+    ...(advertise !== undefined ? { advertise: advertise as McpSurface } : {}),
     name,
     source,
     gbrainBin: value('--gbrain-bin'),
@@ -469,10 +491,12 @@ function ownerConflict(reason: string, message: string, fix: Pick<Action, 'actor
 
 interface Target {
   brain: { kind: 'local-pglite' | 'local-postgres' | 'new-local-pglite'; path?: string; config_dir: string };
-  source: { id: string | null; pinned: boolean; from: 'flag' | 'env' | 'brain-default' };
+  source: { id: string | null; pinned: boolean; from: 'flag' | 'env' | 'receipt' | 'brain-default' };
   transport: 'local-stdio';
   launcher: string;
   surface: McpSurface;
+  /** Codex (I1): whether the surface was chosen (explicit) or follows the Codex default (default); absent on a receipt from before setup recorded it. */
+  surface_origin?: 'explicit' | 'default';
   advertise?: McpSurface;
   /** GST-363: the serve --stdio-member this entry carries. */
   stdio_member?: string;
@@ -521,7 +545,7 @@ function describeTarget(t: Target, out: Out, harness: SetupHarnessId = 'claude-c
     : t.brain.kind === 'local-pglite' ? `existing PGLite brain at ${t.brain.path}` : 'existing Postgres brain (from this install\'s config)';
   say(out, `Target (${HARNESS_LABEL[harness]}, ${t.scope} scope):`);
   say(out, `  brain      ${brain}`);
-  say(out, `  source     ${t.source.id ? `'${t.source.id}' (pinned, from ${t.source.from === 'flag' ? '--source' : 'GBRAIN_SOURCE'})` : 'the brain\'s default source (unpinned)'}`);
+  say(out, `  source     ${t.source.id ? `'${t.source.id}' (pinned, from ${t.source.from === 'flag' ? '--source' : t.source.from === 'receipt' ? 'the setup receipt' : 'GBRAIN_SOURCE'})` : 'the brain\'s default source (unpinned)'}`);
   say(out, `  transport  stdio MCP: ${[hookLauncherPath(t.brain.config_dir), ...stdioServeArgv(t.launcher, t.surface, t.advertise ?? null, t.stdio_member)].join(' ')}${t.advertise ? ` (lists the ${t.advertise === 'verbs' ? 'memory verbs and request_tools' : `${t.advertise} tools`}; every ${t.surface} tool stays callable)` : ''}`);
   say(out, `  owner      ${t.registration_owner === 'setup' ? `this setup (${t.receipt_path})` : t.registration_owner === 'plugin' ? `the gbrain ${HARNESS_LABEL[harness]} plugin (MCP); setup adds hooks only` : `none yet; setup will own '${t.name}'`}`);
   if (t.live_owner) say(out, `  live       gbrain ${t.live_owner.transport === 'http' ? 'serve --http' : 'stdio serve'} PID ${t.live_owner.pid}${t.live_owner.ours ? ' (started by this registration)' : ''}`);
@@ -611,8 +635,9 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
     const envSurface = process.env.GBRAIN_SURFACE;
     if (envSurface && !isRegistrationSurface(envSurface)) notes.push(`GBRAIN_SURFACE='${envSurface}' is not verbs, starter or full; ignored.`);
     const chosenSurface = flags.surface ?? (isRegistrationSurface(envSurface) ? envSurface : undefined);
-    const surface: McpSurface = chosenSurface ?? prior?.surface ?? REGISTRATION_SURFACE;
-    const advertise = registrationAdvertise({ userChoseSurface: chosenSurface !== undefined, prior });
+    const profile = registrationProfile('claude-code', cfg);
+    const surface: McpSurface = chosenSurface ?? prior?.surface ?? profile.surface;
+    const advertise = chosenSurface !== undefined ? flags.advertise ?? null : registrationAdvertise({ userChoseSurface: false, prior, profile });
     const sourceId = flags.source ?? (process.env.GBRAIN_SOURCE && isValidSourceId(process.env.GBRAIN_SOURCE) ? process.env.GBRAIN_SOURCE : null);
     let plan: ClaudeSetupPlan = {
       name: flags.name, scope, ...(projectDir ? { projectDir } : {}), launcher, brainHome,
@@ -815,32 +840,50 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     const envSurface = process.env.GBRAIN_SURFACE;
     if (envSurface && !isRegistrationSurface(envSurface)) notes.push(`GBRAIN_SURFACE='${envSurface}' is not verbs, starter or full; ignored.`);
     const chosenSurface = flags.surface ?? (isRegistrationSurface(envSurface) ? envSurface : undefined);
-    const surface: McpSurface = chosenSurface ?? prior?.surface ?? REGISTRATION_SURFACE;
-    const advertise = registrationAdvertise({ userChoseSurface: chosenSurface !== undefined, prior });
-    const sourceId = flags.source ?? (process.env.GBRAIN_SOURCE && isValidSourceId(process.env.GBRAIN_SOURCE) ? process.env.GBRAIN_SOURCE : null);
+    // I1: an explicit --surface (or GBRAIN_SURFACE) pins the registration (origin explicit); otherwise a new entry, or one
+    // a receipt records as default-origin, follows the Codex default; an explicit or pre-origin receipt keeps its entry.
+    const priorProfile: RegistrationProfile | null = prior ? { surface: prior.surface, advertise: prior.advertise ?? null } : null;
+    const priorOrigin = prior?.surface_origin === 'explicit' || prior?.surface_origin === 'default' ? prior.surface_origin : undefined;
+    const { profile: defaults, why: defaultWhy } = await harnessDefaultProfile('codex', cfg, { note: (n) => notes.push(n), keep: priorProfile, probe: chosenSurface === undefined && (!priorProfile || priorOrigin === 'default') });
+    const picked: { profile: RegistrationProfile; origin?: 'explicit' | 'default' } = chosenSurface !== undefined
+      ? { profile: { surface: chosenSurface, advertise: flags.advertise ?? null }, origin: 'explicit' }
+      : !priorProfile || priorOrigin === 'default' ? { profile: defaults, origin: 'default' } : { profile: priorProfile, origin: priorOrigin };
+    const sourceId = flags.source ?? (process.env.GBRAIN_SOURCE && isValidSourceId(process.env.GBRAIN_SOURCE) ? process.env.GBRAIN_SOURCE : prior?.source_id ?? null);
     let plan: CodexSetupPlan = {
       name: flags.name, launcher, brainHome,
       ...(process.env.GBRAIN_HOME?.trim() ? { gbrainHomeEnv: process.env.GBRAIN_HOME.trim() } : {}),
-      sourceId, surface, advertise, events: hookEvents<CodexSetupEvent>(consent, 'codex'),
+      sourceId, surface: picked.profile.surface, advertise: picked.profile.advertise, ...(picked.origin ? { surfaceOrigin: picked.origin } : {}),
+      events: hookEvents<CodexSetupEvent>(consent, 'codex'),
     };
     let found = inspectCodexSetup(plan);
-    if (found.mcp.state === 'unowned' && !prior && chosenSurface === undefined && plan.advertise) {
-      const listed: CodexSetupPlan = { ...plan, advertise: null };
-      const again = inspectCodexSetup(listed);
-      if (again.mcp.state === 'current') { plan = listed; found = again; }
+    // An entry identical to one setup writes in an earlier profile (starter, listing the verbs or everything) is adopted as it is.
+    if (found.mcp.state === 'unowned' && !prior && chosenSurface === undefined) {
+      for (const candidate of [STARTER_PROFILE, { surface: 'starter' as const, advertise: null }]) {
+        if (sameProfile(candidate, picked.profile)) continue;
+        const listed: CodexSetupPlan = { ...plan, surface: candidate.surface, advertise: candidate.advertise };
+        const again = inspectCodexSetup(listed);
+        if (again.mcp.state === 'current') { plan = listed; found = again; break; }
+      }
     }
+    // An entry setup did not write but adopts (identical to its own) was chosen by whoever wrote it: it stays as it is.
+    if (found.mcp.state === 'current' && !prior?.entry_hash && !prior?.pending_entry_hash) plan = { ...plan, surfaceOrigin: 'explicit' };
     let binding = entryBinding(flags, found.mcp.stdioMember);
     if (binding.member) { plan = { ...plan, stdioMember: binding.member }; found = inspectCodexSetup(plan); }
     if (found.mcp.state === 'remote') return refuse(hostedConnection(found.mcp.url ?? 'a hosted brain', true, flags, 'codex'), out);
 
     const pluginOwner = codexPluginProvidesName(paths.configPath, flags.name);
     if (pluginOwner && flags.stdioMember !== undefined) return refuse(pluginBindingRefusal(pluginOwner, 'codex', flags.stdioMember), out);
+    if (prior && priorProfile && !pluginOwner && chosenSurface === undefined && (found.mcp.state === 'owned' || found.mcp.state === 'current') && !sameProfile(priorProfile, defaults)) {
+      const rerun = setupRerunArgv('codex', prior);
+      if (priorOrigin === 'default') notes.push(`the Codex registration moves from serve ${profileFlags(priorProfile).join(' ')} to serve ${profileFlags(defaults).join(' ')}, the Codex default (${defaultWhy}). To keep the old registration: ${shellQuoteArgv([...rerun, ...profileFlags(priorProfile)])}`);
+      else if (priorOrigin === undefined) notes.push(`this Codex registration was written before setup recorded whether its surface was chosen, so it keeps serve ${profileFlags(priorProfile).join(' ')}. To move it to the Codex default (${defaultWhy}): ${shellQuoteArgv([...rerun, ...profileFlags(defaults)])}`);
+    }
     const { dataDir, liveOwner } = liveOwnerOf(cfg, prior?.status === 'installed' && (found.mcp.state === 'current' || found.mcp.state === 'owned'));
     const target: Target = {
       brain: !cfg ? { kind: 'new-local-pglite', path: gbrainPath('brain.pglite'), config_dir: brainHome }
         : cfg.engine === 'pglite' ? { kind: 'local-pglite', path: dataDir, config_dir: brainHome } : { kind: 'local-postgres', config_dir: brainHome },
-      source: { id: sourceId, pinned: sourceId !== null, from: flags.source ? 'flag' : sourceId ? 'env' : 'brain-default' },
-      transport: 'local-stdio', launcher, surface, ...(plan.advertise ? { advertise: plan.advertise } : {}), ...(plan.stdioMember ? { stdio_member: plan.stdioMember } : {}),
+      source: { id: sourceId, pinned: sourceId !== null, from: flags.source ? 'flag' : sourceId && sourceId === process.env.GBRAIN_SOURCE ? 'env' : sourceId ? 'receipt' : 'brain-default' },
+      transport: 'local-stdio', launcher, surface: plan.surface, ...(plan.surfaceOrigin ? { surface_origin: plan.surfaceOrigin } : {}), ...(plan.advertise ? { advertise: plan.advertise } : {}), ...(plan.stdioMember ? { stdio_member: plan.stdioMember } : {}),
       registration_owner: pluginOwner ? 'plugin' : prior ? 'setup' : 'none',
       live_owner: liveOwner, scope: 'user', name: flags.name,
       config_path: found.configPath, hooks_path: found.hooksPath, receipt_path: found.receiptPath,
@@ -880,7 +923,7 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
         ...Object.keys(found.edited).map((event) => ({ step: 'hooks' as const, action: 'preserve' as const, detail: `${event} was edited after setup wrote it; kept` })),
       ];
       const serves = servesApply(flags, launcher, 'codex', servesPlan, !!cfg, binding);
-      const instructions = brainFirstFor('codex', flags, mcpAccess(flags.name, plan.advertise ?? surface, serves), {});
+      const instructions = brainFirstFor('codex', flags, mcpAccess(flags.name, plan.advertise ?? plan.surface, serves), {});
       const skills = skillsFor('codex', flags, launcher, {}, instructions);
       const resolver = await resolverFor('codex', flags, launcher);
       const layout = await layoutFor('codex', flags, launcher, instructions, brainCreate);
@@ -896,7 +939,7 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     for (const s of result.steps) say(out, `  ${s.action.padEnd(8)} ${s.step.padEnd(7)} ${s.detail}`);
     for (const n of result.notes) say(out, `note: ${n}`);
     const serves = servesApply(flags, launcher, 'codex', servesPlan, true, binding);
-    const instructions = brainFirstFor('codex', flags, mcpAccess(flags.name, plan.advertise ?? surface, serves), {});
+    const instructions = brainFirstFor('codex', flags, mcpAccess(flags.name, plan.advertise ?? plan.surface, serves), {});
     const skills = skillsFor('codex', flags, launcher, {}, instructions);
     const resolver = await resolverFor('codex', flags, launcher);
     if (!result.changed && !instructionsChanged(instructions) && !instructionsChanged(skills) && !resolverChanged(resolver)) say(out, 'Nothing changed: this install is already wired.');
@@ -1120,6 +1163,43 @@ function servesBound(flags: SetupFlags): boolean {
 }
 
 /**
+ * I1: OpenClaw's gbrain stdio entry (`mcp.servers.<name>` in openclaw.json) when it still serves the starter surface,
+ * with the exact `openclaw mcp set` line that replaces it with `serve --surface full` listed whole (OpenClaw, like
+ * Codex, never calls a tool request_tools unlocks). Reads the file only and never runs OpenClaw's CLI; null when the
+ * file is absent or unreadable, or the entry is not a starter serve. `openclaw mcp set` replaces the whole entry, so the
+ * line is printed only for an entry setup may echo whole: a command, `serve` with only surface flags after it, and env
+ * limited to GBRAIN_HOME and GBRAIN_SOURCE. Otherwise `command` is null and the detail names only the flags to change,
+ * so no other value from the entry is printed or overwritten.
+ */
+function openclawStarterEntry(name: string): { path: string; detail: string; from: string[]; to: string[]; command: string | null } | null {
+  const path = openclawConfigPath();
+  let entry: { command?: unknown; args?: unknown; env?: unknown } | undefined;
+  try {
+    if (!existsSync(path)) return null;
+    entry = ((parseJson5ish(readFileSync(path, 'utf8')) as { mcp?: { servers?: Record<string, unknown> } } | undefined)?.mcp?.servers?.[name]) as typeof entry;
+  } catch { return null; } // silent-read-ok: an unreadable or unparsable openclaw.json holds no entry setup can describe, and setup openclaw never writes it
+  if (!entry || typeof entry.command !== 'string' || !Array.isArray(entry.args) || !entry.args.every((a) => typeof a === 'string')) return null;
+  const args = entry.args as string[];
+  if (registeredSurface(args.join(' ')) !== 'starter') return null;
+  const serve = args.indexOf('serve');
+  if (serve < 0) return null;
+  const kept: string[] = [];
+  for (let i = serve + 1; i < args.length; i++) {
+    if (args[i] === '--surface' || args[i] === '--advertise') { i++; continue; }
+    if (/^--(surface|advertise)=/.test(args[i]!)) continue;
+    kept.push(args[i]!);
+  }
+  const from = profileFlags({ surface: 'starter', advertise: registeredAdvertise(args.join(' ')) });
+  const to = profileFlags({ surface: 'full', advertise: null });
+  const echoable = kept.length === 0 && serve === 0 && ['gbrain', HOOK_LAUNCHER_NAME].includes(basename(entry.command))
+    && Object.keys(entry).every((k) => k === 'command' || k === 'args' || k === 'env')
+    && (entry.env === undefined || (!!entry.env && typeof entry.env === 'object' && Object.entries(entry.env as Record<string, unknown>).every(([k, v]) => (k === 'GBRAIN_HOME' || k === 'GBRAIN_SOURCE') && typeof v === 'string')));
+  const registered = `${path} registers '${name}' on serve ${from.join(' ')}; OpenClaw never calls a tool request_tools unlocks, so move it to the full surface (setup does not run OpenClaw's CLI)`;
+  if (!echoable) return { path, from, to, command: null, detail: `${registered}. The entry holds values setup does not print, and openclaw mcp set replaces the whole entry, so in that file change ${from.join(' ')} in its args to ${to.join(' ')} and leave the rest as it is` };
+  return { path, from, to, detail: registered, command: `openclaw mcp set ${name} ${shellQuote(JSON.stringify({ ...entry, args: [...args.slice(0, serve + 1), ...to] }))}` };
+}
+
+/**
  * `--instructions-only`, and the harnesses whose MCP registration setup does
  * not write (opencode, openclaw, hermes, cursor): manage the brain-first
  * block and nothing else. A client with no instruction file gbrain can write
@@ -1130,10 +1210,10 @@ async function runInstructionsOnly(flags: SetupFlags, out: Out): Promise<number>
   const adapter = HARNESS_ADAPTERS.find((a) => a.id === harness)!;
   const envSurface = process.env.GBRAIN_SURFACE;
   const surface = flags.surface ?? (isRegistrationSurface(envSurface) ? envSurface : undefined);
-  const access: BrainFirstAccess = { kind: 'mcp', server: flags.name, ...(surface ? { surface } : {}), ...(flags.serves === 'several' && servesBound(flags) ? { serves: 'several' as const } : {}) };
   const hermesMcp = harness === 'hermes' && !flags.instructionsOnly
-    ? hermesMcpStep({ hermesHome: dirname((brainFirstTarget('hermes', {}) as { path: string }).path), name: flags.name, surface, gbrainBin: flags.gbrainBin ?? resolveGbrainBin(), remove: flags.remove, dryRun: flags.dryRun })
+    ? hermesMcpStep({ hermesHome: dirname((brainFirstTarget('hermes', {}) as { path: string }).path), name: flags.name, surface, defaults: registrationProfile('hermes', loadConfigFileOnly()), gbrainBin: flags.gbrainBin ?? resolveGbrainBin(), remove: flags.remove, dryRun: flags.dryRun })
     : null;
+  const served = surface ?? hermesMcp?.surface, access: BrainFirstAccess = { kind: 'mcp', server: flags.name, ...(served ? { surface: served } : {}), ...(flags.serves === 'several' && servesBound(flags) ? { serves: 'several' as const } : {}) };
   const mcp = hermesMcp ? { setup: hermesMcp.action, docs: adapter.guide, detail: hermesMcp.detail, ...(hermesMcp.command ? { command: hermesMcp.command } : {}) }
     : { setup: flags.instructionsOnly ? 'unchanged' as const : 'manual' as const, docs: adapter.guide };
   const exposure = flags.remove || !BOT_HARNESSES.includes(harness) ? null
@@ -1186,10 +1266,11 @@ async function runInstructionsOnly(flags: SetupFlags, out: Out): Promise<number>
   const check = !off && !flags.dryRun && instructions?.decision.value === 'accepted' && !flags.noHooks && process.env.GBRAIN_HOOKS !== '0' && turnHook && turnHook.action !== 'print' && turnHook.action !== 'remove' && !('unchanged' in turnHook && turnHook.unchanged) ? verifyTurnHook(harness, { projectDir }) : null;
   const resolver = harness === 'claude-code' || harness === 'codex' || harness === 'hermes' ? await resolverFor(harness, flags, flags.gbrainBin ?? resolveGbrainBin() ?? '') : null;
   const skillPlugin = harness === 'openclaw' ? await openclawSkillFor(flags) : null;
+  const openclawMcp = harness === 'openclaw' && !flags.remove ? openclawStarterEntry(flags.name) : null;
   const cursorPins = harness === 'cursor' && projectDir ? await cursorPinsFor(flags, projectDir) : null;
   const code = instructions?.action === 'preserve' || hermesMcp?.action === 'error' || skillsFailed(skills) || (check && !check.ok) || resolver?.error || cursorPins?.error ? 1 : 0;
   if (out.json) {
-    await writeJsonDocument(`${JSON.stringify({ harness, dry_run: flags.dryRun, remove: flags.remove, instructions_only: true, instructions, ...(turnHook ? { turn_hook: turnHook } : {}), ...(check ? { turn_hook_check: check } : {}), skills, ...(resolver ? { skill_resolver: resolver } : {}), ...(skillPlugin ? { skill_resolver: skillPlugin } : {}), ...(cursorPins ? { skill_pins: cursorPins } : {}), mcp, notices }, null, 2)}\n`, (t) => process.stdout.write(t));
+    await writeJsonDocument(`${JSON.stringify({ harness, dry_run: flags.dryRun, remove: flags.remove, instructions_only: true, instructions, ...(turnHook ? { turn_hook: turnHook } : {}), ...(check ? { turn_hook_check: check } : {}), skills, ...(resolver ? { skill_resolver: resolver } : {}), ...(skillPlugin ? { skill_resolver: skillPlugin } : {}), ...(cursorPins ? { skill_pins: cursorPins } : {}), mcp: openclawMcp ? { ...mcp, replace: openclawMcp } : mcp, notices }, null, 2)}\n`, (t) => process.stdout.write(t));
     return skillPlugin?.error ? exitCodeForCode(skillPlugin.error.code) : code;
   }
   writeExposureNotice(exposure);
@@ -1201,6 +1282,7 @@ async function runInstructionsOnly(flags: SetupFlags, out: Out): Promise<number>
   if (skillPlugin) for (const line of describeOpenclawSkill(skillPlugin, flags.dryRun)) say(out, line);
   if (harness === 'openclaw' && turnHook && !off) say(out, `  note     ${'route'.padEnd(7)} the per-turn rule is OpenClaw's primary route to the brain. Skills from \`gbrain skillpack scaffold --harness openclaw\` are an optional fallback: agents seldom open a listed skill on their own.`);
   if (cursorPins) for (const line of describeCursorPins(cursorPins, flags.dryRun)) say(out, line);
+  if (openclawMcp) say(out, `  note     ${'MCP'.padEnd(7)} ${openclawMcp.detail}${openclawMcp.command ? `:\n    ${openclawMcp.command}` : ''}`);
   if (check?.ok) say(out, `  verify   ${'turn hook'.padEnd(7)} ${check.message}`);
   if (mcp.setup === 'manual' && !flags.remove) say(out, `MCP: setup does not register ${adapter.label}'s MCP server. Follow ${adapter.guide} (one command), then start a new session.`);
   if (hermesMcp) say(out, `  ${hermesMcp.action.padEnd(8)} ${'MCP'.padEnd(7)} ${hermesMcp.detail}${hermesMcp.command && hermesMcp.action !== 'write' ? `:\n    ${hermesMcp.command}` : ''}`);
@@ -1375,7 +1457,7 @@ async function finish(out: Out, doc: {
   const importsFailed = doc.layout ? (['notes', 'docs', 'transcripts'] as const).filter((k) => doc.layout![k]?.action === 'failed') : [];
   for (const k of importsFailed) {
     const i = doc.layout![k]!;
-    process.stderr.write(`gbrain setup: the ${k} import of ${i.dir} failed (${i.detail ?? 'unknown error'}). The rest of setup finished; fix that, then run: ${shellQuote(i.argv)}
+    process.stderr.write(`gbrain setup: the ${k} import of ${i.dir} failed (${i.detail ?? 'unknown error'}). The rest of setup finished; fix that, then run: ${shellQuoteArgv(i.argv)}
 `);
   }
   const code = skillsFailed(doc.skills ?? null) || doc.resolver?.error || !servesOk(doc.serves ?? null) || importsFailed.length ? 1 : 0;

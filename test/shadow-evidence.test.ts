@@ -217,12 +217,11 @@ describe('collation order', () => {
 });
 
 describe('exactness table', () => {
-  test('every exact member, the trigram arm and the three ts_rank arms must match exactly; vector and take searches do not', () => {
+  test('every exact member, the trigram arm and the three ts_rank arms must match exactly; take searches count a different row set, and vector search counts under excludePrivate', () => {
     for (const [op, kind] of Object.entries(SHADOW_READ_MEMBERS)) {
-      const expected = kind === 'exact' ? 'exact' : ({ findByTitleFuzzy: 'trigram', searchKeyword: 'keyword_title', searchKeywordChunks: 'keyword_title', searchTitles: 'keyword_title' } as Record<string, string>)[op] ?? null;
+      const expected = kind === 'exact' ? 'exact' : ({ findByTitleFuzzy: 'trigram', searchKeyword: 'keyword_title', searchKeywordChunks: 'keyword_title', searchTitles: 'keyword_title', searchTakes: 'membership', searchTakesVector: 'membership', searchVector: 'private_ranked' } as Record<string, string>)[op] ?? null;
       expect([op, exactnessArm(op)]).toEqual([op, expected]);
     }
-    expect(exactnessArm('searchVector')).toBeNull();
     expect(exactnessArm('toString')).toBeNull(); // an inherited name is not an operation
     expect(exactnessArm('putPage')).toBeNull();
   });
@@ -230,7 +229,9 @@ describe('exactness table', () => {
   test('only a mismatch on an exactness comparison is qualified; lag decides stale', () => {
     expect(qualifyMismatch('getPage', { outcome: 'diff' }, false)).toEqual({ outcome: 'inconclusive', mismatch: 'diff' });
     expect(qualifyMismatch('findByTitleFuzzy', { outcome: 'order_diff' }, true)).toEqual({ outcome: 'stale', mismatch: 'order_diff' });
-    expect(qualifyMismatch('searchVector', { outcome: 'order_diff' }, true)).toEqual({ outcome: 'order_diff' });
+    expect(qualifyMismatch('searchVector', { outcome: 'order_diff' }, true)).toEqual({ outcome: 'order_diff' }); // the same rows in another order stay reported
+    expect(qualifyMismatch('searchTakes', { outcome: 'order_diff' }, true)).toEqual({ outcome: 'order_diff' });
+    expect(qualifyMismatch('searchTakes', { outcome: 'diff' }, false)).toEqual({ outcome: 'inconclusive', mismatch: 'diff' });
     expect(qualifyMismatch('getPage', { outcome: 'match' }, true)).toEqual({ outcome: 'match' });
     expect(qualifyMismatch('getPage', { outcome: 'error', reason: 'x' }, true)).toEqual({ outcome: 'error', reason: 'x' });
   });
@@ -308,13 +309,14 @@ describe('reads', () => {
     expect(status(dir, { now: new Date(NOW.getTime() + 6 * DAY) }).reads).toMatchObject({ rust_error_unresolved_7d: 0 });
   });
 
-  test('unexplained means an inconclusive or diverged exactness mismatch; stale, vector order differences and matches are not', () => {
+  test('unexplained means an inconclusive or diverged exactness mismatch; stale, vector order differences, a vector diff without excludePrivate and matches are not', () => {
     const { dir, epoch } = epochDir();
     put(dir, [
       ...rowsOf(epoch, 'getPage', { match: 4, stale: 7, inconclusive: 2 }), ...rowsOf(epoch, 'findByTitleFuzzy', { inconclusive: 1 }), ...rowsOf(epoch, 'searchKeyword', { diff: 1 }),
       ...rowsOf(epoch, 'searchVector', { order_diff: 9, diff: 3, inconclusive: 1 }), ...rowsOf(epoch, 'getStats', { privacy_diverged: 1 }),
     ]);
-    expect(status(dir).reads).toMatchObject({ diverged_unexplained_7d: 4, rust_error_unresolved_7d: 0 });
+    // getPage 2 + fuzzy 1 + keyword 1, the unrerun vector inconclusive 1 and the leak 1; vector order_diff and a vector diff without excludePrivate are reported only
+    expect(status(dir).reads).toMatchObject({ diverged_unexplained_7d: 6, rust_error_unresolved_7d: 0 });
   });
 
   test('absent, never zero: no epoch, a corrupt ledger day, a corrupt usage file, or nothing used', () => {
@@ -348,7 +350,7 @@ describe('search arms', () => {
     expect(status(dir).search).toEqual({ trigram_exact_disagreements: 0 });
     put(dir, [...rowsOf(epoch, 'findByTitleFuzzy', { inconclusive: 2, diff: 1 }), ...rowsOf(epoch, 'searchKeywordChunks', { match: 1 }), ...rowsOf(epoch, 'searchTitles', { inconclusive: 1, stale: 5 })]);
     expect(status(dir).search).toEqual({ trigram_exact_disagreements: 3, keyword_title: { ranker: 'ts_rank', exact_disagreements: 1 } });
-    expect(JSON.stringify(status(dir))).not.toMatch(/vector_recall|primary_recall|privacy_diverged/);
+    expect(JSON.stringify(status(dir))).not.toMatch(/vector_recall|primary_recall/); // no scored recall samples yet (test/shadow-recall.test.ts)
   });
 
   test('an arm whose rows are all errors has no comparisons', () => {
@@ -421,7 +423,7 @@ describe('epoch, earliest READY date and printed rules', () => {
 describe('through the status command, the report and the readiness evaluator', () => {
   const SEED = { version: 1, seed_id: 'seed-1', started_at: '2026-01-01T00:00:00.000Z', finished_at: '2026-01-01T00:01:00.000Z', unseeded_gap_rows_total: 0, unseeded_gap_rows: {}, relations: {}, digests: true } as unknown as SeedRecord;
 
-  test('status --json carries the manifest epoch and the evidence fields, never the a2 fields; the text status prints the dates', async () => {
+  test('status --json carries the manifest epoch and the evidence fields, no recall before it is scored; the text status prints the dates', async () => {
     const home = tmp();
     const config = { engine: 'pglite' as const, database_path: join(home, 'brain.pglite') };
     await withEnv({ GBRAIN_HOME: home }, async () => {
@@ -444,7 +446,8 @@ describe('through the status command, the report and the readiness evaluator', (
       const viaSwap = await readConfiguredShadowStatus(() => config);
       expect(viaSwap).toMatchObject({ epoch_id: epoch.epoch_id, reads: doc.reads, child: doc.child });
       expect(doc.search).toBeUndefined();
-      expect(Object.keys(doc)).not.toContain('privacy_diverged');
+      expect(doc.privacy_diverged).toBe(0); // reads were compared and none showed a page the caller may not read
+      expect(doc.search).toBeUndefined();
       // The real document goes through the real evaluator: criterion 2 names the class lacking samples, 9 passes, 4 and 6 are missing.
       const verdict = evaluateReadiness(doc, new Date());
       const row = (n: number) => verdict.criteria.find((c) => c.n === n)!;
@@ -453,7 +456,7 @@ describe('through the status command, the report and the readiness evaluator', (
       expect(row(3).state).toBe('pass');
       expect(row(9).state).toBe('pass');
       expect(row(4).state).toBe('missing');
-      expect(row(6).state).toBe('missing');
+      expect(row(6).state).toBe('pass');
       expect(verdict.verdict).toBe('NOT READY');
       const text: string[] = [];
       await runEngineShadow(['status'], { config: () => config, out: (l) => text.push(l) });
@@ -484,7 +487,7 @@ describe('through the status command, the report and the readiness evaluator', (
     }
     const full = { search: { vector_recall_at_10: 1, primary_recall_at_10: 1 } };
 
-    test('a healthy epoch passes criteria 2, 3 and 9, and 4 once the a2 recall fields exist; without them 4 and 6 stay missing and the verdict NOT READY', async () => {
+    test('a healthy epoch passes criteria 2, 3, 6 and 9, and 4 once the recall fields exist; without them 4 stays missing and the verdict NOT READY', async () => {
       const { dir, epoch } = epochDir();
       put(dir, [...rowsOf(epoch, 'getPage', { match: 10_000, stale: 2 }), ...rowsOf(epoch, 'findByTitleFuzzy', { match: 100 }), ...rowsOf(epoch, 'searchKeyword', { match: 100 })]);
       const bare = await evaluate(dir);
@@ -493,7 +496,7 @@ describe('through the status command, the report and the readiness evaluator', (
       expect(bare.row(9).state).toBe('pass');
       expect(bare.row(4).state).toBe('missing');
       expect(bare.row(4).detail).toContain('search.vector_recall_at_10');
-      expect(bare.row(6).state).toBe('missing');
+      expect(bare.row(6).state).toBe('pass');
       expect(bare.v.verdict).toBe('NOT READY');
       const { search } = status(dir);
       const with2 = await evaluate(dir, { search: { ...search, ...full.search } });
@@ -593,7 +596,7 @@ describe('adapter identity', () => {
     // test-reads-source-ok[raw-bytes]: the adapter's source bytes are the fingerprint under test; a change must bump the epoch input
     for (const f of files) digest.update(`${f}\0${readFileSync(join(root, f), 'utf8')}\0`);
     // When this fails, the adapter's mapping changed: bump SHADOW_ADAPTER_VERSION (a new evidence epoch) and set both values here.
-    expect([SHADOW_ADAPTER_VERSION, digest.digest('hex')]).toEqual([7, '8f3e2b4e052d54b950d8864bb11bfab5794c1977e26cb94e61c00c0ec02465a1']);
+    expect([SHADOW_ADAPTER_VERSION, digest.digest('hex')]).toEqual([8, '9728dc5f39275e0daf0e73b36253ed2757bb5d24576f879d1abfe5c0ef5c1a30']);
   });
 });
 

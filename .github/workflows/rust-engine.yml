@@ -12,7 +12,9 @@ name: Rust engine
 #              the Rust arm of the engine parity suite), then the CLI parity test
 #              (test/rust-cli-parity.serial.test.ts: each read command on a Rust brain is equal to
 #              PGLite, refused with a typed refusal, or has no Rust engine; only a diverged command
-#              fails), then uploads the .node file. Each target (Linux and macOS) is two matrix
+#              fails), checks that the built addon, installed as a release asset, loads with no override, then
+#              uploads the .node file (releases build and publish the addon in release.yml, not here). Each target
+#              (Linux and macOS) is two matrix
 #              halves, each under 45 minutes: both build the addon and run the smoke test, each
 #              runs half of the parity files, and the CLI parity steps are divided between them
 #              (see the addon job).
@@ -50,6 +52,7 @@ on:
       - 'src/core/rust-engine/**'
       - 'test/engine-parity/**'
       - 'test/rust-engine-*.test.ts'
+      - 'src/shadow/**'
       - 'test/rust-expected-divergence/**'
       - 'src/core/sql-engine-kind.ts'
       - 'src/core/engine.ts'
@@ -75,6 +78,7 @@ on:
       - 'src/core/rust-engine/**'
       - 'test/engine-parity/**'
       - 'test/rust-engine-*.test.ts'
+      - 'src/shadow/**'
       - 'test/rust-expected-divergence/**'
       - 'src/core/sql-engine-kind.ts'
       - 'src/core/engine.ts'
@@ -355,6 +359,14 @@ jobs:
           GBRAIN_TEST_RUST_ADDON_REQUIRED: '1'
           GBRAIN_TEST_REQUIRE_RUST_ADDON: '1'
         run: bun test --timeout=60000 test/rust-cli-source-target.test.ts
+      # `gbrain engine install rust` with the addon just built served as the release asset: the install checks it and
+      # the real loader then opens it from the gbrain home with no GBRAIN_RUST_ENGINE_ADDON. A missing build fails here.
+      - name: The installed release addon loads with no override
+        if: matrix.shard == '1'
+        shell: bash
+        env:
+          GBRAIN_TEST_RUST_ADDON_REQUIRED: '1'
+        run: bun test --timeout=60000 test/rust-engine-addon-install.test.ts
       # A withdrawn world claim stays out of a large page's lead on a Rust brain. GBRAIN_TEST_REQUIRE_RUST_ADDON
       # makes a missing addon an error instead of a skip, and the next step fails the lane when no test ran.
       # This job owns the file, so the stress gate does not stress it where no addon exists.
@@ -398,7 +410,8 @@ jobs:
           name: gbrain-engine-addon-${{ matrix.target }}
           path: rust/target/addon/gbrain_engine.${{ matrix.target }}.node
           if-no-files-found: error
-          retention-days: 7
+          # The Nov 26 shadow build's addon is the evidence file's addon: keep it for the whole shadow window.
+          retention-days: 90
 
   # One check per target named like the single cell used to be ("Addon and Bun smoke / <target>"). It passes
   # only when every half of that target's addon cells succeeded: it reads the conclusion of each job named

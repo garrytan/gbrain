@@ -626,6 +626,8 @@
       "wanted_links.wanted_links_ref_kind_check": "c CHECK ((ref_kind = ANY (ARRAY['slug'::text, 'name'::text])))",
       "wanted_links.wanted_links_reference_unique": "u UNIQUE (origin_page_id, producer, ref_kind, target_source_id, target_ref)",
       "wanted_links.wanted_links_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
+      "write_gate_hold_rechecks.write_gate_hold_rechecks_pkey": "p PRIMARY KEY (id)",
+      "write_gate_hold_rechecks.write_gate_hold_rechecks_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
       "write_gate_holds.write_gate_holds_kind_check": "c CHECK ((kind = ANY (ARRAY['fact'::text, 'take'::text])))",
       "write_gate_holds.write_gate_holds_pkey": "p PRIMARY KEY (id)",
       "write_gate_holds.write_gate_holds_status_check": "c CHECK ((status = ANY (ARRAY['held'::text, 'released'::text, 'dropped'::text])))",
@@ -1303,6 +1305,9 @@
       "wanted_links": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
+      "write_gate_hold_rechecks": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
       "write_gate_holds": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
@@ -1870,6 +1875,9 @@
       "wanted_links_reference_unique": "CREATE UNIQUE INDEX wanted_links_reference_unique ON public.wanted_links USING btree (origin_page_id, producer, ref_kind, target_source_id, target_ref)",
       "wanted_links_source_idx": "CREATE INDEX wanted_links_source_idx ON public.wanted_links USING btree (source_id)",
       "wanted_links_target_idx": "CREATE INDEX wanted_links_target_idx ON public.wanted_links USING btree (target_source_id, target_ref)",
+      "write_gate_hold_rechecks_hold_idx": "CREATE INDEX write_gate_hold_rechecks_hold_idx ON public.write_gate_hold_rechecks USING btree (hold_id)",
+      "write_gate_hold_rechecks_pkey": "CREATE UNIQUE INDEX write_gate_hold_rechecks_pkey ON public.write_gate_hold_rechecks USING btree (id)",
+      "write_gate_hold_rechecks_queue_idx": "CREATE INDEX write_gate_hold_rechecks_queue_idx ON public.write_gate_hold_rechecks USING btree (queued_at, id)",
       "write_gate_holds_bound_dedupe_idx": "CREATE UNIQUE INDEX write_gate_holds_bound_dedupe_idx ON public.write_gate_holds USING btree (source_id, page_id, fingerprint, detector_version) WHERE (page_id IS NOT NULL)",
       "write_gate_holds_page_idx": "CREATE INDEX write_gate_holds_page_idx ON public.write_gate_holds USING btree (source_id, page_id) WHERE ((status = 'held'::text) AND (page_id IS NOT NULL))",
       "write_gate_holds_pkey": "CREATE UNIQUE INDEX write_gate_holds_pkey ON public.write_gate_holds USING btree (id)",
@@ -1952,6 +1960,7 @@
       "wake_forgets_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=wake_forgets.id",
       "wake_subscriptions_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=wake_subscriptions.id",
       "wanted_links_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=wanted_links.id",
+      "write_gate_hold_rechecks_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=write_gate_hold_rechecks.id",
       "write_gate_holds_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=write_gate_holds.id",
       "write_gate_receipts_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=write_gate_receipts.id"
     },
@@ -5043,6 +5052,17 @@
           "9 context text/text NOT NULL DEFAULT ''::text",
           "10 checked_at timestamp with time zone/timestamptz NOT NULL",
           "11 first_seen_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "write_gate_hold_rechecks": {
+        "columns": [
+          "1 id bigint/int8 NOT NULL DEFAULT nextval('write_gate_hold_rechecks_id_seq'::regclass)",
+          "2 source_id text/text NOT NULL",
+          "3 hold_id bigint/int8 NOT NULL",
+          "4 observed_version text/text NOT NULL",
+          "5 survivor_ids ARRAY/_int8 NOT NULL DEFAULT '{}'::bigint[]",
+          "6 queued_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

@@ -469,6 +469,10 @@ describe('a recorded file the checkout does not have', () => {
     expect(classes(preview)).toEqual({ [`${id}:NOTES/Alice`]: 'move', [`${id}:NOTES/Bob`]: 'rename_file_first' });
     const bob = (preview.details as { items: Array<{ slug: string; fix?: { argv?: string[] } }> }).items.find(item => item.slug === 'NOTES/Bob');
     expect(bob?.fix?.argv).toEqual(['git', '-C', root, 'mv', 'Bob.md', 'bob.md']);
+    // The text a person reads names the same rename, inside the source's folder.
+    const bobText = (preview.details as { items: Array<{ slug: string; message?: string }> }).items.find(item => item.slug === 'NOTES/Bob')?.message ?? '';
+    expect(bobText).toContain('git mv the file to bob.md,');
+    expect(bobText).not.toContain('notes/bob.md');
     expect(await repairJson(applyArgs(id, preview.preview_hash))).toMatchObject({ applied: 1 });
     expect(await row(id, 'notes/alice')).toMatchObject({ id: placed.id });
   }), 60_000);
