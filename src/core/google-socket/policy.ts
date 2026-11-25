@@ -51,7 +51,7 @@ function addresses(value: unknown): string[] {
 const bare = (address: string): string => (address.match(/<([^>]+)>/)?.[1] ?? address).trim().toLowerCase();
 const domainOf = (address: string): string => bare(address).split('@').pop()!;
 /** Public mail domains have no inside: every address but the account's own is outside. */
-const PUBLIC_MAIL_DOMAINS = new Set(['gmail.com', 'googlemail.com', 'icloud.com', 'yahoo.com', 'outlook.com', 'hotmail.com']);
+const PUBLIC_MAIL_DOMAINS = new Set(['gmail.com', 'googlemail.com', 'icloud.com', 'me.com', 'mac.com', 'yahoo.com', 'outlook.com', 'hotmail.com', 'live.com', 'msn.com', 'aol.com', 'proton.me', 'protonmail.com', 'gmx.com']);
 
 /** The invitee addresses a calendar write would add that count toward the outside-invite pause. */
 export function outsideInvitees(account: string, server: GoogleServer, tool: string, args: Record<string, unknown>): string[] {

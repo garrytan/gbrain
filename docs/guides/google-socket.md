@@ -85,12 +85,14 @@ Replies:
   Any other choice, including Google's "always" choices, is answered by the
   owner in `gbrain google approvals`. A held prompt expires after 10 minutes
   and is dropped when the account is reconnected or disconnected. If Google
-  throttles the approved call (`rate_limited`), the approval is kept: send the
-  same verdict again after `retry_after_s`.
+  throttles the approved call (`rate_limited`), the approval is kept until the
+  prompt's 10 minutes run out: send the same verdict again after
+  `retry_after_s`. A confirmed safety pause that Google throttles stays
+  confirmed the same way.
 - `owner_confirm_required`: a safety pause. The second invite to an address
-  outside the account's domain in one turn (for a gmail.com, googlemail.com,
-  icloud.com, yahoo.com, outlook.com or hotmail.com account, every address but
-  the account's own is outside), and the eleventh trash in one
+  outside the account's domain in one turn (for an account on a public mail
+  domain such as gmail.com, icloud.com, outlook.com, yahoo.com, aol.com or
+  proton.me, every address but the account's own is outside), and the eleventh trash in one
   turn, wait for the owner to confirm in `gbrain google approvals`; an
   `owner_verdict` doesn't pass them. After the owner confirms, repeat the call.
 - `tool_error` with `reason` `user_denied`, `admin_policy`,

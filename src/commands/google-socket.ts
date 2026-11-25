@@ -18,7 +18,9 @@ import { openVault } from '../core/creds/vault.ts';
 /** One request, one reply, over the socket; `mint_socket_down` when nothing answers. */
 export function socketRequest(path: string, request: Record<string, unknown>, timeoutMs = 120_000): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
-    const closed = () => Object.assign(new Error('peer_refused: the Google socket closed the connection without answering; this uid may not be in google.socket_peers (gbrain google mint status)'), { code: 'peer_refused' });
+    const closed = () => (request.op === 'call'
+      ? Object.assign(new Error('outcome_unknown: the Google socket closed the connection before answering this call, which may have been sent; read op status with the same idempotency_key before acting again'), { code: 'outcome_unknown' })
+      : Object.assign(new Error('peer_refused: the Google socket closed the connection without answering; this uid may not be in google.socket_peers (gbrain google mint status)'), { code: 'peer_refused' }));
     const socket = net.createConnection(path);
     let buf = '';
     const timer = setTimeout(() => { socket.destroy(); reject(new Error('the Google socket did not answer in time')); }, timeoutMs);
@@ -113,7 +115,7 @@ export function formatPending(p: Record<string, unknown>): string[] {
   return [
     `${p.request_id}  ${p.account}  ${p.server}.${p.tool}  turn ${p.turn_id}  expires ${p.expires_at}`,
     p.kind === 'owner_confirm' ? '  safety pause: confirm with ALLOW_ONCE' : `  Google asks: ${String(p.message_md).replace(/\n/g, '\n    ')}`,
-    ...(outside.length ? [`  outside invitees: ${outside.join(', ')}`] : []),
+    ...(outside.length ? [`  outside invitees: ${outside.map(a => JSON.stringify(a)).join(', ')}`] : []),
     `  arguments: ${args.length > ARGS_SHOWN ? `${args.slice(0, ARGS_SHOWN)}… (${args.length - ARGS_SHOWN} more characters; --json shows all)` : args}`,
     `  choices: ${(p.choices as string[]).join(', ')}`,
   ];

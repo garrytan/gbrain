@@ -158,6 +158,7 @@ describe('socket hardening', () => {
     await new Promise<void>(res => server.listen(path, res));
     const t0 = Date.now();
     await expect(socketRequest(path, { op: 'pending' })).rejects.toMatchObject({ code: 'peer_refused' });
+    await expect(socketRequest(path, { op: 'call' })).rejects.toMatchObject({ code: 'outcome_unknown' });
     expect(Date.now() - t0).toBeLessThan(5000);
     server.close();
   });

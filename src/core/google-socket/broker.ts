@@ -100,7 +100,6 @@ export class GoogleBroker {
 
   /** Puts an approved prompt back after Google throttled its answer, so the same approval can be sent again. */
   private rehold(h: Held): void {
-    h.created_ms = this.now();
     this.held.set(h.request_id, h);
     this.heldByKey.set(h.key, h.request_id);
     this.opts.ledger.put({ key: h.key, args_hash: h.args_hash, account: h.account, server: h.server, tool: h.tool, turn_id: h.turn_id, caller: h.caller, status: 'held', request_id: h.request_id });
@@ -230,7 +229,7 @@ export class GoogleBroker {
         return fail('verdict_expired', 'the account was reconnected or disconnected after the owner confirmed this call; re-call with a new idempotency_key', {}, confirmed.request_id);
       }
     }
-    return this.dispatch({ ...base, request_id: requestId }, act, undefined, release);
+    return this.dispatch({ ...base, request_id: requestId }, act, undefined, release, confirmed);
   }
 
   private async answer(h: Held, choice: string): Promise<Reply> {
