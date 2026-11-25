@@ -76,8 +76,8 @@ function memoryText(text: string): Raw[] {
 
 function claudeMemories(text: string): Raw[] {
   let doc: unknown;
-  try { doc = JSON.parse(text); } catch (e) {
-    throw opError('invalid_params', `profile import: the file is not valid JSON (${(e as Error).message}); nothing was sent.`,
+  try { doc = JSON.parse(text); } catch {
+    throw opError('invalid_params', 'profile import: the file is not valid JSON; nothing was sent.',
       'Pass the memories JSON from a Claude data export, or --format muse-memory or memory-text for a text file.');
   }
   const list = Array.isArray(doc) ? doc : doc && typeof doc === 'object' ? (doc as { memories?: unknown }).memories : undefined;

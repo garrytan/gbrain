@@ -137,6 +137,10 @@ describe('parsers', () => {
     try { planImport('{"memories": [', 'claude-memories'); } catch (e) { err = e as R; }
     expect(err?.code).toBe('invalid_params');
     expect(String(err?.message)).toContain('not valid JSON');
+    let bare: R | undefined;
+    try { planImport('{"memories": [' + FAKE_TOKEN + ']}', 'claude-memories'); } catch (e) { bare = e as R; }
+    expect(bare?.code).toBe('invalid_params');
+    expect(JSON.stringify({ message: bare?.message, fix: bare?.fix, suggestion: bare?.suggestion })).not.toContain(FAKE_TOKEN);
   });
   test('facet hints and sniffing', () => {
     expect(facetHint('Dietary notes', 'No pork')).toBe('diet');
