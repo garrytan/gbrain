@@ -82,15 +82,24 @@ impl Drop for Brain {
 
 pub fn brain(name: &str) -> Brain {
     let concurrent = std::env::var("GBRAIN_RUST_CONCURRENT_WRITES").is_ok_and(|v| v == "1");
-    brain_with(name, concurrent)
+    brain_with(name, concurrent, false)
 }
 
 /// A brain in an explicit mode on the same injected clock, whatever the environment says.
 pub fn brain_in(name: &str, mode: StoreMode) -> Brain {
-    brain_with(name, mode.optimistic())
+    brain_with(name, mode.optimistic(), false)
 }
 
-fn brain_with(name: &str, concurrent: bool) -> Brain {
+/// An optimistic brain with the multi-user switch explicitly on, on the injected clock: protected members then need a fence.
+pub fn brain_mu(name: &str) -> Brain {
+    brain_with(name, true, true)
+}
+
+fn brain_with(name: &str, concurrent: bool, multiuser: bool) -> Brain {
+    let options = OpenOptions {
+        multiuser,
+        ..OpenOptions::default()
+    };
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!(
         "mem-{name}-{}-{}",
         std::process::id(),
@@ -111,7 +120,7 @@ fn brain_with(name: &str, concurrent: bool) -> Brain {
         } else {
             Arc::new(kv)
         };
-        let store = Store::open_kv(kv, clock.clone(), OpenOptions::default()).unwrap();
+        let store = Store::open_kv(kv, clock.clone(), options.clone()).unwrap();
         return Brain { store, clock, dir };
     }
     let kv = RedbKv::open_path(&dir.join("records.redb")).unwrap();
@@ -120,13 +129,24 @@ fn brain_with(name: &str, concurrent: bool) -> Brain {
     } else {
         Arc::new(kv)
     };
-    let store = Store::open_kv(kv, clock.clone(), OpenOptions::default()).unwrap();
+    let store = Store::open_kv(kv, clock.clone(), options.clone()).unwrap();
     Brain { store, clock, dir }
 }
 
 /// Opens (or reopens) the brain whose record file is `<dir>/records.redb` on `clock`, in `mode`. The clock is the store's:
 /// a test sets it below a persisted floor before a reopen to see that written times never go under it.
 pub fn open_at(dir: &std::path::Path, clock: Arc<Clock>, mode: StoreMode) -> Store {
+    open_at_with(dir, clock, mode, true)
+}
+
+/// `open_at` with the multi-user switch given explicitly. The multi-writer twins always say `true` (a fresh brain is never silently
+/// a plain one); the extra argument keeps that a visible choice at the call.
+pub fn open_at_with(
+    dir: &std::path::Path,
+    clock: Arc<Clock>,
+    mode: StoreMode,
+    multiuser: bool,
+) -> Store {
     std::fs::create_dir_all(dir).unwrap();
     let base = RedbKv::open_path(&dir.join("records.redb")).unwrap();
     let kv: Arc<dyn Kv> = if mode.optimistic() {
@@ -134,5 +154,9 @@ pub fn open_at(dir: &std::path::Path, clock: Arc<Clock>, mode: StoreMode) -> Sto
     } else {
         Arc::new(base)
     };
-    Store::open_kv(kv, clock, OpenOptions::default()).unwrap()
+    let options = OpenOptions {
+        multiuser,
+        ..OpenOptions::default()
+    };
+    Store::open_kv(kv, clock, options).unwrap()
 }

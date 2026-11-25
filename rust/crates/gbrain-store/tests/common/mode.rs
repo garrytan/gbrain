@@ -50,3 +50,22 @@ macro_rules! both_modes {
 }
 #[allow(unused_imports)]
 pub(crate) use both_modes;
+
+/// The options of a store a multi-writer test opens explicitly in multi-user mode, whatever the environment says. Every open of a
+/// twin that checks multi-user behaviour goes through this (or `open_optimistic_mu`), so a fresh brain is never silently a plain one.
+#[allow(dead_code)]
+pub fn open_options_mu(mode: StoreMode) -> gbrain_store::OpenOptions {
+    gbrain_store::OpenOptions {
+        concurrent_writes: true,
+        multiuser: true,
+        ..mode_options_base(mode)
+    }
+}
+
+#[allow(dead_code)]
+fn mode_options_base(mode: StoreMode) -> gbrain_store::OpenOptions {
+    gbrain_store::OpenOptions {
+        concurrent_writes: mode.optimistic(),
+        ..gbrain_store::OpenOptions::default()
+    }
+}
