@@ -393,6 +393,42 @@ pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Resul
     Ok(())
 }
 
+/// `moveSlugBindings`' attachment step of `updateSlug` (`page-state/rename-alias.ts`): after `page` moved from
+/// `old_slug` to `new_slug` in `source_id`, its files named by the old slug take the new one: the rows bound to it
+/// (`page_id`), and the rows that name it only by slug (no `page_id`) when the old slug named exactly this live
+/// page (it is not soft-deleted and no page of the source holds the old slug now). A row bound to another page never
+/// moves by slug. Returns the number of slug-only rows left because the slug was ambiguous.
+pub(crate) fn rename_page_files(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    old_slug: &str,
+    new_slug: &str,
+    page: &PageRecord,
+) -> Result<u64> {
+    let unambiguous =
+        page.deleted_at_us.is_none() && read_page(&*tx, source_id, old_slug)?.is_none();
+    let files: Vec<(Vec<u8>, FileRecord)> = collect_values(&*tx, &[keys::RAW_FILES, FILE])?;
+    let mut skipped = 0;
+    for (_, mut file) in files {
+        if file.source_id != source_id || file.page_slug.as_deref() != Some(old_slug) {
+            continue;
+        }
+        let moves = match file.page_id {
+            Some(id) => id == page.id,
+            None if unambiguous => true,
+            None => {
+                skipped += 1;
+                false
+            }
+        };
+        if moves {
+            file.page_slug = Some(new_slug.to_string());
+            put_file(tx, &file)?;
+        }
+    }
+    Ok(skipped)
+}
+
 /// The number of files of source `source_id` (the delete preview's `files` count).
 pub(crate) fn source_file_count(read: &dyn KvRead, source_id: &str) -> Result<u64> {
     let files: Vec<(Vec<u8>, FileRecord)> = collect_values(read, &[keys::RAW_FILES, FILE])?;
@@ -914,13 +950,27 @@ mod tests {
         let store = store();
         let moved = put(&store, "notes/move-me");
         let other = put(&store, "notes/other");
-        for (path, page_id) in [("bound.png", Some(moved)), ("loose.png", None), ("foreign.png", Some(other))] {
+        for (path, page_id) in [
+            ("bound.png", Some(moved)),
+            ("loose.png", None),
+            ("foreign.png", Some(other)),
+        ] {
             let mut spec = file(path, page_id);
             spec.page_slug = Some("notes/move-me".into());
             store.upsert_file(&spec).unwrap();
         }
-        assert_eq!(store.update_slug("notes/move-me", "notes/moved", None).unwrap(), 1);
-        let slug = |path: &str| read_file(&*store.read().unwrap(), path).unwrap().unwrap().page_slug;
+        assert_eq!(
+            store
+                .update_slug("notes/move-me", "notes/moved", None)
+                .unwrap(),
+            1
+        );
+        let slug = |path: &str| {
+            read_file(&*store.read().unwrap(), path)
+                .unwrap()
+                .unwrap()
+                .page_slug
+        };
         assert_eq!(slug("bound.png").as_deref(), Some("notes/moved"));
         assert_eq!(slug("loose.png").as_deref(), Some("notes/moved"));
         assert_eq!(slug("foreign.png").as_deref(), Some("notes/move-me"));
