@@ -26,6 +26,8 @@ export interface HostRegistrationHandle {
   renew(): Promise<void>;
   /** The current fence, or null while unregistered. */
   readonly fence: LeaseToken | null;
+  /** The first registration attempt's fence: null when another live holder has the lease (or the call failed). */
+  readonly first: Promise<LeaseToken | null>;
   /** Stops renewing, releases the lease and clears the registration. */
   stop(): Promise<void>;
 }
@@ -40,11 +42,13 @@ export interface HostRegistrationOpts {
   ttlMs?: number;
   /** Receives each failure (default: one stderr line per failure streak). */
   onError?: (error: unknown) => void;
+  /** Called once when a registration this handle held is lost and could not be taken again (another holder has it). */
+  onLost?: () => void;
   /** Test seam: the lease members (default: the engine's). */
   leases?: RustLeases;
 }
 
-const INERT: HostRegistrationHandle = { renew: async () => {}, get fence() { return null; }, stop: async () => {} };
+const INERT: HostRegistrationHandle = { renew: async () => {}, get fence() { return null; }, first: Promise.resolve(null), stop: async () => {} };
 
 /** Starts the registration of `engine`'s full consumer for its host; inert unless the engine is multi-user Rust. */
 export function startHostRegistration(engine: BrainEngine | object, opts: HostRegistrationOpts): HostRegistrationHandle {
@@ -82,6 +86,7 @@ export function startHostRegistration(engine: BrainEngine | object, opts: HostRe
         clearHostRegistration(engine, current);
         current = null;
         await register();
+        if (!current && !stopped) opts.onLost?.();
       }
       streak = 0;
     } catch (error) {
@@ -97,10 +102,11 @@ export function startHostRegistration(engine: BrainEngine | object, opts: HostRe
   };
   const cadence = setInterval(() => { void renew(); }, opts.everyMs ?? 10_000);
   cadence.unref?.();
-  void renew();
+  const first = renew().then(() => current?.fence ?? null);
   return {
     renew,
     get fence() { return current?.fence ?? null; },
+    first,
     async stop() {
       if (stopped) return;
       stopped = true;

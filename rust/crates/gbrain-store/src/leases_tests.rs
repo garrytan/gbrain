@@ -541,3 +541,19 @@ fn inside_an_explicit_transaction_the_lease_is_read_through_the_transaction() {
         store.assert_lease(&a).unwrap();
     }
 }
+
+/// G17: a read-only transaction can assert a lease (the check reads through the transaction's view and writes nothing).
+#[test]
+fn a_read_only_transaction_can_assert_a_lease() {
+    let clock = Clock::new();
+    for (mode, store) in both(&clock) {
+        let a = store
+            .acquire_lease("ro", &origin("a"), 1_000)
+            .unwrap()
+            .unwrap();
+        let tx = store.begin_transaction(true).unwrap();
+        tx.assert_lease(&a)
+            .unwrap_or_else(|e| panic!("{mode}: {e}"));
+        tx.commit_transaction().unwrap();
+    }
+}

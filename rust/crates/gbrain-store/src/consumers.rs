@@ -15,6 +15,8 @@
 //!   `version`, `segment_reader`, `capabilities`, as `ON CONFLICT DO UPDATE` sets them);
 //! - `delete_consumer_row(key)`.
 //!
+//! On a store not in multi-user mode the members keep and answer nothing, as the TypeScript members did before.
+//!
 //! Each row read has the SQL shape: times as `timestamptz::text`, `renewed_age_ms` and `age_ms` as text milliseconds.
 //! Keys: `~L 0x02 <host_id> 0x00 <pid as 8 hex digits> 0x00 <nonce>` (`leases.rs`, sub-tag `CONSUMER_ROW`). Nothing is
 //! written here unless a member is called, and the TypeScript members call them only on a store in multi-user mode.
@@ -176,6 +178,9 @@ impl Store {
     /// `listHostConsumerRows(hostId)`: every consumer row of the host, oldest first, ages on the store clock.
     pub fn list_host_consumer_rows(&self, host_id: &str) -> Result<Vec<Value>> {
         check_text("host_id", host_id)?;
+        if !self.multiuser() {
+            return Ok(Vec::new());
+        }
         let now = self.env.clock_micros();
         Ok(host_rows(&*self.read()?, host_id)?
             .iter()
@@ -187,6 +192,9 @@ impl Store {
     /// caller, renewed within `live_ms` and not asking for a restart, oldest first.
     pub fn probe_live_consumer_rows(&self, probe: &ConsumerProbe) -> Result<Vec<Value>> {
         check_text("host_id", &probe.host_id)?;
+        if !self.multiuser() {
+            return Ok(Vec::new());
+        }
         let now = self.env.clock_micros();
         let floor = now - probe.live_ms.saturating_mul(1000);
         Ok(host_rows(&*self.read()?, &probe.host_id)?
@@ -209,6 +217,9 @@ impl Store {
         check_text("nonce", &r.nonce)?;
         let pool = json_text(&r.pool, "pool")?;
         let minted_under = json_text(&r.minted_under, "minted_under")?;
+        if !self.multiuser() {
+            return Ok(());
+        }
         self.write(|tx| {
             let now = self.env.now_micros();
             let purge_floor = now - r.purge_ms.saturating_mul(1000);
@@ -259,6 +270,9 @@ impl Store {
     /// `deleteConsumerRow(key)`: deletes the caller's row (a missing row changes nothing).
     pub fn delete_consumer_row(&self, key: &ConsumerRowKey) -> Result<()> {
         check_text("host_id", &key.host_id)?;
+        if !self.multiuser() {
+            return Ok(());
+        }
         let row = row_key(&key.host_id, key.pid, &key.nonce);
         self.write(|tx| {
             if tx.get(&row)?.is_some() {

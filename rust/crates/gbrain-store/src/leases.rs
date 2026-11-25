@@ -461,7 +461,8 @@ impl Store {
         check_name(&token.name)?;
         let now = self.env.clock_micros();
         match &self.bound {
-            Some(tx) => tx.statement(|w| assert_held(w, token, now)),
+            // Read through the transaction's own view (its writes included), so a read-only transaction can assert too.
+            Some(tx) => assert_held(&*tx.reader(), token, now),
             None => assert_held(&*self.read()?, token, now),
         }
     }

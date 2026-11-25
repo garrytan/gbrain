@@ -13,8 +13,8 @@
  * time. On a multi-user store a protected call with no fence refuses `lease_lost` / `fence_missing`; on every other
  * engine and with the mode off, `fenceFor` answers null and the call is exactly what it was.
  *
- * The registration is per engine object and per process: one consumer per engine, one host registration per consumer.
- * It is set only by the consumer that took the lease and cleared when that consumer stops; nothing else writes it.
+ * Registrations are per engine object: each holder (a consumer, a job worker) adds its own and removes only its own
+ * when it stops, so two holders in one process never clear each other's.
  */
 import type { LeaseToken, WriteOrigin } from '../rust-engine/store-members/leases.ts';
 
@@ -28,27 +28,37 @@ export interface HostRegistration {
   readonly fence: LeaseToken;
 }
 
-const registrations = new WeakMap<object, HostRegistration>();
+/** Every live registration of an engine object, oldest first: a consumer and a job worker in one process each own one. */
+const registrations = new WeakMap<object, HostRegistration[]>();
 
 /** The lease name of a host's registration; `forcedNonce` names a forced extra consumer's own registration. */
 export function hostLeaseName(hostId: string, forcedNonce?: string): string {
   return forcedNonce ? `consumer:${hostId}:forced:${forcedNonce}` : `consumer:${hostId}`;
 }
 
-/** Records `registration` as `engine`'s host registration (the consumer that took the lease calls this). */
+/** Adds `registration` to `engine`'s registrations (the holder that took the lease calls this). */
 export function setHostRegistration(engine: object, registration: HostRegistration): void {
-  registrations.set(engine, registration);
+  const list = registrations.get(engine) ?? [];
+  if (!list.includes(registration)) list.push(registration);
+  registrations.set(engine, list);
 }
 
-/** Clears `engine`'s registration when it is still `registration` (a newer one is kept). */
+/** Removes `registration` from `engine`'s registrations; every other holder's stays. */
 export function clearHostRegistration(engine: object, registration: HostRegistration): void {
-  if (registrations.get(engine) === registration) registrations.delete(engine);
+  const list = registrations.get(engine);
+  if (!list) return;
+  const left = list.filter(r => r !== registration);
+  if (left.length) registrations.set(engine, left); else registrations.delete(engine);
 }
 
-/** The host registration of `engine`, or null. A transaction-bound clone reads its parent's (prototype chain). */
+/**
+ * The registration a protected call on `engine` carries: the oldest one the engine object itself holds, else its
+ * prototype's (a transaction-bound clone answers for its parent). A holder that must finish a claim under the fence it
+ * took it with keeps that fence itself (MinionQueue, the cycle-lock handle) instead of asking again.
+ */
 export function hostRegistrationOf(engine: object): HostRegistration | null {
   for (let at: object | null = engine; at; at = Object.getPrototypeOf(at)) {
-    const found = registrations.get(at);
+    const found = registrations.get(at)?.[0];
     if (found) return found;
   }
   return null;
