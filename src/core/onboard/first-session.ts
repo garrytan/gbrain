@@ -20,6 +20,9 @@ import type { BrainEngine } from '../engine.ts';
 import { readInstallReceipt, type InstallReceipt } from './setup-history.ts';
 import { remoteReadFloorSql } from '../search/private-visibility.ts';
 import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
+import { localFederatedSourceIds } from '../source-resolver.ts';
+import { AGENT_POLICY_TYPE } from '../policy/slugs.ts';
+import { AGENT_ACTION_TYPE } from '../ledger/action.ts';
 
 export const FIRST_SESSION_KEY = 'onboarding.first_session';
 export const FIRST_SESSION_SECTION = 'first_session';
@@ -226,13 +229,22 @@ export function quoteTitle(title: string): string {
 
 const SAFE_SLUG = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
 
-/** The newest world-visible, non-stub pages of the bound source: titles as quoted data, slugs as pointers. */
+/**
+ * The newest world-visible, non-stub pages the bound source reads unqualified (itself plus its federated sources, so
+ * the conversations setup's history import writes to its own source are found): titles as quoted data, slugs as
+ * pointers. A connection pinned by GBRAIN_SOURCE or .gbrain-source reads the same set by name (explicitReadBinding), so
+ * every pointer stays one it can open. Agent policy and action records and the archive's day index pages are not things
+ * to offer the user.
+ */
 export async function firstSessionPointers(engine: BrainEngine, sourceId: string): Promise<Array<{ slug: string; title: string }>> {
   try {
+    const sourceIds = (await localFederatedSourceIds(engine, sourceId, 'seed_default')) ?? [sourceId];
     const rows = await engine.executeRaw<{ slug: string; title: string | null }>(
       `SELECT p.slug, p.title FROM pages p
-        WHERE p.source_id = $1 AND p.deleted_at IS NULL AND COALESCE(p.frontmatter->>'status', '') <> 'stub' AND ${remoteReadFloorSql('p')}
-        ORDER BY p.updated_at DESC, p.slug LIMIT $2`, [sourceId, FIRST_SESSION_POINTERS * 2]);
+        WHERE p.source_id = ANY($1::text[]) AND p.deleted_at IS NULL AND COALESCE(p.frontmatter->>'status', '') <> 'stub'
+          AND COALESCE(p.type, '') NOT IN ('${AGENT_POLICY_TYPE}', '${AGENT_ACTION_TYPE}') AND NOT (p.frontmatter ? 'transcript_archive_index')
+          AND ${remoteReadFloorSql('p')}
+        ORDER BY p.updated_at DESC, p.slug LIMIT $2`, [sourceIds, FIRST_SESSION_POINTERS * 2]);
     return rows.filter(r => SAFE_SLUG.test(r.slug)).slice(0, FIRST_SESSION_POINTERS).map(r => ({ slug: r.slug, title: quoteTitle(r.title ?? r.slug) }));
   } catch (err) { // silent-read-ok: pointers are optional; the section's instructions stand without them
     rethrowCapabilityRefusal(err);

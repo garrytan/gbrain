@@ -43,6 +43,8 @@ export interface GBrainConfig {
   secrets?: { on_push?: 'redact' | 'refuse' };
   /** #7242 terminal hook (minions/terminal-hook.ts): file plane only, read by `gbrain jobs work`. */
   minions?: { terminal_hook?: string[] | { argv: string[]; timeout_ms?: number } };
+  /** GST-3849 Google token socket (core/google-socket/config.ts): file plane only, read engine-free by both start paths. */
+  google?: { mint_socket?: boolean; broker_act?: boolean; broker_allow_root_gateway?: boolean; socket_peers?: number[]; broker_joint_probe?: number };
   /** Ambient-writeback MIRROR of the DB-plane `memory.*` keys — `gbrain
    * config set memory.*` dual-writes both planes so the engine-free Stop-hook
    * child and the stdio boot resolve see the same truth the serve does. The
