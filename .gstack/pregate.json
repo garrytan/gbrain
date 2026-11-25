@@ -182,6 +182,7 @@
     "visibility": "public"
   },
   "remote_gate": "bash scripts/pregate-remote-gate.sh",
+  "serial_patterns": ["**/*.serial.test.*", "test/e2e/**/*.test.ts"],
   "run_profiles": {
     "test": {
       "workflow": "test.yml",

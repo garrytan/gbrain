@@ -273,7 +273,7 @@ describe('a put by the exact decomposed spelling is refused: nothing moves and n
   const stored = 'notes/put-cafe\u0301';
   const composed = 'notes/put-caf\u00e9';
   const REFUSAL = `Page ${stored} is stored under an older decomposed Unicode spelling of its name, so a put by that spelling is refused and nothing was changed. `
-    + `A fix that moves the page to the composed spelling ${composed} is coming; until then the page cannot be replaced by put.`;
+    + `To move the page to the normal spelling ${composed}, preview gbrain repair slug-spelling --source default, then run the apply command it prints after the owner agrees; until then the page cannot be replaced by put.`;
   const rows = async () => (await engine.executeRaw<{ slug: string; knowledge_revision: string; compiled_truth: string }>(
     'SELECT slug, knowledge_revision::text AS knowledge_revision, compiled_truth FROM pages WHERE slug IN ($1, $2) ORDER BY slug', [stored, composed]));
 

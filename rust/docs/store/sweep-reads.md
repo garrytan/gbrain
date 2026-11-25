@@ -18,3 +18,18 @@ and has no keys of its own.
 `since` is an ISO 8601 UTC string; any other shape refuses `invalid_argument`, as does a negative `scanCap` or
 `limit`. Pages with the same `updated_at` are ordered by page id, newest first; the SQL leaves that tie in no set order.
 Each read scans every page record and filters in memory: the store has no `(source_id, updated_at)` index.
+
+## Extract bookkeeping (`cli_reads/extract_receipt.rs`)
+
+The extract receipt write (`src/core/extract/receipt-writer.ts`) and the rollup write
+(`src/core/extract/rollup-writer.ts`) ran these statements through `executeRaw`. PGLite and Postgres run the same SQL
+as before, now in `src/core/engine-sql/extract-bookkeeping.ts`.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.readExtractReceiptPrior({ sourceId, slug })` | `{ type, source_path, source_uri, withheld_source_path }` of the page at (source, slug), deleted or not; null when there is none. The store keeps no withheld source path, so `withheld_source_path` is always null | `readExtractReceiptPrior` |
+| `brain.readExtractReceiptSealed({ sourceId, slug, safeVersion })` | `{ sealed }` of the page at (source, slug): `chunker_version >= safeVersion AND text_projection_revision = knowledge_revision`, with SQL's NULL rules; null when there is none | `readExtractReceiptSealed` |
+
+`upsertExtractRollup` writes the store's `extract_rollup_7d` rows (`facts/extract_rollup.rs`; see
+[facts.md](facts.md#extract-rollup-factsextract_rolluprs-family-extract_rollup)). The rollup is a best-effort cache on
+every engine.

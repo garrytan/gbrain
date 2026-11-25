@@ -95,6 +95,21 @@ impl Brain {
         })
     }
 
+    /// `readStoredSlugSpellings(key, sourceId, sourceIds, after)`: up to 200 stored slugs, in byte order.
+    #[napi]
+    pub fn read_stored_slug_spellings<'env>(
+        &self,
+        env: &'env Env,
+        key: String,
+        source_id: Option<String>,
+        source_ids: Option<Vec<String>>,
+        after: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_stored_slug_spellings(&key, source_id.as_deref(), source_ids.as_deref(), &after)
+        })
+    }
+
     /// `readFederationExposedPages(sourceId, hidePrivate, honorAliases)`: `{ slug, member, total }[]`.
     #[napi]
     pub fn read_federation_exposed_pages<'env>(

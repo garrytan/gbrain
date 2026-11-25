@@ -23,7 +23,9 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { normalizeSlug, withStoredSlug } from '../utils.ts';
 import { isEngineCapabilityRefusal } from '../engine-capability-refusal.ts';
+import { STORED_SPELLINGS_PAGE } from '../engine-sql/slug-spellings.ts';
 import { storedWriteSlug } from '../persistence/legacy-slug-put.ts';
+import { spellingKeys } from '../slug-spelling-key.ts';
 import type { Page } from '../types.ts';
 import { opError, type Operation } from './contract.ts';
 import { federatedSearchScope, parseSourceIdParam, sourceScopeOpts } from './context.ts';
@@ -184,26 +186,23 @@ function readScope(ctx: Ctx, op: string, params: Params): { sourceId?: string; s
 }
 
 /**
- * The SQL side of `normalizeSlug`, cut down to ASCII letters and digits, so every row that normalizes to a slug shares its key with
- * it (`storedSpellings` then compares with `normalizeSlug` itself). The capitals are lowered by hand, never by the engine's locale:
- * ASCII, and the two whose lowercase holds ASCII (U+0130 lowers to `i` and a combining dot, U+212A to `k`); then the text is composed.
+ * Every stored spelling in `scope` that normalizes to `normalized` and is not in `skip`, in code-unit order (the scope applies
+ * before any row is kept). The rows come from the spelling index, probed by the slug's own key and the keys of its capital
+ * forms; a slug with more capital forms than `MAX_SPELLING_VARIANTS` is read by scanning the ASCII key instead. Either way
+ * `normalizeSlug` has the last word on each row.
  */
-const SPELLING_KEY_SQL = `regexp_replace(normalize(translate(replace(replace(slug, chr(304), 'i' || chr(775)), chr(8490), 'k'), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), NFC), '[^a-z0-9]', '', 'g')`;
-
-/** Every stored spelling in `scope` that normalizes to `normalized` and is not in `skip`, in code-unit order (the scope applies before any row is kept). */
 async function storedSpellings(ctx: Ctx, normalized: string, scope: { sourceId?: string; sourceIds?: string[] }, skip: readonly string[]): Promise<string[]> {
-  const args: unknown[] = [normalized.replace(/[^a-z0-9]/g, '')];
-  let scoped = '';
-  if (scope.sourceIds) { args.push(scope.sourceIds); scoped = `AND source_id = ANY($${args.length}::text[])`; }
-  else if (scope.sourceId !== undefined) { args.push(scope.sourceId); scoped = `AND source_id = $${args.length}`; }
-  args.push('');
+  // The typed scan (engine-sql/slug-spellings.ts): rows that share the slug's key, a page at a time after the last slug.
+  // The SQL engines probe the spelling index by `keys` (the slug's own key and its capital forms) and scan the ASCII key
+  // when `keys` is null; the Rust store reads by the ASCII key. Either way `normalizeSlug` below has the last word.
+  const keys = spellingKeys(normalized);
+  const key = normalized.replace(/[^a-z0-9]/g, '');
   const found = new Set<string>();
-  for (;;) {
-    const rows = await ctx.engine.executeRaw<{ s: string }>(
-      `SELECT DISTINCT slug COLLATE "C" AS s FROM pages WHERE ${SPELLING_KEY_SQL} = $1 ${scoped} AND slug COLLATE "C" > $${args.length} ORDER BY s LIMIT 200`, args);
-    for (const { s } of rows) if (!skip.includes(s) && normalizeSlug(s) === normalized) found.add(s);
-    if (rows.length < 200) return [...found].sort();
-    args[args.length - 1] = rows[rows.length - 1]!.s;
+  for (let after = '';;) {
+    const rows = await ctx.engine.readStoredSlugSpellings(key, scope, after, keys);
+    for (const s of rows) if (!skip.includes(s) && normalizeSlug(s) === normalized) found.add(s);
+    if (rows.length < STORED_SPELLINGS_PAGE) return [...found].sort();
+    after = rows[rows.length - 1]!;
   }
 }
 
@@ -252,8 +251,8 @@ async function chooseSpelling(ctx: Ctx, op: string, params: Params, raw: string,
         if (liveOthers.length > 1) break;
       }
     } catch (err) {
-      // An engine without raw reads (a typed capability refusal) knows no other spelling; any other failure is not
-      // "nothing found", so it reaches the fallback below, which answers the normal form.
+      // An engine that does not serve the scan (a typed capability refusal) knows no other spelling; any other failure is
+      // not "nothing found", so it reaches the fallback below, which answers the normal form.
       if (!isEngineCapabilityRefusal(err)) throw err;
     }
     if (liveOthers.length > 1) throw ambiguousSpelling(op, raw, liveOthers[0]!, liveOthers[1]!);

@@ -399,6 +399,24 @@ impl Store {
         })
     }
 
+    /// `hasChronicleSkipDecision(sourceId, pageId, contentHash, extractorVersion, reason)`: the ledger row of that page
+    /// revision is `skipped` with that reason (`engine-sql/chronicle-events.ts` hasChronicleSkipDecision).
+    pub fn has_chronicle_skip_decision(
+        &self,
+        source_id: &str,
+        page_id: i64,
+        content_hash: &str,
+        extractor_version: i32,
+        reason: &str,
+    ) -> Result<bool> {
+        let read = self.read()?;
+        let row: Option<LedgerRecord> = get_json(
+            &*read,
+            &row_key(source_id, page_id, content_hash, extractor_version),
+        )?;
+        Ok(row.is_some_and(|r| r.state == "skipped" && r.reason.as_deref() == Some(reason)))
+    }
+
     /// `readChronicleLedger()`: `{ counts, reasons, calls, principals }` over the automatic rows, as
     /// `src/core/chronicle/ledger-stats.ts` reads them: counts (the last 7 days, except pending), skip and failure
     /// reasons by count then byte of reason, the 24-hour reservations, and the five busiest principals by calls then

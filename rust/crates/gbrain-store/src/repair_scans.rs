@@ -121,6 +121,16 @@ pub struct FileTombstone {
     pub by_sync: bool,
 }
 
+/// A tombstone a managed sync made that no live page of its source backs by content
+/// (`listUnreviewedSyncTombstones`); `expired` when it is older than the cutoff.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct UnreviewedSyncTombstone {
+    pub id: u64,
+    pub source_id: String,
+    pub slug: String,
+    pub expired: bool,
+}
+
 /// `listFileTombstones`'s query: the tombstones below page id `before` (all when `None`), at most
 /// `limit`.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -517,6 +527,65 @@ impl Store {
                 })
             })
             .collect()
+    }
+
+    /// `listUnreviewedSyncTombstones(olderThanHours)` (persistence/sync-delete-tombstones.ts): every
+    /// soft-deleted page a managed sync made (its `sync-delete-tombstone` record at its `deleted_at`,
+    /// or an uncompacted committed `managed_sync_delete` receipt completed at or after it) whose
+    /// content no live page of its source holds, by `deleted_at`, then byte source id, then byte
+    /// slug. `expired` when `deleted_at` is older than `older_than_hours` before now. Read-only.
+    pub fn list_unreviewed_sync_tombstones(
+        &self,
+        older_than_hours: i64,
+    ) -> Result<Vec<UnreviewedSyncTombstone>> {
+        let now = self.env.now_micros();
+        let cutoff = now.saturating_sub(older_than_hours.max(0).saturating_mul(3_600_000_000));
+        let read = self.read()?;
+        let pages = all_pages(&*read)?;
+        let live: BTreeSet<(String, String)> = pages
+            .iter()
+            .filter(|p| p.deleted_at_us.is_none())
+            .filter_map(|p| p.content_hash.clone().map(|h| (p.source_id.clone(), h)))
+            .collect();
+        let receipts: Vec<RequestRecord> = all_requests(&*read)?
+            .into_iter()
+            .filter(sync_delete_receipt)
+            .collect();
+        let mut rows: Vec<(i64, UnreviewedSyncTombstone)> = Vec::new();
+        for p in &pages {
+            let Some(deleted_at_us) = p.deleted_at_us else {
+                continue;
+            };
+            let by_sync = tombstone_recorded(&*read, p.id, deleted_at_us)?
+                || receipts.iter().any(|r| {
+                    r.source_id == p.source_id
+                        && r.slug == p.slug
+                        && r.page_id == Some(p.id)
+                        && r.completed_at_us.is_some_and(|at| at >= deleted_at_us)
+                });
+            let twin = p
+                .content_hash
+                .as_ref()
+                .is_some_and(|h| live.contains(&(p.source_id.clone(), h.clone())));
+            if !by_sync || twin {
+                continue;
+            }
+            rows.push((
+                deleted_at_us,
+                UnreviewedSyncTombstone {
+                    id: p.id,
+                    source_id: p.source_id.clone(),
+                    slug: p.slug.clone(),
+                    expired: deleted_at_us < cutoff,
+                },
+            ));
+        }
+        rows.sort_by(|(a, x), (b, y)| {
+            a.cmp(b)
+                .then_with(|| x.source_id.as_bytes().cmp(y.source_id.as_bytes()))
+                .then_with(|| x.slug.as_bytes().cmp(y.slug.as_bytes()))
+        });
+        Ok(rows.into_iter().map(|(_, t)| t).collect())
     }
 
     /// `listTwinMergeLosers(survivorId, twinId)`: what moving the twin into the survivor would land

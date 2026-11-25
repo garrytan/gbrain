@@ -8,6 +8,7 @@
  */
 import type { BrainEngine } from '../../engine.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { assertLowerTrustTier } from '../../engine-sql/derivation-trust.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
@@ -15,6 +16,7 @@ type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infe
 export const lowerTrustTier: Member<'lowerTrustTier'> = async (brain, table, ids, tier, origin) => {
   if (table !== 'pages') refuseMember('lowerTrustTier', `a ${table} row`);
   if (!ids.length) return [];
+  assertLowerTrustTier(tier);
   return storeCall({ member: 'lowerTrustTier' }, () => brain.lowerTrustTier({ ids: [...ids], tier, origin: origin ?? null }));
 };
 

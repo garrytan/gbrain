@@ -348,17 +348,18 @@ describe('sessions', () => {
     await jsonCatalog(home, 'c', [...targets, ...weak]);
     const strong = [1, 10, 18, 25, 37, 50];
     const perTurn: { turn: number; n: number; tokens: number }[] = [];
+    // pregate-literal: DEFAULT_SESSION_TOKEN_BUDGET=2000 this test pins the old budget on purpose to check pacing under a tight budget
+    const budget = 2000;
     for (let t = 1; t <= 50; t++) {
       const s = strong.indexOf(t);
       const message = s >= 0 ? `can you ${targets[s]!.name} this` : `${pool[t % 12]} ${pool[(t + 5) % 12]}`;
-      // pregate-literal: DEFAULT_SESSION_TOKEN_BUDGET=2000 this test pins the old budget on purpose to check pacing under a tight budget
-      const r = await resolveSkills({ message, session_id: 'fifty', top_gate: 0 }, { home, sessionTokenBudget: 2000 });
+      const r = await resolveSkills({ message, session_id: 'fifty', top_gate: 0 }, { home, sessionTokenBudget: budget });
       perTurn.push({ turn: t, n: r.output.suggestions.length, tokens: r.output.block_tokens });
       expect(await r.commit()).toBe(true);
     }
     for (const t of [10, 25, 50]) expect({ turn: t, n: perTurn[t - 1]!.n > 0 }).toEqual({ turn: t, n: true });
     const total = perTurn.reduce((a, x) => a + x.tokens, 0);
-    expect(total).toBeLessThanOrEqual(2000);
+    expect(total).toBeLessThanOrEqual(budget);
     expect(sessionStatus('fifty', { home }).spent).toBe(total);
     const late = perTurn.filter(x => x.turn > 12 && !strong.includes(x.turn));
     expect(late.every(x => x.n === 0)).toBe(true);

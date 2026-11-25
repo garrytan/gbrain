@@ -66,7 +66,7 @@ Each reads the typed arguments; the store never sees the statement.
 
 | Members | Served as |
 | --- | --- |
-| `listFileRowsForSlug`, `listAllFileRows`, `listFileRowsForVerify` | a scan of the `r 0x02` records ordered by `filename`, by `page_slug` then `filename` (nulls last), and by `storage_path`; 100, 100 and 1000 rows; `size_bytes` as a number, `metadata` as the object |
+| `listFileRowsForVerify` | a scan of the `r 0x02` records ordered by `storage_path`, 1000 rows (`files list` is the served `listFiles`); `size_bytes` as a number, `metadata` as the object |
 | `hasFileWithHash` | the record at the path and a compare of its `content_hash` |
 | `upsertCliFileRow`, `upsertRawFileRow`, `upsertSyncFileRow` | `upsertFile`'s write plus the metadata merge: the new keys over the old object (a stored value that is not an object reads as `{}`), then jsonb key order. The raw lane names `source_id`; the others take `default`. A repeat updates the hash, size and type only |
 | `upsertOpFileRow` | the same write; on a repeat the source and page change only when the new row names a page (`source_id` kept, `page_id` coalesced) |

@@ -21,6 +21,8 @@ export const RECORDS_MEMBERS = {
   listActiveTakesForPages: 'takes',
   matchTakeRows: 'takes',
   deleteTakeRows: 'takes',
+  stampTakeResolvedAt: 'takes',
+  recordTakeHoldersUsed: 'takes',
   // files
   upsertFile: 'files',
   getFile: 'files',
@@ -108,6 +110,12 @@ export const RECORDS_MEMBERS = {
   readMcpLogPruneCutoff: 'telemetry',
   pruneMcpRequestLogBatch: 'telemetry',
   logChatUsage: 'telemetry',
+  insertAccessReadLogRows: 'telemetry',
+  pruneAccessReadLog: 'telemetry',
+  readAccessReadLog: 'telemetry',
+  listAccessReadPageRefs: 'telemetry',
+  readAccessReadsOfPages: 'telemetry',
+  tallyAccessReadsOfPages: 'telemetry',
   readChatUsage: 'telemetry',
   // ingest_log
   logIngest: 'ingest_log',

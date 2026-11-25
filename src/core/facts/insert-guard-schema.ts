@@ -50,7 +50,7 @@
  */
 import { requireLedgerPoliciesSql } from '../derived-state-maintainers.ts';
 import { FACT_WITHDRAWAL_STAMP_SETTING } from '../persistence/attribution-schema.ts';
-import { ownedMemorySubjectSql, unbackedEntitySql } from './withdrawal-schema.ts';
+import { legacyFingerprintV2Sql, ownedMemorySubjectSql, unbackedEntitySql } from './withdrawal-schema.ts';
 
 export const FACT_INSERT_GUARD_TRIGGER = 'facts_guard_inserted';
 /** Transaction-local; 'on' defers the withdrawal stamp of the following inserts to facts_guard_inserted. */
@@ -66,13 +66,13 @@ export const GUARD_OUTCOME_MARKER_SQL = "(i.source IN ('cli:extract-conversation
 /** The WITH clause naming, as m, the active inserted facts a withdrawal matches and its earliest withdrawn_at. */
 const WITHDRAWN_INSERTS_SQL = `WITH n AS MATERIALIZED (
         SELECT i.id, i.source_id, i.visibility, i.entity_slug, i.source_markdown_slug, ${unbackedEntitySql('i')} AS unbacked,
-          gbrain_fact_fingerprint(i.fact) AS fact_hash, gbrain_fact_fingerprint_v1(i.fact) AS fact_hash_v1
+          gbrain_fact_fingerprint(i.fact) AS fact_hash, ${legacyFingerprintV2Sql('i.fact')} AS fact_hash_v2, gbrain_fact_fingerprint_v1(i.fact) AS fact_hash_v1
         FROM inserted_facts i WHERE i.expired_at IS NULL),
       m AS (
         SELECT n.id, min(w.withdrawn_at) AS withdrawn_at FROM n JOIN fact_withdrawals w
           ON w.source_id = n.source_id AND w.visibility = n.visibility
           AND (CASE WHEN starts_with(COALESCE(n.source_markdown_slug, ''), 'memory/members/') THEN w.subject = n.source_markdown_slug
-            ELSE (n.unbacked AND NOT ${ownedMemorySubjectSql('w.subject')}) OR w.subject IN ('*', n.entity_slug) END) AND w.fact_hash IN (n.fact_hash, n.fact_hash_v1)
+            ELSE (n.unbacked AND NOT ${ownedMemorySubjectSql('w.subject')}) OR w.subject IN ('*', n.entity_slug) END) AND w.fact_hash IN (n.fact_hash, n.fact_hash_v2, n.fact_hash_v1)
         GROUP BY n.id)`;
 
 /**
@@ -89,11 +89,12 @@ CREATE OR REPLACE FUNCTION gbrain_guard_inserted_facts() RETURNS trigger
     PERFORM s.id FROM sources s WHERE s.id IN (SELECT i.source_id FROM inserted_facts i) ORDER BY s.id FOR SHARE OF s;
     IF EXISTS (SELECT 1 FROM fact_purges p WHERE p.source_id IN (SELECT i.source_id FROM inserted_facts i)) THEN
       WITH n AS MATERIALIZED (
-        SELECT row_number() OVER () AS ord, i.source_id, i.visibility, i.entity_slug, gbrain_fact_fingerprint(i.fact) AS fact_hash
+        SELECT row_number() OVER () AS ord, i.source_id, i.visibility, i.entity_slug, gbrain_fact_fingerprint(i.fact) AS fact_hash,
+          ${legacyFingerprintV2Sql('i.fact')} AS fact_hash_v2
         FROM inserted_facts i WHERE NOT ${GUARD_OUTCOME_MARKER_SQL})
       SELECT n.fact_hash INTO purged FROM n
         WHERE EXISTS (SELECT 1 FROM fact_purges p WHERE p.source_id = n.source_id AND p.visibility = n.visibility
-          AND (p.subject IN ('*', n.entity_slug) OR ${unbackedEntitySql('n')}) AND p.fact_hash = n.fact_hash)
+          AND (p.subject IN ('*', n.entity_slug) OR ${unbackedEntitySql('n')}) AND p.fact_hash IN (n.fact_hash, n.fact_hash_v2))
         ORDER BY n.ord LIMIT 1;
       IF purged IS NOT NULL THEN
         RAISE EXCEPTION USING ERRCODE = 'P0001',

@@ -142,3 +142,71 @@ export async function listGuardedTakeRows(exec: LegacyUnscopedRead, q: GuardedTa
     ORDER BY x.page_id, x.row_num FOR UPDATE OF x`)).rows;
   return rows.map(r => ({ id: Number(r.id), page_id: Number(r.page_id), row_num: Number(r.row_num), trust_tier: r.trust_tier, change: r.change }));
 }
+
+/**
+ * The fence guard's statements around its decisions (trust/fence-guard.ts `guardFenceRows` and `factsAboveWriter`): the
+ * detach of the guarded rows, the read of the page's occupied row numbers, the move of guarded rows to the numbers the
+ * guard picked, the read of trusted narrower copies a world restatement widens, the read of the live row at one number,
+ * and the page's live fence facts above the writer. Each is the text the guard sent through `executeRaw`, byte for byte,
+ * with the same parameters; the writer's rank is the transaction's declared tier, which the SQL reads itself.
+ */
+const DETACH_FENCE_ROWS_SQL = 'UPDATE facts SET row_num = NULL WHERE id = ANY($1::bigint[])';
+const OCCUPIED_ROWS_SQL = 'SELECT row_num FROM facts WHERE source_id = $1 AND source_markdown_slug = $2 AND row_num IS NOT NULL AND expired_at IS NULL';
+const MOVE_GUARDED_ROWS_SQL = `UPDATE facts f SET row_num = m.row_num, visibility = m.visibility FROM jsonb_to_recordset($1::text::jsonb) AS m(id bigint, row_num integer, visibility text)
+    WHERE f.id = m.id`;
+const LIVE_ROW_AT_SQL = `SELECT id, trust_tier FROM facts WHERE source_id = $1 AND source_markdown_slug = $2 AND row_num = $3 AND expired_at IS NULL`;
+
+/** A guarded row's move: its new row number and visibility. */
+export interface FenceRowMove { id: number; row_num: number; visibility: string }
+/** A fence row that restates a claim at world, and the entity it names. */
+export interface FenceRestatement { row_num: number; fact: string; entity: string | null }
+/** A live narrower fact more trusted than the writer that a world restatement at `row_num` widens. */
+export interface TrustedPrivateCopy { row_num: number; id: number; visibility: string; trust_tier: string }
+
+/** Detaches facts `ids` from their fence position (row_num NULL). */
+export async function detachFenceFactRows(raw: Pick<BrainEngine, 'executeRaw'>, ids: readonly number[]): Promise<void> {
+  await raw.executeRaw(DETACH_FENCE_ROWS_SQL, [[...ids]]);
+}
+
+/** The row numbers the page's live positioned facts hold, in no set order. */
+export async function listOccupiedFenceRowNums(raw: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slug: string): Promise<number[]> {
+  return (await raw.executeRaw<{ row_num: number }>(OCCUPIED_ROWS_SQL, [sourceId, slug])).map(r => Number(r.row_num));
+}
+
+/** Moves each guarded fact to its row number and visibility, in one statement. */
+export async function moveGuardedFenceRows(raw: Pick<BrainEngine, 'executeRaw'>, moves: readonly FenceRowMove[]): Promise<void> {
+  await raw.executeRaw(MOVE_GUARDED_ROWS_SQL, [JSON.stringify(moves)]);
+}
+
+/**
+ * For each world restatement, the first live narrower fact (the page's own first, then by id) more trusted than the
+ * writer that states its claim: on the page while no live world fact of the page states it, or of its entity on another
+ * page (or on none) while no live world fact of that entity states it.
+ */
+export async function listTrustedPrivateCopies(raw: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slug: string, restated: readonly FenceRestatement[]): Promise<TrustedPrivateCopy[]> {
+  const { text, params } = renderFragment(sqlFragment`${trustedSql(`SELECT DISTINCT ON (r.row_num) r.row_num, f.id, f.visibility, f.trust_tier
+      FROM jsonb_to_recordset($3::text::jsonb) AS r(row_num integer, fact text, entity text)
+      JOIN facts f ON f.source_id = $1 AND f.expired_at IS NULL AND (f.source_markdown_slug = $2 OR f.entity_slug = r.entity)
+        AND f.fact = r.fact AND f.visibility <> 'world' AND `)}${trustedSql(trustRankSql('f.trust_tier'))}${trustedSql(' > ')}${trustedSql(WRITER_RANK_SQL)}${trustedSql(`
+      WHERE (f.source_markdown_slug = $2
+          AND NOT EXISTS (SELECT 1 FROM facts w WHERE w.source_id = $1 AND w.source_markdown_slug = $2 AND w.expired_at IS NULL AND w.visibility = 'world' AND w.fact = f.fact))
+        OR (f.entity_slug = r.entity AND f.source_markdown_slug IS DISTINCT FROM $2 AND (f.valid_until IS NULL OR f.valid_until > now())
+          AND NOT EXISTS (SELECT 1 FROM facts w WHERE w.source_id = $1 AND w.entity_slug = r.entity AND w.expired_at IS NULL AND w.visibility = 'world'
+            AND w.fact = f.fact AND (w.valid_until IS NULL OR w.valid_until > now())))
+      ORDER BY r.row_num, COALESCE(f.source_markdown_slug = $2, false) DESC, f.id`)}`);
+  if (params.length) throw new Error('listTrustedPrivateCopies: the statement must bind no fragment values');
+  return raw.executeRaw<TrustedPrivateCopy>(text, [sourceId, slug, JSON.stringify(restated.map(r => ({ row_num: r.row_num, fact: r.fact, entity: r.entity ?? null })))]);
+}
+
+/** The id and stored tier of the page's live fact at `rowNum`, or null. */
+export async function readLiveFenceFactAt(raw: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slug: string, rowNum: number): Promise<{ id: number; trust_tier: string } | null> {
+  return (await raw.executeRaw<{ id: number; trust_tier: string }>(LIVE_ROW_AT_SQL, [sourceId, slug, rowNum]))[0] ?? null;
+}
+
+/** The page's live positioned facts more trusted than the writer (the transaction's declared tier): id and stored tier. */
+export async function listFactsAboveWriter(raw: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slug: string): Promise<Array<{ id: number; trust_tier: string }>> {
+  const { text, params } = renderFragment(sqlFragment`${trustedSql(`SELECT id, trust_tier FROM facts WHERE source_id = $1 AND source_markdown_slug = $2
+      AND row_num IS NOT NULL AND expired_at IS NULL AND `)}${trustedSql(trustRankSql('trust_tier'))}${trustedSql(' > ')}${trustedSql(WRITER_RANK_SQL)}`);
+  if (params.length) throw new Error('listFactsAboveWriter: the statement must bind no fragment values');
+  return raw.executeRaw<{ id: number; trust_tier: string }>(text, [sourceId, slug]);
+}

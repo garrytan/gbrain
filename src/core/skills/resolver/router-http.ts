@@ -9,14 +9,15 @@
  * ANTHROPIC_BASE_URL, OPENAI_BASE_URL and GOOGLE_GENERATIVE_AI_BASE_URL point
  * a provider at a proxy. A compat: model is any OpenAI-compatible endpoint
  * (Chat Completions at router_base_url), with its key read from the
- * environment variable router_api_key_env names, or no key.
+ * environment variable router_api_key_env names, or no key; router_extra_body
+ * adds fields to its request body.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 export const PICKER_PROVIDERS = ['anthropic', 'openai', 'google', 'compat'] as const;
 export type PickerProvider = (typeof PICKER_PROVIDERS)[number];
-export interface PickerRequest { model: string; system: string; message: string; maxTokens: number; signal: AbortSignal; baseUrl?: string }
+export interface PickerRequest { model: string; system: string; message: string; maxTokens: number; signal: AbortSignal; baseUrl?: string; extraBody?: Record<string, unknown> }
 /** A reply; usage.input counts only uncached input tokens, and usage is null when the provider reported no token counts. */
 export interface PickerReply { text: string; refused: boolean; usage: { input: number; cacheRead: number; cacheWrite: number; output: number } | null }
 
@@ -108,7 +109,7 @@ export async function pickerChat(req: PickerRequest, key: string, env: NodeJS.Pr
   }
   if (provider === 'compat') {
     const j = await post(`${(req.baseUrl ?? '').replace(/\/+$/, '')}/chat/completions`, key ? { authorization: `Bearer ${key}` } : {}, {
-      model, max_tokens: req.maxTokens, temperature: 0, messages: [{ role: 'system', content: req.system }, { role: 'user', content: req.message }],
+      temperature: 0, ...req.extraBody, model, max_tokens: req.maxTokens, messages: [{ role: 'system', content: req.system }, { role: 'user', content: req.message }],
     }, req.signal);
     const u = j.usage;
     const cached = u?.prompt_tokens_details?.cached_tokens ?? 0;
