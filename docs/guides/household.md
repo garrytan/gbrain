@@ -80,8 +80,9 @@ longer need (`gbrain household mark <slug> archive`).
 ## household_reclassify
 
 A write changed a subject page's `household_role` in a way that would leave household records readable by people the
-table no longer allows, so nothing was written. Two cases: a remote agent tried to turn a child into another role (only
-the owner can), or the subject was narrowed (made a child, or its role removed) while records about it were still shared
+table no longer allows, so nothing was written. Two cases: a remote agent tried to take a child out of `household_role: child`
+(changing or removing it), or to give a subject a role that would widen records already kept to adults because of it
+(only the owner can), or the subject was narrowed (made a child, or its role removed) while records about it were still shared
 with helpers. Run `gbrain household replace --about <slug> --role <role>` on the brain host: it narrows those records
 to adults (`audience: adults` on each) and then sets the role. To remove a role, run it without `--role`, then edit
 the page again.

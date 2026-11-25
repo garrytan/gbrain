@@ -92,9 +92,18 @@ export function roleClass(raw: unknown): SubjectClass {
 /** Live household records about `slug` in `sourceId` whose stored readers include the helpers or family chats groups. */
 export async function sharedRecordsAbout(engine: Pick<BrainEngine, 'listPages'>, sourceId: string, slug: string): Promise<string[]> {
   const groups = [HOUSEHOLD_GROUPS.helpers, HOUSEHOLD_GROUPS.chats].map(g => 'group:' + g);
+  return (await recordsAbout(engine, sourceId, slug)).filter(row => Array.isArray(row.frontmatter?.readable_by)
+    && (row.frontmatter.readable_by as unknown[]).some(r => groups.includes(String(r)))).map(row => row.slug);
+}
+
+async function recordsAbout(engine: Pick<BrainEngine, 'listPages'>, sourceId: string, slug: string) {
   const rows = await engine.listPages({ type: HOUSEHOLD_TYPE as never, sourceId, sort: 'slug', limit: 100_000 });
-  return rows.filter(row => aboutOf(row.frontmatter?.about).includes(slug)
-    && Array.isArray(row.frontmatter?.readable_by) && (row.frontmatter.readable_by as unknown[]).some(r => groups.includes(String(r)))).map(row => row.slug);
+  return rows.filter(row => aboutOf(row.frontmatter?.about).includes(slug));
+}
+
+/** A record kept to adults only by its subjects (not by its kind or its own audience), which a not_child subject would widen. */
+function heldBySubject(fm: Record<string, unknown> | null | undefined): boolean {
+  return fm?.household_audience === 'adults' && fm.audience !== 'adults' && PLACEMENT[fm.kind as HouseholdKind]?.audience === 'shared';
 }
 
 function aboutOf(value: unknown): string[] {
@@ -148,15 +157,16 @@ export async function householdWriteAdmission(engine: Pick<BrainEngine, 'execute
   parsed: { type: string; frontmatter: Record<string, unknown>; tags: readonly string[] },
   previous: { slug?: string; type?: string | null; frontmatter?: Record<string, unknown> | null; deleted_at?: unknown } | null | undefined, remote: boolean): Promise<void> {
   if (parsed.type === HOUSEHOLD_TYPE) { await placeHouseholdFrontmatter(engine, sourceId, parsed.frontmatter, parsed.tags, previous); return; }
-  if (!previous || previous.deleted_at || previous.frontmatter?.household_role === undefined) return;
-  const from = roleClass(previous.frontmatter.household_role);
+  const live = previous && !previous.deleted_at ? previous : null;
+  if (live?.frontmatter?.household_role === undefined && parsed.frontmatter.household_role === undefined) return;
+  const from = roleClass(live?.frontmatter?.household_role);
   const to = roleClass(parsed.frontmatter.household_role);
   const role = String(parsed.frontmatter.household_role ?? '').trim().toLowerCase();
   const fix = (argv: string[], why: string) => ({ fix: { argv, consent: [], actor: 'host_admin' as const, requires_exclusive: false, why } });
-  if (remote && from === 'child' && to === 'not_child') {
-    throw opError('household_reclassify', slug + ' is a child in this household and only the brain\'s owner can change that, so nothing was written.',
-      'Keep household_role: child on the page, or ask the brain\'s owner to run gbrain household replace --about ' + slug + ' --role ' + role + '.',
-      fix(['gbrain', 'household', 'replace', '--about', slug, '--role', role], 'Changes the role on the brain host and re-places the records about it.'));
+  if (remote && from !== to && (from === 'child' || (to === 'not_child' && (await recordsAbout(engine, sourceId, slug)).some(row => heldBySubject(row.frontmatter))))) {
+    throw opError('household_reclassify', 'Only the brain\'s owner can take ' + slug + ' out of household_role child, or give it a role that would widen household records already kept to adults because of it, so nothing was written.',
+      'Keep the page\'s household_role as it is, or ask the brain\'s owner to run gbrain household replace --about ' + slug + (to === 'unclassified' ? '' : ' --role ' + role) + '.',
+      fix(['gbrain', 'household', 'replace', '--about', slug, ...(to === 'unclassified' ? [] : ['--role', role])], 'Changes the role on the brain host and re-places the records about it.'));
   }
   if (from !== 'not_child' || to === 'not_child') return;
   const shared = await sharedRecordsAbout(engine, sourceId, slug);
