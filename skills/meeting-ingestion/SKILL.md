@@ -301,8 +301,9 @@ filed from an earlier version of the page. That is why the template drafts
 the meeting page with `facts_backstop: false` (the receipt reads
 `facts_backstop: { skipped: "opted_out" }`): nothing is extracted while the
 page is still being corrected. When the verification checklist passes, save
-the page once more without that line; the receipt then reads
-`facts_backstop: { queued: true }`. Everything on the verified page is
+the page once more without that line, unless the user declined extraction
+(then keep it on this save too); the receipt then reads
+`facts_backstop: { queued: true }`, or `{ skipped: "opted_out" }` when they declined. Everything on the verified page is
 extraction input, so an uncertain note kept under the downgrade protocol
 becomes a lower-confidence fact. The transcript sidecar keeps its
 `facts_backstop: false`. Don't call `extract_facts` for the meeting or its

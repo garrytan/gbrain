@@ -98,7 +98,11 @@ None of them puts a Google token in the agent's hands:
    user's own Google OAuth client for live sync of mail threads, calendar
    events and contacts. Setup imports right away and keeps syncing, so before
    running it ask which account and which services (`--services`) to connect,
-   and say that it starts syncing at once. Tokens live in gbrain's local credential vault (a 0600
+   and say that it starts syncing at once. In the same breath, say that synced
+   mail and calendar text is sent to the configured model provider for
+   open-loop and atom extraction (both on by default), and how to turn that off:
+   `gbrain config set loops.extraction_enabled false` and
+   `gbrain config set cycle.extract_atoms.connector_pages false`. Tokens live in gbrain's local credential vault (a 0600
    file, redacted in listings); the agent only runs CLI commands. See
    `docs/guides/google-connect.md` and `skills/google-loops/SKILL.md`.
 2. **Google Takeout (offline).** A [Google Takeout](https://takeout.google.com)
