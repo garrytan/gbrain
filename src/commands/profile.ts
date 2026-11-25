@@ -20,7 +20,7 @@ Guide: docs/guides/profile.md`;
 
 interface Flags { json: boolean; budget?: number }
 
-function parse(args: string[]): Flags | { help: true } | { error: string } {
+export function parseProfileArgs(args: string[]): Flags | { help: true } | { error: string } {
   const flags: Flags = { json: false };
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
@@ -54,7 +54,7 @@ export function renderProfile(block: ProfileBlock): string {
 }
 
 export async function runProfile(engine: BrainEngine | null, args: string[]): Promise<void> {
-  const flags = parse(args);
+  const flags = parseProfileArgs(args);
   if ('help' in flags) { console.log(HELP); return; }
   if ('error' in flags) { console.error(flags.error + '\n\n' + HELP); process.exit(2); }
   const params: Record<string, unknown> = { profile: true, ...(flags.budget !== undefined ? { budget_tokens: flags.budget } : {}) };

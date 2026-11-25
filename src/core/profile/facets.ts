@@ -37,10 +37,3 @@ export function facetOfMetric(metric: string | null | undefined): string | null 
   return canonicalFacet(metric!.trim().slice(PROFILE_METRIC_PREFIX.length));
 }
 
-/** A metric label as the facts fence keeps it: a valid profile metric as written, an invalid one as no metric. */
-export function profileMetricLabel(raw: string): { profile: false } | { profile: true; metric: string | null } {
-  if (!isProfileMetricLabel(raw)) return { profile: false };
-  const facet = facetOfMetric(raw);
-  return { profile: true, metric: facet ? PROFILE_METRIC_PREFIX + facet : null };
-}
-

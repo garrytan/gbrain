@@ -35,7 +35,8 @@ A `remember` without `facet` works exactly as before: it is never moved onto you
 The facet becomes the fact's typed claim metric, `profile.<facet>`. That prefix is reserved: a hand-written
 `claim_metric: "profile.diet"` is refused (`profile_metric_reserved`, with the same call using `facet` as the fix),
 an unknown facet is refused with the list (`profile_facet_unknown`), and facts extracted from conversations never get
-one. Profile facts are not metrics, so `find_trajectory`, `gbrain eval trajectory` and the founder scorecard skip
+one. A facts-fence row keeps a `profile.<facet>` metric only on the profile's own page or the holding page `remember`
+would put it on; anywhere else the row is kept without a metric. Profile facts are not metrics, so `find_trajectory`, `gbrain eval trajectory` and the founder scorecard skip
 them.
 
 ## Who a profile belongs to
@@ -46,7 +47,7 @@ them.
   credential bound to the owner (`gbrain access owner set`) read and write it.
 - A member credential's profile is its own member page, `memory/members/<member>`. A member never writes a profile
   fact onto another page and never reads the owner's profile: `remember` with `facet` and another `entity` is refused
-  (`profile_entity_not_self`).
+  (`profile_entity_not_self`), and a member CLI under `GBRAIN_ENFORCED_MEMBER` cannot pass `facet` at all.
 - A credential that is neither the owner nor a member (one asserting an audience, or an unbound credential on a brain
   with members) has no profile: its read returns `entity: null` and its facet writes are refused.
 

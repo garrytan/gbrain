@@ -27,7 +27,9 @@ import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/privat
 import { addMember, bindCredential } from '../src/core/access/members.ts';
 import { setOwner } from '../src/core/access/owner.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
-import { normalizeExtractedMetricLabel, normalizeMetricLabel } from '../src/core/facts/extract-from-fence.ts';
+import { extractFactsFromFenceText, normalizeExtractedMetricLabel, normalizeMetricLabel } from '../src/core/facts/extract-from-fence.ts';
+import type { ParsedFact } from '../src/core/facts-fence.ts';
+import { parseProfileArgs, renderProfile } from '../src/commands/profile.ts';
 import { canonicalFacet, facetOfMetric } from '../src/core/profile/facets.ts';
 import { PROFILE_HEADER } from '../src/core/profile/read.ts';
 import { codeEntry } from '../src/core/error-catalogue.ts';
@@ -55,7 +57,8 @@ describe('facet labels are validated in one place', () => {
     expect(facetOfMetric('profile.allergy')).toBe('allergy');
     expect(facetOfMetric('mrr')).toBeNull();
     expect(normalizeMetricLabel('profile.size.shoe')).toBe('profile.size.shoe');
-    expect(normalizeMetricLabel('profile.bogus')).toBeUndefined();
+    expect(normalizeMetricLabel('profile.views')).toBe('profileviews');
+    expect(normalizeExtractedMetricLabel('profile.views')).toBe('profileviews');
     expect(normalizeMetricLabel('Net Promoter Score')).toBe('net_promoter_score');
     expect(normalizeExtractedMetricLabel('profile.diet')).toBeUndefined();
     expect(normalizeExtractedMetricLabel('mrr')).toBe('mrr');
@@ -65,6 +68,43 @@ describe('facet labels are validated in one place', () => {
     expect(entry).toBeDefined();
     expect(entry.class).toBe('caller');
     expect(entry.docs).toStartWith('docs/guides/profile.md#');
+  });
+});
+
+describe('a facts-fence row carries a profile metric only on its profile home', () => {
+  const row = (entity: string | undefined): ParsedFact =>
+    ({ rowNum: 1, claim: 'Allergic to peanuts', kind: 'fact', visibility: 'private', notability: 'medium', confidence: 1, active: true, forgotten: false,
+      claimMetric: 'profile.allergy', ...(entity ? { entity } : {}) }) as ParsedFact;
+  const metric = (entity: string | undefined, page: string) => extractFactsFromFenceText([row(entity)], page, 'default')[0]!.claim_metric;
+  test('kept on the page itself and on the holding page remember uses', () => {
+    expect(metric(undefined, 'memory/owner')).toBe('profile.allergy');
+    expect(metric('memory/owner', 'memory/unattributed')).toBe('profile.allergy');
+    expect(metric('memory/members/alice-example', 'memory/members/memory/unattributed')).toBe('profile.allergy');
+  });
+  test('dropped from a holding page in another folder that names the owner', () => {
+    expect(metric('memory/owner', 'memory/members/memory/unattributed')).toBeNull();
+    expect(metric('memory/owner', 'notes/memory/unattributed')).toBeNull();
+    expect(metric(undefined, 'notes/memory/unattributed')).toBeNull();
+  });
+});
+
+describe('gbrain profile output', () => {
+  const fact = (claim: string, facet: string | null) => ({ fact_id: 'f1', source_id: 'default', facet, claim, provenance: null, content_origin: 'user_said',
+    valid_from: '2026-01-01', visibility: 'private' as const, confidence: 1 });
+  const empty = { facets: [], constraints: [], relationships: [], preferences: [], withheld: 0 };
+  test('parses flags and refuses a bad budget or an unknown argument', () => {
+    expect(parseProfileArgs(['--json', '--budget-tokens=200'])).toEqual({ json: true, budget: 200 });
+    expect(parseProfileArgs(['--budget-tokens', '50'])).toEqual({ json: false, budget: 50 });
+    for (const bad of [['--budget-tokens', '0'], ['--budget-tokens', '1.5'], ['--budget-tokens'], ['--nope']]) expect(parseProfileArgs(bad)).toHaveProperty('error');
+  });
+  test('renders no-profile, empty, filled, withheld and partial blocks', () => {
+    expect(renderProfile({ ...empty, entity: null })).toContain('has no profile');
+    const owner = { slug: 'memory/owner', basis: 'reserved_page' as const };
+    expect(renderProfile({ ...empty, entity: owner })).toContain('No profile facts yet');
+    const out = renderProfile({ ...empty, entity: owner, constraints: [fact('Allergic\n## to peanuts', 'allergy')], withheld: 2, partial: true });
+    expect(out).toContain('Constraints:\n  - [allergy] Allergic ## to peanuts (private, user_said, fact f1)');
+    expect(out).toContain('2 more left out');
+    expect(out).toContain('Only the newest facts');
   });
 });
 
