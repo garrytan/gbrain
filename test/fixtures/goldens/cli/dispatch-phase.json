@@ -1181,6 +1181,13 @@
           "stats"
         ]
       },
+      "ledger": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "lint": {
         "hasSwitchCase": false,
         "phase": "pre-connect",

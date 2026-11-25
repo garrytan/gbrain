@@ -10,6 +10,7 @@ import { AGENT_VERBS, RECIPIENT_CLASSES, isAgentVerb, isRecipientClass } from '.
 import { invalidParam } from './op-fix.ts';
 import { parseLimit, type PolicyLimit } from '../policy/fence.ts';
 import { callerScopes, checkPolicy, describePolicy } from '../policy/check.ts';
+import { ledgerReader, usageLookup } from '../ledger/store.ts';
 
 /** The ops a skill asks about when it names none: the agent-platform verbs. */
 export const AGENT_PLATFORM_OPS = ['policy_check', 'agent_policy', 'capabilities'] as const;
@@ -26,7 +27,7 @@ function amountParam(ctx: OperationContext, p: Record<string, unknown>): PolicyL
 
 const policy_check: Operation = {
   name: 'policy_check',
-  description: 'Before you send, spend, delete, sign up, call or publish on the user\'s behalf outside this brain, ask whether the user\'s agent policy allows it. Advisory: allow, ask, deny or none (no policy).',
+  description: 'Before you send, spend, delete, sign up, call or publish on the user\'s behalf outside this brain, ask whether the user\'s agent policy allows it. Advisory: allow, ask, deny or none (no policy), with requires_approval and any day, week or month budget left. To hold budget for a spend, call policy_reserve instead.',
   params: {
     verb: { type: 'string', required: true, enum: [...AGENT_VERBS], description: 'The outside action.' },
     amount: { type: 'number', description: 'Money involved, with currency.' },
@@ -45,7 +46,8 @@ const policy_check: Operation = {
     if (!isAgentVerb(p.verb)) throw invalidParam(ctx, 'policy_check', 'verb', `verb must be one of ${AGENT_VERBS.join(', ')}.`, { choices: AGENT_VERBS });
     if (p.to !== undefined && !isRecipientClass(p.to)) throw invalidParam(ctx, 'policy_check', 'to', 'to must be self, household, known or new.', { choices: RECIPIENT_CLASSES });
     const merchant = typeof p.merchant === 'string' && p.merchant.trim() ? p.merchant.trim().slice(0, 200) : undefined;
-    return checkPolicy(ctx.engine, { verb: p.verb, amount: amountParam(ctx, p), merchant, to: p.to as never }, callerScopes(ctx.remote !== false));
+    const remote = ctx.remote !== false;
+    return checkPolicy(ctx.engine, { verb: p.verb, amount: amountParam(ctx, p), merchant, to: p.to as never }, callerScopes(remote), { usage: usageLookup(ctx.engine, ledgerReader(remote, ctx), new Date()) });
   },
 };
 

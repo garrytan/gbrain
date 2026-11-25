@@ -45,10 +45,10 @@ const V2_PARAMS: Record<string, readonly string[]> = { memory_recall: [...V1_PAR
 /** The deferred operations v1 published, frozen: GST-1158 F9 deferred more from v2 on. */
 const V1_DEFERRED_OPS: readonly string[] = ['capture', 'extract_facts', 'list_write_conflicts', 'takes_add', 'takes_resolve', 'takes_supersede', 'takes_update'];
 /**
- * Operations deferred after v5 was published (GBRA-504 promote_guest_note, nightly learning keep and undo, GST-3825 household_add and household_mark). A published version never changes, so v1 to
+ * Operations deferred after v5 was published (GBRA-504 promote_guest_note, nightly learning keep and undo, GST-3825 household_add and household_mark, GST-3824 log_action and policy_reserve). A published version never changes, so v1 to
  * v5 leave them out and every later version lists them; an attested call is refused them either way.
  */
-const DEFERRED_AFTER_V5: ReadonlySet<string> = new Set(['promote_guest_note', 'learned_keep', 'learned_undo', 'household_add', 'household_mark']);
+const DEFERRED_AFTER_V5: ReadonlySet<string> = new Set(['promote_guest_note', 'learned_keep', 'learned_undo', 'household_add', 'household_mark', 'log_action', 'policy_reserve']);
 /** Tool text v3 to v5 published before it changed, frozen: GST-3256 added phone numbers to whois; GST-3338 said query's autocut is off by default; GST-3786 said get_page grep's a|b matches either side. */
 export const V5_TOOL_TEXT: Record<string, { description?: string; params: Record<string, string> }> = {
   whois: {
