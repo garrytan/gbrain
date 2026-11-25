@@ -144,6 +144,7 @@ impl Store {
     /// subject when the withdrawal admits it (`worldOnly`: a world fact or a private one on
     /// `memberPage`; `remoteFloor`: the floor admits it). An extraction outcome marker answers too.
     pub fn lock_fact_for_withdrawal(&self, q: &WithdrawalClaimQuery) -> Result<Option<Value>> {
+        self.assert_serialized_transactions("lockFactForWithdrawal")?;
         const OP: &str = "lockFactForWithdrawal";
         no_nul(OP, &[("sourceId", &q.source_id)])?;
         if let Some(page) = &q.member_page {

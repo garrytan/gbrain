@@ -4,8 +4,8 @@
 //!
 //! The candidate read admits an effect with no worktree, or one on a worktree this host owns
 //! (`worktree_rows.rs`) whose refresh fence is clear and that no effect or write recovers
-//! (`write_claim_terms.rs`, `effect_claimable_on_worktree`). The store runs one write at a time, so the window's `FOR UPDATE SKIP LOCKED` and
-//! the candidates' `FOR SHARE OF p` have nothing to skip or wait for.
+//! (`write_claim_terms.rs`, `effect_claimable_on_worktree`). The window's `FOR UPDATE SKIP LOCKED` and the candidates' `FOR SHARE OF p` are skipped while explicit transactions
+//! hold the writer (`serialized_transactions`; `lockNoopEmbeddingWindow` asserts it).
 
 use super::all_requests;
 use super::effect_worker::{effect_id, pg_uuid, without};
@@ -229,6 +229,7 @@ impl Store {
 
     /// `lockNoopEmbeddingWindow({ from, limit })`: `{ newest, rows }`.
     pub fn lock_noop_embedding_window(&self, from: &str, limit: i64) -> Result<Value> {
+        self.assert_serialized_transactions("lockNoopEmbeddingWindow")?;
         lock_noop_embedding_window_in(&*self.read()?, from, limit)
     }
 

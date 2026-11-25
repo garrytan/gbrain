@@ -113,7 +113,7 @@ describe('connector entry paths on an impossible read', () => {
     const statements: string[] = [];
     const adminState = (brain: unknown) => async () => JSON.stringify({ brain, sources: null, worktrees: null, embedding_leases: null });
     const freshBrain = { id: 'rust-brain-id', enabled: false, mode_epoch: 1, skill_bundles_enabled: false, writer_protocol_floor: 1 };
-    const rust = { kind: 'rust', readWriterAdminState: adminState(freshBrain),
+    const rust = { kind: 'rust', capabilities: new Set(['serialized_transactions']), readWriterAdminState: adminState(freshBrain),
       readManagedModeRows: async () => [{ enabled: false }],
       executeRaw: async (text: string) => { statements.push(text); throw new Error('a Rust brain has no SQL'); } } as unknown as SqlEngine;
     const expected = { ...sql, brain_id: 'rust-brain-id' };

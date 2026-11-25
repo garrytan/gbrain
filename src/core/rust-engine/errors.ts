@@ -54,6 +54,20 @@ export function requireTransactions(engine: object, step: string, why: string): 
 }
 
 /**
+ * The assertion of a TypeScript lock skip on the Rust engine (docs/designs/rust-engine/multi-user-server.md, audit row A1,
+ * groundwork G1). On this path PGLite and Postgres take a lock (a row lock, an advisory lock, a page-key lock) and the Rust
+ * path takes none: while explicit transactions hold the writer (`serialized_transactions`), no other commit lands inside
+ * the caller's transaction. An engine that does not report the capability refuses `engine_capability_missing` naming
+ * `site`, before the skip, so it never races. A target with no capability set refuses too (fail closed): only Rust code
+ * paths call this, and a Rust engine and its transaction clones always carry the set. Every call site is counted by
+ * test/serialized-transactions-guard.test.ts.
+ */
+export function assertSerializedTransactions(engine: object, site: string): void {
+  const caps = (engine as { capabilities?: ReadonlySet<Capability> }).capabilities;
+  if (!caps || !caps.has('serialized_transactions')) throw capabilityMissing('serialized_transactions', site);
+}
+
+/**
  * The named refusal of a managed-checkout persistence step (worktree admission, the refresh barrier, an import hold,
  * grouped admission, the background owner check) on an engine without `managed_persistence`. The
  * step calls it before it reads or locks anything, so nothing of the write ran. PGLite, Postgres and transaction

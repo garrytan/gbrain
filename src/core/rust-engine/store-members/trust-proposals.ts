@@ -10,7 +10,7 @@
  */
 import type { BrainEngine } from '../../engine.ts';
 import { normalizeTrustProposal, trustProposalLimit, type PendingContradictionRow } from '../../engine-sql/trust-proposals.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { assertStoreSerializedTransactions, storeCall, type StoreMember } from './common.ts';
 import { storeVisibility } from './fact-visibility.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
@@ -27,7 +27,9 @@ export const insertTrustProposal: Member<'insertTrustProposal'> = async (brain, 
   return { id: Number(out.id), created: out.created };
 };
 
-export const getTrustProposal: Member<'getTrustProposal'> = async (brain, id) => {
+/** `lock` skips the FOR UPDATE while explicit transactions hold the writer (`serialized_transactions`); it asserts that. */
+export const getTrustProposal: Member<'getTrustProposal'> = async (brain, id, lock) => {
+  if (lock) assertStoreSerializedTransactions(brain, 'getTrustProposal');
   const row: Record<string, unknown> | null = await storeCall({ member: 'getTrustProposal' }, () => brain.getTrustProposal(id));
   return row ? normalizeTrustProposal(row) : null;
 };

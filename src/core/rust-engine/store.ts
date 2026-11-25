@@ -47,6 +47,8 @@ export async function seedEmbeddingIdentity(engine: object): Promise<{ model: st
 /** The napi `Brain`: every method returns a promise and rejects with an `Error` carrying a `code`. */
 export interface StoreBrain {
   readonly isOpen: boolean;
+  /** The store's `serialized_transactions` capability: true while explicit transactions hold the writer; null while closed. */
+  readonly serializedTransactions: boolean | null;
   open(path: string, options?: StoreOpenOptions): Promise<unknown>;
   close(): Promise<void>;
   // The store's methods are documented in rust/README.md; each member module types what it sends and reads.

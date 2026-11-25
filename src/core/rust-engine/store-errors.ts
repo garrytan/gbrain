@@ -13,9 +13,11 @@
  *  - A `constraint_violation` that names a unique index of the facts table (`idx_facts_ontology_stint_dedup`,
  *    `idx_facts_fence_key`) is the error Postgres and PGLite raise for it: SQLSTATE `23505` in `code`, the same message,
  *    and the constraint, table and schema names. The Postgres `detail` line (the key values) is not reproduced.
+ *  - `engine_capability_missing` is a guarantee the store cannot give (today `serialized_transactions`, which every lock
+ *    skip asserts): `capabilityMissing` with the capability and site the store's message names.
  *  - Every other code stays on the original error, which already carries it (`invalid_slug`, `empty_overwrite`, ...).
  */
-import type { Capability } from '../engine-capabilities.ts';
+import { ENGINE_CAPABILITIES, type Capability } from '../engine-capabilities.ts';
 import { opError } from '../ops/contract.ts';
 import { originAlreadyClaimed } from '../persistence/origin-guard.ts';
 import { PageMissingError } from '../engine-errors.ts';
@@ -73,12 +75,22 @@ export function mapStoreError(error: unknown, ctx: StoreErrorContext): unknown {
       return new PageSnapshotAmbiguousError();
     case 'constraint_violation':
       return factsUniqueViolation(error);
+    case 'engine_capability_missing':
+      // A guarantee the store cannot give (Store::assert_serialized_transactions): `<capability>: <site> ...`.
+      return storeCapabilityRefusal(ctx.member, detail);
     case 'unmodeled_input':
       // An input the store does not read as Postgres does: refused by name, before anything is written.
       return refusalFor(ctx.member, detail);
     default:
       return error;
   }
+}
+
+/** The store's own capability refusal: the capability and site its message names, under `member`. */
+function storeCapabilityRefusal(member: string, message: string): Error {
+  const named = /^([a-z_]+): (\S+)/.exec(message);
+  const capability = named && (ENGINE_CAPABILITIES as readonly string[]).includes(named[1]!) ? named[1] as Capability : 'serialized_transactions';
+  return capabilityMissing(capability, named ? `${member} (${named[2]})` : member);
 }
 
 /** `engine_capability_missing` for `member`, under the capability the member table gives it, naming what was refused. */

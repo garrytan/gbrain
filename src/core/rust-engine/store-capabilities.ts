@@ -38,6 +38,15 @@ export const CAPABILITY_REQUIRES: Partial<Record<Capability, readonly Capability
   managed_persistence: ['persistence_journal', 'transactions'],
 };
 
+/**
+ * Guarantees of the store's transaction model, reported with the capabilities above. `serialized_transactions`: an
+ * explicit transaction holds the store's whole writer (`Kv::begin_write_exclusive`), in both store modes, so the lock
+ * skips that assert it take today's branch. The store answers the same through `brain.serializedTransactions`
+ * (`Store::serialized_transactions`); test/serialized-transactions.test.ts pins the two together, so a store mode that stops
+ * serializing explicit transactions must drop it here too.
+ */
+export const STORE_GUARANTEES: readonly Capability[] = ['serialized_transactions'];
+
 export function servedCapabilities(): EngineCapabilities {
   const refusing = new Set<string>(Object.keys(HELD_FOR_CALLERS));
   const present = new Set<string>();
@@ -50,5 +59,6 @@ export function servedCapabilities(): EngineCapabilities {
   for (const [cap, needs] of Object.entries(CAPABILITY_REQUIRES) as [Capability, readonly Capability[]][]) {
     if (needs.some((need) => !served.has(need))) served.delete(cap);
   }
+  for (const guarantee of STORE_GUARANTEES) served.add(guarantee);
   return served;
 }

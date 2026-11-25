@@ -131,6 +131,7 @@ Rules for every method:
 | `brain.close()` | `undefined`; a closed handle is a no-op | `disconnect` |
 | `brain.info()` | the same record as `open` | `readBrainIdentity` (`persistence/identity.ts`) |
 | `brain.isOpen` | `boolean` (a getter, not a promise) | none |
+| `brain.serializedTransactions` | `boolean`, or `null` while closed (a getter, not a promise): the store's `serialized_transactions` capability, true while explicit transactions hold the writer | none |
 
 `options` is `{ schemaVersion?: number, createdBy?: string, concurrentWrites?: boolean,
 embeddingModel?: string, embeddingDimensions?: number, chunkStrategy?: string,
@@ -206,6 +207,7 @@ Errors from the addon are real `Error` objects with a `code`:
 | `invalid_state` | The call does not fit the handle's state (`open` on an open handle), or `finishWrite` met a request that already ended. |
 | `read_only_transaction` | A write inside a read-only transaction (Postgres SQLSTATE `25006`). Nothing was written. |
 | `unmodeled_input` | An input written in a form the store does not read the way Postgres does (a resolved date with a zone followed by an offset such as `PST+1`, or a date after 2037 in a zone with daylight saving time). Nothing was written; the engine refuses the call as `engine_capability_missing`, naming the member and the input. |
+| `engine_capability_missing` | The store cannot give a guarantee the call relies on; today only `serialized_transactions`, which every lock skip asserts (`Store::assert_serialized_transactions`). The message is `serialized_transactions: <site> ...`. Nothing was read or written; the engine refuses the call as `engine_capability_missing` with that capability. |
 | `invalid_argument` | A malformed argument. |
 | `invalid_slug` | The slug failed `validateSlug`. |
 | `source_not_found` | A page write named a source that does not exist. |

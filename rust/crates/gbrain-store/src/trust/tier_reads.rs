@@ -542,9 +542,10 @@ impl Store {
     }
 
     /// `lockLivePagesByKey`: the named pages that are live (not soft-deleted), in key order, a key
-    /// named twice answering twice as the SQL join does. The SQL engines hold each row `FOR SHARE` until the transaction ends; a
-    /// store transaction is serialized already, so no other write can delete one in between.
+    /// named twice answering twice as the SQL join does. The SQL engines hold each row `FOR SHARE` until the transaction ends; the
+    /// lock is skipped while explicit transactions hold the writer (`serialized_transactions`), which this fn asserts.
     pub fn lock_live_pages_by_key(&self, refs: &[PageKeyRef]) -> Result<Vec<Value>> {
+        self.assert_serialized_transactions("lockLivePagesByKey")?;
         let read = self.read()?;
         let mut out = Vec::new();
         for PageKeyRef { source_id, slug } in refs {

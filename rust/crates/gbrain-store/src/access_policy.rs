@@ -3,9 +3,9 @@
 //!
 //! Every write runs in one `Store::write`, so its `FlaggingWriter` sets the member-access flag on a
 //! rule or pending put, and a refused write leaves nothing of itself behind. The row locks policy.ts
-//! takes (`lockAccessPolicy`: the source row, then its policy row) are the store write transaction:
-//! `RustEngine.transaction` holds the writer gate until it commits or rolls back, so
-//! `lockAccessPolicy` only takes that gate for one statement.
+//! takes (`lockAccessPolicy`: the source row, then its policy row) are skipped while explicit transactions hold the writer
+//! (`serialized_transactions`; `lockAccessPolicy` asserts it): `RustEngine.transaction` holds the writer gate until it
+//! commits or rolls back, so `lockAccessPolicy` only takes that gate for one statement.
 //!
 //! Revisions keep the table's two keys: a revision number a source already has, or an operation id
 //! any source already recorded, refuses `constraint_violation`, so two rule changes against one
@@ -453,9 +453,10 @@ impl Store {
         })
     }
 
-    /// `lockAccessPolicy(sourceId)`: one statement under the writer gate. Inside
-    /// `RustEngine.transaction` the gate is held until the transaction ends, which is the lock.
+    /// `lockAccessPolicy(sourceId)`: one statement under the writer gate. The lock outlives the statement only while
+    /// explicit transactions hold the writer (`serialized_transactions`), which this fn asserts.
     pub fn lock_access_policy(&self, _source_id: &str) -> Result<()> {
+        self.assert_serialized_transactions("lockAccessPolicy")?;
         self.write(|_| Ok(()))
     }
 

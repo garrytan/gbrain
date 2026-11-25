@@ -1655,6 +1655,7 @@ pub(crate) fn select_claimable_write_in(
 impl Store {
     /// `lockPersistenceCounters(keys)`: the counter rows, created at zero when missing.
     pub fn lock_persistence_counters(&self, names: &[String]) -> Result<Vec<Value>> {
+        self.assert_serialized_transactions("lockPersistenceCounters")?;
         self.write(|tx| lock_persistence_counters_in(tx, names))
     }
 

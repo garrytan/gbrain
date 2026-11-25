@@ -4,14 +4,15 @@
  * (lockEmbeddingSwitch) and one batch of the vector install (installChunkEmbeddings).
  *
  * The store has one vector column, `embedding`, and no image vectors: another column or an image row is refused, not
- * written to the wrong space. The store write is exclusive, so the two locks need no row lock: the claim check is the
- * read, and the switch lock does nothing (the switch cannot flip inside the write that installs).
+ * written to the wrong space. The row locks are skipped while explicit transactions hold the writer
+ * (`serialized_transactions`; `lockEmbeddingSwitch` asserts it): the claim check is the read, and the switch lock takes
+ * nothing.
  *
  * What each member answers and why: rust/docs/store/embeddings.md ("Embedding install").
  */
 import type { ResolvedColumn } from '../../types.ts';
 import type { EmbeddingCompletionOpts, EmbeddingCompletionRow } from '../../engine-sql/embedding-install.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { assertStoreSerializedTransactions, refuseMember, storeCall, type StoreMember } from './common.ts';
 
 /** The page's visible chunks and which already carry a vector from their current text under the model. */
 export const readEmbeddingCompletion: StoreMember<[pageId: number, opts: EmbeddingCompletionOpts], EmbeddingCompletionRow[]> =
@@ -26,8 +27,10 @@ export const lockEffectClaimRow: StoreMember<[effectId: number | string], { stat
   (brain, effectId) => storeCall({ member: 'lockEffectClaimRow' }, () => brain.lockEffectClaimRow(Number(effectId))) as
     Promise<{ state: string; execution_token: string | null } | null>;
 
-/** Nothing to lock: the store write that installs is exclusive. */
-export const lockEmbeddingSwitch: StoreMember<[], void> = async () => {};
+/** The FOR SHARE is skipped while explicit transactions hold the writer (`serialized_transactions`); it asserts that. */
+export const lockEmbeddingSwitch: StoreMember<[], void> = async brain => {
+  assertStoreSerializedTransactions(brain, 'lockEmbeddingSwitch');
+};
 
 interface BatchRow { id: number; chunk_text: string; embedding: string | null; image: string | null; model: string | null; input_hash: string }
 

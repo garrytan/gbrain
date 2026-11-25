@@ -154,6 +154,14 @@ impl Brain {
             .is_some()
     }
 
+    /// The open store's `serialized_transactions` capability (`Store::serialized_transactions`):
+    /// true while explicit transactions hold the writer; `null` while no brain is open. Read
+    /// synchronously by the lock skips of the TypeScript store members.
+    #[napi(getter)]
+    pub fn serialized_transactions(&self) -> Option<bool> {
+        self.current().map(|store| store.serialized_transactions())
+    }
+
     /// `open(path, options?)`: opens the brain in directory `path` (created when empty) and
     /// resolves `{ brain_id, format_version, schema_version, created }`.
     ///

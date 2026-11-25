@@ -5,8 +5,9 @@
 //! - `ensure` inserts `{}` only when the key has no row. `write` updates only a row that exists.
 //! - `lock` returns the row's value and the store clock as `YYYY-MM-DDTHH:MM:SS.mmmZ` (`now()`, which a bound store
 //!   reads as the transaction's start), or `None` for a missing row. PGLite's `FOR UPDATE` keeps other writers off
-//!   the row for the rest of the transaction; the store admits one write transaction at a time, so a transaction
-//!   that has read the row already holds it and there is nothing more to take (as `lockSourceRow` does).
+//!   the row for the rest of the transaction; the row lock is skipped while explicit transactions hold the writer
+//!   (`serialized_transactions`; `lockDreamMapConfigRow` asserts it), so a transaction that has read the row already
+//!   holds it and there is nothing more to take (as `lockSourceRow` does).
 //! - `recordDreamBreakerReset` rewrites the map at `resetsKey`: it keeps the other entries whose value starts with
 //!   four digits and `-` and is newer than 24 hours, reads a value that is not a JSON object (or not JSON) as `{}`,
 //!   and sets `baseKey` to now plus one millisecond. The map is written in jsonb text form.
@@ -110,6 +111,7 @@ impl Store {
 
     /// `lockDreamMapConfigRow`: `{ value, now }`, or `None` when the row is missing.
     pub fn lock_dream_map_config_row(&self, args: &DreamMapKeyArgs) -> Result<Option<Value>> {
+        self.assert_serialized_transactions("lockDreamMapConfigRow")?;
         row_key("lockDreamMapConfigRow", &args.key)?;
         let now = self.env.now_micros();
         let read = self.read()?;

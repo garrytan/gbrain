@@ -6,14 +6,14 @@
  *
  * The supersede proposal rows carry millisecond ISO strings (`Date#toISOString`, as the SQL side does); the store sends
  * microseconds. The review proposal rows carry Postgres `timestamptz::text`, which the store sends already.
- * `getDecideProposal` and `getDecideReviewProposal` ignore `lock`: the store has one writer, so a read inside a
- * transaction cannot be overtaken.
+ * `getDecideProposal` and `getDecideReviewProposal` skip the FOR UPDATE a `lock` asks for while explicit transactions
+ * hold the writer (`serialized_transactions`); with `lock` set they assert it.
  */
 import type {
   NewProposal, NewReviewProposal, ProposalListing, ProposalReviewCounts, ProposalRow, ProposalStatus, ReviewProposalRecord,
   ReviewQueueOp, ReviewQueueRow, SweepDeferredOp,
 } from '../../engine-sql/decide-proposals.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { assertStoreSerializedTransactions, storeCall, type StoreMember } from './common.ts';
 
 /** A microsecond ISO timestamp from the store as the millisecond ISO string PGLite and Postgres members return. */
 const millis = (value: unknown): string | null => (typeof value === 'string' ? new Date(value).toISOString() : null);
@@ -25,7 +25,8 @@ function proposalRow<R extends ProposalRow>(row: R): R {
 export const insertDecideProposal: StoreMember<[p: NewProposal], number | null> = (brain, p) =>
   storeCall({ member: 'insertDecideProposal' }, () => brain.insertDecideProposal(p));
 
-export const getDecideProposal: StoreMember<[id: number, lock?: boolean], ProposalRow | null> = async (brain, id) => {
+export const getDecideProposal: StoreMember<[id: number, lock?: boolean], ProposalRow | null> = async (brain, id, lock) => {
+  if (lock) assertStoreSerializedTransactions(brain, 'getDecideProposal');
   const row: ProposalRow | null = await storeCall({ member: 'getDecideProposal' }, () => brain.getDecideProposal(id));
   return row ? proposalRow(row) : null;
 };
@@ -54,8 +55,10 @@ export const insertDecideReviewProposal: StoreMember<[p: NewReviewProposal], num
 export const listDecideReviewProposals: StoreMember<[status: string], ReviewProposalRecord[]> = (brain, status) =>
   storeCall({ member: 'listDecideReviewProposals' }, () => brain.listDecideReviewProposals(status));
 
-export const getDecideReviewProposal: StoreMember<[id: number, lock?: boolean], ReviewProposalRecord | null> = (brain, id) =>
-  storeCall({ member: 'getDecideReviewProposal' }, () => brain.getDecideReviewProposal(id));
+export const getDecideReviewProposal: StoreMember<[id: number, lock?: boolean], ReviewProposalRecord | null> = async (brain, id, lock) => {
+  if (lock) assertStoreSerializedTransactions(brain, 'getDecideReviewProposal');
+  return storeCall({ member: 'getDecideReviewProposal' }, () => brain.getDecideReviewProposal(id));
+};
 
 export const transitionDecideReviewProposal: StoreMember<[id: number, from: string, to: string], boolean> = (brain, id, from, to) =>
   storeCall({ member: 'transitionDecideReviewProposal' }, () => brain.transitionDecideReviewProposal({ id, from, to }));

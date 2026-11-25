@@ -22,7 +22,7 @@ import type { AccessMemberInsert, AccessMemberKind, AccessMemberLinkRow, Credent
 import { withDates } from '../store-codec.ts';
 import { storeErrorCode } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { assertStoreSerializedTransactions, storeCall, type StoreMember } from './common.ts';
 
 const PG_CODE: ReadonlyArray<[RegExp, string]> = [[/_(pkey|key)$/, '23505'], [/_check$/, '23514'], [/_fkey$/, '23503']];
 
@@ -170,11 +170,12 @@ export const readAudiencePrincipals: StoreMember<[memberIds: readonly string[], 
   };
 
 /**
- * The binding columns of the token or client, or undefined when no row has the id. The row lock has nothing to wait
- * for: the store runs one write at a time.
+ * The binding columns of the token or client, or undefined when no row has the id. The row lock is skipped while
+ * explicit transactions hold the writer (`serialized_transactions`); the member asserts it.
  */
 export const readCredentialBindingForUpdate: StoreMember<[target: CredentialTarget, opts: { readsUnscoped: boolean }], CredentialBindingRow | undefined> =
   async (brain, target, opts) => {
+    assertStoreSerializedTransactions(brain, 'readCredentialBindingForUpdate');
     const row = await storeCall({ member: 'readCredentialBindingForUpdate' }, () =>
       brain.readCredentialBinding(target.kind, target.id, opts.readsUnscoped)) as CredentialBindingRow | null;
     return row ? withDates(row, ['reads_unscoped']) as CredentialBindingRow : undefined;
@@ -199,8 +200,9 @@ export const readAccessTokenAttest: StoreMember<[id: string], AccessTokenAttestR
   return row ? withDates(row, ['revoked_at']) as AccessTokenAttestRow : null;
 };
 
-/** An OAuth client's attest row, deleted or not, or null. The row lock has nothing to wait for: the store runs one write at a time. */
-export const readOauthClientAttest: StoreMember<[clientId: string, opts?: { lock?: boolean }], OauthClientAttestRow | null> = async (brain, clientId) => {
+/** An OAuth client's attest row, deleted or not, or null. `lock` skips the row lock while explicit transactions hold the writer (`serialized_transactions`); it asserts that. */
+export const readOauthClientAttest: StoreMember<[clientId: string, opts?: { lock?: boolean }], OauthClientAttestRow | null> = async (brain, clientId, opts) => {
+  if (opts?.lock) assertStoreSerializedTransactions(brain, 'readOauthClientAttest');
   const row = await storeCall({ member: 'readOauthClientAttest' }, () => brain.readCredentialAttest('client', clientId)) as OauthClientAttestRow | null;
   return row ? withDates(row, ['deleted_at']) as OauthClientAttestRow : null;
 };

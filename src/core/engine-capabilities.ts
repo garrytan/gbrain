@@ -11,7 +11,7 @@
  * and minion handler needs. Anything not listed needs `raw_sql`, so an engine
  * without raw SQL refuses it until its row says otherwise. On PGLite and
  * Postgres every lookup passes: both report every capability a row can name,
- * except the engine-specific `single_owner` and `postgres_admin`.
+ * except the engine-specific `single_owner` and `postgres_admin` and the Rust-only `serialized_transactions`.
  */
 
 export const ENGINE_CAPABILITIES = [
@@ -32,6 +32,14 @@ export const ENGINE_CAPABILITIES = [
   'single_owner',
   /** Postgres server administration: pooler, roles, server settings and statistics. */
   'postgres_admin',
+  /**
+   * Explicit transactions hold the store's whole writer, so no other commit lands inside one. A lock a SQL engine takes
+   * (a row lock, an advisory lock, `SKIP LOCKED`, a page-key lock) is skipped on an engine that reports it, and every such
+   * skip asserts it first (rust-engine/errors.ts `assertSerializedTransactions`, store-members/common.ts
+   * `assertStoreSerializedTransactions`, the store's `Store::assert_serialized_transactions`), so an engine mode without it
+   * refuses instead of racing. Only the Rust engine reports it (docs/designs/rust-engine/multi-user-server.md, G1).
+   */
+  'serialized_transactions',
 
   // Typed BrainEngine storage domains.
   'schema',
@@ -82,7 +90,10 @@ const ENGINE_ONLY: Readonly<Record<SqlEngineKind, readonly Capability[]>> = {
   postgres: ['postgres_admin'],
 };
 
-const ENGINE_SPECIFIC = new Set<Capability>(Object.values(ENGINE_ONLY).flat());
+/** Capabilities neither PGLite nor Postgres reports: they take their locks instead. */
+const NO_SQL_ENGINE: readonly Capability[] = ['serialized_transactions'];
+
+const ENGINE_SPECIFIC = new Set<Capability>([...Object.values(ENGINE_ONLY).flat(), ...NO_SQL_ENGINE]);
 
 /**
  * The full capability set PGLite or Postgres reports: every shared capability

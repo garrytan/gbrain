@@ -16,7 +16,7 @@ import {
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 
-const shared = ENGINE_CAPABILITIES.filter(c => c !== 'single_owner' && c !== 'postgres_admin');
+const shared = ENGINE_CAPABILITIES.filter(c => c !== 'single_owner' && c !== 'postgres_admin' && c !== 'serialized_transactions');
 
 describe('engine capabilities', () => {
   // Never connected: capabilities are known without opening a database.
@@ -47,6 +47,11 @@ describe('engine capabilities', () => {
     expect(hasCapability(engine, 'postgres_admin')).toBe(true);
     expect(hasCapability(engine, 'single_owner')).toBe(false);
     expect(engine.capabilities.size).toBe(shared.length + 1);
+  });
+
+  test('neither SQL engine reports serialized_transactions: they take the locks a Rust brain skips', () => {
+    expect(hasCapability(pglite, 'serialized_transactions')).toBe(false);
+    expect(hasCapability(postgres, 'serialized_transactions')).toBe(false);
   });
 
   test('a transaction clone reports the same set as its engine', () => {

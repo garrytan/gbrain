@@ -26,7 +26,7 @@ import { withDates } from '../store-codec.ts';
 import {
   privateProvenanceFilterUnderPolicy, ownerReadPolicyFragment,
 } from '../../search/private-visibility.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { assertStoreSerializedTransactions, refuseMember, storeCall, type StoreMember } from './common.ts';
 import { storePrivacyPolicy } from './private-provenance.ts';
 import { storeRemoteFloor } from './remote-floor.ts';
 
@@ -80,6 +80,7 @@ export const readRemoteForgetTier: Member<'readRemoteForgetTier'> = (brain, spec
 };
 
 export const readForgetTarget: Member<'readForgetTarget'> = async (brain, spec) => {
+  if (spec.lock) assertStoreSerializedTransactions(brain, 'readForgetTarget');
   const member = 'readForgetTarget';
   requireInteger(member, spec.id);
   const own = spec.ownPage;
@@ -122,8 +123,9 @@ export const ownerReachesFact: Member<'ownerReachesFact'> = (brain, spec) => {
   return storeCall({ member }, () => brain.ownerReachesFact({ id: spec.id, sourceId: spec.sourceId }));
 };
 
-/** `lock` takes no row lock: the store serializes its writes, so the withdrawal's own Store::write is the lock. */
-export const readFactWithdrawalClaim: Member<'readFactWithdrawalClaim'> = (brain, spec) => {
+/** `lock` skips the row lock while explicit transactions hold the writer (`serialized_transactions`); it asserts that. */
+export const readFactWithdrawalClaim: Member<'readFactWithdrawalClaim'> = async (brain, spec) => {
+  if (spec.lock) assertStoreSerializedTransactions(brain, 'readFactWithdrawalClaim');
   const member = 'readFactWithdrawalClaim';
   requireInteger(member, spec.id);
   const remoteFloor = spec.remoteFloor ? storeRemoteFloor(member) : null;

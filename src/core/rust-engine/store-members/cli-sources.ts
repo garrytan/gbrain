@@ -18,7 +18,7 @@
 import type { SourceRecordRow } from '../../engine.ts';
 import type { DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PageIdentityRow, PageSizeRow, PlainSyncSourceRow, ReasonPurgeTombstone, RenameIdentityRow, SourceCheckRow, SourcesNotReadableOpts, SourceDeleteImpact, SourceDeleteResult, SourceInsert, SourcePathPageRow, SourceRoutingRow, SourceUpstreamObservation, SourcePathRow } from '../../engine-sql/sources.ts';
 import type { StoreBrain } from '../store.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { assertStoreSerializedTransactions, storeCall, type StoreMember } from './common.ts';
 import { refusing } from './constraint-errors.ts';
 import { isOwnerOnlySourceConfig } from '../../access/owner-only.ts';
 import { remoteReadFloorSql } from '../../search/private-visibility.ts';
@@ -83,8 +83,10 @@ export const readFirstSourceId: StoreMember<[], string | null> = async (brain) =
   return ids.includes('default') ? 'default' : ids.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))[0] ?? null;
 };
 
-/** Takes no lock: the store's source records do not lock rows (like lockSourceRow). */
-export const lockAllSourceRows: StoreMember<[mode: 'update' | 'share'], void> = async () => {};
+/** Takes no row lock while explicit transactions hold the writer (`serialized_transactions`); it asserts that. */
+export const lockAllSourceRows: StoreMember<[mode: 'update' | 'share'], void> = async brain => {
+  assertStoreSerializedTransactions(brain, 'lockAllSourceRows');
+};
 
 async function sourceCheckRow(brain: StoreBrain, member: string, sourceId: string): Promise<SourceCheckRow | null> {
   const rows = (await storeCall({ member, sourceId }, () => brain.listSourceRecords())) as SourceRecordRow[];
@@ -95,16 +97,20 @@ async function sourceCheckRow(brain: StoreBrain, member: string, sourceId: strin
 export const readSourceRow: StoreMember<[sourceId: string], SourceCheckRow | null> = (brain, sourceId) =>
   sourceCheckRow(brain, 'readSourceRow', sourceId);
 
-/** The store serializes its writes and the Rust engine runs no SQL transaction, so there is no row lock to take. */
-export const lockSourceRow: StoreMember<[sourceId: string], SourceCheckRow | null> = (brain, sourceId) =>
-  sourceCheckRow(brain, 'lockSourceRow', sourceId);
+/** Takes no row lock while explicit transactions hold the writer (`serialized_transactions`); it asserts that. */
+export const lockSourceRow: StoreMember<[sourceId: string], SourceCheckRow | null> = async (brain, sourceId) => {
+  assertStoreSerializedTransactions(brain, 'lockSourceRow');
+  return sourceCheckRow(brain, 'lockSourceRow', sourceId);
+};
 
 /**
  * The publication transaction's exclusive source lock (`lockSourceForUpdate`, engine-sql/sources.ts). It takes no row lock and
- * calls no store function: the store admits one write transaction at a time, as `lockSourceRow` notes, so the publication
- * transaction already holds the source against every other writer.
+ * calls no store function: the lock is skipped while explicit transactions hold the writer (`serialized_transactions`),
+ * and the member asserts that, as `lockSourceRow` does.
  */
-export const lockSourceForUpdate: StoreMember<[sourceId: string], void> = async () => {};
+export const lockSourceForUpdate: StoreMember<[sourceId: string], void> = async brain => {
+  assertStoreSerializedTransactions(brain, 'lockSourceForUpdate');
+};
 
 export const countSourcePages: StoreMember<[sourceId: string, opts?: { includeDeleted?: boolean }], number> = async (brain, sourceId, opts) =>
   Number(await storeCall({ member: 'countSourcePages', sourceId }, () => brain.countSourcePages(sourceId, opts?.includeDeleted === true)));

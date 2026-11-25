@@ -12,7 +12,7 @@ import type {
 import type { ContentReceiptBinding, OwnedContentRow } from '../../engine-sql/owned-content.ts';
 import { CHECKPOINT_MOVED_MESSAGE } from '../../persistence/sync-slug-mode.ts';
 import type { StoreBrain } from '../store.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { assertStoreSerializedTransactions, storeCall, type StoreMember } from './common.ts';
 
 /** A SQL boolean: true, false or unknown (null). */
 type Bool3 = boolean | null;
@@ -329,6 +329,8 @@ export const applyManagedSyncRetireLimits: StoreMember<[], void> = async () => {
 /** Removes the pass row's `slug_mode` obligation while the refusal still holds and no pass holds the drain lease. */
 export const retireManagedSyncPassSlugMode: StoreMember<[target: ManagedSyncRetireTarget, lockId: string], boolean> =
   async (brain, target, lockId) => {
+    // The cycle lock row's FOR UPDATE is skipped while explicit transactions hold the writer (`serialized_transactions`).
+    assertStoreSerializedTransactions(brain, 'retireManagedSyncPassSlugMode');
     const member = 'retireManagedSyncPassSlugMode';
     const locks: Array<{ ttl_expires_at: string }> =
       await storeCall({ member }, () => brain.readCycleLocks({ by: 'id', lockId }));
@@ -444,6 +446,8 @@ export const listOwnedContentRows: StoreMember<[sourceIds: readonly string[] | n
 /** No writer binding exists, so no content receipt is bound. */
 export const readContentReceiptBinding: StoreMember<[sourceId: string], ContentReceiptBinding | null> = async () => null;
 
-/** The config value; the store serializes its writes, so there is no row lock to take. */
-export const readConfigForUpdate: StoreMember<[key: string], string | null> = (brain, key) =>
-  storeCall({ member: 'readConfigForUpdate' }, () => brain.getConfig(key));
+/** The config value; the row lock is skipped while explicit transactions hold the writer (`serialized_transactions`); the member asserts it. */
+export const readConfigForUpdate: StoreMember<[key: string], string | null> = async (brain, key) => {
+  assertStoreSerializedTransactions(brain, 'readConfigForUpdate');
+  return storeCall({ member: 'readConfigForUpdate' }, () => brain.getConfig(key));
+};

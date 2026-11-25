@@ -6,12 +6,12 @@
  * `readSourceCheckoutPath`, `listPageStates` and `countSegmentedVersionsOfPage`, plus `readPendingWriteReceipt` (the
  * persistence request store) and `lockSourceShared`.
  *
- * `lockSourceShared` resolves at once: the store's writer gate already serializes every write against the source row,
- * so a shared row lock holds nothing more. `readFactsFtsIndexState` and `swapFactsFtsIndex` stay refused: they read
+ * `lockSourceShared` skips the shared row lock while explicit transactions hold the writer (`serialized_transactions`),
+ * and asserts it. `readFactsFtsIndexState` and `swapFactsFtsIndex` stay refused: they read
  * and rebuild a Postgres catalog index (`pg_index`, `pg_get_indexdef`), which a store brain does not have.
  */
 import type { BrainEngine } from '../../engine.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { assertStoreSerializedTransactions, storeCall, type StoreMember } from './common.ts';
 import { readWriteRequest } from './persistence.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
@@ -82,5 +82,7 @@ export const readPendingWriteReceipt: Member<'readPendingWriteReceipt'> = async 
   return row && PENDING_STATES.has(row.state) ? { request_id: String(row.request_id), state: row.state } : null;
 };
 
-/** See the module note: the writer gate already serializes writes against the source. */
-export const lockSourceShared: Member<'lockSourceShared'> = async () => undefined;
+/** See the module note: the shared row lock is skipped while explicit transactions hold the writer (`serialized_transactions`). */
+export const lockSourceShared: Member<'lockSourceShared'> = async brain => {
+  assertStoreSerializedTransactions(brain, 'lockSourceShared');
+};

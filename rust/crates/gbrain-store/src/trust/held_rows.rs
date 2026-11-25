@@ -6,7 +6,8 @@
 //! Both carry their stamped tier in their record: a timeline entry in its `E` record
 //! (`timeline/tier.rs`), a take in its `A 0x01` record (`trust/row_trust.rs`, stamped by
 //! `takes::store_take`). A record stored before the tier reads `unknown`, the column default.
-//! The store runs one write at a time, so the SQL's `FOR UPDATE` lock has nothing to add here.
+//! The SQL's `FOR UPDATE` lock is skipped while explicit transactions hold the writer (`serialized_transactions`);
+//! `listHeldRows` and `listGuardedTakeRows` assert it.
 //!
 //! `listGuardedTakeRows` is the batch form for takes (trust/fence-guard.ts `guardTakeRows`): over
 //! the pages of a reconcile batch, the stored takes the batch would delete, overwrite or deactivate
@@ -85,6 +86,7 @@ impl Store {
         q: &GuardedTakeRowsQuery,
         ctx: &FenceContext,
     ) -> Result<Vec<Value>> {
+        self.assert_serialized_transactions("listGuardedTakeRows")?;
         for n in &q.incoming {
             no_nul(
                 "listGuardedTakeRows",
@@ -155,6 +157,7 @@ impl Store {
     /// no tier ranks 0) or, with `pending`, held by an open `forget` contest. `trust_tier` is the
     /// stored tier (`unknown` when none is stored).
     pub fn list_held_rows(&self, q: &HeldRowsQuery, ctx: &FenceContext) -> Result<Vec<Value>> {
+        self.assert_serialized_transactions("listHeldRows")?;
         no_nul("listHeldRows", &[("table", q.table.as_str())])?;
         if let Some(writer) = &q.writer {
             no_nul("listHeldRows", &[("writer", writer.as_str())])?;

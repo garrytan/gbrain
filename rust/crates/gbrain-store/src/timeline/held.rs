@@ -6,7 +6,8 @@
 //! ([`FenceContext`], `unknown` when undeclared).
 //!
 //! Entries are keyed by page, so the read walks every `E` record once, as `readRowTrustRows`
-//! does. `FOR UPDATE` needs nothing: the store has one writer. Rows come back by id.
+//! does. `FOR UPDATE` is skipped while explicit
+//! transactions hold the writer (`serialized_transactions`; `listHeldTimelineRows` asserts it). Rows come back by id.
 
 use super::TimelineRecord;
 use crate::Store;
@@ -39,6 +40,7 @@ impl Store {
         spec: &HeldTimelineSpec,
         ctx: &FenceContext,
     ) -> Result<Vec<Value>> {
+        self.assert_serialized_transactions("listHeldTimelineRows")?;
         let wanted: BTreeSet<u64> = spec
             .ids
             .iter()

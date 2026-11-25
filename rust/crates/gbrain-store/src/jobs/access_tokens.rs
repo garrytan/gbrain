@@ -435,9 +435,10 @@ impl Store {
 
     /// `lockActiveAccessTokens(target)` (`SELECT * ... AND revoked_at IS NULL FOR UPDATE`, the row `auth rescope` edits):
     /// the whole rows of the tokens not revoked whose id is `id` (a UUID, so any case) or whose name is exactly `name`,
-    /// oldest first and a tie by id. The store runs one write at a time, so no lock is needed. Exactly one of the two
+    /// oldest first and a tie by id. The lock is skipped while explicit transactions hold the writer (`serialized_transactions`), which this fn asserts. Exactly one of the two
     /// names the target; anything else is `invalid_argument`. The rows leave out `token_hash`, as every store row does.
     pub fn lock_active_access_tokens(&self, id: Option<&str>, name: Option<&str>) -> Result<Value> {
+        self.assert_serialized_transactions("lockActiveAccessTokens")?;
         let read = self.read()?;
         let mut rows: Vec<TokenRecord> = match (id, name) {
             (Some(id), None) => {
@@ -609,8 +610,10 @@ impl Store {
 
     /// `lockLegacyAccessTokens()` (`SELECT * ... WHERE revoked_at IS NULL AND source_grant IS NULL ORDER BY created_at, id
     /// FOR UPDATE`): the whole rows of the active tokens still on the legacy shape, oldest first and a tie by id. The store
-    /// runs one write at a time, so no lock is needed. The rows leave out `token_hash`.
+    /// The lock is skipped while explicit transactions hold the writer (`serialized_transactions`), which this fn asserts.
+    /// The rows leave out `token_hash`.
     pub fn lock_legacy_access_tokens(&self) -> Result<Value> {
+        self.assert_serialized_transactions("lockLegacyAccessTokens")?;
         let read = self.read()?;
         let mut rows: Vec<TokenRecord> = all_tokens(&*read)?
             .into_iter()

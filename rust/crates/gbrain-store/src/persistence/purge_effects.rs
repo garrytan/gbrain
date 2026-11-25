@@ -118,6 +118,7 @@ impl Store {
         &self,
         a: &GitEffectsCarryingArgs,
     ) -> Result<Vec<PurgeGitEffectRow>> {
+        self.assert_serialized_transactions("listGitEffectsCarryingReason")?;
         let read = self.read()?;
         let needles = [&a.needle, &a.escaped, &a.folded_json];
         Ok(git_effects_of(&*read, &a.source_id)?
@@ -137,6 +138,7 @@ impl Store {
         &self,
         a: &PageGitEffectsArgs,
     ) -> Result<Vec<PurgeGitEffectRow>> {
+        self.assert_serialized_transactions("listPageGitEffectsForStrip")?;
         let read = self.read()?;
         Ok(git_effects_of(&*read, &a.source_id)?
             .into_iter()

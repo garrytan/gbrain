@@ -1,16 +1,20 @@
 /**
  * The client grant members of engine-sql/client-grants.ts, served by the store (rust/docs/store/oauth-clients.md): the
  * grant write with its legacy job rewrite and audit row, the audit reads, and the whole-table reads the grant checks make.
- * The store keeps no `oauth_tokens` and no `oauth_codes`, so no client holds an authorization. The row-level lock a SQL
- * engine takes is a no-op here: the store has one writer at a time and each write runs to its end.
+ * The store keeps no `oauth_tokens` and no `oauth_codes`, so no client holds an authorization. The row-level locks a SQL
+ * engine takes (`readOauthClientForUpdate`, `lockOauthClientName`, `readSourceArchivedForShare`) are skipped while
+ * explicit transactions hold the writer (`serialized_transactions`); each of those members asserts it.
  */
 import type { OauthClientGrantPersist, OauthGrantAuditRow } from '../../engine-sql/client-grants.ts';
 import { normalizeOauthClientRow, type OauthClientRow } from '../../engine-sql/oauth-clients.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { assertStoreSerializedTransactions, storeCall, type StoreMember } from './common.ts';
 import { refusing } from './constraint-errors.ts';
 import { readOauthClient } from './jobs-oauth-clients.ts';
 
-export const readOauthClientForUpdate: StoreMember<[clientId: string], OauthClientRow | null> = (brain, clientId) => readOauthClient(brain, clientId);
+export const readOauthClientForUpdate: StoreMember<[clientId: string], OauthClientRow | null> = async (brain, clientId) => {
+  assertStoreSerializedTransactions(brain, 'readOauthClientForUpdate');
+  return readOauthClient(brain, clientId);
+};
 
 export const readLiveOauthClients: StoreMember<[], OauthClientRow[]> = async brain => {
   const raw = await storeCall({ member: 'readLiveOauthClients' }, () => brain.readLiveOauthClients()) as Record<string, unknown>[];
@@ -32,14 +36,17 @@ export const listAccessTokenRows: StoreMember<[], Record<string, unknown>[]> = a
     revoked_at: asDate(r.revoked_at), reads_unscoped: asDate(r.reads_unscoped) }));
 };
 
-/** The store has one writer at a time, so a same-name registration already serializes (see the module comment). */
-export const lockOauthClientName: StoreMember<[lockKey: string], void> = async () => {};
+/** The same-name advisory lock is skipped while explicit transactions hold the writer (`serialized_transactions`); it asserts that. */
+export const lockOauthClientName: StoreMember<[lockKey: string], void> = async brain => {
+  assertStoreSerializedTransactions(brain, 'lockOauthClientName');
+};
 
 /** Whether the client holds an OAuth token or an authorization code (expired ones count), as the SQL engines' EXISTS pair. */
 export const oauthClientHoldsAuthorization: StoreMember<[clientId: string], boolean> = async (brain, clientId) =>
   (await storeCall({ member: 'oauthClientHoldsAuthorization' }, () => brain.oauthClientHoldsAuthorization(clientId))) === true;
 
 export const readSourceArchivedForShare: StoreMember<[id: string], boolean | null> = async (brain, id) => {
+  assertStoreSerializedTransactions(brain, 'readSourceArchivedForShare');
   const state = await storeCall({ member: 'readSourceArchivedForShare', sourceId: id }, () => brain.readSourceGrantState(id)) as { archived: boolean } | null;
   return state ? state.archived === true : null;
 };

@@ -15,8 +15,8 @@
  * publication was activated (shared-skills/rust-publication.ts); before that it refuses as the SQL engines'
  * publication guard does: `code` 42501, `writer_not_quiesced`. The token secret is the
  * one the store seeded at brain creation (minted once for an older brain); the serving epoch is
- * readSharedSkillServingEpoch's (access-grants.ts). The store runs one write transaction at a time, so the FOR UPDATE
- * locks the SQL engines take change nothing here.
+ * readSharedSkillServingEpoch's (access-grants.ts). The FOR UPDATE and FOR SHARE locks the SQL engines take are skipped
+ * while explicit transactions hold the writer (`serialized_transactions`); each member that stands for one asserts it.
  */
 import type {
   SharedSkillBatchAcknowledge, SharedSkillBatchIssue, SharedSkillBatchIssued, SharedSkillBatchRow, SharedSkillCatalogIdentity,
@@ -28,7 +28,7 @@ import type { SharedMemberMigrationRow } from '../../engine-sql/shared-skill-mem
 import { withDates } from '../store-codec.ts';
 import { storeErrorCode } from '../store-errors.ts';
 import { readSharedSkillServingEpoch } from './access-grants.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { assertStoreSerializedTransactions, storeCall, type StoreMember } from './common.ts';
 import { readPersistenceBrainId } from './persistence-identity.ts';
 
 const PG_CODE: ReadonlyArray<[RegExp, string]> = [[/_(pkey|key)$/, '23505'], [/_fkey$/, '23503'], [/^shared_skill_delivery_lease$/, '23503']];
@@ -72,10 +72,12 @@ export const listSharedSkillCatalogHeads: StoreMember<[q: SharedSkillHeadQuery],
   return rows.map(row => withDates(row, HEAD_DATES));
 };
 
-/** The store runs one write at a time, so `lock` takes no row lock. */
+/** `lock` skips the row lock while explicit transactions hold the writer (`serialized_transactions`); it asserts that. */
 export const readSharedSkillPolicyRow: StoreMember<[sourceId: string, incarnation: string, lock: boolean], { epoch: string; policy: unknown } | undefined> =
-  async (brain, sourceId, incarnation) =>
-    (await call('readSharedSkillPolicyRow', () => brain.readSharedSkillPolicyRow(sourceId, incarnation)) as { epoch: string; policy: unknown } | null) ?? undefined;
+  async (brain, sourceId, incarnation, lock) => {
+    if (lock) assertStoreSerializedTransactions(brain, 'readSharedSkillPolicyRow');
+    return (await call('readSharedSkillPolicyRow', () => brain.readSharedSkillPolicyRow(sourceId, incarnation)) as { epoch: string; policy: unknown } | null) ?? undefined;
+  };
 
 export const writeSharedSkillPolicy: StoreMember<[write: SharedSkillPolicyWrite], void> = async (brain, write) => {
   await call('writeSharedSkillPolicy', () => brain.writeSharedSkillPolicy({ ...write, policy: write.policy ?? null }));
@@ -97,10 +99,15 @@ export const listSharedSkillFollowSources: StoreMember<[allowed: string[] | null
   async (brain, allowed, sourceIds) =>
     await call('listSharedSkillFollowSources', () => brain.listSharedSkillFollowSources(allowed, sourceIds)) as Array<{ id: string; incarnation: string }>;
 
-/** The brain id; the store runs one write at a time, so there is no row lock to take. */
-export const lockSharedSkillBrainId: StoreMember<[], string | undefined> = async (brain) => (await readPersistenceBrainId(brain)) ?? undefined;
+/** The brain id; the row lock is skipped while explicit transactions hold the writer (`serialized_transactions`); the member asserts it. */
+export const lockSharedSkillBrainId: StoreMember<[], string | undefined> = async brain => {
+  assertStoreSerializedTransactions(brain, 'lockSharedSkillBrainId');
+  return (await readPersistenceBrainId(brain)) ?? undefined;
+};
 
+/** The SQL read is always FOR UPDATE; the lock is skipped while explicit transactions hold the writer (`serialized_transactions`). */
 export const readSharedSkillMember: StoreMember<[by: SharedSkillMemberLookup], SharedSkillMemberRow | undefined> = async (brain, by) => {
+  assertStoreSerializedTransactions(brain, 'readSharedSkillMember');
   const row = await call('readSharedSkillMember', () => brain.readSharedSkillMember(by)) as SharedSkillMemberRow | null;
   return row ? withDates(row, MEMBER_DATES) : undefined;
 };
@@ -126,8 +133,10 @@ export const issueSharedSkillDeliveryBatch: StoreMember<[spec: SharedSkillBatchI
   return { ...out, batch: withDates(out.batch, BATCH_DATES) };
 };
 
+/** As readSharedSkillMember: the SQL read is always FOR UPDATE. */
 export const readSharedSkillDeliveryBatch: StoreMember<[token: string, installationId: string, epoch: number], SharedSkillBatchRow | undefined> =
   async (brain, token, installationId, epoch) => {
+    assertStoreSerializedTransactions(brain, 'readSharedSkillDeliveryBatch');
     const row = await call('readSharedSkillDeliveryBatch', () => brain.readSharedSkillDeliveryBatch(token, installationId, epoch)) as SharedSkillBatchRow | null;
     return row ? withDates(row, BATCH_DATES) : undefined;
   };

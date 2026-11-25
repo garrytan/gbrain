@@ -8,7 +8,7 @@
  * cast error.
  */
 import type { BrainEngine } from '../../engine.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { assertStoreSerializedTransactions, refuseMember, storeCall, type StoreMember } from './common.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
@@ -116,8 +116,9 @@ export const countEmbeddedFactsAmong: Member<'countEmbeddedFactsAmong'> = (brain
   return storeCall({ member: 'countEmbeddedFactsAmong' }, () => brain.countEmbeddedFactsAmong({ sourceId, ids }));
 };
 
-/** A store write runs alone, so there is no row to lock until the transaction ends. */
-export const lockPageById: Member<'lockPageById'> = async (_brain, pageId) => {
+/** The row lock is skipped while explicit transactions hold the writer (`serialized_transactions`); the member asserts it. */
+export const lockPageById: Member<'lockPageById'> = async (brain, pageId) => {
+  assertStoreSerializedTransactions(brain, 'lockPageById');
   if (!Number.isInteger(pageId)) refuseMember('lockPageById', 'a page id that is not an integer');
 };
 

@@ -113,6 +113,16 @@ pub trait Kv: Send + Sync {
     fn begin_write_exclusive(&self) -> Result<Box<dyn KvWrite>> {
         self.begin_write()
     }
+    /// The `serialized_transactions` capability: true while a write begun with
+    /// [`Kv::begin_write_exclusive`] holds the whole writer until it ends, so an explicit
+    /// transaction never overlaps another commit. Every lock skip relies on it
+    /// ([`crate::Store::assert_serialized_transactions`]). True for the single-writer stores and
+    /// for the concurrent store, whose exclusive write still stops every other commit. A store
+    /// whose explicit transactions stop holding the whole writer (optimistic explicit
+    /// transactions, a second commit pipeline) must answer false.
+    fn serializes_explicit_transactions(&self) -> bool {
+        true
+    }
     /// The commit sequence of the latest commit (0 on a database nothing was committed to).
     fn version(&self) -> Result<u64>;
     /// What a store with concurrent writers did since open; `None` for a single-writer store.

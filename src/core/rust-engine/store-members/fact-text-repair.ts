@@ -10,7 +10,7 @@
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Helpers stay unexported.
  */
 import type { BrainEngine } from '../../engine.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { assertStoreSerializedTransactions, refuseMember, storeCall, type StoreMember } from './common.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
@@ -46,7 +46,9 @@ export const listUnexpiredFactIds: Member<'listUnexpiredFactIds'> = async (brain
   return rows.map(Number);
 };
 
-export const lockFactRows: Member<'lockFactRows'> = async (_brain, _sourceId, ids) => {
+export const lockFactRows: Member<'lockFactRows'> = async (brain, _sourceId, ids) => {
+  // The FOR UPDATE is skipped while explicit transactions hold the writer (`serialized_transactions`).
+  assertStoreSerializedTransactions(brain, 'lockFactRows');
   wholeIds('lockFactRows', ids);
 };
 

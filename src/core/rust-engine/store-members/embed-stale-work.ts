@@ -10,7 +10,7 @@
  */
 import type { BrainEngine } from '../../engine.ts';
 import type { ContentDriftChunkResult } from '../../engine-sql/embed-stale-work.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { assertStoreSerializedTransactions, refuseMember, storeCall, type StoreMember } from './common.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
@@ -46,8 +46,11 @@ export const hasEmbeddingSignatureDrift: Member<'hasEmbeddingSignatureDrift'> = 
   return (await storeCall({ member: 'hasEmbeddingSignatureDrift' }, () => brain.hasEmbeddingSignatureDrift({ ...opts }))) === true;
 };
 
-export const lockContentDriftState: Member<'lockContentDriftState'> = async (brain, key, initial) =>
-  storeCall({ member: 'lockContentDriftState' }, () => brain.ensureConfig(key, initial));
+export const lockContentDriftState: Member<'lockContentDriftState'> = async (brain, key, initial) => {
+  // The FOR UPDATE after the insert is skipped while explicit transactions hold the writer (`serialized_transactions`).
+  assertStoreSerializedTransactions(brain, 'lockContentDriftState');
+  return storeCall({ member: 'lockContentDriftState' }, () => brain.ensureConfig(key, initial));
+};
 
 export const invalidateContentDriftChunks: Member<'invalidateContentDriftChunks'> = async (brain, window) => {
   storeColumn('invalidateContentDriftChunks', window.column);

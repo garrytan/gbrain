@@ -702,6 +702,7 @@ impl Store {
     /// <id>`). The keys are held by the innermost savepoint (or the transaction) until it ends.
     /// Returns every key the transaction holds, sorted.
     pub fn hold_page_keys(&self, keys: &[PageKeyHint], hinted: bool) -> Result<Vec<HeldKey>> {
+        self.assert_serialized_transactions("holdPageKeys")?;
         let tx = self.transaction()?;
         let _exclusive = lock(&tx.exclusive);
         let mut state = lock(&tx.state);

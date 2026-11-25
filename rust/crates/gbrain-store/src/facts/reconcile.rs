@@ -11,7 +11,7 @@
 //! engine-sql/facts-purge.ts). A hard page delete removes the page's row (`remove_page_rows`, the
 //! `ON DELETE CASCADE` from `pages`); a soft delete keeps it, as Postgres does. The extract_facts
 //! phase settles `complete` inside its write transaction after `lockReconcileRevision` confirms the
-//! page is still at the revision it read; on Rust that transaction's single writer is the lock.
+//! page is still at the revision it read; on Rust the lock is skipped while explicit transactions hold the writer (`serialized_transactions`).
 
 use super::source_rows;
 use crate::Store;
@@ -233,9 +233,11 @@ impl Store {
     /// Postgres takes a `FOR SHARE` row lock for the rest of the transaction. On a store bound to a
     /// transaction the read runs inside it and sees its own writes; that transaction holds the
     /// store's single writer from begin to commit, so no other writer changes the page before the
-    /// caller's settle commits, which is the lock. A plain read is not blocked, as on Postgres.
+    /// caller's settle commits. The lock is skipped while explicit transactions hold the writer
+    /// (`serialized_transactions`), which this fn asserts. A plain read is not blocked, as on Postgres.
     /// Outside a transaction it reads the last commit, as Postgres' lock ends with its statement.
     pub fn lock_reconcile_revision(&self, a: &LockArgs) -> Result<bool> {
+        self.assert_serialized_transactions("lockReconcileRevision")?;
         no_nul(
             "lockReconcileRevision",
             &[("sourceId", &a.source_id), ("slug", &a.slug)],

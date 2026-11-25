@@ -356,13 +356,14 @@ impl Store {
 
     /// `readOauthRefreshTokenForUpdate(hash, clientId)`: the whole row of the refresh token with this hash held by this
     /// client, or null (an access token, or another client's token, reads null). `created_at` is ISO text. An expired
-    /// token is returned too: the caller refuses it from `expires_at`. The single write transaction is the lock
-    /// `FOR UPDATE` takes elsewhere.
+    /// token is returned too: the caller refuses it from `expires_at`. The `FOR UPDATE` lock is skipped while
+    /// explicit transactions hold the writer (`serialized_transactions`), which this fn asserts.
     pub fn read_oauth_refresh_token_for_update(
         &self,
         hash: &str,
         client_id: &str,
     ) -> Result<Value> {
+        self.assert_serialized_transactions("readOauthRefreshTokenForUpdate")?;
         let read = self.read()?;
         Ok(
             match get_json::<OauthTokenRecord>(&*read, &token_key(hash))? {

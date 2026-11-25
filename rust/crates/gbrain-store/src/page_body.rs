@@ -2229,9 +2229,11 @@ impl Store {
     }
 
     /// `lockBodyStagingState(stagingId)`: the staging's state, or `None` when no staging has that
-    /// id (PGLite's `SELECT state ... FOR UPDATE`; a store write already holds the brain). A value
+    /// id (PGLite's `SELECT state ... FOR UPDATE`, skipped while explicit transactions hold the writer
+    /// (`serialized_transactions`), which this fn asserts). A value
     /// that is not a uuid is refused, as the `::uuid` cast refuses it.
     pub fn lock_body_staging_state(&self, staging_id: &str) -> Result<Option<String>> {
+        self.assert_serialized_transactions("lockBodyStagingState")?;
         let id = staging_id_arg(staging_id)?;
         let read = self.read()?;
         let record: Option<StagingRecord> = get_json(&*read, &staging_key(&id))?;

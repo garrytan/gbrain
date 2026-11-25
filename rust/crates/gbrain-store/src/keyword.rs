@@ -80,6 +80,8 @@ pub use index_build::{KeywordIndexReport, KeywordIndexState};
 pub(crate) use index_writer::IndexingWriter;
 pub use titles::{TitleAttempt, TitleAttemptKind};
 pub(crate) use titles::{check_page_vector, check_sealed_page_vector};
+pub(crate) use vector_cache::KeywordVectors;
+pub(crate) use vector_cache::scope::{Scope as VectorScope, open as open_vector_scope};
 
 #[allow(unused_imports)]
 pub(crate) use rank::{ts_rank, ts_rank_cd};
