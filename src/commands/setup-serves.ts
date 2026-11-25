@@ -95,8 +95,9 @@ export const PGLITE_SEVERAL_NOTE = 'PGLite lets one process at a time open this 
   + 'admin commands (access, sources, auth) and most reads refuse with pglite_busy until it stops, and every member\'s connection drops while it is down; '
   + 'page and fact writes (put, remember) still work through it. For a brain several people use, move to Postgres first: gbrain migrate --to postgres (docs/ENGINES.md#pglite-live-serve)';
 
-function child(launcher: string, args: string[]): { ok: boolean; stdout: string; stderr: string } {
-  const r = bunSpawnSync([launcher, ...args], { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: process.env });
+function child(launcher: string | readonly string[], args: string[], timeout?: number): { ok: boolean; stdout: string; stderr: string } {
+  const command = typeof launcher === 'string' ? [launcher] : launcher;
+  const r = bunSpawnSync([...command, ...args], { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: process.env, timeout });
   return { ok: r.exitCode === 0, stdout: r.stdout?.toString() ?? '', stderr: r.stderr?.toString() ?? '' };
 }
 
@@ -117,8 +118,8 @@ export function servesRoster(flags: ServesFlags, harness: string): string[] | Op
 }
 
 /** The brain's serves view through a child, or the child's error when it cannot read the brain. */
-export function readServesStatus(launcher: string): { status: ServesStatus } | { error: string } {
-  const r = child(launcher, ['access', 'serves', '--json', '--no-open-pages']);
+export function readServesStatus(launcher: string | readonly string[], timeout?: number): { status: ServesStatus } | { error: string } {
+  const r = child(launcher, ['access', 'serves', '--json', '--no-open-pages'], timeout);
   const status = r.ok ? parsed<ServesStatus>(r.stdout) : null;
   return status && 'serves' in status ? { status } : { error: (r.stderr || r.stdout).trim() || 'gbrain access serves --json printed nothing' };
 }
