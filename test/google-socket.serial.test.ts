@@ -132,7 +132,7 @@ describe('the MCP client', () => {
     const seen: Array<Record<string, string>> = [];
     const client = new GoogleMcpClient((async (_url: string, init?: RequestInit) => {
       seen.push(init!.headers as Record<string, string>);
-      return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { resultType: 'input_required', requestState: 'opaque',
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: JSON.parse(String(init!.body)).id, result: { resultType: 'input_required', requestState: 'opaque',
         inputRequests: { approve: { method: 'elicitation/create', params: { mode: 'form', message: 'Allow?', requestedSchema: { properties: { decision: { enum: ['ALLOW_ONCE', 'DENY'] } } } } } } } }), { headers: { 'content-type': 'application/json' } });
     }) as never);
     const out = await client.callTool('gmail', 'ya29.act', 'create_draft', {});

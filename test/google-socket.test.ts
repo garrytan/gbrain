@@ -9,7 +9,7 @@ import { join } from 'node:path';
 
 import { TokenRedactor } from '../src/commands/google-socket.ts';
 import { FileVaultBackend, type CredentialEntry } from '../src/core/creds/vault.ts';
-import { GoogleBroker, argsHash, VERDICT_TTL_MS, type GateResult } from '../src/core/google-socket/broker.ts';
+import { GoogleBroker, MAX_HELD, argsHash, VERDICT_TTL_MS, type GateResult } from '../src/core/google-socket/broker.ts';
 import { BrokerLedger } from '../src/core/google-socket/ledger.ts';
 import { GoogleMcpClient, McpTransportError, toolErrorReason, type ToolCallOutcome } from '../src/core/google-socket/mcp-client.ts';
 import { DAY_CALL_CAP, applyArgumentRules } from '../src/core/google-socket/policy.ts';
@@ -79,7 +79,7 @@ describe('activation gate', () => {
 const PROMPT: ToolCallOutcome = { kind: 'input_required', prompt: { message: 'Allow\u0007 the agent to create a draft?', choices: ['ALLOW_ONCE', 'ALLOW_TOOL_ALWAYS', 'DENY'], field: 'choice', inputKey: 'k', requestState: 's1' } };
 const DONE: ToolCallOutcome = { kind: 'complete', result: { content: [{ type: 'text', text: 'ok' }] }, isError: false, text: 'ok' };
 
-function rig(opts: { gate?: Partial<GateResult>; outcomes?: Array<ToolCallOutcome | Error> } = {}) {
+function rig(opts: { gate?: Partial<GateResult>; outcomes?: Array<ToolCallOutcome | Error>; gmailUsedToday?: number } = {}) {
   let t = Date.parse('2026-11-25T12:00:00Z');
   const now = () => t;
   const outcomes = [...(opts.outcomes ?? [])];
@@ -100,13 +100,16 @@ function rig(opts: { gate?: Partial<GateResult>; outcomes?: Array<ToolCallOutcom
     dropAct: () => {},
   } as unknown as SocketTokens;
   const audit: string[][] = [];
+  const statePath = join(tmp(), 'state.json');
+  if (opts.gmailUsedToday) writeFileSync(statePath, JSON.stringify({ intents: {}, quota: { '2026-11-25': { gmail: opts.gmailUsedToday } } }));
+  const ledger = new BrokerLedger(statePath, now);
   const broker = new GoogleBroker({
-    tokens, client, ledger: new BrokerLedger(join(tmp(), 'state.json'), now), audit: f => audit.push(f), now,
+    tokens, client, ledger, audit: f => audit.push(f), now,
     gate: () => ({ ok: true, unmet: [], rootGateway: false, ...opts.gate }),
   });
   const call = (over: Record<string, unknown> = {}) => broker.call({ op: 'call', account: ACCOUNT, server: 'gmail', tool: 'create_draft', args: { to: 'bob@example.com', subject: 's' },
     turn_id: 'turn-1', idempotency_key: 'intent-1', caller: 'bridge', ...over } as never);
-  return { broker, call, sent, audit, advance: (ms: number) => { t += ms; }, reconnect: () => { generation++; } };
+  return { broker, ledger, call, sent, audit, advance: (ms: number) => { t += ms; }, reconnect: () => { generation++; } };
 }
 
 describe('write broker', () => {
@@ -212,6 +215,25 @@ describe('write broker', () => {
     await expect(client.callTool('gmail', 'ya29.act', 'create_draft', {})).rejects.toMatchObject({ status: null });
   });
 
+  test('the day cap is reserved before sending, and a throttled call gives its slot back', async () => {
+    const r = rig({ outcomes: [new McpTransportError('throttled', 429, 5)], gmailUsedToday: DAY_CALL_CAP - 1 });
+    expect(await r.call()).toMatchObject({ code: 'rate_limited' });
+    expect(r.ledger.used('gmail')).toBe(DAY_CALL_CAP - 1);
+    const [a, b] = await Promise.all([r.call({ idempotency_key: 'd1', turn_id: 't1' }), r.call({ idempotency_key: 'd2', turn_id: 't2' })]);
+    expect([a.ok, b.code]).toEqual([true, 'day_cap']);
+    expect(r.sent.length).toBe(2);
+    expect(r.ledger.used('gmail')).toBe(DAY_CALL_CAP);
+  });
+
+  test('held prompts are bounded: a call past the cap is refused before it reaches Google', async () => {
+    const r = rig({ outcomes: Array.from({ length: MAX_HELD }, () => PROMPT) });
+    for (let i = 0; i < MAX_HELD; i++) expect(await r.call({ idempotency_key: `h${i}`, turn_id: `t${i}` })).toMatchObject({ code: 'input_required' });
+    expect(await r.call({ idempotency_key: 'over', turn_id: 'over' })).toMatchObject({ code: 'rate_limited' });
+    expect(r.sent.length).toBe(MAX_HELD);
+    r.advance(VERDICT_TTL_MS + 1);
+    expect(await r.call({ idempotency_key: 'after', turn_id: 'after' })).toMatchObject({ ok: true });
+  });
+
   test('two calls with one key at the same time send once', async () => {
     const r = rig();
     const [a, b] = await Promise.all([r.call(), r.call()]);
@@ -297,6 +319,21 @@ describe('minting', () => {
     expect(g.posted.length).toBe(1);
     expect(g.posted[0]!.get('scope')).toBe(`openid email ${GMAIL_RO}`);
     expect(readFileSync(file, 'utf8')).toBe(before);
+  });
+
+  test('a refresh that races a reconnect or disconnect is not_connected, never a token for the old grant', async () => {
+    for (const change of ['reconnect', 'disconnect'] as const) {
+      const { v, file } = vaultWith(['openid', 'email', GMAIL_RO]);
+      const g = fakeGoogle(`openid email ${GMAIL_RO}`);
+      const racing = (async (url: string, init?: RequestInit) => {
+        const vault = JSON.parse(readFileSync(file, 'utf8'));
+        if (change === 'reconnect') vault.credentials[`google:${ACCOUNT}`].meta.grant_generation = 2;
+        else delete vault.credentials[`google:${ACCOUNT}`];
+        writeFileSync(file, JSON.stringify(vault));
+        return (g.fetchImpl as unknown as (u: string, i?: RequestInit) => Promise<Response>)(url, init);
+      }) as never;
+      await expect(new SocketTokens(v, racing).mintIngest(ACCOUNT)).rejects.toMatchObject({ code: 'not_connected' });
+    }
   });
 
   test('a minted token that comes back write-capable is refused', async () => {

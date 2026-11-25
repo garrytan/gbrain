@@ -26,6 +26,7 @@ import { SocketTokens } from './tokens.ts';
 
 const MAX_CONNECTIONS = 32;
 const MAX_QUEUED_PER_CONNECTION = 16;
+const IDLE_CONNECTION_MS = 5 * 60_000;
 const MINTS_PER_MINUTE = 120;
 
 export const googleSocketPath = (home: string = configDir()): string => join(cliSocketDir(home), 'google.sock');
@@ -164,6 +165,7 @@ export async function startGoogleSocket(opts: GoogleSocketOptions): Promise<Goog
     sockets.add(socket);
     socket.once('close', () => sockets.delete(socket));
     socket.setEncoding('utf8');
+    socket.setTimeout(IDLE_CONNECTION_MS, () => socket.destroy());
     const reader = new LineReader();
     let chain = Promise.resolve();
     let queued = 0;
@@ -178,7 +180,9 @@ export async function startGoogleSocket(opts: GoogleSocketOptions): Promise<Goog
             let reply: Record<string, unknown>;
             try { reply = await handle(line, peer); }
             catch (error) { reply = failure(crypto.randomUUID(), 'internal', (error as Error).message); }
-            if (!socket.destroyed) socket.write(JSON.stringify(reply) + '\n');
+            if (!socket.destroyed && !socket.write(JSON.stringify(reply) + '\n')) {
+              await new Promise<void>(resolve => { socket.once('drain', resolve); socket.once('close', resolve); });
+            }
           } finally { queued--; }
         });
       }

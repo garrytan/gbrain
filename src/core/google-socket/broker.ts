@@ -20,6 +20,8 @@ import {
 import type { ActToken, SocketTokens } from './tokens.ts';
 
 export const VERDICT_TTL_MS = 10 * 60_000;
+export const MAX_HELD = 64;
+const MAX_HELD_BYTES = 8 * 1024 * 1024;
 const TOOLS_CACHE_MS = 3_600_000;
 const TURN_FORGET_MS = 24 * 3_600_000;
 
@@ -96,8 +98,11 @@ export class GoogleBroker {
 
   private drop(h: Held): void { this.held.delete(h.request_id); this.heldByKey.delete(h.key); }
 
+  private evictExpired(): void { for (const old of [...this.held.values()]) if (this.expired(old)) this.drop(old); }
+
+  private heldBytes(): number { let n = 0; for (const h of this.held.values()) n += JSON.stringify(h.args).length + (h.prompt?.message.length ?? 0); return n; }
+
   private hold(h: Omit<Held, 'request_id' | 'created_ms'>): Held {
-    for (const old of [...this.held.values()]) if (this.expired(old)) this.drop(old);
     const held: Held = { ...h, request_id: randomUUID(), created_ms: this.now() };
     this.held.set(held.request_id, held);
     this.heldByKey.set(held.key, held.request_id);
@@ -180,6 +185,10 @@ export class GoogleBroker {
       const tomorrow = Date.parse(`${this.opts.ledger.day()}T00:00:00Z`) + 86_400_000;
       return fail('day_cap', `the broker made ${DAY_CALL_CAP} ${req.server} calls today (UTC)`, { retry_after_s: Math.ceil((tomorrow - this.now()) / 1000) });
     }
+    this.evictExpired();
+    if (this.held.size >= MAX_HELD || this.heldBytes() >= MAX_HELD_BYTES) {
+      return fail('rate_limited', `${this.held.size} calls are already waiting for the owner; answer or let them expire (gbrain google approvals)`, { retry_after_s: VERDICT_TTL_MS / 1000 });
+    }
     const base = { key: req.idempotency_key, account: req.account, server: req.server, tool: req.tool, args: effects.args, args_hash: hash, turn_id: req.turn_id, caller: req.caller, effects };
     const pauseOutside = effects.outside > 0 && turn.outside + effects.outside >= OUTSIDE_PAUSE_AT;
     const pauseTrash = effects.trash && turn.trash + 1 >= TRASH_PAUSE_AT;
@@ -193,7 +202,8 @@ export class GoogleBroker {
     turn.calls++;
     turn.outside += effects.outside;
     if (effects.trash) turn.trash++;
-    const release = () => { turn.calls--; turn.outside -= effects.outside; if (effects.trash) turn.trash--; };
+    this.opts.ledger.count(req.server);
+    const release = () => { turn.calls--; turn.outside -= effects.outside; if (effects.trash) turn.trash--; this.opts.ledger.uncount(req.server); };
     let act: ActToken;
     try { act = await this.opts.tokens.actToken(req.account); }
     catch (error) { release(); const e = error as SocketError; this.audit(req, hash, e.code); return fail(e.code, e.message); }
@@ -228,7 +238,6 @@ export class GoogleBroker {
     const req = { caller: c.caller, turn_id: c.turn_id, account: c.account, server: c.server, tool: c.tool, idempotency_key: c.key };
     const fail = (code: Parameters<typeof failure>[1], message: string, extra: Reply = {}): Reply => ({ ...failure(c.request_id, code, message, extra), quota: this.quota(c.server) });
     record('dispatched');
-    this.opts.ledger.count(c.server);
     let outcome;
     try { outcome = await this.opts.client.callTool(c.server, act.token, c.tool, c.args, answer); }
     catch (error) {

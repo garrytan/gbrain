@@ -83,6 +83,14 @@ export class BrokerLedger {
     this.save();
     return bucket[product]!;
   }
+
+  /** Gives back a reserved call that had no effect. */
+  uncount(product: GoogleServer): void {
+    const bucket = this.state.quota[this.day()];
+    if (!bucket?.[product]) return;
+    bucket[product] = bucket[product]! - 1;
+    this.save();
+  }
 }
 
 /** Appends audit lines; prunes lines older than 30 days when opened. */

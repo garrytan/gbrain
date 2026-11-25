@@ -137,7 +137,10 @@ product per UTC day (`day_cap`). Google's own throttling (`rate_limited`
 with `retry_after_s`) wins over both; a throttled call had no effect, so repeat
 it with the same `idempotency_key` after `retry_after_s`. Calls made at the same
 time in one turn count toward the caps and safety pauses as soon as each is
-accepted, before Google answers.
+accepted, before Google answers; a call that had no effect gives its place
+back. At most 64 calls wait for the owner at once; past that, a new call gets
+`rate_limited` until one is answered or expires. A connection idle for 5
+minutes is closed.
 
 ## Turning writes on
 
@@ -240,7 +243,7 @@ Every failure is `{"v":4,"ok":false,"code","message","request_id","recovery","ac
 | `client_not_agent` | ask_human | A hosted-relay account; connect it with its own client. |
 | `client_user_mismatch` | ask_human | Google says the client belongs to another account. |
 | `write_scope_refused` | ask_human | Google returned a write-capable token for a mint. |
-| `rate_limited` | wait | Too many mints, or Google is throttling. |
+| `rate_limited` | wait | Too many mints, too many calls waiting for the owner, or Google is throttling. |
 | `broker_precondition_unmet` | ask_human | Writes are off; `unmet` lists why. |
 | `tool_not_allowed` | fix_and_retry | Off the allowlist. |
 | `broker_args_refused` | fix_and_retry | Outside the argument rules. |

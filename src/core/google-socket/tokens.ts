@@ -67,6 +67,10 @@ export class SocketTokens {
       const generation = grantGeneration(e) ?? 0;
       const client = await this.clientFor(e);
       const token = await refreshAccessToken(e, client, this.fetchImpl, new Date(this.now()), scope.join(' '));
+      const after = await this.vault.get(e.id);
+      if (!after || (grantGeneration(after) ?? 0) !== generation) {
+        throw new SocketError('not_connected', `the Google connection for ${e.meta.account} was removed or replaced during the refresh; call again`);
+      }
       if (token.refresh_token && isGrantVault(this.vault)) {
         await this.vault.casUpdateTokens(e.id, generation, { secret: { refresh_token: token.refresh_token }, meta: {} });
       }
