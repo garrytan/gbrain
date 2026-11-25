@@ -16,6 +16,7 @@ import { storeErrorCode } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
+import type { DerivedAliasRow } from '../../engine-sql/pages.ts';
 
 type AliasRef = { slug: string; source_id: string };
 type SlugAliasMatch = { canonical_slug: string; source_id: string; matches: number };
@@ -107,4 +108,15 @@ export const aliasCanonicalRefs: StoreMember<[refs: AliasRef[], policy?: PageRea
       live: !!policy,
       exclude_private: excludePrivate ?? null,
     }));
+  };
+
+/**
+ * Replaces the page's declared and subject alias rows; the first row of an alias and origin wins and a frontmatter row
+ * the page holds keeps its own columns. A refusal writes nothing (PGLite outside a transaction keeps its DELETE).
+ */
+export const replaceDerivedAliases: StoreMember<[slug: string, sourceId: string, aliases: readonly DerivedAliasRow[]], void> =
+  async (brain, slug, sourceId, aliases) => {
+    await storeCall({ member: 'replaceDerivedAliases', slug, sourceId }, () => brain.replaceDerivedAliases(slug, sourceId, aliases.map(a => ({
+      alias_norm: a.alias_norm, origin: a.origin, case_sensitive: a.case_sensitive, alias_text: a.alias_text,
+    }))));
   };
