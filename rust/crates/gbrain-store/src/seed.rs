@@ -16,6 +16,7 @@
 //! columns that held a value other than their default, and `losses` counts the rows and values the
 //! seed could not carry. See rust/docs/store/seed.md.
 
+mod chronicle;
 mod core;
 mod decide;
 mod decode;
@@ -66,6 +67,7 @@ const GROUPS: &[&[(&str, &Relation)]] = &[
     spend::RELATIONS,
     decide::RELATIONS,
     wake::RELATIONS,
+    chronicle::RELATIONS,
 ];
 
 /// One relation of the seed plan.
@@ -396,7 +398,7 @@ pub(crate) fn raise_counter(tx: &mut dyn KvWrite, name: &str, id: u64) -> Result
     Ok(())
 }
 
-fn require_source(read: &dyn KvRead, id: &str) -> Result<()> {
+pub(crate) fn require_source(read: &dyn KvRead, id: &str) -> Result<()> {
     match read_source(read, id)? {
         Some(_) => Ok(()),
         None => Err(StoreError::new(
@@ -406,7 +408,7 @@ fn require_source(read: &dyn KvRead, id: &str) -> Result<()> {
     }
 }
 
-fn require_page(read: &dyn KvRead, id: u64) -> Result<PageRecord> {
+pub(crate) fn require_page(read: &dyn KvRead, id: u64) -> Result<PageRecord> {
     read_page_by_id(read, id)?.ok_or_else(|| {
         StoreError::new(
             crate::error::PAGE_NOT_FOUND,

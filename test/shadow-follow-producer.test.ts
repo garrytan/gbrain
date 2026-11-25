@@ -196,6 +196,22 @@ describe('raw SQL and unmapped writes', () => {
     expect(h.batches[0]!.items).toEqual([{ kind: 'invalid', reason: 'schema_change:runMigration' }]);
   });
 
+  test('upsertChronicleRow publishes the one chronicle_page_state row it decides, keyed by the table\'s primary key', async () => {
+    const h = followHarness(engine);
+    await h.engine.putPage('meetings/launch-example', { ...PAGE('Launch review'), type: 'meeting' } as never);
+    const page = Number(await pageId('meetings/launch-example'));
+    await h.engine.upsertChronicleRow({
+      sourceId: 'default', pageId: page, contentHash: 'hash-1', extractorVersion: 2, slug: 'meetings/launch-example',
+      state: 'pending', reason: null, trigger: 'backfill', principalKind: null, principalId: null, requestId: null,
+      noExtract: false, nextAttemptAt: null,
+    });
+    const batch = h.batches.at(-1)!;
+    expect(batch.items.filter((i) => i.kind === 'invalid')).toEqual([]);
+    expect(rows(batch.items, 'chronicle_page_state').map((i) => i.selector)).toEqual([
+      { source_id: 'default', page_id: String(page), content_hash: 'hash-1', extractor_version: '2' },
+    ]);
+  });
+
   test('a write member missing from the map publishes unmapped_write', async () => {
     const fake = { kind: 'pglite', mysteryMutate: async () => 'done', registerBeforeDisconnect() {} };
     const h = followHarness(fake as never);
