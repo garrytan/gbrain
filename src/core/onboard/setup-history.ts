@@ -184,7 +184,7 @@ export async function eligibleReceipt(engine: BrainEngine): Promise<InstallRecei
 
 async function windowDays(engine: BrainEngine, days: number, now: Date): Promise<{ sourceId: string; from: string; to: string }> {
   const sourceId = await configuredSource(engine);
-  const zone = (await engine.getConfig('transcripts.archive.pinned_timezone.' + sourceId))?.trim() || (await engine.getConfig(ARCHIVE_TIMEZONE_KEY))?.trim()
+  const zone = (await engine.getConfig(`transcripts.archive.pinned_timezone.${sourceId}`))?.trim() || (await engine.getConfig(ARCHIVE_TIMEZONE_KEY))?.trim()
     || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
   const to = localDay(now.toISOString(), zone);
   return { sourceId, from: addDays(to, -(days - 1)), to };
