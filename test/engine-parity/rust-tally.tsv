@@ -264,6 +264,7 @@ test/engine-parity/put-page-missing-link.test.ts	2	0
 test/engine-parity/put-source-fork.test.ts	3	0
 test/engine-parity/query-filters.test.ts	4	0
 test/engine-parity/question-reads.test.ts	5	2
+test/engine-parity/question-store.test.ts	9	0
 test/engine-parity/raw-sql.test.ts	1	4
 test/engine-parity/read-shared-revision.test.ts	3	0
 test/engine-parity/read-shared-sources.test.ts	5	0
