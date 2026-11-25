@@ -34,6 +34,9 @@
       "calibration": [
         "./commands/calibration.ts"
       ],
+      "claims": [
+        "./commands/claims.ts"
+      ],
       "code-callees": [
         "./commands/code-callees.ts"
       ],
@@ -108,6 +111,9 @@
       ],
       "guests": [
         "./commands/guests.ts"
+      ],
+      "household": [
+        "./commands/household.ts"
       ],
       "identity": [
         "./commands/identity.ts"

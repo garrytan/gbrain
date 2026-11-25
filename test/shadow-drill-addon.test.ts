@@ -20,6 +20,7 @@ import { loadRustAddon, loadRustEngineAddon } from '../src/core/rust-engine/addo
 import { openRustEngine } from '../src/core/rust-engine.ts';
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
 import { DEFAULT_HARD_EXCLUDES } from '../src/core/search/source-boost.ts';
+import { verifyStoreDir } from '../src/core/rust-engine/store.ts';
 import { runBackupDrill } from '../src/shadow/drill.ts';
 import { ENGLISH_STOPWORDS } from '../src/shadow/english-stopwords.ts';
 import { buildDrillStatus } from '../src/shadow/drill-status.ts';
@@ -189,5 +190,18 @@ const scratches = (dir: string): string[] => (existsSync(join(dir, 'drills')) ? 
     expect(record).toMatchObject({ pass: true, reason: null });
     expect(record.post_open!.pages).toBe(22);
     expect(record.post_open!.search_hits).toBeGreaterThan(0);
+  }, 90_000);
+
+  test('a shadow deleted while the real verifier runs is not recreated by the drill\'s open of the copy', async () => {
+    const dir = await shadowWithPages([{ slug: 'notes/s', text: 'harbor lanterns' }]);
+    const record = await drill(dir, {
+      verify: async (addon, copy, expected) => {
+        const report = await verifyStoreDir(addon, copy, expected);
+        rmSync(dir, { recursive: true, force: true }); // gbrain engine shadow stop --delete, racing the drill
+        return report;
+      },
+    });
+    expect(record).toMatchObject({ pass: false, reason: 'shadow_gone' });
+    expect(existsSync(dir)).toBe(false);
   }, 90_000);
 });

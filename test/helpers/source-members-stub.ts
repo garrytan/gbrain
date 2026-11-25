@@ -5,7 +5,7 @@
  * Each member answers as the engine-sql statement does: the same filters, the same order, the same row shape.
  */
 import type { GuestSourceLookupRow, SourceDetailRow, SourceIncarnationRow, SourceRecordRow, SourceRow } from '../../src/core/engine.ts';
-import type { DefaultSourceSplit, LocalPathSourceRow, SourceRoutingRow } from '../../src/core/engine-sql/sources.ts';
+import type { ActiveSourceConfigRow, DefaultSourceSplit, LocalPathSourceRow, SourceCheckRow, SourceRoutingRow } from '../../src/core/engine-sql/sources.ts';
 import type { SourceStateRow } from '../../src/core/engine-sql/write-misc.ts';
 
 export interface StubSourceRow {
@@ -76,6 +76,17 @@ export function stubSourceMembers(sources: readonly StubSourceRow[] | (() => rea
       enter('listSourceRoutingRows');
       const flag = hasPages();
       return byId(rows()).map(({ id, local_path, archived, config }) => ({ id, local_path, archived, config, default_has_pages: flag }));
+    },
+    /** The one source row a source check reads (readSourceRow), or null for an unknown id. */
+    async readSourceRow(id: string): Promise<SourceCheckRow | null> {
+      enter('readSourceRow');
+      const r = rows().find(row => row.id === id);
+      return r ? { id: r.id, local_path: r.local_path, config: r.config, archived: r.archived } : null;
+    },
+    /** The active sources with their raw config (listActiveSourceConfigs). */
+    async listActiveSourceConfigs(): Promise<ActiveSourceConfigRow[]> {
+      enter('listActiveSourceConfigs');
+      return byId(rows()).filter(r => !r.archived).map(({ id, config }) => ({ id, config, archived: false }));
     },
     async listSourceRecords(): Promise<SourceRecordRow[]> {
       enter('listSourceRecords');

@@ -3,7 +3,7 @@
  * gbrain-store `cli_reads::sources` and `cli_reads::import` (rust/docs/store/sources.md).
  */
 import type { SourceRecordRow } from '../../engine.ts';
-import type { DefaultSourceSplit, LocalPathSourceRow, SourceCheckRow, SourceRoutingRow } from '../../engine-sql/sources.ts';
+import type { ActiveSourceConfigRow, DefaultSourceSplit, LocalPathSourceRow, SourceCheckRow, SourceRoutingRow } from '../../engine-sql/sources.ts';
 import type { StoreBrain } from '../store.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
@@ -24,3 +24,9 @@ async function sourceCheckRow(brain: StoreBrain, member: string, sourceId: strin
 
 export const readSourceRow: StoreMember<[sourceId: string], SourceCheckRow | null> = (brain, sourceId) =>
   sourceCheckRow(brain, 'readSourceRow', sourceId);
+
+/** The active sources with their raw config, from the store's source records (it keeps no separate statement for them). */
+export const listActiveSourceConfigs: StoreMember<[], ActiveSourceConfigRow[]> = async (brain) => {
+  const rows = (await storeCall({ member: 'listActiveSourceConfigs' }, () => brain.listSourceRecords())) as SourceRecordRow[];
+  return rows.filter(row => row.archived !== true).map(({ id, config }) => ({ id, config, archived: false }));
+};

@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 308922,
-    "stdoutSha256": "b49c46593bc152949433766190a364fe9cb634274c8a333e0d946eee6da3cfb5",
+    "stdoutBytes": 319976,
+    "stdoutSha256": "9d099af10a67cc63abe97a4456a56007d65d50a73511cc3eda7b60407e15f800",
     "toolNames": [
       "remember",
       "entity",
@@ -100,6 +100,7 @@
       "storage_register",
       "storage_update",
       "reveal_secret",
+      "check_claims",
       "policy_check",
       "agent_policy",
       "capabilities",
@@ -207,6 +208,10 @@
       "loops_close",
       "loops_mute",
       "loops_unmute",
+      "household_due",
+      "household_add",
+      "household_mark",
+      "household_replace",
       "questions_pin",
       "questions_list",
       "questions_status",
@@ -573,7 +578,7 @@
               "type": "boolean"
             },
             "grep": {
-              "description": "Only the paragraphs containing this text (case-insensitive substring, not a regex), with line numbers and total_matches.",
+              "description": "Only the paragraphs containing this text (case-insensitive substring, not a regex; an inner \"a|b\" also matches either side), with line numbers and total_matches.",
               "type": "string"
             },
             "include_content": {
@@ -4790,6 +4795,35 @@
           },
           "required": [
             "id"
+          ],
+          "type": "object"
+        },
+        "scope": "read"
+      },
+      {
+        "description": "Check the numbers in a draft against allowed-claims pages (type: facts, claims: allowed) before stating them. Per claim: supported (with the cited dated line), conflicts (lines that say another number) or not_found, which means no allowed claim covers it, not that it is false.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": false,
+        "name": "check_claims",
+        "parameters": {
+          "source_id": "string?",
+          "text": "string"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "source_id": {
+              "description": "One source, or '__all__'.",
+              "type": "string"
+            },
+            "text": {
+              "description": "The draft to check (max 20000 characters).",
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
           ],
           "type": "object"
         },
@@ -9257,6 +9291,365 @@
             "kind",
             "value"
           ],
+          "type": "object"
+        },
+        "scope": "write"
+      },
+      {
+        "description": "Household items overdue, at risk or coming up (bills, supplies, birthdays, school dates, returns, credits), ranked, each with a reason, its slug and a proposed action. Every action needs the user's yes: never buy, pay, book, call or send without it.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": false,
+        "name": "household_due",
+        "parameters": {
+          "about": "string?",
+          "as_of": "string?",
+          "handled_by": "string?",
+          "include": "string?",
+          "kinds": "array?",
+          "limit": "number?",
+          "source_id": "string?",
+          "window_days": "number?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "about": {
+              "description": "Only records about this page slug.",
+              "type": "string"
+            },
+            "as_of": {
+              "description": "YYYY-MM-DD (default today).",
+              "type": "string"
+            },
+            "handled_by": {
+              "description": "Only records handled by this person.",
+              "type": "string"
+            },
+            "include": {
+              "description": "Default due.",
+              "enum": [
+                "at_risk",
+                "due",
+                "all"
+              ],
+              "type": "string"
+            },
+            "kinds": {
+              "description": "Only these kinds.",
+              "items": {
+                "enum": [
+                  "supply",
+                  "birthday",
+                  "bill",
+                  "deadline",
+                  "appointment",
+                  "return",
+                  "credit"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "limit": {
+              "description": "Max items (default 20, max 100).",
+              "type": "number"
+            },
+            "source_id": {
+              "description": "One source.",
+              "type": "string"
+            },
+            "window_days": {
+              "description": "Days ahead (default 7).",
+              "type": "number"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "scope": "read"
+      },
+      {
+        "description": "Add one household record (supply, birthday, bill, deadline, appointment, return or credit). The placement table picks its folder and who may read it; a record about a child is adults only. Refuses full account or card numbers.",
+        "idempotent": false,
+        "local_only": false,
+        "mutating": true,
+        "name": "household_add",
+        "parameters": {
+          "about": "array?",
+          "about_role": "string?",
+          "amount": "number?",
+          "audience": "string?",
+          "cadence": "string?",
+          "child": "boolean?",
+          "currency": "string?",
+          "due": "string?",
+          "gift": "string?",
+          "handled_by": "string?",
+          "kind": "string",
+          "last_done": "string?",
+          "lead_days": "number?",
+          "note": "string?",
+          "on": "string?",
+          "proposed_note": "string?",
+          "proposed_verb": "string?",
+          "recurs": "string?",
+          "request_id": "string?",
+          "school": "boolean?",
+          "slug": "string?",
+          "source_id": "string?",
+          "title": "string"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "about": {
+              "description": "Subject page slugs, e.g. people/alice-example.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "about_role": {
+              "description": "Marks every about subject's household_role (child keeps the record adults only).",
+              "enum": [
+                "adult",
+                "child",
+                "helper",
+                "pet",
+                "home",
+                "other"
+              ],
+              "type": "string"
+            },
+            "amount": {
+              "description": "Amount (with currency).",
+              "type": "number"
+            },
+            "audience": {
+              "description": "Keep this record to adults even when its kind is shared.",
+              "enum": [
+                "adults"
+              ],
+              "type": "string"
+            },
+            "cadence": {
+              "description": "Supply or appointment cadence, e.g. 30d, 6m.",
+              "type": "string"
+            },
+            "child": {
+              "description": "Same as about_role child.",
+              "type": "boolean"
+            },
+            "currency": {
+              "description": "Three-letter currency, e.g. USD.",
+              "type": "string"
+            },
+            "due": {
+              "description": "Due date YYYY-MM-DD (bill, deadline, return, credit; a booked appointment).",
+              "type": "string"
+            },
+            "gift": {
+              "description": "Birthday gift state.",
+              "enum": [
+                "none",
+                "ideas",
+                "bought",
+                "given"
+              ],
+              "type": "string"
+            },
+            "handled_by": {
+              "description": "Who usually handles it.",
+              "type": "string"
+            },
+            "kind": {
+              "description": "Record kind.",
+              "enum": [
+                "supply",
+                "birthday",
+                "bill",
+                "deadline",
+                "appointment",
+                "return",
+                "credit"
+              ],
+              "type": "string"
+            },
+            "last_done": {
+              "description": "When it was last bought or done (YYYY-MM-DD).",
+              "type": "string"
+            },
+            "lead_days": {
+              "description": "Days before the date it turns at risk.",
+              "type": "number"
+            },
+            "note": {
+              "description": "Body text.",
+              "type": "string"
+            },
+            "on": {
+              "description": "Birthday MM-DD.",
+              "type": "string"
+            },
+            "proposed_note": {
+              "description": "One line describing that action.",
+              "type": "string"
+            },
+            "proposed_verb": {
+              "description": "The action to propose when due (send, spend, book, ...).",
+              "type": "string"
+            },
+            "recurs": {
+              "description": "How the due date repeats.",
+              "enum": [
+                "none",
+                "weekly",
+                "monthly",
+                "quarterly",
+                "yearly"
+              ],
+              "type": "string"
+            },
+            "request_id": {
+              "description": "Idempotency key for a retry.",
+              "type": "string"
+            },
+            "school": {
+              "description": "A school deadline (goes under household/school/).",
+              "type": "boolean"
+            },
+            "slug": {
+              "description": "Name within its folder (default: from the title).",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Write source.",
+              "type": "string"
+            },
+            "title": {
+              "description": "Short title, e.g. \"Water bill\".",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "title"
+          ],
+          "type": "object"
+        },
+        "scope": "write"
+      },
+      {
+        "description": "Record what happened to a household record: done, bought, paid, booked, submitted, returned, used, gift_ideas, gift_bought, given, skip, pause, resume or archive. Adds a timeline line and updates the state in one write; never deletes. Use it for what the user says was done, never for what you plan to do.",
+        "idempotent": false,
+        "local_only": false,
+        "mutating": true,
+        "name": "household_mark",
+        "parameters": {
+          "due": "string?",
+          "event": "string",
+          "note": "string?",
+          "on": "string?",
+          "request_id": "string?",
+          "slug": "string",
+          "source_id": "string?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "due": {
+              "description": "For booked: the booked date.",
+              "type": "string"
+            },
+            "event": {
+              "description": "What happened.",
+              "enum": [
+                "done",
+                "bought",
+                "paid",
+                "booked",
+                "submitted",
+                "returned",
+                "used",
+                "gift_ideas",
+                "gift_bought",
+                "given",
+                "skip",
+                "pause",
+                "resume",
+                "archive"
+              ],
+              "type": "string"
+            },
+            "note": {
+              "description": "One line for the timeline.",
+              "type": "string"
+            },
+            "on": {
+              "description": "Day it happened (YYYY-MM-DD); default today.",
+              "type": "string"
+            },
+            "request_id": {
+              "description": "Idempotency key for a retry.",
+              "type": "string"
+            },
+            "slug": {
+              "description": "The record (from household_due).",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Write source.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "slug",
+            "event"
+          ],
+          "type": "object"
+        },
+        "scope": "write"
+      },
+      {
+        "description": "Recompute every household record's audience and readers from the placement table (when the brain starts serving several people). With about: narrow the records about those subjects to adults, set their household_role when role is given, then re-place them. Trusted local CLI only.",
+        "idempotent": true,
+        "local_only": true,
+        "mutating": true,
+        "name": "household_replace",
+        "parameters": {
+          "about": "array?",
+          "role": "string?",
+          "source_id": "string?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "about": {
+              "description": "Subject page slugs to reclassify; only the records about them are re-placed.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "role": {
+              "description": "The household_role to give each about subject (needs about).",
+              "enum": [
+                "adult",
+                "child",
+                "helper",
+                "pet",
+                "home",
+                "other"
+              ],
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Source (default: the current one).",
+              "type": "string"
+            }
+          },
+          "required": [],
           "type": "object"
         },
         "scope": "write"

@@ -9,7 +9,7 @@ import { describe, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BYTECODE_FLAGS, makeWorkDir, NORMALIZE, releaseCompileArgs, STEPS, stepProblems } from '../../scripts/check-bytecode-parity.ts';
+import { boundedDiff, BYTECODE_FLAGS, makeWorkDir, NORMALIZE, releaseCompileArgs, STEPS, stepProblems } from '../../scripts/check-bytecode-parity.ts';
 
 const ROOT = join(import.meta.dir, '..', '..');
 const RELEASE = readFileSync(join(ROOT, '.github/workflows/release.yml'), 'utf8');
@@ -42,6 +42,20 @@ describe('bytecode release build', () => {
     expect(NORMALIZE('score 0.51533', 1)).not.toBe(NORMALIZE('score 0.51633', 1));
     expect(NORMALIZE('{"page_count":2}', 1)).not.toBe(NORMALIZE('{"page_count":3}', 1));
     expect(NORMALIZE('Usage: gbrain put <slug>', 1)).toBe('Usage: gbrain put <slug>');
+  });
+
+  test('a clock-driven decimal that crosses a rounding boundary between the runs matches; a real difference fails and prints a bounded diff', () => {
+    const query = STEPS.find(s => s.name === 'query')!;
+    const out = (score: string, boost: string) => ({ stdout: `[{"slug":"notes/alpha",\n"score": ${score},\n"cosine": 0.19518001959264342,\n"recency_boost": ${boost}}]\n`, stderr: '', status: 0 });
+    expect(stepProblems(query, out('0.9861199999943636', '1.2999997336422118'), out('0.9861200005943636', '1.29999988711424'), 1)).toEqual([]);
+    const [plain, bytecode] = [out('0.9861200055943636', '1.2999997336422118'), out('0.9871200055943636', '1.29999988711424')];
+    expect(stepProblems(query, plain, bytecode, 1)).toEqual(['stdout differs']);
+    expect(stepProblems(query, out('123456.1234567', '1.2999997336422118'), out('123457.0000000', '1.2999997336422118'), 1)).toEqual(['stdout differs']);
+    expect(boundedDiff(plain.stdout, bytecode.stdout, 1).split('\n')).toEqual([
+      '--- plain', '+++ bytecode', '@@ -1,4 +1,4 @@', ' [{"slug":"notes/alpha",', '-"score": 0.9861200055943636,', '+"score": 0.9871200055943636,', ' "cosine": 0.19518001959264342,', ' "recency_boost": 1.2999997336422118}]',
+    ]);
+    const long = Array.from({ length: 200 }, (_, i) => `line ${i}`).join('\n');
+    expect(boundedDiff(long, long.replaceAll('line', 'LINE'), 1).split('\n').length).toBe(61);
   });
 
   test('a step fails when both builds fail, hang or skip its path the same way, not only when they differ', () => {

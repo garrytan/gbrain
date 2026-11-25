@@ -3,7 +3,7 @@ src/commands/doctor/checks/vector-coverage.ts	2
 src/commands/models.ts	1
 src/commands/serve-http-grants.ts	1
 src/core/ai/decide/outcomes.ts	20
-src/core/creds/errors.ts	16
+src/core/creds/errors.ts	21
 src/core/facts/relink-reasons.ts	3
 src/core/grants/legacy-token.ts	1
 src/core/harness/verify.ts	1
