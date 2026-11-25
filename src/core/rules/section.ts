@@ -6,7 +6,7 @@
  * Renders nothing when no confirmed active rule is readable. Engine reads only; no model calls.
  */
 import type { BrainEngine } from '../engine.ts';
-import { remoteTargetHidden } from '../persistence/page-visibility.ts';
+import { remoteReadPolicySql } from '../persistence/page-visibility.ts';
 import { callerMember } from '../access/member-facts.ts';
 import { callerIsOwner } from '../search/private-visibility.ts';
 import { CHANGE_NOTICE_MS } from '../policy/store.ts';
@@ -47,11 +47,19 @@ function ruleIsCallers(rule: RuleRecord, remote: boolean): boolean {
   return !remote || callerIsOwner();
 }
 
+/** The row that supplied the rule's text is still the live page at that same revision, and a remote caller may read it; a purged, deleted or replaced row fails closed. */
+async function liveReadableAt(engine: BrainEngine, remote: boolean, rule: RuleRecord, revision: string): Promise<boolean> {
+  if (!revision) return false;
+  const policy = remote ? await remoteReadPolicySql(engine, 'pages') : 'TRUE';
+  const rows = await engine.executeRaw(`SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL AND knowledge_revision::text=$3 AND ${policy} LIMIT 1`, [rule.source_id, rule.slug, revision]);
+  return rows.length > 0;
+}
+
 export async function loadStandingRules(engine: BrainEngine, opts: { remote: boolean; sourceId: string }): Promise<StandingRule[]> {
   const out: StandingRule[] = [];
   for (const row of await listRulePages(engine, opts.sourceId)) {
     if (row.rule.status !== 'active' || !row.confirmed || !ruleIsCallers(row.rule, opts.remote)) continue;
-    if (await remoteTargetHidden(engine, opts.remote, row.rule.source_id, row.rule.slug)) continue;
+    if (!(await liveReadableAt(engine, opts.remote, row.rule, row.revision))) continue;
     out.push({ ...row.rule, revision: row.revision, confirmed_at: row.confirmation!.proof.at });
   }
   return out.sort((a, b) => (a.scope === b.scope ? b.confirmed_at.localeCompare(a.confirmed_at) : a.scope === 'me' ? -1 : 1));

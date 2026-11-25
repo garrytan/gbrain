@@ -52,6 +52,7 @@ function transitionError(slug: string, from: string, to: string): OperationError
  * write that drops a rule's status or type only takes it out of the standing rules, which is always safe.
  */
 export function ruleWriteAdmission(slug: string, parsed: { type?: unknown; frontmatter: Record<string, unknown> }, existing: { type?: unknown; frontmatter?: Record<string, unknown> | null; deleted_at?: unknown } | null): void {
+  if (!isRuleSlug(slug)) return;
   const live = existing && !existing.deleted_at ? existing : null;
   const status = (v: unknown): RuleStatus | null => (RULE_STATUSES as readonly unknown[]).includes(v) ? v as RuleStatus : null;
   const from = live?.type === RULE_TYPE ? status(live.frontmatter?.status) : null;

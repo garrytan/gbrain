@@ -87,6 +87,11 @@ async function pruneReceipts(engine: BrainEngine): Promise<void> {
   for (const row of finished.slice(0, keys.length - RECEIPTS_KEPT + 1)) await engine.unsetConfig(row.key);
 }
 
+/** Claims a new receipt id atomically; false when another call already holds it. */
+async function claimReceipt(engine: BrainEngine, r: CorrectReceipt): Promise<boolean> {
+  return (await engine.executeRaw('INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING RETURNING key', [receiptKey(r.receipt_id), JSON.stringify(r)])).length > 0;
+}
+
 async function saveReceipt(engine: BrainEngine, r: CorrectReceipt): Promise<void> {
   await engine.setConfig(receiptKey(r.receipt_id), JSON.stringify(r));
 }
@@ -340,6 +345,11 @@ export async function runCorrect(ctx: OperationContext, p: Record<string, unknow
     fact: { action: input.fact_id ? (input.corrected_fact ? 'replace' : 'withdraw') : 'none', id: input.fact_id, text: input.corrected_fact, entity: input.entity, provenance: input.provenance },
     steps: {}, state: 'partial', step: 'rule', confirmed: false,
   };
+  if (!(await claimReceipt(ctx.engine, receipt))) {
+    const held = await readReceipt(ctx.engine, receiptId);
+    if (!held || held.intent !== intent) throw opError('idempotency_conflict', 'The request_id already belongs to a different correction, so nothing was written.', 'Use a new request_id for a new correction.');
+    return receiptView(held, remote);
+  }
   return receiptView(await advance(ctx, receipt, author.owner, proof), remote);
 }
 
