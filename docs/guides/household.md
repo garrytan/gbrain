@@ -65,12 +65,14 @@ people, each record names the owner and the `household-adults`, `household-helpe
 its row allows. To reclassify a subject, run `gbrain household replace --about <slug> --role <role>` on the brain host
 (or `household add --child` with a new record): it narrows the records about the subject to adults first, then sets
 the role. An edit or sync that narrows a subject while records about it are still shared is refused
-([household_reclassify](#household_reclassify)), and only the owner can turn a child into another role.
+([household_reclassify](#household_reclassify)), and so is making a child of a subject page that sync deleted and
+wrote again; only the owner can turn a child into another role.
 Every write path runs these checks against the stored page and the new one: `put_page`, `edit_page`, the household
 tools, sync and imports (a household page too large for the streamed import is held), and `delete_page`. A remote
 agent cannot widen a record: it cannot change its type, drop a child from its `about`, remove `audience: adults`,
 change it to a shared kind, or widen its `readable_by`. It also cannot delete a subject that records are about.
-`gbrain household replace` with no `--about` recomputes every record's readers, for example when the brain starts
+`gbrain household replace` with no `--about` recomputes every record's readers, archived records included and however
+many there are, for example when the brain starts
 serving several people. Run it right after you add the second person: until it runs, records written while the brain
 served one person carry no reader list. `household_due` leaves them out for remote callers and says so
 (`household_placement_stale`), but a direct page read still returns them.
@@ -111,3 +113,6 @@ when the old one is archived. This applies to every write, `put_page` and `edit_
 A field, the body or the timeline of a household record looked like a full account, card or routing number (on any
 write: the household tools, `put_page`, `edit_page` or sync), so nothing was saved and the value is not repeated back.
 Leave the number out (the last four digits in a title are fine) and keep it in your bank or password manager.
+A frontmatter key shaped like a number counts too, and its name is not repeated back either. Calendar dates and date
+ranges (`2026-12-03 - 2027-01-03`) are never read as numbers, and a key such as `bank` or `card` only counts when it
+names the number (`card_number`, `account_no`, `iban`).

@@ -276,6 +276,18 @@ describe('household_due at scale', () => {
     }
   }, 120_000);
 
+  test('household replace re-places every record, archived ones included, past the scan cap (follow-up outside#9)', async () => {
+    try {
+      await bulk('kept', '{"kind":"supply","status":"archived","cadence":"30d","household_schema":1,"household_audience":"shared"}');
+      const out = await call('household_replace', {});
+      expect(out.checked).toBeGreaterThan(HOUSEHOLD_SCAN_CAP);
+    } finally {
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+      await engine.executeRaw("DELETE FROM pages WHERE slug LIKE 'household/bulk/%'");
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    }
+  }, 240_000);
+
   test('household_due reads frontmatter only, never page bodies (outside#8)', async () => {
     const seen: any[] = [];
     const original = engine.listPages.bind(engine);

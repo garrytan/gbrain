@@ -16,7 +16,7 @@ import { invalidParam, readFix } from './op-fix.ts';
 import { parseSourceIdParam } from './context.ts';
 import { requestSourceScope } from './search-source-scope.ts';
 import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
-import { remoteTargetHidden } from '../persistence/page-visibility.ts';
+import { pageNotVisibleError, remoteTargetHidden } from '../persistence/page-visibility.ts';
 import { pageMutationSource, requestPrincipalForContext, submitPageMutation } from '../persistence/page-mutations.ts';
 import { getWriteRequest } from '../persistence/journal.ts';
 import { parseWriteRequestId } from '../persistence/preconditions.ts';
@@ -29,7 +29,7 @@ import {
   RECURS, readHouseholdRecord, strictDate, strictMonthDay, type HouseholdIssue, type HouseholdKind, type HouseholdRecord,
 } from '../household/record.ts';
 import { assessHouseholdRecord, calendarDay, rankAssessments, type HouseholdAssessment, type HouseholdState } from '../household/assess.ts';
-import { aboutOf, classifySubjects, placeHouseholdFrontmatter, placeRecord, readersWiderThanTable, refuseAccountNumbers, roleClass, type SubjectClass } from '../household/placement.ts';
+import { aboutOf, classifySubjects, householdWriteAdmission, placeHouseholdFrontmatter, placeRecord, readersWiderThanTable, refuseAccountNumbers, roleClass, type SubjectClass } from '../household/placement.ts';
 
 /** Records one household_due call reads at most; past it the answer is partial with no counts. */
 export const HOUSEHOLD_SCAN_CAP = 2_000;
@@ -242,43 +242,50 @@ async function classifySubjectPages(ctx: OperationContext, sourceId: string, abo
   const changed: string[] = [];
   const pinned: string[] = [];
   for (const slug of about) {
-    const snapshot = await ctx.engine.readPageSnapshot(slug, { sourceId });
+    const snapshot = await ctx.engine.readPageSnapshot(slug, { sourceId, includeDeleted: true });
     const live = snapshot && !snapshot.page.deleted_at ? snapshot : null;
     if (live && String(live.page.frontmatter?.household_role ?? '') === role) continue;
     if (live) assertInlineBody(live.page, 'household_add about_role');
     if (live && await remoteTargetHidden(ctx.engine, ctx.remote, sourceId, slug)) throw opError('page_not_found', `Page not found: ${slug}`, 'Name a subject page this connection can read.');
-    if (live && role === 'child' && roleClass(live.page.frontmatter?.household_role) === 'not_child') pinned.push(...(await replaceHouseholdRecords(ctx, sourceId, [slug], { pin: true })).replaced);
+    if (role === 'child' && roleClass(live?.page.frontmatter?.household_role) !== 'child') pinned.push(...(await replaceHouseholdRecords(ctx, sourceId, [slug], { pin: true })).replaced);
     const title = live?.page.title ?? slug.split('/').pop()!.replace(/-/g, ' ');
     const fm = { ...(live?.page.frontmatter ?? {}), household_role: role };
     const content = serializeMarkdown(Object.fromEntries(Object.entries(fm).filter(([k]) => !['type', 'title', 'tags'].includes(k))),
       live?.page.compiled_truth ?? `# ${title}`, live?.page.timeline ?? '', { type: (live?.page.type ?? (slug.startsWith('people/') ? 'person' : 'note')) as never, title, tags: live?.tags ?? [] });
-    await submitPageMutation(ctx, { operation: 'put_page', params: { slug, content, source_id: sourceId, ...(live ? { expected_revision: live.revision } : {}) } });
+    await submitPageMutation(ctx, { operation: 'put_page', params: { slug, content, source_id: sourceId, ...(snapshot ? { expected_revision: snapshot.revision } : {}) } });
     changed.push(slug);
   }
   return { classified: changed, pinned };
 }
 
-/** Rewrites every record (optionally only those about `about`) whose stored placement differs from the table; `pin` first narrows each to adults. */
+/**
+ * Rewrites every record (optionally only those about `about`), archived ones included, whose stored placement differs
+ * from the table, reading frontmatter in pages of 500 so no source is too large; `pin` first narrows each to adults.
+ */
 export async function replaceHouseholdRecords(ctx: OperationContext, sourceId: string, about?: readonly string[], opts: { pin?: boolean } = {}): Promise<{ checked: number; replaced: string[] }> {
   const wanted = about?.length ? new Set(aboutOf(about)) : null;
-  const rows = (await ctx.engine.listPages({ type: HOUSEHOLD_TYPE as never, sourceId, sort: 'slug', limit: 100_000, omitBodies: true }) as unknown as HouseholdPage[])
-    .filter(row => !wanted || aboutOf(row.frontmatter?.about).some(s => wanted.has(s)));
-  if (rows.length > HOUSEHOLD_SCAN_CAP) throw opError('household_scale', `More than ${HOUSEHOLD_SCAN_CAP} household records are in source ${sourceId}, so none were re-placed.`, 'Archive records you no longer need, then run gbrain household replace again.');
   const replaced: string[] = [];
-  for (const { slug } of rows) {
-    const snap = await ctx.engine.readPageSnapshot(slug, { sourceId });
-    if (!snap) continue;
-    const fm = { ...(snap.page.frontmatter ?? {}) };
-    const before = JSON.stringify([fm.household_audience ?? null, fm.readable_by ?? null]);
-    if (opts.pin && fm.household_audience !== 'adults') fm.audience = 'adults';
-    await placeHouseholdFrontmatter(ctx.engine, sourceId, fm, snap.tags);
-    if (JSON.stringify([fm.household_audience ?? null, fm.readable_by ?? null]) === before) continue;
-    assertInlineBody(snap.page, 'household_replace');
-    await submitPageMutation(ctx, { operation: 'put_page', params: { slug, source_id: sourceId, expected_revision: snap.revision,
-      content: serializeRecord(fm, snap.page.title, snap.page.compiled_truth, snap.page.timeline ?? '', snap.tags) } });
-    replaced.push(slug);
+  let checked = 0;
+  for (let offset = 0; ; offset += 500) {
+    const rows = await ctx.engine.listPages({ type: HOUSEHOLD_TYPE as never, sourceId, sort: 'slug', limit: 500, offset, omitBodies: true }) as unknown as HouseholdPage[];
+    for (const row of rows) {
+      if (wanted && !aboutOf(row.frontmatter?.about).some(s => wanted.has(s))) continue;
+      checked++;
+      const snap = await ctx.engine.readPageSnapshot(row.slug, { sourceId });
+      if (!snap) continue;
+      const fm = { ...(snap.page.frontmatter ?? {}) };
+      const before = JSON.stringify([fm.household_audience ?? null, fm.readable_by ?? null]);
+      if (opts.pin && fm.household_audience !== 'adults') fm.audience = 'adults';
+      await placeHouseholdFrontmatter(ctx.engine, sourceId, fm, snap.tags);
+      if (JSON.stringify([fm.household_audience ?? null, fm.readable_by ?? null]) === before) continue;
+      assertInlineBody(snap.page, 'household_replace');
+      await submitPageMutation(ctx, { operation: 'put_page', params: { slug: row.slug, source_id: sourceId, expected_revision: snap.revision,
+        content: serializeRecord(fm, snap.page.title, snap.page.compiled_truth, snap.page.timeline ?? '', snap.tags) } });
+      replaced.push(row.slug);
+    }
+    if (rows.length < 500) break;
   }
-  return { checked: rows.length, replaced };
+  return { checked, replaced };
 }
 
 const ROLE_ENUM = [...HOUSEHOLD_ROLES];
@@ -362,11 +369,19 @@ const household_add: Operation = {
     const slug = `${decision.folder}${tail}`;
     const existing = await ctx.engine.readPageSnapshot(slug, { sourceId, includeDeleted: true });
     const requestId = parseWriteRequestId(p.request_id);
+    if (existing && await remoteTargetHidden(ctx.engine, ctx.remote, sourceId, slug)) throw pageNotVisibleError();
     const replay = existing && requestId ? await getWriteRequest(ctx.engine, await requestPrincipalForContext(ctx), requestId) : null;
     if (existing && !existing.page.deleted_at && !(replay && replay.slug === slug && replay.source_id === sourceId)) {
       throw opError('household_exists', `A page already exists at ${slug}, so nothing was written.`,
         'Record an event on the existing record with household_mark, or pass slug to name this one differently.',
         { fix: readFix('Shows the existing household records.', { argv: ['gbrain', 'household', 'list', '--json'], mcp: { tool: 'household_due', arguments: { include: 'all' } } }) });
+    }
+    if (role && role !== 'child') for (const subject of about) {
+      const snap = await ctx.engine.readPageSnapshot(subject, { sourceId });
+      const live = snap && !snap.page.deleted_at ? snap.page : null;
+      if (String(live?.frontmatter?.household_role ?? '') !== role) {
+        await householdWriteAdmission(ctx.engine, sourceId, subject, { type: live?.type ?? 'note', frontmatter: { ...(live?.frontmatter ?? {}), household_role: role }, tags: [] }, live, ctx.remote !== false);
+      }
     }
     const body = capText(p.note, 2_000) ?? `# ${title}`;
     const result = await submitPageMutation(ctx, { operation: 'put_page', params: { slug, source_id: sourceId, content: serializeRecord(fm, title, body, '', tags),

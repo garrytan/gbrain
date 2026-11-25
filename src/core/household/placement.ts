@@ -240,7 +240,8 @@ function reclassifyRefusal(message: string, hint: string, argv: string[], why: s
  *
  * - A subject page's class (household_role; a household record is never a subject) changes only when the records
  *   about it follow: a remote caller cannot take a subject out of child, or give it a role that would widen records
- *   kept to adults because of it; nobody narrows a subject while records about it are still shared with helpers.
+ *   kept to adults because of it; nobody narrows a subject, or makes a child of one that has no class (a page
+ *   deleted by sync and written again), while records about it are still shared with helpers.
  * - A household record is placed (placeHouseholdFrontmatter). A remote write cannot widen it: it cannot retype it to
  *   another type, move it from adults to shared (dropping a child from about, removing audience: adults, changing its
  *   kind), or widen its stored readers.
@@ -278,7 +279,7 @@ async function subjectAdmission(engine: Pick<BrainEngine, 'executeRaw' | 'getCon
       'Keep the page\'s type and household_role as they are, or ask the brain\'s owner to run gbrain household replace --about ' + slug + (keep ? '' : ' --role ' + role) + '.',
       ['gbrain', 'household', 'replace', '--about', slug, ...(keep ? [] : ['--role', role])], 'Changes the role on the brain host and re-places the records about it.');
   }
-  if (from !== 'not_child' || to === 'not_child') return;
+  if (from === to || to === 'not_child' || from === 'child') return;
   const shared = await sharedRecordsAbout(engine, sourceId, slug);
   if (!shared.length) return;
   throw reclassifyRefusal(shared.length + ' household record(s) about ' + slug + ' are shared with helpers, and this change would leave them readable by helpers, so nothing was written.',
