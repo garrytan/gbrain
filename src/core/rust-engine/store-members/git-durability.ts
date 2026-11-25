@@ -6,11 +6,15 @@
  *   with the answers of the SQL they replace.
  * - `bound()` changes nothing: the store commits durably and an explicit transaction holds the store's writer, so no
  *   row lock wait exists to bound.
+ *
+ * While the managed_persistence hold is on (every user's Rust brain), each call refuses exactly as the executeRaw it
+ * replaced did (managed-hold.ts).
  */
 import type { GitDurabilityStore } from '../../engine-sql/git-durability.ts';
 import type { RustEngine } from '../../rust-engine.ts';
 import type { StoreBrain } from '../store.ts';
 import { storeCall } from './common.ts';
+import { heldStore } from './managed-hold.ts';
 
 const MEMBER = 'gitDurabilityStore';
 
@@ -28,5 +32,5 @@ function rustGitDurabilityStore(brain: StoreBrain): GitDurabilityStore {
 
 /** `gitDurabilityStore()`: the store over this engine's store handle; called on a transaction, every call runs in it. */
 export const gitDurabilityStore = async function gitDurabilityStore(this: RustEngine, brain: StoreBrain): Promise<GitDurabilityStore> {
-  return rustGitDurabilityStore(brain);
+  return heldStore(this, rustGitDurabilityStore(brain));
 };

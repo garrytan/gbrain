@@ -13,6 +13,9 @@
  *   epoch, topology generation, incarnation, state) stay as they are.
  * - `bound`, `synchronousCommit` and `markTopologyChange` change nothing: the store commits durably, has no lock wait
  *   to bound and no trigger that a topology change must pass.
+ *
+ * While the managed_persistence hold is on (every user's Rust brain), each call refuses exactly as the executeRaw it
+ * replaced did (managed-hold.ts).
  */
 import type { TopologyStore } from '../../engine-sql/topology-store.ts';
 import type { ContentReceiptRow } from '../../engine-sql/writer-admin.ts';
@@ -22,6 +25,7 @@ import type { RustEngine } from '../../rust-engine.ts';
 import type { StoreBrain } from '../store.ts';
 import { requestRow, topologyRow } from '../store-codec.ts';
 import { storeCall } from './common.ts';
+import { heldStore } from './managed-hold.ts';
 
 const MEMBER = 'topologyStore';
 
@@ -93,5 +97,5 @@ function rustTopologyStore(brain: StoreBrain): TopologyStore {
 
 /** `topologyStore()`: the store over this engine's store handle; called on a transaction, every call runs in it. */
 export const topologyStore = async function topologyStore(this: RustEngine, brain: StoreBrain): Promise<TopologyStore> {
-  return rustTopologyStore(brain);
+  return heldStore(this, rustTopologyStore(brain));
 };

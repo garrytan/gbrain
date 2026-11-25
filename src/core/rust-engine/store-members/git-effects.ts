@@ -4,11 +4,15 @@
  *
  * Each read is one `gitEffectRows({ kind, ... })` call and each write one `gitEffectWrite({ kind, ... })` call, with the
  * answers of the SQL they replace. Every write names its effects by id and claim token, so a moved claim changes nothing.
+ *
+ * While the managed_persistence hold is on (every user's Rust brain), each call refuses exactly as the executeRaw it
+ * replaced did (managed-hold.ts).
  */
 import type { GitEffectStore } from '../../engine-sql/git-effects.ts';
 import type { RustEngine } from '../../rust-engine.ts';
 import type { StoreBrain } from '../store.ts';
 import { storeCall } from './common.ts';
+import { heldStore } from './managed-hold.ts';
 
 const MEMBER = 'gitEffectStore';
 
@@ -28,5 +32,5 @@ function rustGitEffectStore(brain: StoreBrain): GitEffectStore {
 
 /** `gitEffectStore()`: the store over this engine's store handle; called on a transaction, every call runs in it. */
 export const gitEffectStore = async function gitEffectStore(this: RustEngine, brain: StoreBrain): Promise<GitEffectStore> {
-  return rustGitEffectStore(brain);
+  return heldStore(this, rustGitEffectStore(brain));
 };
