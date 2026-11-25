@@ -150,6 +150,7 @@ const SELF_HELP_WITHOUT_ENGINE: Record<string, true | (() => Promise<(engine: ne
     (await import('../commands/compile-context.ts')).runCompileContext as never,
   // runLoops / runWaiting answer --help before touching the engine.
   loops: async () => (await import('../commands/loops.ts')).runLoops as never,
+  household: async () => (await import('../commands/household.ts')).runHousehold as never,
   beliefs: async () => (await import('../commands/beliefs.ts')).runBeliefs as never,
   'edge-proposals': async () => (await import('../commands/edge-proposals.ts')).runEdgeProposals as never,
   'memory-proposals': async () => (await import('../commands/memory-proposals.ts')).runMemoryProposals as never,
