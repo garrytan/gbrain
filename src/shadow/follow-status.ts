@@ -12,9 +12,10 @@
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { WRITE_COVERAGE_LIMIT, WRITE_NOT_RECORDED } from '../core/engine-swap/readiness.ts';
 import { readEpoch } from './evidence-epoch.ts';
 import { readSeedRecord, RESEED_STEPS } from './seed.ts';
-import type { ShadowState } from './state.ts';
+import { writeSampleRate, type ShadowState } from './state.ts';
 
 export interface ProbeRecord {
   state: 'pass' | 'fail' | 'not_run'; checked_at: string | null; server_version: string | null; collation: string | null; mismatches: number;
@@ -126,6 +127,7 @@ export interface FollowStatus {
     consecutive_clean_full_passes: number;
     next_full_pass_due: string | null;
   };
+  /** Write comparisons are not recorded yet (the locked tally is a separate PR): always `capability_missing` with zero counts. The sample rate is the write sample rate. */
   write_comparisons: { state: 'capability_missing'; sample_rate: number | null; comparable: number; unexplained_difference: number; uncomparable: number; capability_missing: number };
   fingerprints: { checked_rows: number; mismatches: number; probe: ProbeRecord };
   seed: { seed_id: string | null; finished_at: string | null; unseeded_gap_rows_total: number | null };
@@ -178,7 +180,7 @@ export function buildFollowStatus(dir: string, state: ShadowState | null, now: D
       consecutive_clean_full_passes: clean,
       next_full_pass_due: lastFull ? new Date(Date.parse(lastFull.finished_at) + NIGHTLY_MS).toISOString() : null,
     },
-    write_comparisons: { state: 'capability_missing', sample_rate: state?.sample_rate ?? null, comparable: 0, unexplained_difference: 0, uncomparable: 0, capability_missing: 0 },
+    write_comparisons: { state: 'capability_missing', sample_rate: state ? writeSampleRate(state) : null, comparable: 0, unexplained_difference: 0, uncomparable: 0, capability_missing: 0 },
     fingerprints: { checked_rows: counted?.fingerprints.checked_rows ?? 0, mismatches: counted?.fingerprints.mismatches ?? 0, probe: counted?.probe ?? NOT_RUN_PROBE },
     seed: { seed_id: seed?.seed_id ?? null, finished_at: seed?.finished_at ?? null, unseeded_gap_rows_total: seed?.unseeded_gap_rows_total ?? null },
     allocators: counted?.allocators ?? { verified: false, checked_at: null },
@@ -197,5 +199,6 @@ export function renderFollowStatus(s: FollowStatus): string[] {
   if (r.last_pass) lines.push(`    last pass ${r.last_pass.kind} ${r.last_pass.finished_at}: repaired ${r.last_pass.repaired_rows}, follower misses ${r.last_pass.follower_misses}`);
   lines.push(`  fingerprints (epoch): checked ${s.fingerprints.checked_rows}, mismatches ${s.fingerprints.mismatches}; probe ${s.fingerprints.probe.state}`);
   lines.push(`  allocators: ${s.allocators.verified ? `verified ${s.allocators.checked_at}` : 'not verified'}; write comparisons: ${s.write_comparisons.state}`);
+  lines.push(`    ${WRITE_NOT_RECORDED}; ${WRITE_COVERAGE_LIMIT}`);
   return lines;
 }
