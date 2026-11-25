@@ -622,7 +622,7 @@ describe('page-handlers publishOwnerPage: an owner repair whose callback runs ag
     expect(subjects.length).toBe(3);
   }, 120_000);
 
-  test('row 94: when the concurrent change that lost the commit moved the page revision, the repair refuses and reports what the file holds', async () => {
+  test('row 94: when the concurrent change that lost the commit moved the page revision, the repair refuses and the file is put back', async () => {
     const fs = await import('node:fs');
     const { git } = await import('./helpers/git-publication.ts');
     const slug = 'inbox/partc-moved';
@@ -637,8 +637,9 @@ describe('page-handlers publishOwnerPage: an owner repair whose callback runs ag
     const revision = (await partCEngine.readPageSnapshot(slug, { sourceId: 'default' }))!.revision;
     const after = { file: fs.readFileSync(file, 'utf8'), subjects: await partCSubjects(partCBrain, `${before.head}..HEAD`) };
     console.log('partC row 94 moved-revision:', JSON.stringify({ code: (error as { code?: string })?.code, revisionMoved: revision !== before.revision, fileRestored: after.file === before.file, subjects: after.subjects }));
-    // Residual (see the lane report): the lost run's file and its write-through commit stay (restore skips a moved revision).
     expect((error as { code?: string }).code).toBe('preview_changed');
+    // The lost run's file is put back (a refused commit never landed), so the file holds what it held before the repair.
+    expect(after.file).toBe(before.file);
     expect((await partCEngine.readPageSnapshot(slug, { sourceId: 'default' }))!.page.compiled_truth).toBe('Captured body, moved by a concurrent writer');
   }, 120_000);
 });

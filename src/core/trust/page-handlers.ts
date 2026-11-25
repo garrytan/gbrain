@@ -363,8 +363,9 @@ async function publishOwnerPage(engine: BrainEngine, input: PageActionInput, int
   try {
     await engine.transaction(tx => withWriteAttribution(tx, { ...attribution, trust }, () => withTrustPromotion(tx, tier, () =>
       withTrustKeep(tx, FENCE_TABLES, async () => {
-        // A run that lost an optimistic commit (multi-user Rust) wrote the file: put it back before this run reads it.
-        if (rendered?.path && file?.ok && file.target) { await restoreOwnerRepairFile(tx, input, file.target, rendered); rendered = null; }
+        // A run that lost an optimistic commit (multi-user Rust) wrote the file: put it back before this run reads it. The
+        // engine runs the callback again only after that commit was refused, so the restore does not ask the revision.
+        if (rendered?.path && file?.ok && file.target) { await restoreOwnerRepairFile(tx, input, file.target, rendered, { lostRun: true }); rendered = null; }
         if ((await tx.readPageSnapshot(input.slug, { sourceId: input.sourceId }))?.revision !== input.expectedRevision) {
           throw changedSincePreview(pageRef(input.sourceId, input.slug), ACTION_NAMES[intent.mode]);
         }
@@ -392,10 +393,12 @@ async function publishOwnerPage(engine: BrainEngine, input: PageActionInput, int
 /**
  * #7960: puts back the bytes an owner repair's file held before `rendered` replaced them (removes a file it created), only
  * while the file still holds what the repair wrote and the page row still has the revision the repair started from (a
- * transaction whose COMMIT landed but whose acknowledgment was lost keeps its file), and commits that restore when the
- * repair's write was committed. Best-effort: the caller rethrows the database failure either way.
+ * transaction whose COMMIT landed but whose acknowledgment was lost keeps its file; `lostRun`, a run whose commit the
+ * engine refused before running the callback again, skips that check), and commits that restore when the repair's write
+ * was committed. Best-effort: the caller rethrows the database failure either way.
  */
-async function restoreOwnerRepairFile(engine: BrainEngine, input: PageActionInput, target: OwnerRepairTarget, rendered: WriteThroughResult): Promise<void> {
+async function restoreOwnerRepairFile(engine: BrainEngine, input: PageActionInput, target: OwnerRepairTarget, rendered: WriteThroughResult,
+  opts: { lostRun?: boolean } = {}): Promise<void> {
   const { existsSync, readFileSync, rmSync } = await import('node:fs');
   const { atomicWriteFileSync } = await import('../atomic-write.ts');
   const { commitWriteThroughFile } = await import('../brain-repo-durability.ts');
@@ -405,7 +408,8 @@ async function restoreOwnerRepairFile(engine: BrainEngine, input: PageActionInpu
   try {
     await withSourceFilesystemLock(engine, target.writeRoot, async () => {
       if ((existsSync(path) ? readFileSync(path, 'utf-8') : null) !== rendered.content) return;
-      if ((await engine.readPageSnapshot(slug, { sourceId: input.sourceId }))?.revision !== input.expectedRevision) return;
+      // A refused commit (`lostRun`) is known not to have landed; otherwise a moved revision may be this repair's own commit.
+      if (!opts.lostRun && (await engine.readPageSnapshot(slug, { sourceId: input.sourceId }))?.revision !== input.expectedRevision) return;
       if (target.expectedFileBytes === null) rmSync(path, { force: true });
       else atomicWriteFileSync(path, target.expectedFileBytes);
       if (rendered.committed) commitWriteThroughFile(target.writeRoot, path, slug, 'restore write-through');
