@@ -325,7 +325,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$SHARD" = 1 ]; then
-            bun test --timeout=60000 test/rust-engine-store.test.ts test/rust-engine-shell.test.ts test/rust-engine-differential.test.ts
+            bun test --timeout=60000 test/rust-engine-store.test.ts test/rust-engine-shell.test.ts test/rust-engine-differential.test.ts test/rust-engine-store-snapshot.test.ts
           fi
           position=0
           ran=0
@@ -385,6 +385,24 @@ jobs:
           GBRAIN_TEST_REQUIRE_RUST_ADDON: '1'
           GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
         run: bash scripts/run-with-receipt.sh rust-store writer-seed -- bun test --timeout=60000 test/shadow-writer-seed.test.ts
+      # The shadow restore drill on a real owner and a real store. Same ownership rule as above: a missing addon is an
+      # error here, and the next step fails the lane when no test ran.
+      - name: The restore drill copies a live shadow store
+        if: matrix.shard == '1'
+        shell: bash
+        env:
+          GBRAIN_TEST_REQUIRE_RUST_ADDON: '1'
+          GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
+        run: bash scripts/run-with-receipt.sh rust-store drill-addon -- bun test --timeout=60000 test/shadow-drill-addon.test.ts
+      # The write comparison pilot (src/shadow/write-compare*.ts, write-capture.ts) replays sampled page and link writes on a real scratch Rust
+      # store. Same ownership rule as above: a missing addon is an error here, and the next step fails the lane when no test ran.
+      - name: The write comparison pilot replays page and link writes on a real scratch store
+        if: matrix.shard == '1'
+        shell: bash
+        env:
+          GBRAIN_TEST_REQUIRE_RUST_ADDON: '1'
+          GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
+        run: bash scripts/run-with-receipt.sh rust-store write-compare -- bun test --timeout=60000 test/shadow-write-compare.test.ts
       - name: Fail the withdrawn-lead lane when no test ran
         if: matrix.shard == '1'
         shell: bash

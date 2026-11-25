@@ -35,8 +35,8 @@ A `remember` without `facet` works exactly as before: it is never moved onto you
 The facet becomes the fact's typed claim metric, `profile.<facet>`. That prefix is reserved: a hand-written
 `claim_metric: "profile.diet"` is refused (`profile_metric_reserved`, with the same call using `facet` as the fix),
 an unknown facet is refused with the list (`profile_facet_unknown`), and facts extracted from conversations never get
-one. A facts-fence row keeps a `profile.<facet>` metric only on the profile's own page or the holding page `remember`
-would put it on; anywhere else the row is kept without a metric. Profile facts are not metrics, so `find_trajectory`, `gbrain eval trajectory` and the founder scorecard skip
+one. A facts-fence row keeps a `profile.<facet>` metric only on the profile's own page or, for `memory/owner` or a
+member page, the holding page `remember` would put it on; anywhere else the row is kept without a metric. Profile facts are not metrics, so `find_trajectory`, `gbrain eval trajectory` and the founder scorecard skip
 them.
 
 ## Who a profile belongs to
@@ -68,7 +68,8 @@ gbrain profile --budget-tokens 400   # pack into 400 tokens; the rest is counted
 
 An agent calls `context_pack {profile: true}` (add `budget_tokens` to cap it). The response's `profile` block has:
 
-- `entity`: your page's slug and how it was found (`basis`), never the email or account that identified you;
+- `entity`: your page's slug and how it was found (`basis`), never the email or account that identified you; the slug
+  is `null` when your page is in a source this credential cannot read;
 - `constraints`: `allergy` and `constraint` facts;
 - `facets`: every other faceted fact;
 - `preferences`: facts on your page saved with `kind: preference` and no facet;
@@ -89,3 +90,44 @@ owner and bind the credential: `gbrain access member add <you>`, `gbrain access 
 `gbrain auth rescope --token <name> --member <you>`.
 The same block is rendered into the pack's `text` under its own heading, one labelled line per row: it is data about
 you, not instructions. The read makes no model call.
+
+## Import
+
+`gbrain profile import` moves what another assistant remembers about you onto your own profile. It reads three formats
+(`--format auto` picks one):
+
+- `muse-memory`: a Markdown list such as Muse's `Memory.md`; a heading like `## Allergies` or `## Food` names the facet of
+  the bullets under it;
+- `claude-memories`: the memories JSON in a Claude data export (a list of memories, or `{"memories": [...]}`);
+- `memory-text`: the `[YYYY-MM-DD] - memory` list an assistant prints when you ask it to list what it remembers about
+  you; the date becomes the fact's `valid_from`.
+
+```bash
+gbrain profile import Memory.md                          # preview: what would be saved, and a hash
+gbrain profile import Memory.md --yes --preview <hash>   # save exactly that preview
+gbrain profile import --status <receipt>                 # what an apply saved, line by line
+gbrain profile import --resume <receipt>                 # finish an apply that stopped
+```
+
+The preview saves nothing. It lists each fact with its line and facet, and names each dropped line by number: a line
+that looks like a password, key or token is never saved or printed, a line over 2,000 characters is skipped, and so is
+a line that is not a list item (in `memory-text`, not a dated memory or a list item). A date that is not a real
+calendar date is left off its fact. In `claude-memories`, a plain sentence under a heading is a fact too. The hash covers the file,
+how it was parsed, your profile, the credential doing the import and, locally, the brain and source it writes to, so the apply refuses with `preview_changed` if any
+of them changed since the preview; preview again and apply the new hash. Scripts and agents pass `--yes --preview
+<hash>`; nothing prompts. The printed apply and resume commands repeat `--brain` and `--source` when you passed them.
+Locally, `--source <id>` picks the source the facts are saved in. A thin client refuses `--brain` and `--source`: the
+remote brain saves them in the source your credential is granted. A file that is not valid JSON is refused before
+anything is sent; the same words under two headings are kept once per facet.
+
+Every imported fact is saved through `remember`, 20 at a time, as `content_origin: inferred` and `visibility: private`,
+with provenance `imported from <file> (<format>), preview <hash>`. It lands on your own profile: the owner's page for the
+owner, your member page for a member credential. A member can never import onto the owner's profile. An import never
+replaces a fact you stated yourself (`user_said`), with or without a facet; a line that repeats a saved fact comes back as a
+duplicate.
+
+The apply keeps a receipt (`profile-imports/<hash>.json` in your gbrain config folder, readable only by you) with each
+line's result. Running the same apply again, or `--resume` after it stopped, sends only what was never saved, and first
+checks any write still finishing. A batch the brain refuses for its lines is recorded as failed lines and the import
+moves on to the next batch. A line that failed is listed and not retried: fix it in the file, then preview and
+apply again. The import exits 10 while writes are still finishing and 1 if anything failed or was left unsent.

@@ -521,6 +521,7 @@ describe('engine parity: decide receipts', () => {
       ]);
       const replay = await engine.listDecideReplayReceipts('conflict', 1);
       const triage = await engine.listDecideReplayReceipts('triage', 1);
+      await apart();
       const none = await engine.listDecideReplayReceipts('conflict', 0);
       expect(replay.map((r) => r.decision_id)).toEqual(['', 'B', 'a', 'a', 'a', 'b', 'b', 'b', '\u00e9']);
       expect(replay.filter((r) => r.decision_id === 'b').map((r) => r.rank)).toEqual([1, 2, null]);

@@ -98,7 +98,8 @@ describe('gbrain schema CLI (Phase C)', () => {
     // v0.42.56.0 (#2390): extended to 27 by adding the Life Chronicle
     // `event` + `diary` temporal types (life/events/, life/diary/).
     // GST-2731: extended to 29 by adding the `facts` annotation type.
-    expect(r.stdout).toContain('Page types (30)');
+    // GST-3824 L1 and L2 and agent platform H1: 33 with the agent_policy, household and agent_action types.
+    expect(r.stdout).toContain('Page types (33)');
     expect(r.stdout).toContain('facts :: annotation');
     expect(r.stdout).toContain('event :: temporal');
     expect(r.stdout).toContain('diary :: temporal');
