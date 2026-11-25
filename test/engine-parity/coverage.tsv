@@ -2359,9 +2359,9 @@ listStalledCatchupRows	doctor_persistence	yes	3	no	yes	yes	serves
 listParkedGroupRows	doctor_persistence	yes	3	no	yes	yes	serves
 readStaleEmbeddingCounts	doctor_persistence	yes	2	no	yes	yes	serves
 listStaleEmbeddingEffects	doctor_persistence	yes	2	no	yes	yes	serves
-listOrphanBindingRows	doctor_persistence	yes	1	no	yes	yes	serves
+listOrphanBindingRows	doctor_persistence	yes	2	no	yes	yes	serves
 readPersistenceBrainIdText	doctor_persistence	yes	2	no	yes	yes	serves
-listWorktreeIds	doctor_persistence	yes	1	no	yes	yes	serves
+listWorktreeIds	doctor_persistence	yes	2	no	yes	yes	serves
 listManagedRoots	doctor_persistence	yes	1	no	yes	yes	serves
 listUnboundSourcePages	doctor_persistence	yes	1	no	yes	yes	serves
 listRecentWriterVersions	doctor_persistence	yes	2	no	yes	yes	serves
@@ -2369,7 +2369,7 @@ listRecentPurgeRequests	doctor_persistence	yes	4	no	yes	yes	serves
 listStuckWorktreeRefreshes	doctor_persistence	yes	1	no	yes	yes	serves
 listSourceBindingsForMovement	doctor_persistence	yes	4	no	yes	yes	serves
 listRunningClaimOwners	doctor_persistence	yes	2	no	yes	yes	serves
-listOwnerBindings	doctor_persistence	yes	1	no	yes	yes	serves
+listOwnerBindings	doctor_persistence	yes	2	no	yes	yes	serves
 listConsumerOwners	doctor_persistence	yes	1	no	yes	yes	serves
 listCallerRefusalRows	doctor_persistence	yes	2	no	yes	yes	serves
 countCompactedCallerRefusals	doctor_persistence	yes	2	no	yes	yes	serves

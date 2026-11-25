@@ -408,6 +408,7 @@ test/engine-parity/page-visibility.test.ts
 test/engine-parity/page-withdrawal-overlay.test.ts
 test/engine-parity/page-write-readers.test.ts
 test/engine-parity/pages.test.ts
+test/engine-parity/persistence-binding-reads.test.ts
 test/engine-parity/persistence-declaration.test.ts
 test/engine-parity/persistence.test.ts
 test/engine-parity/person-duplicates.test.ts

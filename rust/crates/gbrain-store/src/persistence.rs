@@ -65,6 +65,7 @@ use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
+mod binding_reads;
 mod checkpoint_rows;
 mod checkpoint_validation;
 mod connector_attempts;
