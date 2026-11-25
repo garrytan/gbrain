@@ -336,6 +336,25 @@ export async function stdioAmbientOpts(engine: BrainEngine, writeback: Writeback
   });
 }
 
+/**
+ * Onboarding PR 2 (d13): the hook lane a stdio serve answers for. 'owner' only when its member binding
+ * (--stdio-member, else config mcp.stdio_member) is nobody or the brain owner; a member-bound, read-only or
+ * unreadable binding gets nothing pushed.
+ */
+export async function stdioFirstSessionLane(engine: BrainEngine, opts: { readOnly: boolean; stdioMember?: string }): Promise<'owner' | 'member' | 'read_only'> {
+  if (opts.readOnly) return 'read_only';
+  try {
+    const { stdioMemberId } = await import('../core/access/caller.ts');
+    if ((opts.stdioMember ?? await stdioMemberId(engine, { strict: true })) === null) return 'owner';
+    const member = (await stdioMemberIdentity(engine, opts.stdioMember)).find(p => p.startsWith('member:'))?.slice('member:'.length);
+    if (!member) return 'member';
+    const { ownerMemberId } = await import('../core/access/owner.ts');
+    return member === await ownerMemberId(engine) ? 'owner' : 'member';
+  } catch {
+    return 'member';
+  }
+}
+
 export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpSurface; surfaceSource?: SurfaceSource; invalidSurfaceEnv?: string; sourceGuard?: boolean; onBootPhase?: (phase: string) => void; access?: McpAccess; advertise?: McpSurface; stdioMember?: string } = {}) {
   const config = loadConfig();
   const bootPhase = (phase: string) => { try { opts.onBootPhase?.(phase); } catch { /* diagnostic only */ } };
@@ -548,7 +567,8 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
     const lean = readOnlyServeSkipsResidentDuties(!!session.readOnly, engine.kind);
     const persistence = lean ? undefined : await servePersistenceIpcProvider(engine, residentPersistenceConfig(config) ?? { engine: engine.kind });
     bootPhase('resolve_ipc_bind');
-    ipcBinding = await bindResolveIpcForServe(engine, ipcSourceId, persistence, { rememberCallable: () => !session.allowedOps || session.allowedOps.has('remember'), lean });
+    const firstSessionLane = await stdioFirstSessionLane(engine, { readOnly: lean || !!session.readOnly, stdioMember: opts.stdioMember });
+    ipcBinding = await bindResolveIpcForServe(engine, ipcSourceId, persistence, { rememberCallable: () => !session.allowedOps || session.allowedOps.has('remember'), lean, firstSessionLane });
     import('../core/onboard/mcp-onboarding.ts').then(m => m.startOnboardingRefresher(engine, { idle: () => _stdioRpcsInFlight === 0 })).catch(() => { /* coaching is best-effort */ });
     if (lean) return void process.stderr.write(READ_ONLY_SERVE_NOTE);
 

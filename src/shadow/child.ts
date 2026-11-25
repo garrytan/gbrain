@@ -34,6 +34,7 @@ import { FollowChild, type FollowEvent, type FollowStore } from './follow-child.
 import { appendFault, appendLedgerRows, writeSummaryFile, type ShadowLedgerRow, type ShadowSummaryFile } from './ledger.ts';
 import { newMirrorCounters, type MirrorCounters } from './mirror.ts';
 import { createWriteComparer } from './write-compare-child.ts';
+import { WriteTally } from './write-compare.ts';
 import { appendRecall, IntervalGate, recallEligible, RECALL_INTERVAL_MS, scoreRecall, type RankedKey } from './recall.ts';
 import { isShadowReadMember, SHADOW_READ_MEMBERS, type ShadowReadMember } from './reads.ts';
 import { readSeedRecord } from './seed.ts';
@@ -389,7 +390,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   };
 
   // Write comparisons (write-compare.ts): sampled page and link writes replayed on a scratch store, counted under the current epoch.
-  const writes = createWriteComparer({ dir: shadowDir, load, alive: () => !deleted(), openEngine: deps.openEngine, onError: recordRustError });
+  const writes = createWriteComparer({ dir: shadowDir, load, tally: new WriteTally(shadowDir, curEpoch, () => !deleted()), alive: () => !deleted(), openEngine: deps.openEngine, onError: recordRustError });
   const session = deps.session ?? process.env.GBRAIN_SHADOW_SESSION ?? '';
   const ask = createAsker(deps.writeControl, session);
 

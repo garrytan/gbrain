@@ -448,6 +448,18 @@ describe('review round 1: the lock, the probe, persistence, the addon and the di
     expect(existsSync(dir)).toBe(false);
   });
 
+  test('a drill that fails while taking its lock releases the shadow and drills directory holds', async () => {
+    const { dir } = shadow();
+    // The lock is stamped with `now()` right after both directories are held: fail there (the same point a full disk or a
+    // read-only drills directory fails), once the drills directory exists.
+    const failing = (): number => { if (existsSync(join(dir, 'drills'))) throw new Error('lock admission failed'); return Date.now(); };
+    const open = (): number => readdirSync('/dev/fd').length;
+    const before = open();
+    await expect(runBackupDrill(dir, deps(fakeOwner(), { now: failing }))).rejects.toThrow('lock admission failed');
+    expect(open()).toBe(before);
+    expect(existsSync(join(dir, 'drills', 'drill.lock'))).toBe(false);
+  });
+
   test('stop --delete refuses while a drill holds its lock and deletes nothing; once the drill ends it deletes', async () => {
     const { dir } = shadow();
     const lines: string[] = [];

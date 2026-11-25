@@ -488,7 +488,15 @@ async function sweepGmail(g: GmailSweep, onCurrent?: () => Promise<void>): Promi
     state.gmail_history_id = profile.historyId;
     await saveGoogleState(deps, state);
   }
-  if (!state.gmail_history_id) return true;
+  if (!state.gmail_history_id) {
+    // A finished backfill with no change-feed anchor is a window-mode cursor (a gbrain.io source moved to vault): anchor
+    // history now and drain from the newest landed message by window, as an expired history id does.
+    const profile = await gmail.getProfile({ ...(deps.opts.signal ? { signal: deps.opts.signal } : {}) });
+    state.gmail_gap_floor_ms = null;
+    openGmailGap(state, cutoffMs);
+    state.gmail_history_id = profile.historyId;
+    await saveGoogleState(deps, state);
+  }
 
   // ── Current mail first: delta, then any history-expired gap ──
   const delta = await drainGmailDelta(g, cutoffMs);
