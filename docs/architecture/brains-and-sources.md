@@ -329,7 +329,10 @@ the decision keeps a fingerprint (a hash of each page's name and ids, never
 the values), so a renamed or moved page is still kept apart. People are
 linked automatically only by `gbrain dedupe auto --apply` (a "same" decision
 recorded like a confirm, `decided_by: dedupe:auto:<class>`, for the classes
-that passed a labelled sample; see
+that passed a labelled sample; two pages of one person in the same source are
+collapsed instead, the newer page pointing at the older one with
+`merged_into`, in one commit with a repository or through the page history
+without one; see
 [Duplicate people](../guides/duplicate-people.md#automatic-links)), and contact
 pages by exactly the same email or phone: Apple Contacts on every sync, and Google Contacts after
 `gbrain dedupe link-contacts --source <id> --apply`

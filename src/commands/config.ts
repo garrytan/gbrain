@@ -76,6 +76,7 @@ const FILE_PLANE_DOTTED_KEYS: ReadonlySet<string> = new Set([
   'persistence.write_wait_ms',
   // Engine graduation opt-out: the pre-connect migrate router reads it engine-free.
   'migrate.graduation', 'doctor.default_budget_ms', // #6803: the CLI doctor reads it pre-connect (commands/doctor/default-budget.ts)
+  'brain_first.policy_line', // L1: setup and upgrade read it engine-free; writes go through config/reserved-keys.ts (owner-confirmed)
   'minions.terminal_hook', // #7242: a command the worker runs; local file plane only, never the shared DB plane (minions/terminal-hook.ts)
   'mcp.default_surface_claude_code', 'mcp.default_surface_codex', 'mcp.default_surface_hermes', // I1: gbrain setup reads them engine-free (registrationProfile)
 ]);
@@ -382,6 +383,7 @@ export async function handleDbPlaneRoutedKeys(key: string, value: string): Promi
  */
 export async function tryRunConfigEngineFree(args: string[]): Promise<boolean> {
   if (args[1]?.startsWith('skills.resolver.')) return runSkillResolverKey(args);
+  if (await (await import('./config/reserved-keys.ts')).runReservedConfigKey(args)) return true;
   if (args[0] !== 'set') return false;
   const key = args[1];
   const value = args.slice(2).find((a) => !a.startsWith('-'));
@@ -743,6 +745,7 @@ export function printUsage(): void {
 
 export async function runConfig(engine: BrainEngine, args: string[]) {
   if (subcommandHelpRequested(args, ROUTERS.config)) { printUsage(); return; }
+  if (await (await import('./config/reserved-keys.ts')).runReservedConfigKey(args)) return;
   const action = args[0] as (typeof CONFIG_SUBCOMMANDS)[number] | undefined;
 
   // The writer admin lock is reserved for `gbrain sources writer lock|unlock`; --force is no escape.

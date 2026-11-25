@@ -55,7 +55,7 @@ export function fileReader(root: HarnessRoot): ArchiveReader {
   };
 }
 
-async function* parseFile(path: string, format: TranscriptFormat): AsyncGenerator<ParsedSession> {
+export async function* parseFile(path: string, format: TranscriptFormat): AsyncGenerator<ParsedSession> {
   const detected = detectAdapter(path, { explicitFormat: format });
   if (!detected.ok) return;
   const gen = detected.adapter.parse(path);
@@ -69,7 +69,7 @@ async function* parseFile(path: string, format: TranscriptFormat): AsyncGenerato
 }
 
 /** One session read again from every file that holds it (live, rotated, reset, deleted), messages merged once each, oldest first. */
-async function loadSession(harness: TranscriptFormat, sessionId: string, paths: string[]): Promise<ArchiveConversation | null> {
+export async function loadSession(harness: TranscriptFormat, sessionId: string, paths: string[]): Promise<ArchiveConversation | null> {
   let meta: ParsedSession['meta'] | undefined;
   let metaNewest = '';
   const bases = new Set<string | undefined>();
