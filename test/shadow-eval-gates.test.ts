@@ -199,7 +199,7 @@ describe('status and the swap never fetch', () => {
     const real = globalThis.fetch;
     globalThis.fetch = (() => { throw new Error('status must not touch the network'); }) as unknown as typeof fetch;
     try {
-      const doc = shadowStatusDocument({ key: 'k', dir });
+      const doc = await shadowStatusDocument({ key: 'k', dir });
       expect(doc.drills).toMatchObject({ backup_restore_passed: false, eval_gates_e1_e3: false, eval_gates_reason: 'eval_gates_missing', backup_reason: 'backup_drill_missing' });
       expect(doc.drills.eval_gates_reason).toBeDefined();
       expect(epoch.build?.gbrain_commit).toBe(COMMIT);

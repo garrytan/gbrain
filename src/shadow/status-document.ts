@@ -60,7 +60,9 @@ export async function shadowStatusDocument(brain: { key: string; dir: string }, 
     seed: seedStatus(readSeedRecord(brain.dir)), // the seed block carries the recorded storage mode
     ...eligibility,
     ...(bound ? bound.evidence : ({} as EvidenceStatus)),
-    ...(bound ? bound.drills : {}),
+    // Unbound: the epoch kept moving, so the evidence fields above are left out and the swap cannot be READY; the drills
+    // block is then one read against whatever epoch is current, only so `status` can still print its reasons.
+    ...(bound ? bound.drills : buildDrillStatus(brain.dir)),
   };
 }
 
