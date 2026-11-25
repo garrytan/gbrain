@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 323216,
-    "stdoutSha256": "2f5ad6df44cce4160339a5b6cdd51d418800d4ee80d07a6381fc96134f993f6c",
+    "stdoutBytes": 332504,
+    "stdoutSha256": "95543a14410d1043f47f1b640eead0a2bb3be3c6f14fc4c3de29657d7e47b2b0",
     "toolNames": [
       "remember",
       "entity",
@@ -104,6 +104,9 @@
       "policy_check",
       "agent_policy",
       "capabilities",
+      "log_action",
+      "ledger",
+      "policy_reserve",
       "submit_job",
       "get_job",
       "wait_job",
@@ -4834,7 +4837,7 @@
         "scope": "read"
       },
       {
-        "description": "Before you send, spend, delete, sign up, call or publish on the user's behalf outside this brain, ask whether the user's agent policy allows it. Advisory: allow, ask, deny or none (no policy).",
+        "description": "Before you send, spend, delete, sign up, call or publish on the user's behalf outside this brain, ask whether the user's agent policy allows it. Advisory: allow, ask, deny or none (no policy), with requires_approval and any day, week or month budget left. To hold budget for a spend, call policy_reserve instead.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -4939,6 +4942,325 @@
           "type": "object"
         },
         "scope": "read"
+      },
+      {
+        "description": "After you act on the user's behalf outside this brain (send, spend, cancel, sign up...), record it. An amount needs evidence (the slug of a saved page that shows it) or estimated: true. Pass action_id to settle a policy_reserve hold or move a proposed action on. Keep request_id and retry with the same arguments.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": true,
+        "name": "log_action",
+        "parameters": {
+          "action_id": "string?",
+          "approval_by": "string?",
+          "approval_rule": "string?",
+          "at": "string?",
+          "cost_usd": "number?",
+          "counterparty": "string?",
+          "currency": "string?",
+          "estimated": "boolean?",
+          "evidence": "array?",
+          "harness": "string?",
+          "minutes_saved": "number?",
+          "policy_revision": "string?",
+          "purpose": "string?",
+          "request_id": "string?",
+          "saved": "number?",
+          "saved_period": "string?",
+          "spent": "number?",
+          "status": "string?",
+          "summary": "string?",
+          "supersedes": "string?",
+          "verb": "string"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "action_id": {
+              "description": "An action you logged or reserved, to move it on (settles a hold).",
+              "type": "string"
+            },
+            "approval_by": {
+              "description": "Who approved it: owner, policy or none.",
+              "enum": [
+                "owner",
+                "policy",
+                "none"
+              ],
+              "type": "string"
+            },
+            "approval_rule": {
+              "description": "The policy rule id that allowed it.",
+              "type": "string"
+            },
+            "at": {
+              "description": "When it happened (ISO time; default now).",
+              "type": "string"
+            },
+            "cost_usd": {
+              "description": "What the agent run cost, as reported by the harness.",
+              "type": "number"
+            },
+            "counterparty": {
+              "description": "The merchant, service or person on the other side.",
+              "type": "string"
+            },
+            "currency": {
+              "description": "Three-letter code for spent or saved.",
+              "type": "string"
+            },
+            "estimated": {
+              "description": "true when the amount is an estimate with no evidence.",
+              "type": "boolean"
+            },
+            "evidence": {
+              "description": "Refs to evidence: a page slug (counts as evidence when you can read it) or a URL.",
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "note": {
+                    "type": "string"
+                  },
+                  "ref": {
+                    "type": "string"
+                  }
+                },
+                "required": [],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "harness": {
+              "description": "The agent or harness that acted.",
+              "type": "string"
+            },
+            "minutes_saved": {
+              "description": "Estimated minutes saved (recorded, never totalled).",
+              "type": "number"
+            },
+            "policy_revision": {
+              "description": "The policy revision policy_check returned.",
+              "type": "string"
+            },
+            "purpose": {
+              "description": "For spend: buy or pay.",
+              "enum": [
+                "buy",
+                "pay"
+              ],
+              "type": "string"
+            },
+            "request_id": {
+              "description": "A UUID; reuse it only to replay the same call.",
+              "type": "string"
+            },
+            "saved": {
+              "description": "Money saved, with saved_period.",
+              "type": "number"
+            },
+            "saved_period": {
+              "description": "one_time, monthly or yearly (never annualized).",
+              "enum": [
+                "one_time",
+                "monthly",
+                "yearly"
+              ],
+              "type": "string"
+            },
+            "spent": {
+              "description": "Money spent.",
+              "type": "number"
+            },
+            "status": {
+              "description": "Default done.",
+              "enum": [
+                "proposed",
+                "approved",
+                "done",
+                "failed",
+                "cancelled",
+                "reversed"
+              ],
+              "type": "string"
+            },
+            "summary": {
+              "description": "What was done, at most 200 characters (required for a new action).",
+              "type": "string"
+            },
+            "supersedes": {
+              "description": "The action_id this entry corrects.",
+              "type": "string"
+            },
+            "verb": {
+              "description": "The outside action.",
+              "enum": [
+                "send",
+                "publish",
+                "spend",
+                "delete",
+                "sign_up",
+                "call",
+                "book",
+                "cancel",
+                "dispute",
+                "submit",
+                "return",
+                "use",
+                "renew",
+                "remind",
+                "other"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "verb"
+          ],
+          "type": "object"
+        },
+        "scope": "write"
+      },
+      {
+        "description": "Totals of the outside actions you can read for a window: spent and saved per currency, split by evidenced, user_confirmed and estimated, by verb and by counterparty, plus live budget holds. Computed by gbrain; a window too large to read returns state partial and the narrower call.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": false,
+        "name": "ledger",
+        "parameters": {
+          "counterparty": "string?",
+          "since": "string?",
+          "verb": "string?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "counterparty": {
+              "description": "Only this counterparty.",
+              "type": "string"
+            },
+            "since": {
+              "description": "Start: <n>d (default 30d) or an ISO date, at most 3660 days back.",
+              "type": "string"
+            },
+            "verb": {
+              "description": "Only this verb.",
+              "enum": [
+                "send",
+                "publish",
+                "spend",
+                "delete",
+                "sign_up",
+                "call",
+                "book",
+                "cancel",
+                "dispute",
+                "submit",
+                "return",
+                "use",
+                "renew",
+                "remind",
+                "other"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "scope": "read"
+      },
+      {
+        "description": "Before a spend, check the agent policy with its day, week and month budgets and hold the amount for 24 hours, in one step, so two agents cannot both use the last of a budget. Returns the policy_check answer and the reservation; settle it with log_action {action_id, status: \"done\", spent} after you act (with no amount the held amount is recorded as an estimate). A deny holds nothing.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": true,
+        "name": "policy_reserve",
+        "parameters": {
+          "amount": "number",
+          "currency": "string",
+          "harness": "string?",
+          "merchant": "string?",
+          "purpose": "string?",
+          "request_id": "string?",
+          "summary": "string",
+          "to": "string?",
+          "verb": "string"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "amount": {
+              "description": "The amount to hold.",
+              "type": "number"
+            },
+            "currency": {
+              "description": "Three-letter currency code, like USD.",
+              "type": "string"
+            },
+            "harness": {
+              "description": "The agent or harness that will act.",
+              "type": "string"
+            },
+            "merchant": {
+              "description": "Merchant or service, when a rule may name it.",
+              "type": "string"
+            },
+            "purpose": {
+              "description": "For spend: buy or pay.",
+              "enum": [
+                "buy",
+                "pay"
+              ],
+              "type": "string"
+            },
+            "request_id": {
+              "description": "A UUID; reuse it only to replay the same call.",
+              "type": "string"
+            },
+            "summary": {
+              "description": "What the agent is about to do, at most 200 characters.",
+              "type": "string"
+            },
+            "to": {
+              "description": "Who it reaches: self, household, known or new.",
+              "enum": [
+                "self",
+                "household",
+                "known",
+                "new"
+              ],
+              "type": "string"
+            },
+            "verb": {
+              "description": "The outside action.",
+              "enum": [
+                "send",
+                "publish",
+                "spend",
+                "delete",
+                "sign_up",
+                "call",
+                "book",
+                "cancel",
+                "dispute",
+                "submit",
+                "return",
+                "use",
+                "renew",
+                "remind",
+                "other"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "verb",
+            "amount",
+            "currency",
+            "summary"
+          ],
+          "type": "object"
+        },
+        "scope": "write"
       },
       {
         "description": "Submit a background job. Remote callers may submit sync, import, lint or lint-fix for their authenticated filesystem source. Other kinds require local CLI or a dedicated operation.",

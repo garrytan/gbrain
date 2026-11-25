@@ -55,6 +55,8 @@ export const OP_READ_TRUST: Readonly<Record<string, ReadTrustHandling>> = {
   list_write_conflicts: 'text_free', get_brain_health: 'text_free',
   // L1: the owner-approved agent policy (rules and decisions, no page text) and per-op callable flags.
   policy_check: 'text_free', agent_policy: 'text_free', capabilities: 'text_free',
+  // L2: ledger totals carry counterparty names agents wrote, so a floored connection is refused rather than served them.
+  ledger: 'labeled',
   onboarding_status: 'text_free',
   // Held at the unlisted default (refused under a token floor) pending a trust-posture call: it returns config-derived
   // settings and rule text, no stored memory text, so text_free would describe it but would admit floored connections.

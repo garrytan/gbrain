@@ -303,6 +303,7 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // only: a remote caller could declare $0 and void a cost cap, so it is never an operation either.
   { name: 'pricing', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/pricing.ts') },
   { name: 'policy', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/policy.ts') },
+  { name: 'ledger', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/ledger.ts') },
   { name: 'migrate', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/migrate.ts') },
   { name: 'retrieval-upgrade', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/retrieval-upgrade.ts') },
   // selfHelp: #3686 (the #578 residue): eval / storage / reindex each ship real usage — eval's

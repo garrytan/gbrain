@@ -53,7 +53,7 @@ const REFUSED_OPS = [
   'capture', 'list_page_purges', 'list_watches', 'purge_fact', 'unpurge_page', 'unwatch', 'watch_job', 'watch_write_request', 'watch_cron', 'accept_wakeshift_terms', 'connectors_status',
   'get_recent_transcripts', 'sources_inspect', 'sources_add', 'sources_remove', 'connector_sync',
   'code_traversal_cache_clear', 'migrate_embeddings', 'purge_deleted_pages', 'sync_brain',
-  'policy_check', 'agent_policy', 'capabilities',
+  'policy_check', 'agent_policy', 'capabilities', 'log_action', 'ledger', 'policy_reserve',
   'onboarding_status', 'onboarding_off', 'propose_jobs', 'propose_decide',
   // writes outside the checked set: batch, upload, label, history, fact and queue writes
   'abort_page_upload', 'begin_page_upload', 'commit_page_upload', 'get_page_upload', 'upload_page_part', 'put_pages',
@@ -120,7 +120,7 @@ export const CLI_COMMAND_CLASSES: Readonly<Record<string, EnforcedClass | Enforc
     'transcripts', 'models', 'takes', 'onboard', 'founder', 'profile', 'think', 'notability-eval', 'waiting', 'loops', 'household',
     'questions', 'edge-proposals', 'memory-proposals', 'core', 'connectors', 'wakeshift', 'pages', 'quarantine', 'beliefs',
     'trust', 'guests', 'dedupe', 'watch', 'storage', 'code-def', 'code-refs', 'reindex-code', 'reindex-search-vector', 'reindex-frontmatter',
-    'backfill', 'code-callers', 'code-callees', 'repos', 'secrets', 'apple-contacts', 'policy', 'claims', 'onboarding', 'propose',
+    'backfill', 'code-callers', 'code-callees', 'repos', 'secrets', 'apple-contacts', 'policy', 'claims', 'ledger', 'onboarding', 'propose',
   ].map(n => [n, 'refused' as const])),
 };
 

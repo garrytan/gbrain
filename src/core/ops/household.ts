@@ -30,7 +30,7 @@ import {
   RECURS, readHouseholdRecord, strictDate, strictMonthDay, type HouseholdIssue, type HouseholdKind, type HouseholdRecord,
 } from '../household/record.ts';
 import { assessHouseholdRecord, calendarDay, rankAssessments, type HouseholdAssessment, type HouseholdState } from '../household/assess.ts';
-import { aboutOf, classifySubjects, householdWriteAdmission, placedReaders, placeHouseholdFrontmatter, placeRecord, readersWiderThanTable, refuseAccountNumbers, roleClass, type SubjectClass } from '../household/placement.ts';
+import { aboutOf, classifySubjects, householdWriteAdmission, nonOwnerChildRefusal, placedReaders, placeHouseholdFrontmatter, placeRecord, readersWiderThanTable, refuseAccountNumbers, roleClass, type SubjectClass } from '../household/placement.ts';
 
 /** Records one household_due call reads at most; past it the answer is partial with no counts. */
 export const HOUSEHOLD_SCAN_CAP = 2_000;
@@ -236,10 +236,6 @@ function timelineLine(day: string, event: string, note: string | null): string {
 }
 
 /** On a brain that serves several people, only the owner's remote connection makes a subject a child: one refusal, whatever records exist. */
-function nonOwnerChildRefusal(subject: string) {
-  return opError('household_reclassify', `Only the brain's owner can make ${subject} a child, since the household records about it have to be narrowed to adults, so nothing was written.`,
-    `Ask the brain's owner to run gbrain household replace --about ${subject} --role child on the brain host, or to add this record as the owner.`);
-}
 
 /**
  * Writes `household_role` on each subject page (creating a minimal page when none exists). A subject that goes from another

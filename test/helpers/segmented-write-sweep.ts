@@ -164,6 +164,8 @@ export const NO_PAGE_TARGET: Record<string, string> = {
   household_add: 'creates a new household record; a subject page it sets household_role on refuses a segmented body (assertInlineBody, household_add about_role)',
   household_mark: 'loads only a type household record (another type is refused invalid_params before its body is used); a segmented record refuses page_body_segmented (assertInlineBody)',
   household_replace: 'local only; rewrites type household records, and a segmented one refuses page_body_segmented (assertInlineBody)',
+  log_action: 'writes and moves type agent_action records by their frontmatter alone; an evidence page is checked by existence and frontmatter, never its body',
+  policy_reserve: 'holds a spend as a type agent_action record by its frontmatter alone; a segmented policy page reads as an empty policy (readPolicyPage)',
   learned_keep: 'learning ledger rows', learned_undo: 'learning ledger rows; a filled-in page is put back through revert_version, which refuses every segmented page',
   questions_pin: 'pinned questions', questions_refresh: 'pinned questions', questions_unpin: 'pinned questions',
   storage_register: 'storage cards on the storage shelf, keyed by card id; a card (details capped at 64 KiB) is never segmented',
