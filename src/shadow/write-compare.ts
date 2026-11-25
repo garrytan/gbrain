@@ -86,7 +86,7 @@ export function readWriteTally(dir: string, epochId: string | null): WriteTallyF
   try {
     const parsed = JSON.parse(readFileSync(writeTallyPath(dir), 'utf8')) as WriteTallyFile;
     return epochId !== null && parsed?.version === 1 && parsed.epoch_id === epochId ? parsed : null;
-  } catch { return null; }
+  } catch { return null; } // silent-read-ok: no readable tally is no count; the status shows zero and criterion 5 stays missing
 }
 
 const MAX_KEYS = 64;
