@@ -19,6 +19,7 @@ import { RECEIPT_STOP_OWNERS } from '../receipt-stops.ts';
 import { OWNER_IPC_ROUTES, ownerIpcRefusal } from '../owner-ipc/routes.ts';
 import { rustMultiuserFromEnv } from '../multiuser-switch.ts';
 import { connectServed, type ServedConnection } from './client.ts';
+import { SERVED_TXN_CONFLICT_REASON, servedTransactionContention } from './errors.ts';
 import { recordHeldPageKeys, type HeldPageKeys } from '../../page-state/guards.ts';
 import type { PageKey } from '../../page-state/types.ts';
 import { SERVED_BRAIN_CALL, SERVED_STORE_CALL, STORE_RETURNING_MEMBERS, registerServedBrain, unregisterServedBrain } from './store-returning.ts';
@@ -113,7 +114,25 @@ function transactionHandle(engine: object, connection: ServedConnection, ref: st
   return handle as unknown as BrainEngine;
 }
 
+/** How many more times a top-level transaction's callback runs after a lost commit (the in-process engine's limit, I-1). */
+export const SERVED_TRANSACTION_RETRIES = 8;
+
 async function runTransaction<T>(engine: object, connection: ServedConnection, fn: (tx: BrainEngine) => Promise<T>,
+  opts: TransactionOptions | undefined, parent?: string, parentHeld: HeldPageKeys | null = null): Promise<T> {
+  // A savepoint's lost commit is its top-level transaction's: only the top level runs the callback again.
+  if (parent !== undefined) return runTransactionOnce(engine, connection, fn, opts, parent, parentHeld);
+  for (let attempt = 1; ; attempt++) {
+    try { return await runTransactionOnce(engine, connection, fn, opts, parent, parentHeld); }
+    catch (error) {
+      const lost = (error as { code?: unknown; reason?: unknown } | null)?.code === 'revision_conflict'
+        && (error as { reason?: unknown }).reason === SERVED_TXN_CONFLICT_REASON;
+      if (!lost) throw error;
+      if (attempt > SERVED_TRANSACTION_RETRIES) throw servedTransactionContention(attempt);
+    }
+  }
+}
+
+async function runTransactionOnce<T>(engine: object, connection: ServedConnection, fn: (tx: BrainEngine) => Promise<T>,
   opts: TransactionOptions | undefined, parent?: string, parentHeld: HeldPageKeys | null = null): Promise<T> {
   if (opts?.signal?.aborted) throw opError('cancelled', 'The transaction was cancelled before it began; nothing was written.', 'Retry the transaction.', { detail: 'member=transaction via=served' });
   const ref = String(await connection.txn('begin', { ...(parent ? { txn: parent } : {}), ...(opts?.readOnly ? { readOnly: true } : {}) }));

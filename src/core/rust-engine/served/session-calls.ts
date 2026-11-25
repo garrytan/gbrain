@@ -15,7 +15,7 @@ import { withRemoteCaller } from '../../remote-caller.ts';
 import { decodeError, decodeValue, encodeValue, type Wire } from '../owner-ipc/codec.ts';
 import { OWNER_IPC_ROUTES, ownerCallTimeout, ownerIpcRefusal, ownerMemberOnlyReads } from '../owner-ipc/routes.ts';
 import { withCallerAccess, withoutCallerAccess, type CallerAccess } from '../../search/private-visibility.ts';
-import { servedCallbackTimeout, servedProtocol, servedTransactionDeadline } from './errors.ts';
+import { servedCallbackTimeout, servedProtocol, servedTransactionConflict, servedTransactionDeadline } from './errors.ts';
 import { restoreTail } from './framing.ts';
 import type { ServedCall, ServedServerOptions, ServedServerSide } from './session.ts';
 import { STORE_RETURNING_MEMBERS as STORE_MEMBERS_RETURNING, servedBrainMethod } from './store-returning.ts';
@@ -183,7 +183,12 @@ export function sessionCalls(ctx: SessionCallsContext) {
       const ended = new Promise<void>((resolve, reject) => { commit = resolve; rollback = reject; });
       ended.catch(() => undefined);
       let answered = false;
+      let runs = 0;
       const settled = parent.transaction(async tx => {
+        // A second run means the first run's commit was lost and the engine would run the callback again. The callback
+        // here only waits for the client, so a second run would commit nothing and answer success: end it, and the
+        // client runs its own callback again (served/engine.ts runTransaction).
+        if (++runs > 1) throw servedTransactionConflict();
         // A begin that got the writer after its connection closed rolls back at once (review G9).
         if (ctx.closed()) throw servedTransactionDeadline(0);
         const timer = setTimeout(() => rollback(servedTransactionDeadline(maxMs)), maxMs);

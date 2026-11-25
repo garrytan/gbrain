@@ -197,7 +197,10 @@ share permits, queues, bounds and the confirming-read holds.
   the server. A callback that does not answer within 10 s fails the call and rolls its transaction back.
 - `txn` frames (`begin`, `commit`, `rollback`): interactive transactions over the wire, answered only when the server
   engine reports `multi_writer` (lane L1) or under the test-only sub-switch `GBRAIN_RUST_SERVED_SERIAL_TXN=1`.
-  A transaction rolls back on disconnect and after 30 s. Until then `transaction(fn)` on a served client refuses
+  A transaction rolls back on disconnect and after 30 s. When the server engine loses the commit to another writer (optimistic
+  transactions), it does not run the waiting callback again: it ends the transaction `revision_conflict` reason
+  `transaction_conflict`, nothing of it kept, and the client runs its own callback again from a fresh transaction, at
+  most 8 more times, then `revision_conflict` reason `transaction_contention`, as the in-process engine does. Until then `transaction(fn)` on a served client refuses
   exactly as on a local second process (decision N: whole operations first).
 
 ### Who gets in (until M2)

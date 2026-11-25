@@ -113,6 +113,27 @@ export function servedCallbackTimeout(member: string, ms: number): OperationErro
     { reason: 'callback_timeout', retryable: true, detail: `member=${member} via=served callback_ms=${ms} written=nothing` });
 }
 
+/**
+ * The server engine's commit of a transaction over the wire lost to another writer, and it would run the callback
+ * again; over the wire that callback belongs to the client, so the server ends the transaction instead and the client
+ * runs its callback again from a fresh transaction (served/engine.ts). Nothing of the lost run was kept.
+ */
+export const SERVED_TXN_CONFLICT_REASON = 'transaction_conflict';
+export function servedTransactionConflict(): OperationError {
+  return opError('revision_conflict',
+    'The transaction lost its commit to another writer, so nothing it wrote was kept.',
+    'Run the transaction again from a fresh read; the client does this by itself a bounded number of times.',
+    { reason: SERVED_TXN_CONFLICT_REASON, retryable: true, detail: 'member=transaction via=served written=nothing' });
+}
+
+/** The client's reruns of a transaction that kept losing its commit ran out (the in-process engine's limit). */
+export function servedTransactionContention(attempts: number): OperationError {
+  return opError('revision_conflict',
+    `The transaction lost to concurrent writers ${attempts} times in a row, so nothing it wrote was kept.`,
+    'Retry later, or narrow what the transaction reads and writes.',
+    { reason: 'transaction_contention', retryable: true, detail: `member=transaction via=served attempts=${attempts} written=nothing` });
+}
+
 /** A transaction over the wire passed its deadline before it committed; it rolled back. */
 export function servedTransactionDeadline(ms: number): OperationError {
   return opError('timeout',
