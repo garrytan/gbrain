@@ -18,14 +18,14 @@
  *  - Why existing coverage misses it: these statements ran through `executeRaw`, which the parity cases cannot call (D18), so
  *    no case compared them across engines (docs/research/rust-cli-executeraw-map.md).
  *  - Seam: sources are created through createSource/archiveSource (harness.ts), as the other facts parity files do. Every
- *    fact, page, take, alias and consolidation is seeded through typed members. A page stored in segments has no typed
- *    writer, so countSegmentedCensusPages is compared on a brain with none (its filters are pinned in the Postgres text pin,
- *    test/facts-repair-sites-sql-pin.test.ts). Generated values (ids, timestamps, the brain id, a source incarnation) are
+ *    fact, page, take, alias and consolidation is seeded through typed members. A page stored in segments comes from
+ *    createSegmentedPageShell, so countSegmentedCensusPages and listFactsPageBodies are compared with segmented pages too. Generated values (ids, timestamps, the brain id, a source incarnation) are
  *    compared by relation or by shape, never by value.
  */
 import { describe, expect } from 'bun:test';
 import { archiveSource, createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { pageMeta } from '../helpers/page-body-fixtures.ts';
 import type { BrainEngine, NewFact } from '../../src/core/engine.ts';
 import { AUDIT_ROW_SOURCES } from '../../src/core/facts/audit-sources.ts';
 
@@ -334,6 +334,45 @@ describe('engine parity: facts repair, doctor and trust statements that left exe
       { source_id: 'default', slug: 'company/facts', segmented: false, body: '- 2026-02-02 founded' },
       { source_id: 'default', slug: 'me/facts', segmented: false, body: '- 2026-01-01 born\n- undated line' },
       { source_id: 'other', slug: 'me/facts', segmented: false, body: '- elsewhere line' },
+    ]);
+    return listed;
+  });
+
+  parityTest('countSegmentedCensusPages counts the live segmented markdown pages of the sources that no walked file covers', {
+    methods: ['putPage', 'createSegmentedPageShell', 'softDeletePage', 'countSegmentedCensusPages'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    await engine.putPage('notes/whole', note('Whole'));
+    await engine.createSegmentedPageShell('notes/seg-a', pageMeta('Seg A'), { sourceId: 'default' });
+    await engine.createSegmentedPageShell('notes/seg-b', pageMeta('Seg B'), { sourceId: 'default' });
+    await engine.createSegmentedPageShell('notes/seg-c', pageMeta('Seg C'), { sourceId: 'other' });
+    const counts = {
+      unwalked: await engine.countSegmentedCensusPages(['default'], []),
+      walked: await engine.countSegmentedCensusPages(['default'], ['default']),
+      both: await engine.countSegmentedCensusPages(['default', 'other'], ['other']),
+      none: await engine.countSegmentedCensusPages([], ['default']),
+    };
+    await engine.softDeletePage('notes/seg-a');
+    const afterDelete = await engine.countSegmentedCensusPages(['default'], []);
+    // A shell has no source path, so a walked source still counts it.
+    expect(counts).toEqual({ unwalked: { n: 2 }, walked: { n: 2 }, both: { n: 3 }, none: { n: 0 } });
+    expect(afterDelete).toEqual({ n: 1 });
+    return { counts, afterDelete };
+  });
+
+  parityTest('listFactsPageBodies lists a segmented facts page with no published body as segmented with a null body', {
+    methods: ['putPage', 'createSegmentedPageShell', 'listFactsPageBodies'],
+  }, async (engine) => {
+    await engine.putPage('me/facts', note('Me', '- 2026-01-01 born', 'facts'));
+    await engine.createSegmentedPageShell('seg/facts', { ...pageMeta('Seg facts'), type: 'facts' }, { sourceId: 'default' });
+    await engine.putPage('company-x/facts', note('Company X', '- dash sorts before slash', 'facts'));
+    await engine.putPage('company/facts', note('Company', '- slash', 'facts'));
+    const listed = (await engine.listFactsPageBodies()).map(r => ({ slug: r.slug, segmented: r.segmented, body: r.body }));
+    expect(listed).toEqual([
+      { slug: 'company-x/facts', segmented: false, body: '- dash sorts before slash' },
+      { slug: 'company/facts', segmented: false, body: '- slash' },
+      { slug: 'me/facts', segmented: false, body: '- 2026-01-01 born' },
+      { slug: 'seg/facts', segmented: true, body: null },
     ]);
     return listed;
   });

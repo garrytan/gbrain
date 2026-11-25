@@ -14,11 +14,12 @@
 // requests after a mutation. That's the right trade vs serving stale
 // page types.
 //
-// Reuses the existing SemanticQueryCache.clear() method (already
-// PGLite + Postgres parity-safe) rather than reinventing the SQL.
+// The delete is the typed engine member invalidateQueryCacheRows
+// (engine-sql/query-cache-invalidate.ts); the Rust store keeps no query
+// cache, so a Rust brain answers 0 instead of refusing.
 
 import type { BrainEngine } from '../engine.ts';
-import { SemanticQueryCache } from '../search/query-cache.ts';
+import { isEngineCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 export interface InvalidateQueryCacheResult {
   rows_invalidated: number;
@@ -39,8 +40,9 @@ export interface InvalidateQueryCacheResult {
  * always the safe direction for an invalidator.
  *
  * Best-effort: failures (e.g. pre-v51 brain without the table) return
- * {rows_invalidated: 0} silently. Mutation hot-path must never break
- * because the cache invalidator fell over.
+ * {rows_invalidated: 0}. An engine capability refusal is thrown instead, so
+ * a brain that cannot clear the cache never reports it cleared; the mutation
+ * post-hooks (mutate.ts) catch it, so the mutation itself still succeeds.
  *
  * `sourceId` omitted clears the whole table. Used by Phase 4 reload and
  * any cross-source mutation.
@@ -50,28 +52,11 @@ export async function invalidateQueryCache(
   sourceId?: string,
 ): Promise<InvalidateQueryCacheResult> {
   try {
-    if (sourceId === undefined) {
-      const cache = new SemanticQueryCache(engine);
-      const rows_invalidated = await cache.clear({});
-      return { rows_invalidated };
-    }
-    // '__set__:' is 8 chars; substring(... from 9) is the sorted,
-    // comma-joined id list. Wrapping both the list and the target in commas
-    // makes the LIKE an exact token match ('a' never matches 'aa').
-    const rows = await engine.executeRaw<{ n: number }>(
-      `WITH deleted AS (
-         DELETE FROM query_cache
-         WHERE source_id = $1
-            OR source_id = '__unscoped__'
-            OR (source_id LIKE '\\_\\_set\\_\\_:%'
-                AND (',' || substring(source_id from 9) || ',') LIKE ('%,' || $1 || ',%'))
-         RETURNING 1
-       )
-       SELECT COUNT(*)::int AS n FROM deleted`,
-      [sourceId],
-    );
-    return { rows_invalidated: rows[0]?.n ?? 0 };
-  } catch {
+    return { rows_invalidated: await engine.invalidateQueryCacheRows(sourceId) };
+  } catch (e) {
+    // An engine that refuses the delete is reported, never read as a cleared cache; any other failure (a brain from
+    // before the query cache) reads 0, as the mutation post-hooks expect.
+    if (isEngineCapabilityRefusal(e)) throw e;
     return { rows_invalidated: 0 };
   }
 }

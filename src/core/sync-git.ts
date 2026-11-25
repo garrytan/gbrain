@@ -15,6 +15,7 @@ import { hasUnresolvedDbOnlyDeclaration, loadStorageConfig } from './storage-con
 import { GIT_READ_ENV, gitChildEnv } from './git-env.ts';
 import { recordCommit, recordIntent } from './git/commit-ledger.ts';
 import { OWNED_FOLDER_ROOT } from './owned-folder/root.ts';
+import { rethrowCapabilityRefusal } from './engine-capability-refusal.ts';
 
 /**
  * v0.32.7 CJK wave (codex post-merge F4): resolve a slug by `pages.source_path`
@@ -130,7 +131,8 @@ export async function resolveSlugsForRemovedPaths(
       try {
         const m = await engine.resolveSlugsByPaths(paths.slice(i, i + DELETE_BATCH_SIZE), { sourceId });
         for (const [p, s] of m) exact.set(p, s);
-      } catch {
+      } catch (error) {
+        rethrowCapabilityRefusal(error);
         // Best-effort — fall through to the verified phase-2 fallback.
       }
     }
@@ -143,8 +145,9 @@ export async function resolveSlugsForRemovedPaths(
         // holds several rows for the same source_path.
         const slug = await engine.readFirstLiveSlugAtPath(p);
         if (slug) exact.set(p, slug);
-      } catch {
-        // Best-effort.
+      } catch (error) {
+        // Best-effort, but a refused read is not a miss.
+        rethrowCapabilityRefusal(error);
       }
     }
   }
@@ -155,8 +158,9 @@ export async function resolveSlugsForRemovedPaths(
     try {
       const rows = await engine.listPathTwinSlugs(sourceId, unresolved.slice(i, i + DELETE_BATCH_SIZE));
       for (const row of rows) twins.set(row.source_path, row.slugs);
-    } catch {
+    } catch (error) {
       // Best-effort, like phase 1.
+      rethrowCapabilityRefusal(error);
     }
   }
   const fallbacks: Array<{ path: string; slug: string }> = [];
@@ -190,8 +194,9 @@ export async function resolveSlugsForRemovedPaths(
         if (list) list.push(r.source_path);
         else originsBySlug.set(r.slug, [r.source_path]);
       }
-    } catch {
-      // Fail-open: without origin evidence, keep the legacy fallback.
+    } catch (error) {
+      // Fail-open: without origin evidence, keep the legacy fallback. A refused read is not missing evidence.
+      rethrowCapabilityRefusal(error);
     }
   }
   for (const f of fallbacks) {

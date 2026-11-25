@@ -11,6 +11,7 @@
  * rows the copy saw.
  */
 import type { SeedPlan } from '../core/rust-engine/store.ts';
+import { normalizeSlug } from '../core/utils.ts';
 
 /** Runs one read in the seed's snapshot. */
 export type SeedQuery = (sql: string, params?: unknown[]) => Promise<Record<string, unknown>[]>;
@@ -73,5 +74,25 @@ export async function countSeedGaps(plan: SeedPlan, query: SeedQuery): Promise<R
     );
     counts[g.gap] = Number(row?.n ?? 0);
   }
+  const notNormal = await countSlugsNotNormal(query, present);
+  if (notNormal > 0) counts[SLUG_NOT_NORMAL_GAP] = notNormal;
   return Object.fromEntries(Object.entries(counts).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+}
+
+/** The gap of pages and slug aliases stored under a slug that is not in normal form (counted only when above zero). */
+export const SLUG_NOT_NORMAL_GAP = 'pages.slug_not_normal';
+
+/**
+ * Pages and slug aliases whose slug differs from its normal form (normalizeSlug: lowercase, then NFC; master #9944). The
+ * Rust store keeps only the normal form and reads by it, so such a row would be unreachable after a swap. SQL keeps only
+ * slugs with a character outside [a-z0-9/._-] (Postgres lower() under a C locale lowers ASCII only), and the test is in JS.
+ */
+async function countSlugsNotNormal(query: SeedQuery, present: Set<string>): Promise<number> {
+  let n = 0;
+  for (const [table, column] of [['pages', 'slug'], ['slug_aliases', 'alias_slug']] as const) {
+    if (!present.has(table)) continue;
+    const rows = await query(`SELECT ${quoted(column)} AS slug FROM ${quoted(table)} WHERE ${quoted(column)} ~ '[^a-z0-9/._-]'`);
+    for (const row of rows) if (typeof row.slug === 'string' && row.slug !== normalizeSlug(row.slug)) n++;
+  }
+  return n;
 }

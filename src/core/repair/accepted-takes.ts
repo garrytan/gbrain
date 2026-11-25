@@ -43,7 +43,6 @@ import { TAKES_FENCE_BEGIN, TAKES_FENCE_END, parseTakesFence, renderTakesFence, 
 import { setRowTier } from '../trust/page-handlers.ts';
 import { compareTrust, storedTrustTier, type TrustTier } from '../trust/tier.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairScope } from './core.ts';
-import { requireRawSql } from '../rust-engine/errors.ts';
 
 const DOCS = 'docs/guides/repair.md#accepted-takes';
 const COMMAND = 'gbrain repair accepted-takes';
@@ -151,8 +150,6 @@ async function restoreTake(engine: BrainEngine, ctx: Parameters<RepairHandler['a
   const rows = [...live.takes, take.row].sort((a, b) => a.rowNum - b.rowNum);
   const { beginIdx, endIdx } = locateOutsideCode(live.content, TAKES_FENCE_BEGIN, TAKES_FENCE_END);
   const content = live.content.slice(0, beginIdx) + renderTakesFence(rows, live.reserved.filter(n => n !== take.row_num)) + live.content.slice(endIdx + TAKES_FENCE_END.length);
-  // The restore is a page write (put_page, lane 7's writer): an engine without raw SQL stops here, before it.
-  requireRawSql(engine, 'repair accepted-takes page write');
   await submitPageMutation(ctx, { operation: 'put_page', params: { slug: take.slug, source_id: take.source_id, content, expected_revision: live.revision,
     request_id: await repairRequestId(ctx, 'accepted-takes', entry, live.revision) } });
   const restored = await engine.readTakeRowTier(take.page_id, take.row_num);

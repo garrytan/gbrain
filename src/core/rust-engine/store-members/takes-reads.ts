@@ -8,7 +8,7 @@
  * serves), and refuses with `engine_capability_missing` for a caller whose folder rules, audience or lineage widen
  * the policy.
  *
- * The reads and the delete of `gbrain extract takes` (readLivePageIdBySlug through findTakeId) refuse a page, take or
+ * The reads and the delete of `gbrain extract takes` (readLivePageIdBySlug through findTakeId) and stampTakeResolvedAt refuse a page, take or
  * row id that is not an integer, as the SQL's integer casts refuse it.
  */
 import {
@@ -173,6 +173,24 @@ export const findTakeId: StoreMember<[pageId: number, rowNum: number], number | 
   ints('findTakeId', [pageId, rowNum]);
   const id = await storeCall({ member: 'findTakeId' }, () => brain.findTakeId(pageId, rowNum)) as number | null;
   return id === null || id === undefined ? null : Number(id);
+};
+
+/** A remote takes write's holder check (persistence/authority.ts): the distinct holders of the takes at those rows. */
+export const listTakeHoldersAtRows: StoreMember<[pageId: number, rowNums: readonly number[]], string[]> = async (brain, pageId, rowNums) => {
+  ints('listTakeHoldersAtRows', [pageId, ...rowNums]);
+  return await storeCall({ member: 'listTakeHoldersAtRows' }, () => brain.listTakeHoldersAtRows(pageId, [...rowNums])) as string[];
+};
+
+/** The takes publication's prepare step: `resolved_at` of the take at a row number (carried from 098c048ad6). */
+export const stampTakeResolvedAt: StoreMember<[pageId: number, rowNum: number, resolvedAt: string], void> =
+  async (brain, pageId, rowNum, resolvedAt) => {
+    ints('stampTakeResolvedAt', [pageId, rowNum]);
+    await storeCall({ member: 'stampTakeResolvedAt' }, () => brain.stampTakeResolvedAt(pageId, rowNum, resolvedAt));
+  };
+
+/** The takes publication's prepare step: the holders a request used, kept in its authority. */
+export const recordTakeHoldersUsed: StoreMember<[requestId: string, holders: readonly string[]], void> = async (brain, requestId, holders) => {
+  await storeCall({ member: 'recordTakeHoldersUsed' }, () => brain.recordTakeHoldersUsed(requestId, [...holders]));
 };
 
 // The grade_takes verdict cache (take_grade_cache) and `gbrain takes grades`. A take id that is not an integer is

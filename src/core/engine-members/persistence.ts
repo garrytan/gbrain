@@ -33,7 +33,7 @@ import type { WriteRequest } from '../persistence/model.ts';
 import type { CounterColumn } from '../engine-sql/writer-release.ts';
 import type { EmbeddingCandidate } from '../engine-sql/persistence-effect-scans.ts';
 import type { GitHoldListingRow } from '../engine-sql/sync-hold-store.ts';
-import type { ManagedSyncFailureRow, SyncHeadRequestRow, SyncRecoveryProbeRow, SyncStatusCommittedRow, SyncStatusProbeOptions, SyncStatusSourceRow } from '../engine-sql/sync-status-reads.ts';
+import type { IdentityDowngradeCarry, IdentityDowngradeOldPage, IdentityRemedySideRow, ManagedSyncFailureRow, SyncHeadRequestRow, SyncRecoveryProbeRow, SyncStatusCommittedRow, SyncStatusProbeOptions, SyncStatusSourceRow } from '../engine-sql/sync-status-reads.ts';
 import type { ReceiptCompactionCandidate, ReceiptCompactionWindow } from '../engine-sql/persistence-housekeeping.ts';
 import type { RefreshTiming, WorktreeAdmission, WorktreeAdmissionKey } from '../engine-sql/persistence-admission.ts';
 import type { SegmentedGateEvidenceRow } from '../engine-sql/writer-versions.ts';
@@ -42,6 +42,10 @@ import type { HeadBlockerReadOpts, HeadBlockerRow, RecoveringHeadRow } from '../
 import type { IncompleteSyncReceiptRow, IncompleteSyncReceiptSpec, OpenPassWorkSpec } from '../engine-sql/checkpoint-validation.ts';
 
 export interface PersistenceMembers {
+  /** The atom generation a page's content keys on (engine-sql/atom-generation.ts): the kept content's, else the current one, 0 with none. Reads op_checkpoints. */
+  readAtomGeneration(pageId: number, contentHash: string): Promise<number>;
+  /** Bumps a page's atom generation and drops the extraction state and completed managed-atoms runs of its other content. Writes op_checkpoints and extract_atoms_page_state. */
+  recordAtomGenerationBump(sourceId: string, incarnation: string, pageId: number, keepContentHash: string | null, keepGeneration: number | null): Promise<void>;
   // Write-journal statements (engine-sql/persistence-journal.ts): the text journal.ts, limits.ts and held-reads.ts sent through executeRaw.
   /** The journal limit config rows, then one row with a null key: the largest page stored in segments, or 'unindexed'. */
   readJournalLimitRows(): Promise<Array<{ key: string | null; value: string | null }>>;
@@ -111,6 +115,8 @@ export interface PersistenceMembers {
   readRetiredManagedSyncCursor(sourceId: string, incarnation: string): Promise<{ first_seen: string } | null>;
   /** The unfinished managed-sync cursors of the listed sources (null: every source) with their receipts, failures and paths. */
   readManagedSyncFailureRows<V = Record<string, unknown>, R = Record<string, unknown>, F = Record<string, unknown>>(sourceIds: readonly string[] | null): Promise<Array<ManagedSyncFailureRow<V, R, F>>>;
+  /** The commit targets of a worktree's freshness samples (committed managed-sync imports in the window), newest first, at most `limit`. */
+  listFreshnessTargets(worktreeId: string, incarnation: string, windowHours: number, limit: number): Promise<string[]>;
   /** The recorded managed-sync failures of the listed sources (null: every source) whose cursor row is gone. */
   readOrphanedManagedSyncFailureRows<F = Record<string, unknown>>(sourceIds: readonly string[] | null): Promise<Array<{ failure: F }>>;
   /** The drain's head probe: the source binding's head unfinished request, or null. */
@@ -119,6 +125,12 @@ export interface PersistenceMembers {
   readSyncRecoveryProbeRow(sourceId: string, opts?: SyncStatusProbeOptions): Promise<SyncRecoveryProbeRow>;
   /** The open identity-downgrade records of the listed sources (null: every source), oldest first, with the live slugs at each new path. */
   readIdentityDowngradeRows<D = Record<string, unknown>>(sourceIds: readonly string[] | null): Promise<Array<{ record: D | string; new_slugs: string[] | null }>>;
+  /** The soft-deleted page an identity-downgrade record names (by recorded path, else slug), most recently deleted first, or null. */
+  readIdentityDowngradeOldPage(sourceId: string, path: string, slug: string): Promise<IdentityDowngradeOldPage | null>;
+  /** What an old page carries into a downgrade record: the source's facts about the slug, the page's links and the slug's aliases. */
+  countIdentityDowngradeCarry(sourceId: string, slug: string, pageId: number): Promise<IdentityDowngradeCarry>;
+  /** One page of the source by id or slug, deleted or not, as the identity remedy binds it, or null. */
+  readIdentityRemedySide(sourceId: string, by: { pageId: number } | { slug: string }): Promise<IdentityRemedySideRow | null>;
   /** A source's sync point and pending write requests, for the applied watermark (SQL in engine-sql/applied-watermark-reads.ts). */
   readWriteWatermarkRow(sourceId: string): Promise<WriteWatermarkRow>;
   /** One source binding's movement rows for readSourceMovement: the managed-sync watermark, the head request and the hold summary. */

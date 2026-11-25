@@ -237,6 +237,21 @@ describe('engine parity: belief ledger writes', () => {
   );
 
   parityTest(
+    'the pre-v339 fingerprint probes find no claim that holds no character the folds disagree on, and no tombstone for an empty probe list',
+    { methods: ['readLegacyClaimFingerprints', 'readLegacyBeliefTombstones'] },
+    async (engine) => {
+      const got = {
+        none: await engine.readLegacyClaimFingerprints('default', ['Acme will win the market', 'a b']),
+        empty: await engine.readLegacyClaimFingerprints('default', []),
+        tombstones: await engine.readLegacyBeliefTombstones('default', [{ kind: 'fact', claimFp: 'fp1', claim: 'Acme will win the market' }, { kind: 'take', claimFp: 'tp1', claim: 'a b' }]),
+        noProbes: await engine.readLegacyBeliefTombstones('default', []),
+      };
+      expect(got).toEqual({ none: [], empty: [], tombstones: [], noProbes: [] });
+      return got;
+    },
+  );
+
+  parityTest(
     'redactions: copies read by subject or by field hash, a release binds the publication and hash; a take purge tombstone reads back',
     { methods: ['insertTakePurge', 'insertBeliefRedaction', 'readBeliefRedactions', 'releaseBeliefRedactions', 'readBeliefTombstones'] },
     async (engine) => {

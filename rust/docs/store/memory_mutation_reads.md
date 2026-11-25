@@ -30,8 +30,8 @@ from the source, fact and page records the other families write
 - `factReadableUnder` checks, in this order: the fact belongs to the source; its visibility is `world` unless
   `anyVisibility` (the brain owner); its provenance page is not deleted or quarantined; the trust floor and flag
   suppression admit it (`TrustPolicy`); and, with `excludePrivate`, the private-provenance policy
-  (`facts/privacy.rs`) does not hide it. The store keeps no `needs_rederive` queue, so that part of
-  `projectionEligibleSql` hides nothing.
+  (`facts/privacy.rs`) does not hide it. A fact a purge marked in `needs_rederive` (`generations/needs_rederive.rs`) is hidden, as that part of
+  `projectionEligibleSql` hides it.
 - `readRemoteForgetTier` with `remoteFloor` also drops a fact whose provenance page exists and fails the page policy
   for the empty identity (`hidden_by_provenance_page` in `facts/privacy.rs`): `privateProvenanceFilterFragment`, the
   provenance half of the fact policy, with no entity gate. With `restricted: false` (a brain that holds no

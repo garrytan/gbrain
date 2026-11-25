@@ -199,6 +199,27 @@ impl Brain {
         })
     }
 
+    /// `listHostTopologyRows(hostId)`: each host binding of the host with its worktree's owner,
+    /// epoch, state and topology generation.
+    #[napi]
+    pub fn list_host_topology_rows<'env>(
+        &self,
+        env: &'env Env,
+        host_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_host_topology_rows(&host_id))
+    }
+
+    /// `listWorktreeMembers(worktreeId)`: the worktree's source bindings by byte source id.
+    #[napi]
+    pub fn list_worktree_members<'env>(
+        &self,
+        env: &'env Env,
+        worktree_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_worktree_members(&worktree_id))
+    }
+
     /// Records a worktree row.
     #[napi]
     pub fn insert_worktree<'env>(
@@ -263,5 +284,31 @@ impl Brain {
         id: String,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.read_worktree_heartbeat(&id))
+    }
+
+    /// `listOrphanBindingRows(limit)`: resolves the orphaned source bindings, by source id.
+    #[napi]
+    pub fn list_orphan_binding_rows<'env>(
+        &self,
+        env: &'env Env,
+        limit: Option<i64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_orphan_binding_rows(limit))
+    }
+
+    /// `listWorktreeIds()`: resolves every worktree id.
+    #[napi]
+    pub fn list_worktree_ids<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_worktree_ids())
+    }
+
+    /// `listOwnerBindings(hostId)`: resolves the worktrees another host owns, oldest first.
+    #[napi]
+    pub fn list_owner_bindings<'env>(
+        &self,
+        env: &'env Env,
+        host_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_owner_bindings(&host_id))
     }
 }
