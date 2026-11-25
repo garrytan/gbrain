@@ -182,6 +182,9 @@ fn every_kind_of_unfinished_work_refuses_by_name_and_the_refusal_changes_nothing
     );
 
     let fresh = crate::test_support::store();
+    // A fresh store holds the config rows a brain starts with; a refusal adds none.
+    let config_rows = |s: &Store| dump(s).keys().filter(|k| k[0] == keys::CONFIG).count();
+    let config_before = config_rows(&fresh);
     let topology: TopologyChangeInsert = serde_json::from_value(
         json!({ "principalId": "99999999-0000-4000-8000-000000000001", "requestId": "dddddddd-0000-4000-8000-000000000001",
         "digest": "d", "operation": "archive", "sourceId": "default", "state": "recovering",
@@ -195,8 +198,8 @@ fn every_kind_of_unfinished_work_refuses_by_name_and_the_refusal_changes_nothing
         "restore_refused"
     );
     assert_eq!(
-        dump(&fresh).keys().filter(|k| k[0] == keys::CONFIG).count(),
-        1,
+        config_rows(&fresh),
+        config_before,
         "no inventory row after a refusal"
     );
 }

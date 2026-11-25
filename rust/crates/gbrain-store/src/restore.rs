@@ -31,7 +31,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Every key tag of `keys.rs`. A tag outside this list is state this restore has not classified.
 /// `test/restore.rs` compares it with the constants of `keys.rs`.
-const KNOWN_TAGS: &[u8] = b"MCSPIKTVJjWLlUOEDGopekbFNAQYZHgsnrquRcXBwvdmtafi";
+const KNOWN_TAGS: &[u8] = b"MCSPIKTVJjWLlUOEDGopekbFNAQYZHgsnrquRcXBwvdmtafixzyh1";
 /// The `jobs` sub-tags (`jobs.rs` lists them); a later one may hold authority (a token table).
 const JOBS_SUBTAGS: &[u8] = &[
     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x10, 0x11, 0x13, 0x14, 0x15, 0x16,
