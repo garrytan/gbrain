@@ -12,7 +12,6 @@ import { folderAccessForAll } from '../access/caller.ts';
 import { memberIdentity } from '../access/members.ts';
 import { ownerMemberId } from '../access/owner.ts';
 import { MEMBER_PAGE_PREFIX } from '../access/principals.ts';
-import { pageNotVisibleError } from '../persistence/page-visibility.ts';
 import { slugUnderBoundPrefixes } from '../ops/context.ts';
 import { ownedPageWithdrawalSubject, onOwnedMemoryPageSql, withdrawalCoversFactSql, withdrawalReachedFactSql } from '../access/member-facts.ts';
 import { isHoldingSlug } from '../facts-fence.ts';
@@ -104,25 +103,16 @@ async function memberPageWithdrawal(engine: BrainEngine, sourceId: string, input
 }
 
 /**
- * The refusal for a claim `isFactWithdrawn` matched. `withdrawn` comes from the withdrawal ledger alone (never a purge):
- * the most specific subject first, then the newest withdrawal, among withdrawals the caller can see the withdrawn rows of
- * (or that no row backs). It covers the exact normalized claim only.
+ * The refusal for a claim `isFactWithdrawn` matched. A caller that reads private pages (`excludePrivate` off) gets the
+ * `withdrawn` detail from the withdrawal ledger alone (never a purge): the most specific subject first, then the newest
+ * withdrawal. It covers the exact normalized claim only. Any other caller gets the plain refusal with no detail, whether
+ * the withdrawn rows sit on pages it can read, on pages it cannot read, or on no page at all, so the refusal never tells
+ * those cases apart and never carries anything read from a page the caller may not see.
  */
 export async function factWithdrawnRefusal(engine: BrainEngine, sourceId: string, input: SingleFactIntent, opts: { excludePrivate?: boolean } = {}): Promise<OperationError> {
   // GST-359 D: a member writing to its own member page sees that page's withdrawn rows.
   const seen = (param: number) => `(${remoteProvenanceFloorSql('f')} OR COALESCE(f.source_markdown_slug = $${param}::text, false))`;
-  if (opts.excludePrivate) {
-    const [backing] = await engine.executeRaw<{ visible: boolean; hidden: boolean }>(`SELECT
-        COALESCE(bool_or(${seen(5)}), false) AS visible,
-        COALESCE(bool_or(NOT ${seen(5)}), false) AS hidden
-      FROM facts f JOIN fact_withdrawals w ON w.source_id=f.source_id AND w.visibility=f.visibility
-        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact))
-        AND ${withdrawalReachedFactSql('w', 'f')}
-      WHERE f.source_id=$1 AND f.visibility=$2 AND f.expired_at IS NOT NULL
-        AND gbrain_fact_fingerprint(f.fact)=gbrain_fact_fingerprint($3) AND (w.subject='*' OR w.subject=$4::text OR w.subject=$5::text)`,
-    [sourceId, input.visibility, input.fact, input.entity_slug, ownedPageWithdrawalSubject(input.page_slug)]);
-    if (backing?.hidden && !backing.visible) return pageNotVisibleError();
-  }
+  if (opts.excludePrivate === true) return withdrawnRefusal(undefined);
   const [row] = await engine.executeRaw<WithdrawalRow>(`SELECT w.subject,w.visibility,w.withdrawn_at::text AS withdrawn_at
     FROM fact_withdrawals w LEFT JOIN facts f ON f.source_id=w.source_id AND f.visibility=w.visibility AND f.expired_at IS NOT NULL
       AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact)) AND ${withdrawalReachedFactSql('w', 'f')}
@@ -131,7 +121,7 @@ export async function factWithdrawnRefusal(engine: BrainEngine, sourceId: string
     GROUP BY w.subject,w.visibility,w.withdrawn_at
     HAVING $5::boolean=false OR COALESCE(bool_or(${seen(6)}), false) OR NOT COALESCE(bool_or(f.id IS NOT NULL), false)
     ORDER BY (w.subject<>'*') DESC, w.withdrawn_at DESC LIMIT 1`,
-  [sourceId, input.visibility, input.fact, input.entity_slug, opts.excludePrivate === true, ownedPageWithdrawalSubject(input.page_slug)]);
+  [sourceId, input.visibility, input.fact, input.entity_slug, false, ownedPageWithdrawalSubject(input.page_slug)]);
   return withdrawnRefusal(row);
 }
 export const CANDIDATE_FUSION_KEY = 'facts.candidate_fusion';
