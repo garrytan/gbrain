@@ -388,6 +388,13 @@
         "thinClient": "none",
         "thinClientRoutedSubcommands": []
       },
+      "claims": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "claw-test": {
         "hasSwitchCase": false,
         "phase": "pre-connect",

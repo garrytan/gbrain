@@ -182,6 +182,7 @@ const LEDGER: Record<string, string> = {
   extraction_review: 'test/extraction-review.test.ts',
   extract_facts: 'test/extract-facts-embed-warn.serial.test.ts',
   recall: 'test/facts-recall-audit-rows.test.ts',
+  check_claims: 'test/precedence-claims-c3.test.ts',
   context_pack: 'test/ambient-recall.test.ts',
   delta: 'test/ambient-recall.test.ts',
   forget_fact: 'test/e2e/facts-forget.test.ts',
