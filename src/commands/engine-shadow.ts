@@ -312,7 +312,7 @@ async function start(
     out(`Shadow mode plan for brain ${plan.brain} (${plan.primary_engine}):`);
     out(`  mirrors: ${plan.mirrors}`);
     out(`  sample rate ${plan.sample_rate}, serving-process queue bound ${plan.queue_bound}`);
-    out(`  write sample rate ${plan.write_sample_rate}: the share of direct page and link writes that will be sampled for write comparison once the locked tally lands (a separate PR); until then no write is sampled and none waits for the shadow`);
+    out(`  write sample rate ${plan.write_sample_rate}: that share of page and link writes is checked on a throwaway Rust store (a write inside a transaction is not checked, and a PGLite brain samples no writes); a checked write first waits (at most 2 s) for one read of the rows it touches`);
     for (const w of plan.writes) out(`  writes: ${w}`);
     out(`  never writes: ${plan.never_writes.join(', ')}`);
     const line = storageLine(await readStorage(brain, deps, now));

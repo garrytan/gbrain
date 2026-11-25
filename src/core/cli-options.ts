@@ -64,6 +64,8 @@ export interface CliOptions {
   room?: string;
 }
 
+export const THIN_CLIENT_BRAIN_FLAG_MESSAGE = '--brain is not supported on a thin-client install: the remote server is a single brain.';
+
 export const DEFAULT_CLI_OPTIONS: CliOptions = {
   quiet: false,
   progressJson: false,
