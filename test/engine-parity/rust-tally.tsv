@@ -50,7 +50,7 @@ test/engine-parity/collate-belief-cycle-walks.test.ts	1	5
 test/engine-parity/collate-command-listings.test.ts	7	2
 test/engine-parity/collate-core-page-lists.test.ts	16	1
 test/engine-parity/collate-doctor-access.test.ts	0	11
-test/engine-parity/collate-doctor-persistence.test.ts	9	7
+test/engine-parity/collate-doctor-persistence.test.ts	11	6
 test/engine-parity/collate-doctor.test.ts	0	10
 test/engine-parity/collate-engine-sql.test.ts	32	3
 test/engine-parity/collate-facts-home.test.ts	1	0
