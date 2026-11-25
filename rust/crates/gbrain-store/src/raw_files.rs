@@ -396,7 +396,8 @@ pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Resul
 /// `moveSlugBindings`' attachment step of `updateSlug` (`page-state/rename-alias.ts`): after `page` moved from
 /// `old_slug` to `new_slug` in `source_id`, its files named by the old slug take the new one: the rows bound to it
 /// (`page_id`), and the rows that name it only by slug (no `page_id`) when the old slug named exactly this live
-/// page (it is not soft-deleted and no page of the source holds the old slug now). A row bound to another page never
+/// page (it is not soft-deleted, no page of the source holds the old slug now, and the rename history records no
+/// earlier move of another page away from it). A row bound to another page never
 /// moves by slug. Returns the number of slug-only rows left because the slug was ambiguous.
 pub(crate) fn rename_page_files(
     tx: &mut dyn KvWrite,
@@ -405,8 +406,9 @@ pub(crate) fn rename_page_files(
     new_slug: &str,
     page: &PageRecord,
 ) -> Result<u64> {
-    let unambiguous =
-        page.deleted_at_us.is_none() && read_page(&*tx, source_id, old_slug)?.is_none();
+    let unambiguous = page.deleted_at_us.is_none()
+        && read_page(&*tx, source_id, old_slug)?.is_none()
+        && !crate::aliases::renamed_elsewhere(&*tx, source_id, old_slug, new_slug)?;
     let files: Vec<(Vec<u8>, FileRecord)> = collect_values(&*tx, &[keys::RAW_FILES, FILE])?;
     let mut skipped = 0;
     for (_, mut file) in files {
@@ -980,13 +982,26 @@ mod tests {
     fn a_slug_only_row_left_by_an_earlier_rename_stays_when_the_name_is_reused() {
         let store = store();
         put(&store, "notes/reused");
-        assert_eq!(store.update_slug("notes/reused", "notes/first-owner", None).unwrap(), 1);
+        assert_eq!(
+            store
+                .update_slug("notes/reused", "notes/first-owner", None)
+                .unwrap(),
+            1
+        );
         let mut spec = file("left.png", None);
         spec.page_slug = Some("notes/reused".into());
         store.upsert_file(&spec).unwrap();
         put(&store, "notes/reused");
-        assert_eq!(store.update_slug("notes/reused", "notes/second-owner", None).unwrap(), 1);
-        let slug = read_file(&*store.read().unwrap(), "left.png").unwrap().unwrap().page_slug;
+        assert_eq!(
+            store
+                .update_slug("notes/reused", "notes/second-owner", None)
+                .unwrap(),
+            1
+        );
+        let slug = read_file(&*store.read().unwrap(), "left.png")
+            .unwrap()
+            .unwrap()
+            .page_slug;
         assert_eq!(slug.as_deref(), Some("notes/reused"));
     }
 }
