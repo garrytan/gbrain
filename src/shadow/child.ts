@@ -244,6 +244,18 @@ async function openRustStore(
   }
 }
 
+/**
+ * The follow chains a caller gave up waiting for (an apply that has not ended). While one is open the child is unhealthy by itself: it stops heartbeating, so the supervisor's
+ * watchdog restarts it, whether or not later reads or reruns reach a stall of their own (a later rerun waits for a barrier behind the same chain and never reaches the lock).
+ */
+function createWedgeWatch(pending: () => Promise<unknown>, track: (chain: Promise<unknown>) => void): { mark(): void; open(): boolean } {
+  const chains = new Set<Promise<unknown>>();
+  return {
+    mark(): void { const chain = pending(); chains.add(chain); track(chain); const done = (): void => { chains.delete(chain); }; chain.then(done, done); },
+    open: (): boolean => chains.size > 0,
+  };
+}
+
 /** Runs the child loop until stdin closes. Resolves with the number of events handled. */
 export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): Promise<number> {
   const now = deps.now ?? Date.now;
@@ -313,9 +325,11 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     epochId: () => epochNow()?.epoch_id ?? null,
   });
   const stalled = new Set<Promise<unknown>>();
+  const wedged = createWedgeWatch(() => follow.pending(), (chain) => trackStall(chain));
   const heartbeat = setInterval(() => {
     if (openTimedOut || stalled.size >= SHADOW_CHILD_STALL_LIMIT) return; // wedged in native work: go quiet so the watchdog restarts this child
     follow.tick();
+    if (wedged.open()) return; // the follow chain is stuck: no heartbeat until it recovers
     try { deps.writeControl('{"t":"hb"}\n'); } catch { /* parent gone */ }
   }, deps.heartbeatMs ?? SHADOW_HEARTBEAT_MS);
   if (!openTimedOut) try { deps.writeControl('{"t":"hb"}\n'); } catch { /* parent gone */ }
@@ -441,7 +455,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
         let call!: Promise<unknown>;
         // The wait for the follow lock has the same deadline as the call: an apply that never ends holds the lock, and the rerun then ends as a timeout and records a stall (the chain it waits on), so the queue moves on to the next rerun.
         const out = await follow.exclusive(answer.stamp, () => callRust(event.op, args, event.access, Math.max(1, Math.min(timeoutMs, deadline - now())), (p) => { call = p; }), { ms: Math.max(1, Math.min(timeoutMs, deadline - now())), onTimeout: LOCK_WAIT_TIMEOUT });
-        if (out === LOCK_WAIT_TIMEOUT) trackStall(follow.pending()); else if (out?.timedOut) trackStall(call);
+        if (out === LOCK_WAIT_TIMEOUT) wedged.mark(); else if (out?.timedOut) trackStall(call);
         if (out === null || out.timedOut) return skip(out === null ? 'watermark_moved' : 'timeout');
         const c2 = await judge(event.op, event.args, { digest: answer.digest, members: answer.members, attempt: answer.attempt, list: Array.isArray(event.result) }, encodeValue(out.value), event.sid, 'rerun', now(), null);
         if (c2.outcome === 'inconclusive' && c2.reason?.startsWith('privacy_check_')) unsettled = c2.reason; // this rerun's own privacy check could not be settled
@@ -459,7 +473,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   // Vector recall (recall.ts): at most one reference run a minute, asked of the serving process off the request path.
   const recallGate = new IntervalGate(RECALL_INTERVAL_MS, now);
   let recalling: Promise<void> | null = null;
-  const recallEnv: RecallEnv = { ask, now, timeoutMs, curEpoch, pause: waiter.pause, random: deps.random, exclusive: async (stamp, fn) => { const out = await follow.exclusive(stamp, fn, { ms: timeoutMs, onTimeout: LOCK_WAIT_TIMEOUT }); if (out === LOCK_WAIT_TIMEOUT) trackStall(follow.pending()); return out as never; }, callRust: (op, a, access, ms) => callRust(op, a, access, ms) as never,
+  const recallEnv: RecallEnv = { ask, now, timeoutMs, curEpoch, pause: waiter.pause, random: deps.random, exclusive: async (stamp, fn) => { const out = await follow.exclusive(stamp, fn, { ms: timeoutMs, onTimeout: LOCK_WAIT_TIMEOUT }); if (out === LOCK_WAIT_TIMEOUT) wedged.mark(); return out as never; }, callRust: (op, a, access, ms) => callRust(op, a, access, ms) as never,
     write: (score, epoch) => appendRecall(shadowDir, { ts: new Date(now()).toISOString(), epoch_id: epoch, ...score }, { currentEpochOnly: true }) };
   const scoreRecallLater = (event: ReadEvent, args: unknown[], rust: unknown): void => {
     if (event.op !== 'searchVector' || !curEpoch() || recalling || !recallEligible(args) || !recallGate.take()) return;

@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { requestSignal, withRequestSignal } from '../src/core/request-signal.ts';
+import { readAllFaults } from '../src/shadow/ledger.ts';
 import { ShadowSupervisor } from '../src/shadow/supervisor.ts';
 import { makeAskHandler } from '../src/shadow/checks.ts';
 import { ensureEpoch } from '../src/shadow/evidence-epoch.ts';
@@ -264,5 +265,32 @@ describe('the wait for the follow lock has a deadline', () => {
       expect(Date.now() - started).toBeLessThan(20_000);
       expect(rig.rows().find((r) => r.rerun === 'skipped:timeout')).toMatchObject({ outcome: 'inconclusive' }); // unresolved and counted, never silent
     } finally { hang.open(); }
+  }, 30_000);
+
+  test('a follow-chain lock timeout makes the child unhealthy by itself: the apply stays hung, ordinary reads still answer, heartbeats stop and the supervisor restarts the child inside the watchdog window; they resume when the chain recovers', async () => {
+    const hang = gate();
+    let applying = false;
+    const rig = await mismatching({ child: { timeoutMs: 200, heartbeatMs: 40, random: () => 0.5, sleep: async () => undefined }, supervisor: { hangMs: 500 },
+      store: { replaceRelationRows: async () => { applying = true; await hang.wait; return {} as never; } } });
+    try {
+      await rig.settled();
+      const primaryRows = await engine.listPages({ limit: 100 });
+      let reads = 0;
+      rig.rust.listPages = async () => (++reads === 1 ? [] : primaryRows); // the first sample differs and is rerun; later reads agree
+      const heartbeats = (): number => rig.control.fromChild.filter((l) => l.includes('"hb"')).length;
+      await until(() => heartbeats() >= 2); // healthy: the child heartbeats
+      const sup = (rig.attached.supervisor as unknown as { o: { onAsk: (a: Record<string, unknown>) => Promise<unknown> } }).o;
+      const real = sup.onAsk;
+      sup.onAsk = async (ask) => { const answer = await real(ask); if (ask.kind === 'rerun' && !applying) { rig.attached.follower!.publish(batch(1, [{ kind: 'rows', relation: 'config', selector: { key: 'x' }, before_keys: keys(1) }])); await until(() => applying); } return answer; }; // an apply arrives after the barrier and never ends
+      await sample(rig);
+      await until(() => rig.rows().some((r) => r.rerun === 'skipped:timeout'));
+      await sample(rig); // an ordinary read still answers while the apply is hung
+      await until(() => rig.rows().some((r) => r.outcome === 'match'));
+      const quiet = heartbeats();
+      await until(() => readAllFaults(rig.dir)?.some((f) => f.kind === 'child_hung') === true, 5_000); // no heartbeat for hangMs: the supervisor kills and restarts it
+      expect(heartbeats()).toBe(quiet); // none came in between
+    } finally { hang.open(); }
+    const before = rig.control.fromChild.filter((l) => l.includes('"hb"')).length;
+    await until(() => rig.control.fromChild.filter((l) => l.includes('"hb"')).length > before, 3_000); // the chain recovered: the heartbeat is back
   }, 30_000);
 });

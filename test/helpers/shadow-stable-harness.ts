@@ -55,6 +55,8 @@ export interface RigOptions {
   /** The follow store's calls; default applies and reports one upserted row. */
   store?: Partial<FollowStore>;
   child?: Partial<ShadowChildDeps>;
+  /** Supervisor options a test shortens (the heartbeat watchdog window). */
+  supervisor?: Record<string, unknown>;
   /** Keep the brain unseeded: no follower, no epoch. */
   unseeded?: boolean;
 }
@@ -94,7 +96,7 @@ export async function startRig(opts: RigOptions): Promise<Rig> {
     return proc as unknown as ChildProcess;
   }) as never;
   const state = { version: 1, enabled: true, started_at: 'x', sample_rate: 1, queue_bound: 64, plan_hash: 'h', brain: 'b', primary_engine: 'pglite' };
-  const attached = attachShadowParts(o.primary, dir, state as never, { gbrainArgv: ['never'], supervisor: { spawn: spawn as never, stillEnabled: () => true, minBackoffMs: 0, maxBackoffMs: 0 } });
+  const attached = attachShadowParts(o.primary, dir, state as never, { gbrainArgv: ['never'], supervisor: { spawn: spawn as never, stillEnabled: () => true, minBackoffMs: 0, maxBackoffMs: 0, ...o.supervisor } });
   await attached.lsnWatch.ready(); // a sample captured from here on carries the freshness token it is held to
   const seen: Array<Record<string, unknown>> = [];
   const waiting: Array<Record<string, unknown>> = [];
