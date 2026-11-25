@@ -294,7 +294,8 @@ export function countUnavailableReason(r: Record<string, unknown>): 'timeout' | 
 /**
  * #9412: the CLI's stderr line for `gbrain search` / `gbrain query` (null when
  * the call carries no count). With rows, no literal match and no entity the
- * query names, it says the rows matched only by meaning.
+ * query names, it says the rows matched only by meaning, or, when the any-word
+ * retry supplied rows, only some of the words.
  */
 export function cliKeywordCountLine(rows: unknown[], retrieval: Record<string, unknown> | null): string | null {
   if (!retrieval) return null;
@@ -307,6 +308,11 @@ export function cliKeywordCountLine(rows: unknown[], retrieval: Record<string, u
   }
   if (!('keyword_total' in r)) return null;
   if (typeof r.keyword_total !== 'number') return unavailable;
-  if (r.keyword_total === 0 && rows.length > 0 && r.query_entity_resolved !== true) return 'No page contains these words (literal match). The rows below matched only by meaning.';
+  if (r.keyword_total === 0 && rows.length > 0 && r.query_entity_resolved !== true) {
+    const relaxed = rows.some(x => (x as { keyword_relaxed?: unknown })?.keyword_relaxed === true)
+      || (Array.isArray(r.degraded) && r.degraded.some(d => (d as { stage?: unknown })?.stage === 'keyword_relaxed_carried'));
+    return relaxed ? 'No page contains all these words (literal match). The rows below contain only some of them, or matched by meaning.'
+      : 'No page contains these words (literal match). The rows below matched only by meaning.';
+  }
   return `Keyword matches: ${countWords(r.keyword_total, r.keyword_total_capped === true)} (pages containing these words, not a count of these rows). List them all with: gbrain search <words> --match keyword`;
 }

@@ -80,6 +80,7 @@ the call counted nothing, such as an image query. Every `search` and `query`
 also prints the count on stderr, `--json` or not. When no page contains the
 words, the query names no entity and rows still came back, the line reads
 `No page contains these words (literal match). The rows below matched only by meaning.`
+ When the rows came from the any-word retry instead, it says they contain only some of the words.
 
 `timings_ms` adds the CLI's own phases to the operation's stages: `total`
 (process start to output), `startup` (module load, config, argument parsing),

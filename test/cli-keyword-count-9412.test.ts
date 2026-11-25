@@ -33,6 +33,8 @@ beforeAll(async () => {
   await seedPage(engine, 'meetings/widget-review', 'Review of the halcyonite gasket with alice-example.', { type: 'meeting' });
   await seedPage(engine, 'notes/unrelated', 'A note about the weather.');
   await seedPage(engine, 'people/bob-example', 'Bob Example runs procurement.', { type: 'person', title: 'Bob Example' });
+  await seedPage(engine, 'notes/brindle-old', 'The brindlewort order from last decade.', { frontmatter: { date: '2020-01-05', status: 'archived' } });
+  for (let i = 0; i < 2; i++) await seedPage(engine, `notes/brindle-${i}`, `Brindlewort order ${i} this year.`, { frontmatter: { date: '2026-06-01', status: 'active' } });
 }, 120_000);
 
 afterAll(async () => { await engine?.disconnect(); });
@@ -61,6 +63,13 @@ describe('query op: the same strict keyword count as search', () => {
   test('the count honours the type filter and remote callers get it too', async () => {
     expect((await callQuery({ query: 'halcyonite', types: ['meeting'] })).retrieval.keyword_total).toBe(1);
     expect((await callQuery({ query: 'halcyonite' }, true)).retrieval.keyword_total).toBe(4);
+  });
+
+  test('the count covers the same set the query filters: since, until and frontmatter where', async () => {
+    expect((await callQuery({ query: 'brindlewort' })).retrieval.keyword_total).toBe(3);
+    expect((await callQuery({ query: 'brindlewort', since: '2026-01-01' })).retrieval.keyword_total).toBe(2);
+    expect((await callQuery({ query: 'brindlewort', until: '2021-01-01' })).retrieval.keyword_total).toBe(1);
+    expect((await callQuery({ query: 'brindlewort', where: { status: 'archived' } })).retrieval.keyword_total).toBe(1);
   });
 
   test('a query that names an entity marks the count, so zero literal matches never reads as meaning-only', async () => {
@@ -105,6 +114,15 @@ describe('CLI stderr: the literal keyword count', () => {
       expect(err).toContain(ZERO_LINE);
       resetRetrievalMetaForTests();
     }
+  });
+
+  test('zero matches with rows from the any-word retry: the rows contain some of the words', () => {
+    const relaxedLine = 'No page contains all these words (literal match). The rows below contain only some of them, or matched by meaning.';
+    expect(render('search', [{ ...ROW, keyword_relaxed: true }], { keyword_total: 0, keyword_truncated: false }).err).toContain(relaxedLine);
+    resetRetrievalMetaForTests();
+    const carried = render('query', [ROW], { keyword_total: 0, keyword_truncated: false, degraded: [{ stage: 'keyword_relaxed_carried' }] }).err;
+    expect(carried).toContain(relaxedLine);
+    expect(carried).not.toContain(ZERO_LINE);
   });
 
   test('zero matches with a resolved entity keeps the plain count (the entity matched by name)', () => {
