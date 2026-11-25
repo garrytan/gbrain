@@ -956,6 +956,13 @@ async function migrateConsent(engine: BrainEngine, args: string[], flags: Return
  */
 const RUST_MIGRATION_STOP = 'migrate embeddings (the Rust store fixes its vector width at creation; status, plan and apply read vector columns with raw SQL)';
 
+/** The usage error for a run that names no `--to` target; `exit` is the run's own exit. */
+function missingTarget(exit: (code: number) => never): never {
+  serr('Missing --to <provider:model>. Example: gbrain migrate embeddings --to openai:text-embedding-3-small');
+  serr('Run with --help for all flags.');
+  return exit(1);
+}
+
 export async function runMigrateEmbeddings(
   engine: BrainEngine,
   args: string[],
@@ -972,6 +979,8 @@ export async function runMigrateEmbeddings(
     exit(0);
   }
   const flags = parseMigrateEmbeddingsFlags(args);
+  // A run that is no status read and names no target is a usage error on every engine, before any engine check.
+  if (!args.includes('--status') && !flags.to) missingTarget(exit);
   requireRawSql(engine, RUST_MIGRATION_STOP);
   // ── Read-only status surface (D6). No env refusal (it REPORTS env), no
   // mutation, no spend — the mid-incident "where am I?" command.
@@ -1060,11 +1069,7 @@ export async function runMigrateEmbeddings(
     exit(0);
   }
 
-  if (!flags.to) {
-    serr('Missing --to <provider:model>. Example: gbrain migrate embeddings --to openai:text-embedding-3-small');
-    serr('Run with --help for all flags.');
-    exit(1);
-  }
+  if (!flags.to) missingTarget(exit);
 
   let ctx: MigrationPlanContext;
   try {

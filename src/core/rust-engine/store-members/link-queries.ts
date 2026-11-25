@@ -124,8 +124,12 @@ function rankingScope(member: string, opts: PageReadPolicy | undefined): Record<
  * Ids the SQL engines cast to `bigint[]`: a non-integer is refused (the cast fails there). An id below 1 or past
  * `Number.MAX_SAFE_INTEGER` names no page the store can hold, so it matches nothing, as in the SQL, and is dropped.
  */
-function bigintIds(member: string, ids: readonly number[]): number[] {
-  for (const id of ids) if (!Number.isInteger(id)) refuseMember(member, 'a page id that is not an integer');
+function bigintIds(_member: string, ids: readonly number[]): number[] {
+  // A page id that is no integer is bad input: reject it as the `$1::bigint[]` cast does (22P02), not as a missing
+  // capability, so a caller that tells a failed read from an empty one sees the same error on every engine.
+  for (const id of ids) {
+    if (!Number.isInteger(id)) throw Object.assign(new Error(`invalid input syntax for type bigint: "${id}"`), { code: '22P02' });
+  }
   return ids.filter(id => id >= 1 && Number.isSafeInteger(id));
 }
 

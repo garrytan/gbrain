@@ -697,7 +697,7 @@ replaceDerivedAliases	sync_aliases	yes	18	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	2	no	yes	yes	serves
-getConfig	config	yes	57	no	yes	yes	serves
+getConfig	config	yes	58	no	yes	yes	serves
 setConfig	config	yes	82	no	yes	yes	serves
 unsetConfig	config	yes	4	no	yes	yes	serves
 listConfigKeys	config	yes	5	no	yes	yes	serves
