@@ -10,8 +10,9 @@
  *   conflicts  a line about the same thing (it shares content words) says a different number, or a newer one does;
  *   not_found  no allowed line covers it. That means "no allowed claim covers this", never "this is false".
  *
- * A sentence with several numbers is checked one clause per number: supported only when every number is, conflicts
- * when any number is contradicted, otherwise not_found.
+ * A sentence with several numbers is checked number by number, each with the words of its own clause: supported only
+ * when every number is, conflicts when any number is contradicted, otherwise not_found. A percent never matches a
+ * plain number, and digits inside a word (Q3) are not numbers.
  */
 
 export interface AllowedLine { slug: string; source_id: string; line: number; date: string; text: string }
@@ -25,7 +26,7 @@ export interface ClaimCheck {
 interface Num { value: number; unit: string }
 
 const ISO_DATE = /\b\d{4}-\d{2}-\d{2}\b/g;
-const NUMBER = /([$€£])?\s?(\d[\d,]*(?:\.\d+)?)\s?(%|percent\b|k\b|m\b|bn\b|b\b|thousand\b|million\b|billion\b)?/gi;
+const NUMBER = /([$€£])?\s?(?<![A-Za-z0-9_])(\d[\d,]*(?:\.\d+)?)\s?(%|percent\b|k\b|m\b|bn\b|b\b|thousand\b|million\b|billion\b)?/gi;
 const SCALE: Record<string, number> = { k: 1e3, thousand: 1e3, m: 1e6, million: 1e6, b: 1e9, bn: 1e9, billion: 1e9 };
 const DATED_LINE = /^\s*(?:[-*]\s+)?(\d{4}-\d{2}-\d{2})\s*[:\u2013\u2014-]\s*(.+)$/;
 const STOPWORDS = new Set(('the and for with that this from have has had our are was were will been about into than then they them their '
@@ -53,7 +54,8 @@ function words(text: string): Set<string> {
   return out;
 }
 
-const sameNumber = (a: Num, b: Num) => a.value === b.value && (a.unit === b.unit || a.unit === '' || b.unit === '');
+const sameNumber = (a: Num, b: Num) => a.value === b.value
+  && (a.unit === b.unit || ((a.unit === '' || b.unit === '') && a.unit !== 'percent' && b.unit !== 'percent'));
 
 /** The sentences of a draft that hold a number, trimmed. */
 export function extractClaims(text: string): string[] {
@@ -73,9 +75,9 @@ export function allowedLines(page: { slug: string; source_id: string; body: stri
 }
 
 export function checkClaim(claim: string, lines: readonly AllowedLine[]): ClaimCheck {
-  const parts = numberClauses(claim);
-  if (parts.length < 2) return checkPart(claim, claim, lines);
-  const results = parts.map(part => checkPart(claim, part, lines));
+  const units = numberClauses(claim).flatMap(part => numbers(part).map(n => ({ part, n })));
+  if (units.length < 2) return checkPart(claim, claim, numbers(claim), lines);
+  const results = units.map(u => checkPart(claim, u.part, [u.n], lines));
   const conflicting = results.filter(r => r.status === 'conflicts');
   if (conflicting.length) {
     return { claim, status: 'conflicts', conflicting: conflicting.flatMap(r => r.conflicting ?? []).slice(0, MAX_CONFLICTS) };
@@ -99,8 +101,7 @@ function numberClauses(claim: string): string[] {
   return out;
 }
 
-function checkPart(claim: string, part: string, lines: readonly AllowedLine[]): ClaimCheck {
-  const claimNums = numbers(part);
+function checkPart(claim: string, part: string, claimNums: readonly Num[], lines: readonly AllowedLine[]): ClaimCheck {
   const claimWords = words(part);
   const need = Math.min(2, claimWords.size);
   const scored = lines.map(l => {

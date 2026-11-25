@@ -20,6 +20,7 @@ import { searchCtx, seedPage } from './helpers/keyword-paging-fixture.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { serializeMarkdown } from '../src/core/markdown.ts';
 import { withTrustPromotion } from '../src/core/persistence/context.ts';
+import { QUARANTINE_KEY } from '../src/core/quarantine.ts';
 
 let engine: PGLiteEngine;
 const TERM = 'zebrafinch';
@@ -53,6 +54,8 @@ beforeAll(async () => {
   await seedPage(engine, 'me/private-facts', `Private ${TERM} facts.\n\n- 2026-04-01: 7 board seats.`, { type: 'facts', frontmatter: { claims: 'allowed', visibility: 'private' } });
   await seedIn('ledger-src', 'ledgers/q1', `The ${TERM} ledger for Q1.`);
   await seedIn('guest-src', 'guest/facts', `Guest ${TERM} facts.\n\n- 2026-01-01: 5 offices.`, { claims: 'allowed' }, 'facts');
+  await seedPage(engine, 'held/facts', `Held ${TERM} facts.\n\n- 2026-01-01: 3 data centers.`, { type: 'facts', frontmatter: { claims: 'allowed' } });
+  await engine.executeRaw(`UPDATE pages SET frontmatter = frontmatter || jsonb_build_object('${QUARANTINE_KEY}', jsonb_build_object('reason', 'instruction_like')) WHERE slug = 'held/facts'`);
   await seedPage(engine, 'agent/facts', `Agent ${TERM} facts.\n\n- 2026-01-01: 9 warehouses.`, { type: 'facts', frontmatter: { claims: 'allowed' } });
   await engine.transaction(tx => withTrustPromotion(tx, 'user_confirmed', () => tx.executeRaw("UPDATE pages SET trust_tier = 'agent_written' WHERE slug = 'agent/facts'")));
   await seedIn('meet', 'meetings/standup', `Standup notes on the ${TERM} launch.`);
@@ -146,9 +149,17 @@ describe('check_claims', () => {
     expect(out.claims[0]!.conflicting[0]).toMatchObject({ slug: 'company/facts', date: '2026-02-01' });
   });
 
-  test('allowed-claims pages in a guest source or written by an agent never support a claim', async () => {
-    const out = await check('We have 5 offices. We run 9 warehouses.');
-    expect(out.claims.map(c => c.status)).toEqual(['not_found', 'not_found']);
+  test('every number counts, even inside one clause; a percent never matches a plain number; Q3 is not a number', () => {
+    const lines = allowedLines({ slug: 'company/facts', source_id: 'default', body: '- 2026-01-01: 10 paying customers.\n- 2026-03-01: 12 employees.' });
+    expect(checkClaim('We grew from 10 to 500 paying customers.', lines).status).not.toBe('supported');
+    expect(checkClaim('We have 10 paying customers with 99 employees.', lines).status).toBe('conflicts');
+    expect(checkClaim('Churn was 10% among paying customers.', lines).status).not.toBe('supported');
+    expect(checkClaim('In Q3 we had 10 paying customers.', lines).status).toBe('supported');
+  });
+
+  test('allowed-claims pages in a guest source, written by an agent or quarantined never support a claim', async () => {
+    const out = await check('We have 5 offices. We run 9 warehouses. We run 3 data centers.');
+    expect(out.claims.map(c => c.status)).toEqual(['not_found', 'not_found', 'not_found']);
   });
 
   test('check_claims refuses empty and over-long text; set-precedence refuses a bad class and an unknown source', async () => {

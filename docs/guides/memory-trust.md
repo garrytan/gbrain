@@ -237,7 +237,7 @@ Before an agent states a number, `gbrain claims check "<draft>"` (MCP tool
 (`2026-03-01: ARR is $2.1M`) on your allowed-claims facts pages. Each claim
 comes back `supported` with the line it matched, `conflicts` when a line says
 another number, or `not_found`. A sentence with several numbers is supported
-only when every number is. New brains mark `me/facts` and
+only when every number is. A quarantined page never counts. New brains mark `me/facts` and
 `company/facts` as allowed-claims pages; on an older brain, add
 `claims: allowed` to a facts page's front matter. Both work the same on a
 brain with no git repository.
