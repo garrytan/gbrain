@@ -225,6 +225,19 @@ describe('local export on a single-user keyless brain', () => {
     expect(readFileSync(target, 'utf8')).toContain('<!-- gbrain:profile begin rev=');
     expect(readdirSync(home).filter(n => n.endsWith('.tmp'))).toEqual([]);
   }, 60_000);
+
+  test('--into follows a chain of symlinks to a target not yet created, and refuses a symlink loop', async () => {
+    const target = join(home, 'chain-target.md');
+    symlinkSync(target, join(home, 'chain-b.md'));
+    symlinkSync(join(home, 'chain-b.md'), join(home, 'chain-a.md'));
+    await exportCli(['--format', 'muse-memory', '--into', join(home, 'chain-a.md')], localCall(engine));
+    expect(lstatSync(join(home, 'chain-b.md')).isSymbolicLink()).toBe(true);
+    expect(readFileSync(target, 'utf8')).toContain('<!-- gbrain:profile begin rev=');
+    symlinkSync(join(home, 'loop-b.md'), join(home, 'loop-a.md'));
+    symlinkSync(join(home, 'loop-a.md'), join(home, 'loop-b.md'));
+    const refused = await refusal(() => exportCli(['--format', 'muse-memory', '--into', join(home, 'loop-a.md')], localCall(engine)));
+    expect(refused).toMatchObject({ code: 'invalid_params', message: expect.stringContaining('symlink loop') });
+  }, 60_000);
 });
 
 describe('a member exports only its own profile (remote callers, repo-less)', () => {

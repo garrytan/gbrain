@@ -63,12 +63,15 @@ function writeWhole(path: string, text: string, before: string): void {
   } catch (e) { rmSync(tmp, { force: true }); throw e; }
 }
 
-/** The file a path names, a symlink's target included even when that target does not exist yet. */
+/** The file a path names, following symlinks to their target even when that target does not exist yet. */
 function destination(path: string): string {
-  const abs = resolve(path);
-  if (existsSync(abs)) return realpathSync(abs);
-  try { if (lstatSync(abs).isSymbolicLink()) return resolve(dirname(abs), readlinkSync(abs)); } catch { /* no such file yet */ }
-  return abs;
+  let at = resolve(path);
+  for (let hop = 0; hop < 40; hop++) {
+    if (existsSync(at)) return realpathSync(at);
+    if (!lstatSync(at, { throwIfNoEntry: false })?.isSymbolicLink()) return at;
+    at = resolve(dirname(at), readlinkSync(at));
+  }
+  throw opError('invalid_params', `profile export: ${path} is a symlink loop; nothing was written.`, 'Pass the path of your Memory.md.');
 }
 
 export async function runProfileExport(args: string[], call: ImportCall): Promise<void> {
