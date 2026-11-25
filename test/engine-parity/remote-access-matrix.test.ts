@@ -25,9 +25,8 @@
  *    OAuth provider as serve --http does, owner set by setOwner and credentials bound by bindCredential). The members are
  *    seeded by addMember (typed). The folder rules go through the real policy path (proposeRevision), which applies on every
  *    arm, the Rust one included (asserted: `applied:applied`). Embeddings are off, so search and query run keyword-only.
- *  - The owner on the Rust arm: the store does not model the owner's lineage read yet, so every remote owner read refuses
- *    by name before any work (ownerLineageRefusal, src/mcp/engine-access-refusal.ts); the owner cases assert that every
- *    cell refused that way and leaked no page or fact, then stop on the pin in test/rust-stop-pins/remote-access.tsv.
+ *  - The owner on the Rust arm: the store serves the owner's lineage read (storePageTextPolicy and storePrivacyPolicy send
+ *    it as `ownerRead`), so the owner cases answer as PGLite does on every arm.
  *  - Every page is sealed before the reads (seed drains the projection queue): an unsealed page is left out of keyword
  *    search, and whether the background resealer reached it depends on what ran before on the arm.
  *

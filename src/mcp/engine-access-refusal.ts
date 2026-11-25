@@ -23,20 +23,3 @@ export function remoteAccessRefusal(
     : engine.kind === 'rust';
   return lacks ? capabilityMissing('access_control', `${name} for a remote caller`) : null;
 }
-
-/**
- * The refusal `dispatchToolCall` returns, before any work, for the brain owner's remote read on a Rust brain. An owner's
- * remote read is a lineage read (CallerAccess.lineage: the origin check and the fact provenance of its own member page),
- * which the Rust store does not model yet (lane 11, rust-engine/member-page-withdrawal-owner, then the owner fact reads
- * on rust-engine/remote-access-parity). Without this refusal each member the read reaches refuses on its own, or a
- * best-effort part of the answer is dropped; this names the gap once, the same way for every op. Every other caller,
- * and the owner on PGLite and Postgres, is not affected.
- */
-export function ownerLineageRefusal(
-  engine: { readonly kind?: unknown },
-  name: string,
-  access: { readonly owner?: boolean; readonly lineage?: boolean },
-): OperationError | null {
-  if (engine.kind !== 'rust' || access.owner !== true || access.lineage !== true) return null;
-  return capabilityMissing('access_control', `${name} for the brain owner's remote read (the owner lineage read)`);
-}
