@@ -329,7 +329,8 @@ async function retrieveEvidence(
     let n = 0;
     for (const l of rows) {
       if (n >= BACKLINK_LIMIT) break;
-      if (l.from_source_id !== sourceId || !readable.has(l.from_slug) || (l.origin_slug && !readable.has(l.origin_slug))) continue;
+      if (l.from_source_id !== sourceId || !readable.has(l.from_slug)) continue;
+      if (l.origin_slug && ((l.origin_source_id ?? sourceId) !== sourceId || !readable.has(l.origin_slug))) continue;
       const ctx = (l.context ?? '').trim();
       if (!ctx) continue;
       const dedup = `${l.from_slug}:${ctx.slice(0, 40)}`;
@@ -348,6 +349,7 @@ async function retrieveEvidence(
       ...INTERNAL_BREADTH_SEARCH_OPTS,
       limit: HYBRID_SEARCH_LIMIT,
       sourceId,
+      requireSafeChunks: true,
     });
     const readable = await pagesReadingToReadersOf(engine, sourceId, slug, hits.map((h) => h.slug));
     for (const h of hits) {

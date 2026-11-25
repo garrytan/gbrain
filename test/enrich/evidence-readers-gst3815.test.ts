@@ -128,4 +128,52 @@ describe('enrich evidence stays within the page readers (GST-3815)', () => {
     expect(prompt).not.toContain('narrow-chunk-marker');
     expect(prompt).not.toContain('private-chunk-marker');
   }, 30000);
+
+  test('a link from an open page whose origin page names readers stays out', async () => {
+    await seedPage(TARGET, 'person', {}, 'Stub page.');
+    await seedPage('meetings/open-m1', 'note', {});
+    await seedPage('notes/team-a-only', 'note', { readable_by: ['group:team-a'] });
+    await engine.addLink('meetings/open-m1', TARGET, 'open-link-marker: Alice Example ran the summit session.');
+    await engine.addLink('meetings/open-m1', TARGET, 'origin-link-marker: Alice Example compensation review.', 'mentions', 'frontmatter', 'notes/team-a-only', 'attendees');
+
+    const prompt = await enrichPrompt();
+    expect(prompt).toContain('open-link-marker');
+    expect(prompt).not.toContain('origin-link-marker');
+  }, 30000);
+
+  test('a fact on a page under a folder rule fills only a page that rule also covers', async () => {
+    const rule = async (prefix: string) => {
+      await engine.executeRaw(`INSERT INTO access_policy_state(source_id) VALUES('default') ON CONFLICT DO NOTHING`);
+      await engine.executeRaw(`INSERT INTO access_rules(source_id,rule_id,prefix,readable_by,revision) VALUES('default','r1',$1,ARRAY['member:alice-example'],1)`, [prefix]);
+    };
+    await rule('ruled/');
+    await seedPage(TARGET, 'person', {}, 'Stub page.');
+    await seedPage('ruled/note', 'note', {});
+    await seedFact('ruled-fact-marker: Alice Example board seat', 'world', 'ruled/note');
+    await seedFact('open-fact-marker: Alice Example leads design at Acme Example', 'world', null);
+    const [stamped] = await engine.executeRaw<{ ids: string[] | null }>(`SELECT folder_rule_ids AS ids FROM pages WHERE slug = 'ruled/note'`);
+    expect(stamped!.ids?.length).toBe(1);
+    const narrower = await enrichPrompt();
+    expect(narrower).toContain('open-fact-marker');
+    expect(narrower).not.toContain('ruled-fact-marker');
+
+    await resetPgliteState(engine);
+    await rule('people/');
+    await seedPage(TARGET, 'person', {}, 'Stub page.');
+    await seedPage('people/ruled-note', 'note', {});
+    await seedFact('ruled-fact-marker: Alice Example board seat', 'world', 'people/ruled-note');
+    await seedFact('open-fact-marker: Alice Example leads design at Acme Example', 'world', null);
+    expect(await enrichPrompt()).toContain('ruled-fact-marker');
+  }, 30000);
+
+  test('a search chunk from a page whose chunks are not sealed for private fence rows stays out', async () => {
+    await seedPage(TARGET, 'person', {}, 'Stub page.');
+    await importPage('meetings/open-m1', '', 'Alice Example presented the open-chunk-marker design system.');
+    await importPage('meetings/unsealed-m2', '', 'Alice Example unsealed-chunk-marker notes from the offsite.');
+    await engine.executeRaw(`UPDATE pages SET chunker_version = 3 WHERE slug = 'meetings/unsealed-m2'`);
+
+    const prompt = await enrichPrompt();
+    expect(prompt).toContain('open-chunk-marker');
+    expect(prompt).not.toContain('unsealed-chunk-marker');
+  }, 30000);
 });
