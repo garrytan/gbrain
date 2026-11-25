@@ -2,7 +2,8 @@
  * setup-history.ts: gbrain setup's side of the history import it offers on a new personal install (onboarding roadmap
  * PR 1). Setup is engine-free, so every brain read and write here is a 'gbrain transcripts archive setup-import' child
  * (src/commands/transcripts-archive-setup-import.ts; core in src/core/onboard/setup-history.ts) under one 20 s work budget;
- * time spent waiting for a person's answer does not count against it.
+ * time spent waiting for a person's answer does not count against it. Each child runs with --brain host, the brain setup
+ * itself reads and creates, so a mounted project's routing never sends the receipt or the sessions elsewhere.
  *
  * Flags: --history none|decline|latest|<1-30>, --history-dir DIR, --history-decision ID, --no-extract. With none of
  * them, a run that created the brain offers the newest session first: at a terminal Q1 [Y/n] (Enter is yes; end of
@@ -10,7 +11,7 @@
  * authorizes. With --notes the newest-session question is skipped and only the range is offered. Off a terminal, and
  * with --json, the offer is a setup_history decision whose accept command is 'gbrain setup <h> --history-decision <id>'.
  */
-import type { Decision, Notice } from '../core/agent-output.ts';
+import { shellQuote, type Decision, type Notice } from '../core/agent-output.ts';
 import { isInteractive, readLine, type LineRead } from '../core/interaction.ts';
 import { bunSpawnSync } from '../core/spawn.ts';
 
@@ -64,7 +65,7 @@ export function historyAnswer(read: LineRead, defaultYes: boolean): 'yes' | 'no'
 type Child = { ok: true; doc: Record<string, any> } | { ok: false; code: string; message: string };
 
 function child(launcher: string, sub: string, args: string[], deadline: number): Child {
-  const argv = [launcher, 'transcripts', 'archive', 'setup-import', sub, ...args, '--deadline-ms', String(deadline), '--json'];
+  const argv = [launcher, '--brain', 'host', 'transcripts', 'archive', 'setup-import', sub, ...args, '--deadline-ms', String(deadline), '--json'];
   const run = bunSpawnSync(argv, { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: process.env, timeout: Math.max(0, deadline - Date.now()) + CHILD_GRACE_MS });
   const text = run.stdout?.toString() ?? '';
   let doc: Record<string, any> | null = null;
@@ -93,15 +94,16 @@ function previewLine(p: Record<string, any>): string {
  * The history step of one setup run, after the brain's layout. Returns null when there is nothing to say (an existing
  * brain and no history flag, or a dry run).
  */
-export async function historyFor(ctx: { harness: string; launcher: string; flags: HistoryFlags & { notes?: string | null; dryRun?: boolean }; brainCreate: boolean; json: boolean; liveServe: boolean; setupArgv: string[]; read?: typeof readLine; interactive?: boolean; budgetMs?: number }): Promise<HistoryOutcome | null> {
+export async function historyFor(ctx: { harness: string; launcher: string; flags: HistoryFlags & { notes?: string | null; dryRun?: boolean }; brainCreate: boolean; json: boolean; liveServe: boolean; setupArgv: string[]; choices?: string[]; read?: typeof readLine; interactive?: boolean; budgetMs?: number }): Promise<HistoryOutcome | null> {
   const { flags, harness } = ctx;
+  const choices = ctx.choices ?? [];
   const explicit = flags.history !== undefined || flags.historyDecision !== undefined;
   if (flags.dryRun || (!explicit && !ctx.brainCreate)) return null;
   const o: HistoryOutcome = { version: 1, status: 'skipped', stages: [], sessions_found: null, sessions_imported: 0, no_history: false, decision: null, card: null, exit: 0, lines: [] };
   if (flags.history === 'none') return { ...o, reason: 'history_none', lines: ['History import: skipped (--history none).'] };
   if (ctx.liveServe) {
-    const resume = [...ctx.setupArgv, ...(flags.historyDecision ? ['--history-decision', flags.historyDecision] : ['--history', String(flags.history ?? 'latest')])];
-    return { ...o, status: 'deferred', reason: 'live_serve', lines: ['History import: deferred, because a running gbrain server holds this brain. Once it stops, run ' + resume.join(' ')] };
+    const resume = [...ctx.setupArgv, ...(flags.historyDecision ? ['--history-decision', flags.historyDecision] : ['--history', String(flags.history ?? 'latest')]), ...choices];
+    return { ...o, status: 'deferred', reason: 'live_serve', lines: ['History import: deferred, because a running gbrain server holds this brain. Once it stops, run ' + shellQuote(resume)] };
   }
   let deadline = Date.now() + (ctx.budgetMs ?? HISTORY_BUDGET_MS);
   const interactive = ctx.interactive ?? (!ctx.json && isInteractive());
@@ -114,20 +116,20 @@ export async function historyFor(ctx: { harness: string; launcher: string; flags
   const run = (args: string[]): Child => {
     const r = child(ctx.launcher, 'run', [...args, ...dirArgs, '--harness', harness, ...(flags.noExtract ? ['--no-extract'] : [])], deadline);
     if (!r.ok) return r;
-    if (r.doc.resume) r.doc.resume.argv = [...ctx.setupArgv, ...r.doc.resume.argv.slice(3)];
+    if (r.doc.resume) r.doc.resume.argv = [...ctx.setupArgv, ...r.doc.resume.argv.slice(3), ...choices];
     o.stages.push(summary(r.doc));
     o.sessions_imported += r.doc.sessions_imported ?? 0;
     o.status = r.doc.status;
     if (r.doc.exit === 10) o.exit = 10;
-    if (r.doc.status === 'partial' && r.doc.resume) o.lines.push('History import stopped at its time budget; the rest waits: ' + r.doc.resume.argv.join(' '));
+    if (r.doc.status === 'partial' && r.doc.resume) o.lines.push('History import stopped at its time budget; the rest waits: ' + shellQuote(r.doc.resume.argv));
     if (r.doc.status === 'accepted') o.lines.push('History import accepted; the brain publishes it shortly (receipts: ' + r.doc.receipts.join(', ') + ').');
     return r;
   };
   const offer = (stage: 'latest' | 'range'): Child => child(ctx.launcher, 'preview', ['--stage', stage, '--offer', ...dirArgs], deadline);
   const decide = (p: Record<string, any>) => {
     const d = p.decision;
-    o.decision = { id: d.id, stage: d.stage, sessions: p.sessions, expires_at: d.expires_at, accept_argv: [...ctx.setupArgv, '--history-decision', d.id, ...(flags.historyDir ? ['--history-dir', flags.historyDir] : []), ...(flags.noExtract ? ['--no-extract'] : [])], decline_argv: [...ctx.setupArgv, '--history', 'decline'] };
-    o.lines.push((d.stage === 'latest' ? 'To import the newest session' : 'To import ' + p.sessions + ' session(s) since ' + p.from) + ': ' + o.decision.accept_argv.join(' '));
+    o.decision = { id: d.id, stage: d.stage, sessions: p.sessions, expires_at: d.expires_at, accept_argv: [...ctx.setupArgv, '--history-decision', d.id, ...(flags.historyDir ? ['--history-dir', flags.historyDir] : []), ...(flags.noExtract ? ['--no-extract'] : []), ...choices], decline_argv: [...ctx.setupArgv, '--history', 'decline', ...choices] };
+    o.lines.push((d.stage === 'latest' ? 'To import the newest session' : 'To import ' + p.sessions + ' session(s) since ' + p.from) + ': ' + shellQuote(o.decision.accept_argv));
   };
   const ask = async (p: Record<string, any>, stage: 'latest' | 'range'): Promise<'yes' | 'no' | 'unanswered'> => {
     const prompt = stage === 'latest' ? 'Import that newest session now? [Y/n] ' : 'Import ' + (o.stages.length ? 'the rest of ' : '') + 'the ' + p.sessions + ' session(s) since ' + p.from + ' too? [y/N] ';

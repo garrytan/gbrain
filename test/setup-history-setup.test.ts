@@ -14,7 +14,7 @@
  *  3. Backends: PGLite (setup's keyless default brain), repo-less.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { runCli } from './helpers/cli-spawn.ts';
@@ -123,6 +123,54 @@ describe('gbrain setup offers the history import on a new install', () => {
     const quiet = await setup(b, ['claude-code', '--history-dir', b.sessions]);
     expect(quiet.doc.history).toBeUndefined();
   }, 300_000);
+
+  test('the printed commands keep this run\'s wiring choices and quote paths', async () => {
+    const b = box(false);
+    const spaced = join(b.root, 'agent sessions');
+    codingPersona(spaced, new Date());
+    const run = async (args: string[]) => {
+      const r = await runCli(['setup', ...args, '--gbrain-bin', b.bin], { env: envOf(b), timeoutMs: 180_000 });
+      let doc: any = null;
+      try { doc = JSON.parse(r.stdout); } catch { doc = null; }
+      return { ...r, doc };
+    };
+    const first = await run(['claude-code', '--no-hooks', '--history-dir', spaced, '--json']);
+    expect(first.exitCode).toBe(0);
+    expect(first.doc.history).toMatchObject({ status: 'offered', sessions_found: 10, decision: { stage: 'latest' } });
+    const { accept_argv, decline_argv } = first.doc.history.decision;
+    for (const argv of [accept_argv, decline_argv]) {
+      expect(argv).toContain('--no-hooks');
+      expect(argv.slice(argv.indexOf('--gbrain-bin'), argv.indexOf('--gbrain-bin') + 2)).toEqual(['--gbrain-bin', b.bin]);
+    }
+    expect(accept_argv.slice(accept_argv.indexOf('--history-dir'), accept_argv.indexOf('--history-dir') + 2)).toEqual(['--history-dir', spaced]);
+    const settings = join(b.home, '.claude', 'settings.json');
+    const hooked = () => existsSync(settings) && readFileSync(settings, 'utf8').includes('gbrain');
+    expect(hooked()).toBe(false);
+    const second = await run([...accept_argv.slice(2), '--json']);
+    expect(second.exitCode).toBe(0);
+    expect(second.doc.history).toMatchObject({ status: 'imported', sessions_imported: 1 });
+    expect(hooked()).toBe(false);
+
+    const text = box(false);
+    const textSessions = join(text.root, 'agent sessions');
+    codingPersona(textSessions, new Date());
+    const r = await runCli(['setup', 'codex', '--history-dir', textSessions, '--gbrain-bin', text.bin], { env: envOf(text), timeoutMs: 180_000 });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("--history-dir '" + textSessions + "'");
+  }, 600_000);
+
+  test('every setup-import child is pinned to the host brain setup created, never to a mounted project\'s brain', async () => {
+    const b = box(false);
+    const log = join(b.root, 'argv.log');
+    const fake = join(b.root, 'bin', 'fake-gbrain');
+    writeFileSync(fake, '#!/bin/sh\nprintf "%s\\n" "$*" >> \'' + log + '\'\ncase "$*" in *" preview "*) echo \'{"found":{"sessions":0},"answered":[],"harnesses":[]}\' ;; *) echo \'{"lines":[],"no_history":true}\' ;; esac\n');
+    chmodSync(fake, 0o755);
+    const o = await historyFor({ harness: 'codex', launcher: fake, flags: {}, brainCreate: true, json: true, liveServe: false, setupArgv: ['gbrain', 'setup', 'codex'], interactive: false });
+    expect(o).toMatchObject({ status: 'nothing_found' });
+    const calls = readFileSync(log, 'utf8').trim().split('\n');
+    expect(calls.length).toBeGreaterThan(1);
+    for (const c of calls) expect(c.startsWith('--brain host transcripts archive setup-import ')).toBe(true);
+  }, 60_000);
 
   test('conflicting history flags exit 2 before anything is written', async () => {
     const cases = [
