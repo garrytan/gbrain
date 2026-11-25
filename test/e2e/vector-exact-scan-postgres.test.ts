@@ -16,6 +16,7 @@ import { refreshProjectionStatistics } from '../../src/core/search/projection-st
 import { __setVectorExactBudgetForTests } from '../../src/core/search/vector-exact.ts';
 import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import type { SearchOpts } from '../../src/core/types.ts';
+import { vectorPlanCheck } from '../../src/commands/doctor/checks/vector-plan.ts';
 
 const RUN = hasDatabase();
 const D = 32, N = 20_000, K = 10, Q = 30;
@@ -144,5 +145,20 @@ describe.skipIf(!RUN)('exact vector scan under search.vector_exact_max_chunks (P
       const [row] = await tx.executeRaw<{ one: number }>(`SELECT 1 AS one`);
       expect(Number(row!.one)).toBe(1);
     });
+  }, 120_000);
+
+  test('doctor vector_plan reports the setting and says when it covers the brain', async () => {
+    try {
+      await engine.setConfig('search.vector_exact_max_chunks', '1000000');
+      const on = await vectorPlanCheck(engine, { column });
+      expect(on.details).toMatchObject({ exact_scan: { max_chunks: 1_000_000, via: 'config', applies: true } });
+      expect(on.message).toContain('Exact vector scan is on for brains up to 1000000 chunks');
+      await engine.setConfig('search.vector_exact_max_chunks', '100');
+      const below = await vectorPlanCheck(engine, { column });
+      expect(below.details).toMatchObject({ exact_scan: { max_chunks: 100, applies: false } });
+      expect(below.message).not.toContain('Exact vector scan is on');
+    } finally {
+      await engine.unsetConfig('search.vector_exact_max_chunks');
+    }
   }, 120_000);
 });
