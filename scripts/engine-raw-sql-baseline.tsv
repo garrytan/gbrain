@@ -577,7 +577,7 @@ src/core/shared-skills/compatibility.ts	execute_raw	2
 src/core/shared-skills/knowledge-guard.ts	execute_raw	3
 src/core/shared-skills/migration-export.ts	execute_raw	7
 src/core/shared-skills/migration-projection.ts	execute_raw	2
-src/core/shared-skills/migration.ts	execute_raw	4
+src/core/shared-skills/migration.ts	execute_raw	2
 src/core/shared-skills/optimizer.ts	execute_raw	1
 src/core/shared-skills/publication.ts	execute_raw	11
 src/core/shared-skills/restore.ts	execute_raw	25
