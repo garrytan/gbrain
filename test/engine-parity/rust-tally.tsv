@@ -113,7 +113,7 @@ test/engine-parity/extract-bookkeeping.test.ts	2	0
 test/engine-parity/extract-takes-reads.test.ts	9	0
 test/engine-parity/extract-takes.test.ts	2	0
 test/engine-parity/extraction.test.ts	7	0
-test/engine-parity/fact-fingerprint-ambiguous.test.ts	2	3
+test/engine-parity/fact-fingerprint-ambiguous.test.ts	5	0
 test/engine-parity/fact-fingerprint-corpus.test.ts	2	0
 test/engine-parity/fact-future-order.test.ts	1	0
 test/engine-parity/fact-insert-guard.test.ts	2	0
