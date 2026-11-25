@@ -1050,7 +1050,7 @@ src/core/repair/settle.ts	execute_raw	1
 src/core/repair/slug-autoheal.ts	execute_raw	1
 src/core/repair/slug-conflicts.ts	execute_raw	5
 src/core/repair/slug-spelling-guards.ts	execute_raw	4	Carrying purge tombstones to the moved page's normal name in the page's own transaction, the row-security lookup over every brain table that refuses the repair for a role row security applies to, and the pages lookup the doctor check runs (raised from 3: the check covers every table the move re-keys, not a fixed list); like the sibling repairs, a typed method comes with the Rust store serving these members.
-src/core/repair/slug-spelling.ts	execute_raw	9	The preview scan and the per-page re-check read pages, sources and files with SQL like the sibling repairs (legacy-twins, rename-identity), and the collision check looks up every stored spelling of a name through the spelling index; a typed method comes with the Rust store serving these members.
+src/core/repair/slug-spelling.ts	execute_raw	10	The preview scan and the per-page re-check read pages, sources and files with SQL like the sibling repairs (legacy-twins, rename-identity), and the collision check looks up every stored spelling of a name through the spelling index (raised from 9: the move counts the attachments updateSlug carries, for its report); a typed method comes with the Rust store serving these members.
 src/core/repair/split-facts.ts	execute_raw	3
 src/core/repair/stale-atoms.ts	execute_raw	3
 src/core/repair/take-supersession.ts	execute_raw	4
