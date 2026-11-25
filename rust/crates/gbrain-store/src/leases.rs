@@ -454,6 +454,27 @@ impl Store {
         }))
     }
 
+    /// `check_fence(fence, what)` as a typed member: the protected-entry-point check ([`check_fence`]) in its own
+    /// write transaction, for harnesses that drive the fence without a family member. Writes nothing.
+    pub fn check_fence_now(&self, fence: Option<&LeaseToken>, what: &str) -> Result<()> {
+        self.write(|tx| check_fence(self, tx, fence, what))
+    }
+
+    /// `record_claim_epoch(family, id, fence)` as a typed member: records that claim `id` of `family` (a `CLAIM_*`
+    /// byte) was taken under `fence`, after checking the fence, in one write.
+    pub fn record_claim_epoch_now(&self, family: u8, id: &str, fence: &LeaseToken) -> Result<()> {
+        self.write(|tx| {
+            check_fence(self, tx, Some(fence), "record_claim_epoch")?;
+            record_claim_epoch(tx, family, id, fence)
+        })
+    }
+
+    /// `check_claim_epoch(family, id, fence)` as a typed member: `lease_lost` / `claim_epoch_mismatch` unless claim
+    /// `id` of `family` was taken under `fence`'s lease name and epoch. Writes nothing.
+    pub fn check_claim_epoch_now(&self, family: u8, id: &str, fence: &LeaseToken) -> Result<()> {
+        check_claim_epoch(&*self.read()?, family, id, fence)
+    }
+
     /// `assert_lease(token)` (I-1 / I-5): on a store bound to a transaction, a statement that reads the lease record
     /// into the transaction, so the check holds at its commit; on the brain's own store, a check against the latest
     /// snapshot. `lease_lost` when `token` does not hold its lease now.

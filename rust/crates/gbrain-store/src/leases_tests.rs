@@ -557,3 +557,38 @@ fn a_read_only_transaction_can_assert_a_lease() {
         tx.commit_transaction().unwrap();
     }
 }
+
+/// The typed members L6's harness uses: check_fence_now, record_claim_epoch_now, check_claim_epoch_now.
+#[test]
+fn the_typed_fence_members_check_record_and_compare_claim_epochs() {
+    let clock = Clock::new();
+    let store = concurrent(&clock, true);
+    assert_eq!(
+        reason(&store.check_fence_now(None, "x").unwrap_err()),
+        "fence_missing"
+    );
+    let a = store
+        .acquire_lease("consumer:h", &origin("a"), 1_000)
+        .unwrap()
+        .unwrap();
+    store.check_fence_now(Some(&a), "x").unwrap();
+    store.record_claim_epoch_now(CLAIM_JOB, "7", &a).unwrap();
+    store.check_claim_epoch_now(CLAIM_JOB, "7", &a).unwrap();
+    clock.advance_ms(2_000);
+    let b = store
+        .acquire_lease("consumer:h", &origin("b"), 1_000)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        reason(&store.check_claim_epoch_now(CLAIM_JOB, "7", &b).unwrap_err()),
+        "claim_epoch_mismatch"
+    );
+    assert_eq!(
+        reason(
+            &store
+                .record_claim_epoch_now(CLAIM_JOB, "8", &a)
+                .unwrap_err()
+        ),
+        "epoch_moved"
+    );
+}
