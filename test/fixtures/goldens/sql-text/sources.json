@@ -24,6 +24,16 @@
           }
         ]
       },
+      "listActiveSourceConfigs": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT id, config, archived FROM sources WHERE archived = false ORDER BY id",
+            "textSha256": "c53c7976fb939fbcd0d1d28fc6544ee7d97df591d4fa9eacf9c2c66bc7e218fc"
+          }
+        ]
+      },
       "listAllSources": {
         "default": [
           {
@@ -62,8 +72,8 @@
           {
             "lane": "pool",
             "params": [],
-            "sql": "SELECT id, local_path, archived, config, EXISTS (SELECT 1 FROM pages WHERE source_id = 'default' AND deleted_at IS NULL) AS default_has_pages FROM sources ORDER BY id COLLATE \"C\"",
-            "textSha256": "c2c644440a48b94de0b819d28567064c4a6053966b63589d64ff24d3f4cd95b2"
+            "sql": "SELECT id, local_path, archived, config, EXISTS (SELECT 1 FROM pages WHERE source_id = 'default' AND deleted_at IS NULL) AS default_has_pages FROM sources ORDER BY id",
+            "textSha256": "054aca20c098f544c08e897c04f7b4e40a1d032830a5ccfa14d9f93aa06bb3fc"
           }
         ]
       },

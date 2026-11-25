@@ -50,7 +50,7 @@
       "out-of-scope:writer-admin (born in engine-sql/writer-admin.ts; pinned by test/engine-parity/writer-admin.test.ts)": 1,
       "pages": 41,
       "salience": 5,
-      "sources": 9,
+      "sources": 10,
       "tags": 3,
       "takes": 20,
       "timeline": 8
@@ -222,6 +222,7 @@
       "listAccessPolicySourceIds": "out-of-scope:cli-export-reads (born in engine-sql/export-reads.ts; master text pinned by test/n3-sql-move-parity.test.ts)",
       "listAccessTokens": "out-of-scope:write-misc (born in engine-sql/write-misc.ts; pinned by test/write-misc-sql-pin.test.ts)",
       "listActiveAccessMembers": "out-of-scope:write-misc (born in engine-sql/write-misc.ts; pinned by test/write-misc-sql-pin.test.ts)",
+      "listActiveSourceConfigs": "sources",
       "listActiveTakesForPages": "takes",
       "listAllPageRefs": "pages",
       "listAllSources": "sources",
