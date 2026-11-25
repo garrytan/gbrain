@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 pub mod clock;
 pub mod format;
+pub mod logged;
 #[allow(clippy::duplicate_mod)]
 pub mod mode;
 pub mod mu;

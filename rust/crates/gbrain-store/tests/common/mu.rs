@@ -11,10 +11,13 @@
 //! Nothing here touches product code, and nothing in the product reads these types.
 
 use gbrain_store::persistence::{EffectSettle, Settle};
-use gbrain_store::{Store, StoreError};
+use gbrain_store::{Env, Kv, Store, StoreError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::ops::Deref;
+use std::path::Path;
+use std::sync::Arc;
 use std::time::Instant;
 
 /// Lane owners, exactly as they appear in pending reasons.
@@ -528,4 +531,66 @@ impl MuStore for Store {
 /// Stand-in for a step a lane owns that has no member yet (the server, host election, and so on).
 pub fn pending_member<T>(owner: &'static str, member: &'static str) -> MuResult<T> {
     pending(owner, member)
+}
+
+// ---- a store with the commit log on, and byte images of its keys ---------------------------------------------------------
+
+/// Every key and value of a record file but the commit log's own keys (tag `2`): what a log replay must reproduce.
+pub type Image = BTreeMap<Vec<u8>, Vec<u8>>;
+
+/// The commit log's key family (`b'2'`, I-4).
+pub fn is_log_key(key: &[u8]) -> bool {
+    key.first() == Some(&b'2')
+}
+
+/// The image of a record file, from one snapshot.
+pub fn image_of(kv: &dyn Kv) -> Image {
+    let read = kv.snapshot().unwrap();
+    let mut out = Image::new();
+    read.scan(&[1], &[0xFF; 64], false, &mut |k, v| {
+        if !is_log_key(k) {
+            out.insert(k.to_vec(), v.to_vec());
+        }
+        true
+    })
+    .unwrap();
+    out
+}
+
+/// A brain the test holds a raw handle on, with the multi-user switch and the commit log on.
+pub struct LoggedBrain {
+    pub kv: Arc<dyn Kv>,
+    pub store: Store,
+}
+
+/// Opens (or reopens) the record file at `path` with the multi-user switch and the commit log on, on `env`, as host `host_id`, on
+/// the single-writer or the optimistic store. Pending until the commit-log lane's open options exist in this tree.
+pub fn open_logged(
+    _path: &Path,
+    _optimistic: bool,
+    _env: Arc<dyn Env>,
+    _host_id: &str,
+) -> MuResult<LoggedBrain> {
+    pending(L2_LOG, "OpenOptions::multiuser_writes (the commit log on)")
+}
+
+/// A closed logged brain that the next open must write to without any caller: `OlderBase` is one whose records are at an older
+/// base format (its upgrade runs at open), `UpkeepOnly` one at the current format whose open-time markers are gone (the
+/// access-flag scan, the keyword index reset and the source-index backfill run at open). Returns the image of the closed brain,
+/// the starting copy a replay of the open's log records must turn into the opened brain. Pending with the open options.
+pub fn logged_brain_needing_upkeep(
+    _path: &Path,
+    _optimistic: bool,
+    _kind: UpkeepKind,
+) -> MuResult<Image> {
+    pending(
+        L2_LOG,
+        "a logged brain whose open writes (upgrade, open-time upkeep)",
+    )
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UpkeepKind {
+    OlderBase,
+    UpkeepOnly,
 }
