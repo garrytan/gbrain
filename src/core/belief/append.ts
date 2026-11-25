@@ -82,8 +82,8 @@ async function tombstoned(tx: BrainEngine, sourceId: string, drafts: BeliefEvent
   if (!facts.length && !takes.length) return new Set();
   const rows = await tx.readBeliefTombstones(sourceId, facts.map(d => d.claimFp!), takes.map(d => d.claimFp!));
   const out = new Set(rows);
-  // A claim whose fingerprint form differs from its tombstone's (a purge recorded before v339, or a draft keyed by the claim's
-  // pre-v339 fingerprint after it) matches by its text: its current fingerprint or a pre-v339 one no current fingerprint can equal.
+  // A claim whose fingerprint form differs from its tombstone's (a purge recorded before v341, or a draft keyed by the claim's
+  // pre-v341 fingerprint after it) matches by its text: its current fingerprint or a pre-v341 one no current fingerprint can equal.
   const text = (d: BeliefEventDraft) => { const v = d.value as Record<string, unknown> | null | undefined; const c = v?.[d.subjectKind === 'fact' ? 'fact' : 'claim'];
     return typeof c === 'string' && mayHaveLegacyFingerprint(c) ? c : null; };
   const probes = [...facts, ...takes].flatMap(d => { const c = text(d); return c && !out.has(d.claimFp!) ? [{ kind: d.subjectKind as 'fact' | 'take', claimFp: d.claimFp!, claim: c }] : []; });

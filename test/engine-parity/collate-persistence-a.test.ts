@@ -255,7 +255,7 @@ describe('drift, stalled-effect and retry listings sort by byte', () => {
     methods: ['insertWriteRequest', 'completeWriteRow', 'listDriftConflictGroups'],
   }, async (engine, backend) => inHome(async () => {
     // A soft hyphen (U+00AD) that a locale ignores, and NFC `é` beside NFD `e` + U+0301: distinct bytes that en_US ranks
-    // as near-equal (equal at its first levels). The audit groups by `slug COLLATE "C"` (v336): each slug must stay its own
+    // as near-equal (equal at its first levels). The audit groups by `slug COLLATE "C"` (v338): each slug must stay its own
     // group with its own receipt count, its exact bytes and its byte position, as the default-collation grouping gave.
     const counts = new Map<string, number>([['notes/ab', 1], ['notes/a\u00adb', 2], ['notes/caf\u00e9', 3], ['notes/cafe\u0301', 4]]);
     await createSource(engine, backend, 'ab');
