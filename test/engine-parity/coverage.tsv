@@ -276,8 +276,8 @@ listMemberSourceRows	pages	yes	1	no	yes	yes	serves
 listQuestionCandidatePages	pages	yes	1	no	yes	yes	refuses:pages
 listPublishedQuestionAnswers	pages	yes	1	no	yes	yes	refuses:pages
 listQuestionEvidenceFacts	pages	yes	1	no	yes	yes	serves
-listQuestionEvidenceTimeline	pages	yes	1	no	yes	yes	refuses:timeline
-listQuestionEvidenceTakes	pages	yes	1	no	yes	yes	refuses:takes
+listQuestionEvidenceTimeline	pages	yes	1	no	yes	yes	refuses:pages
+listQuestionEvidenceTakes	pages	yes	1	no	yes	yes	refuses:pages
 readQuestionEvidenceClock	pages	yes	1	no	yes	yes	refuses:pages
 readQuestionPageRow	pages	yes	1	no	yes	yes	refuses:pages
 listQuestionEvidenceJoin	pages	yes	1	no	yes	yes	refuses:pages
