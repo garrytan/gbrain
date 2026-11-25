@@ -84,8 +84,10 @@ never a pass. With no shadow running, every criterion is `missing`.
    difference (it can fail criterion 5, never pass it); and a link write that names no type, or no source, treats a link
    another process adds between the same two pages with any type or source as its own. The sample share is the write
    sample rate, 0.05 unless `gbrain engine shadow start --write-sample-rate <0..1>` sets another; it is separate from the
-   read sample rate. A sampled write outside a transaction waits (at most 2 seconds) for one small read of the rows it
-   touches before it runs; if that read is slow, the write goes ahead untouched. `put_page` and import run their page write
+   read sample rate. Until the locked tally lands no write is sampled and no write waits for the shadow: the serving
+   process takes no pre-read while nothing records outcomes. Once it does, a sampled write outside a transaction will wait (at
+   most 2 seconds) for one small read of the rows it touches before it runs; if that read is slow, the write goes ahead
+   untouched. `put_page` and import run their page write
    inside a transaction, so those are `uncomparable` once comparisons are recorded: only link operations outside a transaction
    (`add_link`, `remove_link`, a by-mention extract batch) can make a write `comparable`. Comparing a page write that ran
    inside a transaction is a planned follow-up, not part of this check.

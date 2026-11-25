@@ -185,7 +185,7 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       const state = { version: 1, enabled: true, started_at: 'x', sample_rate: 1, write_sample_rate: 1, queue_bound: 64, plan_hash: 'h', brain: 'b', primary_engine: ctx.kind };
       let pid = 0;
       await withEnv({ GBRAIN_HOME: ctx.tempDir(), GBRAIN_RUST_ENGINE_ADDON: ctx.addonPath! }, async () => {
-        const attached = attachShadowParts(primary(), home, state as never, { gbrainArgv: [process.execPath, join(import.meta.dir, '..', '..', 'src', 'cli.ts')] });
+        const attached = attachShadowParts(primary(), home, state as never, { gbrainArgv: [process.execPath, join(import.meta.dir, '..', '..', 'src', 'cli.ts')], recordsWriteComparisons: true }); // the sampler forced on: even delivered, nothing is recorded
         try {
           await attached.engine.addLink('people/alice-example', 'companies/acme-example', 'again', 'invests_in'); // a direct pilot write, sampled at 1
           await attached.engine.addTag('people/alice-example', 'team'); // another family, sampled too
@@ -475,7 +475,7 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
     test('the write sample rate, not the read rate, decides which writes are copied', async () => {
       await ctx.reset();
       const seeded = (): string => { const dir = ctx.tempDir(); writeFileSync(join(dir, 'seed.json'), JSON.stringify({ version: 1, seed_id: 's', digests: true })); return dir; };
-      const attach = (write_sample_rate: number | undefined) => attachShadowParts(primary(), seeded(), { version: 1, enabled: true, started_at: 'x', sample_rate: 1, write_sample_rate, queue_bound: 64, plan_hash: 'h', brain: 'b', primary_engine: ctx.kind } as never, { gbrainArgv: ['unused'], random: () => 0.5 });
+      const attach = (write_sample_rate: number | undefined) => attachShadowParts(primary(), seeded(), { version: 1, enabled: true, started_at: 'x', sample_rate: 1, write_sample_rate, queue_bound: 64, plan_hash: 'h', brain: 'b', primary_engine: ctx.kind } as never, { gbrainArgv: ['unused'], random: () => 0.5, recordsWriteComparisons: true });
       const watch = watchPreimage(primary());
       // random() is 0.5: a read share of 1 would take every write, the default write share of 0.05 takes none.
       const byDefault = attach(undefined);
@@ -495,7 +495,7 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       await primary().putPage('people/bare-example', page('Bare Example'));
       await primary().deletePage('people/bare-example');
       const state = { version: 1, enabled: true, started_at: 'x', sample_rate: 1, write_sample_rate: 1, queue_bound: 64, plan_hash: 'h', brain: 'b', primary_engine: ctx.kind };
-      const attached = attachShadowParts(primary(), ctx.tempDir(), state as never, { gbrainArgv: ['unused'] }); // no seed.json: nothing to compare against
+      const attached = attachShadowParts(primary(), ctx.tempDir(), state as never, { gbrainArgv: ['unused'], recordsWriteComparisons: true }); // no seed.json: nothing to compare against
       await attached.engine.putPage('people/unseeded-example', page('Unseeded Example'));
       await attached.engine.deletePage('people/unseeded-example');
       attached.supervisor.stop();
@@ -503,9 +503,30 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       // The same engine and the same writes do read once a seeded shadow samples them: the detector can find a positive.
       const seeded = ctx.tempDir();
       writeFileSync(join(seeded, 'seed.json'), JSON.stringify({ version: 1, seed_id: 's', digests: true }));
-      const on = attachShadowParts(primary(), seeded, state as never, { gbrainArgv: ['unused'] });
+      const on = attachShadowParts(primary(), seeded, state as never, { gbrainArgv: ['unused'], recordsWriteComparisons: true });
       await on.engine.putPage('people/seeded-example', page('Seeded Example'));
       on.supervisor.stop(); on.reconciler?.stop();
+      expect(watch.count()).toBe(1);
+      watch.restore();
+    }, 60_000);
+
+    test('with no recorder wired (the product today), a sampled pilot write makes no pre-read call, and the primary write is unchanged', async () => {
+      await ctx.reset();
+      await fillSeedFixture(primary());
+      const watch = watchPreimage(primary());
+      const state = { version: 1, enabled: true, started_at: 'x', sample_rate: 1, write_sample_rate: 1, queue_bound: 64, plan_hash: 'h', brain: 'b', primary_engine: ctx.kind };
+      const seeded = (): string => { const dir = ctx.tempDir(); writeFileSync(join(dir, 'seed.json'), JSON.stringify({ version: 1, seed_id: 's', digests: true })); return dir; };
+      const quiet = attachShadowParts(primary(), seeded(), state as never, { gbrainArgv: ['unused'] }); // seeded, rate 1, no recorder: nothing is sampled
+      try {
+        await quiet.engine.putPage('people/quiet-example', page('Quiet Example'));
+        await quiet.engine.addLink('people/alice-example', 'people/quiet-example', 'knows', 'knows');
+        await quiet.engine.removeLink('people/alice-example', 'people/quiet-example', 'knows');
+        await quiet.engine.deletePage('people/quiet-example');
+      } finally { quiet.supervisor.stop(); quiet.reconciler?.stop(); }
+      expect(watch.count()).toBe(0);
+      expect(await primary().getPage('people/quiet-example')).toBeNull(); // the writes themselves all went through
+      const loud = attachShadowParts(primary(), seeded(), state as never, { gbrainArgv: ['unused'], recordsWriteComparisons: true }); // the same writes with a recorder wired do read
+      try { await loud.engine.addLink('people/alice-example', 'companies/acme-example', 'again', 'invests_in'); } finally { loud.supervisor.stop(); loud.reconciler?.stop(); }
       expect(watch.count()).toBe(1);
       watch.restore();
     }, 60_000);
