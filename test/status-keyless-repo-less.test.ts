@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runStatus } from '../src/commands/status.ts';
 import { runDream } from '../src/commands/dream.ts';
+import { completedFullCycle } from '../src/core/dream-last-cycle.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 let engine: PGLiteEngine;
@@ -86,6 +87,37 @@ describe('gbrain status on a keyless repo-less brain', () => {
     expect(out).not.toContain('Last full cycle: never run');
     expect(out).toMatch(/Last full cycle: \d{4}-\d{2}-\d{2}T/);
   }, 120_000);
+
+  test('a never-synced connector source is not called repo-less', async () => {
+    await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ('slack-example', 'slack-example', '{"kind":"slack","s_channels":"general"}')`);
+    try {
+      const line = (await status()).split('\n').find(l => /\] slack-example\b/.test(l))!;
+      expect(line).toBeDefined();
+      expect(line).not.toContain('repo-less');
+      expect(line).toContain('never');
+    } finally {
+      await engine.executeRaw(`DELETE FROM sources WHERE id = 'slack-example'`);
+    }
+  });
+
+  test('a default source whose checkout is recorded in sync.repo_path is not called repo-less', async () => {
+    await engine.setConfig('sync.repo_path', join(home, 'brain-checkout'));
+    try {
+      const line = (await status()).split('\n').find(l => /\] default\b/.test(l))!;
+      expect(line).toBeDefined();
+      expect(line).not.toContain('repo-less');
+    } finally {
+      await engine.unsetConfig('sync.repo_path');
+    }
+  });
+
+  test('an aborted or lock-stolen cycle is not a completed full cycle', () => {
+    expect(completedFullCycle({ status: 'partial', reason: 'aborted' })).toBe(false);
+    expect(completedFullCycle({ status: 'partial', reason: 'lock_stolen' })).toBe(false);
+    expect(completedFullCycle({ status: 'partial' })).toBe(true);
+    expect(completedFullCycle({ status: 'ok' })).toBe(true);
+    expect(completedFullCycle({ status: 'failed' })).toBe(false);
+  });
 
   test('a never-synced source with a local folder is not called repo-less', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-status-plain-'));

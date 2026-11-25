@@ -51,7 +51,7 @@ describe('transcripts ingest: the try-it hint', () => {
     const hint = out.find(l => l.startsWith('try it:'));
     expect(hint).toBeDefined();
     expect(hint).not.toContain('gbrain query');
-    const slug = /^try it: gbrain get (\S+)$/.exec(hint!)?.[1];
+    const slug = /^try it: gbrain get (\S+) --source-id default$/.exec(hint!)?.[1];
     expect(slug).toBeDefined();
     expect(await engine.getPage(slug!, { sourceId: 'default' })).not.toBeNull();
   }, 120_000);

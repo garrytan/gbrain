@@ -488,6 +488,11 @@ export function applyBrainLayout(opts: { harness: string; scope?: LayoutScope; s
     } else {
       const company = outcome.company = ensureCompanySource(exec, launcher, flags.dryRun);
       if (company.action === 'failed' && !opts.instructionsDeclined) outcome.block = syncLayoutBlock(opts.instructionsPath, harness, scope, source, blockShape(flags.brain, true), flags.dryRun);
+      if (company.action === 'failed') {
+        const detail = `not run: the ${COMPANY_SOURCE} source could not be set up (${company.detail ?? 'unknown error'})`;
+        if (flags.docs) outcome.docs = { dir: flags.docs, files: 0, action: 'failed', argv: ['gbrain', 'import', flags.docs, '--no-embed', '--source', COMPANY_SOURCE], detail };
+        if (flags.transcripts) outcome.transcripts = { dir: flags.transcripts, files: 0, action: 'failed', argv: ['gbrain', 'import', flags.transcripts, '--calls', '--prefix', CALLS_PREFIX, '--no-embed', '--source', COMPANY_SOURCE], detail };
+      }
       if (company.action !== 'failed') {
         outcome.pages.push(...writePages(exec, launcher, COMPANY_PAGES, COMPANY_SOURCE, flags.dryRun));
         if (flags.docs) {

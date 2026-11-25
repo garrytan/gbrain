@@ -58,6 +58,7 @@ import { pendingProposalSummary } from '../core/persistence/memory-proposals.ts'
 import { withReadMeta } from '../core/read-heartbeat.ts';
 import { embeddingsDisabled } from '../core/embedding-disabled.ts';
 import { readDreamFullCycle } from '../core/dream-last-cycle.ts';
+import { parseSourceConfig } from '../core/sources-load.ts';
 
 const SCHEMA_VERSION = 1 as const;
 
@@ -520,8 +521,10 @@ async function buildLocalReport(
             engine,
             sources.map((s) => ({ id: s.id, name: s.name, local_path: s.local_path, config: s.config ?? {} })),
           );
-          const repoLess = sync.sources.filter((src) => src.last_sync_at === null
-            && !src.local_path).map((src) => src.source_id);
+          const brainRepo = await engine.getConfig('sync.repo_path');
+          const connector = new Set(sources.filter((s) => parseSourceConfig(s.config).kind).map((s) => s.id));
+          const repoLess = sync.sources.filter((src) => src.last_sync_at === null && !src.local_path
+            && !connector.has(src.source_id) && !(src.source_id === 'default' && brainRepo)).map((src) => src.source_id);
           if (repoLess.length) report.repo_less_sources = repoLess;
           if (await embeddingsDisabled(engine)) report.embeddings_off = true;
           return sync;

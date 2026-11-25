@@ -1375,7 +1375,7 @@ async function finish(out: Out, doc: {
   const importsFailed = doc.layout ? (['notes', 'docs', 'transcripts'] as const).filter((k) => doc.layout![k]?.action === 'failed') : [];
   for (const k of importsFailed) {
     const i = doc.layout![k]!;
-    process.stderr.write(`gbrain setup: the ${k} import of ${i.dir} failed (${i.detail ?? 'unknown error'}). The rest of setup finished; fix the folder, then run: ${shellQuote(i.argv)}
+    process.stderr.write(`gbrain setup: the ${k} import of ${i.dir} failed (${i.detail ?? 'unknown error'}). The rest of setup finished; fix that, then run: ${shellQuote(i.argv)}
 `);
   }
   const code = skillsFailed(doc.skills ?? null) || doc.resolver?.error || !servesOk(doc.serves ?? null) || importsFailed.length ? 1 : 0;

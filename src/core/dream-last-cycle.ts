@@ -14,6 +14,11 @@ export interface DreamCycleRecord {
   totals: Record<string, unknown>;
 }
 
+/** A cycle that ran to its end: ok, clean or partial, but never one that was aborted or lost its lock part way. */
+export function completedFullCycle(report: { status: string; reason?: string }): boolean {
+  return ['ok', 'clean', 'partial'].includes(report.status) && report.reason !== 'aborted' && report.reason !== 'lock_stolen';
+}
+
 export async function recordDreamFullCycle(engine: BrainEngine, report: { timestamp: string; duration_ms: number; status: string; totals: object }): Promise<void> {
   const record: DreamCycleRecord = {
     finished_at: new Date(Date.parse(report.timestamp) + report.duration_ms).toISOString(),

@@ -5,7 +5,7 @@
 <!-- behavior-change: show_user_relay_whole_gbra789 -->
 - Search and query on a brain with embeddings off on purpose no longer report pages "held from embedding" as degraded coverage or point at gbrain embed --held.
 <!-- behavior-change: keyless_no_embedding_held_notice_gbra789 -->
-- gbrain transcripts ingest suggests gbrain get <slug> for the page it wrote instead of a query for the slug string.
+- gbrain transcripts ingest suggests gbrain get <slug> --source-id <source> for the page it wrote instead of a query for the slug string.
 <!-- behavior-change: transcripts_try_it_get_gbra789 -->
 - gbrain learned and learned --stats start their default window at the brain's creation on a brain younger than the window, instead of naming a date before the brain existed.
 <!-- behavior-change: learned_window_brain_start_gbra789 -->
@@ -14,7 +14,7 @@
 - The page anatomy guide lists the timeline forms gbrain reads (bold-date bullets with `|`, `###` date headings, dated `[Source: …]` citations) and says a plain dated list makes no row.
 - Brain-page pointers name the exact get_page or entity {name} call and how to reach get_page from the starter tool list; entity called with slug says to pass it as name.
 <!-- behavior-change: pointers_name_exact_calls_gbra789 -->
-- gbrain setup exits 1, with the failure on stderr, when a requested --notes, --docs or --transcripts import fails or its folder cannot be read; the wiring that finished stays.
+- gbrain setup exits 1, with the failure on stderr, when a requested --notes, --docs or --transcripts import fails, cannot run because the company source could not be set up, or its folder cannot be read; the wiring that finished stays.
 <!-- behavior-change: setup_failed_import_exits_nonzero_gbra789 -->
 - AGENTS.md, the README and the company-brain tutorial agree on install time: a few minutes, with the measured machine time (about 10 seconds each for the install and setup) stated apart from the time you spend.
 - A prebuilt brain copied into a container refuses its first write with physical_root_directory_changed and the relocated-root self-transfer that fixes it, instead of a generic refusal with no exit.

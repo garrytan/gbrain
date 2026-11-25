@@ -362,6 +362,26 @@ describe('layout units', () => {
     }
   });
 
+  test('requested company imports are failed imports, not skipped, when the company source cannot be set up', () => {
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-layout-blocked-'));
+    roots.push(root);
+    mkdirSync(join(root, 'company'));
+    writeFileSync(join(root, 'company', 'mine.md'), '# Mine\n');
+    const docs = join(root, 'docs');
+    const calls = join(root, 'calls');
+    mkdirSync(docs);
+    mkdirSync(calls);
+    const o = applyBrainLayout({ harness: 'claude-code', launcher: 'gbrain', instructionsPath: null, flags: { brain: 'company', docs, transcripts: calls, dryRun: false },
+      run: (argv) => {
+        if (argv[1] === 'sources') return { code: 0, stdout: JSON.stringify({ sources: [{ id: 'default', local_path: join(root, 'default'), federated: true }] }), stderr: '' };
+        return argv[1] === 'get' ? { code: 1, stdout: '{"code":"page_not_found"}', stderr: '' } : { code: 0, stdout: '', stderr: '' };
+      } })!;
+    expect(o.company!.action).toBe('failed');
+    expect(o.docs).toMatchObject({ dir: docs, action: 'failed' });
+    expect(o.docs!.detail).toContain('company source could not be set up');
+    expect(o.transcripts).toMatchObject({ dir: calls, action: 'failed' });
+  });
+
   test('personal pages land before the company source exists, and either sources add reply reads as federated', () => {
     for (const reply of [{ federated: true }, { config: { federated: true } }]) {
       const root = mkdtempSync(join(tmpdir(), 'gbrain-layout-order-'));

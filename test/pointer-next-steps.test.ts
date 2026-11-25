@@ -32,6 +32,7 @@ describe('ambient pointers name callable next steps', () => {
 
   test('the pointer block says how to reach get_page from the starter tool list', () => {
     expect(renderPointerBlock([pointer])).toContain('request_tools {tools: ["get_page"]}');
+    expect(renderPointerBlock([pointer])).toContain('this connection cannot open pages');
   });
 
   test('an entity card gives entity {name: <slug>} and the get_page call, with the source when it is not home', () => {

@@ -681,7 +681,7 @@ function wholeWordIncludes(haystack: string, needle: string): boolean {
 }
 
 /** How an agent on the starter tool list (which does not list get_page) reaches the call a pointer names. */
-export const GET_PAGE_REACH = 'If get_page is not in your tool list, call request_tools {tools: ["get_page"]} first.';
+export const GET_PAGE_REACH = 'If get_page is not in your tool list, call request_tools {tools: ["get_page"]} first; if it still is not callable, this connection cannot open pages, so say that rather than answer from memory.';
 
 export function renderPointerBlock(pointers: ReflexPointer[]): string {
   const lines = [
