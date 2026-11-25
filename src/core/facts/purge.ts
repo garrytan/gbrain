@@ -488,16 +488,17 @@ export async function submitPurgeFactMutation(ctx: OperationContext, params: Rec
   if (!target) throw notFound(p.rawId);
   const token = purgeConfirmToken(target);
   const plan = await planFactPurge(ctx.engine, target, p.allSubjects);
-  if (dryRun) {
-    const receipt = await verifyFactPurge(ctx.engine, { target, plan, dryRun: true });
-    return { dry_run: true, action: 'purge_fact', request_id: p.requestId, confirm_token: token, expected_revision: plan.revision, ...receipt };
-  }
-  if (params.confirm !== token) throw opError('confirmation_required', 'Purge needs a confirmation bound to this fact.',
+  if (!dryRun && params.confirm !== token) throw opError('confirmation_required', 'Purge needs a confirmation bound to this fact.',
     `Run the dry run first (gbrain forget ${p.rawId} --purge --dry-run), review its receipt with the user, then confirm with the fact's token (the first 8 characters of its fingerprint).`,
     { fix: { argv: ['gbrain', 'forget', p.rawId, '--purge', '--dry-run', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
       why: 'Prints what the purge would remove and the confirmation token, without changing anything.' } });
   // GBRA-217 (A7): while the claim still exists, the commits whose change reason quotes it (rechecked inside the transaction).
+  // The preview must prove the same history is readable before offering a confirmation token.
   const trailers = await scanPurgeTrailers(ctx.engine, { sourceId: p.sourceId, claim: target.fact, rawId: p.rawId, ...(p.reasonScanLimit ? { limit: p.reasonScanLimit } : {}) });
+  if (dryRun) {
+    const receipt = await verifyFactPurge(ctx.engine, { target, plan, dryRun: true });
+    return { dry_run: true, action: 'purge_fact', request_id: p.requestId, confirm_token: token, expected_revision: plan.revision, ...receipt };
+  }
   const { similarActiveAfterForget } = await import('./similar-active.ts');
   const similar = await similarActiveAfterForget(ctx.engine, { sourceId: p.sourceId, factId: p.id, remote: false, committed: true, semanticReview: false })
     .then(s => ({ ...s, candidates: s.candidates.filter(c => !plan.factIds.includes(Number(c.fact_id))) })).catch(() => null);

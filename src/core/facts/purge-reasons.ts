@@ -8,6 +8,7 @@
 import { isAbsolute } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { opError } from '../ops/contract.ts';
+import { readFix } from '../ops/op-fix.ts';
 import { REASON_TRAILER_KEY } from '../persistence/change-reason.ts';
 import type { IntentRedactionTarget } from '../persistence/intent-redaction.ts';
 import { reasonScanCap, scanTrailersCarrying } from '../reason-trailers.ts';
@@ -18,7 +19,11 @@ const PURGE_REASON_DOCS = 'docs/guides/page-history.md#purge-and-reasons';
 /** The preparation's trailer scan: nothing to tombstone without a checkout (repo-less brain, plain folder). */
 export interface PurgeTrailerPlan { sourceRoot: string | null; head: string | null; hits: Array<{ commit: string; path: string }>; commits: number; limited: boolean }
 
-const scanFailed = (sourceId: string, rawId: string, detail: string) => opError('reason_purge_scan_failed',
+const scanFailed = (sourceId: string, rawId: string, detail: string, sourcePathMissing = false) => sourcePathMissing ? opError('reason_purge_scan_failed',
+  `The recorded checkout for source ${sourceId} is missing or is not a directory, so nothing was purged.`,
+  `Waiting cannot restore a missing checkout. On the brain host, restore the recorded directory or have the operator use gbrain sources set-path ${sourceId} with the verified checkout directory, then run the purge preview again. Do not clear the source path to bypass the history scan.`,
+  { docs: PURGE_REASON_DOCS, retryable: false, fix: readFix('Inspect the source and its recorded checkout before the operator repairs its path.',
+    { argv: ['gbrain', 'sources', 'status', sourceId, '--json'] }) }) : opError('reason_purge_scan_failed',
   `Reading the change reasons in the Git history of source ${sourceId} failed (${detail}), so nothing was purged.`,
   'Purge reads every gbrain-reason trailer that quotes the claim before it deletes anything, so the reason can be blocked from coming back; nothing changed and retrying is safe. Wait, then run the same purge again.',
   { docs: PURGE_REASON_DOCS, retryable: true, fix: { argv: ['gbrain', 'forget', rawId, '--purge', '--dry-run', '--json'], consent: [], actor: 'provider', requires_exclusive: false,
@@ -37,7 +42,7 @@ export async function scanPurgeTrailers(engine: BrainEngine, input: { sourceId: 
   if (!root || !isAbsolute(root)) return none;
   const scan = await scanTrailersCarrying(root, [input.claim], input.limit === undefined ? {} : { limit: input.limit });
   if (scan.status === 'no_repository') return none;
-  if (scan.status === 'failed') throw scanFailed(input.sourceId, input.rawId, scan.detail);
+  if (scan.status === 'failed') throw scanFailed(input.sourceId, input.rawId, scan.detail, scan.sourcePathMissing);
   if (scan.status === 'capped') {
     throw opError('reason_purge_scan_capped', `Source ${input.sourceId} has more than ${scan.cap} commits to check for change reasons that quote this claim, so nothing was purged.`,
       'Ask the user: purge now and check only the newest commits (pass --reason-scan-limit with the number they choose; older commits are not checked, so a reason there could be mirrored again by a later re-import), or stop.',
@@ -56,7 +61,7 @@ export async function recordReasonTombstones(tx: BrainEngine, input: { sourceId:
   const { plan } = input;
   if (!plan.sourceRoot) return 0;
   const recheck = await scanTrailersCarrying(plan.sourceRoot, [input.claim], { from: plan.head, limit: reasonScanCap('purge') });
-  if (recheck.status === 'failed') throw scanFailed(input.sourceId, input.rawId, recheck.detail);
+  if (recheck.status === 'failed') throw scanFailed(input.sourceId, input.rawId, recheck.detail, recheck.sourcePathMissing);
   if (recheck.status === 'no_repository') throw scanFailed(input.sourceId, input.rawId, 'the Git checkout scanned before the purge is gone');
   const hits = [...plan.hits, ...(recheck.status === 'complete' ? recheck.hits : [])];
   if (!hits.length) return 0;
