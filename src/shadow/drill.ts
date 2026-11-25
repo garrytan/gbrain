@@ -204,10 +204,25 @@ const sleep = (ms: number): Promise<void> => new Promise(done => setTimeout(done
 async function copyEnded(owner: DrillOwner, opId: string, waitMs: number, pollMs: number): Promise<boolean> {
   const deadline = Date.now() + waitMs;
   for (;;) {
-    try { if ((await owner.status(opId)).state !== 'running') return true; } catch { if (await owner.ownerGone().catch(() => false)) return true; } // silent-read-ok: a status call that fails is retried until the deadline
+    // Each owner request is bounded by what is left of the deadline (at least four polls, so a wait of zero still lets one
+    // answer come back): an owner that stops answering counts as "still running", never as a reason to wait on it forever.
+    const budget = Math.max(deadline - Date.now(), pollMs * 4);
+    try {
+      const status = await within(owner.status(opId), budget);
+      if (status !== TIMED_OUT && status.state !== 'running') return true;
+    } catch { if ((await within(owner.ownerGone().catch(() => false), budget)) === true) return true; } // silent-read-ok: a status call that fails is retried until the deadline
     if (Date.now() >= deadline) return false;
     await sleep(pollMs);
   }
+}
+
+const TIMED_OUT = Symbol('timed_out');
+
+/** The promise's value, or TIMED_OUT when it has not settled within `ms`. A rejection after the timeout is swallowed by the race. */
+async function within<T>(promise: Promise<T>, ms: number): Promise<T | typeof TIMED_OUT> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<typeof TIMED_OUT>(done => { timer = setTimeout(() => done(TIMED_OUT), ms); });
+  try { return await Promise.race([promise, timeout]); } finally { clearTimeout(timer); }
 }
 
 const snapshotReason = (error: unknown): DrillReason => {
@@ -309,6 +324,7 @@ export async function runBackupDrill(dir: string, deps: DrillDeps = {}): Promise
   let rootId: string | null = null;
   let drillsId: string | null = null;
   const shadowLive = (): boolean => rootId !== null && dirIdentity(dir) === rootId && drillsId !== null && dirIdentity(drillsDir(dir)) === drillsId;
+  let published = false;
   const finish = (reason: DrillReason | null, persist: boolean): DrillRecord => {
     const gone = persist && !shadowLive();
     const final = gone ? 'shadow_gone' : reason;
@@ -321,9 +337,13 @@ export async function runBackupDrill(dir: string, deps: DrillDeps = {}): Promise
         // The history first: a pass is published only by `backup.json`, the one file status reads.
         appendFileSync(historyPath(dir), JSON.stringify(rec) + '\n', { mode: 0o600 });
         writeAtomic(backupRecordPath(dir), JSON.stringify(rec, null, 2) + '\n');
+        published = true;
       } catch {
         rec.pass = false;
         rec.reason = shadowLive() ? 'drill_error' : 'shadow_gone';
+        // This drill's result could not be written, so an earlier pass in `backup.json` must not stand for it: take it away
+        // (the pending marker below stays too, so status reads an unfinished copy until a later drill publishes).
+        if (shadowLive()) { try { rmSync(backupRecordPath(dir), { force: true }); } catch { /* the pending marker keeps status from reading a pass */ } }
       }
     }
     return rec;
@@ -435,14 +455,17 @@ export async function runBackupDrill(dir: string, deps: DrillDeps = {}): Promise
     if (ended) {
       try { rmSync(scratch, { recursive: true, force: true }); } catch { /* checked below */ }
       rec.scratch_deleted = !existsSync(scratch);
-      if (rec.scratch_deleted && wrotePending) removePendingIf(dir, opId);
     } else {
       rec.scratch_deleted = false;
     }
     release();
   }
   if (!rec.scratch_deleted) reason ??= 'cleanup_failed';
-  return finish(reason, true);
+  const result = finish(reason, true);
+  // The pending marker goes only once the copy is gone AND this drill's result is durable (or the shadow itself is gone and
+  // nothing can be published): a failed write must not leave the earlier record as the one status reads.
+  if (rec.scratch_deleted && wrotePending && (published || result.reason === 'shadow_gone')) removePendingIf(dir, opId);
+  return result;
 }
 
 async function verifyAfterOpen(addon: object, dir: string): Promise<StoreVerifyReport | null> {
