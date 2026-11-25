@@ -53,3 +53,17 @@ export async function listPageTypesByIds(engine: Raw, ids: readonly number[]): P
   const rows = await engine.executeRaw<{ id: number | string; type: string | null }>('SELECT id, type FROM pages WHERE id = ANY($1::bigint[])', [[...new Set(ids.map(Number))]]);
   return rows.map(r => ({ id: Number(r.id), type: r.type ?? null })).sort((a, b) => a.id - b.id);
 }
+
+/** One pending remote-edit notice of a core page (core-memory.ts pendingCoreNotices). */
+export interface CoreEditNoticeRow { source_id: string; slug: string; revision: string | null; actor: string; created_at: string }
+
+/**
+ * The unacknowledged remote-edit notices of core pages, the newest per page, by source then slug in byte order, at
+ * most 50; only `sourceIds` when given (the core block's and doctor's notice lines).
+ */
+export async function listPendingCoreEditNotices(tx: Raw, sourceIds: readonly string[] | null): Promise<CoreEditNoticeRow[]> {
+  return tx.executeRaw<CoreEditNoticeRow>(
+    `SELECT DISTINCT ON (source_id COLLATE "C", slug COLLATE "C") source_id, slug, revision, actor, created_at::text AS created_at
+       FROM core_edit_notices WHERE acked_at IS NULL ${sourceIds ? 'AND source_id = ANY($1::text[])' : ''}
+      ORDER BY source_id COLLATE "C", slug COLLATE "C", id DESC LIMIT 50`, sourceIds ? [[...sourceIds]] : []);
+}
