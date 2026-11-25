@@ -64,7 +64,7 @@ test/engine-parity/collate-schema-pack-samples.test.ts	4	0
 test/engine-parity/collate-slug-sources.test.ts	7	1
 test/engine-parity/collate-store-listings.test.ts	21	2
 test/engine-parity/collate-ties.test.ts	2	0
-test/engine-parity/concept-rebuild.test.ts	0	3
+test/engine-parity/concept-rebuild.test.ts	4	0
 test/engine-parity/config-ingest.test.ts	9	0
 test/engine-parity/connect-gate.test.ts	7	0
 test/engine-parity/connector-attempts.test.ts	2	0
