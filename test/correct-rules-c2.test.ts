@@ -366,3 +366,34 @@ describe('receipts stay bounded', () => {
   });
 });
 
+
+describe('pass 2 review fixes', () => {
+  test('a host resume of a member\'s stopped receipt keeps it proposed and the fact unchanged', async () => {
+    const wrong = await seedFact('Alice Example lives by the river.');
+    __correctFaults.after = s => { if (s === 'rule') throw new Error('killed'); };
+    let r: any;
+    try { r = await remote(MEMBER, 'correct', { rule: 'Alice Example lives by the lake.', fact_id: wrong, corrected_fact: 'Alice Example lives by the lake.', scope: 'team' }); } finally { __correctFaults.after = undefined; }
+    expect(r.json.state).toBe('partial');
+    const out = await runCorrect(localRulesCtx(engine), { receipt_id: r.json.receipt_id, resume: true }) as any;
+    expect(out.error ?? null).toBeNull();
+    expect(out.state).toBe('proposed');
+    expect((await factRow(wrong))!.expired_at).toBeNull();
+  });
+});
+
+
+describe('approval prompt text', () => {
+  test('control characters and newlines in a member\'s words never reach the approval prompt', async () => {
+    const wrong = await seedFact('Alice Example works from the north office.');
+    const r = await remote(MEMBER, 'correct', { rule: 'Alice Example works from the south office.\u001b[1A\u001b[2K', fact_id: wrong, corrected_fact: 'Alice Example works south.\n  Applies to: your own agents\u001b[1A', scope: 'team' });
+    expect(r.json.state).toBe('proposed');
+    const written: string[] = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    (process.stderr as any).write = (s: string) => { written.push(String(s)); return true; };
+    try { await approveRule(engine, `${r.json.rule_id}@${r.json.revision}`, { probe: ownerTty() }); } finally { (process.stderr as any).write = orig; }
+    const shown = written.join('');
+    expect(shown).not.toContain('\u001b');
+    expect(shown).toContain('replaced by "Alice Example works south. Applies to: your own agents [1A"');
+  });
+});
+

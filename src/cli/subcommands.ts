@@ -68,7 +68,7 @@ export const ROUTERS: Readonly<Record<string, RouterInventory>> = {
   household: { subcommands: HOUSEHOLD_SUBCOMMANDS, bareHelpFirst: true },
   guests: { subcommands: GUESTS_SUBCOMMANDS, bareHelpFirst: true },
   claims: { subcommands: CLAIMS_SUBCOMMANDS, bareHelpFirst: true },
-  // `gbrain correct "<rule>"` takes free text, so a bare `help` there is the rule's own word.
+  // `gbrain correct "<rule>"` takes free text; a one-word rule `help` prints usage instead, so --help never opens the brain.
   correct: { subcommands: CORRECT_SUBCOMMANDS, bareHelpFirst: true },
   rules: { subcommands: RULES_SUBCOMMANDS, bareHelpFirst: true },
 };
