@@ -153,6 +153,8 @@ export interface TurnContextResult {
   coreTrust?: { identity: string; unchanged: boolean };
   /** Context-pressure gate (pressure.ts), serve-sourced; an older serve omits it and no notice fires. */
   pressure?: import('./pressure.ts').PressureGate;
+  /** coreOnly requests: nightly learning's count line (learning/push.ts) when the note holds unseen items; an older serve omits it. */
+  learned?: import('./openclaw-core.ts').LearnedLine;
   /** Reflex pointers that survived suppression + budget. */
   pointers: ReflexPointer[];
   /**
