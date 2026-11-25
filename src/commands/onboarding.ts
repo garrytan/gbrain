@@ -18,7 +18,7 @@ export async function runOnboarding(engine: BrainEngine, args: string[]): Promis
   const sub = args[0];
   const json = args.includes('--json');
   const { exitCliError, usageError } = await import('../cli/cli-error.ts');
-  if (!sub || sub === '--help' || args.includes('--help')) { console.log(ONBOARDING_HELP); return; }
+  if (!sub || sub === '--help' || sub === '-h' || sub === 'help' || args.includes('--help') || args.includes('-h')) { console.log(ONBOARDING_HELP); return; }
   const ctx = { engine, remote: false } as unknown as import('../core/ops/contract.ts').OperationContext;
   if (sub === 'status') {
     const { onboardingStatusFor } = await import('../core/ops/onboarding.ts');
@@ -35,7 +35,7 @@ export async function runOnboarding(engine: BrainEngine, args: string[]): Promis
     const r = await stopFirstSession(engine, { by: args[args.indexOf('--by') + 1] === 'setup' && args.includes('--by') ? 'setup' : 'cli' });
     if (json) console.log(JSON.stringify(r, null, 2));
     else console.log(r.verified ? `First-session suggestion: off (${r.already ? 'it already was' : 'verified in the stored state'}).` : 'First-session suggestion: the stop did not show up in the stored state; nothing is confirmed. Run gbrain onboarding status.');
-    if (!r.verified) process.exitCode = 1;
+    if (!r.verified) (await import('../core/cli-force-exit.ts')).setCliExitVerdict(1);
     return;
   }
   exitCliError(usageError(`unknown onboarding subcommand ${sub}.`, 'Pass status or off, for example gbrain onboarding status --json.'), 'onboarding', { json });

@@ -193,6 +193,13 @@ Every non-localOnly operation on the MCP surface: 192 tools across 31 areas. **S
 | `remember` | Save {fact, provenance (required), `entity` (subject; recall needs it)} or items[]. | write | yes |  |
 | `synthesize` | [EXPENSIVE / SLOW: LLM calls] Cited answer to a broad question across pages. | read | yes |  |
 
+## onboarding
+
+| Tool | Description | Scope | Starter | Gate |
+|---|---|---|---|---|
+| `onboarding_off` | Turn the first-session suggestion off for this install (the owner only). | write |  |  |
+| `onboarding_status` | Whether the first-session suggestion is armed on this brain, and why not when it is off: not_new_install, not_personal, window_expired, sessions_exhausted or stopped. | read |  |  |
+
 ## ontology
 
 | Tool | Description | Scope | Starter | Gate |
@@ -201,13 +208,6 @@ Every non-localOnly operation on the MCP surface: 192 tools across 31 areas. **S
 | `ontology_dimensions` | Life Chronicle meta-ontology: which dimensions the brain tracks across entities, with entity + observation counts. | read |  |  |
 | `ontology_get` | Life Chronicle: the current resolved per-entity ontology (dimension → value) at `asof` (default now), with provenance + confidence + validity. | read |  |  |
 | `ontology_propose` | Life Chronicle: record one ontology observation (entity has dimension=value), sourced + confidence-weighted + bi-temporal. | write |  |  |
-
-## other
-
-| Tool | Description | Scope | Starter | Gate |
-|---|---|---|---|---|
-| `onboarding_off` | Turn the first-session suggestion off for this install (the owner only). | write |  |  |
-| `onboarding_status` | Whether the first-session suggestion is armed on this brain, and why not when it is off: not_new_install, not_personal, window_expired, sessions_exhausted or stopped. | read |  |  |
 
 ## pages
 

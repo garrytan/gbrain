@@ -8612,7 +8612,8 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "cliHints": {
       "name": "onboarding-status",
       "hidden": true
-    }
+    },
+    "area": "onboarding"
   },
   {
     "name": "onboarding_off",
@@ -8628,6 +8629,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "cliHints": {
       "name": "onboarding-off",
       "hidden": true
-    }
+    },
+    "area": "onboarding"
   }
 ];
