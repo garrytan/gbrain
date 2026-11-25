@@ -209,10 +209,10 @@ What changes for M3:
 | Write identity | `(principal, request_id)`, journal `sequence` | adds `WriteOrigin` (writer id, process incarnation, machine id) on every journal row and commit record |
 
 **Why no hybrid logical clock.** With one primary, the commit version is a total order and the
-server's clock stamps `created_at`. A hybrid logical clock only pays off with several primaries,
+server's clock stamps row times. A hybrid logical clock only pays off with several primaries,
 which this design does not plan. If M4 failover moves the primary, the new primary's first commit
-version is above the old one's last (the log carries it), and `created_at` takes the larger of server
-time and the last committed time, so time never runs backwards in the records.
+version is above the old one's last (the log carries it), and its clock floor is the last committed
+time, so no row time and no commit time falls below a time already committed (I-4.v2.1).
 
 **Hosts and fencing.** Each host's writer registers once (`register_consumer`) and gets an epoch.
 Claims and leases carry `(epoch, token)`. A host that comes back after a partition with an old epoch
@@ -356,8 +356,16 @@ pub struct WriteOrigin { pub host_id: String, pub incarnation: String, pub write
   - JSON form, wherever a record is decoded (wire, tests): adds `"commit_time_us": <integer>`; microseconds fit in a
     JavaScript number until the year 2255. A wire frame that ships raw record bytes ships them unchanged.
   - Order rules: fact order and every "what happened first" rule use the commit position `(sequence, index)`, never
-    `commit_time`. `commit_time` sets row times (`created_at` and the like) and the clock floor. A server that takes
-    over as primary starts its clock at the larger of its own `M\0ctime` and the last applied record's `commit_time`.
+    `commit_time`. `commit_time` is the strictly rising time and sets the clock floor. A server that takes over as
+    primary starts its clock floor at the larger of its own `M\0ctime` and the last applied record's `commit_time`.
+  - **I-4.v2.1 (2026-11-25), row times.** A row's `created_at`, and every other time written into a row value, is the
+    transaction's clock time (as Postgres `now()`, the parity reference), taken while the transaction body runs and
+    never below the clock floor at open, including after a promotion. It is not the commit time: a row value is
+    encoded before the pipeline picks the commit order, so a later commit can carry an earlier `created_at`. Commit
+    order is the commit position; no multi-user reader, listing or check orders by `created_at` to mean commit order.
+    Tests: every row time written after open is at or above the floor taken at open, including on a store promoted
+    from the log; the test that expected `created_at` to follow commit order stays ignored with a reason that names
+    this rule.
 
 ### I-5. Leases
 
