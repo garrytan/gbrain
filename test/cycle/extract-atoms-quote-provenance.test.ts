@@ -100,6 +100,76 @@ describe('locateQuote — offsets point into the ORIGINAL text', () => {
   });
 });
 
+describe('Japanese and compatibility quote grounding (#10298)', () => {
+  const source = '試料Ａは室温で２.０×１０<sup>－５</sup> S・cm<sup>－１</sup>の伝導率を示した．';
+
+  test('sentence punctuation and width differences retain the original UTF-16 span', () => {
+    const content = `🚀 前置き\n${source}\n後書き`;
+    const quote = '試料Aは室温で2.0×10<sup>-5</sup> S･cm<sup>-1</sup>の伝導率を示した。';
+    expect(locateQuote(content, quote)).toEqual({ start: '🚀 前置き\n'.length, end: '🚀 前置き\n'.length + source.length });
+    expect(locateQuote('一方，試料Ｂは７３％であった．', '一方、試料Bは73%であった。')).not.toBeNull();
+    expect(locateQuote('一方、試料Bは73%であった。', '一方，試料Ｂは７３％であった．')).not.toBeNull();
+  });
+
+  test('compatibility expansions, voiced kana and canonical spellings share one mapped fold', () => {
+    for (const [original, quote] of [
+      ['重さは２㎏。', '重さは2kg.'],
+      ['面積は１０㎠', '面積は10cm2'],
+      ['指数は１０⁻¹', '指数は10-1'],
+      ['ｶﾞﾗｽの試料。', 'ガラスの試料.'],
+      ['ガラスの試料。', 'ｶﾞﾗｽの試料.'],
+      ['cafe\u0301 の試料。', 'café の試料.'],
+    ]) {
+      const content = `🚀 ${original}`;
+      const loc = locateQuote(content, quote!);
+      expect(loc).toEqual({ start: 3, end: content.length });
+      expect(content.slice(loc!.start, loc!.end)).toBe(original!);
+      const folded = normalizeForGrounding(content);
+      expect(folded.norm.length).toBe(folded.map.length);
+      expect(folded.norm).toBe(normForGrounding(content));
+      expect(normForGrounding(original!)).toBe(normForGrounding(quote!));
+    }
+  });
+
+  test('partial expansions, punctuation changes and omitted scientific notation remain refused', () => {
+    expect(locateQuote('重さは２㎏', '重さは2k')).toBeNull();
+    expect(locateQuote('面積は１０㎠', '面積は10cm')).toBeNull();
+    expect(locateQuote('試料ガ', '試料カ')).toBeNull();
+    expect(locateQuote('測定値は3.991 V。', '測定値は3,991 V。')).toBeNull();
+    expect(locateQuote('測定値は３，９９１ V．', '測定値は3.991 V。')).toBeNull();
+    expect(locateQuote(source, '試料Aは室温で2.0 10-5 S･cm-1の伝導率を示した。')).toBeNull();
+    expect(locateQuote('試料は改善しなかった。', '試料は改善した。')).toBeNull();
+  });
+
+  test('compatibility and punctuation twins still make a quote ambiguous', () => {
+    expect(locateQuote('試料Ａは２㎏．\n試料Aは2kg。', '試料Aは2kg.')).toBeNull();
+    expect(locateQuote('ｶﾞﾗｽ。\nガラス．', 'ガラス.')).toBeNull();
+  });
+
+  test('real extraction stores original Japanese evidence and remains idempotent', async () => {
+    const content = `論文の概要\n${source}\n`.padEnd(600, ' .');
+    const options = {
+      sourceId: 'default',
+      _transcripts: [{ filePath: '/synthetic/japanese-paper.txt', content, contentHash: 'ab'.repeat(8) }],
+      _pages: [],
+      _chat: chatReturning([{
+        title: 'Synthetic conductivity observation', atom_type: 'insight',
+        body: 'The synthetic sample has a measured conductivity.',
+        source_quote: '試料Aは室温で2.0×10<sup>-5</sup> S･cm<sup>-1</sup>の伝導率を示した。',
+      }]),
+    };
+    await runPhaseExtractAtoms(engine, options);
+    const atom = await onlyAtom();
+    expect(atom.frontmatter.source_quote).toBe(source);
+    expect(atom.frontmatter.source_quote_verified).toBe(true);
+    expect(atom.frontmatter.quote_unverified).toBeUndefined();
+    const [start, end] = atom.frontmatter.source_quote_offset as [number, number];
+    expect(content.slice(start, end)).toBe(source);
+    await runPhaseExtractAtoms(engine, options);
+    expect((await onlyAtom()).id).toBe(atom.id);
+  });
+});
+
 describe('locateQuote — fails closed rather than guessing', () => {
   test('a paraphrase returns null', () => {
     const content = 'The cap is the ceiling, not the target.';

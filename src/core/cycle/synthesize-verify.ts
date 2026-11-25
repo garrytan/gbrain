@@ -189,7 +189,8 @@ export function emptyQuoteVerifyStats(): QuoteVerifyStats {
  * used by the triage-rescue segment check and, at prompt-build time, by
  * buildTriageMapBlock's quote filter via the mapless `normForGrounding`).
  *
- * Folds: whitespace runs → single space, curly quotes/apostrophes → straight,
+ * Folds: compatibility decomposition, Japanese stops/commas → ASCII,
+ * whitespace runs → single space, curly quotes/apostrophes → straight,
  * unicode dashes → '-', case → lower; markdown inline markup (`*`, backticks,
  * `~~`) is skipped (`foldSkipSet`). `map[i]` = index in the ORIGINAL string
  * of the character that produced `norm[i]`, so any match in normalized space
@@ -230,28 +231,34 @@ function foldForGrounding(s: string, withMap: boolean, tolerant = false, markup 
     const i = idx;
     idx += cp.length;
     if (skip?.has(i)) continue;
-    let ch = cp;
-    if (/\s/.test(ch)) {
-      pendingSpace = out.length > 0;
-      continue;
-    }
-    if (ch === '‘' || ch === '’' || ch === 'ʼ') ch = "'";
-    else if (ch === '“' || ch === '”') ch = '"';
-    else if (ch === '–' || ch === '—' || ch === '−') ch = '-';
-    // #4706: models render '…' as three dots; fold so quote provenance and
-    // grounding agree. One-to-many like the toLowerCase expansions below —
-    // every emitted unit maps to the ellipsis' original index.
-    else if (ch === '…') ch = '...';
-    if (tolerant && ch === '"') ch = "'";
-    if (pendingSpace) {
-      out.push(' ');
-      if (withMap) map.push(map.length > 0 ? map[map.length - 1] : i);
-      pendingSpace = false;
-    }
-    const low = ch.toLowerCase();
-    for (const lowCp of low) {
-      out.push(lowCp);
-      if (withMap) for (let k = 0; k < lowCp.length; k++) map.push(i);
+    // Compatibility decomposition gives width/ligature/unit variants one
+    // representation without composing ACROSS source characters: ｶﾞ and ガ
+    // both emit カ + combining dakuten. Each emitted UTF-16 unit retains its
+    // original code-point index, including expansions such as ㎏ -> kg.
+    // ASCII needs no normalization. Do not normalize the whole source first:
+    // that would make every subsequent map offset refer to rewritten text.
+    for (let ch of cp.charCodeAt(0) <= 0x7f ? cp : cp.normalize('NFKD')) {
+      if (/\s/.test(ch)) {
+        pendingSpace = out.length > 0;
+        continue;
+      }
+      if (ch === '‘' || ch === '’' || ch === 'ʼ') ch = "'";
+      else if (ch === '“' || ch === '”') ch = '"';
+      else if (ch === '–' || ch === '—' || ch === '−') ch = '-';
+      // Keep sentence stops distinct from commas (especially decimal points).
+      else if (ch === '。') ch = '.';
+      else if (ch === '、') ch = ',';
+      if (tolerant && ch === '"') ch = "'";
+      if (pendingSpace) {
+        out.push(' ');
+        if (withMap) map.push(map.length > 0 ? map[map.length - 1] : i);
+        pendingSpace = false;
+      }
+      const low = ch.toLowerCase();
+      for (const lowCp of low) {
+        out.push(lowCp);
+        if (withMap) for (let k = 0; k < lowCp.length; k++) map.push(i);
+      }
     }
   }
   const norm = out.join('');
@@ -780,6 +787,9 @@ function groundQuoteSpan(inner: string, t: GroundedTranscript, near: boolean): G
     // Defensive: a map hole must never become a "verbatim" repair.
     if (start === undefined || endIdx === undefined) continue;
     const end = sourceCodePointEnd(t.content, endIdx);
+    // A normalized hit must cover the full expansion of each mapped source code point.
+    const sliceNorm = normalizeForGrounding(t.content.slice(start, end), { tolerant: t.tolerant }).norm;
+    if (sliceNorm !== q.norm) continue;
     if (crossesTurn(t.turns, start, end)) crossed = true;
     else normalized.push([start, end]);
   }
