@@ -119,9 +119,17 @@ statement the projection sent through `executeRaw`. The writes join the engine's
   `yesterday`. An input Postgres refuses gets its error (`date/time field value out of range`, `invalid input syntax`,
   `time zone displacement out of range`). Zones: `Z`/`UTC`/`GMT`, numeric offsets, and the 145 fixed-offset
   abbreviations of Postgres's `Default` abbreviation set (`PST`, `EST`, `CET`, `CEST`, `BST`, `IST`, `JST`, ...;
-  `takes/zone_abbreviations.rs`, generated from `share/timezonesets/Default`). Any other form (a zone name, one of the
-  50 date-dependent abbreviations that set defines by a zone name such as `MSK` or `SGT`, BC dates, infinities, Julian
-  or week dates) is `unmodeled_input`, which the engine refuses as `engine_capability_missing`
+  `takes/zone_abbreviations.rs`, generated from `share/timezonesets/Default`), the 50 date-dependent abbreviations
+  that set defines by a zone name (`MSK`, `SGT`, ...), and a zone name after the date (`America/New_York`,
+  `Etc/GMT+3`, `EST5EDT`) or an all-letter zone name anywhere (`Japan`). Both read the zone's transitions as
+  `DetermineTimeZoneOffset` and `DetermineTimeZoneAbbrevOffset` do (`takes/zone_offset.rs`): a local time a change
+  skips takes the offset before it, one it repeats takes the offset after it, and an abbreviation takes its last
+  meaning in the zone at or before the date, else its first after. The zones are generated from the tzdata of the
+  repository's PGLite (`takes/zone_transitions.rs`, `rust/scripts/gen-zone-transitions.ts`; checked by
+  `test/rust-zone-transitions-current.test.ts`); a Postgres server with a different tzdata release can differ for a
+  zone whose rules changed between the two. Any other form (a name the tzdata does not have, a zone followed by an
+  offset such as `PST+1`, an instant past the last listed transition (late 2037) of a zone whose daylight rules go on, BC dates,
+  infinities, Julian or week dates) is `unmodeled_input`, which the engine refuses as `engine_capability_missing`
   naming the member and the text, before anything is written. `takes_resolution_consistency` and then
   `takes_resolved_quality_values` refuse a bad pair or quality.
 

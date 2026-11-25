@@ -8,9 +8,9 @@
  *    take rows on PGLite, Postgres (DATABASE_URL) and the Rust engine (GBRAIN_TEST_RUST_ARM=1). Each typed member the
  *    projection runs answers and writes the same rows on every arm when called directly. A Takes fence row resolved on a
  *    date written the ways Postgres reads `text::timestamptz` stores the same instant on every arm, and the dates
- *    Postgres refuses fail the save on every arm.
- *  - Named stop: a resolved date with a date-dependent zone abbreviation (`MSK`) or a zone name stores Postgres's instant on the SQL arms;
- *    the Rust engine refuses it by name ("a resolved date the store does not read") before it writes.
+ *    Postgres refuses fail the save on every arm. A date written with a zone name (`America/New_York`) or a date-dependent
+ *    zone abbreviation (`MSK`, `SGT`) stores the instant the zone had on that date on every arm, a skipped or repeated
+ *    local time included.
  *  - Regression: the projection read and wrote the page's fact and take rows through executeRaw, so on the Rust engine
  *    any put_page that updated a page with a facts or takes fence stopped on the raw SQL refusal.
  *  - Why existing coverage misses it: the parity files seed fenced pages through engine.putPage, which runs no fence
@@ -26,7 +26,6 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import type { OperationContext } from '../../src/core/operations.ts';
 import { submitPageMutation } from '../../src/core/persistence/page-mutations.ts';
 import { fenceOwnerKey, TAKE_FENCE_KIND } from '../../src/core/generations/fence.ts';
-import { capabilityMissing } from '../../src/core/rust-engine/errors.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -116,23 +115,20 @@ describe('engine parity: put_page with a facts and a takes fence', () => {
     return out;
   });
 
-  parityTest('a Takes fence resolved on a date with a date-dependent zone abbreviation stores it on the SQL arms; the Rust engine refuses the date by name', {
-    methods: ['writeFenceTakeResolutions'],
-    timeout: 60_000,
-  }, async (engine, backend) => {
-    const out = await resolvedAtOf(engine, '2026-03-01 10:00 MSK');
-    if (backend !== 'rust') {
-      expect(out).toEqual({ resolved_at: '2026-03-01T07:00:00.000Z' });
-      return out;
+  parityTest('a Takes fence resolved on a date with a zone name or a date-dependent zone abbreviation stores the same instant on every arm', {
+    methods: ['listTakes', 'writeFenceTakeResolutions'],
+    timeout: 120_000,
+  }, async (engine) => {
+    const out: Record<string, unknown> = {};
+    // MSK meant +04 from 2011 to 2014; SGT is no abbreviation of Asia/Singapore's tzdata, so it reads the zone's
+    // offset on the date (+07:30 in 1980). 02:30 on Mar 8 2026 is skipped in New York; 01:30 on Nov 1 2026 repeats.
+    for (const resolved of ['2026-03-01 10:00 MSK', '2012-03-01 10:00 msk', '1985-07-01 12:00 MSK', '1980-03-01 10:00 SGT',
+      '2026-03-01 10:00 America/New_York', '2026-03-08 02:30 America/New_York', '2026-11-01 01:30 america/new_york',
+      '2026-07-01 10:00 Europe/Moscow', '2026-03-01 10:00 EST5EDT', '2026-03-01 10:00 Etc/GMT+3', 'Japan 2026-03-01 10:00']) {
+      out[resolved] = await resolvedAtOf(engine, resolved);
     }
-    // The store reads no date-dependent zone abbreviation (MSK, SGT, ...; Postgres defines them by a zone name): the publication stops on the typed refusal (the request waits, blocked on
-    // it), and the case stops on it.
-    expect(out).toMatchObject({ blocked: 'engine_capability_missing' });
-    const pageId = Number((await engine.getPage(SLUG, { sourceId: 'default' }))!.id);
-    const direct = await engine.writeFenceTakeResolutions(pageId, JSON.stringify([{ row_num: 1, resolved_at: '2026-03-01 10:00 MSK', resolved_quality: 'correct',
-      resolved_outcome: true, resolved_source: null, resolved_value: null, resolved_unit: null, resolved_by: null }])).then(() => 'no stop', (e: Error) => e.message);
-    expect(direct).toContain('writeFenceTakeResolutions (a resolved date the store does not read: "2026-03-01 10:00 MSK")');
-    throw capabilityMissing('takes', 'writeFenceTakeResolutions (a resolved date the store does not read: "2026-03-01 10:00 MSK")');
+    expect(out['2026-03-01 10:00 MSK']).toEqual({ resolved_at: '2026-03-01T07:00:00.000Z' });
+    return out;
   });
 
   parityTest('the fence projection fact members answer and write the same rows on every arm', {
