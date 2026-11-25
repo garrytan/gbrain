@@ -755,28 +755,58 @@ fn judge_recovery(
         Err(_) => Reopen::Panicked("reopen panicked".into()),
     };
 
-    let verdict = check::check_recovery(acked, in_doubt, false, &reopened);
-    for v in verdict.violations {
-        tally.violations.push(format!("{label}: {}", v.message));
+    let (violations, applied) = recovery_violations(acked, in_doubt, &reopened);
+    for v in violations {
+        tally.violations.push(format!("{label}: {v}"));
     }
+    match applied {
+        Some(true) => tally.in_doubt_applied += 1,
+        Some(false) => tally.in_doubt_dropped += 1,
+        None => {}
+    }
+}
+
+/// The verdict on a recovered store: the violations, and (when there was an in-doubt batch and the store opened) whether the batch
+/// was applied. Pure, so a control can feed it a state.
+fn recovery_violations(
+    acked: &[Committed],
+    in_doubt: &[Committed],
+    reopened: &Reopen,
+) -> (Vec<String>, Option<bool>) {
+    let mut violations: Vec<String> = check::check_recovery(acked, in_doubt, false, reopened)
+        .violations
+        .into_iter()
+        .map(|v| v.message)
+        .collect();
+    let mut applied = None;
     // The recovered state must also be a whole-batch prefix of the acknowledged history plus the in-doubt batch.
-    if let Reopen::Opened { state, .. } = &reopened {
+    if let Reopen::Opened { state, .. } = reopened {
         let mut all = entries(acked);
         all.extend(entries(in_doubt));
         match check_state_is_a_batch_prefix(&all, state) {
             Ok(upto) => {
                 let acked_max = acked.iter().map(|c| c.version).max().unwrap_or(0);
                 if !in_doubt.is_empty() {
-                    if upto > acked_max {
-                        tally.in_doubt_applied += 1;
-                    } else {
-                        tally.in_doubt_dropped += 1;
+                    applied = Some(upto > acked_max);
+                }
+                // When recovery includes the in-doubt batch, its reads and writes are validated together with the acknowledged
+                // prefix (a serial replay), and that replay must be the state on disk.
+                if upto > acked_max && !in_doubt.is_empty() {
+                    let included: Vec<Entry> =
+                        all.iter().filter(|e| e.sequence <= upto).cloned().collect();
+                    match check_batches(&included) {
+                        Ok((replayed, _)) if &replayed != state => violations.push(
+                            "the serial replay of the acknowledged prefix and the in-doubt batch is not the state on disk".into(),
+                        ),
+                        Ok(_) => {}
+                        Err(e) => violations.push(format!("the recovered in-doubt batch is not serializable: {e}")),
                     }
                 }
             }
-            Err(e) => tally.violations.push(format!("{label}: {e}")),
+            Err(e) => violations.push(e),
         }
     }
+    (violations, applied)
 }
 
 fn tally_history(acked: &[Committed], tally: &mut Tally, label: &str) {
@@ -941,6 +971,63 @@ fn p_h_single_writer_crash_keeps_every_acknowledged_commit_and_the_in_doubt_batc
 #[test]
 fn p_h_optimistic_crash_keeps_every_acknowledged_commit_and_the_in_doubt_batch_whole() {
     run_p_h("optimistic", 200, p_h_optimistic);
+}
+
+/// P-H, the in-doubt batch: two writers both read register `r/00` as empty and append their own id; only the last append is on disk.
+/// The disk image is the replay of their writes, but no serial order of the two gives both reads, so a recovery that includes the
+/// batch must be rejected: the acknowledged prefix and the in-doubt batch are validated together, reads included.
+#[test]
+fn p_h_a_non_serializable_in_doubt_batch_that_reached_disk_is_rejected() {
+    let append = |id: u64| Committed {
+        snapshot: 0,
+        version: 1,
+        reads: vec![ReadObs::Point {
+            key: b"r/00".to_vec(),
+            value: None,
+        }],
+        writes: vec![(b"r/00".to_vec(), Some(id.to_le_bytes().to_vec()))],
+    };
+    let in_doubt = vec![append(1), append(2)];
+    // The write replay of the batch: the second append overwrote the first.
+    let on_disk: Model = [(b"r/00".to_vec(), 2u64.to_le_bytes().to_vec())].into();
+    let opened = Reopen::Opened {
+        version: 1,
+        state: on_disk,
+    };
+    let (violations, applied) = recovery_violations(&[], &in_doubt, &opened);
+    assert_eq!(applied, Some(true), "the batch is on disk");
+    assert!(
+        violations.iter().any(|v| v.contains("no serial order")),
+        "a non-serializable in-doubt batch on disk was accepted: {violations:?}"
+    );
+    // A serial order is accepted: the acknowledged append, then an in-doubt append that read it.
+    let both = [1u64.to_le_bytes(), 2u64.to_le_bytes()].concat();
+    let acked = vec![append(1)];
+    let after = Committed {
+        snapshot: 1,
+        version: 2,
+        reads: vec![ReadObs::Point {
+            key: b"r/00".to_vec(),
+            value: Some(1u64.to_le_bytes().to_vec()),
+        }],
+        writes: vec![(b"r/00".to_vec(), Some(both.clone()))],
+    };
+    let state: Model = [(b"r/00".to_vec(), both)].into();
+    let (violations, applied) =
+        recovery_violations(&acked, &[after], &Reopen::Opened { version: 2, state });
+    assert_eq!(applied, Some(true));
+    assert!(violations.is_empty(), "{violations:?}");
+    // An in-doubt batch that did NOT reach disk is not judged on its reads (it never happened).
+    let (violations, applied) = recovery_violations(
+        &[],
+        &in_doubt,
+        &Reopen::Opened {
+            version: 0,
+            state: Model::new(),
+        },
+    );
+    assert_eq!(applied, Some(false));
+    assert!(violations.is_empty(), "{violations:?}");
 }
 
 /// The recovery checker must fail what it claims to: an acknowledged commit missing after the reopen, and half of the
@@ -1139,6 +1226,8 @@ mod optimistic_driver {
         conflicts: usize,
         accepted: usize,
         last_sequence: Option<u64>,
+        /// Set at the cutoff: clients stop starting new transactions and the pipeline drains what is queued.
+        draining: bool,
         stopped: bool,
     }
 
@@ -1164,7 +1253,8 @@ mod optimistic_driver {
         fn ready(&self, sim: &Sim) -> bool {
             !sim.stopped
                 && match &self.flying {
-                    None => true,
+                    // While draining, a client with nothing in flight has nothing left to do.
+                    None => !sim.draining,
                     // Only once a step has taken its commit (the step has answered it).
                     Some(f) => f.ticket < sim.taken,
                 }
@@ -1194,6 +1284,9 @@ mod optimistic_driver {
                     }
                 }
                 return Step::Continue;
+            }
+            if sim.draining {
+                return Step::Done;
             }
             let plan = self.plan.get_or_insert_with(|| gen_plan(cx.rng)).clone();
             let id = (self.index << 32) | self.next;
@@ -1271,6 +1364,7 @@ mod optimistic_driver {
                 conflicts: 0,
                 accepted: 0,
                 last_sequence: None,
+                draining: false,
                 stopped: false,
             };
             let mut scheduler = Scheduler::new(seed);
@@ -1284,6 +1378,19 @@ mod optimistic_driver {
             }
             scheduler.spawn(Box::new(Pipeline));
             scheduler.run(&mut sim, 400, |s| s.stopped);
+            // The cutoff: stop admitting, then step until every queued commit is taken and every client has joined its helper and
+            // appended its acknowledgement (or conflict). A batch accepted at the last step is thus counted, never missed.
+            sim.draining = true;
+            scheduler.run(&mut sim, 400 + 400, |s| s.stopped);
+            assert_eq!(
+                sim.kv.queued_commits(),
+                0,
+                "seed {seed}: a commit is still queued after the drain"
+            );
+            assert_eq!(
+                sim.submitted, sim.taken,
+                "seed {seed}: a helper is still blocked in the stepped pipeline"
+            );
             assert!(!sim.stopped, "seed {seed}: the store stopped");
             let (model, seen) = check_batches(&sim.acked)
                 .unwrap_or_else(|e| panic!("seed {seed}: {e}\nrepro: GBRAIN_SIM_SEED={seed}"));

@@ -1228,7 +1228,9 @@ fn c07_effect_claimed_once_rerun_after_host_lease_expiry() {
         .acquire_lease(NAME, &origin(1), TTL_MS)
         .unwrap()
         .expect("host A takes the lease");
-    let effect = claim(TOKEN_A, &a).unwrap().expect("host A claims the effect");
+    let effect = claim(TOKEN_A, &a)
+        .unwrap()
+        .expect("host A claims the effect");
     assert!(
         claim(TOKEN_A2, &a).unwrap().is_none(),
         "one effect was claimed twice under a live lease"
@@ -2134,30 +2136,59 @@ fn c19_child_writer() {
                     let n = w * 1_000_000 + k;
                     say(format!("SENT {n}\n"));
                     let m = mutation(n, &format!("notes/{n}"), "acknowledged");
-                    let receipt = if explicit {
-                        let tx = begin_host(store, w);
-                        let receipt = tx.submit_page_mutation(&m, None).unwrap();
-                        commit_host(store, tx);
-                        receipt
+                    // A writer that fails says so (and stops): the parent must not mistake the survivors' progress for the
+                    // writer's. A line the kill cuts in half has no newline and is dropped by the parent.
+                    let outcome: std::result::Result<Value, String> = if explicit {
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            let tx = begin_host(store, w);
+                            let receipt = tx.submit_page_mutation(&m, None).unwrap();
+                            commit_host(store, tx);
+                            receipt
+                        }))
+                        .map_err(|_| "a panic in the explicit transaction".to_string())
                     } else {
-                        store.submit_page_mutation(&m, None).unwrap()
+                        store
+                            .submit_page_mutation(&m, None)
+                            .map_err(|e| e.to_string())
                     };
-                    assert_eq!(receipt["state"], "committed", "{receipt}");
-                    say(format!("ACK {n} {}\n", receipt["page_id"]));
+                    match outcome {
+                        Ok(receipt) if receipt["state"] == "committed" => {
+                            // The original receipt, whole, on one line: the parent compares it with the stored one.
+                            say(format!("ACK {n} {receipt}\n"));
+                        }
+                        Ok(receipt) => {
+                            say(format!("ERR {w} not committed: {receipt}\n"));
+                            return;
+                        }
+                        Err(e) => {
+                            say(format!("ERR {w} {e}\n"));
+                            return;
+                        }
+                    }
                 }
             });
         }
     });
 }
 
-/// What the parent learned from a killed child: every request it sent and every acknowledged one with its page id.
+/// What the parent learned from a killed child: every request it sent, every acknowledged one with the ORIGINAL receipt the store
+/// gave it, the writers' progress and errors, and how the child ended.
 struct Killed {
     sent: BTreeSet<usize>,
-    acked: BTreeMap<usize, String>,
+    acked: BTreeMap<usize, Value>,
+    /// Acknowledged writes per writer (`n / 1_000_000`).
+    progress: BTreeMap<usize, usize>,
+    /// Lines a writer printed when it failed (`ERR <writer> <message>`).
+    errors: Vec<String>,
+    /// The signal that ended the child (9 for the kill), `None` when it exited by itself.
+    signal: Option<i32>,
+    /// What the child wrote on its error stream.
+    stderr: String,
 }
 
-/// Runs the child of this test binary, kills it with SIGKILL once it has acknowledged `min_acks` writes (or after 60 s),
-/// and collects what it printed.
+/// Runs the child of this test binary, kills it with SIGKILL once it has acknowledged `min_acks` writes AND every requested writer
+/// has acknowledged at least three (or after 60 s), and collects what it printed. A writer error line, a child that was not ended by
+/// the kill, and a requested writer with no progress each fail with the child's error stream.
 fn kill_child_writer(
     dir: &TempDir,
     writers: usize,
@@ -2165,6 +2196,7 @@ fn kill_child_writer(
     explicit: bool,
     min_acks: usize,
 ) -> Killed {
+    use std::os::unix::process::ExitStatusExt;
     let mut child = Command::new(std::env::current_exe().unwrap())
         .args([C19_CHILD, "--exact", "--ignored", "--nocapture"])
         .args(["--test-threads=1", "-q"])
@@ -2173,10 +2205,16 @@ fn kill_child_writer(
         .env(C19_OPTIMISTIC, if optimistic { "1" } else { "0" })
         .env(C19_EXPLICIT_TXN, if explicit { "1" } else { "0" })
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .unwrap();
     let stdout = child.stdout.take().unwrap();
+    let mut stderr = child.stderr.take().unwrap();
+    let stderr_reader = thread::spawn(move || {
+        let mut text = String::new();
+        let _ = std::io::Read::read_to_string(&mut stderr, &mut text);
+        text
+    });
     let (lines, heard) = mpsc::channel::<String>();
     let reader = thread::spawn(move || {
         let mut r = std::io::BufReader::new(stdout);
@@ -2189,34 +2227,74 @@ fn kill_child_writer(
             buf.clear();
         }
     });
-    let deadline = Instant::now() + Duration::from_secs(60);
+    let mut progress: BTreeMap<usize, usize> = BTreeMap::new();
     let mut seen = Vec::new();
-    let mut acks = 0;
-    while acks < min_acks && Instant::now() < deadline {
+    let enough = |progress: &BTreeMap<usize, usize>| {
+        progress.values().sum::<usize>() >= min_acks
+            && (0..writers).all(|w| progress.get(&w).copied().unwrap_or(0) >= 3)
+    };
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !enough(&progress) && Instant::now() < deadline {
         if let Ok(line) = heard.recv_timeout(Duration::from_millis(100)) {
-            acks += usize::from(line.starts_with("ACK "));
+            if let Some(rest) = line.strip_prefix("ACK ") {
+                let n: usize = rest.split(' ').next().unwrap().parse().unwrap();
+                *progress.entry(n / 1_000_000).or_default() += 1;
+            }
             seen.push(line);
         }
+        // A child that ended by itself before the kill is a failure, not a quiet success.
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
     }
-    child.kill().unwrap(); // SIGKILL
-    child.wait().unwrap();
+    let _ = child.kill(); // SIGKILL
+    let status = child.wait().unwrap();
     reader.join().unwrap();
+    let stderr = stderr_reader.join().unwrap();
     seen.extend(heard.try_iter());
     let mut killed = Killed {
         sent: BTreeSet::new(),
         acked: BTreeMap::new(),
+        progress: BTreeMap::new(),
+        errors: Vec::new(),
+        signal: status.signal(),
+        stderr,
     };
     for line in seen {
-        let f: Vec<&str> = line.split_whitespace().collect();
-        match f.as_slice() {
-            ["SENT", n] => {
-                killed.sent.insert(n.parse().unwrap());
-            }
-            ["ACK", n, page] => {
-                killed.acked.insert(n.parse().unwrap(), page.to_string());
-            }
-            _ => {}
+        if let Some(rest) = line.strip_prefix("ACK ") {
+            let (n, receipt) = rest
+                .split_once(' ')
+                .expect("an ACK line carries its receipt");
+            let n: usize = n.parse().unwrap();
+            let receipt: Value = serde_json::from_str(receipt.trim_end())
+                .unwrap_or_else(|e| panic!("an ACK receipt that is not JSON ({e}): {receipt}"));
+            killed.acked.insert(n, receipt);
+            *killed.progress.entry(n / 1_000_000).or_default() += 1;
+        } else if let Some(n) = line.strip_prefix("SENT ") {
+            killed.sent.insert(n.trim().parse().unwrap());
+        } else if line.starts_with("ERR ") {
+            killed.errors.push(line.trim_end().to_string());
         }
+    }
+    assert!(
+        killed.errors.is_empty(),
+        "a writer failed before the kill: {:?}\nchild stderr: {}",
+        killed.errors,
+        killed.stderr
+    );
+    assert_eq!(
+        killed.signal,
+        Some(9),
+        "the child was not ended by the SIGKILL ({status:?}); stderr: {}",
+        killed.stderr
+    );
+    for w in 0..writers {
+        assert!(
+            killed.progress.get(&w).copied().unwrap_or(0) >= 3,
+            "writer {w} made no progress before the kill: {:?}; stderr: {}",
+            killed.progress,
+            killed.stderr
+        );
     }
     assert!(
         killed.acked.len() >= min_acks,
@@ -2274,39 +2352,96 @@ fn check_acknowledged_survive(
     Ok(())
 }
 
-/// The kill, the reopen and the checks: every acknowledged request id is present and replays to its stored receipt with no
-/// duplicate row. A control that hides one acknowledged write, and one that adds a row, must fail the checker.
+/// The stored receipt of every acknowledged request, read BEFORE any replay, is exactly the one the child was given.
+fn check_receipts_preserved(
+    acked: &BTreeMap<usize, Value>,
+    stored: &BTreeMap<usize, Option<Value>>,
+) -> std::result::Result<(), String> {
+    for (n, original) in acked {
+        match stored.get(n) {
+            Some(Some(now)) if now == original => {}
+            Some(Some(now)) => {
+                return Err(format!(
+                    "request {n}: the stored receipt {now} is not the acknowledged {original}"
+                ));
+            }
+            _ => {
+                return Err(format!(
+                    "request {n}: its receipt is gone after the reopen (a replay would recreate it)"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn principal_of(n: usize) -> gbrain_store::journal::Principal {
+    serde_json::from_value(json!({"kind": "local_cli", "id": format!("w{}", n % 8)})).unwrap()
+}
+
+/// The kill, the reopen and the checks. Before any replay: every acknowledged page is present with its body, and `get_write_receipt`
+/// returns exactly the receipt the child was given. Then a replay of each request id returns that same receipt, adds no row and leaves
+/// every page's history as it was. Controls: a hidden acknowledged write, an added row, a lost receipt with every page present, and
+/// a different stored receipt must all fail.
 fn crash_keeps_acknowledged_writes(dir: &TempDir, mode: StoreMode, killed: Killed, writers: usize) {
     assert!(!killed.acked.is_empty());
     let store = open_in(dir, mode);
     let view = reopened_view(&store, &killed);
     check_acknowledged_survive(&view, &killed, writers).unwrap_or_else(|e| panic!("{e}"));
-    let before = store.count_pages(None).unwrap();
-    for (n, page) in &killed.acked {
+    let stored: BTreeMap<usize, Option<Value>> = killed
+        .acked
+        .keys()
+        .map(|&n| {
+            (
+                n,
+                store
+                    .get_write_receipt(&principal_of(n), &request_id(n))
+                    .unwrap(),
+            )
+        })
+        .collect();
+    check_receipts_preserved(&killed.acked, &stored).unwrap_or_else(|e| panic!("{e}"));
+    for n in killed.acked.keys() {
+        assert_eq!(
+            current_body(&store, &format!("notes/{n}")),
+            "acknowledged",
+            "request {n}: the body is not the acknowledged one"
+        );
+    }
+    let histories = |s: &Store| -> BTreeMap<usize, Vec<Value>> {
+        killed
+            .acked
+            .keys()
+            .map(|&n| {
+                (
+                    n,
+                    s.get_versions(&format!("notes/{n}"), &VersionsOptions::default())
+                        .unwrap(),
+                )
+            })
+            .collect()
+    };
+    let (before_count, before_histories) = (store.count_pages(None).unwrap(), histories(&store));
+    for (n, original) in &killed.acked {
         let replay = store
             .submit_page_mutation(&mutation(*n, &format!("notes/{n}"), "acknowledged"), None)
             .unwrap();
-        assert_eq!(replay["state"], "committed", "{replay}");
         assert_eq!(
-            replay["page_id"].to_string(),
-            *page,
+            &replay, original,
             "request {n} replayed to a different receipt"
         );
     }
     assert_eq!(
         store.count_pages(None).unwrap(),
-        before,
+        before_count,
         "a replay duplicated a write"
     );
-    assert!(
-        store
-            .get_versions("notes/3", &VersionsOptions::default())
-            .unwrap()
-            .is_empty()
-            || !killed.acked.contains_key(&3),
-        "an acknowledged write was applied twice"
+    assert_eq!(
+        histories(&store),
+        before_histories,
+        "a replay changed a page's history"
     );
-    // The controls: the checker is not blind.
+    // The controls: the checkers are not blind.
     let victim = *killed.acked.keys().nth(killed.acked.len() / 2).unwrap();
     let mut lost = reopened_view(&store, &killed);
     lost.present.remove(&victim);
@@ -2316,6 +2451,20 @@ fn crash_keeps_acknowledged_writes(dir: &TempDir, mode: StoreMode, killed: Kille
     let mut duplicated = reopened_view(&store, &killed);
     duplicated.count += 1;
     assert!(check_acknowledged_survive(&duplicated, &killed, writers).is_err());
+    // A receipt lost with every page still present: the presence check accepts it (it never looked at receipts), the receipt check
+    // does not; and a stored receipt that differs from the acknowledged one fails too.
+    let mut receipt_lost = stored.clone();
+    receipt_lost.insert(victim, None);
+    check_acknowledged_survive(&reopened_view(&store, &killed), &killed, writers).unwrap();
+    let err = check_receipts_preserved(&killed.acked, &receipt_lost).unwrap_err();
+    assert!(err.contains("is gone"), "{err}");
+    let mut changed = stored;
+    changed.insert(victim, Some(json!({"state": "committed", "page_id": 0})));
+    assert!(
+        check_receipts_preserved(&killed.acked, &changed)
+            .unwrap_err()
+            .contains("not the acknowledged")
+    );
 }
 
 /// C19, crash robot: a child process admits writes and prints each acknowledged request id; the parent kills it with SIGKILL mid-stream,
@@ -2350,25 +2499,32 @@ fn c19_crash_after_commit_keeps_acknowledged_writes_multi_writer() {
 #[ignore = "multi_writer"]
 fn c19_crash_keeps_commit_times_rising_and_equal_to_last_commit_time_multi_writer() {
     let dir = TempDir::new("c19-clock");
-    {
+    // The cursor before the child writes anything: open-time upkeep and the activation commit are behind it.
+    let start = {
         let probe = open_optimistic(&dir);
         probe
             .read_commit_log(None, 1)
-            .unwrap_or_else(|e| panic!("{e}"));
-    }
+            .unwrap_or_else(|e| panic!("{e}"))
+            .newest
+    };
     let killed = kill_child_writer(&dir, 8, true, true, 80);
     let store = open_optimistic(&dir);
     let log = store
-        .read_commit_log(None, usize::MAX)
+        .read_commit_log(start, usize::MAX)
         .unwrap_or_else(|e| panic!("{e}"));
+    assert!(!log.snapshot_required);
     let last = store.last_commit_time().unwrap_or_else(|e| panic!("{e}"));
-    clock::replay_clock_checks(&log.records, last, None, &[]).unwrap_or_else(|e| panic!("{e}"));
-    assert!(
-        log.records.len() >= killed.acked.len(),
-        "{} records for {} acknowledged writes",
-        log.records.len(),
-        killed.acked.len()
+    // The records after the cursor are the child's commits, in position order, with commit times rising.
+    clock::commit_times_rise(&log.records).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(
+        log.records.last().map(|r| r.commit_time),
+        last,
+        "last_commit_time is not the newest record's commit time"
     );
+    // Every acknowledged request id is in the write ids of exactly one record: a record for an in-flight or upkeep commit cannot
+    // stand in for a missing acknowledged one.
+    let ids: Vec<String> = killed.acked.keys().map(|&n| request_id(n)).collect();
+    clock::request_ids_match_records(&ids, &log.records).unwrap_or_else(|e| panic!("{e}"));
 }
 
 /// Not C19: a store handle dropped without `close` and opened again keeps every acknowledged write. The kill is C19.
@@ -2587,11 +2743,14 @@ fn c21_read_your_writes_token_on_a_second_connection_multi_writer() {
     assert!(newest >= Some(position), "the log does not reach {token}");
 }
 
-/// C22, commit log: no two commits share a position and positions only grow.
+/// C22, commit log, single-writer store only: no two commits share a position and positions only grow. An explicit transaction
+/// holds the writer, so this is the `store-single` cell. It opens the single-writer store whatever the environment says: on the
+/// optimistic store an explicit transaction is exclusive too and would hide a group commit sharing one position, so the optimistic
+/// cell is the `_multi_writer` twin, which forces a real group commit.
 #[test]
 fn c22_commit_position_strictly_increases() {
     let dir = TempDir::new("c22");
-    let store = Arc::new(open(&dir));
+    let store = Arc::new(open_in(&dir, StoreMode::Single));
     let s = store.clone();
     let positions = together(8, move |i| {
         (0..4)
@@ -2613,25 +2772,38 @@ fn c22_commit_position_strictly_increases() {
     assert!(store.commit_version().unwrap() >= *all.iter().next_back().unwrap());
 }
 
-/// C22, commit log: every transaction commits at its own `CommitPosition`, even when a group commit batches several, so
-/// positions strictly grow per writer, no two share one, and the commit log lists each once in order. Per-transaction positions
-/// wait for the commit-log lane (a batch shares one sequence today).
+/// C22, commit log, optimistic store: every transaction commits at its own `CommitPosition` even when a group commit batches
+/// several. Rounds of `WRITERS` transactions are all open before any commits, so the pipeline groups them; the test requires at
+/// least one group of two or more members, and for each group checks the `(sequence, index)` of every member (indices 0..k, each once),
+/// that no two commits share a position, that each returned position has exactly one record (from the cursor taken before the
+/// writers), and that the commit times in the log strictly rise. Per-transaction positions wait for the commit-log lane.
 #[test]
 #[ignore = "multi_writer"]
 fn c22_commit_position_strictly_increases_multi_writer() {
+    const ROUNDS: usize = 6;
     let dir = TempDir::new("c22m");
     let store = Arc::new(open_optimistic(&dir));
-    // Per-transaction positions belong to the commit-log lane: the first call that is not yet a member.
-    store
+    // The first call that is not yet a member; its newest position is the cursor before any writer commits.
+    let start = store
         .read_commit_log(None, 1)
-        .unwrap_or_else(|e| panic!("{e}"));
-    let s = store.clone();
+        .unwrap_or_else(|e| panic!("{e}"))
+        .newest;
+    let (s, gate) = (store.clone(), Arc::new(Barrier::new(WRITERS)));
     let positions = together(WRITERS, move |i| {
-        (0..4)
-            .map(|n| {
+        (0..ROUNDS)
+            .map(|round| {
                 let tx = begin_host(&s, i);
-                put(&tx, &format!("c22m/{i}-{n}"), "one commit");
-                commit_host(&s, tx)
+                put(&tx, &format!("c22m/{i}-{round}"), "one commit");
+                gate.wait(); // every transaction of the round is open before the first commits
+                match s.commit_position(tx) {
+                    Ok(position) => position,
+                    Err(e) => {
+                        assert!(is_conflict(&e), "an untyped refusal: {e}");
+                        let retry = begin_host(&s, i);
+                        put(&retry, &format!("c22m/{i}-{round}"), "one commit");
+                        commit_host(&s, retry)
+                    }
+                }
             })
             .collect::<Vec<CommitPosition>>()
     });
@@ -2641,17 +2813,36 @@ fn c22_commit_position_strictly_increases_multi_writer() {
             "positions went back: {mine:?}"
         );
     }
-    let all: BTreeSet<CommitPosition> = positions.iter().flatten().copied().collect();
-    assert_eq!(all.len(), WRITERS * 4, "two commits share a position");
+    let returned: Vec<CommitPosition> = positions.iter().flatten().copied().collect();
+    let all: BTreeSet<CommitPosition> = returned.iter().copied().collect();
+    assert_eq!(all.len(), WRITERS * ROUNDS, "two commits share a position");
+    // A forced group of at least two: members of one sequence have distinct indices 0..k.
+    let mut groups: BTreeMap<u64, Vec<u32>> = BTreeMap::new();
+    for p in &returned {
+        groups.entry(p.sequence).or_default().push(p.index);
+    }
+    assert!(
+        groups.values().any(|g| g.len() >= 2),
+        "no group commit of two or more was formed, so the test did not exercise per-member positions"
+    );
+    for (sequence, indices) in &mut groups {
+        indices.sort_unstable();
+        let want: Vec<u32> = (0..indices.len() as u32).collect();
+        assert_eq!(
+            *indices, want,
+            "group {sequence}: members' indices are not 0..k each once"
+        );
+    }
     let log = store
-        .read_commit_log(None, 10_000)
+        .read_commit_log(start, usize::MAX)
         .unwrap_or_else(|e| panic!("{e}"));
-    assert_eq!(log.newest, all.iter().next_back().copied());
     assert!(!log.snapshot_required);
-    assert!(log.records.len() >= WRITERS * 4, "the log lost a commit");
+    assert_eq!(log.newest, all.iter().next_back().copied());
+    clock::positions_match_records(&returned, &log.records, 0).unwrap_or_else(|e| panic!("{e}"));
     // Each transaction in a group commit has its own, strictly rising commit time (I-4.v2).
+    clock::commit_times_rise(&log.records).unwrap_or_else(|e| panic!("{e}"));
     let last = store.last_commit_time().unwrap_or_else(|e| panic!("{e}"));
-    clock::replay_clock_checks(&log.records, last, None, &[]).unwrap_or_else(|e| panic!("{e}"));
+    clock::last_commit_time_matches(&log.records, last).unwrap_or_else(|e| panic!("{e}"));
 }
 
 /// The creation time of a page row, in microseconds.
@@ -2678,12 +2869,15 @@ fn c22_follower_replay_keeps_commit_times_rising_and_row_times_above_the_floor_m
         primary_dir.path().join("brain"),
         follower_dir.path().join("brain"),
     );
-    let write_rows = |s: &Store| -> Vec<i64> {
+    // Every open below goes through `open_at`, which opens in multi-user mode explicitly (and with the commit log, once the log
+    // lane's open option is in the tree). Row times are compared with a floor only, and each batch writes FRESH slugs: a page that
+    // already exists keeps its old `created_at`, which would say nothing about the clock at this open.
+    let write_fresh = |s: &Store, prefix: &str| -> Vec<i64> {
         for n in 0..4 {
-            put(s, &format!("rows/{n}"), "a row written after open");
+            put(s, &format!("{prefix}/{n}"), "a row written after open");
         }
         (0..4)
-            .map(|n| page_created_us(s, &format!("rows/{n}")))
+            .map(|n| page_created_us(s, &format!("{prefix}/{n}")))
             .collect()
     };
 
@@ -2704,8 +2898,8 @@ fn c22_follower_replay_keeps_commit_times_rising_and_row_times_above_the_floor_m
     clock::replay_clock_checks(&log.records, last, None, &[]).unwrap_or_else(|e| panic!("{e}"));
     let floor = last.expect("a commit time after commits");
 
-    // Reopen the primary on a clock below the persisted floor: the floor read at open is the persisted one, and the rows written
-    // after open sit at or above it.
+    // Reopen the primary on a clock below the persisted floor: the floor read at open is the persisted one, and fresh rows written
+    // after the open sit at or above it.
     drop(primary);
     let reopened = open_at(&primary_at, Clock::at(floor - 5_000_000), mode);
     assert_eq!(
@@ -2715,7 +2909,7 @@ fn c22_follower_replay_keeps_commit_times_rising_and_row_times_above_the_floor_m
         Some(floor),
         "the floor at open is not the persisted commit time"
     );
-    clock::row_times_at_or_above_floor(floor, &write_rows(&reopened))
+    clock::row_times_at_or_above_floor(floor, &write_fresh(&reopened, "primary-after-open"))
         .unwrap_or_else(|e| panic!("{e}"));
 
     // The follower: its clock reads far below the applied floor. It is given every record, applies them in order, and is promoted.
@@ -2727,13 +2921,13 @@ fn c22_follower_replay_keeps_commit_times_rising_and_row_times_above_the_floor_m
         applied, log.newest,
         "the follower did not apply the whole log"
     );
+    let own = follower
+        .last_commit_time()
+        .unwrap_or_else(|e| panic!("{e}"));
     let promoted_floor = follower
         .promote_from_log(applied)
         .unwrap_or_else(|e| panic!("{e}"))
         .expect("a floor after a promotion from a non-empty log");
-    let own = follower
-        .last_commit_time()
-        .unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(
         Some(promoted_floor),
         clock::floor_of(own, log.records.last()),
@@ -2743,13 +2937,119 @@ fn c22_follower_replay_keeps_commit_times_rising_and_row_times_above_the_floor_m
         promoted_floor >= floor,
         "the promoted floor is below the applied commit time"
     );
-    clock::row_times_at_or_above_floor(promoted_floor, &write_rows(&follower))
+    clock::row_times_at_or_above_floor(promoted_floor, &write_fresh(&follower, "promoted"))
         .unwrap_or_else(|e| panic!("{e}"));
-    // Reopening the promoted follower on a clock below the floor keeps the floor.
+    // The follower commits more after the promotion; its latest commit time (not the promotion floor) is the floor a reopen must keep.
+    for i in 0..4 {
+        let tx = begin_host(&follower, 20 + i);
+        put(
+            &tx,
+            &format!("after-promotion/{i}"),
+            "committed on the follower",
+        );
+        commit_host(&follower, tx);
+    }
+    let latest = follower
+        .last_commit_time()
+        .unwrap_or_else(|e| panic!("{e}"))
+        .expect("the follower's latest commit time");
+    assert!(
+        latest > promoted_floor,
+        "the follower's commits did not move its commit time"
+    );
+
+    // Close the follower and reopen it with the clock BEHIND its latest commit time. Fresh slugs written now must still sit at or
+    // above that latest commit time: a store that forgot its floor would stamp them from the lagging clock.
     drop(follower);
-    let again = open_at(&follower_at, Clock::at(floor - 10_000_000), mode);
-    clock::row_times_at_or_above_floor(promoted_floor, &write_rows(&again))
-        .unwrap_or_else(|e| panic!("{e}"));
+    let behind = latest - 10_000_000;
+    let again = open_at(&follower_at, Clock::at(behind), mode);
+    assert_eq!(
+        again.last_commit_time().unwrap_or_else(|e| panic!("{e}")),
+        Some(latest),
+        "the reopened follower lost its commit time"
+    );
+    let fresh = write_fresh(&again, "reopened-fresh");
+    clock::row_times_at_or_above_floor(latest, &fresh).unwrap_or_else(|e| panic!("{e}"));
+    assert!(
+        fresh.iter().all(|&t| t >= latest) && behind < latest,
+        "the control clock was not behind the floor"
+    );
+}
+
+/// The identity and exact-time checks fail what they claim to. Each control is a history the old count-based or monotonic-only check
+/// accepts: a missing intermediate position made up by another record, an acknowledged id replaced by an in-flight record, and times
+/// `1, 2, 3` that rise but ignore the store clock.
+#[test]
+fn the_identity_and_exact_time_checks_reject_what_counts_and_monotonic_checks_accept() {
+    let rec = |seq: u64, idx: u32, t: i64, ids: &[&str]| mu::CommitRecord {
+        write_ids: ids.iter().map(|s| s.to_string()).collect(),
+        ..clock::record(seq, idx, t)
+    };
+    let p = |sequence, index| CommitPosition { sequence, index };
+    // Positions: 4 returned, the log holds 4 records, but (2,1) is missing and an unrelated (9,0) fills the count.
+    let records = vec![
+        rec(1, 0, 10, &[]),
+        rec(2, 0, 11, &[]),
+        rec(3, 0, 12, &[]),
+        rec(9, 0, 13, &[]),
+    ];
+    let returned = [p(1, 0), p(2, 0), p(2, 1), p(3, 0)];
+    assert_eq!(
+        records.len(),
+        returned.len(),
+        "the count matches, as the old check needed"
+    );
+    assert!(clock::positions_match_records(&returned, &records, 0).is_err());
+    let whole = vec![
+        rec(1, 0, 10, &[]),
+        rec(2, 0, 11, &[]),
+        rec(2, 1, 12, &[]),
+        rec(3, 0, 13, &[]),
+    ];
+    clock::positions_match_records(&returned, &whole, 0).unwrap();
+    // One extra record (open-time upkeep) is allowed only when the test says so.
+    let mut with_upkeep = whole.clone();
+    with_upkeep.push(rec(4, 0, 14, &[]));
+    assert!(clock::positions_match_records(&returned, &with_upkeep, 0).is_err());
+    clock::positions_match_records(&returned, &with_upkeep, 1).unwrap();
+    // A position returned twice, or a record position twice, fails.
+    assert!(clock::positions_match_records(&[p(1, 0), p(1, 0)], &whole, 3).is_err());
+    let twice = vec![rec(1, 0, 10, &[]), rec(1, 0, 11, &[])];
+    assert!(clock::positions_match_records(&[p(1, 0)], &twice, 1).is_err());
+    // Request ids: three acknowledged, three records, but one acknowledged id is replaced by an in-flight one.
+    let by_id = vec![
+        rec(1, 0, 10, &["a"]),
+        rec(2, 0, 11, &["b"]),
+        rec(3, 0, 12, &["in-flight"]),
+    ];
+    let acked = ["a".to_string(), "b".to_string(), "c".to_string()];
+    assert_eq!(by_id.len(), acked.len());
+    assert!(clock::request_ids_match_records(&acked, &by_id).is_err());
+    let by_id_whole = vec![
+        rec(1, 0, 10, &["a"]),
+        rec(2, 0, 11, &["b"]),
+        rec(3, 0, 12, &["c", "in-flight"]),
+    ];
+    clock::request_ids_match_records(&acked, &by_id_whole).unwrap();
+    let doubled = vec![rec(1, 0, 10, &["a", "b", "c"]), rec(2, 0, 11, &["a"])];
+    assert!(clock::request_ids_match_records(&acked, &doubled).is_err());
+    // Exact times: the clock held at 100 for three commits, then advanced to 500, then moved back to 50.
+    let clocks = [100, 100, 100, 500, 50];
+    assert_eq!(
+        clock::exact_commit_times(None, &clocks),
+        vec![100, 101, 102, 500, 501]
+    );
+    assert_eq!(clock::exact_commit_times(Some(200), &[100]), vec![201]);
+    let exact: Vec<mu::CommitRecord> = clock::exact_commit_times(None, &clocks)
+        .into_iter()
+        .enumerate()
+        .map(|(i, t)| clock::record(1 + i as u64, 0, t))
+        .collect();
+    clock::commit_times_are_exact(&exact, None, &clocks).unwrap();
+    // 1, 2, 3, ... rises and equals `last_commit_time`, so the old checks pass; the exact check fails it.
+    let counter: Vec<mu::CommitRecord> = (1..=5).map(|t| clock::record(t as u64, 0, t)).collect();
+    clock::replay_clock_checks(&counter, Some(5), None, &[]).unwrap();
+    assert!(clock::commit_times_are_exact(&counter, None, &clocks).is_err());
 }
 
 /// The clock checks fail what they claim to: a repeated or falling commit time, records out of position order, a stale

@@ -240,30 +240,113 @@ fn opened_brain_is_explained_by_its_log(kind: UpkeepKind) {
     for optimistic in MODES {
         let dir = TempDir::new("log-upkeep");
         let path = dir.path().join("records.redb");
-        let before = mu::logged_brain_needing_upkeep(&path, optimistic, kind)
+        let closed = mu::logged_brain_needing_upkeep(&path, optimistic, kind)
             .unwrap_or_else(|e| panic!("{e}"));
         let brain = mu::open_logged(&path, optimistic, clock_env(), HOST_A)
             .unwrap_or_else(|e| panic!("{e}"));
-        let (records, _) = log_since(&brain.store, None);
+        // Only the records AFTER the cursor taken before the open are the open's: an old idempotent put cannot satisfy this.
+        let (records, _) = log_since(&brain.store, closed.cursor);
         assert!(
             records.iter().any(|r| !r.ops.is_empty()),
             "{kind:?}, optimistic={optimistic}: the open wrote nothing"
         );
         let after = mu::image_of(&*brain.kv);
-        logged::log_explains_change(&before, &after, &records)
+        logged::log_explains_change(&closed.image, &after, &records)
             .unwrap_or_else(|e| panic!("{kind:?}, optimistic={optimistic}: {e}"));
+        // The expected marker or format transition happened, and it is in the open's records.
+        let logged_key = |key: &[u8]| {
+            records.iter().any(|r| {
+                r.ops
+                    .iter()
+                    .any(|(k, op)| k == key && !matches!(op, LogOp::Delete))
+            })
+        };
+        let (scan, backfill) = (
+            gbrain_store::keys::meta("access_flag_scan"),
+            gbrain_store::keys::meta("derivation_purge_source_index"),
+        );
+        assert!(
+            logged_key(&scan) || logged_key(&backfill),
+            "{kind:?}, optimistic={optimistic}: no open-time upkeep marker was logged by the open"
+        );
+        assert!(
+            closed.image.get(&scan).is_none() && after.get(&scan).is_some(),
+            "the access-flag scan marker did not appear at open"
+        );
         if kind == UpkeepKind::OlderBase {
             let format_key = gbrain_store::keys::meta("format");
+            let secret_new = vec![gbrain_store::keys::ACCESS_MEMBERS, 0x0d];
             assert!(
-                records
-                    .iter()
-                    .any(|r| r.ops.iter().any(|(k, _)| *k == format_key)),
+                logged_key(&format_key),
                 "the upgrade did not log the format record"
+            );
+            assert!(
+                logged_key(&secret_new)
+                    && closed.image.get(&secret_new).is_none()
+                    && after.get(&secret_new).is_some(),
+                "the format upgrade did not move the token secret"
             );
         }
         let mut bypass = after.clone();
         bypass.insert(b"bypass".to_vec(), b"x".to_vec());
-        assert!(logged::log_explains_change(&before, &bypass, &records).is_err());
+        assert!(logged::log_explains_change(&closed.image, &bypass, &records).is_err());
+    }
+}
+
+/// The open's own records must be those after the pre-open cursor: with the records read from the start, an old idempotent put
+/// would satisfy a "the open wrote something" check and replay onto an unchanged image. The control feeds exactly that history.
+#[test]
+fn the_open_time_check_needs_the_records_after_the_cursor_not_any_record() {
+    let before = image(&[("a", b"1")]);
+    let old_put = record(1, 10, vec![op("a", LogOp::Put(b"1".to_vec()))]);
+    // The open wrote nothing: the image is unchanged, and the only record is an old idempotent put from before the cursor.
+    let all_records = vec![old_put];
+    assert!(
+        all_records.iter().any(|r| !r.ops.is_empty()),
+        "the from-the-start read finds a record"
+    );
+    logged::log_explains_change(&before, &before, &all_records).unwrap();
+    let after_cursor: Vec<CommitRecord> = all_records
+        .into_iter()
+        .filter(|r| r.position > CommitPosition::new(1, 0))
+        .collect();
+    assert!(
+        after_cursor.iter().all(|r| r.ops.is_empty()),
+        "the records after the cursor must hold the open's writes, and here there are none"
+    );
+}
+
+/// Commit times are exactly `max(store clock, previous commit time + 1 µs)` (I-4.v2): the injected clock is held for several
+/// commits, advanced, then moved back. An increasing counter would rise and equal `last_commit_time()`; this fails it.
+#[test]
+#[ignore = "multi_writer"]
+fn commit_times_are_the_max_of_the_clock_and_the_previous_time_plus_one_multi_writer() {
+    for optimistic in MODES {
+        let dir = TempDir::new("log-clock-exact");
+        let path = dir.path().join("records.redb");
+        let clock = Clock::at(T0);
+        let brain = mu::open_logged(&path, optimistic, clock.clone(), HOST_A)
+            .unwrap_or_else(|e| panic!("{e}"));
+        let (_, start) = log_since(&brain.store, None);
+        let prev = brain
+            .store
+            .last_commit_time()
+            .unwrap_or_else(|e| panic!("{e}"));
+        let mut clocks = Vec::new();
+        let mut commit = |slug: &str| {
+            clocks.push(clock.now());
+            put(&brain.store, slug, "a commit");
+        };
+        for n in 0..3 {
+            commit(&format!("held/{n}")); // the clock holds: each time is previous + 1
+        }
+        clock.advance(1_000_000);
+        commit("advanced"); // the clock is ahead of previous + 1: the time is the clock
+        clock.advance(-5_000_000);
+        commit("behind"); // the clock went back: previous + 1 again
+        let (records, _) = log_since(&brain.store, start);
+        clock::commit_times_are_exact(&records, prev, &clocks)
+            .unwrap_or_else(|e| panic!("optimistic={optimistic}: {e}"));
     }
 }
 

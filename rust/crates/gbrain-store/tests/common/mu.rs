@@ -308,13 +308,20 @@ pub fn open_logged(
 
 /// A closed logged brain that the next open must write to without any caller: `OlderBase` is one whose records are at an older
 /// base format (its upgrade runs at open), `UpkeepOnly` one at the current format whose open-time markers are gone (the
-/// access-flag scan, the keyword index reset and the source-index backfill run at open). Returns the image of the closed brain,
-/// the starting copy a replay of the open's log records must turn into the opened brain. Pending with the open options.
+/// access-flag scan, the keyword index reset and the source-index backfill run at open).
+pub struct ClosedBrain {
+    /// The image of the closed brain: the starting copy a replay of the open's log records must turn into the opened brain.
+    pub image: Image,
+    /// The log's newest position before the open: the open's records are exactly those after it.
+    pub cursor: Option<CommitPosition>,
+}
+
+/// Pending with the open options.
 pub fn logged_brain_needing_upkeep(
     _path: &Path,
     _optimistic: bool,
     _kind: UpkeepKind,
-) -> MuResult<Image> {
+) -> MuResult<ClosedBrain> {
     pending(
         L2_LOG,
         "a logged brain whose open writes (upgrade, open-time upkeep)",
