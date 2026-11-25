@@ -439,6 +439,7 @@ pub(crate) fn page_folder_rules_allowed(
         satisfied,
         coverage: &policy.folder_coverage,
         record: policy.caller_record,
+        lineage: policy.lineage_own_page.is_some(),
     };
     Ok(folders.satisfies_all(rules.iter())
         && !folders.covers(page)
