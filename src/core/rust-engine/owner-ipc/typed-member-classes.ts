@@ -106,7 +106,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'listDreamJobCreatedAt', 'listDreamPageIds', 'listDreamQueueCandidates', 'listDueWakeWatches',
   'listEdgeContradictionCandidates', 'listEffectRecoveries', 'listEmbeddingStores', 'listEntityHintPages',
   'listEntityIdentityRows', 'listEvalCandidateQueries', 'listExactIdentityCandidates', 'listExactRescanChunks',
-  'listExpirableFactIdsOfDeletedPage', 'listExpiredFactIds', 'listExportPageKeys', 'listExportWithdrawals',
+  'listExpirableFactIdsOfDeletedPage', 'listExpiredFactIds', 'listExportPageKeys', 'listExportWithdrawals', 'listPurgeTombstones',
   'listExtractionPendingPages', 'listExtractorFactsForClassification', 'listFactContextsForPurgeProbe',
   'listFactIdsStillOnPage', 'listFactProvenance', 'listFactRelinkOutcomes', 'listFactRowsByIds', 'listFactSourcePages',
   'listFactWithdrawalDates', 'listFactWithdrawalKeys', 'listFactsAbsorbJobsByKeyPrefix',

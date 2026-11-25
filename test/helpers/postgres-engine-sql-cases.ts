@@ -686,7 +686,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'cliReads': OOS.helper,
   'listAccessPolicySourceIds': OOS.cliReadsExport,
   'listExportPageKeys': OOS.cliReadsExport,
-  'listExportWithdrawals': OOS.cliReadsExport,
+  'listExportWithdrawals': OOS.cliReadsExport, 'listPurgeTombstones': OOS.callerRawSql,
   'listForcedCutSeqs': OOS.cliReadsExport,
   'normalizeFenceLines': OOS.cliReadsExport,
   'readBodyManifestMeta': OOS.cliReadsExport,

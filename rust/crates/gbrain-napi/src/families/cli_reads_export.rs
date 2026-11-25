@@ -48,6 +48,16 @@ impl Brain {
         self.run(env, move |s| s.list_export_withdrawals(&source_id))
     }
 
+    /// `listPurgeTombstones(sourceId)`: `{ facts, takes }`, the source's purge tombstones with request, actor and reason.
+    #[napi]
+    pub fn list_purge_tombstones<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_purge_tombstones(&source_id))
+    }
+
     /// `readExportPageRows(ids)`: the live pages among `ids`, each `{ page, tags }`.
     #[napi]
     pub fn read_export_page_rows<'env>(

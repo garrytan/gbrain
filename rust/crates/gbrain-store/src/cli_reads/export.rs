@@ -290,6 +290,17 @@ impl Store {
             + 2)
     }
 
+    /// `listPurgeTombstones(sourceId)`: the source's fact purge tombstones and take purge tombstones,
+    /// each with every column the purge stored (request id, actor, reason), in byte order of their keys.
+    pub fn list_purge_tombstones(&self, source_id: &str) -> Result<serde_json::Value> {
+        no_nul("listPurgeTombstones", &[("sourceId", source_id)])?;
+        let read = self.read()?;
+        Ok(serde_json::json!({
+            "facts": crate::facts::purge_ledger::fact_purge_tombstones(&*read, source_id)?,
+            "takes": crate::facts::take_purges::take_purge_tombstones(&*read, source_id)?,
+        }))
+    }
+
     /// `listExportWithdrawals`: the source's withdrawals (`purged` false) and its fact purge
     /// tombstones (`purged` true, `withdrawn_at` the purge time), ordered by visibility, fact_hash
     /// and subject (byte order), the time as ISO text.

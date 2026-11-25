@@ -2708,6 +2708,14 @@ const PINS: Pin[] = [
         WHERE e.kind='git' AND e.state IN ('queued','running') AND e.data ? 'relative_path' LIMIT 10000`],
   },
   {
+    from: 'test/engine-parity/fact-purge-sites.test.ts the tombstone readback (the local raw reads of fact_purges and take_purges; at a597e7a6c6, now byte-ordered)',
+    case: { method: 'listPurgeTombstones', variant: 'default', run: e => e.listPurgeTombstones('default') },
+    texts: [`SELECT subject, visibility, fact_hash, request_id::text AS request_id, actor, reason FROM fact_purges
+    WHERE source_id = $1 ORDER BY visibility COLLATE "C", subject COLLATE "C", fact_hash COLLATE "C"`,
+    `SELECT subject, claim_hash, request_id::text AS request_id FROM take_purges
+    WHERE source_id = $1 ORDER BY subject COLLATE "C", claim_hash COLLATE "C"`],
+  },
+  {
     from: 'src/core/search/entity-anchor.ts:116 applyEntityAnchoring (the anchored page titles; at efeb078093)',
     case: { method: 'readPageTitlesById', variant: 'default', run: e => e.readPageTitlesById([1, 2]) },
     texts: ['SELECT id, title FROM pages WHERE id = ANY($1::int[])'],

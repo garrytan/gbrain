@@ -7,7 +7,7 @@
 import type { RustEngine } from '../../rust-engine.ts';
 import type { StoreBrain } from '../store.ts';
 import { mapStoreError } from '../store-errors.ts';
-import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines, SegmentedPageHead, BodyManifestRow, BodyManifestMeta, BodyManifestOutline } from '../../engine-sql/export-reads.ts';
+import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, FactPurgeTombstone, TakePurgeTombstone, NormalizedFenceLines, SegmentedPageHead, BodyManifestRow, BodyManifestMeta, BodyManifestOutline } from '../../engine-sql/export-reads.ts';
 import { toGetPage, withDates } from '../store-codec.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
@@ -36,6 +36,10 @@ export const listExportWithdrawals: StoreMember<[sourceId: string], ExportWithdr
   const rows: ExportWithdrawalRow[] = await storeCall({ member: 'listExportWithdrawals', sourceId }, () => brain.listExportWithdrawals(sourceId));
   return rows.map(row => withDates(row, ['withdrawn_at']));
 };
+
+/** The source's fact and take purge tombstones with request id, actor and reason, in byte order (`cli_reads::export::list_purge_tombstones`). */
+export const listPurgeTombstones: StoreMember<[sourceId: string], { facts: FactPurgeTombstone[]; takes: TakePurgeTombstone[] }> = async (brain, sourceId) =>
+  await storeCall({ member: 'listPurgeTombstones', sourceId }, () => brain.listPurgeTombstones(sourceId)) as { facts: FactPurgeTombstone[]; takes: TakePurgeTombstone[] };
 
 /** The live pages among `ids` with their tags, each page as `getPage` returns it (`cli_reads::export::read_export_page_rows`). */
 export const readExportPageRows: StoreMember<[ids: readonly string[]], ExportPageRow[]> = async (brain, ids) => {

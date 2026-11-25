@@ -10223,6 +10223,7 @@
         "listPurgeSegmentClaims": "none",
         "listPurgeStreamSlugs": "none",
         "listPurgeTombstoneMatches": "none",
+        "listPurgeTombstones": "none",
         "listPurgeVersionBodies": "none",
         "listPurgedPageFactCandidates": "none",
         "listPurgedPageRevisions": "none",

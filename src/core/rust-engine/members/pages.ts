@@ -9,6 +9,7 @@ export const PAGES_MEMBERS = {
   listExportPageKeys: 'pages',
   readExportWithdrawalLedgerBytes: 'facts',
   listExportWithdrawals: 'facts',
+  listPurgeTombstones: 'facts',
   readExportPageRows: 'pages',
   normalizeFenceLines: 'pages',
   readSegmentedPageHead: 'pages',

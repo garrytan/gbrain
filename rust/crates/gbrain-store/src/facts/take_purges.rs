@@ -89,6 +89,54 @@ fn key(parts: &[&str]) -> Vec<u8> {
     key
 }
 
+/// One take purge tombstone of a source as `listPurgeTombstones` answers it (the `take_purges` columns).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TakePurgeTombstone {
+    pub subject: String,
+    pub claim_hash: String,
+    pub request_id: Option<String>,
+}
+
+/// Every take purge tombstone of `source_id` with its request, in key order: (subject, claim_hash),
+/// each in byte order, as `ORDER BY subject COLLATE "C", claim_hash COLLATE "C"` sorts them.
+pub(crate) fn take_purge_tombstones(
+    read: &dyn KvRead,
+    source_id: &str,
+) -> Result<Vec<TakePurgeTombstone>> {
+    if source_id.contains('\0') {
+        return Ok(Vec::new());
+    }
+    let prefix = key(&[source_id]);
+    let mut rows = Vec::new();
+    let mut failed = None;
+    scan_prefix(read, &prefix, false, &mut |k, v| {
+        let parts: Vec<&[u8]> = k[prefix.len()..].split(|b| *b == 0).collect();
+        let [subject, claim_hash, ..] = parts.as_slice() else {
+            return true;
+        };
+        match serde_json::from_slice::<TakePurgeRecord>(v) {
+            Ok(r) => {
+                rows.push(TakePurgeTombstone {
+                    subject: String::from_utf8_lossy(subject).into_owned(),
+                    claim_hash: String::from_utf8_lossy(claim_hash).into_owned(),
+                    request_id: r.request_id,
+                });
+                true
+            }
+            Err(e) => {
+                failed = Some(e);
+                false
+            }
+        }
+    })?;
+    match failed {
+        Some(e) => Err(StoreError::invalid(format!(
+            "take purges: corrupt record: {e}"
+        ))),
+        None => Ok(rows),
+    }
+}
+
 /// Whether the source has any take tombstone (`EXISTS (SELECT 1 FROM take_purges WHERE source_id = $1)`).
 pub(crate) fn has_take_purges(read: &dyn KvRead, source_id: &str) -> Result<bool> {
     let mut found = false;
