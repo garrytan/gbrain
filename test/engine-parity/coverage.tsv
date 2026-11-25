@@ -647,7 +647,7 @@ insertFact	facts	yes	198	yes	yes	yes	serves
 insertFacts	facts	yes	269	no	yes	yes	serves
 deleteFactsForPage	facts	yes	8	no	yes	yes	serves
 expireFact	facts	yes	94	no	yes	yes	serves
-listFactsByEntity	facts	yes	62	yes	yes	yes	serves
+listFactsByEntity	facts	yes	64	yes	yes	yes	serves
 listFactsSince	facts	yes	42	yes	yes	yes	serves
 listFactsKeyset	facts	yes	11	no	yes	yes	serves
 listFactsBySession	facts	yes	13	yes	yes	yes	serves
@@ -1518,8 +1518,8 @@ listUnfencedFactRows	facts_purge	yes	2	no	yes	yes	serves
 listHeldFenceFactRows	facts_purge	yes	1	no	yes	yes	serves
 listWithdrawalSlugs	facts_purge	yes	5	no	yes	yes	serves
 expireFactsByWithdrawal	facts_purge	yes	8	no	yes	yes	serves
-insertFactPurge	facts_purge	yes	25	no	yes	yes	serves
-insertTakePurge	facts_purge	yes	16	no	yes	yes	serves
+insertFactPurge	facts_purge	yes	27	no	yes	yes	serves
+insertTakePurge	facts_purge	yes	17	no	yes	yes	serves
 upsertPagePurges	facts_purge	yes	6	no	yes	yes	serves
 expireFactsOfGonePages	facts_purge	yes	1	no	yes	yes	serves
 readPurgeSourceLocalPath	facts_purge	yes	2	no	yes	yes	serves
@@ -1864,7 +1864,7 @@ listSegmentedPages	withdrawal_pages	yes	2	no	yes	yes	serves
 invalidateWithdrawnPages	withdrawal_pages	yes	2	no	yes	yes	serves
 hasWithdrawnFenceClaim	withdrawal_fence	yes	2	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	91	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	88	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 addCodeEdges	code_edges	yes	7	yes	yes	yes	serves
@@ -1891,8 +1891,8 @@ countZeroWeightWithTakes	salience_enrich	yes	1	no	yes	yes	serves
 listGlobalPurgeWithdrawals	trust	yes	1	no	yes	yes	serves
 hasCoveringFactWithdrawal	trust	yes	6	no	yes	yes	serves
 insertFactWithdrawal	trust	yes	68	no	yes	yes	serves
-isFactWithdrawn	trust	yes	4	no	yes	yes	serves
-isFactPurged	trust	yes	7	no	yes	yes	serves
+isFactWithdrawn	trust	yes	5	no	yes	yes	serves
+isFactPurged	trust	yes	8	no	yes	yes	serves
 listFactWithdrawalDates	trust	yes	3	no	yes	yes	serves
 moveFactWithdrawalSubject	trust	yes	1	no	yes	yes	serves
 hasFactWithdrawalForSubject	trust	yes	1	no	yes	yes	serves
