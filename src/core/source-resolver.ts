@@ -27,9 +27,7 @@ import { noteResolvedSource } from './fix-routing.ts';
 import { hookSessionCwd } from './session-cwd.ts';
 import { sortSourcesById, sourceConfigText } from './source-rows.ts';
 import { countDefaultSourceSplit } from './engine-sql/sources.ts';
-import { isUndefinedColumnError } from './utils.ts';
-import { unscopedExecutor } from './engine-sql/brands.ts';
-import type { SqlExecutor } from './engine-sql/executor.ts';
+import { isMissingSchemaObject } from './utils.ts';
 
 // Re-export so scope-resolution call sites can import the sentinel from
 // either module (#1712).
@@ -559,7 +557,7 @@ export async function assessDefaultWriteGuard(
     // An engine object with no typed member (a hermetic stub, an out-of-tree engine) is read the way master read it, through executeRaw.
     const { defaultPages, nonDefaultPages, nonDefaultSources } = typeof engine.countDefaultSourceSplit === 'function'
       ? await engine.countDefaultSourceSplit()
-      : await countDefaultSourceSplit(unscopedExecutor(engine as unknown as SqlExecutor, 'sources: the default-write guard read it unscoped through executeRaw on master'));
+      : await countDefaultSourceSplit(engine);
     // Strict `>` keeps a default-dominant (fresh / legacy) brain un-guarded:
     // with nonDefaultPages 0, the condition is false and 'default' stays valid.
     const shouldGuard = nonDefaultSources >= 1 && nonDefaultPages > defaultPages;
@@ -1064,7 +1062,7 @@ async function liveSourceRows(engine: BrainEngine): Promise<Array<{ id: string; 
   } catch (err) {
     rethrowCapabilityRefusal(err);
     // Only a brain older than the `archived` column falls back; any other failure (a timeout, an unreadable table) is the caller's to see.
-    if (!isUndefinedColumnError(err, 'archived')) throw err;
+    if (!isMissingSchemaObject(err, 'column', 'archived')) throw err;
     return sortSourcesById((await legacySourceRows(engine)).filter(row => row.archived !== true)).map(({ id, config }) => ({ id, config }));
   }
 }

@@ -202,8 +202,6 @@ const ENGINE_INTERNAL_HELPERS: readonly string[] = [
   'rawRead',
   // The raw read the entity reads run through (no statement bound): readIgnoredPrivacyLabelPages, readLivePageFrontmatter.
   'untimedRead',
-  // An executor over this engine's executeRaw, so a typed read that replaced a raw call keeps its wrappers, request abort and retry.
-  'viaExecuteRaw',
   'cliReads',
   'connectForRestore',
   'applyForwardReferenceBootstrap',

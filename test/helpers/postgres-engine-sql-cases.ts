@@ -183,7 +183,6 @@ export const DOMAIN_OF: Record<string, string> = {
   'listSegmentedPages': OOS.withdrawalPages,
   'searchRead': OOS.helper,
   'engineRead': OOS.helper,
-  'viaExecuteRaw': OOS.helper,
   'timelineRead': OOS.helper, 'timelineBoundedRead': OOS.helper, 'decideRead': OOS.helper,
   'writeMiscReads': OOS.helper, 'writeMiscRead': OOS.helper,
   'countOnboardSignal': OOS.stats,
