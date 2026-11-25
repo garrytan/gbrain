@@ -11,8 +11,10 @@
  *   not_found  no allowed line covers it. That means "no allowed claim covers this", never "this is false".
  *
  * A sentence with several numbers is checked number by number, each with the words of its own clause: supported only
- * when every number is, conflicts when any number is contradicted, otherwise not_found. A percent never matches a
- * plain number, and digits inside a word (Q3) are not numbers.
+ * when every number is, conflicts when any number is contradicted, otherwise not_found. Every number is checked, a year
+ * included, so a skipped number can never let a contradicted one read as supported. A percent
+ * never matches a plain number, digits inside a word (Q3) are not numbers, and a comma between digits ($2,100,000) is
+ * a thousands separator, not a clause break.
  */
 
 export interface AllowedLine { slug: string; source_id: string; line: number; date: string; text: string }
@@ -54,7 +56,7 @@ function words(text: string): Set<string> {
   return out;
 }
 
-const sameNumber = (a: Num, b: Num) => a.value === b.value
+const sameNumber = (a: Num, b: Num) => Math.abs(a.value - b.value) <= 1e-9 * Math.max(Math.abs(a.value), Math.abs(b.value))
   && (a.unit === b.unit || ((a.unit === '' || b.unit === '') && a.unit !== 'percent' && b.unit !== 'percent'));
 
 /** The sentences of a draft that hold a number, trimmed. */
@@ -93,7 +95,7 @@ function numberClauses(claim: string): string[] {
   if (numbers(claim).length < 2) return [claim];
   const out: string[] = [];
   let pending = '';
-  for (const clause of claim.split(/[,;]\s*|\s+(?:and|but|while|whereas)\s+/i)) {
+  for (const clause of claim.split(/(?<!\d),\s*|,(?!\d)\s*|;\s*|\s+(?:and|but|while|whereas)\s+/i)) {
     pending = pending ? `${pending} ${clause}` : clause;
     if (numbers(clause).length) { out.push(pending); pending = ''; }
   }

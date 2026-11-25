@@ -5,7 +5,7 @@
  * CLI only, like set-trust. A guest source is always external, whatever this says.
  */
 import type { BrainEngine } from '../core/engine.ts';
-import { normalizeSourceConfig, parseSourceConfig } from '../core/sources-load.ts';
+import { SOURCE_CONFIG_OBJECT_SQL } from '../core/source-config-sql.ts';
 import { PRECEDENCE_CLASSES, isPrecedence } from '../core/eligibility/precedence.ts';
 
 export const SOURCES_SET_PRECEDENCE_USAGE = `Usage: gbrain sources set-precedence <id> <${PRECEDENCE_CLASSES.join('|')}> | --clear`;
@@ -20,15 +20,13 @@ export async function runSetPrecedence(engine: BrainEngine, args: string[]): Pro
     console.error(`${JSON.stringify(value)} is not a precedence class. Accepted: ${PRECEDENCE_CLASSES.join(', ')}.`);
     process.exit(2);
   }
-  const [src] = await engine.executeRaw<{ config: unknown }>('SELECT config FROM sources WHERE id=$1', [id]);
-  if (!src) {
+  const found = value === '--clear'
+    ? (await engine.executeRaw<{ id: string }>(`UPDATE sources SET config = ${SOURCE_CONFIG_OBJECT_SQL} - 'precedence' WHERE id = $1 RETURNING id`, [id])).length > 0
+    : await engine.updateSourceConfig(id, { precedence: value });
+  if (!found) {
     console.error(`Source "${id}" not found. List sources with: gbrain sources list`);
     process.exit(4);
   }
-  const config = parseSourceConfig(src.config);
-  if (value === '--clear') delete config.precedence;
-  else config.precedence = value;
-  await engine.executeRaw('UPDATE sources SET config = $1::text::jsonb WHERE id = $2', [JSON.stringify(normalizeSourceConfig(config)), id]);
   console.log(value === '--clear'
     ? `Source "${id}" uses the default precedence again (chat for the conversation archive, meeting and Google sources, external for guests, curated otherwise).`
     : `Rows from source "${id}" are now labeled precedence ${value}. It is a label: trust and ranking are unchanged.`);
