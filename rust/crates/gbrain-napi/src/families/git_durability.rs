@@ -1,5 +1,5 @@
 //! Managed Git durability: the skipped-effect catch-up and the host binding's setting
-//! (`gitDurabilityStore()`, rust/docs/store/persistence.md, "Git durability").
+//! (`gitDurabilityStore()`, rust/docs/store/managed-mode.md).
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
 

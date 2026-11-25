@@ -1,5 +1,5 @@
 //! The managed Git effect runner: its worktree checks, its yield and its plain outcome
-//! (`gitEffectStore()`, rust/docs/store/persistence.md, "Git effects").
+//! (`gitEffectStore()`, rust/docs/store/managed-mode.md).
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
 

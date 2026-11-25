@@ -19,15 +19,24 @@ import { STORE_MEMBERS } from './store-members/index.ts';
  * mode with the typed refusal (capability managed_persistence). A worktree-bound write (a source with a claimed checkout) is
  * refused by name at its admission (persistence/journal.ts `admitWrite`) and writes no request row, and the first page write to a
  * rooted source refuses `claimWorktree` the same way (persistence/unbound-source.ts). A write with no worktree and a grouped
- * admission of such writes are served. The members that serve a bound write exist and stay in the
- * member table; this hold keeps them from being reached until the program lands.
+ * admission of such writes are served.
+ *
+ * Slice 1 (lane LM) typed what a bound write and a source lifecycle change run: worktree admission, ownership,
+ * compareFileTarget, publication and its recovery, the managed Git effects and Git durability (engine-sql/git-effects.ts,
+ * git-durability.ts), the topology locks with the lifecycle's add, archive, restore, set-path, remove and purge
+ * (engine-sql/topology-store.ts), the moved-checkout check, and add_link and remove_link on a managed page
+ * (engine-sql/manual-links.ts). test/engine-parity/managed-on-rust.test.ts runs them equal on all three arms with the hold lifted
+ * on the test engine only. The hold stays until the slice 2 sites below are typed and proven equal on Rust too; each entry
+ * is a site that still runs raw SQL or has no three-arm case yet.
  */
 export const HELD_FOR_CALLERS: Partial<Record<Capability, readonly string[]>> = {
   managed_persistence: [
-    'compareFileTarget (persistence/page-prepare.ts): a bound write compares its canonical file against the import hold; typed here, held with the rest of managed mode',
-    'guardOwnership (persistence/ownership.ts): a bound write locks its worktree row; typed here, held with the rest of managed mode',
-    'publication recovery (persistence/coordinator.ts): a bound write marks publication started and locks its source row; typed here, held with the rest of managed mode',
-    'withTopologyLocks (persistence/topology-locks.ts): topology recovery takes its locks through executeRaw',
+    'managed sync (persistence/sync-run.ts performManagedSync; sync-discovery.ts readManagedSyncRows, sync-holds.ts sourceHoldFingerprints): a managed import still reads through executeRaw',
+    'refresh barrier (persistence/worktree-refresh.ts, journal.ts readRefreshBarrier; the claim stamp reports passed_sync false): gbrain sources refresh and the writes that wait behind it',
+    'import holds (journal.ts heldBehindImport): the writes held behind a managed import or refresh',
+    'managed clone and its recovery (persistence/topology-clone.ts, topology-recovery.ts): sources add --url, sources reclone and the owner topology recovery',
+    'owner recovery scans (consumer recovery of worktree claims, dead-owner detection of worktree requests, deferred-write expiry)',
+    'git durability --pat-file (git-durability-administration.ts retryParkedPushes): the parked-push retry',
   ],
 };
 

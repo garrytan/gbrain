@@ -12,17 +12,9 @@ import { LINKS_FENCE_ORIGIN_FIELD, LinksFenceRewriteRefusal, MANAGED_LINK_SOURCE
 import { linksFenceProjectionRows, projectLinksFence } from '../links-fence-projection.ts';
 import { removeManualTransitions } from '../link-temporal-apply.ts';
 import { refreshRelationships, type RelationshipKey } from '../link-relationships.ts';
-import { executeRawJsonb } from '../sql-query.ts';
 import { authorizePageVisibility, pageNotVisibleError } from './page-visibility.ts';
 
 const optional = (value: unknown) => typeof value === 'string' && value ? value : undefined;
-
-/** Edges from $1 to the page $3 of source $2, optionally of one type ($5) and provenance ($6). */
-const RELATIONSHIP = `l.from_page_id=$1 AND l.to_page_id=t.id AND t.source_id=$2 AND t.slug=$3
-  AND ($5::text IS NULL OR l.link_type=$5) AND ($6::text IS NULL OR l.link_source=$6)`;
-/** A database-only edge: not projected from a links fence, and of a provenance no reconciliation producer owns ($4). */
-const DATABASE_ONLY = `l.origin_field IS DISTINCT FROM '${LINKS_FENCE_ORIGIN_FIELD}' AND l.link_source <> ALL($4::text[])`;
-const FENCED = `l.origin_field='${LINKS_FENCE_ORIGIN_FIELD}' AND l.origin_page_id=$1`;
 
 type FencedEdge = { to_page_id: number; to: string; type: string; source: string; context: string | null };
 type Statement = { to_page_id: number; type: string; source: string | null; kind: string; on: string };
@@ -30,15 +22,9 @@ const relationship = (row: { to_page_id: number; type: string }) => `${Number(ro
 
 /** The edges page `pageId`'s links fence projected that are still stored, and the page's manual dated statements. */
 async function storedFenceState(engine: BrainEngine, pageId: number): Promise<{ edges: FencedEdge[]; statements: Statement[] }> {
-  const [edges, statements] = await Promise.all([
-    engine.executeRaw<FencedEdge>(
-      `SELECT l.to_page_id, t.slug AS to, l.link_type AS type, l.link_source AS source, l.context FROM links l JOIN pages t ON t.id=l.to_page_id
-        WHERE l.from_page_id=$1 AND l.origin_page_id=$1 AND l.origin_field=$2 ORDER BY t.slug COLLATE "C", l.link_type COLLATE "C", l.link_source COLLATE "C"`, [pageId, LINKS_FENCE_ORIGIN_FIELD]),
-    engine.executeRaw<Statement>(
-      `SELECT to_page_id, link_type AS type, link_source AS source, kind, occurred_on::text AS on FROM link_transitions
-        WHERE origin_page_id=$1 AND from_page_id=$1 AND producer='manual'`, [pageId]),
-  ]);
-  return { edges, statements };
+  const store = await engine.manualLinkStore();
+  const [edges, statements] = await Promise.all([store.fencedEdges(pageId, LINKS_FENCE_ORIGIN_FIELD), store.manualStatements(pageId)]);
+  return { edges, statements: statements as Statement[] };
 }
 
 /** A relationship whose dated statements predate per-row sources and cannot be given to its kept rows exactly. */
@@ -129,8 +115,7 @@ export async function prepareManualLinkMutation(engine: BrainEngine, row: WriteR
   const pageId = Number(stored.page.id);
   const absent = readPageLinksFence(snapshot.page).state === 'absent';
   if (row.operation === 'add_link' && absent && row.authority.remote) {
-    const targets = await engine.executeRaw<{ slug: string; deleted: boolean }>(`SELECT DISTINCT t.slug, t.deleted_at IS NOT NULL AS deleted
-      FROM links l JOIN pages t ON t.id=l.to_page_id WHERE l.from_page_id=$1 AND l.origin_page_id=$1 AND l.origin_field=$2`, [pageId, LINKS_FENCE_ORIGIN_FIELD]);
+    const targets = await (await engine.manualLinkStore()).fencedTargets(pageId, LINKS_FENCE_ORIGIN_FIELD);
     for (const target of targets) {
       if (target.deleted) throw pageNotVisibleError();
       await authorizePageVisibility(engine, row.authority, target.slug);
@@ -159,40 +144,32 @@ export async function prepareManualLinkMutation(engine: BrainEngine, row: WriteR
   if (row.operation === 'add_link') {
     return { ...prepared, apply: async tx => {
       const outcome = await prepared.apply(tx);
-      await tx.executeRaw(`DELETE FROM links l USING pages t WHERE ${RELATIONSHIP} AND ${DATABASE_ONLY} AND l.origin_page_id IS NULL`,
-        [pageId, row.source_id, to, MANAGED_LINK_SOURCES, linkType ?? '', linkSource ?? 'manual']);
+      await (await tx.manualLinkStore()).deleteDatabaseOnly({ pageId, sourceId: row.source_id, to, managedSources: MANAGED_LINK_SOURCES,
+        linkType: linkType ?? '', linkSource: linkSource ?? 'manual' });
       if (fence) await projectLinksFence(tx, origin, fence);
       return { ...outcome, status: 'ok' };
     } };
   }
-  const params = [pageId, row.source_id, to, MANAGED_LINK_SOURCES, linkType ?? null, linkSource ?? null];
+  const rel = { pageId, sourceId: row.source_id, to, managedSources: MANAGED_LINK_SOURCES, linkType: linkType ?? null, linkSource: linkSource ?? null };
   return { ...prepared, apply: async tx => {
-    const count = async () => Number((await tx.executeRaw<{ n: number }>(
-      `SELECT count(*)::int AS n FROM links l, pages t WHERE ${RELATIONSHIP} AND ((${DATABASE_ONLY}) OR (${FENCED}))`, params))[0]?.n ?? 0);
+    const store = await tx.manualLinkStore();
+    const count = () => store.countRelationship(rel);
     const before = await count();
     // A page whose body dropped its whole fence keeps the fence's edges (an absent fence retires nothing), so
     // removing the relationship removes those orphans too: no row in git backs them.
-    const dropped = await tx.executeRaw<{ to_page_id: number; link_type: string; link_source: string; fenced: boolean }>(`DELETE FROM links l USING pages t
-      WHERE ${RELATIONSHIP} AND ((${DATABASE_ONLY}) OR ($7::boolean AND ${FENCED}))
-      RETURNING l.to_page_id, l.link_type, l.link_source, l.origin_field IS NOT DISTINCT FROM '${LINKS_FENCE_ORIGIN_FIELD}' AS fenced`, [...params, fence === null]);
+    const dropped = await store.dropRelationship(rel, fence === null);
     if (dropped.some(edge => !edge.fenced) && (!linkSource || linkSource === 'manual')) {
       await removeManualTransitions(tx, { from: row.slug, to, linkType, sourceId: row.source_id, databaseOnly: true });
     }
     const removedRows = dropped.filter(edge => edge.fenced);
     // A dropped fence's removed rows take their own statements; statements stored before rows had sources go only
     // when no row of their relationship is left (assertRemovalAttributable refused the ambiguous case).
-    const keys = removedRows.length ? await executeRawJsonb<RelationshipKey>(tx, `DELETE FROM link_transitions lt
-        USING jsonb_to_recordset(($3::jsonb)->'rows') AS v(to_page_id integer, link_type text, link_source text)
-      WHERE lt.from_page_id=$1 AND lt.origin_page_id=$1 AND lt.producer='manual' AND lt.to_page_id=v.to_page_id AND lt.link_type=v.link_type
-        AND (lt.link_source=v.link_source OR (lt.link_source IS NULL AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id=$1
-          AND l.origin_page_id=$1 AND l.origin_field=$2 AND l.to_page_id=v.to_page_id AND l.link_type=v.link_type)))
-      RETURNING lt.from_page_id, lt.to_page_id, lt.link_type`, [pageId, LINKS_FENCE_ORIGIN_FIELD],
-      [{ rows: removedRows.map(({ to_page_id, link_type, link_source }) => ({ to_page_id, link_type, link_source })) }]) : [];
+    const keys: RelationshipKey[] = removedRows.length ? await store.deleteRowTransitions(pageId, LINKS_FENCE_ORIGIN_FIELD,
+      removedRows.map(({ to_page_id, link_type, link_source }) => ({ to_page_id, link_type, link_source }))) : [];
     if (keys.length) await refreshRelationships(tx, keys);
     const outcome = await prepared.apply(tx);
     if (fence) await projectLinksFence(tx, origin, fence);
-    const derived = await tx.executeRaw<{ link_type: string; link_source: string }>(`SELECT DISTINCT l.link_type COLLATE "C" AS link_type, l.link_source COLLATE "C" AS link_source FROM links l, pages t
-      WHERE ${RELATIONSHIP} AND l.link_source = ANY($4::text[]) ORDER BY l.link_type COLLATE "C", l.link_source COLLATE "C"`, params);
+    const derived = await store.derivedEdges(rel);
     return { ...outcome, status: 'ok', removed: before - await count(), ...(derived.length ? { derived_from_text: derived,
       derived_message: `${derived.length === 1 ? 'An edge' : `${derived.length} edges`} from ${row.slug} to ${to} ${derived.length === 1 ? 'comes' : 'come'} from the page text (links, wikilinks or frontmatter), so remove_link kept ${derived.length === 1 ? 'it' : 'them'}. Edit the text of ${row.slug} (edit_page) to remove ${derived.length === 1 ? 'it' : 'them'}.` } : {}) };
   } };

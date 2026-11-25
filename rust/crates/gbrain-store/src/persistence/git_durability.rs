@@ -1,7 +1,6 @@
 //! Managed Git durability: the catch-up plan and re-queue of a worktree's Git effects that
 //! completed skipped while durability was off, and the host binding's recorded setting
-//! (`gitDurabilityStore()`, `src/core/engine-sql/git-durability.ts`; rust/docs/store/persistence.md,
-//! "Git durability").
+//! (`gitDurabilityStore()`, `src/core/engine-sql/git-durability.ts`; rust/docs/store/managed-mode.md).
 //!
 //! The effects are the publication effect records (`effects.rs`), the setting is the host
 //! binding's `git_durability` field (`worktrees.rs`). Each statement answers what its Postgres

@@ -1,5 +1,5 @@
 //! The managed Git effect runner's statements (`gitEffectStore()`,
-//! `src/core/engine-sql/git-effects.ts`; rust/docs/store/persistence.md, "Git effects"): the
+//! `src/core/engine-sql/git-effects.ts`; rust/docs/store/managed-mode.md): the
 //! checks a Git group makes against its worktree's requests before it commits, the yield to
 //! publications still queued, and the plain outcome of a group whose root has no durability.
 //!

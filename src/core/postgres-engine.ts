@@ -177,6 +177,7 @@ import * as publicationJournalImpl from './engine-sql/publication-journal.ts';
 import * as gitDurabilityImpl from './engine-sql/git-durability.ts';
 import * as gitEffectsImpl from './engine-sql/git-effects.ts';
 import * as topologyStoreImpl from './engine-sql/topology-store.ts';
+import * as manualLinksImpl from './engine-sql/manual-links.ts';
 import * as writerStatusImpl from './engine-sql/writer-status.ts';
 import * as labelDoorImpl from './engine-sql/label-door.ts';
 import * as pagePurgeImpl from './engine-sql/page-purge.ts';
@@ -2857,6 +2858,7 @@ export class PostgresEngine implements BrainEngine {
   gitDurabilityStore() { return gitDurabilityImpl.gitDurabilityStore(this); }
   gitEffectStore() { return gitEffectsImpl.gitEffectStore(this); }
   topologyStore() { return topologyStoreImpl.topologyStore(this); }
+  manualLinkStore() { return manualLinksImpl.manualLinkStore(this); }
   chronicleStore() { return chronicleExecutorImpl.chronicleStore(this); }
   addPersistenceCounters(key: string, delta: Partial<Record<CounterColumn, number>>): Promise<void> { return writerReleaseImpl.addPersistenceCounters(this, key, delta); }
   hasExtractedEvents(sourceId: string, pageId: number) { return whenNotAborted(() => writeMiscImpl.hasExtractedEvents(this.writeMiscReads, sourceId, pageId)); }

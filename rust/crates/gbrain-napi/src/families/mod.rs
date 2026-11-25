@@ -57,6 +57,7 @@ mod page_purges;
 mod git_durability;
 mod git_effects;
 mod git_gap_census;
+mod manual_links;
 mod page_visibility;
 mod pages;
 mod publication_journal;

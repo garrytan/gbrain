@@ -1,5 +1,5 @@
 //! Managed source topology (`topologyStore()`, `src/core/engine-sql/topology-store.ts`;
-//! rust/docs/store/persistence.md, "Topology store"): the reads and writes a source lifecycle
+//! rust/docs/store/managed-mode.md): the reads and writes a source lifecycle
 //! change makes under its topology locks, its receipt accounting, and the moved-checkout reads.
 //!
 //! Each kind answers what its Postgres statement answers, from the worktree, host-binding and

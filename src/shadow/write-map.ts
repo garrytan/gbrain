@@ -345,7 +345,7 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'lockMentionEntries', 'lockMentionSources', 'lockNoopEmbeddingWindow', 'lockOAuthClient', 'lockOauthClientName',
   'lockOverdueHold', 'lockPageById', 'lockPersistenceCounters', 'lockPurgeSource', 'lockReconcileRevision',
   'lockSourceRow', 'lockSourceShared', 'lockWriteRequest', 'lockWriteRequestsById', 'logChatUsage', 'logMcpRequest',
-  'lowerTrustTier', 'markAccessRevisionsApplied', 'markBeliefCommits', 'markEdgeProposalStale', 'markEdgeProposalUndone',
+  'lowerTrustTier', 'manualLinkStore', 'markAccessRevisionsApplied', 'markBeliefCommits', 'markEdgeProposalStale', 'markEdgeProposalUndone',
   'markGenerationActivated', 'markJobWatchdogSuspect', 'markNeedsRederive', 'markProjectionRebuildFailed',
   'markRevertedEdgeProposals', 'markSourceSynced', 'markSpendUsageUnknown', 'mintBeliefLifetime',
   'moveConversationSourceWindows', 'moveFactToPage', 'moveFactWithdrawalSubject', 'moveKeptFactRows',

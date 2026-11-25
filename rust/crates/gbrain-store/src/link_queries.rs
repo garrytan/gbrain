@@ -57,6 +57,7 @@ mod edge_filter;
 use edge_filter::edge_passes;
 pub use edge_filter::{DuringWindow, EdgeTemporalPolicy};
 pub(crate) mod link_temporal;
+mod manual_links;
 pub use link_temporal::{
     ApplyTemporalInput, ApplyTemporalResult, EdgeValidityCounts, EdgeValidityInput, EvidenceInput,
     InboundEdgeRow, KeysForOriginInput, KeysForPagesInput, KeysTouchingInput, ManualRelationship,
@@ -67,6 +68,7 @@ pub use link_temporal::{
     ReferrerTargetCountInput, ReferrerTargetCountRow, ReferrerTargetSourcesInput, ReferrerTypeRow,
     RelationshipEvidence, RelationshipKey, SearchVectorCounts, StaleKeysInput, StateWrite,
 };
+pub use manual_links::{ManualLinkRead, ManualLinkWrite};
 mod atom_backlog;
 pub use atom_backlog::{AtomBacklogQuery, ConnectorExclusion};
 mod projection_backlog;

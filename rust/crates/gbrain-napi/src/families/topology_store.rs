@@ -1,5 +1,5 @@
 //! Managed source topology: the lifecycle reads, writes and receipts under topology locks
-//! (`topologyStore()`, rust/docs/store/persistence.md, "Topology store").
+//! (`topologyStore()`, rust/docs/store/managed-mode.md).
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
 

@@ -158,9 +158,6 @@ import type { BriefEntityPageOpts, BriefEntityPageRow, ReflexPageMatch, ReflexPa
 import type * as BriefReadsSql from './engine-sql/brief-reads.ts';
 import type { CounterColumn, WriterReleaseStore } from './engine-sql/writer-release.ts';
 import type { PublicationJournalStore } from './engine-sql/publication-journal.ts';
-import type { GitDurabilityStore } from './engine-sql/git-durability.ts';
-import type { GitEffectStore } from './engine-sql/git-effects.ts';
-import type { TopologyStore } from './engine-sql/topology-store.ts';
 import type { StoredWorktreeManifest } from './persistence/worktree-manifest.ts';
 import type { ActiveWorktreeRefreshRow, BlockingEffectRow, OnboardingSourceRow, WriterDiagnosticRows, WriterStatusRows } from './engine-sql/writer-status.ts';
 import type * as DoctorJoinSql from './engine-sql/doctor-join.ts';
@@ -1718,21 +1715,6 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
    * Called on a transaction engine, every store call runs in that transaction.
    */
   publicationJournalStore(): Promise<PublicationJournalStore>;
-  /**
-   * The managed Git durability statements (engine-sql/git-durability.ts): the skipped-effect catch-up plan and re-queue,
-   * and the host binding's recorded setting. Called on a transaction engine, every store call runs in that transaction.
-   */
-  gitDurabilityStore(): Promise<GitDurabilityStore>;
-  /**
-   * The managed Git effect runner's worktree checks, its yield to queued publications and the plain outcome of a group
-   * with no durability (engine-sql/git-effects.ts). Called on a transaction engine, every store call runs in that transaction.
-   */
-  gitEffectStore(): Promise<GitEffectStore>;
-  /**
-   * The managed source topology statements (engine-sql/topology-store.ts): the topology locks, the lifecycle receipts and
-   * writes, and the moved-checkout reads. Called on a transaction engine, every store call runs in that transaction.
-   */
-  topologyStore(): Promise<TopologyStore>;
   /** The chronicle executor's ledger, campaign and event reads and writes (engine-sql/chronicle-executor.ts); on a transaction engine, in that transaction. */
   chronicleStore(): Promise<ChronicleStore>;
   hasExtractedEvents(sourceId: string, pageId: number): Promise<boolean>;

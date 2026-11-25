@@ -95,6 +95,24 @@ const receipt = (out: unknown, home: string) => {
   const { request_id: _r, source_incarnation: _i, ...rest } = r;
   return JSON.parse(JSON.stringify({ ...rest, ...(typeof r.request_id === 'string' ? { request_id: 'set' } : {}) }).split(home).join('<home>'));
 };
+/**
+ * A put_page to `sourceId`, then bounded effect passes until each of its effects settles, so a lifecycle step that
+ * follows never meets a write still publishing (that meeting is a race the lifecycle refuses on, not what these cases test).
+ */
+async function putSettled(engine: BrainEngine, sourceId: string, slug: string, title: string): Promise<void> {
+  const request_id = randomUUID();
+  await submitPageMutation(ctxFor(engine, sourceId) as never, { operation: 'put_page',
+    params: { slug, content: `---\ntype: note\ntitle: ${title}\n---\nWorks at widget-co.\n`, request_id } });
+  const row = await engine.readWriteRequest('local_cli', (await readLocalWriter(engine, 'cli')).id, request_id);
+  for (let i = 0; i < 100; i++) {
+    const open = row ? (await engine.readRequestEffects(row.id)).some(e => e.state === 'queued' || e.state === 'running') : false;
+    if (!open) return;
+    await runPersistenceEffects(engine, { engine: engine.kind } as never, { hostId: hostIdFor(engine), limit: 20 });
+    await Bun.sleep(50);
+  }
+  throw new Error(`the effects of ${slug} did not settle`);
+}
+
 const codeOf = (run: () => Promise<unknown>) => run().then(() => null, (e: { code?: string }) => e?.code ?? String(e));
 
 describe('managed mode on a Rust brain, hold kept for users', () => {
@@ -177,7 +195,7 @@ describe('managed mode on a Rust brain, hold kept for users', () => {
   }));
 
   parityTest('a managed brain adds, archives, restores and removes a source in its own checkout under topology locks', {
-    methods: ['worktreeClaimStore', 'readSourceMembership', 'readTopologyChange'],
+    methods: ['worktreeClaimStore', 'readSourceMembership', 'readTopologyChange', 'topologyStore'],
     timeout: 180_000,
   }, async (engine, backend) => withManagedCheckout(engine, backend, { activate: true }, async (home) => {
     const second = join(home, 'second');
@@ -190,9 +208,28 @@ describe('managed mode on a Rust brain, hold kept for users', () => {
       steps.push({ registered: member !== null, archived: member?.archived ?? null });
     };
     await step({ operation: 'add', sourceId: 'second', path: second });
+    // A page in the new source, so the remove deletes pages in its batches and with the incarnation.
+    await putSettled(engine, 'second', 'notes/ivy-example', 'Ivy Example');
+    steps.push({ page: (await engine.getPage('notes/ivy-example', { sourceId: 'second' }))?.title ?? null });
     await step({ operation: 'archive', sourceId: 'second' });
     await step({ operation: 'restore', sourceId: 'second' });
     await step({ operation: 'remove', sourceId: 'second', confirmDestructive: true });
+    steps.push({ pageAfterRemove: (await engine.getPage('notes/ivy-example', { sourceId: 'second' }))?.title ?? null });
+    // Purge follows an archive; the source and its page go, its files stay on disk.
+    const third = join(home, 'third');
+    gitCheckout(third, 'jade-example.md', '---\ntitle: Jade Example\n---\nWorks at acme-example.\n');
+    await step({ operation: 'add', sourceId: 'second', path: third });
+    await putSettled(engine, 'second', 'notes/kim-example', 'Kim Example');
+    await step({ operation: 'purge', sourceId: 'second', confirmDestructive: true });
+    await step({ operation: 'archive', sourceId: 'second' });
+    await step({ operation: 'purge', sourceId: 'second', confirmDestructive: true });
+    steps.push({ purged: (await engine.getPage('notes/kim-example', { sourceId: 'second' })) === null, filesKept: existsSync(join(third, 'notes', 'kim-example.md')) });
+    // What every engine must do, so equal arms cannot all be wrong together.
+    const states = steps.map(step => (step as { state?: string; refused?: string; operation?: string }))
+      .filter(step => step.state || step.refused).map(step => step.refused ?? `${step.operation}:${step.state}`);
+    expect(states).toEqual(['add:committed', 'archive:committed', 'restore:committed', 'remove:committed', 'add:committed', 'invalid_params',
+      'archive:committed', 'purge:committed']);
+    expect(steps.slice(-1)).toEqual([{ purged: true, filesKept: true }]);
     return steps;
   }));
 
@@ -236,7 +273,9 @@ describe('managed mode on a Rust brain, hold kept for users', () => {
     const linked = async () => (await engine.getLinks('notes/erin-example', { sourceId: 'work' })).map(l => l.to_slug);
     const afterAdd = { file: fenced(), links: await linked() };
     steps.push(await call('remove_link', { from: 'notes/erin-example', to: 'notes/frank-example', link_type: 'mentions' }));
-    return { steps, afterAdd, afterRemove: { file: fenced(), links: await linked() } };
+    const out = { steps, afterAdd, afterRemove: { file: fenced(), links: await linked() } };
+    expect(out).toEqual({ steps: ['ok', 'ok', 'ok', 'ok'], afterAdd: { file: true, links: ['notes/frank-example'] }, afterRemove: { file: false, links: [] } });
+    return out;
   }));
 
   parityTest('a lifecycle change of the claimed source itself refuses while managed writes are pending, by code', {
