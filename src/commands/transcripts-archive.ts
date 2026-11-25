@@ -6,6 +6,7 @@
  *   status                       readers as of the last run, pinned timezone, archived and held days (reads no session)
  *   adopt-legacy --dir <folder>  list the days an old archive folder covers (--apply records them so backfill skips them)
  *   on | off                     turn the archive on or off for this brain
+ *   setup-import ...             the history import gbrain setup offers on a new personal install (transcripts-archive-setup-import.ts)
  *
  * Core: src/core/transcripts/archive.ts. Trusted local CLI only; no MCP operation.
  */
@@ -20,6 +21,7 @@ const HELP = `Usage:
   gbrain transcripts archive status [--source S] [--json]
   gbrain transcripts archive adopt-legacy --dir <folder> [--dry-run | --apply] [--source S] [--json]
   gbrain transcripts archive on | off [--json]
+  gbrain transcripts archive setup-import receipt|preview|run|decline|card ...   (the history import gbrain setup offers; --help)
 
 Writes one redacted page per conversation per local day (conversations/<harness>/<day>/...) plus a day index
 (conversations/days/<day>) into the archive source (default "conversations"). On by default on a personal brain,
@@ -39,6 +41,11 @@ export async function runTranscriptsArchive(engine: BrainEngine, args: string[],
   const sourceId = flag(rest, '--source');
   const out = (doc: unknown, human: () => void) => { if (json) console.log(JSON.stringify(doc, null, 2)); else human(); };
   const archive = await import('../core/transcripts/archive.ts');
+
+  if (sub === 'setup-import') {
+    const { runSetupImport } = await import('./transcripts-archive-setup-import.ts');
+    return runSetupImport(engine, rest, dispatch);
+  }
 
   if (!sub || sub === '--help' || sub === '-h' || rest.includes('--help') || rest.includes('-h')) {
     console.log(HELP);
