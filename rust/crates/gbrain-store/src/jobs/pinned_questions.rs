@@ -281,3 +281,19 @@ impl Store {
         Ok(Value::Array(pins.iter().map(PinRecord::to_row).collect()))
     }
 }
+
+#[cfg(test)]
+mod key_layout {
+    use super::*;
+
+    /// The pins live under their own two-byte tag `~q` (the interfaces lane's allotment), not under `keys::JOBS`:
+    /// `m 0x2D` and `m 0x2E` are `OAUTH_CODE` and `AUDIT` on rust-engine/main.
+    #[test]
+    fn a_pin_and_its_slug_index_are_keyed_under_the_questions_tag() {
+        let mut row = vec![b'~', b'q', 0x01];
+        row.extend_from_slice(&signed_key(7));
+        assert_eq!(pin_key(7), row);
+        assert_eq!(slug_key("default", "notes/a"), b"~q\x02default\x00notes/a".to_vec());
+        assert_ne!(pin_key(7)[0], keys::JOBS);
+    }
+}
