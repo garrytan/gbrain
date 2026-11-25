@@ -558,7 +558,7 @@ fn aliases_are_copied_and_retries_skip() {
     let r = import(&s, "slug_aliases", vec![slug_alias.clone()]);
     assert_eq!(r.imported, 1);
     let found = s
-        .resolve_slug_with_alias_detailed("people/alice", &["default".to_string()])
+        .resolve_slug_with_alias_detailed("people/alice", &["default".to_string()], None)
         .unwrap()
         .unwrap();
     assert_eq!(found.canonical_slug, "people/alice-example");

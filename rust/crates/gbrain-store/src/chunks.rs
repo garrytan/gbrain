@@ -1252,6 +1252,9 @@ pub struct GetChunksOptions {
     /// `requireSafeChunks`: only a page past the chunker-version fence (`safeChunksFilter(p)`)
     /// has chunks to read.
     pub require_safe_chunks: bool,
+    /// `excludePrivate`: only a page the page policy keeps (`facts/privacy.rs` `page_hidden`) has
+    /// chunks to read.
+    pub exclude_private: Option<crate::facts::PrivacyPolicy>,
 }
 
 /// The page's visible chunks as `getChunks` returns them, with their vectors when `with_vectors`. A sealed read takes
@@ -1538,12 +1541,18 @@ impl Store {
         let mut seen = HashSet::new();
         sources.retain(|id| seen.insert(id.clone()));
         let mut rows: Vec<(DocumentKey, String, Value)> = Vec::new();
+        let mut owner_only = crate::facts::OwnerOnlyCache::default();
         for source in sources {
             // The slug is matched as written, and a soft-deleted page is read like a live one: PGLite's
             // chunk read has neither a case fold nor a `deleted_at` filter.
             let Some(page) = read_page(&*read, &source, slug)? else {
                 continue;
             };
+            if let Some(policy) = &options.exclude_private
+                && owner_only.page_hidden(&*read, &page, policy)?
+            {
+                continue;
+            }
             if !options.include_unsealed
                 && page.text_projection_revision.as_deref()
                     != Some(page.knowledge_revision.as_str())

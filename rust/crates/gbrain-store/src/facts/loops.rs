@@ -19,6 +19,7 @@
 
 pub(crate) mod mutes;
 
+use super::purge_probe::{EachRow, ProbeCell, ProbeRow, each_json};
 use crate::env::{iso, parse_iso};
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
 use crate::jsonb;
@@ -274,6 +275,53 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
         }
     }
     Ok(())
+}
+
+/// A page purge's scrub of the loops (`deletePurgedSlugStoreRows` on `open_loops`): deletes the loops of `source_id` whose
+/// `page_slug` is one of `slugs`, with their dedupe keys; how many.
+pub(crate) fn remove_for_slugs(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    slugs: &std::collections::BTreeSet<&str>,
+) -> Result<u64> {
+    let mut found = Vec::new();
+    scan_prefix(tx, &source_prefix(source_id), false, &mut |k, v| {
+        if let Some(id) = keys::be8(v) {
+            found.push((k.to_vec(), id));
+        }
+        true
+    })?;
+    let mut removed = 0;
+    for (key, id) in found {
+        let Some(row) = read_row(&*tx, id)? else {
+            continue;
+        };
+        if row.page_slug.as_deref().is_some_and(|s| slugs.contains(s)) {
+            tx.delete(&key)?;
+            tx.delete(&row_key(id))?;
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
+/// A page purge receipt's probe of the loops (`countPurgeStoreProbe` on `open_loops`): how many loops of `source_id` are
+/// filed under `slug`.
+pub(crate) fn count_for_slug(read: &dyn KvRead, source_id: &str, slug: &str) -> Result<usize> {
+    let mut ids = Vec::new();
+    scan_prefix(read, &source_prefix(source_id), false, &mut |_, v| {
+        if let Some(id) = keys::be8(v) {
+            ids.push(id);
+        }
+        true
+    })?;
+    let mut count = 0;
+    for id in ids {
+        if read_row(read, id)?.is_some_and(|row| row.page_slug.as_deref() == Some(slug)) {
+            count += 1;
+        }
+    }
+    Ok(count)
 }
 
 impl Store {
@@ -744,6 +792,39 @@ pub(crate) fn all_rows(read: &dyn KvRead, op: &str) -> Result<Vec<(u64, LoopReco
         return Err(StoreError::invalid(format!("{op}: corrupt record: {e}")));
     }
     Ok(rows)
+}
+
+/// The `open_loops` rows as the table probe of a fact purge's receipt reads them (`purge_probe.rs`), every source's, in id order.
+pub(crate) fn probe_loops(read: &dyn KvRead, f: EachRow) -> Result<()> {
+    each_json::<LoopRecord>(read, &[keys::FACT, ROW], &mut |_, l| {
+        f(ProbeRow {
+            source_id: Some(l.source_id.clone()),
+            cells: vec![
+                ("source_id", ProbeCell::text(&l.source_id)),
+                ("dedup_key", ProbeCell::text(&l.dedup_key)),
+                ("loop_type", ProbeCell::text(&l.loop_type)),
+                (
+                    "counterparty_slug",
+                    ProbeCell::opt_text(l.counterparty_slug.as_deref()),
+                ),
+                (
+                    "counterparty_source_id",
+                    ProbeCell::opt_text(l.counterparty_source_id.as_deref()),
+                ),
+                (
+                    "counterparty_email",
+                    ProbeCell::opt_text(l.counterparty_email.as_deref()),
+                ),
+                ("summary", ProbeCell::text(&l.summary)),
+                ("evidence", ProbeCell::jsonb(&l.evidence)),
+                ("thread_id", ProbeCell::opt_text(l.thread_id.as_deref())),
+                ("page_slug", ProbeCell::opt_text(l.page_slug.as_deref())),
+                ("status", ProbeCell::text(&l.status)),
+                ("detector", ProbeCell::text(&l.detector)),
+                ("closed_by", ProbeCell::opt_text(l.closed_by.as_deref())),
+            ],
+        })
+    })
 }
 
 /// The shadow follow (`seed/follow.rs`): removes the loop `id` with its dedup key. `false` when

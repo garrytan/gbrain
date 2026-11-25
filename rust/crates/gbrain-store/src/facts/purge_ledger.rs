@@ -386,6 +386,103 @@ impl Store {
         })
     }
 
+    /// `insertPageFactPurges`: `INSERT ... SELECT DISTINCT` of the page purge: one tombstone for each distinct
+    /// (visibility, entity or `*`, fingerprint) of the page's facts that are not outcome markers, reason `page purge`,
+    /// at the transaction clock; a tombstone that exists keeps its columns (`ON CONFLICT DO NOTHING`). A missing source
+    /// fails as the foreign key does, but only when there is a row to insert.
+    pub fn insert_page_fact_purges(
+        &self,
+        source_id: &str,
+        slug: &str,
+        request_id: &str,
+        actor: &str,
+    ) -> Result<()> {
+        let op = "insertPageFactPurges";
+        no_nul(
+            op,
+            &[("sourceId", source_id), ("slug", slug), ("actor", actor)],
+        )?;
+        if !is_uuid(request_id) {
+            return Err(StoreError::invalid(format!(
+                "{op}: requestId is not a UUID"
+            )));
+        }
+        let request_id = request_id.to_lowercase();
+        self.write(|tx| {
+            let rows = super::page_purge_reads::page_fact_tombstones(&*tx, source_id, slug)?;
+            if rows.is_empty() {
+                return Ok(());
+            }
+            require_source(tx, source_id)?;
+            let purged_at_us = crate::env::transaction_clock::transaction_now()
+                .unwrap_or_else(|| self.env.now_micros());
+            for (hash, visibility, subject) in rows {
+                let k = key(&[source_id, &visibility, &subject, &hash]);
+                if get_json::<PurgeRecord>(tx, &k)?.is_some() {
+                    continue;
+                }
+                put_json(
+                    tx,
+                    &k,
+                    &PurgeRecord {
+                        request_id: Some(request_id.clone()),
+                        actor: Some(actor.to_string()),
+                        reason: Some("page purge".to_string()),
+                        purged_at_us,
+                    },
+                )?;
+            }
+            Ok(())
+        })
+    }
+
+    /// `deleteFactPurgesByRequests`: removes the source's fact tombstones of these purge requests; how many.
+    pub fn delete_fact_purges_by_requests(
+        &self,
+        source_id: &str,
+        request_ids: &[String],
+    ) -> Result<u64> {
+        let op = "deleteFactPurgesByRequests";
+        no_nul(op, &[("sourceId", source_id)])?;
+        let mut wanted = BTreeSet::new();
+        for id in request_ids {
+            if !is_uuid(id) {
+                return Err(StoreError::invalid(format!(
+                    "{op}: requestIds holds a value that is not a UUID"
+                )));
+            }
+            wanted.insert(id.to_lowercase());
+        }
+        self.write(|tx| {
+            let mut doomed = Vec::new();
+            let mut failed = None;
+            scan_prefix(&*tx, &key(&[source_id]), false, &mut |k, v| {
+                match serde_json::from_slice::<PurgeRecord>(v) {
+                    Ok(r) => {
+                        if r.request_id.as_ref().is_some_and(|id| wanted.contains(id)) {
+                            doomed.push(k.to_vec());
+                        }
+                    }
+                    Err(e) => {
+                        failed = Some(e);
+                        return false;
+                    }
+                }
+                true
+            })?;
+            if let Some(e) = failed {
+                return Err(StoreError::invalid(format!(
+                    "{op}: corrupt fact purge record: {e}"
+                )));
+            }
+            let count = doomed.len() as u64;
+            for k in doomed {
+                tx.delete(&k)?;
+            }
+            Ok(count)
+        })
+    }
+
     /// `isFactPurged`: whether a tombstone of the source at `visibility` names the fingerprint of
     /// `claim` for subject `*` or `entity_slug`. A visibility outside the CHECK matches nothing.
     pub fn is_fact_purged(
