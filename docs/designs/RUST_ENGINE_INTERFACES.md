@@ -235,6 +235,7 @@ branch, and the reserved ones, with the owner who claimed it. The rules:
 | `0` | `GUEST_SOURCE` | not named on the branch; the trunk names it at intake | branch rust-engine/collate-equal |
 | `3` | `SECRET_STORE` | lane 10 | reserved (the trunk holds it for the secret store) |
 | `~` | `FAMILY_ESCAPE` | core | main once this lands: the escape for two-byte family tags |
+| `~L` | `LEASES` | multi-user lane L5 (writers on many hosts) | branch rust-engine/mu-hosts: leases with epochs, consumer rows, fact sequences, clock high-water, claim epochs (`leases.rs`) |
 
 Free one-byte tags: the digits `4` to `9` (approved rows only) and punctuation other than `~`, which stays unclaimed
 unless a reviewed change to this table names it.

@@ -45,7 +45,7 @@ import type { BrainMaturityRow, OnboardSignal } from './engine-sql/health.ts';
 import type { EntityTypeFilter } from './schema-pack/entity-types.ts';
 import type { ChunkMove } from './page-state/chunk-moves.ts';
 import type { DerivedAliasRow } from './engine-sql/pages.ts';
-import type { DrainLeaseHolderRecord } from './engine-sql/cycle-locks.ts';
+import type { DrainLeaseHolderRecord } from './engine-sql/cycle-locks.ts'; import type { FenceOpts } from './engine-sql/lease-token.ts';
 import type { DrainHolderProgressRow } from './engine-sql/persistence-journal.ts';
 import type { WriteRequest } from './persistence/model.ts';
 import type { CanonicalTimelineRow, TimelineDetailRefresh, TimelineRowRemoval } from './engine-sql/timeline.ts';
@@ -4359,7 +4359,7 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
     acquisitionToken: string;
     ttlMinutes: number;
     stealGraceSeconds: number;
-  }): Promise<{ id: string; fence: string } | null>;
+  } & FenceOpts): Promise<{ id: string; fence: string } | null>;
 
   /**
    * Renew the lease: push `ttl_expires_at` out by `ttlMinutes` and stamp `last_refreshed_at`, only when the row still
@@ -4371,10 +4371,10 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
     holderPid: number;
     acquisitionToken: string;
     ttlMinutes: number;
-  }, queryOpts?: { signal?: AbortSignal }): Promise<boolean>;
+  } & FenceOpts, queryOpts?: { signal?: AbortSignal }): Promise<boolean>;
 
   /** Release the lease: delete the row only when pid and token still match. Returns whether a row was deleted (false: already released or taken over). */
-  releaseCycleLock(lockId: string, opts: { holderPid: number; acquisitionToken: string }): Promise<boolean>;
+  releaseCycleLock(lockId: string, opts: { holderPid: number; acquisitionToken: string } & FenceOpts): Promise<boolean>;
 
   /** Read lease rows (see `CycleLockFilter`). A read: no side effects, no acquire. */
   readCycleLocks(filter: CycleLockFilter): Promise<CycleLockRow[]>;
@@ -4383,15 +4383,15 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   /** Writes a drain lease's holder record, replacing the source's former one, in one statement (engine-sql/cycle-locks.ts). */
   writeDrainLeaseHolder(record: DrainLeaseHolderRecord): Promise<void>;
   /** Renews the drain-lease holder record carrying `lockToken` by `ttlMinutes` (engine-sql/cycle-locks.ts). */
-  refreshDrainLeaseHolder(lockToken: string, ttlMinutes: number): Promise<void>;
+  refreshDrainLeaseHolder(lockToken: string, ttlMinutes: number, opts?: FenceOpts): Promise<void>;
   /** Deletes the drain-lease holder record carrying `lockToken` (engine-sql/cycle-locks.ts). */
-  releaseDrainLeaseHolder(lockToken: string): Promise<void>;
+  releaseDrainLeaseHolder(lockToken: string, opts?: FenceOpts): Promise<void>;
 
   /**
    * Snapshot-matched delete (`gbrain sync --break-lock`, the dead-holder reaper, takeover): one DELETE matching the
    * observed id, pid and token, so a reused pid or a fresh holder is never removed. True when it deleted the row.
    */
-  deleteCycleLock(lockId: string, opts: { holderPid: number; acquisitionToken: string }): Promise<boolean>;
+  deleteCycleLock(lockId: string, opts: { holderPid: number; acquisitionToken: string } & FenceOpts): Promise<boolean>;
 
   /**
    * Age-gated delete (`gbrain sync --break-lock --max-age`): as `deleteCycleLock`, but only when the row's
@@ -4402,7 +4402,7 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
     holderPid: number;
     acquisitionToken: string;
     maxAgeSeconds: number;
-  }): Promise<{ deleted: boolean; lastRefreshedAt: Date | null }>;
+  } & FenceOpts): Promise<{ deleted: boolean; lastRefreshedAt: Date | null }>;
 
   /**
    * Page embedding leases (`embed-page:<page id>`, page-embedding-lease.ts owns the policy). Take: insert the row, or
@@ -4420,7 +4420,7 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
    * The lease fence: true when `lockId` is still held under `acquisitionToken` and unexpired. Inside a transaction it
    * holds the row `FOR KEY SHARE` until commit, so the holder's renewal passes and a takeover or delete waits.
    */
-  assertCycleLease(lockId: string, acquisitionToken: string): Promise<boolean>;
+  assertCycleLease(lockId: string, acquisitionToken: string, opts?: FenceOpts): Promise<boolean>;
 
 
 

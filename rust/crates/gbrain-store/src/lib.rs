@@ -9,7 +9,6 @@
 //! addon method and each `StoreError::code` into a JavaScript `Error.code`.
 
 pub mod access_derive;
-pub mod scope;
 mod access_flag;
 mod access_key_split;
 pub mod access_member_links;
@@ -21,9 +20,12 @@ mod cascade;
 pub mod chronicle_reads;
 pub mod chunks;
 pub mod cli_reads;
+pub mod clock_floor;
 pub mod config;
+pub mod consumers;
 pub mod env;
 pub mod error;
+pub mod fence;
 #[cfg(test)]
 mod fingerprint_fixture;
 #[cfg(feature = "fjall")]
@@ -35,6 +37,7 @@ pub(crate) mod jsonb;
 pub mod keys;
 pub mod keyspaces;
 pub mod kv;
+pub mod leases;
 pub mod link_slug_reads;
 pub mod links;
 pub mod occ_kv;
@@ -48,6 +51,7 @@ pub mod pages;
 pub mod read_shared;
 pub mod redb_kv;
 pub mod retrieval_feedback;
+pub mod scope;
 pub mod search;
 pub mod seed;
 pub mod shared_skill_catalog;
@@ -146,6 +150,7 @@ pub mod wanted_links;
 pub mod write_attribution;
 pub mod write_guards;
 pub mod write_misc;
+pub mod write_origin;
 mod write_receipt;
 pub mod write_trust;
 
@@ -190,6 +195,10 @@ pub struct OpenOptions {
     /// brain records the write gate's scan baseline under it, as migration v227 does on the SQL engines;
     /// `None` records it under `DEFAULT_WRITE_GATE_DETECTOR_VERSION`.
     pub write_gate_detector_version: Option<u32>,
+    /// Multi-user mode (I-0, `GBRAIN_RUST_MULTIUSER=1` or config `engine.rust.multiuser: true`, resolved by the
+    /// caller per brain). It implies `concurrent_writes`, and protected entry points then require a lease fence
+    /// (`leases.rs`). Off (the default), the store behaves exactly as without the field.
+    pub multiuser: bool,
 }
 
 impl Default for OpenOptions {
@@ -203,6 +212,7 @@ impl Default for OpenOptions {
             keyword_index_builder: true,
             initial_config: Vec::new(),
             write_gate_detector_version: None,
+            multiuser: false,
         }
     }
 }
@@ -215,6 +225,17 @@ pub struct StoreInfo {
     pub schema_version: u32,
     /// True when this open created the brain.
     pub created: bool,
+    /// True when the brain runs in multi-user mode (`Store::multiuser`). Left out of the serialized info when false,
+    /// so an open with the mode off reports exactly what it did before.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub multiuser: bool,
+}
+
+/// The config row that turns multi-user mode on for one brain (I-0): `engine.rust.multiuser` set to `true` or `1`.
+pub const MULTIUSER_CONFIG_KEY: &str = "engine.rust.multiuser";
+
+fn multiuser_config_on(value: Option<&[u8]>) -> bool {
+    matches!(value, Some(b"true") | Some(b"1"))
 }
 
 /// One open brain. All methods take `&self` and the store is shared across threads. A brain opened
@@ -246,6 +267,8 @@ pub struct Store {
     /// The brain directory, when the store was opened on one (`open_dir`, `open_dir_read_only`):
     /// the snapshot copies its `FORMAT` (`snapshot.rs`). `None` over `open_kv`.
     dir: Option<std::path::PathBuf>,
+    /// `OpenOptions::multiuser` as the brain was opened; bound and sibling stores copy it.
+    multiuser: bool,
 }
 
 /// The record file of a brain directory, with one writer or many. Only for the storage bake-off:
@@ -349,7 +372,19 @@ impl Store {
                 format::check_version_in(stored.format_version, known)?;
             }
         }
-        let kv = open_records(dir, options.concurrent_writes)?;
+        // Multi-user mode from the brain's own config row picks the concurrent store at open; read without opening the
+        // file for writing. A file redb must repair first reads as off here; the open below still reads the row.
+        let config_on = multiuser_config_on(
+            redb_kv::peek(
+                &dir.join(format::RECORDS_FILE),
+                &config::config_key(MULTIUSER_CONFIG_KEY)?,
+            )
+            .as_deref(),
+        );
+        let kv = open_records(
+            dir,
+            options.concurrent_writes || options.multiuser || config_on,
+        )?;
         let mut store = Store::open_kv_in(kv, Arc::new(SystemEnv), options.clone(), known)?;
         store.dir = Some(dir.to_path_buf());
         // FORMAT follows the records: written when missing (a crash before it, or a deleted
@@ -451,6 +486,20 @@ impl Store {
         let schema_version = config::read_config(&*kv.snapshot()?, "version")?
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
+        // Multi-user mode: the caller's resolved switch, or the brain's own config row.
+        let multiuser = options.multiuser
+            || multiuser_config_on(
+                config::read_config(&*kv.snapshot()?, MULTIUSER_CONFIG_KEY)?
+                    .as_deref()
+                    .map(str::as_bytes),
+            );
+        // Multi-user mode: the store's clock never runs below the last committed time (`clock_floor.rs`).
+        let env: Arc<dyn Env> = if multiuser {
+            let floor = clock_floor::read_high_water(&*kv.snapshot()?)?;
+            Arc::new(clock_floor::ClockFloor::new(env, floor))
+        } else {
+            env
+        };
         Ok(Store {
             kv,
             env,
@@ -461,12 +510,14 @@ impl Store {
                 format_version: stored.format_version,
                 schema_version,
                 created,
+                multiuser,
             },
             bound: None,
             builder: Mutex::new(None),
             runs_builder: options.keyword_index_builder,
             flag_assumed,
             dir: None,
+            multiuser,
         })
         .inspect(|store| {
             if index.needs_build && store.runs_builder {
@@ -488,6 +539,7 @@ impl Store {
             runs_builder: false,
             flag_assumed: self.flag_assumed,
             dir: self.dir.clone(),
+            multiuser: self.multiuser,
         }
     }
 
@@ -556,6 +608,7 @@ impl Store {
             runs_builder: false,
             flag_assumed: self.flag_assumed,
             dir: self.dir.clone(),
+            multiuser: self.multiuser,
         }
     }
 
@@ -565,6 +618,11 @@ impl Store {
 
     pub fn brain_id(&self) -> &str {
         &self.info.brain_id
+    }
+
+    /// True when the brain was opened in multi-user mode (`OpenOptions::multiuser`).
+    pub fn multiuser(&self) -> bool {
+        self.multiuser
     }
 
     /// The commit sequence of the latest commit.
@@ -643,7 +701,13 @@ impl Store {
             // A bound store's env is the transaction's clock (`transactions.rs`, "Time").
             let _clock = crate::env::transaction_clock::open(self.env.clone());
             let _trust = crate::write_trust::stamp_context::open(stamp_trust()?);
-            return tx.statement(|w| write_chain(w, &mut f));
+            return tx.statement(|w| {
+                let value = write_chain(w, &mut f)?;
+                if self.multiuser {
+                    clock_floor::raise_high_water(w, self.env.now_micros())?;
+                }
+                Ok(value)
+            });
         }
         let mut locked: std::collections::BTreeSet<Vec<u8>> = std::collections::BTreeSet::new();
         let mut attempt = 0u32;
@@ -657,6 +721,12 @@ impl Store {
                 let _clock = crate::env::transaction_clock::open(self.env.clone());
                 let _trust = crate::write_trust::stamp_context::open(stamp_trust()?);
                 match write_chain(&mut *tx, &mut f) {
+                    Ok(value) if self.multiuser => {
+                        match clock_floor::raise_high_water(&mut *tx, self.env.now_micros()) {
+                            Ok(()) => tx.commit().map(|_| value),
+                            Err(e) => Err(e),
+                        }
+                    }
                     Ok(value) => tx.commit().map(|_| value),
                     Err(e) => Err(e),
                 }

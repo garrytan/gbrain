@@ -14,6 +14,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import type { RecoveryRecord, WriteRequest } from '../persistence/model.ts';
+import type { FenceOpts, LeaseToken } from './lease-token.ts';
 
 type RawSql = Pick<BrainEngine, 'executeRaw'>;
 
@@ -27,7 +28,7 @@ export interface RecoveryStagingRow { recovery: unknown; recovery_bytes: number 
 /** The worktree row guardOwnership compares with the request. */
 export interface WorktreeOwnerRow { owner_host_id: string | null; owner_epoch: string | number; state: string }
 /** A recovery to record: `keys` are the counter rows its bytes are reserved on. */
-export interface RecoveryReservation { id: string; executionToken: string | null; recovery: RecoveryRecord; bytes: number; keys: string[] }
+export interface RecoveryReservation { id: string; executionToken: string | null; recovery: RecoveryRecord; bytes: number; keys: string[]; fence?: LeaseToken }
 /** The failure a refused publication keeps (the first one recorded wins). */
 export interface RecoveringFailure { code: string; message: string; detail?: unknown }
 
@@ -57,9 +58,9 @@ export interface PublicationJournalStore {
   /** Clears the request's recovery and releases `bytes` from `keys`. */
   clearRecovery(id: string, keys: string[], bytes: number): Promise<void>;
   /** A request still running or recovering under the token moves to `recovering` with `reason`; the first failure is kept. */
-  markRecovering(id: string, executionToken: string | null, reason: string, failure?: RecoveringFailure): Promise<void>;
+  markRecovering(id: string, executionToken: string | null, reason: string, failure?: RecoveringFailure, opts?: FenceOpts): Promise<void>;
   /** Stamps `publication_started` on the request and returns it (the row lock of the publication). */
-  markPublicationStarted(id: string): Promise<WriteRequest | null>;
+  markPublicationStarted(id: string, opts?: FenceOpts): Promise<WriteRequest | null>;
   /** A running or recovering request with a recovery record waits for a publication slot (`writer_pool_capacity`). */
   blockCapacity(id: string): Promise<WriteRequest | null>;
   /** A live request moves to `recovering` with `reason`; a terminal one keeps its state and takes the reason. */

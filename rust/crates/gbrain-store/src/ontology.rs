@@ -245,7 +245,7 @@ impl Store {
                 free_key(tx, trust, obs, valid_from)?;
                 row.expired_at_us = Some(now);
                 row.consolidated_into = Some(cur.id as i64);
-                return Ok(match insert(tx, trust, &mut row)? {
+                return Ok(match insert(tx, trust, &mut row, self.multiuser())? {
                     true => {
                         json!({ "action": "corroborated", "factId": row.id, "supersededId": null })
                     }
@@ -253,7 +253,7 @@ impl Store {
                 });
             }
             free_key(tx, trust, obs, valid_from)?;
-            if !insert(tx, trust, &mut row)? {
+            if !insert(tx, trust, &mut row, self.multiuser())? {
                 return Ok(noop.clone());
             }
             let mut superseded = None;
@@ -554,7 +554,12 @@ fn free_key(
 
 /// `INSERT ... ON CONFLICT (stint key) DO NOTHING`: the row's checks, then the stint key, then the
 /// source (the foreign key Postgres checks after the row). True when the row was stored.
-fn insert(tx: &mut dyn KvWrite, trust: &WriteTrust, row: &mut FactRecord) -> Result<bool> {
+fn insert(
+    tx: &mut dyn KvWrite,
+    trust: &WriteTrust,
+    row: &mut FactRecord,
+    multiuser: bool,
+) -> Result<bool> {
     check_row("mergeOntologyFact", row)?;
     let held = stint_holder(
         tx,
@@ -571,6 +576,9 @@ fn insert(tx: &mut dyn KvWrite, trust: &WriteTrust, row: &mut FactRecord) -> Res
     require_fact_source(tx, &row.source_id)?;
     row.id = next_id(tx, COUNTER)?;
     write_fact(tx, trust, None, row)?;
+    if multiuser {
+        crate::facts::entity_order::stamp_new_row(tx, row)?;
+    }
     Ok(true)
 }
 

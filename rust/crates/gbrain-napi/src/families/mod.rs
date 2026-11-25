@@ -2,10 +2,10 @@
 //! block; napi-rs merges the blocks into one JavaScript class. Every family is listed once, here,
 //! so building a family never edits this list.
 
-pub(crate) mod access_scope;
 mod access_members;
 mod access_read_log;
 mod access_rules;
+pub(crate) mod access_scope;
 mod belief_ledger;
 mod belief_purge;
 mod brief_reads;
@@ -94,6 +94,7 @@ mod chronicle_ledger;
 mod chronicle_state;
 mod chunk_queries;
 mod code_edges;
+mod consumers;
 mod contradictions;
 mod decide_store;
 mod derivation_trust;
@@ -142,6 +143,7 @@ mod handover_reads;
 mod jobs;
 mod keyword;
 mod label_door;
+mod leases;
 mod link_queries;
 mod link_temporal;
 mod memory_mutation_reads;

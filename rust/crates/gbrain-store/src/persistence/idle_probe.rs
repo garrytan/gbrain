@@ -335,6 +335,7 @@ mod tests {
         assert!(probe(&s), "a queued write is work");
         let claimed = s
             .stamp_write_claim(&crate::persistence::ClaimStamp {
+                fence: None,
                 id,
                 token: "c0000000-0000-4000-8000-0000000000c1".into(),
                 lease_ms: 30_000.0,

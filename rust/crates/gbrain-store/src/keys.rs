@@ -141,6 +141,10 @@ pub const SECRET_STORE: u8 = b'3';
 /// each in its own contiguous range. No one-byte family ever takes `~`.
 pub const FAMILY_ESCAPE: u8 = b'~';
 
+/// Family `leases` (`leases.rs`): leases with epochs, consumer heartbeat rows, per-entity fact sequences, the clock
+/// high-water mark and claim epochs of the multi-user build. The byte after the tag names the record (`leases.rs`).
+pub const LEASES: [u8; 2] = family_tag(b'L');
+
 /// The two-byte tag of a family under `FAMILY_ESCAPE`. `family` is never `0x00` (the storage adapter's byte).
 pub const fn family_tag(family: u8) -> [u8; 2] {
     assert!(family != 0, "a family byte is never 0x00");
