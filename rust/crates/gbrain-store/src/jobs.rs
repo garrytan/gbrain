@@ -1783,7 +1783,11 @@ impl Store {
             StoreError::invalid("deleteCycleLockIfStale: maxAgeSeconds is required")
         })?;
         self.write(|tx| {
-            fence::begin(self, tx, opts.fence.as_ref(), "delete_cycle_lock_if_stale")?;
+            // Deleting a stale lock is cleanup an operator runs (`--break-lock`) without a host registration: it only
+            // removes a lock whose holder already lapsed, so it is fenced only when the caller sends a fence.
+            if opts.fence.is_some() {
+                fence::begin(self, tx, opts.fence.as_ref(), "delete_cycle_lock_if_stale")?;
+            }
             let now = self.env.now_micros();
             let key = lock_key(lock_id);
             let none = json!({ "deleted": false, "lastRefreshedAt": null });

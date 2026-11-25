@@ -3597,7 +3597,7 @@ More: [docs/guides/write-refusals.md#label_edit_refused](../../docs/guides/write
 
 Reasons: `not_found`, `epoch_moved`, `released`, `expired`, `fence_missing`, `claim_epoch_mismatch`.
 
-More: [docs/designs/rust-engine/multi-user-server.md](../../docs/designs/rust-engine/multi-user-server.md)
+More: [docs/designs/rust-engine/multi-user-server.md#m3-writers-on-many-machines](../../docs/designs/rust-engine/multi-user-server.md#m3-writers-on-many-machines)
 
 ### legacy_job_selection_invalid
 

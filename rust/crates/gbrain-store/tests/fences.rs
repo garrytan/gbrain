@@ -595,12 +595,10 @@ fn a_cycle_lock_holder_whose_host_lease_was_taken_over_cannot_refresh_or_release
             .unwrap_err(),
         "fence_missing",
     );
-    refused(
-        &b.store
-            .delete_cycle_lock_if_stale("gbrain-sync:default", &lock_holder(LOCK_TOKEN, None))
-            .unwrap_err(),
-        "fence_missing",
-    );
+    // An operator's stale-lock delete (`--break-lock`) runs with no fence; a live lock is not stale, so it stays.
+    b.store
+        .delete_cycle_lock_if_stale("gbrain-sync:default", &lock_holder(LOCK_TOKEN, None))
+        .unwrap();
     assert_eq!(
         b.store
             .read_cycle_locks(&gbrain_store::jobs::LockFilter::All)
