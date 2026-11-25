@@ -12,6 +12,7 @@
  *
  * Every function takes the engine (or transaction) it runs on and returns plain values: counts as numbers.
  */
+import { dropPurgedCandidates, holdOwnedByDeletedPageSql } from '../write-gate-binding.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { IntentRedactionTarget } from '../persistence/intent-redaction.ts';
 import { stagingNeedsTextSql } from '../page-body/schema.ts';
@@ -40,8 +41,12 @@ export async function deletePurgedPageTrustProposals(engine: Raw, sourceId: stri
 }
 
 /** The page's held writes (every hold of the slug in the source); their ids as text, in id order. Writes write_gate_holds; run it in the purge transaction. */
-export async function deletePurgedPageHolds(engine: Raw, sourceId: string, slug: string): Promise<string[]> {
-  const rows = await engine.executeRaw<{ id: string }>('DELETE FROM write_gate_holds WHERE source_id=$1 AND slug=$2 RETURNING id::text AS id', [sourceId, slug]);
+export async function deletePurgedPageHolds(engine: Raw, sourceId: string, slug: string, pageId: number | null = null): Promise<string[]> {
+  const { text, params } = renderFragment(sqlFragment`WITH d(pid, slug) AS (SELECT ${pageId}::bigint, ${slug}::text)
+    DELETE FROM write_gate_holds h USING d WHERE h.source_id=${sourceId} AND ${trustedSql(holdOwnedByDeletedPageSql('h', 'd.pid', 'd.slug'))} RETURNING h.id::text AS id`);
+  const rows = await engine.executeRaw<{ id: string }>(text, params);
+  // A hold marked with candidate pages stays while a candidate survives; the purged page leaves its list (write-gate-binding.ts).
+  rows.push(...(await dropPurgedCandidates(engine, sourceId, pageId === null ? [] : [{ id: pageId }])).map(id => ({ id })));
   return rows.map(h => h.id).sort(byId);
 }
 

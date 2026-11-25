@@ -50,6 +50,7 @@ export const RECORDS_MEMBERS = {
   // code_edges
   addCodeEdges: 'code_edges',
   deleteCodeEdgesForChunks: 'code_edges',
+  clearCodeEdgesLeavingChunks: 'code_edges',
   getCallersOf: 'code_edges',
   getCalleesOf: 'code_edges',
   getEdgesByChunk: 'code_edges',

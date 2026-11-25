@@ -7,7 +7,7 @@ This family answers `pingStore`, `getStats`, `getHealth`, `countOnboardSignal`, 
 `findAnomalies` from the
 records the other families keep (pages, chunks, links, tags, timeline entries, sources, config),
 and keeps one table of its own: PGLite's `ingest_log`. The key tag is the reserved `n`. It took no format
-number; the store is at format 6 now ([format.md](format.md)).
+number; the store is at format 7 now ([format.md](format.md)).
 
 | Key | Value | Mirrors |
 | --- | --- | --- |
@@ -63,6 +63,8 @@ two engines share that code instead of copying it:
   `privatePagesFilterForCaller('p')` refuses with `engine_capability_missing`.
 - `listEnrichCandidates` clamps `limit` and `thinThreshold` and turns `reenrichAfterMs` into the
   `enrichedAfter` text. An unknown `order` reads as `inbound-links`, as PGLite's lookup does.
+  `order: 'owner-contact'` refuses with `engine_capability_missing`: the store has no owner-contact
+  ranking yet, and a silent inbound-links answer would mislead.
 
 ## Differences and costs
 

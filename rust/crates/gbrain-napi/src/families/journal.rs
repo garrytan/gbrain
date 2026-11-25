@@ -372,6 +372,29 @@ impl Brain {
         })
     }
 
+    /// `insertRemirrorEffects({ requestId, sourceId, data })`: the kinds inserted, in insert order.
+    #[napi]
+    pub fn insert_remirror_effects<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.insert_remirror_effects(&required(spec, "insertRemirrorEffects spec")?)
+        })
+    }
+
+    /// `readRemirrorEffects(requestId)`: the request's effect states the segmented-mirror apply waits
+    /// on, in kind order.
+    #[napi]
+    pub fn read_remirror_effects<'env>(
+        &self,
+        env: &'env Env,
+        request_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_remirror_effects(&request_id))
+    }
+
     /// `releaseUnpublishedClaim({ id, token, reason, charge })`: `true` when the claim was released.
     #[napi]
     pub fn release_unpublished_claim<'env>(
@@ -692,6 +715,30 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.read_request_effect_states(&request_id, kind.as_deref())
+        })
+    }
+
+    /// `readStaleEmbeddingCounts(sourceIds | null)`: `{ count, failed, requeued }` over doctor's stale embedding effects.
+    #[napi]
+    pub fn read_stale_embedding_counts<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Option<Vec<String>>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_stale_embedding_counts(source_ids.as_deref())
+        })
+    }
+
+    /// `listStaleEmbeddingEffects(sourceIds | null)`: the first 10 of them by effect id.
+    #[napi]
+    pub fn list_stale_embedding_effects<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Option<Vec<String>>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_stale_embedding_effects(source_ids.as_deref())
         })
     }
 
@@ -1593,6 +1640,19 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.find_topology_changes(&principal_id, &request_ids)
+        })
+    }
+
+    /// `readTopologyChangeDigest(requestId, sourceId)`: the digest text, or `null`.
+    #[napi]
+    pub fn read_topology_change_digest<'env>(
+        &self,
+        env: &'env Env,
+        request_id: String,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_topology_change_digest(&request_id, &source_id)
         })
     }
 }

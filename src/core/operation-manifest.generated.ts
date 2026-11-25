@@ -8061,5 +8061,34 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     },
     "scope": "write",
     "area": "admin"
+  },
+  {
+    "name": "learned",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": "retrieval",
+    "description": "What the brain learned since you last looked: new facts its extractors saved, facts that disagree (which one is right?), promises people made to you, people who may be the same person (with the gbrain dedupe confirm and reject commands, run on the brain host), thin pages it filled in, and rows you typed into Facts fences (shown, never counted). Default: the items you have not been shown yet from the last 7 days; with since, every item since that date. Grouped by kind, questions first, 15 by default; each item carries a stable id and evidence links (the page or loop it came from). Reading stamps the items as shown. With stats: per-night counts (a night ends at 06:00 in brain.timezone) of items shown, kept, undone and expired, and the share of nights with at least 5 counted items.",
+    "params": {
+      "since": {
+        "type": "string",
+        "description": "ISO date or timestamp (e.g. 2026-11-20). Lists every item recorded since then, shown or not. Default: unseen items of the last 7 days (stats: the last 30 days)."
+      },
+      "limit": {
+        "type": "number",
+        "description": "Most items to return (default 15, at most 100). Every item returned is shown and stamped."
+      },
+      "stats": {
+        "type": "boolean",
+        "description": "Return the per-night stats instead of the items. Shows nothing, so it stamps nothing."
+      }
+    },
+    "scope": "read",
+    "annotations": {
+      "readOnlyHint": true
+    },
+    "cliHints": {
+      "name": "learned"
+    },
+    "area": "insights"
   }
 ];

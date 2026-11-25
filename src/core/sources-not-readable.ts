@@ -24,8 +24,8 @@ import type { OperationContext } from './ops/contract.ts';
 import { opError } from './ops/contract.ts';
 import { federatedSearchScope } from './ops/context.ts';
 import { hostFix } from './ops/op-fix.ts';
-import { resolveExcludePrivatePages } from './search/private-visibility.ts';
 import { isEngineCapabilityRefusal } from './engine-capability-refusal.ts';
+import { resolveExcludePrivatePages } from './search/private-visibility.ts';
 
 const UNSCOPED_READ_OPS: ReadonlySet<string> = new Set(['search', 'query', 'recall', 'list_pages']);
 
@@ -38,13 +38,14 @@ function namesSources(params: Record<string, unknown>): boolean {
 export async function assertUnscopedReadReachesPages(op: string, params: Record<string, unknown>, ctx: OperationContext): Promise<void> {
   if (ctx.remote === false || !UNSCOPED_READ_OPS.has(op) || namesSources(params)) return;
   if (ctx.explicitReadBinding || (ctx.auth !== undefined && (ctx.auth.allowedSources !== undefined || ctx.auth.hasSourceGrant !== false))) return;
-  const scope = federatedSearchScope(ctx);
-  const readable = scope.sourceIds ?? (scope.sourceId !== undefined ? [scope.sourceId] : null);
-  if (!readable) return;
-  let refuse: boolean;
+  let refuse = false;
   try {
-    refuse = await ctx.engine.readUnscopedReadRefusal({
-      readable, withFacts: op === 'recall' || op === 'query', floor: await resolveExcludePrivatePages(ctx.engine, ctx.remote),
+    const scope = federatedSearchScope(ctx);
+    const readable = scope.sourceIds ?? (scope.sourceId !== undefined ? [scope.sourceId] : null);
+    if (!readable) return;
+    refuse = await ctx.engine.readSourcesNotReadable(readable, {
+      facts: op === 'recall' || op === 'query',
+      excludePrivate: await resolveExcludePrivatePages(ctx.engine, ctx.remote),
     });
   } catch (e) {
     // A probe that fails never fails the read; an engine that refuses it is reported rather than answering the empty

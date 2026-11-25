@@ -13,7 +13,8 @@
  *    facts (an ordinary page's, or another source's) would hide claims a purge never named.
  *  - Why existing coverage misses it: fact-purge-sites.test.ts reads the tombstones back with a raw SELECT, which the
  *    Rust arm refuses, so that case stops on the raw read and never compares the member. This file reads them with the
- *    typed claim checks (`isFactPurged`, `readFenceOverlayRows`, `readLedgerSource`) only.
+ *    typed claim checks (`isFactPurged`, `readFenceOverlayRows`, `readLedgerSource`) only. The no-entity case keeps a
+ *    no-entity fact alone on its holding page, so a store that drops the entity rule is caught (audit r2 mutant R05).
  *  - Seam: none. Real engines, typed methods only; the purge fingerprints come from `loadPurgeTarget`, the purge's own
  *    read, so no engine's hash function is assumed.
  */
@@ -106,6 +107,26 @@ describe('engine parity: the holding page purge tombstones', () => {
     });
     const out = { purgesPossible: (await engine.readLedgerSource(SRC))?.purgesPossible };
     expect(out).toEqual({ purgesPossible: false });
+    return out;
+  });
+  parityTest('a fact with no entity on a holding page stores no tombstone, even when it is the only fact the purge names there', {
+    methods: ['putPage', 'insertFacts', 'loadPurgeTarget', 'transaction', 'insertHoldingPagePurges', 'isFactPurged', 'readFenceOverlayRows', 'readLedgerSource'],
+  }, async (engine) => {
+    // The first case also lists a no-entity fact, but on a holding page that an entity fact tombstones anyway, so it
+    // cannot tell whether the entity rule held. Here the no-entity facts are the only ones on their holding pages.
+    for (const slug of [HOLDING, NESTED]) await engine.putPage(slug, page(slug));
+    const claim = 'Gamma opened an office';
+    const bare = await fenced(engine, claim, HOLDING, null);
+    const nestedBare = await fenced(engine, claim, NESTED, null);
+    const hash = await hashOf(engine, bare);
+    await engine.transaction(tx => tx.insertHoldingPagePurges(SRC, 'private', hash, REQ, 'local_cli:me', 'no entity', [bare, nestedBare]));
+    const purged: Record<string, boolean> = {};
+    for (const subject of [HOLDING, NESTED, null]) purged[String(subject)] = await engine.isFactPurged(SRC, 'private', claim, subject);
+    const overlay = (await engine.readFenceOverlayRows({ sourceId: SRC, slug: HOLDING }, [{ row_num: 1, claim, visibility: 'private', fp: null }], { hideHeld: false }))
+      .map(r => [r.row_num, r.purged]);
+    const out = { purged, overlay, purgesPossible: (await engine.readLedgerSource(SRC))?.purgesPossible };
+    expect(out.purged).toEqual({ [HOLDING]: false, [NESTED]: false, null: false });
+    expect(out.purgesPossible).toBe(false);
     return out;
   });
 });

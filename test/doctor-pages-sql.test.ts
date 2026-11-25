@@ -77,11 +77,12 @@ describe('doctor pages SQL text', () => {
     expect(SLUG_PATH_CANDIDATE_PATTERN).toBe('[^a-z0-9/._-]|--|-/|/-|^-|-$|//');
   });
 
+  // The scraper scan also says which rows are segmented, so content_sanity counts them from the scan (no second query).
   test('the other reads keep the text the checks ran', () => {
     expect(DOCTOR_PAGES_SQL.scraperJunkLimited).toBe(`SELECT p.slug, p.source_id, p.title,
                   LEFT(p.compiled_truth, 2048) AS body_head,
                   LEFT(COALESCE(p.timeline, ''), 1024) AS tl_head,
-                  p.frontmatter
+                  p.frontmatter, p.body_storage = 'segmented' AS segmented
              FROM pages p
             WHERE p.deleted_at IS NULL
             ORDER BY p.updated_at DESC
@@ -89,7 +90,7 @@ describe('doctor pages SQL text', () => {
     expect(DOCTOR_PAGES_SQL.scraperJunkAll).toBe(`SELECT p.slug, p.source_id, p.title,
                   LEFT(p.compiled_truth, 2048) AS body_head,
                   LEFT(COALESCE(p.timeline, ''), 1024) AS tl_head,
-                  p.frontmatter
+                  p.frontmatter, p.body_storage = 'segmented' AS segmented
              FROM pages p
             WHERE p.deleted_at IS NULL`);
     expect(DOCTOR_PAGES_SQL.markedPages.quarantine).toBe(`SELECT COUNT(*)::int AS n FROM pages p WHERE p.deleted_at IS NULL AND p.frontmatter ? 'quarantine'`);

@@ -130,7 +130,7 @@ describe('callers that once read a quiet default on a Rust brain', () => {
   });
 
   parityTest('an empty unscoped remote read is refused only when its sources hold nothing it can read and another source holds a page', {
-    methods: ['putPage', 'insertFacts', 'readUnscopedReadRefusal'],
+    methods: ['putPage', 'insertFacts', 'readSourcesNotReadable'],
   }, async (engine, backend) => {
     await createSource(engine, backend, 'other');
     const ctx = { engine, remote: true, sourceId: 'default', auth: { hasSourceGrant: false }, config: {}, logger: { info: () => {}, warn: () => {}, error: () => {} } } as unknown as OperationContext;
@@ -147,7 +147,7 @@ describe('callers that once read a quiet default on a Rust brain', () => {
     steps.worldFactSearch = await verdict('search');
     steps.worldFactRecall = await verdict('recall');
     steps.namedSource = await assertUnscopedReadReachesPages('search', { source_id: 'default' }, ctx).then(() => 'answered', (e: { code?: string }) => e.code ?? String(e));
-    steps.direct = String(await engine.readUnscopedReadRefusal({ readable: ['default'], withFacts: false, floor: true }));
+    steps.direct = String(await engine.readSourcesNotReadable(['default'], { facts: false, excludePrivate: true }));
     await engine.putPage('notes/open', note('open'));
     steps.readableHere = await verdict('search');
     expect(steps).toEqual({

@@ -43,7 +43,7 @@ describe('surfaced-read callers', () => {
         labelled: await outcome(() => labelledOnlyFor(engineThrowing('hasLabelledOnlyMemberAmong', error), [['member:alice-example']])),
         lint: await outcome(async () => extractableEmptyCorpus(manifest, { engine: engineThrowing('countLivePagesAtPathPrefix', error) })),
         invalidate: await outcome(() => invalidateQueryCache(engineThrowing('invalidateQueryCacheRows', error), 'default')),
-        reach: await outcome(() => assertUnscopedReadReachesPages('search', {}, ctx('readUnscopedReadRefusal'))),
+        reach: await outcome(() => assertUnscopedReadReachesPages('search', {}, ctx('readSourcesNotReadable'))),
       };
       expect(got).toEqual(want
         ? { labelled: want, lint: want, invalidate: want, reach: want }

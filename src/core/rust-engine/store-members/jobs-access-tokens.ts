@@ -4,7 +4,7 @@
  * `refusing` gives it the SQLSTATE and constraint name PGLite and Postgres raise, so a caller branches on one error shape.
  * The list, the revokes, the active-token grant read and the liveness check are the credential members of
  * engine-sql/access-credentials.ts, and so are the bearer check reads and the OAuth token insert (the store keeps the table:
- * rust/docs/store/oauth-tokens.md); no store call returns a token hash.
+ * rust/docs/store/oauth-tokens.md); no store call here returns a token hash (doctor's whole-row read does: doctor-acc.ts).
  */
 import type { AccessTokenInsert, AccessTokenScopeRow, ActiveAccessTokenRow } from '../../engine-sql/access-tokens.ts';
 import { normalizeOauthClientRow, type OauthClientRow } from '../../engine-sql/oauth-clients.ts';

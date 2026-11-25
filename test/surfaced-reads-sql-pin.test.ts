@@ -1,10 +1,10 @@
 /**
  * The surfaced-read members send PGLite and Postgres the statements their callers sent through executeRaw before the
  * move (src/core/engine-sql/schema-detect.ts path probes, query-cache-invalidate.ts, write-misc.ts
- * hasLabelledOnlyMemberAmong, unscoped-read-reach.ts, access-read-log.ts), copied verbatim from the callers at
- * b7b18e5ab3. Intended differences: the sources_not_readable probe binds its source list once per use ($1, $2, $3), as
- * engine-sql numbers every bound value, where the caller reused $1; the who-read page lookup sorts its source ids
- * COLLATE "C", and the who-read tally breaks a last-read tie by who COLLATE "C", so every engine and locale agree.
+ * hasLabelledOnlyMemberAmong, access-read-log.ts), copied verbatim from the callers at b7b18e5ab3. Intended
+ * differences: the who-read page lookup sorts its source ids COLLATE "C", and the who-read tally breaks a last-read tie
+ * by who COLLATE "C", so every engine and locale agree. The sources_not_readable probe is main's readSourcesNotReadable
+ * (engine-sql/sources.ts), pinned by its own goldens.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: each member sends exactly the text and parameters below for every shape its caller builds.
@@ -17,10 +17,7 @@ import { describe, expect, test } from 'bun:test';
 import { countLivePagesAtPathPrefix, probeUntypedPathPrefix } from '../src/core/engine-sql/schema-detect.ts';
 import { invalidateQueryCacheRows } from '../src/core/engine-sql/query-cache-invalidate.ts';
 import { hasLabelledOnlyMemberAmong } from '../src/core/engine-sql/write-misc.ts';
-import { readUnscopedReadRefusal } from '../src/core/engine-sql/unscoped-read-reach.ts';
 import * as ReadLog from '../src/core/engine-sql/access-read-log.ts';
-import { quarantineFilterFragment } from '../src/core/quarantine.ts';
-import { remoteReadFloorSql } from '../src/core/search/private-visibility.ts';
 
 function recorder(answer: Record<string, unknown>[] = [{ cnt: '2', n: 0, refuse: false }]) {
   const log: Array<[string, unknown[]]> = [];
@@ -69,28 +66,6 @@ describe('surfaced-read members send their callers\' statements', () => {
     await hasLabelledOnlyMemberAmong(r.exec, ['alice-example', 'bob-example']);
     expect(r.log).toEqual([[`SELECT 1 FROM access_members WHERE labelled_only AND id = ANY($1::text[])
       AND id IS DISTINCT FROM (SELECT btrim(value) FROM config WHERE key = $2) LIMIT 1`, [['alice-example', 'bob-example'], 'access.owner_member']]]);
-  });
-
-  test('the sources_not_readable probe, with and without facts and the floor', async () => {
-    for (const withFacts of [false, true]) {
-      for (const floor of [false, true]) {
-        const r = recorder();
-        await readUnscopedReadRefusal(r.raw, { readable: ['default', 'wiki'], withFacts, floor });
-        const visible = ` AND ${quarantineFilterFragment('p')}` + (floor ? ` AND ${remoteReadFloorSql('p')}` : '');
-        const facts = withFacts
-          ? ` OR EXISTS (SELECT 1 FROM facts WHERE source_id = ANY($2::text[]) AND visibility = 'world'
-                       AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()))`
-          : '';
-        const last = withFacts ? '$3' : '$2';
-        expect(r.log).toEqual([[
-          `SELECT CASE WHEN EXISTS (SELECT 1 FROM pages p WHERE p.source_id = ANY($1::text[]) AND p.deleted_at IS NULL${visible})${facts} THEN false
-                   ELSE EXISTS (SELECT 1 FROM pages p JOIN sources s ON s.id = p.source_id
-                                 WHERE p.deleted_at IS NULL AND s.archived IS NOT TRUE AND NOT (p.source_id = ANY(${last}::text[]))${visible})
-              END AS refuse`,
-          Array(withFacts ? 3 : 2).fill(['default', 'wiki']),
-        ]]);
-      }
-    }
   });
 
   test('the access read log insert, prune and reads', async () => {

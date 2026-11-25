@@ -48,6 +48,13 @@ export const readIdentitySiblingCandidates: StoreMember<[sourceId: string, q: Si
     excludePrivate: excludePrivate ?? null }));
 };
 
+/** mentions/siblings.ts siblingCanonical: the live pages at the slugs; the store reads the page policy as readIdentitySiblingCandidates does. */
+export const readSiblingGroupRows: StoreMember<[sourceId: string, slugs: readonly string[], opts?: { excludePrivate?: boolean }], SiblingCandidateRow[]> = (brain, sourceId, slugs, opts) => {
+  const taken = takeOptions('readSiblingGroupRows', opts, ['excludePrivate']);
+  const excludePrivate = storePagePolicy('readSiblingGroupRows', taken.excludePrivate, { callerReaders: true });
+  return storeCall({ member: 'readSiblingGroupRows', sourceId }, () => brain.readSiblingGroupRows(sourceId, [...slugs], excludePrivate ?? null));
+};
+
 /** entities/resolve.ts: the live pages among the slugs; `limit` 2 caps them. */
 export const readLiveSlugs: StoreMember<[sourceId: string, slugs: readonly string[], opts?: { limit?: 2 }], string[]> = (brain, sourceId, slugs, opts) => {
   const { limit } = takeOptions('readLiveSlugs', opts, ['limit']);

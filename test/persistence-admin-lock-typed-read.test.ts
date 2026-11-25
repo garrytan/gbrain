@@ -6,7 +6,8 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: an unset lock blocks nothing; a set lock (or a value that is not JSON, which never unlocks) is a
  *    `writer_admin_lock` blocker for graduation and deactivation and refuses `writer_admin_locked` inside a
- *    transaction; every one of these reads asks `getConfig` for the lock key and runs no raw config read.
+ *    transaction; graduation and the in-transaction refusal ask `getConfig` for the lock key and run no raw config read, and
+ *    deactivation reads it through the writer release store (eb535f0dda), whose read this proxy does not see.
  *  - Regression: the raw config read the Rust engine refuses, which graduation, deactivation and the
  *    in-transaction refusal reached through the retired raw `readWriterAdminLock`.
  *  - Why existing coverage misses it: the graduation and deactivation tests assert the blockers, not how the lock is
@@ -67,7 +68,10 @@ describe('writer admin lock: typed config read', () => {
     const { seen, graduation, deactivation, refusal } = await readAll();
     expect({ graduation, deactivation, refusal }).toEqual({ graduation: [], deactivation: [], refusal: null });
     expect(seen.sql).not.toContain(RAW_CONFIG_READ);
-    expect(seen.configKeys.filter(k => k === WRITER_ADMIN_LOCK_KEY)).toHaveLength(3);
+    // graduation's blocker list and the in-transaction refusal ask getConfig; deactivation's blocker list reads the lock through the
+    // writer release store (eb535f0dda: `adminLockValue`, a typed getConfig on a Rust brain), which this proxy does not wrap. Its
+    // blocker is asserted above, so the read still happens.
+    expect(seen.configKeys.filter(k => k === WRITER_ADMIN_LOCK_KEY)).toHaveLength(2);
   }, 60_000);
 
   test('a set lock blocks graduation and deactivation and refuses inside a transaction, read through getConfig only', async () => {
@@ -78,7 +82,10 @@ describe('writer admin lock: typed config read', () => {
         graduation: ['writer administration locked at 2026-01-02T03:04:05Z'], deactivation: ['set at 2026-01-02T03:04:05Z'], refusal: 'writer_admin_locked',
       });
       expect(seen.sql).not.toContain(RAW_CONFIG_READ);
-      expect(seen.configKeys.filter(k => k === WRITER_ADMIN_LOCK_KEY)).toHaveLength(3);
+      // graduation's blocker list and the in-transaction refusal ask getConfig; deactivation's blocker list reads the lock through the
+    // writer release store (eb535f0dda: `adminLockValue`, a typed getConfig on a Rust brain), which this proxy does not wrap. Its
+    // blocker is asserted above, so the read still happens.
+    expect(seen.configKeys.filter(k => k === WRITER_ADMIN_LOCK_KEY)).toHaveLength(2);
     } finally { await engine.unsetConfig(WRITER_ADMIN_LOCK_KEY); }
   }, 60_000);
 

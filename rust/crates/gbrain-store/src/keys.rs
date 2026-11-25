@@ -128,6 +128,37 @@ pub const REASON_TOMBSTONE: u8 = b'1';
 // Tag `2` is free. It held the `embedding_holds` family (a page's hold state and reason), dropped
 // at the main join: a page's embedding hold now lives only in its `page_embedding_budget` ledger
 // record (`page_embedding_budget.rs`). No store holds a record under it, so a new family may take it.
+/// Family `secret_store` (`secret_store.rs`): the `secret_store` entries and the `secret_store_occurrence` rows. The byte
+/// after the tag names the record (`ENTRY`, `BY_MAC`, `BY_ENTRY`, `OCCURRENCE`, `BY_SLUG`, `BY_PAGE` in that module).
+/// The digit `3`: every letter is taken or reserved across the lanes (`x` by `ACCESS_MEMBERS`, `y` by
+/// `SESSION_STATE`), and `0` and `1` are `GUEST_SOURCE` and `REASON_TOMBSTONE`; `2` is left free on purpose.
+pub const SECRET_STORE: u8 = b'3';
+
+// The one-byte tag space is nearly full (docs/designs/RUST_ENGINE_INTERFACES.md, "Tag registry"). A digit `4`-`9`
+// is claimed only through an approved registry row; every later family takes a two-byte tag under `FAMILY_ESCAPE`.
+/// The family escape: `~ <family byte>` is a two-byte family tag (`family_tag`), and the family owns every byte
+/// after both. `~` (0x7E) sorts after every letter and digit, so the two-byte families sit after the one-byte tags,
+/// each in its own contiguous range. No one-byte family ever takes `~`.
+pub const FAMILY_ESCAPE: u8 = b'~';
+
+/// The two-byte tag of a family under `FAMILY_ESCAPE`. `family` is never `0x00` (the storage adapter's byte).
+pub const fn family_tag(family: u8) -> [u8; 2] {
+    assert!(family != 0, "a family byte is never 0x00");
+    [FAMILY_ESCAPE, family]
+}
+
+/// `family_tag`, then `parts` joined by `0x00`, as `text` does after a one-byte tag. With no parts it is the
+/// family's scan prefix.
+pub fn family_text(tag: [u8; 2], parts: &[&str]) -> Vec<u8> {
+    let mut key = tag.to_vec();
+    for (i, part) in parts.iter().enumerate() {
+        if i > 0 {
+            key.push(0);
+        }
+        key.extend_from_slice(part.as_bytes());
+    }
+    key
+}
 
 pub fn text(tag: u8, parts: &[&str]) -> Vec<u8> {
     let mut key = vec![tag];
@@ -400,4 +431,59 @@ pub fn timeline_dedup_prefix(page_id: u64) -> Vec<u8> {
 /// `G page_id` -> the newest `created_at` (microseconds, big-endian i64) of the page's entries.
 pub fn timeline_latest(page_id: u64) -> Vec<u8> {
     id_key(TIMELINE_LATEST, &[page_id])
+}
+
+#[cfg(test)]
+mod family_tag_tests {
+    use super::*;
+    use crate::kv::{KvWrite, collect_prefix};
+
+    /// A two-byte family sorts after every one-byte tag, and a prefix scan of one family reads only its own keys.
+    #[test]
+    fn two_byte_family_tags_sort_after_one_byte_tags_and_scan_alone() {
+        let store = crate::test_support::store();
+        let fam_a = family_tag(b'a');
+        let fam_b = family_tag(b'b');
+        store
+            .write(|tx: &mut dyn KvWrite| {
+                tx.put(&family_text(fam_a, &["x", "1"]), b"a1")?;
+                tx.put(&family_text(fam_a, &["y"]), b"a2")?;
+                tx.put(&family_text(fam_b, &["x"]), b"b1")?;
+                tx.put(&text(b'z', &["x"]), b"z1")?;
+                tx.put(&text(b'2', &["x"]), b"d1")
+            })
+            .unwrap();
+        let read = store.read().unwrap();
+        let values = |prefix: &[u8]| -> Vec<Vec<u8>> {
+            collect_prefix(&*read, prefix, false, 100)
+                .unwrap()
+                .into_iter()
+                .map(|(_, v)| v)
+                .collect()
+        };
+        assert_eq!(values(&fam_a), vec![b"a1".to_vec(), b"a2".to_vec()]);
+        assert_eq!(values(&fam_b), vec![b"b1".to_vec()]);
+        assert_eq!(
+            values(&[FAMILY_ESCAPE]),
+            vec![b"a1".to_vec(), b"a2".to_vec(), b"b1".to_vec()]
+        );
+        assert_eq!(
+            values(b"z"),
+            vec![b"z1".to_vec()],
+            "a one-byte family never reads a two-byte one"
+        );
+        // Every letter and digit sorts below the escape, so no one-byte tag interleaves with the two-byte ranges.
+        for tag in (b'0'..=b'9').chain(b'A'..=b'Z').chain(b'a'..=b'z') {
+            assert!(tag < FAMILY_ESCAPE);
+        }
+        assert_eq!(family_text(fam_a, &[]), fam_a.to_vec());
+    }
+
+    /// `0x00` is the storage adapter's byte, so no family takes it.
+    #[test]
+    #[should_panic(expected = "a family byte is never 0x00")]
+    fn family_tag_refuses_the_storage_adapter_byte() {
+        let zero = std::hint::black_box(0u8);
+        let _ = family_tag(zero);
+    }
 }

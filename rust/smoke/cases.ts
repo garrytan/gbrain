@@ -565,7 +565,7 @@ export const cases: Case[] = [
         assert.equal(first.isOpen, false);
         const opened = await first.open(dir, { schemaVersion: 319 });
         assert.equal(opened.created, true);
-        assert.equal(opened.format_version, 8);
+        assert.equal(opened.format_version, addon.formatVersions.at(-1)); // the store's current format, from the addon's own list (line 257 pins the whole list)
         assert.match(opened.brain_id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
         assert.equal(first.isOpen, true);
 
@@ -861,7 +861,7 @@ export const cases: Case[] = [
         console.log(`        ${calls} hostile calls, outcomes: ${[...seen].sort().map(([code, n]) => `${code}=${n}`).join(' ')}`);
 
         // 3. The brain still works after all of it.
-        assert.equal((await brain.info()).format_version, 8);
+        assert.equal((await brain.info()).format_version, addon.formatVersions.at(-1));
         await brain.setConfig('fuzz.after', 'fine');
         assert.equal(await brain.getConfig('fuzz.after'), 'fine');
         // (The fuzz may have soft-deleted people/alice, so write and read a new page.)

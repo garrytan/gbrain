@@ -294,14 +294,14 @@ describe('engine parity: the page purge sweep, its segment storage and its slug 
     }));
     const untouched = await pageState(engine, s);
     const removed = await engine.transaction(async tx => {
-      const holds = await tx.deletePurgedPageHolds(SRC, SLUG);
+      const holds = await tx.deletePurgedPageHolds(SRC, SLUG, s.doomed);
       return {
         queue: await tx.deletePurgeReviewQueue(SRC, refs), reviews: await tx.deletePurgeReviewProposals(SRC, refs), decide: await tx.deletePurgeDecideProposals(SRC, factIds),
         trust: await tx.deletePurgedPageTrustProposals(SRC, s.doomed, factIds, takeIds),
         holds: holds.map(id => name(engine, 'write_gate_holds', id)),
         receipts: await tx.deletePurgedPageGateReceipts(s.doomed, factIds, takeIds, holds),
         facts: await tx.deletePurgedPageFacts(SRC, SLUG), files: await tx.deletePurgedPageFiles(SRC, SLUG, s.doomed),
-        again: [await tx.deletePurgedPageHolds(SRC, SLUG), await tx.deletePurgedPageFacts(SRC, SLUG), await tx.deletePurgedPageFiles(SRC, SLUG, s.doomed)],
+        again: [await tx.deletePurgedPageHolds(SRC, SLUG, s.doomed), await tx.deletePurgedPageFacts(SRC, SLUG), await tx.deletePurgedPageFiles(SRC, SLUG, s.doomed)],
       };
     });
     const after = await pageState(engine, s);

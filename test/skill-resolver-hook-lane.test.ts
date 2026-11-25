@@ -306,6 +306,42 @@ describe('skill-resolver lane: turn settings from config', () => {
   });
 });
 
+describe('skill-resolver lane: the model picker', () => {
+  const NO_KEYS = { ANTHROPIC_API_KEY: undefined, OPENAI_API_KEY: undefined, GOOGLE_GENERATIVE_AI_API_KEY: undefined, GEMINI_API_KEY: undefined };
+  test('claude-code and codex with skills.resolver.router on: a turn the picker cannot answer delivers the words block and logs why', async () => {
+    const b = box();
+    seedSkills(claudeSkills(b));
+    seedSkills(codexSkills(b));
+    await setup(b, 'claude-code');
+    await setup(b, 'codex');
+    const cfgPath = join(b.home, '.gbrain', 'config.json');
+    const cfg = readJson(cfgPath);
+    cfg.skills.resolver.router = true;
+    writeFileSync(cfgPath, JSON.stringify(cfg));
+    const ask = (cmd: string, s: string) => hook(b, cmd, { prompt: 'deploy the widget service', session_id: s, hook_event_name: 'UserPromptSubmit' }, { ...WIDE, ...NO_KEYS });
+    expect(contextOf(await ask(wired(b, 'claude-code'), 'r1'))).toContain('id: "deploy-widget"');
+    expect(contextOf(await ask(wired(b, 'codex'), 'r2'))).toContain('deploy-widget');
+    expect(laneLog(b).map((l) => [l.harness, l.outcome, l.router?.by, l.router?.code])).toEqual([['claude-code', 'delivered', 'words', 'missing_key'], ['codex', 'delivered', 'words', 'missing_key']]);
+    cfg.skills.resolver.router_timeout_ms = 5;
+    writeFileSync(cfgPath, JSON.stringify(cfg));
+    expect(contextOf(await ask(wired(b, 'claude-code'), 'r3'))).toContain('id: "deploy-widget"');
+    expect(laneLog(b).at(-1)).toMatchObject({ outcome: 'delivered', router: { by: 'words', code: 'config_invalid' } });
+  });
+
+  test('hermes never calls the picker, even with the setting on', async () => {
+    const b = box();
+    const dir = join(b.home, '.hermes', 'skills');
+    seedSkills(dir);
+    await buildCatalog(b, 'hermes-user', dir, 'hermes');
+    writeFileSync(join(b.home, '.gbrain', 'config.json'), JSON.stringify({ skills: { resolver: { enabled: true, harnesses: ['hermes'], router: true } } }));
+    const cmd = `env GBRAIN_HOOK_LANE=skill-resolver GBRAIN_HOME='${b.home}' '${b.bin}' hook user-prompt --harness hermes`;
+    const r = await hook(b, cmd, { session_id: 'h1', extra: { user_message: 'please deploy the widget to staging', conversation_history: [] } }, { ...WIDE, ...NO_KEYS });
+    expect(JSON.parse(r.stdout).context).toContain('id: "deploy-widget"');
+    expect(laneLog(b).at(-1)).toMatchObject({ harness: 'hermes', outcome: 'delivered' });
+    expect(laneLog(b).at(-1).router).toBeUndefined();
+  });
+});
+
 describe('skill-resolver lane: top_gate from config', () => {
   test('a gate above every score empties the block; per_harness 0 turns it off for one harness; a bad value is refused', async () => {
     const b = box();

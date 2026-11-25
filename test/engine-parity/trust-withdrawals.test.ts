@@ -184,4 +184,32 @@ describe('engine parity: fact withdrawal ledger', () => {
       return out;
     },
   );
+  parityTest(
+    'readPageSnapshot carries the source\'s whole-source (*) withdrawals and the page\'s own, one per claim at the earliest time',
+    { methods: ['putPage', 'insertFactWithdrawal', 'readPageSnapshot'] },
+    async (engine, backend) => {
+      // The other cases insert `*` withdrawals but never read a snapshot (audit r2 mutant R11: a snapshot that drops
+      // whole-source withdrawals stops striking a claim the owner forgot everywhere).
+      await createSource(engine, backend, 'work');
+      await engine.putPage('people/snap-example', { type: 'person', title: 'Snap Example', compiled_truth: 'Snap Example.', timeline: '' });
+      await engine.putPage('people/snap-other', { type: 'person', title: 'Snap Other', compiled_truth: 'Snap Other.', timeline: '' });
+      await engine.insertFactWithdrawal('default', 'world', 'Snap keeps bees', '*', T2);
+      await engine.insertFactWithdrawal('default', 'world', 'Snap keeps bees', 'people/snap-example', T1);
+      await engine.insertFactWithdrawal('default', 'private', 'Snap moved to Lisbon', '*', T3);
+      await engine.insertFactWithdrawal('default', 'world', 'Snap plays chess', 'people/snap-other', T1);
+      await engine.insertFactWithdrawal('work', 'world', 'Snap sings', '*', T1);
+      const read = async (slug: string) => {
+        const snap = await engine.readPageSnapshot(slug, { sourceId: 'default' });
+        return (snap?.withdrawals ?? []).map(w => ({ visibility: w.visibility, withdrawn_at: new Date(w.withdrawn_at as string).toISOString(),
+          purged: (w as { purged?: boolean }).purged ?? false, hash: typeof w.fact_hash }));
+      };
+      const out = { example: await read('people/snap-example'), other: await read('people/snap-other') };
+      expect(out.example).toEqual([
+        { visibility: 'private', withdrawn_at: T3, purged: false, hash: 'string' },
+        { visibility: 'world', withdrawn_at: T1, purged: false, hash: 'string' },
+      ]);
+      expect(out.other).toHaveLength(3);
+      return out;
+    },
+  );
 });

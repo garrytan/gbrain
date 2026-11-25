@@ -1,7 +1,7 @@
 //! The CLI search and graph reads (gbrain-store `cli_reads::reads`): the exact-phrase scan, the
 //! next live page, exact identity candidates, the entity ranking and the extraction review queue,
 //! plus the remote-caller reads around them (gbrain-store `cli_reads::remote_reads`): one source's
-//! rank coverage, the stored chunks search_exact reads again, and the sources_not_readable probe.
+//! rank coverage and the stored chunks search_exact reads again.
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
 
@@ -68,32 +68,6 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.list_extraction_pending_pages(&required(input, "listExtractionPendingPages opts")?)
-        })
-    }
-
-    /// `readUnscopedReadRefusal(input, policy)`: whether an empty unscoped remote read is refused
-    /// `sources_not_readable`; `policy` is the remote read floor's page policy, or null for none.
-    #[napi]
-    pub fn read_unscoped_read_refusal<'env>(
-        &self,
-        env: &'env Env,
-        input: Value,
-        policy: Option<Value>,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let policy = policy
-                .filter(|v| !v.is_null())
-                .map(|v| {
-                    required::<gbrain_store::facts::PrivacyPolicy>(
-                        v,
-                        "readUnscopedReadRefusal policy",
-                    )
-                })
-                .transpose()?;
-            s.read_unscoped_read_refusal(
-                &required(input, "readUnscopedReadRefusal input")?,
-                policy.as_ref(),
-            )
         })
     }
 

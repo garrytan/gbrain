@@ -5,7 +5,6 @@
  * of refusing. `BrainEngine` extends this interface.
  */
 import type * as SchemaDetectSql from '../engine-sql/schema-detect.ts';
-import type * as UnscopedReachSql from '../engine-sql/unscoped-read-reach.ts';
 import type * as AccessReadLogSql from '../engine-sql/access-read-log.ts';
 
 export interface SurfacedReadMembers {
@@ -17,8 +16,6 @@ export interface SurfacedReadMembers {
   invalidateQueryCacheRows(sourceId?: string): Promise<number>;
   /** Whether one of `memberIds` carries the labelled-only grant and is not the configured owner (access/labelled-only.ts labelledOnlyFor). */
   hasLabelledOnlyMemberAmong(memberIds: readonly string[]): Promise<boolean>;
-  /** Whether an empty unscoped remote read is refused `sources_not_readable`: nothing it reads in its sources, a page elsewhere (sources-not-readable.ts). */
-  readUnscopedReadRefusal(query: UnscopedReachSql.UnscopedReachQuery): Promise<boolean>;
   // The access read log (engine-sql/access-read-log.ts): the batched insert and prune of access/read-log.ts, and the
   // reads of `gbrain access log` and `gbrain access who-read`.
   /** Appends a batch of logged reads. */

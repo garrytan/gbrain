@@ -28,6 +28,12 @@ ISO strings. Derivation `createdAt` and `updatedAt` are `YYYY-MM-DDTHH:MM:SS.fff
 | `brain.flipBodyGeneration(input)` | `{ retiredChunks, retireDeferred }` | `flipBodyGeneration` |
 | `brain.openBodyStaging(input)` | `null`; the staging starts `open` | `openBodyStaging` |
 | `brain.setBodyStagingState(id, state, { commitRequestId? }?)` | `null` | `setBodyStagingState` |
+| `brain.listChunkedOccurrences(pageId, occurrences, generation)` | the members of `occurrences`, in the caller's order and with repeats, that have a segment chunk row of the page at or below `generation`; an id naming no page answers `[]`. Named and typed by the segmented-write lane (origin/rust-engine/fingerprint-v3, 8d915c28e8) with the same arguments; the store function and its test are copied from it | `listChunkedOccurrences` (`engine-sql/segmented-writes.ts`) |
+| `brain.readRetiredChunkVectors(pageId, occurrences)` | the page's visible chunk rows of those occurrences that hold a vector, in chunk index order: text, source, vector, model, recorded input, and the page's contextual retrieval mode, slug, source and corpus generation. The shell refuses a column other than `embedding`. A segment chunk staged with a vector (a vector a replace reuses) is stored with it: dimensions checked against the brain's, a vector with no model refused, embedded now (`chunks::append_segment_chunks`). From the segmented-write lane (0aceee20e0), same arguments | `readRetiredChunkVectors` (`engine-sql/segmented-writes.ts`) |
+| `brain.hasStaleSegmentChunks(pageId, generation, live)` | whether the page stores a chunk row generation `generation` (live occurrences `live`) does not hold: a segment chunk of a live occurrence below the newest generation at or below `generation` among that occurrence's chunks, one of any other occurrence at or below `generation`, any inline chunk. Same rule as Postgres's `STALE_CHUNKS_SQL`. From the segmented-write lane (8d915c28e8) | `hasStaleSegmentChunks` (`engine-sql/segmented-writes.ts`) |
+| `brain.retireStaleSegmentChunks(pageId, generation, live, maxRows)` | deletes up to `maxRows` of those stale rows (by occurrence, then inline rows) in one store write and returns how many went. From the segmented-write lane (8d915c28e8) | `retireStaleSegmentChunks` (`engine-sql/segmented-writes.ts`) |
+| `brain.readSegmentedProjectionPage(sourceId, slug)` | the live segmented page a projection builds: id, body generation and bytes, knowledge and projection revision, title, frontmatter, body flags, timeline lead; `null` for a missing, deleted or inline page. From the segmented-write lane (8d915c28e8) | `readSegmentedProjectionPage` (`engine-sql/segmented-writes.ts`) |
+| `brain.listVectorlessChunkIndexes(pageId)` | the chunk indexes of the page's live-body rows (`chunkGenerationFilter`) that hold no vector, in chunk index order; an id that names no page (or is below 1) answers `[]`. The shell refuses a column other than `embedding`. Named and typed by the segment-embed lane (origin/rust-engine/segment-embed) with the same arguments; its store file `page_body/page_spend.rs` also serves that lane's lease and ledger members. The store function is that lane's, unchanged (76c4c4d3be): it reads `segmented_embedding::visible_chunks`, the page's `chunkGenerationFilter` rows in chunk index order | `listVectorlessChunkIndexes` (`engine-sql/page-spend.ts`) |
 | `brain.sweepSegments({ sourceId?, pageId?, graceMs?, expireStagings?, now? }?)` | `{ retiredChunksDeleted, manifestRowsDeleted, textsDeleted, stagingsExpired }`; `now` as an ISO string. See "The sweep" | `sweepSegments` |
 | `brain.readSegmentDerivations(pageId, { kind?, occurrenceIds? }?)` | derivation rows by kind, then occurrence; `[]` for an empty `occurrenceIds` | `readSegmentDerivations` |
 | `brain.upsertSegmentDerivations(rows)` | `null`. A row with the same `(page, kind, occurrence)` is replaced and keeps its `createdAt` | `upsertSegmentDerivations` |
@@ -122,7 +128,10 @@ above "Segment chunks" in `rust/crates/gbrain-store/src/chunks.rs`). In one stor
 
 The chunks stay out of `getChunks` and keyword search until a flip publishes their generation. The
 TypeScript member normalises them as `upsertChunks` does (`prepareChunks`), refuses a chunk that
-carries a vector (`engine_capability_missing`: vectors are not stored) and takes the default model
+carries an image vector (`engine_capability_missing`: image vectors are not stored), keeps a text
+vector a chunk carries (a vector a replace reuses: dimensions checked, a model required, embedded
+now with its recorded input; a chunk without one has no pending time, where Postgres stamps
+`embedding_pending_since`) and takes the default model
 label from `opts.embeddingColumn` as PGLite does. The option is served for the store's one vector
 column only, as on `upsertChunks` (embeddings.md, "Chunk writes"). Deleting a page for good
 also deletes the chunks family's segment view of the page (`chunks::forget_segment_view`).
@@ -130,11 +139,10 @@ also deletes the chunks family's segment view of the page (`chunks::forget_segme
 ## The seal
 
 `sealSegmentedPage(pageId, opts?)` makes a flipped segmented page's chunks and search text visible at
-its current revision, as engine-sql/page-body.ts does. The TypeScript member reads the stored lead,
-revision, slug and source (`readSegmentedSealLead`), takes `opts.timelineLead` in place of the lead when
-given, overlays it with the page's ledger rows (`overlayStoreLead` over the page snapshot read with
-`includeDeleted`: purged fence rows drop, withdrawn ones are struck, as PGLite's `overlayCanonicalBodies`
-does), sanitizes it with `sanitizeRemoteBody`, and calls `seal_segmented_page`. In one store write it:
+its current revision, as engine-sql/page-body.ts does. The TypeScript member reads the stored lead and
+revision (`readSegmentedSealLead`), takes `opts.timelineLead` in place of the lead when given, sanitizes
+the chosen lead with `sanitizeRemoteBody`, and calls `seal_segmented_page` with it and the revision. It reads no
+page snapshot and overlays no withdrawal or purge rows before sealing (see below). In one store write it:
 
 1. Does nothing for a missing page.
 2. Refuses `revision_conflict` when the page's `knowledge_revision` is no longer the one read.
@@ -156,8 +164,8 @@ segmented page's live generation, every body generation a version snapshot refer
 of live stagings. A staging is live in a live state (`open`, `sealed`, `prepared`) or while an
 outstanding persistence request names it in `intent.body_ref.staging_id`, whatever its state. The
 store reads the version generations through `pages::version_generations` and the request-held
-stagings through `journal::request_held_staging_ids`, which reads no request while the brain's
-outstanding-request counter is 0. `now` defaults to the store clock; `graceMs` to
+stagings through `journal::request_held_staging_ids`, which scans every request, whatever the journal's
+outstanding-request counter says, and keeps the staging ids that nonterminal requests name. `now` defaults to the store clock; `graceMs` to
 `SEGMENT_TEXT_GC_GRACE_MS` (one hour).
 
 1. With `expireStagings`: a live staging in scope (its page and source) that is past its hard
@@ -224,9 +232,6 @@ The TypeScript engine refuses these with `engine_capability_missing`:
   "The fact purge's derivation sweep record"); the store has no sweep that walks a record and ends it.
 - The sweep has no upload parts to delete and no upload byte reservations to release when it expires
   an upload staging: the store keeps neither.
-- A segmented version snapshot does not prune older segmented snapshots
-  (`versions.segmented_max_per_page`, `versions.segmented_max_pinned_bytes` in PGLite's
-  `pruneSegmentedVersions`), so a Rust brain can pin more generations than PGLite keeps.
 - PGLite's text delete skips a text another writer has locked (`FOR UPDATE SKIP LOCKED`); the store
   serializes writes, so no text is ever skipped for that reason.
 

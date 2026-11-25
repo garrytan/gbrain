@@ -70,6 +70,13 @@ const members: ReadonlyArray<readonly [string, string, (e: BrainEngine) => Promi
   ['listPagePurgeTombstones', 'SELECT content_hash,slug FROM page_purges WHERE source_id=$1', e => e.listPagePurgeTombstones('default', 10)],
   // The segmented-storage writer gate a page or sync preparation reads through readPageBodyPolicy (page-body/limits.ts).
   ['readSegmentedGateEvidence', 'FROM ingest_log l CROSS JOIN win', e => e.readSegmentedGateEvidence(7)],
+  // The segmented body's chunk reads a page preparation makes (page-body/ingest.ts, import-chunk-reuse.ts, page-body/projection.ts).
+  ['listChunkedOccurrences', 'FROM unnest($2::bigint[]) AS o', e => e.listChunkedOccurrences(1, [1], 1)],
+  ['readRetiredChunkVectors', 'SELECT c.chunk_text, c.chunk_source', e => e.readRetiredChunkVectors(1, [1], 'embedding')],
+  ['hasStaleSegmentChunks', 'WITH RECURSIVE occ(o) AS', e => e.hasStaleSegmentChunks(1, 1, [1])],
+  // The link preparation's alias and source slug reads (persistence/links-preparation.ts).
+  ['readLiveSlugAliases', 'FROM slug_aliases a', e => e.readLiveSlugAliases('default', ['a'])],
+  ['readSourceSlugProbe', 'hashtextextended(slug, 0)', e => e.readSourceSlugProbe('default', 0)],
   // The keyword timeout is resolved once per engine; its own read under a deadline has the test below.
   ['searchKeyword', 'count(*) OVER () AS bounded_rows', e => e.searchKeyword('a title', { limit: 3, sourceId: 'default' }), keywordTimeoutResolved],
 ];

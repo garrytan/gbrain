@@ -38,6 +38,7 @@
     },
     "batchLoadEmotionalInputs#default": {},
     "batchLoadEmotionalInputs#slugs": {},
+    "clearCodeEdgesLeavingChunks#default": {},
     "clearCodeTraversalCache#allSources": {
       "raw": 1
     },
@@ -262,6 +263,8 @@
       "raw": 1
     },
     "listEnrichCandidates#default": {},
+    "listEnrichCandidates#owner-contact": {},
+    "listEnrichCandidates#owner-contact-no-owner": {},
     "listEnrichCandidates#sourceId": {},
     "listEnrichCandidates#sourceIds+reenrich": {},
     "listEntityKeyRows#after": {},
@@ -307,6 +310,9 @@
     },
     "listSourceLocalPaths#default": {},
     "listSourcePathPages#default": {
+      "raw": 1
+    },
+    "listSourcePathRows#default": {
       "raw": 1
     },
     "listSourceRoutingRows#default": {
@@ -435,6 +441,12 @@
       "raw": 1
     },
     "readSourceRow#default": {
+      "raw": 1
+    },
+    "readSourcesNotReadable#default": {
+      "raw": 1
+    },
+    "readSourcesNotReadable#factsFloor": {
       "raw": 1
     },
     "refreshPageBody#default": {},

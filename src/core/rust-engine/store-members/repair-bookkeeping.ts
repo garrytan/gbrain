@@ -23,15 +23,17 @@ export const listSourceIncarnations: StoreMember<[sourceIds: readonly string[]],
   };
 
 /**
- * No binding outlives its source: the store's source delete removes the binding of the deleted
- * incarnation in the same write (`persistence::remove_source_binding_in`), and only a delete
- * creates a new incarnation. So the list is empty.
+ * The orphan source bindings (engine-sql/repair-bookkeeping.ts ORPHANS), by source id. The store's source delete removes
+ * the binding of the deleted incarnation in the same write (`persistence::remove_source_binding_in`), so an orphan comes
+ * from a binding written for a source that is gone or holds another incarnation (persistence/worktrees.rs).
  */
-export const listOrphanBindings: StoreMember<[opts?: { limit?: number }], OrphanBinding[]> = async () => [];
+export const listOrphanBindings: StoreMember<[opts?: { limit?: number }], OrphanBinding[]> = (brain, opts) =>
+  storeCall({ member: 'listOrphanBindings' }, () => brain.listOrphanBindings(opts?.limit ? Math.floor(opts.limit) : null)) as Promise<OrphanBinding[]>;
 
-/** No binding is an orphan (see `listOrphanBindings`), so none is deleted. */
+/** Deletes one orphan binding when it is still orphaned and has no pending request, as the SQL statement rechecks. */
 export const deleteOrphanBinding: StoreMember<[binding: Pick<OrphanBinding, 'source_id' | 'source_incarnation'>], boolean> =
-  async () => false;
+  (brain, binding) => storeCall({ member: 'deleteOrphanBinding', sourceId: binding.source_id },
+    () => brain.deleteOrphanBinding(binding.source_id, binding.source_incarnation)) as Promise<boolean>;
 
 /** A loop, its fact and whether another open loop shares it. `lock` is moot: the store serializes its writes. */
 export const readLoopFactState: StoreMember<[loopId: number, opts?: { lock?: boolean }], LoopFactState> =

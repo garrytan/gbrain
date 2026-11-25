@@ -16,6 +16,7 @@ import { join } from 'node:path';
 import { buildSkillIndex, normalizeTurnInput, resolveSkills, ResolverError } from '../src/core/skills/resolver/index.ts';
 import { readJsonSource } from '../src/core/skills/resolver/sources.ts';
 import { loadSchema, validate } from './helpers/json-schema-lite.ts';
+import { __setPickerTransportForTests } from '../src/core/skills/resolver/router-http.ts';
 
 const dirs: string[] = [];
 afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
@@ -91,6 +92,21 @@ describe('turn output and build receipt', () => {
     expect(results[0]!.output.suggestions[0]!.path).toBe('/skills/deploy/SKILL.md');
     expect(results[4]!.output.ranker.variant).toBe('T+D');
     expect(results[5]!.output.error!.code).toBe('skill_index_missing');
+  });
+
+  test('a turn the model picker answered, and one it fell back on, validate', async () => {
+    const home = tmp();
+    await buildSkillIndex({ catalog: 'one', fromJson: JSON.stringify(SKILLS), fromJsonStdin: true }, { home });
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ skills: { resolver: { router: true } } }));
+    try {
+      __setPickerTransportForTests(async () => ({ text: JSON.stringify({ needed: true, skills: [SKILLS[0]!.id] }), refused: false, usage: { input: 100, cacheRead: 0, cacheWrite: 0, output: 10 } }));
+      const picked = (await resolveSkills({ message: 'zzqxv' }, { home, router: true })).output;
+      expect(picked.suggestions[0]!.match_strength).toBe('picked');
+      __setPickerTransportForTests(async () => { throw new Error('down'); });
+      const fell = (await resolveSkills({ message: 'deploy' }, { home, router: true })).output;
+      expect(fell.router!.fallback).toEqual({ code: 'provider_error' });
+      for (const d of [picked, fell]) expect(validate(OUTPUT, JSON.parse(JSON.stringify(d)))).toEqual([]);
+    } finally { __setPickerTransportForTests(null); }
   });
 
   test('the schemas reject a document with an extra or missing field', async () => {

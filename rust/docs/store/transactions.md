@@ -2,7 +2,14 @@
 
 Part of the store contract in [rust/README.md](../../README.md) ("The brain store"): the rules there apply to every method here.
 
-`engine.transaction(fn, opts?)`, `engine.transactionDirect(fn)` and `engine.lockPageKeys(keys)` run on
+The native store and addon provide explicit transaction handles, savepoints, commit, rollback and page-key
+holds (`crates/gbrain-napi/src/families/transactions.rs`). The TypeScript side is not landed: the current
+`src/core/rust-engine/store-members/transactions.ts` exports no BrainEngine member, so `engine.transaction`,
+`engine.transactionDirect`, `engine.lockPageKeys`, `readTransactionSettings` and `applyTransactionSettings` refuse
+with `engine_capability_missing` on this landing. The JavaScript callback, gating, re-entry and disconnect behaviour
+below is the intended adapter contract, not BrainEngine behaviour available now.
+
+`engine.transaction(fn, opts?)`, `engine.transactionDirect(fn)` and `engine.lockPageKeys(keys)` are meant to run on
 the Rust engine with PGLite's observable behaviour. `fn` gets a transaction engine (a clone of the
 engine); every member called on it reads the transaction's own writes, and the whole transaction
 becomes visible to the brain in one commit, or not at all.
