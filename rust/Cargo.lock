@@ -305,6 +305,7 @@ dependencies = [
  "fjall",
  "gbrain-sim",
  "getrandom",
+ "libc",
  "redb",
  "serde",
  "serde_json",

@@ -62,6 +62,10 @@ pub const SHADOW_RESEED_REQUIRED: &str = "shadow_reseed_required";
 /// A write inside a read-only transaction (Postgres SQLSTATE 25006, `read_only_sql_transaction`).
 pub const READ_ONLY_TRANSACTION: &str = "read_only_transaction";
 
+/// A store snapshot was cancelled (`snapshot.rs`). It removed what it had written and released
+/// its read before this error returned.
+pub const SNAPSHOT_CANCELLED: &str = "snapshot_cancelled";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoreError {
     pub code: &'static str,
