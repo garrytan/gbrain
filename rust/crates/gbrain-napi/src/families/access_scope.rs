@@ -57,7 +57,8 @@ fn store_id(store: &Arc<Store>) -> usize {
 impl ScopeTable {
     /// Drops every entry minted on another store or before the last close.
     fn prune(&mut self, store: usize, closes: u64) {
-        self.entries.retain(|_, e| e.store == store && e.closes == closes);
+        self.entries
+            .retain(|_, e| e.store == store && e.closes == closes);
     }
 
     fn insert(&mut self, store: usize, closes: u64, scope: Scope) -> Result<u64, StoreError> {
@@ -67,13 +68,23 @@ impl ScopeTable {
         }
         self.next += 1;
         let handle = self.next;
-        self.entries.insert(handle, Entry { store, closes, scope });
+        self.entries.insert(
+            handle,
+            Entry {
+                store,
+                closes,
+                scope,
+            },
+        );
         Ok(handle)
     }
 
     /// The scope of `handle` when it was minted on `store` since the last close.
     fn get(&mut self, handle: u64, store: usize, closes: u64) -> Option<Scope> {
-        let live = self.entries.get(&handle).is_some_and(|e| e.store == store && e.closes == closes);
+        let live = self
+            .entries
+            .get(&handle)
+            .is_some_and(|e| e.store == store && e.closes == closes);
         if !live {
             self.entries.remove(&handle);
             return None;
@@ -100,7 +111,10 @@ impl Brain {
             let id = current.as_ref().map(store_id).ok_or_else(refused)?;
             let principal = s.authenticate_bearer(&bearer)?;
             let scope = Scope::from_principal(s, &principal)?;
-            let handle = table.lock().unwrap_or_else(|e| e.into_inner()).insert(id, closes, scope)?;
+            let handle = table
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(id, closes, scope)?;
             Ok(json!({ "handle": handle.to_string() }))
         })
     }
@@ -115,9 +129,17 @@ impl Brain {
         self.run(env, move |s| {
             let id = current.as_ref().map(store_id).ok_or_else(refused)?;
             let h = parse_handle(&handle)?;
-            let scope = table.lock().unwrap_or_else(|e| e.into_inner()).get(h, id, closes).ok_or_else(refused)?;
+            let scope = table
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(h, id, closes)
+                .ok_or_else(refused)?;
             if let Err(e) = scope.revalidate(s) {
-                table.lock().unwrap_or_else(|e| e.into_inner()).entries.remove(&h);
+                table
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .entries
+                    .remove(&h);
                 return Err(e);
             }
             Ok(json!({}))
@@ -134,8 +156,15 @@ impl Brain {
         self.run(env, move |_s| {
             let id = current.as_ref().map(store_id).ok_or_else(refused)?;
             let h = parse_handle(&handle)?;
-            let scope = table.lock().unwrap_or_else(|e| e.into_inner()).get(h, id, closes).ok_or_else(refused)?;
-            Ok(scope.principal().map(|p| p.row().clone()).unwrap_or(Value::Null))
+            let scope = table
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(h, id, closes)
+                .ok_or_else(refused)?;
+            Ok(scope
+                .principal()
+                .map(|p| p.row().clone())
+                .unwrap_or(Value::Null))
         })
     }
 
@@ -143,7 +172,11 @@ impl Brain {
     #[napi]
     pub fn release_scope(&self, handle: String) {
         if let Ok(h) = handle.parse::<u64>() {
-            self.scopes.lock().unwrap_or_else(|e| e.into_inner()).entries.remove(&h);
+            self.scopes
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .entries
+                .remove(&h);
         }
     }
 }
@@ -171,7 +204,10 @@ mod tests {
         for _ in 0..MAX_SCOPES {
             t.insert(1, 0, scope.clone()).unwrap();
         }
-        assert_eq!(t.insert(1, 0, scope.clone()).unwrap_err().code, "permission_denied");
+        assert_eq!(
+            t.insert(1, 0, scope.clone()).unwrap_err().code,
+            "permission_denied"
+        );
         // A close frees every slot.
         assert!(t.insert(1, 1, scope).is_ok());
     }

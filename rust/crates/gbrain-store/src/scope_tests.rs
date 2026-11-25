@@ -47,7 +47,10 @@ fn the_owner_token_is_admitted_and_stays_admitted() {
     let p = s.authenticate_bearer("secret-owner").unwrap();
     assert_eq!(p.token_id(), id);
     assert_eq!(p.member_id(), Some("owner-example"));
-    assert!(p.row().get("token_hash").is_none(), "the row never carries the hash");
+    assert!(
+        p.row().get("token_hash").is_none(),
+        "the row never carries the hash"
+    );
     let scope = Scope::from_principal(&s, &p).unwrap();
     assert!(scope.is_principal());
     scope.revalidate(&s).unwrap();
@@ -61,8 +64,14 @@ fn every_other_credential_gets_the_same_refusal() {
     token(&s, "unbound-key", "secret-unbound", None);
     let unknown = denied(s.authenticate_bearer("no-such-secret"));
     let empty = denied(s.authenticate_bearer(""));
-    let other = denied(Scope::from_principal(&s, &s.authenticate_bearer("secret-alice").unwrap()));
-    let unbound = denied(Scope::from_principal(&s, &s.authenticate_bearer("secret-unbound").unwrap()));
+    let other = denied(Scope::from_principal(
+        &s,
+        &s.authenticate_bearer("secret-alice").unwrap(),
+    ));
+    let unbound = denied(Scope::from_principal(
+        &s,
+        &s.authenticate_bearer("secret-unbound").unwrap(),
+    ));
     assert_eq!([&empty, &other, &unbound], [&unknown, &unknown, &unknown]);
 }
 
@@ -106,8 +115,18 @@ fn a_change_after_admission_refuses_the_next_call() {
     let s = brain();
     let id = token(&s, "owner-key", "secret-owner", Some("owner-example"));
     let scope = Scope::from_principal(&s, &s.authenticate_bearer("secret-owner").unwrap()).unwrap();
-    let columns: crate::jobs::TokenGrantColumns = serde_json::from_value(serde_json::json!({ "source_grant": "scalar", "source_id": "default" })).unwrap();
-    s.write_access_token_grant(&id, &columns, Some(vec!["read".into()]), serde_json::json!({})).unwrap().expect("the token exists");
+    let columns: crate::jobs::TokenGrantColumns = serde_json::from_value(
+        serde_json::json!({ "source_grant": "scalar", "source_id": "default" }),
+    )
+    .unwrap();
+    s.write_access_token_grant(
+        &id,
+        &columns,
+        Some(vec!["read".into()]),
+        serde_json::json!({}),
+    )
+    .unwrap()
+    .expect("the token exists");
     denied(scope.revalidate(&s));
 }
 

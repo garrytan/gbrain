@@ -308,6 +308,14 @@ Errors (store error codes, mapped by napi through the existing converter):
 
 `SingleFlightKey` is `{ source_id: String, slug: String }` (the same exact-source key `lockPageKeys` takes today).
 
+- **I-1.v2 (2026-11-25, additive).** `TxnOptions` gains three fields. It derives `Default`, so every existing caller
+  is unchanged:
+  - `read_only: bool` (default false): every write in the transaction refuses `read_only_transaction`.
+  - `retry_keys: Vec<Vec<u8>>` (default empty; optimistic mode): keys an earlier run of this transaction lost a
+    conflict on. The rerun queues for them and holds them until it ends.
+  - `age: Option<u64>` (default `None`; optimistic mode): the single-flight age from `Store::transaction_age`, so a
+    rerun keeps its place under wait-die. `None` takes a fresh age.
+
 ### I-2. Commit position and read token
 
 ```rust
@@ -390,6 +398,11 @@ impl Store {
   a stale holder fails at commit even if it started before the takeover.
 - Job claims, effect claims and write claims keep their current token fields and add `epoch`.
 
+- **I-5, managed mode limit (2026-11-25).** Managed mode's topology locks (`withTopologyLocks`) stay native file locks
+  on the checkout (`GBRAIN_HOME/locks`) on every engine for the single-host phase, and are replaced with I-5 leases once
+  the lease work is on the multi-user branch; no stub lease is used before then. File locks do not fence writers on
+  two hosts, so managed mode on Rust is single-host until that swap.
+
 ### I-6. Scope (per-user access)
 
 ```rust
@@ -406,6 +419,39 @@ impl Scope {
 - Store entry points take `&Scope` as a new first argument through a wrapper layer; until
   the scope work lands, callers use `Scope::trusted_local` (that is the stub).
 - "Not found" and "not visible to you" return the same error.
+
+#### Session contract for the server (as built on `rust-engine/mu-access`)
+
+The hello handler (lane L3) opens one session per authenticated connection and runs every call of that connection
+through it. TypeScript entry: `openPrincipalSession(store, bearer)` in `src/core/rust-engine/principal-session.ts`;
+store side: `Store::authenticate_bearer`, `Scope::from_principal` and `Scope::revalidate` in
+`rust/crates/gbrain-store/src/scope.rs`; napi: `mintScope`, `checkScope`, `scopeGrant`, `releaseScope`
+(`rust/crates/gbrain-napi/src/families/access_scope.rs`).
+
+1. **Hello.** Pass the hello's `auth.token` to `openPrincipalSession(store, token)`. The store hashes it and looks it up
+   in its own `access_tokens` records; nothing else the client sent reaches the session. The session exists only on a
+   store in multi-user mode (I-0.v2); with the mode off it refuses.
+2. **Owner gate (fail closed).** A session opens only for a live token bound to the enabled member named by config
+   `access.owner_member`. Every other credential (unknown, revoked, empty, unbound, another member's, or any token on a
+   brain with no owner member) refuses with one `permission_denied` and one message, so the refusal does not say which
+   case it hit. The gate stays until both conditions under M2 hold (the design owner's ruling A1, 2026-11-25).
+3. **Handle.** The session holds a store-minted handle (a decimal string). There is no call that builds a scope from
+   parts. A handle is tied to the store that minted it: after a close or a reopen every older handle refuses. One
+   `Brain` handle keeps at most 4096 sessions; a mint past that refuses.
+4. **Every call.** Call `session.admit(member)` before the member runs. It has the store re-read the token (still live,
+   same grant revision, same member), the member (still enabled) and `access.owner_member` (unchanged); any change
+   refuses this call and kills the session, so a revoke or narrowing committed between two calls takes effect on the
+   next one. It also refuses a write member (anything not in `OWNER_IPC_REMOTE_READS` or the local-only reads, unknown
+   members included) when the grant has no `write` scope.
+5. **Grant.** Build the call's `AuthInfo` from `session.grant` (the store-verified token row read through
+   `grantFromTokenRow`, the model the HTTP transport uses), never from the client's frame. The operation layer's scope,
+   source and operation checks then apply as they do over HTTP.
+6. **Remote flag.** The principal is a remote caller. Pass `principalRemote: true` to `ownerRemoteRefusal` (groundwork K,
+   `src/core/rust-engine/owner-ipc/remote-check.ts`); a frame that marks itself local on such a connection refuses.
+7. **Close.** Call `session.release()` when the connection closes.
+
+What the session does not do yet: derive the read policy from the principal for non-owner keys (the access
+self-check proves the derivation first), and carry a session across a reconnect (a reconnect opens a new session).
 
 ### I-7. Wire protocol v3 (grown from owner socket v2, `src/core/rust-engine/owner-ipc/protocol.ts`)
 
@@ -429,6 +475,12 @@ impl Scope {
 reports it only when I-0 is on and optimistic explicit transactions are active; the parity harness uses the same
 name), `commit_log` (when the log is on), `served` (the engine is a client of a server). PGLite and Postgres:
 `multi_writer` yes (Postgres), no (PGLite); the others no.
+
+- **I-8.v2 (2026-11-25).** `multi_writer` lives in a separate list, `MULTIUSER_CAPABILITIES` in
+  `src/core/engine-capabilities.ts`, reported only while the multi-user switch (I-0) is on. With the switch off,
+  every engine's capability set and the error catalogue that lists `ENGINE_CAPABILITIES` stay exactly as they are.
+  With it on, Postgres reports `multi_writer`, PGLite does not, and Rust does while its optimistic explicit
+  transactions are on. The parity harness reads the same list.
 
 ### Interface facts ruled on 2026-11-25
 
@@ -458,6 +510,14 @@ These answer questions raised while building the leases (I-5) and the switch (I-
    takes the lease again with `acquire_lease`, which gives a new epoch. So a machine that comes back after a
    partition is refused for any work it started under the old epoch, even if no other machine took the lease
    meanwhile.
+
+### Rule for multi-user code paths: rerun-safe callbacks
+
+In multi-user mode a transaction can run again after it loses a commit, so its callback can run more than once.
+A callback must keep no counter, flag, cache entry or staging file outside the transaction; everything it changes
+must be inside the transaction or derived again on each run. Multi-user mode is not called safe on a path until the
+callback audit covers that path. Status on 2026-11-25: 12 callers fixed; 58 flagged callbacks not audited yet
+(14 on paths the Rust engine cannot run yet, 44 not read).
 
 ## Audit: landed choices that are costly to undo
 
