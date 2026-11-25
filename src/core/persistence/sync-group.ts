@@ -23,6 +23,7 @@ import type { SyncIntent } from './sync-prepare.ts';
 import type { SyncAuthority } from './sync-authority.ts';
 import { assertDrainLease } from './sync-lease.ts';
 import { assertPassAdmission } from './sync-pass-batch.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
 
 /** What sets a drain's lane ceiling: lanes off, the configured maximum, or the connection pool. */
 export type LanesCap = 'disabled' | 'maximum' | 'pool';
@@ -159,8 +160,7 @@ export async function admitGroup(engine: BrainEngine, members: WaiverEntry[], cu
   return retryWriteAdmission(head.requestId, remaining => engine.transaction(async tx => {
     // The settings go out with the admission's first burst of checks, ahead of them.
     const [, rows] = await pipelined(tx, [
-      () => tx.executeRaw("SELECT set_config('synchronous_commit','on',true),set_config('lock_timeout',$1,true),set_config('statement_timeout',$2,true)",
-        [`${Math.min(1000, remaining)}ms`, `${remaining}ms`]),
+      () => syncRows(tx, 'admission_settings', [`${Math.min(1000, remaining)}ms`, `${remaining}ms`]),
       () => admitWriteGroupInTransaction(tx, members.map(member => ({ requestId: member.requestId, operation: 'submit_job',
         sourceId: cursor.sourceId, sourceIncarnation: cursor.incarnation, slug: member.slug, pageId: member.pageId,
         worktreeId: cursor.binding.worktree_id, topologyGeneration: cursor.binding.topology_generation, ownerEpoch: cursor.binding.owner_epoch,

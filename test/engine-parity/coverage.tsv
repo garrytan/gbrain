@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2404/2432
+# covered: 2405/2433
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -76,7 +76,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 16/16
 # wanted_links: 2/2
-# write_misc: 123/139
+# write_misc: 124/140
 # repair_bookkeeping: 59/59
 # write_attribution: 5/5
 # telemetry: 14/14
@@ -131,7 +131,7 @@ withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 listCatalogRelations	lifecycle	yes	1	no	yes	yes	serves
 readCatalogSchemaVersion	lifecycle	yes	1	no	yes	yes	serves
 listCatalogForeignKeys	lifecycle	yes	1	no	yes	yes	serves
-getPage	pages	yes	286	yes	yes	yes	serves
+getPage	pages	yes	287	yes	yes	yes	serves
 readPageSnapshot	pages	yes	100	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
@@ -145,7 +145,7 @@ softDeletePage	pages	yes	333	yes	yes	yes	serves
 softDeletePages	pages	yes	4	yes	yes	yes	serves
 restorePage	pages	yes	15	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	10	no	yes	yes	serves
-listPages	pages	yes	21	yes	yes	yes	serves
+listPages	pages	yes	24	yes	yes	yes	serves
 findPages	pages	yes	5	no	yes	yes	serves
 countPagesBy	pages	yes	1	no	yes	yes	serves
 pageTypeTotals	pages	yes	2	no	yes	yes	serves
@@ -162,7 +162,7 @@ listAllSources	pages	yes	26	no	yes	yes	serves
 updateSourceConfig	pages	yes	20	no	yes	yes	serves
 renameSource	pages	yes	1	no	yes	yes	serves
 readFederationExposedPages	pages	yes	1	no	yes	yes	serves
-getSource	pages	yes	42	no	yes	yes	serves
+getSource	pages	yes	43	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
 countRepoBoundSources	pages	yes	2	no	yes	yes	serves
 listNotifierHostSourceRows	pages	yes	3	no	yes	yes	serves
@@ -763,7 +763,7 @@ replaceDerivedAliases	sync_aliases	yes	18	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	2	no	yes	yes	serves
-getConfig	config	yes	58	no	yes	yes	serves
+getConfig	config	yes	59	no	yes	yes	serves
 setConfig	config	yes	97	no	yes	yes	serves
 unsetConfig	config	yes	4	no	yes	yes	serves
 listConfigKeys	config	yes	5	no	yes	yes	serves
@@ -1966,7 +1966,7 @@ listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
 getWorktreeBinding	write_misc	yes	36	no	yes	yes	serves
 listHostTopologyRows	write_misc	yes	2	no	yes	yes	serves
 listWorktreeMembers	write_misc	yes	2	no	yes	yes	serves
-worktreeClaimStore	write_misc	yes	48	no	yes	yes	serves
+worktreeClaimStore	write_misc	yes	52	no	yes	yes	serves
 readWriterAdminState	write_misc	yes	10	no	yes	yes	serves
 readWorktreeManifest	write_misc	yes	1	no	yes	yes	serves
 writerAdminStore	write_misc	yes	3	no	yes	yes	serves
@@ -2027,6 +2027,7 @@ topologyStore	write_misc	yes	6	no	yes	yes	serves
 refreshStore	write_misc	no	0	no	-	-	-
 groupPublishStore	write_misc	no	0	no	-	-	-
 manualLinkStore	write_misc	no	0	no	-	-	-
+runSyncStatement	write_misc	yes	1	no	yes	yes	serves
 listAppliedPolicyRevisions	write_misc	yes	6	no	yes	yes	serves
 readLiveMember	write_misc	yes	13	no	yes	yes	serves
 readFolderAccess	write_misc	yes	12	no	yes	yes	serves

@@ -28,6 +28,7 @@ import { syncOriginPath } from './sync-origin.ts';
 import type { SyncDeleteCaps, SyncDeleteTrip } from '../sync-reconcile.ts';
 import { SYNC_DELETES_WITHHELD_OP, SYNC_ORIGIN_DELETED_OP, passFingerprint } from './sync-pass-row.ts';
 import { relativeEscapesRoot } from '../path-confine.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
 
@@ -90,7 +91,7 @@ function originInTree(origin: { gitRoot: string; candidates: Set<string> }, last
  */
 export async function originCommitted(engine: BrainEngine, sourceId: string, sourcePath: string | null | undefined): Promise<boolean> {
   if (!sourcePath || !await managedPersistenceEnabled(engine)) return false;
-  const [source] = await engine.executeRaw<{ last_commit: string | null; config: Record<string, unknown> | null }>('SELECT last_commit, config FROM sources WHERE id=$1', [sourceId]);
+  const [source] = await syncRows<{ last_commit: string | null; config: Record<string, unknown> | null }>(engine, 'source_commit_config', [sourceId]);
   if (!source || companyBrainProfile(source.config) !== null) return false;
   const binding = await getWorktreeBinding(engine, sourceId);
   if (!binding) return false;
@@ -117,11 +118,10 @@ export async function writeOriginDeletedMarker(tx: BrainEngine, input: { sourceI
   let origin: string;
   try { origin = syncOriginPath(page.source_path); } catch { return null; }
   if (!await managedPersistenceEnabled(tx)) return null;
-  const [owned] = await tx.executeRaw('SELECT 1 FROM pages WHERE source_id=$1 AND id<>$2 AND deleted_at IS NULL AND source_path = ANY($3::text[]) LIMIT 1',
+  const [owned] = await syncRows(tx, 'page_owning_origin',
     [sourceId, page.id, [...new Set([page.source_path, origin, `./${origin}`])]]);
   if (owned) return null;
-  const [source] = await tx.executeRaw<{ incarnation: string; last_commit: string | null; config: Record<string, unknown> | null }>(
-    'SELECT incarnation::text AS incarnation, last_commit, config FROM sources WHERE id=$1', [sourceId]);
+  const [source] = await syncRows<{ incarnation: string; last_commit: string | null; config: Record<string, unknown> | null }>(tx, 'source_state', [sourceId]);
   if (!source || companyBrainProfile(source.config) !== null) return null;
   const binding = await getWorktreeBinding(tx, sourceId);
   if (!binding) return null;
@@ -134,17 +134,14 @@ export async function writeOriginDeletedMarker(tx: BrainEngine, input: { sourceI
     blob_oids: [...new Set([record?.blob_oid, record?.disk_blob_oid].filter((oid): oid is string => typeof oid === 'string' && oid.length > 0))],
     page_id: page.id, slug: page.slug, at: new Date().toISOString(),
   };
-  await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys,updated_at) VALUES($1,$2,jsonb_build_array($3::text::jsonb),now())
-    ON CONFLICT (op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys, updated_at=now()`,
-  [SYNC_ORIGIN_DELETED_OP, originMarkerFingerprint(sourceId, source.incarnation, origin), JSON.stringify(marker)]);
+  await syncRows(tx, 'checkpoint_put_first', [SYNC_ORIGIN_DELETED_OP, originMarkerFingerprint(sourceId, source.incarnation, origin), JSON.stringify(marker)]);
   await faultPoint('purge:marker_written', { sourceId, slug: page.slug, path: origin });
   return marker;
 }
 
 /** The deletion marker at one origin of an incarnation, or null. */
 export async function readOriginDeletedMarker(exec: Exec, sourceId: string, incarnation: string, origin: string): Promise<OriginDeletedMarker | null> {
-  const [row] = await exec.executeRaw<{ value: OriginDeletedMarker | null }>('SELECT completed_keys->0 AS value FROM op_checkpoints WHERE op=$1 AND fingerprint=$2',
-    [SYNC_ORIGIN_DELETED_OP, originMarkerFingerprint(sourceId, incarnation, origin)]);
+  const [row] = await syncRows<{ value: OriginDeletedMarker | null }>(exec, 'checkpoint_first', [SYNC_ORIGIN_DELETED_OP, originMarkerFingerprint(sourceId, incarnation, origin)]);
   return row?.value ?? null;
 }
 
@@ -153,8 +150,7 @@ export async function readOriginDeletedMarker(exec: Exec, sourceId: string, inca
  * same origin) stays. Returns whether it was deleted.
  */
 export async function retireOriginDeletedMarker(tx: Exec, input: { sourceId: string; incarnation: string; origin: string; expected: unknown }): Promise<boolean> {
-  const rows = await tx.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2 AND completed_keys->0 = $3::text::jsonb RETURNING 1',
-    [SYNC_ORIGIN_DELETED_OP, originMarkerFingerprint(input.sourceId, input.incarnation, input.origin), JSON.stringify(input.expected)]);
+  const rows = await syncRows(tx, 'checkpoint_delete_if_first', [SYNC_ORIGIN_DELETED_OP, originMarkerFingerprint(input.sourceId, input.incarnation, input.origin), JSON.stringify(input.expected)]);
   return rows.length > 0;
 }
 
@@ -189,20 +185,16 @@ export async function writeDeletesWithheld(tx: Exec, input: { sourceId: string; 
   set_hash: string; samples: readonly string[]; trip?: SyncDeleteTrip; caps?: SyncDeleteCaps }): Promise<DeletesWithheld> {
   const value: DeletesWithheld = { source_id: input.sourceId, incarnation: input.incarnation, target: input.target, count: input.count, reconcilable: input.reconcilable,
     ratio: input.ratio, set_hash: input.set_hash, samples: input.samples.slice(0, DELETES_WITHHELD_SAMPLES), ...(input.trip ? { trip: input.trip } : {}), ...(input.caps ? { caps: input.caps } : {}), at: new Date().toISOString() };
-  await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys,updated_at) VALUES($1,$2,jsonb_build_array($3::text::jsonb),now())
-    ON CONFLICT (op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys, updated_at=now()`,
-  [SYNC_DELETES_WITHHELD_OP, passFingerprint(input.sourceId, input.incarnation), JSON.stringify(value)]);
+  await syncRows(tx, 'checkpoint_put_first', [SYNC_DELETES_WITHHELD_OP, passFingerprint(input.sourceId, input.incarnation), JSON.stringify(value)]);
   return value;
 }
 
 export async function readDeletesWithheld(exec: Exec, sourceId: string, incarnation: string): Promise<DeletesWithheld | null> {
-  const [row] = await exec.executeRaw<{ value: DeletesWithheld | null }>('SELECT completed_keys->0 AS value FROM op_checkpoints WHERE op=$1 AND fingerprint=$2',
-    [SYNC_DELETES_WITHHELD_OP, passFingerprint(sourceId, incarnation)]);
+  const [row] = await syncRows<{ value: DeletesWithheld | null }>(exec, 'checkpoint_first', [SYNC_DELETES_WITHHELD_OP, passFingerprint(sourceId, incarnation)]);
   return row?.value ?? null;
 }
 
 /** Deletes the source's withheld record (the trip cleared); returns whether one existed. */
 export async function clearDeletesWithheld(tx: Exec, sourceId: string, incarnation: string): Promise<boolean> {
-  return (await tx.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2 RETURNING 1',
-    [SYNC_DELETES_WITHHELD_OP, passFingerprint(sourceId, incarnation)])).length > 0;
+  return (await syncRows(tx, 'checkpoint_delete', [SYNC_DELETES_WITHHELD_OP, passFingerprint(sourceId, incarnation)])).length > 0;
 }

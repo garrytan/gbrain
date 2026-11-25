@@ -398,6 +398,7 @@ export const PAGES_MEMBERS = {
   manualLinkStore: 'raw_sql',
   refreshStore: 'raw_sql',
   groupPublishStore: 'raw_sql',
+  runSyncStatement: 'raw_sql',
   readWorktreeManifest: 'persistence_journal',
   // Writer status (engine-sql/writer-status.ts).
   readWriterDiagnosticRows: 'persistence_journal',

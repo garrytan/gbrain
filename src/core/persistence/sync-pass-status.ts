@@ -13,6 +13,7 @@ import { HOLD_ATTEMPTS_NEEDS_HUMAN } from './sync-fault-class.ts';
 import { readDeletesWithheld, type DeletesWithheld } from './sync-markers.ts';
 import { ABANDONED_QUIET_MS, ABANDONED_REPORT_STREAK, MANAGED_SYNC_PASS_OP, NOT_CONVERGED_REPORT_STREAK, passHealth, passReadClock, transientEnding, type PassRoundSummary,
   type PassRow } from './sync-pass-row.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
 
 /**
  * #7614: the sources whose pass row is still the open one a reader saw (same last write, still `open`, source not
@@ -20,9 +21,7 @@ import { ABANDONED_QUIET_MS, ABANDONED_REPORT_STREAK, MANAGED_SYNC_PASS_OP, NOT_
  * that ended and released its lease between the two reads changed its row, so it is not reported killed.
  */
 export async function openPassRowsStill(engine: Pick<BrainEngine, 'executeRaw'>, seen: ReadonlyArray<{ source_id: string; row: PassRow }>): Promise<Set<string>> {
-  const rows = await engine.executeRaw<{ source_id: string; updated_at: Date | string; outcome: string | null }>(`SELECT s.id AS source_id, c.updated_at,
-    c.completed_keys->0->'telemetry'->>'outcome' AS outcome FROM sources s JOIN op_checkpoints c ON c.op=$1 AND c.fingerprint=s.id||':'||s.incarnation::text
-    WHERE s.id=ANY($2::text[]) AND s.archived IS NOT TRUE`, [MANAGED_SYNC_PASS_OP, seen.map(entry => entry.source_id)]);
+  const rows = await syncRows<{ source_id: string; updated_at: Date | string; outcome: string | null }>(engine, 'open_pass_rows', [MANAGED_SYNC_PASS_OP, seen.map(entry => entry.source_id)]);
   const at = new Map(seen.map(entry => [entry.source_id, entry.row.updated_at]));
   return new Set(rows.filter(row => row.outcome === 'open' && new Date(row.updated_at).toISOString() === at.get(row.source_id)).map(row => row.source_id));
 }
@@ -98,20 +97,12 @@ const RESCREEN_PAGE = 500;
  * whose only work is carrying those paths build the streak too.
  */
 export async function passBanked(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, incarnation: string, telemetry: { pass_id: string; started_at: string }): Promise<boolean> {
-  const [row] = await engine.executeRaw<{ banked: boolean }>(`SELECT EXISTS (SELECT 1 FROM persistence_requests r JOIN persistence_source_bindings b ON b.worktree_id=r.worktree_id
-      WHERE b.source_id=$1 AND b.source_incarnation::text=$6 AND r.source_incarnation=b.source_incarnation AND r.state='committed' AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%'
-        AND r.completed_at >= $5::timestamptz AND r.intent->>'passId'=$2)
-    OR EXISTS (SELECT 1 FROM op_checkpoints WHERE op=$3 AND left(fingerprint, length($4))=$4 AND completed_keys->0->>'run_id'=$2 AND (completed_keys->0->>'held_at')::timestamptz >= $5::timestamptz
-        AND completed_keys->0->'meta'->'basis_moved' IS NULL) AS banked`,
+  const [row] = await syncRows<{ banked: boolean }>(engine, 'pass_banked',
     [sourceId, telemetry.pass_id, GIT_HOLD_OP, `${sourceId}:${incarnation}:`, telemetry.started_at, incarnation]);
   if (row?.banked === true) return true;
   for (let after = ''; ;) {
     // The page order never reaches output: the pass only asks whether any held row qualifies, and ORDER BY and the `h.fingerprint > $7` cursor both use the default collation, so they agree and paging stays consistent.
-    const rewritten = await engine.executeRaw<{ fingerprint: string; record: GitHoldRecord; revision: string | null }>(`SELECT h.fingerprint, h.completed_keys->0 AS record, p.knowledge_revision::text AS revision
-      FROM op_checkpoints h LEFT JOIN pages p ON p.source_id=$1 AND p.id=(h.completed_keys->0->>'page_id')::bigint
-      WHERE h.op=$2 AND left(h.fingerprint, length($3))=$3 AND h.completed_keys->0->>'run_id'=$4 AND (h.completed_keys->0->>'updated_at')::timestamptz >= $5::timestamptz
-        AND NOT (h.completed_keys->0->>'code' = ANY($6::text[])) AND h.completed_keys->0->'meta'->'basis_moved' IS NULL
-        AND h.completed_keys->0->'meta'->'retry_only' IS NULL AND h.completed_keys->0->'meta'->'keep_deleted' IS NULL AND h.fingerprint > $7 ORDER BY h.fingerprint LIMIT $8`,
+    const rewritten = await syncRows<{ fingerprint: string; record: GitHoldRecord; revision: string | null }>(engine, 'pass_rewritten_holds',
     [sourceId, GIT_HOLD_OP, `${sourceId}:${incarnation}:`, telemetry.pass_id, telemetry.started_at, [...EVERY_PASS_RESCREEN_CODES], after, RESCREEN_PAGE]);
     if (rewritten.some(({ record, revision }) => !holdRescreenDue(record, false) && !reachedAttemptCap(record)
       && (record.code !== 'file_drift' || record.page_id == null || (record.meta.page_revision ?? null) === revision))) return true;

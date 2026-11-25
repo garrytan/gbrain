@@ -11,6 +11,7 @@
 import { realpathSync } from 'node:fs';
 import type { BrainEngine } from '../engine.ts';
 import type { WriteRequest } from './model.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
 
 type SlugRootMode = 'git-root' | 'source-root';
 
@@ -24,7 +25,7 @@ export function emptySyncScope(root: string, gitRoot: string): boolean {
 
 /** The source's pinned mode when it differs from `slugMode` (null when unpinned, equal, or the source row is gone). */
 export async function pinnedSlugModeMismatch(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, incarnation: string, slugMode: SlugRootMode): Promise<string | null> {
-  const [row] = await engine.executeRaw<{ mode: string | null }>("SELECT config->>'slug_root_mode' AS mode FROM sources WHERE id=$1 AND incarnation=$2::uuid", [sourceId, incarnation]);
+  const [row] = await syncRows<{ mode: string | null }>(engine, 'source_slug_mode', [sourceId, incarnation]);
   return row?.mode != null && row.mode !== slugMode ? row.mode : null;
 }
 
@@ -47,7 +48,7 @@ export async function checkpointMovedToTarget(engine: Pick<BrainEngine, 'execute
   done: Pick<WriteRequest, 'state' | 'error_code' | 'error_message' | 'recovery'>): Promise<boolean> {
   if (done.recovery || !['failed', 'conflict'].includes(done.state) || done.error_code !== 'revision_conflict' || done.error_message !== CHECKPOINT_MOVED_MESSAGE) return false;
   if (intent.slice && !intent.slice.done) return false;
-  const [row] = await engine.executeRaw<{ last_commit: string | null }>('SELECT last_commit FROM sources WHERE id=$1 AND incarnation=$2::uuid', [cursor.sourceId, cursor.incarnation]);
+  const [row] = await syncRows<{ last_commit: string | null }>(engine, 'source_last_commit', [cursor.sourceId, cursor.incarnation]);
   return !!row && row.last_commit === intent.target && row.last_commit !== intent.from;
 }
 
@@ -75,8 +76,7 @@ export async function slugModeCheckpointRevivable(engine: Pick<BrainEngine, 'exe
   done: Pick<WriteRequest, 'state' | 'error_code' | 'error_message' | 'recovery'>): Promise<boolean> {
   if (done.recovery || !['failed', 'conflict'].includes(done.state)) return false;
   if (done.error_code !== 'slug_root_mode_mismatch' && !(done.error_code === 'revision_conflict' && done.error_message === CHECKPOINT_MOVED_MESSAGE)) return false;
-  const [row] = await engine.executeRaw<{ mode: string | null; last_commit: string | null }>(
-    "SELECT config->>'slug_root_mode' AS mode, last_commit FROM sources WHERE id=$1 AND incarnation=$2::uuid", [cursor.sourceId, cursor.incarnation]);
+  const [row] = await syncRows<{ mode: string | null; last_commit: string | null }>(engine, 'source_mode_commit', [cursor.sourceId, cursor.incarnation]);
   if (!row || (row.last_commit ?? null) !== (intent.from ?? null)) return false;
   return row.mode == null || row.mode === intent.slugMode || emptySyncScope(cursor.root, cursor.gitRoot);
 }

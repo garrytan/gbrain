@@ -85,3 +85,20 @@ takes none of them and adds no lock of its own (no file lock, no process-wide mu
   recovery check, the publication mark, the completion applied member by member in the caller's transaction (it stops
   at the first member that does not fit and the caller rolls the group back), and the import path check's source
   roots and pending-import checkpoints.
+
+## Managed sync (`runSyncStatement`)
+
+`gbrain sync` of a managed source sends its reads and writes as named statements (`src/core/engine-sql/managed-sync-store.ts`
+holds the text PGLite and Postgres run; `rust/crates/gbrain-store/src/persistence/managed_sync_store.rs` answers each name on
+Rust). One tagged read call (`syncStoreRows`) and one tagged write call (`syncStoreWrite`) carry them.
+
+- What it answers: the same columns, filters and row choice as the SQL (`DISTINCT ON`, `LIMIT`, `ORDER BY`), from the source,
+  page, request, effect, config and `op_checkpoints` records. A column the SQL casts to `text` is a string; a `bigint` is a number.
+- Row locks (`FOR UPDATE`, `FOR SHARE`, `FOR KEY SHARE`) are stated guarantees, not reads: an explicit transaction is Serialized
+  (it holds the store's writer), and under optimistic transactions the rows read are in the read set, so a racing change aborts
+  the commit with `write_conflict`. Session settings (`set_config`, `SET TRANSACTION ISOLATION LEVEL`) change nothing.
+- No transaction ids: the proof-carrying confirm round (`sync-pass-confirm.ts`) reads `xmin`, `age` and the `txid_*` snapshot
+  functions, so a Rust brain takes the whole read each round (`proveConfirm` answers `no_xids`; the pass skips the mark).
+- Where it stops: statements the pass reaches only for a held cursor of an older release (`sync-run.ts` cursor saves, the legacy
+  waivers), `sync status`, `sync-pass-fold.ts`' refused-checkpoint read and the Postgres planner statistics still refuse on Rust
+  naming `executeRaw`. The managed hold stays: the member refuses while `managed_persistence` is held, as `executeRaw` did.
