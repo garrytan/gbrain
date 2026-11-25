@@ -119,7 +119,7 @@ import { ConnectionManager, DEFAULT_DIRECT_POOL_SIZE } from './connection-manage
 import { logConnectionEvent } from './connection-audit.ts';
 import { drainBackgroundWorkBeforeDisconnect } from './background-work.ts';
 import { abortGuarded, requestSignal, throwIfRequestAborted } from './request-signal.ts';
-import { refuseAborted } from './engine-sql/abort-aware.ts';
+import { refuseAborted, refuseRawWrites, refuseWrites } from './engine-sql/abort-aware.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery, collapseWebsearchDashRuns, keywordPhraseFactorSql } from './search/sql-ranking.ts';
@@ -505,18 +505,18 @@ export class PostgresEngine implements BrainEngine {
   private preparationRead<T>(fn: (exec: SqlExecutor) => Promise<T>, unbounded?: boolean): Promise<T> {
     try { throwIfRequestAborted(); } catch (error) { return Promise.reject(error); } // a cancelled request reserves no connection and sends no BEGIN, as executeRaw refused it (R2)
     const deadlineAt = this._pageTransaction || unbounded ? undefined : readDeadline();
-    if (deadlineAt === undefined) return fn(this.autocommitSql);
-    return runDeadlineRead(this.sql, deadlineAt, tx => fn(refuseAborted(this.engineSqlOn(tx))), this.checkoutGauge, cancelSettleMs(), readDeadlineSignal());
+    if (deadlineAt === undefined) return fn(refuseWrites(this.autocommitSql));
+    return runDeadlineRead(this.sql, deadlineAt, tx => fn(refuseWrites(refuseAborted(this.engineSqlOn(tx)))), this.checkoutGauge, cancelSettleMs(), readDeadlineSignal());
   }
 
   /** A typed read master ran on `engineSql`: still so, or `preparationRead` under a read deadline. */
   private engineSqlRead<T>(fn: (exec: SqlExecutor) => Promise<T>): Promise<T> {
-    return this._pageTransaction || readDeadline() === undefined ? fn(refuseAborted(this.engineSql)) : this.preparationRead(fn);
+    return this._pageTransaction || readDeadline() === undefined ? fn(refuseWrites(refuseAborted(this.engineSql))) : this.preparationRead(fn);
   }
 
   /** A typed read master ran through this engine's executeRaw (a statement fault a test injects reaches it): still so, or `preparationRead` under a read deadline. */
   private ownRawRead<T>(fn: (exec: Pick<BrainEngine, 'executeRaw'>) => Promise<T>): Promise<T> {
-    return this._pageTransaction || readDeadline() === undefined ? fn(this) : this.preparationRead(fn);
+    return this._pageTransaction || readDeadline() === undefined ? fn(refuseRawWrites(this)) : this.preparationRead(fn);
   }
 
   /** An unscoped read in its own transaction with JIT off (search-settings.ts); a savepoint inside a caller's transaction. */
@@ -1272,12 +1272,12 @@ export class PostgresEngine implements BrainEngine {
   }
 
   // The CLI import and extract reads that ran unscoped through executeRaw (engine-sql/cli-reads-import.ts), on the current connection.
-  private get cliReads() { return unscopedExecutor(refuseAborted(this.engineSql), 'cli reads: the import and extract paths ran these unscoped through executeRaw'); }
+  private get cliReads() { return unscopedExecutor(refuseWrites(refuseAborted(this.engineSql)), 'cli reads: the import and extract paths ran these unscoped through executeRaw'); }
   listGuestSourceIds(sourceIds: readonly string[]) { return this.preparationRead(exec => cliReadsImpl.listGuestSourceIds(unscopedExecutor(exec, 'cli reads: the import and extract paths ran these unscoped through executeRaw'), sourceIds)); }
   readPageTrustRows(lookup: PageTrustLookup) { return cliReadsImpl.readPageTrustRows(this.cliReads, lookup); }
 
   /** Page-write reads (engine-sql/write-misc.ts); a preparation read ends at its deadline, a locked read runs in the caller's transaction. */
-  private get writeMiscReads() { return refuseAborted(unscopedExecutor(this.engineSql, 'write misc: page writes ran these unscoped through executeRaw')); }
+  private get writeMiscReads() { return refuseWrites(refuseAborted(unscopedExecutor(this.engineSql, 'write misc: page writes ran these unscoped through executeRaw'))); }
   private writeMiscRead<T>(fn: (exec: ReturnType<typeof unscopedExecutor>) => Promise<T>) {
     return whenNotAborted(() => this.preparationRead(exec => fn(refuseAborted(unscopedExecutor(exec, 'write misc: page writes ran these unscoped through executeRaw')))));
   }

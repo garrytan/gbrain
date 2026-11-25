@@ -11,6 +11,9 @@
 import { throwIfRequestAborted } from '../request-signal.ts';
 import type { SqlExecutor } from './executor.ts';
 
+// The read routes also refuse a write on every call (read-route-guard.ts); one import line for the engine.
+export { refuseRawWrites, refuseWrites } from './read-route-guard.ts';
+
 export function refuseAborted<T extends SqlExecutor>(exec: T): T {
   return {
     ...exec,
