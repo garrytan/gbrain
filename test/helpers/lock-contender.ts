@@ -17,7 +17,7 @@ withLock(lock, () => {
   pause(300);
   writeFileSync(counter, JSON.stringify([...seen, name]));
   appendFileSync(log, `exit ${name}\n`);
-}, barrier ? () => {
+}, { afterJudged: barrier ? () => {
   writeFileSync(`${barrier}.judged`, '1');
   for (let i = 0; i < 250 && !existsSync(barrier); i++) pause(20);
-} : undefined);
+} : undefined });

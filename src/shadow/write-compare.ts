@@ -168,8 +168,9 @@ const running = (pid: number): boolean => { try { process.kill(pid, 0); return t
  */
 export class WriteTally {
   private pending: Array<{ seq: number; delta: WriteTallyFile; ending: boolean }> = [];
-  private sealed = 0; // how many pending batches a save that may have landed has tried: they are never added to
+  private sealed = 0; // the first `sealed` pending batches were in a save that may have landed: never added to, until a durable save takes them
   private seq = 0;
+  private marked: string | null = null; // the epoch of the mark this child has published
   private readonly id: string;
   constructor(private readonly dir: string, private readonly epoch: () => string | null, private readonly alive: () => boolean = () => existsSync(dir), private readonly pid: number = process.pid) { this.id = `${pid}.${randomBytes(4).toString('hex')}`; }
   /** One locked read-modify-write: dead pids recovered, then this child's unsaved batches, then `change`. False when nothing was saved (the batches are kept). `fresh`: a mark under this pid is from an earlier process that had it. */
@@ -187,7 +188,7 @@ export class WriteTally {
         for (const p of dead) applyVerdict(file, 'unexplained_difference', undefined, 1);
         file.in_flight = file.in_flight.filter((p) => !dead.includes(p));
         for (const id of Object.keys(file.applied)) if (id !== this.id && !running(Number.parseInt(id, 10))) delete file.applied[id];
-        const todo = batches.filter((b) => b.seq > (file.applied![this.id] ?? 0));
+        const todo = batches.filter((b) => b.delta.epoch_id === epoch && b.seq > (file.applied![this.id] ?? 0)); // a batch of a retired epoch is never added to another's file
         if (!change && !dead.length && !todo.length) return;
         for (const b of todo) {
           for (const o of OUTCOMES) file[o] += b.delta[o];
@@ -206,18 +207,24 @@ export class WriteTally {
       });
       this.pending = []; this.sealed = 0;
       return true;
-    } catch { this.sealed = renamed ? batches.length : 0; return false; } // silent-read-ok: false is the answer, never a pass: begin() refuses the replay, and note() keeps the unsaved batches for the next save
+    } catch { if (renamed) this.sealed = batches.length; return false; } // silent-read-ok: false is the answer, never a pass: begin() refuses the replay, and note() keeps the unsaved batches for the next save
   }
   /** Publishes this pid as having a replay in flight. True only when that is durable on disk: on false the replay must not run. */
-  begin(): boolean { return this.update((file) => { if (!file.in_flight.includes(this.pid)) file.in_flight.push(this.pid); }); }
+  begin(): boolean {
+    const epoch = this.epoch();
+    if (!this.update((file) => { if (!file.in_flight.includes(this.pid)) file.in_flight.push(this.pid); })) return false;
+    this.marked = epoch; // the replay's verdict belongs to the epoch its mark is in, whatever the epoch is by then
+    return true;
+  }
   /** At child start: counts the marks of dead processes (and of an earlier process with this pid), and saves any verdict still unsaved. */
   recover(): void { this.update(undefined, true); }
   /** Counts one outcome; `ends` is a replay's own verdict, which removes its mark. */
   note(outcome: WriteOutcome, key?: string, n = 1, ends = false): void {
-    const epoch = this.epoch();
+    const epoch = (ends && this.marked) || this.epoch();
     if (epoch === null || !this.alive()) return;
-    if (this.pending.length === this.sealed) this.pending.push({ seq: ++this.seq, delta: blank(epoch), ending: false });
-    const batch = this.pending.at(-1)!;
+    if (ends) this.marked = null;
+    let batch = this.pending.at(-1);
+    if (!batch || this.pending.length === this.sealed || batch.delta.epoch_id !== epoch) this.pending.push(batch = { seq: ++this.seq, delta: blank(epoch), ending: false });
     applyVerdict(batch.delta, outcome, key, n);
     batch.ending ||= ends;
     this.update();

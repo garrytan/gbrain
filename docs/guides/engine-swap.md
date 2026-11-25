@@ -91,7 +91,7 @@ never a pass. With no shadow running, every criterion is `missing`.
    stays `missing`. Postgres keeps the sampler, and stops a slow read with a server-side statement timeout of the same length.
 
    **How the counts are kept.** Counts live in `write-comparisons.json` in the shadow directory, per evidence epoch, and
-   change only under one cross-process lock (the same lock code as the epoch manifest, where a lock whose holder died is taken over through a separate takeover file, so two processes never both enter; a takeover file that a crash left behind refuses the lock until it is removed by hand, and the tally then records nothing, which is no evidence, never a pass). Each update adds this child's
+   change only under one cross-process lock (the same lock code as the epoch manifest, where a lock whose holder died is taken over through a separate takeover file, so two processes never both enter; a takeover file, or a lock file left empty by a crash between creating it and writing it, refuses the lock until it is removed by hand, because neither can be told apart from a live one, and the tally then records nothing, which is no evidence, never a pass). Each unsaved result is tied to the evidence epoch it was made in and is never added to another epoch's counts. Each update adds this child's
    unsaved results to what the file holds at that moment; it never writes back a copy it read earlier, so one child
    cannot erase a difference another saved, and a result whose save failed is kept and added at the next save. Before a
    replay starts, the child writes its process id into the file's in-flight list, and the replay runs only if that write

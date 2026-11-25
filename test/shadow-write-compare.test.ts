@@ -10,7 +10,7 @@
  * (GBRAIN_TEST_REQUIRE_RUST_ADDON=1 or GBRAIN_TEST_RUST_ADDON_REQUIRED=1 makes that an error; the Rust engine workflow runs it that way through its rust-store receipt lane); everything else uses fake engines or no engine.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { WRITE_COVERAGE_LIMIT, type ShadowStatus } from '../src/core/engine-swap/readiness.ts';
@@ -21,7 +21,7 @@ import { writeSeedRecord } from '../src/shadow/seed.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { loadRustAddon, type RustAddon } from '../src/core/rust-engine/addon-loader.ts';
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
-import { ensureEpoch, withLock } from '../src/shadow/evidence-epoch.ts';
+import { ensureEpoch, readEpoch, withLock } from '../src/shadow/evidence-epoch.ts';
 import { buildFollowStatus, renderFollowStatus } from '../src/shadow/follow-status.ts';
 import { encodeArgs } from '../src/shadow/codec.ts';
 import { configDir } from '../src/core/config.ts';
@@ -184,6 +184,58 @@ describe('the locked write tally', () => {
     const other = tallyOn(dir, OTHER); // another child's batches are numbered on their own
     other.tally.note('comparable');
     expect(other.counts().comparable).toBe(1002);
+  });
+
+  const INPUTS = { seed_id: 's', rust_addon_sha256: 'a', comparator_version: 1, adapter_version: 'x', capability_set_hash: null, readiness_policy_hash: 'p' };
+  /** The manifest's epoch changes A, then B, then A again: three epochs, the third not the first. A client reads whichever is current. */
+  const rotate = (dir: string): string => { ensureEpoch(dir, { ...INPUTS, rust_addon_sha256: 'b' } as never, NOW.getTime() + 1000); return ensureEpoch(dir, INPUTS as never, NOW.getTime() + 2000).epoch_id; };
+
+  test('a verdict kept from a retired epoch never counts in a later one, and a replay\'s verdict belongs to the epoch its mark is in', () => {
+    const dir = tmp();
+    const e1 = ensureEpoch(dir, INPUTS as never, NOW.getTime()).epoch_id;
+    const now = (): string | null => readEpoch(dir)?.epoch_id ?? null; // what a client\'s epoch getter sees
+    const mine = new WriteTally(dir, now, () => true, process.pid);
+    expect(mine.begin()).toBe(true);
+    const unblock = blockSave(dir, process.pid);
+    mine.note('comparable', undefined, 1, true); // E1's verdict cannot be saved: kept
+    const e3 = rotate(dir); expect(e3).not.toBe(e1);
+    unblock();
+    expect(mine.begin()).toBe(true); // E3
+    mine.note('comparable', undefined, 1, true);
+    expect(readWriteTally(dir, e3)).toMatchObject({ comparable: 1, in_flight: [] }); // not 2: E1's verdict was not added to E3
+    // A replay begun in E3 whose epoch rotates before its verdict: the verdict is E3's, so it is not counted in E4.
+    expect(mine.begin()).toBe(true);
+    ensureEpoch(dir, { ...INPUTS, rust_addon_sha256: 'c' } as never, NOW.getTime() + 3000);
+    const e4 = now()!;
+    mine.note('comparable', undefined, 1, true);
+    expect(readWriteTally(dir, e4)?.comparable ?? 0).toBe(0);
+  });
+
+  test('a failed begin() before the rename cannot unseal a batch that may have landed: the next outcome is counted, not lost', async () => {
+    const dir = tmp();
+    const { epoch } = tallyOn(dir); saved(dir, epoch);
+    const mine = tallyOn(dir);
+    const durable = await import('../src/core/fs-durable.ts');
+    const flush = spyOn(durable, 'flushDirectory').mockImplementationOnce(() => { throw new Error('EIO'); });
+    mine.tally.note('comparable', undefined, 1, true); // renamed, then the directory flush failed: it may have landed
+    expect(flush).toHaveBeenCalledTimes(1); flush.mockRestore(); // the ambiguity really happened
+    const unblock = blockSave(dir, process.pid);
+    expect(mine.tally.begin()).toBe(false); // fails before any rename
+    unblock();
+    mine.tally.note('uncomparable', 'mark_unwritten', 1, true); // the refused sample's outcome
+    expect(mine.counts()).toMatchObject({ comparable: 1001, uncomparable: 1, uncomparable_by_reason: { mark_unwritten: 1 }, in_flight: [] });
+  });
+
+  test('a lock that names no holder (empty, as a crash between creating and writing it leaves) is never taken over, however old, so a live replacement is never removed', () => {
+    const dir = tmp(); const lock = join(dir, 'x.lock');
+    writeFileSync(lock, '');
+    utimesSync(lock, new Date(Date.now() - 600_000), new Date(Date.now() - 600_000)); // long past any age a takeover once waited for
+    let judged = 0; let ran = 0;
+    expect(() => withLock(lock, () => { ran++; }, { afterJudged: () => { judged++; }, waitMs: 200 })).toThrow('the lock is held');
+    expect([judged, ran, readFileSync(lock, 'utf8'), existsSync(`${lock}.takeover`)]).toEqual([0, 0, '', false]);
+    writeFileSync(lock, 'not-a-pid'); // text that names no holder either
+    expect(() => withLock(lock, () => { ran++; }, { waitMs: 200 })).toThrow('the lock is held');
+    expect(ran).toBe(0);
   });
 
   test('a file that is there and not a tally is never written over (begin refuses), and a child of a retired epoch never replaces the current epoch\'s file', () => {

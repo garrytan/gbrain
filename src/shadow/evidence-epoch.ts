@@ -11,7 +11,7 @@
  * concurrently agree on it, and a return to earlier inputs is still a new epoch (it must not revive old rows).
  */
 import { createHash, randomBytes } from 'node:crypto';
-import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
+import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import { detectAddonTarget } from '../core/rust-engine/addon-target.ts';
 import { VERSION } from '../version.ts';
@@ -81,21 +81,15 @@ export function readEpoch(dir: string): EpochManifest | null {
 }
 
 const lockPath = (dir: string): string => join(dir, 'evidence', 'epoch.lock');
-const LOCK_STALE_MS = 30_000;
 const LOCK_WAIT_MS = 10_000;
 
 const sleepSync = (ms: number): void => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); };
 
-/** A lock is stale when its holder process is gone, or (holder unknown) when it is older than LOCK_STALE_MS. `text` is what the lock file said when it was read. */
-function staleLock(path: string, text: string): boolean {
-  try {
-    const pid = Number.parseInt(text, 10);
-    if (Number.isInteger(pid) && pid > 0) {
-      try { process.kill(pid, 0); } catch (e) { return (e as NodeJS.ErrnoException).code !== 'EPERM'; }
-      return false;
-    }
-    return Date.now() - statSync(path).mtimeMs > LOCK_STALE_MS;
-  } catch { return false; } // silent-read-ok: a lock that cannot be read is treated as held; the wait then times out and the caller records no epoch
+/** A lock is stale only when its text names a holder process that is gone. A lock that names none (empty: a crash between creating it and writing it, or a creation still in progress) is never taken over: it is not told apart from a new one, so it refuses the lock until removed by hand. `text` is what the lock file said when it was read. */
+function staleLock(text: string): boolean {
+  const pid = Number.parseInt(text, 10);
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); return false; } catch (e) { return (e as NodeJS.ErrnoException).code !== 'EPERM'; }
 }
 
 /** Creates a file exclusively (O_EXCL) holding `body`: true when this process now holds it, false when another does. */
@@ -114,16 +108,16 @@ const removeIfOurs = (path: string, body: string): void => { try { if (readText(
  * when it stays held. The directory must exist. A lock whose holder is gone is taken over only through `<path>.takeover`, created exclusively: the
  * taker re-reads the lock under it and removes it only if it is still the very text it judged dead, so two takers never both enter and a lock another
  * process just created is never removed (the drill lock's pattern). A takeover file a crash left behind refuses the lock until it is removed by hand.
- * The release removes the lock only while it is still ours. `afterJudged` is a test seam: it runs right after a lock was judged dead.
+ * The release removes the lock only while it is still ours. `seams` are for tests: `afterJudged` runs right after a lock was judged dead, `waitMs` shortens the wait. A lock with no holder named in it (empty) is never taken over.
  */
-export function withLock<T>(path: string, fn: () => T, afterJudged?: () => void): T {
+export function withLock<T>(path: string, fn: () => T, seams: { afterJudged?: () => void; waitMs?: number } = {}): T {
   const body = `${process.pid}:${randomBytes(6).toString('hex')}`;
-  const deadline = Date.now() + LOCK_WAIT_MS;
+  const deadline = Date.now() + (seams.waitMs ?? LOCK_WAIT_MS);
   for (;;) {
     if (tryCreateLock(path, body)) break;
     const seen = readText(path);
-    if (seen !== null && staleLock(path, seen)) {
-      afterJudged?.();
+    if (seen !== null && staleLock(seen)) {
+      seams.afterJudged?.();
       if (tryCreateLock(`${path}.takeover`, body)) {
         try { if (readText(path) === seen) unlinkSync(path); } catch { /* already gone */ } /* silent-read-ok: a lock that is already gone needs no removal; the loop then creates it */ finally { removeIfOurs(`${path}.takeover`, body); }
         continue;
