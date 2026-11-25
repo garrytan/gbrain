@@ -86,7 +86,8 @@ function config(): IpcPathConfig {
 async function serve(cfg: IpcPathConfig, lane: FirstSessionLane | 'none' = 'owner', path = resolveSocketPathForConfig(cfg, 'resolve')!): Promise<void> {
   const secret = ensureIpcSecretForConfig(cfg)!;
   const server = await startResolveIpcServer(path, { resolve: async () => null, context_pack: makeContextPackIpcHandler(engine, 'default', lane === 'none' ? {} : { firstSessionLane: lane }) }, { secret, boundSourceId: 'default' });
-  if (server) servers.push(server);
+  if (!server) throw new Error(`the test serve did not start at ${path}`);
+  servers.push(server);
 }
 
 /** A raw listener at the serve's socket: `answer` maps the request line to a reply line (or null: say nothing). */
@@ -197,7 +198,7 @@ describe('SessionStart first-session section', () => {
       expect(out).not.toContain(SECTION_HEAD);
       expect(lastOutcome()).toMatchObject({ outcome: 'not_due', reason: 'not_personal' });
       expect(await engine.getConfig(FIRST_SESSION_KEY)).toBeNull();
-      for (const s of servers) s.close();
+      await Promise.all(servers.map(s => new Promise<void>(done => s.close(() => done()))));
       servers = [];
     }
   }, 20_000);
