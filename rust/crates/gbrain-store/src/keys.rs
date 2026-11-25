@@ -76,7 +76,10 @@ pub const LOCK_QUEUE: u8 = b'w';
 pub const RELATION_CATALOG: u8 = b'v';
 /// Family `persistence` (`persistence.rs`): effects, checkpoints, bindings and the page
 /// projection queue. Its write requests stay under `REQUEST` and `REQUEST_ID`, and its local
-/// writers under `WRITER`.
+/// writers under `WRITER`. The byte after `d`: `0x01` counters, `0x02` housekeeping
+/// checkpoints, `0x03` topology changes, `0x04` page projection jobs, `0x05` to `0x07` effect
+/// rows, effect order and operation checkpoint paths, `0x08` the commit notifier
+/// (`persistence/notifier.rs`; `d 0x08 0x01 <host_id>` is the host lease).
 pub const PERSISTENCE: u8 = b'd';
 /// Family `jobs` (`jobs.rs`).
 pub const JOBS: u8 = b'm';
@@ -101,6 +104,23 @@ pub const TELEMETRY_CHAT_USAGE: u8 = 0x0B; // chat_usage_log
 pub const DREAM_SYNTHESIS_COMPLETION: u8 = b'f';
 /// Family `entity_identities` (`entity_identities.rs`).
 pub const ENTITY_IDENTITY: u8 = b'i';
+/// Family `session_state` (`session_state.rs`).
+pub const SESSION_STATE: u8 = b'y';
+/// Family `persistence_journal`, the `derived_generations` ledger (`generations.rs`).
+pub const DERIVED_GENERATION: u8 = b'h';
+/// Family access_members (access_members.rs): members 0x01, groups 0x02, group members 0x03, member links 0x04
+/// (access_member_links.rs).
+pub const ACCESS_MEMBERS: u8 = b'x';
+/// Family `access_rules` (`access_rules.rs`): folder rules, pending prefixes, policy state and
+/// revisions. The byte after the tag names the table; the module owns the sub-tags.
+pub const ACCESS_RULES: u8 = b'z';
+/// Family `reason_tombstones` (`reason_tombstones.rs`): the purged `(commit, path)` pairs of
+/// `reason_purge_tombstones`, `1 source \0 commit \0 path`. Every letter is taken, so this family
+/// uses a digit; `y` is `SESSION_STATE`.
+pub const REASON_TOMBSTONE: u8 = b'1';
+// Tag `2` is free. It held the `embedding_holds` family (a page's hold state and reason), dropped
+// at the main join: a page's embedding hold now lives only in its `page_embedding_budget` ledger
+// record (`page_embedding_budget.rs`). No store holds a record under it, so a new family may take it.
 
 pub fn text(tag: u8, parts: &[&str]) -> Vec<u8> {
     let mut key = vec![tag];

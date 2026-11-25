@@ -9,14 +9,14 @@
  * again on its next call (client.ts `rejoin`, RustEngine `_takeOver`); its calls in flight end `owner_unavailable`
  * (routes.ts `ownerGone`), since the owner may have started them.
  */
-import { mkdirSync } from 'node:fs';
+import { chmodSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { BrainEngine } from '../../engine.ts';
 import { opError } from '../../ops/contract.ts';
 import { tryAcquireNativeLock, type NativeLockHandle } from '../../persistence/native-lock.ts';
 import { parseGlobalFlags } from '../../cli-options.ts';
 import { connectOwner, type OwnerConnection } from './client.ts';
-import { ownerLockPath, ownerSocketPath } from './protocol.ts';
+import { canonicalDatabasePath, ownerLockPath, ownerSocketPath } from './protocol.ts';
 import { serveOwnerEngine, type OwnerEngineServer, type OwnerServerOptions } from './server.ts';
 
 /** How long a process keeps trying to become the owner or reach it before it reports `owner_unavailable`. */
@@ -49,6 +49,11 @@ export async function electOwner(engine: BrainEngine, databasePath: string, opts
   const lockPath = ownerLockPath(databasePath);
   const socketPath = ownerSocketPath(databasePath);
   mkdirSync(dirname(lockPath), { recursive: true });
+  // The store directory is private whatever the socket length: a short socket path hardens it to 0700 as the socket's
+  // parent, but a long one moves the socket elsewhere, so the store's own files would keep the umask's mode.
+  const storeDir = canonicalDatabasePath(databasePath);
+  mkdirSync(storeDir, { recursive: true, mode: 0o700 });
+  if (process.platform !== 'win32') chmodSync(storeDir, 0o700);
   const deadline = Date.now() + (opts.waitMs ?? OWNER_ELECTION_WAIT_MS);
   let lastError: unknown;
   for (;;) {

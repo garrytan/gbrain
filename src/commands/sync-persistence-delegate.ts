@@ -4,7 +4,7 @@ import { resolveBrainId } from '../core/brain-resolver.ts';
 import { loadMounts } from '../core/brain-registry.ts';
 import { getCliOptions } from '../core/cli-options.ts';
 import { resolveSourceIdEngineFree } from '../core/source-resolver.ts';
-import { inspectLockHolder } from '../core/pglite-lock.ts';
+import { engineLabel, persistenceResidentOwner } from '../core/persistence/resident-owner.ts';
 import { OperationError, opError } from '../core/ops/contract.ts';
 import { readFix } from '../core/ops/op-fix.ts';
 import { maybeDelegateLocalAdministration, persistenceConfigForBrain } from '../core/persistence/local-client.ts';
@@ -151,11 +151,12 @@ export async function maybeDelegateSyncToPersistence(hostConfig:GBrainConfig|nul
   if(args.includes('--no-delegate')||process.env.GBRAIN_SYNC_NO_DELEGATE==='1')return false;
   const brainId=resolveBrainId(getCliOptions().brain,process.cwd());
   const config=persistenceConfigForBrain(hostConfig,brainId,brainId==='host'?[]:loadMounts());
-  if(config?.engine!=='pglite'||!config.database_path||config.database_url||!inspectLockHolder(config.database_path).held)return false;
+  const owner=config?await persistenceResidentOwner(config):null;
+  if(!config||!owner)return false;
   try {
     const params=await parsePersistenceSyncArgs(args);
     const deadline=new DelegatedSyncDeadline(params.timeoutSeconds*1000,delegatedProgressWindowMs(args));
-    console.error('[sync] Delegating to the registered PGLite owner.');
+    console.error(`[sync] Delegating to the registered ${engineLabel(owner.engine)} owner.`);
     // #5984: the owner returns one bounded slice per call; the shared drain owns re-entry and the stop rules.
     let result:SyncResult&{source_id?:string};
     try {
@@ -163,7 +164,7 @@ export async function maybeDelegateSyncToPersistence(hostConfig:GBrainConfig|nul
         const sliceSeconds=deadline.sliceSeconds(params.timeoutSeconds);
         const delegated=await maybeDelegateLocalAdministration('writer_sync',{...params,timeoutSeconds:sliceSeconds} as unknown as Record<string,unknown>,config,
           {timeoutMs:sliceSeconds>0?Math.min(86_400_000,Math.max(30_000,sliceSeconds*1000+30_000)):86_400_000});
-        if(!delegated.handled)throw opError('owner_unavailable','The observed PGLite owner stopped before sync admission.','Retry the same sync options to resume its durable cursor.',
+        if(!delegated.handled)throw opError('owner_unavailable','The observed owner stopped before sync admission.','Retry the same sync options to resume its durable cursor.',
           {fix:{argv:['gbrain','sync',...args],consent:[],actor:'agent',requires_exclusive:false,why:'The owner stopped before admission; the same options resume the durable cursor.'}});
         const slice=delegated.result as SyncResult;
         deadline.noteSlice(slice);

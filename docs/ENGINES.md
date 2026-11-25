@@ -1165,6 +1165,14 @@ a digest of the serve's lock token, never the identity); a file another lock hol
 
 **Say to your agent:** *"Give me my brain's brain_ref from gbrain engine status, not its id."*
 
+On a Rust brain the report names `rust` as the engine and the probe is typed. It checks the addon first and reports
+`rust_engine_addon_missing`, `rust_engine_addon_mismatch` or `engine_capability_missing` as a `refusal` (code, reason,
+message), not as a database diagnosis. A `database_path` with no `records.redb` (a missing path or an empty directory)
+probes as `data_dir_missing`, and a `records.redb` that is empty or has no `FORMAT` file beside it (a first open
+that stopped early, or a lost `FORMAT`) as `store_incomplete`;
+the probe creates nothing in either case. Otherwise it opens the store and reads one config key, since the Rust
+engine serves no `SELECT 1`.
+
 ### `gbrain db-repair [--yes] [--apply-rewrites] [--json] [--force] [--undo-last-rewrite] [--dry-run]`
 
 Engine-free Postgres-access repair, the sibling of `gbrain pglite-repair`
@@ -1709,9 +1717,11 @@ and assert `jsonb_typeof` — the assertion PGLite cannot make.
 
 The opt-in Rust engine (`docs/designs/RUST_ENGINE.md`) is under construction. PGLite and Postgres behave exactly
 as before, and an install needs no Rust toolchain and no addon. `openRustEngine({ addon, databasePath })`
-(`src/core/rust-engine.ts`) is the one seam: the addon loader calls it after it has loaded and verified the native
-addon, and gets back the engine: every `BrainEngine` member, with `kind` `'rust'`. `BrainEngine.kind` admits `'rust'`
-when the `rust` config value lands; no config value selects the Rust engine yet. Finding, checking and loading the
+(`src/core/rust-engine.ts`) is the one seam: the `rust` case of `constructEngine` (`src/core/engine-construct.ts`)
+calls it after the addon loader has loaded and verified the native addon, and gets back the engine: every
+`BrainEngine` member, with `kind` `'rust'`. A `~/.gbrain/config.json` with `"engine": "rust"` and an absolute
+`database_path` (the store directory) selects it; that is a hand edit, because no command writes the value. A missing
+or relative `database_path` refuses `config_error` before the addon loads. Finding, checking and loading the
 addon, and refusing a missing or mismatched one, belong to the loader (below), not the shell.
 
 - **Capabilities.** The engine reports a capability only when it serves every `BrainEngine` member of that
@@ -1729,6 +1739,14 @@ addon, and refusing a missing or mismatched one, belong to the loader (below), n
 - **SQL-only paths.** Code that only works through SQL (migrations, cycle locks, engine migration and graduation,
   embed backfill, page-body staging) takes the kind as `EngineKind`, narrows it with `sqlEngineKind` or
   `isRustEngineKind` (`src/core/sql-engine-kind.ts`), and refuses a Rust brain with `engine_capability_missing` reason `raw_sql` instead of treating it as Postgres.
+- **On the CLI.** Commands that need raw SQL (`import`, `sources add` and others) refuse `engine_capability_missing`.
+  When the source lookup is refused on a Rust brain and a source was selected (`GBRAIN_SOURCE`, a `.gbrain-source`
+  file, `sources.default`) or the brain holds a source besides `default`, the command stops with that refusal instead
+  of reading every source (`refusedSourceTarget`, `src/core/source-resolver.ts`). `gbrain init` with no engine flag
+  keeps an existing `rust` config: it reports the brain, leaves `config.json` unchanged and never opens the store;
+  `--pglite`, `--supabase`, `--url` and `--prefer-postgres` still choose the engine
+  (`src/commands/init-existing-engine.ts`). The owner makes the store directory mode 0700 when it opens the brain.
+  Pinned by `test/rust-cli-parity.serial.test.ts` (`docs/TESTING.md`, "Rust parity arm").
 - **The addon loader.** `loadRustEngineAddon()` (`src/core/rust-engine/addon-loader.ts`) returns the loaded addon,
   or the refusal `rust_engine_addon_missing` or `rust_engine_addon_mismatch` with its `reason` (`gbrain errors
   <code>`), before the brain is touched. It uses `GBRAIN_RUST_ENGINE_ADDON` (an absolute path to a build from `bun run
@@ -1807,7 +1825,8 @@ that is not connected refuses `engine_closed`. These members run on the store (`
   `flipBodyGeneration`, `openBodyStaging`, `setBodyStagingState`, `readSegmentDerivations`, `upsertSegmentDerivations`,
   `retireSegmentDerivations`, `sealSegmentedPage` and `refreshPageBody`. `sweepSegments` still refuses, and so does
   a segmented page written inside `transaction` (the store has none), so the `page_body` capability stays unreported.
-  A whole-body `putPage` over a segmented page refuses, as on PGLite (`rust/docs/store/page_body.md`).
+  A whole-body `putPage` over a segmented page refuses, as on PGLite (`rust/docs/store/page_body.md`), and so does a
+  plain (unsealed) `upsertChunks`, `invalid_state` before it writes.
 
 A served member never drops what it cannot keep. An option or input the store has no home for, or cannot answer the
 way PGLite does, refuses `engine_capability_missing` and writes nothing. These are refused today:
@@ -1874,7 +1893,9 @@ Shadow mode checks the Rust engine against your real reads before you switch to 
 nothing about how your brain answers: the primary engine (PGLite or Postgres) always answers first, and a sample of
 reads and searches is then replayed against the Rust engine in a separate, supervised child process. The child
 compares the two answers and records only content-free rows (time, operation, outcome, reason code, row counts, timings) in a local
-ledger. Nothing is written to the brain database, the config table or the brain repo; all shadow state lives in
+ledger. Its only writes to the brain database are the swap-eligibility writer evidence below (one row per writing
+process, and on Postgres one trigger per table while shadow mode is on); nothing is written to brain content, the
+config table or the brain repo, and all other shadow state lives in
 `~/.gbrain/shadow/<brain>/` (`$GBRAIN_HOME/.gbrain/shadow/<brain>/` when `GBRAIN_HOME` is set).
 
 **Say to your agent:** *"Turn on Rust engine shadow mode for my brain and show me the report."*
@@ -1942,6 +1963,69 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   and `gbrain doctor` only use an addon that is already installed; without one, `start --yes` refuses and stays off, `gbrain doctor` fails
   the `rust_engine_addon` check, and the child records `addon_unavailable` (`rust_engine_addon_missing`, reason `not_installed`).
 - **Doctor.** `rust_engine_addon` checks the installed addon when shadow mode is on and is not applicable otherwise.
+- **Writer observations (swap eligibility).** While shadow mode is on, each process that writes to the brain through
+  gbrain notes itself in `engine_writer_observations`: its host id, the name its database connections carry, its
+  command kind and gbrain version, and when it first and last wrote. The note runs after the write committed, in its
+  own short transaction, at most every 10 minutes per process; a rolled-back transaction leaves none. A brain without
+  a shadow keeps the table empty.
+- **Writer hooks (Postgres brains).** `start --yes` adds one statement-level trigger, `gbrain_writer_note`, to every
+  brain table, and `stop` removes them. Each trigger records the writing connection (its `application_name`, client
+  address and backend pid) in `engine_writer_sessions`, at most every 10 minutes per connection, so a writer that is
+  not a gbrain process on the shadow machine (another machine, `psql`, an older gbrain) still leaves a row. A trigger
+  never fails the write and never waits on the evidence tables: it takes each table's lock with `NOWAIT`, so a lock someone else
+  holds is an error it catches at once, and its own `lock_timeout` of 50 ms (set on the function, so the writer's settings are
+  untouched afterwards) bounds any other wait. The sessions table has no unique key, so the trigger's insert has no uniqueness check that could wait on another transaction's uncommitted row (repeated rows do not raise the session count, and a refresh updates every matching row that no other transaction holds locked). It does not catch a cancelled query, so a user's own cancel still cancels, it skips a row
+  another transaction holds (that skip is recorded as a gap, since the write went unrecorded), and any error becomes a row in `engine_writer_coverage_gaps` (that table has no
+  sequence, so an INSERT alone records a gap). It stamps the time it ran, not the start of the writer's transaction.
+  If both evidence tables are unusable at once, the trigger can only warn; a table that is missing or locked then
+  makes the eligibility read fail (`eligibility_evidence`, NOT READY), and a role with no usable route is counted by
+  the role check, so a stretch with no evidence cannot read as clean while the damage lasts. Two limits remain: a
+  statement timeout that fires inside the trigger is not caught (the 50 ms bound keeps it far below any timeout), and
+  a writer whose write lands while both evidence tables are locked by someone else at the same moment, and the locks
+  are gone before the swap reads, leaves no row. `gbrain engine shadow stop` exits 1 and says to run it again when it could not remove the hooks (the database was unreachable); the hooks keep noting writers until a later stop removes them. `stop` ends the bookkeeping of processes that are still open: they
+  note and repair only while `state.json` says shadow mode is on, and a repair acts only while the hooks file says
+  `installed`. Adding or removing the triggers takes a short lock on each table (start refuses after 5 seconds
+  rather than queue writers). `<shadow dir>/writer-hooks.json` is written before the first trigger, the
+  install is one transaction (a killed start leaves nothing), and the next `start` or `stop` removes triggers a crash
+  left. PGLite brains are not hooked: one process on one machine opens them. Measured cost on a local Postgres 16,
+  one client, 1,500 writes each, two rounds: a one-statement write went from about 1.08 to 1.34 ms at p50 (p99 1.46
+  to 1.95 ms, about 21% fewer writes per second), and `put_page` from about 2.33 to 2.58 ms at p50 (p99 3.80 to
+  4.00 ms, about 10% fewer per second). The cost applies only while shadow mode is on.
+- **Eligibility.** The swap reads the evidence with one read-only query: `eligibility.writer_hosts_7d` counts the
+  machines that claimed writes in the last 7 days (from the first start of the current seed at the earliest, with 10 minutes of slack; starting again keeps that
+  start, `start` replaces the hooks in one transaction so writers are never unhooked in between, and `stop` records a gap row in
+  the transaction that removes the hooks, because nothing records writers after that; a state file from before this
+  start was recorded keeps its own start, and a stopped one records the gap at the next start),
+  and `eligibility.unknown_writer_paths` counts what no claim accounts for: a writing connection no gbrain process on
+  the shadow machine claimed, a gap row, a brain table whose hook is missing or does not fire for every write
+  (disabled, replica-only, conditional, the wrong events or another function; the next note repairs it and leaves a
+  gap row), a role that can write brain tables (a table privilege, or a privilege on any single column) but has no
+  complete way to record evidence (INSERT on `engine_writer_coverage_gaps`, and row-level security that lets it in; the
+  session table alone is not enough, because a refresh the trigger skips can only be recorded as a gap), plus the
+  file-side evidence: reconcile follower misses, repairs made while coverage was invalid, and a lost note. The roles
+  judged are the login roles and every role a non-superuser login can `SET ROLE` to (the SET option of a membership
+  on PostgreSQL 16 and newer, direct or through a chain; plain membership on older servers), because the trigger runs
+  with the rights of whichever role is current when it fires. A process claim resolves a connection's rows only
+  while the claim is inside the window too, so an expired claim cannot hide a current writer. The process-side note
+  runs under a 50 ms lock timeout and a 2 s statement timeout, so a busy evidence table ends it as a recorded
+  failure instead of holding one of the brain's connections.
+  A fault or pass record that is
+  torn, has no time, lacks a count or carries a count of the wrong type is incomplete evidence and counts too. Criterion 11 reads
+  NOT READY on any evidence it cannot prove, so a gap nobody thought of fails closed. In particular, shadow mode
+  being off or not provably enabled adds one unknown writer path for as long as it stays that way. A `stop`, or a `start`
+  that continues an existing epoch, first writes a marker to `state.json` (`writer_coverage_stopped_at`,
+  `writer_coverage_restarted_at`) before any hook changes, so a failed gap insert cannot hide it; either or both markers
+  add one more unknown path while they fall inside the eligibility window (7 days plus the 10-minute refresh slack), and
+  the swap is refused with `writer_coverage_unknown` until then. The open engine's capabilities decide whether the hooks
+  must exist. A state file whose primary engine is missing, not a known kind, or not exactly the open engine's kind adds
+  one unknown path. An unreadable state file adds one when the swap builds its status document; if `state.json` is
+  absent, the swap reader reports no shadow instead. Known limit: criterion 11 reads role privileges as they are now, so a privilege repair inside the window can hide an earlier unrecorded write (follow-up: a durable coverage-break record across role and ACL changes). A write that only takes a lock,
+  a log or a cache row counts as a write for the note, though the follower does not copy it. The plan's idea of
+  counting how often an enabled process held no attached engine is not built: it cannot be measured from the shadow
+  machine, and the database hooks replace it. Any
+  one of them refuses the swap (`writer_coverage_unknown`). A connection pooler in transaction mode hides the client's
+  connection name, so its writes read as unclaimed. `gbrain engine shadow status` never opens the database, so it
+  shows only `team_brain` and `preview_target`; the swap passes in the brain it already has open.
 - **Evals.** `gbrain eval longmemeval` and `gbrain eval brainbench` take `--engine pglite|rust`. With `rust`, a missing
   or mismatched addon stops the run with its code and reason, and so does a Rust store that cannot yet run the table
   reset between fixtures (`rust_benchmark_unsupported`), so until the benchmark can reset a Rust store without raw SQL (the Rust engine never reports `raw_sql`) the flag
@@ -2015,7 +2099,18 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   `seed`; `primary_refreshes` (`nonterminal_rows`: primary `gbrain sources refresh` rows that are neither completed nor
   aborted, counted by the last full pass, with its `checked_at`; `null` before one; a swap must drain them first, and
   this is a reading, not the swap's own check); and `write_comparisons`, which is `capability_missing` until write comparisons are built. The
-  `write_comparisons` and `fingerprints` counts are totals for the current epoch; one epoch is one seed.
+  `write_comparisons` and `fingerprints` counts are totals for the current evidence epoch. An epoch is not a seed: `epoch_id`
+  names the candidate whose evidence counts (the seed, the Rust addon's SHA-256, the comparator and adapter versions, the
+  capability set and the hash of the swap's readiness policy, `src/core/engine-swap/policy.ts`), and a change to any of them
+  starts every count over.
+- **Evidence fields.** `status --json` also carries the swap's read and search evidence for the current epoch (`report` prints
+  the same counts):
+  `reads` (successful comparisons per operation class with their minimum, and the 7-day counts of `capability_missing`,
+  unresolved `rust_error` and unexplained divergences), `search` (trigram and keyword/title exact disagreements), `child`
+  (panics and faults) and `evidence` (`epoch_id`, `epoch_started_at`, `readiness_days`, `earliest_ready_at` and the counting
+  rules). A count with no evidence is left out, never zero, and the swap reads it as `NOT READY`. The follower and evidence
+  fields are read from one epoch; if the epoch keeps changing while the document is built, `epoch_id` is `null`, the
+  evidence fields are left out and `evidence_epoch_unstable` is `true`. `gbrain engine swap --plan` reads this same document.
 - **Fingerprint probe.** Withdrawals and purge tombstones key on the fact fingerprint, so a primary whose `lower()` or
   `[[:space:]]` answers differ from PGLite's (and Rust's) for some code point would fingerprint a claim holding it
   differently, and a withdrawn fact would not match on Rust. At follower start and on each full pass the probe reads, in

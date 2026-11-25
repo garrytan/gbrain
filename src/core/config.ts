@@ -34,7 +34,7 @@ function getConfigDir() { return configDir(); }
 function getConfigPath() { return configPath(); }
 
 export interface GBrainConfig {
-  engine: 'postgres' | 'pglite';
+  engine: 'postgres' | 'pglite' | 'rust';
   /** File-plane hook-lane keys (read by engine-free hook/push children).
    * `gbrain config set` routes these two dotted keys here, not to the DB. */
   push?: { allow_unverified_remote?: boolean };
@@ -745,7 +745,7 @@ export function loadConfig(): GBrainConfig | null {
   // the local PGLite brain while claiming to use the env URL. The PGLite
   // database_path is also cleared when dbUrl is set so toEngineConfig
   // doesn't pass a stale path through alongside the URL.
-  const inferredEngine: 'postgres' | 'pglite' = dbUrl
+  const inferredEngine: 'postgres' | 'pglite' | 'rust' = dbUrl
     ? 'postgres'
     : fileConfig?.engine || (fileConfig?.database_path ? 'pglite' : 'postgres');
 
@@ -1559,6 +1559,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // Always-loaded core memory + context-pressure notice (docs/guides/core-memory.md#configuration).
   'memory.core.enabled', 'memory.core.max_chars', 'memory.core.remote_edit',
   'memory.pressure.enabled', 'memory.pressure.warn_ratio', 'memory.pressure.context_window',
+  'learning.note.push', // nightly learning's session-start count line (default on; false turns it off); learning/push.ts
   // Declared brain audience: 'personal' | 'shared'. Set by the operator, by
   // company-brainify's Phase-5 handoff (shared), or from the bootstrap
   // interview. Declaration beats the conservative client-count heuristic in

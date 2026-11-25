@@ -158,6 +158,8 @@ src/commands/doctor/checks/unwithdrawn-facts.ts	execute_raw	1
 src/commands/doctor/checks/vector-coverage.ts	execute_raw	2
 src/commands/doctor/checks/vector-plan.ts	execute_raw	4
 src/commands/doctor/checks/wakeshift.ts	execute_raw	3
+src/commands/doctor/checks/write-gate-hold-ambiguous.ts	execute_raw	1	lists held writes the v333 upgrade left unbound with candidate pages; doctor checks read raw SQL (same shape as trust-release-unpreviewed.ts)
+src/commands/doctor/checks/write-gate-holds-stranded.ts	execute_raw	3	read-only doctor check: a row-security visibility preflight, one keyset read of held rows and one per-batch page and rename lookup; all stay raw SQL until holds have a typed engine method (a raw-SQL refusal on the Rust engine is reported as a named unknown)
 src/commands/doctor/checks/writer-version.ts	execute_raw	1
 src/commands/doctor/last-known.ts	execute_raw	2
 src/commands/doctor/registry.ts	execute_raw	1
@@ -585,6 +587,13 @@ src/core/import-file.ts	execute_raw	1
 src/core/import-identity.ts	execute_raw	1
 src/core/ingestion/applied-captures.ts	execute_raw	5
 src/core/last-retrieved.ts	execute_raw	1
+src/core/learning/decide.ts	execute_raw	3	nightly learning PR 2: the learning_items ledger (v334) has no typed engine methods yet; keep and undo read item states, mark decided items and list the page versions after an enrich write
+src/core/learning/derive.ts	execute_raw	6	nightly learning PR 1: the learning_items ledger (v334) is a new table with no typed engine methods yet; the derive pass records ledger pointers with INSERT ... SELECT per kind, prunes pointers whose target is gone and reads the watermark window; PR 2 expires unseen pointers after 7 days and closes answered conflict questions
+src/core/learning/kinds.ts	execute_raw	1	nightly learning PR 1: the learning_items ledger (v334) is a new table with no typed engine methods yet; learningTablePresent probes to_regclass so a brain behind the migration skips cleanly
+src/core/learning/push.ts	execute_raw	1	nightly learning PR 2: the learning_items ledger (v334) has no typed engine methods yet; the session-start line counts unseen pending items
+src/core/learning/duplicates.ts	execute_raw	3	nightly learning PR 3: the learning_items ledger (v334) has no typed engine methods yet; the duplicate step records the top person groups' anchor pages (and counts them on a dry run); PR 2 closes duplicate questions the preview no longer offers
+src/core/learning/read.ts	execute_raw	4	nightly learning PR 1: the learning_items ledger (v334) is a new table with no typed engine methods yet; the learned read joins each pointer to its live target under the caller filters and stamps shown_at; PR 3 adds one page read-policy probe over duplicate members
+src/core/learning/stats.ts	execute_raw	1	nightly learning PR 1: the learning_items ledger (v334) is a new table with no typed engine methods yet; learned --stats reads ledger rows by night
 src/core/line-grammar-config.ts	execute_raw	2
 src/core/link-extraction.ts	execute_raw	1
 src/core/link-reconciliation.ts	execute_raw	5
@@ -757,7 +766,7 @@ src/core/persistence/connector-path.ts	execute_raw	3
 src/core/persistence/connector-reset.ts	execute_raw	1
 src/core/persistence/connector-state.ts	execute_raw	7
 src/core/persistence/connector-status.ts	execute_raw	2
-src/core/persistence/connector-sync.ts	execute_raw	26
+src/core/persistence/connector-sync.ts	execute_raw	27	#9990: callReads forwards a connector call's reads through one memoized call site; it adds no SQL
 src/core/persistence/consumer-diagnostics.ts	execute_raw	3
 src/core/persistence/consumer-heartbeat.ts	execute_raw	4
 src/core/persistence/consumer-lane.ts	execute_raw	2
@@ -841,7 +850,7 @@ src/core/persistence/memory-mutations.ts	execute_raw	6	GST-2897 B (#9670, opened
 src/core/persistence/memory-prepare.ts	execute_raw	4
 src/core/persistence/memory-proposals.ts	execute_raw	16
 src/core/persistence/mirror-read-only.ts	execute_raw	4
-src/core/persistence/moved-pages.ts	execute_raw	7
+src/core/persistence/moved-pages.ts	execute_raw	8	GST-3623: readMoveCandidates reads the live pages a ghost may have moved to (by file name, renamed path or blob path) in one query; the moved-pages area is still raw SQL and converts with it
 src/core/persistence/noop-kernel.ts	execute_raw	2
 src/core/persistence/onboarding.ts	execute_raw	1
 src/core/persistence/origin-guard.ts	execute_raw	9
@@ -866,7 +875,7 @@ src/core/persistence/plain-directory-drift.ts	execute_raw	2	#8079: reads and rec
 src/core/persistence/pre-activation-release.ts	execute_raw	7
 src/core/persistence/preadmit-cache.ts	execute_raw	4
 src/core/persistence/preparation-budget.ts	execute_raw	1
-src/core/persistence/prepared-maintenance.ts	execute_raw	13
+src/core/persistence/prepared-maintenance.ts	execute_raw	14	GST-3612: the think take preparer reads back the take row id its takes_add wrote (page_id, row_num) inside the publication transaction, as the consolidation preparer does, so the derivation lowers that take; no typed engine method reads one take by row yet
 src/core/persistence/preview-approval.ts	execute_raw	3
 src/core/persistence/protocol.ts	execute_raw	3
 src/core/persistence/provider.ts	execute_raw	1
@@ -1201,6 +1210,7 @@ src/core/trust/derived-gate.ts	execute_raw	1
 src/core/trust/fence-append.ts	execute_raw	3
 src/core/trust/fence-guard.ts	execute_raw	9
 src/core/trust/held-removals.ts	execute_raw	4
+src/core/trust/hold-page.ts	execute_raw	1	reads the page a bound hold belongs to by id for the owner release; the held-write page binding (v333): the holds follow their page by id; no typed engine member is added (no new BrainEngine member in this change), the Rust engine's own hold store and rename paths take the contract in the PR description
 src/core/trust/label-lowerings.ts	execute_raw	1
 src/core/trust/marker-repair.ts	execute_raw	4
 src/core/trust/min-trust.ts	execute_raw	3
@@ -1234,8 +1244,9 @@ src/core/wakeshift/forget.ts	sql_template	6
 src/core/wakeshift/spool.ts	execute_raw	3
 src/core/wakeshift/terms.ts	execute_raw	2
 src/core/wanted-links-store.ts	execute_raw	6
+src/core/write-gate-binding.ts	execute_raw	6	the identity carry of holds (merge identical twins, move, mark differing twins, repoint candidates) and the purge's removal of a purged page from candidate-marked holds (update, then delete the emptied ones), one statement each; the held-write page binding (v333): the holds follow their page by id; no typed engine member is added (no new BrainEngine member in this change), the Rust engine's own hold store and rename paths take the contract in the PR description
 src/core/write-gate-scan.ts	execute_raw	2
-src/core/write-gate-store.ts	execute_raw	8
+src/core/write-gate-store.ts	execute_raw	9	the hold writer now runs up to three statements (bind by the producer's page id, bind by the page at the slug, unbound); the held-write page binding (v333): the holds follow their page by id; no typed engine member is added (no new BrainEngine member in this change), the Rust engine's own hold store and rename paths take the contract in the PR description
 src/core/write-through.ts	execute_raw	2
 src/eval/brainbench/adapters/codex.ts	execute_raw	1
 src/eval/brainbench/metrics/continuity.ts	execute_raw	1
@@ -1254,3 +1265,5 @@ src/mcp/source-preflight.ts	execute_raw	1
 src/shadow/fingerprints.ts	execute_raw	6	the fingerprint probe and fact-fingerprint check run the primary's own SQL functions and read its own lower(), [[:space:]], locale and facts text (gbrain_fact_fingerprint, per-code-point tables, datctype, a count of facts holding a differing code point); the comparison is against the primary's SQL by design
 src/shadow/follow.ts	execute_raw	1	selectWhere: the shadow follow producer reads page ids and the keys of rows a delete removes, on the engine or transaction the write runs on
 src/shadow/follower.ts	execute_raw	1	the shadow follower re-reads the changed keys from the primary in one read-only REPEATABLE READ transaction; only the primary's rows can say what the Rust store must hold
+src/shadow/writer-hooks.ts	execute_raw	21	the maintainer-approved writer hooks on a Postgres primary while a Rust shadow runs: catalog reads of the brain's tables and triggers, CREATE/DROP TRIGGER, the hooks advisory lock and lock timeout inside each install, repair and removal transaction, the gap rows (a repair's, and the one a removal records), and the one-transaction replace of every hook with its server-version and effectiveness checks; trigger DDL has no typed engine method and Rust never holds these hooks
+src/shadow/writer-observations.ts	execute_raw	4	swap eligibility's writer observations live in the primary only while a Rust shadow follows it (Rust never holds them): one upsert per writing process after commit under a SET LOCAL lock timeout and statement timeout (two statements), and the eligibility read; the primary's own table by design

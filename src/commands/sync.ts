@@ -48,9 +48,9 @@ export interface SyncResult {
   chunksCreated: number;
   /** Pages re-embedded during this sync's auto-embed step. 0 if --no-embed or skipped. */
   embedded: number;
-  embedDeferralReason?: 'large_sync';
+  embedDeferralReason?: 'large_sync'; /** GST-3452: a partial connector run stopped at a provider usage or rate limit; beside a `reason` (writer_pending, timeout) its writes were still pending. */ stopped_on?: 'usage_limit';
   pagesAffected: string[]; /** #5867: a Google sweep's loops_extract enqueue (sweep plus managed catch-up). */ loops_enqueue?: { enqueued: number; deferred: number; skipped_reason: string | null };
-  failedFiles?: number; // count of parse failures (Bug 9)
+  /** count of parse failures (Bug 9) */ failedFiles?: number; /** a partial connector run's causes, one line each (Google sweeps) */ partial_causes?: string[];
   /**
    * #3875: code breakdown of the blocking failures (set on
    * `blocked_by_failures` only). Lets printSyncResult (and --json consumers)

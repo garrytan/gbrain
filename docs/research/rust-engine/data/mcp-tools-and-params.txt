@@ -79,6 +79,7 @@ get_versions: diff include_body known_as_of limit slug source_id
 get_write_attribution: fact slug take timeline versions
 get_write_request: applied request_id
 join_brain: adapter follow_policy
+learned: limit since stats
 leave_brain: enrollment_epoch installation_id
 list_brain_skillpack: 
 list_jobs: cursor fields finished_since limit name queue status
@@ -129,6 +130,7 @@ resolve_slugs: partial source_id
 restore_page: detach expected_revision force request_id slug source_id
 resume_job: id
 retry_job: id
+reveal_secret: id
 revert_version: expected_revision force reason request_id slug source_id version_id
 run_doctor: only tier
 run_onboard: max_usd mode target_score

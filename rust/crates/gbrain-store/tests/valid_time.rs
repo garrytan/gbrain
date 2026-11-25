@@ -570,3 +570,45 @@ fn a_grant_never_opens_the_reason_a_private_successor_gave() {
     assert_eq!(reason(true, json!([])), Value::Null);
     assert_eq!(reason(true, json!(["default"])), Value::Null);
 }
+
+/// A sync import's `createVersion` reason and history gap: the pick reads the reason the picked
+/// version was replaced for, the reason the next edition was introduced for, and the page's gap.
+#[test]
+fn the_pick_reads_the_reason_and_gap_a_sync_import_stamps() {
+    let b = brain("valid-time-reason");
+    put(
+        &b,
+        "default",
+        "vt/reason",
+        "Jan.",
+        json!({ "valid_from": "2026-01-01" }),
+    );
+    let v1 = b
+        .create_version_opts(
+            "vt/reason",
+            &args(json!({ "sourceId": "default", "reason": "imported from the notes export", "historyGap": true })),
+        )
+        .unwrap()["id"]
+        .as_i64()
+        .unwrap();
+    put(
+        &b,
+        "default",
+        "vt/reason",
+        "Jun.",
+        json!({ "valid_from": "2026-06-01" }),
+    );
+    let page = page_id(&b, "vt/reason");
+    let march = pick(&b, page, "2026-03-01", None)["row"].clone();
+    assert_eq!(march["version_id"], json!(v1));
+    assert_eq!(march["reason"], json!("imported from the notes export"));
+    assert_eq!(march["introduced_because"], Value::Null);
+    assert!(march["gap_at"].is_string());
+    let july = pick(&b, page, "2026-07-01", None)["row"].clone();
+    assert_eq!(july["ord"], json!(VALID_TIME_CURRENT_ORD));
+    assert_eq!(july["reason"], Value::Null);
+    assert_eq!(
+        july["introduced_because"],
+        json!("imported from the notes export")
+    );
+}

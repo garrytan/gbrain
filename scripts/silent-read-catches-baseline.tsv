@@ -6,7 +6,7 @@
 # Generated from the tree at its own commit (`bun scripts/check-silent-read-catches.ts --print`); the note column names the audit
 # finding (docs/research/gbrain-behavior-audit.md "The silent-failure class") that the fix for the row deletes.
 # Counts only fall; a raise edits the row in the same PR with a note saying why. --prune lowers stale rows.
-src/cli/commands/doctor.ts#run	catch_empty	1
+src/cli/commands/doctor.ts#runLocalDoctor	catch_empty	1
 src/cli/commands/notability-eval.ts#run	catch_empty	1
 src/cli/db-plane-config.ts#mergeDbPlaneConfig	catch_empty	1
 src/cli/enforced-member.ts#enforcedAccess	capability_refusal_swallowed	1
@@ -2038,6 +2038,7 @@ src/core/source-resolver.ts#requestSourceRows<anon@1>	capability_refusal_swallow
 src/core/source-resolver.ts#requestSourceRows<anon@1>	promise_catch_empty	1
 src/core/source-resolver.ts#resolveSourceIdChain	promise_catch_empty	1
 src/core/source-resolver.ts#resolveSourceWithTierChain	promise_catch_empty	1
+src/core/source-resolver.ts#refusedSourceTarget	promise_catch_empty	1	fail-closed, not an empty answer: a failed listAllSources returns null, which refusedSourceTarget turns into true (refuse the command), so a read failure never falls back to the cross-source view (Rust engine CLI connect, #9946)
 src/core/sources-load.ts#fetchSource	capability_refusal_swallowed	1
 src/core/sources-load.ts#loadAllSources	capability_refusal_swallowed	1
 src/core/sources-not-readable.ts#assertUnscopedReadReachesPages	capability_refusal_swallowed	1
@@ -2132,7 +2133,6 @@ src/core/verbs/entity-card.ts#entityLookupScope	promise_catch_empty	1
 src/core/verbs/entity-card.ts#nearMissSuggestions	catch_empty	1
 src/core/verbs/entity-card.ts#readAka	capability_refusal_swallowed	1
 src/core/verbs/entity-card.ts#readAka	promise_catch_empty	1	audit memory-13: the aka read answers empty
-src/core/verbs/entity-card.ts#selectEntityCandidates	capability_refusal_swallowed	2
 src/core/verbs/entity-names.ts#attachReferences	promise_catch_empty	1
 src/core/verbs/entity-names.ts#lookupOne	capability_refusal_swallowed	1
 src/core/verbs/entity-names.ts#lookupOne	promise_catch_empty	1

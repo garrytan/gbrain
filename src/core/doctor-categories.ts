@@ -88,6 +88,10 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'trust_sources_unclaimed',
   // #7656: index-existing trust releases confirmed before their preview showed the fence row's fields (doctor/checks/trust-release-unpreviewed.ts).
   'trust_release_unpreviewed_fields',
+  // Held writes the v333 upgrade could not tie to one page (doctor/checks/write-gate-hold-ambiguous.ts).
+  'write_gate_hold_ambiguous',
+  // Held writes whose page was renamed or removed (doctor/checks/write-gate-holds-stranded.ts).
+  'write_gate_holds_stranded',
   'credential_projection_pending',
   'derived_visibility',
   'privacy_label_ignored',

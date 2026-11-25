@@ -194,6 +194,7 @@ const PARAM_FACTORY: Record<string, Record<string, unknown>> = {
   chronicle_last_seen: { entity: WORLD_PAGE_SLUG },
   find_experts: { topic: 'WORLDSWEEP' },
   find_trajectory: { entity_slug: WORLD_PAGE_SLUG },
+  learned: { since: '2000-01-01' },
   find_contradictions: {},
   search_by_image: {},
   sources_status: { id: 'default' },
@@ -307,6 +308,7 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   find_contradictions: 'ok',
   find_experts: 'ok',
   find_trajectory: 'ok',
+  learned: 'ok',
   find_anomalies: 'ok',
   get_recent_salience: 'ok',
   chronicle_day: 'ok',
@@ -440,6 +442,10 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   loops_close: 'error',
   loops_mute: 'error',
   loops_unmute: 'error',
+  // Nightly learning PR 2: the generic invocation omits the required `ids` → validation error. Remote semantics
+  // (only readable items, the owner command for questions) are pinned in test/learning-decide.test.ts.
+  learned_keep: 'error',
+  learned_undo: 'error',
   // agent contract v1 A6: the generic invocation omits the required `code` → validation error.
   mute_notice: 'error',
   // C4 pinned questions are owner-private: a sweep caller cannot read private

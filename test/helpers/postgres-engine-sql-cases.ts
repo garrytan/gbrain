@@ -445,7 +445,7 @@ const SRC = 'src-a';
 const SRCS = ['src-a', 'src-b'];
 const EMB = new Float32Array([0.1, 0.2, 0.3]);
 const page = { type: 'person', title: 'Alice Example', compiled_truth: 'Alice Example body.', timeline: '', frontmatter: { tags: [] } };
-const pageRet: Rule = [/^\s*INSERT INTO pages \(source_id, slug/, [PAGE_ROW]];
+const pageRet: Rule = [/^\s*(?:WITH ins AS \(\s*)?INSERT INTO pages \(source_id, slug/, [PAGE_ROW]];
 const pageId: Rule = [/SELECT id FROM pages/i, [{ id: 1 }]];
 /** The sealing chunk insert stamps the page's chunker version and needs the page row back. */
 const sealedPage: Rule = [/UPDATE pages SET chunker_version/, [{ id: 1 }]];
@@ -941,6 +941,8 @@ export const SQL_CASES: SqlCase[] = [
     ['default', (e) => e.listEnrichCandidates({ types: ['person'], thinThreshold: 200, order: 'inbound-links' })],
     ['sourceIds+reenrich', (e) => e.listEnrichCandidates({ types: ['person'], thinThreshold: 200, order: 'inbound-links', sourceIds: SRCS, reenrichAfterMs: 86400000 })],
     ['sourceId', (e) => e.listEnrichCandidates({ types: ['person'], thinThreshold: 200, order: 'inbound-links', sourceId: SRC })],
+    ['owner-contact', (e) => e.listEnrichCandidates({ types: ['person'], thinThreshold: 200, order: 'owner-contact', sourceId: SRC, ownerSlug: 'memory/owner', ownerSourceId: SRC })],
+    ['owner-contact-no-owner', (e) => e.listEnrichCandidates({ types: ['person'], thinThreshold: 200, order: 'owner-contact', sourceIds: SRCS, reenrichAfterMs: 86400000 })],
   ]),
   ...variants('findAnomalies', [
     ['default', (e) => e.findAnomalies({ since: '2026-01-02' })],

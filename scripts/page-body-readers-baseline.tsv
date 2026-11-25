@@ -484,6 +484,7 @@ src/core/persistence/loop-fact-retirement.ts	prepareLoopFactRetirement	field	SEG
 src/core/persistence/manual-links.ts	prepareManualLinkMutation	call:serializePageToMarkdown	SEGW	wholeBodySnapshot first: a segmented page within 24 MiB is read back whole, a larger one refuses
 src/core/persistence/memory-mutations.ts	planRememberTarget	call:serializePageToMarkdown	SEGW	
 src/core/persistence/memory-mutations.ts	planRememberTarget	field	STREAM	
+src/core/persistence/moved-pages.ts	bodyLines	field	INLINE	holdsEveryLine returns false for a page whose body is unread (segmented, bodyUnread) before bodyLines reads it, so a segmented page never pairs as a contained move
 src/core/persistence/origin-twins.ts	readOriginClaimants	sql	STREAM	#6948 twin verdict: md5 of an inline body; a segmented page (compiled_truth NULL) reads NULL and holds content_differs, so missing evidence never matches
 src/core/persistence/overwritten-edits.ts	CONTENT_COLUMNS	sql	STREAM	selects body_storage beside the inline body columns; a segmented version or page has NULL bodies and its overwrite is reported unknown (reason segmented), never compared or restored
 src/core/persistence/overwritten-edits.ts	overwriteContent	field	STREAM	returns null for a segmented row (body_storage segmented or NULL compiled_truth); the scan reports that overwrite unknown (reason segmented)
@@ -511,6 +512,7 @@ src/core/persistence/page-prepare.ts	prepareInlineOrSegmentedMutation	call:seria
 src/core/persistence/page-prepare.ts	prepareInlineOrSegmentedMutation	field	SEGW	lane 1d file: preserveProtectedTakes reads the snapshot body; segmented page: getter throws page_body_segmented
 src/core/persistence/page-prepare.ts	remoteCoreMarkingKept	call:serializePageToMarkdown	SEGW	lane 1d file: the remote core-marking carry moved out of prepareInlineOrSegmentedMutation (GST-2518, function size); same read as before
 src/core/persistence/page-prepare.ts	segmentedFileMatches	field	NONE	the body fields hold region digests (body-digests.ts) for the canonical comparison; no page body is read
+src/core/persistence/page-prepare.ts	storedReadings	field	SEGW	the timeline-split reading of the snapshot body, for fileSnapshotDifference and frontmatterDriftWrite only (both read an inline or materialized body); segmented page: getter throws page_body_segmented
 src/core/persistence/page-prepare.ts	unreadPageFile	call:serializePageToMarkdown	NONE	serializes the frontmatter head with an empty body; the body streams from the segments through segmentedExportMarkdown
 src/core/persistence/page-purge.ts	purgePageInTransaction	field	STREAM	
 src/core/persistence/page-purge.ts	purgePageInTransaction	sql	STREAM	
@@ -682,6 +684,7 @@ src/core/sweep.ts	runMaintenanceSweep	sql	STREAM	LIKE over NULL never matches a 
 src/core/think/gather.ts	renderPagesBlockDetailed	field	LEAD	segmented page: getter throws page_body_segmented
 src/core/think/gather.ts	runGather	field	LEAD	visibleLeads reads Page.compiled_truth from listPages/search: segmented page: getter throws page_body_segmented (lead source in PR 2)
 src/core/think/index.ts	composeExtractiveFallback	field	LEAD	
+src/core/think/index.ts	persistSynthesis	call:serializeMarkdown	NONE	GST-3612: renders the synthesis page think just composed (its frontmatter and the answer body) for the managed maintenance request; no stored page body is read here
 src/core/think/persist-take.ts	assertTakeFileCanonical	field	SEGW	compares the inline page body outside the takes section with the file; a segmented page reads NULL, never matches, and the take is refused before any write
 src/core/timeline-dedup-repair.ts	repairLegacyTimelineSourceRows	field	STREAM	
 src/core/timeline-dedup-repair.ts	repairLegacyTimelineSourceRows	sql	STREAM	
