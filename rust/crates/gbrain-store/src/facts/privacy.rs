@@ -47,7 +47,7 @@
 use super::FactRecord;
 use crate::Result;
 use crate::access_flag::RESTRICTIONS_PRESENT_KEY;
-use crate::access_policy::kept_rules;
+use crate::access_policy::{kept_rules, retired_rules};
 use crate::access_rules::{
     AccessRuleRecord, folder_rules, pending_covers, rule_covers, stamped, valid_prefix,
 };
@@ -625,11 +625,19 @@ fn names_readers(page: &PageRecord) -> bool {
 
 /// The folder rules stamped on a page (`folder_rule_ids`): none unless its source holds access
 /// state, else every rule whose prefix its slug starts with.
+///
+/// A page whose kept stamp (`access_policy::retired_rules`) names a rule that was removed since
+/// the last restamp also carries that rule, as a rule nobody satisfies, so it stays hidden until
+/// the restamp, as SQL keeps the deleted id in `folder_rule_ids`. A page with no kept stamp keeps
+/// the live rules alone. Every privacy read takes its rules from here.
 pub(crate) fn stamped_rules(read: &dyn KvRead, page: &PageRecord) -> Result<Vec<AccessRuleRecord>> {
-    if !stamped(read, &page.source_id, &page.slug)? {
-        return Ok(Vec::new());
-    }
-    folder_rules(read, &page.source_id, &page.slug)
+    let mut rules = if stamped(read, &page.source_id, &page.slug)? {
+        folder_rules(read, &page.source_id, &page.slug)?
+    } else {
+        Vec::new()
+    };
+    rules.extend(retired_rules(read, &page.source_id, page.id)?);
+    Ok(rules)
 }
 
 /// The short member-access form `page_readers IS NULL AND folder_rule_ids IS NULL`: the page names no readers and no
@@ -1057,6 +1065,79 @@ mod tests {
         assert!(!origin_closed(&*read, &raw).unwrap());
         assert!(origin_closed(&*read, &queued).unwrap());
         assert!(!origin_closed(&*read, &open_page).unwrap());
+    }
+
+    #[test]
+    fn a_page_stamped_with_a_removed_rule_stays_hidden_until_the_restamp() {
+        use crate::access_policy::{AccessRuleChanges, AccessRuleInsert};
+        let store = store();
+        let stamped = put(&store, "scope/diary");
+        let open_page = put(&store, "notes/open");
+        store.put_access_policy_state("default").unwrap();
+        let change = |insert: Vec<AccessRuleInsert>, remove: &[&str], revision: i64| {
+            store
+                .apply_access_rule_changes(
+                    "default",
+                    &AccessRuleChanges {
+                        remove: remove.iter().map(|r| r.to_string()).collect(),
+                        insert,
+                        pending: Vec::new(),
+                        revision,
+                        actor: "local:test".into(),
+                    },
+                )
+                .unwrap();
+        };
+        change(
+            vec![AccessRuleInsert {
+                rule_id: "scope".into(),
+                prefix: "scope/".into(),
+                readable_by: vec!["member:bob-example".into()],
+                covers_derived: true,
+            }],
+            &[],
+            1,
+        );
+        store.finish_access_restamp("default").unwrap();
+        let identity = ["member:alice-example".to_string()];
+        let judge = || {
+            let read = store.read().unwrap();
+            let rules = stamped_rules(&*read, &stamped).unwrap();
+            let allowed = readers_allowed(
+                &*read,
+                &stamped,
+                &identity,
+                FolderAccess::default(),
+                false,
+                false,
+            )
+            .unwrap();
+            let short = names_no_readers_or_rules(&*read, &stamped).unwrap();
+            let closed = origin_closed(&*read, &stamped).unwrap();
+            let open_rules = stamped_rules(&*read, &open_page).unwrap();
+            (
+                rules.into_iter().map(|r| r.rule_id).collect::<Vec<_>>(),
+                allowed,
+                short,
+                closed,
+                open_rules.is_empty(),
+            )
+        };
+        // The live rule covers the page and the restamp kept its id: the live rule is the only one.
+        assert_eq!(
+            judge(),
+            (vec!["scope".to_string()], false, false, true, true)
+        );
+        // The rule is removed and nothing restamped: the kept id names a rule that is gone, which
+        // no caller satisfies and which closes the origin tests, as `folder_rule_ids` does in SQL.
+        change(Vec::new(), &["scope"], 2);
+        assert_eq!(
+            judge(),
+            (vec!["scope".to_string()], false, false, true, true)
+        );
+        // The restamp drops the kept id: the page is open again, and the open page was never held.
+        store.finish_access_restamp("default").unwrap();
+        assert_eq!(judge(), (Vec::new(), true, true, false, true));
     }
 
     #[test]
