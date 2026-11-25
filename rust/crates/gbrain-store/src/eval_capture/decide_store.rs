@@ -42,6 +42,7 @@ pub(crate) use calibrations::{
 };
 pub use calibrations::{DecideCalibrationInput, DecideQualificationInput};
 pub use receipts::DecideReceiptInput;
+pub(crate) use receipts::purge_probe_rows as purge_probe_receipt_rows;
 pub(crate) use receipts::remove_receipt;
 pub(crate) use receipts::{RECEIPT_ID, ReceiptRecord, seed_receipt};
 

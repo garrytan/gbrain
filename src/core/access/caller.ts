@@ -347,7 +347,7 @@ export async function audienceCallerAccess(engine: BrainEngine, auth: AuthInfo |
 }
 
 /** The member identity a remote caller's credential (or, unauthenticated over stdio, serve --stdio-member, else config mcp.stdio_member) is bound to. */
-async function boundIdentity(engine: BrainEngine, auth: AuthInfo | undefined, transport?: string, stdioMember?: string): Promise<string[]> {
+export async function boundIdentity(engine: BrainEngine, auth: AuthInfo | undefined, transport?: string, stdioMember?: string): Promise<string[]> {
   return !auth && transport === 'stdio' ? stdioMemberIdentity(engine, stdioMember) : memberIdentityFor(engine, auth);
 }
 

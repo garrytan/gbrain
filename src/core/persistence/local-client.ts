@@ -1,4 +1,4 @@
-/** Engine-free CLI routing to the process that already owns a PGLite brain. */
+/** Engine-free CLI routing to the process that already owns a PGLite brain (and, for administration, a Rust brain). */
 import { randomUUID } from 'node:crypto';
 import { hookSessionCwd } from '../session-cwd.ts';
 import { readFileSync } from 'node:fs';
@@ -21,7 +21,7 @@ import {
 } from './ipc.ts';
 import type { PersistenceAdminOperation } from './admin-contract.ts';
 import { currentCliWriteWait, replayWhilePending, writeExchangeBudget } from './write-wait.ts';
-import { inspectRustOwner, rustOwnerServesPersistence } from '../rust-engine/owner-ipc/client.ts';
+import { persistenceResidentOwner } from './resident-owner.ts';
 
 function noDiscoveryPath(message: string, holder: LockHolderInfo, brainId?: string): OperationError {
   const who = holder.pid ? `process ${holder.pid}${holder.subcommand ? ` (gbrain ${holder.subcommand})` : ''}` : 'another process';
@@ -128,12 +128,13 @@ export async function maybeDelegateLocalAdministration(
   operation: PersistenceAdminOperation, params: Record<string, unknown>, config: GBrainConfig,
   options: { timeoutMs?: number; startupWaitMs?: number } = {},
 ): Promise<LocalDelegationResult> {
-  if (config.engine !== 'pglite' || !config.database_path || config.database_url) return { handled: false };
-  const holder = inspectLockHolder(config.database_path);
-  if (!holder.held) return { handled: false };
-  const socketPath = persistenceSocketPathForConfig(config);
+  // A PGLite lock holder, or a Rust serve owner whose engine reports `persistence_journal` and answers its
+  // persistence socket (resident-owner.ts); any other owner leaves the command to the engine path.
+  const owner = await persistenceResidentOwner(config);
+  if (!owner) return { handled: false };
+  const { holder, socketPath } = owner;
   if (!socketPath) throw noDiscoveryPath('The PGLite owner has no persistence discovery path.', holder);
-  const capability = await residentOwnerCapabilities(socketPath, () => inspectLockHolder(config.database_path), holder, options.startupWaitMs);
+  const capability = await residentOwnerCapabilities(socketPath, owner.inspect, holder, options.startupWaitMs);
   if (!ownerAdministers(capability, operation)) throw new OperationError('owner_unavailable',
     'The running owner does not support this local administration command.', 'Upgrade and restart the owner before administering this brain.');
   const registration = readPersistenceCliRegistration(capability.brain_id);
@@ -174,16 +175,9 @@ export async function maybeDelegateLocalOperation(
     if (PERSISTENCE_IPC_READ_EXTENSIONS.includes(operation)) return { handled: false };
     throw error;
   }
-  // A Rust brain's owner answers whole operations only when it is a `gbrain serve` whose engine reports
-  // `persistence_journal` (the persistence provider runs SQL, and the Rust engine has none yet). Any other owner leaves
-  // the call to the engine path, which reaches the owner as its client and refuses typed where a capability is missing
-  // (rust-engine/owner-ipc/).
-  const rust = (config?.engine as string | undefined) === 'rust';
-  if (config?.engine !== 'pglite' && !rust || !config?.database_path || config.database_url) return { handled: false };
-  const databasePath = config.database_path;
-  const inspect = () => rust ? inspectRustOwner(databasePath) : inspectLockHolder(databasePath);
-  const holder = await inspect();
-  if (!holder.held || rust && (holder.serve !== true || !rustOwnerServesPersistence((holder as { capabilities?: string[] }).capabilities))) return { handled: false };
+  if (config?.engine !== 'pglite' || !config.database_path || config.database_url) return { handled: false };
+  const holder = inspectLockHolder(config.database_path);
+  if (!holder.held) return { handled: false };
   const socketPath = persistenceSocketPathForConfig(config);
   if (!socketPath) throw noDiscoveryPath('The selected PGLite owner has no persistence discovery path.', holder, brainId);
 
@@ -198,7 +192,7 @@ export async function maybeDelegateLocalOperation(
   if (sourceInParams) delete wireParams.source;
   delete wireParams.json;
   let capability: PersistenceIpcCapabilities;
-  try { capability = await residentOwnerCapabilities(socketPath, inspect, holder, options.startupWaitMs); }
+  try { capability = await residentOwnerCapabilities(socketPath, () => inspectLockHolder(config.database_path), holder, options.startupWaitMs); }
   catch (error) {
     // A holder that is not a serve and answers no owner socket is another
     // command, such as a concurrent CLI call: the engine path waits for its lock.

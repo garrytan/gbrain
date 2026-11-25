@@ -47,6 +47,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+pub(crate) mod health;
+pub(crate) mod purge_scan;
+
 const TEXT: u8 = 0x01;
 const MANIFEST: u8 = 0x02;
 const STAGING: u8 = 0x03;
@@ -415,6 +418,17 @@ pub struct DerivationRetireOptions {
     pub kind: Option<String>,
 }
 
+/// `deleteRewrittenSegmentDerivations`' argument (engine-sql/segmented-purge-writes.ts).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct RewrittenDerivationsDelete {
+    pub page_id: i64,
+    pub touched_occurrence_ids: Vec<i64>,
+    pub link_reach_occurrence_ids: Vec<i64>,
+    pub pipelines: Vec<String>,
+    pub live_occurrence_ids: Vec<i64>,
+}
+
 /// `SegmentSweepOptions`; `now` as an ISO string.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -427,6 +441,18 @@ pub struct SegmentSweepOptions {
 }
 
 /// `SegmentSweepResult`.
+/// What `sealSegmentedPage` reads before it seals ([`Store::read_segmented_seal_lead`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SealLead {
+    /// The stored timeline lead, `""` when none was published.
+    pub lead: String,
+    /// The page's `knowledge_revision`.
+    pub revision: String,
+    pub slug: String,
+    pub source_id: String,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SegmentSweepResult {
@@ -612,7 +638,7 @@ fn derivation_key(page_id: u64, kind: &str, occurrence: i64) -> Vec<u8> {
     key
 }
 
-fn body_key(page_id: u64) -> Vec<u8> {
+pub(crate) fn body_key(page_id: u64) -> Vec<u8> {
     let mut key = kind_key(BODY);
     key.extend_from_slice(&page_id.to_be_bytes());
     key
@@ -787,7 +813,7 @@ fn meta_type(meta: &SegmentedPageMeta) -> Result<String> {
 
 /// `liveTilingSql` and `untiledSql`: the generation's published rows, by seq, start each at the
 /// sum of the lengths before it, and their lengths sum to `body_bytes`.
-fn tiling(rows: &[&ManifestRow]) -> (i64, i64, bool) {
+pub(crate) fn tiling(rows: &[&ManifestRow]) -> (i64, i64, bool) {
     let mut sorted: Vec<&&ManifestRow> = rows.iter().collect();
     sorted.sort_by_key(|r| r.seq);
     let mut prior = 0i64;
@@ -972,6 +998,28 @@ pub(crate) fn page_columns(
         columns.set("body_bytes", json!(state.body_bytes));
     }
     Ok(())
+}
+
+/// A page's `body_storage` and `body_bytes` columns: `('inline', None)` for a page with no body state, as the column
+/// default reads.
+pub(crate) fn body_storage_columns(
+    read: &dyn KvRead,
+    page_id: u64,
+) -> Result<(String, Option<i64>)> {
+    Ok(read_body_state(read, page_id)?.map_or_else(
+        || ("inline".to_string(), None),
+        |s| (s.body_storage, s.body_bytes),
+    ))
+}
+
+/// Whether a published manifest row of the page (`gen_to IS NULL AND staging_id IS NULL`) has a facts slot
+/// (`facts_slots <> '[]'::jsonb`; a NULL `facts_slots` compares as unknown, so it does not).
+pub(crate) fn has_published_facts_slot(read: &dyn KvRead, page_id: u64) -> Result<bool> {
+    Ok(manifest_rows(read, page_id)?.iter().any(|(_, row)| {
+        live_published(row)
+            && !row.facts_slots.is_null()
+            && row.facts_slots != Value::Array(Vec::new())
+    }))
 }
 
 /// The live body generation and `body_bytes` of a segmented page, which its version snapshot
@@ -1432,6 +1480,7 @@ impl Store {
                 import_filename: meta.import_filename.clone(),
                 source_kind: meta.source_kind.clone(),
                 source_uri: meta.source_uri.clone(),
+                database_only_reason: None,
                 ingested_via: meta.ingested_via.clone(),
                 ingested_at_us: meta_ingested(meta).then_some(now),
                 tags: Vec::new(),
@@ -1705,10 +1754,11 @@ impl Store {
     }
 
     /// The stored timeline lead of page `page_id` (`""` when none was published) with the page's
-    /// `knowledge_revision`, or `None` for a missing page. Not a member: `sealSegmentedPage`'s
-    /// TypeScript side reads it, sanitizes the lead, and passes the revision back to
+    /// `knowledge_revision`, slug and source, or `None` for a missing page. Not a member:
+    /// `sealSegmentedPage`'s TypeScript side reads it, overlays the lead with the page's ledger rows
+    /// (read by slug and source), sanitizes it, and passes the revision back to
     /// [`Store::seal_segmented_page`].
-    pub fn read_segmented_seal_lead(&self, page_id: i64) -> Result<Option<(String, String)>> {
+    pub fn read_segmented_seal_lead(&self, page_id: i64) -> Result<Option<SealLead>> {
         let read = self.read()?;
         let Some(page) = page_u64(page_id)
             .map(|id| read_page_by_id(&*read, id))
@@ -1718,7 +1768,12 @@ impl Store {
             return Ok(None);
         };
         let lead = timeline_lead(&*read, page.id)?.unwrap_or_default();
-        Ok(Some((lead, page.knowledge_revision)))
+        Ok(Some(SealLead {
+            lead,
+            revision: page.knowledge_revision,
+            slug: page.slug,
+            source_id: page.source_id,
+        }))
     }
 
     /// `sealSegmentedPage(pageId, opts)`: seals the page's text projection at its current revision
@@ -2036,60 +2091,43 @@ impl Store {
     /// occurrence); a replaced row keeps its `createdAt`. Refuses the batch on an unknown page,
     /// kind or state, a negative version, a hash that is not 32 bytes, or a key repeated in it.
     pub fn upsert_segment_derivations(&self, rows: &[SegmentDerivationInput]) -> Result<()> {
-        let mut prepared = Vec::with_capacity(rows.len());
-        for row in rows {
-            let segment = from_hex(
-                &row.segment_sha256,
-                "upsertSegmentDerivations segmentSha256",
-            )?;
-            let context = from_hex(&row.context_hash, "upsertSegmentDerivations contextHash")?;
-            int4(row.version, "upsertSegmentDerivations version")?;
-            if !DERIVATION_KINDS.contains(&row.kind.as_str())
-                || !DERIVATION_STATES.contains(&row.state.as_str())
-                || row.version < 0
-                || segment.len() != 32
-                || context.len() != 32
-            {
-                return Err(violation(format!(
-                    "new row for relation \"page_segment_derivations\" violates check constraint (page {}, kind \"{}\", occurrence {})",
-                    row.page_id, row.kind, row.occurrence_id
-                )));
-            }
-            prepared.push((row, to_hex(&segment), to_hex(&context)));
-        }
+        let prepared = prepare_derivations(rows)?;
         if prepared.is_empty() {
             return Ok(());
         }
         let now = self.env.now_micros();
+        self.write(|tx| put_derivations(tx, &prepared, now))
+    }
+
+    /// `storeSegmentDerivationsIfLive(pageId, generation, rows)`: the derive pass's conditional store
+    /// (`segment-derive.ts` storeRuns): the rows are upserted as `upsertSegmentDerivations` does only
+    /// while the page is live, segmented and at body `generation`; returns how many rows were written
+    /// (0 when the page moved, as the SQL's `RETURNING 1` over an empty `live` set).
+    pub fn store_segment_derivations_if_live(
+        &self,
+        page_id: i64,
+        generation: i64,
+        rows: &[SegmentDerivationInput],
+    ) -> Result<u64> {
+        let prepared = prepare_derivations(rows)?;
+        if prepared.is_empty() {
+            return Ok(0);
+        }
+        let Some(id) = page_u64(page_id) else {
+            return Ok(0);
+        };
+        let now = self.env.now_micros();
         self.write(|tx| {
-            let mut seen = HashSet::new();
-            for (row, segment, context) in &prepared {
-                let Some(page_id) = page_u64(row.page_id).filter(|id| matches!(read_page_by_id(&*tx, *id), Ok(Some(_)))) else {
-                    return Err(violation(format!(
-                        "insert into \"page_segment_derivations\" violates foreign key: page {} does not exist",
-                        row.page_id
-                    )));
-                };
-                if !seen.insert((page_id, row.kind.clone(), row.occurrence_id)) {
-                    return Err(violation(
-                        "ON CONFLICT DO UPDATE command cannot affect row a second time (a derivation key repeats in the batch)",
-                    ));
-                }
-                let key = derivation_key(page_id, &row.kind, row.occurrence_id);
-                let created = get_json::<DerivationRecord>(&*tx, &key)?.map_or(now, |old| old.created_at_us);
-                let record = DerivationRecord {
-                    pipeline_version: row.version,
-                    segment_sha256: segment.clone(),
-                    context_hash: context.clone(),
-                    state: row.state.clone(),
-                    output: row.output.clone(),
-                    receipt: row.receipt.clone(),
-                    created_at_us: created,
-                    updated_at_us: now,
-                };
-                put_json(tx, &key, &record)?;
+            let live = read_page_by_id(&*tx, id)?.is_some_and(|p| p.deleted_at_us.is_none());
+            let state = read_body_state(&*tx, id)?;
+            if !live
+                || !is_segmented(state.as_ref())
+                || state.is_none_or(|s| s.body_generation != generation)
+            {
+                return Ok(0);
             }
-            Ok(())
+            put_derivations(tx, &prepared, now)?;
+            Ok(prepared.len() as u64)
         })
     }
 
@@ -2119,6 +2157,79 @@ impl Store {
                         .as_deref()
                         .is_none_or(|want| want.as_bytes() == kind);
                     if kind_matches && occurrence.is_some_and(|o| !live.contains(&o)) {
+                        doomed.push(k.to_vec());
+                    }
+                }
+                true
+            })?;
+            for key in &doomed {
+                tx.delete(key)?;
+            }
+            Ok(doomed.len() as u64)
+        })
+    }
+
+    /// `lockBodyStagingState(stagingId)`: the staging's state, or `None` when no staging has that
+    /// id (PGLite's `SELECT state ... FOR UPDATE`; a store write already holds the brain). A value
+    /// that is not a uuid is refused, as the `::uuid` cast refuses it.
+    pub fn lock_body_staging_state(&self, staging_id: &str) -> Result<Option<String>> {
+        let id = staging_id_arg(staging_id)?;
+        let read = self.read()?;
+        let record: Option<StagingRecord> = get_json(&*read, &staging_key(&id))?;
+        Ok(record.map(|r| r.state))
+    }
+
+    /// `deleteUnstagedSegmentChunks(pageId, generation, keepChunkIndexes)`: deletes the page's
+    /// chunk rows at `generation` whose chunk index is not kept (the rows a dead preparation
+    /// staged), with their postings and the rows that hang off them.
+    pub fn delete_unstaged_segment_chunks(
+        &self,
+        page_id: i64,
+        generation: i64,
+        keep_chunk_indexes: &[i64],
+    ) -> Result<()> {
+        let (Some(page), Ok(generation)) = (page_u64(page_id), u64::try_from(generation)) else {
+            return Ok(());
+        };
+        let keep: HashSet<i64> = keep_chunk_indexes.iter().copied().collect();
+        self.write(|tx| {
+            crate::chunks::delete_chunks_matching(tx, page, &|c| {
+                c.segment
+                    .is_some_and(|place| place.body_generation == generation)
+                    && !keep.contains(&i64::from(c.chunk_index))
+            })?;
+            Ok(())
+        })
+    }
+
+    /// `deleteRewrittenSegmentDerivations({ pageId, touchedOccurrenceIds, linkReachOccurrenceIds,
+    /// pipelines, liveOccurrenceIds })`: deletes the page's rows of a touched occurrence, its
+    /// `links` rows of an occurrence in reach, and its rows of a listed pipeline whose occurrence
+    /// is not live; returns how many.
+    pub fn delete_rewritten_segment_derivations(
+        &self,
+        spec: &RewrittenDerivationsDelete,
+    ) -> Result<u64> {
+        let Some(page) = page_u64(spec.page_id) else {
+            return Ok(0);
+        };
+        let touched: HashSet<i64> = spec.touched_occurrence_ids.iter().copied().collect();
+        let reach: HashSet<i64> = spec.link_reach_occurrence_ids.iter().copied().collect();
+        let live: HashSet<i64> = spec.live_occurrence_ids.iter().copied().collect();
+        self.write(|tx| {
+            let prefix = derivation_prefix(page);
+            let mut doomed = Vec::new();
+            scan_prefix(&*tx, &prefix, false, &mut |k, _| {
+                let rest = &k[prefix.len()..];
+                if let Some(split) = rest.iter().position(|b| *b == 0) {
+                    let kind = &rest[..split];
+                    if let Some(o) =
+                        keys::be8(&rest[split + 1..]).map(|v| (v ^ (1u64 << 63)) as i64)
+                        && (touched.contains(&o)
+                            || (kind == b"links" && reach.contains(&o))
+                            || (spec.pipelines.iter().any(|p| p.as_bytes() == kind)
+                                && !live.contains(&o)))
+                    {
                         doomed.push(k.to_vec());
                     }
                 }
@@ -2849,6 +2960,38 @@ mod segment_chunk_tests {
         id
     }
 
+    /// A published segmented page renames: its version references the live generation and keeps no
+    /// body copy, and the moved page reads the same body under its new slug.
+    #[test]
+    fn update_slug_moves_a_segmented_page_and_versions_it_by_reference() {
+        let store = crate::test_support::store();
+        let id = published(&store);
+        assert_eq!(store.update_slug("notes/a", "notes/b", None).unwrap(), 1);
+        let read = store.read().unwrap();
+        let page = read_page_by_id(&*read, id as u64).unwrap().unwrap();
+        assert_eq!(page.slug, "notes/b");
+        assert!(page.compiled_truth.is_null());
+        assert_eq!(
+            segmented_reference(&*read, id as u64).unwrap(),
+            Some((1, Some(8)))
+        );
+        drop(read);
+        let versions = store
+            .get_versions("notes/b", &crate::pages::VersionsOptions::default())
+            .unwrap();
+        assert_eq!(versions.len(), 1);
+        let v = &versions[0];
+        assert_eq!(
+            (
+                &v["body_storage"],
+                &v["body_generation"],
+                &v["body_bytes"],
+                &v["compiled_truth"]
+            ),
+            (&json!("segmented"), &json!(1), &json!(8), &Value::Null)
+        );
+    }
+
     #[test]
     fn a_retention_purge_deletes_the_texts_only_the_purged_page_needed() {
         // PGLite's purgeDeletedPages deletes the purged pages' segment texts in the same
@@ -3290,8 +3433,14 @@ mod segment_chunk_tests {
             .unwrap();
         assert!(sealed_texts(&store).is_empty());
         // The fixture flip publishes an empty lead.
-        let (lead, revision) = store.read_segmented_seal_lead(id).unwrap().unwrap();
+        let SealLead {
+            lead,
+            revision,
+            slug,
+            source_id,
+        } = store.read_segmented_seal_lead(id).unwrap().unwrap();
         assert_eq!(lead, "");
+        assert_eq!((slug.as_str(), source_id.as_str()), ("notes/a", "default"));
         store
             .seal_segmented_page(id, "lead\0 text", Some(&revision))
             .unwrap();
@@ -3913,4 +4062,71 @@ mod segment_chunk_tests {
             1
         );
     }
+}
+
+type PreparedDerivation<'a> = (&'a SegmentDerivationInput, String, String);
+
+/// The rows of `upsertSegmentDerivations`, checked: each hash decoded, kind, state and version valid.
+fn prepare_derivations(rows: &[SegmentDerivationInput]) -> Result<Vec<PreparedDerivation<'_>>> {
+    let mut prepared = Vec::with_capacity(rows.len());
+    for row in rows {
+        let segment = from_hex(
+            &row.segment_sha256,
+            "upsertSegmentDerivations segmentSha256",
+        )?;
+        let context = from_hex(&row.context_hash, "upsertSegmentDerivations contextHash")?;
+        int4(row.version, "upsertSegmentDerivations version")?;
+        if !DERIVATION_KINDS.contains(&row.kind.as_str())
+            || !DERIVATION_STATES.contains(&row.state.as_str())
+            || row.version < 0
+            || segment.len() != 32
+            || context.len() != 32
+        {
+            return Err(violation(format!(
+                "new row for relation \"page_segment_derivations\" violates check constraint (page {}, kind \"{}\", occurrence {})",
+                row.page_id, row.kind, row.occurrence_id
+            )));
+        }
+        prepared.push((row, to_hex(&segment), to_hex(&context)));
+    }
+    Ok(prepared)
+}
+
+/// Upserts checked derivation rows in the caller's write transaction; a replaced row keeps its `created_at`.
+fn put_derivations(
+    tx: &mut dyn KvWrite,
+    prepared: &[PreparedDerivation<'_>],
+    now: i64,
+) -> Result<()> {
+    let mut seen = HashSet::new();
+    for (row, segment, context) in prepared {
+        let Some(page_id) =
+            page_u64(row.page_id).filter(|id| matches!(read_page_by_id(&*tx, *id), Ok(Some(_))))
+        else {
+            return Err(violation(format!(
+                "insert into \"page_segment_derivations\" violates foreign key: page {} does not exist",
+                row.page_id
+            )));
+        };
+        if !seen.insert((page_id, row.kind.clone(), row.occurrence_id)) {
+            return Err(violation(
+                "ON CONFLICT DO UPDATE command cannot affect row a second time (a derivation key repeats in the batch)",
+            ));
+        }
+        let key = derivation_key(page_id, &row.kind, row.occurrence_id);
+        let created =
+            get_json::<DerivationRecord>(&*tx, &key)?.map_or(now, |old| old.created_at_us);
+        let record = DerivationRecord {
+            pipeline_version: row.version,
+            segment_sha256: segment.clone(),
+            context_hash: context.clone(),
+            state: row.state.clone(),
+            output: row.output.clone(),
+            receipt: row.receipt.clone(),
+            created_at_us: created,
+            updated_at_us: now,
+        };
+        put_json(tx, &key, &record)?;
+    }
+    Ok(())
 }

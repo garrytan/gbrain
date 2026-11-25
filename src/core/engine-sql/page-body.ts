@@ -31,6 +31,7 @@ import { validateSlug } from '../utils.ts';
 import { opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { jsonbParam, type SqlExecutor } from './executor.ts';
+import { HOLD_BIND_CTE, HOLD_BIND_RETURNING } from './hold-binding.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { joinFragments, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 import { compileRowNormalizer } from './normalize.ts';
@@ -308,15 +309,19 @@ function metaParams(meta: SegmentedPageMeta) {
 
 export async function createSegmentedPageShell(exec: SqlExecutor, slug: string, meta: SegmentedPageMeta, opts: { sourceId: string }): Promise<{ id: number }> {
   const m = metaParams(meta);
+  // The new page takes over the quarantine holds waiting for its slug in the same statement (engine-sql/hold-binding.ts).
   // origin-guard-ok: applySegmentedBody runs assertOriginUnclaimed in this transaction first
   const { rows } = await exec.run<{ id: number }>(sqlFragment`
+    WITH ins AS (
     INSERT INTO pages (source_id, slug, type, page_kind, title, compiled_truth, timeline, frontmatter, updated_at, effective_date,
       effective_date_source, import_filename, chunker_version, source_path, source_kind, source_uri, ingested_via, ingested_at,
       body_storage, body_generation, body_bytes)
     VALUES (${opts.sourceId}, ${validateSlug(slug)}, ${meta.type}, ${m.pageKind}, ${m.title}, NULL, NULL, ${m.frontmatter}, now(), ${m.effectiveDate},
       ${m.effectiveDateSource}, ${m.importFilename}, ${m.chunkerVersion ?? 0}::smallint, ${m.sourcePath}, ${m.sourceKind}, ${m.sourceUri},
       ${m.ingestedVia}, ${m.ingestedAt}, 'segmented', 0, 0)
-    RETURNING id`);
+    RETURNING ${HOLD_BIND_RETURNING}
+    ), ${HOLD_BIND_CTE}
+    SELECT id FROM ins`);
   return { id: Number(rows[0]!.id) };
 }
 

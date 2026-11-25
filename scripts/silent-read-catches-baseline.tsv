@@ -6,7 +6,7 @@
 # Generated from the tree at its own commit (`bun scripts/check-silent-read-catches.ts --print`); the note column names the audit
 # finding (docs/research/gbrain-behavior-audit.md "The silent-failure class") that the fix for the row deletes.
 # Counts only fall; a raise edits the row in the same PR with a note saying why. --prune lowers stale rows.
-src/cli/commands/doctor.ts#run	catch_empty	1
+src/cli/commands/doctor.ts#runLocalDoctor	catch_empty	1
 src/cli/commands/notability-eval.ts#run	catch_empty	1
 src/cli/db-plane-config.ts#mergeDbPlaneConfig	catch_empty	1
 src/cli/enforced-member.ts#enforcedAccess	capability_refusal_swallowed	1
@@ -1089,7 +1089,6 @@ src/core/facts/absorb-log.ts#pendingReceipt	catch_empty	1
 src/core/facts/capture-dedup.ts#collapseFactReads	capability_refusal_swallowed	1
 src/core/facts/capture-dedup.ts#entityNames	capability_refusal_swallowed	1
 src/core/facts/capture-dedup.ts#entityNames	catch_empty	1
-src/core/facts/claim-conflicts.ts#claimConflictsMode	promise_catch_empty	1
 src/core/facts/contested-claims.ts#withDecideContested	capability_refusal_swallowed	1
 src/core/facts/dead-absorb-retry.ts#loadMaxResubmits	promise_catch_empty	1
 src/core/facts/dead-absorb-retry.ts#readState	catch_empty	1

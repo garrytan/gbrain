@@ -226,6 +226,8 @@
       "raw": 1
     },
     "listEnrichCandidates#default": {},
+    "listEnrichCandidates#owner-contact": {},
+    "listEnrichCandidates#owner-contact-no-owner": {},
     "listEnrichCandidates#sourceId": {},
     "listEnrichCandidates#sourceIds+reenrich": {},
     "listEntityKeyRows#after": {},

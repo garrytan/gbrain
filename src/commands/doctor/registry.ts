@@ -125,6 +125,7 @@ import { wakeshiftEntry } from './checks/wakeshift.ts';
 import { wakeshiftOpenclawEntry } from './checks/wakeshift-openclaw.ts';
 import { factTakeVectorsEntry } from './checks/vector-coverage.ts';
 import { decideHealthEntry } from './checks/decide.ts';
+import { learningNoteEntry } from './checks/learning-note.ts';
 import { memoryProposalsEntry } from './checks/memory-proposals.ts';
 import { supersessionCalibrationEntry } from './checks/supersession-calibration.ts';
 import { factAdmissionFloorsEntry } from './checks/fact-admission-floors.ts';
@@ -140,6 +141,7 @@ import { provenanceStampDriftEntry } from './checks/provenance-stamp-drift.ts';
 import { trustScanEntry } from './checks/trust-scan.ts';
 import { trustSourcesUnclaimedEntry } from './checks/trust-sources-unclaimed.ts';
 import { trustReleaseUnpreviewedEntry } from './checks/trust-release-unpreviewed.ts';
+import { writeGateHoldAmbiguousEntry } from './checks/write-gate-hold-ambiguous.ts';
 import { writeGateHoldsStrandedEntry } from './checks/write-gate-holds-stranded.ts';
 import { harnessWiringDoctorEntry } from './checks/harness-wiring.ts';
 import { agentContractEntry } from './checks/agent-contract.ts';
@@ -174,6 +176,7 @@ import { guestSourceEntry } from './checks/guest-source.ts';
 import { originTwinsEntry } from './checks/origin-twins.ts';
 import { slugPathMismatchEntry } from './checks/slug-path-mismatch.ts';
 import { renameIdentityDowngradesEntry } from './checks/rename-identity-downgrades.ts';
+import { legacySlugSpellingsEntry } from './checks/legacy-slug-spellings.ts';
 import { unindexedFilesEntry } from './checks/unindexed-files.ts';
 import { syncLandingGapsEntry } from './checks/landing-gaps.ts';
 import { derivedOriginParkedEntry, purgeParkedPagesEntry } from './checks/purge-parks.ts';
@@ -337,6 +340,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   gitWriterEntry,
   foreignWritersEntry,
   decideHealthEntry,
+  learningNoteEntry,
   memoryProposalsEntry,
   unlinkedFactsEntry,
   edgeValidityEntry,
@@ -355,6 +359,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   trustScanEntry,
   trustSourcesUnclaimedEntry,
   trustReleaseUnpreviewedEntry,
+  writeGateHoldAmbiguousEntry,
   // A held write names a page by slug only; a rename or delete can leave it stranded (doctor/checks/write-gate-holds-stranded.ts).
   writeGateHoldsStrandedEntry,
   coreMemoryEntry,
@@ -370,6 +375,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   originTwinsEntry,
   slugPathMismatchEntry,
   renameIdentityDowngradesEntry,
+  legacySlugSpellingsEntry,
   purgeParkedPagesEntry,
   derivedOriginParkedEntry,
   purgeMirrorEntry,

@@ -28,9 +28,17 @@ use std::path::Path;
 ///   by every takes writer (`takes::store_take`). Nothing is rewritten: a take stored before reads
 ///   `unknown`, the column default. A build without the field refuses a format-5 brain, as a take it
 ///   rewrote would lose its tier.
-pub const FORMAT_VERSION: u32 = 5;
+/// - 6: the records are this build's shapes. The v0.60.766.0 Rust addon's shadow seed also wrote
+///   format 5 but kept page purge tombstones, derived generations and oauth clients in other
+///   shapes; the upgrade carries them over (`seed/format_5.rs`) or refuses the brain with
+///   `shadow_reseed_required`. A build that writes the old shapes refuses a format-6 brain.
+/// - 7: the loop mutes (`loop_suppressions`) are at `F 0x11`, no longer at `F 0x10` beside the take
+///   purge tombstones, whose reads scanned them (`facts/key_split.rs`). The upgrade moves each mute
+///   in the one transaction, or refuses a record under `F 0x10` it cannot classify with
+///   `shadow_reseed_required`. A build that keeps both kinds at `F 0x10` refuses a format-7 brain.
+pub const FORMAT_VERSION: u32 = 7;
 /// Every format version this build can open. Addon exports list these as `formatVersions`.
-pub const FORMAT_VERSIONS: &[u32] = &[1, 2, 3, 4, FORMAT_VERSION];
+pub const FORMAT_VERSIONS: &[u32] = &[1, 2, 3, 4, 5, 6, FORMAT_VERSION];
 
 pub const FORMAT_FILE: &str = "FORMAT";
 pub const RECORDS_FILE: &str = "records.redb";
