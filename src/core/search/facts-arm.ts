@@ -175,7 +175,12 @@ async function readableEntityPages(engine: BrainEngine, facts: FactCandidate[], 
   const refs = new Map<string, { source_id: string; slug: string }>();
   for (const f of facts) if (f.entity_slug) refs.set(`${f.source_id}\u0000${f.entity_slug}`, { source_id: f.source_id, slug: f.entity_slug });
   if (!refs.size) return new Set();
-  const rows = await engine.readAdmittedPageRefs([...refs.values()], scope ?? {});
+  // Only the page-read fields: the arm's scope also carries search knobs (an evidence plan) no page read takes.
+  const read: PageReadScope = scope ? {
+    sourceId: scope.sourceId, sourceIds: scope.sourceIds, excludePrivate: scope.excludePrivate,
+    minTrust: scope.minTrust, suppressFlagged: scope.suppressFlagged,
+  } : {};
+  const rows = await engine.readAdmittedPageRefs([...refs.values()], read);
   return new Set(rows.map(r => `${r.source_id}\u0000${r.slug}`));
 }
 
