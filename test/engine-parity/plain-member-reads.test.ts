@@ -84,17 +84,20 @@ describe('engine parity: a plain member reads what it may', () => {
     return out;
   });
 
-  // Row 32e-c-1 (a named loss): an entity-filtered listFactsSince for a plain member still refuses on Rust, loudly.
-  test('loss (32e-c-1): listFactsSince with an entity filter refuses a plain member on Rust and answers elsewhere', async () => {
+  // Row 32e-c-1 is closed: the remote-access change serves an entity-filtered listFactsSince for a plain member on Rust, so it
+  // answers on every arm and the answers match.
+  test('listFactsSince with an entity filter answers a plain member on every engine, with the same facts', async () => {
+    const answers: Record<string, string[]> = {};
     for (const arm of arms()) {
       await resetArm(arm);
       await seed(arm.engine, arm.backend);
       await arm.engine.setConfig('mcp.stdio_member', 'alice-example');
       const access = await remoteCallerAccess(arm.engine, undefined, [], 'stdio');
-      const outcome = await withCallerAccess(access, () => arm.engine.listFactsSince(SRC, new Date(0), { entitySlug: 'people/a-example', excludePrivate: true }))
-        .then(() => 'answers', (e: { code?: string; message?: string }) => `${e.code}: ${/excludePrivate for a caller/.test(String(e.message)) ? 'caller policy' : e.message}`);
-      expect({ backend: arm.backend, outcome }).toEqual({ backend: arm.backend, outcome: arm.backend === 'rust' ? 'engine_capability_missing: caller policy' : 'answers' });
+      const rows = await withCallerAccess(access, () => arm.engine.listFactsSince(SRC, new Date(0), { entitySlug: 'people/a-example', excludePrivate: true }));
+      answers[arm.backend] = rows.map(r => String((r as { fact?: unknown }).fact)).sort();
     }
-    expect(arms().length).toBeGreaterThan(0);
+    const [first, ...rest] = Object.values(answers);
+    expect(first).toBeDefined();
+    for (const other of rest) expect(other).toEqual(first!);
   }, 120_000);
 });
