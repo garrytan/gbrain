@@ -168,6 +168,14 @@ the client as trusted as the CLI. A multi-user server cannot trust that field.
 - Every store entry point takes the `Scope`. Visibility filters run inside the index scans, never
   after top-k (the plan's "Privacy and visibility" rule and the prior-art RLS pitfalls).
 - "Not found" and "not yours" return the same error.
+- **Pre-conditions for non-owner sessions (ruled 2026-11-25).** Until all three hold, the server opens sessions only
+  for the brain owner's keys and refuses every other key with `permission_denied`:
+  1. The access self-check (`GBRAIN_RUST_ACCESS_SELF_CHECK`) runs in CI over the whole parity suite on the Rust arm
+     and passes.
+  2. No read path lets a caller tell a page or claim it cannot see from one that does not exist: the same answer,
+     the same error and no effect on ranking. Where a path is shared with PGLite and Postgres, the fix ships on all
+     three engines in one change, so byte parity holds.
+  3. Retrieval paths that no caller reaches today also apply the caller's visibility, or are removed.
 - Keyword statistics stay per source if a BM25 ranker ever ships, so one tenant's pages cannot move
   another tenant's scores (prior-art map, lock and queue table).
 
