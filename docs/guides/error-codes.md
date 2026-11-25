@@ -4097,7 +4097,7 @@ Reasons: `not_applied`, `still_behind`, `schema_unreadable`, `wedged`, `schema_b
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Nothing serves the Google token socket; start it with gbrain google mint serve, or gbrain serve with google.mint_socket true. | A capability this request needs is not configured or not reachable on this brain. | A required capability is not available on this brain. Run `gbrain doctor --json` to see what is missing. | agent | `gbrain doctor --json` | 1 | no |
+| Nothing serves the Google token socket; start it with gbrain google mint serve, or gbrain serve --http with google.mint_socket true. | A capability this request needs is not configured or not reachable on this brain. | A required capability is not available on this brain. Run `gbrain doctor --json` to see what is missing. | agent | `gbrain doctor --json` | 1 | no |
 
 More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
 

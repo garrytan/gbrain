@@ -68,6 +68,8 @@ export class GoogleBroker {
   private readonly heldByKey = new Map<string, string>();
   private readonly turns = new Map<string, Turn>();
   private readonly toolsCache = new Map<GoogleServer, { at: number; tools: McpTool[] }>();
+  /** Idempotency keys with a call or verdict between its ledger check and its upstream reply; a second one waits its turn by being refused. */
+  private readonly inflight = new Set<string>();
   private readonly now: () => number;
 
   constructor(private readonly opts: BrokerOptions) { this.now = opts.now ?? Date.now; }
@@ -113,6 +115,15 @@ export class GoogleBroker {
   }
 
   async call(req: CallRequest): Promise<Reply> {
+    if (this.inflight.has(req.idempotency_key)) {
+      return { ...failure(randomUUID(), 'outcome_unknown', `another call with this idempotency_key is still in flight; read op status for it, or reconcile with ${RECONCILE[req.server]}`, { reconcile_with: RECONCILE[req.server] }), quota: this.quota(req.server) };
+    }
+    this.inflight.add(req.idempotency_key);
+    try { return await this.callClaimed(req); }
+    finally { this.inflight.delete(req.idempotency_key); }
+  }
+
+  private async callClaimed(req: CallRequest): Promise<Reply> {
     const requestId = randomUUID();
     const fail = (code: Parameters<typeof failure>[1], message: string, extra: Reply = {}, id: string = requestId): Reply =>
       ({ ...failure(id, code, message, extra), quota: this.quota(req.server) });
@@ -146,13 +157,12 @@ export class GoogleBroker {
       this.opts.ledger.put({ ...prior, status: 'failed', code: 'verdict_expired' });
       return fail('verdict_expired', 'the held prompt expired (10 minutes) or the broker restarted; re-call with a new idempotency_key for a fresh prompt');
     }
-    let confirmedPause = false;
+    let confirmed: Held | undefined;
     if (held) {
       if (held.turn_id !== req.turn_id || held.caller !== req.caller) return fail('verdict_mismatch', 'a held call is answered only on the turn and by the caller that made it', {}, held.request_id);
       if (held.kind === 'owner_confirm') {
         if (!held.confirmed) return fail('owner_confirm_required', 'this call needs the owner to confirm it through gbrain google approvals first; owner_verdict is not accepted for a safety pause', { tool: req.tool, args_hash: hash }, held.request_id);
-        this.drop(held);
-        confirmedPause = true;
+        confirmed = held;
       } else {
         if (!req.owner_verdict) return this.promptReply(held);
         if (req.owner_verdict.for_request !== held.request_id) return fail('verdict_mismatch', 'owner_verdict.for_request does not name the held prompt for this call', {}, held.request_id);
@@ -172,7 +182,7 @@ export class GoogleBroker {
     const base = { key: req.idempotency_key, account: req.account, server: req.server, tool: req.tool, args: effects.args, args_hash: hash, turn_id: req.turn_id, caller: req.caller, effects };
     const pauseOutside = effects.outside > 0 && turn.outside + effects.outside >= OUTSIDE_PAUSE_AT;
     const pauseTrash = effects.trash && turn.trash + 1 >= TRASH_PAUSE_AT;
-    if (!confirmedPause && (pauseOutside || pauseTrash)) {
+    if (!confirmed && (pauseOutside || pauseTrash)) {
       const h = this.hold({ ...base, kind: 'owner_confirm', generation: await this.opts.tokens.generationOf(req.account), client_id: null });
       this.audit(req, hash, 'owner_confirm_required');
       return fail('owner_confirm_required', pauseOutside
@@ -182,6 +192,13 @@ export class GoogleBroker {
     let act: ActToken;
     try { act = await this.opts.tokens.actToken(req.account); }
     catch (error) { const e = error as SocketError; this.audit(req, hash, e.code); return fail(e.code, e.message); }
+    if (confirmed) {
+      this.drop(confirmed);
+      if (act.generation !== confirmed.generation) {
+        this.opts.ledger.put({ ...prior!, status: 'failed', code: 'verdict_expired' });
+        return fail('verdict_expired', 'the account was reconnected or disconnected after the owner confirmed this call; re-call with a new idempotency_key', {}, confirmed.request_id);
+      }
+    }
     return this.dispatch({ ...base, request_id: requestId }, act);
   }
 
@@ -253,7 +270,10 @@ export class GoogleBroker {
       return { v: GOOGLE_SOCKET_VERSION, ok: true, request_id: h.request_id, confirmed: true, next: 'the caller repeats the same call (same idempotency_key) to send it' };
     }
     if (!h.prompt!.choices.includes(req.choice)) return failure(h.request_id, 'broker_args_refused', `Google offered ${h.prompt!.choices.join(', ')}`);
-    return this.answer(h, req.choice);
+    if (this.inflight.has(h.key)) return failure(h.request_id, 'verdict_already_answered', 'this prompt is already being answered');
+    this.inflight.add(h.key);
+    try { return await this.answer(h, req.choice); }
+    finally { this.inflight.delete(h.key); }
   }
 
   pending(): Reply {

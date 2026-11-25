@@ -3,14 +3,15 @@
  * `gbrain google exec`: the local Google token socket (docs/guides/google-socket.md).
  */
 import { agentBlock } from '../core/agent-markers.ts';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
+import { appendAuditLine } from '../core/google-socket/ledger.ts';
 import { spawn } from '../core/spawn.ts';
 import net from 'node:net';
-import { basename } from 'node:path';
 import { configDir } from '../core/config.ts';
 import { readGoogleSocketConfig } from '../core/google-socket/config.ts';
 import { brokerGate } from '../core/google-socket/preconditions.ts';
 import { GOOGLE_SOCKET_VERSION, SocketError } from '../core/google-socket/protocol.ts';
-import { googleSocketPath, startGoogleSocket } from '../core/google-socket/server.ts';
+import { googleAuditPath, googleSocketPath, startGoogleSocket } from '../core/google-socket/server.ts';
 import { SocketTokens } from '../core/google-socket/tokens.ts';
 import { openVault } from '../core/creds/vault.ts';
 
@@ -33,7 +34,7 @@ export function socketRequest(path: string, request: Record<string, unknown>, ti
     socket.once('error', (error: NodeJS.ErrnoException) => {
       clearTimeout(timer);
       reject(error.code === 'ENOENT' || error.code === 'ECONNREFUSED'
-        ? Object.assign(new Error(`mint_socket_down: nothing serves ${path}; start it with gbrain google mint serve (or gbrain serve with google.mint_socket true)`), { code: 'mint_socket_down' })
+        ? Object.assign(new Error(`mint_socket_down: nothing serves ${path}; start it with gbrain google mint serve (or gbrain serve --http with google.mint_socket true)`), { code: 'mint_socket_down' })
         : error);
     });
   });
@@ -56,7 +57,7 @@ function mintStatus(json: boolean): void {
     broker: { call: gate.ok ? 'on' : 'off', root_gateway_opt_in: gate.rootGateway, unmet: gate.unmet } };
   if (json) { console.log(JSON.stringify(out, null, 2)); return; }
   console.log(`Google socket: ${out.path} (protocol v${out.protocol})`);
-  console.log(`  started by gbrain serve: ${out.mint_socket_in_serve ? 'yes' : 'no (gbrain google mint serve, or google.mint_socket true)'}`);
+  console.log(`  started by gbrain serve --http: ${out.mint_socket_in_serve ? 'yes' : 'no (gbrain google mint serve, or google.mint_socket true)'}`);
   console.log(`  peers: owner uid ${uid}${out.peers.length ? ` + ${out.peers.join(', ')}` : ''}`);
   console.log(`  write broker (call): ${out.broker.call}${gate.rootGateway ? ' (root-gateway opt-in)' : ''}`);
   for (const line of gate.unmet) console.log(`    unmet: ${line}`);
@@ -79,7 +80,8 @@ export async function runGoogleApprovals(args: string[]): Promise<void> {
     if (!process.stdin.isTTY) {
       console.error('[gbrain] approvals are answered only by the account owner at a terminal; nothing was sent.');
       process.stderr.write(agentBlock({ ask: 'the account owner answers the held prompt', actor: 'user', next: 'gbrain google approvals' }, { showUser: 'Run gbrain google approvals in a terminal and answer the held prompt there.' }));
-      process.exit(3);
+      setCliExitVerdict(2);
+      return;
     }
     const reply = await socketRequest(path, { op: 'verdict', request_id: requestId, choice });
     console.log(json ? JSON.stringify(reply, null, 2) : reply.ok ? `Answered ${requestId}: ${choice}` : `${reply.code}: ${reply.message}`);
@@ -123,13 +125,16 @@ export async function runGoogleExec(args: string[]): Promise<void> {
   const account = ai >= 0 ? head[ai + 1]?.toLowerCase() : undefined;
   const refuse = (msg: string): never => { console.error(`[gbrain] google exec: ${msg}; nothing was run.`); process.exit(2); };
   if (!account || child.length === 0) refuse('usage: gbrain google exec --account <email> -- gwscli <args...>');
-  if (basename(child[0]!) !== 'gwscli') refuse('only gwscli is run with a minted token');
+  if (child[0] !== 'gwscli') refuse('only gwscli, by its bare name on PATH, is run with a minted token');
   const bad = child.slice(1).find(a => DEBUG_FLAG.test(a) || /^--?oauth[-_]token/i.test(a));
   if (bad) refuse(`${bad} is refused (debug output can print the token; the token is supplied by gbrain)`);
   let token: string;
-  try { token = (await new SocketTokens(openVault()).mintIngest(account!)).access_token; }
-  catch (error) {
+  try {
+    token = (await new SocketTokens(openVault()).mintIngest(account!)).access_token;
+    appendAuditLine(googleAuditPath(), ['gwscli-exec', account!, 'ingest', 'ok']);
+  } catch (error) {
     const e = error as SocketError;
+    appendAuditLine(googleAuditPath(), ['gwscli-exec', account!, 'ingest', e.code ?? 'internal']);
     console.error(`[gbrain] google exec: ${e.code ?? 'internal'}: ${e.message}`);
     process.exit(1);
   }
@@ -148,5 +153,5 @@ export async function runGoogleExec(args: string[]): Promise<void> {
   });
   process.stdout.write(redact.out.flush());
   process.stderr.write(redact.err.flush());
-  process.exitCode = code;
+  setCliExitVerdict(code);
 }

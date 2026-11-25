@@ -93,10 +93,14 @@ export function openAuditLog(path: string, now: () => number = Date.now): (field
     });
     writeFileSync(path, kept.length ? kept.join('\n') + '\n' : '', { mode: 0o600 });
   }
-  return (fields: string[]) => {
-    appendFileSync(path, [new Date(now()).toISOString(), ...fields.map(f => f.replace(/\s+/g, '_') || '-')].join(' ') + '\n', { mode: 0o600 });
-    try { chmodSync(path, 0o600); } catch { /* best effort */ }
-  };
+  return (fields: string[]) => appendAuditLine(path, fields, now);
+}
+
+/** One audit line, appended without pruning (for a process that does not own the log, such as gbrain google exec). */
+export function appendAuditLine(path: string, fields: string[], now: () => number = Date.now): void {
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  appendFileSync(path, [new Date(now()).toISOString(), ...fields.map(f => f.replace(/\s+/g, '_') || '-')].join(' ') + '\n', { mode: 0o600 });
+  try { chmodSync(path, 0o600); } catch { /* best effort */ }
 }
 
 export const brokerStatePath = (home: string): string => join(home, 'google-broker', 'state.json');

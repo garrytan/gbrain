@@ -18,17 +18,18 @@ import type { GoogleSocketConfig } from '../src/core/google-socket/preconditions
 
 const ACCOUNT = 'alice@example.com';
 const GMAIL_RO = 'https://www.googleapis.com/auth/gmail.readonly';
+const GMAIL_COMPOSE = 'https://www.googleapis.com/auth/gmail.compose';
 const CLIENT = '100001-personala.apps.googleusercontent.com';
 const OWNER = process.getuid?.() ?? 1000;
 const open: GoogleSocketBinding[] = [];
 afterEach(() => { while (open.length) open.pop()!.close(); });
 
-function brainHome(): string {
+function brainHome(extraScopes: string[] = []): string {
   const root = mkdtempSync(join(tmpdir(), 'gsk-'));
   const home = join(root, '.gbrain');
   mkdirSync(home, { mode: 0o700 });
   const entry: CredentialEntry = { id: `google:${ACCOUNT}`, provider: 'google', kind: 'oauth2', client_ref: 'byo',
-    secret: { refresh_token: '1//synthetic-refresh' }, meta: { account: ACCOUNT, scopes: ['openid', 'email', GMAIL_RO], client_id: CLIENT, client_mode: 'personal', connected_at: '2026-11-01T00:00:00.000Z', grant_generation: 1 } };
+    secret: { refresh_token: '1//synthetic-refresh' }, meta: { account: ACCOUNT, scopes: ['openid', 'email', GMAIL_RO, ...extraScopes], client_id: CLIENT, client_mode: 'personal', connected_at: '2026-11-01T00:00:00.000Z', grant_generation: 1 } };
   writeFileSync(join(home, 'credentials.json'), JSON.stringify({ version: 2, clients: [{ provider: 'google', client_id: CLIENT, client_secret: 'GOCSPX-synthetic', created_at: '2026-01-01T00:00:00.000Z', account: ACCOUNT, mode: 'personal' }], credentials: { [entry.id]: entry } }));
   return home;
 }
@@ -38,11 +39,11 @@ const fakeFetch = (async (url: string) => {
   throw new Error(`unexpected ${url}`);
 }) as never;
 
-async function start(home: string, peer: number, config: GoogleSocketConfig = {}) {
+async function start(home: string, peer: number, config: GoogleSocketConfig = {}, seams: { mcp?: GoogleMcpClient; fetchImpl?: never } = {}) {
   const logs: string[] = [];
   const started = await startGoogleSocket({
-    home, log: l => logs.push(l), config: () => config, vault: new FileVaultBackend(join(home, 'credentials.json')), fetchImpl: fakeFetch,
-    peerCred: { ok: true, read: () => peer }, uid: () => OWNER,
+    home, log: l => logs.push(l), config: () => config, vault: new FileVaultBackend(join(home, 'credentials.json')), fetchImpl: seams.fetchImpl ?? fakeFetch,
+    peerCred: { ok: true, read: () => peer }, uid: () => OWNER, ...(seams.mcp ? { mcp: seams.mcp } : {}),
   });
   if (started.ok) open.push(started.binding);
   return { started, logs };
@@ -60,7 +61,7 @@ describe('the socket', () => {
     expect(await socketRequest(path, { op: 'mint', account: ACCOUNT, profile: 'act', caller: 'test' })).toMatchObject({ ok: false, code: 'act_not_mintable' });
     expect(await socketRequest(path, { v: 3, op: 'mint' })).toMatchObject({ ok: false, code: 'unsupported_version', request_id: expect.any(String) });
     expect(await socketRequest(path, { op: 'call', account: ACCOUNT, server: 'gmail', tool: 'create_draft', args: {}, turn_id: 't', idempotency_key: 'k', caller: 'test' }))
-      .toMatchObject({ ok: false, code: 'broker_precondition_unmet', recovery: 'ask_human' });
+      .toMatchObject({ ok: false, code: 'peer_refused' });
     const audit = readFileSync(googleAuditPath(home), 'utf8');
     expect(audit).toContain(`test ${ACCOUNT} ingest ok`);
     expect(audit).not.toContain('ya29');
@@ -81,6 +82,25 @@ describe('the socket', () => {
     const peerHome = brainHome();
     await start(peerHome, 4242, { socket_peers: [4242] });
     expect(await socketRequest(googleSocketPath(peerHome), { op: 'pending' })).toMatchObject({ ok: false, code: 'peer_refused' });
+    expect(await socketRequest(googleSocketPath(peerHome), { op: 'call', account: ACCOUNT, server: 'gmail', tool: 'create_draft', args: {}, turn_id: 't', idempotency_key: 'k', caller: 'test' }))
+      .toMatchObject({ ok: false, code: 'broker_precondition_unmet', recovery: 'ask_human' });
+  });
+
+  test('a headless agent peer makes a write call end to end once every precondition holds', async () => {
+    const home = brainHome([GMAIL_COMPOSE]);
+    const sent: string[] = [];
+    const mcp = { callTool: async (_s: string, token: string, tool: string) => { sent.push(`${tool} ${token}`); return { kind: 'complete', result: { content: [] }, isError: false, text: '' }; }, listTools: async () => [] } as unknown as GoogleMcpClient;
+    const writeFetch = (async (url: string) => {
+      if (url.endsWith('/token')) return new Response(JSON.stringify({ access_token: 'ya29.act', expires_in: 3600, scope: `openid email ${GMAIL_RO} ${GMAIL_COMPOSE}` }));
+      throw new Error(`unexpected ${url}`);
+    }) as never;
+    const { started } = await start(home, 4242, { broker_act: true, socket_peers: [4242], broker_joint_probe: 4 }, { mcp, fetchImpl: writeFetch });
+    expect(started.ok).toBe(true);
+    const call = { op: 'call', account: ACCOUNT, server: 'gmail', tool: 'create_draft', args: { to: 'bob@example.com', subject: 's' }, turn_id: 't', idempotency_key: 'k1', caller: 'agent' };
+    expect(await socketRequest(googleSocketPath(home), call)).toMatchObject({ ok: true, quota: { product: 'gmail', used_today: 1 } });
+    expect(await socketRequest(googleSocketPath(home), call)).toMatchObject({ ok: true, replayed: true });
+    expect(sent).toEqual(['create_draft ya29.act']);
+    expect(readFileSync(googleAuditPath(home), 'utf8')).not.toContain('ya29');
   });
 
   test('a stale socket file is replaced; a live one and an overlong path refuse', async () => {
@@ -138,7 +158,12 @@ describe('gbrain google exec', () => {
     expect(err).toContain('telemetry=0');
     const refused = Bun.spawnSync(['bun', cli, 'google', 'exec', '--account', ACCOUNT, '--', 'curl', 'x'], { env, stdout: 'pipe', stderr: 'pipe' });
     expect(refused.exitCode).toBe(2);
-    expect(refused.stderr.toString()).toContain('only gwscli is run');
+    expect(refused.stderr.toString()).toContain('only gwscli, by its bare name');
+    const byPath = Bun.spawnSync(['bun', cli, 'google', 'exec', '--account', ACCOUNT, '--', join(bin, 'gwscli'), 'gmail'], { env, stdout: 'pipe', stderr: 'pipe' });
+    expect(byPath.exitCode).toBe(2);
+    const audit = readFileSync(googleAuditPath(home), 'utf8');
+    expect(audit).toContain(`gwscli-exec ${ACCOUNT} ingest ok`);
+    expect(audit).not.toContain('ya29');
     const debug = Bun.spawnSync(['bun', cli, 'google', 'exec', '--account', ACCOUNT, '--', 'gwscli', '--debug'], { env, stdout: 'pipe', stderr: 'pipe' });
     expect(debug.exitCode).toBe(2);
   }, 60_000);
@@ -168,4 +193,17 @@ describe('trust boundary', () => {
     expect(seen.size).toBeGreaterThan(50);
     expect(reached).toEqual([]);
   });
+});
+
+describe('gbrain config set google.*', () => {
+  test('a rejected value prints the reason and writes nothing', () => {
+    const root = mkdtempSync(join(tmpdir(), 'gsk-cfg-'));
+    const cli = resolve(import.meta.dir, '../src/cli.ts');
+    const env = { ...process.env, GBRAIN_HOME: root };
+    expect(Bun.spawnSync(['bun', cli, 'init', '--pglite', '--no-embedding'], { env, stdout: 'pipe', stderr: 'pipe' }).exitCode).toBe(0);
+    const bad = Bun.spawnSync(['bun', cli, 'config', 'set', 'google.socket_peers', 'abc'], { env, stdout: 'pipe', stderr: 'pipe' });
+    expect(bad.stderr.toString()).toContain('comma-separated list of uids');
+    expect(bad.stderr.toString()).not.toContain('${');
+    expect(readFileSync(join(root, '.gbrain', 'config.json'), 'utf8')).not.toContain('socket_peers');
+  }, 60_000);
 });

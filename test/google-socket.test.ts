@@ -65,10 +65,12 @@ describe('activation gate', () => {
     expect(brokerGate({ broker_act: true, socket_peers: [1001], broker_joint_probe: 4 }, 1000, '/h', open).ok).toBe(false);
     expect(brokerGate({ broker_act: true, socket_peers: [1000], broker_joint_probe: 4 }, 1000, '/h', closed).ok).toBe(false);
   });
-  test('a root peer needs the root-gateway opt-in, which skips the home read check', () => {
+  test('a root peer needs the root-gateway opt-in, which skips the home read check; a root broker never passes', () => {
     const cfg = { broker_act: true, socket_peers: [0], broker_joint_probe: 4 };
-    expect(brokerGate(cfg, 0, '/h', open).ok).toBe(false);
-    expect(brokerGate({ ...cfg, broker_allow_root_gateway: true }, 0, '/h', open)).toEqual({ ok: true, unmet: [], rootGateway: true });
+    expect(brokerGate(cfg, 1000, '/h', open).ok).toBe(false);
+    expect(brokerGate({ ...cfg, broker_allow_root_gateway: true }, 1000, '/h', open)).toEqual({ ok: true, unmet: [], rootGateway: true });
+    expect(brokerGate({ ...cfg, broker_allow_root_gateway: true }, 0, '/h', closed).unmet).toEqual([expect.stringContaining('runs as root'), expect.stringContaining('own uid')]);
+    expect(brokerGate({ ...cfg, socket_peers: [1000], broker_allow_root_gateway: true }, 1000, '/h', closed).ok).toBe(false);
     expect(() => parsePeerList('abc')).toThrow();
     expect(parsePeerList('0, 1001,1001')).toEqual([0, 1001]);
   });
@@ -154,6 +156,41 @@ describe('write broker', () => {
     expect(await r.broker.verdict({ op: 'verdict', request_id: paused.request_id as string, choice: 'ALLOW_ONCE' })).toMatchObject({ ok: true, confirmed: true });
     expect(await invite('i2', 'two@acme-example.com')).toMatchObject({ ok: true });
     expect(r.sent[1]!.args.notificationLevel).toBe('NONE');
+  });
+
+  test('a confirmed pause is re-checked against the grant, and an unconfirmed one expires after 10 minutes', async () => {
+    const r = rig();
+    const invite = (key: string, email: string) => r.call({ server: 'calendar', tool: 'create_event', idempotency_key: key, args: { summary: 'x', attendees: [{ email }] } });
+    await invite('i1', 'one@acme-example.com');
+    const paused = await invite('i2', 'two@acme-example.com');
+    await r.broker.verdict({ op: 'verdict', request_id: paused.request_id as string, choice: 'ALLOW_ONCE' });
+    r.reconnect();
+    expect(await invite('i2', 'two@acme-example.com')).toMatchObject({ code: 'verdict_expired' });
+    const late = await invite('i3', 'three@acme-example.com');
+    expect(late).toMatchObject({ code: 'owner_confirm_required' });
+    r.advance(VERDICT_TTL_MS + 1);
+    expect(await r.broker.verdict({ op: 'verdict', request_id: late.request_id as string, choice: 'ALLOW_ONCE' })).toMatchObject({ code: 'verdict_expired' });
+    expect(await invite('i3', 'three@acme-example.com')).toMatchObject({ code: 'verdict_expired' });
+    expect(r.sent.length).toBe(1);
+  });
+
+  test('the owner channel sends Google the exact choice once; a second answer at the same time is refused', async () => {
+    const r = rig({ outcomes: [PROMPT, DONE] });
+    const held = await r.call();
+    const [a, b] = await Promise.all([
+      r.broker.verdict({ op: 'verdict', request_id: held.request_id as string, choice: 'DENY' }),
+      r.call({ owner_verdict: { choice: 'ALLOW_ONCE', for_request: held.request_id } }),
+    ]);
+    expect(a).toMatchObject({ ok: true });
+    expect(b).toMatchObject({ ok: false });
+    expect(r.sent.map(s => s.answer?.choice ?? null)).toEqual([null, 'DENY']);
+  });
+
+  test('two calls with one key at the same time send once', async () => {
+    const r = rig();
+    const [a, b] = await Promise.all([r.call(), r.call()]);
+    expect([a.ok, b.code]).toEqual([true, 'outcome_unknown']);
+    expect(r.sent.length).toBe(1);
   });
 
   test('the eleventh trash in a turn pauses', async () => {

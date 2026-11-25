@@ -139,7 +139,9 @@ export async function startGoogleSocket(opts: GoogleSocketOptions): Promise<Goog
           return failure(id, e.code, e.message);
         }
       }
-      case 'call': return broker.call(request);
+      case 'call':
+        if (peer === uid) return failure(crypto.randomUUID(), 'peer_refused', 'op call comes from an agent uid listed in google.socket_peers, never from the broker owner, whose channel approves the calls');
+        return broker.call(request);
       case 'status': return broker.status(request);
       case 'tools': return broker.tools(request);
       case 'pending':

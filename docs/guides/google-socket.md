@@ -11,7 +11,7 @@ It is off by default. Nothing here changes how `gbrain sync` reads Google.
 
 ```bash
 gbrain google mint serve          # foreground, for a supervisor (systemd, launchd)
-# or let gbrain serve open it:
+# or let the HTTP server open it (gbrain serve --http); stdio serve never does:
 gbrain config set google.mint_socket true
 gbrain google mint status         # path, allowed peers, whether writes are on
 ```
@@ -29,7 +29,9 @@ gbrain config set google.socket_peers 0          # e.g. a gateway running as roo
 ```
 
 In this release the socket file stays `0600`, so only the owner and root can
-open it; a non-root peer uid of its own cannot reach it yet.
+open it; a non-root peer uid of its own cannot reach it yet. `call` is refused
+from the owner's own uid (`peer_refused`): the owner's connection is the
+approval channel, so the caller must be a different uid.
 
 The socket is not an MCP operation: remote MCP callers can never reach it.
 
@@ -96,7 +98,10 @@ Every `call` reply carries
 `"quota":{"product","used_today","cap","day"}` for that product's UTC day.
 
 `turn_id` is any printable string of up to 128 characters that stays the
-same for every call in one turn; per-turn caps and pauses count by it.
+same for every call in one turn; per-turn caps and pauses count by it. The
+caller chooses it, so a caller that changes it on every call resets the
+per-turn cap and pauses; the per-day cap still holds. Treat the per-turn
+limits as guard rails for a cooperating agent, not a wall.
 
 `idempotency_key` names the intent. It is recorded before the call is sent
 and replayed for 24 hours: repeating a finished intent returns
@@ -140,7 +145,9 @@ with `retry_after_s`) wins over both.
 2. `gbrain config set google.socket_peers <uid>`: the peers are named.
 3. The agent can't read GBRAIN_HOME: no peer is the broker's own uid or root,
    and GBRAIN_HOME has no group or other access (`chmod 700`). Run the
-   broker as its own user so the agent's uid can't read the vault.
+   broker as its own non-root user so the agent's uid can't read the vault; a
+   broker running as root never passes, because its approval channel could not
+   be told apart from a root caller.
 4. `gbrain config set google.broker_joint_probe 4`, once the caller's plugin
    has passed its compatibility check against this socket.
 
@@ -149,7 +156,9 @@ the vault off from it. `gbrain config set google.broker_allow_root_gateway true`
 admits a uid 0 peer and skips item 3; everything else still holds, and every
 audit line records the opt-in. Residual risk, stated plainly: an
 `owner_verdict` is asserted by the peer, so anything running as that root
-gateway can approve a prompt once. That is no new exposure on such a box,
+gateway can approve a prompt once with `owner_verdict` ALLOW_ONCE; the
+owner-only channel (any choice, safety-pause confirmations) stays with the
+broker's own uid. That is no new exposure on such a box,
 because the same process can already read the vault. The allowlist, argument
 rules, caps, safety pauses and audit log limit what can go wrong through the
 broker; they are not a wall against root.
@@ -178,9 +187,12 @@ gbrain google exec --account you@example.com -- gwscli gmail list
 `--oauth_token=<token>` and `GWSCLI_TELEMETRY_ENABLED=0`, and replaces the
 token in its output with `[redacted:google_token]`. It runs nothing but
 `gwscli`, and refuses debug and verbose flags and a caller-supplied
-`--oauth_token`. gwscli takes its token only as an argument, which other
-processes of the same user can read while it runs, so prefer `call` where
-both work.
+`--oauth_token`. gwscli takes its token only as an argument, and on Linux's
+default `/proc` (no `hidepid`) any local user can read a process's arguments
+while it runs, so prefer `call` where both work. `exec` runs `gwscli` by its
+bare name from the caller's `PATH`: it keeps tokens out of transcripts, and
+it is not a security boundary against a caller that controls `PATH`. Each
+mint through `exec` adds a `gwscli-exec` line to the audit log.
 
 ## Audit and retention
 
@@ -243,4 +255,4 @@ Every failure is `{"v":4,"ok":false,"code","message","request_id","recovery","ac
 
 On the client side, `mint_socket_down` means nothing serves the socket:
 start it with `gbrain google mint serve`, or set `google.mint_socket` and
-restart `gbrain serve`.
+restart `gbrain serve --http`.

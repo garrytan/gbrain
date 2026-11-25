@@ -556,7 +556,6 @@ async function serveBrain(
     activateStdioIdleActivityTracking();
     // Opt-in warm CLI socket; bound after the stdout redirect so a request's captured console output keeps its stream.
     if (cliSocketOn) void import('../core/cli-socket/server.ts').then(m => m.startCliSocket(engine, opts.log ?? ((msg: string) => console.error(msg))));
-    if (googleSocketOn) void import('../core/google-socket/server.ts').then(m => m.startGoogleSocketForServe(opts.log ?? ((msg: string) => console.error(msg))));
   } finally {
     if (bootDeadline) clock.clearTimeout(bootDeadline);
     stopProgressWatch();

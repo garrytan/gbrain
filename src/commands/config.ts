@@ -598,7 +598,7 @@ async function setFilePlaneKey(key: string, value: string, tail: string[]): Prom
   } else if (key === 'minions.terminal_hook') { (await import('../core/minions/terminal-hook.ts')).setTerminalHookConfig(cfg, value, saveConfig);
   } else if (key.startsWith('google.')) {
     try { console.log((await import('../core/google-socket/config.ts')).setGoogleSocketConfigKey(cfg, key, value, saveConfig)); }
-    catch (e) { console.error(`[config] ${'${'}(e as Error).message}. Nothing was written.`); process.exit(1); }
+    catch (e) { console.error(`[config] ${(e as Error).message}. Nothing was written.`); process.exit(1); }
   } else if (key === 'doctor.default_budget_ms') { (await import('./doctor/default-budget.ts')).setDoctorDefaultBudget(cfg, value, saveConfig);
   } else if (key === 'migrate.graduation') {
     const on = isConfigTruthy(value);

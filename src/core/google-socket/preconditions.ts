@@ -35,9 +35,10 @@ export function brokerGate(cfg: GoogleSocketConfig, ownerUid: number, home: stri
   if (cfg.broker_act !== true) unmet.push('google.broker_act is false (gbrain config set google.broker_act true)');
   const peers = cfg.socket_peers ?? [];
   if (peers.length === 0) unmet.push('no peer uid is allowed (gbrain config set google.socket_peers <uid>[,<uid>])');
+  if (ownerUid === 0) unmet.push('the broker runs as root, so its owner-only approval channel cannot be told apart from a root caller; run it as its own non-root uid');
+  if (peers.includes(ownerUid)) unmet.push(`peer uid ${ownerUid} is this process's own uid, so the agent could read the vault and answer its own prompts; run the broker as its own uid`);
   if (!rootGateway) {
     if (peers.includes(0)) unmet.push('uid 0 is a peer; a root gateway needs gbrain config set google.broker_allow_root_gateway true');
-    if (peers.includes(ownerUid)) unmet.push(`peer uid ${ownerUid} is this process's own uid, so the agent could read the vault; run the broker as its own uid`);
     let mode = 0o777;
     try { mode = homeMode(home); } catch { /* unreadable counts as open */ }
     if ((mode & 0o077) !== 0) unmet.push(`${home} is readable by other users (chmod 700 ${home})`);
