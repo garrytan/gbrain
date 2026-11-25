@@ -32,6 +32,8 @@ export interface ShadowStatus {
     unexplained_difference?: number;
     uncomparable?: number;
     capability_missing?: number;
+    /** Sampled writes outside the page and link pilot, by family (shadow/write-compare.ts). */
+    capability_missing_by_family?: Record<string, number>;
   };
   fingerprints?: {
     checked_rows?: number;
@@ -96,6 +98,9 @@ export const MIN_WRITE_COMPARISONS = 1_000;
 export const MIN_VECTOR_RECALL = 0.98;
 export const MIN_BENCH_PAIRS = 100;
 
+/** What a criterion 5 pass covers, said wherever write comparisons are shown (the shadow status line, this report). */
+export const WRITE_COVERAGE_LIMIT = 'a criterion 5 pass covers page and link writes only';
+
 const DAY_MS = 86_400_000;
 
 type Check = { state: CriterionState; detail: string };
@@ -108,14 +113,19 @@ class Reader {
   constructor(private readonly doc: ShadowStatus | null) {}
   /** The value at `path`, or undefined (recorded as missing) when it is absent or not of the expected kind. */
   get<T>(path: string, ok: (v: unknown) => boolean): T | undefined {
+    const cur = this.peek<unknown>(path);
+    if (cur === undefined || cur === null || !ok(cur)) { if (!this.missing.includes(path)) this.missing.push(path); return undefined; }
+    return cur as T;
+  }
+  /** The value at `path` or undefined, never recorded as missing (a field that only adds detail). */
+  peek<T>(path: string): T | undefined {
     let cur: unknown = this.doc;
     for (const key of path.split('.')) {
       // Own data properties only: an inherited or accessor key (e.g. __proto__) is never evidence.
       cur = cur !== null && typeof cur === 'object' ? Object.getOwnPropertyDescriptor(cur, key)?.value : undefined;
       if (cur === undefined) break;
     }
-    if (cur === undefined || cur === null || !ok(cur)) { if (!this.missing.includes(path)) this.missing.push(path); return undefined; }
-    return cur as T;
+    return cur as T | undefined;
   }
   n(path: string): number | undefined { return this.get<number>(path, num); }
   b(path: string): boolean | undefined { return this.get<boolean>(path, v => typeof v === 'boolean'); }
@@ -207,7 +217,7 @@ function searchArms(r: Reader): Check {
 }
 
 function writeComparisons(r: Reader): Check {
-  return guarded(r, () => {
+  const out = guarded(r, () => {
     const state = r.s('write_comparisons.state');
     const comparable = r.n('write_comparisons.comparable');
     const unexplained = r.n('write_comparisons.unexplained_difference');
@@ -219,6 +229,10 @@ function writeComparisons(r: Reader): Check {
     if (unexplained > 0) fails.push(`${unexplained} unexplained differences`);
     return fails.length ? { state: 'fail', detail: fails.join('; ') } : { state: 'pass', detail: `${comparable} comparable, zero unexplained` };
   });
+  // The coverage limit rides on every outcome. Only page and link writes are compared; every other write family is capability_missing.
+  const named = Object.entries(r.peek<Record<string, number>>('write_comparisons.capability_missing_by_family') ?? {}).filter(([, n]) => num(n) && n > 0).map(([f, n]) => `${f} ${n}`);
+  const limit = `${WRITE_COVERAGE_LIMIT}; every other write family is capability_missing${named.length ? ` (sampled so far: ${named.join(', ')})` : ''}`;
+  return { ...out, detail: out.detail ? `${out.detail}; ${limit}` : limit };
 }
 
 function fingerprintsAndAllocators(r: Reader): Check {

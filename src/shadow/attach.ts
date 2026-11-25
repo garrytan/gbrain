@@ -22,6 +22,7 @@ import { readShadowState, type ShadowState } from './state.ts';
 import { ShadowSupervisor, type ShadowSupervisorOptions } from './supervisor.ts';
 import { appendUsage } from './usage.ts';
 import { wrapShadowEngine } from './wrapper.ts';
+import { createWriteSampler } from './write-capture.ts';
 import { WriterObserver, type WriterIdentity } from './writer-observations.ts';
 import { ensureWriterHooks, primaryTakesWriterHooks } from './writer-hooks.ts';
 import { claimOwner } from '../core/persistence/claim-phase.ts';
@@ -135,7 +136,9 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
   });
   const follow = follower ? { sink: follower } : deps.follow;
   const onCommittedWrite = () => observer.note();
-  return { engine: wrapShadowEngine(engine, sink, { sampleRate: state.sample_rate, random: deps.random, follow, onCommittedWrite }), queue, supervisor, follower, reconciler, observer, lsnWatch: watch };
+  // Write comparisons need the seeded store's epoch to count under: a brain that was never seeded samples no writes.
+  const writes = reads ? createWriteSampler({ rate: state.sample_rate, random: deps.random, send: (line) => supervisor.send(line), generation: () => follower?.published, active: () => supervisor.active() }) : undefined;
+  return { engine: wrapShadowEngine(engine, sink, { sampleRate: state.sample_rate, random: deps.random, follow, onCommittedWrite, writes }), queue, supervisor, follower, reconciler, observer, lsnWatch: watch };
 }
 
 /** This process's writer identity: the engine's host id, the name its pools give their connections, its kind, version. */

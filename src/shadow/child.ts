@@ -35,6 +35,8 @@ import { exactnessArm, qualifyMismatch, SHADOW_COMPARATOR_VERSION } from './exac
 import { FollowChild, type FollowEvent, type FollowStore } from './follow-child.ts';
 import { appendFault, appendLedgerRows, writeSummaryFile, type ShadowLedgerRow, type ShadowSummaryFile } from './ledger.ts';
 import { newMirrorCounters, type MirrorCounters } from './mirror.ts';
+import { createWriteComparer } from './write-compare-child.ts';
+import { WriteTally } from './write-compare.ts';
 import { appendRecall, IntervalGate, recallEligible, RECALL_INTERVAL_MS, scoreRecall, type RankedKey } from './recall.ts';
 import { isShadowReadMember, SHADOW_READ_MEMBERS, type ShadowReadMember } from './reads.ts';
 import { readSeedRecord } from './seed.ts';
@@ -336,11 +338,8 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   }, deps.heartbeatMs ?? SHADOW_HEARTBEAT_MS);
   if (!openTimedOut) try { deps.writeControl('{"t":"hb"}\n'); } catch { /* parent gone */ }
 
-  const pending: ReadEvent[] = [];
-  const rows: ShadowLedgerRow[] = [];
-  let handled = 0;
-  let paused = false;
-  let lastFlush = now();
+  const pending: ReadEvent[] = []; const rows: ShadowLedgerRow[] = [];
+  let handled = 0; let paused = false; let lastFlush = now();
 
   const flush = (force: boolean): void => {
     if (!force && rows.length < 50 && now() - lastFlush < 2_000) return;
@@ -383,6 +382,8 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     flush(false);
   };
 
+  // Write comparisons (write-compare.ts): sampled page and link writes replayed on a scratch store, counted under the current epoch.
+  const writes = createWriteComparer({ dir: shadowDir, load, tally: new WriteTally(shadowDir, curEpoch, () => !deleted()), alive: () => !deleted(), openEngine: deps.openEngine, onError: recordRustError });
   const session = deps.session ?? process.env.GBRAIN_SHADOW_SESSION ?? '';
   const ask = createAsker(deps.writeControl, session);
 
@@ -536,6 +537,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     try { event = JSON.parse(line); } catch { continue; }
     if (event.t === 'apply' || event.t === 'watermark' || event.t === 'depth' || event.t === 'rpc') { follow.handle(event as FollowEvent); continue; }
     if (event.t === 'answer') { ask.answer(event as never); continue; }
+    if (event.t === 'write') { writes.handle(event as never); continue; }
     if (event.t === 'stats' && event.counters) { summary.primary = { ...newMirrorCounters(), ...event.counters }; summary.primary_pid = event.pid; continue; }
     if (event.t !== 'read' || paused) continue;
     if (pending.length >= SHADOW_CHILD_QUEUE_BOUND) { summary.child_shed++; continue; }
@@ -551,7 +553,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   for (const task of reruns.drop()) record(task.event, task.c, task.rustMs, task.rows, 'skipped:child_closing');
   await drain();
   await reruns.idle();
-  await recalling;
+  await recalling; await writes.idle();
   await follow.close();
   clearInterval(heartbeat);
   clearInterval(flusher);

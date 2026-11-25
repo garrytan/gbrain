@@ -63,7 +63,16 @@ never a pass. With no shadow running, every criterion is `missing`.
    least equal to PGLite and Postgres under the default ranker); vector recall@10 at least 0.98 and at least the
    primary's.
 5. Zero unexplained differences on at least 1,000 comparable write comparisons. A shadow that cannot compare writes
-   (`capability_missing`) has no evidence.
+   (`capability_missing`) has no evidence. **A criterion 5 pass covers page and link writes only.** Shadow mode copies the
+   rows a sampled `putPage`, `deletePage`, `addLink`, `addLinksBatch` or `removeLink` touches from your brain, applies the
+   same write to a throwaway Rust store built from that copy (never the live shadow store, never your brain), and compares
+   the changed pages and links. The row counts as `comparable` when they match and `unexplained_difference` when they do not.
+   A write that cannot be checked (the copy could not be read or loaded, the write failed on either side, it ran inside a
+   transaction, another write landed in between, or it touched too many rows) is `uncomparable` and never counts. Every
+   sampled write of any other kind (tags, chunks, timeline, facts, raw SQL and so on) is counted `capability_missing` under
+   its family, so `gbrain engine shadow status` and the swap plan name every family still unchecked. With no verdict yet the
+   row stays `missing`; below 1,000 comparable writes it fails and says how many it has. The sample share is the shadow's
+   `sample_rate`. A sampled write outside a transaction waits for one small read of the rows it touches before it runs.
 6. Zero `privacy_diverged` events (the field is absent, not zero, while any privacy check of the last 7 days is unsettled, so criterion 6 has no evidence until it settles).
 7. Zero fingerprint mismatches, a passed fingerprint probe and a passed allocator verification.
 8. Speed: paired bench samples. **Reported, not gating.** D23 (the maintainer's C1 ruling of 2026-11-19) makes the
