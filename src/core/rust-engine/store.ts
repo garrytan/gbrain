@@ -83,6 +83,7 @@ export interface RustStore {
   snapshotTo(target: string, options: StoreSnapshotOptions): Promise<StoreSnapshotManifest>;
   /** Asks the snapshot `opId` to stop; true when one was running. It returns at once and does not wait for the copy. */
   snapshotCancel(opId: string): boolean;
+  /**
    * `gbrain backup restore` only (not a BrainEngine member): one read of what could still run in a restored store, the
    * authority it holds and the settings a restore changes, with the named `blockers` that refuse a publish. An addon built
    * before the restore step lacks it (`restoreAddonSupportsSafety`).
