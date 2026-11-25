@@ -331,7 +331,7 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'openPageEmbeddingHold', 'openWakeWatch', 'parkEffectRow', 'patchOauthClient', 'pauseJob', 'persistOauthClientGrant',
   'placeRelinkedFact', 'postInboxMessage', 'promoteDelayedJobs', 'pruneHoldingPageVersions', 'pruneJobs',
   'pruneMcpRequestLogBatch', 'pruneSatisfiedWantedMarkers', 'publicationJournalStore', 'purgeCalibrationProfilesByWave',
-  'purgeStaleAppliedCaptures', 'purgeStaleCheckpoints', 'queuePageProjectionJob', 'queueWakeForget', 'queueWithdrawalReview', 'rearmLinksEffects',
+  'purgeStaleCheckpoints', 'queuePageProjectionJob', 'queueWakeForget', 'queueWithdrawalReview', 'rearmLinksEffects',
   'reattributeSessionFacts', 'rebindSharedSkillMember', 'reclaimStalledJobs', 'recordAccessMigrationPhase',
   'recordDerivationEdges', 'recordDreamBreakerReset', 'recordEdgeProposal', 'recordGenerationActivation',
   'recordHeldGenerationRow', 'recordNotifierSyncerHost', 'recordPageEmbeddingHold', 'recordSearchTelemetry',
