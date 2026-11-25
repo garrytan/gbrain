@@ -544,6 +544,7 @@ impl Store {
     /// `lockLivePagesByKey`: the named pages that are live (not soft-deleted), in key order, a key
     /// named twice answering twice as the SQL join does. The SQL engines hold each row `FOR SHARE` until the transaction ends; the
     /// lock is skipped while explicit transactions hold the writer (`serialized_transactions`), which this fn asserts.
+    /// In multi-user mode it passes through its row in `lock_skips::MULTIUSER_PROVEN` (read set, `lock_live_pages_by_key_refuses_when_a_page_is_deleted`): a concurrent writer of what the lock protected refuses the commit `write_conflict`.
     pub fn lock_live_pages_by_key(&self, refs: &[PageKeyRef]) -> Result<Vec<Value>> {
         self.assert_serialized_transactions("lockLivePagesByKey")?;
         let read = self.read()?;

@@ -1934,6 +1934,7 @@ impl Store {
 
     /// `assert_cycle_lease` under the caller's host fence: the host's lease must be held, and when the lock is held
     /// under this token it must have been taken under this fence's epoch (`lease_lost` otherwise).
+    /// In multi-user mode it passes through its row in `lock_skips::MULTIUSER_PROVEN` (read set, `assert_cycle_lease_refuses_when_the_lock_is_retaken`): a concurrent writer of what the lock protected refuses the commit `write_conflict`.
     pub fn assert_cycle_lease_fenced(
         &self,
         lock_id: &str,

@@ -1490,6 +1490,7 @@ impl Store {
     /// <id>`). The keys are held by the innermost savepoint (or the transaction) until it ends.
     /// An optimistic transaction also takes them in the single-flight table first (see the module
     /// docs). Returns every key the transaction holds, sorted.
+    /// In multi-user mode it passes through its row in `lock_skips::MULTIUSER_PROVEN` (single flight, `page_keys_are_held_single_flight_so_a_slug_is_created_once`): the keys are held in the brain's single-flight table until the transaction ends.
     pub fn hold_page_keys(&self, keys: &[PageKeyHint], hinted: bool) -> Result<Vec<HeldKey>> {
         self.assert_serialized_transactions("holdPageKeys")?;
         let tx = self.transaction()?;

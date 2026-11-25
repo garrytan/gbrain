@@ -9,7 +9,6 @@
 //! addon method and each `StoreError::code` into a JavaScript `Error.code`.
 
 pub mod access_derive;
-pub mod lock_skips;
 mod access_flag;
 mod access_key_split;
 pub mod access_member_links;
@@ -42,6 +41,7 @@ pub mod kv;
 pub mod leases;
 pub mod link_slug_reads;
 pub mod links;
+pub mod lock_skips;
 pub mod occ_kv;
 mod owner_only;
 mod owner_only_marks;

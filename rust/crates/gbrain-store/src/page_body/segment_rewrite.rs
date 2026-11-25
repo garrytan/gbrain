@@ -124,6 +124,7 @@ impl Store {
 
     /// `lockSegmentedGenerationPage(pageId)`: the page's body columns, or None. The lock is skipped while
     /// explicit transactions hold the writer (`serialized_transactions`), which this fn asserts.
+    /// In multi-user mode it passes through its row in `lock_skips::MULTIUSER_PROVEN` (read set, `lock_segmented_generation_page_refuses_when_the_page_changed`): a concurrent writer of what the lock protected refuses the commit `write_conflict`.
     pub fn lock_segmented_generation_page(
         &self,
         page_id: i64,

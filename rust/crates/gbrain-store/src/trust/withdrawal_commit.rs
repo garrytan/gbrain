@@ -143,6 +143,7 @@ impl Store {
     /// `lockFactForWithdrawal(spec)`: fact `id` of `source_id`'s visibility, text and withdrawal
     /// subject when the withdrawal admits it (`worldOnly`: a world fact or a private one on
     /// `memberPage`; `remoteFloor`: the floor admits it). An extraction outcome marker answers too.
+    /// In multi-user mode it passes through its row in `lock_skips::MULTIUSER_PROVEN` (read set, `lock_fact_for_withdrawal_refuses_when_the_fact_changed`): a concurrent writer of what the lock protected refuses the commit `write_conflict`.
     pub fn lock_fact_for_withdrawal(&self, q: &WithdrawalClaimQuery) -> Result<Option<Value>> {
         self.assert_serialized_transactions("lockFactForWithdrawal")?;
         const OP: &str = "lockFactForWithdrawal";

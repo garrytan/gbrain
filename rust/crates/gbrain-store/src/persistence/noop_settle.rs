@@ -228,6 +228,7 @@ impl Store {
     }
 
     /// `lockNoopEmbeddingWindow({ from, limit })`: `{ newest, rows }`.
+    /// In multi-user mode it passes through its row in `lock_skips::MULTIUSER_PROVEN` (read set, `lock_noop_embedding_window_never_hands_one_effect_to_two_settlers`): a concurrent writer of what the lock protected refuses the commit `write_conflict`.
     pub fn lock_noop_embedding_window(&self, from: &str, limit: i64) -> Result<Value> {
         self.assert_serialized_transactions("lockNoopEmbeddingWindow")?;
         lock_noop_embedding_window_in(&*self.read()?, from, limit)

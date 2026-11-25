@@ -149,6 +149,7 @@ impl Store {
     /// (any other client's code reads null). `created_at` is `+00:00`-style ISO text. An expired code is returned too:
     /// the caller refuses it from `expires_at`. The `FOR UPDATE` lock is skipped while explicit transactions hold the writer
     /// (`serialized_transactions`), which this fn asserts.
+    /// In multi-user mode it passes through its row in `lock_skips::MULTIUSER_PROVEN` (read set, `read_oauth_code_for_update_second_exchange_refuses`): a concurrent writer of what the lock protected refuses the commit `write_conflict`.
     pub fn read_oauth_code_for_update(&self, hash: &str, client_id: &str) -> Result<Value> {
         self.assert_serialized_transactions("readOauthCodeForUpdate")?;
         let read = self.read()?;

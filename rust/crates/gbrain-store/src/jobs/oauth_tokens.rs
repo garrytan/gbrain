@@ -358,6 +358,7 @@ impl Store {
     /// client, or null (an access token, or another client's token, reads null). `created_at` is ISO text. An expired
     /// token is returned too: the caller refuses it from `expires_at`. The `FOR UPDATE` lock is skipped while
     /// explicit transactions hold the writer (`serialized_transactions`), which this fn asserts.
+    /// In multi-user mode it passes through its row in `lock_skips::MULTIUSER_PROVEN` (read set, `read_oauth_refresh_token_for_update_second_rotation_refuses`): a concurrent writer of what the lock protected refuses the commit `write_conflict`.
     pub fn read_oauth_refresh_token_for_update(
         &self,
         hash: &str,

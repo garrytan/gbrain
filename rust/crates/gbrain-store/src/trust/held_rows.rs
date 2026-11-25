@@ -81,6 +81,7 @@ impl Store {
     /// declared tier of `ctx` or, with `pending`, held by an open `forget` contest. `change` is
     /// `removed` with no incoming row, `replaced` when the content differs, else `deactivated`.
     /// A take with several matching entries is listed once per pair, as the SQL's joins list it.
+    /// In multi-user mode it passes through its row in `lock_skips::MULTIUSER_PROVEN` (read set, `list_guarded_take_rows_refuses_when_the_page_takes_changed`): a concurrent writer of what the lock protected refuses the commit `write_conflict`.
     pub fn list_guarded_take_rows(
         &self,
         q: &GuardedTakeRowsQuery,
@@ -156,6 +157,7 @@ impl Store {
     /// are more trusted than the writer (`q.writer`, else the declared tier of `ctx`; a name that is
     /// no tier ranks 0) or, with `pending`, held by an open `forget` contest. `trust_tier` is the
     /// stored tier (`unknown` when none is stored).
+    /// In multi-user mode it passes through its row in `lock_skips::MULTIUSER_PROVEN` (read set, `list_held_rows_refuses_when_a_row_of_the_page_changed`): a concurrent writer of what the lock protected refuses the commit `write_conflict`.
     pub fn list_held_rows(&self, q: &HeldRowsQuery, ctx: &FenceContext) -> Result<Vec<Value>> {
         self.assert_serialized_transactions("listHeldRows")?;
         no_nul("listHeldRows", &[("table", q.table.as_str())])?;

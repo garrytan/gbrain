@@ -2232,6 +2232,7 @@ impl Store {
     /// id (PGLite's `SELECT state ... FOR UPDATE`, skipped while explicit transactions hold the writer
     /// (`serialized_transactions`), which this fn asserts). A value
     /// that is not a uuid is refused, as the `::uuid` cast refuses it.
+    /// In multi-user mode it passes through its row in `lock_skips::MULTIUSER_PROVEN` (read set, `lock_body_staging_state_refuses_when_the_staging_moved`): a concurrent writer of what the lock protected refuses the commit `write_conflict`.
     pub fn lock_body_staging_state(&self, staging_id: &str) -> Result<Option<String>> {
         self.assert_serialized_transactions("lockBodyStagingState")?;
         let id = staging_id_arg(staging_id)?;

@@ -477,6 +477,7 @@ impl Store {
     }
 
     /// `selectClaimableEffect(hostId, deadOwners)`: the next effect to claim as its row, or null.
+    /// In multi-user mode it passes through its row in `lock_skips::MULTIUSER_PROVEN` (read set, `select_claimable_effect_never_hands_one_effect_to_two_claimants`): a concurrent writer of what the lock protected refuses the commit `write_conflict`.
     pub fn select_claimable_effect(&self, host_id: &str, dead_owners: &[String]) -> Result<Value> {
         self.assert_serialized_transactions("selectClaimableEffect")?;
         let now = self.env.now_micros();
@@ -488,6 +489,7 @@ impl Store {
 
     /// `lockEffectClaimRow(effectId)`: the effect's `{ state, execution_token }`, or null when no
     /// effect has the id. The row lock PGLite takes is skipped while explicit transactions hold the writer (`serialized_transactions`), which this fn asserts; the fn is the read.
+    /// In multi-user mode it passes through its row in `lock_skips::MULTIUSER_PROVEN` (read set, `lock_effect_claim_row_refuses_when_the_effect_was_claimed`): a concurrent writer of what the lock protected refuses the commit `write_conflict`.
     pub fn lock_effect_claim_row(&self, effect_id: i64) -> Result<Value> {
         self.assert_serialized_transactions("lockEffectClaimRow")?;
         Ok(effect_by_id(&*self.read()?, effect_id)?.map_or(

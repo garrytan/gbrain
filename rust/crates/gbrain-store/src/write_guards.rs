@@ -230,6 +230,7 @@ impl Store {
     /// `listOriginClaims(sourceId, spellings, opts)`: the live pages of the source that record any
     /// of `spellings`, other than page `exclude_page_id`, in slug order. An empty origin is never a
     /// claim (no page indexes one), and no caller asks for it.
+    /// In multi-user mode it passes through its row in `lock_skips::MULTIUSER_PROVEN` (read set, `list_origin_claims_refuses_when_another_page_claims_the_file`): a concurrent writer of what the lock protected refuses the commit `write_conflict`.
     pub fn list_origin_claims(
         &self,
         source_id: &str,

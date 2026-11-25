@@ -69,6 +69,7 @@ impl Store {
 
     /// `lockEffectRow(id)`: effect `id` as `SELECT *` returns it, or `None`. The `FOR UPDATE` row lock is skipped while
     /// explicit transactions hold the writer (`serialized_transactions`), which this fn asserts.
+    /// In multi-user mode it passes through its row in `lock_skips::MULTIUSER_PROVEN` (read set, `lock_effect_row_refuses_when_the_effect_was_claimed`): a concurrent writer of what the lock protected refuses the commit `write_conflict`.
     pub fn lock_effect_row(&self, id: &str) -> Result<Option<Value>> {
         self.assert_serialized_transactions("lockEffectRow")?;
         let id: i64 = id

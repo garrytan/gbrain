@@ -437,6 +437,7 @@ impl Store {
     /// the whole rows of the tokens not revoked whose id is `id` (a UUID, so any case) or whose name is exactly `name`,
     /// oldest first and a tie by id. The lock is skipped while explicit transactions hold the writer (`serialized_transactions`), which this fn asserts. Exactly one of the two
     /// names the target; anything else is `invalid_argument`. The rows leave out `token_hash`, as every store row does.
+    /// In multi-user mode it passes through its row in `lock_skips::MULTIUSER_PROVEN` (read set, `lock_active_access_tokens_refuses_when_a_token_is_revoked`): a concurrent writer of what the lock protected refuses the commit `write_conflict`.
     pub fn lock_active_access_tokens(&self, id: Option<&str>, name: Option<&str>) -> Result<Value> {
         self.assert_serialized_transactions("lockActiveAccessTokens")?;
         let read = self.read()?;
@@ -612,6 +613,7 @@ impl Store {
     /// FOR UPDATE`): the whole rows of the active tokens still on the legacy shape, oldest first and a tie by id. The store
     /// The lock is skipped while explicit transactions hold the writer (`serialized_transactions`), which this fn asserts.
     /// The rows leave out `token_hash`.
+    /// In multi-user mode it passes through its row in `lock_skips::MULTIUSER_PROVEN` (read set, `lock_legacy_access_tokens_refuses_when_a_token_changes`): a concurrent writer of what the lock protected refuses the commit `write_conflict`.
     pub fn lock_legacy_access_tokens(&self) -> Result<Value> {
         self.assert_serialized_transactions("lockLegacyAccessTokens")?;
         let read = self.read()?;

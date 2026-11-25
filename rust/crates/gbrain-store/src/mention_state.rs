@@ -11,7 +11,9 @@
 //!
 //! The pass's advisory locks (`lockMentionSources`, `lockMentionEntries`) are skipped while explicit transactions
 //! hold the writer (`serialized_transactions`), so no other write runs between them. `FOR SHARE` reads are plain
-//! reads for the same reason.
+//! reads for the same reason. In multi-user mode the entries and page states a pass reads are validated at commit, so
+//! two passes of one source that interleave refuse the second commit
+//! (`tests/multiuser_lock_skips.rs::two_mention_passes_of_one_source_never_both_apply_their_diff`).
 //!
 //! A hard page delete removes the page's state row (`ON DELETE CASCADE` of `page_id`), and a source
 //! delete removes the source's status row, entries and state rows (`ON DELETE CASCADE` of

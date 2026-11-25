@@ -455,6 +455,7 @@ impl Store {
 
     /// `lockAccessPolicy(sourceId)`: one statement under the writer gate. The lock outlives the statement only while
     /// explicit transactions hold the writer (`serialized_transactions`), which this fn asserts.
+    /// In multi-user mode it passes through its row in `lock_skips::MULTIUSER_PROVEN` (read set, `lock_access_policy_second_rule_set_refuses_write_conflict`): a concurrent writer of what the lock protected refuses the commit `write_conflict`.
     pub fn lock_access_policy(&self, _source_id: &str) -> Result<()> {
         self.assert_serialized_transactions("lockAccessPolicy")?;
         self.write(|_| Ok(()))

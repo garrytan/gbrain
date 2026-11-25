@@ -202,6 +202,7 @@ impl Store {
     }
 
     /// `lockOverdueHold(hold)`.
+    /// In multi-user mode it passes through its row in `lock_skips::MULTIUSER_PROVEN` (read set, `lock_overdue_hold_refuses_when_the_request_changed`): a concurrent writer of what the lock protected refuses the commit `write_conflict`.
     pub fn lock_overdue_hold(
         &self,
         hold: &str,

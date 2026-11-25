@@ -352,6 +352,7 @@ impl Store {
     }
 
     /// `readPairFactRow`: one fact of a supersede pair by id (any source).
+    /// In multi-user mode it passes through its row in `lock_skips::MULTIUSER_PROVEN` (read set, `read_pair_fact_row_refuses_when_the_fact_changed`): a concurrent writer of what the lock protected refuses the commit `write_conflict`.
     pub fn read_pair_fact_row(&self, args: &PairFactArgs) -> Result<Option<Value>> {
         if args.lock == Some(true) {
             self.assert_serialized_transactions("readPairFactRow")?;
@@ -475,6 +476,7 @@ impl Store {
     /// source and visibility with the fact's current or v1 fingerprint that `withdrawalCoversFactSql` reaches), or `None`
     /// for a fact that is gone, in another source or, under `excludePrivate`, hidden by the remote floor: a row of
     /// `ownPage` stays.
+    /// In multi-user mode it passes through its row in `lock_skips::MULTIUSER_PROVEN` (read set, `read_replacement_target_refuses_when_the_fact_changed`): a concurrent writer of what the lock protected refuses the commit `write_conflict`.
     pub fn read_replacement_target(&self, args: &ReplacementTargetArgs) -> Result<Option<Value>> {
         if args.lock == Some(true) {
             self.assert_serialized_transactions("readReplacementTarget")?;

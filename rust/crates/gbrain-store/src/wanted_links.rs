@@ -460,6 +460,7 @@ impl Store {
     /// `lockRegisteredSourceIds(sourceIds)`: the registered ids among `sourceIds`, sorted, once
     /// each. The lock is skipped while explicit transactions hold the writer
     /// (`serialized_transactions`), which this fn asserts.
+    /// In multi-user mode it passes through its row in `lock_skips::MULTIUSER_PROVEN` (read set, `lock_registered_source_ids_refuses_when_a_source_appears`): a concurrent writer of what the lock protected refuses the commit `write_conflict`.
     pub fn lock_registered_source_ids(&self, source_ids: &[String]) -> Result<Vec<String>> {
         self.assert_serialized_transactions("lockRegisteredSourceIds")?;
         let read = self.read()?;

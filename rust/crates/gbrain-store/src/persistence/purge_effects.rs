@@ -114,6 +114,7 @@ fn has_nul(value: &Value) -> bool {
 impl Store {
     /// `listGitEffectsCarryingReason`: the source's Git effects whose data, as jsonb text and
     /// lowered, contains any of the three needles (`strpos(lower(e.data::text), $n) > 0`).
+    /// In multi-user mode it passes through its row in `lock_skips::MULTIUSER_PROVEN` (read set, `purge_effect_reads_refuse_when_an_effect_changed`): a concurrent writer of what the lock protected refuses the commit `write_conflict`.
     pub fn list_git_effects_carrying_reason(
         &self,
         a: &GitEffectsCarryingArgs,
@@ -134,6 +135,7 @@ impl Store {
     /// `listPageGitEffectsForStrip`: the source's Git effects of the slug (`data->>'slug'`) whose
     /// data holds a `commit_line`, `commit_trailers` or `commit_trailer` key (a JSON null value
     /// counts: `data->'k' IS NOT NULL` is true for it).
+    /// In multi-user mode it passes through its row in `lock_skips::MULTIUSER_PROVEN` (read set, `purge_effect_reads_refuse_when_an_effect_changed`): a concurrent writer of what the lock protected refuses the commit `write_conflict`.
     pub fn list_page_git_effects_for_strip(
         &self,
         a: &PageGitEffectsArgs,

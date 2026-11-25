@@ -110,6 +110,7 @@ impl Store {
     }
 
     /// `lockDreamMapConfigRow`: `{ value, now }`, or `None` when the row is missing.
+    /// In multi-user mode it passes through its row in `lock_skips::MULTIUSER_PROVEN` (read set, `lock_dream_map_config_row_refuses_when_the_row_changed`): a concurrent writer of what the lock protected refuses the commit `write_conflict`.
     pub fn lock_dream_map_config_row(&self, args: &DreamMapKeyArgs) -> Result<Option<Value>> {
         self.assert_serialized_transactions("lockDreamMapConfigRow")?;
         row_key("lockDreamMapConfigRow", &args.key)?;

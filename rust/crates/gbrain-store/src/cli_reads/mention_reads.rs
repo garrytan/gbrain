@@ -164,6 +164,7 @@ impl Store {
     }
 
     /// `readPageRevisionForShare(sourceId, slug)`: the live page's content revision.
+    /// In multi-user mode it passes through its row in `lock_skips::MULTIUSER_PROVEN` (read set, `read_page_revision_for_share_refuses_when_the_page_moved`): a concurrent writer of what the lock protected refuses the commit `write_conflict`.
     pub fn read_page_revision_for_share(&self, source_id: &str, slug: &str) -> Result<Vec<Value>> {
         self.assert_serialized_transactions("readPageRevisionForShare")?;
         let read = self.read()?;

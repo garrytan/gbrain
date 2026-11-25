@@ -231,11 +231,13 @@ impl Store {
 
     /// `lockReconcileRevision`: true when the live page `(sourceId, slug)` is at `revision`.
     /// Postgres takes a `FOR SHARE` row lock for the rest of the transaction. On a store bound to a
-    /// transaction the read runs inside it and sees its own writes; that transaction holds the
-    /// store's single writer from begin to commit, so no other writer changes the page before the
-    /// caller's settle commits. The lock is skipped while explicit transactions hold the writer
-    /// (`serialized_transactions`), which this fn asserts. A plain read is not blocked, as on Postgres.
+    /// transaction the read runs inside it and sees its own writes. With multi-user mode off that
+    /// transaction holds the store's single writer from begin to commit, so no other writer changes
+    /// the page before the caller's settle commits; with it on the read is validated at commit and a
+    /// page that moved refuses the commit. The lock is skipped while explicit transactions hold the
+    /// writer (`serialized_transactions`), which this fn asserts. A plain read is not blocked, as on Postgres.
     /// Outside a transaction it reads the last commit, as Postgres' lock ends with its statement.
+    /// In multi-user mode it passes through its row in `lock_skips::MULTIUSER_PROVEN` (revision compare, `lock_reconcile_revision_compare_refuses_when_the_page_moved`): a concurrent writer of what the lock protected refuses the commit `write_conflict`.
     pub fn lock_reconcile_revision(&self, a: &LockArgs) -> Result<bool> {
         self.assert_serialized_transactions("lockReconcileRevision")?;
         no_nul(

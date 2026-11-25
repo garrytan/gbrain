@@ -35,6 +35,7 @@ pub struct HeldTimelineSpec {
 impl Store {
     /// `listHeldTimelineRows({ ids, writer?, pending? })`: `[{ id, trust_tier }]` by id. An id
     /// with no row reads no row; an empty list reads nothing.
+    /// In multi-user mode it passes through its row in `lock_skips::MULTIUSER_PROVEN` (read set, `list_held_timeline_rows_refuses_when_the_timeline_changed`): a concurrent writer of what the lock protected refuses the commit `write_conflict`.
     pub fn list_held_timeline_rows(
         &self,
         spec: &HeldTimelineSpec,

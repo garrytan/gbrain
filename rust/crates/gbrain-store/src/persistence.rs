@@ -1685,6 +1685,7 @@ pub(crate) fn select_claimable_write_in(
 
 impl Store {
     /// `lockPersistenceCounters(keys)`: the counter rows, created at zero when missing.
+    /// In multi-user mode it passes through its row in `lock_skips::MULTIUSER_PROVEN` (read set, `lock_persistence_counters_refuses_when_a_counter_was_charged`): a concurrent writer of what the lock protected refuses the commit `write_conflict`.
     pub fn lock_persistence_counters(&self, names: &[String]) -> Result<Vec<Value>> {
         self.assert_serialized_transactions("lockPersistenceCounters")?;
         self.write(|tx| lock_persistence_counters_in(tx, names))
@@ -1866,6 +1867,7 @@ impl Store {
 
     /// `selectClaimableWrite(spec)`: the row `claimNextWrite` claims next, or `None`; the claim's
     /// stamp is `stamp_write_claim`.
+    /// In multi-user mode it passes through its row in `lock_skips::MULTIUSER_PROVEN` (read set, `select_claimable_write_never_hands_one_request_to_two_claimants`): a concurrent writer of what the lock protected refuses the commit `write_conflict`.
     pub fn select_claimable_write(&self, spec: &ClaimableSpec) -> Result<Option<Value>> {
         self.assert_serialized_transactions("selectClaimableWrite")?;
         let read = self.read()?;

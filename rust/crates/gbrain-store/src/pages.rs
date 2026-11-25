@@ -1629,6 +1629,7 @@ impl Store {
     /// conflicts with (`occ_kv`), so every key a call touches is already held for that call. Holding keys
     /// across calls is skipped while explicit transactions hold the writer (`serialized_transactions`), which
     /// this fn asserts. The call checks that the keys are well formed.
+    /// In multi-user mode it passes through its row in `lock_skips::MULTIUSER_PROVEN` (single flight, `page_keys_are_held_single_flight_so_a_slug_is_created_once`): the keys are held in the brain's single-flight table until the transaction ends.
     pub fn lock_page_keys(&self, keys: &[PageKey]) -> Result<()> {
         self.assert_serialized_transactions("lockPageKeys")?;
         for key in keys {
