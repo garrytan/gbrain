@@ -13,6 +13,7 @@
 //!   vector write or delete, so a reader can tell that its cached vectors are out of date.
 //! - `B 's' <page id>` -> the page's embedding signature (PGLite's `pages.embedding_signature`),
 //!   UTF-8.
+//! - `B 'b' <page id>` -> the page's embedding ledger row (`page_embedding_budget`).
 //! - `B 'k' <take id>` -> the take's `claim_rev` when its vector was written, u64 BE. A take
 //!   vector counts only while this equals the take's current `claim_rev` (PGLite compares
 //!   `embedded_text_hash` with `md5(claim)`); a claim edit makes the vector stale at once.
@@ -76,10 +77,25 @@ fn generation_key() -> [u8; 2] {
     [keys::EMBEDDING_STATE, GENERATION]
 }
 
-fn signature_key(page_id: u64) -> Vec<u8> {
+pub(crate) fn signature_key(page_id: u64) -> Vec<u8> {
     let mut key = vec![keys::EMBEDDING_STATE, PAGE_SIGNATURE];
     key.extend_from_slice(&page_id.to_be_bytes());
     key
+}
+
+/// The shadow seed (`seed.rs`): stores a page's `embedding_signature` as another engine holds it.
+pub(crate) fn seed_page_signature(
+    tx: &mut dyn KvWrite,
+    page_id: u64,
+    signature: &str,
+) -> Result<()> {
+    tx.put(&signature_key(page_id), signature.as_bytes())
+}
+
+/// The shadow follow (`seed/follow.rs`): removes a page's `embedding_signature` and nothing else:
+/// the vectors of its chunks are the chunks' own.
+pub(crate) fn clear_page_signature(tx: &mut dyn KvWrite, page_id: u64) -> Result<()> {
+    tx.delete(&signature_key(page_id))
 }
 
 fn take_state_key(take_id: u64) -> Vec<u8> {
@@ -228,6 +244,36 @@ pub fn scan_take_vectors(
     failure.map_or(Ok(()), Err)
 }
 
+/// Whether a take holds a vector written for its current claim: PGLite's `takes.embedding IS NOT
+/// NULL`. `addTakesBatch` sets the column to NULL when it changes a claim; the store keeps the old
+/// vector record, so only a vector at the take's claim revision counts (embedding_catalog.rs).
+pub(crate) fn any_take_vector(read: &dyn KvRead) -> Result<bool> {
+    let (mut found, mut failure) = (false, None);
+    scan_prefix(
+        read,
+        &[keys::EMBEDDING_STATE, TAKE_VECTOR],
+        false,
+        &mut |k, _| {
+            let exists = k
+                .get(2..10)
+                .and_then(keys::be8)
+                .ok_or_else(|| corrupt("take vector key"))
+                .and_then(|id| take_vector_is_current(read, id));
+            match exists {
+                Ok(current) => {
+                    found = current;
+                    !found
+                }
+                Err(e) => {
+                    failure = Some(e);
+                    false
+                }
+            }
+        },
+    )?;
+    failure.map_or(Ok(found), Err)
+}
+
 /// Whether the take's stored vector was written for its current claim.
 fn take_vector_is_current(read: &dyn KvRead, take_id: u64) -> Result<bool> {
     let Some(take) = read_take(read, take_id)? else {
@@ -243,7 +289,10 @@ fn take_vector_rev(read: &dyn KvRead, take_id: u64) -> Result<Option<u64>> {
 }
 
 /// The take's vector when it was written for the take's current claim.
-fn current_take_vector(read: &dyn KvRead, take: &TakeRecord) -> Result<Option<StoredVector>> {
+pub(crate) fn current_take_vector(
+    read: &dyn KvRead,
+    take: &TakeRecord,
+) -> Result<Option<StoredVector>> {
     if take_vector_rev(read, take.id)? != Some(take.claim_rev) {
         return Ok(None);
     }
@@ -353,9 +402,16 @@ pub(crate) fn reset_page_vectors(tx: &mut dyn KvWrite, page_id: u64, now_us: i64
     Ok(())
 }
 
+/// Clears a page's embedding signature (PGLite's `embedding_signature=NULL`), as a fact
+/// withdrawal does for each page it invalidates (`facts::withdrawal_pages`).
+pub(crate) fn clear_signature(tx: &mut dyn KvWrite, page_id: u64) -> Result<()> {
+    tx.delete(&signature_key(page_id))
+}
+
 /// Deletes this family's records of a page that is deleted for good (`cascade::remove_page_rows`).
 pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()> {
     tx.delete(&signature_key(page.id))?;
+    crate::page_embedding_budget::remove_page_budget(tx, page.id)?;
     let mut prefix = vec![keys::EMBEDDING_STATE, CHUNK_VECTOR];
     prefix.extend_from_slice(&page.id.to_be_bytes());
     let mut doomed = Vec::new();
@@ -527,7 +583,7 @@ fn page_contexts(read: &dyn KvRead) -> Result<Vec<PageCtx>> {
     Ok(out)
 }
 
-fn read_signature(read: &dyn KvRead, page_id: u64) -> Result<Option<String>> {
+pub(crate) fn read_signature(read: &dyn KvRead, page_id: u64) -> Result<Option<String>> {
     read.get(&signature_key(page_id))?
         .map(|bytes| String::from_utf8(bytes).map_err(|_| corrupt("page signature")))
         .transpose()
@@ -815,6 +871,26 @@ impl Store {
                 row
             })
             .collect())
+    }
+
+    /// `readUnembeddedPageSummary(sourceId, column)`: `{ pages, oldest, held }` over the live,
+    /// non-embed_skip pages of the source with a visible chunk that has no vector. This store keeps
+    /// no embedding budget rows, so `held` is 0.
+    pub fn read_unembedded_page_summary(&self, source_id: &str) -> Result<Value> {
+        let read = self.read()?;
+        let mut pages = 0u64;
+        let mut oldest: Option<i64> = None;
+        for ctx in page_contexts(&*read)? {
+            if !ctx.live() || ctx.embed_skip() || ctx.page.source_id != source_id {
+                continue;
+            }
+            if ctx.visible().any(|c| !c.embed.has_vector()) {
+                pages += 1;
+                let at = ctx.page.updated_at_us;
+                oldest = Some(oldest.map_or(at, |o| o.min(at)));
+            }
+        }
+        Ok(json!({ "pages": pages, "oldest": oldest.map(crate::env::iso), "held": 0 }))
     }
 
     /// `setPageEmbeddingSignature(slug, { signature, sourceId? })`: stamps the page (slug as

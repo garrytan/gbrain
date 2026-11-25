@@ -83,7 +83,7 @@ function reasonOf(entry: ShadowPath): string {
     case 'import': return state.page?.live ? 'file changed; the database has no unseen change' : 'new file';
     case 'legacy_unverified': return 'no import record; unchanged since the baseline';
     case 'keep_db': return 'keep_db prefix: the database wins on a clean committed file';
-    case 'drift': return `file and database both changed (side ${result.side})`;
+    case 'drift': return result.side === 'database' ? 'the database changed since the file was last imported (side database, re-screen asked for)' : `file and database both changed (side ${result.side})`;
     default: return result.cls;
   }
 }

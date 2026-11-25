@@ -5035,6 +5035,28 @@
             "via": "unsafe"
           }
         ],
+        "owner-contact": [
+          {
+            "paramCount": 11,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ],
+        "owner-contact-no-owner": [
+          {
+            "paramCount": 10,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ],
         "sourceId": [
           {
             "paramCount": 4,

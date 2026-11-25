@@ -6,7 +6,11 @@ mod memory_env;
 use gbrain_store::error::INVALID_ARGUMENT;
 use gbrain_store::facts::InsertFactsArgs;
 use gbrain_store::sources::SourceInput;
-use gbrain_store::trust::tier_reads::{CorePageRowQuery, TrustScanQuery, VersionIdsQuery};
+use gbrain_store::takes::TakeInput;
+use gbrain_store::timeline::{AddTimelineOptions, TimelineInput};
+use gbrain_store::trust::tier_reads::{
+    CorePageRowQuery, PageIdsQuery, PageKeyRef, TrustScanQuery, VersionIdsQuery,
+};
 use gbrain_store::trust::write_gate::ReceiptFields;
 use memory_env::{Brain, brain};
 use serde_json::{Value, json};
@@ -17,9 +21,7 @@ fn args<T: serde::de::DeserializeOwned>(v: Value) -> T {
 
 /// Opens a transaction under a declared tier (none for `None`) and runs `f` in it.
 fn declared(b: &Brain, tier: Option<&str>, f: impl FnOnce(&gbrain_store::Store)) {
-    // The transaction family is not in this landing: the store's write context stands in for one,
-    // and `clear_write_trust` ends it as a commit does.
-    let tx: &gbrain_store::Store = b;
+    let tx = b.begin_transaction(false).unwrap();
     if let Some(tier) = tier {
         let names = [
             "gbrain.write_trust_tier",
@@ -31,8 +33,8 @@ fn declared(b: &Brain, tier: Option<&str>, f: impl FnOnce(&gbrain_store::Store))
         tx.apply_write_trust(&names, &[tier.into(), tier.into(), origin])
             .unwrap();
     }
-    f(tx);
-    tx.clear_write_trust();
+    f(&tx);
+    tx.commit_transaction().unwrap();
 }
 
 fn page(
@@ -259,7 +261,7 @@ fn core_rows_list_the_live_always_load_pages_by_source_then_slug() {
     assert!(other.contains(&"other:core/elsewhere".to_string()));
     let private = keys(&core_rows(
         &b,
-        json!({ "excludePrivate": { "honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage" } }),
+        json!({ "excludePrivate": { "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn" } }),
     ));
     assert_eq!(private.len(), 7);
     assert!(!private.contains(&"default:core/private".to_string()));
@@ -443,9 +445,108 @@ fn the_trust_scan_reads_facts_at_a_listed_tier() {
 }
 
 #[test]
+fn the_trust_scan_reads_takes_and_timeline_entries_with_their_pages_source() {
+    let b = brain("tier-reads-scan-takes-timeline");
+    other_source(&b);
+    let mut holders = Vec::new();
+    for (slug, source) in [("scan/holder", "default"), ("scan/other-holder", "other")] {
+        declared(&b, Some("operator_curated"), |tx| {
+            let input: gbrain_store::pages::PageInput =
+                args(json!({ "type": "note", "title": slug,
+                "compiled_truth": "h", "timeline": "" }));
+            let put = tx
+                .put_page(slug, &input, &args(json!({ "sourceId": source })))
+                .unwrap();
+            holders.push((slug, source, put["id"].as_i64().unwrap()));
+        });
+    }
+    for (i, (name, tier)) in [
+        ("one", Some("agent_written")),
+        ("two", Some("operator_curated")),
+        ("three", Some("external_untrusted")),
+        ("four", None),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        for &(slug, source, page_id) in &holders {
+            declared(&b, tier, |tx| {
+                let take: TakeInput = args(json!({ "page_id": page_id, "row_num": i + 1,
+                    "claim": format!("take {name}"), "kind": "take", "holder": "h", "weight": 0.5, "active": true }));
+                tx.add_takes_batch(&[take]).unwrap();
+                let entry: TimelineInput = args(json!({ "date": format!("2026-07-0{}", i + 1),
+                    "summary": format!("entry {name}"), "detail": format!("detail {name}"), "source": "cli" }));
+                tx.add_timeline_entry(
+                    slug,
+                    &entry,
+                    &AddTimelineOptions {
+                        source_id: Some(source.into()),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            });
+        }
+    }
+    let takes = scan(&b, "takes", 0, 50, &SCANNED);
+    let claims: Vec<&str> = takes.iter().map(|r| r["claim"].as_str().unwrap()).collect();
+    assert_eq!(
+        claims,
+        [
+            "take one",
+            "take one",
+            "take three",
+            "take three",
+            "take four",
+            "take four"
+        ]
+    );
+    assert_eq!(takes[0]["source_id"], json!("default"));
+    assert_eq!(takes[1]["source_id"], json!("other"));
+    assert_eq!(takes[0]["trust_tier"], json!("agent_written"));
+    assert_eq!(takes[0]["write_origin"]["channel"], json!("agent_written"));
+    assert_eq!(takes[4]["trust_tier"], json!("unknown"));
+    let entries = scan(&b, "timeline_entries", 0, 50, &SCANNED);
+    let summaries: Vec<&str> = entries
+        .iter()
+        .map(|r| r["summary"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        summaries,
+        [
+            "entry one",
+            "entry one",
+            "entry three",
+            "entry three",
+            "entry four",
+            "entry four"
+        ]
+    );
+    assert_eq!(entries[0]["detail"], json!("detail one"));
+    assert_eq!(entries[0]["source"], json!("cli"));
+    assert_eq!(scan(&b, "takes", 0, 3, &SCANNED).len(), 3);
+    let after = takes[1]["id"].as_i64().unwrap();
+    assert_eq!(scan(&b, "takes", after, 50, &SCANNED).len(), 4);
+    assert_eq!(count(&b, "takes", 0, None, &SCANNED), 6);
+    assert_eq!(count(&b, "takes", 0, Some(after), &SCANNED), 2);
+    assert_eq!(count(&b, "timeline_entries", 0, None, &SCANNED), 6);
+    assert_eq!(
+        count(
+            &b,
+            "timeline_entries",
+            entries[3]["id"].as_i64().unwrap(),
+            None,
+            &SCANNED
+        ),
+        2
+    );
+}
+
+#[test]
 fn the_trust_scan_refuses_a_table_it_does_not_model_and_a_nul_tier() {
     let b = brain("tier-reads-scan-refusals");
-    for table in ["takes", "timeline_entries", "links"] {
+    {
+        let table = "links";
         let err = b
             .list_trust_scan_rows(&args::<TrustScanQuery>(
                 json!({ "table": table, "afterId": 0, "limit": 1, "tiers": [] }),
@@ -569,4 +670,73 @@ fn version_reads_answer_the_snapshot_tier_and_the_write_that_replaced_it() {
     let writers = b.list_version_reason_writers(&ids(&[b1])).unwrap();
     assert_eq!(writers.len(), 1);
     assert_eq!(writers[0]["type"], json!("company"));
+}
+
+fn put_ref(b: &Brain, source: &str, slug: &str, page_type: &str) -> i64 {
+    let input: gbrain_store::pages::PageInput = args(json!({
+        "type": page_type, "title": format!("T {slug}"), "compiled_truth": format!("body {slug}"),
+        "timeline": "" }));
+    b.put_page(slug, &input, &args(json!({ "sourceId": source })))
+        .unwrap()["id"]
+        .as_i64()
+        .unwrap()
+}
+
+#[test]
+fn page_refs_by_id_name_each_listed_page_once_deleted_pages_and_other_sources_included() {
+    let b = brain("tier-reads-page-refs");
+    other_source(&b);
+    let chat = put_ref(&b, "default", "quote/chat", "chat");
+    let note = put_ref(&b, "default", "quote/note", "note");
+    let gone = put_ref(&b, "default", "quote/gone", "transcript");
+    let elsewhere = put_ref(&b, "other", "quote/elsewhere", "person");
+    b.soft_delete_page("quote/gone", Some("default")).unwrap();
+
+    let q: PageIdsQuery = args(json!({ "ids": [elsewhere, gone, note, chat, note, 987_654, -1] }));
+    assert_eq!(
+        b.list_page_refs_by_ids(&q).unwrap(),
+        [
+            json!({ "id": chat, "source_id": "default", "slug": "quote/chat", "type": "chat" }),
+            json!({ "id": note, "source_id": "default", "slug": "quote/note", "type": "note" }),
+            json!({ "id": gone, "source_id": "default", "slug": "quote/gone", "type": "transcript" }),
+            json!({ "id": elsewhere, "source_id": "other", "slug": "quote/elsewhere", "type": "person" }),
+        ]
+    );
+    let none: PageIdsQuery = args(json!({ "ids": [] }));
+    assert!(b.list_page_refs_by_ids(&none).unwrap().is_empty());
+}
+
+#[test]
+fn pages_by_key_answer_each_named_key_in_order_with_tier_and_live_check() {
+    let b = brain("tier-reads-pages-by-key");
+    other_source(&b);
+    let plain = put_ref(&b, "default", "tier/plain", "note");
+    let gone = put_ref(&b, "default", "tier/gone", "note");
+    let elsewhere = put_ref(&b, "other", "tier/plain", "note");
+    b.soft_delete_page("tier/gone", Some("default")).unwrap();
+    let key = |s: &str, slug: &str| PageKeyRef {
+        source_id: s.into(),
+        slug: slug.into(),
+    };
+    let refs = [
+        key("other", "tier/plain"),
+        key("default", "tier/gone"),
+        key("default", "tier/missing"),
+        key("default", "tier/plain"),
+        key("default", "tier/plain"),
+    ];
+    let tiers = b.list_page_trust_tiers_by_key(&refs).unwrap();
+    let ids: Vec<i64> = tiers.iter().map(|r| r["id"].as_i64().unwrap()).collect();
+    assert_eq!(ids, [elsewhere, gone, plain, plain]);
+    assert!(tiers.iter().all(|r| r["trust_tier"].is_string()));
+    assert_eq!(
+        b.lock_live_pages_by_key(&refs).unwrap(),
+        [
+            json!({ "source_id": "other", "slug": "tier/plain" }),
+            json!({ "source_id": "default", "slug": "tier/plain" }),
+            json!({ "source_id": "default", "slug": "tier/plain" }),
+        ]
+    );
+    assert!(b.list_page_trust_tiers_by_key(&[]).unwrap().is_empty());
+    assert!(b.lock_live_pages_by_key(&[]).unwrap().is_empty());
 }

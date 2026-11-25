@@ -2,7 +2,7 @@ import type { GBrainConfig } from '../core/config.ts';
 import { loadMounts } from '../core/brain-registry.ts';
 import { resolveBrainId } from '../core/brain-resolver.ts';
 import { getCliOptions } from '../core/cli-options.ts';
-import { inspectLockHolder } from '../core/pglite-lock.ts';
+import { persistenceResidentOwner } from '../core/persistence/resident-owner.ts';
 import { maybeDelegateLocalAdministration, persistenceConfigForBrain } from '../core/persistence/local-client.ts';
 import { PersistenceIpcTransportError } from '../core/persistence/ipc.ts';
 import { validateEmbedFactsOptions, type EmbedFactsOptions } from '../core/embed-facts-options.ts';
@@ -44,13 +44,13 @@ export async function maybeDelegateFactEmbed(hostConfig: GBrainConfig | null, ar
   const options = parseFactEmbedArgs(args);
   const brainId = resolveBrainId(getCliOptions().brain, process.cwd());
   const config = persistenceConfigForBrain(hostConfig, brainId, brainId === 'host' ? [] : loadMounts());
-  if (config?.engine !== 'pglite' || !config.database_path || config.database_url || !inspectLockHolder(config.database_path).held) return false;
+  if (!config || !(await persistenceResidentOwner(config))) return false;
   try {
     const delegated = await maybeDelegateLocalAdministration('writer_embed_facts', { options }, config,
       { timeoutMs: (options.budgetMs ?? 60_000) + 30_000 });
     if (!delegated.handled) {
       const paid = options.dryRun !== true;
-      throw opError('owner_unavailable', 'The observed PGLite owner stopped before fact repair admission',
+      throw opError('owner_unavailable', 'The observed owner stopped before fact repair admission',
         `Nothing ran: the running serve exited before admitting the repair. Run the same command again; it opens the brain directly or delegates to the new owner.${paid ? ' It spends up to the approved --max-cost-usd, as before.' : ''}`,
         { fix: { argv: ['gbrain', 'embed', ...args], consent: paid ? ['paid'] : [], actor: 'agent', requires_exclusive: false,
           why: 'The owner stopped before admission, so the same request has not run yet.' } });

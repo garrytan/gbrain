@@ -166,9 +166,9 @@ Alongside keyword and semantic retrieval, GBrain offers two optional ways to use
 
 The point of building a 150K-page brain is to use it as a strategic moat. To never lose context. To query what's in your own head without re-reading it. The brain layer is what makes the moat usable. The 24/7 dream cycle is what keeps it sharp. Both run on your hardware, your DB, your keys.
 
-It's easier to ship a daemon that runs 24/7 to ingest, enrich, and consolidate than it is to keep an agent in chat working hard. GBrain is that daemon, generalized. Install in 30 minutes. Your agent does the work. As my personal agent gets smarter, so does yours.
+It's easier to ship a daemon that runs 24/7 to ingest, enrich, and consolidate than it is to keep an agent in chat working hard. GBrain is that daemon, generalized. Install in a few minutes: on a cloud machine a cold `bun install -g` took about 11 seconds and `gbrain setup claude-code` about 10 (gbrain v0.60.769.0); the rest is you reading the output and opening a new session. Your agent does the work. As my personal agent gets smarter, so does yours.
 
-> **Start keyless.** Your harness subscription and any separately configured model API usage are different costs. The optional personal-agent bootstrap takes about 15 minutes; always-on enrichment needs its own compute and API configuration.
+> **Start keyless.** Your harness subscription and any separately configured model API usage are different costs. The optional personal-agent bootstrap takes about 15 more minutes of your time, mostly answering its interview; always-on enrichment needs its own compute and API configuration.
 
 Durable preferences and facts can be shared across agents; transient task and
 harness configuration state stay local. Configured cloud embedding, reranking,
@@ -319,6 +319,7 @@ Want to see a tutorial that isn't here yet? [Open an issue](https://github.com/g
 - **Brain-first lookup** before any external API call. The cheapest, fastest, most personal information source you have.
 - **Auto-link** extracts graph links for trusted local page writes. No LLM calls; pure pattern matching on page references such as `[[people/alice-example]]`. Unresolved extracted facts keep their provenance without inventing a backing page.
 - **Cron-driven enrichment** runs while you sleep: dedup people pages, fix citations, score salience, find contradictions, prep tomorrow's tasks.
+- **The morning note** shows what the night learned, each item with where it came from, and lets you keep it or undo it: see [the morning note](docs/guides/morning-note.md).
 
 The whole loop is described in [`docs/architecture/topologies.md`](docs/architecture/topologies.md) with diagrams.
 
@@ -406,7 +407,7 @@ Start with `gbrain doctor`. For database access failures, use `gbrain engine sta
 - [MCP task guide](docs/mcp/README.md) — deployment and per-client setup (Claude Desktop, Code, Cursor, ChatGPT, Perplexity, Cowork)
 - [MCP administration](docs/mcp/ADMIN.md) — owner dashboard access, client registration, OAuth, permissions, and token recovery
 - [Evals](docs/eval/) and [research](docs/research/) — methods and results
-- [Rust engine plan](docs/designs/RUST_ENGINE.md) — design for a third storage engine; the experimental Rust store already serves keyword search, title search, chunk reads, vector search, embeddings, links, takes, salience, facts, page operations, raw data and file records, ontology claims, chronicle projections, eval capture, dream verdicts, contradiction runs and the code call graph, and a second process on the same brain reaches it through the owner process, but nothing selects it yet; its [research maps](docs/designs/rust-engine/research/README.md) and [review record](docs/designs/rust-engine/review-record.md)
+- [Rust engine plan](docs/designs/RUST_ENGINE.md) — design for a third storage engine; the experimental Rust store already serves keyword search, title search, chunk reads, vector search, embeddings, links, takes, salience, facts, page operations, raw data and file records, ontology claims, chronicle projections, eval capture, dream verdicts, contradiction runs and the code call graph, and a second process on the same brain reaches it through the owner process; the CLI opens it only when `~/.gbrain/config.json` sets `"engine": "rust"` by hand (experimental: commands that need raw SQL, such as `import`, refuse with `engine_capability_missing`); its [research maps](docs/designs/rust-engine/research/README.md) and [review record](docs/designs/rust-engine/review-record.md)
 - [`docs/ethos/`](docs/ethos/) — philosophy (thin harness, fat skills, markdown as recipes, origin story)
 - [`AGENTS.md`](AGENTS.md) — entry point for non-Claude agents
 - [`CLAUDE.md`](CLAUDE.md) — entry point for Claude Code (deep operating context)

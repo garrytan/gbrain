@@ -12,7 +12,8 @@
  *
  * - stamps_rewritten: a stamp key changed after the first snapshot, or the live stamp differs from the server-written
  *   `pages` column. The restored value is the trusted column when non-null, else the value just before the first
- *   remote (or ambiguous) change. A later local change of the same key makes the page `needs_review`.
+ *   remote (or ambiguous) change. A later local change of the same key makes the page `needs_review`. An existing
+ *   `ingested_at` is never removed (#10025): a history whose only earlier value is none leaves it as it is.
  * - marker_lost: a transition raised the page's lowest frontmatter cap (`frontmatterTrustCaps`), and the live page
  *   still caps above the lost cap while its stored tier is `unknown` or above it (a re-read would raise it). The repair
  *   stamps the lost cap back as the lower-only `trust_tier` marker.
@@ -93,7 +94,7 @@ export function analyzePageDrift(input: DriftPageInput, opts: { includeAmbiguous
     if (firstDamage < 0 && !columnForged) { changes.push(...events.filter(event => event.writer === 'local')); continue; }
     const before = firstDamage >= 0 ? events[firstDamage]!.from : undefined;
     const target = column !== null ? input.columns[key]! : before ?? null;
-    if (normStamp(key, target) === liveValue) continue;
+    if (normStamp(key, target) === liveValue || key === 'ingested_at' && normStamp(key, target) === null) continue;
     if (firstDamage >= 0) {
       changes.push(...events);
       if (events.slice(firstDamage + 1).some(event => event.writer === 'local')) needsReview = `a later local write also changed ${key}`;

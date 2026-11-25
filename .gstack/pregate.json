@@ -104,6 +104,7 @@
     "scripts/skill-drift-baseline.txt": ["test/skill-drift.test.ts"],
     "scripts/skill-drift-undeclared-subcommands.txt": ["test/skill-drift.test.ts"],
     "scripts/skills-commit-gate.sh": ["test/skill-health.test.ts", "test/skill-drift.test.ts"],
+    "scripts/check-pglite-embedded.sh": ["test/pglite-embedded-assets.test.ts", "test/shadow-fingerprint-probe.test.ts"],
     "skills/skill-budgets.tsv": ["test/skill-health.test.ts"],
     "skills/skills.lock.history.json": ["test/skills-integrity.test.ts", "test/skillpack-safe-update.test.ts"],
     "scripts/check-migration-projection.ts": ["test/scripts/check-migration-projection.test.ts"],
@@ -118,6 +119,7 @@
     "rust/bench/corpus/**": ["rust/bench/baseline/baseline.test.ts"],
     "rust/bench/Cargo.lock": ["rust/bench/tests/sim_kill.rs"],
     "rust/bench/.gitignore": ["rust/bench/tests/sim_kill.rs"],
+    "rust/concurrency-bench/**": [],
     "rust/crates/gbrain-store/tests/fixtures/**": ["rust/crates/gbrain-store/tests/graph_parity.rs"]
   },
   "guards": [
@@ -178,6 +180,7 @@
     "visibility": "public"
   },
   "remote_gate": "bash scripts/pregate-remote-gate.sh",
+  "serial_patterns": ["**/*.serial.test.*", "test/e2e/**/*.test.ts"],
   "run_profiles": {
     "test": {
       "workflow": "test.yml",
@@ -300,6 +303,246 @@
       ],
       "pattern": "^:Char\\(c\\) => \\{$",
       "reason": "a match arm, `Token::Char(c) => {`, in a tokenizer: an enum pattern, never a credential value"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "rust/crates/gbrain-napi/src/families/generations.rs"
+      ],
+      "pattern": "^Option<String>,$",
+      "reason": "Rust type annotations the key-name check reads as values, such as `owner_key: Option<String>,`: code that names a key or passes one along, never a credential value"
+    },
+    {
+      "finding": "pem.private_key",
+      "paths": [
+        "rust/crates/gbrain-store/src/cli_reads/doctor_derived_health.rs"
+      ],
+      "pattern": "^(?:-{5}BEGIN OPENSSH PRIVATE KEY-{5}\"|-{5}BEGIN RSA PRIVATE KEY-{5} y\")$",
+      "reason": "a test string that holds only a private-key header line and no key body, a test input for the doctor private-key marker check, never a key"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "rust/crates/gbrain-store/src/facts/write_path.rs"
+      ],
+      "pattern": "^r\\.source_session, \"created_at\": iso\\(r\\.created_at_us\\) \\}\\)$",
+      "reason": "Rust field and argument expressions the key-name check reads as values, such as `\"source_session\": r.source_session, \"created_at\": iso(r.created_at_us)`: code that names a key or passes one along, never a credential value"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "rust/crates/gbrain-store/src/generations.rs"
+      ],
+      "pattern": "^(?:&GenerationKey,|Option<&str>,|String::from_utf8_lossy\\(&k\\[prefix\\.len\\(\\)\\.\\.\\]\\),|page:notes/a\"\\.into\\(\\),|record\\.owner_key,)$",
+      "reason": "Rust type annotations and field expressions the key-name check reads as values, such as `key: &GenerationKey,`: code that names a key or passes one along, never a credential value"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "rust/crates/gbrain-store/src/generations/activations.rs"
+      ],
+      "pattern": "^(?:&GenerationKey,|\\(\\*item\\)\\.into\\(\\),|record\\.owner_key,)$",
+      "reason": "Rust type annotations and field expressions the key-name check reads as values, such as `key: &GenerationKey,`: code that names a key or passes one along, never a credential value"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "rust/crates/gbrain-store/src/generations/fence_evidence.rs"
+      ],
+      "pattern": "^&GenerationKey,$",
+      "reason": "Rust type annotations the key-name check reads as values, such as `key: &GenerationKey,`: code that names a key or passes one along, never a credential value"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "rust/crates/gbrain-store/src/generations/fence_restore.rs"
+      ],
+      "pattern": "^(?:\\(\\*item_key\\)\\.into\\(\\),|String::from_utf8_lossy\\(&k\\[prefix\\.len\\(\\)\\.\\.\\]\\),)$",
+      "reason": "Rust field and argument expressions the key-name check reads as values, such as `\"item_key\": String::from_utf8_lossy(&k[prefix.len()..]),`: code that names a key or passes one along, never a credential value"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "rust/crates/gbrain-store/src/generations/repair.rs"
+      ],
+      "pattern": "^(?:Option<&'a str>,|String::from_utf8_lossy\\(&k\\[prefix\\.len\\(\\)\\.\\.\\]\\),|format!\\(\"walk/\\{owner\\}\"\\),|record\\.owner_key,)$",
+      "reason": "Rust type annotations and field expressions the key-name check reads as values, such as `owner_key: Option<&'a str>,`: code that names a key or passes one along, never a credential value"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "rust/crates/gbrain-store/src/link_queries/link_temporal.rs"
+      ],
+      "pattern": "^Option<&'a PrivacyPolicy>,$",
+      "reason": "Rust type annotations the key-name check reads as values, such as `exclude_private: Option<&'a PrivacyPolicy>,`: code that names a key or passes one along, never a credential value"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "rust/crates/gbrain-store/src/pages.rs"
+      ],
+      "pattern": "^remote\\.then\\(\\|\\| crate::facts::PrivacyPolicy \\{$",
+      "reason": "Rust field and argument expressions the key-name check reads as values, such as `exclude_private: remote.then(|| crate::facts::PrivacyPolicy {`: code that names a key or passes one along, never a credential value"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "rust/crates/gbrain-store/src/persistence/op_checkpoint.rs"
+      ],
+      "pattern": "^Vec<u8>,$",
+      "reason": "Rust type annotations the key-name check reads as values, such as `key: Vec<u8>,`: code that names a key or passes one along, never a credential value"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "rust/crates/gbrain-store/src/persistence/publication.rs"
+      ],
+      "pattern": "^Option<String>,$",
+      "reason": "Rust type annotations the key-name check reads as values, such as `execution_token: Option<String>,`: code that names a key or passes one along, never a credential value"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "rust/crates/gbrain-store/src/persistence/worktree_admission.rs"
+      ],
+      "pattern": "^&WorktreeAdmissionKey,$",
+      "reason": "Rust type annotations the key-name check reads as values, such as `key: &WorktreeAdmissionKey,`: code that names a key or passes one along, never a credential value"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "rust/crates/gbrain-store/src/shared_skill_members.rs"
+      ],
+      "pattern": "^(?:b\\.token,|b\\.view_token,)$",
+      "reason": "Rust field and argument expressions the key-name check reads as values, such as `\"token\": b.token,`: code that names a key or passes one along, never a credential value"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "rust/crates/gbrain-store/src/shared_skill_publication.rs"
+      ],
+      "pattern": "^Vec<u8>,$",
+      "reason": "Rust type annotations the key-name check reads as values, such as `key: Vec<u8>,`: code that names a key or passes one along, never a credential value"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "rust/crates/gbrain-store/src/trust/belief_events.rs"
+      ],
+      "pattern": "^(?:Option<Vec<u8>>,|need\\(&r\\.subject_key, \"subject_key\"\\)\\?,)$",
+      "reason": "Rust type annotations and field expressions the key-name check reads as values, such as `key: Option<Vec<u8>>,`: code that names a key or passes one along, never a credential value"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "rust/crates/gbrain-store/src/trust/belief_history.rs"
+      ],
+      "pattern": "^(?:e\\.subject_key,|later_private,)$",
+      "reason": "Rust field and argument expressions the key-name check reads as values, such as `\"subject_key\": e.subject_key,`: code that names a key or passes one along, never a credential value"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "rust/crates/gbrain-store/src/trust/belief_redactions.rs"
+      ],
+      "pattern": "^(?:need\\(&row\\.subject_key, \"subject_key\"\\)\\?,|r\\.subject_key,)$",
+      "reason": "Rust field and argument expressions the key-name check reads as values, such as `subject_key: r.subject_key,`: code that names a key or passes one along, never a credential value"
+    },
+    {
+      "finding": "pem.private_key",
+      "paths": [
+        "rust/crates/gbrain-store/tests/cli_reads_doctor_derived_health.rs"
+      ],
+      "pattern": "^(?:-{5}BEGIN PRIVATE KEY-{5}\\\\n\"\\],|-{5}BEGIN RSA PRIVATE KEY-{5}\\\\nabc\\\\n-{5}END RSA PRIVATE KEY-{5}\";)$",
+      "reason": "a test string that holds only a private-key header line and no key body, a test input for the doctor private-key marker check, never a key"
+    },
+    {
+      "finding": "pii.cc",
+      "paths": [
+        "rust/crates/gbrain-store/tests/cli_reads_doctor_derived_health.rs"
+      ],
+      "pattern": "^0000000000000000\", \"extracted_at\": \"2026-03-04T00:00:00Z\" \\}\\),$",
+      "reason": "a 16-zero test hash in a fixture, which the scanner reads as a card number"
+    },
+    {
+      "finding": "pii.phone.e164",
+      "paths": [
+        "rust/crates/gbrain-store/tests/cli_reads_doctor_derived_health.rs"
+      ],
+      "pattern": "^(?:1111-4111-8111-111111111111\"\\);|111111111111\"\\);|4444-4444-8444-444444444444\"\\);|444444444444\"\\);)$",
+      "reason": "fictional 555-01xx test numbers and the digit groups of an all-ones or all-fours test UUID, which the scanner reads as phone numbers"
+    },
+    {
+      "finding": "pii.phone.e164",
+      "paths": [
+        "rust/crates/gbrain-store/tests/cli_reads_ops.rs"
+      ],
+      "pattern": "^(?:\\+1 \\(415\\) 555-0100\"\\}\\),|14155550100\"\\]\\), false\\),|14155550100\"\\]\\), true\\)\\.is_empty\\(\\)\\);|415\\.555\\.0199\", 4155550142_i64\\]\\)\\);|415\\.555\\.0199\", 4155550142_i64\\], \"email\": \"bob@example\\.com\"\\}\\),)$",
+      "reason": "fictional 555-01xx test numbers and the digit groups of an all-ones or all-fours test UUID, which the scanner reads as phone numbers"
+    },
+    {
+      "finding": "pii.phone.e164",
+      "paths": [
+        "rust/crates/gbrain-store/tests/cli_reads_ops.rs"
+      ],
+      "pattern": "^(?:4155550100\"\\]\\), false\\)\\.is_empty\\(\\)\\);|4155550142\"\\]\\), false\\), \\[\"people/bob-example\"\\]\\);|4155550199\"\\]\\),|4155550199\"\\]\\), false\\), \\[\"people/bob-example\"\\]\\);)$",
+      "reason": "fictional 555-01xx test numbers and the digit groups of an all-ones or all-fours test UUID, which the scanner reads as phone numbers"
+    },
+    {
+      "finding": "pii.phone.e164",
+      "paths": [
+        "rust/crates/gbrain-store/tests/cli_reads_sweep_reads.rs"
+      ],
+      "pattern": "^(?:1111-4111-8111-111111111111\"\\);|111111111111\"\\);|4444-4444-8444-444444444444\"\\);|444444444444\"\\);)$",
+      "reason": "fictional 555-01xx test numbers and the digit groups of an all-ones or all-fours test UUID, which the scanner reads as phone numbers"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "rust/crates/gbrain-store/tests/generation_atom_reads.rs"
+      ],
+      "pattern": "^format!\\(\"input:\\{id\\}\"\\),$",
+      "reason": "Rust field and argument expressions the key-name check reads as values, such as `owner_key: format!(\"input:{id}\"),`: code that names a key or passes one along, never a credential value"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "rust/crates/gbrain-store/tests/jobs_wake.rs"
+      ],
+      "pattern": "^client-A\",$",
+      "reason": "Rust field and argument expressions the key-name check reads as values, such as `\"legacy_token:client-A\",`: code that names a key or passes one along, never a credential value"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "rust/crates/gbrain-store/tests/owner_only_pages.rs"
+      ],
+      "pattern": "^Some\\(PrivacyPolicy \\{$",
+      "reason": "Rust field and argument expressions the key-name check reads as values, such as `exclude_private: Some(PrivacyPolicy {`: code that names a key or passes one along, never a credential value"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "rust/crates/gbrain-store/tests/relational_reads.rs"
+      ],
+      "pattern": "^Some\\(PrivacyPolicy \\{$",
+      "reason": "Rust field and argument expressions the key-name check reads as values, such as `exclude_private: Some(PrivacyPolicy {`: code that names a key or passes one along, never a credential value"
+    },
+    {
+      "finding": "pii.phone.e164",
+      "paths": [
+        "rust/crates/gbrain-store/tests/repair_plan_scans.rs"
+      ],
+      "pattern": "^(?:1111-4111-8111-111111111111\"\\);|111111111111\"\\);|4444-4444-8444-444444444444\"\\), \"sourceId\": \"default\",|444444444444\"\\), \"sourceId\": \"default\",)$",
+      "reason": "fictional 555-01xx test numbers and the digit groups of an all-ones or all-fours test UUID, which the scanner reads as phone numbers"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "src/core/engine-sql/persistence-journal.ts"
+      ],
+      "pattern": "^\\$2::uuid,claim_expires_at=now\\(\\)\\+\\(\\$3::double precision\\*interval '1 millisecond'\\),$",
+      "reason": "a SQL column assignment, `execution_token=$2::uuid,claim_expires_at=now()+($3::double precision*interval '1 millisecond'),` in CLAIM_STAMP_SQL (the persistence journal's claim statement): a parameter placeholder and a cast, never a credential value; for the RP2 landing (rust-engine/land-rp2)"
     }
   ]
 }

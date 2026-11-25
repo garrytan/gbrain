@@ -4,8 +4,10 @@
 //! Members: `upsertOpenLoop`, `listOpenLoops` and `closeOpenLoop` (src/core/loops/loops-store.ts,
 //! SQL in src/core/engine-sql/open-loops.ts), and `closedLoopWithActiveFact` (the `loops_close`
 //! retry read) and `loopFactDrift` (the loop-fact retirement scan), SQL in
-//! src/core/engine-sql/facts-repair.ts. The other loop statements (thread auto-close, the
-//! staleness pass and mutes) still run through `executeRaw` and refuse on this engine.
+//! src/core/engine-sql/facts-repair.ts, and `readLoopFactState` and `expireSourceFactNow` (the
+//! loop-fact retirement publication, SQL in src/core/engine-sql/repair-bookkeeping.ts). Mutes, the
+//! thread auto-close and the mute re-check live in [`mutes`]. The staleness pass still runs
+//! through `executeRaw` and refuses on this engine.
 //!
 //! Keys (after `keys::FACT`; a text part ends with a NUL byte, and no text column may hold one):
 //! - `F 0x08 id -> LoopRecord`: one row, the `id` primary key (8 big-endian bytes).
@@ -13,14 +15,16 @@
 //! - meta `next_open_loops_id`: the `BIGSERIAL` sequence. Every upsert takes an id, also one that
 //!   lands on an existing row, as `nextval` runs before `ON CONFLICT` looks.
 //!
-//! Deleting a source removes its loops (`ON DELETE CASCADE`, [`remove_source_rows`]).
+//! Deleting a source removes its loops and its mutes (`ON DELETE CASCADE`, [`remove_source_rows`]).
+
+pub(crate) mod mutes;
 
 use crate::env::{iso, parse_iso};
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
+use crate::jsonb;
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::next_id;
-use crate::raw_files::jsonb_order;
 use crate::sources::require_source;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
@@ -30,7 +34,7 @@ use serde_json::{Map, Value, json};
 const ROW: u8 = 0x08;
 /// The byte after `keys::FACT` that marks the `(source_id, dedup_key)` unique key.
 const DEDUP: u8 = 0x09;
-const COUNTER: &str = "next_open_loops_id";
+pub(crate) const COUNTER: &str = "next_open_loops_id";
 
 /// The table's CHECK lists.
 const LOOP_TYPES: [&str; 5] = [
@@ -49,28 +53,29 @@ const MUTE_RECHECK: &str = "mute_recheck";
 
 /// What is stored for a loop.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct LoopRecord {
-    source_id: String,
-    dedup_key: String,
-    loop_type: String,
-    counterparty_slug: Option<String>,
-    counterparty_source_id: Option<String>,
-    counterparty_email: Option<String>,
-    summary: String,
-    evidence: Value,
-    thread_id: Option<String>,
-    page_slug: Option<String>,
-    due_at_us: Option<i64>,
-    status: String,
-    detector: String,
-    confidence: f32,
-    fact_id: Option<i64>,
-    opened_at_us: i64,
-    last_activity_at_us: i64,
-    closed_at_us: Option<i64>,
-    closed_by: Option<String>,
-    created_at_us: i64,
-    updated_at_us: i64,
+pub(crate) struct LoopRecord {
+    pub(crate) source_id: String,
+    pub(crate) dedup_key: String,
+    pub(crate) loop_type: String,
+    pub(crate) counterparty_slug: Option<String>,
+    pub(crate) counterparty_source_id: Option<String>,
+    pub(crate) counterparty_email: Option<String>,
+    pub(crate) summary: String,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
+    pub(crate) evidence: Value,
+    pub(crate) thread_id: Option<String>,
+    pub(crate) page_slug: Option<String>,
+    pub(crate) due_at_us: Option<i64>,
+    pub(crate) status: String,
+    pub(crate) detector: String,
+    pub(crate) confidence: f32,
+    pub(crate) fact_id: Option<i64>,
+    pub(crate) opened_at_us: i64,
+    pub(crate) last_activity_at_us: i64,
+    pub(crate) closed_at_us: Option<i64>,
+    pub(crate) closed_by: Option<String>,
+    pub(crate) created_at_us: i64,
+    pub(crate) updated_at_us: i64,
 }
 
 /// The input of `upsertOpenLoop`. `counterpartySourceId` is already NULL when the slug is empty
@@ -169,7 +174,7 @@ fn real(value: f32) -> Value {
         .unwrap_or(Value::Null)
 }
 
-fn row_json(id: u64, r: &LoopRecord) -> Value {
+pub(crate) fn row_json(id: u64, r: &LoopRecord) -> Value {
     let mut m = Map::new();
     m.insert("id".into(), json!(id));
     m.insert("source_id".into(), json!(r.source_id));
@@ -178,7 +183,7 @@ fn row_json(id: u64, r: &LoopRecord) -> Value {
     m.insert("counterparty_slug".into(), json!(r.counterparty_slug));
     m.insert("counterparty_email".into(), json!(r.counterparty_email));
     m.insert("summary".into(), json!(r.summary));
-    m.insert("evidence".into(), r.evidence.clone());
+    m.insert("evidence".into(), jsonb::ordered(&r.evidence));
     m.insert("thread_id".into(), json!(r.thread_id));
     m.insert("page_slug".into(), json!(r.page_slug));
     m.insert("due_at".into(), json!(r.due_at_us.map(iso)));
@@ -203,8 +208,60 @@ fn read_row(read: &dyn KvRead, id: u64) -> Result<Option<LoopRecord>> {
     get_json::<LoopRecord>(read, &row_key(id))
 }
 
-/// Removes every loop of a source, for the source delete.
+/// The shadow seed (`seed.rs`): stores `record`, a loop copied from another engine with its own id,
+/// times and status, with its `(source_id, dedup_key)` unique key, where `upsert_open_loop` stores
+/// a new one. `false` when the id already holds a loop; the dedup key held by another id is the
+/// `open_loops_dedup` violation.
+pub(crate) fn seed_open_loop(tx: &mut dyn KvWrite, id: u64, record: &LoopRecord) -> Result<bool> {
+    if read_row(&*tx, id)?.is_some() {
+        return Ok(false);
+    }
+    check("loop_type", &record.loop_type, &LOOP_TYPES)?;
+    check("status", &record.status, &STATUSES)?;
+    check("detector", &record.detector, &DETECTORS)?;
+    require_source(tx, &record.source_id)?;
+    let dk = dedup_key(&record.source_id, &record.dedup_key);
+    if tx.get(&dk)?.is_some() {
+        return Err(StoreError::new(
+            CONSTRAINT_VIOLATION,
+            "duplicate key value violates unique constraint \"open_loops_dedup\"",
+        ));
+    }
+    put_json(tx, &row_key(id), record)?;
+    tx.put(&dk, &id.to_be_bytes())?;
+    Ok(true)
+}
+
+/// `deletePurgeOpenLoops` (a fact purge): deletes the loops of `source_id` on a purged fact
+/// (`fact_id` in `fact_ids`), with their dedup entries; how many.
+pub(crate) fn purge_rows(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    fact_ids: &std::collections::HashSet<i64>,
+) -> Result<u64> {
+    let mut found = Vec::new();
+    scan_prefix(tx, &source_prefix(source_id), false, &mut |k, v| {
+        found.push((k.to_vec(), keys::be8(v)));
+        true
+    })?;
+    let mut deleted = 0;
+    for (k, id) in found {
+        let Some(id) = id else { continue };
+        let Some(row) = read_row(tx, id)? else {
+            continue;
+        };
+        if row.fact_id.is_some_and(|f| fact_ids.contains(&f)) {
+            tx.delete(&k)?;
+            tx.delete(&row_key(id))?;
+            deleted += 1;
+        }
+    }
+    Ok(deleted)
+}
+
+/// Removes every loop and every mute of a source, for the source delete.
 pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
+    mutes::remove_source_rows(tx, source_id)?;
     let mut doomed = Vec::new();
     scan_prefix(tx, &source_prefix(source_id), false, &mut |k, v| {
         doomed.push((k.to_vec(), keys::be8(v)));
@@ -284,7 +341,7 @@ impl Store {
                     counterparty_source_id: input.counterparty_source_id.clone(),
                     counterparty_email: input.counterparty_email.clone(),
                     summary: input.summary.clone(),
-                    evidence: jsonb_order(input.evidence.clone()),
+                    evidence: jsonb::order(input.evidence.clone()),
                     thread_id: input.thread_id.clone(),
                     page_slug: input.page_slug.clone(),
                     due_at_us,
@@ -338,7 +395,7 @@ impl Store {
             r.counterparty_slug = input.counterparty_slug.clone().or(r.counterparty_slug);
             r.counterparty_email = input.counterparty_email.clone().or(r.counterparty_email);
             r.summary = input.summary.clone();
-            r.evidence = jsonb_order(input.evidence.clone());
+            r.evidence = jsonb::order(input.evidence.clone());
             r.page_slug = input.page_slug.clone().or(r.page_slug);
             r.due_at_us = due_at_us.or(r.due_at_us);
             r.confidence = confidence;
@@ -416,6 +473,54 @@ impl Store {
             .collect())
     }
 
+    /// `countOpenLoopsByCounterpartyEmail`: the open loops of `loop_type` in `source_id` per
+    /// counterparty email among `emails`, one `{ email, n }` per email with any, in email byte
+    /// order, with no limit (the withheld-noise card of `open_loops`).
+    pub fn count_open_loops_by_counterparty_email(
+        &self,
+        source_id: &str,
+        emails: &[String],
+        loop_type: &str,
+    ) -> Result<Vec<Value>> {
+        let op = "countOpenLoopsByCounterpartyEmail";
+        no_nul(op, &[("sourceId", source_id), ("loopType", loop_type)])?;
+        for e in emails {
+            no_nul(op, &[("email", e.as_str())])?;
+        }
+        if emails.is_empty() {
+            return Ok(Vec::new());
+        }
+        let read = self.read()?;
+        let mut counts: std::collections::BTreeMap<String, i64> = std::collections::BTreeMap::new();
+        let mut failed = None;
+        scan_prefix(&*read, &[keys::FACT, ROW], false, &mut |_k, v| {
+            match serde_json::from_slice::<LoopRecord>(v) {
+                Ok(r) => {
+                    if r.source_id == source_id
+                        && r.status == "open"
+                        && r.loop_type == loop_type
+                        && let Some(email) =
+                            r.counterparty_email.as_ref().filter(|e| emails.contains(e))
+                    {
+                        *counts.entry(email.clone()).or_insert(0) += 1;
+                    }
+                }
+                Err(e) => {
+                    failed = Some(e);
+                    return false;
+                }
+            }
+            true
+        })?;
+        if let Some(e) = failed {
+            return Err(StoreError::invalid(format!("{op}: corrupt record: {e}")));
+        }
+        Ok(counts
+            .into_iter()
+            .map(|(email, n)| json!({ "email": email, "n": n }))
+            .collect())
+    }
+
     /// `closeOpenLoop`: closes the open loop `id` (in `source_id` when given) as `status`, by
     /// `closed_by`, now. `None` when no open loop matches.
     pub fn close_open_loop(
@@ -488,6 +593,71 @@ impl Store {
         Ok(active.then(|| json!({ "id": uid, "status": r.status, "fact_id": fact_id })))
     }
 
+    /// `readLoopFactState(loopId, { lock })` (persistence/loop-fact-retirement.ts): loop `loop_id`
+    /// as `{ id, source_id, status, fact_id }` (null when absent), its commitment fact as `{ id,
+    /// source_id, expired_at, row_num, source_markdown_slug, fact }` (null for a loop with no fact
+    /// or a fact that is gone; `expired_at` ISO text) and `shared`, whether another `open` loop
+    /// names that fact. Postgres's `lock` takes `FOR UPDATE` row locks; here a write transaction
+    /// already holds the store's one writer, so it has no argument.
+    pub fn read_loop_fact_state(&self, loop_id: i64) -> Result<Value> {
+        let read = self.read()?;
+        let row = u64::try_from(loop_id)
+            .ok()
+            .map(|uid| read_row(&*read, uid).map(|r| r.map(|r| (uid, r))))
+            .transpose()?
+            .flatten();
+        let Some((uid, r)) = row else {
+            return Ok(json!({ "loop": null, "fact": null, "shared": false }));
+        };
+        let loop_json = json!({ "id": uid, "source_id": r.source_id, "status": r.status, "fact_id": r.fact_id });
+        let Some(fact_id) = r.fact_id else {
+            return Ok(json!({ "loop": loop_json, "fact": null, "shared": false }));
+        };
+        let fact = match u64::try_from(fact_id) {
+            Ok(fid) => super::read_fact(&*read, fid)?,
+            Err(_) => None,
+        };
+        let shared = all_rows(&*read, "readLoopFactState")?
+            .iter()
+            .any(|(id, o)| *id != uid && o.status == "open" && o.fact_id == Some(fact_id));
+        let fact_json = fact.map(|f| {
+            json!({
+                "id": f.id,
+                "source_id": f.source_id,
+                "expired_at": f.expired_at_us.map(iso),
+                "row_num": f.row_num,
+                "source_markdown_slug": f.source_markdown_slug,
+                "fact": f.fact,
+            })
+        });
+        Ok(json!({ "loop": loop_json, "fact": fact_json, "shared": shared }))
+    }
+
+    /// `expireSourceFactNow(factId, sourceId)`: `UPDATE facts SET expired_at=now(),
+    /// valid_until=LEAST(COALESCE(valid_until, now()), now()) WHERE id=$1 AND source_id=$2 AND
+    /// expired_at IS NULL`, true when that one row changed.
+    pub fn expire_source_fact_now(&self, fact_id: i64, source_id: &str) -> Result<bool> {
+        no_nul("expireSourceFactNow", &[("sourceId", source_id)])?;
+        let now = self.env.now_micros();
+        let trust = &self.write_trust()?;
+        self.write(|tx| {
+            let Ok(fid) = u64::try_from(fact_id) else {
+                return Ok(false);
+            };
+            let Some(old) = super::read_fact(tx, fid)? else {
+                return Ok(false);
+            };
+            if old.source_id != source_id || old.expired_at_us.is_some() {
+                return Ok(false);
+            }
+            let mut new = old.clone();
+            new.expired_at_us = Some(now);
+            new.valid_until_us = Some(old.valid_until_us.map_or(now, |v| v.min(now)));
+            super::write_fact(tx, trust, Some(&old), &new)?;
+            Ok(true)
+        })
+    }
+
     /// `loopFactDrift(sourceIds, loopId)`: the closed (`done` or `dropped`) loops of the sources
     /// (only `loop_id` when given) whose commitment fact, in the loop's own source, has no
     /// `expired_at` and no `open` loop referencing it, as `{ loop_id, source_id, fact_id, status,
@@ -554,7 +724,7 @@ pub(crate) fn loop_fact_ids(
 }
 
 /// Every loop row, in id order (the key order of `F 0x08 id`).
-fn all_rows(read: &dyn KvRead, op: &str) -> Result<Vec<(u64, LoopRecord)>> {
+pub(crate) fn all_rows(read: &dyn KvRead, op: &str) -> Result<Vec<(u64, LoopRecord)>> {
     let mut rows = Vec::new();
     let mut failed = None;
     scan_prefix(read, &[keys::FACT, ROW], false, &mut |k, v| {
@@ -574,6 +744,20 @@ fn all_rows(read: &dyn KvRead, op: &str) -> Result<Vec<(u64, LoopRecord)>> {
         return Err(StoreError::invalid(format!("{op}: corrupt record: {e}")));
     }
     Ok(rows)
+}
+
+/// The shadow follow (`seed/follow.rs`): removes the loop `id` with its dedup key. `false` when
+/// there is none.
+pub(crate) fn remove_open_loop(tx: &mut dyn KvWrite, id: u64) -> Result<bool> {
+    let Some(old) = read_row(&*tx, id)? else {
+        return Ok(false);
+    };
+    let dk = dedup_key(&old.source_id, &old.dedup_key);
+    if tx.get(&dk)?.is_some_and(|v| keys::be8(&v) == Some(id)) {
+        tx.delete(&dk)?;
+    }
+    tx.delete(&row_key(id))?;
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -620,6 +804,47 @@ mod tests {
         }
         // the stored row still reads, and so does the listing
         assert_eq!(s.upsert_open_loop(&input("src", "k", T2)).unwrap().id, 1);
+    }
+
+    #[test]
+    fn counts_open_loops_per_counterparty_email_with_no_limit() {
+        let s = store();
+        source(&s, "src");
+        source(&s, "other");
+        for i in 0..1005 {
+            s.upsert_open_loop(&input("src", &format!("k{i}"), T1))
+                .unwrap();
+        }
+        let mut b = input("src", "b1", T1);
+        b.counterparty_email = Some("b@example.com".into());
+        s.upsert_open_loop(&b).unwrap();
+        s.upsert_open_loop(&input("other", "o1", T1)).unwrap();
+        s.close_open_loop(Some("src"), 1, "done", "manual").unwrap();
+        let emails = vec![
+            "a@example.com".to_string(),
+            "b@example.com".to_string(),
+            "c@example.com".to_string(),
+        ];
+        let got = s
+            .count_open_loops_by_counterparty_email("src", &emails, "unanswered_inbound")
+            .unwrap();
+        assert_eq!(
+            got,
+            vec![
+                json!({ "email": "a@example.com", "n": 1004 }),
+                json!({ "email": "b@example.com", "n": 1 })
+            ]
+        );
+        assert!(
+            s.count_open_loops_by_counterparty_email("src", &emails, "awaiting_reply")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            s.count_open_loops_by_counterparty_email("src", &[], "unanswered_inbound")
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

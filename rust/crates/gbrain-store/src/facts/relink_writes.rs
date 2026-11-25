@@ -8,10 +8,12 @@
 //! Each member reads the one row by id, applies the statement's `WHERE` to it, and writes the
 //! changed row through [`write_fact`], so the trust stamp and the unique indexes run as the
 //! `UPDATE` would. A row the `WHERE` does not match is left alone and the member returns false (the
-//! statement's empty `RETURNING`). The withdrawal and purge guards of the `UPDATE` are not modeled
-//! (\"Not modeled\" in rust/docs/store/facts.md): their ledgers have no Rust writer.
+//! statement's empty `RETURNING`). [`write_fact`] runs the purge guard of the `UPDATE` (\"The fact
+//! purge ledger\" in rust/docs/store/facts.md), and [`preserve_withdrawal`] runs the withdrawal guard of the
+//! `UPDATE` (it sets `entity_slug`): a row left active that a withdrawal of its claim reaches comes back expired.
 
 use super::relink::Memos;
+use super::withdrawal_guard::preserve_withdrawal;
 use super::{
     AUDIT_ROW_SOURCES, FactRecord, count_arg, fact_by_number, purge::unbacked, source_rows,
     write_fact,
@@ -139,6 +141,7 @@ impl Store {
                 }
                 None => new.expired_at_us = Some(now),
             }
+            preserve_withdrawal(&*tx, &mut new)?;
             write_fact(tx, trust, Some(&old), &new)?;
             Ok(true)
         })
@@ -191,6 +194,7 @@ impl Store {
             let mut new = old.clone();
             new.entity_slug = Some(link.entity_slug.clone());
             new.context = Some(link.context.clone());
+            preserve_withdrawal(&*tx, &mut new)?;
             write_fact(tx, trust, Some(&old), &new)?;
             Ok(true)
         })

@@ -2,6 +2,7 @@
  * The BrainEngine members the Rust engine serves from its store, keyed by member name. `RustEngine` installs each on its
  * prototype (rust-engine.ts); a member in `RUST_ENGINE_MEMBERS` that is not here refuses with `engine_capability_missing`.
  */
+import * as opCheckpoint from './op-checkpoint.ts';
 import type { BrainEngine } from '../../engine.ts';
 import type { StoreMember } from './common.ts';
 import * as chunks from './chunks.ts';
@@ -42,6 +43,8 @@ import * as cliReadsSearchPages from './cli-reads-search-pages.ts';
 import * as fieldUsage from './field-usage.ts';
 import * as decideProposals from './decide-proposals.ts';
 import * as decideStore from './decide-store.ts';
+import * as jobsHealth from './jobs-health.ts';
+import * as openLoops from './open-loops.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
 const initSchema: StoreMember<[], void> = async () => undefined;
@@ -57,10 +60,12 @@ export const STORE_MEMBERS = {
   ...chunkQueries, ...vectors, ...embeddings, ...transactions, ...relations,
   // The field usage sample read of schema detect --fields (rust/docs/store/field-usage.md).
   ...fieldUsage,
-  // The decide proposal lanes and decide store (rust/docs/store/decide-proposals.md, decide-store.md).
-  ...decideProposals, ...decideStore,
+  // The decide proposal lanes and decide store (rust/docs/store/decide-proposals.md), and the open loops (rust/docs/store/facts.md).
+  ...decideProposals, ...decideStore, ...openLoops, ...opCheckpoint,
   // Typed reads that CLI paths ran through executeRaw (docs/research/rust-cli-executeraw-map.md).
   ...cliReadsSearchPages,
+  // Queue health reads (rust/crates/gbrain-store/src/jobs/health.rs).
+  ...jobsHealth,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

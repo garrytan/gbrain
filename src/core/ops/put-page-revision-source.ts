@@ -1,3 +1,4 @@
+import { normalizeSlug } from '../utils.ts';
 import { OperationError, type OperationContext } from './contract.ts';
 import { federatedSearchScope } from './context.ts';
 import { readFix } from './op-fix.ts';
@@ -13,7 +14,7 @@ import { isPrivatePage, resolveExcludePrivatePages } from '../search/private-vis
  */
 export async function rethrowNamingRevisionSource(ctx: OperationContext, writeSource: string, p: Record<string, unknown>, error: unknown): Promise<never> {
   if (!(error instanceof OperationError) || error.code !== 'revision_conflict' || typeof p.slug !== 'string' || typeof p.expected_revision !== 'string') throw error;
-  const slug = p.slug.toLowerCase();
+  const slug = normalizeSlug(p.slug);
   const expected = p.expected_revision.toLowerCase();
   try {
     const candidates = await ctx.engine.executeRaw<{ source_id: string }>(
