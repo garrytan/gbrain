@@ -269,6 +269,19 @@ describe('v0.41.2.1: discoverExtractablePages SQL contract', () => {
       batch.mockRestore();
     }
   });
+
+  test('an engine capability refusal stays visible during canonical discovery', async () => {
+    const fence = renderFactsTable([{ rowNum: 1, claim: 'Synthetic fence claim', visibility: 'world',
+      kind: 'fact', confidence: 1, notability: 'medium', active: true }]);
+    await seedPage({ slug: 'meeting/fenced', type: 'meeting', compiled_truth: `${LONG_CONTENT}\n\n${fence}` });
+    const refusal = Object.assign(new Error('synthetic engine refusal'), { code: 'engine_capability_missing' });
+    const batch = spyOn(engine, 'readPageSnapshotsBatch').mockRejectedValue(refusal);
+    try {
+      await expect(discoverExtractablePages(engine, 'default')).rejects.toThrow('synthetic engine refusal');
+    } finally {
+      batch.mockRestore();
+    }
+  });
 });
 
 describe('v0.41.2.1: runPhaseExtractAtoms — dual-source merge + idempotency', () => {

@@ -69,8 +69,8 @@ import { createGlobalLlmHaltTracker, haltedClassOf, providerContentBlockReason, 
 import { derivedWriteThrough, reportDerivedWriteThrough } from './derived-write-through.ts';
 import { emptySessionSourceRouting, keepSessionSourceTranscripts, withSessionSourceRouting } from './synthesize-source-routing.ts';
 import { serializeMarkdown } from '../markdown.ts';
-import { DEFAULT_EXTRACT_MAX_INPUT_CHARS, extractAtomsInput, inputTruncatedLine, recordPartialDisposition, releasePartialDispositions, resolveExtractAtomsInputCap, stampTranscriptTombstone, type ExtractAtomsInput, type ExtractAtomsItem } from './extract-atoms-input.ts';
-import { commitExtractionPlan, readPageWatermark } from '../extraction-watermark.ts';
+import { DEFAULT_EXTRACT_MAX_INPUT_CHARS, inputTruncatedLine, readExtractAtomsInput, recordPartialDisposition, releasePartialDispositions, resolveExtractAtomsInputCap, stampTranscriptTombstone, type ExtractAtomsInput, type ExtractAtomsItem } from './extract-atoms-input.ts';
+import { commitExtractionPlan } from '../extraction-watermark.ts';
 import { claudeCliSelfSessionIds } from '../ai/providers/claude-cli-scratch.ts';
 import { BudgetExhausted, BudgetTracker, loadPricingOverrides } from '../budget/budget-tracker.ts';
 import type { MaintenanceWriteWait } from '../persistence/maintenance-wait.ts';
@@ -91,20 +91,18 @@ import { normalizeForGrounding, isGroundingQuoteMark } from './synthesize-verify
 import type { TranscriptPageIndex } from '../transcripts/discover.ts';
 import { atomOriginPin, atomWriteFailure, type AtomWriteFailure, concurrentAtomBatch, managedAtomSession, readAtomOrigin, resumeManagedAtoms, publishManagedAtoms, publishManagedAtomGeneration, resumeManagedGenerationMembers,
   MANAGED_ATOM_DISCOVERY_SQL, managedAtomDiscoverySql, type AtomOrigin } from '../persistence/atom-maintenance.ts';
-import { effectiveVisibility, folderRestricted, withoutCallerAccess } from '../search/private-visibility.ts';
+import { effectiveVisibility, folderRestricted } from '../search/private-visibility.ts';
 import { OperationError } from '../ops/contract.ts';
 import { isOpPageSlug } from '../ops/context.ts';
 import type { WriteReceipt } from '../persistence/types.ts';
 import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
-import { AtomPageStateError, MAX_DETERMINISTIC_FAILURES, readAtomPageIdentity, writeAtomPageState, type AtomPageInput } from './extract-atoms-page-state.ts';
+import { AtomPageStateError, MAX_DETERMINISTIC_FAILURES, readAtomDiscoverySnapshots, readAtomPageIdentity, writeAtomPageState, type AtomDiscoveryRow, type AtomPageInput } from './extract-atoms-page-state.ts';
 import { atomGenerationOrigin, atomInputPin, heldLine, publishUnmanagedAtoms, resolveTranscriptAtomSlug, resolveTranscriptKeys, transcriptRoot } from './extract-atoms-generation.ts';
 import { heldForInput } from '../generations/publish.ts';
 import { ATOM_TYPES, ATOMS_RESPONSE_SCHEMA } from './extract-atoms-schema.ts';
 import { parseAtomsOutcome } from './extract-atoms-parse.ts';
-import { pageSnapshotKey } from '../page-snapshot-batch.ts';
-import type { PageSnapshot } from '../page-state/types.ts';
 import { FACTS_FENCE_BEGIN } from '../facts-fence.ts';
-import { heldRowsForCaller } from '../eligibility/fence-overlay.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 export { parseAtomsOutcome, parseAtomsResponse, type AtomsParseOutcome } from './extract-atoms-parse.ts';
 
 const DEFAULT_BUDGET_USD = 0.3;
@@ -458,49 +456,16 @@ export async function discoverExtractablePages(
   if (hasFilter) params.push(affectedSlugs);
 
   try {
-    const rows = await engine.executeRaw<{
-      id: number;
-      knowledge_revision: string;
-      source_incarnation: string;
-      slug: string;
-      compiled_truth: string;
-      content_hash: string;
-    }>(sql, params);
-    // The canonical reader overlays withdrawals and purges on stored fact fences.
-    // Keep discovery and the later origin check on the same page revision and view.
-    const withFences = new Map(rows.filter(row => row.compiled_truth.includes(FACTS_FENCE_BEGIN))
-      .map(row => [row.slug, row] as const));
-    const refs = [...withFences.keys()].map(slug => ({ slug, sourceId }));
-    const projected = new Map<string, string>();
-    const retainProjection = (slug: string, snapshot: PageSnapshot | null | undefined) => {
-      const row = withFences.get(slug)!;
-      if (snapshot?.page.id === row.id && snapshot.sourceIncarnation === row.source_incarnation
-        && snapshot.revision === row.knowledge_revision && snapshot.page.content_hash === row.content_hash) {
-        projected.set(slug, snapshot.page.compiled_truth);
-      }
-    };
-    for (let rest = refs; rest.length > 0;) {
-      const batch = await engine.readPageSnapshotsBatch(rest, { absentIsNull: true }).catch(() => null);
-      if (!batch) {
-        // One unreadable fence must not starve other candidates or fall back to raw text.
-        for (const { slug } of rest) {
-          try { retainProjection(slug, await engine.readPageSnapshot(slug, { sourceId })); }
-          catch { console.error(`[extract_atoms] could not read the canonical atom input for ${slug}; it remains pending`); }
-        }
-        break;
-      }
-      for (const { slug } of rest.slice(0, batch.covered)) {
-        retainProjection(slug, batch.snapshots.get(pageSnapshotKey(sourceId, slug)));
-      }
-      rest = rest.slice(Math.max(1, batch.covered));
-    }
+    const rows = await engine.executeRaw<AtomDiscoveryRow>(sql, params);
+    const withFences = new Map(rows.filter(row => row.compiled_truth.includes(FACTS_FENCE_BEGIN)).map(row => [row.slug, row]));
+    const snapshots = await readAtomDiscoverySnapshots(engine, sourceId, withFences);
     return rows.flatMap(row => {
-      const content = withFences.has(row.slug) ? projected.get(row.slug) : row.compiled_truth;
-      if (content === undefined) return [];
-      return [{ slug: row.slug, content, contentHash: row.content_hash,
+      const content = withFences.has(row.slug) ? snapshots.get(row.slug)?.page.compiled_truth : row.compiled_truth;
+      return content === undefined ? [] : [{ slug: row.slug, content, contentHash: row.content_hash,
         identity: { pageId: row.id, sourceIncarnation: row.source_incarnation, revision: row.knowledge_revision } }];
     });
   } catch (err) {
+    rethrowCapabilityRefusal(err);
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[extract_atoms] page-discovery query failed: ${msg}`);
     return []; // fail-soft: transcript path still proceeds
@@ -1144,11 +1109,7 @@ export async function runPhaseExtractAtoms(
     // disposition instead of a completion stamp (extract-atoms-input.ts).
     let origin: AtomOrigin | null = null;
     try {
-      const omitRows = item.kind === 'page'
-        ? await withoutCallerAccess(() => heldRowsForCaller(engine, true, { sourceId, slug: item.slug, compiled_truth: item.content }))
-        : undefined;
-      const watermark = item.kind === 'page' ? (await readPageWatermark(engine, sourceId, item.slug, 'extract_atoms')).stored : null;
-      const input = extractAtomsInput(item, maxInputChars, watermark, omitRows);
+      const input = await readExtractAtomsInput(engine, sourceId, item, maxInputChars);
       const { promptContent, truncated } = input;
       origin = managed ? { ...await readAtomOrigin(engine, managed, item), ...(truncated ? { partialInputChars: maxInputChars } : {}) } : null;
       const sourcePage = item.kind === 'page' ? await engine.getPage(item.slug, { sourceId }) : null;

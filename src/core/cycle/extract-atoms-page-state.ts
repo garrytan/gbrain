@@ -2,6 +2,9 @@ import type { SqlEngine } from '../persistence/model.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { stableJson } from '../persistence/digest.ts';
 import type { BrainEngine } from '../engine.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
+import { pageSnapshotKey } from '../page-snapshot-batch.ts';
+import { isSegmentedPage } from '../page-body/page-shape.ts';
 
 /**
  * gbrain#4148: consecutive same-content failures of a content-deterministic
@@ -22,6 +25,52 @@ export interface AtomPageInput {
   content: string;
   contentHash: string;
   identity?: AtomPageIdentity;
+}
+
+export interface AtomDiscoveryRow {
+  id: number;
+  knowledge_revision: string;
+  source_incarnation: string;
+  slug: string;
+  compiled_truth: string;
+  content_hash: string;
+}
+
+/** Discovery and the managed origin check must read the same revision and withdrawal view. */
+export async function readAtomDiscoverySnapshots(engine: BrainEngine, sourceId: string,
+  withFences: ReadonlyMap<string, AtomDiscoveryRow>): Promise<Map<string, PageSnapshot>> {
+  const refs = [...withFences.keys()].map(slug => ({ slug, sourceId }));
+  const projected = new Map<string, PageSnapshot>();
+  const retain = (slug: string, snapshot: PageSnapshot | null | undefined) => {
+    const row = withFences.get(slug);
+    if (row && snapshot?.page.id === row.id && snapshot.sourceIncarnation === row.source_incarnation
+      && snapshot.revision === row.knowledge_revision && snapshot.page.content_hash === row.content_hash
+      && !isSegmentedPage(snapshot.page)) {
+      projected.set(slug, snapshot);
+    }
+  };
+  for (let rest = refs; rest.length > 0;) {
+    try {
+      const batch = await engine.readPageSnapshotsBatch(rest, { absentIsNull: true });
+      for (const { slug } of rest.slice(0, batch.covered)) {
+        retain(slug, batch.snapshots.get(pageSnapshotKey(sourceId, slug)));
+      }
+      rest = rest.slice(Math.max(1, batch.covered));
+    } catch (error) {
+      rethrowCapabilityRefusal(error);
+      // A single unreadable fence leaves that page pending; other candidates can proceed.
+      for (const { slug } of rest) {
+        try {
+          retain(slug, await engine.readPageSnapshot(slug, { sourceId }));
+        } catch (pageError) {
+          rethrowCapabilityRefusal(pageError);
+          console.error(`[extract_atoms] could not read the canonical atom input for ${slug}; it remains pending`);
+        }
+      }
+      break;
+    }
+  }
+  return projected;
 }
 
 export class AtomPageStateError extends Error {

@@ -965,7 +965,6 @@ src/core/cycle/extract-atoms-stamp.ts#sourcesWithStaleExtractAtomsRun	capability
 src/core/cycle/extract-atoms-stamp.ts#sourcesWithStaleExtractAtomsRun	catch_empty	1
 src/core/cycle/extract-atoms.ts#atomsExistingForHashes	capability_refusal_swallowed	1
 src/core/cycle/extract-atoms.ts#countExtractAtomsBacklog	capability_refusal_swallowed	1
-src/core/cycle/extract-atoms.ts#discoverExtractablePages	capability_refusal_swallowed	1
 src/core/cycle/extract-atoms.ts#resolveExtractAtomsModelWithSource	catch_empty	1
 src/core/cycle/extract-atoms.ts#resolveExtractableTypes	catch_empty	1
 src/core/cycle/extract-atoms.ts#resolvePageDiscoveryLimit	catch_empty	1

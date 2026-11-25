@@ -21,8 +21,10 @@ import type { SqlEngine } from '../persistence/model.ts';
 import { truncateUtf8 } from '../text-safe.ts';
 import { corpusTextForExtraction } from '../context/corpus-segments.ts';
 import { AtomPageStateError, type AtomPageInput } from './extract-atoms-page-state.ts';
-import { planExtraction, type ExtractionPlan, type StoredWatermark } from '../extraction-watermark.ts';
+import { planExtraction, readPageWatermark, type ExtractionPlan, type StoredWatermark } from '../extraction-watermark.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
+import { withoutCallerAccess } from '../search/private-visibility.ts';
+import { heldRowsForCaller } from '../eligibility/fence-overlay.ts';
 
 export const DEFAULT_EXTRACT_MAX_INPUT_CHARS = 50_000;
 export const EXTRACT_MAX_INPUT_CHARS_KEY = 'cycle.extract_atoms.max_input_chars';
@@ -80,6 +82,15 @@ export function extractAtomsInput(item: ExtractAtomsItem, maxInputChars: number,
   const text = corpusTextForExtraction(item.filePath, item.content);
   const promptContent = truncateUtf8(text, maxInputChars);
   return { promptContent, truncated: promptContent.length < text.length, inputChars: text.length };
+}
+
+export async function readExtractAtomsInput(engine: BrainEngine, sourceId: string, item: ExtractAtomsItem,
+  maxInputChars: number): Promise<ExtractAtomsInput> {
+  if (item.kind === 'transcript') return extractAtomsInput(item, maxInputChars);
+  const omitRows = await withoutCallerAccess(() => heldRowsForCaller(engine, true,
+    { sourceId, slug: item.slug, compiled_truth: item.content }));
+  const { stored } = await readPageWatermark(engine, sourceId, item.slug, 'extract_atoms');
+  return extractAtomsInput(item, maxInputChars, stored, omitRows);
 }
 
 /** The one stderr line per cut item; names the knob that raises the cap. Null for a complete appended-tail read. */
