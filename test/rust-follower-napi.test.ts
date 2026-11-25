@@ -56,10 +56,13 @@ async function setup() {
   closers.push(() => pool.shutdown(1000));
   const open = async (name: string) => {
     const brain = new addon.Brain(pool);
-    await brain.open(join(root, name), {
+    // Multi-user mode on through the open options (the test preload strips GBRAIN_RUST_MULTIUSER), asserted on.
+    const info = await brain.open(join(root, name), {
       schemaVersion: 1, createdBy: 'test', multiuser: true, commitLog: true,
       hostId: 'd0000000-0000-4000-8000-0000000000d1',
-    });
+    }) as { multiuser?: unknown; commit_log?: unknown };
+    expect(info.multiuser).toBe(true);
+    expect(info.commit_log).toBe(true);
     closers.push(() => brain.close());
     return brain;
   };
