@@ -46,7 +46,7 @@ export async function runtimeCase(config: RuntimeCase) {
       await assert.rejects(engine.withReservedConnection(async () => {}), { code: 'writer_pool_capacity' });
       assert.equal((await bounded(engine.executeRawDirect<{ n: number }>('SELECT 1 AS n'), 'direct control read'))[0].n, 1);
       const claim = await bounded(claimNextWrite(engine, config.hostId), 'claim with saturated bulk budget'); assert(claim);
-      assert.equal(await bounded(renewWriteClaim(engine, claim.id, claim.execution_token!), 'claim renewal'), true);
+      assert.equal(await bounded(renewWriteClaim({ executeRaw: engine.executeRawDirect.bind(engine) }, claim.id, claim.execution_token!), 'claim renewal'), true);
       const queued = await bounded(publishMutation(engine, claim, prepared(claim, sources, null, true), config.hostId), 'publication capacity refusal');
       assert.equal(queued.state, 'queued'); assert.equal(queued.blocked_reason, 'writer_pool_capacity');
       assert.equal(existsSync(join(sources[0].root, 'capacity.md')), false);
