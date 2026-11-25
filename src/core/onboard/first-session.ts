@@ -232,7 +232,9 @@ const SAFE_SLUG = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
 /**
  * The newest world-visible, non-stub pages the bound source reads unqualified (itself plus its federated sources, so
  * the conversations setup's history import writes to its own source are found): titles as quoted data, slugs as
- * pointers. Agent policy and action records and the archive's day index pages are not things to offer the user.
+ * pointers. A connection pinned by GBRAIN_SOURCE or .gbrain-source reads the same set by name (explicitReadBinding), so
+ * every pointer stays one it can open. Agent policy and action records and the archive's day index pages are not things
+ * to offer the user.
  */
 export async function firstSessionPointers(engine: BrainEngine, sourceId: string): Promise<Array<{ slug: string; title: string }>> {
   try {
