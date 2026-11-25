@@ -91,6 +91,32 @@ describe('gbrain setup codex: Codex waits for gbrain to start (GST-3901)', () =>
     expect((await setup(b, ['--remove'])).exitCode).toBe(0);
     expect(toml(b)[KEY]).toBe(2500);
   }, 240_000);
+
+  test('a 0 the user set before setup is never recorded as setup\'s or removed', async () => {
+    const b = box();
+    mkdirSync(join(b.home, '.codex'), { recursive: true });
+    writeFileSync(tomlPath(b), `${KEY} = 0\n`);
+    expect((await setup(b, [])).exitCode).toBe(0);
+    expect(receipt(b).startup_grace).toBeUndefined();
+    expect((await setup(b, ['--remove'])).exitCode).toBe(0);
+    expect(toml(b)[KEY]).toBe(0);
+  }, 240_000);
+
+  test('--dry-run lists the write, and removing one named install keeps the key while another still uses it', async () => {
+    const b = box();
+    const dry = await setup(b, ['--dry-run']);
+    expect(dry.exitCode, dry.stderr).toBe(0);
+    expect(dry.doc.steps).toContainEqual(expect.objectContaining({ step: 'mcp', action: 'write', detail: expect.stringContaining(KEY) }));
+    expect((await setup(b, [])).exitCode).toBe(0);
+    const second = await setup(b, ['--name', 'gbrain-2', '--no-hooks']);
+    expect(second.exitCode, second.stderr).toBe(0);
+    expect(JSON.parse(readFileSync(join(b.home, '.codex', '.gbrain-connection-codex-gbrain-2.json'), 'utf8')).startup_grace).toBe('written');
+    const first = await setup(b, ['--remove']);
+    expect(first.exitCode, first.stderr).toBe(0);
+    expect(toml(b)[KEY]).toBe(0);
+    expect((await setup(b, ['--remove', '--name', 'gbrain-2'])).exitCode).toBe(0);
+    expect(toml(b)[KEY]).toBeUndefined();
+  }, 300_000);
 });
 
 describe('top-level TOML key helpers', () => {
@@ -101,6 +127,15 @@ describe('top-level TOML key helpers', () => {
     prependCodexTomlTopLevelInt(p, KEY, 0, 'gbrain setup (gbrain): test');
     expect(Bun.TOML.parse(readFileSync(p, 'utf8'))).toEqual({ [KEY]: 0, notes: '[not.a.table]\n', mcp_servers: { a: { command: 'a' } } });
     expect(() => prependCodexTomlTopLevelInt(p, KEY, 0)).toThrow('already sets');
+    expect(removeCodexTomlTopLevelInt(p, KEY, 0)).toBe('removed');
+    expect(readFileSync(p, 'utf8')).toBe(text);
+  });
+  test('a config that starts with a byte-order mark keeps it at the front, through prepend and removal', () => {
+    const text = '\uFEFFmodel = "x"\n';
+    const p = file(text);
+    prependCodexTomlTopLevelInt(p, KEY, 0, 'gbrain setup (gbrain): test');
+    expect(readFileSync(p, 'utf8').startsWith('\uFEFF# gbrain setup')).toBe(true);
+    expect(Bun.TOML.parse(readFileSync(p, 'utf8'))).toEqual({ [KEY]: 0, model: 'x' });
     expect(removeCodexTomlTopLevelInt(p, KEY, 0)).toBe('removed');
     expect(readFileSync(p, 'utf8')).toBe(text);
   });

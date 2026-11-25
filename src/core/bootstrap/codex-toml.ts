@@ -486,13 +486,14 @@ export function removeCodexTomlTable(configPath: string, path: string[], opts: {
 export function prependCodexTomlTopLevelInt(configPath: string, key: string, value: number, comment?: string): void {
   const raw = existsSync(configPath) ? readFileSync(configPath, 'utf8') : '';
   const crlf = raw.includes('\r\n');
-  const text = raw.replace(/\r\n/g, '\n');
+  const bom = raw.startsWith('\uFEFF') ? '\uFEFF' : '';
+  const text = raw.slice(bom.length).replace(/\r\n/g, '\n');
   const before = parseToml(text);
   if (key in before) throw new Error(`${configPath} already sets ${key}; setup never sets a key twice.`);
   const head = [...(comment ? [`# ${comment}`] : []), `${tomlKey(key)} = ${Math.trunc(value)}`].join('\n');
   const next = text.trim() ? `${head}\n\n${text}` : `${head}\n`;
   if (canonicalJson(parseToml(next)) !== canonicalJson({ ...before, [key]: Math.trunc(value) })) throw new Error(`setting ${key} in ${configPath} would change other settings; the file is left as it was.`);
-  atomicWriteTextFile(configPath, crlf ? next.replace(/\n/g, '\r\n') : next, { freshMode: 0o600 });
+  atomicWriteTextFile(configPath, bom + (crlf ? next.replace(/\n/g, '\r\n') : next), { freshMode: 0o600 });
 }
 
 /**
@@ -504,7 +505,8 @@ export function removeCodexTomlTopLevelInt(configPath: string, key: string, valu
   if (!existsSync(configPath)) return 'absent';
   const raw = readFileSync(configPath, 'utf8');
   const crlf = raw.includes('\r\n');
-  const lines = raw.replace(/\r\n/g, '\n').split('\n');
+  const bom = raw.startsWith('\uFEFF') ? '\uFEFF' : '';
+  const lines = raw.slice(bom.length).replace(/\r\n/g, '\n').split('\n');
   const before = parseToml(lines.join('\n'));
   if (!(key in before)) return 'absent';
   const firstHeader = lines.findIndex((l) => /^\s*\[/.test(l));
@@ -520,7 +522,6 @@ export function removeCodexTomlTopLevelInt(configPath: string, key: string, valu
   let after: Record<string, unknown>;
   try { after = parseToml(next); } catch { return 'unlocatable'; }
   if (canonicalJson(after) !== canonicalJson(withoutPath(before, [key]))) return 'unlocatable';
-  if (!opts.dryRun) atomicWriteTextFile(configPath, crlf ? next.replace(/\n/g, '\r\n') : next, { freshMode: 0o600 });
+  if (!opts.dryRun) atomicWriteTextFile(configPath, bom + (crlf ? next.replace(/\n/g, '\r\n') : next), { freshMode: 0o600 });
   return 'removed';
 }
-

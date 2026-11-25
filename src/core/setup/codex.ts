@@ -31,7 +31,7 @@
  * leaves pending fingerprints the next run treats as owned, so a resume never
  * duplicates an entry, and an untrusted hook never runs.
  */
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { atomicWriteTextFile } from '../bootstrap/atomic-write.ts';
 import { ownedEntryFingerprint } from '../bootstrap/adopted-connections.ts';
@@ -161,6 +161,18 @@ export function readCodexSetupReceipt(receiptPath: string): { setup: CodexSetupR
 
 const writeReceipt = (path: string, receipt: CodexSetupReceipt) => atomicWriteTextFile(path, `${JSON.stringify(receipt, null, 2)}\n`, { forceMode: 0o600 });
 
+/** Another setup install in the same config dir (`--name`) records the grace key as setup's, so it stays setup's and stays put. */
+function graceOwnedElsewhere(receiptPath: string): boolean {
+  const dir = dirname(receiptPath);
+  let names: string[];
+  try { names = readdirSync(dir); } catch { return false; }
+  return names.some((f) => {
+    if (!f.startsWith('.gbrain-connection-codex-') || !f.endsWith('.json') || join(dir, f) === receiptPath) return false;
+    try { const r = JSON.parse(readFileSync(join(dir, f), 'utf8')) as Partial<CodexSetupReceipt>; return r.startup_grace === 'written' && r.status !== 'removed'; }
+    catch { return false; }
+  });
+}
+
 /**
  * Provider key and endpoint names Codex forwards from its own environment to
  * serve. Codex starts stdio servers with a scrubbed environment, so a key the
@@ -267,7 +279,7 @@ export function inspectCodexSetup(plan: CodexSetupPlan): CodexInspection {
   const otherLaneEvents = [...new Set(census.filter((g) => g.lane === 'bootstrap').map((g) => g.event))];
   const graceValue = readCodexTomlTable(paths.configPath, [CODEX_STARTUP_GRACE_KEY]);
   const grace: CodexInspection['grace'] = graceValue === undefined ? { state: 'absent' }
-    : graceValue === 0 && prior?.startup_grace === 'written' ? { state: 'ours', value: 0 } : { state: 'user', value: graceValue };
+    : graceValue === 0 && (prior?.startup_grace === 'written' || graceOwnedElsewhere(paths.receiptPath)) ? { state: 'ours', value: 0 } : { state: 'user', value: graceValue };
   return { ...paths, prior, hostedReceipt: hosted, mcp, otherLaneEvents, edited, hooksCurrent, trustCurrent, grace };
 }
 
@@ -508,7 +520,9 @@ export async function removeCodexSetup(receipt: CodexSetupReceipt, receiptPath: 
 
     if (receipt.startup_grace === 'written') {
       const grace = readCodexTomlTable(receipt.config_path, [CODEX_STARTUP_GRACE_KEY]);
-      if (grace === 0 && removeCodexTomlTopLevelInt(receipt.config_path, CODEX_STARTUP_GRACE_KEY, 0, { dryRun: opts.dryRun }) === 'removed') {
+      if (grace === 0 && graceOwnedElsewhere(receiptPath)) {
+        steps.push({ step: 'mcp', action: 'keep', detail: `${CODEX_STARTUP_GRACE_KEY} in ${receipt.config_path}: another gbrain setup install in this config still uses it` });
+      } else if (grace === 0 && removeCodexTomlTopLevelInt(receipt.config_path, CODEX_STARTUP_GRACE_KEY, 0, { dryRun: opts.dryRun }) === 'removed') {
         steps.push({ step: 'mcp', action: 'remove', detail: `${CODEX_STARTUP_GRACE_KEY} from ${receipt.config_path}` });
       } else if (grace !== undefined) {
         steps.push({ step: 'mcp', action: 'preserve', detail: `${CODEX_STARTUP_GRACE_KEY} in ${receipt.config_path} ${grace === 0 ? 'could not be located as one line' : 'changed after setup wrote it'}; kept` });
