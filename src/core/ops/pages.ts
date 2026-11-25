@@ -464,6 +464,7 @@ const delete_page: Operation = {
       }
       return { dry_run: true, action: p.purge === true ? 'purge_page' : 'delete_page', slug: p.slug };
     }
+    if (typeof p.slug === 'string') await (await import('../household/placement.ts')).householdDeleteAdmission(ctx.engine, sourceId, p.slug, ctx.remote);
     return (await import('../repair/origin-carry.ts')).deletePageCarryingPrivate(ctx, p, sourceId);
   },
   cliHints: { name: 'delete', positional: ['slug'] },

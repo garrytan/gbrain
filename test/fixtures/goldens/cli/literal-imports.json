@@ -112,6 +112,9 @@
       "guests": [
         "./commands/guests.ts"
       ],
+      "household": [
+        "./commands/household.ts"
+      ],
       "identity": [
         "./commands/identity.ts"
       ],

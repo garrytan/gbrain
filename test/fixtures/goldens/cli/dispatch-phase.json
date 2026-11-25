@@ -1079,6 +1079,13 @@
         "thinClient": "none",
         "thinClientRoutedSubcommands": []
       },
+      "household": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "identity": {
         "hasSwitchCase": true,
         "phase": "post-connect",
