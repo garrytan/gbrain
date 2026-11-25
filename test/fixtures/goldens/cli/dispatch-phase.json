@@ -1340,6 +1340,13 @@
         "thinClient": "none",
         "thinClientRoutedSubcommands": []
       },
+      "onboarding": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "orphans": {
         "hasSwitchCase": true,
         "phase": "post-connect",

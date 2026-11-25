@@ -159,6 +159,9 @@
       "onboard": [
         "./commands/onboard.ts"
       ],
+      "onboarding": [
+        "./commands/onboarding.ts"
+      ],
       "orphans": [
         "./commands/orphans.ts"
       ],

@@ -91,7 +91,9 @@ A short block in the agent's instruction file, next to the brain-first block
 (`~/.claude/CLAUDE.md` for Claude Code, `$CODEX_HOME/AGENTS.md` for Codex). It names the
 pages to read for the parts you chose, says to state facts about you only from `me/facts`
 and company numbers only from `company/facts`, to add decisions to `company/decisions` as
-dated entries, to save company facts with `--source company`, to quote only the dated
+dated entries, to save company facts with `--source company`, to name the readers of a
+decision the whole team should know (`readable_by: [<member>, ...]` in its frontmatter;
+a `company/` page without it is readable by everyone who can read the company source), to quote only the dated
 lines of a page whose frontmatter says `type: facts` (`me/facts` and `company/facts` do),
 and that a `status: stub` page holds no facts yet. `--no-instructions` skips it, and takes it out again if an
 earlier run wrote it.

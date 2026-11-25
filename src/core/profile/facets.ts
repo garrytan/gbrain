@@ -31,6 +31,9 @@ export const facetKind = (facet: string): ProfileFacet => facet.split('.')[0] as
 export const isProfileMetricLabel = (label: string | null | undefined): boolean =>
   typeof label === 'string' && label.trim().toLowerCase().startsWith(PROFILE_METRIC_PREFIX);
 
+/** SQL twin of facetOfMetric(metric) !== null: a case-insensitive POSIX pattern for `claim_metric ~* pattern`. */
+export const PROFILE_METRIC_SQL_PATTERN = `^\\s*profile\\.\\s*(${PROFILE_FACETS.filter(f => f !== 'size').join('|')}|size\\.${ITEM_RE.source.slice(1, -1)})\\s*$`;
+
 /** The facet a stored claim metric carries (`profile.diet` → `diet`), or null for any other metric or an invalid facet. */
 export function facetOfMetric(metric: string | null | undefined): string | null {
   if (!isProfileMetricLabel(metric)) return null;

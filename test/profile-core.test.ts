@@ -38,6 +38,7 @@ import { packProfile, PROFILE_HEADER } from '../src/core/profile/read.ts';
 import { estimateTokens } from '../src/core/search/token-budget.ts';
 import { codeEntry } from '../src/core/error-catalogue.ts';
 import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
+import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type R = Record<string, any>;
@@ -90,6 +91,12 @@ describe('a facts-fence row carries a profile metric only on its profile home', 
     expect(metric('memory/owner', 'notes/memory/unattributed')).toBeNull();
     expect(metric(undefined, 'notes/memory/unattributed')).toBeNull();
   });
+  test('dropped from a holding page for an entity that is no profile home', () => {
+    expect(metric('companies/acme-example', 'memory/unattributed')).toBeNull();
+    expect(metric('acme-example', 'memory/unattributed')).toBeNull();
+    expect(metric('companies/acme-example', 'companies/memory/unattributed')).toBeNull();
+    expect(metric('memory/members/alice-example', 'memory/unattributed')).toBe('profile.allergy');
+  });
 });
 
 describe('reservation and engine guards', () => {
@@ -109,6 +116,29 @@ describe('reservation and engine guards', () => {
     const brain = { findTrajectory: async (o: { limit: number }) => native.slice(Math.max(0, native.length - o.limit)) };
     const points = await rustFindTrajectory(brain as never, { entitySlug: 'memory/owner', sourceId: 'default', remote: false, limit: 2 } as never);
     expect(points.map(p => p.text)).toEqual(['mrr2', 'mrr3']);
+  });
+  test('Rust trajectory: a profile.* metric that names no facet stays a point', async () => {
+    const row = (metric: string, i: number) => ({ fact_id: i, metric, text: metric + i, valid_from: '2026-01-0' + i, valid_until: null });
+    const native = [row('profile.views', 1), row('mrr', 2), row('profile.size.shoe', 3), row('profile.size.a.b', 4)];
+    const brain = { findTrajectory: async () => native };
+    const points = await rustFindTrajectory(brain as never, { entitySlug: 'memory/owner', sourceId: 'default', remote: false, limit: 10 } as never);
+    expect(points.map(p => p.text)).toEqual(['profile.views1', 'mrr2', 'profile.size.a.b4']);
+  });
+  test('Rust trajectory: pages the native read past more profile rows than one native read returns', async () => {
+    const at = (i: number) => new Date(Date.UTC(2026, 0, 1) + i * 60_000).toISOString();
+    const row = (metric: string, i: number) => ({ fact_id: i, metric, text: metric + i, valid_from: at(i), valid_until: null });
+    const native = [row('mrr', 1), row('mrr', 2), row('mrr', 3), ...Array.from({ length: 1200 }, (_, i) => row('profile.diet', 10 + i))];
+    const reads: Array<string | undefined> = [];
+    const brain = { findTrajectory: async (o: { limit: number; until?: string }) => {
+      reads.push(o.until);
+      const upTo = native.filter(r => o.until === undefined || r.valid_from <= o.until);
+      return upTo.slice(Math.max(0, upTo.length - o.limit));
+    } };
+    const points = await rustFindTrajectory(brain as never, { entitySlug: 'memory/owner', sourceId: 'default', remote: false, limit: 2 } as never);
+    expect(points.map(p => p.text)).toEqual(['mrr2', 'mrr3']);
+    const all = await rustFindTrajectory(brain as never, { entitySlug: 'memory/owner', sourceId: 'default', remote: false, limit: 50 } as never);
+    expect(all.map(p => p.text)).toEqual(['mrr1', 'mrr2', 'mrr3']);
+    expect(reads.length).toBeGreaterThan(2);
   });
 });
 
@@ -130,6 +160,7 @@ describe('gbrain profile output', () => {
   });
   test('renders no-profile, empty, filled, withheld and partial blocks', () => {
     expect(renderProfile({ ...empty, entity: null })).toContain('has no profile');
+    expect(renderProfile({ ...empty, entity: { slug: null, basis: 'identifier_page' } })).toStartWith('Profile of your own page, in a source this credential cannot read (identifier_page)');
     const owner = { slug: 'memory/owner', basis: 'reserved_page' as const };
     expect(renderProfile({ ...empty, entity: owner })).toContain('No profile facts yet');
     const out = renderProfile({ ...empty, entity: owner, constraints: [fact('Allergic\n## to peanuts', 'allergy')], withheld: 2, partial: true });
@@ -186,6 +217,16 @@ describe('profile core on a single-user keyless brain (local CLI)', () => {
     expect(points.map(p => p.metric)).toContain('runway_months');
     expect(points.filter(p => String(p.metric).startsWith('profile.'))).toEqual([]);
     expect(points.some(p => p.text.includes('canarydiet'))).toBe(false);
+  }, 60_000);
+
+  test('find_trajectory keeps a hand-written profile.* metric that names no facet', async () => {
+    await engine.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source, claim_metric, claim_value)
+      VALUES ('default', 'memory/owner', 'Profile views reached 40 canaryviews', 'fact', 'world', 'legacy', 'profile.views', 40),
+             ('default', 'memory/owner', 'Shoe size 11 canarylegacyshoe', 'fact', 'world', 'legacy', 'profile.size.shoe', 11)`);
+    const points = await engine.findTrajectory({ entitySlug: 'memory/owner', sourceId: 'default', remote: false });
+    expect(points.filter(p => p.text.includes('canaryviews')).map(p => p.metric)).toEqual(['profile.views']);
+    expect(points.some(p => p.text.includes('canarylegacyshoe'))).toBe(false);
+    await engine.executeRaw("DELETE FROM facts WHERE fact LIKE '%canaryviews%' OR fact LIKE '%canarylegacyshoe%'");
   }, 60_000);
 
   test('context_pack {profile: true} applies the pack trust floor to profile rows', async () => {
@@ -313,6 +354,62 @@ describe('profile core with the owner found by a person page in another source (
     expect(all).toContain('people-src');
     expect(await sourceOf('canarysrcremote')).toBeUndefined();
   }, 60_000);
+
+  test('an unfaceted preference joins the profile only from the profile page itself, not from a sibling slug', async () => {
+    await run(engine, 'remember', { fact: 'Prefers aisle seats canaryselfpref', kind: 'preference', entity: 'people/alice-example', source_id: 'people-src', provenance: 'p', infer_entity: false });
+    expect(await sourceOf('canaryselfpref')).toEqual({ source_id: 'people-src', entity_slug: 'people/alice-example' });
+    await engine.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source)
+      VALUES ('people-src', 'alice-example', 'Prefers window seats canarysiblingpref', 'preference', 'world', 'legacy')`);
+    const prefs = (await run(engine, 'context_pack', { profile: true })).profile.preferences.map((f: R) => f.claim);
+    expect(prefs).toEqual(['Prefers aisle seats canaryselfpref']);
+  }, 60_000);
+
+  test('a remote owner credential whose grant excludes the owner page\'s source is not told that page\'s slug', async () => {
+    const out = await dispatchToolCall(engine, 'context_pack', { profile: true },
+      { remote: true, transport: 'http', sourceId: 'default', auth: await provider().verifyAccessToken(token) as unknown as AuthInfo });
+    const profile = JSON.parse(out.content[0]!.text).profile;
+    expect(profile.entity).toEqual({ slug: null, basis: 'identifier_page' });
+    expect(profile.partial).toBe(true);
+    expect(out.content.map(c => c.text).join('\n') + JSON.stringify(out.structuredContent ?? {})).not.toContain('people/alice-example');
+  }, 60_000);
+});
+
+describe('a bound owner\'s private profile fact survives a facts rebuild from its member page fence (repo-less)', () => {
+  let engine: BrainEngine;
+  let token = '';
+  const provider = () => new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
+  const remote = async (op: string, params: R) => dispatchToolCall(engine, op, params,
+    { remote: true, transport: 'http', sourceId: 'people-src', auth: await provider().verifyAccessToken(token) as unknown as AuthInfo });
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({ engine: 'pglite' } as never);
+    await engine.initSchema();
+    __resetPrivateVisibilityCacheForTests();
+    await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('people-src', 'people-src') ON CONFLICT (id) DO NOTHING");
+    await addMember(engine, 'owner-example', { email: 'owner@example.com' });
+    await setOwner(engine, 'owner-example');
+    await engine.putPage('people/owner-example', { type: 'person', title: 'Owner Example', compiled_truth: 'Owner Example is a person.', frontmatter: { email: 'owner@example.com' } }, { sourceId: 'people-src' });
+    const c = await provider().registerClientManual('p1-rebuild-' + randomUUID().slice(0, 8), ['client_credentials'], 'read write', [], 'people-src');
+    await bindCredential(engine, { kind: 'client', id: c.clientId }, { member: 'owner-example' });
+    token = (await provider().exchangeClientCredentials(c.clientId, c.clientSecret ?? '')).access_token;
+  }, 120_000);
+  afterAll(async () => { await engine.disconnect(); });
+
+  test('the allergy is in the local and remote profile after its row is rebuilt from the member page fence', async () => {
+    const saved = await remote('remember', { fact: 'Allergic to kiwi canaryrebuild', facet: 'allergy', provenance: 'told me 2026-11-25' });
+    expect(saved.isError).not.toBe(true);
+    expect(await factRow(engine, 'canaryrebuild')).toMatchObject({ entity_slug: 'people/owner-example', claim_metric: 'profile.allergy', visibility: 'private',
+      source_markdown_slug: 'memory/members/owner-example' });
+    await engine.executeRaw("DELETE FROM facts WHERE fact LIKE '%canaryrebuild%'");
+    const rebuilt = await runExtractFacts(engine, { sourceId: 'people-src', deferEmbedding: true });
+    expect(rebuilt.factsInserted).toBe(1);
+    expect(await factRow(engine, 'canaryrebuild')).toMatchObject({ claim_metric: 'profile.allergy', visibility: 'private' });
+    const local = (await run(engine, 'context_pack', { profile: true })).profile;
+    expect(local.entity).toEqual({ slug: 'people/owner-example', basis: 'identifier_page' });
+    expect(local.constraints.map((f: R) => f.claim)).toEqual(['Allergic to kiwi canaryrebuild']);
+    const read = JSON.parse((await remote('context_pack', { profile: true })).content[0]!.text).profile;
+    expect(read.constraints.map((f: R) => f.claim)).toEqual(['Allergic to kiwi canaryrebuild']);
+  }, 60_000);
 });
 
 describe('the owner profile survives an owner identity change, and a null visibility keeps allergies private (repo-less)', () => {
@@ -325,6 +422,19 @@ describe('the owner profile survives an owner identity change, and a null visibi
     await run(engine, 'remember', { items: [{ fact: 'Allergic to milk canarynullbatch', facet: 'allergy', visibility: null }], provenance: 'p' });
     expect((await factRow(engine, 'canarynullone'))?.visibility).toBe('private');
     expect((await factRow(engine, 'canarynullbatch'))?.visibility).toBe('private');
+  }, 60_000);
+
+  test('a batched remember routes each faceted item to the profile with its own metric, allergy private by default', async () => {
+    await run(engine, 'remember', { items: [
+      { fact: 'Eats pescatarian canarybatchdiet', facet: 'diet' },
+      { fact: 'Allergic to shellfish canarybatchallergy', facet: 'allergy' },
+      { fact: 'Ring size 7 canarybatchring', facet: 'size.ring' },
+      { fact: 'The harbor ledger closes on Fridays canarybatchplain', infer_entity: false },
+    ], provenance: 'batch 2026-11-25' });
+    expect(await factRow(engine, 'canarybatchdiet')).toMatchObject({ entity_slug: 'memory/owner', claim_metric: 'profile.diet', visibility: 'world' });
+    expect(await factRow(engine, 'canarybatchallergy')).toMatchObject({ entity_slug: 'memory/owner', claim_metric: 'profile.allergy', visibility: 'private' });
+    expect(await factRow(engine, 'canarybatchring')).toMatchObject({ entity_slug: 'memory/owner', claim_metric: 'profile.size.ring' });
+    expect(await factRow(engine, 'canarybatchplain')).toMatchObject({ entity_slug: null, claim_metric: null });
   }, 60_000);
 
   test('an allergy saved on memory/owner is still in the profile after the owner is named', async () => {
