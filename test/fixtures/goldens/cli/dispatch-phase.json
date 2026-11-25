@@ -1359,6 +1359,13 @@
         "thinClient": "none",
         "thinClientRoutedSubcommands": []
       },
+      "policy": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "post-upgrade": {
         "hasSwitchCase": false,
         "phase": "pre-connect",

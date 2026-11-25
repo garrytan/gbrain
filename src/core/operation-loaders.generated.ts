@@ -40,6 +40,7 @@ const load_page_edit = () => import('./ops/page-edit.ts') as Promise<Record<stri
 const load_page_upload = () => import('./ops/page-upload.ts') as Promise<Record<string, unknown>>;
 const load_pages = () => import('./ops/pages.ts') as Promise<Record<string, unknown>>;
 const load_persistence = () => import('./ops/persistence.ts') as Promise<Record<string, unknown>>;
+const load_policy = () => import('./ops/policy.ts') as Promise<Record<string, unknown>>;
 const load_purge = () => import('./ops/purge.ts') as Promise<Record<string, unknown>>;
 const load_qm_memory = () => import('./ops/qm-memory.ts') as Promise<Record<string, unknown>>;
 const load_questions = () => import('./ops/questions.ts') as Promise<Record<string, unknown>>;
@@ -162,6 +163,9 @@ export const OPERATION_LOADERS: Record<string, readonly [() => Promise<Record<st
   "storage_update": [load_storage_manifest, "storageManifestOperations"],
   "reveal_secret": [load_secrets, "secretsOperations"],
   "check_claims": [load_claims, "claimsOperations"],
+  "policy_check": [load_policy, "policyOperations"],
+  "agent_policy": [load_policy, "policyOperations"],
+  "capabilities": [load_policy, "policyOperations"],
   "submit_job": [load_jobs, "jobsOperations"],
   "get_job": [load_jobs, "jobsOperations"],
   "wait_job": [load_jobs, "jobsOperations"],

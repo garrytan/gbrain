@@ -114,6 +114,8 @@ const CLASSIFIED: Record<string, Args | { skip: string }> = {
   find_contradictions: { slug: GUEST },
   find_experts: { topic: SENTINEL },
   find_trajectory: { entity_slug: GUEST },
+  policy_check: { skip: 'answers from the owner-approved agent policy in the default source only; no guest-source text reaches it' },
+  agent_policy: { skip: 'returns the owner-approved agent policy rules from the default source only; no guest-source text reaches it' },
   code_callers: { symbol: SENTINEL }, code_callees: { symbol: SENTINEL }, code_def: { symbol: SENTINEL }, code_refs: { symbol: SENTINEL },
   code_blast: { symbol: SENTINEL }, code_flow: { entry_point: SENTINEL },
   open_loops: {},
