@@ -80,6 +80,11 @@ gbrain setup claude-code --shape both --notes ~/notes --docs ~/acme-example/docs
 
 `--shape both` does both parts.
 
+A `--docs` or `--transcripts` import that fails, can't read its folder, or can't run
+because the `company` source could not be set up gets the same treatment as a failed
+`--notes` import: setup finishes the rest, prints the error and the import command on
+stderr, and exits 1.
+
 ## The instruction block
 
 A short block in the agent's instruction file, next to the brain-first block
