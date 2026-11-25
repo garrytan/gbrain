@@ -37,7 +37,7 @@ import { serializePageToMarkdown } from '../markdown.ts';
 import { strikeFenceRow } from '../facts/forget.ts';
 import { opError, OperationError, type OperationContext } from '../ops/contract.ts';
 import { trustedCliRequired } from '../ops/op-fix.ts';
-import { factOnMemberPageSql, factPageReasons, factProvenanceSlugSql, unpagedFactSql } from '../facts/private-fact-pages.ts';
+import { factProvenanceSlugSql } from '../facts/private-fact-pages.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { authorizeWrite } from '../persistence/authority.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
@@ -79,41 +79,14 @@ interface Group { mode: 'open' | 'close'; source_id: string; slug: string; fence
 interface OpenItem extends RepairItem { group: Group; hash: string; ledger: OpenFactsLedger; brain_id: string }
 interface PlannedRow extends FactRef { cls: string; fence: boolean }
 
-/** A fact's class: unpaged:<lane> (no holding page, or a transcript lane), fenced, or unfenced. */
-export const openFactClassSql = (f: string) => `(CASE WHEN ${unpagedFactSql(f)} THEN 'unpaged:' || COALESCE(NULLIF(${f}.source, ''), 'unknown')
-  WHEN ${f}.row_num IS NOT NULL THEN 'fenced' ELSE 'unfenced' END)`;
-
-/**
- * Why a private fact `f` stays private, or NULL when it may open: the one exclusion expression the preview, the reason
- * counts and the locked apply share. A trust contest is any pending proposal on the row (a hold, a forget, a supersession)
- * or a widening (`before_state.visibility`) the owner rejected or undid: an owner's decision is never overridden.
- */
-export function openFactsReasonSql(f: string): string {
-  return `(CASE
-    WHEN ${f}.expired_at IS NOT NULL THEN 'expired'
-    WHEN ${f}.superseded_by IS NOT NULL THEN 'superseded'
-    WHEN ${f}.valid_until IS NOT NULL AND ${f}.valid_until <= now() THEN 'lapsed'
-    WHEN ${factOnMemberPageSql(f)} THEN 'member_page'
-    WHEN EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = ${f}.source_id
-        AND w.fact_hash IN (gbrain_fact_fingerprint(${f}.fact), gbrain_fact_fingerprint_v1(${f}.fact)) AND (w.subject = '*' OR w.subject = ${f}.entity_slug))
-      OR EXISTS (SELECT 1 FROM fact_purges x WHERE x.source_id = ${f}.source_id AND x.fact_hash = gbrain_fact_fingerprint(${f}.fact)
-        AND (x.subject = '*' OR x.subject = ${f}.entity_slug)) THEN 'withdrawn'
-    WHEN EXISTS (SELECT 1 FROM trust_proposals tp WHERE ((tp.target_table = 'facts' AND tp.target_id = ${f}.id) OR (tp.related_table = 'facts' AND tp.related_id = ${f}.id))
-        AND (tp.status = 'pending' OR (tp.action IN ('supersede_fact', 'confirm') AND tp.status IN ('rejected', 'undone') AND tp.before_state->'visibility' IS NOT NULL))) THEN 'contested'
-    ${factPageReasons(f).map(([reason, condition]) => `WHEN ${condition} THEN '${reason}'`).join('\n    ')}
-    ELSE NULL END)`;
-}
-
-/** The selection's private facts, before reasons: one source, created before the cut, the named ids. */
-const BASE = (f: string) => `${f}.source_id = $1 AND ${f}.visibility = 'private' AND ${f}.created_at < $2::timestamptz AND ($3::bigint[] IS NULL OR ${f}.id = ANY($3::bigint[]))`;
+/** The class and reason builders moved to engine-sql/open-facts-scans.ts with the two scans; re-exported for their callers. */
+export { openFactClassSql, openFactsReasonSql } from '../engine-sql/open-facts-scans.ts';
+import { openFactClassSql, openFactsReasonSql } from '../engine-sql/open-facts-scans.ts';
 
 /** One keyset window of eligible facts: ids in (after, upper], the selected classes, every exclusion in the statement. */
 async function planWindow(engine: BrainEngine, sel: Selection, limit: number, upper: number | null): Promise<PlannedRow[]> {
-  const rows = await engine.executeRaw<{ id: number; row_num: number | null; fact: string; source_markdown_slug: string | null; cls: string }>(
-    `SELECT f.id, f.row_num, f.fact, f.source_markdown_slug, ${openFactClassSql('f')} AS cls
-    FROM facts f WHERE ${BASE('f')} AND f.id > $4 AND ($5::bigint IS NULL OR f.id <= $5::bigint)
-      AND ${openFactClassSql('f')} = ANY($6::text[]) AND ${openFactsReasonSql('f')} IS NULL
-    ORDER BY f.id LIMIT $7`, [sel.source_id, sel.created_before, sel.ids, sel.after, upper, sel.classes, limit], bounded);
+  const rows = await engine.listOpenFactsWindow({ sourceId: sel.source_id, createdBefore: sel.created_before, ids: sel.ids }, sel.after, upper, sel.classes, limit,
+    bounded.timeoutMs);
   return rows.map(row => {
     const rowNum = row.row_num === null ? null : Number(row.row_num);
     return { id: Number(row.id), row_num: rowNum, fact: row.fact, holder: row.source_markdown_slug, cls: row.cls, fence: row.cls === 'fenced' };
@@ -124,8 +97,7 @@ async function planWindow(engine: BrainEngine, sel: Selection, limit: number, up
 async function countReasons(engine: BrainEngine, sel: Selection): Promise<{ eligible: Record<string, number>; excluded: Record<string, number> } | null> {
   let rows: Array<{ cls: string; reason: string; n: number }>;
   try {
-    rows = await engine.executeRaw(`SELECT cls, reason, count(*)::int AS n FROM (SELECT ${openFactClassSql('f')} AS cls, COALESCE(${openFactsReasonSql('f')}, 'eligible') AS reason
-      FROM facts f WHERE ${BASE('f')}) x GROUP BY cls, reason ORDER BY cls COLLATE "C", reason COLLATE "C"`, [sel.source_id, sel.created_before, sel.ids], bounded);
+    rows = await engine.countOpenFactReasons({ sourceId: sel.source_id, createdBefore: sel.created_before, ids: sel.ids }, bounded.timeoutMs);
   } catch (error) {
     if ((error as { code?: string } | null)?.code === '57014') return null;
     throw error;
@@ -260,8 +232,8 @@ async function planUndo(engine: BrainEngine, scope: RepairScope, sel: Selection,
 }
 
 /**
- * The window, its counts and the undo's rows classify each fact by the privacy of its page (folder rules, privacy aliases, derivation lineage, withdrawals and
- * trust proposals), a predicate the Rust store does not carry, so a Rust brain stops here by name, before any of those reads.
+ * The undo's rows and the apply's locked writes still read and write facts through raw SQL, so a Rust brain stops them here by
+ * name, before any of those reads; the preview's window and counts are typed (engine-sql/open-facts-scans.ts).
  */
 function refusePrivacyScan(engine: BrainEngine): void {
   requireRawSql(engine, 'repair open-facts privacy scan');
@@ -303,7 +275,6 @@ export const openFactsRepair: RepairHandler = {
         listing: listingOf(groups), details: { mode: 'undo', ledger: request.ledger.path, skipped, listed: groups.reduce((n, g) => n + g.facts.length, 0) } };
     }
     const size = Math.min(Math.max(1, opts?.limit ?? OPEN_FACTS_WINDOW), OPEN_FACTS_WINDOW_MAX);
-    refusePrivacyScan(engine);
     const window = await planWindow(engine, sel, size, null);
     const upper = window.length >= size ? window[window.length - 1]!.id : null;
     const groups = groupRows('open', sel, window, upper);

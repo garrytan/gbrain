@@ -206,7 +206,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readRetainedSources', 'readSegmentedVersionBodyBytes', 'readSourceCheckoutPath', 'readSourceChunkerVersion', 'readSourceIncarnation',
   'readSourceJobCounts', 'readSourceLocalPath', 'readSourceLocalPathForVerify', 'readSourceMembership',
   'readSourcePurgeFlags', 'readSourceRow', 'readSourcesNotReadable', 'readSourceState', 'readSourceWriteRow', 'readStoredConversationEntry',
-  'readStoredPageTier', 'readSupersessionReplacement', 'readTopologyChange', 'readTrustGeneration',
+  'readStoredPageTier', 'readSupersessionReplacement', 'readTopologyChange', 'readTrustGeneration', 'readUntakenWaitingJobs',
   'readVersionAttributions', 'readVoiceGateHealth', 'readWaitingQueueDepths', 'readWaitingScopeState',
   'readWakeDoctor', 'readWedgeSignals', 'readWithdrawalAnchor', 'readWithdrawalDiscovery',
   'readWriteAttributionNames', 'readWriteRequest', 'readWriteRequestById', 'readWriteRequestProgress',
@@ -392,6 +392,11 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'listQuotedTakeRows', 'listPageFenceFactCells', 'hasPositionedPageFacts', 'hasFenceAbsentHold', 'listPageTakeRowNums',
   'listOccupiedFenceRowNums', 'listTrustedPrivateCopies', 'readLiveFenceFactAt', 'listFactsAboveWriter',
   'readRowTrustTier', 'readTierProjectionPage', 'readPageInlineBody',
+
+  // The repair applies' rechecks (engine-sql/repair-applies.ts).
+  'listLiveDuplicateRows', 'listCommittedRestorePages', 'listActivePositionedFactIds', 'readFactRestorePage', 'readSourceCloneRow', 'readPageVersionRow', 'hasDatabaseOnlyClaim', 'readAtomGeneration', 'listPageAccessKeys',
+  'listAtomLineageRows', 'listChronicleEventVisibilityRows', 'listAliasOnlyPrivatePages', 'listOpenTwinRows', 'listOpenFactsWindow', 'countOpenFactReasons',
+  'listLabelledPages', 'listLiveLabelRows', 'listClearDependents', 'listContextualRetrievalModes', 'listUnembeddedChunkPages',
   // The page purge port's own typed reads (each reads only: its engine-sql function and the store function it calls):
   'countPageCascadeRows', 'countPageManifestRows', 'factsOrAliasesMayMatch', 'isConceptStillHeld',
   'listCatalogForeignKeys', 'listCatalogRelations', 'listCheckoutFiles', 'listConceptIncomingLinks', 'listDerivationClaimForms', 'listHorizonScanRows',
@@ -588,6 +593,18 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   repointSupersededToKept: 'listActiveFactsForEntity for that fact\'s entity',
   restoreOntologyFact: 'listActiveFactsForEntity for that fact\'s entity',
   setConsolidatedFactValidUntil: 'listActiveFactsForEntity for that fact\'s entity',
+  // The repair applies' writes (engine-sql/repair-applies.ts).
+  restoreConsolidationTie: 'listClosedConsolidationTies for that source (a reopened fact is no longer a closed tie)',
+  supersedeDuplicateFacts: 'listLiveDuplicateRows for those facts (a superseded copy no longer reads live)',
+  linkStruckDuplicateFacts: 'listFactRowsByIds for those facts (their superseded_by names the kept fact)',
+  restoreExtractorFact: 'listActivePositionedFactIds for that fact (a restored fact is active at its row)',
+  moveFactClaimDates: 'listFactsOnValidDay for that source and day (a moved fact no longer reads on the bulk day)',
+  detachFenceRowFacts: 'hasDatabaseOnlyClaim for that fact\'s claim (a detached fact is database-only)',
+  lockApprovedFacts: nothingLock,
+  tightenDatabaseFactVisibility: 'listWorldFactsFromPrivateSources for those facts (a tightened fact is no longer world)',
+  expireApprovedFacts: 'listActivePositionedFactIds for those facts (an expired fact is no longer active)',
+  // Additive: a rerun bumps the generation once more, which only re-keys the page's next atom extraction (a rebuildable run key).
+  recordAtomGenerationBump: 'readAtomGeneration for that page (the generation moved on)',
   closeOpenLoop: 'listOpenLoops for that source', upsertOpenLoop: 'listOpenLoops for that source',
   completeSubagentToolExecution: 'summarizeSubagentToolExecutions for that job',
   failSubagentToolExecution: 'summarizeSubagentToolExecutions for that job',

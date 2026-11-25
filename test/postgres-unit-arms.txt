@@ -417,6 +417,7 @@ test/engine-parity/projection-reseal.test.ts
 test/engine-parity/publication-retry-limit.test.ts
 test/engine-parity/publication-source-lock.test.ts
 test/engine-parity/purge-dry-run.test.ts
+test/engine-parity/purge-gazetteer.test.ts
 test/engine-parity/purge-plan.test.ts
 test/engine-parity/purge-receipt-members.test.ts
 test/engine-parity/purge-slug-stores.test.ts
@@ -558,6 +559,7 @@ test/engine-parity/trust-reads.test.ts
 test/engine-parity/trust-tier-reads.test.ts
 test/engine-parity/trust-withdrawals.test.ts
 test/engine-parity/trust-write-gate.test.ts
+test/engine-parity/twin-merge-rows.test.ts
 test/engine-parity/typed-config-reads.test.ts
 test/engine-parity/unbound-claim.test.ts
 test/engine-parity/unowned-refusal-sites.test.ts

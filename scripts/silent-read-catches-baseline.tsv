@@ -1320,7 +1320,6 @@ src/core/repair/file-drift.ts#fileDriftConsentText	catch_empty	1
 src/core/repair/label-write.ts#labelFileRefusal>read	catch_empty	1
 src/core/repair/missing-tables.ts#apply<anon@1>	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/repair/open-facts.ts#applyFence	capability_refusal_swallowed	1
-src/core/repair/open-facts.ts#countReasons	capability_refusal_swallowed	1
 src/core/repair/origin-twins-heal.ts#healOriginTwinsAfterManagedSync	capability_refusal_swallowed	1
 src/core/repair/origin-twins.ts#originFileId	catch_empty	1
 src/core/repair/redacted-facts.ts#hashParts	promise_catch_empty	1

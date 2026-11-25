@@ -55,10 +55,10 @@ test/engine-parity/collate-engine-sql.test.ts	29	6
 test/engine-parity/collate-facts-home.test.ts	1	0
 test/engine-parity/collate-ontology-config.test.ts	4	1
 test/engine-parity/collate-outputs.test.ts	3	4
-test/engine-parity/collate-persistence-a.test.ts	15	8
+test/engine-parity/collate-persistence-a.test.ts	16	7
 test/engine-parity/collate-persistence-b.test.ts	12	12
 test/engine-parity/collate-referrer-ties.test.ts	3	0
-test/engine-parity/collate-repair-scans.test.ts	0	4
+test/engine-parity/collate-repair-scans.test.ts	4	0
 test/engine-parity/collate-schema-pack-samples.test.ts	4	0
 test/engine-parity/collate-slug-sources.test.ts	7	1
 test/engine-parity/collate-store-listings.test.ts	3	18
@@ -260,6 +260,7 @@ test/engine-parity/projection-reseal.test.ts	2	0
 test/engine-parity/publication-retry-limit.test.ts	3	0
 test/engine-parity/publication-source-lock.test.ts	4	0
 test/engine-parity/purge-dry-run.test.ts	2	0
+test/engine-parity/purge-gazetteer.test.ts	2	0
 test/engine-parity/purge-plan.test.ts	13	0
 test/engine-parity/purge-receipt-members.test.ts	3	0
 test/engine-parity/purge-slug-stores.test.ts	0	2
@@ -383,7 +384,7 @@ test/engine-parity/takes.test.ts	32	0
 test/engine-parity/telemetry.test.ts	10	0
 test/engine-parity/think-gather-takes.test.ts	1	0
 test/engine-parity/tie-break-stale-orphan-edge-downgrade.test.ts	0	4
-test/engine-parity/tie-purge-files-links-facts.test.ts	1	4
+test/engine-parity/tie-purge-files-links-facts.test.ts	4	1
 test/engine-parity/timeline-add.test.ts	6	0
 test/engine-parity/timeline-held-rows.test.ts	2	0
 test/engine-parity/timeline-reads.test.ts	4	0
@@ -400,6 +401,7 @@ test/engine-parity/trust-reads.test.ts	13	0
 test/engine-parity/trust-tier-reads.test.ts	27	0
 test/engine-parity/trust-withdrawals.test.ts	8	0
 test/engine-parity/trust-write-gate.test.ts	5	1
+test/engine-parity/twin-merge-rows.test.ts	3	0
 test/engine-parity/typed-config-reads.test.ts	3	0
 test/engine-parity/unbound-claim.test.ts	0	3
 test/engine-parity/unowned-refusal-sites.test.ts	4	0

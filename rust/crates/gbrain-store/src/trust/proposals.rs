@@ -572,6 +572,28 @@ pub(crate) fn lower_page_prior_tiers(
         .collect())
 }
 
+/// `gbrain repair open-facts`' trust contest on fact `fact_id` (`openFactsReasonSql`, 'contested'): a proposal naming the
+/// fact as its target or related row that is pending, or a `supersede_fact` or `confirm` widening (`before_state` has a
+/// `visibility` key) the owner rejected or undid.
+pub(crate) fn open_fact_contested(read: &dyn KvRead, fact_id: i64) -> Result<bool> {
+    for id in ids_naming(read, "facts", fact_id)? {
+        let Some(p) = read_record(read, id)? else {
+            return Err(corrupt("row index entry without its row"));
+        };
+        if !p.names("facts", fact_id) {
+            continue;
+        }
+        if p.status == "pending"
+            || (matches!(p.action.as_str(), "supersede_fact" | "confirm")
+                && matches!(p.status.as_str(), "rejected" | "undone")
+                && p.before_state.get("visibility").is_some())
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// The targets (`target_table`, `target_id`) of the visibility proposals that name fact `fact_id` as their related row,
 /// whatever their status: the `supersede_fact` and `confirm` proposals whose `before_state` has a `visibility` key
 /// (`heldRowSql`'s grant clause, `eligibility/fence-overlay.ts`). Ascending by proposal id.

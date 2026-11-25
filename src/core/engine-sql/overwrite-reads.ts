@@ -8,8 +8,10 @@
  * - `listVersionsAfter`: the later versions of the candidate pages.
  * - `listOverwriteLivePages`: each candidate page's revision, its writing request, content and tags.
  * - `readVersionContent`: one version's content columns (the repair renders it as `revert_version` does).
+ * - `readPageVersionRow`: the whole version row `revert_version` reverts to (src/core/persistence/page-prepare.ts).
  */
 import type { BrainEngine } from '../engine.ts';
+import type { PageVersion } from '../page-state/version-types.ts';
 
 type Raw = Pick<BrainEngine, 'executeRaw'>;
 
@@ -63,4 +65,11 @@ export async function readVersionContent(raw: Raw, versionId: number, pageId: nu
   const [row] = await raw.executeRaw<OverwriteContentRow>(
     'SELECT body_storage, title, type, compiled_truth, timeline, frontmatter, tags FROM page_versions WHERE id=$1 AND page_id=$2', [versionId, pageId]);
   return row ?? null;
+}
+
+/** The whole row of version `versionId` of page `pageId`, as `revert_version` reads it (moved from page-prepare.ts unchanged), or null. */
+export async function readPageVersionRow(raw: Raw, versionId: number, pageId: number): Promise<PageVersion | null> {
+  const [version] = await raw.executeRaw<PageVersion>(
+        'SELECT * FROM page_versions WHERE id=$1 AND page_id=$2', [versionId, pageId]);
+  return version ?? null;
 }

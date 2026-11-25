@@ -46,7 +46,7 @@ fn all_files(read: &dyn KvRead) -> Result<Vec<FileRecord>> {
     Ok(rows.into_iter().map(|(_, file)| file).collect())
 }
 
-/// `ORDER BY page_slug, filename` (nulls last), then the path for a tie.
+/// `ORDER BY page_slug, filename, id` (nulls last): equal names fall to the file id, lowest first.
 fn by_slug_then_name(a: &FileRecord, b: &FileRecord) -> Ordering {
     let slugs = match (&a.page_slug, &b.page_slug) {
         (Some(x), Some(y)) => x.cmp(y),
@@ -56,13 +56,12 @@ fn by_slug_then_name(a: &FileRecord, b: &FileRecord) -> Ordering {
     };
     slugs
         .then_with(|| a.filename.cmp(&b.filename))
-        .then_with(|| a.storage_path.cmp(&b.storage_path))
+        .then_with(|| a.id.cmp(&b.id))
 }
 
+/// `ORDER BY filename, id`.
 fn by_name(a: &FileRecord, b: &FileRecord) -> Ordering {
-    a.filename
-        .cmp(&b.filename)
-        .then_with(|| a.storage_path.cmp(&b.storage_path))
+    a.filename.cmp(&b.filename).then_with(|| a.id.cmp(&b.id))
 }
 
 fn by_path(a: &FileRecord, b: &FileRecord) -> Ordering {

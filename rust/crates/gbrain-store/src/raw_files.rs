@@ -434,6 +434,28 @@ pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Resul
     Ok(())
 }
 
+/// The first table among `raw_data` and `files` that holds a row of page `page_id` (the twin merge's foreign-key
+/// check: a move onto a missing survivor fails at that table), or none.
+pub(crate) fn first_page_child_table(
+    read: &dyn KvRead,
+    page_id: u64,
+) -> Result<Option<&'static str>> {
+    for (table, prefix) in [
+        ("raw_data", raw_page_prefix(page_id)),
+        ("files", file_page_prefix(page_id)),
+    ] {
+        let mut any = false;
+        scan_prefix(read, &prefix, false, &mut |_, _| {
+            any = true;
+            false
+        })?;
+        if any {
+            return Ok(Some(table));
+        }
+    }
+    Ok(None)
+}
+
 /// The twin merge's `UPDATE raw_data SET page_id = to WHERE page_id = from AND NOT EXISTS (a `to` row of the same
 /// source)`: the twin's raw data of a source the survivor lacks moves to the survivor, and the rest stays on the
 /// twin. A missing `to` page refuses as the foreign key does when a row would move.

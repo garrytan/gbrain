@@ -83,6 +83,7 @@ export const JOBS_MEMBERS = {
   listPrivateQueueHealth: 'minion_queue',
   readWedgeSignals: 'minion_queue',
   readOldestWaitingAge: 'minion_queue',
+  readUntakenWaitingJobs: 'minion_queue',
   countWaitingJobs: 'minion_queue',
   countWaitingJobsForNames: 'minion_queue',
   listStuckActiveJobsByName: 'minion_queue',

@@ -220,6 +220,7 @@ pub(crate) fn table_rows(
         "fact_relink_attempts" => super::relink::purge_probe_rows(read, source_id)?,
         "ingest_log" => crate::stats::purge_probe_rows(read)?,
         "mcp_request_log" => crate::telemetry::purge_probe_rows(read)?,
+        "mention_gazetteer_entries" => crate::mention_state::purge_probe_rows(read)?,
         "minion_attachments" => crate::jobs::purge_probe_attachment_rows(read)?,
         "minion_inbox" => crate::jobs::purge_probe_inbox_rows(read)?,
         "minion_jobs" => crate::jobs::purge_probe_job_rows(read)?,

@@ -42,6 +42,10 @@ import type { HeadBlockerReadOpts, HeadBlockerRow, RecoveringHeadRow } from '../
 import type { IncompleteSyncReceiptRow, IncompleteSyncReceiptSpec, OpenPassWorkSpec } from '../engine-sql/checkpoint-validation.ts';
 
 export interface PersistenceMembers {
+  /** The atom generation a page's content keys on (engine-sql/atom-generation.ts): the kept content's, else the current one, 0 with none. Reads op_checkpoints. */
+  readAtomGeneration(pageId: number, contentHash: string): Promise<number>;
+  /** Bumps a page's atom generation and drops the extraction state and completed managed-atoms runs of its other content. Writes op_checkpoints and extract_atoms_page_state. */
+  recordAtomGenerationBump(sourceId: string, incarnation: string, pageId: number, keepContentHash: string | null, keepGeneration: number | null): Promise<void>;
   // Write-journal statements (engine-sql/persistence-journal.ts): the text journal.ts, limits.ts and held-reads.ts sent through executeRaw.
   /** The journal limit config rows, then one row with a null key: the largest page stored in segments, or 'unindexed'. */
   readJournalLimitRows(): Promise<Array<{ key: string | null; value: string | null }>>;
