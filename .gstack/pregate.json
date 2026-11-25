@@ -119,6 +119,7 @@
     "rust/scripts/**": ["rust/smoke/smoke.test.ts"],
     "rust/smoke/**": ["rust/smoke/smoke.test.ts"],
     "rust/bench/baseline/**": ["rust/bench/baseline/baseline.test.ts"],
+    "rust/bench/keyed-lookups/**": [],
     "rust/bench/corpus/**": ["rust/bench/baseline/baseline.test.ts"],
     "rust/bench/Cargo.lock": ["rust/bench/tests/sim_kill.rs"],
     "rust/bench/.gitignore": ["rust/bench/tests/sim_kill.rs"],
