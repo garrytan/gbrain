@@ -54,7 +54,7 @@ export type HistoryStage = 'latest' | 'range';
 export type IneligibleReason = 'existing_brain' | 'pages_present' | 'shared_brain' | 'audience_unproven' | 'archive_off' | 'pinned_source' | 'team_brain' | 'member_bound';
 
 export interface HistoryFileRef { harness: HistoryHarness; path: string }
-export interface PendingDecision { id: string; stage: HistoryStage; days: number; from: string; to: string; preview_id: string; files: HistoryFileRef[]; created_at: string; expires_at: string; consumed_at?: string }
+export interface PendingDecision { id: string; stage: HistoryStage; days: number; from: string; to: string; source_id: string; preview_id: string; files: HistoryFileRef[]; created_at: string; expires_at: string; consumed_at?: string }
 export interface StageRecord {
   status: StageStatus; at: string; preview_id: string; from: string; to: string; sessions_imported: number; days_written: number;
   decision_id?: string; links?: LinksEffect['status']; projects?: Record<string, string>;
@@ -93,6 +93,7 @@ const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 const LABEL: Record<string, string> = { 'claude-code': 'Claude Code', codex: 'Codex', openclaw: 'OpenClaw' };
 export const harnessLabel = (h: string) => LABEL[h] ?? h;
 const SEP = '\u0000';
+const SETTLED = new Set(['written', 'unchanged', 'accepted', 'kept', 'skipped_legacy']);
 
 /** Session roots the import reads: the harness's own folders, or one folder holding claude-code/, codex/ and openclaw/. */
 export function historyRoots(opts: { dir?: string; env?: NodeJS.ProcessEnv; home?: string } = {}): Array<{ harness: HistoryHarness; root: string }> {
@@ -256,7 +257,7 @@ export async function previewHistory(engine: BrainEngine, opts: { stage: History
 /** Stores the preview as the one pending decision (replacing an unconsumed one), so an answer later imports exactly it. */
 export async function offerHistoryDecision(engine: BrainEngine, preview: HistoryPreview, now = new Date()): Promise<PendingDecision> {
   const decision: PendingDecision = {
-    id: randomUUID().slice(0, 13), stage: preview.stage, days: preview.days, from: preview.from, to: preview.to, preview_id: preview.preview_id,
+    id: randomUUID().slice(0, 13), stage: preview.stage, days: preview.days, from: preview.from, to: preview.to, source_id: preview.source_id, preview_id: preview.preview_id,
     files: preview.files, created_at: now.toISOString(), expires_at: new Date(now.getTime() + HISTORY_DECISION_TTL_MS).toISOString(),
   };
   await updateReceipt(engine, r => ({ ...r, pending: decision }));
@@ -275,7 +276,7 @@ export async function declineHistory(engine: BrainEngine, stage: HistoryStage, n
 export type DecisionClaim = { kind: 'claimed'; decision: PendingDecision } | { kind: 'consumed'; stage: HistoryStage; record?: StageRecord };
 
 /** Consumes a pending decision once: a second answer gets the first one's record; an expired or unknown id is refused. */
-async function claimDecision(engine: BrainEngine, id: string, now: Date): Promise<DecisionClaim> {
+async function claimDecision(engine: BrainEngine, id: string, now: Date, sourceId: string): Promise<DecisionClaim> {
   let claim: DecisionClaim | null = null;
   await updateReceipt(engine, r => {
     const done = (Object.entries(r.stages) as Array<[HistoryStage, StageRecord]>).find(([, rec]) => rec.decision_id === id);
@@ -288,6 +289,10 @@ async function claimDecision(engine: BrainEngine, id: string, now: Date): Promis
     if (Date.parse(r.pending.expires_at) <= now.getTime()) {
       throw opError('setup_history_decision_expired', 'History import decision ' + id + ' expired at ' + r.pending.expires_at + ' before it was answered; nothing was imported.',
         'Run gbrain setup again to preview the import and get a new decision.');
+    }
+    if (r.pending.source_id !== sourceId) {
+      throw opError('setup_history_decision_unavailable', 'History import decision ' + id + " was approved for the archive source '" + r.pending.source_id + "', but the archive source is now '" + sourceId + "'; nothing was imported.",
+        "Run gbrain setup again to preview the import into '" + sourceId + "' and get a new decision.");
     }
     claim = { kind: 'claimed', decision: r.pending };
     return { ...r, pending: { ...r.pending, consumed_at: now.toISOString() } };
@@ -359,7 +364,7 @@ export async function runSetupHistory(engine: BrainEngine, opts: RunHistoryOpts)
   let decisionId: string | undefined;
   const sourceId = await configuredSource(engine);
   if (opts.decisionId) {
-    const claim = await claimDecision(engine, opts.decisionId, now);
+    const claim = await claimDecision(engine, opts.decisionId, now, sourceId);
     if (claim.kind === 'consumed') return consumedResult(claim, sourceId, opts.decisionId);
     stage = claim.decision.stage;
     files = claim.decision.files.filter(f => { try { return lstatSync(f.path).isFile(); } catch { return false; } });
@@ -406,7 +411,7 @@ async function importStage(engine: BrainEngine, opts: RunHistoryOpts, s: {
   const seen: Seen = { sessions: new Map<string, string>(), days: new Map<string, string[]>(), parsed: new Set<string>(), messages: 0, stopped: false };
   let run: ArchiveRunResult;
   const attempt = () => runTranscriptArchive(engine, {
-    mode: 'backfill', from: window.from, to: window.to, now, readers: boundedReaders(files, opts.deadlineAtMs, seen), deadlineAtMs: opts.deadlineAtMs,
+    mode: 'backfill', sourceId, from: window.from, to: window.to, now, readers: boundedReaders(files, opts.deadlineAtMs, seen), deadlineAtMs: opts.deadlineAtMs,
     recheckAudienceEachDay: true, ...(opts.makeContext ? { makeContext: opts.makeContext } : {}), ...opts.archive,
   }).then(r => ({ ok: true as const, r }), (err: unknown) => ({ ok: false as const, err }));
   for (let a = await attempt(); ; a = await attempt()) {
@@ -428,7 +433,7 @@ async function importStage(engine: BrainEngine, opts: RunHistoryOpts, s: {
   base.days_unchanged = run.unchanged;
   base.days_accepted = run.accepted;
   base.errors = run.errors.map(e => ({ code: e.code, harness: e.harness, ...(e.day ? { day: e.day } : {}) }));
-  const withRow = new Set(run.days.filter(d => d.harness !== 'index').map(d => d.harness + SEP + d.conversation_key_hash));
+  const withRow = new Set(run.days.filter(d => d.harness !== 'index' && SETTLED.has(d.status)).map(d => d.harness + SEP + d.conversation_key_hash));
   const deferredDays = new Set(run.deferred_days);
   const ledger = new Map((await readArchiveLedger(engine, run.source_id)).map(e => [e.harness + SEP + e.conversation_key_hash + SEP + e.day, e]));
   let deferred = files.filter(f => !seen.parsed.has(f.path)).length;

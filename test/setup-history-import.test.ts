@@ -25,7 +25,7 @@ import { addMember } from '../src/core/access/members.ts';
 import { setOwner } from '../src/core/access/owner.ts';
 import { withRefreshingLock } from '../src/core/db-lock.ts';
 import { redactSession } from '../src/core/transcripts/render.ts';
-import { ARCHIVE_TIMEZONE_KEY, setArchiveEnabled } from '../src/core/transcripts/archive.ts';
+import { ARCHIVE_SOURCE_KEY, ARCHIVE_TIMEZONE_KEY, setArchiveEnabled } from '../src/core/transcripts/archive.ts';
 import {
   HISTORY_BOUNDS, INSTALL_RECEIPT_KEY, declineHistory, decisionTopic, historyCard, offerHistoryDecision, previewHistory, readInstallReceipt,
   recordInstallReceipt, renderHistoryCard, runSetupHistory,
@@ -318,6 +318,31 @@ if (pgliteOnly) describe('setup history import: bounds, holds and the lock (pgli
       expect(retry).toMatchObject({ status: 'imported', sessions_imported: 1, decision_id: decision.id });
       expect((await archivedPages(engine)).map(p => p.body).join('\n')).toContain('regression test for the login bug');
     } finally { release(); await holder; await close(); }
+  }, 120_000);
+
+  test('a decision approved for one archive source is refused once the archive source changes, and still imports into the approved one', async () => {
+    const { engine, close, dir } = await freshInstall('pglite');
+    try {
+      const preview = await inHome(() => previewHistory(engine, { stage: 'latest', dir, now: NOW }));
+      const decision = await inHome(() => offerHistoryDecision(engine, preview, NOW));
+      await engine.setConfig(ARCHIVE_SOURCE_KEY, 'team-notes-example');
+      expect(await code(inHome(() => runSetupHistory(engine, { harness: 'claude-code', decisionId: decision.id, deadlineAtMs: soon(), now: NOW })))).toMatchObject({ code: 'setup_history_decision_unavailable' });
+      expect(await archivedPages(engine)).toEqual([]);
+      await engine.setConfig(ARCHIVE_SOURCE_KEY, preview.source_id);
+      const accepted = await inHome(() => runSetupHistory(engine, { harness: 'claude-code', decisionId: decision.id, deadlineAtMs: soon(), now: NOW }));
+      expect(accepted).toMatchObject({ status: 'imported', sessions_imported: 1, source_id: preview.source_id });
+    } finally { await close(); }
+  }, 120_000);
+
+  test('a run whose every day is held is partial, not imported', async () => {
+    const { engine, close, dir } = await freshInstall('pglite');
+    try {
+      const result = await inHome(() => runSetupHistory(engine, { harness: 'claude-code', stage: 'latest', dir, deadlineAtMs: soon(), now: NOW,
+        archive: { redact: () => { throw new Error('detector crashed'); } } }));
+      expect(result.held.length).toBeGreaterThan(0);
+      expect(result).toMatchObject({ status: 'partial', sessions_imported: 0, deferred_sessions: 1 });
+      expect((await readInstallReceipt(engine))!.stages.latest).toMatchObject({ status: 'partial' });
+    } finally { await close(); }
   }, 120_000);
 
   test('an expired or replaced range decision imports nothing', async () => {

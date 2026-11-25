@@ -5696,7 +5696,7 @@ More: [docs/guides/conversation-archive.md#setup-history-import](../../docs/guid
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| No pending history import decision with that id exists on this brain, so nothing was imported. | A decision belongs to one install and one preview; a newer preview replaces it and a no removes it. | Run gbrain setup again to preview the import and get a new decision. | agent | `repeat the read that failed` | 1 | no |
+| No pending history import decision with that id can be used on this brain, so nothing was imported. | A decision belongs to one install, one preview and one archive source; a newer preview replaces it, a no removes it, and a changed archive source refuses it. | Run gbrain setup again to preview the import and get a new decision. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/conversation-archive.md#setup-history-import](../../docs/guides/conversation-archive.md#setup-history-import)
 
