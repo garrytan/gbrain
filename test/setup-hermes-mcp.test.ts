@@ -138,11 +138,14 @@ describe('gbrain setup hermes registers MCP through hermes mcp add', () => {
     expect(calls(b).filter((c) => c.argv[1] === 'add')).toHaveLength(1);
   });
 
-  test('a bare re-run writes the brain-first block and turn rule for the surface the entry keeps', async () => {
+  test('a bare re-run writes the turn rule for the full surface the entry keeps', async () => {
     const b = box({ hermes: true });
     await setup(b, ['--surface', 'full']);
     await setup(b, []);
     expect(config(b)).toContain('mcp__gbrain__get_page');
+  });
+
+  test('a bare re-run writes the brain-first block and turn rule for the verbs surface the entry keeps', async () => {
     const v = box({ hermes: true });
     await setup(v, ['--surface', 'verbs']);
     const again = await setup(v, []);
