@@ -36,6 +36,11 @@ const CALLS: Record<string, (engine: BrainEngine) => Promise<unknown>> = {
   listGuestSourceIds: (e) => e.listGuestSourceIds(['default']),
   readSourceRow: (e) => e.readSourceRow('default'),
   getWorktreeBinding: (e) => e.getWorktreeBinding('default', null),
+  readMayActFor: (e) => e.readMayActFor('oauth_client', 'client-a'),
+  readAudiencePrincipals: (e) => e.readAudiencePrincipals(['alice-example'], []),
+  readScopeSourceConfigs: (e) => e.readScopeSourceConfigs(['default']),
+  readOwnerOnlySourcesPresent: (e) => e.readOwnerOnlySourcesPresent(),
+  readOwnerOnlySourceConfig: (e) => e.readOwnerOnlySourceConfig('default'),
 };
 
 test('every typed preparation read this part adds is in TYPED_PREPARATION_READS and is a member of the Postgres engine', () => {
