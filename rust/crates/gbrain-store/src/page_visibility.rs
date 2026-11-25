@@ -9,7 +9,7 @@
 //! `readCallerPageAccess` names it with `readable` false.
 //!
 //! `readWriteVisibilityProbe` is the one read a remote page write opens its visibility check with:
-//! whether any access member row carries the labelled-only grant (`access_members.rs` `any_labelled_only`: a
+//! whether any access member row holds the labelled-only grant (`access_members.rs` `any_labelled_only`: a
 //! disabled or removed member counts, as in the statement),
 //! whether a reader identity could open the page the empty-identity policy hides (none when no row
 //! is hidden; else whether the row names readers or a folder rule is stamped on it), and whether
