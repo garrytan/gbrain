@@ -14,8 +14,7 @@
 import type { SearchTimingsMeta } from '../core/search/stage-timings.ts';
 import type { SearchCostMeta } from '../core/search/search-cost.ts';
 import { getCliOptions } from '../core/cli-options.ts';
-import { countUnavailableReason } from '../core/search/keyword-paging.ts';
-import { KEYWORD_COUNT_CAP } from '../core/search/keyword-statement.ts';
+import { countUnavailableReason, KEYWORD_COUNT_CAP } from '../core/search/keyword-count-text.ts';
 
 type CliPhase = 'connect' | 'context' | 'remote';
 const phases = new Map<CliPhase, number>();
