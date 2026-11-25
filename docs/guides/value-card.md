@@ -23,7 +23,7 @@ The card counts the whole brain, every source and every page, because only the b
 | Pages | Live pages by kind (person, company, note, ...) |
 | Links | Links between two live pages |
 | Facts kept | Facts that are active, superseded by a newer fact, or withdrawn with `forget` |
-| Lookups served | Searches, queries and recalls served in the last 30 days |
+| Lookups served | Searches and recalls search telemetry recorded in the last 30 days, including searches gbrain runs for itself |
 | Pages brought up on their own | Pages gbrain put into an agent's context without being asked, in the last 30 days |
 | Of those, later retrieved | How many of those pages a search or read later surfaced |
 | Nightly items | Items the nightly cycle recorded in the last 30 days (`gbrain learned` shows them); hidden from the text card when there are none |
@@ -31,10 +31,14 @@ The card counts the whole brain, every source and every page, because only the b
 
 Conversations count only archive pages that were published; a conversation held back by redaction is not counted.
 
+Lookups served counts every search that search telemetry recorded, so it includes searches gbrain runs for itself
+(the per-prompt recall check, the nightly cycle, `gbrain eval replay`), not only the ones you or an agent asked for.
+A recall that ran a ranked page search counts as that search, any other recall counts as a recall, and a keyword-only
+search (`--match keyword`) counts as a search.
+
 Lookups and pages brought up are labelled "best effort, may undercount": telemetry is buffered in each process and
-a hard kill drops what was not flushed. Each lookup counts once: a recall that ran a ranked page search counts as that
-search, any other recall counts as a recall, and a keyword-only search (`--match keyword`) counts as a search. "Later
-retrieved" means a search or read surfaced the page afterwards; it does not mean a person opened it.
+a hard kill drops what was not flushed. "Later retrieved" means a search or read surfaced the page afterwards; it does
+not mean a person opened it, and a page surfaced again within 5 minutes of its last retrieval is not recorded again.
 
 Reading the card writes nothing: it does not mark nightly items as seen, and it never runs when an agent session
 starts.
