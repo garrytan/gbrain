@@ -180,6 +180,37 @@ export function mountAdminMemoryProposals(app: Express, requireAdmin: RequestHan
   });
 }
 
+/**
+ * L1: the owner session's approval of a pending agent policy revision, the remote twin of gbrain policy accept. The
+ * owner session is the owner, so the session itself is the confirmation; the approval binds the one revision named,
+ * which must be the policy page's current revision, and leaves one audit row.
+ */
+export function mountAdminPolicy(app: Express, requireAdmin: RequestHandler, engine: BrainEngine): void {
+  app.get('/admin/api/policy', requireAdmin, async (_req, res) => {
+    await answer(res, false, async () => {
+      const { POLICY_SCOPES, resolvePolicy } = await import('../core/policy/store.ts');
+      const served = await Promise.all(POLICY_SCOPES.map(s => resolvePolicy(engine, s)));
+      return { scopes: served.map(p => ({ scope: p.scope, state: p.state, served_revision: p.served_revision, page_revision: p.page_revision, rules: p.rules })) };
+    });
+  });
+
+  app.post('/admin/api/policy/accept', requireAdmin, express.json(), async (req, res) => {
+    const body = req.body ?? {};
+    const { scope = 'owner', revision } = body;
+    if (scope !== 'owner' && scope !== 'company') return refuse(res, 'scope must be owner or company.');
+    if (typeof revision !== 'string' || !revision) return refuse(res, 'revision is required: the pending revision gbrain policy status shows.');
+    const unknown = Object.keys(body).find(key => key !== 'scope' && key !== 'revision');
+    if (unknown !== undefined) return refuse(res, `Unknown field ${unknown}: an approval takes scope and revision.`);
+    await answer(res, true, async () => {
+      const { acceptRevision } = await import('../core/policy/store.ts');
+      const { ownerSessionProof } = await import('../core/policy/authority.ts');
+      const result = await acceptRevision(engine, scope, revision, { proof: digest => ownerSessionProof(digest, 'admin-api') });
+      if (result.status === 'approved') await audit(engine, 'policy_accept', { scope, revision: result.revision, digest: result.digest });
+      return { applied: result.status === 'approved', ...result };
+    }, 'Read the policy state (GET /admin/api/policy)');
+  });
+}
+
 function refuse(res: Response, message: string): void {
   res.status(400).json({ error: 'invalid_params', code: 'invalid_params', message, outcome: 'failed' });
 }

@@ -980,6 +980,7 @@ export function buildOperationContext(
     ...(opts.thinClient ? { thinClient: true } : {}),
     ...(opts.mcpCaller ? { mcpCaller: opts.mcpCaller } : {}),
     isCallable: (opName: string, args?: Record<string, unknown>) => (render ??= dispatchRenderContext(opts)).isCallable(opName, args),
+    toolAccess: { connection: () => toolConnection(opts), ...(opts.isListed ? { isListed: opts.isListed } : {}) },
     auth: opts.auth,
   };
 }
