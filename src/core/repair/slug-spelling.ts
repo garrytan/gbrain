@@ -470,12 +470,13 @@ async function movePageUnderStoredSlug(engine: BrainEngine, sourceId: string, pa
     if (taken) throw changedSincePreview(sourceId, page.slug, `another page now prints the same name, ${taken.slug} (id ${taken.page_id}) (slug_spelling_collision)`);
     let attachments = 0, guards: Awaited<ReturnType<typeof carryGuards>> = { fact_purges: 0, take_purges: 0 };
     await lockedBeliefBatch(tx, { sourceId, slugs: [page.slug, page.normal], publicationId, op: 'slug_spelling', remote: false, report }, async () => {
-      // The page's own attachments move with it inside updateSlug (moveSlugBindings); counted first for the report.
-      const [bound] = await tx.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM files WHERE source_id = $1 AND page_slug = $2 AND page_id = $3', [sourceId, page.slug, page.page_id]);
+      // The page's attachments (bound to it, or naming the old spelling with no page id), counted first for the report.
+      const [own] = await tx.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM files WHERE source_id = $1 AND page_slug = $2 AND (page_id = $3 OR page_id IS NULL)', [sourceId, page.slug, page.page_id]);
+      // updateSlug moves them (moveSlugBindings), except slug-only rows of a soft-deleted page; the spelling names this one
+      // page under the page locks, so this repair moves those itself.
       if (await tx.updateSlug(page.slug, page.normal, { sourceId }) !== 1) throw changedSincePreview(sourceId, page.slug, `page ${page.slug} could not move to ${page.normal}`);
-      // Rows with no page id that name the old spelling are this repair's to move: the spelling names one page.
-      const files = await tx.executeRaw('UPDATE files SET page_slug = $3 WHERE source_id = $1 AND page_slug = $2 AND page_id IS NULL RETURNING id', [sourceId, page.slug, page.normal]);
-      attachments = Number(bound?.n ?? 0) + files.length;
+      await tx.executeRaw('UPDATE files SET page_slug = $3 WHERE source_id = $1 AND page_slug = $2 AND page_id IS NULL', [sourceId, page.slug, page.normal]);
+      attachments = Number(own?.n ?? 0);
       guards = await carryGuards(tx, sourceId, page.slug, page.normal);
     });
     return { applied: true, outcome: 'moved', detail: { page_id: page.page_id, from: page.slug, to: page.normal, attachments_moved: attachments, kept_source_path: page.source_path, guards_carried: guards } } satisfies RepairItemOutcome;
