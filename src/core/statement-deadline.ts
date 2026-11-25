@@ -106,7 +106,7 @@ function refuse(scope: StatementDeadline): never {
 }
 
 /** The write-journal reads (engine-sql/persistence-journal.ts, persistence-claims.ts, persistence-housekeeping.ts, persistence-admission.ts, config.ts) that replaced statements this wrapper bounded through executeRaw. */
-const JOURNAL_TYPED_READS: ReadonlySet<string> = new Set(['readJournalLimitRows', 'readWriteRequest', 'readWriteRequestById', 'readWriteRequestProgress', 'countOutstandingBySource', 'hasDeferralRoom', 'readRefreshTiming', 'countHeldBehindImport', 'ownsSchemaTables', 'readOAuthClientWriteGrant', 'readAccessTokenWriteGrant', 'shareLockWriteCredential', 'readCounterRows', 'readAdmissionRate', 'readHeldPageRows', 'readHeldCoverageRows',
+const JOURNAL_TYPED_READS: ReadonlySet<string> = new Set(['readJournalLimitRows', 'readWriteRequest', 'readWriteRequestById', 'readWriteRequestProgress', 'countOutstandingBySource', 'hasDeferralRoom', 'readRefreshTiming', 'countHeldBehindImport', 'refreshStore', 'ownsSchemaTables', 'readOAuthClientWriteGrant', 'readAccessTokenWriteGrant', 'shareLockWriteCredential', 'readCounterRows', 'readAdmissionRate', 'readHeldPageRows', 'readHeldCoverageRows',
   'readSourceMembership', 'getConfigValues', 'readReceiptBudget', 'readCapacityForecastInputs', 'listHostConsumerRows', 'probeLiveConsumerRows']);
 /**
  * Typed reads that replaced a statement a doctor entry sent through this wrapper's executeRaw, outside the doctor-*.ts

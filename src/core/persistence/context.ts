@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { BrainEngine } from '../engine.ts';
+import type { GroupPublishStore } from '../engine-sql/group-publish-store.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import type { WriteAttribution } from './attribution.ts';
 import { readPersistenceBrain } from './managed-mode.ts';
@@ -98,10 +99,21 @@ export function insideCoordinatedWrite(): boolean {
  * names the next request as the actor of the rows it writes. One statement; the
  * enclosing coordinated write restores the outer values when it ends.
  */
-export async function setMemberAttribution(engine: Pick<BrainEngine, 'applyTransactionSettings'>, attribution: WriteAttribution): Promise<void> {
-  // The member's trust declaration replaces the previous member's (an undeclared member resets to none: `unknown`). The typed settings member sets them in one statement.
-  await engine.applyTransactionSettings([...ATTRIBUTION_SETTINGS, ...TRUST_SETTINGS],
-    [attribution.requestId ?? '', attribution.principal.kind, attribution.principal.id, ...trustValues(attribution.trust ?? null)]);
+export async function setMemberAttribution(engine: Pick<BrainEngine, 'executeRaw'>, attribution: WriteAttribution): Promise<void> {
+  const { sql, values } = memberAttributionStatement(attribution);
+  await engine.executeRaw(sql, values);
+}
+/** The statement that sets a member's attribution and trust settings, with the names it sets and their values. */
+function memberAttributionStatement(attribution: WriteAttribution) {
+  const names = [...ATTRIBUTION_SETTINGS, ...TRUST_SETTINGS];
+  // The member's trust declaration replaces the previous member's (an undeclared member resets to none: `unknown`).
+  return { names, values: [attribution.requestId ?? '', attribution.principal.kind, attribution.principal.id, ...trustValues(attribution.trust ?? null)],
+    sql: `SELECT ${names.map((name, index) => `set_config('${name}',$${index + 1},true)`).join(',')}` };
+}
+/** `setMemberAttribution` through an opened group publish store, which sends the same statement on the SQL engines. */
+export async function setMemberAttributionIn(store: Pick<GroupPublishStore, 'setMemberSettings'>, attribution: WriteAttribution): Promise<void> {
+  const { sql, names, values } = memberAttributionStatement(attribution);
+  await store.setMemberSettings(sql, names, values);
 }
 /** Attribution without coordinator capability, for unmanaged legacy transactions. */
 export function withWriteAttribution<T>(engine: SettingsEngine, attribution: WriteAttribution, fn: () => Promise<T>): Promise<T> {

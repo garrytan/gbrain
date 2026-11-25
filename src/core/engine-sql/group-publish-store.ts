@@ -15,6 +15,7 @@
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import type { WriteRequest } from '../persistence/model.ts';
+import { pipelined } from '../page-state/transactions.ts';
 
 type RawSql = Pick<BrainEngine, 'executeRaw'>;
 
@@ -37,6 +38,14 @@ export interface GroupPublishStore {
   startPublication(members: ReadonlyArray<{ id: string; token: string }>): Promise<string[]>;
   /** Completes every member in one step (missing counters created, then locked, then the rows completed and the counters released); the completed rows, each with its `principal_key`. */
   completeGroup(members: readonly GroupCompletionMember[], keys: readonly string[], version: string, hostId: string | null): Promise<Array<WriteRequest & { principal_key: string }>>;
+  /** The owner's host binding rows of the worktree (`local_path`); none when the worktree has no owner binding. */
+  hostBinding(worktreeId: string): Promise<Array<{ local_path: string | null }>>;
+  /** The state of the request a principal submitted under `requestId`, or null. */
+  requestState(principalKind: string, principalId: string, requestId: string): Promise<string | null>;
+  /** The source config row an owner-source write's trust is read from (`[{ config }]`, none for an unknown source). */
+  sourceTrustConfig(sourceId: string): Promise<Array<{ config: Record<string, unknown> | string | null }>>;
+  /** Sets a coordinated write's attribution and trust settings for the rest of the transaction: `sql` is the one statement that sets `names` to `values`. */
+  setMemberSettings(sql: string, names: readonly string[], values: readonly string[]): Promise<void>;
   /** Every live source with its own root and its binding on this host. */
   importRoots(hostId: string): Promise<ImportSourceRoot[]>;
   /** Records every member's recovery record and reserves `total` recovery bytes on the counters, all or nothing; the ids recorded (fewer than the members: nothing was). */
@@ -116,6 +125,9 @@ const COMPLETE_GROUP_SQL = `WITH m AS (
       ), clamped AS (INSERT INTO config(key,value) SELECT 'persistence.true_up.clamped',k.n::text FROM (SELECT count(*) FROM d JOIN persistence_counters c ON c.key=d.key WHERE d.freed>c.terminal_bytes) AS k(n) WHERE k.n>0
       ON CONFLICT (key) DO UPDATE SET value=(CASE WHEN config.value ~ '^[0-9]+$' THEN config.value::bigint ELSE 0 END+EXCLUDED.value::bigint)::text)
       SELECT * FROM done`;
+const HOST_BINDING_SQL = 'SELECT h.local_path FROM persistence_host_bindings h JOIN persistence_worktrees w ON w.id=h.worktree_id AND w.owner_host_id=h.host_id WHERE w.id=$1::uuid';
+const REQUEST_STATE_SQL = 'SELECT state FROM persistence_requests WHERE principal_kind=$1 AND principal_id=$2 AND request_id=$3::uuid';
+const SOURCE_TRUST_CONFIG_SQL = 'SELECT config FROM sources WHERE id = $1';
 const IMPORT_ROOTS_SQL = `SELECT s.id,s.local_path,h.local_path AS worktree_path,b.relative_path FROM sources s
       LEFT JOIN persistence_source_bindings b ON b.source_id=s.id AND b.source_incarnation=s.incarnation
       LEFT JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id=$1::uuid WHERE NOT s.archived`;
@@ -167,11 +179,19 @@ export function sqlGroupPublishStore(exec: RawSql): GroupPublishStore {
     recoveryBlocked: async (worktreeId, excluded) => (await exec.executeRaw(RECOVERY_BLOCKED_SQL, [worktreeId, excluded])).length > 0,
     startPublication: async members => (await exec.executeRaw<{ id: string }>(START_PUBLICATION_SQL, [members.map(m => m.id), members.map(m => m.token)])).map(row => row.id),
     async completeGroup(members, keys, version, hostId) {
-      await exec.executeRaw(ENSURE_COUNTERS_SQL, [keys]);
-      await exec.executeRaw(LOCK_COUNTERS_SQL, [keys]);
-      return exec.executeRaw(COMPLETE_GROUP_SQL, [members.map(m => m.id), members.map(m => m.token), members.map(m => m.outcome), members.map(m => m.need),
-        members.map(m => m.principalKey), version, hostId, members.map(m => m.retained)]);
+      // Three statements sent together on Postgres (one round trip), in this order; PGLite runs them one at a time.
+      const [, , completed] = await pipelined(exec, [
+        () => exec.executeRaw(ENSURE_COUNTERS_SQL, [keys]),
+        () => exec.executeRaw(LOCK_COUNTERS_SQL, [keys]),
+        () => exec.executeRaw(COMPLETE_GROUP_SQL, [members.map(m => m.id), members.map(m => m.token), members.map(m => m.outcome), members.map(m => m.need),
+          members.map(m => m.principalKey), version, hostId, members.map(m => m.retained)]),
+      ]);
+      return completed as Array<WriteRequest & { principal_key: string }>;
     },
+    hostBinding: worktreeId => exec.executeRaw<{ local_path: string | null }>(HOST_BINDING_SQL, [worktreeId]),
+    requestState: async (principalKind, principalId, requestId) => (await exec.executeRaw<{ state: string }>(REQUEST_STATE_SQL, [principalKind, principalId, requestId]))[0]?.state ?? null,
+    sourceTrustConfig: sourceId => exec.executeRaw<{ config: Record<string, unknown> | string | null }>(SOURCE_TRUST_CONFIG_SQL, [sourceId]),
+    setMemberSettings: async (sql, _names, values) => { await exec.executeRaw(sql, [...values]); },
     importRoots: hostId => exec.executeRaw<ImportSourceRoot>(IMPORT_ROOTS_SQL, [hostId]),
     async recordRecoveries(members, total, counterKeys) {
       return (await exec.executeRaw<{ id: string }>(RECORD_RECOVERIES_SQL, [JSON.stringify(members.map(member => ({ id: member.id, token: member.token, record: member.record, bytes: member.bytes }))),

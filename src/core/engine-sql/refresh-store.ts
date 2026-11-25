@@ -77,6 +77,15 @@ export interface RefreshStore {
   /** When the host that owns each worktree was last active (the owner-activity evidence), for the worktrees that have an owner. */
   ownerActivity(worktreeIds: readonly string[], lapsedMs: number, opts?: { signal?: AbortSignal }): Promise<OwnerActivityRow[]>;
 
+  /** The worktree's member source ids, in byte order. */
+  memberIds(worktreeId: string): Promise<string[]>;
+  /** The checkout root host `hostId` binds the worktree at, or null. */
+  hostLocalPath(worktreeId: string, hostId: string): Promise<string | null>;
+  /** The commit the source's last sync reached; null before the first sync and for an unknown source. */
+  sourceLastCommit(sourceId: string): Promise<string | null>;
+  /** The source's incarnation, or null for an unknown source. */
+  sourceIncarnation(sourceId: string): Promise<string | null>;
+
   // The writes that wait behind a refresh or an import (import-deferral.ts, refresh-barrier.ts).
   /** A claimed write whose preparation was refused `pending_import` moves back to `deferred` behind that import; the row or null. */
   holdForImport(id: string, token: string, importFrom: string): Promise<WriteRequest | null>;
@@ -167,6 +176,10 @@ const OWNER_ACTIVITY_SQL = `
       (SELECT min(r.created_at) FROM persistence_requests r WHERE r.worktree_id=w.id AND r.state IN ('queued','deferred','running','recovering')) AS oldest_open
     FROM persistence_worktrees w
     WHERE w.id::text = ANY($1::text[]) AND w.owner_host_id IS NOT NULL`;
+const MEMBER_IDS_SQL = 'SELECT source_id FROM persistence_source_bindings WHERE worktree_id=$1::uuid ORDER BY source_id COLLATE "C"';
+const HOST_LOCAL_PATH_SQL = 'SELECT local_path FROM persistence_host_bindings WHERE worktree_id=$1::uuid AND host_id=$2::uuid';
+const SOURCE_LAST_COMMIT_SQL = 'SELECT last_commit FROM sources WHERE id=$1';
+const SOURCE_INCARNATION_SQL = 'SELECT incarnation::text AS incarnation FROM sources WHERE id=$1';
 const DEFERRED_WAITING_SQL = `SELECT
     ($1::uuid IS NOT NULL AND NOT EXISTS (SELECT 1 FROM persistence_worktree_refreshes WHERE id=$1::uuid AND released_at IS NOT NULL))
     OR ($2::text IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sources WHERE id=$3 AND COALESCE(last_commit,'')<>$2::text)) AS waiting`;
@@ -203,6 +216,10 @@ export function sqlRefreshStore(exec: RawSql): RefreshStore {
     sourceCommits: sourceIds => exec.executeRaw(SOURCE_COMMITS_SQL, [sourceIds]),
     memberCommits: sourceIds => exec.executeRaw(MEMBER_COMMITS_SQL, [sourceIds]),
     ownerActivity: (worktreeIds, lapsedMs, opts) => exec.executeRaw(OWNER_ACTIVITY_SQL, [worktreeIds, lapsedMs], opts),
+    memberIds: async worktreeId => (await exec.executeRaw<{ source_id: string }>(MEMBER_IDS_SQL, [worktreeId])).map(row => row.source_id),
+    hostLocalPath: async (worktreeId, hostId) => (await first<{ local_path: string | null }>(HOST_LOCAL_PATH_SQL, [worktreeId, hostId]))?.local_path ?? null,
+    sourceLastCommit: async sourceId => (await first<{ last_commit: string | null }>(SOURCE_LAST_COMMIT_SQL, [sourceId]))?.last_commit ?? null,
+    sourceIncarnation: async sourceId => (await first<{ incarnation: string }>(SOURCE_INCARNATION_SQL, [sourceId]))?.incarnation ?? null,
     holdForImport: (id, token, importFrom) => first<WriteRequest>(HOLD_FOR_IMPORT_SQL, [id, token, importFrom]),
     readReleased: id => first(READ_RELEASED_SQL, [id]),
     laterWrite: async (sourceId, slug, sequence) => (await first<{ request_id: string }>(LATER_WRITE_SQL, [sourceId, slug, sequence]))?.request_id ?? null,

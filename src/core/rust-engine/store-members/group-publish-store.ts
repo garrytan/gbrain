@@ -14,10 +14,11 @@ import type { StoreBrain } from '../store.ts';
 import { requestRow } from '../store-codec.ts';
 import { storeCall } from './common.ts';
 import { heldStore } from './managed-hold.ts';
+import { applyTransactionSettings } from './transactions.ts';
 
 const MEMBER = 'groupPublishStore';
 
-function rustGroupPublishStore(brain: StoreBrain): GroupPublishStore {
+function rustGroupPublishStore(engine: RustEngine, brain: StoreBrain): GroupPublishStore {
   const call = <T>(run: () => Promise<T>): Promise<T> => storeCall({ member: MEMBER }, run);
   const rows = <T>(kind: string, args: Record<string, unknown>): Promise<T> => call<T>(() => brain.groupRows({ kind, ...args }));
   const write = <T>(kind: string, args: Record<string, unknown>): Promise<T> => call<T>(() => brain.groupWrite({ kind, ...args }));
@@ -38,6 +39,10 @@ function rustGroupPublishStore(brain: StoreBrain): GroupPublishStore {
       return done.map(row => ({ ...requestRow<WriteRequest>(row)!, principal_key: row.principal_key }));
     },
     importRoots: hostId => rows('import_roots', { hostId }),
+    async hostBinding(worktreeId) { const path = await call(() => brain.readOwnerHostBinding(worktreeId)) as string | null; return path === null ? [] : [{ local_path: path }]; },
+    async requestState(principalKind, principalId, requestId) { return (await call(() => brain.readWriteRequest({ kind: principalKind, id: principalId }, requestId)) as { state: string } | null)?.state ?? null; },
+    async sourceTrustConfig(sourceId) { const source = await call(() => brain.getSource(sourceId)) as { config: Record<string, unknown> } | null; return source ? [{ config: source.config }] : []; },
+    async setMemberSettings(_sql, names, values) { await call(() => applyTransactionSettings.call(engine, brain, names, values)); },
     recordRecoveries: (members, total, counterKeys) => write<string[]>('record_recoveries', { members: members.map(m => ({ id: m.id, token: m.token, record: m.record, bytes: m.bytes })), total, counterKeys: [...counterKeys] }),
     clearRecoveries: (resolved, counterKeys, worktreeId) => write<string[]>('clear_recoveries', { resolved: resolved.map(r => ({ id: r.id, record: r.record })), counterKeys: [...counterKeys], worktreeId }),
     readImportCheckpoints: <R>(op: string, fingerprints: readonly string[]) => rows<Array<{ fingerprint: string; completed_keys: [R] }>>('import_checkpoints', { op, fingerprints: [...fingerprints] }),
@@ -48,5 +53,5 @@ function rustGroupPublishStore(brain: StoreBrain): GroupPublishStore {
 
 /** `groupPublishStore()`: the store over this engine's store handle; called on a transaction, every call runs in it. */
 export const groupPublishStore = async function groupPublishStore(this: RustEngine, brain: StoreBrain): Promise<GroupPublishStore> {
-  return heldStore(this, rustGroupPublishStore(brain));
+  return heldStore(this, rustGroupPublishStore(this, brain));
 };
