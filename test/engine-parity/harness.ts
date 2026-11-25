@@ -671,11 +671,15 @@ export const recordFactsReconcile: typeof recordFactsReconcileImpl = (...args) =
 export const recordFenceRetirement: typeof recordFenceRetirementImpl = (...args) => setupStep('recordFenceRetirement', () => recordFenceRetirementImpl(...args));
 
 /** Wrap an engine so every direct method call on the handle is recorded. */
-function recordingEngine(engine: BrainEngine, calls: Set<string>, refusals: unknown[] = []): BrainEngine {
+export function recordingEngine(engine: BrainEngine, calls: Set<string>, refusals: unknown[] = []): BrainEngine {
   return new Proxy(engine, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
       if (typeof value !== 'function' || typeof prop !== 'string') return value;
+      // A Proxy must return a non-configurable, non-writable own property as it is (e.g. `openStore` on a Rust transaction
+      // clone, which `rustLeases(tx)` reads); wrapping it throws a TypeError. Such a property is not recorded.
+      const own = Object.getOwnPropertyDescriptor(target, prop);
+      if (own !== undefined && own.configurable === false && own.writable === false) return value;
       return (...args: unknown[]) => {
         calls.add(prop);
         // The transaction handle is an engine too: record the calls made on it.

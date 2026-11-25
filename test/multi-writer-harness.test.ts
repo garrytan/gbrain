@@ -20,7 +20,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assertMultiuserCapabilityName, checkMwArm, checkRustArm, mwArmPlan, runMwCase, rustMultiuserView, type MwArmHandle, type MwArmStarted, type RustTally } from './engine-parity/harness.ts';
+import { assertMultiuserCapabilityName, recordingEngine, checkMwArm, checkRustArm, mwArmPlan, runMwCase, rustMultiuserView, type MwArmHandle, type MwArmStarted, type RustTally } from './engine-parity/harness.ts';
 import { checkRustTally } from './engine-parity/rust-tally.ts';
 import { MW_ARMS, type MwArm, type MwCase, type MwCell } from './engine-parity/multi-writer-cases.ts';
 import { type LedgerLine } from './engine-parity/multi-writer-ledger.ts';
@@ -534,3 +534,17 @@ parityTest('C11 a case every arm holds pending', { methods: ['getConfig'], mwCas
     }
   }, 120_000);
 });
+
+describe('the recording wrapper keeps the Proxy invariant', () => {
+  test('a non-configurable, non-writable method (a Rust transaction clone\'s openStore) is returned as it is', () => {
+    const openStore = () => ({ brain: 'b' });
+    const clone = Object.defineProperty({ putPage: async () => 1 }, 'openStore', { value: openStore, configurable: false, writable: false, enumerable: false });
+    const calls = new Set<string>();
+    const wrapped = recordingEngine(clone as never, calls) as unknown as { openStore: typeof openStore; putPage: () => Promise<number> };
+    expect(wrapped.openStore).toBe(openStore);
+    expect(wrapped.openStore()).toEqual({ brain: 'b' });
+    void wrapped.putPage();
+    expect([...calls]).toEqual(['putPage']);
+  });
+});
+
