@@ -172,7 +172,7 @@ src/commands/edges-backfill.ts	execute_raw	1
 src/commands/embed.ts	execute_raw	1
 src/commands/embeddings.ts	execute_raw	1
 src/commands/engine-status.ts	execute_raw	1
-src/commands/enrich.ts	execute_raw	1
+src/commands/enrich.ts	execute_raw	2	GST-3815: the reader-scope check on backlink and search evidence (pageReadsToReadersOfSql) sits beside the raw facts read it shares a predicate with; no typed engine method exists for either, and both convert together
 src/commands/eval-suspected-contradictions.ts	execute_raw	1
 src/commands/eval-whoknows.ts	execute_raw	1
 src/commands/export.ts	execute_raw	2
@@ -587,6 +587,7 @@ src/core/import-file.ts	execute_raw	1
 src/core/import-identity.ts	execute_raw	1
 src/core/ingestion/applied-captures.ts	execute_raw	5
 src/core/last-retrieved.ts	execute_raw	1
+src/commands/doctor/checks/learning-note.ts	execute_raw	3	nightly learning PR 4: the learning_items ledger (v334) has no typed engine methods yet; doctor learning_note reads the newest run, its items by kind and the 30-day kept and undone shares
 src/core/learning/decide.ts	execute_raw	3	nightly learning PR 2: the learning_items ledger (v334) has no typed engine methods yet; keep and undo read item states, mark decided items and list the page versions after an enrich write
 src/core/learning/derive.ts	execute_raw	6	nightly learning PR 1: the learning_items ledger (v334) is a new table with no typed engine methods yet; the derive pass records ledger pointers with INSERT ... SELECT per kind, prunes pointers whose target is gone and reads the watermark window; PR 2 expires unseen pointers after 7 days and closes answered conflict questions
 src/core/learning/kinds.ts	execute_raw	1	nightly learning PR 1: the learning_items ledger (v334) is a new table with no typed engine methods yet; learningTablePresent probes to_regclass so a brain behind the migration skips cleanly
@@ -1049,6 +1050,8 @@ src/core/repair/segmented-tiling.ts	execute_raw	7
 src/core/repair/settle.ts	execute_raw	1
 src/core/repair/slug-autoheal.ts	execute_raw	1
 src/core/repair/slug-conflicts.ts	execute_raw	5
+src/core/repair/slug-spelling-guards.ts	execute_raw	4	Carrying purge tombstones to the moved page's normal name in the page's own transaction, the row-security lookup over every brain table that refuses the repair for a role row security applies to, and the pages lookup the doctor check runs (raised from 3: the check covers every table the move re-keys, not a fixed list); like the sibling repairs, a typed method comes with the Rust store serving these members.
+src/core/repair/slug-spelling.ts	execute_raw	9	The preview scan and the per-page re-check read pages, sources and files with SQL like the sibling repairs (legacy-twins, rename-identity), and the collision check looks up every stored spelling of a name through the spelling index; a typed method comes with the Rust store serving these members.
 src/core/repair/split-facts.ts	execute_raw	3
 src/core/repair/stale-atoms.ts	execute_raw	3
 src/core/repair/take-supersession.ts	execute_raw	4
@@ -1150,6 +1153,7 @@ src/core/shared-skills/source-opt-out.ts	execute_raw	3
 src/core/similar-pages.ts	execute_raw	1
 src/core/skillpack/shared-brain-bridge.ts	execute_raw	4
 src/core/slack/slack-source.ts	execute_raw	4
+src/core/slug-spelling-key.ts	execute_raw	1	Reads the server encoding (SHOW server_encoding) so the spelling index migration and the slug-spelling repair skip or refuse on a database that cannot evaluate the key; like the database_encoding doctor check.
 src/core/source-default-search.ts	execute_raw	2
 src/core/source-delete.ts	execute_raw	2
 src/core/source-health.ts	execute_raw	6
@@ -1262,6 +1266,7 @@ src/eval/longmemeval/retrieval-arms.ts	execute_raw	2
 src/eval/shared/embed-cache.ts	driver_call	4
 src/mcp/http-transport.ts	sql_template	3
 src/mcp/source-preflight.ts	execute_raw	1
+src/shadow/checks.ts	execute_raw	9	the shadow privacy check reads the access tables' revisions and times and the primary's snapshot bound and the transactions in progress (pg_snapshot_xmax, pg_current_snapshot, pg_stat_activity, pg_prepared_xacts, pg_xact_status: the proof that nothing was written or became visible since a read started), judges the pages and chunks a Rust answer named with the primary's own read-policy fragment and safe-chunk fence under the captured caller (verdicts only), and the exact vector reference sets two planner switches and runs the engine's own exact statement on its read-only transaction: only the primary can say what the caller may read or what an exact scan returns
 src/shadow/fingerprints.ts	execute_raw	6	the fingerprint probe and fact-fingerprint check run the primary's own SQL functions and read its own lower(), [[:space:]], locale and facts text (gbrain_fact_fingerprint, per-code-point tables, datctype, a count of facts holding a differing code point); the comparison is against the primary's SQL by design
 src/shadow/follow.ts	execute_raw	1	selectWhere: the shadow follow producer reads page ids and the keys of rows a delete removes, on the engine or transaction the write runs on
 src/shadow/follower.ts	execute_raw	1	the shadow follower re-reads the changed keys from the primary in one read-only REPEATABLE READ transaction; only the primary's rows can say what the Rust store must hold

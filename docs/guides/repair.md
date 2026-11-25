@@ -9,7 +9,7 @@ fixes those and the other kinds listed in
 [What each kind fixes](#what-each-kind-fixes). Every run is a preview unless
 you pass `--apply`.
 The explicit-only kinds, among them `google-file-modes`, `stale-atoms`, `atoms-restore`, `atom-fence-rows`, `extractor-facts`, `unwithdrawn-facts`, `purged-page-facts`, `purged-change-reasons`,
-`captured-facts`, `agent-session-facts`, `redacted-facts`, `loop-facts`, `ontology-facts`, `orphan-children`, `failed-writes`, `frontmatter`, `managed-sync-orphans`, `content-receipt-root`, `stuck-recovery`, `aliases`, `rename-identity` and `segmented-mirror`, run only when you name them (see [Explicit-only repair kinds](#explicit-only-repair-kinds)).
+`captured-facts`, `agent-session-facts`, `redacted-facts`, `loop-facts`, `ontology-facts`, `orphan-children`, `failed-writes`, `frontmatter`, `managed-sync-orphans`, `content-receipt-root`, `stuck-recovery`, `aliases`, `rename-identity`, `slug-spelling` and `segmented-mirror`, run only when you name them (see [Explicit-only repair kinds](#explicit-only-repair-kinds)).
 `gbrain doctor --remediation-plan` lists the same kinds as repair steps, and
 `gbrain doctor --remediate --yes --include-repairs --expect <plan_hash>` runs them under a budget
 (see [Run repairs through doctor](#run-repairs-through-doctor)).
@@ -272,6 +272,7 @@ work behind exits 0, so scripts should also check `results[].complete`.
 | `receipt-compaction` | `persistence_capacity` (terminal bytes) | Explicit-only, preview-bound, destructive consent. Compacts terminal write receipts now instead of on the idle maintenance tick (#6696): the intent and error message are dropped, the outcome, error code and detail stay, and the unused reservation returns to the receipt-bytes counters. `--older-than <72h\|30d>` is floored at the configured retention unless `--force`; committed receipts only unless `--include-failures`. No admission, so it runs at a full cap. See [receipt compaction](#receipt-compaction). | `failures_kept`: failed, conflict and cancelled receipts left without `--include-failures`. Receipts of a run whose sync cursor is still open, and the newest sync receipt of each worktree, are never listed. |
 | `aliases` | `dangling_aliases` (orphaned rows) | Explicit-only. Deletes free-text page aliases and slug redirects whose target page has no row at all (a page purged before purge removed its aliases, #6619, or a hard-deleted page), each target rechecked under its page lock; a coordinated maintenance write on a managed brain. A redirect from an old name of a page that still exists is never touched. See [aliases](#aliases). | `soft_deleted_target`: aliases of a soft-deleted page, kept for `gbrain restore` and removed when the page is purged. |
 | `rename-identity` | `rename_identity_downgrades` | Explicit-only, preview-bound, destructive consent. For an inexact Git rename that sync split into a delete plus an add (#6729): carries the old page's identity (id, version history, timeline, links, facts, aliases) onto the new slug, imports the new file onto it as an edit and retires the provisional page; or, with `--close`, settles the pair and moves nothing. `--slug <new-slug>` (and `--from <old-slug>`) names one pair; `--apply --expect <hash> --yes`. See [rename identity](#rename-identity). | `fact_rows_collide` (a fence row of the old page the new file does not keep with the same claim); `managed_remedy_unavailable` (a carry on a managed source; `--close` is the remedy there); pages changed after the preview (`changed_since_preview`). |
+| `slug-spelling` | `legacy_slug_spellings` | Explicit-only, preview-bound, destructive consent. Moves pages stored under an older spelling of their name (capitals, or decomposed Unicode) to the normal slug, keeping each page's id, versions, tags, timeline, links, facts and attachments; the old spelling keeps resolving through an alias. `--source <id>` previews, `--apply --expect <hash> --yes` moves. See [slug spelling](#slug-spelling). | `slug_spelling_collision` (a page already holds the normal slug); `rename_file_first` (the page's file is not at the normal path); `managed_remedy_unavailable` (managed brain: a person is needed); `writer_coordinator_required` (row-level security applies to any table of the brain for the role; nothing is written); `slug_spelling_encoding` (the database encoding is not UTF8); pages changed after the preview (`changed_since_preview`). |
 | `overwritten-edits` | `sync_overwritten_db_edits` | Explicit-only, preview-bound. Restores database edits that an incremental managed sync replaced with a committed file edit and no `file_drift` hold (#6712, fixed by #6887). It restores only what the records prove: a database-only revision (its receipt published no file) archived by a managed-sync import that wrote different content, with no later revision holding the edit again. The preview diffs the live page against the edit; `--apply --expect <hash>` reverts each page to that version through a revision-bound, database-only `revert_version` and holds the committed file `file_drift` when it differs. See [overwritten edits](#overwritten-edits). | `unknown_*` findings (no persistence outcome on the writer's receipt, the import's content no longer readable, a segmented version), listed but not restored; pages that moved after the preview (`changed_since_preview`). |
 | `provenance` | `provenance_stamp_drift` | Explicit-only, preview-bound, destructive. Restores provenance stamps and lowering markers that remote writes removed before #7892, and stamps the stored tier as the marker on classified pages whose file would re-read higher (#7918). Only lowers; a lowered page files a `lower_page` proposal. See [provenance](#provenance). | The owner's own edits (`local`), pages a later local write also changed (`needs_review`), pages whose file sync holds (`held`), unattributed writes without `--include-ambiguous`; pages that moved after the preview (`preview_changed`). |
 | `missing-tables` | `schema_missing_tables` | Explicit-only, preview-bound. Recreates, empty, a rebuildable cache table (`query_cache`, `code_traversal_cache`) that the applied migrations created but the brain no longer has, on a brain whose schema version already covers its creating migration, so `apply-migrations` never recreates it (#6911). DDL only (`IF NOT EXISTS`), no journal admission, brain-wide. See [missing tables](#missing-tables). | `user_data_tables`: a missing table that holds user data; this repair never recreates it, so restore its rows from a backup first. `other_tables`: a missing table that holds no user data; `gbrain init --migrate-only` recreates it if the base schema defines it. |
@@ -2090,6 +2091,67 @@ also works on both.
 
 Explicit-only: `gbrain repair --all`, the maintenance cycle and the doctor
 remediation plan never run it.
+
+<a id="slug-spelling"></a>
+### Slug spelling
+
+Writes store a page's slug in one normal form: lowercase, then Unicode NFC. A page saved before that (capitals, or a
+decomposed `café`) still opens by any spelling and takes small edits, but a `put_page` by its stored spelling is refused
+(detail [`legacy_slug_spelling`](error-codes.md#legacy_slug_spelling)) and an import of its file is held, because either
+would create a second page that prints the same name. `gbrain doctor` warns `legacy_slug_spellings` with the count per
+source (count unknown when its scan stops at its limit, or when row-level security applies to `pages` for the role). `gbrain repair slug-spelling` moves those pages to their normal slug, after which the put and the import work.
+
+```bash
+gbrain repair slug-spelling --source default                          # preview: every page of the source stored under an older spelling, with its class
+gbrain repair slug-spelling --source default --apply --expect <hash> --yes
+```
+
+Each page in the preview is one of:
+
+- **move**: the normal slug is free and the file evidence agrees. The apply moves it in its own transaction under both
+  page locks: the page keeps its id, versions, tags, timeline, links and facts; the slug-keyed facts, withdrawals and
+  search aliases follow; the attachments' page name follows (their ids, storage paths and bytes do not change); the old
+  spelling becomes an alias, so `gbrain get` by it still answers. The guards that name the page by its slug follow it
+  too: the purge tombstones of its facts and takes are copied to the normal slug (so a purged claim stays refused and an
+  import still drops it). Held writes (active quarantine holds of a fact or take, rows kept out of delivered text) do not
+  stop the move and are not changed: a hold bound to the page follows its page id, and a hold under the old spelling
+  reaches the moved page through the rename record, so its content stays out of delivered text, including a hold a writer
+  records under the old spelling while or after the move runs. `gbrain trust review` lists them as before. The apply takes the page lock of the stored spelling as well as the
+  normal one, so an edit under way waits for the move (or the move refuses, below). When row-level security applies to
+  any table of any schema on the search path for the database role, a policy can hide rows from it (another page with the same name, a fact, a
+  withdrawal, an alias, an attachment, a tombstone), so the preview and the apply refuse with [`writer_coordinator_required`](error-codes.md#writer_coordinator_required) before anything
+  moves, whatever policies the role has. The refusal names the tables the move reads or re-keys first and counts the rest. Run the repair as the table owner (with FORCE ROW LEVEL SECURITY off) or as a role
+  with BYPASSRLS. On a Postgres database whose encoding is not UTF8 the repair refuses with
+  [`slug_spelling_encoding`](error-codes.md#slug_spelling_encoding) before it reads anything: finding every stored spelling
+  of a name compares composed Unicode, which only a UTF8 database can evaluate.
+- **needs_human** ([`slug_spelling_collision`](error-codes.md#slug_spelling_collision)): another page (live or
+  soft-deleted) already holds the normal slug, or two stored spellings share it. Every stored spelling of the name is
+  looked up through the spelling index, so a page the preview's scan did not reach still counts, and the apply looks
+  again under the page locks. Nothing moves, because that would merge
+  two pages. The listing names the pages to compare; keep the content you want in one, soft-delete the other with
+  `gbrain delete`, and preview again.
+- **rename_file_first** ([`rename_file_first`](error-codes.md#rename_file_first)): the page's file in the source's
+  checkout is not at the path of the normal slug (or the recorded file is not in the checkout, the checkout is not on this host, or a file sits at the old spelling's path). Moving only
+  the row would split the page from its file. `git mv` the file to the normal path, commit and sync; sync carries the page
+  identity. Then preview again. For a source that is a subfolder of its Git repository in git-root slug mode (a source that pins
+  no mode counts as git-root; see [Sources in a Git subfolder](multi-source-brains.md#sources-in-a-git-subfolder)),
+  slugs carry the folder's path, so the normal path and the `git mv` the fix names are taken inside the source's folder.
+
+The plan hash binds the brain, the source incarnation and, for every page, its id, revision, recorded origin, source path
+and the file evidence read from the checkout. The apply needs the user's consent (destructive): without `--yes` a
+non-interactive run exits 3 with the consent payload. It reads every bound fact again, and refuses
+[`changed_since_preview`](error-codes.md#changed_since_preview) before moving anything when a page, its origin, the source
+or the files changed or the normal slug was taken; preview again and approve the new hash (a refused hash is never reused).
+A fault part way through a page's move rolls that page back whole. Applying the same set again moves nothing
+(`already_moved`).
+
+Classic brains only. On a managed brain page tables take writes only through coordinated publications, so the preview
+lists the pages as [`managed_remedy_unavailable`](error-codes.md#managed_remedy_unavailable) and an apply refuses with
+it: a person has to decide how to rename each page, which stays readable and editable by its stored spelling. A preview by a
+role that row-level security applies to (above) is refused with `writer_coordinator_required` before it lists anything, on a managed brain too; a preview on a database whose encoding is not UTF8 is refused with `slug_spelling_encoding` the same way.
+
+Explicit-only: `gbrain repair --all`, the maintenance cycle and the doctor remediation plan never run it, and a remote
+caller is refused. Moving a page automatically inside a full replace is not part of this repair.
 
 ### Calls not scoped
 

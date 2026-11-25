@@ -381,7 +381,7 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
     let pick: Extract<PickOutcome, { ok: true }> | null = null;
     if (opts.router && settings.router.on) {
       const descriptions = loaded.map(l => readPickerDescriptions(home, l));
-      const offer = (c: number, doc: number) => { const id = metaOf(c, doc).id; if (!offered.has(id)) offered.set(id, { c, doc }); };
+      const offer = (c: number, doc: number) => { const m = metaOf(c, doc); if (!m.dep && !offered.has(m.id)) offered.set(m.id, { c, doc }); };
       if (loaded.reduce((n, l) => n + l.ix.n, 0) <= PICKER_FULL_CATALOG_MAX) loaded.forEach((l, c) => { for (let d = 0; d < l.ix.n; d++) offer(c, d); });
       else for (let i = 0; i < Math.max(...ranks.map(r => r.ranked.length)) && offered.size < PICKER_SHORTLIST; i++) loaded.forEach((_, c) => { const r = ranks[c]!.ranked[i]; if (r && offered.size < PICKER_SHORTLIST) offer(c, r.doc); });
       const skills: PickerSkill[] = [...offered].map(([id, { c, doc }]) => ({ id, description: loaded[c]!.receipt.catalog.hints === 'names_only' ? '' : descriptions[c]?.get(id) ?? metaOf(c, doc).summary }));
@@ -408,7 +408,7 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
     const seen = new Set<string>();
     const admit = (x: Cand) => {
       seen.add(x.id);
-      if (window.length < kEff && !excluded.has(x.id) && MATCH_STRENGTHS.indexOf(strengthOf(x)) <= floor) window.push(x);
+      if (window.length < kEff && !excluded.has(x.id) && (x.explicit || !metaOf(x.c, x.doc).dep) && MATCH_STRENGTHS.indexOf(strengthOf(x)) <= floor) window.push(x);
     };
     loaded.forEach((_, c) => {
       for (const r of ranks[c]!.ranked) {
@@ -467,7 +467,7 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
       const namesOnly = lines.find(l => l.id === m.id)!.namesOnly;
       const fields = ranks[x.c]!.matchedFields(x.doc).fields;
       const match_strength = strengthOf(x);
-      return { id: m.id, name: m.name, score: round4(x.score), summary: namesOnly ? '' : m.summary, reason: x.explicit ? `named in the turn; ${reasonText(fields)}` : x.picked ? 'picked by the model picker' : reasonText(fields), match_strength, ...(m.path ? { path: m.path } : {}), catalog: loaded[x.c]!.name };
+      return { id: m.id, name: m.name, score: round4(x.score), summary: namesOnly ? '' : m.summary, reason: x.explicit ? `named in the turn; ${m.dep ? `deprecated${m.rep ? `, use ${m.rep} instead` : ''}; ` : ''}${reasonText(fields)}` : x.picked ? 'picked by the model picker' : reasonText(fields), match_strength, ...(m.path ? { path: m.path } : {}), catalog: loaded[x.c]!.name };
     });
     const blockReason: BlockReason | null = suggestions.length ? null : exhausted ? 'budget_exhausted' : gated ? 'weak_top_match' : paced ? 'paced' : window.length ? 'deduped' : 'filtered';
     const out: TurnOutput = { ...base, budget_exhausted: exhausted, block_reason: blockReason, suggestions, block: r.block, block_tokens: r.tokens, deduped };

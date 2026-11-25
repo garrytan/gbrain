@@ -60,11 +60,11 @@ transaction	lifecycle	yes	19	no	yes	yes	refuses:transactions
 transactionDirect	lifecycle	yes	1	no	yes	yes	refuses:transactions
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	49	yes	yes	yes	serves
-readPageSnapshot	pages	yes	20	no	yes	yes	serves
+getPage	pages	yes	50	yes	yes	yes	serves
+readPageSnapshot	pages	yes	21	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	194	yes	yes	yes	serves
+putPage	pages	yes	196	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	17	yes	yes	yes	serves
@@ -96,7 +96,7 @@ searchKeyword	search	yes	29	yes	yes	yes	serves
 countKeywordPages	search	yes	5	no	yes	yes	serves
 searchKeywordPages	search	yes	8	no	yes	yes	serves
 searchTitles	search	yes	13	yes	yes	yes	serves
-searchVector	search	yes	9	yes	yes	yes	serves
+searchVector	search	yes	10	yes	yes	yes	serves
 getEmbeddingsByChunkIds	search	yes	1	no	yes	yes	serves
 searchKeywordChunks	search	yes	6	yes	yes	yes	serves
 cosinesByChunkIds	search_reads	yes	1	no	yes	yes	serves
@@ -109,7 +109,7 @@ generatedPagesIn	search_reads	yes	2	no	yes	yes	serves
 livePageIdsAt	search_reads	yes	2	no	yes	yes	serves
 pagesLinkingTo	search_reads	yes	2	no	yes	yes	serves
 upsertChunks	chunks	yes	21	yes	yes	yes	serves
-sealChunks	chunks	yes	16	no	yes	yes	serves
+sealChunks	chunks	yes	17	no	yes	yes	serves
 getChunks	chunks	yes	25	yes	yes	yes	serves
 getChunkPage	chunks	yes	9	no	yes	yes	serves
 getChunkWindows	chunks	yes	9	no	yes	yes	serves
@@ -154,8 +154,8 @@ relationalFanout	links	yes	3	yes	yes	yes	serves
 relationalChainHop	links	yes	2	no	yes	yes	serves
 getBacklinkCounts	links	yes	6	no	yes	yes	serves
 getAdjacencyBoosts	links	yes	6	no	yes	yes	serves
-getContentFlagsByPageIds	links	yes	6	no	yes	yes	serves
-getUnverifiedExtractionPageIds	links	yes	6	no	yes	yes	serves
+getContentFlagsByPageIds	links	yes	7	no	yes	yes	serves
+getUnverifiedExtractionPageIds	links	yes	7	no	yes	yes	serves
 getPageTimestamps	links	yes	1	no	yes	yes	serves
 getEffectiveDates	links	yes	6	no	yes	yes	serves
 getSalienceScores	links	yes	8	yes	yes	yes	serves

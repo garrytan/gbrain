@@ -94,7 +94,7 @@ function gbrainHome(opts: { target?: string } = {}): Home {
     engine_build: engineBuild,
     targets: { [target]: { asset: `gbrain-engine-rust-${target}.node`, sha256: sha256(addonBytes), bytes: addonBytes.length } },
   };
-  const dest = join(rustDir, engineBuild, `${target}.node`);
+  const dest = join(rustDir, engineBuild, `${target}-${sha256(addonBytes)}.node`);
   const deps: RustAddonLoaderDeps = {
     env: {},
     rustDir,

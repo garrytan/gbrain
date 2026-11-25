@@ -3486,6 +3486,13 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
+            "message": "The nightly cycle has not recorded anything it learned yet.",
+            "name": "learning_note",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
             "message": "No memory proposals await the owner.",
             "name": "memory_proposals_pending",
             "status": "ok"
@@ -4263,6 +4270,19 @@
             "elapsed_ms": "<volatile>",
             "message": "No rename that lost its page identity is waiting for a disposition.",
             "name": "rename_identity_downgrades",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "by_source": [],
+              "count": 0,
+              "docs": "docs/guides/repair.md#slug-spelling",
+              "truncated": false
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No page is stored under an older spelling of its name.",
+            "name": "legacy_slug_spellings",
             "status": "ok"
           },
           {
@@ -9122,6 +9142,13 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
+            "message": "The nightly cycle has not recorded anything it learned yet.",
+            "name": "learning_note",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
             "message": "No memory proposals await the owner.",
             "name": "memory_proposals_pending",
             "status": "ok"
@@ -9899,6 +9926,19 @@
             "elapsed_ms": "<volatile>",
             "message": "No rename that lost its page identity is waiting for a disposition.",
             "name": "rename_identity_downgrades",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "by_source": [],
+              "count": 0,
+              "docs": "docs/guides/repair.md#slug-spelling",
+              "truncated": false
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No page is stored under an older spelling of its name.",
+            "name": "legacy_slug_spellings",
             "status": "ok"
           },
           {

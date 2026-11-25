@@ -106,17 +106,18 @@ async function seedBacklink(toSlug: string, fromSlug: string, context: string) {
   await engine.putPage(fromSlug, {
     type: 'note' as never,
     title: fromSlug,
-    compiled_truth: `Notes referencing ${toSlug}.`,
+    compiled_truth: `Notes referencing ${toSlug}. ${context}`,
     timeline: '',
     frontmatter: {},
   });
   await engine.addLink(fromSlug, toSlug, context);
 }
 
+/** A world fact: the column default is private, which enrich never copies onto a page (GST-3815). */
 async function seedFact(entitySlug: string, fact: string) {
   await engine.executeRaw(
-    `INSERT INTO facts (source_id, entity_slug, fact, source, valid_from)
-     VALUES ('default', $1, $2, 'test', now())`,
+    `INSERT INTO facts (source_id, entity_slug, fact, visibility, source, valid_from)
+     VALUES ('default', $1, $2, 'world', 'test', now())`,
     [entitySlug, fact],
   );
 }
