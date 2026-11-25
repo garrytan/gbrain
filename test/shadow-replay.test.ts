@@ -26,6 +26,8 @@ import { captureDir, writePrivateJson } from '../src/shadow/capture-state.ts';
 import { FanOutSeedTarget } from '../src/shadow/replay-copy.ts';
 import { runNightlyReplay, settleSeededEpoch } from '../src/shadow/replay-run.ts';
 import { appendPurgeIntent as purgeIntent } from '../src/core/belief/purge-mirror.ts';
+import { statSync } from 'node:fs';
+import { hmacKey } from '../src/shadow/replay.ts';
 import { encodeArgs } from '../src/shadow/codec.ts';
 import { decodeValue } from '../src/shadow/codec.ts';
 import {
@@ -655,5 +657,40 @@ describe('fix round (review of aefcd32430)', () => {
     const r = streamSegment(join(dir, 's.jsonl'), into, { left: line(1).length * 2 });
     expect(into.map(x => x.seq)).toEqual([1, 2]);
     expect(r).toEqual({ torn: true, skipped: 1 });
+  });
+});
+
+describe('the per-brain hash key (review of 3e7a623341)', () => {
+  for (const [name, text] of [['an empty', ''], ['a short', 'ab'.repeat(16)], ['a non-hex', 'zz'.repeat(32)]] as const) {
+    test(`${name} capture/key stops the nightly run with a named error; no child runs and no summary is written`, async () => {
+      const { cap, deps, shadowDir } = sealedEpoch();
+      writeFileSync(join(cap, 'key'), text);
+      let spawned = 0;
+      const counting = { ...deps, spawnChild: () => { spawned++; return { exited: Promise.resolve(1), kill() {} }; } } as typeof deps;
+      await expect(runNightlyReplay(counting)).rejects.toThrow(/shadow_replay_key_invalid/);
+      expect(spawned).toBe(0);
+      const runs = existsSync(join(shadowDir, 'replay')) ? readdirSync(join(shadowDir, 'replay')).filter(f => f.startsWith('run-')) : [];
+      for (const r of runs) expect(existsSync(join(shadowDir, 'replay', r, 'out', 'summary.json'))).toBe(false);
+    });
+  }
+
+  test('a run spec whose key is not 64 hex characters makes the child refuse and write no report or summary', async () => {
+    const { cap, home } = recordingCapture();
+    await recordSession(cap, home);
+    const runDir = join(tmp(), 'run');
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, 'run.json'), JSON.stringify({ version: 1, epoch: readEpoch(cap)!.id, brain_key: 'pglite-abc', hmac_key: '',
+      arms: { pglite: 'x', rust: 'y' }, cut: { before: 0, after: 0 }, seed_losses_present: false, segments: epochDir(cap, readEpoch(cap)!.id) } satisfies RunSpec));
+    await expect(runReplayChild(runDir, { blockNetwork: () => {}, openArm: async () => fakeEngine() as unknown as BrainEngine })).rejects.toThrow(/shadow_replay_key_invalid/);
+    expect(existsSync(join(runDir, 'out'))).toBe(false);
+  });
+
+  test('a new key is written whole, owner-only, with no temp file left behind', () => {
+    const cap = join(tmp(), 'capture');
+    const key = hmacKey(cap);
+    expect(key).toMatch(/^[0-9a-f]{64}$/);
+    expect(statSync(join(cap, 'key')).mode & 0o777).toBe(0o600);
+    expect(readdirSync(cap)).toEqual(['key']);
+    expect(hmacKey(cap)).toBe(key);
   });
 });

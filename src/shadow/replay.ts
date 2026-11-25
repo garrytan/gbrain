@@ -12,7 +12,7 @@
  * compared report, so two replays of the same epoch on the same copies write identical reports.
  */
 import { createHmac, randomBytes } from 'node:crypto';
-import { chmodSync, closeSync, cpSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, cpSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import net from 'node:net';
 import tls from 'node:tls';
 import { join, resolve, sep } from 'node:path';
@@ -482,7 +482,7 @@ export interface ChildDeps {
 export async function runReplayChild(runDir: string, deps: ChildDeps, now: () => number = Date.now): Promise<ReplayReport> {
   const spec = JSON.parse(readFileSync(join(runDir, 'run.json'), 'utf8')) as RunSpec;
   (deps.blockNetwork ?? blockNetwork)(runDir);
-  const key = Buffer.from(spec.hmac_key, 'hex');
+  const key = Buffer.from(checkedKey(spec.hmac_key, 'the run spec'), 'hex');
   const records: CaptureRecord[] = [];
   let torn = 0;
   let overMemory = 0;
@@ -580,8 +580,21 @@ export function childEnv(parentEnv: Record<string, string | undefined>, runHome:
 /** The per-brain key for keyed hashes, created on first use (0600). */
 export function hmacKey(cap: string): string {
   const path = join(cap, 'key');
-  if (!existsSync(path)) { mkdirSync(cap, { recursive: true, mode: 0o700 }); writeOwnerOnly(path, randomBytes(32).toString('hex')); }
-  return readFileSync(path, 'utf8').trim();
+  if (!existsSync(path)) {
+    // Written whole or not at all: a 0600 temp file in the same folder, flushed to disk, then renamed into place.
+    mkdirSync(cap, { recursive: true, mode: 0o700 });
+    const tmp = `${path}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
+    const fd = openSync(tmp, 'wx', 0o600);
+    try { writeSync(fd, randomBytes(32).toString('hex')); fsyncSync(fd); } finally { closeSync(fd); }
+    try { linkSync(tmp, path); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e; } finally { rmSync(tmp, { force: true }); }
+  }
+  return checkedKey(readFileSync(path, 'utf8').trim(), path);
+}
+
+/** A hash key must be exactly 32 bytes (64 hex characters): a shorter or empty one would make summary hashes guessable. */
+export function checkedKey(key: string, where: string): string {
+  if (!/^[0-9a-f]{64}$/i.test(key)) throw new ReplayError('shadow_replay_key_invalid', `${where} holds ${key.length} characters, not 64 hex characters`);
+  return key;
 }
 
 /** Copies a sealed epoch's segments and base copies into a new run directory; returns the run's paths. */

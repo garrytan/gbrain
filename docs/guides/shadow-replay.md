@@ -24,7 +24,7 @@ Everything lives under `<gbrain home>/shadow/<brain>/` in owner-only files (mode
 | `replay/<run>/out/summary.json` | the only file meant to leave the machine: operation, field path, keyed hash and counts | no |
 
 Field names outside a fixed list of schema fields (a frontmatter key, for example) appear only as a keyed hash.
-Hashes are keyed with a per-brain secret in `capture/key`, so a short value cannot be guessed from its hash.
+Hashes are keyed with a per-brain secret in `capture/key`, so a short value cannot be guessed from its hash. The key is written whole or not at all, and a run refuses a key that is not 64 hex characters.
 
 ## Turn it on
 
@@ -145,6 +145,7 @@ Nothing here needs the brain's owner. Run these on the brain's host only.
 | `shadow_replay_seed_failed` | the brain could not be opened for the seed (nothing retired), or seeding failed (partial copies deleted) | on PGLite stop resident processes; else read stderr, fix, rerun | after fix |
 | `shadow_replay_addon_unavailable` | no Rust addon for this release | install it | after fix |
 | `shadow_replay_postgres_unavailable` | postgres replay arm not in this release | unset `GBRAIN_SHADOW_REPLAY_POSTGRES_URL` | after fix |
+| `shadow_replay_key_invalid` | the per-brain hash key `capture/key` is empty, short or not hex; nothing was written | delete `capture/key` (a new one is written; earlier summaries become incomparable) | after fix |
 | `shadow_replay_budget` | the run passed `--budget-minutes` (default 120) | raise the budget | safe |
 
 The registry with every field is `src/shadow/replay-errors.ts`.

@@ -14,6 +14,7 @@ export const REPLAY_ERRORS = {
   shadow_replay_network_blocked: { what: 'A replayed call tried to open a network connection; the replay child blocks every network connection.', fix: 'Nothing: the call is reported as uncomparable.', changed: 'nothing', retry: 'never' },
   shadow_replay_addon_unavailable: { what: 'The Rust engine addon is not installed or does not match this release.', fix: 'Install the addon for this release (or set GBRAIN_RUST_ENGINE_ADDON to a build), then rerun.', changed: 'nothing', retry: 'after_fix' },
   shadow_replay_budget: { what: 'The replay ran past its time budget and was stopped; its work copies were deleted.', fix: 'Raise --budget-minutes or replay on a quieter night.', changed: 'deleted the run\'s work copies', retry: 'safe' },
+  shadow_replay_key_invalid: { what: 'The per-brain hash key (capture/key) is empty, short or not hex, so no report or summary was written (its hashes would be guessable).', fix: 'Delete capture/key (the next run writes a new one; earlier summaries become incomparable), then rerun.', changed: 'nothing', retry: 'after_fix' },
   shadow_replay_busy: { what: 'Another replay holds the lock for this brain, or a crashed replay left its lock behind.', fix: 'Wait for the running replay to end. For a stale lock (the message says so: its process is gone and its deadline passed), remove the lock file it names, then rerun.', changed: 'nothing', retry: 'after_fix' },
 } as const satisfies Record<string, ReplayErrorInfo>;
 
