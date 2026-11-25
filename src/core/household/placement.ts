@@ -102,9 +102,10 @@ export function subjectClass(page: { type?: string | null; frontmatter?: Record<
  */
 export async function sharedRecordsAbout(engine: Pick<BrainEngine, 'listPages' | 'executeRaw' | 'getConfig'>, sourceId: string, slug: string): Promise<string[]> {
   const adults = tableReaders('adults', await ownerMemberId(engine));
+  const missing = (await brainServes(engine as BrainEngine)).serves === 'several' ? null : [];
   const shared: string[] = [];
   for (const row of await recordsAbout(engine, sourceId, slug)) {
-    if (await readersWiden(engine, readerList(row.frontmatter?.readable_by) ?? [], adults)) shared.push(row.slug);
+    if (await readersWiden(engine, readerList(row.frontmatter?.readable_by) ?? missing, adults)) shared.push(row.slug);
   }
   return shared;
 }
@@ -202,8 +203,8 @@ export async function placeHouseholdFrontmatter(engine: Pick<BrainEngine, 'execu
   const classes = await classifySubjects(engine, sourceId, about);
   const decision = placeRecord({ kind: frontmatter.kind, school: tags.map(t => t.toLowerCase()).includes('school'), subjects: [...classes.values()], requested: frontmatter.audience });
   frontmatter.household_audience = decision.audience;
-  const [serves, owner] = await Promise.all([brainServes(engine as BrainEngine), ownerMemberId(engine)]);
-  const table = serves.serves === 'several' ? tableReaders(decision.audience, owner) : null;
+  const owner = await ownerMemberId(engine);
+  const table = await placedReaders(engine, decision.audience);
   const written = readerList(frontmatter.readable_by);
   const authored = written && !(['adults', 'shared'] as const).some(a => sameList(written, tableReaders(a, owner))) ? written : null;
   if (!authored) {
@@ -216,6 +217,12 @@ export async function placeHouseholdFrontmatter(engine: Pick<BrainEngine, 'execu
   for (const entry of authored) if (await readerCovered(engine, entry, table)) kept.push(entry);
   frontmatter.readable_by = kept.length ? kept : owner ? [owner] : [`group:${HOUSEHOLD_GROUPS.adults}`];
   return decision;
+}
+
+/** The readers the placement table gives an audience on a brain that serves several people; null on a brain that serves one. */
+export async function placedReaders(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig'>, audience: HouseholdAudience): Promise<string[] | null> {
+  const [serves, owner] = await Promise.all([brainServes(engine as BrainEngine), ownerMemberId(engine)]);
+  return serves.serves === 'several' ? tableReaders(audience, owner) : null;
 }
 
 /** True when some reader in `next` (null: everyone) is not covered by `before` (null: everyone). */
@@ -240,7 +247,8 @@ function reclassifyRefusal(message: string, hint: string, argv: string[], why: s
  *
  * - A subject page's class (household_role; a household record is never a subject) changes only when the records
  *   about it follow: a remote caller cannot take a subject out of child, or give it a role that would widen records
- *   kept to adults because of it; nobody narrows a subject while records about it are still shared with helpers.
+ *   kept to adults because of it; nobody narrows a subject, or makes a child of one that has no class (a page
+ *   deleted by sync and written again), while records about it are still shared with helpers.
  * - A household record is placed (placeHouseholdFrontmatter). A remote write cannot widen it: it cannot retype it to
  *   another type, move it from adults to shared (dropping a child from about, removing audience: adults, changing its
  *   kind), or widen its stored readers.
@@ -278,7 +286,7 @@ async function subjectAdmission(engine: Pick<BrainEngine, 'executeRaw' | 'getCon
       'Keep the page\'s type and household_role as they are, or ask the brain\'s owner to run gbrain household replace --about ' + slug + (keep ? '' : ' --role ' + role) + '.',
       ['gbrain', 'household', 'replace', '--about', slug, ...(keep ? [] : ['--role', role])], 'Changes the role on the brain host and re-places the records about it.');
   }
-  if (from !== 'not_child' || to === 'not_child') return;
+  if (from === to || to === 'not_child' || from === 'child') return;
   const shared = await sharedRecordsAbout(engine, sourceId, slug);
   if (!shared.length) return;
   throw reclassifyRefusal(shared.length + ' household record(s) about ' + slug + ' are shared with helpers, and this change would leave them readable by helpers, so nothing was written.',
