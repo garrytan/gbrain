@@ -73,11 +73,9 @@ export interface PageChangeProof { request_id: string; operation: string; revisi
  */
 export async function pageChangeProof(engine: Pick<BrainEngine, 'executeRaw'>, input: { sourceId: string; incarnation: string; pageId: number | null; expectedRevision: string | null }): Promise<PageChangeProof | null> {
   if (input.pageId === null) return null;
-  const [page] = await engine.executeRaw<{ revision: string | null; writer: string | null }>(
-    'SELECT knowledge_revision::text AS revision, revision_write_request_id::text AS writer FROM pages WHERE id=$1 AND source_id=$2', [input.pageId, input.sourceId]);
+  const [page] = await syncRows<{ revision: string | null; writer: string | null }>(engine, 'page_revision_writer', [input.pageId, input.sourceId]);
   if (!page?.revision || !page.writer || page.revision === String(input.expectedRevision ?? '')) return null;
-  const [writer] = await engine.executeRaw<{ request_id: string; operation: string; kind: string | null; state: string; incarnation: string; page_id: number | null }>(
-    `SELECT request_id::text, operation, intent->>'kind' AS kind, state, source_incarnation::text AS incarnation, page_id FROM persistence_requests WHERE id=$1::uuid`, [page.writer]);
+  const [writer] = await syncRows<{ request_id: string; operation: string; kind: string | null; state: string; incarnation: string; page_id: number | null }>(engine, 'request_writer', [page.writer]);
   if (!writer || writer.state !== 'committed' || String(writer.kind ?? '').startsWith('managed_sync_')
     || writer.incarnation !== input.incarnation || Number(writer.page_id) !== input.pageId) return null;
   return { request_id: writer.request_id, operation: writer.operation, revision: page.revision };
@@ -93,14 +91,12 @@ export async function pageChangeProof(engine: Pick<BrainEngine, 'executeRaw'>, i
 export async function idempotentDeletionProof(engine: Pick<BrainEngine, 'executeRaw'>, input: { sourceId: string; incarnation: string; pageId: number | null;
   revision: string | null; sourcePath: string }): Promise<{ request_id: string } | null> {
   if (input.pageId === null || input.revision === null) return null;
-  const [page] = await engine.executeRaw<{ revision: string; writer: string | null; deleted: boolean }>(
-    'SELECT knowledge_revision::text AS revision, revision_write_request_id::text AS writer, deleted_at IS NOT NULL AS deleted FROM pages WHERE id=$1 AND source_id=$2', [input.pageId, input.sourceId]);
+  const [page] = await syncRows<{ revision: string; writer: string | null; deleted: boolean }>(engine, 'page_deleted_revision_writer', [input.pageId, input.sourceId]);
   if (!page?.deleted || !page.writer || page.revision !== input.revision) return null;
-  const [writer] = await engine.executeRaw<{ request_id: string; operation: string; kind: string | null; state: string; incarnation: string; page_id: number | null }>(
-    `SELECT request_id::text, operation, intent->>'kind' AS kind, state, source_incarnation::text AS incarnation, page_id FROM persistence_requests WHERE id=$1::uuid`, [page.writer]);
+  const [writer] = await syncRows<{ request_id: string; operation: string; kind: string | null; state: string; incarnation: string; page_id: number | null }>(engine, 'request_writer', [page.writer]);
   if (!writer || writer.state !== 'committed' || writer.incarnation !== input.incarnation || Number(writer.page_id) !== input.pageId
     || !(writer.operation === 'delete_page' || writer.kind === 'managed_sync_delete')) return null;
-  const live = await engine.executeRaw('SELECT 1 FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND id<>$2 AND source_path=$3 LIMIT 1', [input.sourceId, input.pageId, input.sourcePath]);
+  const live = await syncRows(engine, 'live_page_at_origin', [input.sourceId, input.pageId, input.sourcePath]);
   return live.length ? null : { request_id: writer.request_id };
 }
 

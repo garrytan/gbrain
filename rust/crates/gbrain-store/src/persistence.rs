@@ -118,6 +118,7 @@ mod sync_run_reads;
 pub(crate) mod topology;
 mod topology_store;
 mod managed_sync_store;
+mod managed_sync_status;
 pub(crate) use topology::purge_probe_rows as purge_probe_topology_rows;
 mod worktree_admission;
 #[cfg(test)]

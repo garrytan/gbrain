@@ -151,7 +151,7 @@ purgeDeletedPages	pages	yes	12	no	yes	yes	serves
 listPages	pages	yes	22	yes	yes	yes	serves
 restorePage	pages	yes	15	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	10	no	yes	yes	serves
-listPages	pages	yes	24	yes	yes	yes	serves
+listPages	pages	yes	29	yes	yes	yes	serves
 findPages	pages	yes	5	no	yes	yes	serves
 countPagesBy	pages	yes	1	no	yes	yes	serves
 pageTypeTotals	pages	yes	2	no	yes	yes	serves
@@ -374,7 +374,7 @@ listStaleChunks	chunks	yes	4	no	yes	yes	serves
 countChunklessPagesWithContent	chunks	yes	6	yes	yes	yes	serves
 listChunklessPagesWithContent	chunks	yes	4	yes	yes	yes	serves
 readEmbeddingStateCounts	chunks	yes	3	no	yes	yes	serves
-listEmbeddingStateRows	chunks	yes	4	no	yes	yes	serves
+listEmbeddingStateRows	chunks	yes	5	no	yes	yes	serves
 deleteChunks	chunks	yes	4	no	yes	yes	serves
 deleteChunksExcept	chunks	yes	4	no	yes	yes	serves
 setChunkerVersion	chunks	yes	20	no	yes	yes	serves
@@ -869,7 +869,7 @@ readSyncStatusCommittedRow	persistence_journal	yes	1	no	yes	yes	serves
 readManagedSyncCursorHeader	persistence_journal	yes	2	no	yes	yes	serves
 readRetiredManagedSyncCursor	persistence_journal	yes	2	no	yes	yes	serves
 readManagedSyncFailureRows	persistence_journal	yes	2	no	yes	yes	serves
-listFreshnessTargets	persistence_journal	yes	1	no	yes	yes	serves
+listFreshnessTargets	persistence_journal	yes	2	no	yes	yes	serves
 readOrphanedManagedSyncFailureRows	persistence_journal	yes	2	no	yes	yes	serves
 readSyncHeadRequestRow	persistence_journal	yes	1	no	yes	yes	serves
 readSyncRecoveryProbeRow	persistence_journal	yes	1	no	yes	yes	serves
@@ -2054,7 +2054,7 @@ gitDurabilityStore	write_misc	no	0	no	-	-	-
 gitEffectStore	write_misc	no	0	no	-	-	-
 topologyStore	write_misc	yes	6	no	yes	yes	serves
 manualLinkStore	write_misc	no	0	no	-	-	-
-runSyncStatement	write_misc	yes	1	no	yes	yes	serves
+runSyncStatement	write_misc	yes	3	no	yes	yes	serves
 listAppliedPolicyRevisions	write_misc	yes	6	no	yes	yes	serves
 readLiveMember	write_misc	yes	13	no	yes	yes	serves
 readFolderAccess	write_misc	yes	13	no	yes	yes	serves

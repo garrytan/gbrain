@@ -75,9 +75,7 @@ export async function sweepNeedsHumanHolds(engine: BrainEngine, sourceId: string
   const auto = await fenceAutoRepairFor(engine, records);
   const stamp = new Date(now).toISOString();
   for (const record of records.filter(hold => holdVerdict(hold, auto, now).needs_human).slice(0, SWEEP_LIMIT)) {
-    const updated = await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,meta,needs_human_at}',to_jsonb($3::text))
-      WHERE op=$1 AND fingerprint=$2 AND completed_keys->0->>'code'=$4 AND NOT (completed_keys->0->'meta' ? 'needs_human_at') RETURNING 1`,
-    [GIT_HOLD_OP, gitHoldFingerprint(sourceId, source.incarnation, record.path), stamp, record.code]);
+    const updated = await syncRows(engine, 'hold_needs_human_stamp', [GIT_HOLD_OP, gitHoldFingerprint(sourceId, source.incarnation, record.path), stamp, record.code]);
     if (updated.length) counted[record.code === 'file_drift' ? 'file_drift_hold' : 'needs_human']++;
   }
   await recordSoakEvent(engine, 'needs_human', counted.needs_human);
