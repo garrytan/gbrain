@@ -88,3 +88,86 @@ pub fn record(sequence: u64, index: u32, commit_time: i64) -> CommitRecord {
         ops: Vec::new(),
     }
 }
+
+/// The commit time I-4.v2 gives each commit: `max(store clock at the commit, previous commit time + 1 µs)`. `prev` is the commit
+/// time before the first of these (`None` for none), `clocks[i]` the injected store clock when commit `i` was accepted.
+pub fn exact_commit_times(prev: Option<i64>, clocks: &[i64]) -> Vec<i64> {
+    let mut out = Vec::with_capacity(clocks.len());
+    let mut last = prev;
+    for &clock in clocks {
+        let t = last.map_or(clock, |p| clock.max(p + 1));
+        out.push(t);
+        last = Some(t);
+    }
+    out
+}
+
+/// The records' commit times are exactly `max(store clock, previous + 1 µs)` for the clock readings given; an increasing counter
+/// that ignores the clock fails here though it rises.
+pub fn commit_times_are_exact(
+    records: &[CommitRecord],
+    prev: Option<i64>,
+    clocks: &[i64],
+) -> Result<(), String> {
+    if records.len() != clocks.len() {
+        return Err(format!(
+            "{} records for {} clock readings",
+            records.len(),
+            clocks.len()
+        ));
+    }
+    let want = exact_commit_times(prev, clocks);
+    for (i, (r, w)) in records.iter().zip(&want).enumerate() {
+        if r.commit_time != *w {
+            return Err(format!(
+                "commit {i} has commit_time {}, max(clock {}, previous + 1) is {w}",
+                r.commit_time, clocks[i]
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Every returned position matches exactly one record at that position, and the records hold no position nobody was told about
+/// beyond `extra_allowed` (open-time upkeep records, which no commit call returned).
+pub fn positions_match_records(
+    returned: &[CommitPosition],
+    records: &[CommitRecord],
+    extra_allowed: usize,
+) -> Result<(), String> {
+    let mut seen = std::collections::BTreeSet::new();
+    for r in records {
+        if !seen.insert(r.position) {
+            return Err(format!("two records share position {:?}", r.position));
+        }
+    }
+    let mut told = std::collections::BTreeSet::new();
+    for p in returned {
+        if !told.insert(*p) {
+            return Err(format!("two commits were returned position {p:?}"));
+        }
+        if !seen.contains(p) {
+            return Err(format!("returned position {p:?} has no record"));
+        }
+    }
+    let extra = seen.len() - told.len();
+    if extra > extra_allowed {
+        return Err(format!(
+            "{extra} records match no returned position (at most {extra_allowed} allowed)"
+        ));
+    }
+    Ok(())
+}
+
+/// Every acknowledged request id appears in the write ids of exactly one record.
+pub fn request_ids_match_records(acked: &[String], records: &[CommitRecord]) -> Result<(), String> {
+    for id in acked {
+        let n = records.iter().filter(|r| r.write_ids.contains(id)).count();
+        if n != 1 {
+            return Err(format!(
+                "acknowledged request {id} is in {n} records' write ids, not exactly one"
+            ));
+        }
+    }
+    Ok(())
+}
