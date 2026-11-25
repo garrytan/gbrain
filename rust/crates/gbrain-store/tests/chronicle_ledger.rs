@@ -292,6 +292,7 @@ fn an_upsert_for_a_missing_source_or_page_refuses_and_writes_nothing() {
 #[test]
 fn a_skip_decision_reads_only_a_skipped_row_with_that_reason() {
     let b = brain("chronicle-skip-decision");
+    pages(&b, 3);
     assert!(
         !b.has_chronicle_skip_decision("default", 3, "h", 2, "too_short")
             .unwrap()
