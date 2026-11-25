@@ -1040,6 +1040,75 @@ fn overlapping_restores_leave_a_store_that_opens_with_format_matching_the_record
     assert_eq!(reopened.brain_id(), on_disk_id);
 }
 
+/// A restore called from inside an open transaction is refused at once, whoever holds the restore lock.
+#[test]
+fn a_restore_inside_a_transaction_is_refused_without_waiting_for_the_restore_lock() {
+    let (store, _dir) = on_disk("bound-lock");
+    let tx = store.begin_transaction(false).unwrap();
+    let guard = RESTORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let (send, recv) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let code = tx.restore_quarantine(&default_only()).unwrap_err().code;
+        tx.rollback_transaction().unwrap();
+        send.send(code).unwrap();
+    });
+    let result = recv.recv_timeout(std::time::Duration::from_secs(5));
+    drop(guard);
+    worker.join().unwrap();
+    assert_eq!(
+        result.expect("the refusal does not wait for the lock"),
+        "invalid_state"
+    );
+}
+
+/// A restore whose `FORMAT` write failed leaves the record one rotation ahead. A second restore must not commit
+/// another rotation over the id `FORMAT` still names: it repairs `FORMAT` first, or refuses with nothing changed.
+#[test]
+fn repeated_format_write_failures_never_discard_the_id_format_still_names() {
+    let (store, dir) = on_disk("format-errors");
+    let blocker = dir.join("FORMAT.tmp");
+    std::fs::create_dir(&blocker).unwrap();
+    let first = format::read(&dir).unwrap().unwrap().brain_id;
+    assert!(
+        store.restore_quarantine(&default_only()).is_err(),
+        "FORMAT cannot be written"
+    );
+    let committed = store.brain_id();
+    assert_ne!(committed, first, "the record committed the first rotation");
+    let (before, generation) = (dump(&store), store.commit_version().unwrap());
+    let mut retry = default_only();
+    retry.restore_id = "retry".into();
+    assert!(
+        store.restore_quarantine(&retry).is_err(),
+        "FORMAT still cannot be written: refused before any commit"
+    );
+    assert_eq!(
+        (dump(&store), store.commit_version().unwrap()),
+        (before, generation),
+        "the refused retry committed nothing"
+    );
+    std::fs::remove_dir(&blocker).unwrap();
+    // The directory opens now: FORMAT names the id the record rotated from.
+    drop(store);
+    let reopened = Store::open_dir(&dir, Default::default()).unwrap();
+    assert_eq!(reopened.brain_id(), committed);
+    // And with the file system fixed, another restore repairs FORMAT, rotates again, and the store still opens.
+    let mut again = default_only();
+    again.restore_id = "again".into();
+    let report = reopened.restore_quarantine(&again).unwrap();
+    assert_eq!(
+        format::read(&dir).unwrap().unwrap().brain_id,
+        report.brain_id
+    );
+    drop(reopened);
+    assert_eq!(
+        Store::open_dir(&dir, Default::default())
+            .unwrap()
+            .brain_id(),
+        report.brain_id
+    );
+}
+
 /// A brain on a real directory (`FORMAT` and `records.redb`), reopened by path.
 fn on_disk(name: &str) -> (Store, std::path::PathBuf) {
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))

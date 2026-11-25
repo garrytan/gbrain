@@ -612,22 +612,33 @@ impl Store {
     /// The restore changes, in one write transaction (see the module text). A second call with
     /// the same `restore_id` is `invalid_state`; a blocker is `restore_refused`.
     pub fn restore_quarantine(&self, plan: &QuarantinePlan) -> Result<QuarantineReport> {
-        // One restore at a time: a second one rotating the id while the first has not yet written `FORMAT`
-        // could leave `FORMAT` behind the record by more than one rotation, which an open refuses.
-        let _one_at_a_time = RESTORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // The new id and `FORMAT` are published at once; inside an outer transaction a rollback
-        // would leave them naming a brain the records never had.
+        // would leave them naming a brain the records never had. This refusal comes before the lock: a
+        // call from inside an open transaction must return, not wait for another restore.
         if self.bound.is_some() {
             return Err(StoreError::new(
                 INVALID_STATE,
                 "a restore changes the brain's identity and cannot run inside a transaction",
             ));
         }
+        // One restore at a time: a second one rotating the id while the first has not yet written `FORMAT`
+        // could leave `FORMAT` behind the record by more than one rotation, which an open refuses.
+        let _one_at_a_time = RESTORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         if plan.restore_id.is_empty() || plan.restore_id.contains('\0') {
             return Err(StoreError::new(
                 INVALID_ARGUMENT,
                 "a restore id is a non-empty name",
             ));
+        }
+        // An earlier restore may have committed its rotation and failed to write `FORMAT`. The record keeps only
+        // the one id it rotated from, which `FORMAT` still names, so another rotation must not commit first:
+        // bring `FORMAT` up to the committed id here, or refuse with nothing changed when that write fails.
+        if let Some(dir) = &self.dir
+            && let Some(mut on_disk) = format::read(dir)?
+            && on_disk.brain_id != self.brain_id()
+        {
+            on_disk.brain_id = self.brain_id();
+            format::write(dir, &on_disk)?;
         }
         let identity = self.restore_identity()?;
         let inventory_key = format!("restore.{}.detached_execution", plan.restore_id);
