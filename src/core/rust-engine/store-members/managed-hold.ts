@@ -8,8 +8,6 @@
  * nothing ran and no caller sees a different answer than before these members existed. A test engine with the hold
  * lifted (test/engine-parity/rust-managed.ts) reports the capability and the calls are served.
  */
-import { capabilityMissing } from '../errors.ts';
-import { RECEIPT_STOP_OWNERS } from '../receipt-stops.ts';
 
 /** Whether `engine` serves managed mode (the hold is lifted on it). */
 export function managedServed(engine: unknown): boolean {
@@ -17,15 +15,18 @@ export function managedServed(engine: unknown): boolean {
   return caps?.has('managed_persistence') === true;
 }
 
-/** The refusal executeRaw answers on this engine. */
-export function heldRefusal(): Error {
-  return capabilityMissing('raw_sql', 'executeRaw', 'none', RECEIPT_STOP_OWNERS.executeRaw);
+/**
+ * The refusal, from this engine's own executeRaw: the very call the member replaced, so the error is the same object kind
+ * with the same text, and a caller (or the parity harness) that records engine calls sees executeRaw refuse.
+ */
+export function heldRefusal(engine: unknown): Promise<never> {
+  return (engine as { executeRaw(sql: string): Promise<never> }).executeRaw('');
 }
 
 /** `store` as `engine` may use it: every method refuses as executeRaw did while the hold is on. */
 export function heldStore<S extends object>(engine: unknown, store: S): S {
   if (managedServed(engine)) return store;
   const held = {} as Record<string, unknown>;
-  for (const key of Object.keys(store)) held[key] = () => Promise.reject(heldRefusal());
+  for (const key of Object.keys(store)) held[key] = () => heldRefusal(engine);
   return held as S;
 }

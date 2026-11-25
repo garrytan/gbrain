@@ -38,7 +38,7 @@ export const stampEffectClaim: StoreMember<[claim: EffectClaim], Record<string, 
 /** The claimed rows of up to `limit` ready single-file Git effects of one worktree (#5530), in claim order. */
 /** Refuses as the executeRaw it replaced did while the managed_persistence hold is on (managed-hold.ts). */
 export const claimCoalescedGitEffects = async function claimCoalescedGitEffects(this: unknown, brain: StoreBrain, input: CoalescedGitClaim): Promise<Record<string, unknown>[]> {
-  if (!managedServed(this)) throw heldRefusal();
+  if (!managedServed(this)) return heldRefusal(this);
   return storeCall({ member: 'claimCoalescedGitEffects' }, () => brain.claimCoalescedGitEffects({ ...input, deadOwners: [...input.deadOwners] }));
 };
 
