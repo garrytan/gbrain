@@ -3294,6 +3294,16 @@ More: [docs/designs/GIT_CANONICAL_MEMORY.md#remote-and-hosted-writes](../../docs
 
 More: [docs/guides/household.md#household_exists](../../docs/guides/household.md#household_exists)
 
+### household_reclassify
+
+<a id="household_reclassify"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A write was refused because it changes a subject page's household_role in a way that would leave household records readable by people the placement table no longer allows (a remote caller turning a child into another role, or a subject narrowed while records about it are still shared with helpers); nothing was written. | A household record's readers are written from its subject's role when the record is written; a role change that skipped the records would leave them wider than the table, so the role and the records change together through gbrain household replace --about. | Run the command in fix on the brain host (gbrain household replace --about <slug> --role <role>), which narrows the records about the subject and sets its role in one step; a remote agent asks the brain's owner. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/household.md#household_reclassify](../../docs/guides/household.md#household_reclassify)
+
 ### household_scale
 
 <a id="household_scale"></a>

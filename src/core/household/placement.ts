@@ -80,11 +80,21 @@ export function placementFolderRules(owner: string | null): Array<{ prefix: stri
 /** The class of each subject slug, read from its page's household_role in the record's own source (trusted internal read). */
 export async function classifySubjects(engine: Pick<BrainEngine, 'getPage'>, sourceId: string, about: readonly string[]): Promise<Map<string, SubjectClass>> {
   const pages = await Promise.all(about.map(slug => engine.getPage(slug, { sourceId })));
-  return new Map(about.map((slug, i) => {
-    const raw = pages[i]?.frontmatter?.household_role;
-    const role = typeof raw === 'string' ? raw.trim().toLowerCase() : null;
-    return [slug, role === 'child' ? 'child' : role && (HOUSEHOLD_ROLES as readonly string[]).includes(role) ? 'not_child' : 'unclassified'];
-  }));
+  return new Map(about.map((slug, i) => [slug, roleClass(pages[i]?.frontmatter?.household_role)]));
+}
+
+/** The class a page's household_role gives the records about it. */
+export function roleClass(raw: unknown): SubjectClass {
+  const role = typeof raw === 'string' ? raw.trim().toLowerCase() : null;
+  return role === 'child' ? 'child' : role && (HOUSEHOLD_ROLES as readonly string[]).includes(role) ? 'not_child' : 'unclassified';
+}
+
+/** Live household records about `slug` in `sourceId` whose stored readers include the helpers or family chats groups. */
+export async function sharedRecordsAbout(engine: Pick<BrainEngine, 'listPages'>, sourceId: string, slug: string): Promise<string[]> {
+  const groups = [HOUSEHOLD_GROUPS.helpers, HOUSEHOLD_GROUPS.chats].map(g => 'group:' + g);
+  const rows = await engine.listPages({ type: HOUSEHOLD_TYPE as never, sourceId, sort: 'slug', limit: 100_000 });
+  return rows.filter(row => aboutOf(row.frontmatter?.about).includes(slug)
+    && Array.isArray(row.frontmatter?.readable_by) && (row.frontmatter.readable_by as unknown[]).some(r => groups.includes(String(r)))).map(row => row.slug);
 }
 
 function aboutOf(value: unknown): string[] {
@@ -124,4 +134,36 @@ export async function placeHouseholdFrontmatter(engine: Pick<BrainEngine, 'execu
   if (serves.serves === 'several') frontmatter.readable_by = audienceReaders(decision.audience, owner).map(p => p.startsWith('member:') ? p.slice(7) : p).sort();
   else delete frontmatter.readable_by;
   return decision;
+}
+
+/**
+ * Write admission for a page's household fields, on every import (put_page, edit_page, the household ops and sync
+ * projection; import-file.ts). A household record is placed (placeHouseholdFrontmatter). On any other page household_role
+ * classifies the records about it, so two changes are refused: a remote caller turning a child into another role (every
+ * record about the child would widen at its next write), and narrowing a subject while records about it are still
+ * shared with helpers (their stored readers would stay wider than the table). gbrain household replace --about makes
+ * either change and re-places the records in the same step.
+ */
+export async function householdWriteAdmission(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig' | 'getPage' | 'listPages'>, sourceId: string, slug: string,
+  parsed: { type: string; frontmatter: Record<string, unknown>; tags: readonly string[] },
+  previous: { slug?: string; type?: string | null; frontmatter?: Record<string, unknown> | null; deleted_at?: unknown } | null | undefined, remote: boolean): Promise<void> {
+  if (parsed.type === HOUSEHOLD_TYPE) { await placeHouseholdFrontmatter(engine, sourceId, parsed.frontmatter, parsed.tags, previous); return; }
+  if (!previous || previous.deleted_at || previous.frontmatter?.household_role === undefined) return;
+  const from = roleClass(previous.frontmatter.household_role);
+  const to = roleClass(parsed.frontmatter.household_role);
+  const role = String(parsed.frontmatter.household_role ?? '').trim().toLowerCase();
+  const fix = (argv: string[], why: string) => ({ fix: { argv, consent: [], actor: 'host_admin' as const, requires_exclusive: false, why } });
+  if (remote && from === 'child' && to === 'not_child') {
+    throw opError('household_reclassify', slug + ' is a child in this household and only the brain\'s owner can change that, so nothing was written.',
+      'Keep household_role: child on the page, or ask the brain\'s owner to run gbrain household replace --about ' + slug + ' --role ' + role + '.',
+      fix(['gbrain', 'household', 'replace', '--about', slug, '--role', role], 'Changes the role on the brain host and re-places the records about it.'));
+  }
+  if (from !== 'not_child' || to === 'not_child') return;
+  const shared = await sharedRecordsAbout(engine, sourceId, slug);
+  if (!shared.length) return;
+  const argv = ['gbrain', 'household', 'replace', '--about', slug, ...(to === 'child' ? ['--role', 'child'] : [])];
+  throw opError('household_reclassify', shared.length + ' household record(s) about ' + slug + ' are shared with helpers, and this change would leave them readable by helpers, so nothing was written.',
+    to === 'child' ? 'Classify it with household_add (about_role child) or gbrain household replace --about ' + slug + ' --role child, which narrows those records to adults in the same step.'
+      : 'Run gbrain household replace --about ' + slug + ' first, which narrows those records to adults, then make this change again.',
+    fix(argv, 'Narrows the records about the subject to adults, then sets its role.'));
 }

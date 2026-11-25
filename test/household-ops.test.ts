@@ -80,6 +80,24 @@ describe('household_add refusals', () => {
     const err = await call('household_add', { kind: 'bill', title: 'Water bill', due: '2026-12-28' }).catch(e => e);
     expect(err.code).toBe('household_exists');
   });
+
+  test('a new request_id does not let household_add overwrite an existing record', async () => {
+    const slug = slugs.get('Water bill')!;
+    await call('household_mark', { slug, event: 'paid', on: AS_OF });
+    const err = await call('household_add', { kind: 'bill', title: 'Water bill', due: '2027-01-01', request_id: 'water-bill-fresh-1' }).catch(e => e);
+    expect(err.code).toBe('household_exists');
+    const page = await engine.getPage(slug);
+    expect(page!.timeline).toContain('household — paid');
+    expect(page!.frontmatter.last_paid).toBe(AS_OF);
+  });
+
+  test('a retry with the same request_id replays the first add instead of refusing', async () => {
+    const params = { kind: 'supply', title: 'Light bulbs', cadence: '90d', last_done: '2026-11-01', request_id: 'light-bulbs-add-1' };
+    const first = await call('household_add', params);
+    const again = await call('household_add', params);
+    expect(again.slug).toBe(first.slug);
+    expect((await engine.getPage(first.slug))!.frontmatter.cadence).toBe('90d');
+  });
 });
 
 describe('status transitions are enforced in write admission, not only in household_mark', () => {

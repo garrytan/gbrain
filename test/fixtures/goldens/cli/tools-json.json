@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 315094,
-    "stdoutSha256": "3237b1372fced6572d9e0b2264d457a35175042342a6f21c4e9ffdea70293c10",
+    "stdoutBytes": 315761,
+    "stdoutSha256": "793d05f0517cfc1f8689ccd55e9facd4fd7746fbbb49e5bc3a9eb7532f3bc025",
     "toolNames": [
       "remember",
       "entity",
@@ -9462,17 +9462,38 @@
         "scope": "write"
       },
       {
-        "description": "Recompute every household record's audience and readers from the placement table (after a subject is reclassified, or when the brain starts serving several people). Trusted local CLI only.",
+        "description": "Recompute every household record's audience and readers from the placement table (when the brain starts serving several people). With about: narrow the records about those subjects to adults, set their household_role when role is given, then re-place them. Trusted local CLI only.",
         "idempotent": true,
         "local_only": true,
         "mutating": true,
         "name": "household_replace",
         "parameters": {
+          "about": "array?",
+          "role": "string?",
           "source_id": "string?"
         },
         "required_scopes": [],
         "schema": {
           "properties": {
+            "about": {
+              "description": "Subject page slugs to reclassify; only the records about them are re-placed.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "role": {
+              "description": "The household_role to give each about subject (needs about).",
+              "enum": [
+                "adult",
+                "child",
+                "helper",
+                "pet",
+                "home",
+                "other"
+              ],
+              "type": "string"
+            },
             "source_id": {
               "description": "Source (default: the current one).",
               "type": "string"

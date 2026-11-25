@@ -340,6 +340,7 @@
     "host_upgrade_required",
     "hosted_repo_refused",
     "household_exists",
+    "household_reclassify",
     "household_scale",
     "household_transition",
     "idempotency_conflict",

@@ -17,7 +17,9 @@ import { parseSourceIdParam } from './context.ts';
 import { requestSourceScope } from './search-source-scope.ts';
 import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { remoteTargetHidden } from '../persistence/page-visibility.ts';
-import { pageMutationSource, submitPageMutation } from '../persistence/page-mutations.ts';
+import { pageMutationSource, requestPrincipalForContext, submitPageMutation } from '../persistence/page-mutations.ts';
+import { getWriteRequest } from '../persistence/journal.ts';
+import { parseWriteRequestId } from '../persistence/preconditions.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import { assertInlineBody } from '../page-body/page-shape.ts';
 import { slugifySegment } from '../sync.ts';
@@ -27,7 +29,7 @@ import {
   RECURS, readHouseholdRecord, strictDate, strictMonthDay, type HouseholdIssue, type HouseholdKind, type HouseholdRecord,
 } from '../household/record.ts';
 import { assessHouseholdRecord, calendarDay, rankAssessments, type HouseholdAssessment, type HouseholdState } from '../household/assess.ts';
-import { classifySubjects, placeHouseholdFrontmatter, placeRecord, type SubjectClass } from '../household/placement.ts';
+import { classifySubjects, placeHouseholdFrontmatter, placeRecord, roleClass, type SubjectClass } from '../household/placement.ts';
 
 /** Records one household_due call reads at most; past it the answer is partial with no counts. */
 export const HOUSEHOLD_SCAN_CAP = 2_000;
@@ -210,15 +212,20 @@ function timelineLine(day: string, event: string, note: string | null): string {
   return `- **${day}** | household — ${event}${note ? `: ${note}` : ''}`;
 }
 
-/** Writes `household_role` on each subject page (creating a minimal page when none exists), then re-places the records about it. */
-async function classifySubjectPages(ctx: OperationContext, sourceId: string, about: string[], role: string): Promise<string[]> {
+/**
+ * Writes `household_role` on each subject page (creating a minimal page when none exists). A subject that goes from another
+ * role to child first has the records about it narrowed to adults (`audience: adults`), so none is shared for a moment.
+ */
+async function classifySubjectPages(ctx: OperationContext, sourceId: string, about: string[], role: string): Promise<{ classified: string[]; pinned: string[] }> {
   const changed: string[] = [];
+  const pinned: string[] = [];
   for (const slug of about) {
     const snapshot = await ctx.engine.readPageSnapshot(slug, { sourceId });
     const live = snapshot && !snapshot.page.deleted_at ? snapshot : null;
     if (live && String(live.page.frontmatter?.household_role ?? '') === role) continue;
     if (live) assertInlineBody(live.page, 'household_add about_role');
     if (live && await remoteTargetHidden(ctx.engine, ctx.remote, sourceId, slug)) throw opError('page_not_found', `Page not found: ${slug}`, 'Name a subject page this connection can read.');
+    if (live && role === 'child' && roleClass(live.page.frontmatter?.household_role) === 'not_child') pinned.push(...(await replaceHouseholdRecords(ctx, sourceId, [slug], { pin: true })).replaced);
     const title = live?.page.title ?? slug.split('/').pop()!.replace(/-/g, ' ');
     const fm = { ...(live?.page.frontmatter ?? {}), household_role: role };
     const content = serializeMarkdown(Object.fromEntries(Object.entries(fm).filter(([k]) => !['type', 'title', 'tags'].includes(k))),
@@ -226,11 +233,11 @@ async function classifySubjectPages(ctx: OperationContext, sourceId: string, abo
     await submitPageMutation(ctx, { operation: 'put_page', params: { slug, content, source_id: sourceId, ...(live ? { expected_revision: live.revision } : {}) } });
     changed.push(slug);
   }
-  return changed;
+  return { classified: changed, pinned };
 }
 
-/** Rewrites every record (optionally only those about `about`) whose stored placement differs from the table. */
-export async function replaceHouseholdRecords(ctx: OperationContext, sourceId: string, about?: readonly string[]): Promise<{ checked: number; replaced: string[] }> {
+/** Rewrites every record (optionally only those about `about`) whose stored placement differs from the table; `pin` first narrows each to adults. */
+export async function replaceHouseholdRecords(ctx: OperationContext, sourceId: string, about?: readonly string[], opts: { pin?: boolean } = {}): Promise<{ checked: number; replaced: string[] }> {
   const wanted = about?.length ? new Set(about) : null;
   const rows = (await ctx.engine.listPages({ type: HOUSEHOLD_TYPE as never, sourceId, sort: 'slug', limit: HOUSEHOLD_SCAN_CAP + 1 }) as unknown as HouseholdPage[])
     .filter(row => !wanted || (Array.isArray(row.frontmatter?.about) && (row.frontmatter.about as unknown[]).some(s => wanted.has(String(s)))));
@@ -241,6 +248,7 @@ export async function replaceHouseholdRecords(ctx: OperationContext, sourceId: s
     if (!snap) continue;
     const fm = { ...(snap.page.frontmatter ?? {}) };
     const before = JSON.stringify([fm.household_audience ?? null, fm.readable_by ?? null]);
+    if (opts.pin && fm.household_audience !== 'adults') fm.audience = 'adults';
     await placeHouseholdFrontmatter(ctx.engine, sourceId, fm, snap.tags);
     if (JSON.stringify([fm.household_audience ?? null, fm.readable_by ?? null]) === before) continue;
     assertInlineBody(snap.page, 'household_replace');
@@ -325,16 +333,18 @@ const household_add: Operation = {
     const tail = slugifySegment(String(p.slug ?? title)).toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '') || 'record';
     const slug = `${decision.folder}${tail}`;
     const existing = await ctx.engine.readPageSnapshot(slug, { sourceId });
-    if (existing && !existing.page.deleted_at && typeof p.request_id !== 'string') {
+    const requestId = parseWriteRequestId(p.request_id);
+    const replay = existing && requestId ? await getWriteRequest(ctx.engine, await requestPrincipalForContext(ctx), requestId) : null;
+    if (existing && !existing.page.deleted_at && !(replay && replay.slug === slug && replay.source_id === sourceId)) {
       throw opError('household_exists', `A page already exists at ${slug}, so nothing was written.`,
         'Record an event on the existing record with household_mark, or pass slug to name this one differently.',
         { fix: readFix('Shows the existing household records.', { argv: ['gbrain', 'household', 'list', '--json'], mcp: { tool: 'household_due', arguments: { include: 'all' } } }) });
     }
-    const classified = role ? await classifySubjectPages(ctx, sourceId, about, role) : [];
+    const { classified, pinned } = role ? await classifySubjectPages(ctx, sourceId, about, role) : { classified: [], pinned: [] };
     const body = capText(p.note, 2_000) ?? `# ${title}`;
     const result = await submitPageMutation(ctx, { operation: 'put_page', params: {
       slug, source_id: sourceId, content: serializeRecord(fm, title, body, '', tags), ...(typeof p.request_id === 'string' ? { request_id: p.request_id } : {}) } });
-    const replaced = classified.length ? (await replaceHouseholdRecords(ctx, sourceId, classified)).replaced.filter(s => s !== slug) : [];
+    const replaced = [...new Set([...pinned, ...(classified.length ? (await replaceHouseholdRecords(ctx, sourceId, classified)).replaced : [])])].filter(s => s !== slug).sort();
     return { ...result, slug, kind, audience: decision.audience, placement_basis: decision.basis, subjects_classified: classified, records_replaced: replaced };
   },
 };
@@ -418,15 +428,26 @@ const household_replace: Operation = {
   idempotent: true,
   writeInference: 'none',
   outputRedaction: 'no_stored_text',
-  description: "Recompute every household record's audience and readers from the placement table (after a subject is reclassified, or when the brain starts serving several people). Trusted local CLI only.",
-  params: { source_id: { type: 'string', description: 'Source (default: the current one).' } },
+  description: "Recompute every household record's audience and readers from the placement table (when the brain starts serving several people). With about: narrow the records about those subjects to adults, set their household_role when role is given, then re-place them. Trusted local CLI only.",
+  params: {
+    source_id: { type: 'string', description: 'Source (default: the current one).' },
+    about: { type: 'array', items: { type: 'string' }, description: 'Subject page slugs to reclassify; only the records about them are re-placed.' },
+    role: { type: 'string', enum: ROLE_ENUM, description: 'The household_role to give each about subject (needs about).' },
+  },
   scope: 'write',
   localOnly: true,
   cliOnly: { argv: ['gbrain', 'household', 'replace'] },
   handler: async (ctx, p) => {
     if (ctx.remote !== false) throw opError('permission_denied', 'household_replace runs only on the brain host.', 'Ask the brain\'s owner to run gbrain household replace.');
     const sourceId = pageMutationSource(ctx, p, 'household_replace');
-    return { source_id: sourceId, ...await replaceHouseholdRecords(ctx, sourceId) };
+    const about = (listParam(p.about) ?? []).map(s => s.trim().toLowerCase().replace(/\.md$/, ''));
+    const role = p.role as string | undefined;
+    if (role !== undefined && !(HOUSEHOLD_ROLES as readonly string[]).includes(role)) throw invalidParam(ctx, 'household_replace', 'role', 'household_replace: unknown role.', { choices: ROLE_ENUM });
+    if (role !== undefined && !about.length) throw invalidParam(ctx, 'household_replace', 'about', 'household_replace: role needs about to name the subject page.', { example: ['people/alice-example'] });
+    if (!about.length) return { source_id: sourceId, ...await replaceHouseholdRecords(ctx, sourceId) };
+    const { classified, pinned } = role ? await classifySubjectPages(ctx, sourceId, about, role) : { classified: [], pinned: (await replaceHouseholdRecords(ctx, sourceId, about, { pin: true })).replaced };
+    const result = await replaceHouseholdRecords(ctx, sourceId, about);
+    return { source_id: sourceId, subjects_classified: classified, checked: result.checked, replaced: [...new Set([...pinned, ...result.replaced])].sort() };
   },
 };
 

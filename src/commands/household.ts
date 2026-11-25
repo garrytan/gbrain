@@ -6,7 +6,7 @@
  *   gbrain household add  <kind> --title <t> [record flags] [--json]
  *   gbrain household mark <slug> <event> [--on YYYY-MM-DD] [--due YYYY-MM-DD] [--note <text>] [--json]
  *   gbrain household list [--source <id>] [--json]
- *   gbrain household replace [--source <id>] [--json]
+ *   gbrain household replace [--about <slug> [--role <role>]] [--source <id>] [--json]
  *
  * Every path dispatches through the trusted-local op layer (handleToolCall, remote: false), so the CLI and MCP share
  * one behavior. GBrain never acts: nothing here buys, pays, books, calls or sends.
@@ -41,7 +41,8 @@ export function printUsage(): void {
     '          [--audience adults] [--school] [--note text] [--slug name] [--source <id>] [--json]',
     `  mark    <slug> <event> [--on D] [--due D] [--note text] [--json]   events: ${HOUSEHOLD_EVENTS.join(', ')}`,
     '  list    [--source <id>] [--json]                                     every record, ranked',
-    '  replace [--source <id>] [--json]   recompute every record\'s readers from the placement table',
+    '  replace [--about slug,slug [--role adult|child|helper|pet|home|other]] [--source <id>] [--json]',
+    '          recompute record readers from the placement table; --about narrows the records about a subject to adults first',
     '',
     `Kinds: ${HOUSEHOLD_KINDS.join(', ')}. One example per kind:`,
     ...Object.values(ADD_SHAPES).map(s => `  ${s}`),
@@ -56,7 +57,7 @@ const FLAGS: Readonly<Record<string, string>> = {
   '--due': 'due', '--recurs': 'recurs', '--cadence': 'cadence', '--last-done': 'last_done', '--on': 'on', '--lead-days': 'lead_days',
   '--amount': 'amount', '--gift': 'gift', '--proposed-verb': 'proposed_verb', '--proposed-note': 'proposed_note', '--audience': 'audience',
   '--school': 'school', '--note': 'note', '--source': 'source_id', '--request-id': 'request_id', '--window': 'window_days', '--kinds': 'kinds',
-  '--include': 'include', '--as-of': 'as_of', '--limit': 'limit',
+  '--include': 'include', '--as-of': 'as_of', '--limit': 'limit', '--role': 'role',
 };
 const BOOLEAN_FLAGS = new Set(['child', 'school']);
 const NUMBER_FLAGS = new Set(['lead_days', 'amount', 'window_days', 'limit']);
@@ -120,7 +121,7 @@ export async function runHousehold(engine: BrainEngine, args: string[]): Promise
       return;
     }
     if (sub === 'replace') {
-      const result = await handleToolCall(engine, 'household_replace', pick(values, ['source_id'])) as { checked: number; replaced: string[] };
+      const result = await handleToolCall(engine, 'household_replace', pick(values, ['source_id', 'about', 'role'])) as { checked: number; replaced: string[] };
       print(json, result, `Checked ${result.checked} household record(s); re-placed ${result.replaced.length}.`);
       return;
     }

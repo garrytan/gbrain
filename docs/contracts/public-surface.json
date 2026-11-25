@@ -2867,6 +2867,7 @@
     "host_upgrade_required": 16,
     "hosted_repo_refused": 1,
     "household_exists": 1,
+    "household_reclassify": 1,
     "household_scale": 1,
     "household_transition": 1,
     "idempotency_conflict": 1,

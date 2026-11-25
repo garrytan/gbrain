@@ -59,8 +59,12 @@ subject is classified. You can narrow a shared record with `--audience adults`; 
 
 On a brain that serves one person, records carry no reader list and you read everything. On a brain that serves several
 people, each record names the owner and the `household-adults`, `household-helpers` and `household-chats` groups
-its row allows. If a subject is reclassified by hand, records about it drop out of remote reads until the owner runs
-`gbrain household replace`, which recomputes every record's readers.
+its row allows. To reclassify a subject, run `gbrain household replace --about <slug> --role <role>` on the brain host
+(or `household add --child` with a new record): it narrows the records about the subject to adults first, then sets
+the role. An edit or sync that narrows a subject while records about it are still shared is refused
+([household_reclassify](#household_reclassify)), and only the owner can turn a child into another role.
+`gbrain household replace` with no `--about` recomputes every record's readers, for example when the brain starts
+serving several people.
 
 ## household_exists
 
@@ -72,6 +76,15 @@ its row allows. If a subject is reclassified by hand, records about it drop out 
 `household_due` found more household records than it reads in one call (2,000), so it returned nothing rather than a
 partial ranking. Narrow the read with `kinds`, `about`, `handled_by` or `source_id`, and archive records you no
 longer need (`gbrain household mark <slug> archive`).
+
+## household_reclassify
+
+A write changed a subject page's `household_role` in a way that would leave household records readable by people the
+table no longer allows, so nothing was written. Two cases: a remote agent tried to turn a child into another role (only
+the owner can), or the subject was narrowed (made a child, or its role removed) while records about it were still shared
+with helpers. Run `gbrain household replace --about <slug> --role <role>` on the brain host: it narrows those records
+to adults (`audience: adults` on each) and then sets the role. To remove a role, run it without `--role`, then edit
+the page again.
 
 ## household_transition
 

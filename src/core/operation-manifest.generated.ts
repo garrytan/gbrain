@@ -8155,11 +8155,30 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "idempotent": true,
     "writeInference": "none",
     "outputRedaction": "no_stored_text",
-    "description": "Recompute every household record's audience and readers from the placement table (after a subject is reclassified, or when the brain starts serving several people). Trusted local CLI only.",
+    "description": "Recompute every household record's audience and readers from the placement table (when the brain starts serving several people). With about: narrow the records about those subjects to adults, set their household_role when role is given, then re-place them. Trusted local CLI only.",
     "params": {
       "source_id": {
         "type": "string",
         "description": "Source (default: the current one)."
+      },
+      "about": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Subject page slugs to reclassify; only the records about them are re-placed."
+      },
+      "role": {
+        "type": "string",
+        "enum": [
+          "adult",
+          "child",
+          "helper",
+          "pet",
+          "home",
+          "other"
+        ],
+        "description": "The household_role to give each about subject (needs about)."
       }
     },
     "scope": "write",

@@ -5,7 +5,7 @@
  *
  * - Money, returns and everything about the child stay adults only, in household_due and in get_page.
  * - The owner's remote reads equal the trusted local read (R94: nothing reduces what the owner's callers read).
- * - A child added to an existing helper-readable record, and a subject reclassified as a child, take the record away
+ * - A child added to an existing helper-readable record, and a subject reclassified through household replace --about, take the record away
  *   from helpers in direct reads (get_page) and in derived reads (household_due counts, items and text).
  * Synthetic data only.
  */
@@ -169,23 +169,47 @@ describe('household privacy over remote MCP', () => {
     expect((await remote(HELPER, 'get_page', { slug: slugs.get('Casey birthday')! })).isError).toBe(true);
   });
 
-  test('a subject page reclassified by hand leaves stale records out of remote reads, with a notice', async () => {
-    const before = await remote(HELPER, 'household_due', ALL);
-    expect(titles(before)).toContain('Dog food');
+  test('narrowing a subject by hand is refused while records about it are shared; household replace --about narrows them first', async () => {
+    expect(titles(await remote(HELPER, 'household_due', ALL))).toContain('Dog food');
     const pet = await engine.getPage('pets/biscuit-example');
-    await importFromContent(engine, 'pets/biscuit-example', ['---', 'type: ' + (pet?.type ?? 'note'), 'title: biscuit-example', 'household_role: child', '---', '', 'Reclassified.'].join('\n'), { sourceId: 'default' });
+    const err = await importFromContent(engine, 'pets/biscuit-example', ['---', 'type: ' + (pet?.type ?? 'note'), 'title: biscuit-example', 'household_role: child', '---', '', 'Reclassified.'].join('\n'), { sourceId: 'default' }).catch(e => e);
+    expect(err.code).toBe('household_reclassify');
+    expect((await engine.getPage('pets/biscuit-example'))!.frontmatter.household_role).toBe('pet');
+    const out = await local('household_replace', { about: ['pets/biscuit-example'], role: 'child' });
+    expect(out.subjects_classified).toEqual(['pets/biscuit-example']);
+    expect(out.replaced).toContain(slugs.get('Dog food'));
+    expect((await engine.getPage(slugs.get('Dog food')!))!.frontmatter).toMatchObject({ audience: 'adults', household_audience: 'adults' });
+    __resetPrivateVisibilityCacheForTests();
+    expect((await remote(HELPER, 'get_page', { slug: slugs.get('Dog food')! })).isError).toBe(true);
+    expect((await remote(HELPER, 'list_pages', { type: 'household', limit: 100 })).text).not.toContain(slugs.get('Dog food')!);
+    expect(titles(await remote(HELPER, 'household_due', ALL))).not.toContain('Dog food');
+    expect(titles(await remote(OWNER, 'household_due', ALL))).toContain('Dog food');
+  });
+
+  test('a stored reader list wider than the table is left out of household_due, with a notice', async () => {
+    expect(titles(await remote(HELPER, 'household_due', ALL))).toContain('Bob birthday');
+    await engine.executeRaw("UPDATE pages SET frontmatter = frontmatter - 'household_role' WHERE slug = 'people/bob-example'");
     __resetPrivateVisibilityCacheForTests();
     const helper = await remote(HELPER, 'household_due', ALL);
-    expect(titles(helper)).not.toContain('Dog food');
-    expect(helper.text).not.toContain('Dog food');
+    expect(titles(helper)).not.toContain('Bob birthday');
     expect(helper.text).toContain('household_placement_stale');
-    const owner = await remote(OWNER, 'household_due', ALL);
-    expect(titles(owner)).not.toContain('Dog food');
-    const replaced = await local('household_replace', {});
-    expect(replaced.replaced).toContain(slugs.get('Dog food'));
+    await engine.executeRaw("UPDATE pages SET frontmatter = frontmatter || '{\"household_role\": \"adult\"}'::jsonb WHERE slug = 'people/bob-example'");
     __resetPrivateVisibilityCacheForTests();
-    expect(titles(await remote(OWNER, 'household_due', ALL))).toContain('Dog food');
-    expect(titles(await remote(HELPER, 'household_due', ALL))).not.toContain('Dog food');
+    expect(titles(await remote(HELPER, 'household_due', ALL))).toContain('Bob birthday');
+  });
+
+  test('a remote adult cannot turn a child into another role, through household_add or put_page', async () => {
+    const add = await remote(ADULT, 'household_add', { kind: 'supply', title: 'Crayons', cadence: '30d', about: ['people/robin-example'], about_role: 'adult' });
+    expect(add.isError).toBe(true);
+    expect(add.text).toContain('household_reclassify');
+    const page = await local('get_page', { slug: 'people/robin-example', include_content: true });
+    const put = await remote(ADULT, 'put_page', { slug: 'people/robin-example', expected_revision: page.revision, content: String(page.content).replace(/household_role: child/, 'household_role: adult') });
+    expect(put.isError).toBe(true);
+    expect(put.text).toContain('household_reclassify');
+    expect((await engine.getPage('people/robin-example'))!.frontmatter.household_role).toBe('child');
+    __resetPrivateVisibilityCacheForTests();
+    const helper = await remote(HELPER, 'household_due', ALL);
+    expect(titles(helper).filter(t => t.startsWith('Robin') || t === 'Crayons')).toEqual([]);
   });
 
   test('record text is quoted data in the digest, never an instruction line', async () => {
