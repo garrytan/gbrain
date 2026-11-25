@@ -133,6 +133,7 @@ function codexSessionStartContext(stdout: string): string {
   expect(value !== null && typeof value === 'object' && !Array.isArray(value)).toBe(true);
   expect(value.hookSpecificOutput?.hookEventName).toBe('SessionStart');
   expect(typeof value.hookSpecificOutput?.additionalContext).toBe('string');
+  expect((value.hookSpecificOutput!.additionalContext as string).isWellFormed()).toBe(true);
   return value.hookSpecificOutput!.additionalContext as string;
 }
 
@@ -170,6 +171,18 @@ describe('SessionStart first-session section', () => {
     const context = codexSessionStartContext(codex);
     expect(context.trimStart().startsWith('[gbrain]')).toBe(true);
     expect(context).toContain(SECTION_HEAD);
+  }, 20_000);
+
+  test('a pack trimmed inside an emoji still gives Codex well-formed JSON (serde rejects a lone surrogate)', async () => {
+    for (const lead of ['', 'a']) {
+      const cfg = config();
+      const text = lead + '\u{1F600}'.repeat(6000);
+      await rawServe(cfg, () => JSON.stringify({ ok: true, protocol: 2, block: { text, pointers: [], factsCount: 0, mode: 'pack' } }));
+      const context = codexSessionStartContext(await sessionStart('resume', `codex-trim-${lead || 'even'}`, 'codex'));
+      expect(context).toContain('\u{1F600}');
+      await Promise.all(servers.map(s => new Promise<void>(done => s.close(() => done()))));
+      servers = [];
+    }
   }, 20_000);
 
   test('resume, clear and compact consume no slot', async () => {
