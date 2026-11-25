@@ -211,12 +211,14 @@ async function uploadFile(engine: BrainEngine, args: string[]) {
   // legacy `{}` row heals on its next content change.
   await executeRawJsonb(
     engine,
-    `INSERT INTO files (page_slug, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
-     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+    `INSERT INTO files (page_slug, page_id, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
+     VALUES ($1, (SELECT id FROM pages WHERE source_id = 'default' AND slug = $1 AND deleted_at IS NULL), $2, $3, $4, $5, $6, $7::jsonb)
      ON CONFLICT (storage_path) DO UPDATE SET
        content_hash = EXCLUDED.content_hash,
        size_bytes = EXCLUDED.size_bytes,
        mime_type = EXCLUDED.mime_type,
+       page_id = COALESCE(EXCLUDED.page_id, files.page_id),
+       page_slug = CASE WHEN EXCLUDED.page_id IS NULL THEN files.page_slug ELSE EXCLUDED.page_slug END,
        ${FILES_METADATA_MERGE_SQL}`,
     [pageSlug, filename, storagePath, mimeType, stat.size, hash],
     [{ storage: storageConfig.backend }],
@@ -309,12 +311,14 @@ async function uploadRaw(engine: BrainEngine, args: string[]) {
     const storagePath = relative(target.writeRoot, dest);
     await executeRawJsonb(
       engine,
-      `INSERT INTO files (source_id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+      `INSERT INTO files (source_id, page_slug, page_id, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
+       VALUES ($1, $2, (SELECT id FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL), $3, $4, $5, $6, $7, $8::jsonb)
        ON CONFLICT (storage_path) DO UPDATE SET
          content_hash = EXCLUDED.content_hash,
          size_bytes = EXCLUDED.size_bytes,
          mime_type = EXCLUDED.mime_type,
+         page_id = COALESCE(EXCLUDED.page_id, files.page_id),
+         page_slug = CASE WHEN EXCLUDED.page_id IS NULL THEN files.page_slug ELSE EXCLUDED.page_slug END,
          ${FILES_METADATA_MERGE_SQL}`,
       [sourceId, pageSlug, filename, storagePath, mimeType, stat.size, 'sha256:' + hash],
       [{ storage: 'git', ...(fileType ? { type: fileType } : {}) }],
@@ -384,12 +388,14 @@ async function uploadRaw(engine: BrainEngine, args: string[]) {
   // an actual object, not a JSON-encoded string (D1 wave).
   await executeRawJsonb(
     engine,
-    `INSERT INTO files (page_slug, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
-     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+    `INSERT INTO files (page_slug, page_id, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
+     VALUES ($1, (SELECT id FROM pages WHERE source_id = 'default' AND slug = $1 AND deleted_at IS NULL), $2, $3, $4, $5, $6, $7::jsonb)
      ON CONFLICT (storage_path) DO UPDATE SET
        content_hash = EXCLUDED.content_hash,
        size_bytes = EXCLUDED.size_bytes,
        mime_type = EXCLUDED.mime_type,
+       page_id = COALESCE(EXCLUDED.page_id, files.page_id),
+       page_slug = CASE WHEN EXCLUDED.page_id IS NULL THEN files.page_slug ELSE EXCLUDED.page_slug END,
        ${FILES_METADATA_MERGE_SQL}`,
     [pageSlug, filename, storagePath, mimeType, stat.size, 'sha256:' + hash],
     [{ storage: backend, ...(fileType ? { type: fileType } : {}), upload_method: method }],

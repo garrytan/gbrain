@@ -15,7 +15,7 @@
  *    transport, so nothing leaves the machine.
  */
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { __setEmbedTransportForTests, EMBED_SKIP_CODES, embedOverHttp, type EmbedRequest } from '../src/core/skills/resolver/embed-http.ts';
@@ -355,6 +355,80 @@ describe('vectors: build batches', () => {
     expect(r.vectors).toEqual({ skipped: 'not_needed' });
     expect(calls).toHaveLength(0);
     expect((await turn(h, 'summarize meeting notes')).output.meta.index_stale).toBe(false);
+  });
+});
+
+
+describe('vectors: zero replies, the file cap, a removed catalog and the plain explanation', () => {
+  async function source(skills: unknown[]): Promise<string> {
+    const f = join(tmp('skvec-src-'), 'catalog.json');
+    writeFileSync(f, JSON.stringify(skills));
+    return f;
+  }
+
+  test('a zero vector is a bad reply: the build keeps no vectors and the turn answers with words', async () => {
+    embedder(async req => req.texts.map(() => [0, 0, 0, 0]));
+    const h = tmp();
+    writeFileSync(join(h, 'config.json'), JSON.stringify(CONFIG));
+    const r = await buildSkillIndex({ catalog: 'c', fromJson: await source(SKILLS) }, { home: h });
+    expect(r.vectors).toEqual({ skipped: 'bad_reply', attempts: 1 });
+    expect(existsSync(join(h, 'skill-index', 'c', 'vectors.bin'))).toBe(false);
+    embedder();
+    const good = await home(CONFIG);
+    __setEmbedTransportForTests(null);
+    const words = (await turn(good, 'deploy the service', {}, { env: { PATH: process.env.PATH } })).output;
+    embedder(async req => req.texts.map(() => [0, 0, 0, 0]));
+    const zero = (await turn(good, 'deploy the service')).output;
+    expect(zero.vectors).toMatchObject({ used: false, fallback: { code: 'bad_reply' } });
+    expect(strip(zero)).toBe(strip(words));
+  });
+
+  const many = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `s${String(i).padStart(4, '0')}`, name: `s${i}`, description: 'Ship the service' }));
+
+  test('the file cap counts the header: a catalog whose file would pass it is refused before any request when the width is configured', async () => {
+    embedder();
+    const h = tmp();
+    writeFileSync(join(h, 'config.json'), JSON.stringify({ embedding_model: 'voyage:voyage-4', embedding_dimensions: 4096 }));
+    const r = await buildSkillIndex({ catalog: 'c', fromJson: await source(many(4095)) }, { home: h });
+    expect(4095 * 4096 * 4 + 8).toBeLessThan(64 * 1024 * 1024);
+    expect(r.vectors).toEqual({ skipped: 'too_many_skills' });
+    expect(calls).toHaveLength(0);
+  });
+
+  test('with no configured width the first reply sizes the file and the rest of the requests are not sent', async () => {
+    embedder(async req => req.texts.map(() => Array.from({ length: 4096 }, (_, i) => (i === 0 ? 1 : 0))));
+    const h = tmp();
+    writeFileSync(join(h, 'config.json'), JSON.stringify({ embedding_model: 'voyage:voyage-4' }));
+    const r = await buildSkillIndex({ catalog: 'c', fromJson: await source(many(4095)) }, { home: h });
+    expect(r.vectors).toEqual({ skipped: 'too_many_skills' });
+    expect(calls.length).toBeLessThanOrEqual(4);
+  });
+
+  test('a catalog removed, or removed and made again, while its skills are embedded is not written back', async () => {
+    const { removeSkillIndex } = await import('../src/core/skills/resolver/index.ts');
+    const h = tmp();
+    writeFileSync(join(h, 'config.json'), JSON.stringify(CONFIG));
+    const f = await source(SKILLS);
+    embedder(async req => { if (calls.length === 1) await removeSkillIndex('c', { home: h }); return req.texts.map(vectorOf); });
+    await expect(buildSkillIndex({ catalog: 'c', fromJson: f }, { home: h })).rejects.toMatchObject({ code: 'skill_index_removed' });
+    expect(existsSync(join(h, 'skill-index', 'c'))).toBe(false);
+    const dir = join(h, 'skill-index', 'c');
+    embedder(async req => {
+      if (calls.length === 1) { await removeSkillIndex('c', { home: h }); mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, 'replacement'), 'x'); }
+      return req.texts.map(vectorOf);
+    });
+    await expect(buildSkillIndex({ catalog: 'c', fromJson: f }, { home: h })).rejects.toMatchObject({ code: 'skill_index_removed' });
+    expect(existsSync(join(dir, 'replacement'))).toBe(true);
+    expect(existsSync(join(dir, 'index.bin'))).toBe(false);
+    expect(existsSync(join(dir, 'receipt.json'))).toBe(false);
+  });
+
+  test('plain --explain-target prints the cosine and the floor', async () => {
+    embedder();
+    const h = await home(CONFIG);
+    const { explainText } = await import('../src/commands/skill-resolver.ts');
+    const why = await turn(h, 'can we go live with it today?', {}, { explainTarget: 'deploy' });
+    expect(explainText(why.explain!)).toContain(`meaning: cosine 1.000, floor ${VECTOR_FLOOR['voyage:voyage-4']}`);
   });
 });
 
