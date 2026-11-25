@@ -33,7 +33,10 @@ const ledger = async (engine: BrainEngine, subject: string) => {
 const remember = (engine: BrainEngine, caller: Caller = 'remote', extra: Record<string, unknown> = {}) =>
   call(engine, 'remember', { fact: CLAIM, entity: 'crm/acme-example', provenance: 'call notes', ...extra }, caller);
 
-/** Every surface carries one identical object; the frozen code, message and suggestion are unchanged. */
+/**
+ * A local caller gets the `withdrawn` object; a remote caller (stdio or HTTP, the batch included) gets the same frozen
+ * code, message and suggestion with no object, so the refusal carries nothing read from the forgotten rows.
+ */
 export async function detailOnEverySurface(engine: BrainEngine): Promise<void> {
   await seedPages(engine);
   const saved = await call(engine, 'remember', { fact: CLAIM, provenance: 'call notes', infer_entity: false });
@@ -43,13 +46,15 @@ export async function detailOnEverySurface(engine: BrainEngine): Promise<void> {
     const r = await remember(engine, caller);
     expect(r.isError).toBe(true);
     expect(r.body).toMatchObject({ code: 'invalid_params', message: FACT_WITHDRAWN_MESSAGE, suggestion: FACT_WITHDRAWN_SUGGESTION });
-    expect(r.body.withdrawn).toEqual(withdrawn);
+    expect(r.body.withdrawn).toEqual(caller === 'local' ? withdrawn : undefined);
   }
   const batch = await call(engine, 'remember', { items: [{ fact: CLAIM, entity: 'crm/acme-example', provenance: 'call notes' }] });
-  // #8621: a batch whose only item is refused is the item's refusal, prefixed with its index, keeping the same object.
+  // #8621: a batch whose only item is refused is the item's refusal, prefixed with its index (no object for a remote caller).
   expect(batch.isError).toBe(true);
   expect(batch.body).toMatchObject({ code: 'invalid_params', message: `items[0]: ${FACT_WITHDRAWN_MESSAGE} None of the 1 item(s) was saved.` });
-  expect(batch.body.withdrawn).toEqual(withdrawn);
+  expect(batch.body.withdrawn).toBeUndefined();
+  const localBatch = await call(engine, 'remember', { items: [{ fact: CLAIM, entity: 'crm/acme-example', provenance: 'call notes' }] }, 'local');
+  expect(localBatch.body.withdrawn).toEqual(withdrawn);
 }
 
 /** Several ledger rows: the entity's own withdrawal outranks a newer one for all entities. */
@@ -62,34 +67,46 @@ export async function mostSpecificSubjectFirst(engine: BrainEngine): Promise<voi
   expect((await call(engine, 'forget', { id: String(unlinked.body.id) })).body.expired).toBe(true);
   const acmeAt = await ledger(engine, 'crm/acme-example');
   expect(Date.parse(await ledger(engine, '*'))).toBeGreaterThanOrEqual(Date.parse(acmeAt));
-  expect((await remember(engine)).body.withdrawn).toEqual({ at: acmeAt, subject: 'crm/acme-example', visibility: 'world' });
+  expect((await remember(engine, 'local')).body.withdrawn).toEqual({ at: acmeAt, subject: 'crm/acme-example', visibility: 'world' });
   // Without the entity, only the all-entities withdrawal applies.
-  const bare = await call(engine, 'remember', { fact: CLAIM, provenance: 'call notes', infer_entity: false });
+  const bare = await call(engine, 'remember', { fact: CLAIM, provenance: 'call notes', infer_entity: false }, 'local');
   expect(bare.body.withdrawn.subject).toBe('all_entities');
 }
 
-/** A withdrawal whose rows the caller cannot read gives no detail; #6509's refusal is unchanged. */
+/**
+ * A withdrawal whose rows the caller cannot read gives no detail, and neither does one whose rows it can read or one
+ * no row backs: a remote caller's refusal is byte-identical in all three cases. A local caller keeps the detail.
+ */
 export async function hiddenBackingOmitsDetail(engine: BrainEngine): Promise<void> {
   await seedPages(engine);
-  const hiddenPage = await call(engine, 'remember', { fact: CLAIM, entity: 'crm/hidden-co', provenance: 'call notes' });
   const [row] = await engine.executeRaw<{ id: number }>(`INSERT INTO facts(source_id,fact,kind,visibility,entity_slug,source_markdown_slug,source,confidence,valid_from)
     VALUES ('default',$1,'fact','world','crm/acme-example','crm/hidden-co','meeting notes',1,now()) RETURNING id`, [CLAIM]);
   expect((await call(engine, 'forget_fact', { id: Number(row!.id) }, 'local')).body.expired).toBe(true);
-  const remote = await remember(engine);
-  for (const key of ['code', 'error', 'message', 'suggestion']) expect(remote.body[key]).toEqual(hiddenPage.body[key]);
-  expect(remote.body.withdrawn).toBeUndefined();
+  const hidden = await remember(engine);
+  expect(hidden.isError).toBe(true);
+  expect(hidden.body).toMatchObject({ code: 'invalid_params', message: FACT_WITHDRAWN_MESSAGE, suggestion: FACT_WITHDRAWN_SUGGESTION });
+  expect(hidden.body.withdrawn).toBeUndefined();
   const local = await remember(engine, 'local');
   expect(local.body.withdrawn).toEqual({ at: await ledger(engine, 'crm/acme-example'), subject: 'crm/acme-example', visibility: 'world' });
-  // A visible withdrawal for all entities: the remote caller is told about that one, never the hidden one.
+  // A visible withdrawal (its row on a page the caller reads) and one no row backs answer byte-identically.
+  const VISIBLE = 'Acme Example opened an office in a second city.';
+  const visibleSaved = await call(engine, 'remember', { fact: VISIBLE, entity: 'crm/acme-example', provenance: 'call notes' });
+  expect((await call(engine, 'forget_fact', { id: Number(visibleSaved.body.id) }, 'local')).body.expired).toBe(true);
+  const visible = await call(engine, 'remember', { fact: VISIBLE, entity: 'crm/acme-example', provenance: 'call notes' });
+  const UNBACKED = 'Acme Example signed a lease for a warehouse.';
+  await engine.executeRaw(`INSERT INTO fact_withdrawals(source_id,visibility,subject,fact_hash) VALUES ('default','world','*',gbrain_fact_fingerprint($1))`, [UNBACKED]);
+  const unbacked = await call(engine, 'remember', { fact: UNBACKED, entity: 'crm/acme-example', provenance: 'call notes' });
+  expect(JSON.stringify(visible.body)).toBe(JSON.stringify(hidden.body));
+  expect(JSON.stringify(unbacked.body)).toBe(JSON.stringify(hidden.body));
+  // Beside a visible withdrawal for all entities, the remote answer is still the plain one.
   const unlinked = await call(engine, 'remember', { fact: CLAIM, provenance: 'call notes', infer_entity: false });
   expect((await call(engine, 'forget', { id: String(unlinked.body.id) })).body.expired).toBe(true);
   const mixed = await remember(engine);
-  expect(mixed.body.message).toBe(FACT_WITHDRAWN_MESSAGE);
-  expect(mixed.body.withdrawn).toEqual({ at: await ledger(engine, '*'), subject: 'all_entities', visibility: 'world' });
+  expect(JSON.stringify(mixed.body)).toBe(JSON.stringify(hidden.body));
   expect((await remember(engine, 'local')).body.withdrawn.subject).toBe('crm/acme-example');
 }
 
-/** A withdrawal that lands after admission fails the receipt; the object rides the response and get_write_request. */
+/** A withdrawal that lands after admission fails the receipt; a remote caller's response, receipt and replay carry no object. */
 export async function receiptKeepsDetail(engine: BrainEngine): Promise<void> {
   await seedPages(engine);
   await engine.executeRaw(`CREATE OR REPLACE FUNCTION wd_withdraw_on_admit() RETURNS trigger AS $$
@@ -105,12 +122,13 @@ export async function receiptKeepsDetail(engine: BrainEngine): Promise<void> {
     const res = await remember(engine, 'remote', { request_id: requestId });
     expect(res.body).toMatchObject({ code: 'invalid_params', write_error: 'invalid_params', message: FACT_WITHDRAWN_MESSAGE });
     expect(res.body.write_request).toMatchObject({ request_id: requestId, state: 'failed' });
-    const withdrawn = { at: await ledger(engine, '*'), subject: 'all_entities', visibility: 'world' };
-    expect(res.body.withdrawn).toEqual(withdrawn);
+    // A remote caller's refusal carries no object, so neither does its receipt or a replay.
+    expect(res.body.withdrawn).toBeUndefined();
     const receipt = await call(engine, 'get_write_request', { request_id: requestId });
-    expect(receipt.body).toMatchObject({ request_id: requestId, state: 'failed', write_error_message: FACT_WITHDRAWN_MESSAGE, withdrawn });
+    expect(receipt.body).toMatchObject({ request_id: requestId, state: 'failed', write_error_message: FACT_WITHDRAWN_MESSAGE });
+    expect(receipt.body.withdrawn).toBeUndefined();
     const replay = await remember(engine, 'remote', { request_id: requestId });
-    expect(replay.body.withdrawn).toEqual(withdrawn);
+    expect(replay.body.withdrawn).toBeUndefined();
   } finally {
     await engine.executeRaw('DROP TRIGGER IF EXISTS wd_withdraw_on_admit ON persistence_requests');
     await engine.executeRaw('DROP FUNCTION IF EXISTS wd_withdraw_on_admit()');
@@ -129,7 +147,7 @@ export async function singleWriterSameRule(engine: BrainEngine): Promise<void> {
   expect(local?.message).toBe(FACT_WITHDRAWN_MESSAGE);
   expect(local?.withdrawn).toEqual({ at: await ledger(engine, 'crm/acme-example'), subject: 'crm/acme-example', visibility: 'world' });
   const unset = await write();
-  expect(unset?.message).toBe('Page not found.');
+  expect(unset?.message).toBe(FACT_WITHDRAWN_MESSAGE);
   expect(unset?.withdrawn).toBeUndefined();
   const purged = 'Acme Example moved its headquarters.';
   await engine.executeRaw(`INSERT INTO fact_purges(source_id,visibility,subject,fact_hash) VALUES ('default','world','*',gbrain_fact_fingerprint($1))`, [purged]);

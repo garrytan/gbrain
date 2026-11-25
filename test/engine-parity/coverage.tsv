@@ -135,7 +135,7 @@ getPage	pages	yes	280	yes	yes	yes	serves
 readPageSnapshot	pages	yes	100	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1324	yes	yes	yes	serves
+putPage	pages	yes	1325	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	43	yes	yes	yes	serves
@@ -640,7 +640,7 @@ readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
 readLiveFactRowTier	facts	yes	1	no	yes	yes	serves
 insertFact	facts	yes	198	yes	yes	yes	serves
-insertFacts	facts	yes	269	no	yes	yes	serves
+insertFacts	facts	yes	270	no	yes	yes	serves
 deleteFactsForPage	facts	yes	8	no	yes	yes	serves
 expireFact	facts	yes	94	no	yes	yes	serves
 listFactsByEntity	facts	yes	62	yes	yes	yes	serves
@@ -1512,7 +1512,7 @@ countUnfencedFactGroups	facts_purge	yes	1	no	yes	yes	serves
 listUnfencedFactRows	facts_purge	yes	2	no	yes	yes	serves
 listHeldFenceFactRows	facts_purge	yes	1	no	yes	yes	serves
 listWithdrawalSlugs	facts_purge	yes	5	no	yes	yes	serves
-expireFactsByWithdrawal	facts_purge	yes	8	no	yes	yes	serves
+expireFactsByWithdrawal	facts_purge	yes	9	no	yes	yes	serves
 insertFactPurge	facts_purge	yes	25	no	yes	yes	serves
 insertTakePurge	facts_purge	yes	16	no	yes	yes	serves
 upsertPagePurges	facts_purge	yes	6	no	yes	yes	serves
@@ -1702,7 +1702,7 @@ listFactsForRelevance	facts_trust	yes	9	no	yes	yes	serves
 countUncomparableFacts	facts_trust	yes	5	no	yes	yes	serves
 matchSavedFacts	facts_trust	yes	8	no	yes	yes	serves
 readEntityNewestFacts	facts_trust	yes	2	no	yes	yes	serves
-readClaimWithdrawal	facts_trust	yes	3	no	yes	yes	serves
+readClaimWithdrawal	facts_trust	yes	4	no	yes	yes	serves
 matchHeadStems	facts_trust	yes	2	no	yes	yes	serves
 readFactForOwnerAction	facts_trust	yes	2	no	yes	yes	serves
 listStandingPreferences	facts_trust	yes	2	no	yes	yes	serves
@@ -1885,7 +1885,7 @@ findAnomalies	salience_enrich	yes	9	yes	yes	yes	serves
 countZeroWeightWithTakes	salience_enrich	yes	1	no	yes	yes	serves
 listGlobalPurgeWithdrawals	trust	yes	1	no	yes	yes	serves
 hasCoveringFactWithdrawal	trust	yes	6	no	yes	yes	serves
-insertFactWithdrawal	trust	yes	68	no	yes	yes	serves
+insertFactWithdrawal	trust	yes	69	no	yes	yes	serves
 isFactWithdrawn	trust	yes	4	no	yes	yes	serves
 isFactPurged	trust	yes	7	no	yes	yes	serves
 listFactWithdrawalDates	trust	yes	3	no	yes	yes	serves
