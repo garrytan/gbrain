@@ -1,8 +1,10 @@
 /**
- * Storage for use-attributed retrieval feedback (migration v207). One module
- * owns every statement against retrieval_events / retrieval_event_pages /
- * retrieval_event_links / retrieval_feedback / retrieval_weights; both engines
- * run the same SQL through `engine.executeRaw` with positional binds (no JSONB).
+ * Storage for use-attributed retrieval feedback (migration v207): every read and
+ * write of retrieval_events / retrieval_event_pages / retrieval_event_links /
+ * retrieval_feedback / retrieval_weights. The event log, its read and a rating
+ * batch are typed engine members (engine-sql/retrieval-feedback.ts), which a
+ * Rust brain serves; the rest run through `engine.executeRaw` with positional
+ * binds (no JSONB).
  */
 import type { BrainEngine } from '../engine.ts';
 import type { FeedbackStatusRow } from '../engine-sql/doctor-acc.ts';
@@ -63,66 +65,23 @@ export interface AppliedRating {
   newly_applied: boolean;
 }
 
-const pageRowExists = (source: string, slug: string) => `EXISTS (SELECT 1 FROM pages pg WHERE pg.source_id = ${source} AND pg.slug = ${slug} FOR KEY SHARE)`;
-const edgeEndsExist = (source: string, key: string) =>
-  `${pageRowExists(source, `split_part(${key}, '|', 1)`)} AND ${pageRowExists(source, `reverse(split_part(reverse(${key}), '|', 1))`)}`;
 
 export async function insertRetrievalEvents(engine: BrainEngine, events: RetrievalEventInput[]): Promise<void> {
   if (events.length === 0) return;
-  await engine.executeRaw(
-    `INSERT INTO retrieval_events (id, client_id, op)
-     SELECT * FROM unnest($1::text[], $2::text[], $3::text[])
-     ON CONFLICT (id) DO NOTHING`,
-    [events.map(e => e.id), events.map(e => e.client_id), events.map(e => e.op)],
-  );
-  const pages = events.flatMap(e => e.pages.map(p => ({ id: e.id, ...p })));
-  if (pages.length > 0) {
-    await engine.executeRaw(
-      `INSERT INTO retrieval_event_pages (event_id, source_id, slug, content_hash, rank, cited)
-       SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::int[], $6::text[]::boolean[])
-         AS t(event_id, source_id, slug, content_hash, rank, cited)
-        WHERE ${pageRowExists('t.source_id', 't.slug')}
-       ON CONFLICT DO NOTHING`,
-      [
-        pages.map(p => p.id), pages.map(p => p.source_id), pages.map(p => p.slug),
-        pages.map(p => p.content_hash), pages.map(p => p.rank), pages.map(p => (p.cited ? 'true' : 'false')),
-      ],
-    );
-  }
-  const links = events.flatMap(e => e.links.map(l => ({ id: e.id, ...l })));
-  if (links.length > 0) {
-    await engine.executeRaw(
-      `INSERT INTO retrieval_event_links (event_id, source_id, edge_key, to_slug)
-       SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[]) AS t(event_id, source_id, edge_key, to_slug)
-        WHERE ${pageRowExists('t.source_id', 't.to_slug')} AND ${edgeEndsExist('t.source_id', 't.edge_key')}
-       ON CONFLICT DO NOTHING`,
-      [links.map(l => l.id), links.map(l => l.source_id), links.map(l => l.edge_key), links.map(l => l.to_slug)],
-    );
-  }
+  // engine-sql/retrieval-feedback.ts: the event rows, then the pages and links whose page rows exist (FOR KEY SHARE).
+  await engine.insertRetrievalEvents(events);
 }
 
 export async function getRetrievalEvent(engine: BrainEngine, id: string): Promise<StoredEvent | null> {
-  const rows = await engine.executeRaw<{ id: string; client_id: string; op: FeedbackOp; created_at: Date | string }>(
-    `SELECT id, client_id, op, created_at FROM retrieval_events WHERE id = $1`,
-    [id],
-  );
-  const row = rows[0];
+  const row = await engine.readRetrievalEvent(id);
   if (!row) return null;
-  const pages = await engine.executeRaw<{ source_id: string; slug: string; content_hash: string | null; rank: number | string; cited: boolean }>(
-    `SELECT source_id, slug, content_hash, rank, cited FROM retrieval_event_pages WHERE event_id = $1 ORDER BY rank`,
-    [id],
-  );
-  const links = await engine.executeRaw<EventLink>(
-    `SELECT source_id, edge_key, to_slug FROM retrieval_event_links WHERE event_id = $1 ORDER BY source_id COLLATE "C", edge_key COLLATE "C", to_slug COLLATE "C"`,
-    [id],
-  );
   return {
     id: row.id,
     client_id: row.client_id,
-    op: row.op,
+    op: row.op as FeedbackOp,
     created_at: new Date(row.created_at),
-    pages: pages.map(p => ({ ...p, rank: Number(p.rank) })),
-    links,
+    pages: row.pages.map(p => ({ ...p, rank: Number(p.rank) })),
+    links: row.links,
   };
 }
 
@@ -163,77 +122,11 @@ export async function applyRatings(
     return true;
   });
   if (targets.length === 0) return [];
-  const kinds = targets.map(t => t.kind);
-  const sources = targets.map(t => t.source_id);
-  const keys = targets.map(t => t.key);
-  const ratings = targets.map(t => t.rating);
-  const hashes = targets.map(t => t.content_hash);
-  const applied = await engine.executeRaw<{ element_kind: ElementKind; source_id: string; element_key: string; weight_after: number | string }>(
-    `WITH input AS (
-       SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::int[], $5::text[])
-         AS t(element_kind, source_id, element_key, rating, content_hash)
-        WHERE CASE t.element_kind WHEN 'page' THEN ${pageRowExists('t.source_id', 't.element_key')}
-                                  ELSE ${edgeEndsExist('t.source_id', 't.element_key')} END
-     ),
-     cur AS (
-       SELECT i.*, COALESCE(w.weight, ${NEUTRAL_WEIGHT})::real AS w0,
-              CASE WHEN w.weight IS NULL THEN ${NEUTRAL_WEIGHT}
-                   WHEN i.element_kind = 'page' AND w.content_hash IS DISTINCT FROM i.content_hash
-                     THEN ${NEUTRAL_WEIGHT} + (w.weight - ${NEUTRAL_WEIGHT}) / 2
-                   ELSE w.weight END AS w_eff
-         FROM input i
-         LEFT JOIN retrieval_weights w
-           ON w.source_id = i.source_id AND w.element_kind = i.element_kind AND w.element_key = i.element_key
-     ),
-     calc AS (
-       SELECT c.*, LEAST(1, GREATEST(0, c.w_eff + $6::real * ((c.rating - 1) / 4.0 - c.w_eff)))::real AS w1
-         FROM cur c
-     ),
-     ins AS (
-       INSERT INTO retrieval_feedback
-         (event_id, signal, element_kind, source_id, element_key, client_id, rating, weight_before, weight_after)
-       SELECT $7, $8, element_kind, source_id, element_key, $9, rating, w_eff, w1 FROM calc
-       ON CONFLICT DO NOTHING
-       RETURNING element_kind, source_id, element_key, rating
-     )
-     INSERT INTO retrieval_weights AS rw (source_id, element_kind, element_key, weight, content_hash, updates, updated_at)
-     SELECT ins.source_id, ins.element_kind, ins.element_key, calc.w1, calc.content_hash, 1, now()
-       FROM ins JOIN calc ON calc.element_kind = ins.element_kind AND calc.source_id = ins.source_id AND calc.element_key = ins.element_key
-     ON CONFLICT (source_id, element_kind, element_key) DO UPDATE SET
-       weight = LEAST(1, GREATEST(0,
-         (CASE WHEN rw.element_kind = 'page' AND rw.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-               THEN ${NEUTRAL_WEIGHT} + (rw.weight - ${NEUTRAL_WEIGHT}) / 2 ELSE rw.weight END)
-         + $6::real * ((SELECT rating FROM ins i2 WHERE i2.source_id = EXCLUDED.source_id AND i2.element_kind = EXCLUDED.element_kind AND i2.element_key = EXCLUDED.element_key) - 1) / 4.0
-         - $6::real * (CASE WHEN rw.element_kind = 'page' AND rw.content_hash IS DISTINCT FROM EXCLUDED.content_hash
-               THEN ${NEUTRAL_WEIGHT} + (rw.weight - ${NEUTRAL_WEIGHT}) / 2 ELSE rw.weight END)))::real,
-       content_hash = EXCLUDED.content_hash,
-       updates = rw.updates + 1,
-       updated_at = now()
-     RETURNING rw.element_kind, rw.source_id, rw.element_key, rw.weight AS weight_after`,
-    [kinds, sources, keys, ratings, hashes, alpha, eventId, signal, clientId],
-  );
-  const newly = new Set(applied.map(a => `${a.element_kind}|${a.source_id}|${a.element_key}`));
-  const stored = await engine.executeRaw<{ element_kind: ElementKind; source_id: string; element_key: string; rating: number | string; weight_before: number | string; weight_after: number | string }>(
-    `SELECT element_kind, source_id, element_key, rating, weight_before, weight_after
-       FROM retrieval_feedback
-      WHERE event_id = $1 AND signal = $2
-        AND (element_kind, source_id, element_key) IN (
-          SELECT * FROM unnest($3::text[], $4::text[], $5::text[]))`,
-    [eventId, signal, kinds, sources, keys],
-  );
-  const finalWeights = new Map(applied.map(a => [`${a.element_kind}|${a.source_id}|${a.element_key}`, Number(a.weight_after)]));
-  return stored.map(r => {
-    const id = `${r.element_kind}|${r.source_id}|${r.element_key}`;
-    return {
-      kind: r.element_kind,
-      source_id: r.source_id,
-      key: r.element_key,
-      rating: Number(r.rating),
-      weight_before: Number(r.weight_before),
-      weight_after: newly.has(id) ? (finalWeights.get(id) ?? Number(r.weight_after)) : Number(r.weight_after),
-      newly_applied: newly.has(id),
-    };
-  });
+  // engine-sql/retrieval-feedback.ts: one statement stores each new rating and moves its weight, a second reads the batch back.
+  return (await engine.applyRetrievalRatings({
+    eventId, clientId, signal, alpha,
+    targets: targets.map(t => ({ kind: t.kind, source_id: t.source_id, key: t.key, rating: t.rating, content_hash: t.content_hash })),
+  })).map(r => ({ ...r, kind: r.kind as ElementKind }));
 }
 
 /**

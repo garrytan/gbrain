@@ -51,7 +51,7 @@ test/engine-parity/collate-core-page-lists.test.ts	16	1
 test/engine-parity/collate-doctor-access.test.ts	0	11
 test/engine-parity/collate-doctor-persistence.test.ts	9	7
 test/engine-parity/collate-doctor.test.ts	0	10
-test/engine-parity/collate-engine-sql.test.ts	29	6
+test/engine-parity/collate-engine-sql.test.ts	32	3
 test/engine-parity/collate-facts-home.test.ts	1	0
 test/engine-parity/collate-ontology-config.test.ts	4	1
 test/engine-parity/collate-outputs.test.ts	3	4
@@ -61,7 +61,7 @@ test/engine-parity/collate-referrer-ties.test.ts	3	0
 test/engine-parity/collate-repair-scans.test.ts	4	0
 test/engine-parity/collate-schema-pack-samples.test.ts	4	0
 test/engine-parity/collate-slug-sources.test.ts	7	1
-test/engine-parity/collate-store-listings.test.ts	3	18
+test/engine-parity/collate-store-listings.test.ts	21	2
 test/engine-parity/collate-ties.test.ts	2	0
 test/engine-parity/concept-rebuild.test.ts	0	3
 test/engine-parity/config-ingest.test.ts	9	0
@@ -197,7 +197,7 @@ test/engine-parity/label-guard-tiers.test.ts	2	0
 test/engine-parity/large-page.test.ts	3	0
 test/engine-parity/lifecycle.test.ts	10	1
 test/engine-parity/link-read-options.test.ts	17	0
-test/engine-parity/link-reads.test.ts	15	1
+test/engine-parity/link-reads.test.ts	16	0
 test/engine-parity/link-temporal.test.ts	22	0
 test/engine-parity/links.test.ts	38	0
 test/engine-parity/list-reads.test.ts	2	0

@@ -16,6 +16,7 @@ export const ACCESS_MEMBERS = {
   readAudiencePrincipals: 'access_control',
   readAccessMembers: 'access_control',
   readAccessCredentials: 'access_control',
+  listOwnerCredentialRows: 'access_control',
   listAudienceAccessMembers: 'access_control',
   listAccessTokens: 'minion_queue',
   // access_control: the folder-rule policy members access/policy.ts runs (engine-sql/access-policy.ts)

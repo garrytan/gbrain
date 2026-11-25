@@ -336,7 +336,6 @@ src/commands/self-upgrade.ts#runSelfUpgrade	catch_empty	1
 src/commands/serve-health.ts#readSelfExits	catch_empty	1
 src/commands/serve-health.ts#readServeTransport	promise_catch_empty	1
 src/commands/serve-health.ts#recordServeTransport	catch_empty	1
-src/commands/serve-http-clients.ts#mountAdminClients<anon@1>	capability_refusal_swallowed	1
 src/commands/serve-http-mcp.ts#callMcpTool	catch_empty	1
 src/commands/serve-http-mcp.ts#listMcpTools	catch_empty	1
 src/commands/serve-http-mcp.ts#mountMcp>handleMcpPost	promise_catch_empty	1
@@ -675,8 +674,6 @@ src/core/context/turn-context.ts#assembleTurnContext<anon@4>	catch_empty	1
 src/core/context/turn-context.ts#assembleTurnContext<anon@5>	catch_empty	1
 src/core/context/volunteer-events.ts#purgeStaleVolunteerEvents	capability_refusal_swallowed	1
 src/core/context/volunteer-events.ts#purgeStaleVolunteerEvents	catch_empty	1
-src/core/context/volunteer.ts#volunteerUsageStats	capability_refusal_swallowed	1
-src/core/context/volunteer.ts#volunteerUsageStats	catch_empty	1
 src/core/contextual-retrieval-service.ts#resolveSynopsisMaxTokens	catch_empty	1
 src/core/conversation-parser/body.ts#resolveTranscriptPath	catch_empty	1
 src/core/conversation-parser/body.ts#resolveWithinRoot	catch_empty	1
@@ -835,7 +832,6 @@ src/core/facts/writeback-audience.ts#classifyBrainAudience	promise_catch_empty	1
 src/core/feedback/record.ts#recordAnswer	catch_empty	1
 src/core/feedback/settings.ts#loadFeedbackSettings>read	catch_empty	1
 src/core/fence-repair/config.ts#readFenceRepairCaps>read	catch_empty	1
-src/core/fence-repair/hold-fix.ts#readFenceAutoRepair	promise_catch_empty	1
 src/core/fence-repair/model.ts#fileConfig	catch_empty	1
 src/core/fence-repair/model.ts#resolveFenceRepairModelWithSource	promise_catch_empty	1
 src/core/fence-repair/uncommitted.ts#uncommittedFenceRepairsBySource	promise_catch_empty	1

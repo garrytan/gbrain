@@ -16,6 +16,7 @@
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay
  * unexported.
  */
+import type { OwnerOnlyForm } from '../../access/owner-only.ts';
 import { DELETE_BATCH_SIZE } from '../../engine-constants.ts';
 import { assertPurgeAge } from '../../engine-errors.ts';
 import type { FindPagesQuery, FoundPages } from '../../page-find.ts';
@@ -415,3 +416,7 @@ export const listStaleAtoms: StoreMember<[sourceIds: readonly string[], atomId: 
   const rows: StaleAtomRow[] = await storeCall({ member: 'listStaleAtoms' }, () => brain.listStaleAtoms([...sourceIds], atomId));
   return rows.map(row => ({ ...row, id: Number(row.id), origin_page_id: row.origin_page_id == null ? null : Number(row.origin_page_id), chars: Number(row.chars) }));
 };
+
+/** The slugs of the source's markdown pages, soft-deleted pages included, by byte order. */
+export const listMarkdownPageSlugs: StoreMember<[sourceId: string], string[]> = async (brain, sourceId) =>
+  await storeCall({ member: 'listMarkdownPageSlugs' }, () => brain.listMarkdownPageSlugs(sourceId)) as string[];

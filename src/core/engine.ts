@@ -21,6 +21,7 @@ import type * as SlugSpellingsSql from './engine-sql/slug-spellings.ts';
 import type * as FederationExposureSql from './engine-sql/federation-exposure.ts';
 import type * as DreamCycleSql from './engine-sql/dream-cycle.ts';
 import type * as FilesOpsSql from './engine-sql/files-ops.ts';
+import type { OwnerOnlyForm } from './access/owner-only.ts';
 import type * as ContradictionsCycleSql from './engine-sql/contradictions-cycle.ts';
 import type * as OntologyRepairSql from './engine-sql/ontology-repair.ts';
 import type * as AdminReadsSql from './engine-sql/admin-reads.ts';
@@ -1400,6 +1401,9 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
    * instead of a getPage round-trip per page across the whole corpus.
    */
   listAllPageRefs(): Promise<Array<{ slug: string; source_id: string; updated_at: Date }>>;
+  /** The slugs of the source's markdown pages, soft-deleted pages included, by byte order (commands/reconcile-links.ts). */
+  listMarkdownPageSlugs(sourceId: string): Promise<string[]>;
+  /** who-can-read's page rows for `slug` (in `sourceId` when given), with the owner-only test of `form` (commands/access.ts). */
 
   /**
    * v0.38 — lean per-source enumeration for hot-loop callers (autopilot
@@ -1752,6 +1756,7 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   readOpCheckpointRecords(op: string, fingerprints: readonly string[]): Promise<unknown[]>;
   /** Each row's checkpoint parent set to the one-element array `[record]`, stamped now; each fingerprint at most once (sync-holds.ts recordSyncImportProvenances). */
   writeOpCheckpointRecords(op: string, rows: ReadonlyArray<{ fingerprint: string; record: unknown }>): Promise<void>;
+  /** The uncommitted fence-repair notices of `sourceIds` (all when null), by byte order of fingerprint (fence-repair/uncommitted.ts). */
   /**
    * A sync pass's `I⋈P` (engine-sql/sync-pass-pages.ts): the source's pages with a recorded origin and the fields of their
    * import records, for the named page ids or the keyset page after `after`, in page id order.
@@ -3768,6 +3773,7 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   // Per-segment derivation watermarks (Wave B PR 4; types in page-body/derivations.ts, SQL in engine-sql/page-body.ts).
   /** A page's rows (every kind, or `kind`; optionally only `occurrenceIds`), by kind then occurrence. */
   readSegmentDerivations(pageId: number, opts?: { kind?: SegmentDerivationKind; occurrenceIds?: readonly number[] }): Promise<SegmentDerivationRow[]>;
+  /** Claims normalized and folded as derivation needles (gbrain_fact_normalize, then the fold), non-empty, distinct, by byte order. */
   /** Insert or replace rows keyed (page, kind, occurrence) in bounded statements; a replaced row keeps created_at. */
   upsertSegmentDerivations(rows: readonly SegmentDerivationInput[]): Promise<void>;
   /** Delete a page's rows (every kind, or `kind`) whose occurrence is not in `liveOccurrenceIds`; returns the count. */

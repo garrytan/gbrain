@@ -211,6 +211,10 @@ import * as synopsisTier from './synopsis-tier.ts';
 import * as sourceCrMode from './source-cr-mode.ts';
 import * as remoteLinks from './remote-links.ts';
 import * as factsBackstop from './facts-backstop.ts';
+import * as pinnedQuestions from './pinned-questions.ts';
+import * as volunteerEvents from './volunteer-events.ts';
+import * as retrievalFeedback from './retrieval-feedback.ts';
+import * as gitGapCensus from './git-gap-census.ts';
 
 const { readBrainMode: _brainModeHelper, ...writerReleaseMembers } = writerRelease;
 
@@ -400,6 +404,14 @@ export const STORE_MEMBERS = {
   ...repairApplies,
   // The preview reads of gbrain repair visibility (rust/docs/store/repair-applies.md).
   ...visibilityScans,
+  // The pinned-question insert, read and listing (rust/docs/store/pinned-questions.md).
+  ...pinnedQuestions,
+  // The volunteered-page log insert and usage read (rust/docs/store/volunteer-events.md).
+  ...volunteerEvents,
+  // The retrieval event log, its read and a rating batch (rust/docs/store/retrieval-feedback.md).
+  ...retrievalFeedback,
+  // The Git-gap census reads (rust/docs/store/git-gap-census.md).
+  ...gitGapCensus,
   // The page-list, slug-source, access and connector-status reads (rust/docs/store/list-reads.md).
   ...listReads,
   // The dream cycle's persistence journal reads (rust/docs/store/dream.md, "Dream cycle statements").

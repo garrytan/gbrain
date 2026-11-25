@@ -65,6 +65,28 @@ impl Brain {
         self.run(env, move |s| s.has_extracted_events(&source_id, page_id))
     }
 
+    /// `hasChronicleSkipDecision(sourceId, pageId, contentHash, extractorVersion, reason)`: a boolean.
+    #[napi]
+    pub fn has_chronicle_skip_decision<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        page_id: i64,
+        content_hash: String,
+        extractor_version: i32,
+        reason: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.has_chronicle_skip_decision(
+                &source_id,
+                page_id,
+                &content_hash,
+                extractor_version,
+                &reason,
+            )
+        })
+    }
+
     /// `countRecentChronicleReservations()`: the judge reservations of the last 24 hours.
     #[napi]
     pub fn count_recent_chronicle_reservations<'env>(

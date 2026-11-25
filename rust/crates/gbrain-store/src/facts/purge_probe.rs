@@ -224,6 +224,8 @@ pub(crate) fn table_rows(
         "minion_attachments" => crate::jobs::purge_probe_attachment_rows(read)?,
         "minion_inbox" => crate::jobs::purge_probe_inbox_rows(read)?,
         "minion_jobs" => crate::jobs::purge_probe_job_rows(read)?,
+        "pinned_questions" => crate::jobs::purge_probe_pin_rows(read)?,
+        "context_volunteer_events" => crate::volunteer_events::purge_probe_rows(read)?,
         "persistence_topology_changes" => crate::persistence::purge_probe_topology_rows(read)?,
         "subagent_messages" => crate::jobs::purge_probe_message_rows(read)?,
         "subagent_tool_executions" => crate::jobs::purge_probe_tool_rows(read)?,

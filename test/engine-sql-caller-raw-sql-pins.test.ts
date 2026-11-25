@@ -56,6 +56,10 @@ import { identityDowngradeOpen } from '../src/core/sync-identity-downgrades.ts';
 import { EFFECT_BYTES_SQL } from '../src/core/persistence/receipt-bytes.ts';
 import { ruleCoversSql } from '../src/core/access/folder-rules.ts';
 import { exactIdentityStatement } from '../src/core/engine-sql/exact-identity.ts';
+import { tokenGrantJsonSql } from '../src/core/guests/owner-credentials.ts';
+import { foldSql } from '../src/core/page-body/schema.ts';
+import { CLIENT_INSPECTION_COLUMNS } from '../src/core/harness/client-setup.ts';
+import { ownerOnlyPageSql } from '../src/core/access/owner-only.ts';
 
 const memberSql = (member: string) => `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
   FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
@@ -2720,6 +2724,191 @@ const PINS: Pin[] = [
     texts: [`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
     SELECT $1, entry->>'fingerprint', jsonb_build_array(entry->'record') FROM jsonb_array_elements($2::text::jsonb) AS entry
     ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`],
+  },
+  {
+    from: 'src/core/guests/owner-credentials.ts:73 ownerCredentials (at b7b18e5ab3; the token row is tokenGrantJsonSql(\'t\'))',
+    case: { method: 'listOwnerCredentialRows', variant: 'default', run: e => e.listOwnerCredentialRows('owner-example') },
+    texts: () => ["SELECT * FROM (SELECT 'token' AS kind, t.id::text AS id, t.name, " + tokenGrantJsonSql('t') + " AS row FROM access_tokens t WHERE t.member_id = $1 AND t.revoked_at IS NULL "
+      + "UNION ALL SELECT 'client' AS kind, c.client_id AS id, COALESCE(c.client_name, c.client_id) AS name, to_jsonb(c) - 'client_secret_hash' AS row "
+      + "FROM oauth_clients c WHERE c.member_id = $1 AND (to_jsonb(c)->>'deleted_at') IS NULL) q ORDER BY kind COLLATE \"C\", name COLLATE \"C\", id COLLATE \"C\""],
+  },
+  {
+    from: 'src/core/shared-skills/migration-members.ts:13 inspectSharedMemberMigration (at b7b18e5ab3)',
+    case: { method: 'listSharedMemberMigrationRows', variant: 'default', run: e => e.listSharedMemberMigrationRows('s') },
+    texts: [`SELECT m.installation_id,m.adapter,m.epoch,m.active,m.follow_policy->'sources'->>$1 AS approved_incarnation,
+      m.desired_view,m.acknowledged_view,
+      (SELECT b.evidence->>'stage' FROM shared_skill_delivery_batches b WHERE b.installation_id=m.installation_id
+        AND b.epoch=m.epoch AND b.sequence=m.acknowledged_sequence AND b.acknowledged_at IS NOT NULL LIMIT 1) AS stage
+    FROM shared_skill_members m WHERE m.follow_policy->'sources' ? $1 ORDER BY m.adapter COLLATE "C",m.installation_id LIMIT 4096`],
+  },
+  {
+    from: 'src/commands/reconcile-links.ts:120 runReconcileLinks (at b7b18e5ab3)',
+    case: { method: 'listMarkdownPageSlugs', variant: 'default', run: e => e.listMarkdownPageSlugs('work') },
+    texts: [`SELECT slug FROM pages WHERE page_kind = 'markdown' AND source_id = $1 ORDER BY slug COLLATE "C"`],
+  },
+  {
+    from: 'src/commands/serve-http-clients.ts:21 mountAdminClients (at b7b18e5ab3)',
+    case: { method: 'listAdminClientRows', variant: 'default', run: e => e.listAdminClientRows() },
+    texts: () => [`SELECT ${CLIENT_INSPECTION_COLUMNS} FROM oauth_clients ORDER BY created_at DESC, client_id COLLATE "C"`],
+  },
+  {
+    from: 'src/core/questions/store.ts:133 insertPin (at b7b18e5ab3)',
+    case: { method: 'insertPinnedQuestion', variant: 'default', run: e => e.insertPinnedQuestion({ sourceId: 'default', slug: 'q', question: 'q?', scopeSlugPrefix: null, scopeEntity: null, state: 'active', inactiveReason: null, publishMode: 'publish', createdBy: 't' }) },
+    texts: [`INSERT INTO pinned_questions (source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     ON CONFLICT (source_id, slug) DO NOTHING RETURNING id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
+  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
+  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
+  refresh_attempts, spend_usd, created_at, archived_at`],
+  },
+  {
+    from: 'src/core/questions/store.ts:104 getPin (at b7b18e5ab3; without forUpdate)',
+    case: { method: 'readPinnedQuestion', variant: 'default', run: e => e.readPinnedQuestion('default', 'q') },
+    texts: [`SELECT id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
+  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
+  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
+  refresh_attempts, spend_usd, created_at, archived_at FROM pinned_questions WHERE source_id = $1 AND slug = $2`],
+  },
+  {
+    from: 'src/core/questions/store.ts:115 listPins (at b7b18e5ab3; the all composition)',
+    case: { method: 'listPinnedQuestions', variant: 'all', run: e => e.listPinnedQuestions({ includeArchived: true }) },
+    texts: [`SELECT id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
+  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
+  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
+  refresh_attempts, spend_usd, created_at, archived_at FROM pinned_questions  ORDER BY source_id COLLATE "C", created_at, id`],
+  },
+  {
+    from: 'src/core/questions/store.ts:115 listPins (at b7b18e5ab3; the unarchived composition)',
+    case: { method: 'listPinnedQuestions', variant: 'unarchived', run: e => e.listPinnedQuestions({ includeArchived: false }) },
+    texts: [`SELECT id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
+  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
+  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
+  refresh_attempts, spend_usd, created_at, archived_at FROM pinned_questions WHERE state <> 'archived' ORDER BY source_id COLLATE "C", created_at, id`],
+  },
+  {
+    from: 'src/core/questions/store.ts:115 listPins (at b7b18e5ab3; the states composition)',
+    case: { method: 'listPinnedQuestions', variant: 'states', run: e => e.listPinnedQuestions({ states: ['active'] }) },
+    texts: [`SELECT id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
+  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
+  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
+  refresh_attempts, spend_usd, created_at, archived_at FROM pinned_questions WHERE state = ANY($1::text[]) ORDER BY source_id COLLATE "C", created_at, id`],
+  },
+  {
+    from: 'src/core/questions/store.ts:115 listPins (at b7b18e5ab3; the sources composition)',
+    case: { method: 'listPinnedQuestions', variant: 'sources', run: e => e.listPinnedQuestions({ sourceIds: ['default'], includeArchived: true }) },
+    texts: [`SELECT id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
+  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
+  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
+  refresh_attempts, spend_usd, created_at, archived_at FROM pinned_questions WHERE source_id = ANY($1::text[]) ORDER BY source_id COLLATE "C", created_at, id`],
+  },
+  {
+    from: 'src/core/questions/store.ts:115 listPins (at b7b18e5ab3; the sources-unarchived composition)',
+    case: { method: 'listPinnedQuestions', variant: 'sources-unarchived', run: e => e.listPinnedQuestions({ sourceIds: ['default'] }) },
+    texts: [`SELECT id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
+  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
+  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
+  refresh_attempts, spend_usd, created_at, archived_at FROM pinned_questions WHERE source_id = ANY($1::text[]) AND state <> 'archived' ORDER BY source_id COLLATE "C", created_at, id`],
+  },
+  {
+    from: 'src/core/questions/store.ts:115 listPins (at b7b18e5ab3; the sources-states composition)',
+    case: { method: 'listPinnedQuestions', variant: 'sources-states', run: e => e.listPinnedQuestions({ sourceIds: ['default'], states: ['active'] }) },
+    texts: [`SELECT id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
+  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
+  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
+  refresh_attempts, spend_usd, created_at, archived_at FROM pinned_questions WHERE source_id = ANY($1::text[]) AND state = ANY($2::text[]) ORDER BY source_id COLLATE "C", created_at, id`],
+  },
+  {
+    from: 'src/core/context/volunteer-events.ts:178 insertVolunteerEvents (at b7b18e5ab3; two rows)',
+    case: { method: 'insertVolunteerEvents', variant: 'default', run: e => e.insertVolunteerEvents([
+      { source_id: 'default', slug: 'p', confidence: 0.5, match_arm: 'a', rationale: '', channel: 'op' },
+      { source_id: 'default', slug: 'q', confidence: 0.5, match_arm: 'b', rationale: '', channel: 'op', session_id: 's', turn: 1 }]) },
+    texts: [`INSERT INTO context_volunteer_events
+       (source_id, slug, confidence, match_arm, rationale, channel, session_id, turn)
+     SELECT v.* FROM (VALUES ($1::text, $2::text, $3::float8, $4::text, $5::text, $6::text, $7::text, $8::int), ($9::text, $10::text, $11::float8, $12::text, $13::text, $14::text, $15::text, $16::int)) AS v(source_id, slug, confidence, match_arm, rationale, channel, session_id, turn)
+     WHERE EXISTS (SELECT 1 FROM pages pg WHERE pg.source_id = v.source_id AND pg.slug = v.slug FOR KEY SHARE)`],
+  },
+  {
+    from: 'src/core/context/volunteer.ts:370 volunteerUsageStats (at b7b18e5ab3)',
+    case: { method: 'readVolunteerUsage', variant: 'default', run: e => e.readVolunteerUsage(['default'], 30) },
+    texts: [`SELECT e.match_arm, e.channel,
+              count(*)::text AS volunteered,
+              count(*) FILTER (WHERE GREATEST(p.last_retrieved_at, r.last_retrieved_at) > e.volunteered_at)::text AS used
+         FROM context_volunteer_events e
+         LEFT JOIN pages p
+           ON p.source_id = e.source_id AND p.slug = e.slug AND p.deleted_at IS NULL
+         LEFT JOIN page_retrievals r ON r.page_id = p.id
+        WHERE e.source_id = ANY($1::text[])
+          AND e.volunteered_at > now() - ($2 || ' days')::interval
+        GROUP BY e.match_arm, e.channel
+        ORDER BY e.match_arm COLLATE "C", e.channel COLLATE "C"`],
+  },
+  {
+    from: 'src/commands/sources-git-gap.ts:153 censusGitGap (at b7b18e5ab3; the source row)',
+    case: { method: 'readGitGapSourceRow', variant: 'default', run: e => e.readGitGapSourceRow('work') },
+    texts: ['SELECT local_path, incarnation::text AS incarnation FROM sources WHERE id=$1'],
+  },
+  {
+    from: 'src/commands/sources-git-gap.ts:167 censusGitGap (at b7b18e5ab3; the live page count)',
+    case: { method: 'countGitGapLivePages', variant: 'default', run: e => e.countGitGapLivePages('work') },
+    texts: ['SELECT count(*)::int AS n FROM pages WHERE source_id=$1 AND deleted_at IS NULL'],
+  },
+  {
+    from: 'src/commands/sources-git-gap.ts:175 censusGitGap (at b7b18e5ab3; also :189 and :205)',
+    case: { method: 'markTransactionReadOnly', variant: 'default', run: e => e.markTransactionReadOnly() },
+    texts: ['SET TRANSACTION READ ONLY'],
+  },
+  {
+    from: 'src/commands/sources-git-gap.ts:176 censusGitGap (at b7b18e5ab3; the --newest pages)',
+    case: { method: 'listGitGapNewestPages', variant: 'default', run: e => e.listGitGapNewestPages('work', 5) },
+    texts: [`SELECT id::text, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS updated_at
+        FROM pages WHERE source_id=$1 AND deleted_at IS NULL ORDER BY updated_at DESC, id DESC LIMIT $2`],
+  },
+  {
+    from: 'src/commands/sources-git-gap.ts:178 censusGitGap (at b7b18e5ab3; facts on the pages --newest leaves unread)',
+    case: { method: 'countGitGapUnreadFacts', variant: 'default', run: e => e.countGitGapUnreadFacts('work', ['1', '2']) },
+    texts: [`SELECT count(*)::int AS n FROM facts f
+        JOIN pages p ON p.source_id=f.source_id AND p.slug=f.source_markdown_slug AND p.deleted_at IS NULL
+        WHERE f.source_id=$1 AND f.row_num IS NOT NULL AND NOT (p.id = ANY($2::bigint[]))`],
+  },
+  {
+    from: 'src/commands/sources-git-gap.ts:190 censusGitGap (at b7b18e5ab3; the keyset batch)',
+    case: { method: 'readGitGapPageBatch', variant: 'after', run: e => e.readGitGapPageBatch('work', { after: '0' }) },
+    texts: () => [`SELECT id::text, slug, source_id, source_path, octet_length(source_path) AS source_path_bytes, source_uri, withheld_source_path, type, frontmatter,
+          database_only_reason, body_storage='segmented' AS segmented, knowledge_revision::text AS revision, NOT ${privacyPartSql('pages')} AS lineage_private
+        FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND pages.id > $2::bigint ORDER BY pages.id LIMIT 256`],
+  },
+  {
+    from: 'src/commands/sources-git-gap.ts:190 censusGitGap (at b7b18e5ab3; the --newest batch)',
+    case: { method: 'readGitGapPageBatch', variant: 'ids', run: e => e.readGitGapPageBatch('work', { ids: ['1', '2'] }) },
+    texts: () => [`SELECT id::text, slug, source_id, source_path, octet_length(source_path) AS source_path_bytes, source_uri, withheld_source_path, type, frontmatter,
+          database_only_reason, body_storage='segmented' AS segmented, knowledge_revision::text AS revision, NOT ${privacyPartSql('pages')} AS lineage_private
+        FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND pages.id = ANY($2::bigint[]) ORDER BY pages.id LIMIT 256`],
+  },
+  {
+    from: 'src/commands/sources-git-gap.ts:369 countRowsWithoutFile (at b7b18e5ab3; the facts)',
+    case: { method: 'countGitGapFactsOnPages', variant: 'default', run: e => e.countGitGapFactsOnPages('work', ['notes/a']) },
+    texts: ['SELECT count(*)::int AS n FROM facts WHERE source_id=$1 AND row_num IS NOT NULL AND source_markdown_slug = ANY($2::text[])'],
+  },
+  {
+    from: 'src/commands/sources-git-gap.ts:371 countRowsWithoutFile (at b7b18e5ab3; the timeline rows)',
+    case: { method: 'countGitGapTimelineOnPages', variant: 'default', run: e => e.countGitGapTimelineOnPages([1, 2]) },
+    texts: ['SELECT count(*)::int AS n FROM timeline_entries WHERE page_id = ANY($1::int[])'],
+  },
+  {
+    from: 'src/commands/sources-git-gap.ts:385-398 countSourceRows (at b7b18e5ab3; the five statements, in order)',
+    case: { method: 'readGitGapSourceRows', variant: 'default', run: e => e.readGitGapSourceRows('work', ['frontmatter'], 'sync-hold') },
+    texts: ['SELECT count(*)::int AS n FROM facts WHERE source_id=$1 AND row_num IS NULL AND expired_at IS NULL',
+      `SELECT count(*)::int AS n FROM facts f WHERE f.source_id=$1 AND f.row_num IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id AND p.slug=f.source_markdown_slug AND p.deleted_at IS NULL)`,
+      `SELECT COALESCE(l.link_source, '(none)') COLLATE "C" AS link_source, count(*)::int AS n
+    FROM links l JOIN pages p ON p.id=l.from_page_id WHERE p.source_id=$1 AND p.deleted_at IS NULL AND (l.link_source IS NULL OR NOT (l.link_source = ANY($2::text[])))
+    GROUP BY 1 ORDER BY 1`,
+      `SELECT h.completed_keys->0->>'code' COLLATE "C" AS code, count(*)::int AS n FROM op_checkpoints h
+    JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
+    WHERE h.op=$1 AND s.id=$2 GROUP BY 1 ORDER BY 1`,
+      `SELECT e.kind COLLATE "C" AS kind, p->>'error_code' COLLATE "C" AS code, count(*)::int AS targets
+    FROM persistence_effects e CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(e.data->'parked')='array' THEN e.data->'parked' ELSE '[]'::jsonb END) p
+    WHERE e.source_id=$1 GROUP BY 1, 2 ORDER BY 1, 2`],
   },
   {
     from: 'src/core/persistence/sync-admission.ts:34 readSyncAdmission',

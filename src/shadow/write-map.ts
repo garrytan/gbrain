@@ -279,6 +279,8 @@ export const READ_ONLY_MEMBERS: ReadonlySet<string> = new Set([
   'filterPageIdsByFrontmatter', 'lockEffectRow', 'secretEntryExists',
   // Lane 15 reads whose names carry no read prefix: the schema-pack sync probe and the who-read tally.
   'probeUntypedPathPrefix', 'tallyAccessReadsOfPages',
+  // Lane 17: the git-gap census marks its transaction read-only and writes nothing (engine-sql/git-gap-census.ts).
+  'markTransactionReadOnly',
 ]);
 
 /**
@@ -406,6 +408,8 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   // The segmented write path's typed writes (engine-members/segmented-writes.ts): a re-chunk, a fence rewrite and a segmented embed.
   'installSegmentedVectors', 'publishRebuiltGeneration', 'restorePageDeletedAt', 'restorePageUpdatedAt',
   'setMaterializingRevision', 'setSegmentedVersionHash', 'splitManifestGeneration',
+  // Lane 17 typed writes (pinned questions, the volunteer log, retrieval events and ratings): not mapped to a write plan yet.
+  'applyRetrievalRatings', 'insertPinnedQuestion', 'insertRetrievalEvents', 'insertVolunteerEvents',
 ]);
 export type MemberKind = 'read_name' | 'raw' | 'reserved' | 'ignored' | 'schema' | 'mapped' | 'unmapped';
 

@@ -93,7 +93,6 @@ src/commands/migrations/v0_31_0.ts	execute_raw	1
 src/commands/migrations/v0_32_2.ts	execute_raw	2
 src/commands/onboard.ts	execute_raw	1
 src/commands/pages-status.ts	execute_raw	2
-src/commands/reconcile-links.ts	execute_raw	1
 src/commands/reindex-code.ts	execute_raw	2
 src/commands/reindex-multimodal.ts	sql_template	5
 src/commands/reindex-synopsis.ts	execute_raw	2
@@ -102,13 +101,11 @@ src/commands/reindex.ts	execute_raw	4
 src/commands/repair-jsonb.ts	driver_call	4
 src/commands/repair-propose.ts	execute_raw	1
 src/commands/serve-health.ts	execute_raw	1
-src/commands/serve-http-clients.ts	execute_raw	1
 src/commands/serve-http-metrics.ts	execute_raw	1
 src/commands/serve-http-webhooks.ts	execute_raw	3
 src/commands/serve-http.ts	sql_template	1
 src/commands/sources-add-next.ts	execute_raw	1
 src/commands/sources-canonical.ts	execute_raw	1
-src/commands/sources-git-gap.ts	execute_raw	15
 src/commands/sources-git-reconcile.ts	execute_raw	1
 src/commands/sources-harden.ts	execute_raw	5
 src/commands/sources-mirror.ts	execute_raw	2
@@ -189,8 +186,7 @@ src/core/connectors/api-source.ts	execute_raw	1
 src/core/connectors/item-holds-store.ts	execute_raw	9
 src/core/context/compile-view.ts	execute_raw	1
 src/core/context/corpus-source.ts	execute_raw	1
-src/core/context/volunteer-events.ts	execute_raw	2
-src/core/context/volunteer.ts	execute_raw	1
+src/core/context/volunteer-events.ts	execute_raw	1
 src/core/contextual-retrieval-service.ts	execute_raw	3
 src/core/conversation-parser/llm-base.ts	execute_raw	2
 src/core/cycle/concept-publication.ts	execute_raw	3
@@ -244,7 +240,7 @@ src/core/facts/derivation-inputs.ts	execute_raw	1	#9653: releaseHiddenMoment, a 
 src/core/facts/held-fact-move.ts	execute_raw	1
 src/core/facts/purge-overlay.ts	execute_raw	1
 src/core/facts/purge.ts	execute_raw	1	GBRA-574 F #9674 (opened before this ratchet): +1 the purge plan reads whether a fact sits on an unbacked name tag
-src/core/feedback/store.ts	execute_raw	15
+src/core/feedback/store.ts	execute_raw	7
 src/core/function-search-path.ts	execute_raw	3
 src/core/ghost-pages.ts	execute_raw	1
 src/core/git/redact-finish.ts	execute_raw	7	GST-2988 PR 2 publish redaction finish: reads sources.local_path and persistence_host_bindings to find the checkout that owns a pushed root, reads and compare-and-sets sources.last_commit to the rebuilt sha, and lists persistence_effects worktree ids to remap parked effects; branched before the #9641 ratchet; no typed engine method for these source and effect reads exists yet
@@ -270,7 +266,6 @@ src/core/grants/service.ts	sql_template	11	+1: stampReadShared writes oauth_clie
 src/core/guard-ledger-checks.ts	execute_raw	3
 src/core/guests/admission.ts	execute_raw	3
 src/core/guests/marker.ts	execute_raw	1
-src/core/guests/owner-credentials.ts	execute_raw	1
 src/core/guests/promote.ts	execute_raw	4
 src/core/guests/sources.ts	execute_raw	7	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/core/guests/stamp-readable.ts	execute_raw	1
@@ -519,7 +514,7 @@ src/core/questions/pages.ts	execute_raw	1
 src/core/questions/receipt.ts	execute_raw	1
 src/core/questions/refresh.ts	execute_raw	14
 src/core/questions/service.ts	execute_raw	1
-src/core/questions/store.ts	execute_raw	7
+src/core/questions/store.ts	execute_raw	5
 src/core/reindex-consent.ts	execute_raw	1
 src/core/repair/attribution-backfill.ts	execute_raw	5
 src/core/repair/failed-writes.ts	execute_raw	13
@@ -583,7 +578,6 @@ src/core/shared-skills/adopted-packs.ts	execute_raw	1
 src/core/shared-skills/compatibility.ts	execute_raw	2
 src/core/shared-skills/knowledge-guard.ts	execute_raw	3
 src/core/shared-skills/migration-export.ts	execute_raw	7
-src/core/shared-skills/migration-members.ts	execute_raw	1
 src/core/shared-skills/migration-projection.ts	execute_raw	2
 src/core/shared-skills/migration.ts	execute_raw	4
 src/core/shared-skills/optimizer.ts	execute_raw	1

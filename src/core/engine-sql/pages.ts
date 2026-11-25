@@ -1336,3 +1336,11 @@ export async function bumpPageRetrievals(exec: SqlExecutor, pageIds: number[]): 
   if (pageIds.length === 0) return;
   await exec.run(bumpRetrievalsFragment(pageIds));
 }
+
+/** The statement commands/reconcile-links.ts runReconcileLinks ran through executeRaw. */
+export const MARKDOWN_PAGE_SLUGS_SQL = `SELECT slug FROM pages WHERE page_kind = 'markdown' AND source_id = $1 ORDER BY slug COLLATE "C"`;
+
+/** The slugs of the source's markdown pages, soft-deleted pages included, by byte order. A failure is thrown unchanged. */
+export async function listMarkdownPageSlugs(exec: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<string[]> {
+  return (await exec.executeRaw<{ slug: string }>(MARKDOWN_PAGE_SLUGS_SQL, [sourceId])).map(r => r.slug);
+}

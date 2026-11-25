@@ -43,7 +43,7 @@ const STORE_PROBED_TABLES: ReadonlySet<string> = new Set([
   'links', 'timeline_entries', 'raw_data', 'wanted_links', 'calibration_profiles', 'decision_receipts', 'dream_verdicts',
   'eval_candidates', 'eval_contradictions_cache', 'eval_contradictions_runs', 'fact_relink_attempts', 'ingest_log',
   'mcp_request_log', 'mention_gazetteer_entries', 'minion_attachments', 'minion_inbox', 'minion_jobs', 'persistence_topology_changes',
-  'subagent_messages', 'subagent_tool_executions',
+  'subagent_messages', 'subagent_tool_executions', 'pinned_questions', 'context_volunteer_events',
   // The swept stores a fact purge's receipt probes (facts/purge_probe.rs `for_each_table_row`).
   'belief_events', 'derived_generations', 'derived_generation_items', 'files', 'open_loops', 'page_aliases', 'page_body_manifest', 'page_body_stagings',
   'page_body_staging_texts', 'page_segment_texts', 'page_segment_derivations', 'page_segment_derivation_purges', 'persistence_effects', 'trust_proposals', 'write_gate_holds',
