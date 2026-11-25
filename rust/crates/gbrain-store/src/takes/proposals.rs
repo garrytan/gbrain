@@ -328,8 +328,15 @@ fn like_prefix(value: &str, lead: &str) -> bool {
 
 impl Store {
     /// `listPendingTakeProposals({ sourceId?, limit })`: pending proposals, newest first
-    /// (`proposed_at DESC, id DESC`); `limit` is truncated and clamped to 1..500.
+    /// (`proposed_at DESC, id DESC`); `limit` is truncated and clamped to 1..500 (an infinity
+    /// clamps to an end). A NaN limit refuses `invalid_argument`, as Postgres refuses `LIMIT NaN`,
+    /// instead of reading as no rows.
     pub fn list_pending_take_proposals(&self, spec: &TakeProposalListSpec) -> Result<Vec<Value>> {
+        if spec.limit.is_nan() {
+            return Err(StoreError::invalid(
+                "listPendingTakeProposals: limit is not a number",
+            ));
+        }
         let limit = spec.limit.trunc().clamp(1.0, 500.0) as usize;
         // An empty source id is no source scope, as the SQL's `if (opts.sourceId)`.
         let source = spec.source_id.as_deref().filter(|s| !s.is_empty());
@@ -809,6 +816,24 @@ mod tests {
             limit: 0.0,
         };
         assert_eq!(store.list_pending_take_proposals(&spec).unwrap().len(), 1);
+        // An infinity clamps to an end, as `Math.min(500, Math.trunc(Infinity))` does; NaN refuses
+        // (Postgres refuses `LIMIT NaN`) instead of saturating to no rows.
+        for (limit, rows) in [(f64::INFINITY, 1), (f64::NEG_INFINITY, 1)] {
+            let spec = TakeProposalListSpec {
+                source_id: None,
+                limit,
+            };
+            assert_eq!(
+                store.list_pending_take_proposals(&spec).unwrap().len(),
+                rows
+            );
+        }
+        let nan = TakeProposalListSpec {
+            source_id: None,
+            limit: f64::NAN,
+        };
+        let err = store.list_pending_take_proposals(&nan).unwrap_err();
+        assert_eq!(err.code, "invalid_argument");
     }
 
     #[test]

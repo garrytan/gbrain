@@ -11,6 +11,7 @@ use napi::bindgen_prelude::Object;
 use napi_derive::napi;
 use serde_json::Value;
 
+use super::whole;
 use crate::store_binding::{Brain, required};
 
 #[napi]
@@ -37,7 +38,7 @@ impl Brain {
         source_id: Option<String>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.read_take_proposal(id as i64, source_id.as_deref())
+            s.read_take_proposal(whole(id, "id")?, source_id.as_deref())
         })
     }
 
@@ -49,7 +50,9 @@ impl Brain {
         id: f64,
         acted_by: String,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.claim_take_proposal(id as i64, &acted_by))
+        self.run(env, move |s| {
+            s.claim_take_proposal(whole(id, "id")?, &acted_by)
+        })
     }
 
     /// `readStrandedTakeProposalClaim(id)`: `{ id, acted_at }` or null.
@@ -59,7 +62,9 @@ impl Brain {
         env: &'env Env,
         id: f64,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.read_stranded_take_proposal_claim(id as i64))
+        self.run(env, move |s| {
+            s.read_stranded_take_proposal_claim(whole(id, "id")?)
+        })
     }
 
     /// `releaseTakeProposalClaim(id, claimedAt)`.
@@ -71,7 +76,7 @@ impl Brain {
         claimed_at: Option<String>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.release_take_proposal_claim(id as i64, claimed_at.as_deref())
+            s.release_take_proposal_claim(whole(id, "id")?, claimed_at.as_deref())
         })
     }
 
@@ -84,7 +89,7 @@ impl Brain {
         row_num: f64,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.set_take_proposal_promoted_row(id as i64, row_num as i64)
+            s.set_take_proposal_promoted_row(whole(id, "id")?, whole(row_num, "rowNum")?)
         })
     }
 
@@ -96,7 +101,9 @@ impl Brain {
         id: f64,
         acted_by: String,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.reject_take_proposal(id as i64, &acted_by))
+        self.run(env, move |s| {
+            s.reject_take_proposal(whole(id, "id")?, &acted_by)
+        })
     }
 
     /// `takeProposalCached({ sourceId, pageSlug, contentHash, promptVersion })`: a boolean.
