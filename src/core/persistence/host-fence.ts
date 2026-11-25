@@ -80,3 +80,12 @@ export function withFence<T extends object | undefined>(engine: object, opts: T)
   const fence = fenceFor(engine);
   return fence ? { ...opts, fence } as NonNullable<T> & { fence: LeaseToken } : opts;
 }
+
+/**
+ * The claim an effect's install reads its claim row under: the execution token it was claimed with and the registered
+ * fence (none on a plain brain). On a multi-user Rust brain the read, inside the install's own transaction, checks the
+ * host fence and the claim epoch; every other engine ignores it. Null token (no claim): nothing to check.
+ */
+export function effectInstallClaim(engine: object, effect: { execution_token: string | null }): { token: string; fence?: LeaseToken } | undefined {
+  return effect.execution_token ? { token: effect.execution_token, ...fenceOpts(engine) } : undefined;
+}

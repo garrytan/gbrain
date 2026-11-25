@@ -19,6 +19,7 @@ import { derivedExtractionSkip } from './derived-extraction-gate.ts';
 import { isGuestWrite, skipsGuestNote } from '../guests/derived.ts';
 import { bodyUnread, isSegmentedPage } from '../page-body/page-shape.ts';
 import type { PersistenceEffect } from './effect-model.ts';
+import { effectInstallClaim } from './host-fence.ts';
 import type { WriteRequest } from './model.ts';
 import { requireOauthClientColumns } from '../engine-sql/oauth-clients.ts';
 
@@ -135,7 +136,7 @@ export async function dispatchFactsBackstopEffect(engine: BrainEngine, effect: P
       }
     }
     if (effect.data.slug) await tx.lockPageKeys([{ sourceId: effect.source_id, slug: effect.data.slug }]);
-    const current = await tx.lockEffectClaimRow(effect.id);
+    const current = await tx.lockEffectClaimRow(effect.id, effectInstallClaim(tx, effect));
     if (!current || current.state !== 'running' || current.execution_token !== effect.execution_token) return;
     const snapshot = effect.data.slug ? await tx.readPageSnapshot(effect.data.slug, { sourceId: effect.source_id }) : null;
     if (!snapshot || snapshot.page.id !== effect.data.page_id || snapshot.revision !== effect.revision) skipped ??= 'superseded';

@@ -915,7 +915,7 @@ async function recoverPublicationRow(engine: BrainEngine, id: string, hostId: st
       landed ??= adoption?.landed ?? null;
       // G7b: a door commit that landed before its row is named on the receipt, whatever the replay's outcome.
       const kept = landed ? { persistence: { git_state: 'committed', git_commit: landed, landed_before_row: true } } : null;
-      if (failure && !replayLanded) return completeWrite(tx, current, failureState(failure.code), kept ?? {}, failure);
+      if (failure && !replayLanded) return completeWrite(tx, current, failureState(failure.code), kept ?? {}, failure, undefined, true);
       for (const key of ['brain', `worktree:${current.worktree_id}`]) await tx.addPersistenceCounters(key, { recovery_bytes: -Number(current.recovery_bytes) });
       return (await journal.requeueRecovered(id, kept, failure !== undefined))!;
     });

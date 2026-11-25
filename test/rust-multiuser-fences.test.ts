@@ -22,12 +22,14 @@ import { loadRustAddon, type RustAddon } from '../src/core/rust-engine/addon-loa
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
 import { openRustEngine, type RustEngine } from '../src/core/rust-engine.ts';
 import { rustLeases, type LeaseToken, type WriteOrigin } from '../src/core/rust-engine/store-members/leases.ts';
-import { clearHostRegistration, fenceOpts, hostRegistrationOf, setHostRegistration } from '../src/core/persistence/host-fence.ts';
+import { clearHostRegistration, effectInstallClaim, fenceOpts, hostRegistrationOf, setHostRegistration } from '../src/core/persistence/host-fence.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 import { tryAcquireDbLock } from '../src/core/db-lock.ts';
 import { withDrainLease } from '../src/core/persistence/sync-lease.ts';
 import { startWorkerFence } from '../src/core/minions/worker-fence.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
+import { completeWrite, getWriteRequestById } from '../src/core/persistence/journal.ts';
+import { claimPersistenceEffect } from '../src/core/persistence/effect-journal.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const TARGET = detectAddonTarget();
@@ -364,6 +366,156 @@ describe('review G1, G3, G7, G11: the queue and the lock handle bind each claim 
       const failure = await refusal(() => performManagedSync(engine, { sourceId: 'default' } as never));
       expect(failure.code).toBe('engine_capability_missing');
       expect(raw).toEqual([]);
+    });
+  });
+});
+
+describe('request and effect claims under a host fence (G2, G6, G8, G18)', () => {
+  const REQUEST = 'b0000000-0000-4000-8000-0000000000b1';
+  const TOKEN = 'c0000000-0000-4000-8000-0000000000c1';
+  const TOKEN_2 = 'c0000000-0000-4000-8000-0000000000c2';
+  const HOST_ID = 'd0000000-0000-4000-8000-0000000000d1';
+  const COUNTERS = ['principal:local_cli:parity-writer', 'brain'];
+  const failure = { code: 'git_failed', message: 'refused' };
+
+  async function admit(engine: RustEngine) {
+    const membership = await engine.readSourceMembership('default');
+    await engine.lockPersistenceCounters(COUNTERS);
+    return engine.insertWriteRequest({
+      principalKind: 'local_cli', principalId: 'parity-writer', requestId: REQUEST, operation: 'put_page', sourceId: 'default',
+      sourceIncarnation: membership!.incarnation, pageId: null, slug: 'notes/a', worktreeId: null, topologyGeneration: null, digest: 'digest',
+      intent: {}, authority: {}, intentBytes: 10, terminalReservation: 4096, targetKind: 'page', protocolVersion: 1, admitterVersion: 'v-test',
+      admitterHostId: null, counterKeys: COUNTERS, clientRequestId: null, state: 'queued', deferredRefreshId: null,
+    } as never);
+  }
+
+  /** A registered host A, with a request claimed under it. */
+  async function claimed(engine: RustEngine) {
+    const leases = rustLeases(engine);
+    const a = (await leases.acquire('consumer:h', holder('a'), 60_000))!;
+    register(engine, a);
+    const row = await admit(engine);
+    expect(await engine.stampWriteClaim(row.id, TOKEN, 30_000, '{}', fenceOpts(engine))).not.toBeNull();
+    return { leases, a, row };
+  }
+
+  withAddon('G18: a late renewal or release after a completed claim gets the inactive answer, not an epoch refusal', async () => {
+    await withEnv({ GBRAIN_RUST_MULTIUSER: '1' }, async () => {
+      const engine = await open();
+      const { a, row } = await claimed(engine);
+      const current = (await getWriteRequestById(engine, row.id))!;
+      await engine.transaction(tx => completeWrite(tx, current, 'failed', {}, failure));
+      expect(await engine.renewWriteClaim({ id: row.id, token: TOKEN, leaseMs: 30_000, phaseJson: null, fence: a })).toBe(false);
+      await engine.releaseUnpublishedClaim({ id: row.id, token: TOKEN, reason: 'late', charge: false, fence: a });
+      expect((await getWriteRequestById(engine, row.id))!.state).toBe('failed');
+    });
+  });
+
+  withAddon('G6: a delayed direct stamp of another live host does not take a live claim, nor a finished request', async () => {
+    await withEnv({ GBRAIN_RUST_MULTIUSER: '1' }, async () => {
+      const engine = await open();
+      const { leases, row } = await claimed(engine);
+      const other = (await leases.acquire('consumer:o', holder('o'), 60_000))!;
+      expect(await engine.stampWriteClaim(row.id, TOKEN_2, 30_000, '{}', { fence: other })).toBeNull();
+      expect((await getWriteRequestById(engine, row.id))!.execution_token).toBe(TOKEN);
+      const current = (await getWriteRequestById(engine, row.id))!;
+      await engine.transaction(tx => completeWrite(tx, current, 'failed', {}, failure));
+      expect(await engine.stampWriteClaim(row.id, TOKEN_2, 30_000, '{}', { fence: other })).toBeNull();
+      expect((await getWriteRequestById(engine, row.id))!.state).toBe('failed');
+    });
+  });
+
+  withAddon('G6: the effect claim passes the owners it proved dead, so a dead owner\'s effect is claimed before its lease lapses', async () => {
+    await withEnv({ GBRAIN_RUST_MULTIUSER: '1' }, async () => {
+      const engine = await open();
+      const { leases, row } = await claimed(engine);
+      const membership = await engine.readSourceMembership('default');
+      await engine.insertPublicationEffects({ requestId: row.id, revision: null, sourceId: 'default', sourceIncarnation: membership!.incarnation,
+        worktreeId: null, effects: [{ kind: 'embedding', data: { slug: 'notes/a', page_id: 1 } }] } as never);
+      const first = await claimPersistenceEffect(engine, HOST_ID);
+      expect(first?.state).toBe('running');
+      // Held by this live process: not claimable again, with or without a proof of death that names someone else.
+      expect(await claimPersistenceEffect(engine, HOST_ID, ['1:other:x'])).toBeNull();
+      const owner = (first as unknown as { claim_owner: { owner: { pid: number; nonce: string; start: string } } }).claim_owner.owner;
+      const taken = await claimPersistenceEffect(engine, HOST_ID, [`${owner.pid}:${owner.nonce}:${owner.start}`]);
+      expect(taken?.id).toBe(first!.id);
+      expect(taken?.execution_token).not.toBe(first!.execution_token);
+      void leases;
+    });
+  });
+
+  withAddon('G2: a vector install under a taken-over host lease is refused in its own write', async () => {
+    await withEnv({ GBRAIN_RUST_MULTIUSER: '1' }, async () => {
+      const engine = await open();
+      const { leases, a, row } = await claimed(engine);
+      const membership = await engine.readSourceMembership('default');
+      await engine.insertPublicationEffects({ requestId: row.id, revision: null, sourceId: 'default', sourceIncarnation: membership!.incarnation,
+        worktreeId: null, effects: [{ kind: 'embedding', data: { slug: 'notes/a', page_id: 1 } }] } as never);
+      const effect = (await claimPersistenceEffect(engine, HOST_ID))!;
+      const column = { name: 'embedding', type: 'vector', dimensions: 2 } as never;
+      const claim = { effectId: effect.id, token: effect.execution_token!, fence: a };
+      const vectors = [{ chunk_index: 0, chunk_text: 'x', vector: new Float32Array([0.5, 1]), hash: 'h', expected: null }];
+      // The claim holds: the install is reached (the page does not exist, so nothing is installed).
+      expect(await engine.installSegmentedVectors(999_999, column, null, vectors, claim)).toBe(0);
+      await leases.release(a);
+      const b = (await leases.acquire('consumer:h', holder('b'), 60_000))!;
+      expect((await refusal(() => engine.installSegmentedVectors(999_999, column, null, vectors, claim))).code).toBe('lease_lost');
+      expect((await refusal(() => engine.installSegmentedVectors(999_999, column, null, vectors, { ...claim, fence: b }))).reason).toBe('claim_epoch_mismatch');
+    });
+  });
+
+  withAddon('G8: a successor settles the failure a predecessor recorded, and the predecessor\'s claim epoch is retired', async () => {
+    await withEnv({ GBRAIN_RUST_MULTIUSER: '1' }, async () => {
+      const engine = await open();
+      const { leases, a, row } = await claimed(engine);
+      const journal = await engine.publicationJournalStore();
+      await journal.markPublicationStarted(row.id, { fence: a });
+      await journal.recordRecovery({ id: row.id, executionToken: TOKEN, recovery: { files: [] } as never, bytes: 0, keys: [], fence: a }, true);
+      await journal.markRecovering(row.id, TOKEN, 'publication_refused', failure, { fence: a });
+      await leases.release(a);
+      const b = (await leases.acquire('consumer:h', holder('b'), 60_000))!;
+      register(engine, b, 'b');
+      const current = (await getWriteRequestById(engine, row.id))!;
+      expect(current.state).toBe('recovering');
+      // Ordinary completion needs the predecessor's claim epoch.
+      expect(await refusal(() => engine.transaction(tx => completeWrite(tx, current, 'failed', {}, failure)))).toEqual({ code: 'lease_lost', reason: 'claim_epoch_mismatch' });
+      // Recovery's own completion checks the current owner's fence and the recovery state instead.
+      const done = await engine.transaction(tx => completeWrite(tx, current, 'failed', {}, failure, undefined, true));
+      expect(done.state).toBe('failed');
+      expect(await engine.renewWriteClaim({ id: row.id, token: TOKEN, leaseMs: 30_000, phaseJson: null, fence: b })).toBe(false);
+    });
+  });
+  withAddon('G2b: the effect installs read their claim under the host fence and the claim epoch in their own transaction', async () => {
+    await withEnv({ GBRAIN_RUST_MULTIUSER: '1' }, async () => {
+      const engine = await open();
+      const { leases, a, row } = await claimed(engine);
+      const membership = await engine.readSourceMembership('default');
+      await engine.insertPublicationEffects({ requestId: row.id, revision: null, sourceId: 'default', sourceIncarnation: membership!.incarnation,
+        worktreeId: null, effects: [{ kind: 'embedding', data: { slug: 'notes/a', page_id: 1 } }] } as never);
+      const effect = (await claimPersistenceEffect(engine, HOST_ID))!;
+      const claim = effectInstallClaim(engine, effect)!;
+      expect(claim.fence).toEqual(a);
+      expect(await engine.transaction(tx => tx.lockEffectClaimRow(effect.id, effectInstallClaim(tx, effect)))).toMatchObject({ state: 'running', execution_token: effect.execution_token });
+      await leases.release(a);
+      const b = (await leases.acquire('consumer:h', holder('b'), 60_000))!;
+      expect(await refusal(() => engine.transaction(tx => tx.lockEffectClaimRow(effect.id, claim)))).toEqual({ code: 'lease_lost', reason: 'epoch_moved' });
+      expect(await refusal(() => engine.transaction(tx => tx.lockEffectClaimRow(effect.id, { ...claim, fence: b })))).toEqual({ code: 'lease_lost', reason: 'claim_epoch_mismatch' });
+      // No claim at all (a plain read) is the answer it always was.
+      expect(await engine.lockEffectClaimRow(effect.id)).toMatchObject({ state: 'running' });
+    });
+  });
+
+  withAddon('G18b: a claimant\'s publication step after its claim finished gets its normal answer, not an epoch refusal', async () => {
+    await withEnv({ GBRAIN_RUST_MULTIUSER: '1' }, async () => {
+      const engine = await open();
+      const { a, row } = await claimed(engine);
+      const current = (await getWriteRequestById(engine, row.id))!;
+      await engine.transaction(tx => completeWrite(tx, current, 'failed', {}, failure));
+      const journal = await engine.publicationJournalStore();
+      expect(await journal.recordRecovery({ id: row.id, executionToken: TOKEN, recovery: { files: [] } as never, bytes: 0, keys: [], fence: a }, true)).toBe(false);
+      await journal.markRecovering(row.id, TOKEN, 'late', failure, { fence: a });
+      await journal.markPublicationStarted(row.id, { fence: a });
+      expect((await getWriteRequestById(engine, row.id))!.state).toBe('failed');
     });
   });
 });

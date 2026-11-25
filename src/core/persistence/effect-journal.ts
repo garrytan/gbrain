@@ -148,7 +148,9 @@ export async function claimPersistenceEffect(engine: BrainEngine, hostId: string
     const candidate = await tx.selectClaimableEffect<PersistenceEffect>(hostId, deadOwners);
     if (!candidate) return null;
     const token = randomUUID();
-    return tx.stampEffectClaim<PersistenceEffect>({ id: candidate.id, token, ownerJson: effectClaimStamp(token), ...fenceOpts(tx) });
+    // L5 (G6): a multi-user Rust stamp takes only an effect that is claimable now, so it is told the owners proved dead.
+    const fence = fenceOpts(tx);
+    return tx.stampEffectClaim<PersistenceEffect>({ id: candidate.id, token, ownerJson: effectClaimStamp(token), ...fence, ...(fence.fence && deadOwners.length ? { deadOwners: [...deadOwners] } : {}) });
   }, { pipelineFirst: isPersistenceDeclaration });
 }
 

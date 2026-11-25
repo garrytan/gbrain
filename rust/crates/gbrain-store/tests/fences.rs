@@ -13,8 +13,8 @@ use gbrain_store::jobs::{AdmitSpec, ClaimSpec, DelayOpts, LockAcquire, LockHolde
 use gbrain_store::leases::{self, LeaseToken, lost_reason};
 use gbrain_store::occ_kv::OccKv;
 use gbrain_store::persistence::{
-    ClaimRelease, ClaimStamp, EffectClaim, EffectSettle, ExpireClaims, PublicationEffectsSpec,
-    PublicationWrite, Settle, WriteCompletion, WriteRequestInsert,
+    ClaimRelease, ClaimStamp, EffectClaim, EffectSettle, ExpireClaims, InstallClaim,
+    PublicationEffectsSpec, PublicationWrite, Settle, WriteCompletion, WriteRequestInsert,
 };
 use gbrain_store::redb_kv::RedbKv;
 use gbrain_store::write_origin::WriteOrigin;
@@ -1052,6 +1052,7 @@ fn effect_claim(
         token: token.into(),
         owner_json: owner.to_string(),
         fence: fence.cloned(),
+        dead_owners: vec![],
     })
 }
 
@@ -1184,4 +1185,586 @@ fn an_effect_on_a_plain_store_without_a_fence_writes_no_lease_record() {
             .unwrap()
     );
     assert!(b.lease_records().is_empty());
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// G18: late upkeep after a finished claim.
+
+#[test]
+fn g18_a_late_renewal_or_release_after_a_completed_claim_gets_the_inactive_result() {
+    let b = brain("write-late-upkeep", true);
+    let a = b.lease("consumer:h", "a");
+    let id = admit_request(&b, REQ);
+    b.store
+        .stamp_write_claim(&stamp(&id, TOKEN, Some(&a)))
+        .unwrap()
+        .unwrap();
+    b.store
+        .complete_write_row(&completion(&id, Some(&a)))
+        .unwrap()
+        .unwrap();
+    assert_eq!(b.claim_epochs(), 0);
+    let done = request(&b, &id);
+    let release = ClaimRelease {
+        id: id.clone(),
+        token: Some(TOKEN.into()),
+        reason: "claim_lost".into(),
+        charge: false,
+        fence: Some(a.clone()),
+    };
+    // The same live registration, the same token, a row that finished: the answers a plain store gives.
+    assert!(
+        !b.store
+            .renew_write_claim(&stamp(&id, TOKEN, Some(&a)))
+            .expect("a late renewal is answered, not refused"),
+        "the row is not running"
+    );
+    assert!(
+        !b.store
+            .release_unpublished_claim(&release)
+            .expect("a late release is answered, not refused"),
+        "the row is not running"
+    );
+    assert_eq!(request(&b, &id), done, "nothing was written");
+}
+
+#[test]
+fn g18_a_renewal_or_release_under_another_live_claim_is_the_inactive_result_and_the_holder_still_holds()
+ {
+    let b = brain("write-other-claim", true);
+    let a = b.lease("consumer:h", "a");
+    let other = b.lease("consumer:o", "o");
+    let id = admit_request(&b, REQ);
+    b.store
+        .stamp_write_claim(&stamp(&id, TOKEN, Some(&a)))
+        .unwrap()
+        .unwrap();
+    let held = request(&b, &id);
+    // A caller holding a different token has no claim here: false, never an epoch refusal.
+    let late = "c0000000-0000-4000-8000-0000000000c2";
+    assert!(
+        !b.store
+            .renew_write_claim(&stamp(&id, late, Some(&other)))
+            .unwrap()
+    );
+    let release = ClaimRelease {
+        id: id.clone(),
+        token: Some(late.into()),
+        reason: "claim_lost".into(),
+        charge: false,
+        fence: Some(other.clone()),
+    };
+    assert!(!b.store.release_unpublished_claim(&release).unwrap());
+    assert_eq!(request(&b, &id), held);
+    // The real holder's epoch is still checked: another fence with its token is refused.
+    refused(
+        &b.store
+            .renew_write_claim(&stamp(&id, TOKEN, Some(&other)))
+            .unwrap_err(),
+        "claim_epoch_mismatch",
+    );
+    assert!(
+        b.store
+            .renew_write_claim(&stamp(&id, TOKEN, Some(&a)))
+            .unwrap()
+    );
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// G6: a direct stamp claims only what is claimable now.
+
+const TOKEN_2: &str = "c0000000-0000-4000-8000-0000000000c2";
+const REQ_2: &str = "b0000000-0000-4000-8000-0000000000b2";
+
+#[test]
+fn g6_a_delayed_direct_stamp_cannot_take_a_live_write_claim_or_revive_finished_work() {
+    let b = brain("stamp-write-guard", true);
+    let a = b.lease("consumer:h", "a");
+    let other = b.lease("consumer:o", "o");
+    let id = admit_request(&b, REQ);
+    b.store
+        .stamp_write_claim(&stamp(&id, TOKEN, Some(&a)))
+        .unwrap()
+        .unwrap();
+    let held = request(&b, &id);
+    // Another live host's delayed stamp finds the claim live: nothing is claimed, nothing is written.
+    assert!(
+        b.store
+            .stamp_write_claim(&stamp(&id, TOKEN_2, Some(&other)))
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(request(&b, &id), held, "the live claim is untouched");
+    assert_eq!(b.claim_epochs(), 1, "and keeps its epoch");
+    assert!(
+        b.store
+            .renew_write_claim(&stamp(&id, TOKEN, Some(&a)))
+            .unwrap(),
+        "the holder still holds"
+    );
+    // Finished work stays finished.
+    b.store
+        .complete_write_row(&completion(&id, Some(&a)))
+        .unwrap()
+        .unwrap();
+    let done = request(&b, &id);
+    assert_eq!(done["state"], "committed");
+    assert!(
+        b.store
+            .stamp_write_claim(&stamp(&id, TOKEN_2, Some(&other)))
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(request(&b, &id), done, "a committed request is not revived");
+    assert_eq!(b.claim_epochs(), 0);
+}
+
+#[test]
+fn g6_a_write_claim_past_its_lease_and_a_queued_request_are_stamped() {
+    let b = brain("stamp-write-lapsed", true);
+    let a = b.lease("consumer:h", "a");
+    let other = b.lease("consumer:o", "o");
+    let id = admit_request(&b, REQ_2);
+    b.store
+        .stamp_write_claim(&stamp(&id, TOKEN, Some(&a)))
+        .unwrap()
+        .unwrap();
+    b.advance_ms(31_000);
+    let taken = b
+        .store
+        .stamp_write_claim(&stamp(&id, TOKEN_2, Some(&other)))
+        .unwrap()
+        .expect("a lapsed claim is claimable");
+    assert_eq!(taken["execution_token"], TOKEN_2);
+    assert_eq!(b.claim_epochs(), 1, "the epoch moved to the new claimer");
+    refused(
+        &b.store
+            .renew_write_claim(&stamp(&id, TOKEN_2, Some(&a)))
+            .unwrap_err(),
+        "claim_epoch_mismatch",
+    );
+}
+
+#[test]
+fn g6_with_the_mode_off_a_stamp_is_exactly_what_it_was() {
+    let b = brain("stamp-write-off", false);
+    let id = admit_request(&b, REQ);
+    b.store
+        .stamp_write_claim(&stamp(&id, TOKEN, None))
+        .unwrap()
+        .unwrap();
+    // Today's behavior, kept byte for byte: the stamp does not look at the row's state.
+    let again = b
+        .store
+        .stamp_write_claim(&stamp(&id, TOKEN_2, None))
+        .unwrap()
+        .expect("a plain store stamps what it is told to");
+    assert_eq!(again["execution_token"], TOKEN_2);
+    b.store
+        .complete_write_row(&completion(&id, None))
+        .unwrap()
+        .unwrap();
+    let revived = b
+        .store
+        .stamp_write_claim(&stamp(&id, TOKEN, None))
+        .unwrap()
+        .expect("a plain store stamps what it is told to");
+    assert_eq!(revived["state"], "running");
+}
+
+/// A direct effect stamp as a store call; `dead_owners` is the owner keys the caller proved dead.
+fn direct_effect_stamp(
+    b: &Brain,
+    effect: &Value,
+    token: &str,
+    fence: Option<&LeaseToken>,
+    dead_owners: &[&str],
+) -> Option<Value> {
+    let claim: EffectClaim = serde_json::from_value(json!({
+        "id": effect["id"], "token": token,
+        "ownerJson": json!({ "token": token, "owner": { "pid": 9, "nonce": "z", "start": "s" } }).to_string(),
+        "fence": fence, "deadOwners": dead_owners,
+    }))
+    .unwrap();
+    b.store.stamp_effect_claim(&claim).unwrap()
+}
+
+#[test]
+fn g6_a_delayed_direct_effect_stamp_cannot_take_a_live_claim_or_revive_a_finished_effect() {
+    let b = brain("stamp-effect-guard", true);
+    let a = b.lease("consumer:h", "a");
+    let other = b.lease("consumer:o", "o");
+    let id = admit_request(&b, REQ);
+    queue_effect(&b, &id);
+    let claimed = effect_claim(&b, EFFECT_TOKEN_A, Some(&a)).unwrap().unwrap();
+    let held = b.store.read_request_effects(&id).unwrap();
+    assert!(direct_effect_stamp(&b, &claimed, EFFECT_TOKEN_B, Some(&other), &[]).is_none());
+    assert_eq!(
+        b.store.read_request_effects(&id).unwrap(),
+        held,
+        "the live claim is untouched"
+    );
+    assert_eq!(b.claim_epochs(), 1);
+    assert!(
+        b.store
+            .settle_effect(
+                Settle::Complete,
+                &settle(&claimed["id"], EFFECT_TOKEN_A, Some(&a))
+            )
+            .unwrap()
+    );
+    let done = b.store.read_request_effects(&id).unwrap();
+    assert_eq!(done[0]["state"], "committed");
+    assert!(direct_effect_stamp(&b, &claimed, EFFECT_TOKEN_B, Some(&other), &[]).is_none());
+    assert_eq!(
+        b.store.read_request_effects(&id).unwrap(),
+        done,
+        "a committed effect is not revived"
+    );
+    assert_eq!(b.claim_epochs(), 0);
+}
+
+#[test]
+fn g6_an_effect_claim_past_its_lease_or_held_by_a_dead_owner_is_stamped() {
+    let b = brain("stamp-effect-lapsed", true);
+    let a = b.lease("consumer:h", "a");
+    let other = b.lease("consumer:o", "o");
+    let id = admit_request(&b, REQ);
+    queue_effect(&b, &id);
+    let claimed = effect_claim(&b, EFFECT_TOKEN_A, Some(&a)).unwrap().unwrap();
+    // Held by an owner the caller proved dead: claimable before its lease runs out (`effect_claim` stamps pid 7).
+    assert!(direct_effect_stamp(&b, &claimed, EFFECT_TOKEN_B, Some(&other), &["8:n:s"]).is_none());
+    let taken = direct_effect_stamp(&b, &claimed, EFFECT_TOKEN_B, Some(&other), &["7:n:s"])
+        .expect("dead owner");
+    assert_eq!(taken["execution_token"], EFFECT_TOKEN_B);
+    // Past its two-minute lease: claimable.
+    b.advance_ms(121_000);
+    let again = direct_effect_stamp(&b, &claimed, EFFECT_TOKEN_A, Some(&a), &[]).expect("lapsed");
+    assert_eq!(again["execution_token"], EFFECT_TOKEN_A);
+    assert_eq!(b.claim_epochs(), 1);
+}
+
+#[test]
+fn g6_with_the_mode_off_an_effect_stamp_is_exactly_what_it_was() {
+    let b = brain("stamp-effect-off", false);
+    let id = admit_request(&b, REQ);
+    queue_effect(&b, &id);
+    let claimed = effect_claim(&b, EFFECT_TOKEN_A, None).unwrap().unwrap();
+    let again = direct_effect_stamp(&b, &claimed, EFFECT_TOKEN_B, None, &[])
+        .expect("a plain store stamps what it is told to");
+    assert_eq!(again["execution_token"], EFFECT_TOKEN_B);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// G8: a successor settles a recovered publication.
+
+/// A recovering request claimed under `a`: publication started, recovery recorded, publication refused.
+fn recovering_request(b: &Brain, a: &LeaseToken) -> String {
+    let id = admit_request(b, REQ);
+    b.store
+        .stamp_write_claim(&stamp(&id, TOKEN, Some(a)))
+        .unwrap()
+        .unwrap();
+    let steps = [
+        json!({ "kind": "publication_started", "id": id }),
+        json!({ "kind": "record_recovery", "id": id, "executionToken": TOKEN, "recovery": { "files": [] },
+                "bytes": 0, "keys": [], "checked": true }),
+        json!({ "kind": "mark_recovering", "id": id, "executionToken": TOKEN, "reason": "publication_refused",
+                "errorCode": "git_failed", "errorMessage": "refused" }),
+    ];
+    for step in steps {
+        let step: PublicationWrite = serde_json::from_value(step).unwrap();
+        b.store
+            .publication_journal_write_fenced(&step, Some(a))
+            .unwrap();
+    }
+    assert_eq!(request(b, &id)["state"], "recovering");
+    id
+}
+
+/// The failure completion of recovery: `recovered` names the state and token the successor read.
+fn recovered_failure(id: &str, fence: Option<&LeaseToken>, recovered: Value) -> WriteCompletion {
+    let mut fields = json!({
+        "id": id, "state": "failed", "outcome": {}, "errorCode": "git_failed", "errorMessage": "refused",
+        "consumerVersion": "v-consumer", "consumerHostId": HOST, "errorDetail": null, "resultBytes": 100,
+        "counterKeys": KEYS, "intentBytes": 10, "retainedBytes": 512, "terminalReservation": 4096,
+        "probePurges": false, "fence": fence,
+    });
+    if !recovered.is_null() {
+        fields["recovered"] = recovered;
+    }
+    serde_json::from_value(fields).unwrap()
+}
+
+#[test]
+fn g8_a_successor_settles_the_failure_a_predecessor_recorded_and_retires_its_claim_epoch() {
+    let b = brain("recovery-settle", true);
+    let a = b.lease("consumer:h", "a");
+    let id = recovering_request(&b, &a);
+    let new = b.take_over("consumer:h", &a);
+    let held = request(&b, &id);
+    // Ordinary completion needs the former claim epoch: the successor cannot use it.
+    refused(
+        &b.store
+            .complete_write_row(&recovered_failure(&id, Some(&new), Value::Null))
+            .unwrap_err(),
+        "claim_epoch_mismatch",
+    );
+    // The recovery transition names the state and token recovery found.
+    let recovered = json!({ "state": "recovering", "executionToken": TOKEN });
+    let done = b
+        .store
+        .complete_write_row(&recovered_failure(&id, Some(&new), recovered.clone()))
+        .expect("the successor settles the recovery")
+        .unwrap();
+    assert_eq!(done["state"], "failed");
+    assert_eq!(
+        b.claim_epochs(),
+        0,
+        "the predecessor's claim epoch is retired"
+    );
+    assert_ne!(request(&b, &id), held);
+    // The request is finished: the predecessor's late completion changes nothing and a repeat is refused too.
+    refused(
+        &b.store
+            .complete_write_row(&recovered_failure(&id, Some(&a), recovered))
+            .unwrap_err(),
+        "epoch_moved",
+    );
+}
+
+#[test]
+fn g8_a_stale_owner_or_a_moved_recovery_cannot_use_the_recovery_transition() {
+    let b = brain("recovery-settle-guards", true);
+    let a = b.lease("consumer:h", "a");
+    let id = recovering_request(&b, &a);
+    let new = b.take_over("consumer:h", &a);
+    let held = request(&b, &id);
+    let recovered = json!({ "state": "recovering", "executionToken": TOKEN });
+    // A stale owner (its lease was taken over) is refused by the fence, whatever it names.
+    refused(
+        &b.store
+            .complete_write_row(&recovered_failure(&id, Some(&a), recovered.clone()))
+            .unwrap_err(),
+        "epoch_moved",
+    );
+    // No fence on a multi-user store: refused before anything is read.
+    refused(
+        &b.store
+            .complete_write_row(&recovered_failure(&id, None, recovered.clone()))
+            .unwrap_err(),
+        "fence_missing",
+    );
+    // The current owner names a state or token the row no longer has: refused, nothing written.
+    for wrong in [
+        json!({ "state": "running", "executionToken": TOKEN }),
+        json!({ "state": "recovering", "executionToken": TOKEN_2 }),
+        json!({ "state": "recovering", "executionToken": null }),
+    ] {
+        let e = b
+            .store
+            .complete_write_row(&recovered_failure(&id, Some(&new), wrong))
+            .unwrap_err();
+        assert_eq!(e.code, gbrain_store::error::INVALID_STATE, "{e}");
+    }
+    assert_eq!(request(&b, &id), held);
+    assert_eq!(b.claim_epochs(), 1);
+    // A row with no recovery record is not in recovery: the transition does not apply to a live claim.
+    let live = admit_request(&b, REQ_2);
+    b.store
+        .stamp_write_claim(&stamp(&live, TOKEN_2, Some(&new)))
+        .unwrap()
+        .unwrap();
+    let e = b
+        .store
+        .complete_write_row(&recovered_failure(
+            &live,
+            Some(&new),
+            json!({ "state": "running", "executionToken": TOKEN_2 }),
+        ))
+        .unwrap_err();
+    assert_eq!(e.code, gbrain_store::error::INVALID_STATE, "{e}");
+    assert_eq!(request(&b, &live)["state"], "running");
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The effect installs (embedding, links, facts) check the claim they run under, in the install's own transaction.
+
+/// `lock_effect_claim_row_claimed`'s claim: the effect and the token and fence it was claimed under.
+fn install_claim(effect: &Value, token: &str, fence: Option<&LeaseToken>) -> InstallClaim {
+    serde_json::from_value(json!({ "effectId": effect["id"], "token": token, "fence": fence }))
+        .unwrap()
+}
+
+fn effect_id(effect: &Value) -> i64 {
+    effect["id"].as_str().unwrap().parse().unwrap()
+}
+
+#[test]
+fn an_effect_install_reads_its_claim_under_the_host_fence_and_the_claim_epoch() {
+    let b = brain("install-claim", true);
+    let a = b.lease("consumer:h", "a");
+    let id = admit_request(&b, REQ);
+    queue_effect(&b, &id);
+    let claimed = effect_claim(&b, EFFECT_TOKEN_A, Some(&a)).unwrap().unwrap();
+    let row = b
+        .store
+        .lock_effect_claim_row_claimed(
+            effect_id(&claimed),
+            Some(&install_claim(&claimed, EFFECT_TOKEN_A, Some(&a))),
+        )
+        .unwrap();
+    assert_eq!(row["state"], "running");
+    assert_eq!(row["execution_token"], EFFECT_TOKEN_A);
+    // No fence on a multi-user store: refused before the read answers.
+    refused(
+        &b.store
+            .lock_effect_claim_row_claimed(
+                effect_id(&claimed),
+                Some(&install_claim(&claimed, EFFECT_TOKEN_A, None)),
+            )
+            .unwrap_err(),
+        "fence_missing",
+    );
+    // The host's lease is taken over during the provider call: the old fence is refused, and so is the new host's
+    // fence on a claim of the old epoch. The effect row itself is untouched.
+    let new = b.take_over("consumer:h", &a);
+    refused(
+        &b.store
+            .lock_effect_claim_row_claimed(
+                effect_id(&claimed),
+                Some(&install_claim(&claimed, EFFECT_TOKEN_A, Some(&a))),
+            )
+            .unwrap_err(),
+        "epoch_moved",
+    );
+    refused(
+        &b.store
+            .lock_effect_claim_row_claimed(
+                effect_id(&claimed),
+                Some(&install_claim(&claimed, EFFECT_TOKEN_A, Some(&new))),
+            )
+            .unwrap_err(),
+        "claim_epoch_mismatch",
+    );
+    // A claim that is no longer running under the token is the inactive answer the caller already handles.
+    let other = b
+        .store
+        .lock_effect_claim_row_claimed(
+            effect_id(&claimed),
+            Some(&install_claim(&claimed, EFFECT_TOKEN_B, Some(&new))),
+        )
+        .unwrap();
+    assert_eq!(
+        other["execution_token"], EFFECT_TOKEN_A,
+        "the caller compares tokens and stops"
+    );
+}
+
+#[test]
+fn with_the_mode_off_an_effect_install_read_ignores_the_claim() {
+    let b = brain("install-claim-off", false);
+    let id = admit_request(&b, REQ);
+    queue_effect(&b, &id);
+    let claimed = effect_claim(&b, EFFECT_TOKEN_A, None).unwrap().unwrap();
+    let plain = b.store.lock_effect_claim_row(effect_id(&claimed)).unwrap();
+    let with_claim = b
+        .store
+        .lock_effect_claim_row_claimed(
+            effect_id(&claimed),
+            Some(&install_claim(&claimed, EFFECT_TOKEN_B, None)),
+        )
+        .unwrap();
+    assert_eq!(plain, with_claim);
+    assert!(b.lease_records().is_empty());
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The claimant's publication steps after the claim finished.
+
+fn step(fields: Value) -> PublicationWrite {
+    serde_json::from_value(fields).unwrap()
+}
+
+/// The three claimant steps, as the claimant sends them for request `id` held under `TOKEN`.
+fn claimant_steps(id: &str) -> [PublicationWrite; 3] {
+    [
+        step(
+            json!({ "kind": "record_recovery", "id": id, "executionToken": TOKEN, "recovery": { "files": [] },
+                     "bytes": 0, "keys": [], "checked": true }),
+        ),
+        step(
+            json!({ "kind": "mark_recovering", "id": id, "executionToken": TOKEN, "reason": "late",
+                     "errorCode": "git_failed", "errorMessage": "refused" }),
+        ),
+        step(json!({ "kind": "publication_started", "id": id })),
+    ]
+}
+
+#[test]
+fn g18b_a_claimant_step_after_its_claim_finished_gets_the_answer_a_plain_store_gives() {
+    // The answers before the lane, on a plain store with no fence.
+    let plain = brain("late-step-plain", false);
+    let plain_id = admit_request(&plain, REQ);
+    plain
+        .store
+        .stamp_write_claim(&stamp(&plain_id, TOKEN, None))
+        .unwrap()
+        .unwrap();
+    plain
+        .store
+        .complete_write_row(&completion(&plain_id, None))
+        .unwrap()
+        .unwrap();
+    let expected: Vec<Value> = claimant_steps(&plain_id)
+        .iter()
+        .map(|s| plain.store.publication_journal_write(s).unwrap())
+        .collect();
+    // The same steps, from the same live host registration, after the same completion on a multi-user store.
+    let b = brain("late-step", true);
+    let a = b.lease("consumer:h", "a");
+    let id = admit_request(&b, REQ);
+    b.store
+        .stamp_write_claim(&stamp(&id, TOKEN, Some(&a)))
+        .unwrap()
+        .unwrap();
+    b.store
+        .complete_write_row(&completion(&id, Some(&a)))
+        .unwrap()
+        .unwrap();
+    let got: Vec<Value> = claimant_steps(&id)
+        .iter()
+        .map(|s| {
+            b.store
+                .publication_journal_write_fenced(s, Some(&a))
+                .expect("a late step is answered, not refused")
+        })
+        .collect();
+    assert_eq!(got[0], expected[0], "record_recovery");
+    assert_eq!(got[1], expected[1], "mark_recovering");
+    assert_eq!(got[2]["state"], expected[2]["state"], "publication_started");
+    assert_eq!(request(&b, &id)["state"], "committed");
+}
+
+#[test]
+fn g18b_a_claimant_step_under_another_live_claim_is_still_refused() {
+    let b = brain("late-step-other", true);
+    let a = b.lease("consumer:h", "a");
+    let other = b.lease("consumer:o", "o");
+    let id = admit_request(&b, REQ);
+    b.store
+        .stamp_write_claim(&stamp(&id, TOKEN, Some(&a)))
+        .unwrap()
+        .unwrap();
+    let held = request(&b, &id);
+    // The running claim belongs to host A's epoch: another host's step is refused, whatever it names.
+    for s in claimant_steps(&id) {
+        refused(
+            &b.store
+                .publication_journal_write_fenced(&s, Some(&other))
+                .unwrap_err(),
+            "claim_epoch_mismatch",
+        );
+    }
+    assert_eq!(request(&b, &id), held);
 }
