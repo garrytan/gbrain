@@ -14,8 +14,22 @@
  *
  * Each case is its own update, so each uses its slug index.
  */
-import { CONVERSATION_SLOT_SQL } from '../chronicle/ontology.ts';
-
+import { CONVERSATION_SLOT_SQL } from '../chronicle/ontology.ts';/**
+ * The facts a page takes with it when a retention purge removes its row for good. Facts have no foreign key to pages,
+ * so left active they would come back for every reader once the tombstone that hid them is gone, and a new page at the
+ * slug would pick them up. They are expired (kept, never deleted):
+ *
+ * - the facts filed on the page (`source_markdown_slug` is the page). Ontology observations (`dimension` set) are not
+ *   filed there: their `source_markdown_slug` is provenance, so an observation about a live entity sourced from the
+ *   purged page stays. A conversation fact's slot (GBRA-574 B2: `dimension` set on a row with a row number) is filed
+ *   there: the row is expired and gives up its slot;
+ * - the facts extracted from the page and filed on none (#8859: the backstop's database-only rows, which name the page
+ *   only as their context head; extractedFromPageSql);
+ * - the facts about the page (`entity_slug` is the page) that no page row holds. A fact held by another page, live or
+ *   soft-deleted, stays that page's: a restore brings it back, and that page's own purge expires it.
+ *
+ * Each case is its own update, so each uses its slug index.
+ */
 /** facts.source values written by page-extraction paths, whose context head is the source page slug. */
 export const PAGE_EXTRACTION_SOURCE_LIST = ['mcp:put_page', 'sync:import', 'file_upload', 'code_import'] as const;
 

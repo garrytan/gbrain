@@ -9,7 +9,7 @@ import { flushDirectory } from '../fs-durable.ts';
 import { digest, sha256 } from './digest.ts';
 import { canonicalFilesystemPath } from './root-registry.ts';
 import { OWNERSHIP_MARKER_GLOBS, PHYSICAL_ROOT_MARKER } from './root-metadata.ts';
-import { ownerMarkerMissingError } from './owner-marker.ts';
+import { ownerMarkerMissingError, ownershipReservationMissingError } from './owner-marker.ts';
 
 export { OWNERSHIP_MARKER_GLOBS, PHYSICAL_ROOT_MARKER, isPhysicalRootMetadata } from './root-metadata.ts';
 const RESERVATION_PREFIX = '.gbrain-owner-';
@@ -530,11 +530,30 @@ export function relocatePhysicalRoot(recorded: string, target: string, records: 
   excludeOwnershipMarkers([target, dirname(target)]);
   return reservation;
 }
+/**
+ * #10260: the stamp in `root` when the reservation beside `root` is gone and the stamp still names `root` and this exact
+ * directory (device, inode and birth time all equal), else null: the state the plain self-transfer repairs. `brainId`
+ * and `worktreeId`, when given, must match too. Refusal evidence only; the self-transfer verifies ownership itself.
+ */
+export function lostReservationStamp(root: string, identity: { brainId?: string; worktreeId?: string } = {}): PhysicalRootStamp | null {
+  try {
+    if (readReservationRecord(root) !== null) return null;
+    const stamp = readPhysicalRootStamp(root);
+    if (!stamp || stamp.root !== root || identity.brainId !== undefined && stamp.brainId !== identity.brainId
+      || identity.worktreeId !== undefined && stamp.worktreeId !== identity.worktreeId) return null;
+    const info = statSync(root, { bigint: true });
+    return info.isDirectory() && stamp.device === info.dev.toString() && stamp.inode === info.ino.toString() && stamp.birth === info.birthtimeNs.toString() ? stamp : null;
+  } catch (error) {
+    if (error instanceof OperationError && error.detail === 'ownership_record_not_private') throw error;
+    return null;
+  }
+}
 export function assertPhysicalRoot(path: string, identity: { worktreeId: string; coordinationPath?: string | null }): void {
   try {
     const root = realpathSync(path);
     if (root !== path || lstatSync(path).isSymbolicLink()) throw physicalRootError();
     const reservation = readPhysicalRootReservation(root);
+    if (!reservation && lostReservationStamp(root, { worktreeId: identity.worktreeId })) throw ownershipReservationMissingError();
     if (!reservation || reservation.worktreeId !== identity.worktreeId || identity.coordinationPath && reservation.coordinationPath !== identity.coordinationPath) throw physicalRootError();
     assertPhysicalRootStamp(root, reservation);
     excludeMarkersInLaterCheckout(root);

@@ -7,7 +7,8 @@
  *   fact_added      machine-extracted facts (facts.source names an extractor) created in the window
  *   you_wrote       facts reconciled from a Facts fence row with no source cell (fence:reconcile); shown, never counted
  *   conflict_found  pending claim_conflicts proposals created in the window; older proposals stay a count
- *   page_filled     pages enrich wrote in the window, pointing at the page version that holds the prior revision
+ *   page_filled     pages enrich wrote in the window, pointing at the page version that holds the prior revision; a page
+ *                   whose enriched_at an older version already carries is a restored version (a revert), not a new fill
  *   promise_found   open loops of kind commitment_owed_to_me created in the window
  *   duplicate_to_confirm  the top five person groups of the dedupe preview, by owner contact (duplicates.ts)
  *
@@ -19,6 +20,8 @@
  * inserts at most MAX_PER_KIND rows per pass; a truncated pass keeps the old watermark, so the next pass continues.
  * Idempotent on the (kind, target_table, target_id) key. Never throws: a failure is a `warn` result, so it never fails
  * the cycle. A pending or expired pointer whose target row is gone (a purge) is pruned; a decided one stays for stats.
+ * Pending items never shown expire after seven days, except duplicate questions, which stay open until answered. A claim
+ * conflict answered through gbrain decide proposals is marked answered.
  */
 
 import type { BrainEngine } from '../engine.ts';
@@ -36,6 +39,7 @@ export const LEARNING_WATERMARK_KEY = 'learning.derive.watermark';
 export const LEARNING_WINDOW_MAX_MS = 7 * 86_400_000;
 const WINDOW_OVERLAP_MS = 3_600_000;
 export const MAX_PER_KIND = 500;
+export const LEARNING_EXPIRY_MS = 7 * 86_400_000;
 
 const list = (values: readonly string[]) => values.map(v => `'${v}'`).join(', ');
 /** Fact sources the machine extractors write: extract_facts (the facts drain writes through it) and the conversation-facts backfill. */
@@ -73,6 +77,7 @@ const PRODUCERS: Array<{ kinds: LearningKind[]; select: string }> = [
                      ORDER BY pv.id DESC LIMIT 1) v ON TRUE
      WHERE p.updated_at >= $1::timestamptz AND p.deleted_at IS NULL AND p.frontmatter->>'enriched_by' = '${ENRICHED_BY}'
        AND ${ENRICHED_AT_SQL} >= $1::timestamptz
+       AND NOT EXISTS (SELECT 1 FROM page_versions o WHERE o.page_id = p.id AND o.id < v.id AND o.frontmatter->>'enriched_at' = p.frontmatter->>'enriched_at')
        AND ${notRecordedSql("'page_filled'", 'page_versions', 'v.id')}
      ORDER BY v.id LIMIT $2` },
   { kinds: ['promise_found'], select: `
@@ -91,6 +96,17 @@ const PRUNE_SQL = `DELETE FROM learning_items li WHERE li.state IN ('pending', '
   OR (li.target_table = 'page_versions' AND NOT EXISTS (SELECT 1 FROM page_versions t WHERE t.id = li.target_id))
   OR (li.target_table = 'pages' AND NOT EXISTS (SELECT 1 FROM pages t WHERE t.id = li.target_id)))
   RETURNING li.id`;
+
+/**
+ * Items never shown expire after LEARNING_EXPIRY_MS, so the note never piles up. A shown item stays pending (it counts
+ * toward the bar unless undone), and a duplicate question stays open until it is answered (duplicates.ts holds five).
+ */
+const EXPIRE_SQL = `UPDATE learning_items SET state = 'expired', decided_at = now(), decided_by = 'expiry'
+  WHERE state = 'pending' AND shown_at IS NULL AND created_at < $1::timestamptz AND kind <> 'duplicate_to_confirm' RETURNING id`;
+/** A claim conflict answered through gbrain decide proposals (accepted, rejected or gone stale) is answered here too. */
+const ANSWERED_CONFLICTS_SQL = `UPDATE learning_items li SET state = 'answered', decided_at = now(), decided_by = 'decide'
+  FROM decide_proposals d WHERE li.kind = 'conflict_found' AND li.state = 'pending' AND li.target_table = 'decide_proposals'
+    AND d.id = li.target_id AND d.status <> 'pending' RETURNING li.id`;
 
 /** The learning_derive phase. `runId` is the cycle's run id (src/core/cycle.ts mints one per cycle). */
 export async function runPhaseLearningDerive(engine: BrainEngine, opts: { runId: string; dryRun: boolean; now?: Date; maxPerKind?: number }): Promise<PhaseResult> {
@@ -125,6 +141,8 @@ export async function runPhaseLearningDerive(engine: BrainEngine, opts: { runId:
     }
     const [backlog] = await engine.executeRaw<{ n: number | string }>(CONFLICT_BACKLOG_SQL, [null]);
     const pruned = opts.dryRun ? 0 : (await engine.executeRaw(PRUNE_SQL)).length;
+    const expired = opts.dryRun ? 0 : (await engine.executeRaw(EXPIRE_SQL, [new Date(now.getTime() - LEARNING_EXPIRY_MS).toISOString()])).length;
+    const answered = opts.dryRun ? 0 : (await engine.executeRaw(ANSWERED_CONFLICTS_SQL)).length;
     if (!opts.dryRun && truncated.length === 0 && failed.length === 0) await engine.setConfig(LEARNING_WATERMARK_KEY, now.toISOString());
     let duplicates: Awaited<ReturnType<typeof recordDuplicateQuestions>> | undefined;
     try {
@@ -150,7 +168,7 @@ export async function runPhaseLearningDerive(engine: BrainEngine, opts: { runId:
     return {
       phase: 'learning_derive', status: failed.length ? 'warn' : 'ok', duration_ms: 0,
       summary: `${opts.dryRun ? 'dry-run: would record' : 'recorded'} ${total} learning item(s)${duplicates?.recorded ? ` and ${duplicates.recorded} possible duplicate person group(s) to confirm` : ''}${conflictBacklog ? `; ${conflictBacklog} older claim conflict(s) wait as a count` : ''}${failed.length ? `; not recorded: ${failed.flatMap(f => f.kinds).join(', ')}` : ''}`,
-      details: { run_id: opts.runId, since, dry_run: opts.dryRun, recorded: counts, conflict_backlog: conflictBacklog, pruned, truncated, ...(duplicates ? { duplicates } : {}), ...(thinContacts ? { thin_contacts: thinContacts } : {}), ...(failed.length ? { failed } : {}) },
+      details: { run_id: opts.runId, since, dry_run: opts.dryRun, recorded: counts, conflict_backlog: conflictBacklog, pruned, expired, answered, truncated, ...(duplicates ? { duplicates } : {}), ...(thinContacts ? { thin_contacts: thinContacts } : {}), ...(failed.length ? { failed } : {}) },
     };
   } catch (e) {
     rethrowCapabilityRefusal(e);

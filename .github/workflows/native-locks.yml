@@ -26,6 +26,9 @@ jobs:
     if: ${{ inputs.scope != 'smoke' }}
     runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 10
+    # Advisory (GST-3494, #6143): the startup cell flaps, so it runs and reports but its failure fails neither
+    # native-locks nor full-suite (docs/ci-event-parity.md#advisory-native-cells).
+    continue-on-error: true
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -70,6 +73,9 @@ jobs:
     name: ${{ matrix.target }} / Bun ${{ matrix.bun }}
     runs-on: ${{ fromJSON('{"linux-x64-glibc":"ubicloud-standard-4-ubuntu-2404","linux-arm64-glibc":"ubicloud-standard-4-arm-ubuntu-2404","darwin-arm64":"macos-26","darwin-x64":"macos-26-intel","win32-x64":"windows-2022","win32-arm64":"windows-11-arm"}')[matrix.target] }}
     timeout-minutes: 15
+    # Advisory on macOS (GST-3494): a darwin cell runs and reports, but its failure fails neither native-locks nor
+    # full-suite, because the darwin-x64 runner wedges and macOS slots queue (docs/ci-event-parity.md#advisory-native-cells).
+    continue-on-error: ${{ startsWith(matrix.target, 'darwin-') }}
     # statuses: the darwin-x64 heartbeat below (one commit status context per cell, diag/native-heartbeat/<target>/<bun>).
     permissions:
       contents: read

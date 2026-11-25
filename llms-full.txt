@@ -3989,6 +3989,7 @@ Want to see a tutorial that isn't here yet? [Open an issue](https://github.com/g
 - **Brain-first lookup** before any external API call. The cheapest, fastest, most personal information source you have.
 - **Auto-link** extracts graph links for trusted local page writes. No LLM calls; pure pattern matching on page references such as `[[people/alice-example]]`. Unresolved extracted facts keep their provenance without inventing a backing page.
 - **Cron-driven enrichment** runs while you sleep: dedup people pages, fix citations, score salience, find contradictions, prep tomorrow's tasks.
+- **The morning note** shows what the night learned, each item with where it came from, and lets you keep it or undo it: see [the morning note](docs/guides/morning-note.md).
 
 The whole loop is described in [`docs/architecture/topologies.md`](docs/architecture/topologies.md) with diagrams.
 
