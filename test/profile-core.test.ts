@@ -315,6 +315,31 @@ describe('profile core with the owner found by a person page in another source (
   }, 60_000);
 });
 
+describe('the owner profile survives an owner identity change, and a null visibility keeps allergies private (repo-less)', () => {
+  let engine: BrainEngine;
+  beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({ engine: 'pglite' } as never); await engine.initSchema(); __resetPrivateVisibilityCacheForTests(); }, 60_000);
+  afterAll(async () => { await engine.disconnect(); });
+
+  test('visibility null on a single or batched allergy is still private', async () => {
+    await run(engine, 'remember', { fact: 'Allergic to egg canarynullone', facet: 'allergy', visibility: null, provenance: 'p' });
+    await run(engine, 'remember', { items: [{ fact: 'Allergic to milk canarynullbatch', facet: 'allergy', visibility: null }], provenance: 'p' });
+    expect((await factRow(engine, 'canarynullone'))?.visibility).toBe('private');
+    expect((await factRow(engine, 'canarynullbatch'))?.visibility).toBe('private');
+  }, 60_000);
+
+  test('an allergy saved on memory/owner is still in the profile after the owner is named', async () => {
+    await run(engine, 'remember', { fact: 'Allergic to wheat canarybeforeowner', facet: 'allergy', provenance: 'p' });
+    expect((await run(engine, 'context_pack', { profile: true })).profile.entity.slug).toBe('memory/owner');
+    await addMember(engine, 'owner-example');
+    await setOwner(engine, 'owner-example');
+    __resetPrivateVisibilityCacheForTests();
+    await run(engine, 'remember', { fact: 'Allergic to oats canaryafterowner', facet: 'allergy', provenance: 'p' });
+    const after = (await run(engine, 'context_pack', { profile: true })).profile;
+    expect(after.entity.slug).toBe('memory/members/owner-example');
+    expect(after.constraints.map((f: R) => f.claim).sort()).toEqual(expect.arrayContaining(['Allergic to oats canaryafterowner', 'Allergic to wheat canarybeforeowner']));
+  }, 60_000);
+});
+
 describe('profile core with members (remote callers, repo-less)', () => {
   let engine: BrainEngine;
   const tokens: Record<string, string> = {};

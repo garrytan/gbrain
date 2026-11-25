@@ -74,8 +74,9 @@ export async function readProfile(ctx: OperationContext, readable: string[], eli
   const hidden: FactRow[] = [];
   let scanned = 0;
   let partial = sources.length === 0;
-  for (const src of sources) {
-    const slugs = await factEntitySlugs(ctx.engine, src, self.slug, { excludePrivate: ctx.remote !== false }).catch(() => { partial = true; return [self.slug]; });
+  const targets: Array<[string, string]> = [...sources.map((s): [string, string] => [s, self.slug]), ...(self.homes ?? []).flatMap(h => readable.map((s): [string, string] => [s, h]))];
+  for (const [src, home] of targets) {
+    const slugs = await factEntitySlugs(ctx.engine, src, home, { excludePrivate: ctx.remote !== false }).catch(() => { partial = true; return [home]; });
     for (const slug of slugs) {
       for (let offset = 0; ; offset += PAGE) {
         if (scanned >= PROFILE_SCAN_CAP) { partial = true; break; }

@@ -50,6 +50,11 @@ export interface ProfileSelf {
   /** A member's own profile (its member page), or the brain owner's. */
   kind: 'owner' | 'member';
   source_id: string | null;
+  /**
+   * The owner's other profile homes (memory/owner, the owner member's page), read beside slug so a fact saved before
+   * the owner identity changed (an owner named, a person page matched) stays in the profile.
+   */
+  homes?: string[];
 }
 
 /**
@@ -59,11 +64,12 @@ export interface ProfileSelf {
  */
 export async function profileSelf(ctx: OperationContext): Promise<ProfileSelf | null> {
   sqlEngineKind(ctx.engine.kind, 'profile');
-  const [{ callerMember, memberPageSlug, ownerSpeaksForItself }, { currentCallerAccess }, { ownerIdentity }] = await Promise.all([
+  const [{ callerMember, memberPageSlug, ownerSpeaksForItself }, { currentCallerAccess }, { ownerIdentity, RESERVED_OWNER_SLUG }] = await Promise.all([
     import('../access/member-facts.ts'), import('../search/private-visibility.ts'), import('../identity/owner.ts')]);
   const owner = async (): Promise<ProfileSelf> => {
     const id = await ownerIdentity(ctx.engine);
-    return { slug: id.entity.slug, basis: id.entity.basis, kind: 'owner', source_id: id.entity.source_id };
+    const homes = [RESERVED_OWNER_SLUG, ...(id.member ? [memberPageSlug(id.member)] : [])].filter(s => s !== id.entity.slug);
+    return { slug: id.entity.slug, basis: id.entity.basis, kind: 'owner', source_id: id.entity.source_id, homes };
   };
   if (ctx.remote === false) return owner();
   if (ownerSpeaksForItself(ctx)) return owner();
@@ -119,7 +125,7 @@ export async function profileRemember(ctx: OperationContext, p: Record<string, u
       throw writeGrantRefusal(ctx, `Your profile is ${self!.slug} in source ${pinned}, and this connection cannot write there, so the profile fact was not saved (saving it elsewhere would hide it from your profile). Ask the brain host's operator to grant this connection source ${pinned}, or save it from the brain host's CLI.`);
     }
   }
-  const privateDefault = PRIVATE_BY_DEFAULT_FACETS.includes(facetKind(facet)) && p.visibility === undefined && p.share !== true;
+  const privateDefault = PRIVATE_BY_DEFAULT_FACETS.includes(facetKind(facet)) && p.visibility == null && p.share !== true;
   if ((privateDefault || p.visibility === 'private') && self?.kind === 'owner' && own) {
     const [{ worldOnlyFacts }, { profilePrivateHiddenNotice }] = await Promise.all([import('../search/private-visibility.ts'), import('../interop-notices.ts')]);
     if (worldOnlyFacts(ctx.remote)) ctx.emitNotice?.(profilePrivateHiddenNotice());
