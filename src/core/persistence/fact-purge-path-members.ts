@@ -37,7 +37,8 @@
  *   (page_body/derivation_sweep.rs): no stop is left for it;
  * - the receipt's ledger reads and the generation-ledger scrub keep the owners and dates the page purge list names;
  * - the segmented-page branches (a page stored as segments, a staged upload and the write that would publish it) add raw sites,
- *   each with the owner and date Ember ruled: the segmented rewrite statements (trunk, Nov 23), the segmented purge writes (the
+ *   each with the owner and date Ember ruled: the segmented rewrite statements (trunk, Nov 23; lifted: segment-pending-stamp serves
+ *   them as typed members), the segmented purge writes (the
  *   flip, the segmented version insert and prune, the derivation delete, the inline version insert and the version-body read:
  *   lane 1, Nov 25) and the cancellation of a staged write with its terminal compaction (lane 5, Nov 25).
  *   No stop is left without an owner and a date (test/fact-purge-path-members.test.ts).
