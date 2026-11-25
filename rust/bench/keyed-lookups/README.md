@@ -1,6 +1,6 @@
 # Keyed-lookups bench
 
-`bench.ts` times one Rust addon on a fresh brain, stage by stage, so two addons (and their TypeScript) can be compared
+`bench.ts` (corpus and stats in `corpus.ts`, checked by `bench.test.ts`) times one Rust addon on a fresh brain, stage by stage, so two addons (and their TypeScript) can be compared
 on the same machine and the same synthetic corpus. Nothing leaves the machine: embeddings come from a deterministic
 local function, the reranker and autocut are off, and the brain lives in a temp directory with its own `GBRAIN_HOME`.
 
