@@ -199,6 +199,8 @@ proptest! {
         let receipts: Vec<Value> = receipts.into_iter().flatten().collect();
         prop_assert_eq!(receipts.len(), threads * replays);
         prop_assert!(receipts.iter().all(|r| r["state"] == "committed"), "a replay was not committed");
+        // A replay answers with the stored receipt of the first run: every one says the page was created.
+        prop_assert!(receipts.iter().all(|r| r["status"] == "created"), "a replay was applied as a new request");
         let pages: BTreeSet<String> = receipts.iter().map(|r| r["page_id"].to_string()).collect();
         prop_assert_eq!(pages.len(), 1, "replays answered with different rows");
         prop_assert_eq!(store.count_pages(None).unwrap(), 1, "a replay added a row");
@@ -302,7 +304,7 @@ fn p_d_a_write_with_a_replaced_leases_token_is_refused_multi_writer() {
         for old in &tokens[..takeovers] {
             for _ in 0..stale_writes {
                 let tx = store.begin_with(host(9)).unwrap_or_else(|e| panic!("{e}"));
-                let refused = store.assert_lease(&tx, old).is_err();
+                let refused = tx.assert_lease(old).is_err();
                 prop_assert!(refused, "a replaced lease's token was accepted");
             }
         }

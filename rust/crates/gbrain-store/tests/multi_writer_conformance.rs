@@ -22,8 +22,8 @@ mod common;
 mod memory_env;
 
 use common::mu::{
-    self, CommitPosition, L1_TXN, L2_LOG, L3_SERVER, L5_HOSTS, LeaseToken, MuStore, MuTxn,
-    SingleFlightKey, TxnMode, TxnOptions, WriteOrigin,
+    self, CLAIM_JOB, CLAIM_WRITE, CommitPosition, L1_TXN, L2_LOG, L3_SERVER, L5_HOSTS, LEASE_LOST,
+    LeaseToken, LostReason, MuStore, MuTxn, SingleFlightKey, TxnMode, TxnOptions, WriteOrigin,
 };
 use common::{StoreMode, TempDir, open, open_in};
 use gbrain_store::chunks::{ChunkInput, UpsertChunksOptions};
@@ -37,7 +37,7 @@ use gbrain_store::persistence::{
     ClaimStamp, ClaimableSpec, EffectClaim, EffectSettle, PublicationEffectsSpec, Settle,
     WriteRequestInsert,
 };
-use gbrain_store::{FORMAT_VERSION, OpenOptions, Store};
+use gbrain_store::{FORMAT_VERSION, OpenOptions, Store, StoreError};
 use memory_env::{Brain, brain, brain_in};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -258,8 +258,8 @@ fn commit_host(store: &Store, tx: MuTxn) -> CommitPosition {
 }
 
 /// A typed `write_conflict` from a commit is the retryable answer of an optimistic transaction.
-fn is_conflict(e: &mu::MuError) -> bool {
-    e.code() == Some(WRITE_CONFLICT)
+fn is_conflict(e: &StoreError) -> bool {
+    e.code == WRITE_CONFLICT
 }
 
 /// A host's lease, taken through I-5 (pending until the hosts lane lands it).
@@ -269,9 +269,6 @@ fn require_host_lease(store: &Store) -> LeaseToken {
         .unwrap_or_else(|e| panic!("{e}"))
         .expect("the first holder gets the lease")
 }
-
-/// The typed refusal of a write whose lease was taken over (I-1).
-const LEASE_LOST: &str = "lease_lost";
 
 fn current_body(s: &Store, slug: &str) -> String {
     let snap = s
@@ -508,7 +505,7 @@ fn c03_two_claimers_of_one_write_never_both_claim() {
 fn c03_two_claimers_of_one_write_never_both_claim_multi_writer() {
     let dir = TempDir::new("c03m");
     let store = Arc::new(open_optimistic(&dir));
-    require_transactions(&store);
+    require_host_lease(&store);
     let id = queued_write(&store, "b0000000-0000-4000-8000-0000000000b1");
     let s = store.clone();
     let won = together(8, move |i| {
@@ -696,23 +693,85 @@ fn c06_stale_holder_data_write_refused_by_its_token() {
     assert_eq!(current_body(&b, "protected"), "from the new holder");
 }
 
+/// Asserts `e` is a `lease_lost` with exactly this reason (the message carries it as JSON).
+fn assert_lost(e: &StoreError, reason: LostReason, what: &str) {
+    assert_eq!(e.code, LEASE_LOST, "{what}: {e}");
+    assert_eq!(
+        mu::lost_reason(e).as_deref(),
+        Some(reason.as_str()),
+        "{what}: {e}"
+    );
+}
+
+/// C06, the token-fenced cycle lock (today's `acquire_lease`): after a takeover the old holder cannot refresh the lock, release it, or write
+/// protected data under it, and the new holder can. (An expired but untaken cycle lock still refreshes today; that an expired
+/// lease cannot be renewed is the multi-writer part.)
+#[test]
+fn c06_old_holder_cannot_refresh_release_or_write_after_a_takeover() {
+    let b = brain("c06-old-holder");
+    let (a, c) = (
+        "00000000-0000-4000-8000-0000000000a1",
+        "00000000-0000-4000-8000-0000000000b2",
+    );
+    b.acquire_cycle_lock("src", &lock(1, a, 1.0))
+        .unwrap()
+        .unwrap();
+    let holder = |pid: i64, token: &str| -> gbrain_store::jobs::LockHolder {
+        serde_json::from_value(
+            json!({"holderPid": pid, "acquisitionToken": token, "ttlMinutes": 1.0}),
+        )
+        .unwrap()
+    };
+    // The live lock is not taken by a second holder.
+    assert!(
+        b.acquire_cycle_lock("src", &lock(2, c, 1.0))
+            .unwrap()
+            .is_none()
+    );
+    b.clock.advance(120_000_000);
+    b.acquire_cycle_lock("src", &lock(2, c, 1.0))
+        .unwrap()
+        .expect("the takeover after expiry");
+    assert!(
+        !b.refresh_cycle_lock("src", &holder(1, a)).unwrap(),
+        "the old holder refreshed"
+    );
+    assert!(
+        !b.release_cycle_lock("src", &holder(1, a)).unwrap(),
+        "the old holder released"
+    );
+    let tx = b.begin_transaction(false).unwrap();
+    assert!(
+        !tx.assert_cycle_lease("src", a).unwrap(),
+        "the old token still holds"
+    );
+    tx.rollback_transaction().unwrap();
+    assert!(!exists(&b, "protected"));
+    // The new holder still holds, refreshes and writes.
+    assert!(b.refresh_cycle_lock("src", &holder(2, c)).unwrap());
+    let tx = b.begin_transaction(false).unwrap();
+    assert!(tx.assert_cycle_lease("src", c).unwrap());
+    put(&tx, "protected", "from the new holder");
+    tx.commit_transaction().unwrap();
+    assert_eq!(current_body(&b, "protected"), "from the new holder");
+}
+
 /// C06, `acquire_lease` and `assert_lease`: a holder that paused after taking its lease cannot write protected data
 /// after a takeover, whether it asserts its token before or after the takeover. Every takeover moves the epoch.
 #[test]
 #[ignore = "multi_writer"]
 fn c06_stale_holder_data_write_refused_by_its_token_multi_writer() {
-    let dir = TempDir::new("c06m");
-    let store = Arc::new(open_optimistic(&dir));
-    let first = store
+    let b = brain_in("c06m", memory_env::StoreMode::Optimistic);
+    let first = b
         .acquire_lease("cycle", &origin(1), 50)
         .unwrap_or_else(|e| panic!("{e}"))
         .expect("the first holder");
     // The paused holder asserts its lease, writes and then pauses before its commit.
-    let paused = begin_host(&store, 1);
-    store.assert_lease(&paused, &first).unwrap();
+    let paused = begin_host(&b, 1);
+    paused.assert_lease(&first).unwrap();
     put(&paused, "protected", "from the paused holder");
-    thread::sleep(Duration::from_millis(120));
-    let second = store
+    b.clock.advance(120_000);
+    let second = b
         .acquire_lease("cycle", &origin(2), 60_000)
         .unwrap_or_else(|e| panic!("{e}"))
         .expect("the takeover");
@@ -720,22 +779,219 @@ fn c06_stale_holder_data_write_refused_by_its_token_multi_writer() {
         second.epoch > first.epoch,
         "a takeover did not move the epoch"
     );
-    let refused = store.commit_position(paused).unwrap_err();
+    let refused = b.commit_position(paused).unwrap_err();
     assert!(
-        refused.code() == Some(LEASE_LOST) || is_conflict(&refused),
+        refused.code == LEASE_LOST || is_conflict(&refused),
         "the paused holder's commit was not refused: {refused}"
     );
-    assert!(!exists(&store, "protected"), "the stale write landed");
+    assert!(!exists(&b, "protected"), "the stale write landed");
     // A holder that asserts its old token after the takeover is refused in its own transaction.
-    let late = begin_host(&store, 1);
-    let late_refusal = store.assert_lease(&late, &first).unwrap_err();
-    assert_eq!(late_refusal.code(), Some(LEASE_LOST), "{late_refusal}");
+    let late = begin_host(&b, 1);
+    assert_lost(
+        &late.assert_lease(&first).unwrap_err(),
+        LostReason::EpochMoved,
+        "the old token inside a transaction",
+    );
     drop(late);
-    let holder = begin_host(&store, 2);
-    store.assert_lease(&holder, &second).unwrap();
+    let holder = begin_host(&b, 2);
+    holder.assert_lease(&second).unwrap();
     put(&holder, "protected", "from the new holder");
-    commit_host(&store, holder);
-    assert_eq!(current_body(&store, "protected"), "from the new holder");
+    commit_host(&b, holder);
+    assert_eq!(current_body(&b, "protected"), "from the new holder");
+}
+
+/// C06, a partitioned host: host A takes a lease with a short ttl on the store clock, starts a protected write transaction (its
+/// `assert_lease` is a statement of the transaction), the clock passes the expiry, and A's renewal is refused `expired`. Another
+/// holder takes the lease under epoch + 1. A's old-epoch transaction then cannot commit (`lease_lost`, or a retryable
+/// `write_conflict` whose fresh run is refused `epoch_moved`), nothing protected is written, A's old token outside a transaction
+/// is refused `epoch_moved`, and a claim taken under the old epoch is refused `claim_epoch_mismatch`. Every `lease_lost` reason is
+/// asserted. Lease semantics are those of `leases.rs` on the hosts branch.
+#[test]
+#[ignore = "multi_writer"]
+fn c06_partitioned_host_old_epoch_work_refused_multi_writer() {
+    const TTL_MS: u64 = 1_000;
+    const NAME: &str = "protected-writer";
+    let b = brain_in("c06-partition", memory_env::StoreMode::Optimistic);
+    let past_expiry = || b.clock.advance((TTL_MS as i64 + 1) * 1000);
+
+    // Host A holds the lease under epoch 1; a second taker of a live lease gets nothing, never an error.
+    let a = b
+        .acquire_lease(NAME, &origin(1), TTL_MS)
+        .unwrap_or_else(|e| panic!("{e}"))
+        .expect("host A takes the lease");
+    assert_eq!(a.epoch, 1);
+    assert!(
+        b.acquire_lease(NAME, &origin(2), TTL_MS).unwrap().is_none(),
+        "a live lease was taken by a second holder"
+    );
+    assert!(b.read_lease(NAME).unwrap().expect("the record").live);
+
+    // A starts a protected write: the lease check is a statement of its transaction. A claim is stamped under epoch 1.
+    let tx = begin_host(&b, 1);
+    tx.assert_lease(&a).unwrap();
+    put(&tx, "protected", "from the partitioned host");
+    b.record_claim_epoch(CLAIM_JOB, "42", &a).unwrap();
+    b.check_claim_epoch(CLAIM_JOB, "42", &a).unwrap();
+
+    // The partition: the clock passes the expiry. A cannot renew, and its token no longer holds (nobody took over yet).
+    past_expiry();
+    assert!(!b.read_lease(NAME).unwrap().expect("the record").live);
+    assert_lost(
+        &b.renew_lease(&a, TTL_MS).unwrap_err(),
+        LostReason::Expired,
+        "renew after expiry",
+    );
+    assert_lost(
+        &b.assert_lease(&a).unwrap_err(),
+        LostReason::Expired,
+        "assert after expiry, outside a transaction",
+    );
+
+    // Host B takes the lease under epoch + 1.
+    let taken = b
+        .acquire_lease(NAME, &origin(2), TTL_MS)
+        .unwrap_or_else(|e| panic!("{e}"))
+        .expect("host B takes the expired lease");
+    assert_eq!(
+        taken.epoch,
+        a.epoch + 1,
+        "a takeover raises the epoch by one"
+    );
+
+    // A's old-epoch transaction cannot commit.
+    let refused = b.commit_position(tx).unwrap_err();
+    assert!(
+        refused.code == LEASE_LOST || is_conflict(&refused),
+        "the old-epoch commit was not refused: {refused}"
+    );
+    if refused.code == LEASE_LOST {
+        let reason = mu::lost_reason(&refused).unwrap_or_default();
+        assert!(
+            reason == LostReason::EpochMoved.as_str() || reason == LostReason::Expired.as_str(),
+            "{refused}"
+        );
+    }
+    assert!(
+        !exists(&b, "protected"),
+        "protected data was written under the old epoch"
+    );
+
+    // A run again from a fresh snapshot is refused epoch_moved, inside a transaction and outside one.
+    let again = begin_host(&b, 1);
+    assert_lost(
+        &again.assert_lease(&a).unwrap_err(),
+        LostReason::EpochMoved,
+        "the old token in a fresh transaction",
+    );
+    drop(again);
+    assert_lost(
+        &b.assert_lease(&a).unwrap_err(),
+        LostReason::EpochMoved,
+        "the old token outside a transaction",
+    );
+    assert_lost(
+        &b.renew_lease(&a, TTL_MS).unwrap_err(),
+        LostReason::EpochMoved,
+        "renew with the old token",
+    );
+    b.release_lease(&a).unwrap(); // a stale release changes nothing
+    b.assert_lease(&taken).unwrap();
+
+    // The claim stamped under epoch 1 finishes only under epoch 1: the new holder's fence, another family, and a
+    // claim nobody recorded are all refused claim_epoch_mismatch.
+    assert_lost(
+        &b.check_claim_epoch(CLAIM_JOB, "42", &taken).unwrap_err(),
+        LostReason::ClaimEpochMismatch,
+        "a claim taken under the old epoch",
+    );
+    assert_lost(
+        &b.check_claim_epoch(CLAIM_WRITE, "42", &a).unwrap_err(),
+        LostReason::ClaimEpochMismatch,
+        "another family's claim with the same id",
+    );
+    assert_lost(
+        &b.check_claim_epoch(CLAIM_JOB, "never-recorded", &taken)
+            .unwrap_err(),
+        LostReason::ClaimEpochMismatch,
+        "a claim with no record",
+    );
+
+    // The current holder writes protected data; then it releases and its own token is refused released.
+    let holder = begin_host(&b, 2);
+    holder.assert_lease(&taken).unwrap();
+    put(&holder, "protected", "from the current holder");
+    commit_host(&b, holder);
+    assert_eq!(current_body(&b, "protected"), "from the current holder");
+    b.release_lease(&taken).unwrap();
+    assert_lost(
+        &b.assert_lease(&taken).unwrap_err(),
+        LostReason::Released,
+        "assert after release",
+    );
+    assert_lost(
+        &b.renew_lease(&taken, TTL_MS).unwrap_err(),
+        LostReason::Released,
+        "renew after release",
+    );
+
+    // A takes it again (A can come back): epoch + 1 again, and the first epoch's token is still refused.
+    let a_again = b
+        .acquire_lease(NAME, &origin(1), TTL_MS)
+        .unwrap_or_else(|e| panic!("{e}"))
+        .expect("host A takes the released lease");
+    assert_eq!(a_again.epoch, taken.epoch + 1);
+    b.assert_lease(&a_again).unwrap();
+    assert_lost(
+        &b.assert_lease(&a).unwrap_err(),
+        LostReason::EpochMoved,
+        "epoch 1 after epoch 3",
+    );
+
+    // A name nobody took: not_found.
+    let stranger = LeaseToken {
+        name: "never-taken".into(),
+        epoch: 1,
+        token: "x".into(),
+    };
+    assert_lost(
+        &b.assert_lease(&stranger).unwrap_err(),
+        LostReason::NotFound,
+        "a lease that does not exist",
+    );
+    assert_lost(
+        &b.renew_lease(&stranger, TTL_MS).unwrap_err(),
+        LostReason::NotFound,
+        "renew of a lease that does not exist",
+    );
+
+    // A protected entry point called with no fence on a multi-user store: fence_missing.
+    assert_lost(
+        &b.check_fence(None, "complete_job").unwrap_err(),
+        LostReason::FenceMissing,
+        "no fence on a multi-user store",
+    );
+}
+
+/// The reasons the adapter names are the six the store's `lease_lost` carries, each round-tripping through the error message.
+#[test]
+fn the_lease_lost_reasons_round_trip_through_the_error_message() {
+    let named: Vec<&str> = LostReason::ALL.iter().map(|r| r.as_str()).collect();
+    assert_eq!(
+        named,
+        [
+            "not_found",
+            "epoch_moved",
+            "released",
+            "expired",
+            "fence_missing",
+            "claim_epoch_mismatch"
+        ]
+    );
+    for reason in LostReason::ALL {
+        let e = mu::lease_lost(reason, "n", 3, Some(4));
+        assert_lost(&e, reason, "round trip");
+    }
+    assert_eq!(mu::lost_reason(&StoreError::new(WRITE_CONFLICT, "x")), None);
 }
 
 /// C07 scenario: one effect, eight claimants; the owner dies after the action and before it records, and the
@@ -1007,7 +1263,7 @@ fn c11_per_entity_order_equals_commit_order() {
 fn c11_per_entity_order_equals_commit_order_multi_writer() {
     let dir = TempDir::new("c11m");
     let store = Arc::new(open_optimistic(&dir));
-    require_transactions(&store);
+    require_host_lease(&store);
     let (s, gate) = (store.clone(), Arc::new(Barrier::new(WRITERS)));
     let committed = together(WRITERS, move |i| {
         let text = format!("fact {i}");
@@ -1971,6 +2227,9 @@ fn c21_read_your_writes_token_on_a_second_connection() {
 fn c21_read_your_writes_token_on_a_second_connection_multi_writer() {
     let dir = TempDir::new("c21m");
     let store = Arc::new(open_optimistic(&dir));
+    // The token on a connection that is another process waits for the server lane.
+    mu::pending_member::<()>(L3_SERVER, "a read token on a second connection")
+        .unwrap_or_else(|e| panic!("{e}"));
     let tx = begin_host(&store, 1);
     put(&tx, "notes/a", "acknowledged on A");
     let position = commit_host(&store, tx);
@@ -2031,7 +2290,10 @@ fn c22_commit_position_strictly_increases() {
 fn c22_commit_position_strictly_increases_multi_writer() {
     let dir = TempDir::new("c22m");
     let store = Arc::new(open_optimistic(&dir));
-    require_transactions(&store);
+    // Per-transaction positions belong to the commit-log lane: the first call that is not yet a member.
+    store
+        .read_commit_log(None, 1)
+        .unwrap_or_else(|e| panic!("{e}"));
     let s = store.clone();
     let positions = together(WRITERS, move |i| {
         (0..4)
@@ -2062,10 +2324,12 @@ fn c22_commit_position_strictly_increases_multi_writer() {
 /// together, so an un-pend never happens by accident.
 #[test]
 fn mu_adapter_stubs_are_still_pending() {
-    fn owner<T>(call: &str, result: mu::MuResult<T>) -> &'static str {
+    fn owner<T>(call: &str, result: mu::MuResult<T>) -> String {
         match result {
-            Err(mu::MuError::Pending(p)) => p.owner,
-            Err(e) => panic!("{call} failed for another reason: {e}"),
+            Err(e) => match mu::pending_owner(&e) {
+                Some(owner) => owner.to_string(),
+                None => panic!("{call} failed for another reason: {e}"),
+            },
             Ok(_) => panic!("{call} is no longer pending: edit this test with its stub"),
         }
     }
@@ -2093,10 +2357,7 @@ fn mu_adapter_stubs_are_still_pending() {
         owner("commit_position", store.commit_position(txn())),
         L2_LOG
     );
-    assert_eq!(
-        owner("assert_lease", store.assert_lease(&txn(), &token)),
-        L5_HOSTS
-    );
+    assert_eq!(owner("assert_lease", store.assert_lease(&token)), L5_HOSTS);
     assert_eq!(
         owner("acquire_lease", store.acquire_lease("n", &origin(1), 1000)),
         L5_HOSTS
@@ -2107,6 +2368,25 @@ fn mu_adapter_stubs_are_still_pending() {
     );
     assert_eq!(
         owner("release_lease", store.release_lease(&token)),
+        L5_HOSTS
+    );
+    assert_eq!(owner("read_lease", store.read_lease("n")), L5_HOSTS);
+    assert_eq!(
+        owner(
+            "record_claim_epoch",
+            store.record_claim_epoch(CLAIM_JOB, "1", &token)
+        ),
+        L5_HOSTS
+    );
+    assert_eq!(
+        owner(
+            "check_claim_epoch",
+            store.check_claim_epoch(CLAIM_JOB, "1", &token)
+        ),
+        L5_HOSTS
+    );
+    assert_eq!(
+        owner("check_fence", store.check_fence(None, "complete_job")),
         L5_HOSTS
     );
     assert_eq!(

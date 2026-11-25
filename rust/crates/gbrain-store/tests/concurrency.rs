@@ -433,7 +433,7 @@ fn explicit_transactions_conflict_with_a_typed_error_and_ids_stay_unique_multi_w
                         ids.push(id);
                         break;
                     }
-                    Err(e) => assert_eq!(e.code(), Some(WRITE_CONFLICT), "an untyped refusal: {e}"),
+                    Err(e) => assert_eq!(e.code, WRITE_CONFLICT, "an untyped refusal: {e}"),
                 }
             }
         }
