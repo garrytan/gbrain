@@ -42,6 +42,18 @@ under `env_vars` in `[mcp_servers.gbrain]`. Codex forwards each one that is set
 and skips the rest, so a key you already use gives the session semantic search.
 Only names are written, never values.
 
+Codex 0.147 and newer wait only one second for MCP servers to start before a
+session's first turn, and a server still starting after that is left out of the
+whole `codex exec` run, with no warning. `gbrain serve` takes about a second to
+start, so setup also sets `mcp_optional_startup_grace_ms = 0` at the top of
+config.toml: Codex then waits for each server up to its `startup_timeout_sec`
+(10 seconds unless you set one), and starts without a server that is broken.
+The setting applies to every MCP server in that config, not only gbrain. Setup
+never changes a value you set yourself (it says so when yours is above 0), and
+`--remove` deletes the key only while it is still setup's `0`. The plugin and
+`codex mcp add` paths write nothing here: add the line yourself if a session
+sometimes lists no gbrain tools.
+
 ## Install as a Codex plugin (recommended)
 
 gbrain ships as a native Codex plugin — MCP server + a curated brain-first

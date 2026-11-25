@@ -37,7 +37,7 @@ import { atomicWriteTextFile } from '../bootstrap/atomic-write.ts';
 import { ownedEntryFingerprint } from '../bootstrap/adopted-connections.ts';
 import { acquireBootstrapLock } from '../bootstrap/lock.ts';
 import { codexConfigPath } from '../bootstrap/host-specs.ts';
-import { appendCodexTomlTable, readCodexTomlTable, removeCodexTomlTable, type CodexTomlValue } from '../bootstrap/codex-toml.ts';
+import { appendCodexTomlTable, prependCodexTomlTopLevelInt, readCodexTomlTable, removeCodexTomlTable, removeCodexTomlTopLevelInt, type CodexTomlValue } from '../bootstrap/codex-toml.ts';
 import {
   CODEX_SETUP_EVENTS,
   CODEX_SETUP_LANE_TOKEN,
@@ -55,6 +55,15 @@ import { SetupAbortInjected, type SetupConsent, type SetupStep } from './claude-
 import { ensureHookLauncher, hookLauncherPath } from './hook-launcher.ts';
 
 export const CODEX_SETUP_RECEIPT_VERSION = 2;
+
+/**
+ * Codex (0.147+) gives MCP servers not marked `required` one shared 1 s window to start when it builds a turn's tool
+ * list, then leaves out every server still starting, for the whole of a one-shot `codex exec`. `gbrain serve` takes
+ * about 0.8 s to answer `initialize` and `tools/list` on a fast machine, so a slower one loses gbrain's tools for that
+ * session. `0` makes Codex wait for each server up to its own `startup_timeout_sec` (Codex 0.151+). It is a top-level
+ * key: setup writes it only when absent, never changes a value the user set, and `--remove` deletes only its own `0`.
+ */
+export const CODEX_STARTUP_GRACE_KEY = 'mcp_optional_startup_grace_ms';
 
 type Hashes = Partial<Record<CodexSetupEvent, string>>;
 interface TrustRecord { key: string; hash: string }
@@ -87,6 +96,8 @@ export interface CodexSetupReceipt {
   mcp_plugin?: string;
   hooks: { owned: Hashes; pending: Hashes; edited: Hashes };
   trust: { owned: TrustRecords; pending: TrustRecords; edited: TrustRecords };
+  /** `written`: setup set `mcp_optional_startup_grace_ms = 0` (CODEX_STARTUP_GRACE_KEY); `--remove` deletes it while it is still 0. */
+  startup_grace?: 'written';
   consent: SetupConsent & { recorded_at: string };
   brain_created_by_setup: boolean;
   native_harness_verified: false;
@@ -127,6 +138,8 @@ export interface CodexInspection {
   edited: Hashes;
   hooksCurrent: boolean;
   trustCurrent: boolean;
+  /** CODEX_STARTUP_GRACE_KEY: `ours` = setup's 0, `user` = a value setup did not write (kept as is), `absent` = unset. */
+  grace: { state: 'ours' | 'user' | 'absent'; value?: unknown };
 }
 
 export function codexSetupPaths(name: string): { configPath: string; hooksPath: string; receiptPath: string } {
@@ -252,7 +265,10 @@ export function inspectCodexSetup(plan: CodexSetupPlan): CodexInspection {
     }
   }
   const otherLaneEvents = [...new Set(census.filter((g) => g.lane === 'bootstrap').map((g) => g.event))];
-  return { ...paths, prior, hostedReceipt: hosted, mcp, otherLaneEvents, edited, hooksCurrent, trustCurrent };
+  const graceValue = readCodexTomlTable(paths.configPath, [CODEX_STARTUP_GRACE_KEY]);
+  const grace: CodexInspection['grace'] = graceValue === undefined ? { state: 'absent' }
+    : graceValue === 0 && prior?.startup_grace === 'written' ? { state: 'ours', value: 0 } : { state: 'user', value: graceValue };
+  return { ...paths, prior, hostedReceipt: hosted, mcp, otherLaneEvents, edited, hooksCurrent, trustCurrent, grace };
 }
 
 export interface CodexApplyResult { steps: CodexSetupStep[]; receipt: CodexSetupReceipt; changed: boolean; preserved: CodexPreserved[]; notes: string[] }
@@ -304,7 +320,7 @@ export async function applyCodexSetup(
     const mcpDone = opts.pluginOwner !== null || found.mcp.state === 'current';
     const consentSame = prior?.consent !== undefined && consentValues(prior.consent) === consentValues(consent);
     const originSame = prior?.surface_origin === plan.surfaceOrigin;
-    if (prior?.status === 'installed' && consentSame && originSame && mcpDone && found.hooksCurrent && found.trustCurrent && !opts.brainCreated) {
+    if (prior?.status === 'installed' && consentSame && originSame && mcpDone && found.hooksCurrent && found.trustCurrent && found.grace.state !== 'absent' && !opts.brainCreated) {
       steps.push({ step: 'receipt', action: 'keep', detail: `${paths.receiptPath} already records this install` });
       steps.push({ step: 'mcp', action: opts.pluginOwner ? 'skip' : 'keep', detail: opts.pluginOwner ? `the '${opts.pluginOwner}' plugin serves '${plan.name}'` : `[mcp_servers.${plan.name}] in ${paths.configPath} is current` });
       steps.push({ step: 'hooks', action: 'keep', detail: plan.events.length ? `${plan.events.join(', ')} in ${paths.hooksPath} are current` : 'no hooks wanted' });
@@ -324,6 +340,7 @@ export async function applyCodexSetup(
       ...(opts.pluginOwner ? { mcp_plugin: opts.pluginOwner } : {}),
       hooks: { owned: prior?.hooks.owned ?? {}, pending: want, edited: found.edited },
       trust: { owned: prior?.trust.owned ?? {}, pending: prior?.trust.pending ?? {}, edited: prior?.trust.edited ?? {} },
+      ...(found.grace.state === 'user' ? {} : { startup_grace: 'written' as const }),
       consent: { ...consent, recorded_at: now },
       brain_created_by_setup: (prior?.brain_created_by_setup ?? false) || opts.brainCreated,
       native_harness_verified: false,
@@ -351,6 +368,12 @@ export async function applyCodexSetup(
     }
     if (!opts.pluginOwner) receipt.entry_hash = desiredHash;
     receipt.pending_entry_hash = null;
+    if (found.grace.state === 'absent') {
+      prependCodexTomlTopLevelInt(paths.configPath, CODEX_STARTUP_GRACE_KEY, 0, `gbrain setup (${plan.name}): Codex waits for gbrain to start instead of leaving its tools out of a session; \`gbrain setup codex --remove\` deletes it while it is 0`);
+      steps.push({ step: 'mcp', action: 'write', detail: `${CODEX_STARTUP_GRACE_KEY} = 0 in ${paths.configPath}: Codex waits for '${plan.name}' to start (up to its startup_timeout_sec) instead of leaving its tools out of a session after 1 second` });
+    } else if (found.grace.state === 'user' && found.grace.value !== 0) {
+      steps.push({ step: 'mcp', action: 'preserve', detail: `${paths.configPath} sets ${CODEX_STARTUP_GRACE_KEY} = ${String(found.grace.value)}; kept, so a session where '${plan.name}' starts slower than that runs without its tools (0 makes Codex wait)` });
+    }
     save();
     if (opts.abortAfter === 'mcp') throw new SetupAbortInjected('mcp');
 
@@ -481,6 +504,15 @@ export async function removeCodexSetup(receipt: CodexSetupReceipt, receiptPath: 
     } else {
       preserved.push({ kind: 'mcp', reason: 'edited' });
       steps.push({ step: 'mcp', action: 'preserve', detail: `[mcp_servers.${receipt.name}] in ${receipt.config_path} changed after setup wrote it; kept` });
+    }
+
+    if (receipt.startup_grace === 'written') {
+      const grace = readCodexTomlTable(receipt.config_path, [CODEX_STARTUP_GRACE_KEY]);
+      if (grace === 0 && removeCodexTomlTopLevelInt(receipt.config_path, CODEX_STARTUP_GRACE_KEY, 0, { dryRun: opts.dryRun }) === 'removed') {
+        steps.push({ step: 'mcp', action: 'remove', detail: `${CODEX_STARTUP_GRACE_KEY} from ${receipt.config_path}` });
+      } else if (grace !== undefined) {
+        steps.push({ step: 'mcp', action: 'preserve', detail: `${CODEX_STARTUP_GRACE_KEY} in ${receipt.config_path} ${grace === 0 ? 'could not be located as one line' : 'changed after setup wrote it'}; kept` });
+      }
     }
 
     let receiptRemoved = false;
