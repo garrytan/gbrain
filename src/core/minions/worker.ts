@@ -759,16 +759,9 @@ export class MinionWorker extends EventEmitter {
               // jobs accumulate in `waiting`. Only counts work THIS worker would
               // actually have claimed.
               const handlerNames = this.registeredNames;
-              const rows = handlerNames.length === 0
-                ? [] as { cnt: string }[]
-                : await this.engine.executeRaw<{ cnt: string }>(
-                    `SELECT count(*)::text AS cnt FROM minion_jobs
-                     WHERE status = 'waiting'
-                       AND queue = $1
-                       AND name = ANY($2::text[])`,
-                    [this.opts.queue, handlerNames],
-                  );
-              const waiting = parseInt(rows[0]?.cnt ?? '0', 10);
+              const waiting = handlerNames.length === 0
+                ? 0
+                : await this.engine.countWaitingJobsForNames(this.opts.queue, handlerNames);
               const idleMinutes = Math.round(idleMs / 60_000);
               if (waiting > 0) {
                 // Two thresholds, both measured from `lastCompletionTime` (NOT

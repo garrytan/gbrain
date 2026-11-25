@@ -5,8 +5,7 @@
  *  - Contract: on a brain seeded so each preview lists at least one item, the preview is equal on PGLite, Postgres
  *    (DATABASE_URL) and the Rust engine (GBRAIN_TEST_RUST_ARM=1). take-supersession: a page whose fence is already right
  *    but whose stored pointers were cleared is reprojected the same way on every arm; a broken chain is relinked through
- *    put_page on the SQL arms, and the Rust engine refuses that page write by name ("repair take-supersession page write",
- *    lane 7's writer) before it writes. timeline, timeline-comments, timeline-order and connector-fences list the same
+ *    put_page the same way on every arm (the page write's fence projection runs on typed members). timeline, timeline-comments, timeline-order and connector-fences list the same
  *    pages on every arm, and their apply rewrites the page on the SQL arms while the Rust engine refuses the page write
  *    by name ("repair <kind> page write"). conversation-labels lists the same label-line facts and retires them the same
  *    way on every arm (the retirement's fact writes are typed: engine-sql/fact-text-repair.ts). agent-session-facts
@@ -154,11 +153,11 @@ describe('engine parity: repair take and timeline kinds (batch 5)', () => {
     return { out, pointers, again: again.affected };
   });
 
-  parityTest('take-supersession relinks a broken chain on the SQL arms, and the Rust engine refuses the page write by name', {
-    methods: ['putPage', 'addTakesBatch', 'listTakeSupersessionCandidates', 'listTakePointers', 'listTakeSupersedeReceipts'], requires: 'raw_sql', timeout: 60_000,
+  parityTest('take-supersession relinks a broken chain the same way on every arm', {
+    methods: ['putPage', 'addTakesBatch', 'listTakeSupersessionCandidates', 'listTakePointers', 'listTakeSupersedeReceipts'], timeout: 60_000,
   }, async (engine, backend) => {
     await seedTakesPage(engine, 'notes/chain', CHAIN);
-    return previewThenApply(engine, backend, 'take-supersession', 'repair take-supersession page write');
+    return previewThenApply(engine, backend, 'take-supersession', 'no stop: the relink is served on every arm');
   });
 
   parityTest('setTakeSupersededBy sets and clears one take\'s pointer and nothing else', {
@@ -176,8 +175,8 @@ describe('engine parity: repair take and timeline kinds (batch 5)', () => {
     expect(strip(after)).toEqual(strip(before));
     return { set, cleared };
   });
-  parityTest('timeline previews a database-only row the same way, and the Rust engine refuses the page write by name', {
-    methods: ['putPage', 'addTimelineEntry', 'listTimelineHistoryPages'], requires: 'raw_sql', timeout: 60_000,
+  parityTest('timeline previews a database-only row and writes it into the page the same way on every arm', {
+    methods: ['putPage', 'addTimelineEntry', 'listTimelineHistoryPages'], timeout: 60_000,
   }, async (engine, backend) => {
     await putNote(engine, 'notes/history', 'A synthetic page.', '');
     await engine.addTimelineEntry('notes/history', event('Database-only event'), { sourceId: 'default' });
@@ -198,24 +197,24 @@ describe('engine parity: repair take and timeline kinds (batch 5)', () => {
     return { out, stored, again: again.affected };
   });
 
-  parityTest('timeline-comments drops a commented materialized bullet on the SQL arms, and the Rust engine refuses the page write by name', {
-    methods: ['putPage', 'listTimelineMarkupRows', 'listMaterializedMarkerPages'], requires: 'raw_sql', timeout: 60_000,
+  parityTest('timeline-comments drops a commented materialized bullet the same way on every arm', {
+    methods: ['putPage', 'listTimelineMarkupRows', 'listMaterializedMarkerPages'], timeout: 60_000,
   }, async (engine, backend) => {
     await putNote(engine, 'notes/bullets', 'A synthetic page.',
       '## Timeline\n\n<!-- gbrain:materialized v1 0123456789ab -->\n- **2024-03-01** | slack — <!-- AUTO:slack END -->\n- **2024-03-02** | manual — Kept');
     return previewThenApply(engine, backend, 'timeline-comments', 'repair timeline-comments page write');
   });
 
-  parityTest('timeline-order previews an out-of-order timeline the same way, and the Rust engine refuses the page write by name', {
-    methods: ['putPage', 'listDateBulletPages'], requires: 'raw_sql', timeout: 60_000,
+  parityTest('timeline-order previews and reorders an out-of-order timeline the same way on every arm', {
+    methods: ['putPage', 'listDateBulletPages'], timeout: 60_000,
   }, async (engine, backend) => {
     await putNote(engine, 'notes/order', 'A synthetic page.',
       '## Timeline\n\n- **2021-01-01** | import — Second\n- **2022-01-01** | import — Third\n- **2020-01-01** | import — First');
     return previewThenApply(engine, backend, 'timeline-order', 'repair timeline-order page write');
   });
 
-  parityTest('connector-fences previews a fence below the timeline sentinel the same way, and the Rust engine refuses the page write by name', {
-    methods: ['putPage', 'insertSource', 'listConnectorFencePages'], requires: 'raw_sql', timeout: 60_000,
+  parityTest('connector-fences previews and moves a fence below the timeline sentinel the same way on every arm', {
+    methods: ['putPage', 'insertSource', 'listConnectorFencePages'], timeout: 60_000,
   }, async (engine, backend) => {
     await engine.insertSource({ id: 'gc-example', name: 'gc-example', local_path: null, config: { kind: 'google' } });
     await putNote(engine, 'notes/fenced', 'A synthetic page.', `- **2024-03-01** | manual — An event\n\n${FACTS_FENCE_BEGIN}\n${FACTS_FENCE_END}`, 'gc-example');

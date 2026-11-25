@@ -9,6 +9,8 @@
  * repairs silently, or counting a covered table as a gap.
  * A column of a copied relation that the store cannot keep yet (`gap_columns`) counts the rows
  * that hold a value, and is skipped when the primary has no such column.
+ * A page or slug alias whose slug is not in normal form (master #9944) counts as `pages.slug_not_normal`: the Rust store
+ * keeps only the normal form, so those rows would be unreachable after a swap.
  * Not covered elsewhere: the Rust test pins the plan's `op_checkpoints` split; this file checks
  * the count that reads the primary.
  */
@@ -99,5 +101,18 @@ describe('countSeedGaps', () => {
       ],
     };
     expect(await countSeedGaps(plan, query)).toEqual({ 'pages.deleted_at': 1 });
+  });
+
+  test('a page or slug alias stored under a slug that is not in normal form (lowercase, then NFC) is the gap pages.slug_not_normal', async () => {
+    // Slugs written before #9944 kept capitals or a decomposed accent; the Rust store keeps only the normal form, so a
+    // swap would leave those rows unreachable there. Normal slugs, including composed accents, are not counted.
+    await engine.putPage('notes/normal-caf\u00e9', { type: 'note', title: 'Normal', compiled_truth: 'body' });
+    await engine.putPage('notes/capital', { type: 'note', title: 'Capital', compiled_truth: 'body' });
+    await engine.executeRaw(`UPDATE pages SET slug = 'Notes/Capital' WHERE slug = 'notes/capital'`);
+    await engine.executeRaw(`INSERT INTO slug_aliases (source_id, alias_slug, canonical_slug) VALUES
+      ('default', $1, 'notes/normal-caf\u00e9'), ('default', 'notes/old-name', 'notes/normal-caf\u00e9')`, ['notes/old-cafe\u0301']);
+    const tables = await primaryTables(query);
+    const plan: SeedPlan = { relations: tables.map(relation => ({ relation, key: ['id'], removable: true })), carried: [], not_copied: [], gap_columns: [] };
+    expect(await countSeedGaps(plan, query)).toEqual({ 'pages.slug_not_normal': 2 });
   });
 });

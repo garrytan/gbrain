@@ -591,3 +591,46 @@ fn a_transfer_accept_moves_the_owner_binding_and_content_receipt_to_the_successo
     store.accept_worktree_owner(STALE, HOST_B).unwrap();
     assert_eq!(store.read_worktree_owner(STALE).unwrap(), None);
 }
+
+#[test]
+fn the_binding_reads_name_orphans_every_worktree_and_foreign_owners() {
+    let dir = TempDir::new("worktrees-binding-reads");
+    let store = open(&dir);
+    let incarnation = source(&store, "work", json!({}));
+    source(&store, "stale", json!({}));
+    seed(&store, "work", &incarnation);
+    store
+        .insert_source_binding(&binding("stale", STALE, WORKTREE))
+        .unwrap();
+    store
+        .insert_source_binding(&binding("gone", STALE, WORKTREE))
+        .unwrap();
+    let orphans = store.list_orphan_binding_rows(None).unwrap();
+    let reasons: Vec<(String, String)> = orphans
+        .iter()
+        .map(|r| {
+            (
+                r["source_id"].as_str().unwrap().into(),
+                r["reason"].as_str().unwrap().into(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        reasons,
+        vec![
+            ("gone".into(), "source_removed".into()),
+            ("stale".into(), "incarnation_replaced".into())
+        ]
+    );
+    assert_eq!(store.list_orphan_binding_rows(Some(1)).unwrap().len(), 1);
+    assert_eq!(
+        store.list_worktree_ids().unwrap(),
+        vec![WORKTREE.to_string()]
+    );
+    // The seed's worktree is HOST_A's: another host sees it, HOST_A does not.
+    let foreign = store.list_owner_bindings(HOST_B).unwrap();
+    assert_eq!(foreign.len(), 1);
+    assert_eq!(foreign[0]["local_path"], json!("/var/tmp/work-root"));
+    assert_eq!(foreign[0]["source_ids"], json!(["gone", "stale", "work"]));
+    assert!(store.list_owner_bindings(HOST_A).unwrap().is_empty());
+}

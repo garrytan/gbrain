@@ -126,3 +126,13 @@ removes the source's rows of all five tables (`cascade.rs`).
 
 Every write goes through `Store::write`, so it runs on `access_flag::FlaggingWriter`; this family writes no page
 record, so it never sets the member-access flag itself.
+
+## The re-derive queue
+
+`markNeedsRederive` keeps the `needs_rederive` rows under `h 0x0C derived_table \0 derived_id`
+(`crates/gbrain-store/src/generations/needs_rederive.rs`), next to the derivation inputs (`h 0x0A`, `h 0x0B`). A
+purge's `hideDerivedRows` marks each derived row it hides. The reads whose SQL applies `rederiveHiddenSql` hide a
+marked row: the fact reads with a read eligibility, the fact pool, the saved-fact match, `countWorldFacts`,
+`findTrajectory`, `listContestedProposalPairs`, `factReadableUnder`, the take and timeline reads with a read
+eligibility, `listLiveTakesByIds`, and `getVersions` (a marked page shows no version). `pageAwaitsRederive` reads it.
+A source delete removes the source's rows.

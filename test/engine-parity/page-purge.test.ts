@@ -18,10 +18,9 @@
  *      isOriginTwinPage                             lane 10, rust-engine/repair-rust b5945d814f (readPageDatabaseOnlyReason)
  *      the publication_started stamp                 lane 5, rust-engine/bound-write-rust 075a30ef45 (journal.markPublicationStarted)
  *      scrubGenerationLedger                         lane 4, 61b18fbbc (scrubGenerationPageRows, scrubGenerationTextRows)
- *      listPageProseHits, readPurgeReceiptSourcePath,
- *      readDeletePageRequest, listPurgeEffects       lane 4, rust-engine/rust-5a 90e7bea933
  *      the receipt's recorded-value probe            lane 3, rust-engine/rust-belief-purge e211982aba (once merged)
- *      the receipt's fact-context probe              lane 4, rust-engine/rust-5a 90e7bea933
+ *    (lane 4's rust-5a serves listPageProseHits, readPurgeReceiptSourcePath, readDeletePageRequest, listPurgeEffects and
+ *    the receipt's fact-context probe, so they are off the list.)
  *  - Why existing coverage misses it: delete-page.test.ts pins only the refusal on Rust; the page purge suites
  *    (test/page-purge*.test.ts) run on PGLite and Postgres only.
  *  - Seam: the delete_page and put_page operation handlers, whole, with a local (trusted) caller and the arm's own
@@ -52,11 +51,6 @@ type R = Record<string, unknown>;
 const RUST_KNOWN_STOP = [
   { name: 'readRequestIndexStates (persistence/checkpoint-validation.ts)', owner: 'lane 14 (doctor-checks-3 b78e56edb9, contains 8d4d809039)', due: '5 PM PST Nov 25' },
   { name: 'listBeliefEventsForPurgeProbe', owner: 'lane 3 (rust-belief-purge e211982aba)', due: '5 PM PST Nov 24' },
-  { name: 'listFactContextsForPurgeProbe', owner: 'lane 4 (rust-5a 90e7bea933)', due: '5 PM PST Nov 24' },
-  { name: 'listPageProseHits', owner: 'lane 4 (rust-5a 90e7bea933)', due: '5 PM PST Nov 25' },
-  { name: 'readPurgeReceiptSourcePath', owner: 'lane 4 (rust-5a 90e7bea933)', due: '5 PM PST Nov 25' },
-  { name: 'readDeletePageRequest', owner: 'lane 4 (rust-5a 90e7bea933)', due: '5 PM PST Nov 25' },
-  { name: 'listPurgeEffects', owner: 'lane 4 (rust-5a 90e7bea933)', due: '5 PM PST Nov 25' },
 ];
 
 /** `engine`, keeping every capability refusal a call on it (or on a transaction handle it opens) raised, caught or not. */

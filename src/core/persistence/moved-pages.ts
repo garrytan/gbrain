@@ -37,8 +37,6 @@ import { readDeletionProvenance, type DeletionProvenance } from './sync-origin-e
 import { fileMatchesSnapshot } from './page-prepare.ts';
 import { twinMergeConflicts } from './twin-merge.ts';
 import { literalPathspecs } from '../git-env.ts';
-import { privateSnapshotFilterFragment } from '../search/private-visibility.ts';
-import { requireRawSql } from '../rust-engine/errors.ts';
 
 export interface MovedPageRef { page_id: number; slug: string; revision: string; path: string }
 export type MovedEvidence = 'same_commit' | 'first_commit' | 'renamed_contained' | 'named_contained';
@@ -289,11 +287,7 @@ async function pairRefusal(engine: BrainEngine, old: MovedPageRef, row: { id: nu
   held: (reason: MovedHeldReason, detail: string, candidates?: string[]) => MovedPageVerdict): Promise<MovedPageVerdict | null> {
   const storage = { segmented: await engine.hasSegmentedHistory(old.page_id) };
   if (storage?.segmented) return held('segmented_versions', `${old.path} moved to ${row.source_path}, but page ${old.slug} or one of its saved versions is stored in segments (over 1 MiB), whose body generations belong to ${old.slug} and cannot move to ${row.slug}, so it stays as it is`, [row.slug]);
-  // The access comparison reads the privacy predicate (privateSnapshotFilterFragment, page_readers, folder_rule_ids): no
-  // typed member serves it, so an engine without raw SQL stops here by name.
-  requireRawSql(engine, 'repair moved-pages access check');
-  const access = await engine.executeRaw<{ id: number; readers: unknown; folder: unknown; readable_by: unknown; world: boolean }>(`SELECT p.id, p.page_readers AS readers, p.folder_rule_ids AS folder,
-    p.frontmatter->'readable_by' AS readable_by, ${privateSnapshotFilterFragment('p')} AS world FROM pages p WHERE p.id=ANY($1::int[])`, [[old.page_id, Number(row.id)]]);
+  const access = await engine.listPageAccessKeys([old.page_id, Number(row.id)]);
   const key = (id: number) => { const page = access.find(entry => Number(entry.id) === id); return page ? JSON.stringify([page.readers, page.folder, page.readable_by, page.world]) : null; };
   if (key(old.page_id) !== key(Number(row.id))) return held('access_differs', `${old.path} moved to ${row.source_path}, but the two pages differ in who may read them (readers, folder rules or privacy label), so a fold would put ${old.slug}'s database-only evidence under ${row.slug}'s access; decide with the user`, [row.slug]);
   return null;
