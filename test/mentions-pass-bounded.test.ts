@@ -12,6 +12,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import type { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { countMentionDuePages, runMentionPass } from '../src/core/mentions/pass.ts';
+import { mentionCoverageNotice, readMentionCoverage } from '../src/core/mentions/coverage.ts';
 import { mentionBrain, page, resetMentionBrain, sweep } from './helpers/mention-brain.ts';
 
 let engine: PGLiteEngine;
@@ -173,6 +174,20 @@ describe('the scan for added names stays inside the pass budget', () => {
     expect(r.state).toBe('pending');
   });
 
+  test('coverage reads a deferred name-list change as pending with a notice, even with no page counted due', async () => {
+    await page(engine, 'companies/acme', 'company', 'Acme Example', 'A company.');
+    await page(engine, 'notes/n1', 'note', 'n1', 'Met Acme Example today.');
+    await sweep(engine);
+    await engine.executeRaw("DELETE FROM mention_gazetteer_entries WHERE source_id = 'default' AND target_slug = 'companies/acme'");
+    const t = clock();
+    await runMentionPass(engine, { deadline: t.base - 1 });
+    expect(await countMentionDuePages(engine)).toBe(0);
+    const coverage = await readMentionCoverage(engine, ['default']);
+    expect(coverage.state).toBe('pending');
+    expect(coverage.degraded).toBe(true);
+    expect(mentionCoverageNotice(coverage)?.why).toContain('name list');
+  });
+
   test('a pass with no time left before the save does not scan, and still writes its status', async () => {
     await seedAddedName();
     const t = clock();
@@ -185,5 +200,50 @@ describe('the scan for added names stays inside the pass budget', () => {
     expect(s.generation).toBe(before.generation);
     expect(s.state).toBe('pending');
     expect(s.last_pass_at).not.toBeNull();
+  });
+
+  /** 1,200 note pages, only the last of which names the added company: a rare new name. */
+  async function seedRare() {
+    await page(engine, 'companies/acme', 'company', 'Acme Example', 'A company.');
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline, frontmatter)
+       SELECT 'notes/bulk-' || lpad(g::text, 4, '0'), 'default', 'note', 'Bulk ' || g, 'Filler text about nothing in particular.', '', '{}'::jsonb
+         FROM generate_series(1, 1199) AS g`);
+    await page(engine, 'notes/last', 'note', 'last', 'Met Zebra Holdings today.');
+    await sweep(engine);
+    await page(engine, 'companies/zebra', 'company', 'Zebra Holdings', 'Another company.');
+  }
+
+  test('a rare added name is looked for one batch of pages per statement, not in one statement over the whole source', async () => {
+    await seedRare();
+    const sizes: number[] = [];
+    hookQueries(async (sql, run) => {
+      const rows = await run();
+      if (isPrefilter(sql)) sizes.push((rows as unknown[]).length);
+      return rows;
+    });
+    await runMentionPass(engine);
+    expect(sizes.length).toBeGreaterThanOrEqual(3);
+    expect(Math.max(...sizes)).toBeLessThanOrEqual(500);
+    expect(await countMentionDuePages(engine)).toBe(0);
+  });
+
+  test('when the budget runs out between batches the scan stops at a batch edge: the name list is saved and every page past it is due', async () => {
+    await seedRare();
+    const t = clock();
+    let scans = 0;
+    hookQueries(async (sql, run) => {
+      const rows = await run();
+      if (isPrefilter(sql)) { scans++; t.jump(scans === 1 ? 3_000 : 11_000); }
+      return rows;
+    });
+    const r = await runMentionPass(engine, { deadline: t.base + 10_000 });
+    expect(scans).toBe(2);
+    expect((await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM mention_gazetteer_entries WHERE source_id = 'default' AND target_slug = 'companies/zebra'"))[0]!.n).toBeGreaterThan(0);
+    const due = await engine.executeRaw<{ n: number }>(
+      `SELECT count(*)::int AS n FROM pages p LEFT JOIN page_mention_state m ON m.page_id = p.id
+        WHERE p.type = 'note' AND (m.page_id IS NULL OR m.mention_revision IS DISTINCT FROM p.knowledge_revision)`);
+    expect(due[0]!.n).toBe(1200 - 999);
+    expect(r.state).toBe('pending');
   });
 });
