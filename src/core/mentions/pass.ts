@@ -460,8 +460,8 @@ async function pagesMatchingNames(engine: BrainEngine, sourceIds: string[], adde
 }
 
 /**
- * The names a save must look for in page text: the added entries as they are, and each removed name (any case, no
- * target, so no guard skips it) because a page that contained it may now match another name it hid, even when it had
+ * The names a save must look for in page text: the added entries as they are, and each removed name (any case, any
+ * spacing, since the saved form no longer has it; no target, so no guard skips it) because a page that contained it may now match another name it hid, even when it had
  * no mention link to the removed target.
  */
 function scanGazetteer(gazetteer: Gazetteer, added: GazetteerEntryKey[], removed: GazetteerEntryKey[]): Gazetteer {
@@ -476,7 +476,7 @@ function scanGazetteer(gazetteer: Gazetteer, added: GazetteerEntryKey[], removed
     const tokens = k.name_norm.replace(/^@/, '').toLowerCase().split(' ').filter(Boolean);
     if (!tokens.length || seen.has(`${k.source_id}\0${tokens.join(' ')}`)) continue;
     seen.add(`${k.source_id}\0${tokens.join(' ')}`);
-    out.set(tokens[0]!, [...out.get(tokens[0]!) ?? [], { slug: '', source_id: k.source_id, title: k.name_norm, tokens }]);
+    out.set(tokens[0]!, [...out.get(tokens[0]!) ?? [], { slug: '', source_id: k.source_id, title: k.name_norm, tokens, anySpacing: true }]);
   }
   for (const bucket of out.values()) bucket.sort((a, b) => b.tokens.length - a.tokens.length);
   return out;
