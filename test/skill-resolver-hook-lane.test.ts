@@ -94,13 +94,30 @@ function wired(b: Box, harness: 'claude-code' | 'codex', event: 'UserPromptSubmi
 
 interface Run { stdout: string; stderr: string; exitCode: number; wallMs: number }
 /** Run a hook command the way the harness does: sh -c, the event JSON on stdin. Wall time is measured outside the process. */
-async function hook(b: Box, command: string, payload: Record<string, unknown> | string, env: Record<string, string | undefined> = {}, cwd = b.project): Promise<Run> {
+function hookEnv(b: Box, env: Record<string, string | undefined>): Record<string, string> {
   const merged: Record<string, string> = {};
   for (const [k, v] of Object.entries({ ...process.env, ...b.env, GBRAIN_SKIP_STARTUP_HOOKS: '1', ...env })) if (v !== undefined) merged[k] = v;
+  return merged;
+}
+async function hook(b: Box, command: string, payload: Record<string, unknown> | string, env: Record<string, string | undefined> = {}, cwd = b.project): Promise<Run> {
+  const merged = hookEnv(b, env);
   const t0 = performance.now();
   const stdin = new TextEncoder().encode(typeof payload === 'string' ? payload : JSON.stringify({ cwd, ...payload }));
   const proc = Bun.spawn(['sh', '-c', command], { env: merged, cwd, stdin, stdout: 'pipe', stderr: 'pipe' });
   const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+  return { stdout, stderr, exitCode, wallMs: performance.now() - t0 };
+}
+/** hook(), but the payload's last byte reaches stdin only after holdMs (or never, if the process exits first): a harness still writing a large payload down the pipe. */
+async function hookHeld(b: Box, command: string, payload: Record<string, unknown>, holdMs: number, env: Record<string, string | undefined> = {}, cwd = b.project): Promise<Run> {
+  const bytes = new TextEncoder().encode(JSON.stringify({ cwd, ...payload }));
+  const t0 = performance.now();
+  const proc = Bun.spawn(['sh', '-c', command], { env: hookEnv(b, env), cwd, stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' });
+  const out = Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+  proc.stdin.write(bytes.subarray(0, -1));
+  proc.stdin.flush();
+  const exitedFirst = await Promise.race([Bun.sleep(holdMs).then(() => false), proc.exited.then(() => true)]);
+  if (!exitedFirst) { proc.stdin.write(bytes.subarray(-1)); proc.stdin.end(); }
+  const [stdout, stderr, exitCode] = await out;
   return { stdout, stderr, exitCode, wallMs: performance.now() - t0 };
 }
 const WIDE = { GBRAIN_TEST_SKILL_LANE_DEADLINE_MS: '10000' };
@@ -735,6 +752,25 @@ describe('skill-resolver lane: hermes', () => {
     // Reading 5 MB adds less than one lane deadline to a small turn; a buffering or quadratic reader would not.
     // Each side's fastest of three runs, so one turn a busy machine descheduled cannot decide it.
     expect(Math.min(...bigMs) - Math.min(...smallMs)).toBeLessThan(LANE_DEADLINE_MS);
+  });
+
+  test('a payload still arriving after the worker has loaded gets its whole turn budget once it is read', async () => {
+    const b = await hermesBox();
+    const turn = { session_id: 'h-held', extra: { user_message: 'please deploy the widget to staging', conversation_history: history(64 * 1024) } };
+    // The last byte lands 2 s after spawn, long after the worker loaded; the turn's 500 ms is counted from the read, inside a 10 s start bound.
+    const r = await hookHeld(b, hermesCmd(b), turn, 2000, { GBRAIN_TEST_SKILL_LANE_DEADLINE_MS: '500', GBRAIN_TEST_SKILL_LANE_START_MS: '10000' });
+    expect(r.exitCode).toBe(0);
+    expect(laneLog(b).at(-1)).toMatchObject({ harness: 'hermes', outcome: 'delivered' });
+    expect(JSON.parse(r.stdout).context).toContain('id: "deploy-widget"');
+  });
+
+  test('a payload that never finishes arriving still ends at the start bound: no block, exit 0, logged as a timeout', async () => {
+    const b = await hermesBox();
+    const turn = { session_id: 'h-stuck', extra: { user_message: 'please deploy the widget to staging', conversation_history: [] } };
+    const r = await hookHeld(b, hermesCmd(b), turn, 30_000, { GBRAIN_TEST_SKILL_LANE_START_MS: '300' });
+    expect(r).toMatchObject({ exitCode: 0, stdout: '' });
+    expect(r.wallMs).toBeLessThan(10_000);
+    expect(laneLog(b).at(-1)).toMatchObject({ harness: 'hermes', outcome: 'timeout', code: 'skill_resolve_timeout' });
   });
 
   test('malformed Hermes JSON fails open: exit 0, no stdout, skill_resolve_no_input', async () => {
