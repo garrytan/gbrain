@@ -41,7 +41,7 @@ chunks costs far more than scoring a vector, so the store scores first and reads
 1. Every chunk vector of the cached index is scored (`1 - (embedding <=> q)`, the same arithmetic as
    above), split across the machine's cores when there are at least 4,096 vectors. Helper threads come
    from one process-wide budget (cores minus one), so concurrent searches share the cores.
-2. Each page gets a bound: the largest of `raw * f` over its best and worst raw score and its own factor
+2. Each page gets a bound, the largest of `raw * f` over its best and worst raw score and its own factor
    `f`, read from the page's rank key in the keyed index (`keyed_index::RANK_KEY`: the slug and stub flag
    `source_factor` reads, kept in step by every page write; [keyed-index.md](keyed-index.md)). A page with
    no rank key takes every factor the call can apply (1 and each source factor). A product is monotone in
@@ -60,8 +60,16 @@ bounded scan returns no rows at once, as the full scan would.
 Measured with `rust/bench/vector-scan.sh` (an invented corpus, 1536 dims, 2 chunks per page on average,
 limit 50, 8 vCPU Xeon 6975P-C): unfiltered p50 165 ms before and 8.6 ms after at 10,000 pages, 887 ms
 before and 28.5 ms after at 50,000 pages. A filter that keeps few pages reads more of them before the top
-settles (a 4% source at 50,000 pages: 239 ms before, 74 ms after). `cosinesByChunkIds` still reads every
-page (about 590 ms at 50,000 pages).
+settles (a 4% source at 50,000 pages: 239 ms before, 74 ms after). Those runs predate the keyed lookups
+(store format 9): `cosinesByChunkIds` then read every page (about 590 ms at 50,000 pages); it now finds the
+owning pages through the keyed index (below).
+
+With source boosts on, the bounds above used the largest factor for every page until store format 10, so a
+query could read many pages that could not rank. Each page's own factor, from its rank key, now bounds it:
+on a 10,000-page brain (1024-dim hash embeddings, limit 20, 400 queries, the same 8 vCPU machine) the pages
+read per query went from p50 154 / p95 927 to 20 / 20, and `searchVector` through the TypeScript engine from
+p50 5.6 / p95 17.0 ms to 3.8 / 4.9 ms (boosts off: 2.9 / 3.8 ms, unchanged). The format 9 to 10 upgrade of
+that brain took 2.7 s.
 
 ## searchTakesVector
 
