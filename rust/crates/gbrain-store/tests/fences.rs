@@ -1,8 +1,9 @@
 //! Claim epochs and protected writes (lane L5, step 3; `src/fence.rs`, `src/leases.rs`).
 //!
 //! Every protected entry point takes the caller's host fence. With one, the write checks the lease and the claim's
-//! recorded epoch in its own transaction; with none, a multi-user store refuses `lease_lost` / `fence_missing` and a plain
-//! store behaves as it always has (and writes no `~L` record). The cases run through the real members: jobs (claim,
+//! recorded epoch in its own transaction; with none, a plain store behaves as it always has (and writes no `~L` record) and a multi-user store takes
+//! an implicit lease for a claim it takes (`tests/implicit_leases.rs`) and refuses `lease_lost` / `held_by_another` when a
+//! registered holder's live lease owns the claim. The cases run through the real members: jobs (claim,
 //! renew, finish, fail, release, reclaim: conformance C05), write claims (stamp, renew, release, finish, expire, the
 //! publication steps: C06), effects (claim and settle: C07), the drain lease holder and the cycle lock.
 //!
@@ -117,6 +118,14 @@ impl Brain {
             .iter()
             .filter(|(k, _)| k[keys::LEASES.len()] == 0x05)
             .count()
+    }
+
+    /// The claim-epoch records themselves, as (key, value).
+    fn claim_epoch_records(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
+        self.lease_records()
+            .into_iter()
+            .filter(|(k, _)| k[keys::LEASES.len()] == 0x05)
+            .collect()
     }
 
     /// The drain-lease claim epochs (`~L 0x05 0x04 ...`).
@@ -249,40 +258,57 @@ fn a_job_claim_without_a_fence_on_a_plain_store_writes_no_lease_record() {
 }
 
 #[test]
-fn a_job_member_without_a_fence_on_a_multi_user_store_refuses_before_writing() {
-    let b = brain("job-omit", true);
+fn a_job_member_without_a_fence_refuses_held_by_another_while_a_registered_holder_owns_the_claim() {
+    let b = brain("job-held", true);
     let id = add_job(&b, "work");
     let fence = b.lease("jobs:a", "a");
-    let before = job(&b, id);
-    let e = b
-        .store
-        .claim_next_job(&claim_spec("w:1", None))
-        .unwrap_err();
-    refused(&e, "fence_missing");
-    assert_eq!(job(&b, id), before, "nothing was claimed");
+    // With no host registered, an unfenced claim is taken (it is not refused for lacking a fence).
+    let other = add_job(&b, "work");
+    b.store
+        .claim_next_job(&claim_spec("w:0", None))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        job(&b, id)["status"],
+        "active",
+        "the oldest job was claimed"
+    );
     b.store
         .claim_next_job(&claim_spec("w:1", Some(&fence)))
         .unwrap()
         .unwrap();
-    let claimed = job(&b, id);
-    refused(
-        &b.store.renew_job_lease(id, "w:1", 30000.0).unwrap_err(),
-        "fence_missing",
-    );
-    refused(
-        &b.store.complete_job(id, "w:1", None).unwrap_err(),
-        "fence_missing",
-    );
-    refused(
-        &b.store
-            .fail_job(id, "w:1", "x", "failed", None, None)
-            .unwrap_err(),
-        "fence_missing",
-    );
-    refused(
-        &b.store.reclaim_stalled_jobs(0.0, MARK).unwrap_err(),
-        "fence_missing",
-    );
+    let claimed = job(&b, other);
+    assert_eq!(claimed["status"], "active");
+    let before = b.claim_epoch_records();
+    for (what, error) in [
+        (
+            "renew",
+            b.store.renew_job_lease(other, "w:1", 30000.0).unwrap_err(),
+        ),
+        (
+            "complete",
+            b.store.complete_job(other, "w:1", None).unwrap_err(),
+        ),
+        (
+            "fail",
+            b.store
+                .fail_job(other, "w:1", "x", "failed", None, None)
+                .unwrap_err(),
+        ),
+        (
+            "delay_held_claim",
+            b.store.delay_held_claim(other, "w:1", 1000.0).unwrap_err(),
+        ),
+        (
+            "release_watchdog_claim",
+            b.store
+                .release_watchdog_claim(other, "w:1", "x", MARK)
+                .unwrap_err(),
+        ),
+    ] {
+        assert_eq!(error.code, gbrain_store::error::LEASE_LOST, "{what}");
+        refused(&error, "held_by_another");
+    }
     let delay = DelayOpts {
         error_text: "x".into(),
         delay_ms: 1000.0,
@@ -291,20 +317,13 @@ fn a_job_member_without_a_fence_on_a_multi_user_store_refuses_before_writing() {
         fence: None,
     };
     refused(
-        &b.store.delay_active_job(id, "w:1", &delay).unwrap_err(),
-        "fence_missing",
+        &b.store.delay_active_job(other, "w:1", &delay).unwrap_err(),
+        "held_by_another",
     );
-    refused(
-        &b.store.delay_held_claim(id, "w:1", 1000.0).unwrap_err(),
-        "fence_missing",
-    );
-    refused(
-        &b.store
-            .release_watchdog_claim(id, "w:1", "x", MARK)
-            .unwrap_err(),
-        "fence_missing",
-    );
-    assert_eq!(job(&b, id), claimed, "no refused call changed the job");
+    // A sweep with no fence reclaims nothing that is still live.
+    b.store.reclaim_stalled_jobs(0.0, MARK).unwrap();
+    assert_eq!(job(&b, other), claimed, "no refused call changed the job");
+    assert_eq!(b.claim_epoch_records(), before, "the record is unchanged");
 }
 
 #[test]
@@ -587,24 +606,27 @@ fn a_cycle_lock_holder_whose_host_lease_was_taken_over_cannot_refresh_or_release
         before,
         "the lock is unchanged"
     );
-    // Without a fence a multi-user store refuses every cycle-lock write.
-    refused(
-        &b.store
-            .acquire_cycle_lock("gbrain-sync:other", &lock_acquire(LOCK_TOKEN, None))
-            .unwrap_err(),
-        "fence_missing",
-    );
+    // With no fence a multi-user store still takes a lock nobody holds (an implicit lease), but an unfenced holder
+    // cannot refresh or release a lock a registered holder's live lease owns.
+    b.store
+        .acquire_cycle_lock("gbrain-sync:other", &lock_acquire(LOCK_TOKEN, None))
+        .unwrap()
+        .expect("a free lock is taken with no fence");
+    let before = b
+        .store
+        .read_cycle_locks(&gbrain_store::jobs::LockFilter::All)
+        .unwrap();
     refused(
         &b.store
             .refresh_cycle_lock("gbrain-sync:default", &lock_holder(LOCK_TOKEN, None))
             .unwrap_err(),
-        "fence_missing",
+        "held_by_another",
     );
     refused(
         &b.store
             .release_cycle_lock("gbrain-sync:default", &lock_holder(LOCK_TOKEN, None))
             .unwrap_err(),
-        "fence_missing",
+        "held_by_another",
     );
     // An operator's stale-lock delete (`--break-lock`) runs with no fence; a live lock is not stale, so it stays.
     b.store
@@ -647,7 +669,6 @@ fn a_cycle_lock_steal_records_the_stealer_s_epoch() {
 }
 
 const TOK_A: &str = "a0000000-0000-4000-8000-0000000000a1";
-const TOK_B: &str = "a0000000-0000-4000-8000-0000000000b1";
 const TOK_N: &str = "a0000000-0000-4000-8000-0000000000c1";
 
 #[test]
@@ -698,19 +719,14 @@ fn the_drain_lease_holder_writes_refreshes_and_releases_under_its_fence() {
             "the holder record is unchanged"
         );
         if multiuser {
-            refused(
-                &b.store
-                    .write_drain_lease_holder("default", TOK_B, data.clone(), 10.0)
-                    .unwrap_err(),
-                "fence_missing",
-            );
+            // With no fence the holder record of a registered holder's live lease is not finished by another.
             refused(
                 &b.store.refresh_drain_lease_holder(TOK_A, 10.0).unwrap_err(),
-                "fence_missing",
+                "held_by_another",
             );
             refused(
                 &b.store.release_drain_lease_holder(TOK_A).unwrap_err(),
-                "fence_missing",
+                "held_by_another",
             );
         }
         if multiuser {
@@ -947,58 +963,57 @@ fn c06_a_paused_claimant_cannot_publish_after_its_host_lease_was_taken_over() {
 }
 
 #[test]
-fn a_write_claim_step_without_a_fence_on_a_multi_user_store_refuses_before_writing() {
-    let b = brain("write-omit", true);
+fn a_write_claim_step_without_a_fence_refuses_held_by_another_while_a_registered_holder_owns_it() {
+    let b = brain("write-held", true);
     let a = b.lease("consumer:h", "a");
     let id = admit_request(&b, REQ);
-    let queued = request(&b, &id);
-    refused(
-        &b.store
-            .stamp_write_claim(&stamp(&id, TOKEN, None))
-            .unwrap_err(),
-        "fence_missing",
-    );
-    refused(
-        &b.store
-            .select_claimable_write(&Default::default())
-            .unwrap_err(),
-        "fence_missing",
-    );
-    assert_eq!(request(&b, &id), queued);
+    // Nothing registered owns a queued request: an unfenced select and expiry sweep just run.
+    b.store.select_claimable_write(&Default::default()).unwrap();
     b.store
         .stamp_write_claim(&stamp(&id, TOKEN, Some(&a)))
         .unwrap()
         .unwrap();
     let running = request(&b, &id);
-    refused(
-        &b.store
+    let records = b.claim_epoch_records();
+    for error in [
+        b.store
             .renew_write_claim(&stamp(&id, TOKEN, None))
             .unwrap_err(),
-        "fence_missing",
-    );
-    refused(
-        &b.store
+        b.store
             .complete_write_row(&completion(&id, None))
             .unwrap_err(),
-        "fence_missing",
-    );
-    refused(
-        &b.store
+        b.store
             .publication_journal_write(&PublicationWrite::PublicationStarted { id: id.clone() })
             .unwrap_err(),
-        "fence_missing",
-    );
+        b.store
+            .release_unpublished_claim(&ClaimRelease {
+                id: id.clone(),
+                token: Some(TOKEN.into()),
+                reason: "x".into(),
+                charge: false,
+                fence: None,
+            })
+            .unwrap_err(),
+    ] {
+        refused(&error, "held_by_another");
+    }
     let spec = ExpireClaims {
         host_id: HOST.into(),
         charge: false,
         dead_owners: vec![],
         fence: None,
     };
-    refused(
-        &b.store.expire_stale_write_claims(&spec).unwrap_err(),
-        "fence_missing",
+    // The sweep takes nothing that is still live.
+    assert_eq!(b.store.expire_stale_write_claims(&spec).unwrap(), 0);
+    assert_eq!(
+        request(&b, &id),
+        running,
+        "no refused call changed the request"
     );
-    assert_eq!(request(&b, &id), running);
+    assert_eq!(b.claim_epoch_records(), records, "the record is unchanged");
+    // Once the registered holder's lease is gone, the member's own token rules decide.
+    b.store.release_lease(&a).unwrap();
+    assert!(b.store.renew_write_claim(&stamp(&id, TOKEN, None)).unwrap());
 }
 
 #[test]
@@ -1146,28 +1161,24 @@ fn c07_an_effect_is_claimed_once_and_a_rerun_by_the_new_owner_leaves_one_row() {
 }
 
 #[test]
-fn an_effect_claim_or_settle_without_a_fence_on_a_multi_user_store_refuses_before_writing() {
-    let b = brain("effect-omit", true);
+fn an_effect_settle_without_a_fence_refuses_held_by_another_while_a_registered_holder_owns_it() {
+    let b = brain("effect-held", true);
     let a = b.lease("consumer:h", "a");
     let id = admit_request(&b, REQ);
     queue_effect(&b, &id);
-    let queued = b.store.read_request_effects(&id).unwrap();
-    refused(
-        &effect_claim(&b, EFFECT_TOKEN_A, None).unwrap_err(),
-        "fence_missing",
-    );
-    assert_eq!(b.store.read_request_effects(&id).unwrap(), queued);
     let claimed = effect_claim(&b, EFFECT_TOKEN_A, Some(&a)).unwrap().unwrap();
     let running = b.store.read_request_effects(&id).unwrap();
+    let records = b.claim_epoch_records();
     for action in [Settle::Renew, Settle::Complete, Settle::Retry, Settle::Fail] {
         refused(
             &b.store
                 .settle_effect(action, &settle(&claimed["id"], EFFECT_TOKEN_A, None))
                 .unwrap_err(),
-            "fence_missing",
+            "held_by_another",
         );
     }
     assert_eq!(b.store.read_request_effects(&id).unwrap(), running);
+    assert_eq!(b.claim_epoch_records(), records, "the record is unchanged");
 }
 
 #[test]
@@ -1548,13 +1559,17 @@ fn g8_a_stale_owner_or_a_moved_recovery_cannot_use_the_recovery_transition() {
             .unwrap_err(),
         "epoch_moved",
     );
-    // No fence on a multi-user store: refused before anything is read.
-    refused(
-        &b.store
-            .complete_write_row(&recovered_failure(&id, None, recovered.clone()))
-            .unwrap_err(),
-        "fence_missing",
-    );
+    // No fence on a multi-user store: the settle is not refused for lacking one; it needs the recovery state the
+    // caller read (checked below with the current owner's fence), so a row that moved is refused the same way.
+    let moved = b
+        .store
+        .complete_write_row(&recovered_failure(
+            &id,
+            None,
+            json!({ "state": "running", "executionToken": TOKEN }),
+        ))
+        .unwrap_err();
+    assert!(moved.to_string().contains("recovery_moved"), "{moved}");
     // The current owner names a state or token the row no longer has: refused, nothing written.
     for wrong in [
         json!({ "state": "running", "executionToken": TOKEN }),
@@ -1616,7 +1631,7 @@ fn an_effect_install_reads_its_claim_under_the_host_fence_and_the_claim_epoch() 
         .unwrap();
     assert_eq!(row["state"], "running");
     assert_eq!(row["execution_token"], EFFECT_TOKEN_A);
-    // No fence on a multi-user store: refused before the read answers.
+    // No fence on a multi-user store: the host's live lease owns the claim, so the read refuses `held_by_another`.
     refused(
         &b.store
             .lock_effect_claim_row_claimed(
@@ -1624,7 +1639,7 @@ fn an_effect_install_reads_its_claim_under_the_host_fence_and_the_claim_epoch() 
                 Some(&install_claim(&claimed, EFFECT_TOKEN_A, None)),
             )
             .unwrap_err(),
-        "fence_missing",
+        "held_by_another",
     );
     // The host's lease is taken over during the provider call: the old fence is refused, and so is the new host's
     // fence on a claim of the old epoch. The effect row itself is untouched.

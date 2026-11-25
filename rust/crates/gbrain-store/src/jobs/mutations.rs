@@ -216,7 +216,7 @@ impl Store {
         self.write(|tx| {
             fence::begin(self, tx, fence, "update_job_progress")?;
             if load(tx, id)?.is_some_and(|r| held_by(lock_token)(&r)) {
-                fence::claim_held(tx, CLAIM_JOB, &id.to_string(), fence)?;
+                fence::claim_held(self, tx, CLAIM_JOB, &id.to_string(), fence)?;
             }
             let now = self.env.now_micros();
             let row = update(tx, id, held_by(lock_token), |r| {
@@ -243,7 +243,7 @@ impl Store {
         self.write(|tx| {
             fence::begin(self, tx, fence, "add_job_tokens")?;
             if load(tx, id)?.is_some_and(|r| held_by(lock_token)(&r)) {
-                fence::claim_held(tx, CLAIM_JOB, &id.to_string(), fence)?;
+                fence::claim_held(self, tx, CLAIM_JOB, &id.to_string(), fence)?;
             }
             let now = self.env.now_micros();
             let Some(old) = load(tx, id)?.filter(held_by(lock_token)) else {
@@ -273,7 +273,7 @@ impl Store {
         self.write(|tx| {
             fence::begin(self, tx, fence, "delay_active_job")?;
             if load(tx, id)?.is_some_and(|r| held_by(lock_token)(&r)) {
-                fence::claim_held(tx, CLAIM_JOB, &id.to_string(), fence)?;
+                fence::claim_held(self, tx, CLAIM_JOB, &id.to_string(), fence)?;
                 fence::claim_ended(self, tx, CLAIM_JOB, &id.to_string(), fence)?;
             }
             let now = self.env.now_micros();
@@ -316,7 +316,7 @@ impl Store {
         self.write(|tx| {
             fence::begin(self, tx, fence, "delay_held_claim")?;
             if load(tx, id)?.is_some_and(|r| r.lock_token.as_deref() == Some(lock_token)) {
-                fence::claim_held(tx, CLAIM_JOB, &id.to_string(), fence)?;
+                fence::claim_held(self, tx, CLAIM_JOB, &id.to_string(), fence)?;
                 fence::claim_ended(self, tx, CLAIM_JOB, &id.to_string(), fence)?;
             }
             let now = self.env.now_micros();
@@ -360,7 +360,7 @@ impl Store {
         self.write(|tx| {
             fence::begin(self, tx, fence, "release_watchdog_claim")?;
             if load(tx, id)?.is_some_and(|r| held_by(lock_token)(&r)) {
-                fence::claim_held(tx, CLAIM_JOB, &id.to_string(), fence)?;
+                fence::claim_held(self, tx, CLAIM_JOB, &id.to_string(), fence)?;
                 fence::claim_ended(self, tx, CLAIM_JOB, &id.to_string(), fence)?;
             }
             let now = self.env.now_micros();

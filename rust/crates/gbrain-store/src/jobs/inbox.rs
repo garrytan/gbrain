@@ -97,7 +97,7 @@ impl Store {
             if !holds(tx, job_id, lock_token)? {
                 return Ok(Vec::new());
             }
-            fence::claim_held(tx, CLAIM_JOB, &job_id.to_string(), fence)?;
+            fence::claim_held(self, tx, CLAIM_JOB, &job_id.to_string(), fence)?;
             let mut out = Vec::new();
             for (key, mut row) in inbox_rows(tx, job_id)? {
                 if row.read_at.is_none() {

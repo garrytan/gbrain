@@ -10,8 +10,10 @@
  *
  * Every protected entry point (job claims and their results, write claims and publication, effect claims and results,
  * the drain lease holder, the cycle lock) takes the fence explicitly, as `fence` in its options, read here at call
- * time. On a multi-user store a protected call with no fence refuses `lease_lost` / `fence_missing`; on every other
- * engine and with the mode off, `fenceFor` answers null and the call is exactly what it was.
+ * time. On a multi-user store a protected call with no fence (no host registered: a one-shot command, a served caller)
+ * is not refused for it: the store takes an implicit lease for each claim it takes, and refuses `lease_lost` /
+ * `held_by_another` only a finish of a claim a registered holder's live lease owns. On every other engine and with the
+ * mode off, `fenceFor` answers null and the call is exactly what it was.
  *
  * Registrations are per engine object: each holder (a consumer, a job worker) adds its own and removes only its own
  * when it stops, so two holders in one process never clear each other's.

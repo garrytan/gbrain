@@ -2,8 +2,9 @@
  * The job worker's own host registration on a Rust brain in multi-user mode (lane L5; persistence/host-fence.ts).
  *
  * The persistence consumer registers its host with the lease `consumer:<host_id>`. A job worker process that runs no
- * consumer has no registration, and every protected job call (claim, renew, complete, fail, the releases, the stall
- * sweep) refuses `lease_lost` / `fence_missing` on a multi-user store without one. So the worker takes its own
+ * consumer has no registration. A protected job call with no fence is not refused on a multi-user store (the store
+ * takes an implicit lease for the claim), but it cannot finish a claim a registered holder's live lease owns
+ * (`lease_lost` / `held_by_another`), and a worker is such a holder: it takes its own
  * lease, `jobs:<host_id>:<pid>:<nonce>` (unique to the process, so two workers never contend for it), when it starts,
  * renews it every 10 s, and releases it when it stops. The token goes in with `setHostRegistration`, where `fenceOpts`
  * finds it; the queue passes it to every protected call.

@@ -282,18 +282,15 @@ impl Store {
         fence::begin(self, tx, fence, "install_vectors")?;
         let id = effect_id(&claim.effect_id)?;
         let token = pg_uuid(&claim.token)?;
-        let Some(fence) = fence else {
-            return Ok(());
-        };
-        fence::claim_held(tx, CLAIM_EFFECT, &id.to_string(), Some(fence))?;
+        fence::claim_held(self, tx, CLAIM_EFFECT, &id.to_string(), fence)?;
         let live = effect_by_id(&*tx, id)?.is_some_and(|e| {
             e.state == "running" && e.execution_token.as_deref() == Some(token.as_str())
         });
         if !live {
             return Err(lease_lost(
                 LostReason::ClaimEpochMismatch,
-                &fence.name,
-                fence.epoch,
+                fence.map_or("install_vectors", |f| f.name.as_str()),
+                fence.map_or(0, |f| f.epoch),
                 None,
             ));
         }
@@ -569,16 +566,22 @@ impl Store {
             let fence = claim.fence.as_ref();
             crate::leases::check_fence(self, &*read, fence, "lock_effect_claim_row")?;
             let token = pg_uuid(&claim.token)?;
-            if let (Some(fence), Some(e)) = (fence, &effect)
+            if let Some(e) = &effect
                 && e.state == "running"
                 && e.execution_token.as_deref() == Some(token.as_str())
             {
-                crate::leases::check_claim_epoch(
-                    &*read,
-                    CLAIM_EFFECT,
-                    &effect_id.to_string(),
-                    fence,
-                )?;
+                let id = effect_id.to_string();
+                match fence {
+                    Some(fence) => {
+                        crate::leases::check_claim_epoch(&*read, CLAIM_EFFECT, &id, fence)?
+                    }
+                    None => crate::leases::check_claim_unheld(
+                        &*read,
+                        CLAIM_EFFECT,
+                        &id,
+                        self.env.clock_micros(),
+                    )?,
+                }
             }
         }
         Ok(effect.map_or(
@@ -601,7 +604,15 @@ impl Store {
             let row = stamp_effect_claim_in(tx, &*self.env, claim)?;
             if row.is_some() {
                 let id = effect_id(&claim.id)?.to_string();
-                fence::claim_taken(tx, CLAIM_EFFECT, &id, claim.fence.as_ref())?;
+                fence::claim_taken(
+                    self,
+                    tx,
+                    CLAIM_EFFECT,
+                    &id,
+                    claim.fence.as_ref(),
+                    "stamp_effect_claim",
+                    None,
+                )?;
             }
             Ok(row)
         })
@@ -618,12 +629,12 @@ impl Store {
             // (a malformed id with a missing payload says the payload is missing). So the fence's claim check runs
             // only on an id and token that parse; any other call goes on to `settle_effect_in`, which refuses them
             // in its own order. With no fence nothing here reads the id before `settle_effect_in` does.
-            if let Some(fence) = fence
+            if (fence.is_some() || self.multiuser())
                 && let Ok(id) = effect_id(&spec.id)
                 && spec.token.as_deref().is_none_or(|t| pg_uuid(t).is_ok())
                 && claimed(&*tx, &spec.id, spec.token.as_deref(), no_recovery)?.is_some()
             {
-                fence::claim_held(tx, CLAIM_EFFECT, &id.to_string(), Some(fence))?;
+                fence::claim_held(self, tx, CLAIM_EFFECT, &id.to_string(), fence)?;
             }
             let settled = settle_effect_in(tx, &*self.env, action, spec)?;
             // Every settle but a renewal ends the claim (it releases the execution token). A settle that matched

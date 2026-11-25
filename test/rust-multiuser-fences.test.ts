@@ -3,7 +3,8 @@
  * the napi addon (rust/crates/gbrain-store/src/fence.rs, src/core/persistence/host-fence.ts).
  *
  * - Multi-user on: a job claimed under host A's fence; A's lease is taken over; A's completeJob refuses
- *   `lease_lost` and the job row is unchanged. A call with no fence refuses `fence_missing`. The queue passes the
+ *   `lease_lost` and the job row is unchanged. A call with no fence on a claim that host A's live lease owns refuses
+ *   `held_by_another`; with no host registered it is not refused (test/rust-multiuser-single-host.test.ts). The queue passes the
  *   registered fence (`fenceOpts`) on every protected call, with no change to its callers.
  * - Switch off, plain Rust brain: the same calls with no fence behave as they always did, and nothing is registered.
  * - The job worker's own registration (`startWorkerFence`): taken on a multi-user brain, renewed, released at stop.
@@ -110,20 +111,25 @@ describe('protected job writes through the typed engine and napi', () => {
     });
   });
 
-  withAddon('a protected call with no fence refuses fence_missing on a multi-user brain and changes nothing', async () => {
+  withAddon('a protected call with no fence is not refused for it; it refuses held_by_another only where a registered holder\'s live lease owns the claim', async () => {
     await withEnv({ GBRAIN_RUST_MULTIUSER: '1' }, async () => {
       const engine = await open();
       const queue = new MinionQueue(engine);
       const a = (await rustLeases(engine).acquire('jobs:h', holder('a'), 60_000))!;
       const job = await queue.add('work', {});
-      expect(await refusal(() => engine.claimNextJob(claimSpec('w:1')))).toEqual({ code: 'lease_lost', reason: 'fence_missing' });
-      expect((await engine.getJob(job.id))?.status).toBe('waiting');
       await engine.claimNextJob(claimSpec('w:1', a));
       const before = await engine.getJob(job.id);
-      expect(await refusal(() => engine.completeJob(job.id, 'w:1'))).toEqual({ code: 'lease_lost', reason: 'fence_missing' });
-      expect(await refusal(() => engine.renewJobLease(job.id, 'w:1', 30_000))).toEqual({ code: 'lease_lost', reason: 'fence_missing' });
-      expect(await refusal(() => engine.reclaimStalledJobs(0))).toEqual({ code: 'lease_lost', reason: 'fence_missing' });
+      expect(await refusal(() => engine.completeJob(job.id, 'w:1'))).toEqual({ code: 'lease_lost', reason: 'held_by_another' });
+      expect(await refusal(() => engine.renewJobLease(job.id, 'w:1', 30_000))).toEqual({ code: 'lease_lost', reason: 'held_by_another' });
       expect(await engine.getJob(job.id)).toEqual(before);
+      // A sweep with no fence is not refused; the claim is still live, so it reclaims nothing.
+      expect(await refusal(() => engine.reclaimStalledJobs(0))).toEqual({});
+      expect(await engine.getJob(job.id)).toEqual(before);
+      // With no claim of a registered holder in the way, an unfenced call claims, renews and completes.
+      const other = await queue.add('work', {});
+      expect((await engine.claimNextJob(claimSpec('w:2')))?.id).toBe(other.id);
+      expect(await refusal(() => engine.renewJobLease(other.id, 'w:2', 30_000))).toEqual({});
+      expect(await refusal(() => engine.completeJob(other.id, 'w:2'))).toEqual({});
       // The queue passes the registered fence on its own: the same calls succeed through it.
       register(engine, a);
       expect(await queue.renewLock(job.id, 'w:1', 30_000)).toBe(true);

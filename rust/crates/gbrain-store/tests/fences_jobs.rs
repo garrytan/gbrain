@@ -248,23 +248,23 @@ fn g1_job_progress_tokens_and_inbox_reads_carry_the_host_fence() {
     b.store
         .post_inbox_message(id, "admin", &json!({"type": "note", "n": 2}))
         .unwrap();
-    // No fence on a multi-user store: refused, nothing written.
+    // No fence on a multi-user store, while the host's live lease owns the claim: refused, nothing written.
     let before = b.dump();
     refused(
         &b.store
             .update_job_progress_fenced(id, "w:1", &json!({"n": 2}), None)
             .unwrap_err(),
-        "fence_missing",
+        "held_by_another",
     );
     refused(
         &b.store
             .add_job_tokens_fenced(id, "w:1", &tokens, None)
             .unwrap_err(),
-        "fence_missing",
+        "held_by_another",
     );
     refused(
         &b.store.read_job_inbox_fenced(id, "w:1", None).unwrap_err(),
-        "fence_missing",
+        "held_by_another",
     );
     assert_eq!(
         b.dump(),
@@ -402,20 +402,28 @@ fn g3_a_cycle_lock_release_needs_the_claim_epoch_but_the_operator_delete_does_no
             .unwrap()
     );
     assert_eq!(b.claim_epochs(), 0);
-    // Without a fence a multi-user store still refuses both, and the unfenced stale delete stays allowed.
+    // Without a fence, a multi-user store refuses an unfenced holder's release of a lock a registered holder's live
+    // lease owns; the operator's snapshot delete needs no claim epoch, and the stale delete stays allowed.
     b.store
         .acquire_cycle_lock(LOCK_ID, &lock_acquire(T1, Some(&new)))
         .unwrap()
         .unwrap();
     refused(
         &b.store
-            .delete_cycle_lock(LOCK_ID, &lock_holder(T1, None))
+            .release_cycle_lock(LOCK_ID, &lock_holder(T1, None))
             .unwrap_err(),
-        "fence_missing",
+        "held_by_another",
     );
     b.store
         .delete_cycle_lock_if_stale(LOCK_ID, &lock_holder(T1, None))
         .unwrap();
+    assert_eq!(b.claim_epochs(), 1, "a live lock is not stale");
+    assert!(
+        b.store
+            .delete_cycle_lock(LOCK_ID, &lock_holder(T1, None))
+            .unwrap()
+    );
+    assert_eq!(b.claim_epochs(), 0);
 }
 
 #[test]
@@ -652,10 +660,6 @@ fn g7_timeout_sweeps_carry_the_fence_and_clear_the_claim_epoch() {
         .unwrap();
     b.advance_ms(2000);
     let before = b.dump();
-    refused(
-        &b.store.kill_timed_out_jobs_fenced(None).unwrap_err(),
-        "fence_missing",
-    );
     // The sweeping worker lost its own lease: it ends no job.
     let old = b.lease("jobs:sweeper", "s");
     let sweeper = b.take_over("jobs:sweeper", &old);
@@ -686,19 +690,12 @@ fn g7_timeout_sweeps_carry_the_fence_and_clear_the_claim_epoch() {
 fn g7_wall_clock_sweep_carries_the_fence_and_clears_the_claim_epoch() {
     let b = brain("g7-wall", true);
     let a = b.lease("jobs:a", "a");
-    let id = add_job(&b, "work", None);
+    add_job(&b, "work", None);
     b.store
         .claim_next_job(&claim_spec("w:1", Some(&a)))
         .unwrap()
         .unwrap();
     b.advance_ms(301_000);
-    refused(
-        &b.store
-            .kill_wall_clock_jobs_fenced(30_000.0, None)
-            .unwrap_err(),
-        "fence_missing",
-    );
-    assert_eq!(b.store.get_job(id).unwrap().unwrap()["status"], "active");
     let dead = b
         .store
         .kill_wall_clock_jobs_fenced(30_000.0, Some(&a))

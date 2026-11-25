@@ -1036,15 +1036,39 @@ fn write_claimable_now(read: &dyn KvRead, env: &dyn Env, id: &str) -> Result<boo
 }
 
 /// Requires that request `id`, while a claim holds it (an execution token is stamped), was claimed under `fence`'s
-/// lease name and epoch. A request nobody holds (queued, or finished) has no claim to check.
-fn held_claim_of(read: &dyn KvRead, id: &str, fence: Option<&LeaseToken>) -> Result<()> {
-    let (Some(fence), Some(record)) = (fence, request_by_id(read, id)?) else {
+/// lease name and epoch. A request nobody holds (queued, or finished) has no claim to check. With no fence a plain
+/// store checks nothing, and a multi-user store refuses `held_by_another` while a registered holder's live lease owns
+/// the claim.
+fn held_claim_of(
+    store: &Store,
+    read: &dyn KvRead,
+    id: &str,
+    fence: Option<&LeaseToken>,
+) -> Result<()> {
+    if fence.is_none() && !store.multiuser() {
+        return Ok(());
+    }
+    let Some(record) = request_by_id(read, id)? else {
         return Ok(());
     };
     if json_text(record.extra.get("execution_token")).is_some() {
-        crate::leases::check_claim_epoch(read, CLAIM_WRITE, &record.id.to_lowercase(), fence)?;
+        check_claim(store, read, &record.id.to_lowercase(), fence)?;
     }
     Ok(())
+}
+
+/// The claim step of a write-claim request `id` (the lowercase id): the fence's epoch check, or, with none on a
+/// multi-user store, the live-holder check.
+fn check_claim(
+    store: &Store,
+    read: &dyn KvRead,
+    id: &str,
+    fence: Option<&LeaseToken>,
+) -> Result<()> {
+    match fence {
+        Some(fence) => crate::leases::check_claim_epoch(read, CLAIM_WRITE, id, fence),
+        None => crate::leases::check_claim_unheld(read, CLAIM_WRITE, id, store.env.clock_micros()),
+    }
 }
 
 /// Like [`held_claim_of`], for a caller that holds a claim only while `active` says the row is running one it holds:
@@ -1052,28 +1076,33 @@ fn held_claim_of(read: &dyn KvRead, id: &str, fence: Option<&LeaseToken>) -> Res
 /// claim has nothing of this caller's to check, so the call gets the inactive-row answer a plain store gives instead
 /// of a claim-epoch refusal.
 pub(crate) fn held_claim_when(
+    store: &Store,
     read: &dyn KvRead,
     id: &str,
     fence: Option<&LeaseToken>,
     active: impl Fn(&RequestRecord) -> bool,
 ) -> Result<()> {
-    let (Some(fence), Some(record)) = (fence, request_by_id(read, id)?) else {
+    if fence.is_none() && !store.multiuser() {
+        return Ok(());
+    }
+    let Some(record) = request_by_id(read, id)? else {
         return Ok(());
     };
     if active(&record) {
-        crate::leases::check_claim_epoch(read, CLAIM_WRITE, &record.id.to_lowercase(), fence)?;
+        check_claim(store, read, &record.id.to_lowercase(), fence)?;
     }
     Ok(())
 }
 
 /// Upkeep (a renewal or a release) names the token it holds: active is a `running` row under that token.
 fn held_active_claim_of(
+    store: &Store,
     read: &dyn KvRead,
     id: &str,
     token: Option<&str>,
     fence: Option<&LeaseToken>,
 ) -> Result<()> {
-    held_claim_when(read, id, fence, |record| {
+    held_claim_when(store, read, id, fence, |record| {
         token.is_some_and(|token| {
             record.state == "running"
                 && json_text(record.extra.get("execution_token"))
@@ -1869,7 +1898,17 @@ impl Store {
             }
             let row = stamp_write_claim_in(tx, &*self.env, stamp)?;
             if let Some(id) = row.as_ref().and_then(|r| r["id"].as_str()) {
-                fence::claim_taken(tx, CLAIM_WRITE, &id.to_lowercase(), stamp.fence.as_ref())?;
+                let ttl = (stamp.lease_ms.is_finite() && stamp.lease_ms >= 1.0)
+                    .then_some(stamp.lease_ms as u64);
+                fence::claim_taken(
+                    self,
+                    tx,
+                    CLAIM_WRITE,
+                    &id.to_lowercase(),
+                    stamp.fence.as_ref(),
+                    "stamp_write_claim",
+                    ttl,
+                )?;
             }
             Ok(row)
         })
@@ -1881,10 +1920,10 @@ impl Store {
         let fence = completion.fence.as_ref();
         self.write(|tx| {
             fence::begin(self, tx, fence, "complete_write_row")?;
-            if fence.is_some() {
+            if fence.is_some() || self.multiuser() {
                 match &completion.recovered {
                     Some(recovered) => recovery_state_matches(tx, &completion.id, recovered)?,
-                    None => held_claim_of(tx, &completion.id, fence)?,
+                    None => held_claim_of(self, tx, &completion.id, fence)?,
                 }
             }
             let row = complete_write_row_in(tx, &*self.env, completion)?;
@@ -1920,9 +1959,13 @@ impl Store {
     pub fn renew_write_claim(&self, stamp: &ClaimStamp) -> Result<bool> {
         self.write(|tx| {
             fence::begin(self, tx, stamp.fence.as_ref(), "renew_write_claim")?;
-            if stamp.fence.is_some() {
-                held_active_claim_of(tx, &stamp.id, Some(&stamp.token), stamp.fence.as_ref())?;
-            }
+            held_active_claim_of(
+                self,
+                tx,
+                &stamp.id,
+                Some(&stamp.token),
+                stamp.fence.as_ref(),
+            )?;
             renew_write_claim_in(tx, &*self.env, stamp)
         })
     }
@@ -1932,9 +1975,7 @@ impl Store {
         let fence = release.fence.as_ref();
         self.write(|tx| {
             fence::begin(self, tx, fence, "release_unpublished_claim")?;
-            if fence.is_some() {
-                held_active_claim_of(tx, &release.id, release.token.as_deref(), fence)?;
-            }
+            held_active_claim_of(self, tx, &release.id, release.token.as_deref(), fence)?;
             let released = release_unpublished_claim_in(tx, &*self.env, release)?;
             if released {
                 fence::claim_ended(self, tx, CLAIM_WRITE, &release.id.to_lowercase(), fence)?;

@@ -672,6 +672,18 @@ mod tests {
     }
 
     #[test]
+    fn g2_an_unfenced_claim_and_install_on_a_multi_user_store_take_an_implicit_lease_and_install() {
+        let store = open(true);
+        let id = sealed_page(&store);
+        let effect = claimed_effect(&store, None);
+        assert_eq!(
+            install_claimed(&store, id, &install_claim(&effect, None)).unwrap(),
+            1
+        );
+        assert_eq!(store.count_segmented_embed_rows(id).unwrap().stale, 1);
+    }
+
+    #[test]
     fn g2_a_worker_whose_host_lease_was_taken_over_during_its_provider_call_installs_nothing() {
         let store = open(true);
         let id = sealed_page(&store);
@@ -689,9 +701,11 @@ mod tests {
             &install_claimed(&store, id, &install_claim(&effect, Some(&new))).unwrap_err(),
             "claim_epoch_mismatch",
         );
+        // No fence: the claim is owned by host A's lease, which was released and taken again by host B (live), so an
+        // unfenced install is held off; nothing is refused for lacking a fence as such.
         refused(
             &install_claimed(&store, id, &install_claim(&effect, None)).unwrap_err(),
-            "fence_missing",
+            "held_by_another",
         );
         assert_eq!(
             store.count_segmented_embed_rows(id).unwrap().stale,
