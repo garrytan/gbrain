@@ -296,7 +296,22 @@ impl Brain {
         })
     }
 
-    /// `releaseCycleLock(lockId, opts)` and `deleteCycleLock`: whether a row was deleted.
+    /// `deleteCycleLock(lockId, opts)`: the operator's snapshot delete; whether a row was deleted. It is not the
+    /// holder's release, so it asks for no claim epoch.
+    #[napi]
+    pub fn delete_cycle_lock<'env>(
+        &self,
+        env: &'env Env,
+        lock_id: String,
+        opts: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let opts: LockHolder = required(opts, "deleteCycleLock opts")?;
+            s.delete_cycle_lock(&lock_id, &opts)
+        })
+    }
+
+    /// `releaseCycleLock(lockId, opts)`: the holder's release; whether a row was deleted.
     #[napi]
     pub fn release_cycle_lock<'env>(
         &self,

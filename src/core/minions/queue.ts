@@ -27,7 +27,8 @@ import { isProtectedJobName } from './protected-names.ts';
 import { jsonbSafeJson } from '../text-safe.ts';
 import { assertEmbedBackfillQueueAdmission } from './embed-backfill-admission.ts';
 import { lockDelegatedSubmission, checkDelegatedCapacity, prepareDelegatedReplay, admitDelegatedRetry } from './delegated-admission.ts';
-import { fenceOpts, withFence } from '../persistence/host-fence.ts';
+import type { FenceOpts } from '../engine-sql/lease-token.ts';
+import { ClaimFences } from './claim-fences.ts';
 import {
   computeParamHash,
   resolveAdmissionPolicy,
@@ -150,10 +151,16 @@ export class MinionQueue {
   readonly maxSpawnDepth: number;
   readonly maxAttachmentBytes: number;
 
+  private readonly fences: ClaimFences;
+
   constructor(private engine: BrainEngine, opts: MinionQueueOpts = {}) {
     this.maxSpawnDepth = opts.maxSpawnDepth ?? DEFAULT_MAX_SPAWN_DEPTH;
     this.maxAttachmentBytes = opts.maxAttachmentBytes ?? DEFAULT_MAX_ATTACHMENT_BYTES;
+    this.fences = new ClaimFences(engine, opts.fence);
   }
+
+  /** The fence a write on job `id` under `lockToken` carries: the one its claim was taken under (claim-fences.ts). */
+  fenceOptsFor(id: number, lockToken: string): FenceOpts { return this.fences.optsFor(id, lockToken); }
 
   /** Verify minion_jobs table exists (migration v5+). Call before first operation. */
   async ensureSchema(): Promise<void> {
@@ -874,6 +881,7 @@ export class MinionQueue {
     // repair, foreign tooling) must not grant a ~24-day lease to a worker
     // that crashes before its first renewal (or a 1ms one that thrashes).
     const [groupId, capUsd] = legacyDefaultClaimParams();
+    const claimFence = this.fences.registration();
     const row = await this.engine.claimNextJob({
       lockToken, lockDurationMs, queue, names: registeredNames,
       excludeNames: opts.excludeNames?.length ? opts.excludeNames : null,
@@ -881,9 +889,11 @@ export class MinionQueue {
       ...(opts.suspectWaitMs !== undefined ? { suspectWaitMs: opts.suspectWaitMs } : {}),
       handlerTimeouts: HANDLER_DEFAULT_TIMEOUT_MS,
       handlerLockDurations: HANDLER_DEFAULT_LOCK_DURATION_MS,
-      legacySpend: { groupId, capUsd }, ...fenceOpts(this.engine),
+      legacySpend: { groupId, capUsd }, ...(claimFence ? { fence: claimFence } : {}),
     });
-    return row ? rowToMinionJob(row) : null;
+    const job = row ? rowToMinionJob(row) : null;
+    if (job && claimFence) this.fences.remember(job.id, lockToken, claimFence);
+    return job;
   }
 
   /** GST-2529: whether a marked job this worker could claim has waited `suspectWaitMs` since its requeue. The worker asks at most every
@@ -894,7 +904,7 @@ export class MinionQueue {
   }
 
   /** A co-runner of a watchdog drain back to waiting, marked, no attempt burned (token-fenced). */
-  releaseWatchdogClaim(id: number, lockToken: string, errorText: string): Promise<boolean> { return this.engine.releaseWatchdogClaim(id, lockToken, errorText, fenceOpts(this.engine)); }
+  releaseWatchdogClaim(id: number, lockToken: string, errorText: string): Promise<boolean> { return this.fences.ending(id, lockToken, opts => this.engine.releaseWatchdogClaim(id, lockToken, errorText, opts)); }
 
   /**
    * Dead-letter active jobs whose timeout_at has passed.
@@ -910,7 +920,7 @@ export class MinionQueue {
    */
   async handleTimeouts(): Promise<MinionJob[]> {
     await assertNoUnreviewedJobs(this.engine);
-    return (await this.engine.killTimedOutJobs()).map(rowToMinionJob);
+    return (await this.engine.killTimedOutJobs(...this.fences.sweepArgs())).map(rowToMinionJob);
   }
 
   /**
@@ -924,7 +934,7 @@ export class MinionQueue {
    */
   async handleWallClockTimeouts(lockDurationMs: number): Promise<MinionJob[]> {
     await assertNoUnreviewedJobs(this.engine);
-    return (await this.engine.killWallClockJobs(lockDurationMs)).map(rowToMinionJob);
+    return (await this.engine.killWallClockJobs(lockDurationMs, ...this.fences.sweepArgs())).map(rowToMinionJob);
   }
 
   /**
@@ -943,7 +953,7 @@ export class MinionQueue {
    * stranding the parent in waiting-children forever.
    */
   async completeJob(id: number, lockToken: string, result?: Record<string, unknown>): Promise<MinionJob | null> {
-    const row = await retryOnStalePlan(() => this.engine.completeJob(id, lockToken, result, fenceOpts(this.engine)));
+    const row = await this.fences.ending(id, lockToken, opts => retryOnStalePlan(() => this.engine.completeJob(id, lockToken, result, opts)));
     return row ? rowToMinionJob(row) : null;
   }
 
@@ -969,7 +979,7 @@ export class MinionQueue {
     backoffMs?: number,
     result?: Record<string, unknown>,
   ): Promise<MinionJob | null> {
-    const row = await retryOnStalePlan(() => this.engine.failJob(id, lockToken, errorText, newStatus, backoffMs, result, fenceOpts(this.engine)));
+    const row = await this.fences.ending(id, lockToken, opts => retryOnStalePlan(() => this.engine.failJob(id, lockToken, errorText, newStatus, backoffMs, result, opts)));
     return row ? rowToMinionJob(row) : null;
   }
 
@@ -1003,7 +1013,7 @@ export class MinionQueue {
     errorText: string,
     backoffMs: number,
   ): Promise<MinionJob | null> {
-    const row = await this.engine.delayActiveJob(id, lockToken, { errorText, delayMs: backoffMs, appendStack: true, clearTimeout: false }, fenceOpts(this.engine));
+    const row = await this.fences.ending(id, lockToken, opts => this.engine.delayActiveJob(id, lockToken, { errorText, delayMs: backoffMs, appendStack: true, clearTimeout: false }, opts));
     return row ? rowToMinionJob(row) : null;
   }
 
@@ -1013,7 +1023,7 @@ export class MinionQueue {
    * a key for weeks must not accumulate one stack entry per retry).
    */
   async deferJob(id: number, lockToken: string, note: string, delayMs: number): Promise<MinionJob | null> {
-    const row = await this.engine.delayActiveJob(id, lockToken, { errorText: note, delayMs: Math.max(0, delayMs), appendStack: false, clearTimeout: true }, fenceOpts(this.engine));
+    const row = await this.fences.ending(id, lockToken, opts => this.engine.delayActiveJob(id, lockToken, { errorText: note, delayMs: Math.max(0, delayMs), appendStack: false, clearTimeout: true }, opts));
     return row ? rowToMinionJob(row) : null;
   }
 
@@ -1029,11 +1039,11 @@ export class MinionQueue {
         onAbort = () => resolve('unconfirmed');
         signal.addEventListener('abort', onAbort, { once: true });
       });
-      const release = this.engine.delayActiveJob(
+      const release = this.fences.ending(id, lockToken, opts => this.engine.delayActiveJob(
         id, lockToken,
         { errorText: 'worker_configuration_blocked', delayMs: 30_000, appendStack: false, clearTimeout: true },
-        { signal, ...fenceOpts(this.engine) },
-      ).then(row => signal.aborted ? 'unconfirmed' as const : row ? 'released' as const : 'no_op' as const);
+        { signal, ...opts },
+      )).then(row => signal.aborted ? 'unconfirmed' as const : row ? 'released' as const : 'no_op' as const);
       return await Promise.race([release, cancelled]);
     } catch {
       return 'unconfirmed';
@@ -1044,7 +1054,7 @@ export class MinionQueue {
 
   /** Update job progress (token-fenced). */
   async updateProgress(id: number, lockToken: string, progress: unknown): Promise<boolean> {
-    return this.engine.updateJobProgress(id, lockToken, progress);
+    return this.engine.updateJobProgress(id, lockToken, progress, ...this.fences.claimArgs(id, lockToken));
   }
 
   /**
@@ -1068,7 +1078,8 @@ export class MinionQueue {
     // Direct (session-mode) pool — see claim(). The heartbeat that keeps a job
     // alive for minutes cannot run on the transaction pooler without periodic
     // CONNECTION_ENDED drops that look like lock-expiry and orphan the job.
-    return this.engine.renewJobLease(id, lockToken, lockDurationMs, withFence(this.engine, opts));
+    const fence = this.fences.optsFor(id, lockToken);
+    return this.engine.renewJobLease(id, lockToken, lockDurationMs, fence.fence ? { ...opts, ...fence } : opts);
   }
 
   /**
@@ -1131,7 +1142,7 @@ export class MinionQueue {
     const graceMs = graceMsOverride ?? resolveStallReclaimGraceMs();
     // GBRA-133 (drain-lease holder records) and GBRA-130 A-30 (a multi-claim worker's co-runners requeue marked, no
     // stall counted) live in the engine statement; stall-deaths notify and unblock parents like every terminal kill.
-    return this.engine.reclaimStalledJobs(graceMs, fenceOpts(this.engine)).then(r => ({ requeued: r.requeued.map(rowToMinionJob), dead: r.dead.map(rowToMinionJob) })).then(async (result) => {
+    return this.engine.reclaimStalledJobs(graceMs, this.fences.registrationOpts()).then(r => ({ requeued: r.requeued.map(rowToMinionJob), dead: r.dead.map(rowToMinionJob) })).then(async (result) => {
       // W0 ship-review (data-migration): the per-kill unblock above is
       // forward-only — parents stranded in 'waiting-children' by PRE-upgrade
       // stall-deaths (children already status='dead') are never revisited by
@@ -1199,12 +1210,12 @@ export class MinionQueue {
 
   /** Read unread inbox messages for a job. Token-fenced. Marks messages as read. */
   async readInbox(jobId: number, lockToken: string): Promise<InboxMessage[]> {
-    return (await this.engine.readJobInbox(jobId, lockToken)).map(rowToInboxMessage);
+    return (await this.engine.readJobInbox(jobId, lockToken, ...this.fences.claimArgs(jobId, lockToken))).map(rowToInboxMessage);
   }
 
   /** Update token counts for a job. Accumulates (adds to existing). Token-fenced. */
   async updateTokens(id: number, lockToken: string, tokens: TokenUpdate): Promise<boolean> {
-    return this.engine.addJobTokens(id, lockToken, { input: tokens.input ?? 0, output: tokens.output ?? 0, cache_read: tokens.cache_read ?? 0 });
+    return this.engine.addJobTokens(id, lockToken, { input: tokens.input ?? 0, output: tokens.output ?? 0, cache_read: tokens.cache_read ?? 0 }, ...this.fences.claimArgs(id, lockToken));
   }
 
   /** Replay a completed/failed/dead job with optional data overrides. Creates a new job. */

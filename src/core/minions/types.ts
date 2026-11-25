@@ -1,3 +1,4 @@
+import type { LeaseToken } from '../engine-sql/lease-token.ts';
 import { parseSubmissionAuthority, type SubmissionAuthority } from './submission-authority.ts';
 import { parseSpendAuthorization, type JobSpendContext, type SpendAuthorization } from './spend-record.ts';
 /**
@@ -216,6 +217,11 @@ export interface MinionQueueOpts {
   maxSpawnDepth?: number;
   /** Max attachment size in bytes. Default 5 MiB. */
   maxAttachmentBytes?: number;
+  /**
+   * The registration this queue's claims and sweeps run under on a multi-user Rust brain (a worker passes its own
+   * lease); null or absent falls back to the engine's registration. Read once per claim and once per sweep.
+   */
+  fence?: () => LeaseToken | null;
 }
 
 export interface MinionWorkerOpts {

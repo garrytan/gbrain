@@ -10,7 +10,7 @@
 
 use gbrain_store::env::uuid_from_bytes;
 use gbrain_store::jobs::{AdmitSpec, ClaimSpec, DelayOpts, LockAcquire, LockHolder};
-use gbrain_store::leases::{LeaseToken, lost_reason};
+use gbrain_store::leases::{self, LeaseToken, lost_reason};
 use gbrain_store::occ_kv::OccKv;
 use gbrain_store::persistence::{
     ClaimRelease, ClaimStamp, EffectClaim, EffectSettle, ExpireClaims, PublicationEffectsSpec,
@@ -116,6 +116,17 @@ impl Brain {
         self.lease_records()
             .iter()
             .filter(|(k, _)| k[keys::LEASES.len()] == 0x05)
+            .count()
+    }
+
+    /// The drain-lease claim epochs (`~L 0x05 0x04 ...`).
+    fn drain_epochs(&self) -> usize {
+        self.lease_records()
+            .iter()
+            .filter(|(k, _)| {
+                k[keys::LEASES.len()] == 0x05
+                    && k[keys::LEASES.len() + 1] == leases::CLAIM_DRAIN_LEASE
+            })
             .count()
     }
 
@@ -635,19 +646,30 @@ fn a_cycle_lock_steal_records_the_stealer_s_epoch() {
     );
 }
 
+const TOK_A: &str = "a0000000-0000-4000-8000-0000000000a1";
+const TOK_B: &str = "a0000000-0000-4000-8000-0000000000b1";
+const TOK_N: &str = "a0000000-0000-4000-8000-0000000000c1";
+
 #[test]
 fn the_drain_lease_holder_writes_refreshes_and_releases_under_its_fence() {
     for multiuser in [false, true] {
         let b = brain("drain", multiuser);
         let a = b.lease("consumer:h", "a");
+        if multiuser {
+            // The beacon is written only by the holder of the source's cycle lock (review G5).
+            b.store
+                .acquire_cycle_lock("gbrain-sync:default", &lock_acquire(TOK_A, Some(&a)))
+                .unwrap()
+                .unwrap();
+        }
         let data = json!({ "sourceId": "default", "drain_lease_beacon": { "kind": "consumer", "id": null, "version": "t" } });
         b.store
-            .write_drain_lease_holder_fenced("default", "tok-a", data.clone(), 10.0, Some(&a))
+            .write_drain_lease_holder_fenced("default", TOK_A, data.clone(), 10.0, Some(&a))
             .unwrap();
-        assert_eq!(b.claim_epochs(), 1);
+        assert_eq!(b.drain_epochs(), 1);
         assert_eq!(
             b.store
-                .refresh_drain_lease_holder_fenced("tok-a", 10.0, Some(&a))
+                .refresh_drain_lease_holder_fenced(TOK_A, 10.0, Some(&a))
                 .unwrap(),
             1
         );
@@ -655,56 +677,66 @@ fn the_drain_lease_holder_writes_refreshes_and_releases_under_its_fence() {
         let new = b.take_over("consumer:h", &a);
         refused(
             &b.store
-                .refresh_drain_lease_holder_fenced("tok-a", 10.0, Some(&a))
+                .refresh_drain_lease_holder_fenced(TOK_A, 10.0, Some(&a))
                 .unwrap_err(),
             "epoch_moved",
         );
         refused(
             &b.store
-                .release_drain_lease_holder_fenced("tok-a", Some(&a))
+                .release_drain_lease_holder_fenced(TOK_A, Some(&a))
                 .unwrap_err(),
             "epoch_moved",
         );
         refused(
             &b.store
-                .refresh_drain_lease_holder_fenced("tok-a", 10.0, Some(&new))
+                .refresh_drain_lease_holder_fenced(TOK_A, 10.0, Some(&new))
                 .unwrap_err(),
             "claim_epoch_mismatch",
         );
         assert!(
-            b.store.read_drain_lease_beacon("tok-a").unwrap().is_some(),
+            b.store.read_drain_lease_beacon(TOK_A).unwrap().is_some(),
             "the holder record is unchanged"
         );
         if multiuser {
             refused(
                 &b.store
-                    .write_drain_lease_holder("default", "tok-b", data.clone(), 10.0)
+                    .write_drain_lease_holder("default", TOK_B, data.clone(), 10.0)
                     .unwrap_err(),
                 "fence_missing",
             );
             refused(
-                &b.store
-                    .refresh_drain_lease_holder("tok-a", 10.0)
-                    .unwrap_err(),
+                &b.store.refresh_drain_lease_holder(TOK_A, 10.0).unwrap_err(),
                 "fence_missing",
             );
             refused(
-                &b.store.release_drain_lease_holder("tok-a").unwrap_err(),
+                &b.store.release_drain_lease_holder(TOK_A).unwrap_err(),
                 "fence_missing",
             );
         }
+        if multiuser {
+            // The new holder took the source's cycle lock over (the former's row was cleared) before its beacon.
+            assert!(
+                b.store
+                    .delete_cycle_lock("gbrain-sync:default", &lock_holder(TOK_A, Some(&new)))
+                    .unwrap()
+            );
+            b.store
+                .acquire_cycle_lock("gbrain-sync:default", &lock_acquire(TOK_N, Some(&new)))
+                .unwrap()
+                .unwrap();
+        }
         // A new holder replaces the former one's record, and the former's epoch goes with it.
         b.store
-            .write_drain_lease_holder_fenced("default", "tok-n", data, 10.0, Some(&new))
+            .write_drain_lease_holder_fenced("default", TOK_N, data, 10.0, Some(&new))
             .unwrap();
-        assert_eq!(b.claim_epochs(), 1);
+        assert_eq!(b.drain_epochs(), 1);
         assert_eq!(
             b.store
-                .release_drain_lease_holder_fenced("tok-n", Some(&new))
+                .release_drain_lease_holder_fenced(TOK_N, Some(&new))
                 .unwrap(),
             1
         );
-        assert_eq!(b.claim_epochs(), 0);
+        assert_eq!(b.drain_epochs(), 0);
     }
 }
 
