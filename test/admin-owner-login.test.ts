@@ -24,6 +24,7 @@ describe('owner login strings', () => {
   });
 
   test('the login page leads with the owner\'s command and folds the host-administrator prompt', () => {
+    // test-reads-source-ok[structural]: the login page has no component harness in the unit lanes; admin/e2e/admin.pw.ts drives it in Chromium.
     const page = readFileSync('admin/src/pages/Login.tsx', 'utf8');
     expect(page).not.toContain('Ask the agent that administers the brain host');
     const command = page.indexOf('owner-login-command');

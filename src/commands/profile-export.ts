@@ -4,7 +4,7 @@
  * world-visible facts leave by default; --include-private adds private ones with a warning, because the exported text
  * is outside gbrain's access control.
  */
-import { chmodSync, existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { EXPORT_FORMATS, mergeMuseBlock, renderMarkdown, renderMemoryText, renderMuseBlock, selectFacts, type ExportFormat } from '../core/profile/export.ts';
 import type { ProfileBlock } from '../core/profile/read.ts';
@@ -58,13 +58,6 @@ export async function runProfileExport(args: string[], call: ImportCall): Promis
   const { opError } = await import('../core/ops/contract.ts');
   const f = parseExportArgs(args);
   if ('error' in f) throw opError('invalid_params', f.error, 'gbrain profile export --help lists the forms.');
-  const into = f.into === undefined ? undefined : resolve(f.into);
-  let existing = '';
-  if (into && existsSync(into)) {
-    try { existing = readFileSync(into, 'utf8'); } catch (e) {
-      throw opError('invalid_params', `profile export: cannot read ${into} (${(e as NodeJS.ErrnoException).code ?? (e as Error).message}); nothing was written.`, 'Pass the path of your Memory.md.');
-    }
-  }
   const block = (await call('context_pack', { profile: true })).profile as ProfileBlock | undefined;
   if (!block) throw opError('unavailable', 'The brain did not return a profile: it may predate context_pack {profile: true}; nothing was exported.', 'Upgrade the brain with gbrain upgrade.');
   if (!block.entity) throw opError('profile_entity_not_self', 'profile export: this credential has no profile (it speaks for no member and is not the brain owner); nothing was exported.',
@@ -72,8 +65,16 @@ export async function runProfileExport(args: string[], call: ImportCall): Promis
   const { facts, private_left_out } = selectFacts(block, f.includePrivate);
   const privateIncluded = facts.filter(x => x.visibility === 'private').length;
   const text = f.format === 'memory-text' ? renderMemoryText(facts) : f.format === 'markdown' ? renderMarkdown(block, facts) : renderMuseBlock(facts);
-  const output = into ? mergeMuseBlock(existing, text) : text;
-  if (into) writeWhole(into, output);
+  const into = f.into === undefined ? undefined : existsSync(f.into) ? realpathSync(f.into) : resolve(f.into);
+  if (into) {
+    let existing = '';
+    if (existsSync(into)) {
+      try { existing = readFileSync(into, 'utf8'); } catch (e) {
+        throw opError('invalid_params', `profile export: cannot read ${into} (${(e as NodeJS.ErrnoException).code ?? (e as Error).message}); nothing was written.`, 'Pass the path of your Memory.md.');
+      }
+    }
+    writeWhole(into, mergeMuseBlock(existing, text));
+  }
   if (privateIncluded) console.error(`Warning: ${privateIncluded} private fact(s) included. This text is outside gbrain's access control: anyone or any assistant that reads it reads them.`);
   else if (private_left_out) console.error(`${private_left_out} private fact(s) left out; --include-private adds them.`);
   if (block.partial) console.error('Warning: the profile may be incomplete (too many facts on your page, or a failed read); the export may miss facts.');

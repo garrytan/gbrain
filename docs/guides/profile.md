@@ -132,7 +132,7 @@ checks any write still finishing. A line the brain refuses inside a batch is rec
 again, so one bad line costs only itself. A write the write gate holds for your review counts as not saved and
 names the command that keeps it; a write whose outcome is unknown is checked on the next `--resume`. A line that
 failed is listed and not retried: fix it in the file, then preview and apply again. A damaged receipt is refused
-and left as it is; move it aside and apply again, and lines already saved come back as duplicates. The import exits 10 while writes are still finishing and 1 if anything failed or was left unsent.
+and left as it is; move it aside and apply again: the brain replays the lines it already saved, so nothing is saved twice. The import exits 10 while writes are still finishing and 1 if anything failed or was left unsent.
 
 ## Export
 
@@ -148,7 +148,8 @@ gbrain profile export --format markdown > profile.md            # a readable pag
 Only facts visible to everyone are exported. A private fact, such as an allergy (private by default), stays out, and
 the export says how many it left out. `--include-private` adds them and warns that the text now sits outside gbrain's
 access control: anyone or any assistant that reads the file reads them. Relationships from your page's links are
-never exported.
+never exported. A fact a tool wrote rather than you keeps the label "(from a tool, not confirmed by you)", so the
+other assistant never reads it as something you said.
 
 `muse-memory` is one marked block:
 
@@ -168,6 +169,8 @@ file with no block gets it appended, and a missing file is created. A file whose
 begin with no end, an end before its begin, or a marker line that is not exactly as above) is refused with
 `invalid_params` and left untouched: delete the damaged lines and export again. The standing line is there because
 an assistant that searches its own memory first can otherwise answer without ever asking GBrain. `profile import`
-skips the GBrain block, so importing that Memory.md later never reads your exported profile back as new facts.
+skips the GBrain block, so importing that Memory.md later never reads your exported profile back as new facts; it
+refuses a file whose block is damaged the same way. The file is read after your profile, just before it is written, and
+a symlinked Memory.md is updated at its target.
 
 To connect Muse itself, hand it the [Muse connector brief](../connectors/muse.md).

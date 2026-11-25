@@ -5,7 +5,8 @@
  * 1. Protects: only world-visible facts leave by default and private ones only with --include-private and a warning;
  *    the three formats; a Muse block replaces only the previous block, keeps the user's own lines and carries the
  *    standing line; a damaged destination is refused and left byte-for-byte as it was; an export read back by
- *    `profile import` skips GBrain's own block.
+ *    `profile import` skips GBrain's own block, and an import refuses a damaged block; a claim that mentions the marker
+ *    text stays a bullet; --into merges the file as it is after the profile read and writes through a symlink.
  * 2. Fails when: a private fact is exported by default; a member's export carries the owner's profile; --into rewrites
  *    lines outside the block or a refused file.
  * 3. Real seams: operation handlers for the local CLI, OAuth client-credentials tokens through MCP dispatch for a
@@ -13,7 +14,7 @@
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, lstatSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -115,6 +116,25 @@ describe('renderers', () => {
     expect(bad('<!-- gbrain:profile end -->\n- x\n<!-- gbrain:profile begin rev=000000000000 -->')).toBe('invalid_params');
   });
 
+  test('a claim that mentions the marker text is a bullet, not a marker, on export and on import', () => {
+    const block = renderMuseBlock([fact({ claim: 'Keeps notes on gbrain:profile end markers' }), fact({ claim: 'Eats vegan', fact_id: '2' })]);
+    const file = mergeMuseBlock('# Memory\n- mine one\n', block);
+    expect(mergeMuseBlock(file, block)).toBe(file);
+    expect(planImport(file + '- mine two\n', 'muse-memory').items.map(i => i.fact)).toEqual(['mine one', 'mine two']);
+  });
+
+  test('a fact a tool wrote keeps its label in the memory list and the Muse block', () => {
+    const tool = fact({ claim: 'Prefers aisle seats', content_origin: 'tool_output', facet: null });
+    expect(renderMemoryText([tool])).toBe('[2026-11-01] - Prefers aisle seats (from a tool, not confirmed by you)\n');
+    expect(renderMuseBlock([tool])).toContain('- Prefers aisle seats (from a tool, not confirmed by you)');
+    expect(renderMemoryText([fact({})])).toBe('[2026-11-01] - Eats vegetarian\n');
+  });
+
+  test('an import refuses a file whose GBrain block has no end, instead of skipping the lines after it', () => {
+    const refused = (() => { try { planImport('<!-- gbrain:profile begin rev=000000000000 -->\n- Likes tea\n', 'muse-memory'); } catch (e) { return e as R; } return null; })();
+    expect(refused).toMatchObject({ code: 'invalid_params', message: expect.stringContaining('nothing was previewed') });
+  });
+
   test('flags', () => {
     expect(parseExportArgs([])).toEqual({ error: 'Pass --format memory-text|muse-memory|markdown.' });
     expect(parseExportArgs(['--format', 'markdown', '--into', 'x.md'])).toMatchObject({ error: expect.stringContaining('only with --format muse-memory') });
@@ -162,6 +182,18 @@ describe('local export on a single-user keyless brain', () => {
     const refused = await refusal(() => exportCli(['--format', 'muse-memory', '--into', file], localCall(engine)));
     expect(refused.code).toBe('invalid_params');
     expect(readFileSync(file, 'utf8')).toBe(damaged);
+  }, 60_000);
+
+  test('--into merges the file as it is after the profile read, and writes through a symlink to its target', async () => {
+    const target = join(home, 'Target.md');
+    const link = join(home, 'Linked.md');
+    writeFileSync(target, '# Memory\n');
+    symlinkSync(target, link);
+    const call: ImportCall = async (tool, p) => { const out = await localCall(engine)(tool, p); appendFileSync(target, '- Written during the read\n'); return out; };
+    await exportCli(['--format', 'muse-memory', '--into', link], call);
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    const text = readFileSync(target, 'utf8');
+    expect(text.startsWith('# Memory\n- Written during the read\n\n<!-- gbrain:profile begin rev=')).toBe(true);
   }, 60_000);
 });
 

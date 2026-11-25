@@ -17,7 +17,7 @@ export type ExportFormat = (typeof EXPORT_FORMATS)[number];
 export const MUSE_STANDING_LINE = 'Check GBrain after your own memory search and before answering.';
 export const MUSE_END = '<!-- gbrain:profile end -->';
 const MUSE_BEGIN_RE = /^<!-- gbrain:profile begin rev=[0-9a-f]{12} -->$/;
-const MARKER_RE = /gbrain:profile\s+(begin|end)\b/;
+const MARKER_RE = /^\s*<!--\s*gbrain:profile\s+(begin|end)\b/;
 
 /** Facet headings an importer reads back as the same facet (src/core/profile/import.ts facetHint). */
 const HEADINGS: Record<string, string> = {
@@ -36,6 +36,8 @@ export function selectFacts(block: ProfileBlock, includePrivate: boolean): Expor
 }
 
 const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim();
+/** A fact a tool wrote keeps that label in the other assistant's memory, so it never reads as something you said. */
+const claimText = (f: ProfileFact) => oneLine(f.claim) + (f.content_origin === 'tool_output' ? ' (from a tool, not confirmed by you)' : '');
 const day = (f: ProfileFact) => f.valid_from.slice(0, 10);
 const group = (facts: ProfileFact[]) => {
   const by = new Map<string, ProfileFact[]>();
@@ -44,12 +46,12 @@ const group = (facts: ProfileFact[]) => {
 };
 const bullet = (f: ProfileFact) => {
   const item = f.facet?.startsWith('size.') ? f.facet.slice(5) : null;
-  return `- ${item ? `${item}: ` : ''}${oneLine(f.claim)}`;
+  return `- ${item ? `${item}: ` : ''}${claimText(f)}`;
 };
 
 /** `[YYYY-MM-DD] - fact`, one per line: the list Claude's memory import reads. */
 export function renderMemoryText(facts: ProfileFact[]): string {
-  return facts.map(f => `[${day(f)}] - ${oneLine(f.claim)}`).join('\n') + (facts.length ? '\n' : '');
+  return facts.map(f => `[${day(f)}] - ${claimText(f)}`).join('\n') + (facts.length ? '\n' : '');
 }
 
 /** The marked Muse block; rev is a digest of its body, so an unchanged profile exports the same block. */
@@ -72,11 +74,10 @@ export function renderMarkdown(block: ProfileBlock, facts: ProfileFact[]): strin
 }
 
 /**
- * The destination's text with the Muse block in place: the previous block replaced, or the block appended when there
- * is none. Refuses, changing nothing, when a marker line is malformed, repeated, or an end comes before its begin.
+ * The one gbrain:profile block's begin and end line indexes, or null when there is none. Refuses, so the caller changes
+ * nothing, when a marker line is malformed, repeated, unpaired, or an end comes before its begin.
  */
-export function mergeMuseBlock(existing: string, block: string): string {
-  const lines = existing.split('\n');
+function museBlock(lines: string[], refusal: string, fix: string): { begin: number; end: number } | null {
   const marks = lines.flatMap((l, i) => MARKER_RE.test(l) ? [{ i, kind: MARKER_RE.exec(l)![1]!, ok: l.trim() === MUSE_END || MUSE_BEGIN_RE.test(l.trim()) }] : []);
   const begins = marks.filter(m => m.kind === 'begin');
   const ends = marks.filter(m => m.kind === 'end');
@@ -85,25 +86,34 @@ export function mergeMuseBlock(existing: string, block: string): string {
     const why = bad ? `line ${bad.i + 1} is not a well-formed gbrain:profile marker`
       : begins.length !== ends.length ? `it has ${begins.length} begin and ${ends.length} end marker(s)`
       : begins.length > 1 ? `it has ${begins.length} gbrain:profile blocks` : 'its end marker comes before its begin marker';
-    throw opError('invalid_params', `profile export: the destination's GBrain block is damaged (${why}); the file was left untouched.`,
-      'Delete the damaged gbrain:profile lines (from the begin marker through the end marker) and export again.');
+    throw opError('invalid_params', refusal.replace('%s', why), fix);
   }
-  if (!begins.length) {
+  return begins.length ? { begin: begins[0]!.i, end: ends[0]!.i } : null;
+}
+
+/**
+ * The destination's text with the Muse block in place: the previous block replaced, or the block appended when there
+ * is none. Refuses, changing nothing, when a marker line is malformed, repeated, or an end comes before its begin.
+ */
+export function mergeMuseBlock(existing: string, block: string): string {
+  const lines = existing.split('\n');
+  const at = museBlock(lines, "profile export: the destination's GBrain block is damaged (%s); the file was left untouched.",
+    'Delete the damaged gbrain:profile lines (from the begin marker through the end marker) and export again.');
+  if (!at) {
     const head = existing.replace(/\n*$/, '');
     return (head ? head + '\n\n' : '') + block + '\n';
   }
-  return [...lines.slice(0, begins[0]!.i), ...block.split('\n'), ...lines.slice(ends[0]!.i + 1)].join('\n');
+  return [...lines.slice(0, at.begin), ...block.split('\n'), ...lines.slice(at.end + 1)].join('\n');
 }
 
-/** The 1-based line ranges of a gbrain:profile block, which an import skips so an exported profile is never re-imported. */
+/**
+ * The 1-based lines of the gbrain:profile block, which an import skips so an exported profile is never re-imported.
+ * A damaged block is refused the same way export refuses it, so no line of the file is skipped by guesswork.
+ */
 export function museBlockLines(text: string): Set<number> {
+  const at = museBlock(text.split(/\r?\n/), "profile import: the file's GBrain block is damaged (%s); nothing was previewed.",
+    'Delete the damaged gbrain:profile lines (from the begin marker through the end marker) and preview again.');
   const out = new Set<number>();
-  let open = false;
-  text.split(/\r?\n/).forEach((l, i) => {
-    const m = MARKER_RE.exec(l);
-    if (m?.[1] === 'begin') open = true;
-    if (open) out.add(i + 1);
-    if (m?.[1] === 'end') open = false;
-  });
+  for (let i = at?.begin ?? 0; at && i <= at.end; i++) out.add(i + 1);
   return out;
 }
