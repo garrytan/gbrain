@@ -35,15 +35,15 @@ function rustPublicationJournalStore(brain: StoreBrain): PublicationJournalStore
     },
     shareWorktree: none,
     lockSource: none,
-    recordRecovery: ({ id, executionToken, recovery, bytes, keys }, checked) =>
-      write('record_recovery', { id, executionToken, recovery, bytes, keys, checked }),
+    recordRecovery: ({ id, executionToken, recovery, bytes, keys, fence }, checked) =>
+      write('record_recovery', { id, executionToken, recovery, bytes, keys, checked, ...(fence ? { fence } : {}) }),
     clearKnownRecovery: (id, keys, recovery) => write('clear_known_recovery', { id, keys, recovery }),
     async clearRecovery(id, keys, bytes) { await write('clear_recovery', { id, keys, bytes }); },
-    async markRecovering(id, executionToken, reason, failure) {
+    async markRecovering(id, executionToken, reason, failure, opts) {
       await write('mark_recovering', { id, executionToken, reason, errorCode: failure?.code ?? null,
-        errorMessage: failure?.message ?? null, errorDetail: failure?.detail ? failure.detail : null });
+        errorMessage: failure?.message ?? null, errorDetail: failure?.detail ? failure.detail : null, ...(opts?.fence ? { fence: opts.fence } : {}) });
     },
-    markPublicationStarted: id => write<WriteRequest | null>('publication_started', { id }),
+    markPublicationStarted: (id, opts) => write<WriteRequest | null>('publication_started', { id, ...(opts?.fence ? { fence: opts.fence } : {}) }),
     blockCapacity: id => write<WriteRequest | null>('block_capacity', { id }),
     blockRecovery: (id, reason) => write<WriteRequest | null>('block_recovery', { id, reason }),
     requeueRecovered: (id, kept, clearError) => write<WriteRequest | null>('requeue_recovered', { id, kept, clearError }),

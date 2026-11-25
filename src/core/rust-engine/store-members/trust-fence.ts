@@ -58,7 +58,7 @@ export const listHeldFenceCells: StoreMember<[keys: readonly HeldFenceCellKey[]]
   const member = own === null ? undefined : {
     slug: memberPageSlug(own),
     principal: `member:${own}`,
-    policy: storePageTextPolicy('listHeldFenceCells', () => privatePagesFilterForCaller('p'), { callerReaders: true }),
+    policy: storePageTextPolicy('listHeldFenceCells', () => privatePagesFilterForCaller('p'), { callerReaders: true, fragment: 'caller' }),
   };
   const grantSources = [...privateFactSources()];
   const input = { keys, ...(member ? { member } : {}), ...(grantSources.length ? { grantSources } : {}) };

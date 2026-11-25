@@ -537,6 +537,7 @@ fn expiry_releases_only_the_claims_of_worktrees_the_host_owns() {
         });
     }
     let spec = ExpireClaims {
+        fence: None,
         host_id: HOST.into(),
         charge: false,
         dead_owners: vec![],

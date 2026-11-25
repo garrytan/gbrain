@@ -168,6 +168,14 @@ the client as trusted as the CLI. A multi-user server cannot trust that field.
 - Every store entry point takes the `Scope`. Visibility filters run inside the index scans, never
   after top-k (the plan's "Privacy and visibility" rule and the prior-art RLS pitfalls).
 - "Not found" and "not yours" return the same error.
+- **Pre-conditions for non-owner sessions (ruled 2026-11-25).** Until all three hold, the server opens sessions only
+  for the brain owner's keys and refuses every other key with `permission_denied`:
+  1. The access self-check (`GBRAIN_RUST_ACCESS_SELF_CHECK`) runs in CI over the whole parity suite on the Rust arm
+     and passes.
+  2. No read path lets a caller tell a page or claim it cannot see from one that does not exist: the same answer,
+     the same error and no effect on ranking. Where a path is shared with PGLite and Postgres, the fix ships on all
+     three engines in one change, so byte parity holds.
+  3. Retrieval paths that no caller reaches today also apply the caller's visibility, or are removed.
 - Keyword statistics stay per source if a BM25 ranker ever ships, so one tenant's pages cannot move
   another tenant's scores (prior-art map, lock and queue table).
 
@@ -209,10 +217,10 @@ What changes for M3:
 | Write identity | `(principal, request_id)`, journal `sequence` | adds `WriteOrigin` (writer id, process incarnation, machine id) on every journal row and commit record |
 
 **Why no hybrid logical clock.** With one primary, the commit version is a total order and the
-server's clock stamps `created_at`. A hybrid logical clock only pays off with several primaries,
+server's clock stamps row times. A hybrid logical clock only pays off with several primaries,
 which this design does not plan. If M4 failover moves the primary, the new primary's first commit
-version is above the old one's last (the log carries it), and `created_at` takes the larger of server
-time and the last committed time, so time never runs backwards in the records.
+version is above the old one's last (the log carries it), and its clock floor is the last committed
+time, so no row time and no commit time falls below a time already committed (I-4.v2.1).
 
 **Hosts and fencing.** Each host's writer registers once (`register_consumer`) and gets an epoch.
 Claims and leases carry `(epoch, token)`. A host that comes back after a partition with an old epoch
@@ -254,6 +262,262 @@ registry when it is built. None changes any output while off.
 wire protocol. openraft can later sit under the commit log for failover (prior-art map: adopt for
 M3/M4 only; avoid raft-rs). Shadow mode would also gain an exact follower: today it re-reads
 invalidated keys and runs a reconcile, because there is no log (plan, "How the shadow stays in step").
+
+## Frozen interfaces (I-0 to I-8)
+
+These contracts were frozen on 2026-11-25 so the multi-user work can be built in parallel branches. A change is
+recorded here as a new version (I-n.v2), never silently. Work that depends on an interface not yet built codes
+against a stub that implements exactly this contract, behind the same switch.
+
+### I-0. One switch
+
+- `GBRAIN_RUST_MULTIUSER=1` (environment) or `engine.rust.multiuser: true` (config). Default off. Off means every code
+  path, record, frame and output is byte-identical to `rust-engine/main` at the branch's merge base.
+- Branches may add sub-switches for development, but each is read only when `GBRAIN_RUST_MULTIUSER=1` is also set.
+  The groundwork sub-flags (`GBRAIN_RUST_WRITE_ORIGIN`, `GBRAIN_RUST_COMMIT_LOG`, `GBRAIN_RUST_OWNER_REQUEST_IDS`,
+  `GBRAIN_RUST_ACCESS_SELF_CHECK`, `GBRAIN_RUST_TXN_DEADLINE_MS`, `GBRAIN_RUST_OWNER_REMOTE_CHECK`) become sub-switches
+  under it.
+- `GBRAIN_RUST_CONCURRENT_WRITES=1` (existing optimistic store) stays as is; multi-user mode implies it.
+
+### I-1. Store transactions (Rust, `gbrain-store`)
+
+```rust
+pub enum TxnMode { Serialized, Optimistic }      // Serialized = today's begin_write_exclusive
+pub struct TxnOptions {
+    pub mode: TxnMode,                            // default Serialized; Optimistic only under I-0
+    pub deadline: Option<std::time::Instant>,     // absolute; None = no deadline (today)
+    pub origin: Option<WriteOrigin>,              // I-3
+}
+impl Store {
+    pub fn begin_with(&self, opts: TxnOptions) -> Result<Transaction>;   // new; begin_transaction() = begin_with(default)
+    pub fn single_flight(&self, txn: &Transaction, keys: &[SingleFlightKey]) -> Result<()>; // sorted, held to commit/abort
+}
+impl Transaction {
+    pub fn commit(self) -> Result<CommitPosition>;   // I-2; today's commit keeps returning u64 = position.sequence
+    pub fn assert_lease(&self, token: &LeaseToken) -> Result<()>; // I-5, checked again at commit
+}
+```
+
+Errors (store error codes, mapped by napi through the existing converter):
+- `write_conflict`: retryable, the transaction's read set was overwritten after its snapshot. `Store::write` retries
+  internally (as `WRITE_RETRY_LIMIT` does today); an explicit transaction returns it to TypeScript, which re-runs the
+  callback from a fresh snapshot at most 8 times, then surfaces `revision_conflict` (existing code) to the caller.
+- `timeout` reason `transaction_deadline` or `key_wait`: the deadline passed; nothing committed. If the commit was
+  already dispatched when the deadline passed, the commit's result wins.
+- `lease_lost`: new code (registered in `src/core/error-registry.ts` with a fix contract): the lease's epoch moved.
+
+`SingleFlightKey` is `{ source_id: String, slug: String }` (the same exact-source key `lockPageKeys` takes today).
+
+- **I-1.v2 (2026-11-25, additive).** `TxnOptions` gains three fields. It derives `Default`, so every existing caller
+  is unchanged:
+  - `read_only: bool` (default false): every write in the transaction refuses `read_only_transaction`.
+  - `retry_keys: Vec<Vec<u8>>` (default empty; optimistic mode): keys an earlier run of this transaction lost a
+    conflict on. The rerun queues for them and holds them until it ends.
+  - `age: Option<u64>` (default `None`; optimistic mode): the single-flight age from `Store::transaction_age`, so a
+    rerun keeps its place under wait-die. `None` takes a fresh age.
+
+### I-2. Commit position and read token
+
+```rust
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct CommitPosition { pub sequence: u64, pub index: u32 }  // ordered by (sequence, index)
+```
+- Single-writer store: `index` is always 0. Optimistic store: `index` is the transaction's place in its group commit.
+- JSON form everywhere (napi, wire, receipts): `{ "sequence": <number>, "index": <number> }`.
+- Read token (wire, I-7): the string `cp1:<sequence>.<index>`. A read with `min_position` waits until the published
+  position is at or past it, bounded by the call deadline, else ends `timeout` reason `position_not_reached`.
+- Nothing in today's CLI, JSON or MCP output shows a position. Adding it to any agent-visible output needs a
+  separate maintainer yes.
+
+### I-3. Write origin
+
+```rust
+pub struct WriteOrigin { pub host_id: String, pub incarnation: String, pub writer_id: String }
+```
+- `host_id`: the existing machine UUID from `host.json` (`src/core/persistence/identity.ts` `localHostId`, per engine
+  `hostIdFor`). Never a hostname.
+- `incarnation`: a fresh UUID v7 per engine open (or per server connection, I-7).
+- `writer_id`: `<principal_kind>:<principal_id>` as the journal already keys it.
+- Journal rows store `admitter_host_id` (existing column) and `extra.admitter_incarnation`, `extra.writer_id`.
+
+### I-4. Commit record (store format)
+
+- Key: tag byte `b'2'` (reserved now in `rust/crates/gbrain-store/src/keys.rs`), then `sequence` u64 BE, then `index`
+  u32 BE. Value: `[version u8 = 1][origin: 3 length-prefixed UTF-8 strings][write_ids: u32 count, each length-prefixed]
+  [ops: u32 count, each: op u8 (1 put, 2 delete, 3 add_i64, 4 raise_counter), key length-prefixed bytes, operand
+  length-prefixed bytes (the full value for put, never a reference)]`.
+- Written in the same redb write transaction as the records, on BOTH the single-writer and optimistic stores
+ . Log-maintenance writes are not logged.
+- A brain that has ever been opened with the log on carries `FORMAT.log = { "since": <position> }` and the next format
+  number (claimed in `rust/docs/store/format.md` before any branch writes it). An older build refuses it with
+  `format_unknown`. A writable open of a log-stamped brain with the log off refuses (never writes unlogged).
+- Read API: `Store::read_commit_log(after: Option<CommitPosition>, max: usize) -> Result<LogPage>`, where `LogPage` is
+  `{ records, oldest_retained, newest, snapshot_required: bool }`, all from one snapshot. Retention cap 64 MiB default.
+- **I-4.v2 (2026-11-25, replaces the v1 record layout).** Each commit record carries its commit time. Value layout:
+  `[version u8 = 2]` `[host_id]` `[incarnation]` `[writer_id]` (each a u32 big-endian length, then UTF-8 bytes)
+  `[commit_time i64 big-endian, signed, microseconds since the Unix epoch, UTC]` `[write_ids: u32 BE count, each
+  length-prefixed]` `[ops: u32 BE count, each: op u8, key length-prefixed, operand length-prefixed]`. Ops and operands
+  are unchanged from v1.
+  - `commit_time` strictly increases in commit-position order across the whole log, single-writer and optimistic
+    stores alike (each transaction in one group commit gets its own time): it is the larger of the store clock and the
+    previous commit's time plus 1 microsecond. The same commit writes the same value to the meta key `M\0ctime`, which
+    `Store::last_commit_time()` reads and which is the floor at open.
+  - `M\0ctime` is written only while the multi-user switch (I-0) is on, with the log on or off. With the switch off it
+    is never written, so records stay byte-identical to the base.
+  - Version 1 was never written outside test stores, so it is retired, not read: a v2 reader refuses a version-1
+    record, and any version other than 2, with `format_unknown` (an unknown version is not corruption, so not
+    `store_corrupt`). The log format number (`format::LOG_FORMAT_VERSION`) does not change, because no build that
+    writes v1 records has shipped. A build that only knows v1 refuses a v2 record the same way and never guesses
+    offsets.
+  - JSON form, wherever a record is decoded (wire, tests): adds `"commit_time_us": <integer>`; microseconds fit in a
+    JavaScript number until the year 2255. A wire frame that ships raw record bytes ships them unchanged.
+  - Order rules: fact order and every "what happened first" rule use the commit position `(sequence, index)`, never
+    `commit_time`. `commit_time` is the strictly rising time and sets the clock floor. A server that takes over as
+    primary starts its clock floor at the larger of its own `M\0ctime` and the last applied record's `commit_time`.
+  - **I-4.v2.1 (2026-11-25), row times.** A row's `created_at`, and every other time written into a row value, is the
+    transaction's clock time (as Postgres `now()`, the parity reference), taken while the transaction body runs and
+    never below the clock floor at open, including after a promotion. It is not the commit time: a row value is
+    encoded before the pipeline picks the commit order, so a later commit can carry an earlier `created_at`. Commit
+    order is the commit position; no multi-user reader, listing or check orders by `created_at` to mean commit order.
+    Tests: every row time written after open is at or above the floor taken at open, including on a store promoted
+    from the log; the test that expected `created_at` to follow commit order stays ignored with a reason that names
+    this rule.
+
+### I-5. Leases
+
+```rust
+pub struct LeaseToken { pub name: String, pub epoch: u64, pub token: String }   // token is a UUID v7
+impl Store {
+    pub fn acquire_lease(&self, name: &str, holder: &WriteOrigin, ttl_ms: u64) -> Result<Option<LeaseToken>>;
+    pub fn renew_lease(&self, token: &LeaseToken, ttl_ms: u64) -> Result<()>;   // lease_lost if the epoch moved
+    pub fn release_lease(&self, token: &LeaseToken) -> Result<()>;
+}
+```
+- Every takeover increments `epoch`. Expiry uses the time of the process that runs the store (one server = one clock);
+  a client's clock is never used. `assert_lease` inside a transaction adds the lease row to the read set, so a write by
+  a stale holder fails at commit even if it started before the takeover.
+- Job claims, effect claims and write claims keep their current token fields and add `epoch`.
+
+- **I-5, managed mode limit (2026-11-25).** Managed mode's topology locks (`withTopologyLocks`) stay native file locks
+  on the checkout (`GBRAIN_HOME/locks`) on every engine for the single-host phase, and are replaced with I-5 leases once
+  the lease work is on the multi-user branch; no stub lease is used before then. File locks do not fence writers on
+  two hosts, so managed mode on Rust is single-host until that swap.
+
+### I-6. Scope (per-user access)
+
+```rust
+pub struct Scope { /* private fields */ }
+impl Scope {
+    pub fn from_principal(store: &Store, principal: &AuthenticatedPrincipal) -> Result<Scope>; // only constructor on the server path
+    pub fn trusted_local(access_record: &AccessRecord) -> Scope;                                // today's behavior, embedded only
+}
+```
+- `AuthenticatedPrincipal` is built only by the server's hello handler (I-7) from a verified token in the existing
+  `access_tokens` / `client_grants` families. napi exposes a `ScopeHandle` (u64) minted by the store; TypeScript can
+  pass it along but cannot build a Scope from parts.
+- With I-0 off, every entry point uses `Scope::trusted_local` built from today's access record: byte-identical.
+- Store entry points take `&Scope` as a new first argument through a wrapper layer; until
+  the scope work lands, callers use `Scope::trusted_local` (that is the stub).
+- "Not found" and "not visible to you" return the same error.
+
+#### Session contract for the server (as built on `rust-engine/mu-access`)
+
+The hello handler (lane L3) opens one session per authenticated connection and runs every call of that connection
+through it. TypeScript entry: `openPrincipalSession(store, bearer)` in `src/core/rust-engine/principal-session.ts`;
+store side: `Store::authenticate_bearer`, `Scope::from_principal` and `Scope::revalidate` in
+`rust/crates/gbrain-store/src/scope.rs`; napi: `mintScope`, `checkScope`, `scopeGrant`, `releaseScope`
+(`rust/crates/gbrain-napi/src/families/access_scope.rs`).
+
+1. **Hello.** Pass the hello's `auth.token` to `openPrincipalSession(store, token)`. The store hashes it and looks it up
+   in its own `access_tokens` records; nothing else the client sent reaches the session. The session exists only on a
+   store in multi-user mode (I-0.v2); with the mode off it refuses.
+2. **Owner gate (fail closed).** A session opens only for a live token bound to the enabled member named by config
+   `access.owner_member`. Every other credential (unknown, revoked, empty, unbound, another member's, or any token on a
+   brain with no owner member) refuses with one `permission_denied` and one message, so the refusal does not say which
+   case it hit. The gate stays until both conditions under M2 hold (the design owner's ruling A1, 2026-11-25).
+3. **Handle.** The session holds a store-minted handle (a decimal string). There is no call that builds a scope from
+   parts. A handle is tied to the store that minted it: after a close or a reopen every older handle refuses. One
+   `Brain` handle keeps at most 4096 sessions; a mint past that refuses.
+4. **Every call.** Call `session.admit(member)` before the member runs. It has the store re-read the token (still live,
+   same grant revision, same member), the member (still enabled) and `access.owner_member` (unchanged); any change
+   refuses this call and kills the session, so a revoke or narrowing committed between two calls takes effect on the
+   next one. It also refuses a write member (anything not in `OWNER_IPC_REMOTE_READS` or the local-only reads, unknown
+   members included) when the grant has no `write` scope.
+5. **Grant.** Build the call's `AuthInfo` from `session.grant` (the store-verified token row read through
+   `grantFromTokenRow`, the model the HTTP transport uses), never from the client's frame. The operation layer's scope,
+   source and operation checks then apply as they do over HTTP.
+6. **Remote flag.** The principal is a remote caller. Pass `principalRemote: true` to `ownerRemoteRefusal` (groundwork K,
+   `src/core/rust-engine/owner-ipc/remote-check.ts`); a frame that marks itself local on such a connection refuses.
+7. **Close.** Call `session.release()` when the connection closes.
+
+What the session does not do yet: derive the read policy from the principal for non-owner keys (the access
+self-check proves the derivation first), and carry a session across a reconnect (a reconnect opens a new session).
+
+### I-7. Wire protocol v3 (grown from owner socket v2, `src/core/rust-engine/owner-ipc/protocol.ts`)
+
+- Hello: `{ t: 'hello', v: 3, caps: string[], auth?: { scheme: 'bearer', token: string } }`. A v2 peer keeps v2.
+  Server caps: `request_ids`, `positions`, `whole_ops`, `binary_tail`, `remote_check`.
+- Framing on TCP: `u32 BE length` + JSON header + optional binary tail (header field `tail_len`). Unix socket keeps
+  JSON lines unless both sides list `binary_tail`. TLS on TCP is required; plain TCP only on loopback.
+- `call` and `fn` frames add `req` (UUID v7, unique per request across clients, reused on retry), `min_position`
+  (I-2 token), `remote: boolean` (the client's `callerIsRemote` result; the server re-derives it from the
+  authenticated principal and refuses on mismatch). Results add `position` for writes.
+- Retry: a client that lost an answer re-sends the same `req`; the server returns the stored outcome when the write
+  is journaled under the same principal, else `outcome_unknown` with the existing confirming-read rules. Non-idempotent
+  member calls are never replayed automatically.
+- `owner_busy` stays; the client retries it within the caller's deadline (decision R default), so a caller sees only
+  `timeout` at its own deadline.
+- Unknown top-level frame fields are ignored by v2 and v3 decoders; unknown value tags refuse.
+
+### I-8. Capability names (`src/core/engine-capabilities.ts`)
+
+`serialized_transactions` (Rust reports it while explicit transactions run Serialized), `multi_writer` (Rust
+reports it only when I-0 is on and optimistic explicit transactions are active; the parity harness uses the same
+name), `commit_log` (when the log is on), `served` (the engine is a client of a server). PGLite and Postgres:
+`multi_writer` yes (Postgres), no (PGLite); the others no.
+
+- **I-8.v2 (2026-11-25).** `multi_writer` lives in a separate list, `MULTIUSER_CAPABILITIES` in
+  `src/core/engine-capabilities.ts`, reported only while the multi-user switch (I-0) is on. With the switch off,
+  every engine's capability set and the error catalogue that lists `ENGINE_CAPABILITIES` stay exactly as they are.
+  With it on, Postgres reports `multi_writer`, PGLite does not, and Rust does while its optimistic explicit
+  transactions are on. The parity harness reads the same list.
+
+### Interface facts ruled on 2026-11-25
+
+These answer questions raised while building the leases (I-5) and the switch (I-0) and are part of the contracts above.
+
+1. **Clock (I-5).** Times written by the store follow one rule: never below the last committed time seen at open,
+   and never backwards on one server. Lease and claim times (`acquired_at`, `renewed_at`, `expires_at`) are the
+   writing transaction's clock time under I-4.v2.1: written inside the transaction from the store's own clock
+   (`Env::clock_micros`, the floored clock in multi-user mode), never below the floor, never from the commit
+   pipeline's `on_accept(commit_time)` hook and never from a caller's clock. The claim-epoch side records hold no
+   time. Fencing is decided by epoch and token through the transaction's read set, never by time order.
+2. **Switch (I-0).** The config half of the switch is the row `engine.rust.multiuser` in the brain's own config
+   table, read by the store at open, so each brain resolves its own mode. The environment half is
+   `GBRAIN_RUST_MULTIUSER=1`. Both are resolved in `src/core/rust-engine/multiuser-switch.ts`; the store's decision
+   comes back in the open info and is the one answer every caller uses. I-0.v2: sub-switches follow that resolved answer,
+   not the environment variable alone, so a brain switched on by its config row gets its sub-switches too.
+3. **Write origin (I-3).** `WriteOrigin` lives in `rust/crates/gbrain-store/src/write_origin.rs`; the journal and
+   the commit record reuse it.
+4. **Lease keys (I-5).** Leases take the two-byte family tag `~L` (`keys::LEASES`, `family_tag(b'L')`), with a row in
+   the tag registry (`docs/designs/RUST_ENGINE_INTERFACES.md`). The commit record (I-4) keeps the one-byte tag `2`,
+   which also needs its registry row before it is written.
+5. **Lease checks in a transaction (I-1, I-5).** `Transaction::assert_lease` delegates to `Store::assert_lease`; the
+   check reads the lease row inside the transaction, so it is in the read set and checked again at commit.
+   Both ways are tested: on the optimistic path, the read set refuses the commit after a takeover; an exclusive
+   transaction sees its own consistent view.
+6. **Expired leases (I-5).** An expired lease cannot be renewed: `renew_lease` on it ends `lease_lost`. The holder
+   takes the lease again with `acquire_lease`, which gives a new epoch. So a machine that comes back after a
+   partition is refused for any work it started under the old epoch, even if no other machine took the lease
+   meanwhile.
+
+### Rule for multi-user code paths: rerun-safe callbacks
+
+In multi-user mode a transaction can run again after it loses a commit, so its callback can run more than once.
+A callback must keep no counter, flag, cache entry or staging file outside the transaction; everything it changes
+must be inside the transaction or derived again on each run. Multi-user mode is not called safe on a path until the
+callback audit covers that path. Status on 2026-11-25: 12 callers fixed; 58 flagged callbacks not audited yet
+(14 on paths the Rust engine cannot run yet, 44 not read).
 
 ## Audit: landed choices that are costly to undo
 

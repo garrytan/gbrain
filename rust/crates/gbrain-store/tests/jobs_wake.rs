@@ -480,6 +480,7 @@ fn committed_request(b: &Brain) -> String {
         .unwrap()
         .to_string();
     let stamp = ClaimStamp {
+        fence: None,
         id: id.clone(),
         token: "c0000000-0000-4000-8000-0000000000c1".into(),
         lease_ms: 60_000.0,

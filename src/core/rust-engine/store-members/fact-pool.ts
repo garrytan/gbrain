@@ -20,7 +20,7 @@ export function poolArgs(member: string, scope: FactPoolScope, filters: FactPool
     worldOnly: scope.worldOnly,
     ...(widen ? { widen } : {}),
     // A caller with a reader identity and a private-readable grant is served (`callerReaders`).
-    excludePrivate: storePrivacyPolicy(member, scope.excludePrivate, () => privateProvenanceFilterUnderPolicy('facts'), { callerReaders: true }),
+    excludePrivate: storePrivacyPolicy(member, scope.excludePrivate, () => privateProvenanceFilterUnderPolicy('facts'), { callerReaders: true, fragment: 'under_policy' }),
     minTrust: scope.minTrust || null,
     suppressFlagged: scope.suppressFlagged === true,
     ...(filters?.entities ? { entities: filters.entities.map(e => ({ sourceId: e.sourceId, slug: e.slug })) } : {}),

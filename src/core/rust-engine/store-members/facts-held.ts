@@ -40,7 +40,7 @@ export const listStruckHeldRows: Member<'listStruckHeldRows'> = (brain, sourceId
   storeCall({ member: 'listStruckHeldRows', sourceId }, () => brain.listStruckHeldRows({ sourceId }));
 
 export const readHeldRowVisibility: Member<'readHeldRowVisibility'> = (brain, sourceId, slug) => {
-  const policy = storePageTextPolicy('readHeldRowVisibility', () => privatePagesFilterFragment('p'));
+  const policy = storePageTextPolicy('readHeldRowVisibility', () => privatePagesFilterFragment('p'), { fragment: 'plain' });
   return storeCall({ member: 'readHeldRowVisibility', sourceId }, () => brain.readHeldRowVisibility({ sourceId, slug, policy }));
 };
 

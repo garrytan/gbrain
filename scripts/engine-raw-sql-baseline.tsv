@@ -245,7 +245,7 @@ src/core/facts/purge.ts	execute_raw	1	GBRA-574 F #9674 (opened before this ratch
 src/core/feedback/store.ts	execute_raw	7
 src/core/function-search-path.ts	execute_raw	3
 src/core/ghost-pages.ts	execute_raw	1
-src/core/git/redact-finish.ts	execute_raw	7	GST-2988 PR 2 publish redaction finish: reads sources.local_path and persistence_host_bindings to find the checkout that owns a pushed root, reads and compare-and-sets sources.last_commit to the rebuilt sha, and lists persistence_effects worktree ids to remap parked effects; branched before the #9641 ratchet; no typed engine method for these source and effect reads exists yet
+src/core/git/redact-finish.ts	execute_raw	5	GST-2988 PR 2 publish redaction finish: reads sources.local_path and persistence_host_bindings to find the checkout that owns a pushed root, reads and compare-and-sets sources.last_commit to the rebuilt sha, and lists persistence_effects worktree ids to remap parked effects; branched before the #9641 ratchet; no typed engine method for these source and effect reads exists yet
 src/core/git/untrack-admission.ts	execute_raw	3	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
 src/core/github-source.ts	execute_raw	2
 src/core/google/attachment-backfill.ts	execute_raw	2

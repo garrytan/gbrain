@@ -433,6 +433,8 @@ pub(crate) fn group_write_in(tx: &mut dyn KvWrite, env: &dyn Env, what: &GroupWr
                     retained_bytes: m.retained,
                     terminal_reservation: extra_i64(&r, "terminal_reservation"),
                     probe_purges: false,
+                    // No fence yet: managed mode is not served on a multi-user store until its claims take I-5 leases.
+                    fence: None,
                 };
                 let Some(mut row) = complete_write_row_in(tx, env, &completion)? else { break };
                 row["principal_key"] = json!(m.principal_key);

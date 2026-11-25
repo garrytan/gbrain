@@ -158,7 +158,7 @@ listIdentityDecisions	pages	yes	10	no	yes	yes	serves
 listRestrictedIdentityMembers	pages	yes	1	no	yes	yes	serves
 applyIdentityDecisions	pages	yes	12	no	yes	yes	serves
 listAllPageRefs	pages	yes	5	yes	yes	yes	serves
-listAllSources	pages	yes	26	no	yes	yes	serves
+listAllSources	pages	yes	28	no	yes	yes	serves
 updateSourceConfig	pages	yes	20	no	yes	yes	serves
 renameSource	pages	yes	1	no	yes	yes	serves
 readFederationExposedPages	pages	yes	1	no	yes	yes	serves
@@ -2021,7 +2021,7 @@ attachSourcePath	write_misc	yes	14	no	yes	yes	serves
 readAtomGeneration	write_misc	yes	2	no	yes	yes	serves
 recordAtomGenerationBump	write_misc	yes	2	no	yes	yes	serves
 addPersistenceCounters	write_misc	yes	4	no	yes	yes	serves
-gitDurabilityStore	write_misc	yes	1	no	yes	yes	serves
+gitDurabilityStore	write_misc	yes	2	no	yes	yes	serves
 gitEffectStore	write_misc	no	0	no	-	-	-
 topologyStore	write_misc	yes	6	no	yes	yes	serves
 refreshStore	write_misc	no	0	no	-	-	-

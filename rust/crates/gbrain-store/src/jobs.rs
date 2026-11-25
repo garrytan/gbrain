@@ -133,9 +133,11 @@ pub use wake::{
 
 use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
+use crate::fence;
 use crate::jsonb::ordered;
 use crate::keys;
 use crate::kv::{KvRead, KvWrite, for_each_prefix_paged, scan_prefix};
+use crate::leases::{CLAIM_CYCLE_LOCK, CLAIM_DRAIN_LEASE, CLAIM_JOB, LeaseToken};
 use crate::timeline_queries::jsonb_field_text;
 use crate::{Store, get_json, put_json};
 use serde::{Deserialize, Serialize};
@@ -677,6 +679,9 @@ pub struct ClaimSpec {
     #[serde(default)]
     pub handler_lock_durations: HashMap<String, Value>,
     pub legacy_spend: LegacySpend,
+    /// The caller's host registration (lane L5). The claim records its lease name and epoch.
+    #[serde(default)]
+    pub fence: Option<LeaseToken>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -688,6 +693,9 @@ pub struct LockAcquire {
     pub acquisition_token: String,
     pub ttl_minutes: f64,
     pub steal_grace_seconds: f64,
+    /// The caller's host registration (lane L5). The lock records its lease name and epoch.
+    #[serde(default)]
+    pub fence: Option<LeaseToken>,
 }
 
 /// `takePageEmbeddingLease` opts (page-embedding-lease.ts).
@@ -718,6 +726,9 @@ pub struct LockHolder {
     pub ttl_minutes: Option<f64>,
     #[serde(default)]
     pub max_age_seconds: Option<f64>,
+    /// The caller's host registration (lane L5).
+    #[serde(default)]
+    pub fence: Option<LeaseToken>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1266,6 +1277,7 @@ impl Store {
             .map(String::as_str)
             .collect();
         self.write(|tx| {
+            fence::begin(self, tx, spec.fence.as_ref(), "claim_next_job")?;
             let now = self.env.now_micros();
             // `overdue`: marked, and last touched at least `suspectWaitMs` ago.
             let overdue_cutoff = spec.suspect_wait_ms.map(|w| now - ms_to_us(w));
@@ -1340,6 +1352,8 @@ impl Store {
             new.started_at = old.started_at.or(Some(now));
             new.updated_at = now;
             save(tx, Some(&old), &new)?;
+            // A reclaim by this claimer overwrites the epoch of the claim it takes over.
+            fence::claim_taken(tx, CLAIM_JOB, &new.id.to_string(), spec.fence.as_ref())?;
             Ok(Some(new.to_json()))
         })
     }
@@ -1351,7 +1365,20 @@ impl Store {
         lock_token: &str,
         lock_duration_ms: f64,
     ) -> Result<bool> {
+        self.renew_job_lease_fenced(id, lock_token, lock_duration_ms, None)
+    }
+
+    /// `renew_job_lease` under the caller's host fence: the lease must be held, and the claim must have been taken
+    /// under this fence's epoch (`lease_lost` otherwise, nothing written).
+    pub fn renew_job_lease_fenced(
+        &self,
+        id: i64,
+        lock_token: &str,
+        lock_duration_ms: f64,
+        fence: Option<&LeaseToken>,
+    ) -> Result<bool> {
         self.write(|tx| {
+            fence::begin(self, tx, fence, "renew_job_lease")?;
             let now = self.env.now_micros();
             let Some(old) = load(tx, id)? else {
                 return Ok(false);
@@ -1359,6 +1386,7 @@ impl Store {
             if old.status != "active" || old.lock_token.as_deref() != Some(lock_token) {
                 return Ok(false);
             }
+            fence::claim_held(tx, CLAIM_JOB, &id.to_string(), fence)?;
             let mut new = old.clone();
             new.lock_until = Some(now + ms_to_us(lock_duration_ms));
             new.updated_at = now;
@@ -1377,8 +1405,21 @@ impl Store {
         lock_token: &str,
         result: Option<&Value>,
     ) -> Result<Option<Value>> {
+        self.complete_job_fenced(id, lock_token, result, None)
+    }
+
+    /// `complete_job` under the caller's host fence (see `renew_job_lease_fenced`); the claim's epoch record goes
+    /// with the claim.
+    pub fn complete_job_fenced(
+        &self,
+        id: i64,
+        lock_token: &str,
+        result: Option<&Value>,
+        fence: Option<&LeaseToken>,
+    ) -> Result<Option<Value>> {
         let result = result.filter(|r| !r.is_null());
         self.write(|tx| {
+            fence::begin(self, tx, fence, "complete_job")?;
             let now = self.env.now_micros();
             let Some(old) = load(tx, id)? else {
                 return Ok(None);
@@ -1386,6 +1427,8 @@ impl Store {
             if old.status != "active" || old.lock_token.as_deref() != Some(lock_token) {
                 return Ok(None);
             }
+            fence::claim_held(tx, CLAIM_JOB, &id.to_string(), fence)?;
+            fence::claim_ended(self, tx, CLAIM_JOB, &id.to_string(), fence)?;
             let mut row = old.clone();
             row.status = "completed".into();
             row.result = result.cloned();
@@ -1433,11 +1476,29 @@ impl Store {
         backoff_ms: Option<f64>,
         result: Option<&Value>,
     ) -> Result<Option<Value>> {
+        self.fail_job_fenced(
+            id, lock_token, error_text, new_status, backoff_ms, result, None,
+        )
+    }
+
+    /// `fail_job` under the caller's host fence (see `complete_job_fenced`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn fail_job_fenced(
+        &self,
+        id: i64,
+        lock_token: &str,
+        error_text: &str,
+        new_status: &str,
+        backoff_ms: Option<f64>,
+        result: Option<&Value>,
+        fence: Option<&LeaseToken>,
+    ) -> Result<Option<Value>> {
         if !["delayed", "failed", "dead"].contains(&new_status) {
             return Err(StoreError::invalid(format!("failJob: status {new_status}")));
         }
         let result = result.filter(|r| !r.is_null());
         self.write(|tx| {
+            fence::begin(self, tx, fence, "fail_job")?;
             let now = self.env.now_micros();
             let Some(old) = load(tx, id)? else {
                 return Ok(None);
@@ -1445,6 +1506,8 @@ impl Store {
             if old.status != "active" || old.lock_token.as_deref() != Some(lock_token) {
                 return Ok(None);
             }
+            fence::claim_held(tx, CLAIM_JOB, &id.to_string(), fence)?;
+            fence::claim_ended(self, tx, CLAIM_JOB, &id.to_string(), fence)?;
             let delayed = new_status == "delayed";
             let terminal = !delayed;
             let mut row = old.clone();
@@ -1511,7 +1574,19 @@ impl Store {
     /// kills every active job whose lease expired more than `grace_ms` ago. `suspect_mark` is
     /// `WATCHDOG_SUSPECT_MARK`. Both lists come back in id order.
     pub fn reclaim_stalled_jobs(&self, grace_ms: f64, suspect_mark: &str) -> Result<Value> {
+        self.reclaim_stalled_jobs_fenced(grace_ms, suspect_mark, None)
+    }
+
+    /// `reclaim_stalled_jobs` under the caller's host fence: the sweep runs only for a host that holds its lease, and
+    /// each reclaimed claim's epoch record goes with the claim (the next claimer writes its own).
+    pub fn reclaim_stalled_jobs_fenced(
+        &self,
+        grace_ms: f64,
+        suspect_mark: &str,
+        fence: Option<&LeaseToken>,
+    ) -> Result<Value> {
         self.write(|tx| {
+            fence::begin(self, tx, fence, "reclaim_stalled_jobs")?;
             let now = self.env.now_micros();
             let cutoff = now - ms_to_us(grace_ms);
             let active = rows_with_status(tx, "active")?;
@@ -1528,6 +1603,9 @@ impl Store {
                     .is_some_and(|t| live_tokens.contains(t));
                 if expired && !held {
                     delete_row(tx, row)?;
+                    if let Some(token) = row.lock_token.as_deref() {
+                        fence::claim_ended(self, tx, CLAIM_DRAIN_LEASE, token, fence)?;
+                    }
                 }
             }
             let active: Vec<JobRecord> = rows_with_status(tx, "active")?;
@@ -1580,6 +1658,7 @@ impl Store {
                     new.lock_until = None;
                     new.updated_at = now;
                     save(tx, Some(c), &new)?;
+                    fence::claim_ended(self, tx, CLAIM_JOB, &c.id.to_string(), fence)?;
                     requeued.push(new);
                 } else {
                     rest.push(c);
@@ -1596,6 +1675,7 @@ impl Store {
                     new.status = "waiting".into();
                     new.started_at = None;
                     save(tx, Some(c), &new)?;
+                    fence::claim_ended(self, tx, CLAIM_JOB, &c.id.to_string(), fence)?;
                     requeued.push(new);
                 } else {
                     new.status = "dead".into();
@@ -1603,6 +1683,7 @@ impl Store {
                     new.error_text = Some(MAX_STALLED_TEXT.into());
                     new.finished_at = Some(now);
                     save(tx, Some(c), &new)?;
+                    fence::claim_ended(self, tx, CLAIM_JOB, &c.id.to_string(), fence)?;
                     dead.push(new);
                 }
             }
@@ -1637,6 +1718,7 @@ impl Store {
     pub fn acquire_cycle_lock(&self, lock_id: &str, opts: &LockAcquire) -> Result<Option<Value>> {
         uuid_arg("acquireCycleLock", &opts.acquisition_token)?;
         self.write(|tx| {
+            fence::begin(self, tx, opts.fence.as_ref(), "acquire_cycle_lock")?;
             let now = self.env.now_micros();
             let key = lock_key(lock_id);
             if let Some(held) = get_json::<LockRecord>(tx, &key)? {
@@ -1656,6 +1738,8 @@ impl Store {
                 acquisition_token: opts.acquisition_token.to_lowercase(),
             };
             put_json(tx, &key, &record)?;
+            // A steal overwrites the epoch of the lock it takes over.
+            fence::claim_taken(tx, CLAIM_CYCLE_LOCK, lock_id, opts.fence.as_ref())?;
             let fence = format!(
                 "{}.{:06}",
                 now.div_euclid(1_000_000),
@@ -1670,11 +1754,13 @@ impl Store {
             .ttl_minutes
             .ok_or_else(|| StoreError::invalid("refreshCycleLock: ttlMinutes is required"))?;
         self.write(|tx| {
+            fence::begin(self, tx, opts.fence.as_ref(), "refresh_cycle_lock")?;
             let now = self.env.now_micros();
             let key = lock_key(lock_id);
             let Some(mut held) = held_by(tx, &key, opts)? else {
                 return Ok(false);
             };
+            fence::claim_held(tx, CLAIM_CYCLE_LOCK, lock_id, opts.fence.as_ref())?;
             held.ttl_expires_at = now + minutes_us(ttl);
             held.last_refreshed_at = Some(now);
             put_json(tx, &key, &held)?;
@@ -1685,11 +1771,15 @@ impl Store {
     /// `releaseCycleLock` and `deleteCycleLock`: the row goes only when pid and token match.
     pub fn release_cycle_lock(&self, lock_id: &str, opts: &LockHolder) -> Result<bool> {
         self.write(|tx| {
+            fence::begin(self, tx, opts.fence.as_ref(), "release_cycle_lock")?;
             let key = lock_key(lock_id);
             if held_by(tx, &key, opts)?.is_none() {
                 return Ok(false);
             }
+            // No claim-epoch check: the deleter shows the holder's pid and token (a reaper or an operator deleting a
+            // snapshot), and the lease check above already refused a host that lost its own.
             tx.delete(&key)?;
+            fence::claim_ended(self, tx, CLAIM_CYCLE_LOCK, lock_id, opts.fence.as_ref())?;
             Ok(true)
         })
     }
@@ -1701,6 +1791,11 @@ impl Store {
             StoreError::invalid("deleteCycleLockIfStale: maxAgeSeconds is required")
         })?;
         self.write(|tx| {
+            // Deleting a stale lock is cleanup an operator runs (`--break-lock`) without a host registration: it only
+            // removes a lock whose holder already lapsed, so it is fenced only when the caller sends a fence.
+            if opts.fence.is_some() {
+                fence::begin(self, tx, opts.fence.as_ref(), "delete_cycle_lock_if_stale")?;
+            }
             let now = self.env.now_micros();
             let key = lock_key(lock_id);
             let none = json!({ "deleted": false, "lastRefreshedAt": null });
@@ -1711,6 +1806,7 @@ impl Store {
             match held.last_refreshed_at {
                 Some(r) if r < cutoff => {
                     tx.delete(&key)?;
+                    fence::claim_ended(self, tx, CLAIM_CYCLE_LOCK, lock_id, opts.fence.as_ref())?;
                     Ok(json!({ "deleted": true, "lastRefreshedAt": iso(r) }))
                 }
                 _ => Ok(none),
@@ -1840,13 +1936,28 @@ impl Store {
 
     /// `assertCycleLease`: the lease is held under this token and unexpired.
     pub fn assert_cycle_lease(&self, lock_id: &str, acquisition_token: &str) -> Result<bool> {
+        self.assert_cycle_lease_fenced(lock_id, acquisition_token, None)
+    }
+
+    /// `assert_cycle_lease` under the caller's host fence: the host's lease must be held, and when the lock is held
+    /// under this token it must have been taken under this fence's epoch (`lease_lost` otherwise).
+    pub fn assert_cycle_lease_fenced(
+        &self,
+        lock_id: &str,
+        acquisition_token: &str,
+        fence: Option<&LeaseToken>,
+    ) -> Result<bool> {
         uuid_arg("assertCycleLease", acquisition_token)?;
         let now = self.env.now_micros();
-        Ok(
-            get_json::<LockRecord>(&*self.read()?, &lock_key(lock_id))?.is_some_and(|l| {
-                l.acquisition_token == acquisition_token.to_lowercase() && l.ttl_expires_at > now
-            }),
-        )
+        let read = self.read()?;
+        crate::leases::check_fence(self, &*read, fence, "assert_cycle_lease")?;
+        let held = get_json::<LockRecord>(&*read, &lock_key(lock_id))?.is_some_and(|l| {
+            l.acquisition_token == acquisition_token.to_lowercase() && l.ttl_expires_at > now
+        });
+        if let (true, Some(fence)) = (held, fence) {
+            crate::leases::check_claim_epoch(&*read, CLAIM_CYCLE_LOCK, lock_id, fence)?;
+        }
+        Ok(held)
     }
 }
 

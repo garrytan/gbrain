@@ -189,6 +189,14 @@ More: [docs/guides/write-refusals.md#access_policy_pending](../../docs/guides/wr
 
 More: [docs/guides/write-refusals.md#access_rule_invalid](../../docs/guides/write-refusals.md#access_rule_invalid)
 
+### access_self_check_mismatch
+
+<a id="access_self_check_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A Rust brain in multi-user self-check mode refused a read before it ran, because the privacy policy the store derived for the caller differs from the one TypeScript rendered. | With GBRAIN_RUST_MULTIUSER=1 and GBRAIN_RUST_ACCESS_SELF_CHECK=1 the store derives every caller's privacy policy itself and compares it with the rendered one; a difference means one of the two is wrong, so the read is refused instead of risking a page the caller must not see. reason names the policy mode and detail the first differing field. | Turn off GBRAIN_RUST_ACCESS_SELF_CHECK to read as before, and report the member, mode and field from detail. | host_admin | `gbrain doctor --json` | 1 | no |
+
 ### access_serves_key_dir_in_git
 
 <a id="access_serves_key_dir_in_git"></a>
@@ -3586,6 +3594,18 @@ More: [docs/guides/repair.md#known-as-of-unproven](../../docs/guides/repair.md#k
 Reasons: `file_differs`, `label_line`.
 
 More: [docs/guides/write-refusals.md#label_edit_refused](../../docs/guides/write-refusals.md#label_edit_refused)
+
+### lease_lost
+
+<a id="lease_lost"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A multi-user Rust write carried a lease that no longer fences it (taken over, released, expired, missing, or from another claim epoch), so the store refused it at commit and nothing was written. | With GBRAIN_RUST_MULTIUSER on, writers on several machines share one Rust brain. Every ownership (a host registration, a job or write claim, a drain or cycle lease) is a lease with an epoch that rises on each takeover, and the store checks it inside the writing transaction, so a paused or partitioned holder cannot overwrite the new owner. Retrying the same write with the same lease always fails again. | Stop the work the lease protected, take the lease again (a new epoch), re-read the state, and redo the work only if it is still yours. Run: gbrain engine status --json | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `not_found`, `epoch_moved`, `released`, `expired`, `fence_missing`, `claim_epoch_mismatch`.
+
+More: [docs/designs/rust-engine/multi-user-server.md#m3-writers-on-many-machines](../../docs/designs/rust-engine/multi-user-server.md#m3-writers-on-many-machines)
 
 ### legacy_job_selection_invalid
 

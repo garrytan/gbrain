@@ -24,6 +24,7 @@ import { ledgerLocation } from './commit-ledger.ts';
 import { relativeEscapesRoot } from '../path-confine.ts';
 import { BACKUP_KEEP_DAYS, BACKUP_REF_PREFIX, onPushMode, REDACTIONS_FILE } from './redact-unpushed.ts';
 import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
+import { managesWorktrees } from '../rust-engine/errors.ts';
 
 const canonical = (path: string) => { try { return realpathSync(path); } catch { return resolve(path); } };
 const inside = (child: string, parent: string) => child === parent || child.startsWith(parent.endsWith(sep) ? parent : parent + sep);
@@ -156,7 +157,7 @@ export function pruneBackupRefs(root: string, now = Date.now()): number {
   return deleted;
 }
 
-/** The bookkeeping_gc step: spool, pending redactions, old backup refs, and (redact mode) parked secret pushes. Never throws. */
+/** The bookkeeping_gc step: spool, pending redactions, old backup refs, and (redact mode) parked secret pushes. Throws only a capability refusal. */
 export async function secretPublishMaintenance(engine: BrainEngine): Promise<Record<string, number>> {
   const out: Record<string, number> = {};
   const add = (key: string, n: number) => { if (n) out[key] = (out[key] ?? 0) + n; };
@@ -165,8 +166,13 @@ export async function secretPublishMaintenance(engine: BrainEngine): Promise<Rec
   let roots: string[] = [];
   try {
     roots = [...new Set((await engine.listAllSources()).map(r => r.local_path).filter((p): p is string => typeof p === 'string' && p !== ''))];
-    roots.push(...(await engine.executeRaw<{ local_path: string }>('SELECT local_path FROM persistence_host_bindings WHERE local_path IS NOT NULL').catch(() => [])).map(r => r.local_path));
   } catch (e) { rethrowCapabilityRefusal(e); /* no sources table yet */ }
+  // Managed checkouts (host bindings) exist only where the engine serves managed mode; elsewhere there is none to read.
+  if (managesWorktrees(engine)) {
+    try { roots.push(...await (await engine.gitDurabilityStore()).hostBindingPaths()); }
+    // silent-read-ok: a brain before the persistence tables has no host binding to add; a capability refusal is rethrown.
+    catch (e) { rethrowCapabilityRefusal(e); }
+  }
   const seen = new Set<string>();
   for (const root of roots) {
     const loc = ledgerLocation(root);
@@ -175,13 +181,13 @@ export async function secretPublishMaintenance(engine: BrainEngine): Promise<Rec
     try { add('publish_redactions_finished', (await finishRedactions(engine, root)).redactions); } catch { /* retried next pass */ }
     try { add('redact_backup_refs_deleted', pruneBackupRefs(root)); } catch { /* not a checkout git can read */ }
   }
-  if (onPushMode() === 'redact') {
+  // Parked pushes are managed Git effects: an engine that does not serve managed mode has none to retry.
+  if (onPushMode() === 'redact' && managesWorktrees(engine)) {
     try {
       const { retryParkedPushes } = await import('../persistence/git-durability-administration.ts');
-      const worktrees = await engine.executeRaw<{ worktree_id: string }>(`SELECT DISTINCT worktree_id::text AS worktree_id FROM persistence_effects
-        WHERE kind='git' AND state='failed' AND worktree_id IS NOT NULL`);
-      for (const { worktree_id } of worktrees) add('secret_parked_pushes_retried', (await retryParkedPushes(engine, worktree_id, false, ['publish_secret_found'])).queued);
-    } catch { /* no persistence tables, or no owner here */ }
+      const worktrees = await (await engine.gitDurabilityStore()).failedGitWorktrees();
+      for (const worktree_id of worktrees) add('secret_parked_pushes_retried', (await retryParkedPushes(engine, worktree_id, false, ['publish_secret_found'])).queued);
+    } catch (e) { rethrowCapabilityRefusal(e); /* no persistence tables, or no owner here */ }
   }
   return out;
 }

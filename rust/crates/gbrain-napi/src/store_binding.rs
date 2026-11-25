@@ -71,6 +71,9 @@ pub struct BrainOpenOptions {
     /// A fresh brain records the write gate's scan baseline under this detector version (the
     /// TypeScript `WRITE_GATE_DETECTOR_VERSION`).
     pub write_gate_detector_version: Option<u32>,
+    /// Multi-user mode (I-0), resolved by the caller for this brain (`GBRAIN_RUST_MULTIUSER=1` or the brain's config
+    /// `engine.rust.multiuser: true`). It implies concurrent writes. Absent or false: the open is unchanged.
+    pub multiuser: Option<bool>,
 }
 
 #[napi]
@@ -79,9 +82,11 @@ pub struct Brain {
     slot: Slot,
     /// Bumped by every `close`. An `open` still queued when `close` is called sees a newer value
     /// and refuses, so a close never resolves while a queued open can still take the brain's lock.
-    closes: Arc<AtomicU64>,
+    pub(crate) closes: Arc<AtomicU64>,
     /// True while a `bind` on this handle is running, so a second one is refused at once.
     binding: Arc<AtomicBool>,
+    /// Multi-user sessions opened on this handle (`families/access_scope.rs`); unused unless one is minted.
+    pub(crate) scopes: Arc<Mutex<crate::families::access_scope::ScopeTable>>,
 }
 
 impl Brain {
@@ -142,6 +147,7 @@ impl Brain {
             slot: Arc::new(Mutex::new(None)),
             closes: Arc::new(AtomicU64::new(0)),
             binding: Arc::new(AtomicBool::new(false)),
+            scopes: Arc::new(Mutex::new(Default::default())),
         }
     }
 
@@ -152,6 +158,17 @@ impl Brain {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .is_some()
+    }
+
+    /// True while the open brain runs in multi-user mode (I-0); false when closed or off. A bound transaction handle
+    /// answers for the brain it runs on.
+    #[napi(getter)]
+    pub fn multiuser(&self) -> bool {
+        self.slot
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .is_some_and(|s| s.multiuser())
     }
 
     /// `open(path, options?)`: opens the brain in directory `path` (created when empty) and
@@ -200,6 +217,7 @@ impl Brain {
                         .push(("chunk_strategy".into(), strategy));
                 }
                 opts.write_gate_detector_version = options.write_gate_detector_version;
+                opts.multiuser = options.multiuser.unwrap_or(false);
             }
             // Holding the slot while opening makes a second `open` on this handle wait, then see
             // the brain open.

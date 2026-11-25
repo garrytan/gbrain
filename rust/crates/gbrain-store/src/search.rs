@@ -64,6 +64,11 @@ pub struct SearchOptions {
     pub after_date: Option<Value>,
     #[serde(rename = "beforeDate")]
     pub before_date: Option<Value>,
+    /// A caller privacy policy. This search reads none (every page it matches is returned, and the
+    /// collection statistics count every chunk), so any value other than absent, null or false is
+    /// refused rather than ignored; the keyword arm (`keyword/arm.rs`) serves policy-scoped reads.
+    #[serde(rename = "excludePrivate")]
+    pub exclude_private: Option<Value>,
 }
 
 /// `clampSearchLimit(limit, 20, 100)`.
@@ -142,6 +147,16 @@ impl Store {
                     format!("searchKeyword: the {name} filter is not supported by the rust engine"),
                 ));
             }
+        }
+        if options
+            .exclude_private
+            .as_ref()
+            .is_some_and(|v| !v.is_null() && *v != Value::Bool(false))
+        {
+            return Err(StoreError::new(
+                INVALID_ARGUMENT,
+                "searchKeyword: excludePrivate is not supported by this search; the keyword arm serves privacy-scoped reads",
+            ));
         }
         let limit = clamp_limit(options.limit);
         let offset = options

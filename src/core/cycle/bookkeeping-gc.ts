@@ -1,5 +1,6 @@
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult } from '../cycle.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 /**
  * GBRA-438 — bookkeeping GC, split out of purge with the same functions and
@@ -65,7 +66,8 @@ export async function runPhaseBookkeepingGc(engine: BrainEngine, dryRun: boolean
   let purgedFeedback = { events: 0, weights: 0 };
   try { purgedFeedback = await (await import('../feedback/store.ts')).pruneRetrievalFeedback(engine, (await (await import('../feedback/settings.ts')).loadFeedbackSettings(engine)).eventRetentionDays); } catch { /* pre-v207 brain */ }
   let secretPublish: Record<string, number> = {};
-  try { secretPublish = await (await import('../git/redact-finish.ts')).secretPublishMaintenance(engine); } catch { /* never fatal */ }
+  // Never fatal, except a capability refusal: a managed-mode read the engine claims to serve and then refuses is a bug to see.
+  try { secretPublish = await (await import('../git/redact-finish.ts')).secretPublishMaintenance(engine); } catch (e) { rethrowCapabilityRefusal(e); }
   const rechecks = await heldWriteRechecks(engine, false);
   // A sweep that failed or could not see its evidence leaves held text it owes; the phase says so instead of ok.
   const sweepOwed = rechecks?.status === 'fail' || rechecks?.status === 'unknown';

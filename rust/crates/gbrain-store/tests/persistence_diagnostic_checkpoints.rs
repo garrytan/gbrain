@@ -130,6 +130,7 @@ fn request(s: &Store, source: &str, n: u64, state: &str) -> String {
         .unwrap()
         .to_string();
     s.stamp_write_claim(&ClaimStamp {
+        fence: None,
         id: id.clone(),
         token: "c0000000-0000-4000-8000-0000000000c1".into(),
         lease_ms: 60_000.0,

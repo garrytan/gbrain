@@ -8,6 +8,7 @@ import { embeddedSchemaEmbedding } from '../embedded-engine.ts';
 import { DEFAULT_EMBEDDING_DIMENSIONS, DEFAULT_EMBEDDING_MODEL } from '../ai/defaults.ts';
 import { WRITE_GATE_DETECTOR_VERSION } from '../write-gate-schema.ts';
 import { mapStoreError } from './store-errors.ts';
+import { rustMultiuserFromEnv } from './multiuser-switch.ts';
 
 /** Worker threads the store's pool runs its calls on. One write runs at a time; reads overlap. */
 const STORE_POOL_THREADS = 4;
@@ -23,6 +24,8 @@ export interface StoreOpenOptions {
   chunkStrategy?: string;
   /** A fresh brain records the write gate's scan baseline under this detector version. */
   writeGateDetectorVersion?: number;
+  /** Multi-user mode from the environment (I-0, multiuser-switch.ts); sent only when true, so an open with the switch off is unchanged. */
+  multiuser?: boolean;
 }
 
 /** The strategy the SQL engines' schema seeds as config `chunk_strategy` (src/schema.sql). */
@@ -59,6 +62,8 @@ interface StoreAddon { Pool: new (threads: number) => StorePool; Brain: new (poo
 /** An open store: the brain and the pool it runs on. */
 export interface RustStore {
   readonly brain: StoreBrain;
+  /** True when the store runs in multi-user mode (I-0): the environment switch or the brain's own config row. */
+  readonly multiuser: boolean;
   /**
    * Copies one batch of a primary relation into this store for the shadow seed (rust/docs/store/seed.md).
    * Every value is the column's text form (`::text`, UTC) or null. Not a BrainEngine member.
@@ -276,12 +281,15 @@ export async function openRustStore(addon: object, databasePath: string, embeddi
   const { Pool, Brain } = addon as StoreAddon;
   const pool = new Pool(STORE_POOL_THREADS);
   const brain = new Brain(pool);
+  let multiuser = false;
   try {
-    await brain.open(databasePath, {
+    const info = await brain.open(databasePath, {
       schemaVersion: LATEST_SCHEMA_VERSION, createdBy: 'gbrain', chunkStrategy: SEED_CHUNK_STRATEGY,
       writeGateDetectorVersion: WRITE_GATE_DETECTOR_VERSION,
       ...(embedding ? { embeddingModel: embedding.model, embeddingDimensions: embedding.dimensions } : {}),
-    });
+      ...(rustMultiuserFromEnv() ? { multiuser: true } : {}),
+    }) as { multiuser?: unknown } | null;
+    multiuser = info?.multiuser === true;
   } catch (error) {
     await pool.shutdown(0).catch(() => undefined);
     throw mapStoreError(error, { member: 'connect' });
@@ -296,6 +304,7 @@ export async function openRustStore(addon: object, databasePath: string, embeddi
   };
   return {
     brain,
+    multiuser,
     importRelation: (seedId, relation, rows, digests) => call('importRelation', () => brain.importRelation(seedId, relation, rows, digests ?? null)),
     replaceRelationRows: (seedId, relation, generation, keys, rows, digests) =>
       call('replaceRelationRows', () => brain.replaceRelationRows(seedId, relation, generation, keys, rows, digests)),

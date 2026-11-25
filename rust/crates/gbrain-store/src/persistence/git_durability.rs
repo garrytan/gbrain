@@ -10,7 +10,7 @@
 use super::effect_worker::pg_uuid;
 use super::effects::{EffectRecord, all_effects, write_effect};
 use super::{json_text, request_by_id};
-use super::worktrees::{host_binding_key, read_host_record};
+use super::worktrees::{HOST_BINDING, HostBindingRecord, host_binding_key, read_host_record, scan_records};
 use crate::env::Env;
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
 use crate::kv::{KvRead, KvWrite};
@@ -54,6 +54,11 @@ pub enum GitDurabilityRead {
         worktree_id: String,
         codes: Vec<String>,
     },
+    /// `HOST_BINDING_PATHS_SQL`: the local path of every host binding, in key order.
+    HostBindingPaths {},
+    /// `FAILED_GIT_WORKTREES_SQL`: each worktree (lower-case uuid text) with a failed Git effect, once,
+    /// in byte order.
+    FailedGitWorktrees {},
 }
 
 /// One write of `gitDurabilityStore()`, named by `kind`.
@@ -422,7 +427,30 @@ pub(crate) fn git_durability_rows_in(read: &dyn KvRead, what: &GitDurabilityRead
             worktree_id,
             codes,
         } => former_worktree_holds_in(read, source_id, worktree_id, codes),
+        GitDurabilityRead::HostBindingPaths {} => host_binding_paths_in(read),
+        GitDurabilityRead::FailedGitWorktrees {} => failed_git_worktrees_in(read),
     }
+}
+
+fn host_binding_paths_in(read: &dyn KvRead) -> Result<Value> {
+    let bindings: Vec<HostBindingRecord> = scan_records(read, HOST_BINDING, "host binding")?;
+    Ok(Value::Array(bindings.into_iter().map(|b| Value::String(b.local_path)).collect()))
+}
+
+fn failed_git_worktrees_in(read: &dyn KvRead) -> Result<Value> {
+    let mut worktrees: Vec<String> = Vec::new();
+    for e in all_effects(read)? {
+        if e.kind != "git" || e.state != "failed" {
+            continue;
+        }
+        let Some(worktree) = e.worktree_id.as_deref() else { continue };
+        let worktree = worktree.to_lowercase();
+        if !worktrees.contains(&worktree) {
+            worktrees.push(worktree);
+        }
+    }
+    worktrees.sort();
+    Ok(Value::Array(worktrees.into_iter().map(Value::String).collect()))
 }
 
 pub(crate) fn git_durability_write_in(

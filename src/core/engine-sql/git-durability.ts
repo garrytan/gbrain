@@ -40,6 +40,10 @@ export interface GitDurabilityStore {
   formerWorktreeHolds(sourceId: string, worktreeId: string, codes: readonly string[]): Promise<FormerWorktreeHoldsRow>;
   /** Queues a failed effect again with `data`; the row `{ state }` when it was still failed on `errorCode`, unclaimed and without a recovery, else null. */
   requeueParkedEffect(id: string, data: Record<string, unknown>, errorCode: string | null): Promise<{ state: string } | null>;
+  /** The local path of every host binding (secret publish maintenance finishes redactions in each checkout); no order. */
+  hostBindingPaths(): Promise<string[]>;
+  /** Every worktree with a failed Git effect (the parked-push retry of secret publish maintenance); no order. */
+  failedGitWorktrees(): Promise<string[]>;
 }
 
 /** One request a parked-push retry covers: its source, journal id, public request id and slug. */
@@ -93,6 +97,13 @@ export const REQUEUE_PARKED_EFFECT_SQL = `UPDATE persistence_effects SET state='
         next_attempt_at=now(),claim_expires_at=NULL,claim_owner=NULL,updated_at=now() WHERE id=$1 AND state='failed' AND error_code IS NOT DISTINCT FROM $3
         AND execution_token IS NULL AND recovery IS NULL RETURNING state`;
 
+/** `hostBindingPaths`: the text git/redact-finish.ts has always sent. */
+export const HOST_BINDING_PATHS_SQL = 'SELECT local_path FROM persistence_host_bindings WHERE local_path IS NOT NULL';
+
+/** `failedGitWorktrees`: the text git/redact-finish.ts has always sent. */
+export const FAILED_GIT_WORKTREES_SQL = `SELECT DISTINCT worktree_id::text AS worktree_id FROM persistence_effects
+        WHERE kind='git' AND state='failed' AND worktree_id IS NOT NULL`;
+
 /** `gitDurabilityStore()` on PGLite and Postgres: the store over `exec` (a transaction engine runs every call in it). */
 export async function gitDurabilityStore(exec: RawSql): Promise<GitDurabilityStore> {
   return {
@@ -115,5 +126,7 @@ export async function gitDurabilityStore(exec: RawSql): Promise<GitDurabilitySto
       const [row] = await exec.executeRaw<{ state: string }>(REQUEUE_PARKED_EFFECT_SQL, [id, JSON.stringify(data), errorCode]);
       return row ?? null;
     },
+    async hostBindingPaths() { return (await exec.executeRaw<{ local_path: string }>(HOST_BINDING_PATHS_SQL)).map(r => r.local_path); },
+    async failedGitWorktrees() { return (await exec.executeRaw<{ worktree_id: string }>(FAILED_GIT_WORKTREES_SQL)).map(r => r.worktree_id); },
   };
 }
