@@ -42,6 +42,7 @@ import { hostIdFor, readLocalWriter } from '../../src/core/persistence/identity.
 import { claimNextLaneHead, claimNextWrite, completeWrite, reclaimReleasedWrite, releaseUnpublishedClaim } from '../../src/core/persistence/journal.ts';
 import { releaseChargedInterruption } from '../../src/core/persistence/coordinator.ts';
 import { claimAndRecoverEffect } from '../../src/core/persistence/effects.ts';
+import { readOwnerRecoveryHeads } from '../../src/core/persistence/consumer.ts';
 import { consumerIdentity } from '../../src/core/persistence/consumer-heartbeat.ts';
 import { ownerHostStaleCheck } from '../../src/commands/doctor/checks/owner-host-stale.ts';
 import type { WriteRequest } from '../../src/core/persistence/model.ts';
@@ -207,6 +208,30 @@ describe('managed claims on a Rust brain, hold kept for users', () => {
     release();
     expect(answer).toEqual({ heldBack: null, overridden: null, claimedElsewhere: null,
       earned: { request: 'first', state: 'running', token: 'set', phase: 'preparing', blocked: null }, nonce: 'string' });
+    return answer;
+  }));
+
+  parityTest('the owner recovery scan lists a recovering write on the owner host\'s worktree only, and skips an excluded root', {
+    methods: ['worktreeClaimStore', 'listOwnerRecoveryHeads', 'publicationJournalStore', 'stampWriteClaim', 'insertWriteRequest', 'lockPersistenceCounters'],
+    timeout: 180_000,
+  }, async (engine, backend) => withManagedBrain(engine, backend, async root => {
+    const host = hostIdFor(engine);
+    const wt = await worktreeOf(engine);
+    const release = holdConsumer();
+    const id = await foreground(engine, wt);
+    const token = randomUUID();
+    await engine.stampWriteClaim(id, token, 60_000, JSON.stringify({ phase: 'publishing' }));
+    const before = (await readOwnerRecoveryHeads(engine, host, [])).length;
+    const record = { version: 3, target: 'pages', root, ownerEpoch: '1', attempt: token, files: [] };
+    await engine.transaction(async tx => {
+      const journal = await tx.publicationJournalStore();
+      await journal.recordRecovery({ id, executionToken: token, recovery: record, bytes: 40, keys: KEYS }, true);
+      await journal.markRecovering(id, token, 'publication_failed', { code: 'storage_error', message: 'parity' });
+    });
+    const heads = async (hostId: string, excluded: string[]) => (await readOwnerRecoveryHeads(engine, hostId, excluded)).map(row => ({ source: row.source_id, state: row.state, tree: row.worktree_id === wt }));
+    const answer = { before, owner: await heads(host, []), otherHost: await heads(OTHER_HOST, []), excluded: await heads(host, [wt]) };
+    release();
+    expect(answer).toEqual({ before: 0, owner: [{ source: 'work', state: 'recovering', tree: true }], otherHost: [], excluded: [] });
     return answer;
   }));
 
