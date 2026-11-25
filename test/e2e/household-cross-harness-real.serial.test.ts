@@ -78,7 +78,7 @@ function codexHome(prefix: string, gbrainHome?: string): string {
   return home;
 }
 
-const codexEnv = () => (CODEX_KEY ? { CODEX_API_KEY: CODEX_KEY } : {});
+const codexEnv = (): Record<string, string> => (CODEX_KEY ? { CODEX_API_KEY: CODEX_KEY } : {});
 
 /** Numbered lines of an answer: `<n>. <title>` with an optional ` — <slug>` citation. */
 function listed(text: string): Array<{ title: string; slug: string | null }> {
