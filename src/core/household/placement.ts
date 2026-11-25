@@ -246,6 +246,16 @@ export function nonOwnerChildRefusal(subject: string) {
 }
 
 /**
+ * The one refusal a remote non-owner gets for giving, changing or removing a subject's household_role on a brain that
+ * serves several people, before any record about it is read, so it says nothing about records the caller cannot read.
+ */
+export function nonOwnerRoleRefusal(subject: string, role: string) {
+  if (role === 'child') return nonOwnerChildRefusal(subject);
+  return opError('household_reclassify', `Only the brain's owner can give, change or remove the household_role of ${subject} on a brain that serves several people, since the household records about it are placed from it, so nothing was written.`,
+    `Ask the brain's owner to run gbrain household replace --about ${subject}${role ? ' --role ' + role : ''} on the brain host, or to make this change as the owner.`);
+}
+
+/**
  * Write admission for a page's household fields, on every import path (put_page, edit_page, the household ops, sync
  * projection and staged imports; import-file.ts, which holds a caller that does not say it is trusted to the remote
  * rules; the streamed import holds these pages so they take this path). It
@@ -255,8 +265,8 @@ export function nonOwnerChildRefusal(subject: string) {
  *   about it follow: a remote caller cannot take a subject out of child, or give it a role that would widen records
  *   kept to adults because of it; nobody narrows a subject, or makes a child of one that has no class (a page
  *   deleted by sync and written again), while records about it are still shared with helpers. On a brain that serves
- *   several people a remote caller other than the owner cannot narrow a subject at all, and is refused the same way
- *   whatever records exist, so the refusal tells it nothing about records it cannot read.
+ *   several people a remote caller other than the owner cannot give, change or remove a subject's role at all, and is
+ *   refused the same way whatever records exist, so the refusal tells it nothing about records it cannot read.
  * - A household record is placed (placeHouseholdFrontmatter). A remote write cannot widen it: it cannot retype it to
  *   another type, move it from adults to shared (dropping a child from about, removing audience: adults, changing its
  *   kind), or widen its stored readers.
@@ -289,18 +299,14 @@ async function subjectAdmission(engine: Pick<BrainEngine, 'executeRaw' | 'getCon
   const to = subjectClass(parsed);
   const role = parsed.type === HOUSEHOLD_TYPE ? '' : String(parsed.frontmatter.household_role ?? '').trim().toLowerCase();
   const keep = to === 'unclassified' || !role;
+  const before = live && live.type !== HOUSEHOLD_TYPE ? String(live.frontmatter?.household_role ?? '').trim().toLowerCase() : '';
+  if (remote && owner && before !== role && await placedReaders(engine, 'adults') && !await owner()) throw nonOwnerRoleRefusal(slug, role);
   if (remote && from !== to && (from === 'child' || (to === 'not_child' && (await recordsAbout(engine, sourceId, slug)).some(row => heldBySubject(row.frontmatter))))) {
     throw reclassifyRefusal('Only the brain\'s owner can take ' + slug + ' out of household_role child, or give it a role that would widen household records already kept to adults because of it, so nothing was written.',
       'Keep the page\'s type and household_role as they are, or ask the brain\'s owner to run gbrain household replace --about ' + slug + (keep ? '' : ' --role ' + role) + '.',
       ['gbrain', 'household', 'replace', '--about', slug, ...(keep ? [] : ['--role', role])], 'Changes the role on the brain host and re-places the records about it.');
   }
   if (from === to || to === 'not_child' || from === 'child') return;
-  if (remote && owner && await placedReaders(engine, 'adults') && !await owner()) {
-    if (to === 'child') throw nonOwnerChildRefusal(slug);
-    throw reclassifyRefusal('Only the brain\'s owner can take ' + slug + ' out of its household_role, since the household records about it may have to be narrowed to adults first, so nothing was written.',
-      'Keep the page\'s household_role, or ask the brain\'s owner to run gbrain household replace --about ' + slug + ' on the brain host.',
-      ['gbrain', 'household', 'replace', '--about', slug], 'Narrows the records about the subject to adults on the brain host.');
-  }
   const shared = await sharedRecordsAbout(engine, sourceId, slug);
   if (!shared.length) return;
   throw reclassifyRefusal(shared.length + ' household record(s) about ' + slug + ' are shared with helpers, and this change would leave them readable by helpers, so nothing was written.',

@@ -64,8 +64,8 @@ On a brain that serves one person, records carry no reader list and you read eve
 people, each record names the owner and the `household-adults`, `household-helpers` and `household-chats` groups
 its row allows. To reclassify a subject, run `gbrain household replace --about <slug> --role <role>` on the brain host
 (or `household add --child` with a new record): it narrows the records about the subject to adults first, then sets
-the role. On a brain that serves several people, only the owner's MCP connection can make a subject a child with
-`household_add`, `put_page` or `edit_page`, remove a subject's role, or delete a subject page; any other connection is refused with `household_reclassify`, the same way whatever records exist, so the refusal says nothing about records it cannot read. An edit or sync that narrows a subject while records about it are still shared is refused
+the role. On a brain that serves several people, only the owner's MCP connection can give, change or remove a subject's role (with
+`household_add`, `put_page`, `edit_page` or sync) or delete a subject page; any other connection is refused with `household_reclassify`, the same way whatever records exist, so the refusal says nothing about records it cannot read. An edit or sync that narrows a subject while records about it are still shared is refused
 ([household_reclassify](#household_reclassify)), and so is making a child of a subject page that sync deleted and
 wrote again; only the owner can turn a child into another role.
 Every write path runs these checks against the stored page and the new one: `put_page`, `edit_page`, the household
@@ -116,8 +116,8 @@ written. For a record: a remote agent tried to change its type, drop a child fro
 brain's owner, who can make the change with a local write. For a subject page: a remote agent tried to take a child out of `household_role: child`
 (changing or removing it), or to give a subject a role that would widen records already kept to adults because of it
 (only the owner can), or the subject was narrowed (made a child, or its role removed) while records about it were still shared
-with helpers. On a brain that serves several people, a connection other than the owner's is refused for making a
-subject a child, removing its role or deleting it, whatever records exist. Run `gbrain household replace --about <slug> --role <role>` on the brain host: it narrows those records
+with helpers. On a brain that serves several people, a connection other than the owner's is refused for giving,
+changing or removing a subject's role, or deleting it, whatever records exist. Run `gbrain household replace --about <slug> --role <role>` on the brain host: it narrows those records
 to adults (`audience: adults` on each) and then sets the role. To remove a role, run it without `--role`, then edit
 the page again. A subject that records are about can be deleted only on the brain host, and only once no record
 about it is still shared with helpers (run `gbrain household replace --about <slug>` first).

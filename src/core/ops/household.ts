@@ -30,7 +30,7 @@ import {
   RECURS, readHouseholdRecord, strictDate, strictMonthDay, type HouseholdIssue, type HouseholdKind, type HouseholdRecord,
 } from '../household/record.ts';
 import { assessHouseholdRecord, calendarDay, rankAssessments, type HouseholdAssessment, type HouseholdState } from '../household/assess.ts';
-import { aboutOf, classifySubjects, householdWriteAdmission, nonOwnerChildRefusal, placedReaders, placeHouseholdFrontmatter, placeRecord, readersWiderThanTable, refuseAccountNumbers, roleClass, type SubjectClass } from '../household/placement.ts';
+import { aboutOf, classifySubjects, householdWriteAdmission, nonOwnerRoleRefusal, placedReaders, placeHouseholdFrontmatter, placeRecord, readersWiderThanTable, refuseAccountNumbers, roleClass, type SubjectClass } from '../household/placement.ts';
 
 /** Records one household_due call reads at most; past it the answer is partial with no counts. */
 export const HOUSEHOLD_SCAN_CAP = 2_000;
@@ -248,8 +248,8 @@ async function classifySubjectPages(ctx: OperationContext, sourceId: string, abo
     if (snapshot && await remoteTargetHidden(ctx.engine, ctx.remote, sourceId, slug)) throw opError('page_not_found', `Page not found: ${slug}`, 'Name a subject page this connection can read.');
     if (live && String(live.page.frontmatter?.household_role ?? '') === role) continue;
     if (live) assertInlineBody(live.page, 'household_add about_role');
+    if (ctx.remote !== false && !callerIsOwner() && await placedReaders(ctx.engine, 'adults')) throw nonOwnerRoleRefusal(slug, role);
     if (role === 'child' && roleClass(live?.page.frontmatter?.household_role) !== 'child') {
-      if (ctx.remote !== false && !callerIsOwner() && await placedReaders(ctx.engine, 'adults')) throw nonOwnerChildRefusal(slug);
       pinned.push(...(await replaceHouseholdRecords(ctx, sourceId, [slug], { pin: true })).replaced);
     }
     const title = live?.page.title ?? slug.split('/').pop()!.replace(/-/g, ' ');
@@ -397,7 +397,7 @@ const household_add: Operation = {
       if (snap && await remoteTargetHidden(ctx.engine, ctx.remote, sourceId, subject)) throw opError('page_not_found', `Page not found: ${subject}`, 'Name a subject page this connection can read.');
       const live = snap && !snap.page.deleted_at ? snap.page : null;
       if (live && String(live.frontmatter?.household_role ?? '') === role) continue;
-      if (role === 'child' && placed && !callerIsOwner()) throw nonOwnerChildRefusal(subject);
+      if (placed && !callerIsOwner()) throw nonOwnerRoleRefusal(subject, role);
       if (live) assertInlineBody(live, 'household_add about_role');
       if (role === 'child') {
         if (remote) for (const row of await ctx.engine.listPages({ type: HOUSEHOLD_TYPE as never, sourceId, sort: 'slug', limit: 100_000, omitBodies: true }) as unknown as HouseholdPage[]) {
