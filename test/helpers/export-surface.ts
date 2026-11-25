@@ -10,7 +10,8 @@
  * - `typeSurface()`: a .d.ts-level snapshot per subpath from the TypeScript
  *   checker: each exported symbol's kind and printed signature/members, with
  *   `import("<path>").` qualifiers stripped so moving a declaration between
- *   files is not a surface change.
+ *   files is not a surface change. `collapse` names type aliases whose
+ *   expanded text is replaced by the alias name (see `CollapsedAlias`).
  */
 
 import { resolve } from 'path';
@@ -98,7 +99,19 @@ export interface TypeSurfaceEntry {
   statics?: string[];
 }
 
-export function typeSurface(): Record<string, TypeSurfaceEntry[]> {
+/**
+ * A type alias the checker prints expanded (e.g. `keyof typeof CODES`) whose
+ * text is replaced by `alias` everywhere in the surface. Its members are
+ * pinned elsewhere, one per line, so adding one does not rewrite a shared
+ * line. A collapse that matches nothing throws, so it never goes stale.
+ */
+export interface CollapsedAlias {
+  /** Repo-relative file that exports the alias. */
+  file: string;
+  alias: string;
+}
+
+export function typeSurface(opts: { collapse?: readonly CollapsedAlias[] } = {}): Record<string, TypeSurfaceEntry[]> {
   const subpaths = exportSubpaths();
   const program = ts.createProgram(subpaths.map((s) => s.file), {
     target: ts.ScriptTarget.ESNext,
@@ -152,5 +165,28 @@ export function typeSurface(): Record<string, TypeSurfaceEntry[]> {
     }
     out[subpath] = entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   }
+  for (const c of opts.collapse ?? []) collapseAlias(program, checker, out, c);
   return out;
+}
+
+function collapseAlias(program: ts.Program, checker: ts.TypeChecker, surface: Record<string, TypeSurfaceEntry[]>, c: CollapsedAlias): void {
+  const sf = program.getSourceFile(resolve(REPO, c.file));
+  const moduleSym = sf && checker.getSymbolAtLocation(sf);
+  const sym = moduleSym && checker.getExportsOfModule(moduleSym).find((s) => s.name === c.alias);
+  if (!sf || !sym || !(sym.flags & ts.SymbolFlags.TypeAlias)) throw new Error(`collapse: ${c.file} does not export type ${c.alias}`);
+  const text = stripImportQualifiers(checker.typeToString(checker.getDeclaredTypeOfSymbol(sym), sf, FLAGS));
+  let hits = 0;
+  const swap = (s: string): string => {
+    const parts = s.split(text);
+    hits += parts.length - 1;
+    return parts.join(c.alias);
+  };
+  for (const entries of Object.values(surface)) {
+    for (const e of entries) {
+      if (e.signature) e.signature = e.signature.map(swap);
+      if (e.members) e.members = e.members.map(swap);
+      if (e.statics) e.statics = e.statics.map(swap);
+    }
+  }
+  if (hits === 0) throw new Error(`collapse: the expanded text of ${c.alias} appears nowhere in the export surface; drop the collapse or fix its printing`);
 }
