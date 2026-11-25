@@ -292,7 +292,7 @@
       "  [OK] sync_config_keys: No retired sync config key is stored on this brain.",
       "  [OK] person_title_duplicates: No title-prefixed person page pairs with an unprefixed page (0 titled page(s) examined).",
       "  [OK] entity_duplicates: No likely duplicate person or company pages.",
-      "  [OK] dedupe_auto_links: No person links made automatically in the last 24 hours.",
+      "  [OK] dedupe_auto_links: No person pages linked or collapsed automatically in the last 24 hours.",
       "  [OK] local_edit_adoptions: No local edit was adopted in the last 24 h.",
       "  [OK] outside_content_fences: No fact, take or link is indexed from a fence on an imported email, calendar, GitHub or transcript page.",
       "  [OK] embedding_plane_disagreement: The config file disables embeddings and the database holds no vectors.",
