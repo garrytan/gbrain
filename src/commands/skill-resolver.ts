@@ -72,7 +72,9 @@ const HELP_RESOLVE = `Usage: gbrain skills resolve [--catalog <name>]... (--text
         [--explain-target <id>] [--fail-open] [--json]
 
 Pick the few skills that fit one user turn (or none) and print the <relevant_skills>
-block for the harness to show the model. Word matching only: nothing leaves this machine,
+block for the harness to show the model. Word matching, plus skill vectors when the catalog
+has them: then the message goes to the brain's embedding provider (config.json embedding_model),
+as it does with the model picker on (skills.resolver.router). Otherwise nothing leaves this machine,
 and no brain connection is needed.
 
   --catalog <name>     the catalog to rank (repeatable to merge; default: the only one)
