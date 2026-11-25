@@ -81,7 +81,7 @@ function readFilters(member: string, o: OntologyReadOpts): Record<string, unknow
     excludeDiary: o.excludeDiary === true,
     // pglite-engine.ts getOntology / findOntologyConflicts: `privateFactFilterForReader('facts')`. A caller with a
     // reader identity and a private-readable grant is served (`callerReaders`).
-    excludePrivate: storePrivacyPolicy(member, o.excludePrivate, () => privateFactFilterForReader('facts'), { callerReaders: true }),
+    excludePrivate: storePrivacyPolicy(member, o.excludePrivate, () => privateFactFilterForReader('facts'), { callerReaders: true, fragment: 'for_reader' }),
   };
 }
 

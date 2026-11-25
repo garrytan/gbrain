@@ -189,6 +189,14 @@ More: [docs/guides/write-refusals.md#access_policy_pending](../../docs/guides/wr
 
 More: [docs/guides/write-refusals.md#access_rule_invalid](../../docs/guides/write-refusals.md#access_rule_invalid)
 
+### access_self_check_mismatch
+
+<a id="access_self_check_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A Rust brain in multi-user self-check mode refused a read before it ran, because the privacy policy the store derived for the caller differs from the one TypeScript rendered. | With GBRAIN_RUST_MULTIUSER=1 and GBRAIN_RUST_ACCESS_SELF_CHECK=1 the store derives every caller's privacy policy itself and compares it with the rendered one; a difference means one of the two is wrong, so the read is refused instead of risking a page the caller must not see. reason names the policy mode and detail the first differing field. | Turn off GBRAIN_RUST_ACCESS_SELF_CHECK to read as before, and report the member, mode and field from detail. | host_admin | `gbrain doctor --json` | 1 | no |
+
 ### access_serves_key_dir_in_git
 
 <a id="access_serves_key_dir_in_git"></a>

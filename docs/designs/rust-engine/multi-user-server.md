@@ -168,6 +168,14 @@ the client as trusted as the CLI. A multi-user server cannot trust that field.
 - Every store entry point takes the `Scope`. Visibility filters run inside the index scans, never
   after top-k (the plan's "Privacy and visibility" rule and the prior-art RLS pitfalls).
 - "Not found" and "not yours" return the same error.
+- **Pre-conditions for non-owner sessions (ruled 2026-11-25).** Until all three hold, the server opens sessions only
+  for the brain owner's keys and refuses every other key with `permission_denied`:
+  1. The access self-check (`GBRAIN_RUST_ACCESS_SELF_CHECK`) runs in CI over the whole parity suite on the Rust arm
+     and passes.
+  2. No read path lets a caller tell a page or claim it cannot see from one that does not exist: the same answer,
+     the same error and no effect on ranking. Where a path is shared with PGLite and Postgres, the fix ships on all
+     three engines in one change, so byte parity holds.
+  3. Retrieval paths that no caller reaches today also apply the caller's visibility, or are removed.
 - Keyword statistics stay per source if a BM25 ranker ever ships, so one tenant's pages cannot move
   another tenant's scores (prior-art map, lock and queue table).
 
@@ -209,10 +217,10 @@ What changes for M3:
 | Write identity | `(principal, request_id)`, journal `sequence` | adds `WriteOrigin` (writer id, process incarnation, machine id) on every journal row and commit record |
 
 **Why no hybrid logical clock.** With one primary, the commit version is a total order and the
-server's clock stamps `created_at`. A hybrid logical clock only pays off with several primaries,
+server's clock stamps row times. A hybrid logical clock only pays off with several primaries,
 which this design does not plan. If M4 failover moves the primary, the new primary's first commit
-version is above the old one's last (the log carries it), and `created_at` takes the larger of server
-time and the last committed time, so time never runs backwards in the records.
+version is above the old one's last (the log carries it), and its clock floor is the last committed
+time, so no row time and no commit time falls below a time already committed (I-4.v2.1).
 
 **Hosts and fencing.** Each host's writer registers once (`register_consumer`) and gets an epoch.
 Claims and leases carry `(epoch, token)`. A host that comes back after a partition with an old epoch
@@ -337,6 +345,35 @@ pub struct WriteOrigin { pub host_id: String, pub incarnation: String, pub write
   `format_unknown`. A writable open of a log-stamped brain with the log off refuses (never writes unlogged).
 - Read API: `Store::read_commit_log(after: Option<CommitPosition>, max: usize) -> Result<LogPage>`, where `LogPage` is
   `{ records, oldest_retained, newest, snapshot_required: bool }`, all from one snapshot. Retention cap 64 MiB default.
+- **I-4.v2 (2026-11-25, replaces the v1 record layout).** Each commit record carries its commit time. Value layout:
+  `[version u8 = 2]` `[host_id]` `[incarnation]` `[writer_id]` (each a u32 big-endian length, then UTF-8 bytes)
+  `[commit_time i64 big-endian, signed, microseconds since the Unix epoch, UTC]` `[write_ids: u32 BE count, each
+  length-prefixed]` `[ops: u32 BE count, each: op u8, key length-prefixed, operand length-prefixed]`. Ops and operands
+  are unchanged from v1.
+  - `commit_time` strictly increases in commit-position order across the whole log, single-writer and optimistic
+    stores alike (each transaction in one group commit gets its own time): it is the larger of the store clock and the
+    previous commit's time plus 1 microsecond. The same commit writes the same value to the meta key `M\0ctime`, which
+    `Store::last_commit_time()` reads and which is the floor at open.
+  - `M\0ctime` is written only while the multi-user switch (I-0) is on, with the log on or off. With the switch off it
+    is never written, so records stay byte-identical to the base.
+  - Version 1 was never written outside test stores, so it is retired, not read: a v2 reader refuses a version-1
+    record, and any version other than 2, with `format_unknown` (an unknown version is not corruption, so not
+    `store_corrupt`). The log format number (`format::LOG_FORMAT_VERSION`) does not change, because no build that
+    writes v1 records has shipped. A build that only knows v1 refuses a v2 record the same way and never guesses
+    offsets.
+  - JSON form, wherever a record is decoded (wire, tests): adds `"commit_time_us": <integer>`; microseconds fit in a
+    JavaScript number until the year 2255. A wire frame that ships raw record bytes ships them unchanged.
+  - Order rules: fact order and every "what happened first" rule use the commit position `(sequence, index)`, never
+    `commit_time`. `commit_time` is the strictly rising time and sets the clock floor. A server that takes over as
+    primary starts its clock floor at the larger of its own `M\0ctime` and the last applied record's `commit_time`.
+  - **I-4.v2.1 (2026-11-25), row times.** A row's `created_at`, and every other time written into a row value, is the
+    transaction's clock time (as Postgres `now()`, the parity reference), taken while the transaction body runs and
+    never below the clock floor at open, including after a promotion. It is not the commit time: a row value is
+    encoded before the pipeline picks the commit order, so a later commit can carry an earlier `created_at`. Commit
+    order is the commit position; no multi-user reader, listing or check orders by `created_at` to mean commit order.
+    Tests: every row time written after open is at or above the floor taken at open, including on a store promoted
+    from the log; the test that expected `created_at` to follow commit order stays ignored with a reason that names
+    this rule.
 
 ### I-5. Leases
 
@@ -397,9 +434,12 @@ name), `commit_log` (when the log is on), `served` (the engine is a client of a 
 
 These answer questions raised while building the leases (I-5) and the switch (I-0) and are part of the contracts above.
 
-1. **Clock (I-5).** Times written by the store first follow one rule: never below the last committed time seen at
-   open, and never backwards on one server. Then the commit pipeline gains an `on_accept(commit_time)` hook, and lease
-   and claim times are stamped from it.
+1. **Clock (I-5).** Times written by the store follow one rule: never below the last committed time seen at open,
+   and never backwards on one server. Lease and claim times (`acquired_at`, `renewed_at`, `expires_at`) are the
+   writing transaction's clock time under I-4.v2.1: written inside the transaction from the store's own clock
+   (`Env::clock_micros`, the floored clock in multi-user mode), never below the floor, never from the commit
+   pipeline's `on_accept(commit_time)` hook and never from a caller's clock. The claim-epoch side records hold no
+   time. Fencing is decided by epoch and token through the transaction's read set, never by time order.
 2. **Switch (I-0).** The config half of the switch is the row `engine.rust.multiuser` in the brain's own config
    table, read by the store at open, so each brain resolves its own mode. The environment half is
    `GBRAIN_RUST_MULTIUSER=1`. Both are resolved in `src/core/rust-engine/multiuser-switch.ts`; the store's decision
