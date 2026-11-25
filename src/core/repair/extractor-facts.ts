@@ -65,7 +65,6 @@ import { compareWriterVersions, recentWriterVersions, writerVersionLabel } from 
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
-import { requireRawSql } from '../rust-engine/errors.ts';
 
 export const EXTRACTOR_FACTS_INTENT = 'managed_maintenance_restore_extractor_facts';
 export { EXTRACTOR_FACTS_SOURCE_PREFIX } from '../engine-sql/facts-repair.ts';
@@ -81,8 +80,6 @@ export type ExtractorFactClass = 'evidenced' | 'ambiguous' | 'excluded';
  * The exact expiry instant as text (UTC, microseconds). Compared as text in
  * SQL: a bound timestamp parameter can lose its microseconds on the way in.
  */
-const EXPIRY_TEXT = (column: string) => `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
-
 /** One candidate as the preview showed it; the apply rechecks every field. */
 export interface ExtractorFactCandidate {
   id: number;
@@ -217,16 +214,9 @@ function pageItem(page: ExtractorFactsPage, hash: string, index: number, last: b
 /** Pages of an approved set whose restore already finished (a committed request, or every fact active again). */
 async function finishedPages(engine: BrainEngine, hash: string, pages: ExtractorFactsPage[]): Promise<Set<string>> {
   if (!pages.length) return new Set();
-  // The resume check and the restore read and write facts through raw SQL, so a Rust brain stops its apply here by name,
-  // before its first write.
-  requireRawSql(engine, 'repair extractor-facts fact write');
-  const committed = await engine.executeRaw<{ source_id: string; slug: string }>(`SELECT DISTINCT source_id, slug FROM persistence_requests
-    WHERE state='committed' AND operation='submit_job' AND source_id=ANY($1::text[]) AND slug=ANY($2::text[])
-      AND (intent->>'preview_hash'=$3 OR request_id=ANY($4::uuid[]))`,
-  [[...new Set(pages.map(p => p.source_id))], [...new Set(pages.map(p => p.slug))], hash, pages.map(p => p.request_id)]);
-  const active = await engine.executeRaw<{ id: number | string }>(
-    'SELECT id FROM facts WHERE id=ANY($1::bigint[]) AND expired_at IS NULL AND row_num IS NOT NULL', [pages.flatMap(p => p.facts.map(f => f.id))]);
-  const restored = new Set(active.map(row => Number(row.id)));
+  const committed = await engine.listCommittedRestorePages([...new Set(pages.map(p => p.source_id))], [...new Set(pages.map(p => p.slug))], hash,
+    pages.map(p => p.request_id));
+  const restored = new Set(await engine.listActivePositionedFactIds(pages.flatMap(p => p.facts.map(f => f.id))));
   const done = new Set(committed.map(row => `${row.source_id}\u0000${row.slug}`));
   for (const page of pages) if (page.facts.every(f => restored.has(f.id))) done.add(`${page.source_id}\u0000${page.slug}`);
   return done;
@@ -340,13 +330,11 @@ async function restoreManaged(engine: BrainEngine, config: Parameters<typeof wai
  */
 async function restorePageFacts(tx: BrainEngine, page: ExtractorFactsPage, managed: boolean): Promise<RestoreResult> {
   const ids = page.facts.map(f => f.id);
-  await tx.executeRaw('SELECT id FROM facts WHERE source_id=$1 AND id=ANY($2::bigint[]) FOR UPDATE', [page.source_id, ids]);
+  await tx.lockFactRows(page.source_id, ids);
   const live = new Map((await classifyExtractorFacts(tx, [page.source_id], { managed, slug: page.slug })).map(f => [f.id, f]));
-  const [live_page] = await tx.executeRaw<{ id: number | string; compiled_truth: string | null; max_row: number | string | null }>(
-    `SELECT p.id, p.compiled_truth, (SELECT MAX(row_num) FROM facts WHERE source_id=$1 AND source_markdown_slug=$2) AS max_row
-       FROM pages p WHERE p.source_id=$1 AND p.slug=$2 AND p.deleted_at IS NULL`, [page.source_id, page.slug]);
+  const live_page = await tx.readFactRestorePage(page.source_id, page.slug);
   // A page deleted and recreated at the same slug since the preview is another page.
-  const snapshot = live_page && Number(live_page.id) === page.page_id ? live_page : undefined;
+  const snapshot = live_page && live_page.id === page.page_id ? live_page : undefined;
   const fenceRows = parseFactsFence(snapshot?.compiled_truth ?? '').facts.map(f => f.rowNum);
   let next = Math.max(Number(snapshot?.max_row ?? 0), ...fenceRows, 0) + 1;
   const result: RestoreResult = { restored: [], changed: [] };
@@ -354,10 +342,8 @@ async function restorePageFacts(tx: BrainEngine, page: ExtractorFactsPage, manag
     const current = live.get(approved.id);
     const same = !!snapshot && !!current && (['class', 'reason', 'expired_at', 'receipt', 'receipt_consumer', 'fact_hash'] as const)
       .every(field => current[field] === approved[field]);
-    const updated = same ? await tx.executeRaw(`UPDATE facts SET expired_at=NULL, row_num=$3
-      WHERE source_id=$1 AND id=$2 AND row_num IS NULL AND superseded_by IS NULL AND ${EXPIRY_TEXT('expired_at')}=$4 RETURNING id`,
-    [page.source_id, approved.id, next, approved.expired_at]) : [];
-    if (updated.length) { result.restored.push(approved.id); next++; } else result.changed.push(approved.id);
+    const updated = same && await tx.restoreExtractorFact(page.source_id, approved.id, next, approved.expired_at!);
+    if (updated) { result.restored.push(approved.id); next++; } else result.changed.push(approved.id);
   }
   return result;
 }

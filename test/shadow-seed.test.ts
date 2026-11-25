@@ -108,6 +108,20 @@ describe('shadow seed from PGLite', () => {
     expect(record.losses.not_copied.find(n => n.table === 'minion_jobs')?.rows).toBe(2);
     expect(record.segmented_pages).toBe(0);
   });
+
+  // Every logged member read appends to access_read_log, so a shadow copy of it would differ from the primary by design:
+  // the seed leaves it behind as telemetry, and its rows are never a gap that blocks a swap.
+  withAddon('access_read_log rows are a not-copied loss, never an unseeded gap', async () => {
+    await fill();
+    await primary.insertAccessReadLogRows([
+      { created_at: '2026-01-01T00:00:00.000Z', member: 'alice-example', audience: null, operation: 'search', transport: 'http', result_code: 'ok', page_ids: [1] },
+      { created_at: '2026-01-02T00:00:00.000Z', member: null, audience: ['member:bob-example'], operation: 'query', transport: 'stdio', result_code: 'ok', page_ids: [] },
+    ]);
+    const { record } = await seedHere(tempDir());
+    const loss = record.losses.not_copied.find(n => n.table === 'access_read_log');
+    expect({ gap: record.unseeded_gap_rows.access_read_log ?? 'none', loss: loss ? { table: loss.table, kind: loss.kind, rows: loss.rows } : 'none' } as Record<string, unknown>)
+      .toEqual({ gap: 'none', loss: { table: 'access_read_log', kind: 'telemetry', rows: 2 } });
+  });
 });
 
 /** A store that records what it was sent, for tests that need no addon. */

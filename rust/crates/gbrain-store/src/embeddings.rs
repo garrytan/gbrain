@@ -567,6 +567,42 @@ impl PageCtx {
 }
 
 /// Every page (soft-deleted included) in page id order, with its chunks and signature.
+/// One applying hold: the page context, the ledger state, its reason and its update time in microseconds.
+type ApplyingHold = (PageCtx, String, Option<String>, i64);
+
+/// The budget holds the large-page budget reads apply to: a ledger row not `open` on a live page without
+/// `embed_skip`, whose body is over the inline limit (`body_bytes` of a segmented page, else the inline text's bytes) or
+/// whose reason is an archive or call import hold. Each with its page context, state, reason and update time.
+fn applying_holds(read: &dyn KvRead) -> Result<Vec<ApplyingHold>> {
+    const ALWAYS_APPLIES: [&str; 3] = ["archive_backfill", "archive_open_day", "call_import"];
+    let mut out = Vec::new();
+    for ctx in page_contexts(read)? {
+        if !ctx.live() || ctx.embed_skip() {
+            continue;
+        }
+        let Some((state, reason, updated_at)) =
+            crate::page_embedding_budget::read_state_reason_updated(read, ctx.page.id)?
+        else {
+            continue;
+        };
+        if state == "open" {
+            continue;
+        }
+        let bytes = match crate::page_body::segmented_reference(read, ctx.page.id)? {
+            Some((_, body_bytes)) => body_bytes,
+            None => i64::try_from(ctx.page.compiled_truth.len() + ctx.page.timeline.len()).ok(),
+        };
+        if bytes.is_some_and(|b| b > 1_048_576)
+            || reason
+                .as_deref()
+                .is_some_and(|r| ALWAYS_APPLIES.contains(&r))
+        {
+            out.push((ctx, state, reason, updated_at));
+        }
+    }
+    Ok(out)
+}
+
 fn page_contexts(read: &dyn KvRead) -> Result<Vec<PageCtx>> {
     let mut pages = all_pages(read)?;
     pages.sort_by_key(|p| p.id);
@@ -789,6 +825,73 @@ impl Store {
             }
         }
         Ok(out)
+    }
+
+    /// `listBudgetLimitedRows({ column, sourceId?, signature })`: the held and capped pages over the inline size
+    /// limit (or held for an archive or call import) that still have chunks waiting, grouped by source, state and
+    /// reason (`awaiting_approval` for none), each group's page, chunk and character counts, by byte order of source,
+    /// state and reason as the SQL's `COLLATE "C"` keys sort. A chunk waits when it has no vector, when an inline page's
+    /// chunk was never embedded, or when `signature` is given and the page is stamped with another one; only the live
+    /// body's chunks count (`chunkGenerationFilter`). Live pages without `embed_skip` only.
+    pub fn list_budget_limited_rows(
+        &self,
+        source_id: Option<&str>,
+        signature: Option<&str>,
+    ) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let mut groups: BTreeMap<(String, String, String), (i64, i64, i64)> = BTreeMap::new();
+        for (ctx, state, reason, _) in applying_holds(&*read)? {
+            if source_id.is_some_and(|id| id != ctx.page.source_id) {
+                continue;
+            }
+            let segmented = crate::chunks::segmented(&ctx.page);
+            let resigned = signature
+                .is_some_and(|target| ctx.signature.as_deref().is_some_and(|sig| sig != target));
+            let (mut chunks, mut chars) = (0i64, 0i64);
+            for chunk in ctx.live_body() {
+                if !chunk.embed.has_vector()
+                    || (!segmented && chunk.embed.embedded_at_us.is_none())
+                    || resigned
+                {
+                    chunks += 1;
+                    chars += chunk.chunk_text.chars().count() as i64;
+                }
+            }
+            if chunks == 0 {
+                continue;
+            }
+            let entry = groups
+                .entry((
+                    ctx.page.source_id.clone(),
+                    state,
+                    reason.unwrap_or_else(|| "awaiting_approval".into()),
+                ))
+                .or_default();
+            entry.0 += 1;
+            entry.1 += chunks;
+            entry.2 += chars;
+        }
+        Ok(groups
+            .into_iter()
+            .map(|((source_id, state, reason), (pages, chunks, chars))| {
+                json!({ "source_id": source_id, "state": state, "reason": reason, "pages": pages, "chunks": chunks, "chars": chars })
+            })
+            .collect())
+    }
+
+    /// `readBudgetHoldAge()`: of the holds `listBudgetLimitedRows` reads (chunks or not), how many were last updated
+    /// more than a day ago, and the oldest update time (null when there is none).
+    pub fn read_budget_hold_age(&self) -> Result<Value> {
+        let read = self.read()?;
+        let cutoff = self.env.now_micros() - 86_400_000_000;
+        let (mut stale, mut oldest) = (0i64, None::<i64>);
+        for (_, _, _, updated_at) in applying_holds(&*read)? {
+            if updated_at < cutoff {
+                stale += 1;
+            }
+            oldest = Some(oldest.map_or(updated_at, |o| o.min(updated_at)));
+        }
+        Ok(json!({ "stale": stale, "oldest": oldest.map(crate::env::iso) }))
     }
 
     /// `countStaleChunks(opts?)`: chunks the embed job would select (no vector; with a signature,

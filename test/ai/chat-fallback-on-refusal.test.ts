@@ -1,11 +1,12 @@
 /**
  * `chat_fallback_on_refusal` and the first-hop notice (fix wave lane B3).
  *
- * Protects: with `chat_fallback_on_refusal=false`, a refused request (a
- * structural refusal stop reason or a provider content block thrown as an
- * error) is never sent to the next `chat_fallback_chain` entry, while an
- * outage still falls back; the key reaches chat() through the real loader on
- * every plane with env > config.json > DB precedence; the first hop of a
+ * Protects: unless `chat_fallback_on_refusal` is explicitly true (it defaults
+ * to false), a refused request (a structural refusal stop reason or a provider
+ * content block thrown as an error) is never sent to the next
+ * `chat_fallback_chain` entry, while an outage still falls back; an explicit
+ * true on any plane still sends a refusal on; the key reaches chat() through
+ * the real loader on every plane with env > config.json > DB precedence; the first hop of a
  * process queues exactly one `chat_fallback_hop` safety notice naming the
  * failed and the next model.
  * Fails when: the key is dropped at any hop (config.ts, the DB merge key list,
@@ -102,9 +103,34 @@ describe('chatWithFallback onRefusal', () => {
     expect(out.model).toBe(FALLBACK);
   });
 
-  test('the default (true) keeps falling back on refusals', async () => {
+  test('the default (unset) returns a refusal instead of sending it on', async () => {
     const seen: string[] = [];
-    await chatWithFallback({ messages: [] }, PRIMARY, [FALLBACK], async (o) => { seen.push(o.model!); return result(o.model!, o.model === PRIMARY ? 'refusal' : 'end'); });
+    const out = await chatWithFallback({ messages: [] }, PRIMARY, [FALLBACK], async (o) => { seen.push(o.model!); return result(o.model!, o.model === PRIMARY ? 'refusal' : 'end'); });
+    expect(seen).toEqual([PRIMARY]);
+    expect(out.stopReason).toBe('refusal');
+  });
+
+  test('the default (unset) throws a provider content block instead of sending it on', async () => {
+    const seen: string[] = [];
+    await expect(chatWithFallback({ messages: [] }, PRIMARY, [FALLBACK], async (o) => { seen.push(o.model!); throw contentBlock(); }))
+      .rejects.toThrow('blocked');
+    expect(seen).toEqual([PRIMARY]);
+  });
+
+  test('the default (unset) still falls back on an outage', async () => {
+    const seen: string[] = [];
+    const out = await chatWithFallback({ messages: [] }, PRIMARY, [FALLBACK], async (o) => {
+      seen.push(o.model!);
+      if (o.model === PRIMARY) throw Object.assign(new Error('upstream 503'), { status: 503 });
+      return result(o.model!, 'end');
+    });
+    expect(seen).toEqual([PRIMARY, FALLBACK]);
+    expect(out.model).toBe(FALLBACK);
+  });
+
+  test('true keeps falling back on refusals', async () => {
+    const seen: string[] = [];
+    await chatWithFallback({ messages: [] }, PRIMARY, [FALLBACK], async (o) => { seen.push(o.model!); return result(o.model!, o.model === PRIMARY ? 'refusal' : 'end'); }, { onRefusal: true });
     expect(seen).toEqual([PRIMARY, FALLBACK]);
   });
 });
@@ -126,7 +152,10 @@ describe('chat_fallback_on_refusal through the real loader', () => {
 
   interface PlaneCase { name: string; env?: string; file?: boolean; db?: string; fallsBack: boolean }
   const cases: PlaneCase[] = [
-    { name: 'unset (default true)', fallsBack: true },
+    { name: 'unset (default false)', fallsBack: false },
+    { name: 'DB true', db: 'true', fallsBack: true },
+    { name: 'config.json true', file: true, fallsBack: true },
+    { name: 'GBRAIN_CHAT_FALLBACK_ON_REFUSAL=true', env: 'true', fallsBack: true },
     { name: 'DB false', db: 'false', fallsBack: false },
     { name: 'config.json false', file: false, fallsBack: false },
     { name: 'GBRAIN_CHAT_FALLBACK_ON_REFUSAL=false', env: 'false', fallsBack: false },
@@ -159,6 +188,20 @@ describe('chat_fallback_on_refusal through the real loader', () => {
       });
     });
   }
+
+  test('unset: an outage still falls back', async () => {
+    await engine.unsetConfig('chat_fallback_on_refusal');
+    _resetDbPlaneMergeMemoForTests();
+    await withEnv({
+      GBRAIN_HOME: home(), GBRAIN_CHAT_FALLBACK_ON_REFUSAL: undefined, GBRAIN_CHAT_FALLBACK_CHAIN: undefined,
+      GBRAIN_CHAT_MODEL: undefined, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined, OPENAI_API_KEY: 'fake-openai',
+    }, async () => {
+      configureGateway(buildGatewayConfig((await loadConfigWithEngine(engine, loadConfig()))!));
+      installTransport({ 'claude-sonnet-4-6': 'outage' });
+      expect((await ask()).model).toBe(FALLBACK);
+      expect(attempts).toEqual(['claude-sonnet-4-6', 'gpt-5.6-luna']);
+    });
+  });
 });
 
 describe('first-hop notice', () => {
@@ -180,12 +223,13 @@ describe('first-hop notice', () => {
   });
 
   test('a refusal hop says refused content went to the next provider', async () => {
-    configureGateway({ chat_model: PRIMARY, chat_fallback_chain: [FALLBACK], env: { OPENAI_API_KEY: 'fake-openai' } });
+    configureGateway({ chat_model: PRIMARY, chat_fallback_chain: [FALLBACK], chat_fallback_on_refusal: true, env: { OPENAI_API_KEY: 'fake-openai' } });
     installTransport({ 'claude-sonnet-4-6': 'refusal' });
     await ask();
     const [notice] = takeChatFallbackHopNotices();
     expect(notice!.why).toContain('refused it');
-    expect(notice!.why).toContain('chat_fallback_on_refusal false');
+    expect(notice!.why).toContain('chat_fallback_on_refusal is set to true');
+    expect(notice!.why).toContain('gbrain doctor --only chat_fallback_chain');
   });
 
   test('no hop, no notice', async () => {

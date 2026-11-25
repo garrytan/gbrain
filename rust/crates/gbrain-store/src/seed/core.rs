@@ -684,6 +684,7 @@ static FACTS: Relation = Relation {
         ("attributed_to", Kept),
         ("trust_tier", Kept),
         ("write_origin", Kept),
+        ("source_window", Kept),
         ("write_request_id", Kept),
         ("write_principal_kind", Kept),
         ("write_principal_id", Kept),
@@ -739,6 +740,7 @@ fn import_fact(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Result<Outcom
         attributed_to: row.text("attributed_to"),
         trust_tier: row.text_or("trust_tier", "unknown"),
         write_origin: row.json("write_origin")?,
+        source_window: row.json("source_window")?,
         receipt: row.write_receipt()?,
     };
     crate::facts::write_fact(tx, &seed_trust(), None, &record)?;

@@ -74,6 +74,8 @@ describe("guard registration ⇒ execution coverage", () => {
       "runs directly as a test.yml verify-job step (not via CHECKS — avoids a package.json edit)",
     "check-bash32.sh":
       "needs Docker or a native bash 3.2: runs as a test.yml verify-job step (bash:3.2 image) and in macos-validation.yml (/bin/bash), never in verify",
+    "check-bytecode-parity.ts":
+      "builds two release binaries (about 40 s): runs directly as a test.yml verify-job step, not via CHECKS",
     "check-test-discriminates.sh":
       "manual per-PR discrimination helper (#3665): reverts named source files and re-runs bun test to prove the test fails without the fix — cannot know which hunk is 'the fix' on an arbitrary diff, so deliberately not in verify/CI (manifest row says the same)",
   };

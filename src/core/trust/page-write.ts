@@ -309,9 +309,6 @@ export async function recordAgentPageLowering(tx: BrainEngine, row: Pick<WriteRe
  * queues the page's projection rebuild (re-chunk) in the same transaction.
  */
 export async function queueTierProjection(tx: BrainEngine, table: 'facts' | 'takes' | 'pages', id: number): Promise<void> {
-  const sql = table === 'facts' ? 'SELECT source_id, source_markdown_slug AS slug FROM facts WHERE id = $1 AND source_markdown_slug IS NOT NULL'
-    : table === 'takes' ? 'SELECT p.source_id, p.slug FROM takes t JOIN pages p ON p.id = t.page_id WHERE t.id = $1'
-      : 'SELECT source_id, slug FROM pages WHERE id = $1';
-  const [page] = await tx.executeRaw<{ source_id: string; slug: string }>(sql, [id]);
+  const page = await tx.readTierProjectionPage(table, id);
   if (page) await queuePageProjection(tx, page.source_id, page.slug, 'trust_tier_changed');
 }

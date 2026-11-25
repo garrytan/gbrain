@@ -91,11 +91,55 @@ export const listDriftVersionRows: Member<'listDriftVersionRows'> = (brain, _sch
   pageIds.length === 0 ? Promise.resolve([]) : storeCall({ member: 'listDriftVersionRows' }, async () =>
     (await brain.listDriftVersionRows({ pageIds: [...pageIds] })) as never);
 
-// Decide, proposals, chronicle, feedback, belief and volunteer state: none is written on this engine.
-export const readChronicleLedgerStats: Member<'readChronicleLedgerStats'> = async () => AVAILABLE_CHRONICLE_LEDGER_STATS;
+// Decide, proposals and belief state: none is written on this engine. The chronicle ledger, retrieval feedback and the
+// volunteer log are read from the store below.
+/**
+ * The automatic ledger rows' rollup, from the store's ledger records (chronicle_ledger.rs), shaped as
+ * engine-sql/doctor-acc.ts readChronicleLedgerStats shapes its four statements: reasons tallied in their row order
+ * (count, then byte of reason), the five busiest principals by calls, then byte of principal.
+ */
+export const readChronicleLedgerStats: Member<'readChronicleLedgerStats'> = async (brain) => {
+  type Sections = {
+    counts: { pending: number; extracted: number; failed: number; skipped: number; known_usd: number | null; unpriced: number; incomplete: number };
+    reasons: Array<{ state: string; reason: string; n: number }>;
+    calls: number;
+    principals: Array<{ principal: string; calls: number }>;
+  };
+  const { counts, reasons, calls, principals } = await storeCall({ member: 'readChronicleLedgerStats' }, () => brain.readChronicleLedger()) as Sections;
+  const tally = (rows: Sections['reasons']) => rows.reduce<Record<string, number>>((acc, r) => {
+    acc[r.reason] = (acc[r.reason] ?? 0) + Number(r.n);
+    return acc;
+  }, {});
+  return {
+    ...AVAILABLE_CHRONICLE_LEDGER_STATS,
+    pending: Number(counts.pending),
+    autoCalls24h: Number(calls),
+    principals24h: principals.map(p => ({ principal: p.principal, calls: Number(p.calls) })),
+    last7d: { extracted: Number(counts.extracted), failed: Number(counts.failed), skipped: Number(counts.skipped),
+      reasons: tally(reasons), failedReasons: tally(reasons.filter(r => r.state === 'failed')) },
+    spend7d: { knownUsd: Number(counts.known_usd ?? 0), unpricedCalls: Number(counts.unpriced), incompleteRecords: Number(counts.incomplete) },
+  };
+};
 export const readChronicleDuplicateEvents: Member<'readChronicleDuplicateEvents'> = async () => ({ pages: 0, surplus: 0 });
-export const readFeedbackStatus: Member<'readFeedbackStatus'> = async () => ({
-  events: 0, ratings_explicit: 0, ratings_cited: 0, weights_total: 0, weights_off_neutral: 0,
-  last_rating_at: null, top_client_share_7d: null, lowest: [], highest: [],
-});
-export const listVolunteerChannels: Member<'listVolunteerChannels'> = async () => [];
+/** The feedback counts and the ten lowest and highest page weights, from the store's feedback records (retrieval_feedback.rs). */
+export const readFeedbackStatus: Member<'readFeedbackStatus'> = async (brain) => {
+  type Status = {
+    counts: { events: number; ratings_explicit: number; ratings_cited: number; weights_total: number; weights_off_neutral: number; last_rating_at: string | null; top_client_share_7d: number | null };
+    lowest: Array<{ source_id: string; slug: string; weight: number; low_ratings: number }>;
+    highest: Array<{ source_id: string; slug: string; weight: number }>;
+  };
+  const { counts, lowest, highest } = await storeCall({ member: 'readFeedbackStatus' }, () => brain.readFeedbackStatus()) as Status;
+  return {
+    events: Number(counts.events), ratings_explicit: Number(counts.ratings_explicit), ratings_cited: Number(counts.ratings_cited),
+    weights_total: Number(counts.weights_total), weights_off_neutral: Number(counts.weights_off_neutral),
+    last_rating_at: counts.last_rating_at ? new Date(counts.last_rating_at) : null,
+    top_client_share_7d: counts.top_client_share_7d == null ? null : Number(counts.top_client_share_7d),
+    lowest: lowest.map(r => ({ source_id: r.source_id, slug: r.slug, weight: Number(r.weight), low_ratings: Number(r.low_ratings) })),
+    highest: highest.map(r => ({ source_id: r.source_id, slug: r.slug, weight: Number(r.weight) })),
+  };
+};
+/** The volunteered-page log per channel over the last 7 days, from the store's event records (volunteer_events.rs). */
+export const listVolunteerChannels: Member<'listVolunteerChannels'> = async (brain, sourceIds) => {
+  const rows = await storeCall({ member: 'listVolunteerChannels' }, () => brain.listVolunteerChannels(sourceIds ? [...sourceIds] : null)) as Array<{ channel: string; n: number; last_fired: string | null }>;
+  return rows.map(r => ({ channel: r.channel, n: r.n, last_fired: r.last_fired === null ? null : new Date(r.last_fired) }));
+};

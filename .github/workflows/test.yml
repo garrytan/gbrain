@@ -562,6 +562,13 @@ jobs:
       # default regardless of per-test third-arg timeouts. Runs directly
       # (not via verify's CHECKS array) to avoid a package.json edit.
       - run: bash scripts/check-bun-test-timeout.sh
+      # The release binary is compiled with --bytecode --format=esm (release.yml). This builds that
+      # compile line with and without the two flags and requires the same stdout, stderr and exit
+      # codes from a fixed command set on a temp PGLite brain; only clock, ids and timings are
+      # masked (about 40 s).
+      - name: Bytecode release build prints the same output as a plain build
+        timeout-minutes: 5
+        run: bun scripts/check-bytecode-parity.ts
       # #5810: every tracked *.sh must parse under bash 3.2 (macOS /bin/bash).
       # The real parser runs in the digest-pinned bash:3.2 image; REQUIRE
       # turns a missing Docker into a failure instead of a skip, and makes the

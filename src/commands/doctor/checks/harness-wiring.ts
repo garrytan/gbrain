@@ -626,10 +626,11 @@ export async function harnessWiringCheck(opts: { smoke: boolean; skillResolver?:
 /**
  * Information only: a stdio registration pinned to `--surface full` keeps
  * working and is never rewritten; new installs register starter (the smaller
- * daily-driver tool list). Status and fix are unchanged.
+ * daily-driver tool list), except Codex, whose default is full, so Codex
+ * entries get no note. Status and fix are unchanged.
  */
 export function withSurfaceNote(check: Check, regs: HarnessRegistration[]): Check {
-  const full = regs.filter((r) => r.kind === 'stdio' && !r.env?.GBRAIN_SURFACE && r.args?.[r.args.indexOf('--surface') + 1] === 'full' && r.args.includes('--surface'));
+  const full = regs.filter((r) => r.kind === 'stdio' && r.harness !== 'codex' && !r.env?.GBRAIN_SURFACE && r.args?.[r.args.indexOf('--surface') + 1] === 'full' && r.args.includes('--surface'));
   if (full.length === 0) return check;
   return { ...check, details: { ...(check.details ?? {}), surface_note: `${full.map((r) => HARNESS_LABEL[r.harness]).join(', ')} registered with --surface full, which stays supported. New installs register starter listing the memory verbs (request_tools reaches the rest).` } };
 }

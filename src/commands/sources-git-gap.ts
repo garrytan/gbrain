@@ -19,19 +19,21 @@ import { OperationError } from '../core/ops/contract.ts';
 import { cliRenderContext, toAgentError } from '../core/agent-output.ts';
 import { readExportPages, readExportWithdrawals, type ExportSnapshot, type ExportWithdrawal } from '../core/export-snapshot.ts';
 import { RestoreTargetError, restoreFilePath } from '../core/restore-target.ts';
-import { privacyPartSql, readHonorAliases } from '../core/search/private-visibility.ts';
+import { readHonorAliases } from '../core/search/private-visibility.ts';
 import { resolveSourceId } from '../core/source-resolver.ts';
 import { sourceMirrorReadOnly } from '../core/persistence/mirror-read-only.ts';
 import { isSourceDbOnlySlug } from '../core/persistence/source-storage.ts';
 import { GIT_HOLD_OP, readSyncImportProvenances } from '../core/persistence/sync-holds.ts';
 import { DERIVED_LINK_SOURCES } from '../core/persistence/twin-merge.ts';
 import { scannerSlugRootMode, scannerSourcePath } from '../core/write-through.ts';
+import { GIT_GAP_BATCH } from '../core/engine-sql/git-gap-census.ts';
 import { compareInlineExportFile, compareSegmentedExportBlob, DECLARED_CLASSES, declaredDatabaseOnly, DIRECTION_EVIDENCE, ignoredPaths, readBlobs, readDirectionEvidence, readHeadTree, worktreeBlobOid,
   type DeclaredClass, type DirectionEvidence, type Evidence, type ExportFileComparison, type HeadTree, type TreeBlob, type UnparseableReason } from '../core/persistence/git-gap.ts';
 
 const USAGE = 'Usage: gbrain sources git-gap <source-id> [--sample <n>] [--json]';
 export const GIT_GAP_DOCS = 'docs/designs/GIT_CANONICAL_MEMORY.md#the-git-gap-census';
-const BATCH = 256;
+// GIT_GAP_BATCH in engine-sql/git-gap-census.ts: the page batch reads at most this many.
+const BATCH = GIT_GAP_BATCH;
 
 export const PAGE_STATES = ['equal', 'database_ahead', 'git_ahead', 'declared_database_only', 'undeclared_database_only', 'worktree_only', 'unparseable', 'unsafe_path'] as const;
 export type PageState = typeof PAGE_STATES[number];
@@ -150,7 +152,7 @@ const refuse = (message: string, suggestion: string) => new OperationError('stor
  */
 export async function censusGitGap(engine: BrainEngine, sourceId: string, opts: { sample: number; deadlineAt?: number; collect?: GitGapCollect; evidence?: boolean; newest?: number }): Promise<GitGapCensus> {
   await resolveSourceId(engine, sourceId, undefined, { skipLocalSignals: true });
-  const [source] = await engine.executeRaw<{ local_path: string | null; incarnation: string }>('SELECT local_path, incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]);
+  const source = await engine.readGitGapSourceRow(sourceId);
   const root = source?.local_path && existsSync(source.local_path) ? source.local_path : null;
   const mirror = await sourceMirrorReadOnly(engine, sourceId);
   if (root) isSourceDbOnlySlug(root, '', 'refuse');
@@ -164,21 +166,16 @@ export async function censusGitGap(engine: BrainEngine, sourceId: string, opts: 
     checkout = { root, head, mode: await scannerSlugRootMode(engine, sourceId, root), scope };
   }
   const census = emptyCensus(sourceId, root, checkout?.head ?? null);
-  const [live] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE source_id=$1 AND deleted_at IS NULL', [sourceId]);
-  census.live_pages = Number(live?.n ?? 0);
+  census.live_pages = await engine.countGitGapLivePages(sourceId);
   const pending: Unrecorded[] = [];
   // G7a: a source with no checkout is a database-only source, one declared class for all its pages (outside strict mode).
   const policy = { mirror, databaseOnlySource: root === null, dbOnly: (slug: string) => root !== null && isSourceDbOnlySlug(root, slug, 'refuse'), ignored: new Set<string>() };
   let newest: string[] | null = null;
   if (opts.newest !== undefined) {
     const { rows, unread } = await engine.transaction(async tx => {
-      await tx.executeRaw('SET TRANSACTION READ ONLY');
-      const rows = await tx.executeRaw<{ id: string; updated_at: string }>(`SELECT id::text, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS updated_at
-        FROM pages WHERE source_id=$1 AND deleted_at IS NULL ORDER BY updated_at DESC, id DESC LIMIT $2`, [sourceId, opts.newest]);
-      const [unread] = await tx.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM facts f
-        JOIN pages p ON p.source_id=f.source_id AND p.slug=f.source_markdown_slug AND p.deleted_at IS NULL
-        WHERE f.source_id=$1 AND f.row_num IS NOT NULL AND NOT (p.id = ANY($2::bigint[]))`, [sourceId, rows.map(row => row.id)]);
-      return { rows, unread: Number(unread?.n ?? 0) };
+      await tx.markTransactionReadOnly();
+      const rows = await tx.listGitGapNewestPages(sourceId, opts.newest!);
+      return { rows, unread: await tx.countGitGapUnreadFacts(sourceId, rows.map(row => row.id)) };
     });
     newest = rows.map(row => row.id);
     Object.assign(census, { newest: opts.newest, newest_since: rows.at(-1)?.updated_at ?? null, facts_on_unread_pages: unread });
@@ -186,11 +183,8 @@ export async function censusGitGap(engine: BrainEngine, sourceId: string, opts: 
   for (let cursor = '0', offset = 0; ;) {
     if (opts.deadlineAt !== undefined && Date.now() >= opts.deadlineAt) { census.complete = false; break; }
     const done = await engine.transaction(async tx => {
-      await tx.executeRaw('SET TRANSACTION READ ONLY');
-      const batch = await tx.executeRaw<Key>(`SELECT id::text, slug, source_id, source_path, octet_length(source_path) AS source_path_bytes, source_uri, withheld_source_path, type, frontmatter,
-          database_only_reason, body_storage='segmented' AS segmented, knowledge_revision::text AS revision, NOT ${privacyPartSql('pages')} AS lineage_private
-        FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND ${newest ? 'pages.id = ANY($2::bigint[])' : 'pages.id > $2::bigint'} ORDER BY pages.id LIMIT ${BATCH}`,
-        [sourceId, newest ? newest.slice(offset, offset + BATCH) : cursor]);
+      await tx.markTransactionReadOnly();
+      const batch = await tx.readGitGapPageBatch(sourceId, newest ? { ids: newest.slice(offset, offset + BATCH) } : { after: cursor }) as Key[];
       if (batch.length) {
         await censusBatch(tx, batch, census, { checkout, policy, incarnation: source!.incarnation, sample: opts.sample, collect: opts.collect, pending: opts.evidence ? pending : undefined });
         cursor = batch[batch.length - 1]!.id;
@@ -202,7 +196,7 @@ export async function censusGitGap(engine: BrainEngine, sourceId: string, opts: 
   }
   if (pending.length) await settleUnrecorded(engine, census, checkout!, pending, { sample: opts.sample, collect: opts.collect, read: census.complete });
   await engine.transaction(async tx => {
-    await tx.executeRaw('SET TRANSACTION READ ONLY');
+    await tx.markTransactionReadOnly();
     await countSourceRows(tx, census);
   });
   return census;
@@ -366,11 +360,8 @@ async function countRowsWithoutFile(tx: BrainEngine, sourceId: string, noFile: {
   for (const side of ['undeclared', 'declared'] as const) {
     const keys = noFile[side];
     if (!keys.length) continue;
-    const [facts] = await tx.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM facts WHERE source_id=$1 AND row_num IS NOT NULL AND source_markdown_slug = ANY($2::text[])`,
-      [sourceId, keys.map(key => key.slug)]);
-    const [timeline] = await tx.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM timeline_entries WHERE page_id = ANY($1::int[])', [keys.map(key => Number(key.id))]);
-    rows.facts_on_pages_without_file[side] += Number(facts?.n ?? 0);
-    rows.timeline_on_pages_without_file[side] += Number(timeline?.n ?? 0);
+    rows.facts_on_pages_without_file[side] += await tx.countGitGapFactsOnPages(sourceId, keys.map(key => key.slug));
+    rows.timeline_on_pages_without_file[side] += await tx.countGitGapTimelineOnPages(keys.map(key => Number(key.id)));
   }
 }
 
@@ -382,22 +373,12 @@ async function countRowsWithoutFile(tx: BrainEngine, sourceId: string, noFile: {
 async function countSourceRows(tx: BrainEngine, census: GitGapCensus): Promise<void> {
   const sourceId = census.source_id;
   const rows = census.rows_without_git_home;
-  const [unfenced] = await tx.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM facts WHERE source_id=$1 AND row_num IS NULL AND expired_at IS NULL', [sourceId]);
-  rows.facts_unfenced = Number(unfenced?.n ?? 0);
-  const [missing] = await tx.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM facts f WHERE f.source_id=$1 AND f.row_num IS NOT NULL
-    AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id AND p.slug=f.source_markdown_slug AND p.deleted_at IS NULL)`, [sourceId]);
-  rows.facts_fence_page_missing = Number(missing?.n ?? 0);
-  const links = await tx.executeRaw<{ link_source: string; n: number }>(`SELECT COALESCE(l.link_source, '(none)') COLLATE "C" AS link_source, count(*)::int AS n
-    FROM links l JOIN pages p ON p.id=l.from_page_id WHERE p.source_id=$1 AND p.deleted_at IS NULL AND (l.link_source IS NULL OR NOT (l.link_source = ANY($2::text[])))
-    GROUP BY 1 ORDER BY 1`, [sourceId, DERIVED_LINK_SOURCES]);
+  // engine-sql/git-gap-census.ts readGitGapSourceRows: the five statements, in this order.
+  const { unfenced, fencePageMissing, links, holds, parked } = await tx.readGitGapSourceRows(sourceId, DERIVED_LINK_SOURCES, GIT_HOLD_OP);
+  rows.facts_unfenced = unfenced;
+  rows.facts_fence_page_missing = fencePageMissing;
   rows.links = { total: links.reduce((sum, row) => sum + Number(row.n), 0), by_link_source: Object.fromEntries(links.map(row => [row.link_source, Number(row.n)])) };
-  const holds = await tx.executeRaw<{ code: string; n: number }>(`SELECT h.completed_keys->0->>'code' COLLATE "C" AS code, count(*)::int AS n FROM op_checkpoints h
-    JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
-    WHERE h.op=$1 AND s.id=$2 GROUP BY 1 ORDER BY 1`, [GIT_HOLD_OP, sourceId]);
   census.holds = Object.fromEntries(holds.map(row => [row.code ?? 'unknown', Number(row.n)]));
-  const parked = await tx.executeRaw<{ kind: string; code: string | null; targets: number }>(`SELECT e.kind COLLATE "C" AS kind, p->>'error_code' COLLATE "C" AS code, count(*)::int AS targets
-    FROM persistence_effects e CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(e.data->'parked')='array' THEN e.data->'parked' ELSE '[]'::jsonb END) p
-    WHERE e.source_id=$1 GROUP BY 1, 2 ORDER BY 1, 2`, [sourceId]);
   census.parked_effects = parked.map(row => ({ kind: row.kind, code: row.code ?? 'unknown', targets: Number(row.targets) }));
 }
 

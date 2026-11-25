@@ -3,7 +3,7 @@
  * Declarations moved verbatim out of engine.ts; `BrainEngine` extends this interface, so the member set is unchanged.
  */
 import type { AccessCoverageRow, AccessPolicyMarks, AccessRestampWindow, AccessRevisionInsert, AccessRevisionQuery, AccessRevisionRow, AccessRuleChanges, AccessRuleRow } from '../engine-sql/access-policy.ts';
-import type { AccessCredentialLookup, AccessCredentialRow, AccessGroupRow, AccessMemberLookup, AccessMemberRow, AppliedPolicyRevision, AudiencePrincipalRows, FolderAccessRows, JobPrincipalKind, LiveMemberRow, MayActForVia, MemberBindingVia, PageNamingReaderRow } from '../engine-sql/access-control.ts';
+import type { AccessCredentialLookup, AccessCredentialRow, AccessGroupRow, AccessMemberLookup, AccessMemberRow, AppliedPolicyRevision, AudiencePrincipalRows, FolderAccessRows, JobPrincipalKind, LiveMemberRow, MayActForVia, MemberBindingVia, OwnerCredentialRow, PageNamingReaderRow } from '../engine-sql/access-control.ts';
 import type { AccessMigrationRow, LiveAccessTokenRow, MemberKeyReadingRow, OpenPageCount, OpenPageExclusion, PeopleFolderCount } from '../engine-sql/access-setup.ts';
 import type { AccessTokenGrantWrite, AccessTokenListRow, AccessTokenPrivateAxis, ActiveTokenGrantField, ActiveTokenTarget, DeletedOAuthClient, LegacyTokenGrantColumns, OauthClientGrantInsert, OauthClientProbe, OauthCodeInsert, OauthCodeRow, OauthTokenInsert, OauthTokenRow, OauthTokenRung, ScopeSourceLock, TokenByHashCaller } from '../engine-sql/access-credentials.ts';
 import type * as BeliefLedgerSql from '../engine-sql/belief-ledger.ts';
@@ -17,11 +17,20 @@ import type * as OpenLoopsSql from '../engine-sql/open-loops.ts';
 import type * as BeliefPurgeSql from '../engine-sql/belief-purge.ts';
 import type * as BeliefStateSql from '../engine-sql/belief-state.ts';
 import type * as ReadSharedSourcesSql from '../engine-sql/read-shared-sources.ts';
+import type * as PinnedQuestionsSql from '../engine-sql/pinned-questions.ts';
+import type * as VolunteerEventsSql from '../engine-sql/volunteer-events.ts';
+import type * as ChronicleLedgerSql from '../engine-sql/chronicle-ledger.ts';
+import type * as RetrievalFeedbackSql from '../engine-sql/retrieval-feedback.ts';
+import type * as GitGapCensusSql from '../engine-sql/git-gap-census.ts';
 
 export interface LedgerMembers {
   // Belief ledger writes (engine-sql/belief-ledger.ts). Each runs the statement its caller in src/core/belief/ ran through executeRaw.
   /** The fingerprints among `factFps` and `takeFps` that a fact or take purge of the source tombstoned (subject '*' included). No set order. */
   readBeliefTombstones(sourceId: string, factFps: readonly string[], takeFps: readonly string[]): Promise<string[]>;
+  /** Of `claims`, each one the ledger recorded under its pre-v341 Postgres fingerprint, with that fingerprint (belief/legacy-fingerprint.ts). A claim with none is absent; the Rust store never held one, so it answers none. */
+  readLegacyClaimFingerprints(sourceId: string, claims: readonly string[]): Promise<BeliefLedgerSql.LegacyClaimFingerprintRow[]>;
+  /** The `claimFp` of each probe whose claim a purge of the source tombstoned under its current or its pre-v341 fingerprint. No set order; the Rust store answers none. */
+  readLegacyBeliefTombstones(sourceId: string, probes: readonly BeliefLedgerSql.LegacyTombstoneProbe[]): Promise<string[]>;
   /** The coverage state of the source's current incarnation: its newest coverage event other than `coverage.restored`, or null. */
   readLatestBeliefCoverage(sourceId: string): Promise<BeliefLedgerSql.BeliefCoverageRow | null>;
   /** Whether `slug` of the source has a baseline event of run `runId`. */
@@ -184,6 +193,46 @@ export interface LedgerMembers {
 
   /** Live credentials (active legacy tokens, clients not deleted): the tokens with one exact name, or those bound to one member. */
   readAccessCredentials(by: AccessCredentialLookup): Promise<AccessCredentialRow[]>;
+  /** The live credentials bound to `memberId` with their grant rows, by byte order of kind, name and id (guests/owner-credentials.ts). */
+  listOwnerCredentialRows(memberId: string): Promise<OwnerCredentialRow[]>;
+  /** Inserts one pinned question (`ON CONFLICT (source_id, slug) DO NOTHING`); its row, or null when the slug has one (questions/store.ts). */
+  insertPinnedQuestion(row: PinnedQuestionsSql.PinnedQuestionInsert): Promise<PinnedQuestionsSql.PinnedQuestionRow | null>;
+  /** The row of the pinned question `(sourceId, slug)`, or null. */
+  readPinnedQuestion(sourceId: string, slug: string): Promise<PinnedQuestionsSql.PinnedQuestionRow | null>;
+  /** The pinned questions that pass the filter, by source id in byte order, then creation time, then id. */
+  listPinnedQuestions(filter: PinnedQuestionsSql.PinnedQuestionFilter): Promise<PinnedQuestionsSql.PinnedQuestionRow[]>;
+  /** Logs the volunteered pages whose page still exists, in one statement (context/volunteer-events.ts). */
+  insertVolunteerEvents(rows: readonly VolunteerEventsSql.VolunteerEventInsert[]): Promise<void>;
+  /** The volunteered and later-retrieved counts per match arm and channel over the last `days` days, by byte of arm then channel. */
+  readVolunteerUsage(sourceIds: readonly string[], days: number): Promise<VolunteerEventsSql.VolunteerUsageRow[]>;
+  /** Records a chronicle decision for a page revision; false when the ledger guards keep the existing row (chronicle/ledger.ts). */
+  upsertChronicleRow(w: ChronicleLedgerSql.ChronicleRowUpsert): Promise<boolean>;
+  /** Takes one automatic chronicle judge slot when fewer than `limit` were taken in the last 24 hours; false otherwise. */
+  reserveChronicleJudgeSlot(limit: number, key: ChronicleLedgerSql.ChronicleJudgeKey): Promise<boolean>;
+  /** Records retrieval events with the pages and links each returned whose page rows exist; a repeat is ignored (feedback/store.ts). */
+  insertRetrievalEvents(events: RetrievalFeedbackSql.RetrievalEventInsert[]): Promise<void>;
+  /** One retrieval event with its pages by rank and its links by byte of source, edge key and target, or null. */
+  readRetrievalEvent(id: string): Promise<RetrievalFeedbackSql.RetrievalEventRead | null>;
+  /** Applies one batch of ratings (targets already distinct): each newly stored rating moves its element's weight. */
+  applyRetrievalRatings(args: RetrievalFeedbackSql.RetrievalRatingBatch): Promise<RetrievalFeedbackSql.AppliedRatingRow[]>;
+  /** The Git-gap census reads (commands/sources-git-gap.ts; engine-sql/git-gap-census.ts). The source's checkout root and incarnation. */
+  readGitGapSourceRow(sourceId: string): Promise<GitGapCensusSql.GitGapSourceRow | null>;
+  /** The source's live pages. */
+  countGitGapLivePages(sourceId: string): Promise<number>;
+  /** Makes the open transaction read-only (`SET TRANSACTION READ ONLY`); the census reads run in one. */
+  markTransactionReadOnly(): Promise<void>;
+  /** The `limit` most recently updated live pages of the source, newest first. */
+  listGitGapNewestPages(sourceId: string, limit: number): Promise<Array<{ id: string; updated_at: string }>>;
+  /** The source's fenced facts on a live page that is not one of `pageIds`. */
+  countGitGapUnreadFacts(sourceId: string, pageIds: readonly string[]): Promise<number>;
+  /** One batch of the source's live pages by id, with the census key fields and the privacy part's verdict. */
+  readGitGapPageBatch(sourceId: string, batch: GitGapCensusSql.GitGapBatch): Promise<GitGapCensusSql.GitGapPageRow[]>;
+  /** The source's fenced facts on the pages at `slugs`. */
+  countGitGapFactsOnPages(sourceId: string, slugs: readonly string[]): Promise<number>;
+  /** The timeline rows of the pages `pageIds`. */
+  countGitGapTimelineOnPages(pageIds: readonly number[]): Promise<number>;
+  /** The census's source-wide rows with no Git home, hold codes and parked effect targets, each list by byte order. */
+  readGitGapSourceRows(sourceId: string, derivedLinkSources: readonly string[], holdOp: string): Promise<GitGapCensusSql.GitGapSourceRows>;
 
   /** Revoke every active access token with this exact name; the revoked ids (none on a store that keeps no credentials). */
   revokeAccessTokensNamed(name: string): Promise<string[]>;

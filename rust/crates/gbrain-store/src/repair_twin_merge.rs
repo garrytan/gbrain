@@ -38,9 +38,9 @@ use crate::links::{
     unique_violation,
 };
 use crate::pages::{TAG_ADDED, TAG_FRONTMATTER, read_page_by_id, tag_change, write_page};
-use crate::raw_files::{move_files, move_raw_data};
+use crate::raw_files::{first_page_child_table, move_files, move_raw_data};
 use crate::repair_scans::{twin_link_losers, twin_transition_losers};
-use crate::timeline_queries::move_twin_timeline;
+use crate::timeline_queries::{move_twin_timeline, twin_timeline_reference};
 
 /// `TwinMergeIds`: the twin and the page that replaces it.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -227,6 +227,16 @@ impl Store {
             return Err(same_page());
         }
         self.write(|tx| {
+            // The foreign keys refuse a move onto a page that does not exist at the first statement that moves a row:
+            // the timeline, then raw data and files (the tags move refuses on its own).
+            if read_page_by_id(&*tx, survivor)?.is_none() {
+                if let Some(column) = twin_timeline_reference(&*tx, twin)? {
+                    return Err(missing_survivor("timeline_entries", column));
+                }
+                if let Some(table) = first_page_child_table(&*tx, twin)? {
+                    return Err(missing_survivor(table, "page_id"));
+                }
+            }
             move_twin_timeline(tx, twin, survivor)?;
             move_raw_data(tx, twin, survivor)?;
             claim_survivor_tags(tx, twin, survivor)?;

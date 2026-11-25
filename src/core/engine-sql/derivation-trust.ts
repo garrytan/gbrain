@@ -2,8 +2,8 @@
  * The trust writes of a derivation as typed engine members: the statements trust/taint.ts,
  * persistence/derived-retirement-hold.ts and the atom generation adapter sent through `executeRaw`, byte for byte, with
  * the same parameters. `lowerTrustTier` is the exception: it binds its values through `sqlFragment`, so its placeholders
- * are renumbered in text order and the tier it compares against binds as a rank (`TRUST_TIER_RANK`, 0 for an unknown
- * tier, as the CASE expression gave).
+ * are renumbered in text order and the tier it compares against binds as a rank (`TRUST_TIER_RANK`); a tier that names
+ * no trust tier is refused before the statement (`assertLowerTrustTier`).
  *
  * - `lowerTrustTier`: lowers rows of one taint table to a derivation's tier and origin, never raising.
  * - `countDerivedRowTaint`: how many take, timeline or page rows carry `taint_inputs`, and how many of those are
@@ -16,7 +16,7 @@
  */
 import type { EngineRawRead } from './cli-reads-ops.ts';
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
-import { TRUST_TIER_RANK, trustRankSql, type TaintTable, type TrustTier, type WriteOrigin } from '../trust/tier.ts';
+import { isTrustTier, TRUST_TIER_RANK, trustRankSql, type TaintTable, type TrustTier, type WriteOrigin } from '../trust/tier.ts';
 
 const TAINT_TABLES: readonly TaintTable[] = ['facts', 'takes', 'pages', 'timeline_entries'];
 /** The table text of each taint table, so a statement splices a constant (check:engine-sql-dynamic). */
@@ -38,13 +38,23 @@ function taintTable(member: string, table: string): TaintTable {
   return table as TaintTable;
 }
 
-/** Lowers the rows of `ids` whose stored tier ranks above `tier` to `tier` and `origin`; resolves the ids lowered. */
+/**
+ * Refuses a lowering tier that names no trust tier. Without it the SQL ranked the tier 0 and lowered every ranked row to
+ * the bad name (the tier CHECK then refused the write), but updated nothing and resolved [] when no row ranked above 0,
+ * while the Rust store refused every call: one call, two answers.
+ */
+export function assertLowerTrustTier(tier: unknown): asserts tier is TrustTier {
+  if (!isTrustTier(tier)) throw new Error(`lowerTrustTier: unknown trust tier ${JSON.stringify(tier)}`);
+}
+
+/** Lowers the rows of `ids` whose stored tier ranks above `tier` to `tier` and `origin`; resolves the ids lowered. An unknown tier is refused. */
 export async function lowerTrustTier(raw: EngineRawRead, table: TaintTable, ids: readonly number[], tier: TrustTier,
   origin: WriteOrigin | null): Promise<number[]> {
   const name = taintTable('lowerTrustTier', table);
   if (!ids.length) return [];
+  assertLowerTrustTier(tier);
   const { text, params } = renderFragment(sqlFragment`UPDATE ${trustedSql(TAINT_TABLE_SQL[name])} SET trust_tier=${tier},write_origin=${origin ? JSON.stringify(origin) : null}::text::jsonb
-      WHERE id=ANY(${[...ids]}::bigint[]) AND ${trustedSql(trustRankSql('trust_tier'))}>${TRUST_TIER_RANK[tier] ?? 0}::int RETURNING id`);
+      WHERE id=ANY(${[...ids]}::bigint[]) AND ${trustedSql(trustRankSql('trust_tier'))}>${TRUST_TIER_RANK[tier]}::int RETURNING id`);
   const rows = await raw<{ id: number | string }>(text, params);
   return rows.map(row => Number(row.id));
 }

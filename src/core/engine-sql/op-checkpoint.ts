@@ -10,6 +10,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { PURGE_STALE_CHECKPOINTS_SQL } from '../op-checkpoint-purge-sql.ts';
+import { FENCE_UNCOMMITTED_OP } from '../fence-repair/uncommitted-op.ts';
 
 type Direct = Pick<BrainEngine, 'executeRawDirect'>;
 type Raw = Pick<BrainEngine, 'executeRaw'>;
