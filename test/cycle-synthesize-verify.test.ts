@@ -127,6 +127,37 @@ describe('groundQuote — the repair ladder', () => {
     expect(result).toEqual({ status, replacement, spans: [[start, start + replacement.length]] });
   });
 
+  describe.each([false, true])('NFKD expansion boundaries (tolerant=%s)', (tolerant) => {
+    test.each([
+      { quote: '材料は 試料カ', content: '材料は 試料ガ' },
+      { quote: '重さは 2k', content: '重さは ２㎏' },
+    ])('rejects a partial expansion: $quote', ({ quote, content }) => {
+      expect(groundQuote(quote, groundSource('/t/nfkd.txt', content, { tolerant }))).toEqual({
+        status: 'none', reason: 'not_found',
+      });
+    });
+
+    test.each([
+      { quote: '材料は 試料カ\u3099', replacement: '材料は 試料ガ' },
+      { quote: '重さは 2kg', replacement: '重さは ２㎏' },
+    ])('accepts the complete expansion with original offsets: $quote', ({ quote, replacement }) => {
+      const content = `前置き 😀 ${replacement} 後続`;
+      const start = content.indexOf(replacement);
+      expect(groundQuote(quote, groundSource('/t/nfkd.txt', content, { tolerant }))).toEqual({
+        status: 'normalized', replacement, spans: [[start, start + replacement.length]],
+      });
+    });
+
+    test('skips a partial expansion candidate and keeps the unique valid normalized slice', () => {
+      const replacement = '材料は 試料ｶ';
+      const content = `材料は 試料ガ。 ${replacement}`;
+      const start = content.indexOf(replacement);
+      expect(groundQuote('材料は 試料カ', groundSource('/t/nfkd.txt', content, { tolerant }))).toEqual({
+        status: 'normalized', replacement, spans: [[start, start + replacement.length]],
+      });
+    });
+  });
+
   test('heavy paraphrase (low overlap) → none (caller quarantines)', () => {
     const g = groundQuote('our fundamental product philosophy centers customer delight above metrics', t);
     expect(g.status).toBe('none');
