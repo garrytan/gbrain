@@ -52,7 +52,7 @@ test/engine-parity/collate-facts-home.test.ts	1	0
 test/engine-parity/collate-ontology-config.test.ts	4	1
 test/engine-parity/collate-outputs.test.ts	3	4
 test/engine-parity/collate-persistence-a.test.ts	15	8
-test/engine-parity/collate-persistence-b.test.ts	12	12
+test/engine-parity/collate-persistence-b.test.ts	14	10
 test/engine-parity/collate-referrer-ties.test.ts	3	0
 test/engine-parity/collate-repair-scans.test.ts	0	4
 test/engine-parity/collate-schema-pack-samples.test.ts	4	0
@@ -281,7 +281,7 @@ test/engine-parity/repair-bookkeeping.test.ts	7	1
 test/engine-parity/repair-busy.test.ts	1	0
 test/engine-parity/repair-facts-previews-2.test.ts	4	4
 test/engine-parity/repair-facts-previews-3.test.ts	4	6
-test/engine-parity/repair-facts-previews-4.test.ts	1	8
+test/engine-parity/repair-facts-previews-4.test.ts	2	7
 test/engine-parity/repair-facts-previews.test.ts	5	0
 test/engine-parity/repair-fence-kinds.test.ts	5	1
 test/engine-parity/repair-fence-records.test.ts	4	0
@@ -355,7 +355,8 @@ test/engine-parity/sync-route.test.ts	6	0
 test/engine-parity/sync-run-reads.test.ts	3	0
 test/engine-parity/sync-run.test.ts	1	0
 test/engine-parity/sync-stamp.test.ts	1	0
-test/engine-parity/sync-status-reads.test.ts	8	0
+test/engine-parity/sync-status-reads.test.ts	10	0
+test/engine-parity/sync-swap-reads.test.ts	6	0
 test/engine-parity/take-held-rows.test.ts	2	0
 test/engine-parity/take-proposals.test.ts	7	1
 test/engine-parity/take-purge-ledger.test.ts	4	0
