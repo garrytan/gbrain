@@ -65,7 +65,7 @@ people, each record names the owner and the `household-adults`, `household-helpe
 its row allows. To reclassify a subject, run `gbrain household replace --about <slug> --role <role>` on the brain host
 (or `household add --child` with a new record): it narrows the records about the subject to adults first, then sets
 the role. On a brain that serves several people, only the owner's MCP connection can make a subject a child with
-`household_add`; any other connection is refused with `household_reclassify`, whatever records exist. An edit or sync that narrows a subject while records about it are still shared is refused
+`household_add` or `put_page`, or remove a subject's role; any other connection is refused with `household_reclassify`, the same way whatever records exist, so the refusal says nothing about records it cannot read. An edit or sync that narrows a subject while records about it are still shared is refused
 ([household_reclassify](#household_reclassify)), and so is making a child of a subject page that sync deleted and
 wrote again; only the owner can turn a child into another role.
 Every write path runs these checks against the stored page and the new one: `put_page`, `edit_page`, the household
@@ -78,6 +78,24 @@ serving several people. Run it right after you add the second person: until it r
 served one person carry no reader list. `household_due` leaves them out for remote callers and says so
 (`household_placement_stale`), but a direct page read still returns them, and making a subject a child counts them as
 shared with helpers, so it is refused until the replace runs.
+
+## Check it across harnesses
+
+The household tools are meant to give every agent the same answer. `test/e2e/household-cross-harness-real.serial.test.ts`
+checks that with real agents on a keyless brain with no git repository, seeded with an invented household
+(`bun scripts/synthetic-household.ts <dir>` seeds one for you to try):
+
+1. Claude Code, with gbrain connected, adds a gas bill and marks the milk bought.
+2. A new Codex session, with gbrain connected, answers "what's at risk at home this week?" through `household_due`.
+   Its list has to match a ranking worked out by hand, in order, with each item's page slug.
+3. The same two steps run again with gbrain disconnected, using only each tool's own notes file (`AGENTS.md`). That
+   answer has to miss at least one item, which shows the brain is what got the list right.
+
+It costs a few dollars of model use, so it runs only when you ask:
+`GBRAIN_TEST_HOUSEHOLD_LIVE=1 GBRAIN_TEST_KEEP_PROVIDER_KEYS=1 bun test test/e2e/household-cross-harness-real.serial.test.ts`,
+with the `claude` (2.1.280 or newer, for Opus 5.5) and `codex` commands, and `ANTHROPIC_API_KEY` plus `CODEX_API_KEY`
+or `OPENAI_API_KEY`. If you ask for it and something is missing, it fails and names what. It uses no judge and publishes
+no number. The seed script refuses a directory that already holds a brain.
 
 ## household_exists
 

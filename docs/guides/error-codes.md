@@ -223,6 +223,46 @@ More: [docs/guides/household.md#account_number_key](../../docs/guides/household.
 |---|---|---|---|---|---|---|
 | This batch is unknown or outside the retained replay window. | A capability this request needs is not configured or not reachable on this brain. | A required capability is not available on this brain. Run `gbrain doctor --json` to see what is missing. | agent | `gbrain doctor --json` | 1 | no |
 
+### act_not_mintable
+
+<a id="act_not_mintable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A Google token socket mint asked for the write-capable act profile; only the read-only ingest profile is minted, and write actions go through the broker's call op. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
+
+### action_invalid
+
+<a id="action_invalid"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An action ledger entry did not have the agent_action shape (an unknown field, a bad status, verb, amount or currency, or a page outside actions/YYYY/MM/<id>), so nothing was logged. | Ledger totals are computed by gbrain from a fixed shape; a field it does not know would be silently left out of every total, so it is refused instead. | Fix the field the error names and call log_action again with the same request_id. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/action-ledger.md#action_invalid](../../docs/guides/action-ledger.md#action_invalid)
+
+### action_not_found
+
+<a id="action_not_found"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The action_id names no action page this caller logged or can read, so nothing was changed. | A caller moves on (or settles the hold of) only an action it logged; another member's actions stay out of reach, and no caller learns whether they exist. | Pass the action_id log_action or policy_reserve returned, or log a new action without action_id. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/action-ledger.md#action_not_found](../../docs/guides/action-ledger.md#action_not_found)
+
+### action_transition_invalid
+
+<a id="action_transition_invalid"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The action cannot move to the status asked for (a done action is never edited, and a failed, cancelled or reversed one is final), so nothing was changed. | The ledger keeps what happened: a correction is a new action whose supersedes names the old one, so the old entry and its evidence stay as they were. | Log a new action with supersedes set to the old action_id. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/action-ledger.md#action_transition_invalid](../../docs/guides/action-ledger.md#action_transition_invalid)
+
 ### actor_not_attested
 
 <a id="actor_not_attested"></a>
@@ -895,6 +935,26 @@ Reasons: `missing_brain`.
 |---|---|---|---|---|---|---|
 | The private local CLI registration is invalid. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### broker_args_refused
+
+<a id="broker_args_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Google write broker refused a call whose arguments fall outside its policy: a calendar notification other than NONE, too many draft recipients, or an owner_verdict other than ALLOW_ONCE. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
+
+### broker_precondition_unmet
+
+<a id="broker_precondition_unmet"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Google write broker's call op is off because its activation gate is not met; the reply lists each unmet item with the config line that fixes it. | Only the operator of the brain host can change what blocks this. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
+
 ### bucket_not_found
 
 <a id="bucket_not_found"></a>
@@ -1114,6 +1174,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 | Google connect credential error: client json wrong type. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
+
+### client_not_agent
+
+<a id="client_not_agent"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Google token socket cannot mint for an account connected through the hosted relay, whose client secret never leaves gbrain.io; the account needs its own client. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
 
 ### client_not_found
 
@@ -1720,6 +1790,16 @@ More: [docs/guides/repair.md#managed-sync-orphans](../../docs/guides/repair.md#m
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The brain database could not be reached or refused the operation. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
+
+### day_cap
+
+<a id="day_cap"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Google write broker already made its daily cap of calls for this product (UTC day); retry after the day turns over. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
 
 ### dedupe_decision_store_mismatch
 
@@ -3409,6 +3489,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 |---|---|---|---|---|---|---|
 | This local CLI principal already owns another source/destination for this harness. | The step needs the user's decision before it runs. | Stop and ask the user; re-run only with the authorization the message names. | user | `repeat the read that failed` | 1 | no |
 
+### input_required
+
+<a id="input_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Google asked the account owner to approve this broker call; the caller repeats it with owner_verdict ALLOW_ONCE on an owner turn, or the owner answers in gbrain google approvals. | The step needs the user's decision before it runs. | Stop and ask the user; re-run only with the authorization the message names. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
+
 ### insufficient_scope
 
 <a id="insufficient_scope"></a>
@@ -3426,6 +3516,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 | Local and remote commits changed the same file; nothing was merged and the checkout is unchanged. | The step needs the user's decision before it runs. | Stop and ask the user; re-run only with the authorization the message names. | user | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/shared-checkout-git.md#conflicts](../../docs/guides/shared-checkout-git.md#conflicts)
+
+### intent_unknown
+
+<a id="intent_unknown"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| No broker intent with this idempotency key was recorded in the last 24 hours. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
 
 ### internal
 
@@ -3687,6 +3787,48 @@ Reasons: `file_differs`, `label_line`.
 
 More: [docs/guides/write-refusals.md#label_edit_refused](../../docs/guides/write-refusals.md#label_edit_refused)
 
+### ledger_busy
+
+<a id="ledger_busy"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Another budget reservation was being checked and held, so this one waited and then gave up without holding anything. | Reservations are checked and written one at a time, so two agents cannot both be allowed the last of a budget. | Retry policy_reserve in a few seconds with the same request_id. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/action-ledger.md#ledger_busy](../../docs/guides/action-ledger.md#ledger_busy)
+
+### ledger_confirm_required
+
+<a id="ledger_confirm_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain ledger confirm ran in a process that looks like an agent session or has no terminal, so the action was not marked as confirmed by the user. | user_confirmed means the user said the amount is right; an agent must not say it for them. | Ask the user to run the command in fix in their own terminal, outside the agent session. | user | `repeat the read that failed` | 1 | no |
+
+Reasons: `agent_marker`, `no_terminal`.
+
+More: [docs/guides/action-ledger.md#ledger_confirm_required](../../docs/guides/action-ledger.md#ledger_confirm_required)
+
+### ledger_log_action_only
+
+<a id="ledger_log_action_only"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A remote caller tried to write, move or retype an action ledger page directly, so nothing was written. | log_action stamps who logged an action and works out on the server whether its evidence holds; a direct page write would let a caller set both itself. | Record the action with log_action, or hold budget with policy_reserve. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/action-ledger.md#ledger_log_action_only](../../docs/guides/action-ledger.md#ledger_log_action_only)
+
+### ledger_scan_too_large
+
+<a id="ledger_scan_too_large"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The ledger read would scan more actions than one read allows, so it returned no totals rather than a partial total presented as whole. | A total over part of the window would read as the whole; the read stops and names the filters that make it fit. | Narrow the read with since, verb or counterparty. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/action-ledger.md#ledger_scan_too_large](../../docs/guides/action-ledger.md#ledger_scan_too_large)
+
 ### legacy_job_selection_invalid
 
 <a id="legacy_job_selection_invalid"></a>
@@ -3840,6 +3982,16 @@ More: [docs/guides/cron-schedule.md#dream-beside-autopilot](../../docs/guides/cr
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | A live gbrain serve owns this brain and runs free upkeep while idle, so the scheduled upkeep run did nothing (serve owns upkeep). | One runner at a time: the serve holds the brain (the PGLite lock, or the warm CLI socket on Postgres) and runs the same free upkeep on its idle tick. | Nothing to do; gbrain maintain --status shows the last run and its runner. | agent | `repeat the read that failed` | 0 | no |
+
+### malformed_request
+
+<a id="malformed_request"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A Google token socket request was not one JSON object per line with the fields its op needs. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
 
 ### managed_failure_unsettled
 
@@ -4011,6 +4163,16 @@ Reasons: `not_applied`, `still_behind`, `schema_unreadable`, `wedged`, `schema_b
 |---|---|---|---|---|---|---|
 | Another apply-migrations run holds the migration orchestration lock. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 75 | yes |
 
+### mint_socket_down
+
+<a id="mint_socket_down"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Nothing serves the Google token socket; start it with gbrain google mint serve, or gbrain serve --http with google.mint_socket true. | A capability this request needs is not configured or not reachable on this brain. | A required capability is not available on this brain. Run `gbrain doctor --json` to see what is missing. | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
+
 ### missing_source_scope
 
 <a id="missing_source_scope"></a>
@@ -4034,6 +4196,16 @@ Reasons: `not_applied`, `still_behind`, `schema_unreadable`, `wedged`, `schema_b
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | A configured model is not allowed under models strict mode. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### money_unevidenced
+
+<a id="money_unevidenced"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An amount was logged as done with no evidence gbrain could read and without estimated: true, so nothing was logged. | Every amount in the ledger is either backed by a page the writer can read or marked as an estimate, so totals never mix the two. | Add evidence (the slug of a saved page that shows the amount) or pass estimated: true, then call again with the same request_id. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/action-ledger.md#money_unevidenced](../../docs/guides/action-ledger.md#money_unevidenced)
 
 ### moved_pages_mass_fold_refused
 
@@ -4255,6 +4427,16 @@ More: [docs/mcp/OPENCLAW.md#have-gbrain-report-back-to-this-chat](../../docs/mcp
 
 More: [docs/guides/repair.md#origin-twins](../../docs/guides/repair.md#origin-twins)
 
+### outcome_unknown
+
+<a id="outcome_unknown"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A Google write may have taken effect but its reply was lost; the broker never resends it, so reconcile with a read before acting again. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
+
 ### overlapping_path
 
 <a id="overlapping_path"></a>
@@ -4292,6 +4474,16 @@ More: [docs/guides/apple-setup.md#owned_folder_conflict](../../docs/guides/apple
 | A Rust brain's owner refused a call or a connection because a bound on its memory was reached; `reason` says which bound, and nothing ran. | Every process on a Rust brain sends its calls to the one process that owns it, over `<database_path>/.gbrain-owner.sock`. The owner bounds what it holds for all of them so one busy or misbehaving process cannot grow its memory without limit. `queue_full`: the calls waiting for a free permit reached the queue cap. `inflight_bytes`: the call frames the owner holds (waiting and running) reached the byte cap. `connections`: the owner already has the most client connections it keeps. A refused call never started, so a retry is safe. | Retry after the calls in flight finish. If it repeats, run fewer processes on the brain at once or send smaller calls (a smaller batch or limit). Run: gbrain doctor --json | agent | `repeat the read that failed` | 1 | yes |
 
 Reasons: `queue_full`, `inflight_bytes`, `connections`.
+
+### owner_confirm_required
+
+<a id="owner_confirm_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A Google broker call hit a per-turn safety pause (a second outside invite, or an eleventh trash) and waits for the owner to confirm it in gbrain google approvals. | The step needs the user's decision before it runs. | Stop and ask the user; re-run only with the authorization the message names. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
 
 ### owner_ipc_peer_refused
 
@@ -4504,6 +4696,16 @@ More: [docs/guides/dream-patterns.md#cadence](../../docs/guides/dream-patterns.m
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The payload exceeds the configured size cap. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### peer_refused
+
+<a id="peer_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Google token socket refused this peer: held prompts are listed and answered only by the owner's own uid. | Only the operator of the brain host can change what blocks this. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
 
 ### pending_import_expired
 
@@ -5602,6 +5804,16 @@ More: [docs/guides/windowed-reads.md#revision_changed](../../docs/guides/windowe
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The exact authorized revision is unavailable. | A capability this request needs is not configured or not reachable on this brain. | A required capability is not available on this brain. Run `gbrain doctor --json` to see what is missing. | agent | `gbrain doctor --json` | 1 | no |
+
+### revoked
+
+<a id="revoked"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Google grant behind a socket mint or broker call was revoked or expired; reconnect the account. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
 
 ### runtime_build_skew
 
@@ -6947,6 +7159,26 @@ More: [docs/guides/write-refusals.md#timeline_rows_would_be_removed](../../docs/
 |---|---|---|---|---|---|---|
 | The operation did not finish within its time bound. | On a Rust brain client, a call through the owner socket carries its deadline and `reason` says how far it got: `not_sent` (never reached the owner) and `not_started` (waited in the owner queue and never ran) are safe to retry. A call whose deadline passed after the owner started it ends `owner_unavailable` with reason `outcome_unknown` instead. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 124 | yes |
 
+### tool_error
+
+<a id="tool_error"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Google's tool returned an error inside its result (user denial, admin policy, a pending challenge, or a failed call); the broker reports it as a failure, never as success. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
+
+### tool_not_allowed
+
+<a id="tool_not_allowed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Google write broker accepts only allowlisted Workspace MCP tools on its served products; Chat and REST are not served. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
+
 ### topology_change_required
 
 <a id="topology_change_required"></a>
@@ -6998,6 +7230,16 @@ Reasons: `corpus_source_other`, `corpus_source_unresolved`, `corpus_legacy_unsta
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The operation runs only from the trusted local CLI on the brain host; no MCP connection can call it. | Only the operator of the brain host can change what blocks this. | Ask the user to run the named gbrain command on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
+
+### turn_cap
+
+<a id="turn_cap"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Google write broker already made its per-turn cap of calls on this turn_id. | The step needs the user's decision before it runs. | Stop and ask the user; re-run only with the authorization the message names. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
 
 ### turn_hook_not_loaded
 
@@ -7087,6 +7329,16 @@ More: [docs/guides/write-refusals.md#unclosed_ambiguous_tail](../../docs/guides/
 |---|---|---|---|---|---|---|
 | The JSON-RPC method is not supported. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### unknown_op
+
+<a id="unknown_op"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A Google token socket request named an op other than mint, call, status or tools. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
+
 ### unknown_source
 
 <a id="unknown_source"></a>
@@ -7166,6 +7418,16 @@ More: [docs/guides/system-one.md#unpriced_model](../../docs/guides/system-one.md
 Reasons: `not_utf8`, `control_character`.
 
 More: [docs/guides/write-refusals.md#unsupported_path](../../docs/guides/write-refusals.md#unsupported_path)
+
+### unsupported_version
+
+<a id="unsupported_version"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A Google token socket request used a protocol version other than 4; versions 1 to 3 are refused so a verdict is never silently ignored. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
 
 ### untrack_not_db_only
 
@@ -7312,6 +7574,36 @@ More: [docs/ENGINES.md#vector-index-prewarm](../../docs/ENGINES.md#vector-index-
 | `gbrain embeddings prewarm` was refused before reading anything because the brain's HNSW indexes are larger than half of shared_buffers. | Prewarm loads the indexes into shared_buffers, the cache Postgres sizes and keeps; past half of it the prewarm would evict heap and keyword-index pages other reads need, so the next searches would pay first-touch reads on those instead. effective_cache_size does not decide: it is a planner hint, not memory the server holds. | Raise shared_buffers on the database host to at least twice the index size the message names and restart Postgres, or leave the indexes cold; read the fit with gbrain embeddings prewarm --dry-run --json. Run: gbrain embeddings prewarm --dry-run --json | host_admin | `gbrain doctor --json` | 1 | no |
 
 More: [docs/ENGINES.md#vector-index-prewarm](../../docs/ENGINES.md#vector-index-prewarm)
+
+### verdict_already_answered
+
+<a id="verdict_already_answered"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The held Google prompt this verdict names was already answered. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
+
+### verdict_expired
+
+<a id="verdict_expired"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The held Google prompt is gone: it expired after 10 minutes, the broker restarted, or the account was reconnected; re-call for a fresh prompt. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
+
+### verdict_mismatch
+
+<a id="verdict_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An owner_verdict named a different held prompt, or came from another turn or caller than the call it answers. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
 
 ### verification_failed
 

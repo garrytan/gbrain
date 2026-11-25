@@ -4153,7 +4153,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
   },
   {
     "name": "policy_check",
-    "description": "Before you send, spend, delete, sign up, call or publish on the user's behalf outside this brain, ask whether the user's agent policy allows it. Advisory: allow, ask, deny or none (no policy).",
+    "description": "Before you send, spend, delete, sign up, call or publish on the user's behalf outside this brain, ask whether the user's agent policy allows it. Advisory: allow, ask, deny or none (no policy), with requires_approval and any day, week or month budget left. To hold budget for a spend, call policy_reserve instead.",
     "params": {
       "verb": {
         "type": "string",
@@ -4259,6 +4259,300 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "readOnlyHint": true
     },
     "area": "discovery"
+  },
+  {
+    "name": "log_action",
+    "description": "After you act on the user's behalf outside this brain (send, spend, cancel, sign up...), record it. An amount needs evidence (the slug of a saved page that shows it) or estimated: true. Pass action_id to settle a policy_reserve hold or move a proposed action on. Keep request_id and retry with the same arguments.",
+    "params": {
+      "verb": {
+        "type": "string",
+        "required": true,
+        "enum": [
+          "send",
+          "publish",
+          "spend",
+          "delete",
+          "sign_up",
+          "call",
+          "book",
+          "cancel",
+          "dispute",
+          "submit",
+          "return",
+          "use",
+          "renew",
+          "remind",
+          "other"
+        ],
+        "description": "The outside action."
+      },
+      "summary": {
+        "type": "string",
+        "description": "What was done, at most 200 characters (required for a new action)."
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "proposed",
+          "approved",
+          "done",
+          "failed",
+          "cancelled",
+          "reversed"
+        ],
+        "description": "Default done."
+      },
+      "purpose": {
+        "type": "string",
+        "enum": [
+          "buy",
+          "pay"
+        ],
+        "description": "For spend: buy or pay."
+      },
+      "counterparty": {
+        "type": "string",
+        "description": "The merchant, service or person on the other side."
+      },
+      "harness": {
+        "type": "string",
+        "description": "The agent or harness that acted."
+      },
+      "at": {
+        "type": "string",
+        "description": "When it happened (ISO time; default now)."
+      },
+      "currency": {
+        "type": "string",
+        "description": "Three-letter code for spent or saved."
+      },
+      "spent": {
+        "type": "number",
+        "description": "Money spent."
+      },
+      "saved": {
+        "type": "number",
+        "description": "Money saved, with saved_period."
+      },
+      "saved_period": {
+        "type": "string",
+        "enum": [
+          "one_time",
+          "monthly",
+          "yearly"
+        ],
+        "description": "one_time, monthly or yearly (never annualized)."
+      },
+      "estimated": {
+        "type": "boolean",
+        "description": "true when the amount is an estimate with no evidence."
+      },
+      "minutes_saved": {
+        "type": "number",
+        "description": "Estimated minutes saved (recorded, never totalled)."
+      },
+      "evidence": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "ref": {
+              "type": "string"
+            },
+            "note": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "Refs to evidence: a page slug (counts as evidence when you can read it) or a URL."
+      },
+      "approval_by": {
+        "type": "string",
+        "enum": [
+          "owner",
+          "policy",
+          "none"
+        ],
+        "description": "Who approved it: owner, policy or none."
+      },
+      "approval_rule": {
+        "type": "string",
+        "description": "The policy rule id that allowed it."
+      },
+      "policy_revision": {
+        "type": "string",
+        "description": "The policy revision policy_check returned."
+      },
+      "cost_usd": {
+        "type": "number",
+        "description": "What the agent run cost, as reported by the harness."
+      },
+      "supersedes": {
+        "type": "string",
+        "description": "The action_id this entry corrects."
+      },
+      "action_id": {
+        "type": "string",
+        "description": "An action you logged or reserved, to move it on (settles a hold)."
+      },
+      "request_id": {
+        "type": "string",
+        "description": "A UUID; reuse it only to replay the same call."
+      }
+    },
+    "callShape": "{\"verb\":\"cancel\",\"summary\":\"Cancelled the acme-example trial\",\"counterparty\":\"acme-example\",\"saved\":12,\"currency\":\"USD\",\"saved_period\":\"monthly\",\"evidence\":[{\"ref\":\"inbox/acme-example-cancel\"}],\"request_id\":\"<uuid>\"}",
+    "scope": "write",
+    "mutating": true,
+    "idempotent": true,
+    "outputRedaction": {
+      "exempt": "derived ledger fields (action id, status, claim basis, which evidence refs resolved); no page text"
+    },
+    "cliHints": {
+      "name": "log-action",
+      "hidden": true
+    },
+    "annotations": {
+      "title": "log_action (action ledger)"
+    },
+    "area": "action-ledger"
+  },
+  {
+    "name": "ledger",
+    "description": "Totals of the outside actions you can read for a window: spent and saved per currency, split by evidenced, user_confirmed and estimated, by verb and by counterparty, plus live budget holds. Computed by gbrain; a window too large to read returns state partial and the narrower call.",
+    "params": {
+      "since": {
+        "type": "string",
+        "description": "Start: <n>d (default 30d) or an ISO date, at most 3660 days back."
+      },
+      "verb": {
+        "type": "string",
+        "enum": [
+          "send",
+          "publish",
+          "spend",
+          "delete",
+          "sign_up",
+          "call",
+          "book",
+          "cancel",
+          "dispute",
+          "submit",
+          "return",
+          "use",
+          "renew",
+          "remind",
+          "other"
+        ],
+        "description": "Only this verb."
+      },
+      "counterparty": {
+        "type": "string",
+        "description": "Only this counterparty."
+      }
+    },
+    "scope": "read",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": {
+      "exempt": "derived totals over actions the caller can read; no page text"
+    },
+    "cliHints": {
+      "name": "ledger-totals",
+      "hidden": true
+    },
+    "annotations": {
+      "title": "ledger (action totals)",
+      "readOnlyHint": true
+    },
+    "area": "action-ledger"
+  },
+  {
+    "name": "policy_reserve",
+    "description": "Before a spend, check the agent policy with its day, week and month budgets and hold the amount for 24 hours, in one step, so two agents cannot both use the last of a budget. Returns the policy_check answer and the reservation; settle it with log_action {action_id, status: \"done\", spent} after you act (with no amount the held amount is recorded as an estimate). A deny holds nothing.",
+    "params": {
+      "verb": {
+        "type": "string",
+        "required": true,
+        "enum": [
+          "send",
+          "publish",
+          "spend",
+          "delete",
+          "sign_up",
+          "call",
+          "book",
+          "cancel",
+          "dispute",
+          "submit",
+          "return",
+          "use",
+          "renew",
+          "remind",
+          "other"
+        ],
+        "description": "The outside action."
+      },
+      "amount": {
+        "type": "number",
+        "required": true,
+        "description": "The amount to hold."
+      },
+      "currency": {
+        "type": "string",
+        "required": true,
+        "description": "Three-letter currency code, like USD."
+      },
+      "summary": {
+        "type": "string",
+        "required": true,
+        "description": "What the agent is about to do, at most 200 characters."
+      },
+      "merchant": {
+        "type": "string",
+        "description": "Merchant or service, when a rule may name it."
+      },
+      "to": {
+        "type": "string",
+        "enum": [
+          "self",
+          "household",
+          "known",
+          "new"
+        ],
+        "description": "Who it reaches: self, household, known or new."
+      },
+      "purpose": {
+        "type": "string",
+        "enum": [
+          "buy",
+          "pay"
+        ],
+        "description": "For spend: buy or pay."
+      },
+      "harness": {
+        "type": "string",
+        "description": "The agent or harness that will act."
+      },
+      "request_id": {
+        "type": "string",
+        "description": "A UUID; reuse it only to replay the same call."
+      }
+    },
+    "callShape": "{\"verb\":\"spend\",\"amount\":40,\"currency\":\"USD\",\"merchant\":\"acme-example\",\"summary\":\"Reorder printer ink\",\"request_id\":\"<uuid>\"}",
+    "scope": "write",
+    "mutating": true,
+    "idempotent": true,
+    "outputRedaction": {
+      "exempt": "derived decision and budget fields from the owner-approved policy and the caller's readable actions; no page text"
+    },
+    "cliHints": {
+      "name": "policy-reserve",
+      "hidden": true
+    },
+    "annotations": {
+      "title": "policy_reserve (advisory budget hold)"
+    },
+    "area": "agent-policy"
   },
   {
     "name": "submit_job",

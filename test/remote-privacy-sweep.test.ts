@@ -189,6 +189,8 @@ const PARAM_FACTORY: Record<string, Record<string, unknown>> = {
   resolve_slugs: { partial: 'world-page' },
   whois: { query: WORLD.pageTitle },
   policy_check: { verb: 'send' },
+  log_action: { verb: 'send', summary: 'Sent the sweep note', request_id: '6007a5e0-0000-4000-8000-0000000000a1' },
+  policy_reserve: { verb: 'spend', amount: 1, currency: 'USD', summary: 'Sweep hold', request_id: '6007a5e0-0000-4000-8000-0000000000a2' },
   volunteer_context: { window: 'Recent discussion about WORLDSWEEP topics and pages.' },
   chronicle_day: { date: '2026-01-02' },
   chronicle_since: { date: '2020-01-01' },
@@ -311,6 +313,9 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   onboarding_off: 'error', // onboarding_owner_only: the sweep's remote caller is not the install's owner
   agent_policy: 'ok',
   capabilities: 'ok',
+  ledger: 'ok',
+  log_action: 'ok',
+  policy_reserve: 'ok',
   sources_list: 'ok',
   sources_status: 'ok',
   sources_resolve_path: 'error',
