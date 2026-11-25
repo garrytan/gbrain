@@ -342,7 +342,7 @@ describe('variants and both rust-mu routes', () => {
   const PART: MwCell = { status: 'pending', owner: 'L5 hosts', why: 'store lease fence' };
   /** C01 as above, plus a variant with engine cells only (as the case work's MwVariant). */
   const WITH_VARIANT: readonly MwCase[] = [{ ...MATRIX[0]!, variants: [{ id: 'C01.partition', of: 'C01', title: 'back from a partition', invariant: 'x', reference: 'compare', members: ['putPage'],
-    cells: { pglite: RUNS, postgres: RUNS, rust: RUNS, 'rust-mu': PART } }] } as MwCase, MATRIX[1]!];
+    cells: { pglite: RUNS, postgres: RUNS, rust: RUNS, 'rust-mu': PART } }] } as unknown as MwCase, MATRIX[1]!];
 
   test('the expected set is the rows on engine and store arms plus the variant on engine arms only; the variant is its own table row', async () => {
     const r = rig();

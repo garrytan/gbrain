@@ -118,7 +118,7 @@ export const MW_CASES: readonly MwCase[] = [
     members: ['putPage', 'readPageSnapshot'],
     storeTests: {
       runnable: ['c01_same_page_writers_lose_no_update'],
-      pending: [],
+      pending: ['c01_same_page_writers_lose_no_update_multi_writer'],
     },
     cells: {
       pglite: RUNS, postgres: RUNS,
@@ -136,7 +136,7 @@ export const MW_CASES: readonly MwCase[] = [
     members: ['putPage', 'readPageSnapshot', 'upsertChunks', 'getChunks'],
     storeTests: {
       runnable: ['c02_stale_revision_gets_a_typed_conflict'],
-      pending: [],
+      pending: ['c02_stale_revision_gets_a_typed_conflict_multi_writer'],
     },
     cells: {
       pglite: RUNS, postgres: RUNS,
@@ -172,7 +172,7 @@ export const MW_CASES: readonly MwCase[] = [
     members: ['admitJob', 'claimNextJob', 'getJob'],
     storeTests: {
       runnable: ['c04_eight_workers_claim_each_job_once'],
-      pending: [],
+      pending: ['c04_eight_workers_claim_each_job_once_multi_writer'],
     },
     cells: {
       pglite: RUNS, postgres: RUNS,
@@ -207,8 +207,8 @@ export const MW_CASES: readonly MwCase[] = [
     reference: 'compare',
     members: ['acquireCycleLock', 'transaction', 'assertCycleLease', 'putPage', 'readPageSnapshot'],
     storeTests: {
-      runnable: ['c06_stale_holder_data_write_refused_by_its_token'],
-      pending: [],
+      runnable: ['c06_stale_holder_data_write_refused_by_its_token', 'c06_old_holder_cannot_refresh_release_or_write_after_a_takeover'],
+      pending: ['c06_stale_holder_data_write_refused_by_its_token_multi_writer', 'c06_partitioned_host_old_epoch_work_refused_multi_writer'],
     },
     cells: {
       pglite: RUNS, postgres: RUNS,
@@ -240,14 +240,14 @@ export const MW_CASES: readonly MwCase[] = [
     reference: 'compare',
     members: ['readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'transactionDirect', 'declarePersistence', 'insertPublicationEffects', 'selectClaimableEffect', 'stampEffectClaim', 'completeEffectRow', 'readRequestEffects'],
     storeTests: {
-      runnable: [],
+      runnable: ['c07_effect_claimed_once_rerun_after_owner_crash'],
       pending: ['c07_effect_claimed_once_rerun_after_owner_crash_multi_writer'],
     },
     cells: {
       pglite: RUNS, postgres: RUNS,
       rust: RUNS,
       'rust-mu': RUNS,
-      'store-single': pending('L5 hosts', 'the store case is ignored until concurrent effect claims land'), 'store-optimistic': pending('L5 hosts', 'the store case is ignored until concurrent effect claims land'),
+      'store-single': RUNS, 'store-optimistic': RUNS,
     },
   },
   {
@@ -259,7 +259,7 @@ export const MW_CASES: readonly MwCase[] = [
     members: ['reserveChronicleJudgeSlot', 'countRecentChronicleReservations'],
     storeTests: {
       runnable: ['c08_counter_never_over_admits'],
-      pending: [],
+      pending: ['c08_counter_never_over_admits_multi_writer'],
     },
     cells: {
       pglite: RUNS, postgres: RUNS,
@@ -277,7 +277,7 @@ export const MW_CASES: readonly MwCase[] = [
     members: ['admitJob', 'listJobs'],
     storeTests: {
       runnable: ['c09_idempotency_key_maps_to_one_row'],
-      pending: [],
+      pending: ['c09_idempotency_key_maps_to_one_row_multi_writer'],
     },
     cells: {
       pglite: RUNS, postgres: RUNS,
@@ -294,14 +294,14 @@ export const MW_CASES: readonly MwCase[] = [
     reference: 'compare',
     members: ['insertFact', 'listFactsByEntity'],
     storeTests: {
-      runnable: [],
+      runnable: ['c10_facts_of_one_entity_form_one_total_order'],
       pending: ['c10_facts_of_one_entity_form_one_total_order_multi_writer'],
     },
     cells: {
       pglite: RUNS, postgres: RUNS,
       rust: RUNS,
       'rust-mu': RUNS,
-      'store-single': pending('L5 hosts', 'the store case is ignored until concurrent appends to one entity land'), 'store-optimistic': pending('L5 hosts', 'the store case is ignored until concurrent appends to one entity land'),
+      'store-single': RUNS, 'store-optimistic': RUNS,
     },
   },
   {
@@ -312,14 +312,14 @@ export const MW_CASES: readonly MwCase[] = [
     reference: 'compare',
     members: ['insertFact', 'listFactsByEntity'],
     storeTests: {
-      runnable: [],
+      runnable: ['c11_per_entity_order_equals_commit_order'],
       pending: ['c11_per_entity_order_equals_commit_order_multi_writer'],
     },
     cells: {
       pglite: pending('L5 hosts', 'new rule: SQL reads order facts by created_at, id, which is not commit order; facts carry no sequence assigned at commit yet'), postgres: pending('L5 hosts', 'new rule: SQL reads order facts by created_at, id, which is not commit order; facts carry no sequence assigned at commit yet'),
       rust: pending('L5 hosts', 'new rule: SQL reads order facts by created_at, id, which is not commit order; facts carry no sequence assigned at commit yet'),
       'rust-mu': pending('L5 hosts', 'new rule: SQL reads order facts by created_at, id, which is not commit order; facts carry no sequence assigned at commit yet'),
-      'store-single': pending('L5 hosts', 'new rule: the store case is ignored until facts carry a commit sequence'), 'store-optimistic': pending('L5 hosts', 'new rule: the store case is ignored until facts carry a commit sequence'),
+      'store-single': RUNS, 'store-optimistic': RUNS,
     },
   },
   {
@@ -331,7 +331,7 @@ export const MW_CASES: readonly MwCase[] = [
     members: ['transaction', 'putPage', 'getPage'],
     storeTests: {
       runnable: ['c12_two_transactions_read_only_their_own_writes'],
-      pending: [],
+      pending: ['c12_two_transactions_read_only_their_own_writes_multi_writer'],
     },
     cells: {
       pglite: RUNS, postgres: RUNS,
@@ -349,14 +349,14 @@ export const MW_CASES: readonly MwCase[] = [
     needs: 'multi_writer',
     members: ['putPage', 'transaction', 'lockPageKeys'],
     storeTests: {
-      runnable: [],
+      runnable: ['c13_transactions_on_different_keys_both_land'],
       pending: ['c13_transactions_on_different_keys_do_not_wait_multi_writer'],
     },
     cells: {
       pglite: na('PGLite has one connection: a second transaction queues behind the open one (test/pglite-checkpoint-guard.test.ts:193-207)'), postgres: RUNS,
       rust: pending('L1 optimistic transactions', 'today an open transaction holds the one writer, so a commit on another key waits (concurrency.rs:349)'),
       'rust-mu': pending('L1 optimistic transactions', 'today an open transaction holds the one writer, so a commit on another key waits (concurrency.rs:349)'),
-      'store-single': pending('L1 optimistic transactions', 'the store case is ignored: today an open transaction holds the writer'), 'store-optimistic': pending('L1 optimistic transactions', 'the store case is ignored: today an open transaction holds the writer'),
+      'store-single': RUNS, 'store-optimistic': RUNS,
     },
   },
   {
@@ -367,14 +367,14 @@ export const MW_CASES: readonly MwCase[] = [
     reference: 'compare',
     members: ['readLiveGenerationRow', 'activateGenerationRows', 'lockGenerationKey', 'transaction'],
     storeTests: {
-      runnable: [],
+      runnable: ['c14_concurrent_publishers_one_winner'],
       pending: ['c14_concurrent_publishers_one_winner_multi_writer'],
     },
     cells: {
       pglite: RUNS, postgres: RUNS,
       rust: RUNS,
       'rust-mu': RUNS,
-      'store-single': pending('L1 optimistic transactions', 'the store case is ignored until concurrent publishers land'), 'store-optimistic': pending('L1 optimistic transactions', 'the store case is ignored until concurrent publishers land'),
+      'store-single': RUNS, 'store-optimistic': RUNS,
     },
   },
   {
@@ -422,14 +422,14 @@ export const MW_CASES: readonly MwCase[] = [
     needs: 'multi_writer',
     members: ['putPage', 'getPage'],
     storeTests: {
-      runnable: [],
+      runnable: ['c17_a_second_raw_opener_is_refused_with_a_typed_store_locked'],
       pending: ['c17_second_opener_becomes_a_client_never_an_error_multi_writer'],
     },
     cells: {
       pglite: na('PGLite refuses a second opener by design'), postgres: RUNS,
       rust: pending('L3 server', 'a second opener that becomes a client with calls retried by request id is the server\'s behavior'),
       'rust-mu': pending('L3 server', 'a second opener that becomes a client with calls retried by request id is the server\'s behavior'),
-      'store-single': pending('L3 server', 'the store case is ignored until a second opener becomes a client'), 'store-optimistic': pending('L3 server', 'the store case is ignored until a second opener becomes a client'),
+      'store-single': RUNS, 'store-optimistic': RUNS,
     },
   },
   {
@@ -440,14 +440,14 @@ export const MW_CASES: readonly MwCase[] = [
     reference: 'standalone',
     members: ['putPage', 'readPageSnapshot', 'admitJob', 'claimNextJob', 'listJobs'],
     storeTests: {
-      runnable: [],
+      runnable: ['c18_sixty_four_writers_no_busy_error'],
       pending: ['c18_sixty_four_writers_no_busy_error_multi_writer'],
     },
     cells: {
       pglite: RUNS, postgres: RUNS,
       rust: pending('L3 server', 'a second Rust engine is an owner-socket client, and through it today admitJob and claimNextJob refuse (capability minion_queue), so 64 writers over eight connections are refused; the server serves them'),
       'rust-mu': pending('L3 server', 'a second Rust engine is an owner-socket client, and through it today admitJob and claimNextJob refuse (capability minion_queue), so 64 writers over eight connections are refused; the server serves them'),
-      'store-single': pending('L3 server', 'the store case is ignored until the server serves many client processes'), 'store-optimistic': pending('L3 server', 'the store case is ignored until the server serves many client processes'),
+      'store-single': RUNS, 'store-optimistic': RUNS,
     },
   },
   {
@@ -495,14 +495,14 @@ export const MW_CASES: readonly MwCase[] = [
     needs: 'multi_writer',
     members: ['putPage', 'getPage'],
     storeTests: {
-      runnable: [],
+      runnable: ['c21_read_your_writes_token_on_a_second_connection'],
       pending: ['c21_read_your_writes_token_on_a_second_connection_multi_writer'],
     },
     cells: {
       pglite: na('PGLite has one connection'), postgres: pending('L3 server', 'new rule: no engine returns a commit position to use as a token (needs the commit log and the wire token); the body is the plain read-after-commit'),
       rust: pending('L3 server', 'new rule: no engine returns a commit position to use as a token (needs the commit log and the wire token); the body is the plain read-after-commit'),
       'rust-mu': pending('L3 server', 'new rule: no engine returns a commit position to use as a token (needs the commit log and the wire token); the body is the plain read-after-commit'),
-      'store-single': pending('L3 server', 'the store case is ignored until a token-taking read exists'), 'store-optimistic': pending('L3 server', 'the store case is ignored until a token-taking read exists'),
+      'store-single': RUNS, 'store-optimistic': RUNS,
     },
   },
   {

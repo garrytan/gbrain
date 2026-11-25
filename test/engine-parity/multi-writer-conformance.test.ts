@@ -31,7 +31,7 @@ import type { BrainEngine, FactRow } from '../../src/core/engine.ts';
 import type { AdmitJobPolicy, ClaimJobSpec, JobInsertValues, JobRow } from '../../src/core/engine-sql/jobs.ts';
 import type { PageInput } from '../../src/core/types.ts';
 import { APPLICATION_AUTHORITY, coalesceDecision, parseSubmissionAuthority } from '../../src/core/minions/submission-authority.ts';
-import { parityArms, type ParityContext } from './harness.ts';
+import { parityArms, type ParityContext, rustMultiuserView } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -284,7 +284,7 @@ describe('engine parity: multi-writer conformance', () => {
   }, async (engine, backend) => {
     const SLUG = 'notes/c06-partition-protected';
     const outcome = { oldEpochWriteRefused: true, protectedDataUnchanged: true, newHolderWrote: true, oldTokenRenewed: false, oldTokenReleased: false, reacquiredUnderNewEpoch: true };
-    if (backend === 'rust' && process.env.GBRAIN_RUST_MULTIUSER === '1') {
+    if (backend === 'rust' && rustMultiuserView() !== 'off') {
       // The store lease path (interface I-5): not BrainEngine members, reached through the Rust engine's store.
       type Holder = { host_id: string; incarnation: string; writer_id: string };
       type Lease = { name: string; epoch: number; token: string };

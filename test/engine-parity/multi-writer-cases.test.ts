@@ -191,6 +191,8 @@ describe('multi-writer support matrix', () => {
     }
     // Every plain or ignored cNN test of the suite belongs to exactly one row.
     const named = new Set(MW_CASES.flatMap(c => [...c.storeTests.runnable, ...c.storeTests.pending]));
-    expect([...tests.keys()].filter(name => !named.has(name)), 'a Rust test is not in the matrix').toEqual([]);
+    // `c19_child_writer` is not a case: it is the child process C19 re-runs and kills (ignored with reason c19_child).
+    const helpers = new Set(['c19_child_writer']);
+    expect([...tests.keys()].filter(name => !named.has(name) && !helpers.has(name)), 'a Rust test is not in the matrix').toEqual([]);
   });
 });
