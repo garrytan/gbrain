@@ -249,6 +249,53 @@ fn check_readers(store: &Store) {
         }
     }
     same("hasSupersedeEdges", || store.has_supersede_edges().unwrap());
+    let stamp = |name: &str| -> Option<String> {
+        let page = crate::pages::read_page(&*store.read().ok()?, "default", name).ok()??;
+        Some(crate::env::iso(page.updated_at_us))
+    };
+    let mid = stamp("notes/c").or_else(|| stamp("notes/a"));
+    let mut lists: Vec<Value> = Vec::new();
+    for sort in [
+        None,
+        Some("updated_desc"),
+        Some("updated_asc"),
+        Some("created_desc"),
+        Some("slug"),
+    ] {
+        for (limit, offset) in [
+            (None, None),
+            (Some(3), None),
+            (Some(2), Some(3)),
+            (Some(500), Some(1)),
+        ] {
+            for include_deleted in [false, true] {
+                let mut f = json!({"limit": limit, "offset": offset, "sort": sort, "includeDeleted": include_deleted});
+                lists.push(f.clone());
+                f["sourceId"] = json!("work");
+                lists.push(f.clone());
+                if let Some(ts) = &mid {
+                    let mut g = f.clone();
+                    g.as_object_mut().unwrap().remove("sourceId");
+                    g["updated_after"] = json!(ts);
+                    lists.push(g.clone());
+                    g.as_object_mut().unwrap().remove("updated_after");
+                    g["updatedAfterKeyset"] = json!({"updatedAt": ts, "slug": "notes/b"});
+                    lists.push(g);
+                }
+            }
+        }
+    }
+    lists.push(json!({"limit": 0}));
+    lists.push(json!({"limit": 4, "excludePrivate": {"honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn"}}));
+    lists.push(json!({"limit": 4, "sort": "updated_asc", "excludePrivate": {"honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn"}}));
+    lists.push(json!({"type": "person", "limit": 3}));
+    lists.push(json!({"slugPrefix": "notes/", "limit": 3}));
+    for f in lists {
+        let filters: crate::pages::PageFilters = de(f.clone());
+        same(&format!("listPages {f}"), || {
+            store.list_pages(&filters).unwrap()
+        });
+    }
     for page_id in 1..30 {
         same("linkRelationshipKeysForOrigin", || {
             store
@@ -318,7 +365,8 @@ fn the_index_stays_in_step_and_the_members_answer_as_the_scans() {
                 CONTENT_HASH,
                 FRONTMATTER_ID,
                 LONG_TITLE,
-                TRANSITION_ORIGIN
+                TRANSITION_ORIGIN,
+                UPDATED
             ]
             .into_iter()
             .collect(),
@@ -403,6 +451,20 @@ fn format_8_brain(
     BTreeSet<Vec<u8>>,
     Vec<String>,
 ) {
+    old_format_brain(seed, 8)
+}
+
+/// [`format_8_brain`] stamped `version` instead. At 9 it is a format-9 brain whose lookups
+/// predate this build's set (no set stamp): here it has no entries at all, so the open must build
+/// every one, the updated-order entries included.
+fn old_format_brain(
+    seed: u64,
+    version: u32,
+) -> (
+    std::sync::Arc<dyn crate::kv::Kv>,
+    BTreeSet<Vec<u8>>,
+    Vec<String>,
+) {
     let kv = crate::test_support::mem_kv();
     let env: std::sync::Arc<dyn crate::env::Env> = std::sync::Arc::new(crate::SystemEnv);
     let store = Store::open_kv(kv.clone(), env, crate::OpenOptions::default()).unwrap();
@@ -419,10 +481,11 @@ fn format_8_brain(
     for key in &want {
         tx.delete(key).unwrap();
     }
+    tx.delete(&stamp_key()).unwrap();
     let mut stored: crate::StoredFormat = crate::get_json(&*tx, &keys::meta("format"))
         .unwrap()
         .unwrap();
-    stored.format_version = 8;
+    stored.format_version = version;
     crate::put_json(&mut *tx, &keys::meta("format"), &stored).unwrap();
     tx.commit().unwrap();
     (kv, want, said)
@@ -464,6 +527,13 @@ fn answers(store: &Store) -> Vec<String> {
         format!("{:?}", store.has_supersede_edges()),
         format!("{:?}", store.read_projection_readiness(&de(json!({})))),
         format!("{:?}", store.cosines_by_chunk_ids(&ids, &basis(1))),
+        format!("{:?}", store.list_pages(&de(json!({"limit": 7})))),
+        format!(
+            "{:?}",
+            store.list_pages(&de(
+                json!({"limit": 5, "sort": "updated_asc", "includeDeleted": true})
+            ))
+        ),
     ];
     for page_id in 1..30 {
         out.push(format!(
@@ -475,6 +545,19 @@ fn answers(store: &Store) -> Vec<String> {
         ));
     }
     out
+}
+
+#[test]
+fn a_format_9_brain_with_an_older_lookup_set_is_rebuilt_when_it_opens() {
+    let (kv, want, said) = old_format_brain(17, 9);
+    let env: std::sync::Arc<dyn crate::env::Env> = std::sync::Arc::new(crate::SystemEnv);
+    let store = Store::open_kv(kv, env, crate::OpenOptions::default()).unwrap();
+    assert_eq!(store.info().format_version, crate::FORMAT_VERSION);
+    assert_eq!(stored_entries(&*store.read().unwrap()).unwrap(), want);
+    assert!(want.iter().any(|k| k[keys::KEYED_INDEX.len()] == UPDATED));
+    assert!(is_current(&*store.read().unwrap()).unwrap());
+    assert_eq!(answers(&store), said);
+    check_readers(&store);
 }
 
 #[test]

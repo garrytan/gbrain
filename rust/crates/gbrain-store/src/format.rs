@@ -45,6 +45,8 @@ use std::path::Path;
 ///   duplicate-page and transition-origin reads look rows up instead of reading every record. The upgrade builds every
 ///   entry in the one transaction. A build without the lookups refuses a format-9 brain, as its
 ///   writes would leave them stale.
+///   The set of lookups is stamped in its own record; an open rebuilds a stale set within format 9
+///   (`keyed_index::rebuild_if_stale`).
 pub const FORMAT_VERSION: u32 = 9;
 /// Every format version this build can open. Addon exports list these as `formatVersions`.
 pub const FORMAT_VERSIONS: &[u32] = &[1, 2, 3, 4, 5, 6, 7, 8, FORMAT_VERSION];

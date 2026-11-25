@@ -380,6 +380,7 @@ impl Store {
                 } else {
                     put_json(&mut *tx, &keys::meta("format"), &fresh)?;
                     seed(&mut *tx, &*env, &options)?;
+                    keyed_index::rebuild(&mut *tx)?;
                     tx.commit()?;
                     (fresh, true)
                 }
@@ -394,7 +395,7 @@ impl Store {
         let schema_version = config::read_config(&*kv.snapshot()?, "version")?
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
-        Ok(Store {
+        let store = Store {
             kv,
             env,
             vectors: vectors::VectorCache::default(),
@@ -409,12 +410,15 @@ impl Store {
             builder: Mutex::new(None),
             runs_builder: options.keyword_index_builder,
             flag_assumed,
-        })
-        .inspect(|store| {
-            if index.needs_build && store.runs_builder {
-                store.start_keyword_index_builder();
-            }
-        })
+        };
+        // A format-9 brain whose keyed lookups predate this build's set gets them now.
+        if !created {
+            keyed_index::rebuild_if_stale(&store)?;
+        }
+        if index.needs_build && store.runs_builder {
+            store.start_keyword_index_builder();
+        }
+        Ok(store)
     }
 
     /// A store on the same records with no transaction and no builder: the build thread's handle.

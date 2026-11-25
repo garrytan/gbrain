@@ -15,10 +15,18 @@ change: each member reads the records an index names and applies its own test to
 | `0x05` | h(source, content hash), page id | each page record with a content hash | `findDuplicatePage`, `findDuplicatePages` |
 | `0x06` | h(source, frontmatter `id`), page id | each page record whose frontmatter `id` is not null | `findDuplicatePage`, `findDuplicatePages` |
 | `0x07` | h(lower-cased title), page id | the `0x02` titles longer than 512 bytes | `findPagesByTitles`, `listPagesTitledIn` |
+| `0x09` | updated_at (sign bit flipped, big-endian), slug, NUL, source, NUL, page id | each page record (lookup set 2) | `listPages` sorted by `updated_at` (the default and `updated_asc`) with no type, tag or slug filter |
 | `0x08` | origin page id, the transition's record key | each link transition record (`q source NUL T ...`, as `link_temporal.rs` `scan_tag` picks them) with an origin page | `applyLinkTemporalRows` (the page's own transitions it replaces), `linkRelationshipKeysForOrigin` |
 
 `h` is the first 16 bytes of the SHA-256 of the parts joined by NUL. Every value is empty. Soft-deleted pages keep
 their entries; the members filter them as before.
+
+## The set stamp
+
+`rebuild` writes the set version (`LOOKUPS_VERSION`, now `2`) to the `M keyed_lookups` record. Every writable open
+of a format-9 brain checks it: a brain whose lookups predate this build's set (set 1, before the `0x09` entries) is
+rebuilt in one write before the open returns, so a new kind of entry needs no new store format. A read-only open of
+such a brain refuses, as a read-only open of a brain that needs a format upgrade does.
 
 ## How the entries stay right
 
@@ -35,6 +43,15 @@ their entries; the members filter them as before.
   through its id, and each member applies its full test. A stale entry could add no row; a missing one would drop a
   row, which `keyed_index/tests.rs` guards against by checking the entries against what the records derive after every
   write of a random workload (and under concurrent writers and rollbacks).
+
+## The updated-order walk
+
+`listPages` sorted by `updated_at` orders by updated_at, slug, source, id (`cmp_updated` in `pages.rs`). The `0x09`
+entry's bytes sort the same way: the time is a sign-flipped big-endian integer, and a slug or source never holds NUL,
+so the NUL after each one sorts below any byte it could hold. The member walks the entries newest first (or oldest
+first, starting at `updated_after` when one is set), reads each page by id in batches, applies the same filters and
+privacy test as before, and stops once it holds offset + limit rows. With a type, tag or slug filter, or another
+sort, it reads every page as before.
 
 ## The substring read
 
