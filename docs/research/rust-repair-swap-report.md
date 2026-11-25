@@ -2,7 +2,7 @@
 
 - **We learned that every `gbrain repair` kind on a Rust brain either runs, or stops with a typed `engine_capability_missing` refusal that writes nothing.** No kind returns an empty answer in place of a refusal.
 - **We learned that more kinds stop than the three rows below.** 18 kinds can preview but stop before their first page or fact write. You should read the table in section 1 as the swap's list of known stops.
-- **We learned that two stops are on paths a normal brain can reach without naming a kind.** `visibility` is an automatic kind, and on a Rust brain its default preview stops at `repair visibility privacy scan`. `fences` is an automatic kind too, and its apply of a database-only page stops at publication. You should decide whether the Dec 1 opt-in swap accepts these two (section 3).
+- **We learned that two stops are on paths a normal brain can reach without naming a kind.** `visibility` is an automatic kind, and on a Rust brain its default preview stops at `repair visibility privacy scan`. `fences` is an automatic kind too, and its apply of a database-only page stops at publication. Both are named swap-report rows for the Dec 1 opt-in swap (RUST_ENGINE.md rows 51 and 50, section 3).
 - The three rows in section 2 stay as named swap-report rows. Their owner is the post-freeze lane.
 
 ## Evidence
@@ -105,7 +105,7 @@ Totals (67 kinds): 37 served, 18 preview-only, 5 partly served, 4 stop at previe
 | Kind | `private-labels` | `moved-pages` | `fences` (also `split-facts`) |
 | Stop text on Rust | `repair private-labels privacy scan` | `repair moved-pages access check` | Observed in the parity case: `member=executeRaw capability=raw_sql outcome=none written=nothing`, message "...refused at publication on 3 claims, the limit (3); it is not claimed again." The settle step names `repair write publication (request <id> stays queued)` only when the request is still queued. |
 | File:line | `src/core/repair/private-labels.ts:386` (plan, before any read) | `src/core/persistence/moved-pages.ts:286` (verdict, `pairRefusal`) | Refusal recorded at `src/core/persistence/coordinator.ts:404`; the raw statements are in `guardFenceRows`, `src/core/trust/fence-guard.ts:70-155`; the queued text is `src/core/repair/settle.ts:42` |
-| RUST_ENGINE.md row | 38 | 39 | None. This stop has no row in the loss list yet. |
+| RUST_ENGINE.md row | 38 | 39 | 50 |
 | Test that proves it fails closed | `test/engine-parity/repair-history-kinds.test.ts:463` checks the refusal text on Rust | `test/engine-parity/repair-history-kinds.test.ts:442` checks the refusal text on Rust | `test/engine-parity/repair-fence-kinds.test.ts:133` accepts either refusal text on Rust |
 | Nothing written | The refusal detail says `written=nothing`. The test does not read the page back. A probe read it back: frontmatter `access: private` and the body were unchanged. | The refusal detail says `written=nothing`; the stop is in the preview. A probe read both pages back: both live and unchanged. | The refusal detail says `written=nothing`. The test does not read the page back. A probe read it back: the body was byte-identical and the broken fence was still broken (1 warning). |
 | explicit_only | yes | yes | no: `fences` is an automatic kind. Only its apply reaches the stop, and `gbrain repair --all` previews unless `--apply` is passed. `split-facts` is explicit_only. |
@@ -115,9 +115,11 @@ The probes were temporary edits, not committed. The post-freeze lane should add 
 
 ## 3. Findings for the swap decision
 
-1. **`visibility` is automatic, and it stops on a Rust brain by default.** `gbrain repair --all` and `doctor --remediate` run it. Its default preview covers all classes, so it stops at `repair visibility privacy scan` before it reads anything, also on an empty brain. `runRepairKinds` (`src/commands/repair.ts:741`) records the kind as an error and runs the next kind, so the whole run does not stop. The run's exit code shows the error. The stop is safe (nothing read, nothing written), but every automatic run on a Rust brain reports it.
-2. **The publication stop has no step name.** On Rust, the fences apply and the split-facts apply end with `member=executeRaw`, not `repair write publication`. The refusal is typed and writes nothing, but an operator does not see which step refused. The text `repair write publication` appears only when the request is still queued at settle.
-3. **The publication stop has no RUST_ENGINE.md row.** Rows 38 and 39 exist. The `guardFenceRows` stop and the page-visibility fallback (section 4.3) have no row.
+On a Rust brain every `gbrain repair --all` and `doctor --remediate` reports an error for visibility; nothing is read or written.
+
+1. **`visibility` is automatic, and it stops on a Rust brain by default (RUST_ENGINE.md row 51).** `gbrain repair --all` and `doctor --remediate` run it. Its default preview covers all classes, so it stops at `repair visibility privacy scan` before it reads anything, also on an empty brain. `runRepairKinds` (`src/commands/repair.ts:741`) records the kind as an error and runs the next kind, so the whole run does not stop. The run's exit code shows the error. The stop is safe (nothing read, nothing written), but every automatic run on a Rust brain reports it.
+2. **The publication stop has no step name (row 50).** On Rust, the fences apply and the split-facts apply end with `member=executeRaw`, not `repair write publication`. The refusal is typed and writes nothing, but an operator does not see which step refused. The text `repair write publication` appears only when the request is still queued at settle.
+3. **Loss rows.** RUST_ENGINE.md rows 50 (the publication stop), 51 (the visibility default preview) and 52 (the page-visibility fallback, section 4.3) now list the three stops that had no row. The missing step name of row 50 is on the post-freeze lane's list.
 4. **Two more stops refuse a raw statement with no step name:** `rename-identity` with an open pair (`sync-identity-downgrades.ts:148`), and the `unwithdrawn-facts` parity seed. Both are explicit_only.
 
 ## 4. Inventory for the post-freeze privacy lane
