@@ -235,7 +235,7 @@ branch, and the reserved ones, with the owner who claimed it. The rules:
 | `0` | `GUEST_SOURCE` | not named on the branch; the trunk names it at intake | branch rust-engine/collate-equal |
 | `3` | `SECRET_STORE` | lane 10 | reserved (the trunk holds it for the secret store) |
 | `~` | `FAMILY_ESCAPE` | core | main once this lands: the escape for two-byte family tags |
-| `~q` | `QUESTIONS` | lane 15 (interfaces lane allotment) | branch rust-engine/refresh-evidence-reads (the pinned-question evidence family, `questions.rs`: evidence `0x03`; `0x04` kept; **`0x01` and `0x02` are reserved-unused, never to be reused**: the pin rows and their `(source_id, slug)` index live at `m 0x2F` / `m 0x30` on main, `jobs/pinned_questions.rs`) |
+| `~q` | `QUESTIONS` | lane 15 (interfaces lane allotment) | branch rust-engine/refresh-evidence-reads-h2 (the pinned-question evidence family, `questions.rs`: evidence `0x03`; `0x04` kept; **`0x01` and `0x02` are reserved-unused, never to be reused**: the pin rows and their `(source_id, slug)` index live at `m 0x2F` / `m 0x30` on main, `jobs/pinned_questions.rs`) |
 
 Free one-byte tags: the digits `4` to `9` (approved rows only) and punctuation other than `~`, which stays unclaimed
 unless a reviewed change to this table names it.
