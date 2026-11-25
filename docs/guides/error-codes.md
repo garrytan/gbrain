@@ -5434,9 +5434,9 @@ More: [docs/guides/troubleshooting.md#runtime-build-skew](../../docs/guides/trou
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The Rust engine addon on this machine does not match what this gbrain release expects (checksum, engine_abi, engine_build or target), so it was not used and gbrain wrote nothing. | A different addon build could read or write the brain with a different on-disk format, so only the addon the running release names, with the checksum in its manifest, is loaded. A file that fails the check is left as it was. | Rebuild the addon with bun run rust:build and point GBRAIN_RUST_ENGINE_ADDON at the path it prints, or install the gbrain release that matches the addon, or switch engine in the gbrain config back to pglite or postgres. | user | `gbrain doctor --json` | 1 | no |
+| The Rust engine addon on this machine does not match what this gbrain release expects (checksum, engine_abi, engine_build or target), so it was not used and gbrain wrote nothing. | A different addon build could read or write the brain with a different on-disk format, so only the addon the running release names, with the checksum in its manifest, is loaded. A file that fails the check is left as it was. | Run gbrain engine install rust to replace it with the addon this release names. verification_failed means a downloaded addon or manifest did not match its checksum or build attestation: it was deleted, the installed addon was left as it was, and there is no bypass, so report it. For a build you made, rebuild it with bun run rust:build and point GBRAIN_RUST_ENGINE_ADDON at the path it prints. Or switch engine in the gbrain config back to pglite or postgres. | user | `gbrain doctor --json` | 1 | no |
 
-Reasons: `digest`, `engine_abi`, `engine_build`, `target`, `load_failed`.
+Reasons: `digest`, `engine_abi`, `engine_build`, `target`, `load_failed`, `verification_failed`.
 
 ### rust_engine_addon_missing
 
@@ -5444,9 +5444,9 @@ Reasons: `digest`, `engine_abi`, `engine_build`, `target`, `load_failed`.
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The Rust engine is selected (engine: rust), but no addon for this gbrain release is installed on this machine, or no addon is published for this platform, so gbrain opened nothing and wrote nothing. | The Rust engine ships as a separate addon file kept in the gbrain home, checked against the checksum in this release's manifest before it loads. Without a checked addon the engine cannot open, and gbrain refuses before touching the brain. | Point GBRAIN_RUST_ENGINE_ADDON at an addon you built with bun run rust:build, or switch engine in the gbrain config back to pglite or postgres. | user | `gbrain doctor --json` | 1 | yes |
+| The Rust engine is selected (engine: rust), but no addon for this gbrain release is installed on this machine, or no addon is published for this platform, so gbrain opened nothing and wrote nothing. | The Rust engine ships as a separate addon file kept in the gbrain home, checked against the checksum in this release's manifest before it loads. Without a checked addon the engine cannot open, and gbrain refuses before touching the brain. | Run gbrain engine install rust to download and check the addon this release names (not_published means this release has none: use a release that does, or keep pglite or postgres; unsupported_target means no release has one for this platform). For a build you made, point GBRAIN_RUST_ENGINE_ADDON at it (bun run rust:build). Or switch engine in the gbrain config back to pglite or postgres. | user | `gbrain doctor --json` | 1 | yes |
 
-Reasons: `unsupported_target`, `not_installed`, `override_not_found`.
+Reasons: `unsupported_target`, `not_installed`, `override_not_found`, `not_published`, `fetch_failed`.
 
 ### rust_store_locked
 
