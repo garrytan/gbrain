@@ -26,11 +26,35 @@ import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { runImport } from '../../src/commands/import.ts';
 import { importImageFile } from '../../src/core/import-file.ts';
-import { isCapabilityMissing } from '../../src/core/rust-engine/errors.ts';
+import { capabilityMissing, isCapabilityMissing } from '../../src/core/rust-engine/errors.ts';
+import { RUST_ENGINE_MEMBERS } from '../../src/core/rust-engine/members.ts';
+import type { Capability } from '../../src/core/engine-capabilities.ts';
 
 const { parityTest } = parityArms(testBackends());
 
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+/**
+ * The members this import still stops on when the engine is the Rust one: each landing part removes the stops it serves
+ * and leaves the list at what is left, ending empty. A stop outside the list, or a listed stop no scenario reaches any
+ * more, fails the file, so the list can only shrink. Part A (source, resolver, guest, privacy-label, writer-state reads,
+ * cycle locks, seal read): transaction is next.
+ */
+const KNOWN_STOPS: readonly string[] = ['transaction'];
+const stopOf = (text: string): string | null => /does not support (\w+) yet/.exec(text)?.[1] ?? null;
+/** A typed refusal of a listed stop stays typed (the Rust arm counts it as the case's stop); any other refusal is a failure. */
+function refusalOrFailure(error: unknown, what: string): unknown {
+  if (!isCapabilityMissing(error)) return error;
+  const stop = stopOf((error as Error).message);
+  return stop && KNOWN_STOPS.includes(stop) ? error : new Error(`${what} refused: ${(error as Error).message}`);
+}
+/** A file the import recorded as failed because of a listed stop is that stop, thrown as the typed refusal. */
+function throwListedStop(failures: Array<{ error: string }>): void {
+  const stops = failures.map((f) => stopOf(f.error));
+  const stop = stops[0];
+  if (stop && stops.every((s) => s === stop) && KNOWN_STOPS.includes(stop)) {
+    throw capabilityMissing(((RUST_ENGINE_MEMBERS as Record<string, string>)[stop] ?? 'transactions') as Capability, stop);
+  }
+}
 const roots: string[] = [];
 afterAll(() => { for (const root of roots) rmSync(root, { recursive: true, force: true }); });
 
@@ -68,9 +92,10 @@ async function markdownScenario(engine: BrainEngine) {
   const dir = markdownDir();
   const run = async () => {
     try { return await runImport(engine, [dir, '--no-embed', '--json']); }
-    catch (error) { throw isCapabilityMissing(error) ? new Error(`import refused: ${(error as Error).message}`) : error; }
+    catch (error) { throw refusalOrFailure(error, 'import'); }
   };
   const first = count(await run());
+  throwListedStop(first.failures as Array<{ error: string }>);
   const again = count(await run());
   expect(first).toEqual({ imported: 2, skipped: 0, errors: 0, chunksCreated: first.chunksCreated, failures: [] });
   expect(again).toEqual({ imported: 0, skipped: 2, errors: 0, chunksCreated: 0, failures: [] });
@@ -87,12 +112,14 @@ async function folderScenario(engine: BrainEngine, backend: ParityBackend, setup
   await createSource(setup, backend, 'folder', {}, dir);
   const run = async () => {
     try { return await runImport(engine, [dir, '--no-embed', '--json', '--source', 'folder']); }
-    catch (error) { throw isCapabilityMissing(error) ? new Error(`folder import refused: ${(error as Error).message}`) : error; }
+    catch (error) { throw refusalOrFailure(error, 'folder import'); }
   };
   const first = count(await run());
+  throwListedStop(first.failures as Array<{ error: string }>);
   writeFileSync(join(dir, 'notes', 'widgets.md'), '---\ntype: note\ntitle: Widgets\ntags: [company, gears]\n---\n# Widgets\n\nWidgets Inc makes sprockets and gears.\n');
   renameSync(join(dir, 'people', 'alice-example.md'), join(dir, 'people', 'alice-moved.md'));
   const changed = count(await run());
+  throwListedStop(changed.failures as Array<{ error: string }>);
   expect(first).toEqual({ imported: 2, skipped: 0, errors: 0, chunksCreated: first.chunksCreated, failures: [] });
   expect({ errors: changed.errors, failures: changed.failures }).toEqual({ errors: 0, failures: [] });
   const source = await engine.getSource('folder');
@@ -109,9 +136,10 @@ async function imageScenario(engine: BrainEngine) {
   writeFileSync(file, PNG);
   const run = async () => {
     try { return await importImageFile(engine, file, 'images/sealed-example.png', { noEmbed: true }); }
-    catch (error) { throw isCapabilityMissing(error) ? new Error(`image import refused: ${(error as Error).message}`) : error; }
+    catch (error) { throw refusalOrFailure(error, 'image import'); }
   };
   const first = await run();
+  throwListedStop(first.error ? [{ error: first.error }] : []);
   const again = await run();
   const answer = { first: first.status, again: again.status, error: again.error ?? null };
   expect(answer).toEqual({ first: 'imported', again: 'skipped', error: null });
@@ -136,9 +164,10 @@ describe('engine parity: gbrain import --no-embed ends in no refusal on any arm'
   });
 });
 
-describe('Rust-engine stand-in: the same import over PGLite ends in no refusal', () => {
+describe('Rust-engine stand-in: the same import over PGLite ends in no refusal but the listed stops', () => {
   let plain: PGLiteEngine;
   let standIn: PGLiteEngine;
+  const reached = new Set<string>();
   beforeAll(async () => {
     plain = new PGLiteEngine();
     await plain.connect({});
@@ -149,33 +178,28 @@ describe('Rust-engine stand-in: the same import over PGLite ends in no refusal',
   }, 180_000);
   afterAll(async () => { await plain.disconnect(); await standIn.disconnect(); });
 
-  test('markdown import: the stand-in answers what PGLite answers, with no refusal', async () => {
+  /** The stand-in's run beside PGLite's: equal answers and no refusal, or a stop on a listed member and nothing else. */
+  async function compare<T>(run: (engine: BrainEngine, setup: BrainEngine) => Promise<T>) {
     await resetPgliteState(plain);
     await resetPgliteState(standIn);
     const refused: string[] = [];
-    const reference = await markdownScenario(plain);
-    const answer = await markdownScenario(rustStandIn(standIn, refused)).catch((error: Error) => { expect({ refused, error: error.message }).toEqual({ refused: [], error: null }); });
+    const reference = await run(plain, plain);
+    const outcome = await run(rustStandIn(standIn, refused), standIn).then((answer) => ({ answer }), (error: unknown) => ({ error }));
+    const members = [...new Set(refused.map((entry) => entry.split(' ')[0]!))];
+    for (const member of members) reached.add(member);
+    if ('error' in outcome) {
+      expect({ refused: members.filter((m) => !KNOWN_STOPS.includes(m)), error: isCapabilityMissing(outcome.error) ? null : String(outcome.error) })
+        .toEqual({ refused: [], error: null } as never);
+      return;
+    }
     expect({ refused }).toEqual({ refused: [] });
-    expect(answer).toEqual(reference);
-  }, 180_000);
+    expect(outcome.answer).toEqual(reference);
+  }
 
-  test('folder source: the stand-in answers what PGLite answers, with no refusal', async () => {
-    await resetPgliteState(plain);
-    await resetPgliteState(standIn);
-    const refused: string[] = [];
-    const reference = await folderScenario(plain, 'pglite');
-    const answer = await folderScenario(rustStandIn(standIn, refused), 'pglite', standIn).catch((error: Error) => { expect({ refused, error: error.message }).toEqual({ refused: [], error: null }); });
-    expect({ refused }).toEqual({ refused: [] });
-    expect(answer).toEqual(reference);
-  }, 180_000);
-
-  test('unchanged image re-import: the stand-in skips it with no refusal', async () => {
-    await resetPgliteState(plain);
-    await resetPgliteState(standIn);
-    const refused: string[] = [];
-    const reference = await imageScenario(plain);
-    const answer = await imageScenario(rustStandIn(standIn, refused)).catch((error: Error) => { expect({ refused, error: error.message }).toEqual({ refused: [], error: null }); });
-    expect({ refused }).toEqual({ refused: [] });
-    expect(answer).toEqual(reference);
-  }, 120_000);
+  test('markdown import: the stand-in answers what PGLite answers, or stops on a listed member', () => compare((engine) => markdownScenario(engine)), 180_000);
+  test('folder source: the stand-in answers what PGLite answers, or stops on a listed member', () => compare((engine, setup) => folderScenario(engine, 'pglite', setup)), 180_000);
+  test('unchanged image re-import: the stand-in skips it, or stops on a listed member', () => compare((engine) => imageScenario(engine)), 120_000);
+  test('the listed stops are exactly the members the three imports stop on', () => {
+    expect([...reached].sort()).toEqual([...KNOWN_STOPS].sort());
+  });
 });

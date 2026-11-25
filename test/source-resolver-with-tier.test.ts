@@ -18,6 +18,7 @@ import {
 } from '../src/core/source-resolver.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { stubSourceMembers } from './helpers/source-members-stub.ts';
 
 // Stub engine same shape as source-resolver.test.ts
 function makeStub(
@@ -27,18 +28,11 @@ function makeStub(
 ): BrainEngine {
   return {
     kind: 'pglite',
-    executeRaw: async <T>(sql: string, params?: unknown[]): Promise<T[]> => {
-      if (sql.includes('SELECT id FROM sources WHERE id = $1')) {
-        const target = params?.[0];
-        return (registeredSources.includes(target as string)
-          ? [{ id: target } as unknown as T]
-          : []);
-      }
-      if (sql.includes('SELECT id, local_path FROM sources') || sql.includes(', archived FROM sources')) {
-        return paths as unknown as T[];
-      }
-      return [];
-    },
+    // Every registered id exists; the tier-4 paths carry local_path.
+    ...stubSourceMembers([
+      ...registeredSources.map(id => ({ id, local_path: paths.find(p => p.id === id)?.local_path ?? null })),
+      ...paths.filter(p => !registeredSources.includes(p.id)),
+    ]),
     getConfig: async (key: string) => (key === 'sources.default' ? defaultKey : null),
   } as unknown as BrainEngine;
 }

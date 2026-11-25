@@ -20,41 +20,34 @@ import { operations } from '../src/core/operations.ts';
 import { sourceGuardBlocksWrite, WRITE_SAFE_SOURCE_TIERS, __resetSourceGuardQueryShape, type SourceTier } from '../src/core/source-resolver.ts';
 import { resolveMcpStdioSourceScope } from '../src/mcp/server.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { stubSourceMembers } from './helpers/source-members-stub.ts';
 
 function engineWithSources(ids: string[]): BrainEngine {
   return {
     kind: 'postgres',
-    // Emulates just enough SQL semantics for the guard's bounded probe:
-    // the `id <> 'default'` filter (both the archived and legacy shapes).
-    executeRaw: async (sql: string) => {
-      const rows = ids.map(id => ({ id }));
-      return sql.includes("id <> 'default'") ? rows.filter(r => r.id !== 'default') : rows;
-    },
+    // The guard's probe reads the active sources (listAllSources) and keeps any that is not 'default'.
+    ...stubSourceMembers(ids.map(id => ({ id }))),
     getConfig: async () => null,
     sql: async () => [],
     resolveCaseSensitiveAliases: async () => [],
   } as unknown as BrainEngine;
 }
 
-/** Pre-`archived`-column schema: the filtered-by-archived query throws, the
- *  legacy shape succeeds. */
+/** Pre-`archived`-column schema: the archived-aware read throws, the every-source read (listSourceRecords)
+ *  succeeds. */
 function legacyEngine(ids: string[]): BrainEngine {
   return {
     kind: 'postgres',
-    executeRaw: async (sql: string) => {
-      if (sql.includes('archived')) throw new Error('column "archived" does not exist');
-      const rows = ids.map(id => ({ id }));
-      return sql.includes("id <> 'default'") ? rows.filter(r => r.id !== 'default') : rows;
-    },
+    ...stubSourceMembers(ids.map(id => ({ id })), {
+      fail: member => (member === 'listAllSources' ? new Error('column "archived" does not exist') : undefined),
+    }),
     getConfig: async () => null,
   } as unknown as BrainEngine;
 }
 
 const throwingEngine = {
   kind: 'postgres',
-  executeRaw: async () => {
-    throw new Error('db down');
-  },
+  ...stubSourceMembers([], { fail: () => new Error('db down') }),
   getConfig: async () => null,
 } as unknown as BrainEngine;
 
@@ -112,13 +105,13 @@ describe('sourceGuardBlocksWrite tier policy', () => {
     let archivedAttempts = 0;
     const counting = {
       kind: 'postgres',
-      executeRaw: async (sql: string) => {
-        if (sql.includes('archived')) {
+      ...stubSourceMembers([], {
+        fail: member => {
+          if (member !== 'listAllSources') return undefined;
           archivedAttempts++;
-          throw new Error('column "archived" does not exist');
-        }
-        return [];
-      },
+          return new Error('column "archived" does not exist');
+        },
+      }),
       getConfig: async () => null,
     } as unknown as BrainEngine;
     await sourceGuardBlocksWrite(counting, 'seed_default');

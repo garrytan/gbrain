@@ -19,6 +19,7 @@ import { withoutRequestConfigSnapshot } from '../src/core/config-snapshot.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { GBrainConfig } from '../src/core/config.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { stubSourceMembers } from './helpers/source-members-stub.ts';
 
 const hooks = (completeStartup: (e: BrainEngine) => Promise<void> = async () => {}): EngineConnectHooks => ({
   SELECTED_CONFIG_BY_ENGINE: new WeakMap<BrainEngine, GBrainConfig>(), completeStartup,
@@ -117,7 +118,8 @@ describe('connectEngineForServe', () => {
 
 describe('gbrain call sizes its connect by the operation scope', () => {
   const stub = {
-    executeRaw: async (sql: string) => sql.includes('FROM sources') ? [{ id: 'default' }] : [],
+    ...stubSourceMembers([{ id: 'default' }]),
+    executeRaw: async () => [],
     getStats: async () => ({ pages: 1, chunks: 1 }),
     getTags: async () => [],
   } as unknown as BrainEngine;

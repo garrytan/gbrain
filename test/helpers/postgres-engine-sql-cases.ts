@@ -42,6 +42,11 @@ const OOS = {
   dream: 'out-of-scope:dream-verdicts',
   raw: 'out-of-scope:raw-data',
   stub: 'out-of-scope:no-sql-stub',
+  cliReadsImport: 'out-of-scope:cli-import-reads (born in engine-sql/cli-reads-import.ts; pinned by test/engine-parity/cli-reads-import.test.ts)',
+  entityReads: 'out-of-scope:entity-reads (born in engine-sql/entity-reads.ts; pinned by test/engine-parity/entity-reads.test.ts)',
+  callerRawSql: 'out-of-scope:caller-raw-sql (statements callers ran through executeRaw, now typed members; pinned byte-identical by test/engine-sql-caller-raw-sql-pins.test.ts)',
+  journal: 'out-of-scope:persistence-journal (born in engine-sql/persistence-journal.ts, persistence-claims.ts and persistence-housekeeping.ts; pinned by test/engine-parity/persistence.test.ts and test/persistence-journal-statements.test.ts)',
+  writerAdmin: 'out-of-scope:writer-admin (born in engine-sql/writer-admin.ts; pinned by test/engine-parity/writer-admin.test.ts)',
   importGuards: 'out-of-scope:import-guards (born in engine-sql/persistence-state.ts, transaction-settings.ts, belief.ts, access-control.ts; pinned by test/engine-parity/import-path.test.ts)',
   searchReads: 'out-of-scope:search-reads (born in engine-sql/search-reads.ts; pinned by test/engine-parity/search-reads.test.ts)',
   importWrites: 'out-of-scope:import-writes (born in engine-sql/chunks.ts, tags.ts, pages.ts; pinned by test/engine-parity/import-writes.test.ts)',
@@ -326,6 +331,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'getStats': OOS.stats, 'getHealth': OOS.stats,
   'getConfig': OOS.config, 'setConfig': OOS.config, 'unsetConfig': OOS.config, 'listConfigKeys': OOS.config, 'getAllConfig': OOS.config, 'getConfigValues': OOS.config,
   // import guards (typed reads and writes the default import path runs)
+  'listLocalPathSources': 'sources', 'listSourceRoutingRows': 'sources', 'countDefaultSourceSplit': 'sources', 'readSourceRow': 'sources', 'markSourceSynced': 'sources', 'listSourceRecords': OOS.cliReadsImport, 'readSourceIncarnation': OOS.cliReadsImport, 'readIgnoredPrivacyLabelPages': OOS.entityReads, 'readLivePageFrontmatter': OOS.callerRawSql, 'readGuestSourceRow': OOS.cliReadsImport, 'hasCompanyBrainReceipt': OOS.cliReadsImport, 'ownsSchemaTables': OOS.journal, 'readWriterAdminState': OOS.writerAdmin,
   'readManagedModeRows': OOS.importGuards, 'getSourceStrictness': OOS.importGuards, 'readPersistenceBrainId': OOS.importGuards,
   'readLocalWriterRow': OOS.importGuards, 'insertLocalWriterRow': OOS.importGuards, 'readTransactionSettings': OOS.importGuards,
   'applyTransactionSettings': OOS.importGuards, 'readLedgerSource': OOS.importGuards, 'isFolderRestricted': OOS.importGuards,
@@ -712,6 +718,11 @@ export const SQL_CASES: SqlCase[] = [
   ...variants('listSourceLocalPaths', [['default', (e) => e.listSourceLocalPaths()]]),
   ...variants('updateSourceConfig', [['default', (e) => e.updateSourceConfig(SRC, { federated: true })]]),
   ...variants('getSource', [['default', (e) => e.getSource(SRC)]]),
+  ...variants('listLocalPathSources', [['default', (e) => e.listLocalPathSources()]]),
+  ...variants('listSourceRoutingRows', [['default', (e) => e.listSourceRoutingRows()]]),
+  ...variants('countDefaultSourceSplit', [['default', (e) => e.countDefaultSourceSplit()]]),
+  ...variants('readSourceRow', [['default', (e) => e.readSourceRow(SRC)]]),
+  ...variants('markSourceSynced', [['default', (e) => e.markSourceSynced(SRC)]]),
 
   // ── files ──
   ...variants('upsertFile', [

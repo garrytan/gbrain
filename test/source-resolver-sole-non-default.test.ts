@@ -11,8 +11,8 @@
  *   - AFTER brain_default (explicit user intent wins)
  *   - BEFORE seed_default (auto-route beats the empty terminal)
  *
- * Tests use a stub BrainEngine that only implements the three methods the
- * resolver touches: executeRaw, getConfig, kind. Hermetic — no PGLite.
+ * Tests use a stub BrainEngine that only implements what the resolver touches:
+ * the typed source members (stubSourceMembers), getConfig, kind. Hermetic — no PGLite.
  */
 
 import { describe, test, expect } from 'bun:test';
@@ -23,47 +23,35 @@ import {
   formatSoleNonDefaultNudge,
 } from '../src/core/source-resolver.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { stubSourceMembers } from './helpers/source-members-stub.ts';
 
 type StubSource = { id: string; local_path: string | null; archived?: boolean; config?: Record<string, unknown> };
 
 function makeStub(
   sources: StubSource[],
   globalDefault: string | null = null,
-  opts?: { defaultActivePages?: number; pagesProbeThrows?: boolean },
+  opts?: { defaultActivePages?: number; pagesProbeThrows?: boolean; archivedColumnMissing?: boolean },
 ) {
+  const legacyBrain = () => new Error('column "archived" does not exist');
   return {
     kind: 'pglite' as const,
-    async executeRaw<T>(sql: string, _params?: unknown[]): Promise<T[]> {
-      // Query shapes hit in the resolver:
-      //   1. tier 4 (local_path match): SELECT id, local_path FROM sources WHERE local_path IS NOT NULL
-      //   2. assertSourceExists: SELECT id FROM sources WHERE id = $1
-      //   3. tier 5.5 (sole_non_default): SELECT id FROM sources WHERE local_path IS NOT NULL AND id != 'default' AND archived = false
-      //   4. tier 5.5 emptiness guard (#3070): SELECT 1 ... FROM pages WHERE source_id = 'default' AND deleted_at IS NULL LIMIT 1
-      if (sql.includes('FROM pages')) {
-        if (opts?.pagesProbeThrows) throw new Error('relation "pages" probe failed (legacy schema)');
-        return (opts?.defaultActivePages ?? 0) > 0 ? ([{ one: 1 }] as unknown as T[]) : [];
-      }
-      if (sql.includes('archived = false')) {
-        return sources.filter(s => s.local_path !== null && s.id !== 'default' && s.archived !== true)
-          .map(s => ({ id: s.id, config: s.config ?? {} })) as unknown as T[];
-      }
-      if (sql.includes('local_path IS NOT NULL AND id != \'default\'')) {
-        return sources.filter(s => s.local_path !== null && s.id !== 'default')
-          .map(s => ({ id: s.id })) as unknown as T[];
-      }
-      if (
-        sql.includes('SELECT id, local_path FROM sources WHERE local_path IS NOT NULL') ||
-        sql.includes(', archived FROM sources WHERE local_path IS NOT NULL')
-      ) {
-        return sources.filter(s => s.local_path !== null)
-          .map(s => ({ id: s.id, local_path: s.local_path, archived: s.archived === true })) as unknown as T[];
-      }
-      if (sql.includes('SELECT id FROM sources WHERE id =')) {
-        const id = (_params as string[])?.[0];
-        return sources.filter(s => s.id === id).map(s => ({ id: s.id })) as unknown as T[];
-      }
-      return [];
-    },
+    // Query shapes hit in the resolver, now typed members:
+    //   1. tier 4 (local_path match): listLocalPathSources
+    //   2. assertSourceExists: listAllSources
+    //   3. tier 5.5 (sole_non_default): listSourceRoutingRows, which also carries the emptiness guard (#3070) as `default_has_pages`
+    //   4. the legacy fallbacks: listSourceRecords + countDefaultSourceSplit
+    ...stubSourceMembers(sources, {
+      defaultHasPages: (opts?.defaultActivePages ?? 0) > 0,
+      fail: member => {
+        // A brain older than the `archived` column: the routing read fails, the page split still answers.
+        if (opts?.archivedColumnMissing && member === 'listSourceRoutingRows') return legacyBrain();
+        // The pages probe fails (legacy schema): the routing read fails and so does the page split.
+        if (opts?.pagesProbeThrows && (member === 'listSourceRoutingRows' || member === 'countDefaultSourceSplit')) {
+          return new Error('relation "pages" probe failed (legacy schema)');
+        }
+        return undefined;
+      },
+    }),
     async getConfig(_key: string): Promise<string | null> {
       return globalDefault;
     },

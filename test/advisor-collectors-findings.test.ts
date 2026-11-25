@@ -27,6 +27,7 @@ import { describe, test, expect } from 'bun:test';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { stubSourceMembers, type StubSourceRow } from './helpers/source-members-stub.ts';
 
 import { collectMigration } from '../src/core/advisor/collect-migration.ts';
 import { collectUninstalledBrainPack } from '../src/core/advisor/collect-uninstalled-brain-pack.ts';
@@ -150,7 +151,9 @@ describe('collect-uninstalled-brain-pack (five-gate matrix)', () => {
   }
 
   function sourcesEngine(rows: unknown[], counter = { calls: 0 }): { engine: BrainEngine; counter: { calls: number } } {
+    // loadAllSources reads the typed listSourceRecords member; count it (and executeRaw) as engine calls.
     const engine = {
+      ...stubSourceMembers(rows as StubSourceRow[], { onCall: () => { counter.calls++; } }),
       executeRaw: async () => {
         counter.calls++;
         return rows;
@@ -277,9 +280,7 @@ describe('collect-uninstalled-brain-pack (five-gate matrix)', () => {
   test('fail-open — loadAllSources throwing → []', async () => {
     await withEnv({ GBRAIN_HOME: emptyHome() }, async () => {
       const engine = {
-        executeRaw: async () => {
-          throw new Error('relation "sources" does not exist');
-        },
+        ...stubSourceMembers([], { fail: () => new Error('relation "sources" does not exist') }),
       } as unknown as BrainEngine;
       expect(await collectUninstalledBrainPack.collect(ctx(engine))).toEqual([]);
     });

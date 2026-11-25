@@ -78,6 +78,7 @@
           "consolidateFact: (id: number, takeId: number) => Promise<void>",
           "cosinesByChunkIds: (ids: number[], column: string, query: Float32Array) => Promise<Map<number, number>>",
           "countChunklessPagesWithContent: (opts?: { sourceId?: string; }) => Promise<number>",
+          "countDefaultSourceSplit: () => Promise<DefaultSourceSplit>",
           "countKeywordPages: (query: string, opts?: SearchOpts & { timeoutMs?: number; }) => Promise<number>",
           "countOnboardSignal: (signal: OnboardSignal, entityTypes: EntityTypeFilter, opts?: { signal?: AbortSignal; }) => Promise<number>",
           "countOpenLoopsByCounterpartyEmail: (sourceId: string, emails: readonly string[], loopType: string) => Promise<CounterpartyEmailLoopCount[]>",
@@ -176,6 +177,7 @@
           "getUnverifiedExtractionPageIds: (pageIds: number[], opts?: PageReadScope) => Promise<Map<number, { unverified: boolean; status: string; }>>",
           "getVersions: <B extends boolean = true>(slug: string, opts?: GetVersionsOpts<B>) => Promise<PageVersionRows<B>>",
           "getWorktreeBinding: (sourceId: string, hostId: string | null) => Promise<WorktreeBinding | null>",
+          "hasCompanyBrainReceipt: (sourceId: string) => Promise<boolean>",
           "hasExtractedEvents: (sourceId: string, pageId: number) => Promise<boolean>",
           "hasLabelledOnlyMember: () => Promise<boolean>",
           "hasSupersedeEdges: () => Promise<boolean>",
@@ -235,6 +237,7 @@
           "listForcedCutSeqs: (pageId: number, generation: number) => Promise<number[]>",
           "listIdentityDecisions: () => Promise<IdentityDecisionsRead>",
           "listLinkSources: (opts?: { sourceId?: string; sourceIds?: string[]; }) => Promise<{ link_source: string | null; count: number; }[]>",
+          "listLocalPathSources: () => Promise<LocalPathSourceRow[]>",
           "listMemoryProposalRows: (query: ProposalListQuery) => Promise<Array<Record<string, unknown>>>",
           "listOpenLoops: (opts?: ListLoopsOpts) => Promise<OpenLoopDbRow[]>",
           "listOwnerProposalRows: (requestId: string) => Promise<Array<Record<string, unknown>>>",
@@ -248,6 +251,8 @@
           "listSegmentedPages: (sourceId: string, slugs: readonly string[]) => Promise<Array<{ id: number; slug: string; }>>",
           "listSharedSkillPackRoots: (hostId: string) => Promise<SharedSkillPackRoot[]>",
           "listSourceLocalPaths: () => Promise<string[]>",
+          "listSourceRecords: () => Promise<SourceRecordRow[]>",
+          "listSourceRoutingRows: () => Promise<SourceRoutingRow[]>",
           "listStaleChunks: (opts?: { batchSize?: number; afterPageId?: number; afterChunkIndex?: number; sourceId?: string; orderBy?: \"page_id\" | \"updated_desc\"; afterUpdatedAt?: string | null; }) => Promise<StaleChunkRow[]>",
           "listStaleFrontmatterKeyPages: (opts: { sourceId: string; afterId: number; limit: number; }) => Promise<Array<{ id: number; slug: string; keys: string[]; }>>",
           "listStalePagesForExtraction: (opts: { batchSize: number; afterPageId?: number; sourceId?: string; versionTs?: string; held?: \"exclude\"; wantedProducers?: readonly string[]; }) => Promise<StalePageRow[]>",
@@ -270,6 +275,7 @@
           "logIngest: (entry: IngestLogInput) => Promise<void>",
           "markPagesAttendanceBlocked: (refs: Array<{ slug: string; source_id: string; revision: string; }>) => Promise<number>",
           "markPagesExtractedBatch: (refs: Array<{ slug: string; source_id: string; extractedAt?: string; }>, defaultExtractedAt: string) => Promise<number>",
+          "markSourceSynced: (sourceId: string, opts?: SourceSyncStampOptions) => Promise<boolean>",
           "matchTakeRows: (pageId: number, rows: readonly TakeFenceRow[], limit: number) => Promise<number[]>",
           "mergeOntologyFact: (obs: OntologyObservationInput) => Promise<OntologyMergeResult>",
           "migrateFactsToCanonical: (phantomSlug: string, canonicalSlug: string, sourceId: string) => Promise<{ migrated: number; }>",
@@ -278,6 +284,7 @@
           "notifierCoverageRecorded: () => Promise<boolean>",
           "openBodyStaging: (input: BodyStagingInput) => Promise<void>",
           "ownerOnlyMarkTriggers: (opts?: { ensure?: boolean; installing?: boolean; }) => Promise<OwnerOnlyTriggerState>",
+          "ownsSchemaTables: () => Promise<boolean>",
           "pageCollapseFacts: (ids: number[], bodyIds: number[]) => Promise<PageCollapseFactRow[]>",
           "pagesLinkingTo: (fromIds: number[], toIds: number[]) => Promise<number[]>",
           "pruneDecideReceipts: (retentionDays: number) => Promise<number>",
@@ -302,8 +309,11 @@
           "readExportPageRows: (ids: readonly string[]) => Promise<ExportPageRow[]>",
           "readExportWithdrawalLedgerBytes: (sourceId: string) => Promise<number>",
           "readFieldUsageSamples: (query: FieldUsageQuery) => Promise<FieldUsageTypeSample[]>",
+          "readGuestSourceRow: (sourceId: string) => Promise<GuestSourceLookupRow>",
           "readHealthMemoClock: () => Promise<string>",
+          "readIgnoredPrivacyLabelPages: (sourceId: string, scope: { slugs: readonly string[]; } | { since: string; }, opts?: { limit?: number; timeoutMs?: number; }) => Promise<IgnoredLabelPageRow[]>",
           "readLedgerSource: (sourceId: string, opts?: { batch?: boolean; }) => Promise<LedgerSource | null>",
+          "readLivePageFrontmatter: (sourceId: string, slug: string, opts?: { timeoutMs?: number; }) => Promise<IgnoredLabelPageRow | null>",
           "readLocalWriterRow: (id: string, opts?: { lock?: boolean; }) => Promise<LocalWriterRow | undefined>",
           "readManagedModeRows: () => Promise<Array<{ enabled: unknown; }>>",
           "readManifest: (pageId: number, opts?: { generation?: number; stagingId?: string; region?: BodyRegion; lastN?: number; }) => Promise<ManifestRow[]>",
@@ -325,11 +335,14 @@
           "readSegmentTexts: (sourceId: string, sha256s: readonly Uint8Array[]) => Promise<Map<string, Uint8Array>>",
           "readSegmentedPageHead: (pageId: number) => Promise<SegmentedPageHead | undefined>",
           "readSegmentedVersionBodyBytes: (pageId: number, generation: number) => Promise<number | null>",
+          "readSourceIncarnation: (sourceId: string) => Promise<SourceIncarnationRow | null>",
+          "readSourceRow: (sourceId: string) => Promise<SourceCheckRow | null>",
           "readSourceState: (sourceId: string, opts?: SourceStateOptions) => Promise<SourceStateRow | null>",
           "readStoredBodyBytes: (slug: string, sourceId: string) => Promise<number | null>",
           "readTransactionSettings: (names: readonly string[]) => Promise<Array<string | null>>",
           "readWedgeSignals: (queue: string, handlerNames: readonly string[], opts?: { signal?: AbortSignal; }) => Promise<QueueWedgeSignals>",
           "readWithdrawalDiscovery: <K extends WithdrawalDiscoveryKind>(read: Extract<WithdrawalDiscoveryRead, { kind: K; }>) => Promise<WithdrawalDiscoveryRows[K]>",
+          "readWriterAdminState: (opts?: WriterAdminStateOptions) => Promise<string>",
           "readonly capabilities: EngineCapabilities",
           "readonly kind: \"postgres\" | \"pglite\" | \"rust\"",
           "reconnect: (ctx?: { error?: unknown; }) => Promise<void>",
@@ -1275,6 +1288,7 @@
           "consolidateFact: (id: number, takeId: number) => Promise<void>",
           "cosinesByChunkIds: (ids: number[], column: string, query: Float32Array) => Promise<Map<number, number>>",
           "countChunklessPagesWithContent: (opts?: { sourceId?: string; }) => Promise<number>",
+          "countDefaultSourceSplit: () => Promise<DefaultSourceSplit>",
           "countKeywordPages: (query: string, opts?: SearchOpts & { timeoutMs?: number; }) => Promise<number>",
           "countOnboardSignal: (signal: OnboardSignal, entityTypes: EntityTypeFilter, opts?: { signal?: AbortSignal; }) => Promise<number>",
           "countOpenLoopsByCounterpartyEmail: (sourceId: string, emails: readonly string[], loopType: string) => Promise<CounterpartyEmailLoopCount[]>",
@@ -1375,6 +1389,7 @@
           "getUnverifiedExtractionPageIds: (pageIds: number[], opts?: PageReadScope) => Promise<Map<number, { unverified: boolean; status: string; }>>",
           "getVersions: <B extends boolean = true>(slug: string, opts?: GetVersionsOpts<B>) => Promise<PageVersionRows<B>>",
           "getWorktreeBinding: (sourceId: string, hostId: string | null) => Promise<WorktreeBinding | null>",
+          "hasCompanyBrainReceipt: (sourceId: string) => Promise<boolean>",
           "hasExtractedEvents: (sourceId: string, pageId: number) => Promise<boolean>",
           "hasLabelledOnlyMember: () => Promise<boolean>",
           "hasSupersedeEdges: () => Promise<boolean>",
@@ -1434,6 +1449,7 @@
           "listForcedCutSeqs: (pageId: number, generation: number) => Promise<number[]>",
           "listIdentityDecisions: () => Promise<IdentityDecisionsRead>",
           "listLinkSources: (opts?: { sourceId?: string; sourceIds?: string[]; }) => Promise<{ link_source: string | null; count: number; }[]>",
+          "listLocalPathSources: () => Promise<LocalPathSourceRow[]>",
           "listMemoryProposalRows: (query: ProposalListQuery) => Promise<Record<string, unknown>[]>",
           "listOpenLoops: (opts?: ListLoopsOpts) => Promise<OpenLoopDbRow[]>",
           "listOwnerProposalRows: (requestId: string) => Promise<Record<string, unknown>[]>",
@@ -1447,6 +1463,8 @@
           "listSegmentedPages: (sourceId: string, slugs: readonly string[]) => Promise<{ id: number; slug: string; }[]>",
           "listSharedSkillPackRoots: (hostId: string) => Promise<SharedSkillPackRoot[]>",
           "listSourceLocalPaths: () => Promise<string[]>",
+          "listSourceRecords: () => Promise<SourceRecordRow[]>",
+          "listSourceRoutingRows: () => Promise<SourceRoutingRow[]>",
           "listStaleChunks: (opts?: { batchSize?: number; afterPageId?: number; afterChunkIndex?: number; sourceId?: string; orderBy?: \"page_id\" | \"updated_desc\"; afterUpdatedAt?: string | null; }) => Promise<StaleChunkRow[]>",
           "listStaleFrontmatterKeyPages: (opts: { sourceId: string; afterId: number; limit: number; }) => Promise<{ id: number; slug: string; keys: string[]; }[]>",
           "listStalePagesForExtraction: (opts: { batchSize: number; afterPageId?: number; sourceId?: string; versionTs?: string; held?: \"exclude\"; wantedProducers?: readonly string[]; }) => Promise<StalePageRow[]>",
@@ -1469,6 +1487,7 @@
           "logIngest: (entry: IngestLogInput) => Promise<void>",
           "markPagesAttendanceBlocked: (refs: Array<{ slug: string; source_id: string; revision: string; }>) => Promise<number>",
           "markPagesExtractedBatch: (refs: Array<{ slug: string; source_id: string; extractedAt?: string; }>, defaultExtractedAt: string) => Promise<number>",
+          "markSourceSynced: (sourceId: string, opts?: SourceSyncStampOptions) => Promise<boolean>",
           "matchTakeRows: (pageId: number, rows: readonly TakeFenceRow[], limit: number) => Promise<number[]>",
           "mergeOntologyFact: (obs: OntologyObservationInput) => Promise<OntologyMergeResult>",
           "migrateFactsToCanonical: (phantomSlug: string, canonicalSlug: string, sourceId: string) => Promise<{ migrated: number; }>",
@@ -1478,6 +1497,7 @@
           "onCheckout: (listener: () => void) => () => void",
           "openBodyStaging: (input: BodyStagingInput) => Promise<void>",
           "ownerOnlyMarkTriggers: (opts?: { ensure?: boolean; installing?: boolean; }) => Promise<OwnerOnlyTriggerState>",
+          "ownsSchemaTables: () => Promise<boolean>",
           "pageCollapseFacts: (ids: number[], bodyIds: number[]) => Promise<PageCollapseFactRow[]>",
           "pagesLinkingTo: (fromIds: number[], toIds: number[]) => Promise<number[]>",
           "private _beforeDisconnect",
@@ -1553,8 +1573,11 @@
           "readExportPageRows: (ids: readonly string[]) => Promise<ExportPageRow[]>",
           "readExportWithdrawalLedgerBytes: (sourceId: string) => Promise<number>",
           "readFieldUsageSamples: (query: FieldUsageQuery) => Promise<FieldUsageTypeSample[]>",
+          "readGuestSourceRow: (sourceId: string) => Promise<GuestSourceLookupRow>",
           "readHealthMemoClock: () => Promise<string>",
+          "readIgnoredPrivacyLabelPages: (sourceId: string, scope: { slugs: readonly string[]; } | { since: string; }, opts?: { limit?: number; timeoutMs?: number; }) => Promise<IgnoredLabelPageRow[]>",
           "readLedgerSource: (sourceId: string, opts?: { batch?: boolean; }) => Promise<LedgerSource | null>",
+          "readLivePageFrontmatter: (sourceId: string, slug: string, opts?: { timeoutMs?: number; }) => Promise<IgnoredLabelPageRow | null>",
           "readLocalWriterRow: (id: string, opts?: { lock?: boolean; }) => Promise<LocalWriterRow | undefined>",
           "readManagedModeRows: () => Promise<{ enabled: unknown; }[]>",
           "readManifest: (pageId: number, opts?: { generation?: number; stagingId?: string; region?: BodyRegion; lastN?: number; }) => Promise<ManifestRow[]>",
@@ -1576,11 +1599,14 @@
           "readSegmentTexts: (sourceId: string, sha256s: readonly Uint8Array[]) => Promise<Map<string, Uint8Array>>",
           "readSegmentedPageHead: (pageId: number) => Promise<SegmentedPageHead | undefined>",
           "readSegmentedVersionBodyBytes: (pageId: number, generation: number) => Promise<number | null>",
+          "readSourceIncarnation: (sourceId: string) => Promise<SourceIncarnationRow | null>",
+          "readSourceRow: (sourceId: string) => Promise<SourceCheckRow | null>",
           "readSourceState: (sourceId: string, opts?: SourceStateOptions) => Promise<SourceStateRow | null>",
           "readStoredBodyBytes: (slug: string, sourceId: string) => Promise<number | null>",
           "readTransactionSettings: (names: readonly string[]) => Promise<(string | null)[]>",
           "readWedgeSignals: (queue: string, handlerNames: readonly string[], opts?: { signal?: AbortSignal; }) => Promise<QueueWedgeSignals>",
           "readWithdrawalDiscovery: <K extends WithdrawalDiscoveryKind>(read: Extract<{ kind: \"claim_keys\"; sourceId: string; claims: Array<{ visibility: string; fact_hash: string; subject: string; claim: string | null; }>; }, { kind: K; }> | Extract<{ kind: \"claim_matches\"; incoming: WithdrawalDiscoveryCandidate[]; keys: WithdrawalDiscoveryKey[]; }, { kind: K; }> | Extract<{ kind: \"split_fence_slots\"; sourceId: string; subjects: string[] | null; after: [page: number, region: string, openStart: number]; limit: number; }, { kind: K; }> | Extract<{ kind: \"target_pages\"; sourceId: string; ids: number[]; }, { kind: K; }> | Extract<{ kind: \"sample_slugs\"; sourceId: string; ids: number[]; }, { kind: K; }>) => Promise<WithdrawalDiscoveryRows[K]>",
+          "readWriterAdminState: (opts?: WriterAdminStateOptions) => Promise<string>",
           "readonly [ENGINE_ROOT]: object",
           "readonly capabilities: EngineCapabilities",
           "readonly kind: \"postgres\"",
@@ -4010,6 +4036,7 @@
           "consolidateFact: (id: number, takeId: number) => Promise<void>",
           "cosinesByChunkIds: (ids: number[], column: string, query: Float32Array) => Promise<Map<number, number>>",
           "countChunklessPagesWithContent: (opts?: { sourceId?: string; }) => Promise<number>",
+          "countDefaultSourceSplit: () => Promise<DefaultSourceSplit>",
           "countKeywordPages: (query: string, opts?: SearchOpts & { timeoutMs?: number; }) => Promise<number>",
           "countOnboardSignal: (signal: OnboardSignal, entityTypes: EntityTypeFilter, opts?: { signal?: AbortSignal; }) => Promise<number>",
           "countOpenLoopsByCounterpartyEmail: (sourceId: string, emails: readonly string[], loopType: string) => Promise<OpenLoopsSql.CounterpartyEmailLoopCount[]>",
@@ -4108,6 +4135,7 @@
           "getUnverifiedExtractionPageIds: (pageIds: number[], opts?: PageReadScope) => Promise<Map<number, { unverified: boolean; status: string; }>>",
           "getVersions: <B extends boolean = true>(slug: string, opts?: GetVersionsOpts<B>) => Promise<PageVersionRows<B>>",
           "getWorktreeBinding: (sourceId: string, hostId: string | null) => Promise<WorktreeBinding | null>",
+          "hasCompanyBrainReceipt: (sourceId: string) => Promise<boolean>",
           "hasExtractedEvents: (sourceId: string, pageId: number) => Promise<boolean>",
           "hasLabelledOnlyMember: () => Promise<boolean>",
           "hasSupersedeEdges: () => Promise<boolean>",
@@ -4167,6 +4195,7 @@
           "listForcedCutSeqs: (pageId: number, generation: number) => Promise<number[]>",
           "listIdentityDecisions: () => Promise<IdentityDecisionsRead>",
           "listLinkSources: (opts?: { sourceId?: string; sourceIds?: string[]; }) => Promise<{ link_source: string | null; count: number; }[]>",
+          "listLocalPathSources: () => Promise<LocalPathSourceRow[]>",
           "listMemoryProposalRows: (query: ProposalListQuery) => Promise<Array<Record<string, unknown>>>",
           "listOpenLoops: (opts?: OpenLoopListOpts) => Promise<OpenLoopsSql.OpenLoopDbRow[]>",
           "listOwnerProposalRows: (requestId: string) => Promise<Array<Record<string, unknown>>>",
@@ -4180,6 +4209,8 @@
           "listSegmentedPages: (sourceId: string, slugs: readonly string[]) => Promise<Array<{ id: number; slug: string; }>>",
           "listSharedSkillPackRoots: (hostId: string) => Promise<SharedSkillPackRoot[]>",
           "listSourceLocalPaths: () => Promise<string[]>",
+          "listSourceRecords: () => Promise<SourceRecordRow[]>",
+          "listSourceRoutingRows: () => Promise<SourceRoutingRow[]>",
           "listStaleChunks: (opts?: { batchSize?: number; afterPageId?: number; afterChunkIndex?: number; sourceId?: string; orderBy?: \"page_id\" | \"updated_desc\"; afterUpdatedAt?: string | null; }) => Promise<StaleChunkRow[]>",
           "listStaleFrontmatterKeyPages: (opts: { sourceId: string; afterId: number; limit: number; }) => Promise<Array<{ id: number; slug: string; keys: string[]; }>>",
           "listStalePagesForExtraction: (opts: { batchSize: number; afterPageId?: number; sourceId?: string; versionTs?: string; held?: \"exclude\"; wantedProducers?: readonly string[]; }) => Promise<StalePageRow[]>",
@@ -4202,6 +4233,7 @@
           "logIngest: (entry: IngestLogInput) => Promise<void>",
           "markPagesAttendanceBlocked: (refs: Array<{ slug: string; source_id: string; revision: string; }>) => Promise<number>",
           "markPagesExtractedBatch: (refs: Array<{ slug: string; source_id: string; extractedAt?: string; }>, defaultExtractedAt: string) => Promise<number>",
+          "markSourceSynced: (sourceId: string, opts?: SourceSyncStampOptions) => Promise<boolean>",
           "matchTakeRows: (pageId: number, rows: readonly TakeFenceRow[], limit: number) => Promise<number[]>",
           "mergeOntologyFact: (obs: OntologyObservationInput) => Promise<OntologyMergeResult>",
           "migrateFactsToCanonical: (phantomSlug: string, canonicalSlug: string, sourceId: string) => Promise<{ migrated: number; }>",
@@ -4210,6 +4242,7 @@
           "notifierCoverageRecorded: () => Promise<boolean>",
           "openBodyStaging: (input: BodyStagingInput) => Promise<void>",
           "ownerOnlyMarkTriggers: (opts?: { ensure?: boolean; installing?: boolean; }) => Promise<OwnerOnlyTriggerState>",
+          "ownsSchemaTables: () => Promise<boolean>",
           "pageCollapseFacts: (ids: number[], bodyIds: number[]) => Promise<PageCollapseFactRow[]>",
           "pagesLinkingTo: (fromIds: number[], toIds: number[]) => Promise<number[]>",
           "pruneDecideReceipts: (retentionDays: number) => Promise<number>",
@@ -4234,8 +4267,11 @@
           "readExportPageRows: (ids: readonly string[]) => Promise<ExportPageRow[]>",
           "readExportWithdrawalLedgerBytes: (sourceId: string) => Promise<number>",
           "readFieldUsageSamples: (query: FieldUsageQuery) => Promise<FieldUsageTypeSample[]>",
+          "readGuestSourceRow: (sourceId: string) => Promise<GuestSourceLookupRow>",
           "readHealthMemoClock: () => Promise<string>",
+          "readIgnoredPrivacyLabelPages: (sourceId: string, scope: { slugs: readonly string[]; } | { since: string; }, opts?: { limit?: number; timeoutMs?: number; }) => Promise<IgnoredLabelPageRow[]>",
           "readLedgerSource: (sourceId: string, opts?: { batch?: boolean; }) => Promise<LedgerSource | null>",
+          "readLivePageFrontmatter: (sourceId: string, slug: string, opts?: { timeoutMs?: number; }) => Promise<IgnoredLabelPageRow | null>",
           "readLocalWriterRow: (id: string, opts?: { lock?: boolean; }) => Promise<LocalWriterRow | undefined>",
           "readManagedModeRows: () => Promise<Array<{ enabled: unknown; }>>",
           "readManifest: (pageId: number, opts?: { generation?: number; stagingId?: string; region?: BodyRegion; lastN?: number; }) => Promise<ManifestRow[]>",
@@ -4257,11 +4293,14 @@
           "readSegmentTexts: (sourceId: string, sha256s: readonly Uint8Array[]) => Promise<Map<string, Uint8Array>>",
           "readSegmentedPageHead: (pageId: number) => Promise<SegmentedPageHead | undefined>",
           "readSegmentedVersionBodyBytes: (pageId: number, generation: number) => Promise<number | null>",
+          "readSourceIncarnation: (sourceId: string) => Promise<SourceIncarnationRow | null>",
+          "readSourceRow: (sourceId: string) => Promise<SourceCheckRow | null>",
           "readSourceState: (sourceId: string, opts?: SourceStateOptions) => Promise<SourceStateRow | null>",
           "readStoredBodyBytes: (slug: string, sourceId: string) => Promise<number | null>",
           "readTransactionSettings: (names: readonly string[]) => Promise<Array<string | null>>",
           "readWedgeSignals: (queue: string, handlerNames: readonly string[], opts?: { signal?: AbortSignal; }) => Promise<QueueWedgeSignals>",
           "readWithdrawalDiscovery: <K extends WithdrawalDiscoveryKind>(read: Extract<WithdrawalDiscoveryRead, { kind: K; }>) => Promise<WithdrawalDiscoveryRows[K]>",
+          "readWriterAdminState: (opts?: WriterAdminStateOptions) => Promise<string>",
           "readonly capabilities: EngineCapabilities",
           "readonly kind: \"postgres\" | \"pglite\" | \"rust\"",
           "reconnect: (ctx?: { error?: unknown; }) => Promise<void>",
@@ -4477,6 +4516,17 @@
       {
         "kind": "interface",
         "members": [
+          "anyVisibility: boolean",
+          "eligibility: ReadEligibility | undefined",
+          "excludePrivate: boolean",
+          "id: number",
+          "sourceId: string"
+        ],
+        "name": "FactReadableSpec"
+      },
+      {
+        "kind": "interface",
+        "members": [
           "attributed_to?: FactAttribution | null | undefined",
           "claim_metric?: string | null | undefined",
           "claim_period?: string | null | undefined",
@@ -4517,6 +4567,29 @@
         "signature": [
           "\"private\" | \"world\""
         ]
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "expired: boolean",
+          "fact: string",
+          "fact_hash: string",
+          "subject: string",
+          "visibility: \"private\" | \"world\""
+        ],
+        "name": "FactWithdrawalClaim"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "id: number",
+          "lock?: boolean | undefined",
+          "memberPage: string | null",
+          "remoteFloor: boolean",
+          "sourceId: string",
+          "worldOnly: boolean"
+        ],
+        "name": "FactWithdrawalClaimSpec"
       },
       {
         "kind": "interface",
@@ -4570,6 +4643,40 @@
       {
         "kind": "interface",
         "members": [
+          "entity_slug: string | null",
+          "expired_at: Date | null",
+          "id: number",
+          "row_num: number | null",
+          "source_markdown_slug: string | null",
+          "trust_tier: string | null"
+        ],
+        "name": "ForgetTargetRow"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "id: number",
+          "lock: boolean",
+          "ownPage: string | null",
+          "remoteFloor: boolean",
+          "sourceId: string",
+          "worldOnly: boolean"
+        ],
+        "name": "ForgetTargetSpec"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "hidden: boolean",
+          "source_id: string | null",
+          "trust_ceiling: string | null",
+          "writers: string[] | null"
+        ],
+        "name": "GuestSourceLookupRow"
+      },
+      {
+        "kind": "interface",
+        "members": [
           "context?: string | undefined",
           "from_slug: string",
           "from_source_id?: string | undefined",
@@ -4584,6 +4691,36 @@
           "to_source_id?: string | undefined"
         ],
         "name": "LinkBatchInput"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "aliases?: unknown",
+          "knowledge_revision: string",
+          "slug: string",
+          "source_id: string",
+          "title: string",
+          "type: string"
+        ],
+        "name": "LinkPageMetadataRow"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "id: number",
+          "remoteFloor: boolean",
+          "sourceId: string",
+          "worldOnly: boolean"
+        ],
+        "name": "LinkedFactCopiesSpec"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "entity_slug: string",
+          "id: number"
+        ],
+        "name": "LinkedFactCopy"
       },
       {
         "kind": "interface",
@@ -4627,6 +4764,25 @@
           "visibility?: FactVisibility | undefined"
         ],
         "name": "NewFact"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "id: number",
+          "identity: readonly string[]",
+          "satisfied: readonly string[]",
+          "sourceId: string"
+        ],
+        "name": "OwnerReachSpec"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "revision: string",
+          "slug: string",
+          "source_id: string"
+        ],
+        "name": "PageAtRevisionRef"
       },
       {
         "kind": "interface",
@@ -4737,6 +4893,25 @@
       {
         "kind": "interface",
         "members": [
+          "ids: readonly number[]",
+          "table: \"takes\" | \"facts\" | \"timeline_entries\""
+        ],
+        "name": "RowTrustLookup"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "contested: string | null",
+          "flagged: boolean",
+          "id: number",
+          "trust_tier: string",
+          "write_origin: unknown"
+        ],
+        "name": "RowTrustRow"
+      },
+      {
+        "kind": "interface",
+        "members": [
           "config: Record<string, unknown>",
           "contextual_retrieval_mode?: string | null | undefined",
           "created_at: Date",
@@ -4752,6 +4927,29 @@
       {
         "kind": "interface",
         "members": [
+          "config: unknown",
+          "incarnation: string"
+        ],
+        "name": "SourceIncarnationRow"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "archived?: boolean | undefined",
+          "config: string | Record<string, unknown>",
+          "created_at: Date",
+          "id: string",
+          "last_commit: string | null",
+          "last_sync_at: Date | null",
+          "local_path: string | null",
+          "name: string",
+          "newest_content_at?: Date | null | undefined"
+        ],
+        "name": "SourceRecordRow"
+      },
+      {
+        "kind": "interface",
+        "members": [
           "config: Record<string, unknown>",
           "id: string",
           "last_sync_at: Date | null",
@@ -4759,6 +4957,17 @@
           "name: string | null"
         ],
         "name": "SourceRow"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "archived: boolean",
+          "incarnation: string",
+          "kind: string | null",
+          "local_path: string | null",
+          "role: string | null"
+        ],
+        "name": "SourceWriteRow"
       },
       {
         "kind": "interface",
@@ -4778,6 +4987,17 @@
           "take_id: number"
         ],
         "name": "StaleTakeRow"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "date: string",
+          "detail: string | null",
+          "id: number",
+          "source: string",
+          "summary: string"
+        ],
+        "name": "StoredTimelineRow"
       },
       {
         "kind": "interface",
@@ -7738,6 +7958,7 @@
           "consolidateFact: (id: number, takeId: number) => Promise<void>",
           "cosinesByChunkIds: (ids: number[], column: string, query: Float32Array) => Promise<Map<number, number>>",
           "countChunklessPagesWithContent: (opts?: { sourceId?: string; }) => Promise<number>",
+          "countDefaultSourceSplit: () => Promise<sourcesImpl.DefaultSourceSplit>",
           "countKeywordPages: (query: string, opts?: SearchOpts & { timeoutMs?: number; }) => Promise<number>",
           "countOnboardSignal: (signal: healthImpl.OnboardSignal, entityTypes: EntityTypeFilter, opts?: { signal?: AbortSignal; }) => Promise<number>",
           "countOpenLoopsByCounterpartyEmail: (sourceId: string, emails: readonly string[], loopType: string) => Promise<openLoopsImpl.CounterpartyEmailLoopCount[]>",
@@ -7837,6 +8058,7 @@
           "getUnverifiedExtractionPageIds: (pageIds: number[], opts?: PageReadScope) => Promise<Map<number, { unverified: boolean; status: string; }>>",
           "getVersions: <B extends boolean = true>(slug: string, opts?: GetVersionsOpts<B>) => Promise<PageVersionRows<B>>",
           "getWorktreeBinding: (sourceId: string, hostId: string | null) => Promise<writeMiscImpl.WorktreeBinding | null>",
+          "hasCompanyBrainReceipt: (sourceId: string) => Promise<boolean>",
           "hasExtractedEvents: (sourceId: string, pageId: number) => Promise<boolean>",
           "hasLabelledOnlyMember: () => Promise<boolean>",
           "hasSupersedeEdges: () => Promise<boolean>",
@@ -7896,6 +8118,7 @@
           "listForcedCutSeqs: (pageId: number, generation: number) => Promise<number[]>",
           "listIdentityDecisions: () => Promise<identityDecisionsImpl.IdentityDecisionsRead>",
           "listLinkSources: (opts?: { sourceId?: string; sourceIds?: string[]; }) => Promise<{ link_source: string | null; count: number; }[]>",
+          "listLocalPathSources: () => Promise<sourcesImpl.LocalPathSourceRow[]>",
           "listMemoryProposalRows: (query: writeMiscImpl.ProposalListQuery) => Promise<Record<string, unknown>[]>",
           "listOpenLoops: (opts?: OpenLoopListOpts) => Promise<openLoopsImpl.OpenLoopDbRow[]>",
           "listOwnerProposalRows: (requestId: string) => Promise<Record<string, unknown>[]>",
@@ -7909,6 +8132,8 @@
           "listSegmentedPages: (sourceId: string, slugs: readonly string[]) => Promise<{ id: number; slug: string; }[]>",
           "listSharedSkillPackRoots: (hostId: string) => Promise<writeMiscImpl.SharedSkillPackRoot[]>",
           "listSourceLocalPaths: () => Promise<string[]>",
+          "listSourceRecords: () => Promise<SourceRecordRow[]>",
+          "listSourceRoutingRows: () => Promise<sourcesImpl.SourceRoutingRow[]>",
           "listStaleChunks: (opts?: { batchSize?: number; afterPageId?: number; afterChunkIndex?: number; sourceId?: string; orderBy?: \"page_id\" | \"updated_desc\"; afterUpdatedAt?: string | null; }) => Promise<StaleChunkRow[]>",
           "listStaleFrontmatterKeyPages: (opts: { sourceId: string; afterId: number; limit: number; }) => Promise<{ id: number; slug: string; keys: string[]; }[]>",
           "listStalePagesForExtraction: (opts: { batchSize: number; afterPageId?: number; sourceId?: string; versionTs?: string; held?: \"exclude\"; wantedProducers?: readonly string[]; }) => Promise<StalePageRow[]>",
@@ -7931,6 +8156,7 @@
           "logIngest: (entry: IngestLogInput) => Promise<void>",
           "markPagesAttendanceBlocked: (refs: Array<{ slug: string; source_id: string; revision: string; }>) => Promise<number>",
           "markPagesExtractedBatch: (refs: Array<{ slug: string; source_id: string; extractedAt?: string; }>, defaultExtractedAt: string) => Promise<number>",
+          "markSourceSynced: (sourceId: string, opts?: sourcesImpl.SourceSyncStampOptions) => Promise<boolean>",
           "matchTakeRows: (pageId: number, rows: readonly takesImpl.TakeFenceRow[], limit: number) => Promise<number[]>",
           "mergeOntologyFact: (obs: OntologyObservationInput) => Promise<OntologyMergeResult>",
           "migrateFactsToCanonical: (phantomSlug: string, canonicalSlug: string, sourceId: string) => Promise<{ migrated: number; }>",
@@ -7939,6 +8165,7 @@
           "notifierCoverageRecorded: () => Promise<boolean>",
           "openBodyStaging: (input: BodyStagingInput) => Promise<void>",
           "ownerOnlyMarkTriggers: (opts?: { ensure?: boolean; installing?: boolean; }) => Promise<OwnerOnlyTriggerState>",
+          "ownsSchemaTables: () => Promise<boolean>",
           "pageCollapseFacts: (ids: number[], bodyIds: number[]) => Promise<searchReadsImpl.PageCollapseFactRow[]>",
           "pagesLinkingTo: (fromIds: number[], toIds: number[]) => Promise<number[]>",
           "private _adoptedLock",
@@ -7977,6 +8204,7 @@
           "private rawRead",
           "private searchRead",
           "private timelineRead",
+          "private untimedRead",
           "private vectorIterativeScan",
           "private vectorScope",
           "private writeMiscReads",
@@ -8002,8 +8230,11 @@
           "readExportPageRows: (ids: readonly string[]) => Promise<exportReadsImpl.ExportPageRow[]>",
           "readExportWithdrawalLedgerBytes: (sourceId: string) => Promise<number>",
           "readFieldUsageSamples: (query: fieldUsageImpl.FieldUsageQuery) => Promise<fieldUsageImpl.FieldUsageTypeSample[]>",
+          "readGuestSourceRow: (sourceId: string) => Promise<GuestSourceLookupRow>",
           "readHealthMemoClock: () => Promise<string>",
+          "readIgnoredPrivacyLabelPages: (sourceId: string, scope: { slugs: readonly string[]; } | { since: string; }, opts?: { limit?: number; timeoutMs?: number; }) => Promise<entityReadsImpl.IgnoredLabelPageRow[]>",
           "readLedgerSource: (sourceId: string, opts?: { batch?: boolean; }) => Promise<beliefImpl.LedgerSource | null>",
+          "readLivePageFrontmatter: (sourceId: string, slug: string, opts?: { timeoutMs?: number; }) => Promise<entityReadsImpl.IgnoredLabelPageRow | null>",
           "readLocalWriterRow: (id: string, opts?: { lock?: boolean; }) => Promise<persistenceStateImpl.LocalWriterRow | undefined>",
           "readManagedModeRows: () => Promise<{ enabled: unknown; }[]>",
           "readManifest: (pageId: number, opts?: { generation?: number; stagingId?: string; region?: BodyRegion; lastN?: number; }) => Promise<ManifestRow[]>",
@@ -8025,11 +8256,14 @@
           "readSegmentTexts: (sourceId: string, sha256s: readonly Uint8Array[]) => Promise<Map<string, Uint8Array>>",
           "readSegmentedPageHead: (pageId: number) => Promise<exportReadsImpl.SegmentedPageHead | undefined>",
           "readSegmentedVersionBodyBytes: (pageId: number, generation: number) => Promise<number | null>",
+          "readSourceIncarnation: (sourceId: string) => Promise<SourceIncarnationRow | null>",
+          "readSourceRow: (sourceId: string) => Promise<sourcesImpl.SourceCheckRow | null>",
           "readSourceState: (sourceId: string, opts?: writeMiscImpl.SourceStateOptions) => Promise<writeMiscImpl.SourceStateRow | null>",
           "readStoredBodyBytes: (slug: string, sourceId: string) => Promise<number | null>",
           "readTransactionSettings: (names: readonly string[]) => Promise<(string | null)[]>",
           "readWedgeSignals: (queue: string, handlerNames: readonly string[], opts?: { signal?: AbortSignal; }) => Promise<jobsHealth.QueueWedgeSignals>",
           "readWithdrawalDiscovery: <K extends withdrawalDiscoveryReads.WithdrawalDiscoveryKind>(read: Extract<{ kind: \"claim_keys\"; sourceId: string; claims: Array<{ visibility: string; fact_hash: string; subject: string; claim: string | null; }>; }, { kind: K; }> | Extract<{ kind: \"claim_matches\"; incoming: withdrawalDiscoveryReads.WithdrawalDiscoveryCandidate[]; keys: withdrawalDiscoveryReads.WithdrawalDiscoveryKey[]; }, { kind: K; }> | Extract<{ kind: \"split_fence_slots\"; sourceId: string; subjects: string[] | null; after: [page: number, region: string, openStart: number]; limit: number; }, { kind: K; }> | Extract<{ kind: \"target_pages\"; sourceId: string; ids: number[]; }, { kind: K; }> | Extract<{ kind: \"sample_slugs\"; sourceId: string; ids: number[]; }, { kind: K; }>) => Promise<withdrawalDiscoveryReads.WithdrawalDiscoveryRows[K]>",
+          "readWriterAdminState: (opts?: WriterAdminStateOptions) => Promise<string>",
           "readonly [ENGINE_ROOT]: object",
           "readonly capabilities: EngineCapabilities",
           "readonly kind: \"pglite\"",

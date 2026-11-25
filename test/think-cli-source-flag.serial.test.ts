@@ -80,12 +80,13 @@ mock.module('../src/core/source-resolver.ts', () => ({
     tier === 'seed_default' ? ['default', 'team-wiki'] : undefined,
 }));
 
+import { stubSourceMembers } from './helpers/source-members-stub.ts';
+
 const { runThinkCli } = await import('../src/commands/think.ts');
 
-/** Stub engine: assertSourceExists's query resolves only 'workspace'. */
+/** Stub engine: assertSourceExists's read resolves only 'workspace'. */
 const stubEngine = {
-  executeRaw: async (_sql: string, params?: unknown[]) =>
-    params?.[0] === 'workspace' ? [{ id: 'workspace' }] : [],
+  ...stubSourceMembers([{ id: 'workspace' }]),
 } as never;
 
 class ExitSentinel extends Error {
