@@ -388,9 +388,24 @@ struct Shared {
     published: AtomicU64,
     poisoned: AtomicBool,
     stats: Arc<OccStats>,
+    /// Messages sent to the pipeline and not yet taken by a step (`OccKv::queued_commits`).
+    #[cfg(feature = "sim")]
+    queued: AtomicUsize,
 }
 
 impl Shared {
+    /// Counts one message about to be sent to the pipeline (the simulation seam only).
+    fn sent(&self) {
+        #[cfg(feature = "sim")]
+        self.queued.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// Takes back [`Shared::sent`] for a message that could not be sent.
+    fn unsent(&self) {
+        #[cfg(feature = "sim")]
+        self.queued.fetch_sub(1, Ordering::SeqCst);
+    }
+
     fn register(&self, version: u64) {
         let mut open = self.open.lock().unwrap_or_else(|p| p.into_inner());
         *open.entry(version).or_insert(0) += 1;
@@ -641,6 +656,28 @@ fn approx_bytes(r: &Request) -> usize {
 pub struct OccKv {
     shared: Arc<Shared>,
     thread: Mutex<Option<JoinHandle<()>>>,
+    /// A pipeline with no thread, run by `step_pipeline` (`new_stepped`, the simulation seam).
+    #[cfg(feature = "sim")]
+    stepped: Mutex<Option<Stepped>>,
+}
+
+/// What `OccKv::step_pipeline` took and did (the simulation seam).
+#[cfg(feature = "sim")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PipelineStep {
+    /// The batch's commit sequence; `None` when every request in it was refused.
+    pub sequence: Option<u64>,
+    pub taken: usize,
+    pub accepted: usize,
+    pub conflicts: usize,
+}
+
+/// The pipeline of a stepped `OccKv`, its queue, and a message a step took but left for the next one.
+#[cfg(feature = "sim")]
+struct Stepped {
+    pipeline: Pipeline,
+    rx: Receiver<Msg>,
+    pending: Option<Msg>,
 }
 
 impl OccKv {
@@ -649,6 +686,20 @@ impl OccKv {
     }
 
     pub(crate) fn over(base: Arc<dyn OccBase>) -> Result<OccKv> {
+        let (shared, pipeline, rx) = Self::parts(base)?;
+        let thread = std::thread::Builder::new()
+            .name("gbrain-commit-pipeline".into())
+            .spawn(move || pipeline.run(rx))
+            .map_err(|e| StoreError::io(format!("starting the commit pipeline: {e}")))?;
+        Ok(OccKv {
+            shared,
+            thread: Mutex::new(Some(thread)),
+            #[cfg(feature = "sim")]
+            stepped: Mutex::new(None),
+        })
+    }
+
+    fn parts(base: Arc<dyn OccBase>) -> Result<(Arc<Shared>, Pipeline, Receiver<Msg>)> {
         let version = base.version()?;
         let (tx, rx) = channel::<Msg>();
         let shared = Arc::new(Shared {
@@ -660,6 +711,8 @@ impl OccKv {
             published: AtomicU64::new(version),
             poisoned: AtomicBool::new(false),
             stats: Arc::new(OccStats::default()),
+            #[cfg(feature = "sim")]
+            queued: AtomicUsize::new(0),
         });
         let pipeline = Pipeline {
             shared: shared.clone(),
@@ -669,14 +722,92 @@ impl OccKv {
             },
             version,
         };
-        let thread = std::thread::Builder::new()
-            .name("gbrain-commit-pipeline".into())
-            .spawn(move || pipeline.run(rx))
-            .map_err(|e| StoreError::io(format!("starting the commit pipeline: {e}")))?;
+        Ok((shared, pipeline, rx))
+    }
+
+    /// Like [`OccKv::new`], but starts no pipeline thread: commits queue until
+    /// [`OccKv::step_pipeline`] runs (the seeded simulation, `tests/multi_writer_sim.rs`).
+    #[cfg(feature = "sim")]
+    pub fn new_stepped(base: RedbKv) -> Result<OccKv> {
+        let (shared, pipeline, rx) = Self::parts(Arc::new(base))?;
         Ok(OccKv {
             shared,
-            thread: Mutex::new(Some(thread)),
+            thread: Mutex::new(None),
+            stepped: Mutex::new(Some(Stepped {
+                pipeline,
+                rx,
+                pending: None,
+            })),
         })
+    }
+
+    /// Commit requests (and exclusive-write messages) queued and not yet taken by a step.
+    #[cfg(feature = "sim")]
+    pub fn queued_commits(&self) -> usize {
+        self.shared.queued.load(Ordering::SeqCst)
+    }
+
+    /// One iteration of the pipeline loop on the calling thread: takes up to `max_batch` queued
+    /// commits in arrival order (an exclusive-write message ends the batch, and a step that starts
+    /// with one runs that exclusive write alone), validates and writes them as one batch and answers
+    /// each. `Ok(None)` when nothing was queued; `invalid_state` on an `OccKv` that was not made
+    /// with [`OccKv::new_stepped`].
+    #[cfg(feature = "sim")]
+    pub fn step_pipeline(&self, max_batch: usize) -> Result<Option<PipelineStep>> {
+        let mut slot = self.stepped.lock().unwrap_or_else(|p| p.into_inner());
+        let Some(stepped) = slot.as_mut() else {
+            return Err(StoreError::new(
+                crate::error::INVALID_STATE,
+                "step_pipeline needs an OccKv made with new_stepped",
+            ));
+        };
+        let take = |stepped: &mut Stepped| -> Option<Msg> {
+            let msg = stepped
+                .pending
+                .take()
+                .or_else(|| stepped.rx.try_recv().ok())?;
+            Some(msg)
+        };
+        let Some(first) = take(stepped) else {
+            return Ok(None);
+        };
+        self.shared.queued.fetch_sub(1, Ordering::SeqCst);
+        let stats = &self.shared.stats;
+        let commits_before = stats.commits.load(Ordering::Relaxed);
+        let version_before = stepped.pipeline.version;
+        let taken = match first {
+            Msg::Exclusive { granted, end } => {
+                stepped.pipeline.exclusive(granted, end);
+                1
+            }
+            Msg::Commit(req) => {
+                let mut batch = vec![req];
+                while batch.len() < max_batch.max(1) {
+                    match take(stepped) {
+                        Some(Msg::Commit(next)) => {
+                            self.shared.queued.fetch_sub(1, Ordering::SeqCst);
+                            batch.push(next);
+                        }
+                        Some(exclusive) => {
+                            stepped.pending = Some(exclusive);
+                            break;
+                        }
+                        None => break,
+                    }
+                }
+                let taken = batch.len();
+                stepped.pipeline.commit_batch(batch);
+                taken
+            }
+        };
+        let accepted = (stats.commits.load(Ordering::Relaxed) - commits_before) as usize;
+        let version = stepped.pipeline.version;
+        Ok(Some(PipelineStep {
+            sequence: (version != version_before).then_some(version),
+            taken,
+            accepted,
+            conflicts: taken - accepted.min(taken),
+        }))
     }
 
     pub fn stats(&self) -> Arc<OccStats> {
@@ -692,12 +823,16 @@ impl OccKv {
             let Some(sender) = sender.as_ref() else {
                 return Err(StoreError::new(STORE_CLOSED, "the brain is closing"));
             };
+            self.shared.sent();
             sender
                 .send(Msg::Exclusive {
                     granted: granted_tx,
                     end,
                 })
-                .map_err(|_| StoreError::new(STORE_CLOSED, "the brain is closing"))?;
+                .map_err(|_| {
+                    self.shared.unsent();
+                    StoreError::new(STORE_CLOSED, "the brain is closing")
+                })?;
         }
         let version = granted
             .recv()
@@ -1161,9 +1296,11 @@ impl KvWrite for OccTxn {
             let Some(sender) = sender.as_ref() else {
                 return Err(StoreError::new(STORE_CLOSED, "the brain is closing"));
             };
-            sender
-                .send(Msg::Commit(request))
-                .map_err(|_| StoreError::new(STORE_CLOSED, "the brain is closing"))?;
+            this.shared.sent();
+            sender.send(Msg::Commit(request)).map_err(|_| {
+                this.shared.unsent();
+                StoreError::new(STORE_CLOSED, "the brain is closing")
+            })?;
         }
         let result = answer
             .recv()
@@ -1171,5 +1308,73 @@ impl KvWrite for OccTxn {
         // Locks are released only after the commit is durable (or refused).
         drop(this.locks.take());
         result
+    }
+}
+
+#[cfg(all(test, feature = "sim"))]
+mod sim_seam_tests {
+    use super::*;
+    use crate::kv::{Kv, KvRead, KvWrite};
+
+    fn stepped() -> Arc<OccKv> {
+        let kv = crate::redb_kv::RedbKv::open_backend(Box::new(
+            crate::test_support::FlakyFile::default(),
+        ))
+        .unwrap();
+        Arc::new(OccKv::new_stepped(kv).unwrap())
+    }
+
+    /// Commits queue until a step takes them; a step batches in arrival order, refuses a stale
+    /// read, and reports what it did.
+    #[test]
+    fn a_stepped_pipeline_commits_only_when_stepped() {
+        let kv = stepped();
+        assert_eq!(kv.step_pipeline(4).unwrap(), None);
+        let mut stale = kv.begin_write().unwrap();
+        assert_eq!(stale.get(b"yk").unwrap(), None);
+        stale.put(b"ystale", b"x").unwrap();
+        let commit = |kv: Arc<OccKv>, key: &'static [u8]| {
+            std::thread::spawn(move || {
+                let mut w = kv.begin_write().unwrap();
+                w.put(key, b"v").unwrap();
+                w.commit()
+            })
+        };
+        let first = commit(kv.clone(), b"yk");
+        while kv.queued_commits() < 1 {
+            std::thread::yield_now();
+        }
+        let stale = std::thread::spawn(move || stale.commit());
+        while kv.queued_commits() < 2 {
+            std::thread::yield_now();
+        }
+        assert_eq!(kv.snapshot().unwrap().get(b"yk").unwrap(), None);
+        let step = kv.step_pipeline(4).unwrap().unwrap();
+        assert_eq!(
+            step,
+            PipelineStep {
+                sequence: Some(1),
+                taken: 2,
+                accepted: 1,
+                conflicts: 1
+            }
+        );
+        assert_eq!(kv.queued_commits(), 0);
+        assert_eq!(first.join().unwrap().unwrap(), 1);
+        assert_eq!(
+            stale.join().unwrap().unwrap_err().code,
+            crate::error::WRITE_CONFLICT
+        );
+        assert!(
+            OccKv::new(
+                crate::redb_kv::RedbKv::open_backend(Box::new(
+                    crate::test_support::FlakyFile::default()
+                ))
+                .unwrap()
+            )
+            .unwrap()
+            .step_pipeline(1)
+            .is_err()
+        );
     }
 }

@@ -25,6 +25,9 @@ libc = "0.2"
 
 [features]
 fjall = ["dep:fjall"]
+# The seeded simulation driver of the optimistic store in `tests/multi_writer_sim.rs`; it needs the
+# `step_pipeline()` seam on `OccKv`. No code in this crate sits behind it yet.
+sim = []
 
 [dev-dependencies]
 gbrain-sim = { path = "../gbrain-sim" }
