@@ -263,6 +263,10 @@ gbrain search diagnose "<query>" --target <slug>
                                  # across the keyword/vector/alias/hybrid layers
 ```
 
+`search diagnose` runs without a source filter unless you pass `--source <id>`.
+In its JSON report, `source_id` is the selected filter, or `null` when no source
+filter was applied.
+
 `gbrain search modes` also answers the question the knob table cannot: is
 the resolved reranker actually going to run? Below the attribution table it
 prints one runtime line — `Reranker: voyage:rerank-3-lite (enabled) —
