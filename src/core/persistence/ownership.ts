@@ -22,7 +22,8 @@ import { assertPhysicalRootReservation, readPhysicalRootStamp, relocatedRootTran
 import { nativeFilesystemPath } from './root-registry.ts';
 import { assertWriterAdminState } from './admin-intent.ts';
 import { readGraduationRow } from './graduation-schema.ts';
-import { ownerMarkerMissingError } from './owner-marker.ts';
+import { checkoutGitMissingError, ownerMarkerMissingError, ownershipReservationMissingError } from './owner-marker.ts';
+import { classifyGitCheckout } from '../git-checkout.ts';
 import { assertWriterAdminUnlocked } from './admin-lock.ts';
 import { inspectPhysicalRootRecovery, repairPhysicalRoot, type PhysicalRootRecovery } from './physical-root-recovery.ts';
 import type { ContentReceiptRebind } from '../shared-skills/receipt-root.ts';
@@ -227,6 +228,7 @@ async function lockWorktree(binding: WorktreeBinding, waitMs: number, signal: Ab
   catch (error) {
     try {
       if (error instanceof OperationError && error.code === 'owner_marker_missing') throw ownerMarkerMissingError(binding.source_id, { root: binding.local_path, epoch: String(binding.owner_epoch) });
+      if (error instanceof OperationError && error.detail === 'ownership_reservation_missing') throw ownershipReservationMissingError(binding.source_id, { root: binding.local_path, epoch: String(binding.owner_epoch) });
       if (error instanceof OperationError && error.detail === 'physical_root_directory_changed') {
         // #6501: a directory recreated (or drifted beyond tolerance) at its recorded path; fill the #5914 exit for this source.
         error.suggestion = `The directory at ${binding.local_path} is not the one this owner stamped (inode or birth time changed; owner token, brain, worktree, root and device match). `
@@ -365,9 +367,21 @@ export async function prepareWriterTransfer(engine: BrainEngine, sourceId: strin
       if (pending.length || mirrors.length) throw opError('recovery_required', 'Resolve outstanding publication before transfer.',
         `Source ${sourceId}'s worktree still has a write or mirror effect publishing or recovering, so no transfer was prepared. Inspect writer status and wait for it to settle on the owner before preparing again.`,
         { fix: writerStatusFix(sourceId) });
-      const [brain] = await tx.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
-      const recovery = opts.selfTransfer ? inspectPhysicalRootRecovery(binding.local_path!, { brainId: brain.brain_id,
-        worktreeId: binding.worktree_id, hostId, coordinationPath: binding.coordination_path! }, { relocated: opts.relocated === true }) : undefined;
+      const [brain] = await tx.executeRaw<{ brain_id: string; last_commit: string | null }>(`SELECT brain_id,(SELECT s.last_commit FROM persistence_source_bindings b JOIN sources s
+        ON s.id=b.source_id AND s.incarnation=b.source_incarnation WHERE b.worktree_id=$1::uuid AND s.last_commit IS NOT NULL ORDER BY s.id LIMIT 1) AS last_commit
+        FROM persistence_brain WHERE singleton=1`, [binding.worktree_id]);
+      let recovery: PhysicalRootRecovery | undefined;
+      if (opts.selfTransfer) {
+        try {
+          recovery = inspectPhysicalRootRecovery(binding.local_path!, { brainId: brain.brain_id, worktreeId: binding.worktree_id, hostId, coordinationPath: binding.coordination_path! },
+            { relocated: opts.relocated === true });
+        } catch (error) {
+          if (error instanceof OperationError && error.detail === 'ownership_reservation_missing') throw ownershipReservationMissingError(sourceId, { root: binding.local_path!, epoch: String(owner.owner_epoch) }, error.message);
+          throw error;
+        }
+        // #10260: re-creating a lost reservation over a checkout whose Git repository is gone too would adopt whatever was left behind.
+        if (!recovery.before.reservation && brain.last_commit && classifyGitCheckout(binding.local_path!) === 'not_git') throw checkoutGitMissingError(sourceId, binding.local_path!, brain.last_commit);
+      }
       if (!opts.selfTransfer) assertPhysicalRoot(binding.local_path!, { worktreeId: binding.worktree_id, coordinationPath: binding.coordination_path });
       if (hashed instanceof Error) throw hashed;
       const manifest: StoredWorktreeManifest = { ...hashed, ...(recovery ? { self_transfer: recovery } : {}) };
