@@ -25,7 +25,7 @@ import { addMember } from '../src/core/access/members.ts';
 import { setOwner } from '../src/core/access/owner.ts';
 import { withRefreshingLock } from '../src/core/db-lock.ts';
 import { redactSession } from '../src/core/transcripts/render.ts';
-import { ARCHIVE_SOURCE_KEY, ARCHIVE_TIMEZONE_KEY, setArchiveEnabled } from '../src/core/transcripts/archive.ts';
+import { ARCHIVE_SOURCE_KEY, ARCHIVE_TIMEZONE_KEY, adoptLegacyArchive, setArchiveEnabled } from '../src/core/transcripts/archive.ts';
 import {
   HISTORY_BOUNDS, INSTALL_RECEIPT_KEY, declineHistory, decisionTopic, historyCard, offerHistoryDecision, previewHistory, readInstallReceipt,
   recordInstallReceipt, renderHistoryCard, runSetupHistory,
@@ -342,6 +342,47 @@ if (pgliteOnly) describe('setup history import: bounds, holds and the lock (pgli
       expect(result.held.length).toBeGreaterThan(0);
       expect(result).toMatchObject({ status: 'partial', sessions_imported: 0, deferred_sessions: 1 });
       expect((await readInstallReceipt(engine))!.stages.latest).toMatchObject({ status: 'partial' });
+    } finally { await close(); }
+  }, 120_000);
+
+  test('a newest session with nothing to archive (empty, or every message outside the window) is nothing_found, not imported, and stays offerable', async () => {
+    const cases: Array<[string, (folder: string) => string]> = [
+      ['empty', folder => { const p = join(folder, 'sess-empty-newest.jsonl'); writeFileSync(p, JSON.stringify({ type: 'summary', summary: 'Login bug notes', leafUuid: 'sess-empty-newest-u0' }) + '\n'); return p; }],
+      ['out_of_window', folder => writeClaudeSession(join(folder, '..'), { sessionId: 'sess-copied-old', project: 'acme-example-web', turns: [['user', daysAgo(NOW, 45, 9), 'An old session copied onto this machine today.']] })],
+    ];
+    for (const [name, write] of cases) {
+      const { engine, close, dir } = await freshInstall('pglite');
+      try {
+        const folder = join(dir, 'claude-code', '-home-alice-example-code-acme-example-web');
+        mkdirSync(folder, { recursive: true });
+        const newest = write(folder);
+        const t = new Date(NOW.getTime() - 60_000);
+        utimesSync(newest, t, t);
+        const result = await inHome(() => runSetupHistory(engine, { harness: 'claude-code', stage: 'latest', dir, deadlineAtMs: soon(), now: NOW }));
+        expect({ name, status: result.status, imported: result.sessions_imported, days: result.days_written }).toEqual({ name, status: 'nothing_found', imported: 0, days: 0 });
+        expect({ name, stage: (await readInstallReceipt(engine))!.stages.latest?.status }).toEqual({ name, stage: 'nothing_found' });
+        const again = await inHome(() => previewHistory(engine, { stage: 'latest', dir, now: NOW }));
+        expect({ name, answered: again.answered.includes('latest') }).toEqual({ name, answered: false });
+        expect(await archivedPages(engine)).toEqual([]);
+      } finally { await close(); }
+    }
+  }, 180_000);
+
+  test('a newest session covered only by an old-archive date marker is not counted as imported, because no transcript of it reached the brain', async () => {
+    const { engine, close } = await brain('pglite');
+    try {
+      await inHome(() => recordInstallReceipt(engine, { harness: 'claude-code', createdBySetup: true, now: NOW }));
+      const dir = tmp('setup-history-legacy-');
+      writeClaudeSession(join(dir, 'claude-code'), { sessionId: 'sess-legacy-newest', project: 'acme-example-web', turns: [['user', daysAgo(NOW, 1, 9), 'Notes the old archive already kept.']] });
+      const legacy = tmp('setup-history-legacy-folder-');
+      writeFileSync(join(legacy, daysAgo(NOW, 1).slice(0, 10) + '.md'), '# chats of the day\n');
+      await setArchiveEnabled(engine, true);
+      await adoptLegacyArchive(engine, { dir: legacy, apply: true });
+      const result = await inHome(() => runSetupHistory(engine, { harness: 'claude-code', stage: 'latest', dir, deadlineAtMs: soon(), now: NOW }));
+      expect({ status: result.status, imported: result.sessions_imported, days: result.days_written }).toEqual({ status: 'nothing_found', imported: 0, days: 0 });
+      expect((await readInstallReceipt(engine))!.stages.latest?.status).toBe('nothing_found');
+      expect(await archivedPages(engine)).toEqual([]);
+      expect((await inHome(() => previewHistory(engine, { stage: 'latest', dir, now: NOW }))).answered).not.toContain('latest');
     } finally { await close(); }
   }, 120_000);
 

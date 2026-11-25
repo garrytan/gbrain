@@ -4129,6 +4129,29 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     }
   },
   {
+    "name": "check_claims",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": "retrieval",
+    "description": "Check the numbers in a draft against allowed-claims pages (type: facts, claims: allowed) before stating them. Per claim: supported (with the cited dated line), conflicts (lines that say another number) or not_found, which means no allowed claim covers it, not that it is false.",
+    "params": {
+      "text": {
+        "type": "string",
+        "required": true,
+        "description": "The draft to check (max 20000 characters)."
+      },
+      "source_id": {
+        "type": "string",
+        "description": "One source, or '__all__'."
+      }
+    },
+    "scope": "read",
+    "cliHints": {
+      "hidden": true
+    },
+    "area": "search"
+  },
+  {
     "name": "policy_check",
     "description": "Before you send, spend, delete, sign up, call or publish on the user's behalf outside this brain, ask whether the user's agent policy allows it. Advisory: allow, ask, deny or none (no policy).",
     "params": {

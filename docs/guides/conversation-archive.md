@@ -153,7 +153,10 @@ input or 60 seconds of silence is no and leaves the offer open), then `[y/N]` fo
 `setup_history` decision in the first-run bundle, after `brain_shape`: its `import` option runs
 `gbrain setup <harness> --history-decision <id>` (valid 24 hours, used once; a replay reports `consumed` and imports
 nothing), its `decline` option `--history decline`. `--history none` skips for one run, `--history latest` or
-`--history <1-30>` imports at once, and `--no-extract` imports without deriving links.
+`--history <1-30>` imports at once, and `--no-extract` imports without deriving links. Every command setup prints
+for this step (the accept, decline, resume and deferred ones) repeats this run's wiring flags, such as `--no-hooks`,
+`--surface`, `--workspace` or `--source`, and quotes paths with spaces, so running it later wires the brain the same
+way. Each step runs against the brain setup itself created, never a project brain the current folder points at.
 
 **What it waits for.** The whole step has one 20-second budget. A run that reaches it stops starting new work and
 reports `partial` with a resume command; a write the brain accepted but has not published exits 10 with its
