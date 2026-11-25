@@ -47,6 +47,7 @@ import { INSPECT_OWNER_RETRY_MS } from './health.ts';
 import { lockOpenOsError } from './native-lock.ts';
 import { boundPublication, publicationLeaseMs, readPublicationCeilingMs, type PublicationBound } from './publication-deadline.ts';
 import { isCapabilityMissing, servesRawSql } from '../rust-engine/errors.ts';
+import { fenceOpts } from './host-fence.ts';
 
 type PhaseObservation = { name: string; started_at: string; deadline_exceeded: boolean; attempt: number; first_conn_ms?: number };
 /** #5373: set by a task that abandons a still-running preparation after losing its claim; its root is freed only once `until` settles. */
@@ -700,7 +701,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       const deadOwners = this.deadOwnersSeen?.length ? this.deadOwnersSeen : await this.phase('dead_owner_claims', signal => this.deadOwnerClaims(signal));
       this.deadOwnersSeen = null;
       // #6278: a claim that expired while its owner was preparing (the kill case) counts one preparation attempt.
-      await this.phase('expired_claims', signal => this.engine.expireStaleWriteClaims({ hostId: this.hostId, charge: this.policy.deadlines, deadOwners },
+      await this.phase('expired_claims', signal => this.engine.expireStaleWriteClaims({ hostId: this.hostId, charge: this.policy.deadlines, deadOwners, ...fenceOpts(this.engine) },
         { signal, direct: consumerConnectionRoute(this.engine).lane === 'direct' }));
       // PR B: a write deferred behind a refresh that outlived the barrier's wait limit ends failed, nothing applied.
       for (const row of await this.phase('deferred_expiry', signal => expireDeferredWrites(this.engine, this.hostId, signal))) this.settled(row);
