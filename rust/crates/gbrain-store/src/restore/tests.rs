@@ -862,6 +862,184 @@ fn archived_oauth_tokens_and_codes_are_refused_by_name() {
     assert_eq!(dump(&store), before);
 }
 
+/// A restore revokes no shared-skill state and disables no publication, so it refuses by name, before any
+/// record changes, a store with publication activated, a member, a delivery batch or policy, or `mcp.publish_skills` on.
+/// The catalog token secret every brain holds does not refuse by itself.
+#[test]
+fn archived_shared_skill_state_refuses_by_name_and_the_refusal_changes_nothing() {
+    let refused = |store: &Store, named: &str| {
+        let census = store.restore_census(&[]).unwrap();
+        let blocker = census
+            .blockers
+            .iter()
+            .find(|b| b.reason == "shared_skill_state")
+            .expect("shared_skill_state is named");
+        assert!(
+            blocker.detail.as_deref().unwrap().contains(named),
+            "{blocker:?}"
+        );
+        let (before, generation) = (dump(store), store.commit_version().unwrap());
+        let err = store.restore_quarantine(&default_only()).unwrap_err();
+        assert_eq!(err.code, "restore_refused");
+        assert!(
+            err.message.starts_with("shared_skill_state: "),
+            "{}",
+            err.message
+        );
+        assert_eq!(
+            (dump(store), store.commit_version().unwrap()),
+            (before, generation),
+            "a refusal commits nothing"
+        );
+    };
+
+    let inert = store();
+    inert.shared_skill_token_secret().unwrap();
+    assert!(
+        !blocked(&inert, "shared_skill_state"),
+        "the default secret alone is not state"
+    );
+
+    let activated = store();
+    source(&activated, "default", Some("/old/repo"), json!({}));
+    activated.set_config("mcp.publish_skills", "true").unwrap();
+    assert_eq!(
+        activated.activate_shared_skill_publication(false).unwrap()["activated"],
+        true
+    );
+    let plan = plan(
+        json!([{ "id": "default", "local_path": "/old/repo", "rebased_path": null }]),
+        json!([]),
+    );
+    let (before, generation) = (dump(&activated), activated.commit_version().unwrap());
+    assert_eq!(
+        activated.restore_quarantine(&plan).unwrap_err().code,
+        "restore_refused"
+    );
+    assert_eq!(
+        (dump(&activated), activated.commit_version().unwrap()),
+        (before, generation)
+    );
+    refused(&activated, "publication activated");
+
+    let flag_only = store();
+    flag_only.set_config("mcp.publish_skills", "true").unwrap();
+    refused(&flag_only, "mcp.publish_skills on");
+
+    let member = store();
+    member
+        .enroll_shared_skill_member(
+            &serde_json::from_value(
+                json!({ "installationId": "bbbbbbbb-0000-4000-8000-000000000001",
+                "principalKind": "local_cli", "principalId": "bbbbbbbb-0000-4000-8000-000000000002", "adapter": "claude",
+                "brainId": "bbbbbbbb-0000-4000-8000-000000000003", "followPolicy": {} }),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    refused(&member, "1 shared-skill members");
+
+    let policy = store();
+    policy
+        .write_shared_skill_policy(
+            &serde_json::from_value(json!({ "sourceId": "default", "incarnation": "cccccccc-0000-4000-8000-000000000001", "epoch": "cccccccc-0000-4000-8000-000000000002",
+                "policy": {}, "principalKind": "local_cli", "principalId": "p", "previousEpoch": "" }))
+            .unwrap(),
+        )
+        .unwrap();
+    refused(&policy, "1 shared-skill policies");
+}
+
+/// A take purge the archive holds only in the take purge ledger (`F 0x10`) counts as present; one no ledger holds
+/// is still missing.
+#[test]
+fn a_purge_only_the_take_ledger_holds_is_present_and_a_truly_missing_one_is_not() {
+    let store = store();
+    store
+        .insert_take_purge(
+            &serde_json::from_value(
+                json!({ "sourceId": "default", "subject": "*", "claimHash": "h", "requestId": PURGE }),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let absent = "aaaaaaaa-0000-4000-8000-000000000002";
+    let census = store
+        .restore_census(&[PURGE.into(), absent.into()])
+        .unwrap();
+    assert_eq!(
+        (census.purges_present, census.purges_missing),
+        (vec![PURGE.to_string()], vec![absent.to_string()])
+    );
+    let only_present = store.restore_census(&[PURGE.into()]).unwrap();
+    assert!(
+        only_present.blockers.is_empty(),
+        "{:?}",
+        only_present.blockers
+    );
+}
+
+/// A job whose payload is not an object is cancelled with its payload kept whole, not replaced by `{}`.
+#[test]
+fn a_cancelled_job_keeps_a_payload_that_is_not_an_object() {
+    let store = store();
+    let mut ids = Vec::new();
+    for data in [json!([1, 2, 3]), json!("text"), json!(7)] {
+        let spec = json!({ "insert": { "name": "work", "queue": "default", "status": "waiting", "priority": 0,
+            "data": data, "max_attempts": 3, "backoff_type": "fixed", "backoff_delay": 1000,
+            "backoff_jitter": 0.0, "on_child_fail": "fail_parent", "remove_on_complete": false,
+            "remove_on_fail": false, "submission_authority": { "version": 1, "kind": "application" } },
+            "maxSpawnDepth": 5 });
+        ids.push((
+            store
+                .admit_job(&serde_json::from_value(spec).unwrap())
+                .unwrap()
+                .row["id"]
+                .as_i64()
+                .unwrap(),
+            data,
+        ));
+    }
+    store.restore_quarantine(&default_only()).unwrap();
+    for (id, data) in ids {
+        let row = store.get_job(id).unwrap().unwrap();
+        assert_eq!(row["status"], "cancelled");
+        assert_eq!(row["data"]["__restore_original_data"], data);
+        assert_eq!(row["data"]["__restore_previous_status"], "waiting");
+        assert_eq!(row["data"]["__restore_id"], RESTORE);
+    }
+}
+
+/// Restores that overlap (different ids) run one at a time: each rotation and its `FORMAT` update finish before the
+/// next starts, so the directory always opens and `FORMAT` names the id the record holds.
+#[test]
+fn overlapping_restores_leave_a_store_that_opens_with_format_matching_the_record() {
+    let (store, dir) = on_disk("overlap");
+    let ids: Vec<String> = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..6)
+            .map(|n| {
+                let store = &store;
+                scope.spawn(move || {
+                    let mut p = default_only();
+                    p.restore_id = format!("overlap-{n}");
+                    store.restore_quarantine(&p).unwrap().brain_id
+                })
+            })
+            .collect();
+        workers.into_iter().map(|w| w.join().unwrap()).collect()
+    });
+    assert_eq!(
+        ids.iter().collect::<BTreeSet<_>>().len(),
+        6,
+        "every restore rotated to its own id"
+    );
+    let on_disk_id = format::read(&dir).unwrap().unwrap().brain_id;
+    assert_eq!(on_disk_id, store.brain_id());
+    drop(store);
+    let reopened = Store::open_dir(&dir, Default::default()).unwrap();
+    assert_eq!(reopened.brain_id(), on_disk_id);
+}
+
 /// A brain on a real directory (`FORMAT` and `records.redb`), reopened by path.
 fn on_disk(name: &str) -> (Store, std::path::PathBuf) {
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))

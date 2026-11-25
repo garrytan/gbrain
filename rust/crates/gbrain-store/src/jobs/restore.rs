@@ -26,9 +26,11 @@ pub(crate) fn quarantine_jobs(tx: &mut dyn KvWrite, restore_id: &str, now: i64) 
             new.updated_at = now;
             new.error_text =
                 Some("quarantined by backup restore; inspect and explicitly resubmit".into());
+            // A payload that is not an object (an array, a string, a number) is kept whole under its own key.
             let mut data = match std::mem::take(&mut new.data) {
                 Value::Object(map) => map,
-                _ => Map::new(),
+                Value::Null => Map::new(),
+                other => Map::from_iter([("__restore_original_data".to_string(), other)]),
             };
             data.insert("__restore_previous_status".into(), json!(old.status));
             data.insert("__restore_id".into(), json!(restore_id));

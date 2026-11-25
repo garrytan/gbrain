@@ -5,7 +5,7 @@
  */
 
 /** A reason a restore cannot publish; `restore_step_unsupported` carries it as `reason`. */
-export type RestoreBlockerReason = 'pending_requests' | 'recovery_required' | 'purge_replay' | 'archived_authority' | 'unclassified_state';
+export type RestoreBlockerReason = 'pending_requests' | 'recovery_required' | 'purge_replay' | 'archived_authority' | 'shared_skill_state' | 'unclassified_state';
 
 export interface RestoreStoreIdentity {
   engine_format_version: number;

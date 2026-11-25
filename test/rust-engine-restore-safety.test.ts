@@ -301,6 +301,16 @@ describe('refusals', () => {
     expect(String(error.suggestion)).toContain('follow-up release that adds revocation');
   });
 
+  test('shared-skill state that is switched on is refused by name, with the fix, and nothing was published', () => {
+    const held = census({ blockers: [{ reason: 'shared_skill_state', count: 2, detail: 'publication activated, mcp.publish_skills on' }] });
+    const error = restoreRefusalFor({ census: held, mode: 'new_brain', mirror: 'ok' })!.toJSON() as Record<string, unknown>;
+    expect(error.reason).toBe('shared_skill_state');
+    expect(String(error.message)).toContain('publication activated, mcp.publish_skills on');
+    expect(String(error.message)).toContain('Nothing was published');
+    expect(String(error.suggestion)).toContain('mcp.publish_skills');
+    expect(String(error.suggestion)).toContain('follow-up release');
+  });
+
   test('an addon without the restore members is detected', () => {
     class Old {}
     class Current { restoreCensus() {} restoreQuarantine() {} }

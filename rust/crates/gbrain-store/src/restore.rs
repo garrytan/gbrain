@@ -6,15 +6,17 @@
 //! requests, claims, effects, recovery records, jobs), what authority the archive holds, every
 //! source and the config rows a restore changes, which purges the caller expects are in the
 //! ledgers, and any record of a kind this build has not classified. `blockers` names each reason
-//! to refuse: `pending_requests`, `recovery_required`, `purge_replay`, `archived_authority` and
-//! `unclassified_state`. Nothing on this engine cancels a request with a receipt, and nothing
+//! to refuse: `pending_requests`, `recovery_required`, `purge_replay`, `archived_authority`,
+//! `shared_skill_state` and `unclassified_state`. Nothing on this engine cancels a request with a receipt, and nothing
 //! revokes archived authority yet, so those are refusals, never repairs.
 //!
 //! `restore_quarantine` is one write transaction that repeats the safety census and refuses
 //! (`restore_refused`) while a blocker stands, then detaches sources, rebases managed paths and
 //! page origins, turns off automation settings and cancels unfinished jobs. It revokes nothing: a
 //! store that holds a live OAuth client or a live local writer registration is refused as
-//! `archived_authority` before any record changes, and an access-token, OAuth token or OAuth code
+//! `archived_authority`, and one with shared-skill publication activated, any shared-skill member,
+//! delivery batch or policy, or `mcp.publish_skills` on is refused as `shared_skill_state`, before any
+//! record changes, and an access-token, OAuth token or OAuth code
 //! record lands in `unclassified`, which refuses by name. The store keeps no shared-skill table.
 //! Page text, facts, links and source incarnations are not touched.
 
@@ -64,6 +66,37 @@ pub struct StoreIdentity {
 pub struct Authority {
     pub local_writers: Vec<String>,
     pub oauth_clients: Vec<String>,
+}
+
+/// Shared-skill state a restore does not quarantine: the activated publication flag, any member
+/// (`x 0x05`), delivery batch (`x 0x06`) or policy (`x 0x07`), and `mcp.publish_skills` on. The
+/// catalog token secret (`x 0x04`) alone is the inert default of every brain and does not count.
+fn shared_skill_state(read: &dyn KvRead) -> Result<Vec<String>> {
+    let mut found = Vec::new();
+    if crate::shared_skill_publication::publication_activated(read)? {
+        found.push("publication activated".to_string());
+    }
+    for (sub, what) in [
+        (0x05, "members"),
+        (0x06, "delivery batches"),
+        (0x07, "policies"),
+    ] {
+        let mut count = 0u64;
+        scan_prefix(read, &[keys::ACCESS_MEMBERS, sub], false, &mut |_, _| {
+            count += 1;
+            true
+        })?;
+        if count > 0 {
+            found.push(format!("{count} shared-skill {what}"));
+        }
+    }
+    if read
+        .get(&keys::text(keys::CONFIG, &["mcp.publish_skills"]))?
+        .is_some_and(|v| v.eq_ignore_ascii_case(b"true"))
+    {
+        found.push("mcp.publish_skills on".to_string());
+    }
+    Ok(found)
 }
 
 impl Authority {
@@ -174,6 +207,9 @@ struct Liveness {
     #[serde(default)]
     publication_started: bool,
 }
+
+/// Held for the whole of `restore_quarantine`, id rotation and `FORMAT` update included.
+static RESTORE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[derive(Deserialize)]
 struct PurgeId {
@@ -331,8 +367,8 @@ fn purge_ids_present(read: &dyn KvRead, wanted: &BTreeSet<String>) -> Result<BTr
     if wanted.is_empty() {
         return Ok(present);
     }
-    // The fact purge ledger (`F 0x0F`) and the page purge ledger (`F 0x0C`); the store keeps no take purges.
-    for sub in [0x0F, 0x0C] {
+    // The fact purge ledger (`F 0x0F`), the page purge ledger (`F 0x0C`) and the take purge ledger (`F 0x10`).
+    for sub in [0x0F, 0x0C, 0x10] {
         each_record(read, &[keys::FACT, sub], &mut |p: PurgeId| {
             if let Some(id) = p.request_id.map(|id| id.to_lowercase())
                 && wanted.contains(&id)
@@ -418,6 +454,7 @@ fn census_in(read: &dyn KvRead, purge_ids: &[String], store: StoreIdentity) -> R
         local_writers: crate::journal::active_writer_ids(read)?,
         oauth_clients: crate::jobs::live_client_ids(read)?,
     };
+    let shared_skills = shared_skill_state(read)?;
     let blockers = [
         ("pending_requests", unfinished + effects_live),
         ("recovery_required", recovering + recovery_records),
@@ -426,6 +463,7 @@ fn census_in(read: &dyn KvRead, purge_ids: &[String], store: StoreIdentity) -> R
             "archived_authority",
             (authority.local_writers.len() + authority.oauth_clients.len()) as u64,
         ),
+        ("shared_skill_state", shared_skills.len() as u64),
         ("unclassified_state", unclassified.len() as u64),
     ]
     .into_iter()
@@ -436,6 +474,7 @@ fn census_in(read: &dyn KvRead, purge_ids: &[String], store: StoreIdentity) -> R
         detail: match reason {
             "unclassified_state" => Some(unclassified.join(", ")),
             "archived_authority" => Some(authority.describe()),
+            "shared_skill_state" => Some(shared_skills.join(", ")),
             _ => None,
         },
     })
@@ -573,6 +612,9 @@ impl Store {
     /// The restore changes, in one write transaction (see the module text). A second call with
     /// the same `restore_id` is `invalid_state`; a blocker is `restore_refused`.
     pub fn restore_quarantine(&self, plan: &QuarantinePlan) -> Result<QuarantineReport> {
+        // One restore at a time: a second one rotating the id while the first has not yet written `FORMAT`
+        // could leave `FORMAT` behind the record by more than one rotation, which an open refuses.
+        let _one_at_a_time = RESTORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // The new id and `FORMAT` are published at once; inside an outer transaction a rollback
         // would leave them naming a brain the records never had.
         if self.bound.is_some() {
