@@ -100,7 +100,8 @@ Replies:
   inside its result. It is never reported as success.
 - `outcome_unknown`: the request may have reached Google but no reply came
   back. The broker never resends it under the same key; read first (the
-  reply's `reconcile_with` names the tool), then decide.
+  reply's `reconcile_with` names the tool), then decide. The client also returns it when the
+  socket closes a `call` before replying; read `op: status` with the same key.
 
 Every `call` reply carries
 `"quota":{"product","used_today","cap","day"}` for that product's UTC day.
@@ -247,7 +248,7 @@ Every failure is `{"v":4,"ok":false,"code","message","request_id","recovery","ac
 | `malformed_request` | fix_and_retry | Not one JSON object with the op's fields. |
 | `unsupported_version` | fix_and_retry | `v` is not 4. |
 | `unknown_op` | fix_and_retry | Not mint, call, status or tools. |
-| `peer_refused` | ask_human | Only the owner lists or answers held prompts. |
+| `peer_refused` | ask_human | Only the owner lists or answers held prompts; also returned when the socket closes without replying or this uid can't open it (not in `google.socket_peers`, or the 0600 file). |
 | `act_not_mintable` | fix_and_retry | Only `ingest` is minted. |
 | `not_connected` | ask_human | No connection (or no client) for the account. |
 | `revoked` | ask_human | The grant was revoked or expired; reconnect. |
