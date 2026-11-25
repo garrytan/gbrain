@@ -220,8 +220,9 @@ can reach.
 - gbrain's addon loader (`src/core/rust-engine/addon-loader.ts`) uses `GBRAIN_RUST_ENGINE_ADDON`
   first, then an addon cached under `<gbrain home>/engines/rust/` whose SHA-256 matches this
   release's cached manifest. It does not download anything: with no cached addon it refuses with
-  `rust_engine_addon_missing`, reason `not_installed`. Nothing starts the loader yet (ENGINES.md,
-  "The Rust engine shell").
+  `rust_engine_addon_missing`, reason `not_installed`. `gbrain engine install rust` downloads, checks
+  and installs the addon a release publishes (ENGINES.md, "Installing the addon"); releases build it
+  with `rust/scripts/release-addon.ts` in `.github/workflows/release.yml`.
 - To go back to the normal gbrain path, `unset GBRAIN_RUST_ENGINE_ADDON`.
 - `GBRAIN_TEST_BACKEND=rust bun test <file>` arrives with the Rust test arm in a later change. It
   does not exist yet.

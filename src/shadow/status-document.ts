@@ -6,6 +6,7 @@
 import { existsSync } from 'node:fs';
 import type { BrainEngine } from '../core/engine.ts';
 import type { EngineConfig } from '../core/types.ts';
+import { buildBenchStatus } from './bench.ts';
 import { buildEligibilityStatus } from './eligibility.ts';
 import { buildEvidenceStatus, type EvidenceStatus } from './evidence.ts';
 import { readEpoch } from './evidence-epoch.ts';
@@ -54,6 +55,7 @@ export async function shadowStatusDocument(brain: { key: string; dir: string }, 
     seed: seedStatus(readSeedRecord(brain.dir)), // the seed block carries the recorded storage mode
     ...eligibility,
     ...(bound ? bound.evidence : ({} as EvidenceStatus)),
+    ...buildBenchStatus({ dir: brain.dir, primaryEngine: state?.primary_engine ?? null }),
   };
 }
 

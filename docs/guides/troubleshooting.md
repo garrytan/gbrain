@@ -321,6 +321,18 @@ Refused writes a caller never saw land (`lost_caller_writes`) have their own rep
 
 A running sync is not one of these: `gbrain repair fences` now runs during a catch-up for every candidate the sync does not still name ([fence repair during a sync](repair.md#fence-repair-during-a-sync)), and a candidate it does name is `sync_in_progress`, not `owner_unavailable`.
 
+<a id="rust-addon-install"></a>**Rust addon refused?** The installed addon is kept.
+
+| reason | Meaning | Next |
+|---|---|---|
+| `not_installed` | None for this version | `gbrain engine install rust` |
+| `unsupported_target` | Platform not covered | Keep PGLite/Postgres |
+| `not_published` | This release has none | Upgrade |
+| `fetch_failed` | Download failed | Retry later |
+| `verification_failed` | Checksum/attestation mismatch, deleted | Report it |
+
+`engine status --json` `rust_addon`: `target`, `preview_target`, `override`, `installed`, `path`, `sha256`, `pinned_sha256`, `engine_build`.
+
 <a id="write-capacity"></a>**Managed writes refused with `queue_capacity`, or doctor warns `persistence_capacity`?** A per-principal or per-brain write-journal limit (`persistence.limits.*`) is full (`queue_capacity`), or doctor sees lifetime request IDs or receipt bytes at 80% or more (`persistence_capacity`). For the cumulative limits (lifetime request IDs and receipt bytes), the warning and the refusal print a `gbrain config set persistence.limits.<limit> <value>` sized for about one more year; run it on the brain host, then retry with the same request ID. For outstanding-request or queued-byte limits, let outstanding writes finish and check `gbrain sources writer status`. Receipt compaction age is `persistence.receipt_retention_days` (default 30). Limits and defaults: [bounded admission and retention](concurrent-writes.md#bounded-admission-and-retention).
 
 <a id="doctor-ops-tier"></a>**`gbrain doctor` is slow on a large brain, or you need to see what is wrong in seconds?** Run `gbrain doctor --tier ops --json`: only the operator sections (write capacity, unresolved write failures, a managed sync cursor that stopped moving, [receipt compaction](repair.md#receipt-compaction) freshness, a serve on an older build, schema-pack consistency, embedding state) under a 4000 ms deadline (`--budget-ms <n>`). A section the deadline cut off reads unknown (`details.health: "unknown"`, `reason: "budget"`, `exact: false`), never clear; the report says `complete: false` and lists it in `unknown_sections`; rerun it with `gbrain doctor --only <name> --json`. On PGLite, serve-only sections read `not_applicable` and the report stays complete. The default doctor runs the same sections first and bounds each check and a plain `--json` run ([doctor budgets](repair.md#doctor-budgets)); above `doctor.orphan_ratio.full_scan_max_pages` pages (default 50000) it samples `orphan_ratio`, and `--tier deep` scans fully. From a thin client, `gbrain doctor --tier ops` (or `--only persistence_capacity`) asks the serve: an admin token gets the ops report, a read token the `get_brain_health` bands (no raw counts), and a serve that predates the ops tier refuses `doctor_tier_unavailable` (run it on the brain host, or upgrade and restart the serve). Agents without a shell call MCP `get_brain_health` (read) or `run_doctor` with `tier: "ops"` (admin).
