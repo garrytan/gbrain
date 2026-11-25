@@ -26,9 +26,9 @@ export const lockOverdueHold: StoreMember<[hold: OverdueHold], boolean> =
 export const listOwnerRecoveryHeads: StoreMember<[hostId: string, excluded: readonly string[], opts?: { signal?: AbortSignal; direct?: boolean }], Record<string, unknown>[]> =
   (brain, hostId, excluded) => storeCall({ member: 'listOwnerRecoveryHeads' }, () => brain.listOwnerRecoveryHeads(hostId, [...excluded]));
 
-/** No refresh row exists here (refreshes live only on managed worktrees), so none is interrupted; the sync budget changes nothing. */
+/** The interrupted refreshes of worktrees `hostId` owns that an owner's topology scan converges, at most 16 (each carries `stale`: no move for `budgetMs`). */
 export const listResumableRefreshes: StoreMember<[hostId: string, budgetMs: number], (Record<string, unknown> & { stale: boolean })[]> =
-  (brain, hostId) => storeCall({ member: 'listResumableRefreshes' }, () => brain.listResumableRefreshes(hostId));
+  (brain, hostId, budgetMs) => storeCall({ member: 'listResumableRefreshes' }, () => brain.listResumableRefreshes(hostId, budgetMs));
 
 /**
  * Each named source that exists, in id order, with its last commit. The store keeps no `last_commit`

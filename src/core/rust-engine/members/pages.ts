@@ -393,6 +393,7 @@ export const PAGES_MEMBERS = {
   gitDurabilityStore: 'managed_persistence',
   gitEffectStore: 'managed_persistence',
   topologyStore: 'managed_persistence',
+  refreshStore: 'managed_persistence',
   manualLinkStore: 'managed_persistence',
   readWorktreeManifest: 'persistence_journal',
   // Writer status (engine-sql/writer-status.ts).

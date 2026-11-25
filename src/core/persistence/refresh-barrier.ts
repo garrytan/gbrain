@@ -14,10 +14,10 @@ import { gitChildEnv } from '../git-env.ts';
 import { OperationError } from '../ops/contract.ts';
 import { type AuthorityEngine, authorizeWrite } from './authority.ts';
 import type { BrainEngine } from '../engine.ts';
-import { completeWrite, SYNC_KIND } from './journal.ts';
+import { completeWrite } from './journal.ts';
 import { PENDING_IMPORT } from './pending-import.ts';
 import { declarePersistenceProtocol } from './protocol.ts';
-import type { SqlEngine, WriteRequest } from './model.ts';
+import type { WriteRequest } from './model.ts';
 import { readConfigValue } from '../config-values.ts';
 import { overdueDeferredFrom, overdueImportFrom } from '../engine-sql/persistence-owner-scans.ts';
 
@@ -30,13 +30,12 @@ const changed = new Map<string, Promise<RefreshPaths | null>>();
 interface RefreshPaths { paths: ReadonlySet<string>; fold: boolean }
 
 /** Paths (repository-relative, forward slashes) refresh `refreshId` changed; empty for an aborted refresh; null when unreadable. */
-async function refreshChangedPaths(engine: SqlEngine, refreshId: string, root: string): Promise<RefreshPaths | null> {
+async function refreshChangedPaths(engine: Pick<BrainEngine, 'refreshStore'>, refreshId: string, root: string): Promise<RefreshPaths | null> {
   const key = `${refreshId}\0${root}`;
   const held = changed.get(key);
   if (held) return held;
   const read = (async () => {
-    const [refresh] = await engine.executeRaw<{ state: string; old_head: string; target_head: string; released: boolean }>(
-      'SELECT state,old_head,target_head,released_at IS NOT NULL AS released FROM persistence_worktree_refreshes WHERE id=$1::uuid', [refreshId]);
+    const refresh = await (await engine.refreshStore()).readReleased(refreshId);
     if (!refresh?.released) return null;
     if (refresh.state === 'aborted' || refresh.old_head === refresh.target_head) return { paths: new Set<string>(), fold: false };
     const [diff, config] = await Promise.all([execFileBounded('git', ['-C', root, '-c', 'core.quotepath=false', 'diff', '--name-only', '-z', '--no-renames', '--relative',
@@ -65,14 +64,11 @@ const APPENDING_OPERATIONS = ['remember', 'add_timeline_entry'];
  * dropped its intent (#8765 review): a caller cannot make its own write look like one. A connector import names
  * `connector_database` in its outcome and stays a later write (overwritten-edits.ts MANAGED_IMPORT).
  */
-async function laterWriteRefusal(engine: SqlEngine, row: WriteRequest): Promise<DeferredRefusal | null> {
+async function laterWriteRefusal(engine: Pick<BrainEngine, 'refreshStore'>, row: WriteRequest): Promise<DeferredRefusal | null> {
   if (APPENDING_OPERATIONS.includes(row.operation)) return null;
-  const [later] = await engine.executeRaw<{ request_id: string }>(`SELECT r.request_id::text AS request_id FROM persistence_requests r
-    WHERE r.source_id=$1 AND r.slug=$2 AND r.sequence>$3 AND r.state='committed' AND NOT (r.operation='submit_job'
-      AND (${SYNC_KIND('r')} OR (r.intent IS NULL AND COALESCE(r.outcome->>'imported_file','')='true' AND NOT (r.outcome ? 'connector_database')))) ORDER BY r.sequence LIMIT 1`,
-  [row.source_id, row.slug, String(row.sequence)]);
+  const later = await (await engine.refreshStore()).laterWrite(row.source_id, row.slug, String(row.sequence));
   if (!later) return null;
-  return { state: 'conflict', failure: { code: 'revision_conflict', message: `Request ${row.request_id} waited ${row.deferred_refresh_id ? `behind refresh ${row.deferred_refresh_id}` : 'for an import'}, and request ${later.request_id}, accepted after it, has already changed ${row.slug}, so nothing was applied and the later write was not overwritten. Read the page again and submit the change with a new request_id.` } };
+  return { state: 'conflict', failure: { code: 'revision_conflict', message: `Request ${row.request_id} waited ${row.deferred_refresh_id ? `behind refresh ${row.deferred_refresh_id}` : 'for an import'}, and request ${later}, accepted after it, has already changed ${row.slug}, so nothing was applied and the later write was not overwritten. Read the page again and submit the change with a new request_id.` } };
 }
 
 /**
@@ -167,20 +163,13 @@ export async function expireDeferredWrites(engine: BrainEngine, hostId: string, 
  * Whether a deferred write still waits: behind a refresh not yet released, or (GST-1582) for an import that has not landed
  * (`sources.last_commit` still the commit it was held at). A read that fails counts as waiting.
  */
-export async function deferredWaiting(engine: SqlEngine, row: Pick<WriteRequest, 'source_id' | 'deferred_refresh_id' | 'deferred_import_from'>): Promise<boolean> {
-  const [held] = await engine.executeRaw<{ waiting: boolean }>(`SELECT
-    ($1::uuid IS NOT NULL AND NOT EXISTS (SELECT 1 FROM persistence_worktree_refreshes WHERE id=$1::uuid AND released_at IS NOT NULL))
-    OR ($2::text IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sources WHERE id=$3 AND COALESCE(last_commit,'')<>$2::text)) AS waiting`,
-  [row.deferred_refresh_id ?? null, row.deferred_import_from ?? null, row.source_id]).catch(() => [{ waiting: true }]);
-  return held?.waiting !== false;
+export async function deferredWaiting(engine: Pick<BrainEngine, 'refreshStore'>, row: Pick<WriteRequest, 'source_id' | 'deferred_refresh_id' | 'deferred_import_from'>): Promise<boolean> {
+  return (await engine.refreshStore()).deferredWaiting(row).catch(() => true);
 }
 
 /** Writes admitted deferred that have not finished (waiting, or claimed and still publishing), for `gbrain upgrade --check-downgrade`. */
-export async function deferredBacklog(engine: SqlEngine): Promise<{ count: number; oldest_age_ms: number }> {
-  const [row] = await engine.executeRaw<{ count: number; oldest_age_ms: number | null }>(`SELECT count(*)::int AS count,
-    (EXTRACT(EPOCH FROM now()-min(created_at))*1000)::bigint AS oldest_age_ms FROM persistence_requests
-    WHERE (deferred_refresh_id IS NOT NULL OR deferred_import_from IS NOT NULL) AND state IN ('deferred','queued','running','recovering')`);
-  return { count: Number(row?.count ?? 0), oldest_age_ms: Number(row?.oldest_age_ms ?? 0) };
+export async function deferredBacklog(engine: Pick<BrainEngine, 'refreshStore'>): Promise<{ count: number; oldest_age_ms: number }> {
+  return (await engine.refreshStore()).deferredBacklog();
 }
 
 let afterImportScan: ((rows: WriteRequest[]) => Promise<void>) | null = null;

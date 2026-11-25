@@ -62,6 +62,7 @@ mod page_visibility;
 mod pages;
 mod publication_journal;
 mod reflex_reads;
+mod refresh_store;
 mod retrieval_feedback;
 mod search;
 mod seed;
