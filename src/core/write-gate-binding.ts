@@ -82,13 +82,17 @@ export function holdVersionSql(h: string): string {
 
 /**
  * A data-modifying CTE named `noted` for the purge statement that deletes holds: it notes, in the same statement and so
- * the same snapshot as the delete decision, the holds `holdKeptForSurvivorSql` keeps for the page(s) `pages` names. `from`
- * is the FROM clause binding the purged page's `pageId` and `slug` expressions (and `extra`, an AND-ed time rule). No
- * hold row is locked and no unique key is touched, so a purge never waits on another purge's note.
+ * the same snapshot as the delete decision, the holds `holdKeptForSurvivorSql` keeps for the purged page(s), with the
+ * ids of the surviving pages it saw (`purged(q)` is SQL true for a page row the statement purges, so those are left
+ * out): the purge's own scrub of the rename record can cut the route to them, so the sweep checks them by id. `from` is
+ * the FROM clause binding the purged page's `pageId` and `slug` expressions (and `extra`, an AND-ed time rule). No hold
+ * row is locked and no unique key is touched, so a purge never waits on another purge's note.
  */
-export function noteKeptHoldsCte(sourceParam: string, pageId: string, slug: string, from = '', extra = 'true'): string {
-  return `noted AS (INSERT INTO write_gate_hold_rechecks (source_id, hold_id, observed_version)
-      SELECT h.source_id, h.id, ${holdVersionSql('h')} FROM write_gate_holds h
+export function noteKeptHoldsCte(sourceParam: string, pageId: string, slug: string, purged: (q: string) => string, from = '', extra = 'true'): string {
+  return `noted AS (INSERT INTO write_gate_hold_rechecks (source_id, hold_id, observed_version, survivor_ids)
+      SELECT h.source_id, h.id, ${holdVersionSql('h')},
+             ARRAY(${holdReachCte('h')} SELECT DISTINCT q.id FROM reach JOIN pages q ON q.source_id = h.source_id AND q.slug = reach.s WHERE NOT ${purged('q')})
+        FROM write_gate_holds h
        WHERE h.source_id = ${sourceParam} AND EXISTS (SELECT 1 ${from} WHERE ${holdKeptForSurvivorSql('h', pageId, slug)} AND ${extra})
       RETURNING 1)`;
 }

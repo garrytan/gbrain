@@ -163,7 +163,7 @@ async function awaitingSweep(engine: BrainEngine, items: Item[]): Promise<number
 }
 
 function sweepNote(scan: Scan): string {
-  return scan.awaitingSweep ? ` ${scan.awaitingSweep} of them were kept by a purge for another page and are noted: the next maintenance run (bookkeeping_gc) removes the ones no page is left for.` : '';
+  return scan.awaitingSweep ? ` ${scan.awaitingSweep} of them were kept by a purge for another page and are noted for a recheck by the next maintenance run (bookkeeping_gc).` : '';
 }
 
 const NEXT_STEP = 'This check only detects and changes nothing. The one next step is the read-only gbrain trust review, which lists the held writes.';

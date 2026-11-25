@@ -380,7 +380,7 @@ export async function sweepPurgedPage(tx: BrainEngine, input: PurgedPageSweep): 
       OR (target_table='takes' AND target_id=ANY($4::bigint[])) OR (related_table='takes' AND related_id=ANY($4::bigint[]))) RETURNING 1`, [sourceId, pageId, factIds, takeIds]);
   }
   // The holds kept for another page are noted in the same statement (write-gate-binding.ts noteKeptHoldsCte).
-  const noted = has('write_gate_hold_rechecks') ? `WITH ${noteKeptHoldsCte('$1', '$3', '$2')} ` : '';
+  const noted = has('write_gate_hold_rechecks') ? `WITH ${noteKeptHoldsCte('$1', '$3', '$2', q => `${q}.id = $3::bigint`)} ` : '';
   const holds = has('write_gate_holds') ? (await tx.executeRaw<{ id: string }>(
     `${noted}DELETE FROM write_gate_holds h WHERE h.source_id=$1 AND ${holdOwnedByDeletedPageSql('h', '$3', '$2')} RETURNING h.id::text AS id`, [sourceId, slug, pageId])).map(h => h.id) : [];
   if (has('write_gate_holds')) holds.push(...await dropPurgedCandidates(tx, sourceId, [{ id: pageId }]));

@@ -3304,7 +3304,8 @@
           "2 source_id text/text NOT NULL",
           "3 hold_id bigint/int8 NOT NULL",
           "4 observed_version text/text NOT NULL",
-          "5 queued_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+          "5 survivor_ids ARRAY/_int8 NOT NULL DEFAULT '{}'::bigint[]",
+          "6 queued_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

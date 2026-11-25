@@ -3567,6 +3567,7 @@ CREATE TABLE IF NOT EXISTS write_gate_hold_rechecks (
   source_id        TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
   hold_id          BIGINT NOT NULL,
   observed_version TEXT NOT NULL,
+  survivor_ids     BIGINT[] NOT NULL DEFAULT '{}',
   queued_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS write_gate_hold_rechecks_queue_idx ON write_gate_hold_rechecks (queued_at, id);

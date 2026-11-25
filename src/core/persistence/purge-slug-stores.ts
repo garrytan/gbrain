@@ -68,10 +68,12 @@ export async function scrubPurgedSlugHolds(
   pages: ReadonlyArray<{ slug: string; id?: number | null; deletedAt?: string | null }>,
 ): Promise<{ write_gate_holds: number; write_gate_receipts: number }> {
   if (!pages.length) return { write_gate_holds: 0, write_gate_receipts: 0 };
-  // One statement: the holds kept for another page are noted in the delete decision's own snapshot (write-gate-binding.ts).
+  // One statement: the holds kept for another page are noted in the delete decision's own snapshot (write-gate-binding.ts),
+  // once the notes table exists (a brain whose v337 migration has not run yet still purges).
   const upto = '(d.upto IS NULL OR GREATEST(h.created_at, h.last_seen_at) <= d.upto)';
-  const holds: string[] = (await engine.executeRaw<{ id: string }>(`WITH d AS (SELECT * FROM unnest($2::text[], $3::bigint[], $4::timestamptz[]) AS d(slug, id, upto)),
-    ${noteKeptHoldsCte('$1', 'd.id', 'd.slug', 'FROM d', upto)}
+  const [notes] = await engine.executeRaw<{ ok: boolean }>("SELECT pg_catalog.to_regclass('write_gate_hold_rechecks') IS NOT NULL AS ok");
+  const noted = notes?.ok ? `, ${noteKeptHoldsCte('$1', 'd.id', 'd.slug', q => `EXISTS (SELECT 1 FROM d WHERE d.id = ${q}.id)`, 'FROM d', upto)}` : '';
+  const holds: string[] = (await engine.executeRaw<{ id: string }>(`WITH d AS (SELECT * FROM unnest($2::text[], $3::bigint[], $4::timestamptz[]) AS d(slug, id, upto))${noted}
     DELETE FROM write_gate_holds h USING d
     WHERE h.source_id = $1 AND ${holdOwnedByDeletedPageSql('h', 'd.id', 'd.slug')} AND ${upto} RETURNING h.id::text AS id`,
   [sourceId, pages.map(p => p.slug), pages.map(p => p.id ?? null), pages.map(p => p.deletedAt ?? null)])).map(h => h.id);

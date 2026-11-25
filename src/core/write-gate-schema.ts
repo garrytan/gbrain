@@ -41,7 +41,8 @@ export const WRITE_GATE_SCAN_BASELINE_KEY = 'write_gate.scan_baseline';
 
 /**
  * write_gate_hold_rechecks: held writes a purge kept only because the rename record still led to another page,
- * each with the version the purge saw (`holdVersionSql`, write-gate-binding.ts). Two pages purged side by side can
+ * each with the version the purge saw (`holdVersionSql`, write-gate-binding.ts) and the ids of the pages it kept the
+ * held write for (a purge of a middle name scrubs the rename record that led to them). Two pages purged side by side can
  * each keep a held write for the other; the maintenance sweep (write-gate-recheck.ts, run by bookkeeping_gc) checks
  * these again and deletes a held write no page row is left for. Append-only: no unique key, so a purge never waits on
  * another purge's note, and a purge never locks the held write it notes. Shared by the v337 migration.
@@ -52,6 +53,7 @@ CREATE TABLE IF NOT EXISTS write_gate_hold_rechecks (
   source_id        TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
   hold_id          BIGINT NOT NULL,
   observed_version TEXT NOT NULL,
+  survivor_ids     BIGINT[] NOT NULL DEFAULT '{}',
   queued_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS write_gate_hold_rechecks_queue_idx ON write_gate_hold_rechecks (queued_at, id);

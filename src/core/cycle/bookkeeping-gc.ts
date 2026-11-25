@@ -67,13 +67,16 @@ export async function runPhaseBookkeepingGc(engine: BrainEngine, dryRun: boolean
   let secretPublish: Record<string, number> = {};
   try { secretPublish = await (await import('../git/redact-finish.ts')).secretPublishMaintenance(engine); } catch { /* never fatal */ }
   const rechecks = await heldWriteRechecks(engine, false);
+  // A sweep that failed or could not see its evidence leaves held text it owes; the phase says so instead of ok.
+  const sweepOwed = rechecks?.status === 'fail' || rechecks?.status === 'unknown';
   return {
     phase: 'bookkeeping_gc',
-    status: 'ok',
+    status: sweepOwed ? 'warn' : 'ok',
     duration_ms: 0,
     summary:
       `${purgedCheckpoints} stale op_checkpoint(s), ${purgedBrainstormCheckpoints} stale brainstorm checkpoint(s), ` +
-      `${purgedBatchRetryAuditFiles} stale batch-retry audit file(s) and ${purgedVolunteerEvents} stale volunteer event(s)`,
+      `${purgedBatchRetryAuditFiles} stale batch-retry audit file(s) and ${purgedVolunteerEvents} stale volunteer event(s)` +
+      (sweepOwed ? `; the held-write recheck did not run to the end (${rechecks!.status}${rechecks!.reason ? `: ${String(rechecks!.reason)}` : ''})` : ''),
     details: {
       purged_checkpoints_count: purgedCheckpoints,
       purged_brainstorm_checkpoints_count: purgedBrainstormCheckpoints,
