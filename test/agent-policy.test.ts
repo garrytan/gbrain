@@ -27,9 +27,11 @@ import type { OperationContext } from '../src/core/ops/contract.ts';
 import { acceptRevision, applyPolicyChange, readApproval, resolvePolicy, POLICY_SLUGS } from '../src/core/policy/store.ts';
 import { evaluatePolicy } from '../src/core/policy/evaluate.ts';
 import { copyMigrationConfig } from '../src/commands/migrate-engine.ts';
-import { checkPolicy } from '../src/core/policy/check.ts';
+import { callerScopes, checkPolicy } from '../src/core/policy/check.ts';
 import { ownerSessionProof, terminalAuthorityProblem, withOwnerProof, type TerminalProbe } from '../src/core/policy/authority.ts';
-import { renderPolicyFence, type PolicyRule } from '../src/core/policy/fence.ts';
+import { parsePolicyFence, renderPolicyFence, type PolicyRule } from '../src/core/policy/fence.ts';
+import { ruleFromArgs } from '../src/commands/policy.ts';
+import { withCallerAccess } from '../src/core/search/private-visibility.ts';
 import { findPreset } from '../src/core/policy/presets.ts';
 import { policyOperations } from '../src/core/ops/policy.ts';
 import { renderPolicyLine, POLICY_LINE_LEAD } from '../src/core/setup/policy-line.ts';
@@ -256,6 +258,39 @@ describe('evaluatePolicy', () => {
     expect(evaluatePolicy(spendRules, { verb: 'spend' }).decision).toBe('ask');
     expect(evaluatePolicy([{ id: 'big', verb: 'spend', decision: 'deny', limit: { amount: 1000, currency: 'USD' } }, { id: 'spend', verb: 'spend', decision: 'allow' }], { verb: 'spend' }))
       .toMatchObject({ decision: 'ask', rule_id: 'big' });
+    const merchantDeny: PolicyRule[] = [{ id: 'acme', verb: 'spend', decision: 'deny', merchant: 'acme-example' }, { id: 'treats', verb: 'spend', decision: 'allow', merchant: 'treats-example' }, { id: 'spend', verb: 'spend', decision: 'allow' }];
+    expect(evaluatePolicy(merchantDeny, { verb: 'spend' })).toMatchObject({ decision: 'ask', rule_id: 'acme' });
+    expect(evaluatePolicy(merchantDeny, { verb: 'spend', merchant: 'Acme-Example' }).decision).toBe('deny');
+    expect(evaluatePolicy(merchantDeny, { verb: 'spend', merchant: 'other-example' }).decision).toBe('allow');
+  });
+});
+
+describe('policy scopes for remote callers', () => {
+  test('only local, owner and unbound callers read the owner policy; a member, group, guest or several-member audience reads the company policy', () => {
+    expect(callerScopes(false)).toEqual(['owner', 'company']);
+    expect(withCallerAccess({ identity: [], audience: null }, () => callerScopes(true))).toEqual(['owner', 'company']);
+    expect(withCallerAccess({ owner: true, identity: ['member:alice-example'] }, () => callerScopes(true))).toEqual(['owner', 'company']);
+    expect(withCallerAccess({ identity: ['member:alice-example'] }, () => callerScopes(true))).toEqual(['company']);
+    expect(withCallerAccess({ identity: ['group:team-a'] }, () => callerScopes(true))).toEqual(['company']);
+    expect(withCallerAccess({ identity: [], audience: ['guest'], audienceIdentities: [[]] }, () => callerScopes(true))).toEqual(['company']);
+    expect(withCallerAccess({ identity: [], audience: ['member:alice-example', 'member:bob-example'], audienceIdentities: [['member:alice-example'], ['member:bob-example']] }, () => callerScopes(true))).toEqual(['company']);
+  });
+});
+
+describe('gbrain policy allow|ask|deny rule building', () => {
+  test('every rule the CLI builds parses back, and one it cannot store is refused before anything is written', async () => {
+    const roundTrips = (args: string[]) => {
+      const rule = ruleFromArgs('allow', args);
+      const parsed = parsePolicyFence(renderPolicyFence([rule]));
+      expect(parsed.ok).toBe(true);
+      return rule;
+    };
+    expect(roundTrips(['spend', '--amount', '60.50USD']).id).toBe('spend-upto-60-5usd');
+    expect(roundTrips(['spend', '--merchant', 'A Very Long Merchant Name Incorporated Holdings Example', '--to', 'household', '--amount', '12345.67', '--currency', 'USD']).id.length).toBeLessThanOrEqual(64);
+    expect(roundTrips(['send', '--to', 'known', '--id', 'family_ok']).id).toBe('family_ok');
+    for (const bad of [['send', '--id', 'My Rule'], ['spend', '--merchant', 'x'.repeat(201)]]) {
+      expect((await caught(() => ruleFromArgs('allow', bad)) as { code: string }).code).toBe('invalid_params');
+    }
   });
 });
 

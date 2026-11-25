@@ -16,7 +16,7 @@ User guide: `docs/guides/agent-policy.md`. Advisory only: nothing here blocks an
 
 - `src/core/policy/store.ts` — Page at `policy/agent` / `company/policy/agent` (source default, type agent_policy, private) plus the approval record in config `policy.approved.<scope>`. `resolvePolicy` states: none, ok, unapproved (non-authoritative: every verb asks), malformed and changed_outside_gbrain (both serve the last approval; malformed with no approval asks for every verb). `applyPolicyChange` writes a pending revision and refuses without owner authority; `acceptRevision` binds the current revision only (`policy_revision_stale` otherwise).
 
-- `src/core/policy/check.ts` — `checkPolicy` / `describePolicy` for the ops and CLI; `callerScopes` (a member credential reads the company scope only); `policyStateForPack` (context_pack's `policy_state`, with a 7-day change notice from the stored proof).
+- `src/core/policy/check.ts` — `checkPolicy` / `describePolicy` for the ops and CLI; `callerScopes` (local, owner and unbound callers read both scopes; a member, group, guest or several-member audience reads the company scope only); `policyStateForPack` (context_pack's `policy_state`, with a 7-day change notice from the stored proof).
 
 - `src/core/policy/admission.ts` — Write admission: `assertPolicySlugWrite` (remote writes naming a policy slug, as target or rename destination) and `admitPolicyFrontmatter` (remote writes that are or would become agent_policy) refuse with `policy_owner_only`; local writes are forced `visibility: private`.
 

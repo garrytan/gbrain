@@ -9,19 +9,23 @@ import type { AgentVerb, RecipientClass } from '../agent-verbs.ts';
 import { currentCallerAccess } from '../search/private-visibility.ts';
 import { evaluatePolicy, stricterVerdict, type PolicyQuery, type PolicyVerdict } from './evaluate.ts';
 import { formatLimit, type PolicyLimit, type PolicyRule } from './fence.ts';
-import { CHANGE_NOTICE_MS, resolvePolicy, scopesForCaller, type PolicyScope, type PolicyState, type ServedPolicy } from './store.ts';
+import { CHANGE_NOTICE_MS, resolvePolicy, type PolicyScope, type PolicyState, type ServedPolicy } from './store.ts';
 
 export const POLICY_ENFORCEMENT = 'advisory' as const;
 export const HARNESS_APPROVALS_LINE = 'Advice only: keep following your harness\'s own approvals, and ask the user whenever the decision is ask.';
 
 const STATE_RANK: Record<PolicyState, number> = { none: 0, ok: 1, changed_outside_gbrain: 2, unapproved: 3, malformed: 4 };
 
-/** The scopes this request reads: local callers and unbound or owner credentials read both; a member credential reads the company policy. */
+/**
+ * The scopes this request reads. Local callers, owner credentials and unbound credentials (no audience, identity or
+ * actor) read both. Every other remote caller (a member, a group, a guest, a several-member audience) reads only the
+ * company policy, because the owner's policy page is private.
+ */
 export function callerScopes(remote: boolean): PolicyScope[] {
   if (!remote) return ['owner', 'company'];
   const access = currentCallerAccess();
-  const member = access.identity.find(i => i.startsWith('member:'))?.slice('member:'.length) ?? null;
-  return scopesForCaller(access.owner ? null : member, null);
+  const unbound = access.audience === null && access.identity.length === 0 && !access.actor;
+  return access.owner || unbound ? ['owner', 'company'] : ['company'];
 }
 
 export interface ScopeView {

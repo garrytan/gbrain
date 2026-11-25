@@ -89,11 +89,6 @@ export async function resolvePolicy(engine: BrainEngine, scope: PolicyScope): Pr
   return { ...base, state: 'changed_outside_gbrain', authoritative: true, rules: approval.rules, served_revision: approval.revision, foreign: { revision: page.revision, author: page.author } };
 }
 
-/** The scopes that apply to a caller: a member credential reads the company policy only; the owner and unbound callers read both. */
-export function scopesForCaller(member: string | null, ownerMember: string | null): PolicyScope[] {
-  return member && member !== ownerMember ? ['company'] : ['owner', 'company'];
-}
-
 /** The page body the policy commands write: a short header and the canonical fence. */
 export function renderPolicyPage(scope: PolicyScope, rules: readonly PolicyRule[]): string {
   const frontmatter = dumpFrontmatterYaml({ type: AGENT_POLICY_TYPE, title: scope === 'owner' ? 'Agent policy' : 'Company agent policy', visibility: 'private' });

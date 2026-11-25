@@ -36,7 +36,7 @@ Each change asks you to type a short code from the terminal, so you see what cha
 | `gbrain policy accept <revision>` | Approves a pending revision (see below). |
 | `gbrain policy status [--json]` | Each scope's state and which MCP clients fetched the policy last. |
 
-How rules combine: a rule that names a merchant wins, then a rule with a condition (amount or recipient), then the verb's plain rule. When two rules match at the same level, deny beats ask and ask beats allow. A verb with no rule answers ask. An amount in a currency the rule does not name answers ask. On a shared brain the owner policy and the company policy both apply, and the stricter answer wins; a member's credential reads only the company policy.
+How rules combine: a rule that names a merchant wins, then a rule with a condition (amount or recipient), then the verb's plain rule. When two rules match at the same level, deny beats ask and ask beats allow. A verb with no rule answers ask, and so does a check that leaves out the merchant, recipient or amount a deny or ask rule depends on. An amount in a currency the rule does not name answers ask. On a shared brain the owner policy and the company policy both apply, and the stricter answer wins; a member, group or guest credential, or an audience of several people, reads only the company policy.
 
 ## Who can change it
 

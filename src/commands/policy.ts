@@ -76,10 +76,6 @@ function verbOf(value: string | undefined): (typeof AGENT_VERBS)[number] {
   return value;
 }
 
-function slugPart(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
-}
-
 export function ruleFromArgs(decision: PolicyDecision, args: string[]): PolicyRule {
   const verb = verbOf(args[0]);
   const to = flag(args, '--to');
@@ -90,8 +86,12 @@ export function ruleFromArgs(decision: PolicyDecision, args: string[]): PolicyRu
   if (window && !limit) throw opError('invalid_params', '--window needs --amount.', 'Pass --amount 60 --currency USD with --window per_action.');
   const merchant = flag(args, '--merchant');
   const note = flag(args, '--note');
-  const id = flag(args, '--id') ?? [verb, merchant ? slugPart(merchant) : '', to ?? '', limit ? `upto-${limit.amount}${limit.currency.toLowerCase()}` : ''].filter(Boolean).join('-');
-  return { id, verb, decision, ...(to ? { when: to } : {}), ...(limit ? { limit } : {}), ...(window ? { window: 'per_action' as const } : {}), ...(merchant ? { merchant } : {}), ...(note ? { note } : {}) };
+  const id = flag(args, '--id') ?? [verb, merchant ?? '', to ?? '', limit ? `upto-${limit.amount}${limit.currency}` : ''].filter(Boolean).join('-')
+    .toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 64).replace(/^-+|-+$/g, '');
+  const rule: PolicyRule = { id, verb, decision, ...(to ? { when: to } : {}), ...(limit ? { limit } : {}), ...(window ? { window: 'per_action' as const } : {}), ...(merchant ? { merchant } : {}), ...(note ? { note } : {}) };
+  const parsed = parsePolicyFence(renderPolicyFence([rule]));
+  if (!parsed.ok) throw opError('invalid_params', `That rule cannot be saved: ${parsed.error.message}. Nothing was changed.`, 'Shorten --merchant or --note, or pass --id with lowercase letters, digits, - or _ (at most 64).');
+  return rule;
 }
 
 function describeRule(r: PolicyRule): string {
