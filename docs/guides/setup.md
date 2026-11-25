@@ -129,9 +129,9 @@ table with its `trusted_hash`, otherwise Codex lists it and silently skips it.
   (3 s) only after `--capture`;
 - one trust table per group;
 - the top-level `mcp_optional_startup_grace_ms = 0`, only when the key is
-  unset, so Codex waits for gbrain to start instead of leaving its tools out of
-  the session after one second ([Codex guide](../mcp/CODEX.md)). A value you set
-  is kept, and `--remove` deletes the key only while it is still setup's `0`.
+  unset, so Codex 0.151 and newer wait for gbrain to start instead of leaving
+  its tools out of the session after one second ([Codex guide](../mcp/CODEX.md)).
+  A value you set is kept, and `--remove` deletes the key only while it is still setup's `0`.
 
 Each of these entries is owned by its sha256 fingerprint (canonical JSON of the
 exact parsed entry), stored per entry in

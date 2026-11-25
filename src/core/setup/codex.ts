@@ -60,8 +60,9 @@ export const CODEX_SETUP_RECEIPT_VERSION = 2;
  * Codex (0.147+) gives MCP servers not marked `required` one shared 1 s window to start when it builds a turn's tool
  * list, then leaves out every server still starting, for the whole of a one-shot `codex exec`. `gbrain serve` takes
  * about 0.8 s to answer `initialize` and `tools/list` on a fast machine, so a slower one loses gbrain's tools for that
- * session. `0` makes Codex wait for each server up to its own `startup_timeout_sec` (Codex 0.151+). It is a top-level
- * key: setup writes it only when absent, never changes a value the user set, and `--remove` deletes only its own `0`.
+ * session. `0` makes Codex wait for each server up to its own `startup_timeout_sec` (Codex 0.151+; 0.147 to 0.150
+ * ignore the key, except that `codex exec --strict-config` refuses it). It is a top-level key: setup writes it only
+ * when absent, never changes a value the user set, and `--remove` deletes only its own `0`.
  */
 export const CODEX_STARTUP_GRACE_KEY = 'mcp_optional_startup_grace_ms';
 
