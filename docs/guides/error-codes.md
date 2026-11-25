@@ -233,6 +233,36 @@ More: [docs/guides/household.md#account_number_key](../../docs/guides/household.
 
 More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
 
+### action_invalid
+
+<a id="action_invalid"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An action ledger entry did not have the agent_action shape (an unknown field, a bad status, verb, amount or currency, or a page outside actions/YYYY/MM/<id>), so nothing was logged. | Ledger totals are computed by gbrain from a fixed shape; a field it does not know would be silently left out of every total, so it is refused instead. | Fix the field the error names and call log_action again with the same request_id. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/action-ledger.md#action_invalid](../../docs/guides/action-ledger.md#action_invalid)
+
+### action_not_found
+
+<a id="action_not_found"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The action_id names no action page this caller logged or can read, so nothing was changed. | A caller moves on (or settles the hold of) only an action it logged; another member's actions stay out of reach, and no caller learns whether they exist. | Pass the action_id log_action or policy_reserve returned, or log a new action without action_id. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/action-ledger.md#action_not_found](../../docs/guides/action-ledger.md#action_not_found)
+
+### action_transition_invalid
+
+<a id="action_transition_invalid"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The action cannot move to the status asked for (a done action is never edited, and a failed, cancelled or reversed one is final), so nothing was changed. | The ledger keeps what happened: a correction is a new action whose supersedes names the old one, so the old entry and its evidence stay as they were. | Log a new action with supersedes set to the old action_id. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/action-ledger.md#action_transition_invalid](../../docs/guides/action-ledger.md#action_transition_invalid)
+
 ### actor_not_attested
 
 <a id="actor_not_attested"></a>
@@ -3757,6 +3787,48 @@ Reasons: `file_differs`, `label_line`.
 
 More: [docs/guides/write-refusals.md#label_edit_refused](../../docs/guides/write-refusals.md#label_edit_refused)
 
+### ledger_busy
+
+<a id="ledger_busy"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Another budget reservation was being checked and held, so this one waited and then gave up without holding anything. | Reservations are checked and written one at a time, so two agents cannot both be allowed the last of a budget. | Retry policy_reserve in a few seconds with the same request_id. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/action-ledger.md#ledger_busy](../../docs/guides/action-ledger.md#ledger_busy)
+
+### ledger_confirm_required
+
+<a id="ledger_confirm_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain ledger confirm ran in a process that looks like an agent session or has no terminal, so the action was not marked as confirmed by the user. | user_confirmed means the user said the amount is right; an agent must not say it for them. | Ask the user to run the command in fix in their own terminal, outside the agent session. | user | `repeat the read that failed` | 1 | no |
+
+Reasons: `agent_marker`, `no_terminal`.
+
+More: [docs/guides/action-ledger.md#ledger_confirm_required](../../docs/guides/action-ledger.md#ledger_confirm_required)
+
+### ledger_log_action_only
+
+<a id="ledger_log_action_only"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A remote caller tried to write, move or retype an action ledger page directly, so nothing was written. | log_action stamps who logged an action and works out on the server whether its evidence holds; a direct page write would let a caller set both itself. | Record the action with log_action, or hold budget with policy_reserve. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/action-ledger.md#ledger_log_action_only](../../docs/guides/action-ledger.md#ledger_log_action_only)
+
+### ledger_scan_too_large
+
+<a id="ledger_scan_too_large"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The ledger read would scan more actions than one read allows, so it returned no totals rather than a partial total presented as whole. | A total over part of the window would read as the whole; the read stops and names the filters that make it fit. | Narrow the read with since, verb or counterparty. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/action-ledger.md#ledger_scan_too_large](../../docs/guides/action-ledger.md#ledger_scan_too_large)
+
 ### legacy_job_selection_invalid
 
 <a id="legacy_job_selection_invalid"></a>
@@ -4125,6 +4197,16 @@ More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket
 |---|---|---|---|---|---|---|
 | A configured model is not allowed under models strict mode. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### money_unevidenced
+
+<a id="money_unevidenced"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An amount was logged as done with no evidence gbrain could read and without estimated: true, so nothing was logged. | Every amount in the ledger is either backed by a page the writer can read or marked as an estimate, so totals never mix the two. | Add evidence (the slug of a saved page that shows the amount) or pass estimated: true, then call again with the same request_id. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/action-ledger.md#money_unevidenced](../../docs/guides/action-ledger.md#money_unevidenced)
+
 ### moved_pages_mass_fold_refused
 
 <a id="moved_pages_mass_fold_refused"></a>
@@ -4314,6 +4396,16 @@ More: [docs/guides/write-refusals.md#on_behalf_of_not_permitted](../../docs/guid
 | A shared agent's audience names a member who is not enabled on this brain, or a group that does not exist, so nothing was read. | An unknown or disabled entry is refused rather than read as a guest, so a typo or a removed person never quietly changes what the agent reads. | Name enabled members and existing groups only (gbrain access member list --all, gbrain access group list on the brain host); a person who is not a member joins the audience as guest. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/write-refusals.md#on_behalf_of_unknown_member](../../docs/guides/write-refusals.md#on_behalf_of_unknown_member)
+
+### onboarding_owner_only
+
+<a id="onboarding_owner_only"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Only the owner of this install can turn the first-session suggestion off, and this connection is not bound to the owner, so nothing changed. | The suggestion belongs to the install's owner; a member-bound connection can read its status but never change it. | Ask the brain owner to run gbrain onboarding off on the brain host. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/first-session-suggestion.md#turning-it-off](../../docs/guides/first-session-suggestion.md#turning-it-off)
 
 ### openclaw_not_found
 

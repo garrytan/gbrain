@@ -4,7 +4,14 @@
 <!-- Regenerate: bun run scripts/generate-tool-catalog.ts -->
 <!-- Freshness-guarded by scripts/check-tool-catalog-fresh.sh (bun run verify). -->
 
-Every non-localOnly operation on the MCP surface: 190 tools across 30 areas. **Starter** marks membership in the ~42-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
+Every non-localOnly operation on the MCP surface: 195 tools across 32 areas. **Starter** marks membership in the ~42-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
+
+## action-ledger
+
+| Tool | Description | Scope | Starter | Gate |
+|---|---|---|---|---|
+| `ledger` | Totals of the outside actions you can read for a window: spent and saved per currency, split by evidenced, user_confirmed and estimated, by verb and by counterparty, plus live budget holds. | read |  |  |
+| `log_action` | After you act on the user's behalf outside this brain (send, spend, cancel, sign up...), record it. | write |  |  |
 
 ## admin
 
@@ -34,6 +41,7 @@ Every non-localOnly operation on the MCP surface: 190 tools across 30 areas. **S
 |---|---|---|---|---|
 | `agent_policy` | The user's agent policy rules that apply to you, as rows, with its state and revision. | read |  |  |
 | `policy_check` | Before you send, spend, delete, sign up, call or publish on the user's behalf outside this brain, ask whether the user's agent policy allows it. | read |  |  |
+| `policy_reserve` | Before a spend, check the agent policy with its day, week and month budgets and hold the amount for 24 hours, in one step, so two agents cannot both use the last of a budget. | write |  |  |
 
 ## chronicle
 
@@ -192,6 +200,13 @@ Every non-localOnly operation on the MCP surface: 190 tools across 30 areas. **S
 | `recall` | Read facts by entity, since or session_id; `query` also searches pages. | read | yes |  |
 | `remember` | Save {fact, provenance (required), `entity` (subject; recall needs it)} or items[]. | write | yes |  |
 | `synthesize` | [EXPENSIVE / SLOW: LLM calls] Cited answer to a broad question across pages. | read | yes |  |
+
+## onboarding
+
+| Tool | Description | Scope | Starter | Gate |
+|---|---|---|---|---|
+| `onboarding_off` | Turn the first-session suggestion off for this install (the owner only). | write |  |  |
+| `onboarding_status` | Whether the first-session suggestion is armed on this brain, and why not when it is off: not_new_install, not_personal, window_expired, sessions_exhausted or stopped. | read |  |  |
 
 ## ontology
 

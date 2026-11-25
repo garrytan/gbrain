@@ -127,6 +127,9 @@
       "jobs": [
         "./commands/jobs.ts"
       ],
+      "ledger": [
+        "./commands/ledger.ts"
+      ],
       "loops": [
         "./commands/loops.ts"
       ],
@@ -155,6 +158,9 @@
       ],
       "onboard": [
         "./commands/onboard.ts"
+      ],
+      "onboarding": [
+        "./commands/onboarding.ts"
       ],
       "orphans": [
         "./commands/orphans.ts"
