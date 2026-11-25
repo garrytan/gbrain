@@ -9,10 +9,11 @@
  *  - Regression: the refusal was logged at most, so a Rust brain's terminal hook never ran, a spend refusal left no result
  *    row, a pause or quiet-hours release left the claim to expire, and the stall check never looked.
  *  - Why existing coverage misses it: the worker tests run PGLite, where every raw statement succeeds.
- *  - Seam: a PGLite engine wrapped so `executeRaw` throws the real refusal (test/helpers/refusing-engine.ts); the Rust
- *    cases need the addon and are skipped without it unless GBRAIN_TEST_RUST_ADDON_REQUIRED=1. The pause release and the
- *    quiet-hours defer are typed members every engine serves (releaseClaimForPause, deferClaimForQuietHours), so their
- *    cases refuse that member, and on a Rust brain they put the claim back as delayed (as
+ *  - Seam: a PGLite engine wrapped so `executeRaw`, or a named typed member, throws the real refusal
+ *    (test/helpers/refusing-engine.ts); the Rust cases need the addon and are skipped without it unless
+ *    GBRAIN_TEST_RUST_ADDON_REQUIRED=1. The pause release, the quiet-hours defer and the stall count are typed members
+ *    every engine serves (releaseClaimForPause, deferClaimForQuietHours, countWaitingJobsForNames), so their cases refuse
+ *    that member; on a Rust brain the release and the defer put the claim back as delayed (as
  *    test/engine-parity/jobs-worker-liveness.test.ts pins on every arm). The quiet-hours skip is still raw SQL.
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
@@ -186,16 +187,12 @@ describe('worker refusal-swallow sites', () => {
   }
 
   test('S9 worker stall check: a capability refusal on the waiting-job count stops the worker as unhealthy instead of skipping the check', async () => {
-    const events = await unhealthyAfter(refusingEngine(pg, { needle: 'AS cnt FROM minion_jobs' }), 800);
+    const events = await unhealthyAfter(refusingEngine(pg, { members: ['countWaitingJobsForNames'] }), 800);
     expect(events.map((e) => e.reason)).toEqual(['db_dead']);
     expect(events[0]!.message).toContain('does not support executeRaw');
   }, 20_000);
 
-  // On a Rust brain the DB-liveness probe is the typed pingStore (served), so the health check now reaches the stall count,
-  // which is still raw SQL: its refusal surfaces and ends the worker loudly (db_dead), as row 9 requires. The stall count
-  // runs only after stallWarnAfterMs idle with nothing in flight (5 minutes by default), so this pins the remaining loss
-  // too: an idle Rust worker stops at that check until the stall count is typed.
-  rustRun('S9 finding: on a Rust brain the health check reaches the stall count, whose refusal ends the worker as db_dead', async () => {
+  rustRun('S9 on a Rust brain: the health check reaches the stall count, which the store answers, so an idle worker stays alive and sends no raw SQL', async () => {
     const { engine, dir } = await openRustBrain();
     try {
       const statements: string[] = [];
@@ -206,13 +203,11 @@ describe('worker refusal-swallow sites', () => {
           return typeof value === 'function' ? value.bind(target) : value;
         },
       });
+      // A waiting job of a name the worker does not handle makes the stall count run (and answer 0).
+      await new MinionQueue(engine as unknown as BrainEngine).add('not-handled-here', { n: 1 });
       const events = await unhealthyAfter(e, 800);
-      expect(events.map((x) => x.reason)).toEqual(['db_dead']);
-      expect(events[0]!.message).toContain('does not support executeRaw');
-      expect(statements.length).toBeGreaterThan(0);
-      // Only the stall count reaches raw SQL: the liveness probe no longer does.
-      expect(statements.every((sql) => sql.includes('AS cnt FROM minion_jobs'))).toBe(true);
-      expect(statements).not.toContain('SELECT 1');
+      expect(events).toEqual([]);
+      expect(statements).toEqual([]);
     } finally {
       await engine.disconnect();
       removeBrainDir(dir);

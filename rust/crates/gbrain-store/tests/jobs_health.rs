@@ -426,3 +426,36 @@ fn waiting_count_keeps_to_waiting_rows_and_can_leave_out_facts_absorb() {
     assert_eq!(b.count_waiting_jobs(false).unwrap(), 3);
     assert_eq!(b.count_waiting_jobs(true).unwrap(), 2);
 }
+
+#[test]
+fn the_stall_count_keeps_to_waiting_rows_of_the_queue_with_a_listed_name() {
+    let b = brain("jobs_health");
+    let none: Vec<String> = Vec::new();
+    let work = vec!["work".to_string()];
+    assert_eq!(b.count_waiting_jobs_for_names("default", &work).unwrap(), 0);
+
+    add(&b, "work", json!({}));
+    add(&b, "work", json!({}));
+    add(&b, "other", json!({}));
+    add(&b, "elsewhere", json!({"queue": "side"}));
+    add(&b, "work", json!({"queue": "side"}));
+    add(
+        &b,
+        "work",
+        json!({"status": "delayed", "delay_until": "2099-01-01T00:00:00.000Z"}),
+    );
+    add(&b, "busy", json!({}));
+    claim(&b, "c1", "default", "busy", 60_000);
+
+    let both = vec!["work".to_string(), "other".to_string(), "busy".to_string()];
+    assert_eq!(b.count_waiting_jobs_for_names("default", &work).unwrap(), 2);
+    assert_eq!(b.count_waiting_jobs_for_names("default", &both).unwrap(), 3);
+    assert_eq!(b.count_waiting_jobs_for_names("side", &work).unwrap(), 1);
+    assert_eq!(b.count_waiting_jobs_for_names("default", &none).unwrap(), 0);
+    assert_eq!(b.count_waiting_jobs_for_names("no-such-queue", &both).unwrap(), 0);
+    assert_eq!(
+        b.count_waiting_jobs_for_names("default", &["Work".to_string()]).unwrap(),
+        0,
+        "names match exactly"
+    );
+}

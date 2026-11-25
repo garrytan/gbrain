@@ -318,7 +318,7 @@ src/core/minions/spend-authorization.ts	execute_raw	3
 src/core/minions/sync-queue-wake.ts	execute_raw	2
 src/core/minions/terminal-events.ts	execute_raw	1
 src/core/minions/worker-shutdown.ts	execute_raw	1
-src/core/minions/worker.ts	execute_raw	3
+src/core/minions/worker.ts	execute_raw	2
 src/core/multi-source-drift.ts	execute_raw	1
 src/core/oauth-grants.ts	sql_template	16
 src/core/oauth-provider.ts	sql_template	22

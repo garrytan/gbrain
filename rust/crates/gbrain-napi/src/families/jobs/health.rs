@@ -86,6 +86,17 @@ impl Brain {
         self.run(env, move |s| s.count_waiting_jobs(exclude_facts_absorb))
     }
 
+    /// `countWaitingJobsForNames(queue, names)`: the waiting jobs of the queue with one of the names.
+    #[napi]
+    pub fn count_waiting_jobs_for_names<'env>(
+        &self,
+        env: &'env Env,
+        queue: String,
+        names: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.count_waiting_jobs_for_names(&queue, &names))
+    }
+
     /// `listStuckActiveJobsByName()`: `{ name, n }` per name.
     #[napi]
     pub fn list_stuck_active_jobs_by_name<'env>(

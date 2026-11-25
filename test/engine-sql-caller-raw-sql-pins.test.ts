@@ -2585,6 +2585,15 @@ const PINS: Pin[] = [
            WHERE id = $1 AND lock_token = $2`],
   },
   {
+    // The minion worker's stall check sent this text on the default lane when idle past stallWarnAfterMs (worker.ts, health tick).
+    from: 'src/core/minions/worker.ts:762-771 the stall check waiting-job count (at a59ee3ca58)',
+    case: { method: 'countWaitingJobsForNames', variant: 'default', run: e => e.countWaitingJobsForNames('default', ['noop']) },
+    texts: [`SELECT count(*)::text AS cnt FROM minion_jobs
+                     WHERE status = 'waiting'
+                       AND queue = $1
+                       AND name = ANY($2::text[])`],
+  },
+  {
     from: 'src/commands/serve-http-webhooks.ts:303 legacyIngestJob (at 1bc04e66a8)',
     case: { method: 'readJobDataByIdempotencyKey', variant: 'default', run: e => e.readJobDataByIdempotencyKey('ingest:pin') },
     texts: ['SELECT data FROM minion_jobs WHERE idempotency_key = $1'],

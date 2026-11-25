@@ -188,6 +188,8 @@ export interface JobsMembers {
   readOldestWaitingAge(queue: string, opts?: { signal?: AbortSignal }): Promise<number | null>;
   /** How many jobs wait; `excludeFactsAbsorb` leaves out the `facts-absorb` jobs PGLite's facts drain owns. */
   countWaitingJobs(excludeFactsAbsorb: boolean): Promise<number>;
+  /** How many jobs of `queue` wait under one of `names` (the minion worker's stall count); none for an empty list. */
+  countWaitingJobsForNames(queue: string, names: readonly string[]): Promise<number>;
   /** Active jobs whose lock lapsed or whose stalled counter reached two, per name. */
   listStuckActiveJobsByName(): Promise<Array<{ name: string; n: number }>>;
 

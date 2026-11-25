@@ -2,7 +2,7 @@
  * BrainEngine parity — queue health reads (engine-sql/jobs-health.ts): the counts `gbrain doctor`'s queue checks, the
  * advisor's stalled-jobs collector and the submit-time queue probe ask of `minion_jobs`: readQueueHealthSignals,
  * listWaitingByQueue, readQueueDivergence, listQueueWedgeCounts, listPrivateQueueHealth, readWedgeSignals,
- * readOldestWaitingAge, countWaitingJobs and listStuckActiveJobsByName.
+ * readOldestWaitingAge, countWaitingJobs, countWaitingJobsForNames and listStuckActiveJobsByName.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: each read returns the same counts, ties, orders and nulls on every engine arm (PGLite always; Postgres
@@ -307,4 +307,37 @@ describe('engine parity: queue health reads', () => {
     expect({ empty, all, noAbsorb }).toEqual({ empty: 0, all: 3, noAbsorb: 2 });
     return { empty, all, noAbsorb };
   });
+
+  parityTest('countWaitingJobsForNames counts only the waiting jobs of one queue under the listed names',
+    { methods: ['admitJob', 'claimNextJob', 'countWaitingJobsForNames'] }, async (engine) => {
+      const empty = await engine.countWaitingJobsForNames('default', ['work']);
+      await waiting(engine, 'work', 2);
+      await waiting(engine, 'other', 1);
+      await add(engine, 'work', { queue: 'side' });
+      await add(engine, 'side-only', { queue: 'side' });
+      await add(engine, 'work', { status: 'delayed', delay_until: FAR });
+      await active(engine, 'busy', 'c1');
+      await waiting(engine, 'busy', 1);
+      const counts = {
+        empty,
+        oneName: await engine.countWaitingJobsForNames('default', ['work']),
+        twoNames: await engine.countWaitingJobsForNames('default', ['work', 'other']),
+        repeatedName: await engine.countWaitingJobsForNames('default', ['work', 'work']),
+        sideQueue: await engine.countWaitingJobsForNames('side', ['work', 'side-only', 'other']),
+        noNames: await engine.countWaitingJobsForNames('default', []),
+        unknownQueue: await engine.countWaitingJobsForNames('no-such-queue', ['work', 'other']),
+        unknownName: await engine.countWaitingJobsForNames('default', ['nothing']),
+        otherCase: await engine.countWaitingJobsForNames('default', ['Work']),
+        claimedAndWaiting: await engine.countWaitingJobsForNames('default', ['busy']),
+      };
+      expect(counts).toEqual({
+        empty: 0, oneName: 2, twoNames: 3, repeatedName: 2, sideQueue: 2, noNames: 0, unknownQueue: 0, unknownName: 0,
+        otherCase: 0, claimedAndWaiting: 1,
+      });
+      // Counted jobs leave the count once a worker claims them: the stall check counts only what is still waiting.
+      await engine.claimNextJob(claimSpec('c2', { names: ['other'] }));
+      const afterClaim = await engine.countWaitingJobsForNames('default', ['work', 'other']);
+      expect(afterClaim).toBe(2);
+      return { ...counts, afterClaim };
+    });
 });
