@@ -153,3 +153,12 @@ Differences from PGLite:
 - Orderings PostgreSQL leaves open (the arrays of `readJobStats`) are in no promised order; the TypeScript side sorts them.
 - An owner job, a job for an attachment or an inbox message that does not exist is `constraint_violation`, as the
   foreign keys; `admitJob` checks the private-queue owner the same way.
+
+## Multi-user mode: the host fence on job and lock writes
+
+Only with the multi-user switch on (`leases.rs`, `fence.rs`); with it off every call above behaves as it always did.
+
+- `updateJobProgress`, `addJobTokens`, `readJobInbox`, `killTimedOutJobs` and `killWallClockJobs` take the host fence as a last argument. A write on a job its token locks needs the claim to have been taken under that fence's epoch (`claim_epoch_mismatch` otherwise); the two timeout sweeps need a held lease and delete each dead job's claim epoch in the same write. No fence on a multi-user store is `fence_missing`.
+- `releaseCycleLock` is the holder's release and also needs the claim epoch. `deleteCycleLock` is the operator's snapshot delete (pid and token matched, no claim epoch), and `deleteCycleLockIfStale` still runs with no fence.
+- The page embedding lease members (`embed-page:` ids) and the cycle lock members never act on each other's rows: an embedding take of another id is refused, and every other call on the wrong family answers false and writes nothing.
+- `writeDrainLeaseHolder` writes the beacon only while the source's cycle lock (`gbrain-sync:<source>`) is held by the same token, unexpired, under the fence's epoch (`not_found`, `expired` or `claim_epoch_mismatch` otherwise), checked in the same write.
