@@ -9266,6 +9266,7 @@
         "countValidityLapsedFacts": "none",
         "countVisibilityNoncanonicalHolds": "none",
         "countWaitingJobs": "none",
+        "countWaitingJobsForNames": "none",
         "countWakeWatches": "none",
         "countWorldFacts": "none",
         "countZeroWeightWithTakes": "none",

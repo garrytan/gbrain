@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2275/2290
+# covered: 2276/2291
 # lifecycle: 12/12
 # pages: 124/125
 # search: 8/8
@@ -39,7 +39,7 @@
 # entity_reads: 29/29
 # cycle_locks: 10/10
 # minion_jobs: 10/10
-# minion_queue: 137/140
+# minion_queue: 138/141
 # minion_status: 14/14
 # minion_subagent: 17/17
 # cli_reads_export: 14/14
@@ -682,7 +682,7 @@ countChunksBySource	stats_ingest	yes	1	no	yes	yes	serves
 readBrainMaturity	stats_ingest	yes	3	no	yes	yes	serves
 getStats	stats_ingest	yes	8	yes	yes	yes	serves
 getHealth	stats_ingest	yes	7	yes	yes	yes	serves
-pingStore	stats_ingest	yes	3	no	yes	yes	serves
+pingStore	stats_ingest	yes	4	no	yes	yes	serves
 listVisiblePageSlugs	stats_ingest	yes	1	no	yes	yes	refuses:pages
 readPagesForVersionHistory	stats_ingest	yes	1	no	yes	yes	refuses:pages
 logIngest	stats_ingest	yes	9	no	yes	yes	serves
@@ -1125,14 +1125,14 @@ takePageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 renewPageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 releasePageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 assertCycleLease	cycle_locks	yes	1	no	yes	yes	serves
-admitJob	minion_jobs	yes	131	no	yes	yes	serves
-getJob	minion_jobs	yes	46	no	yes	yes	serves
+admitJob	minion_jobs	yes	133	no	yes	yes	serves
+getJob	minion_jobs	yes	47	no	yes	yes	serves
 readJobDataByIdempotencyKey	minion_jobs	yes	2	no	yes	yes	serves
 coalesceOnIdempotencyKey	minion_jobs	yes	2	no	yes	yes	serves
 listJobs	minion_jobs	yes	1	no	yes	yes	serves
-claimNextJob	minion_jobs	yes	94	no	yes	yes	serves
+claimNextJob	minion_jobs	yes	96	no	yes	yes	serves
 renewJobLease	minion_jobs	yes	1	no	yes	yes	serves
-completeJob	minion_jobs	yes	54	no	yes	yes	serves
+completeJob	minion_jobs	yes	55	no	yes	yes	serves
 failJob	minion_jobs	yes	42	no	yes	yes	serves
 reclaimStalledJobs	minion_jobs	yes	2	no	yes	yes	serves
 readActiveAccessTokenGrant	minion_queue	yes	3	no	yes	yes	serves
@@ -1238,6 +1238,7 @@ listPrivateQueueHealth	minion_queue	yes	1	no	yes	yes	serves
 readWedgeSignals	minion_queue	yes	1	no	yes	yes	serves
 readOldestWaitingAge	minion_queue	yes	1	no	yes	yes	serves
 countWaitingJobs	minion_queue	yes	3	no	yes	yes	serves
+countWaitingJobsForNames	minion_queue	yes	1	no	yes	yes	serves
 listStuckActiveJobsByName	minion_queue	yes	1	no	yes	yes	serves
 listStalledEmbedBackfillSources	minion_queue	yes	1	no	yes	yes	serves
 readGlobalMaintenanceDeaths	minion_queue	yes	1	no	yes	yes	serves

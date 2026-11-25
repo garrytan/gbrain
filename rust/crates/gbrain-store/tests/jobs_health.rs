@@ -452,9 +452,14 @@ fn the_stall_count_keeps_to_waiting_rows_of_the_queue_with_a_listed_name() {
     assert_eq!(b.count_waiting_jobs_for_names("default", &both).unwrap(), 3);
     assert_eq!(b.count_waiting_jobs_for_names("side", &work).unwrap(), 1);
     assert_eq!(b.count_waiting_jobs_for_names("default", &none).unwrap(), 0);
-    assert_eq!(b.count_waiting_jobs_for_names("no-such-queue", &both).unwrap(), 0);
     assert_eq!(
-        b.count_waiting_jobs_for_names("default", &["Work".to_string()]).unwrap(),
+        b.count_waiting_jobs_for_names("no-such-queue", &both)
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        b.count_waiting_jobs_for_names("default", &["Work".to_string()])
+            .unwrap(),
         0,
         "names match exactly"
     );
