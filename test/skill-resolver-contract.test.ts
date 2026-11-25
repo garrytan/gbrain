@@ -10,7 +10,7 @@
  * 3. Seam: test/helpers/json-schema-lite.ts (no new dependency).
  */
 import { afterAll, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildSkillIndex, normalizeTurnInput, resolveSkills, ResolverError } from '../src/core/skills/resolver/index.ts';
@@ -48,8 +48,9 @@ describe('turn input', () => {
 });
 
 describe('build input (the --from-json catalog)', () => {
-  test('docs/schemas/skill-resolver.v1.build-input.json types the optional fields the reader checks', () => {
-    const props = (CATALOG as unknown as { $defs: { skill: { properties: Record<string, { type?: string }> } } }).$defs.skill.properties;
+  test('the build-input schema types the optional fields the reader checks', () => {
+    const schema = JSON.parse(readFileSync(join(import.meta.dir, '..', 'docs/schemas/skill-resolver.v1.build-input.json'), 'utf8')) as { $defs: { skill: { properties: Record<string, { type?: string }> } } };
+    const props = schema.$defs.skill.properties;
     const fields = ['eligible', 'disable_model_invocation', 'deprecated', 'replaced_by', 'when_to_use'];
     expect(Object.fromEntries(fields.map(f => [f, props[f]?.type]))).toEqual({ eligible: 'boolean', disable_model_invocation: 'boolean', deprecated: 'boolean', replaced_by: 'string', when_to_use: 'string' });
   });
