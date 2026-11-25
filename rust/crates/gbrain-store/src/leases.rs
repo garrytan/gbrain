@@ -3,8 +3,9 @@
 //!
 //! A lease is one named record: who holds it (`WriteOrigin`), its `epoch`, a token, and when it expires. Taking a
 //! lease that nobody holds (never taken, released, or expired) raises the epoch by one and mints a new token, so
-//! every takeover moves the epoch. A holder renews with its [`LeaseToken`]; a renewal after the epoch moved, after a
-//! release or for a token that never held the lease refuses `lease_lost`.
+//! every takeover moves the epoch. A holder renews with its [`LeaseToken`] before the lease expires; a renewal after
+//! the epoch moved, after a release, after expiry or for a token that never held the lease refuses `lease_lost`, and
+//! the holder takes the lease again under a new epoch.
 //!
 //! Fencing: [`assert_held`] reads the lease record inside the writing transaction. On the concurrent store
 //! (`occ_kv`) that read is in the transaction's read set, so a takeover that commits after the holder's snapshot
@@ -318,8 +319,10 @@ impl Store {
         })
     }
 
-    /// `renew_lease(token, ttl_ms)`: moves the expiry `ttl_ms` past now. `lease_lost` when the epoch or token moved
-    /// or the lease was released. A lease that expired but that nobody took over renews.
+    /// `renew_lease(token, ttl_ms)`: moves the expiry `ttl_ms` past now. `lease_lost` when the epoch or token moved,
+    /// the lease was released, or it expired on the store clock: an expired holder (a machine back from a partition)
+    /// takes the lease again with `acquire_lease`, under a new epoch, so every write it started under the old epoch is
+    /// refused.
     pub fn renew_lease(&self, token: &LeaseToken, ttl_ms: u64) -> Result<()> {
         check_name(&token.name)?;
         let ttl_us = check_ttl(ttl_ms)?;
@@ -333,6 +336,9 @@ impl Store {
             }
             if rec.released {
                 return Err(lease_lost(LostReason::Released, &token.name, token.epoch, Some(rec.epoch)));
+            }
+            if rec.expires_at_us <= now {
+                return Err(lease_lost(LostReason::Expired, &token.name, token.epoch, Some(rec.epoch)));
             }
             rec.renewed_at_us = now;
             rec.expires_at_us = now.saturating_add(ttl_us);

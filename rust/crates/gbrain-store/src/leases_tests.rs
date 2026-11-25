@@ -88,19 +88,20 @@ fn a_takeover_raises_the_epoch_and_the_old_token_loses_renew_assert_and_release(
 }
 
 #[test]
-fn expiry_is_judged_on_the_store_clock_and_an_unclaimed_expired_lease_still_renews() {
+fn expiry_is_judged_on_the_store_clock_and_an_expired_holder_takes_a_new_epoch() {
     let clock = Clock::new();
     for (mode, store) in both(&clock) {
         let a = store.acquire_lease("drain:s", &origin("a"), 1_000).unwrap().unwrap();
+        clock.advance_ms(500);
+        store.renew_lease(&a, 1_000).unwrap();
         clock.advance_ms(1_500);
         assert_eq!(reason(&store.assert_lease(&a).unwrap_err()), "expired", "{mode}");
-        // Nobody took it over: the holder renews and holds it again.
-        store.renew_lease(&a, 1_000).unwrap();
-        store.assert_lease(&a).unwrap();
-        clock.advance_ms(1_500);
-        let b = store.acquire_lease("drain:s", &origin("b"), 1_000).unwrap().unwrap();
-        assert_eq!(b.epoch, a.epoch + 1, "{mode}");
-        assert_eq!(reason(&store.renew_lease(&a, 1_000).unwrap_err()), "epoch_moved", "{mode}");
+        // A holder back after its lease expired cannot renew the old epoch: it takes the lease again.
+        assert_eq!(reason(&store.renew_lease(&a, 1_000).unwrap_err()), "expired", "{mode}");
+        let again = store.acquire_lease("drain:s", &origin("a"), 1_000).unwrap().unwrap();
+        assert_eq!(again.epoch, a.epoch + 1, "{mode}");
+        assert_eq!(reason(&store.assert_lease(&a).unwrap_err()), "epoch_moved", "{mode}");
+        store.assert_lease(&again).unwrap();
     }
 }
 
