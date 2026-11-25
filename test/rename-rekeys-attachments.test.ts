@@ -66,7 +66,7 @@ for (const backend of testBackends()) {
       return { id, root, sync };
     }
 
-    test('a sync Git rename moves the page\'s attachments to the new slug, also one that names it only by slug; another page\'s attachment stays', () => withEnv(env, async () => {
+    test('a sync Git rename moves the page\'s attachments to the new slug; one that names it only by slug, and another page\'s, stay', () => withEnv(env, async () => {
       const s = await gitSource({ 'notes/plan.md': note('Plan'), 'notes/peer.md': note('Peer') });
       await attach(s.id, 'notes/plan', await pageId(s.id, 'notes/plan'), 'card.png');
       await attach(s.id, 'notes/plan', null, 'loose.png');
@@ -74,7 +74,7 @@ for (const backend of testBackends()) {
       await attach(s.id, 'notes/plan', await pageId(s.id, 'notes/peer'), 'peer.png');
       git(s.root, 'mv', 'notes/plan.md', 'notes/roadmap.md'); commit(s.root, 'rename the note');
       expect(await s.sync()).toMatchObject({ status: 'synced', renamed: 1 });
-      expect(await fileSlugs(s.id)).toEqual([['card.png', 'notes/roadmap'], ['loose.png', 'notes/roadmap'], ['peer.png', 'notes/plan']]);
+      expect(await fileSlugs(s.id)).toEqual([['card.png', 'notes/roadmap'], ['loose.png', 'notes/plan'], ['peer.png', 'notes/plan']]);
     }), 240_000);
 
     test('gbrain repair rename-identity moves the carried page\'s attachments to the new slug', () => withEnv(env, async () => {
@@ -141,17 +141,27 @@ for (const backend of testBackends()) {
       rmSync(storageDir, { recursive: true, force: true });
     }), 240_000);
 
-    test('an attachment that names the old slug and no page follows a rename only when that slug named just this live page', () => withEnv(env, async () => {
+    test('an attachment that names the page only by slug (no page id) stays where it is after a rename', () => withEnv(env, async () => {
       const id = `n${randomUUID().replace(/-/g, '').slice(0, 14)}`;
       await engine.executeRaw("INSERT INTO sources(id,name,config) VALUES($1,$1,'{}')", [id]);
-      for (const slug of ['notes/solo', 'notes/stale', 'notes/fresh']) await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: 'x', timeline: '' }, { sourceId: id });
+      await engine.putPage('notes/solo', { type: 'note', title: 'Solo', compiled_truth: 'x', timeline: '' }, { sourceId: id });
       await attach(id, 'notes/solo', null, 'solo.png');
-      await attach(id, 'notes/stale', null, 'shared.png');
       expect(await engine.updateSlug('notes/solo', 'notes/solo-renamed', { sourceId: id })).toBe(1);
-      // A fallback rename: the stale row still holds its slug while its bindings move, so the slug names two pages.
-      const { carryRenameIdentity } = await import('../src/commands/sync/renames.ts');
-      await carryRenameIdentity(engine, id, 'notes/stale', 'notes/fresh');
-      expect(await fileSlugs(id)).toEqual([['shared.png', 'notes/stale'], ['solo.png', 'notes/solo-renamed']]);
+      expect(await fileSlugs(id)).toEqual([['solo.png', 'notes/solo']]);
+    }), 60_000);
+
+    test('a slug-only attachment stays when a later page reuses the name after the earlier page and its rename history were deleted', () => withEnv(env, async () => {
+      const id = `p${randomUUID().replace(/-/g, '').slice(0, 14)}`;
+      await engine.executeRaw("INSERT INTO sources(id,name,config) VALUES($1,$1,'{}')", [id]);
+      await engine.putPage('notes/old', { type: 'note', title: 'A', compiled_truth: 'x', timeline: '' }, { sourceId: id });
+      expect(await engine.updateSlug('notes/old', 'notes/b', { sourceId: id })).toBe(1);
+      await attach(id, 'notes/old', null, 'left.png');
+      // Deleting the page at notes/b also scrubs its rename history (scrubPurgedSlugStores deletes by new_slug).
+      await engine.deletePages(['notes/b'], { sourceId: id });
+      expect(await engine.executeRaw('SELECT 1 FROM slug_rename_history WHERE source_id = $1', [id])).toEqual([]);
+      await engine.putPage('notes/old', { type: 'note', title: 'C', compiled_truth: 'y', timeline: '' }, { sourceId: id });
+      expect(await engine.updateSlug('notes/old', 'notes/d', { sourceId: id })).toBe(1);
+      expect(await fileSlugs(id)).toEqual([['left.png', 'notes/old']]);
     }), 60_000);
 
     test('a slug-only attachment an earlier rename left behind does not move to an unrelated page that reused the name', () => withEnv(env, async () => {

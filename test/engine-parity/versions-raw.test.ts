@@ -248,7 +248,7 @@ describe('engine parity: raw data + files', () => {
 
 describe('engine parity: attachments follow a renamed page', () => {
   parityTest(
-    'updateSlug moves the page\'s attachments by page id and by an unambiguous old slug; another page\'s stays',
+    'updateSlug moves the page\'s attachments by page id; a slug-only one and another page\'s stay',
     { methods: ['putPage', 'upsertFile', 'updateSlug', 'getFile', 'getPage'] },
     async (engine) => {
       await engine.putPage('notes/move-me', { type: 'note', title: 'Move me', compiled_truth: 'x', timeline: '' });
@@ -265,7 +265,7 @@ describe('engine parity: attachments follow a renamed page', () => {
       expect(await engine.updateSlug('notes/move-me', 'notes/moved', { sourceId: 'default' })).toBe(1);
       const slugOf = async (path: string) => (await engine.getFile('default', path))?.page_slug ?? null;
       const out = { bound: await slugOf('a/bound.png'), loose: await slugOf('a/loose.png'), foreign: await slugOf('a/foreign.png') };
-      expect(out).toEqual({ bound: 'notes/moved', loose: 'notes/moved', foreign: 'notes/move-me' });
+      expect(out).toEqual({ bound: 'notes/moved', loose: 'notes/move-me', foreign: 'notes/move-me' });
       return out;
     },
   );
@@ -282,6 +282,22 @@ describe('engine parity: attachments follow a renamed page', () => {
       const left = (await engine.getFile('default', 'b/left.png'))?.page_slug ?? null;
       expect(left).toBe('notes/reused');
       return { left };
+    },
+  );
+
+  parityTest(
+    'updateSlug leaves a slug-only attachment when a later page reuses the name after the earlier page was deleted',
+    { methods: ['putPage', 'upsertFile', 'updateSlug', 'deletePages', 'getFile'] },
+    async (engine) => {
+      await engine.putPage('notes/scrubbed', { type: 'note', title: 'A', compiled_truth: 'x', timeline: '' });
+      expect(await engine.updateSlug('notes/scrubbed', 'notes/gone-owner', { sourceId: 'default' })).toBe(1);
+      await engine.upsertFile({ source_id: 'default', page_slug: 'notes/scrubbed', page_id: null, filename: 'kept.png', storage_path: 'c/kept.png', mime_type: 'image/png', size_bytes: 1, content_hash: 'h', metadata: {} });
+      await engine.deletePages(['notes/gone-owner'], { sourceId: 'default' });
+      await engine.putPage('notes/scrubbed', { type: 'note', title: 'C', compiled_truth: 'y', timeline: '' });
+      expect(await engine.updateSlug('notes/scrubbed', 'notes/new-owner', { sourceId: 'default' })).toBe(1);
+      const kept = (await engine.getFile('default', 'c/kept.png'))?.page_slug ?? null;
+      expect(kept).toBe('notes/scrubbed');
+      return { kept };
     },
   );
 });

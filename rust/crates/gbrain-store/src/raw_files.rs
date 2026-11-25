@@ -948,7 +948,7 @@ mod tests {
     }
 
     #[test]
-    fn a_renamed_page_takes_its_files_and_an_unambiguous_slug_only_row() {
+    fn a_renamed_page_takes_its_bound_files_and_leaves_slug_only_rows() {
         let store = store();
         let moved = put(&store, "notes/move-me");
         let other = put(&store, "notes/other");
@@ -974,7 +974,7 @@ mod tests {
                 .page_slug
         };
         assert_eq!(slug("bound.png").as_deref(), Some("notes/moved"));
-        assert_eq!(slug("loose.png").as_deref(), Some("notes/moved"));
+        assert_eq!(slug("loose.png").as_deref(), Some("notes/move-me"));
         assert_eq!(slug("foreign.png").as_deref(), Some("notes/move-me"));
     }
 
