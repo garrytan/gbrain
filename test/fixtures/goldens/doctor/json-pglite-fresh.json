@@ -3955,6 +3955,17 @@
         {
           "category": "brain",
           "details": {
+            "classes": [],
+            "links": 0
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No person links made automatically in the last 24 hours.",
+          "name": "dedupe_auto_links",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
             "docs": "docs/guides/write-refusals.md#file_database_drift",
             "sources": []
           },
