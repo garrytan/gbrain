@@ -6,6 +6,7 @@
  * and sends the sample. Nothing here changes a write's outcome or fails it.
  */
 import type { BrainEngine } from '../core/engine.ts';
+import { hasCapability } from '../core/engine-capabilities.ts';
 import { DIGEST_SESSION_SETTINGS, digestQuery } from '../core/persistence/graduation-digest.ts';
 import { CAPTURE_BUDGET_BYTES, encodeArgs, encodeValue } from './codec.ts';
 import { relationRead } from './seed.ts';
@@ -40,7 +41,7 @@ export async function readPreimage(engine: BrainEngine, op: string, targets: Pag
     const query = digestQuery(tx);
     await query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ'); // the first statement fixes the snapshot, as in the seed
     await query(DIGEST_SESSION_SETTINGS);
-    if (engine.kind === 'postgres') await query(`SET LOCAL statement_timeout = ${PREIMAGE_TIMEOUT_MS}`); // the wait below only abandons a read: this stops it
+    if (hasCapability(engine, 'postgres_admin')) await query(`SET LOCAL statement_timeout = ${PREIMAGE_TIMEOUT_MS}`); // the wait below only abandons a read: this stops it
     const rowsOf = async (relation: string, where: string, params: unknown[], limit: number): Promise<Row[]> => {
       const read = await relationRead(tx, relation, ['id']);
       const rows = await tx.executeRaw<Record<string, string | null>>(`/* shadow write preimage */ ${read.select} WHERE ${where} LIMIT ${limit + 1}`, params);
