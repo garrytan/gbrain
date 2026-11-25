@@ -138,16 +138,10 @@ async function readNoncanonicalPrivate(engine: BrainEngine, sourceIds?: string[]
 /** `readers_noncanonical` holds, and live stored pages whose frontmatter has a top-level readers key in a spelling page access does not read (first five named). Read-only. */
 async function readNoncanonicalReaders(engine: BrainEngine, sourceIds?: string[]): Promise<{ held: number; stored: number; first: Array<{ source_id: string; slug: string }> }> {
   const ids = sourceIds ?? null;
-  const [heldRow] = await engine.executeRaw<{ n: number | string }>(`SELECT count(*)::int AS n FROM op_checkpoints x
-      JOIN sources s ON x.completed_keys->0->>'source_id'=s.id AND x.completed_keys->0->>'incarnation'=s.incarnation::text
-    WHERE x.op=$1 AND x.completed_keys->0->>'code'='readers_noncanonical' AND s.archived IS NOT TRUE AND ($2::text[] IS NULL OR s.id=ANY($2::text[]))`, [GIT_HOLD_OP, ids]);
-  const candidates = await engine.executeRaw<{ source_id: string; slug: string; frontmatter: Record<string, unknown> | string | null }>(`SELECT p.source_id, p.slug, p.frontmatter
-    FROM pages p JOIN sources s ON s.id=p.source_id
-    WHERE p.deleted_at IS NULL AND s.archived IS NOT TRUE AND ($1::text[] IS NULL OR p.source_id=ANY($1::text[])) AND jsonb_typeof(p.frontmatter)='object'
-      AND EXISTS (SELECT 1 FROM jsonb_object_keys(p.frontmatter) k WHERE k<>'readable_by' AND regexp_replace(lower(k),'[-_[:space:]]+','','g')='readableby')
-    ORDER BY p.source_id, p.slug`, [ids]);
+  const held = await engine.countReadersNoncanonicalHolds(GIT_HOLD_OP, ids);
+  const candidates = await engine.listReaderCandidatePages(ids);
   const stored = candidates.filter(row => misspelledReaderKeys('', typeof row.frontmatter === 'string' ? JSON.parse(row.frontmatter) : row.frontmatter).length > 0);
-  return { held: Number(heldRow?.n ?? 0), stored: stored.length, first: stored.slice(0, SAMPLE_PATHS).map(({ source_id, slug }) => ({ source_id, slug })) };
+  return { held, stored: stored.length, first: stored.slice(0, SAMPLE_PATHS).map(({ source_id, slug }) => ({ source_id, slug })) };
 }
 
 /** Whether the maintenance run repairs fence holds by itself, as one sentence ('' when nothing says). */

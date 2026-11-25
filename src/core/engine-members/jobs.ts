@@ -5,8 +5,8 @@
 import type { AccessTokenInsert, ActiveAccessTokenRow } from '../engine-sql/access-tokens.ts';
 import type { AdmitJobPolicy, AdmitJobResult, AdmitJobSpec, ClaimJobSpec, JobRow, ListJobsFilter } from '../engine-sql/jobs.ts';
 import type { AgentClientSpendRow, ClientReserveOutcome, ClientReserveSpec, GroupReserveOutcome, GroupReserveSpec, GroupSpendRow, OauthClientInsert, SettleLogOutcome, SpendLogInsert } from '../engine-sql/spend-log.ts';
-import type { BudgetOwnerRow, EmbedBackfillState, FailedJobError, JobStatusCount, JobStatusFilter, LastAutopilotCycles, QueueDepth, SourceJobCounts, TtlCancelledCount, WaitingScopeState } from '../engine-sql/jobs-status.ts';
-import type { CancelJobsSpec, DelayActiveJobSpec, JobAttachmentInsert, JobPageSpec, JobSourceState, JobStatsRead, JobTokenCounts, PrivateQueueState, PruneJobsSpec, QueueFamilyRow, RetryJobPolicy, SynthesisCompletion, SynthesisCompletionPrefix } from '../engine-sql/jobs-queue.ts';
+import type { BudgetOwnerRow, EmbedBackfillState, FailedJobError, JobStatusCount, JobStatusFilter, LastAutopilotCycles, QueueDepth, SourceCycleFailureRow, SourceJobCounts, TtlCancelledCount, WaitingScopeState } from '../engine-sql/jobs-status.ts';
+import type { CancelJobsSpec, DelayActiveJobSpec, JobAttachmentInsert, JobPageSpec, JobSourceState, JobStatsRead, JobTokenCounts, PrivateQueueState, PruneJobsSpec, QueueFamilyRow, RetryJobPolicy, SynthesisCompletion, SynthesisCompletionPrefix, UnfinishedJobRow } from '../engine-sql/jobs-queue.ts';
 import type { DeadDreamSubmissionSpec, FactsAbsorbJobRow, FactsAbsorbStillDead, GlobalMaintenanceDeaths, LastFailedGlobalMaintenanceJob, LegacyJobAuthorityRead, QueuedSpendRows } from '../engine-sql/jobs-checks.ts';
 import type { ExpireSpendScope, JobSpendTreeSpec, LeasePressureFilter, LeasePressureInsert, LeasePressureRow, SettleSpendOutcome, SpendReservationInsert, SpendTreeRow } from '../engine-sql/jobs-spend.ts';
 import type { JobInsightRows, JobInsightSpec } from '../engine-sql/jobs-insight.ts';
@@ -98,6 +98,13 @@ export interface JobsMembers {
   delayActiveJob(id: number, lockToken: string, spec: DelayActiveJobSpec, opts?: { signal?: AbortSignal }): Promise<JobRow | null>;
   /** Requeue a co-runner of a watchdog drain with the suspect mark, no attempt counted; false when the claim moved on. */
   releaseWatchdogClaim(id: number, lockToken: string, errorText: string): Promise<boolean>;
+  /**
+   * Hand a just-taken claim back un-run because the pause marker appeared after the claim: the row this token locks goes
+   * to `delayed` for one minute, lock cleared, start time, error text and attempt counts untouched. A stale token changes nothing.
+   */
+  releaseClaimForPause(id: number, lockToken: string): Promise<void>;
+  /** The same hand-back for a quiet-hours deferral: `delayed` for fifteen minutes. */
+  deferClaimForQuietHours(id: number, lockToken: string): Promise<void>;
   /** Append the watchdog suspect mark once to a job's stacktrace (any status, `updated_at` untouched). */
   markJobWatchdogSuspect(id: number): Promise<void>;
   /** Move delayed jobs whose delay passed back to waiting. */
@@ -132,6 +139,8 @@ export interface JobsMembers {
   readPrivateQueueState(queue: string): Promise<PrivateQueueState>;
   /** Ids of jobs of `name` waiting since before `hours` ago, oldest first, at most `limit`. */
   listStaleWaitingJobIds(name: string, hours: number, limit: number): Promise<number[]>;
+  /** Every unfinished job of `names` (any status but completed, failed, dead, cancelled), by id, in one read with no limit. */
+  listUnfinishedJobsByName(names: readonly string[]): Promise<UnfinishedJobRow[]>;
   /** How many jobs of `name` have waited since before `hours` ago. */
   countTtlExpiredWaiting(name: string, hours: number): Promise<number>;
   /** The raw counts behind the queue statistics, with the wedge signature of `queue`. */
@@ -202,8 +211,12 @@ export interface JobsMembers {
   countJobsByStatus(filter?: JobStatusFilter): Promise<JobStatusCount[]>;
   /** Waiting depth and oldest-waiting age in seconds per queue with waiting work, deepest first. */
   readWaitingQueueDepths(): Promise<QueueDepth[]>;
+  /** Recent whole-cycle failures of `autopilot-cycle` jobs by source (failure cooldown): count and last finish, after an ISO cutoff, by source id. */
+  listRecentSourceCycleFailures(spec: { cutoff: string; sourceId?: string | null }): Promise<SourceCycleFailureRow[]>;
   /** The freshest `updated_at` among completed jobs, or null. */
   readLastCompletedJobAt(): Promise<Date | null>;
+  /** The latest `finished_at` of the completed jobs named `name`, as UTC ISO seconds, or null (engine-sql/fence-repair-records.ts). */
+  readLastFinishedJobAt(name: string): Promise<string | null>;
   /** Cancelled jobs whose `error_text` matches the LIKE pattern and that finished in the last `withinSeconds`, counted by name. */
   countTtlCancelledByName(reasonLike: string, withinSeconds: number): Promise<TtlCancelledCount[]>;
   /** The waiting jobs sharing a returned job's source scope, plus its id and age in minutes while it is active with a live lease. */

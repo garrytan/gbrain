@@ -11,7 +11,12 @@
  * The reads and the delete of `gbrain extract takes` (readLivePageIdBySlug through findTakeId) and stampTakeResolvedAt refuse a page, take or
  * row id that is not an integer, as the SQL's integer casts refuse it.
  */
-import { checkTakePreimageRead, type HeldFenceTakeRow, type HeldFenceTakeSpec, type McpResolvedSpec, type PageTierRef, type PurgeTakesSpec, type TakePreimage, type TakePreimageRead, type TakesLeavingFence, type AcceptedTakeRemoval, type TakeTrustRef, type AbandonedTakeRow, type HolderResolvedTakeRow } from '../../engine-sql/takes-reads.ts';
+import {
+  checkTakePreimageRead, type AbandonedTakeRow, type AcceptedTakeRemoval, type HeldFenceTakeRow, type HeldFenceTakeSpec, type HolderResolvedTakeRow,
+  type HorizonBasis, type HorizonScanRow, type McpResolvedSpec, type PageTierRef, type PurgeTakesSpec, type TakeGrade, type TakeGradeFilter,
+  type TakeGradeKey, type TakeGradeRow, type TakeHorizonRow, type TakeNudgeFilter, type TakeNudgeInput, type TakeNudgeRow, type TakePreimage,
+  type TakePreimageRead, type TakesLeavingFence, type TakeTrustRef,
+} from '../../engine-sql/takes-reads.ts';
 import { storedTrustTier } from '../../trust/tier.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
@@ -186,4 +191,127 @@ export const stampTakeResolvedAt: StoreMember<[pageId: number, rowNum: number, r
 /** The takes publication's prepare step: the holders a request used, kept in its authority. */
 export const recordTakeHoldersUsed: StoreMember<[requestId: string, holders: readonly string[]], void> = async (brain, requestId, holders) => {
   await storeCall({ member: 'recordTakeHoldersUsed' }, () => brain.recordTakeHoldersUsed(requestId, [...holders]));
+};
+
+// The grade_takes verdict cache (take_grade_cache) and `gbrain takes grades`. A take id that is not an integer is
+// refused, as the SQL's bigint cast refuses it.
+const gradeKey = (member: string, key: TakeGradeKey): TakeGradeKey => {
+  ints(member, [key.takeId]);
+  return { takeId: key.takeId, promptVersion: key.promptVersion, judgeModelId: key.judgeModelId, evidenceSignature: key.evidenceSignature };
+};
+
+export const readTakeGrade: StoreMember<[key: TakeGradeKey], TakeGrade | null> = async (brain, key) => {
+  const row = await storeCall({ member: 'readTakeGrade' }, () => brain.readTakeGrade(gradeKey('readTakeGrade', key))) as TakeGrade | null;
+  return row ? { verdict: row.verdict, confidence: Number(row.confidence), applied: row.applied } : null;
+};
+
+export const insertTakeGrade: StoreMember<[row: TakeGradeKey & TakeGrade & { gradedAt?: string; waveVersion?: string }], void> = async (brain, row) => {
+  const input = {
+    ...gradeKey('insertTakeGrade', row), verdict: row.verdict, confidence: row.confidence, applied: row.applied,
+    ...(row.gradedAt === undefined ? {} : { gradedAt: row.gradedAt }),
+    ...(row.waveVersion === undefined ? {} : { waveVersion: row.waveVersion }),
+  };
+  await storeCall({ member: 'insertTakeGrade' }, () => brain.insertTakeGrade(input));
+};
+
+export const deleteTakeGrade: StoreMember<[key: TakeGradeKey], void> = async (brain, key) => {
+  await storeCall({ member: 'deleteTakeGrade' }, () => brain.deleteTakeGrade(gradeKey('deleteTakeGrade', key)));
+};
+
+export const listLatestTakeGrades: StoreMember<[filter: TakeGradeFilter], TakeGradeRow[]> = async (brain, f) => {
+  ints('listLatestTakeGrades', [f.limit]);
+  const rows = await storeCall({ member: 'listLatestTakeGrades' }, () =>
+    brain.listLatestTakeGrades({ verdict: f.verdict, minConfidence: f.minConfidence, applied: f.applied, limit: f.limit })) as TakeGradeRow[];
+  return rows.map((r) => ({
+    take_id: Number(r.take_id), source_id: r.source_id, page_slug: r.page_slug, row_num: Number(r.row_num), claim: r.claim,
+    holder: r.holder, since_date: r.since_date, verdict: r.verdict, confidence: Number(r.confidence), applied: r.applied,
+    judge_model_id: r.judge_model_id, prompt_version: r.prompt_version, graded_at: new Date(r.graded_at).toISOString(),
+  }));
+};
+
+// grade_takes' managed resolve: a page, row or take id that is not an integer is refused, as the SQL's casts refuse it.
+export const readLiveTakePage: StoreMember<[at: { pageId: number; rowNum: number; claim: string }], { slug: string; source_id: string } | null> =
+  async (brain, at) => {
+    ints('readLiveTakePage', [at.pageId, at.rowNum]);
+    const page = await storeCall({ member: 'readLiveTakePage' }, () =>
+      brain.readLiveTakePage({ pageId: at.pageId, rowNum: at.rowNum, claim: at.claim })) as { slug: string; source_id: string } | null;
+    return page ? { slug: page.slug, source_id: page.source_id } : null;
+  };
+
+// take_horizons (store A 0x06, takes/horizons.rs): `gbrain takes horizon` and the forecast journal.
+export const readTakeClaim: StoreMember<[takeId: number], string | null> = async (brain, takeId) => {
+  ints('readTakeClaim', [takeId]);
+  const claim = await storeCall({ member: 'readTakeClaim' }, () => brain.readTakeClaim(takeId)) as string | null;
+  return claim ?? null;
+};
+
+export const upsertTakeHorizon: StoreMember<[h: { takeId: number; claimSha256: string; horizonDate: string; basis: HorizonBasis }], void> =
+  async (brain, h) => {
+    ints('upsertTakeHorizon', [h.takeId]);
+    await storeCall({ member: 'upsertTakeHorizon' }, () =>
+      brain.upsertTakeHorizon({ takeId: h.takeId, claimSha256: h.claimSha256, horizonDate: h.horizonDate, basis: h.basis }));
+  };
+
+export const deleteTakeHorizon: StoreMember<[takeId: number], boolean> = async (brain, takeId) => {
+  ints('deleteTakeHorizon', [takeId]);
+  return (await storeCall({ member: 'deleteTakeHorizon' }, () => brain.deleteTakeHorizon(takeId))) === true;
+};
+
+export const listTakeHorizons: StoreMember<[takeIds: readonly number[] | null], TakeHorizonRow[]> = async (brain, takeIds) => {
+  const ids = takeIds === null ? null : ints('listTakeHorizons', takeIds);
+  const rows = await storeCall({ member: 'listTakeHorizons' }, () => brain.listTakeHorizons(ids)) as TakeHorizonRow[];
+  return rows.map(r => ({
+    take_id: Number(r.take_id), horizon_date: r.horizon_date, basis: r.basis, set_at: new Date(r.set_at).toISOString(),
+    claim_sha256: r.claim_sha256, claim: r.claim,
+  }));
+};
+
+export const listHorizonScanRows: StoreMember<[sourceId: string | null], HorizonScanRow[]> = async (brain, sourceId) => {
+  const rows = await storeCall({ member: 'listHorizonScanRows' }, () => brain.listHorizonScanRows(sourceId)) as HorizonScanRow[];
+  return rows.map(r => ({
+    id: Number(r.id), claim: r.claim, since_date: r.since_date ?? null, basis: r.basis ?? null,
+    claim_sha256: r.claim_sha256 ?? null, horizon_date: r.horizon_date ?? null,
+  }));
+};
+
+// `gbrain calibration --undo-wave`: a wave's verdicts (A 0x05), resolutions (A 0x01) and nudges (A 0x07, takes/nudges.rs).
+export const listWaveAppliedTakeIds: StoreMember<[waveVersion: string], number[]> = async (brain, waveVersion) => {
+  const ids = await storeCall({ member: 'listWaveAppliedTakeIds' }, () => brain.listWaveAppliedTakeIds(waveVersion)) as number[];
+  return ids.map(Number);
+};
+
+export const revertWaveTakeResolutions: StoreMember<[spec: { takeIds: readonly number[]; resolvedBy: string; dryRun: boolean }], number> =
+  async (brain, spec) => {
+    const takeIds = ints('revertWaveTakeResolutions', spec.takeIds);
+    return Number(await storeCall({ member: 'revertWaveTakeResolutions' }, () =>
+      brain.revertWaveTakeResolutions({ takeIds, resolvedBy: spec.resolvedBy, dryRun: spec.dryRun })));
+  };
+
+export const unapplyWaveTakeGrades: StoreMember<[spec: { waveVersion: string; dryRun: boolean }], number> = async (brain, spec) =>
+  Number(await storeCall({ member: 'unapplyWaveTakeGrades' }, () =>
+    brain.unapplyWaveTakeGrades({ waveVersion: spec.waveVersion, dryRun: spec.dryRun })));
+
+export const purgeTakeNudgesByWave: StoreMember<[spec: { waveVersion: string; dryRun: boolean }], number> = async (brain, spec) =>
+  Number(await storeCall({ member: 'purgeTakeNudgesByWave' }, () =>
+    brain.purgeTakeNudgesByWave({ waveVersion: spec.waveVersion, dryRun: spec.dryRun })));
+
+export const insertTakeNudge: StoreMember<[n: TakeNudgeInput], number> = async (brain, n) => {
+  ints('insertTakeNudge', [n.takeId, n.proposalId].filter((v): v is number => v !== null && v !== undefined));
+  const input: Record<string, unknown> = { sourceId: n.sourceId, takeId: n.takeId ?? null, proposalId: n.proposalId ?? null, nudgePattern: n.nudgePattern };
+  if (n.channel !== undefined) input.channel = n.channel;
+  if (n.waveVersion !== undefined) input.waveVersion = n.waveVersion;
+  if (n.firedAt !== undefined) input.firedAt = n.firedAt;
+  return Number(await storeCall({ member: 'insertTakeNudge' }, () => brain.insertTakeNudge(input)));
+};
+
+export const listTakeNudges: StoreMember<[f: TakeNudgeFilter], TakeNudgeRow[]> = async (brain, f) => {
+  ints('listTakeNudges', [f.takeId, f.proposalId].filter((v): v is number => v !== null && v !== undefined));
+  const rows = await storeCall({ member: 'listTakeNudges' }, () => brain.listTakeNudges({
+    sourceId: f.sourceId, takeId: f.takeId ?? null, proposalId: f.proposalId ?? null, nudgePattern: f.nudgePattern ?? null, waveVersion: f.waveVersion ?? null,
+  })) as TakeNudgeRow[];
+  return rows.map(r => ({
+    id: Number(r.id), source_id: r.source_id, take_id: r.take_id === null ? null : Number(r.take_id),
+    proposal_id: r.proposal_id === null ? null : Number(r.proposal_id), nudge_pattern: r.nudge_pattern,
+    fired_at: new Date(r.fired_at).toISOString(), channel: r.channel, wave_version: r.wave_version,
+  }));
 };

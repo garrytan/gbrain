@@ -2,7 +2,7 @@
  * Added by /ship coverage audit.
  * Value: protects=a failed exposure read prints a warning and reads as null, and no read runs when the change does not federate;
  *   fails_when=the .catch is dropped (federate throws after its config commit) or the federating guard is removed; why_new=sources-federate-member-pages
- *   never fails the read; seam=none; no_claim=the real SQL read (a rejecting executeRaw stands in for a broken database)
+ *   never fails the read; seam=none; no_claim=the real SQL read (a rejecting readFederationExposedPages stands in for a broken database)
  * Value: protects=the operator lines name how many pages beyond the five examples exist, and add no such line when every page is listed;
  *   fails_when=the "... and N more" line is dropped or miscounted; why_new=the CLI cases expose at most two pages; seam=none; no_claim=none beyond protects
  */
@@ -10,9 +10,10 @@ import { describe, expect, spyOn, test } from 'bun:test';
 import { pagesExposedLines, remotePagesFederationExposesOrWarn, type PagesExposed } from '../src/core/access/federation-exposure.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
-function engineWith(executeRaw: () => Promise<never>): { engine: BrainEngine; calls: () => number } {
+/** The exposure read is the typed readFederationExposedPages (engine-sql/federation-exposure.ts); a rejecting one stands in for a broken database. */
+function engineWith(read: () => Promise<never>): { engine: BrainEngine; calls: () => number } {
   let n = 0;
-  return { engine: { executeRaw: async () => { n++; return executeRaw(); } } as unknown as BrainEngine, calls: () => n };
+  return { engine: { readFederationExposedPages: async () => { n++; return read(); } } as unknown as BrainEngine, calls: () => n };
 }
 
 describe('#8982 federation exposure read never changes the federation', () => {

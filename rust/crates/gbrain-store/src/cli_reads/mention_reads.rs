@@ -10,6 +10,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::Store;
+use crate::cli_reads::entities::is_retired;
 use crate::cli_reads::pg_text::{fm_text, fm_value};
 use crate::env::iso;
 use crate::error::Result;
@@ -95,7 +96,7 @@ impl Store {
             .collect())
     }
 
-    /// `listGazetteerPages(types, handleKeys)`: live pages of `types`, by id.
+    /// `listGazetteerPages(types, handleKeys)`: live, unretired (`retiredPageSql`) pages of `types`, by id.
     pub fn list_gazetteer_pages(
         &self,
         types: &[String],
@@ -105,7 +106,7 @@ impl Store {
         let key = |i: usize| handle_keys.get(i).map(String::as_str).unwrap_or("");
         Ok(live_pages_by_id(&*read)?
             .into_iter()
-            .filter(|p| types.contains(&p.page_type))
+            .filter(|p| types.contains(&p.page_type) && !is_retired(p))
             .map(|p| GazetteerPageRow {
                 connector_stub: fm_text(&p.frontmatter, "google_contact_id").is_some(),
                 h1: fm_text(&p.frontmatter, key(0)),
@@ -120,7 +121,7 @@ impl Store {
             .collect())
     }
 
-    /// `listGazetteerAliases(types)`: the alias rows of live pages of `types`, in key order.
+    /// `listGazetteerAliases(types)`: the alias rows of live, unretired pages of `types`, in key order.
     pub fn list_gazetteer_aliases(&self, types: &[String]) -> Result<Vec<GazetteerAliasRow>> {
         let read = self.read()?;
         let mut out = Vec::new();
@@ -128,7 +129,7 @@ impl Store {
             let Some(p) = live_page(&*read, &source, &slug)? else {
                 continue;
             };
-            if !types.contains(&p.page_type) {
+            if !types.contains(&p.page_type) || is_retired(&p) {
                 continue;
             }
             out.push(GazetteerAliasRow {

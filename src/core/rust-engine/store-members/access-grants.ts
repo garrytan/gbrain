@@ -64,6 +64,6 @@ export const readSharedSkillServingEpoch: StoreMember<[], string | null> = async
 
 /** At most two request rows with this request id, from any principal. */
 export const readWriteRequestsByRequestId: StoreMember<[requestId: string], WriteRequest[]> = async (brain, requestId) => {
-  const rows = await storeCall({ member: 'readWriteRequestsByRequestId' }, () => brain.listWriteRequestsByRequestId(requestId)) as unknown[];
+  const rows = await storeCall({ member: 'readWriteRequestsByRequestId' }, () => brain.readWriteRequestsByRequestId(requestId)) as unknown[];
   return rows.map(row => requestRow<WriteRequest>(row)).filter((row): row is WriteRequest => row !== null);
 };

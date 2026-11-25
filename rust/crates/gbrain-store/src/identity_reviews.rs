@@ -579,12 +579,12 @@ fn decided_at_micros(text: &str) -> Option<i64> {
     if let Some(at) = parse_iso(text) {
         return Some(at);
     }
-    let base = text.strip_suffix("+00")?;
-    let (time, frac) = base.split_once('.').unwrap_or((base, ""));
-    if time.len() != 19 || time.as_bytes()[10] != b' ' || frac.len() > 6 {
+    // The listed text carries a zone (`+00`, or another offset such as `-01:30`); a time with none is refused.
+    let t = text.trim();
+    if t.len() <= 19 || !t[19..].contains(['+', '-']) {
         return None;
     }
-    parse_iso(&format!("{}T{}.{:0<6}Z", &time[..10], &time[11..], frac))
+    crate::persistence::projection_queue::parse_timestamptz(t, "decided_at").ok()
 }
 
 #[cfg(test)]
@@ -626,13 +626,6 @@ mod tests {
     }
 
     #[test]
-    fn jsonb_orders_shorter_keys_first() {
-        let mut keys = vec!["emails".to_string(), "email".to_string(), "b".to_string()];
-        keys.sort_by(jsonb_key_order);
-        assert_eq!(keys, ["b", "email", "emails"]);
-    }
-
-    #[test]
     fn decided_at_reads_the_listed_text_back() {
         let at = parse_iso("2026-11-18T00:00:00.500000Z").unwrap();
         assert_eq!(decided_at_micros("2026-11-18 00:00:00.5+00"), Some(at));
@@ -642,5 +635,12 @@ mod tests {
             parse_iso("2026-11-18T00:00:00.000000Z")
         );
         assert_eq!(decided_at_micros("2026-11-18 00:00:00"), None);
+    }
+
+    #[test]
+    fn jsonb_orders_shorter_keys_first() {
+        let mut keys = vec!["emails".to_string(), "email".to_string(), "b".to_string()];
+        keys.sort_by(jsonb_key_order);
+        assert_eq!(keys, ["b", "email", "emails"]);
     }
 }

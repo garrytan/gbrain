@@ -24,7 +24,8 @@ a store that already exists: a PGLite store with no `PG_VERSION` file is refused
 because connecting would otherwise initialize a new, empty brain. With a store in place, it opens the brain without
 migrating it and reads whether the brain uses managed storage. A managed brain is refused with `engine_swap_refused`
 (reason `managed_storage`), because the Rust engine never holds managed storage. Otherwise it reads the worktree
-refresh journal and the shadow status, and lists:
+refresh journal and the shadow status, and lists. The shadow status is the same document `gbrain engine shadow
+status --json` prints for this brain; with no shadow for it, the verdict is `NOT READY` with reason `no_shadow`:
 
 - the verdict, `READY` or `NOT READY`, and the refusal a run would give;
 - one row per readiness criterion (below), each `pass`, `fail`, `missing` or, for criterion 8, `reported`;
@@ -94,6 +95,14 @@ A worktree refresh (`gbrain sources refresh`) is draining, fenced, merged, synci
 engine does not resume a refresh, so a carried row would fence its sources for good. This is checked before any
 readiness criterion. Fix: `gbrain sources refresh <source> --resume` for each listed source (abandoning one with
 `--abandon` needs the user), then read the plan again. Retry once per refresh.
+
+<a id="no_shadow"></a>
+### `no_shadow`
+
+No shadow runs for this brain, so there is no readiness evidence: `gbrain engine shadow status` has no shadow
+directory for it. Needs the user's decision to run one: `gbrain engine shadow seed` first (it copies the brain into
+the Rust store and refuses while shadow mode is on), then `gbrain engine shadow start` (it shows a plan and needs
+`--yes --expect <hash>`). Read the plan again after the shadow has run for the readiness window. There is no override.
 
 <a id="not_ready"></a>
 ### `not_ready`

@@ -32,6 +32,12 @@ const purge_fact: Operation = {
   scope: 'admin',
   cliOnly: { argv: ['gbrain', 'forget', '<id>', '--purge'] },
   handler: async (ctx, p) => {
+    // A real run and `--status --continue` write; on an engine that cannot serve every statement of the purge they refuse
+    // here, before anything is journaled or written, naming the first stop with its owner and due date. A dry run and
+    // `--match` only read and are not checked.
+    const { factPurgeEntryPoint, requireFactPurgeServed } = await import('../persistence/fact-purge-path-members.ts');
+    const entryPoint = factPurgeEntryPoint(ctx, p);
+    if (entryPoint) await requireFactPurgeServed(ctx.engine, entryPoint);
     const { submitPurgeFactMutation } = await import('../facts/purge.ts');
     return submitPurgeFactMutation(ctx, p);
   },

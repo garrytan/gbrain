@@ -134,19 +134,7 @@ export async function findTypeOrphans(
   scope: { sourceId?: string; sourceIds?: string[] },
   limit: number,
 ): Promise<TypeOrphansResult> {
-  const params: unknown[] = [];
-  let where = 'deleted_at IS NULL';
-  if (scope.sourceIds && scope.sourceIds.length > 0) {
-    params.push(scope.sourceIds);
-    where += ` AND source_id = ANY($${params.length}::text[])`;
-  } else if (scope.sourceId) {
-    params.push(scope.sourceId);
-    where += ` AND source_id = $${params.length}`;
-  }
-  const typeRows = await engine.executeRaw<{ type: string | null; n: string }>(
-    `SELECT type, count(*)::text AS n FROM pages WHERE ${where} GROUP BY type`,
-    params,
-  );
+  const typeRows = await engine.countLivePagesByType(scope);
   const missing = typeRows.filter((r) => (manifest ? storedTypeMissesPack(r.type, manifest) : !r.type));
   const undeclared = missing
     .filter((r): r is { type: string; n: string } => !!r.type)
@@ -157,13 +145,7 @@ export async function findTypeOrphans(
     return { orphan_count: 0, orphans: [], undeclared_types: [], pack: manifest?.name ?? null, truncated: false };
   }
   const rowLimit = Number.isFinite(limit) ? Math.max(1, Math.floor(limit)) : 100;
-  const rows = await engine.executeRaw<{ slug: string; source_id: string; type: string | null }>(
-    `SELECT slug, COALESCE(source_id, 'default') AS source_id, type FROM pages
-      WHERE ${where} AND (type IS NULL OR type = '' OR type = ANY($${params.length + 1}::text[]))
-      ORDER BY source_id COLLATE "C", slug COLLATE "C"
-      LIMIT ${rowLimit}`,
-    [...params, undeclared.map((u) => u.type)],
-  );
+  const rows = await engine.listTypeOrphanRows(scope, undeclared.map((u) => u.type), rowLimit);
   return {
     orphan_count: orphanCount,
     orphans: rows.map((r) => ({

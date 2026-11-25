@@ -325,3 +325,4 @@ export async function listPagesNamingReader(exec: MemberLookupRead, principal: s
   const rows = await exec.executeRaw<PageNamingReaderRow>(opts.live ? LIVE_PAGES_NAMING_READER_SQL : PAGES_NAMING_READER_SQL, [principal]);
   return rows.map(r => ({ slug: r.slug, source_id: r.source_id }));
 }
+

@@ -140,6 +140,8 @@ import { provenanceStampDriftEntry } from './checks/provenance-stamp-drift.ts';
 import { trustScanEntry } from './checks/trust-scan.ts';
 import { trustSourcesUnclaimedEntry } from './checks/trust-sources-unclaimed.ts';
 import { trustReleaseUnpreviewedEntry } from './checks/trust-release-unpreviewed.ts';
+import { writeGateHoldAmbiguousEntry } from './checks/write-gate-hold-ambiguous.ts';
+import { writeGateHoldsStrandedEntry } from './checks/write-gate-holds-stranded.ts';
 import { harnessWiringDoctorEntry } from './checks/harness-wiring.ts';
 import { agentContractEntry } from './checks/agent-contract.ts';
 import { chatFallbackChainEntry } from './checks/chat-fallback.ts';
@@ -167,6 +169,7 @@ import { ownerReadsRestrictedEntry } from './checks/owner-reads-restricted.ts';
 import { accessLineageEntry } from './checks/access-lineage.ts';
 import { accessLabelledOnlyEntry } from './checks/access-labelled-only.ts';
 import { accessPagesReadByNobodyEntry } from './checks/access-pages-read-by-nobody.ts';
+import { accessReachEntry } from './checks/access-reach.ts';
 import { attestReadAccessEntry } from './checks/attest-read-access.ts';
 import { guestSourceEntry } from './checks/guest-source.ts';
 import { originTwinsEntry } from './checks/origin-twins.ts';
@@ -275,6 +278,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   accessLineageEntry,
   accessLabelledOnlyEntry,
   accessPagesReadByNobodyEntry,
+  accessReachEntry,
   attestReadAccessEntry,
   guestSourceEntry,
   rlsEntry,
@@ -356,6 +360,9 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   trustScanEntry,
   trustSourcesUnclaimedEntry,
   trustReleaseUnpreviewedEntry,
+  writeGateHoldAmbiguousEntry,
+  // A held write names a page by slug only; a rename or delete can leave it stranded (doctor/checks/write-gate-holds-stranded.ts).
+  writeGateHoldsStrandedEntry,
   coreMemoryEntry,
   persistenceConsumersEntry,
   // GBRA-133: this role's session connections across every process, against the pooler's limit (read-only).

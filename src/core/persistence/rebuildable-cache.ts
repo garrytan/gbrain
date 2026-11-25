@@ -15,14 +15,17 @@ export function isRebuildableCache(table: string): boolean {
 }
 
 /** Whether `table` resolves on the connection's search path, the same resolution the statement that uses it gets. */
-export async function relationExists(engine: Pick<BrainEngine, 'executeRaw'>, table: string): Promise<boolean> {
-  const [row] = await engine.executeRaw<{ present: boolean }>('SELECT to_regclass($1) IS NOT NULL AS present', [table]);
-  return row?.present === true;
+export function relationExists(engine: Pick<BrainEngine, 'relationExists'>, table: string): Promise<boolean> {
+  return engine.relationExists(table);
 }
 
-/** Empty a rebuildable cache and return the rows removed, or null when the cache table does not exist. */
-export async function clearRebuildableCache(tx: Pick<BrainEngine, 'executeRaw'>, table: string): Promise<number | null> {
+/**
+ * Empty a rebuildable cache and return the rows removed, or null when the cache table does not exist. The query cache (the only
+ * one a purge clears) goes through the engine's `clearQueryCache` member.
+ */
+export async function clearRebuildableCache(tx: Pick<BrainEngine, 'executeRaw' | 'clearQueryCache' | 'relationExists'>, table: string): Promise<number | null> {
   if (!isRebuildableCache(table)) throw new Error(`clearRebuildableCache: ${table} is not a rebuildable cache in the graduation inventory`);
+  if (table === 'query_cache') return tx.clearQueryCache();
   if (!await relationExists(tx, table)) return null;
   return (await tx.executeRaw(`DELETE FROM ${table} RETURNING 1`)).length;
 }

@@ -197,3 +197,22 @@ describe('withRelationGuard: suggestion and fix agree', () => {
     expect(env.suggestion).not.toContain('apply-migrations');
   });
 });
+
+describe('a memory verb answers a capability refusal with the protocol code unavailable', () => {
+  const refusal = () => opError('engine_capability_missing', "This brain's engine does not support listFenceRowTrust yet (it needs the facts capability), so nothing ran.",
+    'Run this on a brain whose engine serves it.');
+
+  test('recall and synthesize give unavailable with protocol_version 1, the refusal named in detail', () => {
+    for (const op of ['recall', 'synthesize']) {
+      const env = toAgentError(refusal(), { transport: 'stdio', op, render: ctx() }) as unknown as Record<string, unknown>;
+      expect({ op, error: env.error, code: env.code, protocol_version: env.protocol_version, named: String(env.detail).includes('listFenceRowTrust'),
+        suggestion: typeof env.suggestion === 'string' && env.suggestion.length > 0 })
+        .toEqual({ op, error: 'unavailable', code: 'unavailable', protocol_version: 1, named: true, suggestion: true });
+    }
+  });
+
+  test('an operation that is not a memory verb keeps engine_capability_missing', () => {
+    const env = toAgentError(refusal(), { transport: 'stdio', op: 'list_pages', render: ctx() }) as unknown as Record<string, unknown>;
+    expect(env.code).toBe('engine_capability_missing');
+  });
+});

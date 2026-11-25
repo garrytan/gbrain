@@ -80,6 +80,21 @@ pub const NOT_COPIED: &[NotCopied] = &[
         "each transcript is triaged again (a paid call) before dream synthesis",
     ),
     t(
+        "engine_writer_coverage_gaps",
+        MachineLocal,
+        "swap eligibility's writer gap rows of the primary start empty",
+    ),
+    t(
+        "engine_writer_observations",
+        MachineLocal,
+        "swap eligibility's writer observations of the primary start empty",
+    ),
+    t(
+        "engine_writer_sessions",
+        MachineLocal,
+        "swap eligibility's writing connections of the primary start empty",
+    ),
+    t(
         "eval_candidates",
         Telemetry,
         "captured eval candidates start empty",

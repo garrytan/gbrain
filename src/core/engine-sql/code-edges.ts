@@ -66,6 +66,19 @@ export async function deleteCodeEdgesForChunks(exec: SqlExecutor, chunkIds: numb
   }
 
 /**
+ * Drops the edges that LEAVE these chunks (both tables) and clears their `edges_backfilled_at`, so a page's chunks can take
+ * freshly extracted edges (`installCodeChunkEdges`, code-chunks.ts). Unlike `deleteCodeEdgesForChunks` it keeps the
+ * edges other pages' chunks hold that point AT these chunks. The three statements are the ones `installCodeChunkEdges` ran
+ * through `executeRaw`, unchanged (`test/embed-stale-sql-pin.test.ts`).
+ */
+export async function clearCodeEdgesLeavingChunks(exec: SqlExecutor, chunkIds: number[]): Promise<void> {
+    if (chunkIds.length === 0) return;
+    (await exec.run(sqlFragment`DELETE FROM code_edges_chunk WHERE from_chunk_id = ANY(${chunkIds}::int[])`)).rows;
+    (await exec.run(sqlFragment`DELETE FROM code_edges_symbol WHERE from_chunk_id = ANY(${chunkIds}::int[])`)).rows;
+    (await exec.run(sqlFragment`UPDATE content_chunks SET edges_backfilled_at=NULL WHERE id = ANY(${chunkIds}::int[])`)).rows;
+  }
+
+/**
  * #5439: `opts.chunkId` keys the read on chunk identity instead of the name.
  * Callers of a chunk: code_edges_chunk rows pointing at it plus
  * code_edges_symbol rows the resolver stamped with that resolved_chunk_id.

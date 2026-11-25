@@ -1,11 +1,13 @@
 //! Takes: the reads behind the doctor, onboarding, purge, fence import, scorecard, supersession
-//! repair and calibration admin sites, the take trust reads, and the reads and the delete of
-//! `gbrain extract takes`, and the two writes of the takes publication's prepare step
-//! (rust/docs/store/takes-reads.md). Same shape as `../takes.rs`.
+//! repair and calibration admin sites, the take trust reads, the reads and the delete of
+//! `gbrain extract takes` (rust/docs/store/takes-reads.md), the two writes of the takes
+//! publication's prepare step, the grade_takes verdict cache, the take horizons, and the wave
+//! writes of `gbrain calibration --undo-wave` with the nudge log. Same shape as `../takes.rs`.
 
 use gbrain_store::takes::{
-    HeldFenceTakeSpec, IncomingTake, McpResolvedInput, PurgeTakesInput, TakePreimageInput,
-    TakesLeavingFence,
+    HeldFenceTakeSpec, IncomingTake, LiveTakeAt, McpResolvedInput, PurgeTakesInput,
+    RevertResolutionsSpec, TakeGradeFilter, TakeGradeInput, TakeGradeKey, TakeHorizonInput,
+    TakeNudgeFilter, TakeNudgeInput, TakePreimageInput, TakesLeavingFence, WaveSpec,
 };
 use napi::Env;
 use napi::bindgen_prelude::Object;
@@ -378,6 +380,205 @@ impl Brain {
         self.run(env, move |s| {
             let holders: Vec<String> = required(holders, "recordTakeHoldersUsed holders")?;
             s.record_take_holders_used(&request_id, &holders)
+        })
+    }
+
+    /// `readTakeGrade({ takeId, promptVersion, judgeModelId, evidenceSignature })`:
+    /// `{ verdict, confidence, applied }` or null.
+    #[napi]
+    pub fn read_take_grade<'env>(
+        &self,
+        env: &'env Env,
+        input: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let key: TakeGradeKey = required(input, "readTakeGrade key")?;
+            s.read_take_grade(&key)
+        })
+    }
+
+    /// `insertTakeGrade({ ...key, verdict, confidence, applied, gradedAt? })`: a row already at the key stays.
+    #[napi]
+    pub fn insert_take_grade<'env>(
+        &self,
+        env: &'env Env,
+        input: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let row: TakeGradeInput = required(input, "insertTakeGrade row")?;
+            s.insert_take_grade(&row)
+        })
+    }
+
+    /// `deleteTakeGrade(key)`: drops the cached verdict at the key.
+    #[napi]
+    pub fn delete_take_grade<'env>(
+        &self,
+        env: &'env Env,
+        input: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let key: TakeGradeKey = required(input, "deleteTakeGrade key")?;
+            s.delete_take_grade(&key)
+        })
+    }
+
+    /// `listLatestTakeGrades({ verdict, minConfidence, applied, limit })`: the newest verdict of each live take.
+    #[napi]
+    pub fn list_latest_take_grades<'env>(
+        &self,
+        env: &'env Env,
+        input: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let filter: TakeGradeFilter = required(input, "listLatestTakeGrades filter")?;
+            s.list_latest_take_grades(&filter)
+        })
+    }
+    /// `readLiveTakePage({ pageId, rowNum, claim })`: `{ slug, source_id }` or null.
+    #[napi]
+    pub fn read_live_take_page<'env>(
+        &self,
+        env: &'env Env,
+        input: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let at: LiveTakeAt = required(input, "readLiveTakePage input")?;
+            s.read_live_take_page(&at)
+        })
+    }
+
+    /// `readTakeClaim(takeId)`: the claim, or null.
+    #[napi]
+    pub fn read_take_claim<'env>(
+        &self,
+        env: &'env Env,
+        take_id: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_take_claim(take_id as i64))
+    }
+
+    /// `upsertTakeHorizon({ takeId, claimSha256, horizonDate, basis })`: resolves when stored.
+    #[napi]
+    pub fn upsert_take_horizon<'env>(
+        &self,
+        env: &'env Env,
+        input: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let h: TakeHorizonInput = required(input, "upsertTakeHorizon input")?;
+            s.upsert_take_horizon(&h)
+        })
+    }
+
+    /// `deleteTakeHorizon(takeId)`: resolves true when the take had a horizon.
+    #[napi]
+    pub fn delete_take_horizon<'env>(
+        &self,
+        env: &'env Env,
+        take_id: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.delete_take_horizon(take_id as i64))
+    }
+
+    /// `listTakeHorizons(takeIds | null)`: `[{ take_id, horizon_date, basis, set_at, claim_sha256, claim }]`.
+    #[napi]
+    pub fn list_take_horizons<'env>(
+        &self,
+        env: &'env Env,
+        take_ids: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let ids: Option<Vec<i64>> = required(take_ids, "listTakeHorizons takeIds")?;
+            s.list_take_horizons(ids.as_deref())
+        })
+    }
+
+    /// `listHorizonScanRows(sourceId | null)`: `[{ id, claim, since_date, basis, claim_sha256, horizon_date }]`.
+    #[napi]
+    pub fn list_horizon_scan_rows<'env>(
+        &self,
+        env: &'env Env,
+        source_id: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let source: Option<String> = required(source_id, "listHorizonScanRows sourceId")?;
+            s.list_horizon_scan_rows(source.as_deref())
+        })
+    }
+
+    /// `listWaveAppliedTakeIds(waveVersion)`: the take ids, ascending.
+    #[napi]
+    pub fn list_wave_applied_take_ids<'env>(
+        &self,
+        env: &'env Env,
+        wave_version: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_wave_applied_take_ids(&wave_version))
+    }
+
+    /// `revertWaveTakeResolutions({ takeIds, resolvedBy, dryRun })`: the count.
+    #[napi]
+    pub fn revert_wave_take_resolutions<'env>(
+        &self,
+        env: &'env Env,
+        input: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let spec: RevertResolutionsSpec = required(input, "revertWaveTakeResolutions spec")?;
+            s.revert_wave_take_resolutions(&spec)
+        })
+    }
+
+    /// `unapplyWaveTakeGrades({ waveVersion, dryRun })`: the count.
+    #[napi]
+    pub fn unapply_wave_take_grades<'env>(
+        &self,
+        env: &'env Env,
+        input: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let spec: WaveSpec = required(input, "unapplyWaveTakeGrades spec")?;
+            s.unapply_wave_take_grades(&spec)
+        })
+    }
+
+    /// `listTakeNudges({ sourceId, takeId?, proposalId?, nudgePattern?, waveVersion? })`: the source's nudge rows, oldest first.
+    #[napi]
+    pub fn list_take_nudges<'env>(
+        &self,
+        env: &'env Env,
+        input: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let f: TakeNudgeFilter = required(input, "listTakeNudges filter")?;
+            s.list_take_nudges(&f)
+        })
+    }
+
+    /// `purgeTakeNudgesByWave({ waveVersion, dryRun })`: the count.
+    #[napi]
+    pub fn purge_take_nudges_by_wave<'env>(
+        &self,
+        env: &'env Env,
+        input: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let spec: WaveSpec = required(input, "purgeTakeNudgesByWave spec")?;
+            s.purge_take_nudges_by_wave(&spec)
+        })
+    }
+
+    /// `insertTakeNudge({ sourceId, takeId?, proposalId?, nudgePattern, channel?, waveVersion?, firedAt? })`: the id.
+    #[napi]
+    pub fn insert_take_nudge<'env>(
+        &self,
+        env: &'env Env,
+        input: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let n: TakeNudgeInput = required(input, "insertTakeNudge input")?;
+            s.insert_take_nudge(&n)
         })
     }
 }

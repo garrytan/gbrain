@@ -43,10 +43,10 @@ describe('swap readiness', () => {
     expect(v.missing_fields).toEqual([]);
   });
 
-  test('no shadow: NOT READY, every gating criterion missing, writer coverage unknown', () => {
+  test('no shadow: NOT READY, every gating criterion missing, reason no_shadow', () => {
     const v = evaluateReadiness(null, NOW);
     expect(v.verdict).toBe('NOT READY');
-    expect(v.reason).toBe('writer_coverage_unknown');
+    expect(v.reason).toBe('no_shadow');
     expect(v.criteria).toHaveLength(11);
     expect(v.criteria.filter(c => c.gating).every(c => c.state === 'missing')).toBe(true);
   });

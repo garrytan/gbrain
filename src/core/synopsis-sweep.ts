@@ -29,6 +29,7 @@ import {
 } from './page-summary.ts';
 import { reservationCostUsd } from './budget/reservation-cost.ts';
 import type { CRMode } from './types.ts';
+import { rethrowCapabilityRefusal } from './engine-capability-refusal.ts';
 
 export const SYNOPSIS_SWEEP_JOB = 'contextual_reindex_per_chunk';
 export const SYNOPSIS_SWEEP_ARGV = ['gbrain', 'reindex', '--synopsis'] as const;
@@ -233,7 +234,9 @@ export async function readLastSynopsisSweep(engine: BrainEngine): Promise<{ jobs
       `SELECT count(*)::bigint AS jobs, max(finished_at) AS last FROM minion_jobs WHERE name = $1`, [SYNOPSIS_SWEEP_JOB]);
     const last = rows[0]?.last ?? null;
     return { jobs: Number(rows[0]?.jobs ?? 0), last_finished_at: last === null ? null : new Date(last).toISOString() };
-  } catch {
+  } catch (e) {
+    // null means the queue table is unreadable on this brain, never that an engine refused the read.
+    rethrowCapabilityRefusal(e);
     return null;
   }
 }
