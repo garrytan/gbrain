@@ -55,6 +55,21 @@ describe('query facts arm and the entity page read', () => {
     expect(text).toContain(`"page_slug":"${PAGE}"`);
   });
 
+  test('the entity page read takes only page-read fields, never the search knobs of the arm', async () => {
+    const seen: unknown[] = [];
+    const spy = new Proxy(engine as BrainEngine, {
+      get(target, key, receiver) {
+        if (key === 'readAdmittedPageRefs') return async (refs: unknown, scope: unknown) => { seen.push(scope); return (target as BrainEngine).readAdmittedPageRefs(refs as never, scope as never); };
+        const value = Reflect.get(target, key, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    const out = await query(spy);
+    expect(out.isError).not.toBe(true);
+    expect(seen.length).toBeGreaterThan(0);
+    for (const scope of seen) expect(Object.keys(scope as object).every(k => ['sourceId', 'sourceIds', 'excludePrivate', 'minTrust', 'suppressFlagged'].includes(k))).toBe(true);
+  });
+
   test('a refused entity page read surfaces as the refusal, not as fact rows without their page', async () => {
     const out = await query(refusing(engine, 'readAdmittedPageRefs'));
     expect(out.isError).toBe(true);
