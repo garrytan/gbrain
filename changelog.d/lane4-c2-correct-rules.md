@@ -10,5 +10,5 @@
 - `gbrain rules list|show|approve|retire|check` and the doctor check `rules_regression`.
 
 ### Changed
-- Remote writes to `rules/` pages, or of `type: rule` pages, outside `correct` are refused (`rule_owner_only`), and a rule's status only moves proposed → active → retired.
+- Remote writes to `rules/` pages, or of `type: rule` pages, outside `correct` are refused (`rule_owner_only`), and a standing rule (a `rules/` page) only moves forward: from proposed to active, and from active to retired, never back.
 - The correction-pipeline skill uses `correct` for wrong facts in the facts table and for hallucination guards.
