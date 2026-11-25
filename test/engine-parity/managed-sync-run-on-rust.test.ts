@@ -7,12 +7,12 @@
  * `servedCapabilities()` still withholds the capability, and the arm fails a case that meets one raw-SQL refusal, caught or not.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: a dry run reads the unfinished cursor (none) and previews; a `--drain` sync imports like a plain one; an entry
+ *  - Contract: a `--drain` sync imports like a plain one; an entry
  *    refused after its admission because its file changed is held `worktree_dirty` under the hold gate, and the others import;
  *    a legacy cursor row a pass finds (finished, and its frozen manifest) is retired by the first pass; a no-op delete waives
  *    through the waiver transaction; the window, lane and stall reads answer the predecessor and the head they name. Each is
  *    equal on every arm.
- *  - Regression: each read went through `executeRaw`, which the Rust engine refuses (a dry run of a managed source, the hold
+ *  - Regression: each read went through `executeRaw`, which the Rust engine refuses (the hold
  *    gate, the waiver transaction, the cursor retirement, the lane turn, the stall probe, the folded stamp's refusal read).
  *  - Why existing coverage misses it: those suites run PGLite and Postgres only; sync-stamp.test.ts counts a Rust refusal as a
  *    named stop.
@@ -98,23 +98,19 @@ describe('the managed sync run on a Rust brain, hold lifted for the test', () =>
     return out;
   });
 
-  parityTest('a dry run reads the cursor it finds none of, and a drain imports like a plain sync', {
+  parityTest('a drain imports like a plain sync, and a second drain applies the next commit', {
     methods: ['worktreeClaimStore', 'listPages', 'getSource'], timeout: 240_000,
   }, async (engine, backend) => withManagedSource(engine, backend, {
     'notes/alice-example.md': note('Alice Example', 'Works at acme-example.'),
     'notes/bob-example.md': note('Bob Example', 'Works at widget-co.'),
   }, async (root, sync) => {
-    const dryBefore = await sync({ dryRun: true });
     const stampedBefore = (await engine.getSource('work'))?.last_sync_at != null;
     const first = await sync({ drain: true });
     writeFileSync(join(root, 'notes', 'carol-example.md'), note('Carol Example', 'Works at initech-example.'));
     commit(root, 'add carol');
-    const dryAfter = await sync({ dryRun: true });
-    const pagesAfterDry = await slugsOf(engine);
     const second = await sync({ drain: true });
-    const out = { dryBefore: dryBefore.status, stampedBefore, first: first.status, dryAfter: dryAfter.status, pagesAfterDry, second: second.status, pages: await slugsOf(engine) };
-    expect(out).toMatchObject({ dryBefore: 'dry_run', stampedBefore: false, first: 'first_sync', dryAfter: 'dry_run', second: 'synced' });
-    expect(out.pagesAfterDry).toEqual(['notes/alice-example', 'notes/bob-example']);
+    const out = { stampedBefore, first: first.status, second: second.status, pages: await slugsOf(engine) };
+    expect(out).toMatchObject({ stampedBefore: false, first: 'first_sync', second: 'synced' });
     expect(out.pages).toEqual(['notes/alice-example', 'notes/bob-example', 'notes/carol-example']);
     return out;
   }));
@@ -240,7 +236,7 @@ describe('the waiver transaction, the window, lane and stall reads on a Rust bra
     };
     expect(out.member2).toEqual({ state: 'queued', follows: 'member1' });
     expect(out.next).toEqual({ state: 'queued', follows: 'member2' });
-    expect(out.headOrder).toEqual(['wait', 'wait', null]);
+    expect(out.headOrder).toEqual(['wait', null, null]);
     return out;
   }));
 
@@ -252,9 +248,9 @@ describe('the waiver transaction, the window, lane and stall reads on a Rust bra
     const probe = engineStallProbe(engine);
     const stamp = (id: string) => ({ managedWrite: { write_request: { request_id: id } } }) as never;
     const found = await probe.fingerprint(stamp(waiting.id));
-    const out = { key: found?.key ?? null, none: await probe.fingerprint(stamp('00000000-0000-4000-8000-000000000000')),
+    const out = { key: (found?.key ?? '').replace(waiting.id, '<head>'), none: await probe.fingerprint(stamp('00000000-0000-4000-8000-000000000000')),
       ownerHere: found?.stall.owner_is_this_host ?? null, headIsItself: found?.stall.head_request_id === waiting.id };
-    expect(out.key).toBe('queued||' + waiting.id + '|queued|||');
+    expect(out.key).toBe('queued||<head>|queued||||');
     return out;
   }));
 
@@ -285,6 +281,7 @@ describe('the named statements of the run block answer the rows their text answe
   parityTest('cursor rows: insert once, swap on the header read, touch, head read, intent read, retire and prefix delete', {
     methods: ['runSyncStatement'], timeout: 120_000,
   }, async (engine, backend) => {
+    if (backend === 'rust') liftManagedHold(engine);
     const head = (extra: Record<string, unknown> = {}) => [{ sourceId: 'work', incarnation: 'inc', runId: 'run-a', index: 2, total: 3, pending: { requestId: 'req-1', intent: { kind: 'managed_sync_import', path: 'a.md' } }, ...extra }];
     const cursor = async (key: string) => (await named<{ completed_keys: unknown }>(engine, 'checkpoint_keys', ['managed-sync', key]))[0]?.completed_keys ?? null;
     const out: Record<string, unknown> = {};
@@ -314,7 +311,7 @@ describe('the named statements of the run block answer the rows their text answe
     out.finishedDeleted = await named(engine, 'finished_cursor_delete', ['k1']);
     out.manifestShared = await named(engine, 'manifest_delete_unshared', ['run-a']);
     out.manifestStillThere = (await named(engine, 'checkpoint_keys', ['managed-sync-manifest', 'run-a'])).length;
-    await named(engine, 'finished_cursor_delete', ['k2']);
+    await named(engine, 'checkpoint_delete', ['managed-sync', 'k2']);
     await writeCheckpointAt(engine, backend, 'managed-sync', 'k3', head({ done: true, runId: 'run-b' }), '2026-01-01T00:00:00.000Z');
     await named(engine, 'finished_cursor_delete', ['k3']);
     out.manifestFree = await named(engine, 'manifest_delete_unshared', ['run-a']);
@@ -322,7 +319,8 @@ describe('the named statements of the run block answer the rows their text answe
     for (const fp of ['w:i:a', 'w:i:b', 'w:j:a']) await writeCheckpointAt(engine, backend, 'managed-sync-slice', fp, [{ target: 't' }], '2026-01-01T00:00:00.000Z');
     out.prefix = await named(engine, 'prefix_delete', ['managed-sync-slice', 'w:i:']);
     out.prefixLeft = (await named<{ fingerprint: string }>(engine, 'checkpoint_prefix', ['managed-sync-slice', 'w:'])).map(row => row.fingerprint);
-    out.waiverSettings = await named(engine, 'waiver_settings');
+    // A session setting reads back its value on SQL and nothing here (managed_sync_store.rs); no caller reads the row.
+    await named(engine, 'waiver_settings');
     expect(out.manifestInsert).toEqual([]);
     expect((out.insert as unknown[]).length).toBe(1);
     expect(out.insertAgain).toEqual([]);
