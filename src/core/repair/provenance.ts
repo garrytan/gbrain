@@ -93,7 +93,7 @@ async function scan(engine: BrainEngine, scope: RepairScope, selection: Selectio
       const label = `${item.source_id}:${item.slug} (revision ${item.revision})`;
       const { verdict } = item;
       if (verdict.class === 'local') { residuals.local!++; listing.push({ item: label, class: 'local', detail: `the owner's own edit, never repaired; ${writerDetail(item)}` }); continue; }
-      if (verdict.class === 'needs_review') { residuals.needs_review!++; listing.push({ item: label, class: 'needs_review', detail: `${verdict.reason}; edit the page by hand` }); continue; }
+      if (verdict.class === 'needs_review') { residuals.needs_review!++; listing.push({ item: label, class: 'needs_review', detail: verdict.reason }); continue; }
       if (!verdict.restore) {
         residuals.ambiguous!++;
         listing.push({ item: label, class: 'ambiguous', detail: `no recorded writer; previewed with --include-ambiguous only; ${writerDetail(item)}` });

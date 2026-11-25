@@ -32,6 +32,9 @@ import { withManagedFixtureWrite } from './helpers/managed-e2e-fixture-write.ts'
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
+import { repairRunner } from '../src/core/repair/registry.ts';
+import { resolveRepairScope } from '../src/core/repair/core.ts';
+import { readPageDrift } from '../src/core/trust/provenance-drift.ts';
 
 const STORED = { source_kind: 'webhook', ingested_via: 'webhook', ingested_at: '2026-01-02T03:04:05.000Z' };
 const FORGED = { source_kind: 'put_page', ingested_via: 'put_page', ingested_at: '2020-01-01T00:00:00.000Z' };
@@ -134,6 +137,65 @@ for (const kind of testBackends()) {
           expect(stampsOf(file)).toEqual(STORED);
           expect(ownerPageTrust({ frontmatter: file, channel: 'sync' }).tier).toBe(prior);
         }
+      });
+
+      test.each(['current edit', 'later tag', 'compacted edit', 'renamed page'] as const)(
+        'provenance repair does not offer a later authenticated remote edit as the first ingest (%s)', async (scenario) => {
+        let slug = 'inbox/synthetic-drift-direction';
+        const original = await seed(slug, STORED, 'unknown');
+        const reply = await edit(slug, [['Captured body', 'Captured body, edited']]);
+        expect(reply.noop).toBe(false);
+        // Preserve the real edit receipt, then reproduce the columns left by an older binary.
+        const setHistoricalColumns = (tx: BrainEngine) => tx.executeRaw(`UPDATE pages
+          SET source_kind='mcp:edit_page', ingested_via='mcp:edit_page', ingested_at=now()
+          WHERE source_id='default' AND slug=$1`, [slug]);
+        if (repo && kind === 'postgres') await withManagedFixtureWrite(engine, ['default'], setHistoricalColumns);
+        else await setHistoricalColumns(engine);
+        const editedRevision = (await page(slug)).revision;
+        if (scenario === 'later tag') {
+          await call('add_tag', { slug, tag: 'synthetic-review', expected_revision: editedRevision });
+          expect((await page(slug)).revision).not.toBe(editedRevision);
+        }
+        if (scenario === 'compacted edit') {
+          const receipts = await engine.executeRaw(`UPDATE persistence_requests SET intent=NULL, compacted=true
+            WHERE source_id='default' AND slug=$1 AND operation='edit_page' AND outcome->>'revision'=$2 RETURNING id`, [slug, editedRevision]);
+          expect(receipts).toHaveLength(1);
+        }
+        if (scenario === 'renamed page') {
+          const moved = 'inbox/synthetic-drift-renamed';
+          const rename = (tx: BrainEngine) => tx.updateSlug(slug, moved, { sourceId: 'default' });
+          const renamed = repo && kind === 'postgres' ? await withManagedFixtureWrite(engine, ['default'], rename) : await rename(engine);
+          expect(renamed).toBe(1);
+          if (repo) fs.renameSync(path.join(brainDir, `${slug}.md`), path.join(brainDir, `${moved}.md`));
+          slug = moved;
+          expect((await page(slug)).page.id).toBe(original.page.id);
+        }
+        const afterEdit = await page(slug);
+        expect(stampsOf(afterEdit.page.frontmatter)).toEqual(STORED);
+        expect(afterEdit.page.source_kind).toBe('mcp:edit_page');
+        expect(afterEdit.page.ingested_via).toBe('mcp:edit_page');
+        expect(afterEdit.page.ingested_at).not.toEqual(original.page.ingested_at);
+        const persisted = async () => (await engine.executeRaw(`SELECT source_kind, ingested_via, ingested_at::text, source_uri
+          FROM pages WHERE source_id='default' AND slug=$1`, [slug]))[0];
+        const before = { revision: afterEdit.revision, columns: await persisted(), frontmatter: stampsOf(afterEdit.page.frontmatter),
+          file: repo ? fileFrontmatter(slug) : null };
+        const lookup = await readPageDrift(engine, 'default', slug, { includeAmbiguous: true });
+        expect(lookup?.verdict).toMatchObject({ class: 'needs_review', stamps_rewritten: true });
+        expect(lookup?.verdict.restore).toBeUndefined();
+        const logger = { info() {}, warn() {}, error() {} };
+        const preview = await withEnv({ GBRAIN_HOME: path.join(tmpRoot, 'home') }, async () => {
+          const runner = await repairRunner(engine, { apply: false, logger });
+          return runner.run('provenance', await resolveRepairScope(engine, 'default'), {
+            explicit: true, sourceFlag: 'default', slugs: [slug], includeAmbiguous: true,
+          });
+        });
+        expect(preview.affected).toBe(0);
+        expect(preview.listing?.[0]).toMatchObject({ class: 'needs_review' });
+        expect(preview.listing?.[0]?.detail).toContain('database stamps match a later remote edit');
+        expect(preview.listing?.[0]?.detail).not.toContain('edit the page by hand');
+        const afterPreview = await page(slug);
+        expect({ revision: afterPreview.revision, columns: await persisted(), frontmatter: stampsOf(afterPreview.page.frontmatter),
+          file: repo ? fileFrontmatter(slug) : null }).toEqual(before);
       });
 
       test('a remote edit_page that only forges stamps is a no-op', async () => {

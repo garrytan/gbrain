@@ -38,13 +38,13 @@ async function runProvenanceStampDrift(ctx: DoctorContext): Promise<Check[]> {
     const sample = first.items.find(item => item.verdict.class !== 'local')!;
     const preview = ['gbrain', 'repair', 'provenance', '--source', first.source_id, '--json'];
     checks.push({ name: 'provenance_stamp_drift', status: 'warn', details,
-      message: `${total} page(s) carry provenance stamps or a trust marker that a write removed before stamps became server-owned, or would re-read above their stored tier `
+      message: `${total} page(s) have changed provenance stamps, a missing trust marker, or a file that would re-read above the stored tier `
         + `(${found.map(scan => `${scan.source_id}: ${pages(scan)}`).join('; ')}; e.g. ${found.flatMap(scan => scan.items.filter(item => item.verdict.class !== 'local').slice(0, 3).map(item => `${scan.source_id}:${item.slug}`)).slice(0, 5).join(', ')})${bounded}. `
         + `Preview the repair with gbrain repair provenance --source ${first.source_id}; it lists each page and writes nothing. Applying it only lowers trust.`,
       fix: agentFix(preview, 'Lists each page with the stamps, marker and tier before and after; it writes nothing. Applying the repair is the user\'s call.',
         'provenance_stamp_drift', { ask_user: true, docs: DOCS,
-          user_message: `${total} page(s) (for example ${sample.slug}) lost the record of where they came from, so gbrain may trust them more than it should. `
-            + 'Should I show you the list and put the original record back? It only lowers trust, and you can undo each page in gbrain trust review.' }) });
+          user_message: `${total} page(s) (for example ${sample.slug}) have provenance or trust-marker drift. `
+            + 'Should I show you the preview of which records the repair can restore and which need review?' }) });
   } catch (error) {
     checks.push(checkError('provenance_stamp_drift', 'check page history for provenance stamps and trust markers a write removed', error, { details: { docs: DOCS } }));
   }

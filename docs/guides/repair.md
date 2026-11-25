@@ -968,10 +968,11 @@ Each listed page has a class:
   only with `--include-ambiguous`, which changes the hash.
 - `restamp`: the classified page from #7918. The apply stamps its stored tier as
   the marker; the row keeps its tier.
-- `local`, `needs_review` and `held`: the owner's own edit, a page a later local
-  write also changed, or a page whose file sync holds (the hold's code and fix are
-  in the detail; the apply skips a page held after its preview). Listed, never
-  written; edit those pages by hand, or resolve the hold and preview again.
+- `local`, `needs_review` and `held`: the owner's own edit, a page whose
+  provenance needs manual review, or a page whose file sync holds. The repair
+  lists these pages without writing them. If the database stamps match a later
+  remote edit, compare them with the original ingest in the page history or a
+  backup. For a held file, follow the fix in the detail and preview again.
 
 Every change only lowers: no stamp, marker or tier is ever raised. A lowered
 page gets a `lower_page` proposal (proposer `provenance_repair`) that

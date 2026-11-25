@@ -43,6 +43,8 @@ export interface DriftPageInput {
   chain: DriftSnapshot[];
   stored: TrustTier;
   columns: Partial<Record<ProvenanceStampKey, string | null>>;
+  /** The live columns match the authenticated channel of this later remote edit. */
+  columnEditRequest?: string | null;
 }
 export interface DriftChange { key: ProvenanceStampKey | 'cap'; writer: DriftWriter; request_id: string | null; from: unknown; to: unknown }
 export interface DriftVerdict {
@@ -97,9 +99,12 @@ export function analyzePageDrift(input: DriftPageInput, opts: { includeAmbiguous
     if (normStamp(key, target) === liveValue || key === 'ingested_at' && normStamp(key, target) === null) continue;
     if (firstDamage >= 0) {
       changes.push(...events);
-      if (events.slice(firstDamage + 1).some(event => event.writer === 'local')) needsReview = `a later local write also changed ${key}`;
+      if (events.slice(firstDamage + 1).some(event => event.writer === 'local')) needsReview = `a later local write also changed ${key}; edit the page by hand`;
     } else changes.push({ key, writer: 'unattributed', request_id: null, from: input.columns[key] ?? null, to: live[key] ?? null });
     restoredStamps[key] = target;
+  }
+  if (Object.keys(restoredStamps).length && input.columnEditRequest) {
+    needsReview = 'database stamps match a later remote edit; verify the original ingest against the page history or a backup';
   }
   let lostCap: TrustTier | null = null;
   for (let i = 1; i < chain.length; i++) {
@@ -151,8 +156,12 @@ export interface SourceDrift {
 interface LiveRow {
   id: number | string; slug: string; trust_tier: string | null; frontmatter: Record<string, unknown> | string | null; revision: string;
   source_kind: string | null; ingested_via: string | null; ingested_at: string | Date | null; req: string | null; kind: string | null; remote: string | null;
+  column_edit_request: string | null;
 }
-interface VersionRow { page_id: number | string; frontmatter: Record<string, unknown> | string | null; req: string | null; kind: string | null; remote: string | null }
+interface VersionRow {
+  page_id: number | string; frontmatter: Record<string, unknown> | string | null; req: string | null; kind: string | null; remote: string | null;
+  column_edit_request: string | null;
+}
 
 const json = (value: Record<string, unknown> | string | null): Record<string, unknown> => typeof value === 'string' ? JSON.parse(value) as Record<string, unknown> : value ?? {};
 function writerOf(req: string | null, remote: string | null, kind: string | null): DriftWriter {
@@ -186,12 +195,19 @@ export async function readPageDrift(engine: BrainEngine, sourceId: string, slug:
   return itemOf(sourceId, row, versions, opts);
 }
 
+// The remote write path generates both stamps from the operation. This evidence survives receipt compaction.
+const COLUMN_EDIT_RECEIPT = `r.operation = 'edit_page' AND r.state = 'committed' AND r.authority->>'remote' = 'true'
+  AND r.source_id = p.source_id AND r.page_id = p.id AND r.outcome->>'noop' = 'false'
+  AND p.source_kind = 'mcp:edit_page' AND p.ingested_via = 'mcp:edit_page' AND p.ingested_at >= r.created_at
+  AND r.source_incarnation = (SELECT incarnation FROM sources WHERE id = p.source_id)`;
+
 function liveRows(engine: BrainEngine, schema: SourceDrift['schema'], sourceId: string, at: { after?: number; slug?: string }): Promise<LiveRow[]> {
   const attributed = schema === 'current';
   return engine.executeRaw<LiveRow>(
     `SELECT p.id, p.slug, p.trust_tier, p.frontmatter, p.knowledge_revision::text AS revision, p.source_kind, p.ingested_via, p.ingested_at,
             ${attributed ? "p.revision_write_request_id::text AS req, p.revision_principal_kind AS kind, r.authority->>'remote' AS remote"
-              : 'NULL::text AS req, NULL::text AS kind, NULL::text AS remote'}
+              : 'NULL::text AS req, NULL::text AS kind, NULL::text AS remote'},
+            ${attributed ? `CASE WHEN ${COLUMN_EDIT_RECEIPT} AND r.outcome->>'revision' = p.knowledge_revision::text THEN r.id::text END` : 'NULL::text'} AS column_edit_request
        FROM pages p ${attributed ? 'LEFT JOIN persistence_requests r ON r.id = p.revision_write_request_id' : ''}
       WHERE p.source_id = $1 AND p.deleted_at IS NULL AND ${at.slug !== undefined ? 'p.slug = $2' : 'p.id > $2'}
       ORDER BY p.id LIMIT ${BATCH}`, [sourceId, at.slug ?? at.after ?? 0]);
@@ -202,8 +218,9 @@ function versionRows(engine: BrainEngine, schema: SourceDrift['schema'], pageIds
   return engine.executeRaw<VersionRow>(
     `SELECT v.page_id, v.frontmatter,
             ${attributed ? "v.archived_write_request_id::text AS req, v.archived_principal_kind AS kind, r.authority->>'remote' AS remote"
-              : 'NULL::text AS req, NULL::text AS kind, NULL::text AS remote'}
-       FROM page_versions v ${attributed ? 'LEFT JOIN persistence_requests r ON r.id = v.archived_write_request_id' : ''}
+              : 'NULL::text AS req, NULL::text AS kind, NULL::text AS remote'},
+            ${attributed ? `CASE WHEN ${COLUMN_EDIT_RECEIPT} THEN r.id::text END` : 'NULL::text'} AS column_edit_request
+       FROM page_versions v ${attributed ? 'JOIN pages p ON p.id = v.page_id LEFT JOIN persistence_requests r ON r.id = v.archived_write_request_id' : ''}
       WHERE v.page_id = ANY($1::int[]) ORDER BY v.page_id, v.id`, [pageIds]);
 }
 
@@ -217,7 +234,8 @@ function itemOf(sourceId: string, row: LiveRow, versions: VersionRow[], opts: { 
   chain.push({ frontmatter: json(row.frontmatter), ...liveWriter });
   const ingestedAt = row.ingested_at instanceof Date ? row.ingested_at.toISOString() : row.ingested_at;
   const verdict = analyzePageDrift({ chain, stored: storedTrustTier(row.trust_tier),
-    columns: { source_kind: row.source_kind, ingested_via: row.ingested_via, ingested_at: ingestedAt } }, opts);
+    columns: { source_kind: row.source_kind, ingested_via: row.ingested_via, ingested_at: ingestedAt },
+    columnEditRequest: row.column_edit_request ?? versions.findLast(version => version.column_edit_request)?.column_edit_request }, opts);
   return verdict ? { source_id: sourceId, slug: row.slug, page_id: Number(row.id), revision: row.revision, tier: storedTrustTier(row.trust_tier), verdict } : null;
 }
 
