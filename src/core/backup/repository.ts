@@ -67,6 +67,19 @@ export function backupGitEnv(source: NodeJS.ProcessEnv = process.env, platform: 
   return { ...env, ...buildGitEnv(platform) };
 }
 
+/**
+ * #10357: a shared-skill publication writes `skillpack.json`, `skills/` and the pack's extra files (LICENSE) and
+ * queues no git effect, so they stay untracked in a git-backed root. While the pack manifest is untracked, the
+ * untracked reserved pack paths are not brain content and do not make the worktree dirty.
+ */
+export function withoutUnpublishedPackFiles(porcelain: string): string {
+  const lines = porcelain.split('\n').filter(line => line.trim() !== '');
+  if (!lines.includes('?? skillpack.json')) return porcelain;
+  return lines.filter(line => !packCandidate(line)).join('\n');
+}
+const packCandidate = (line: string): boolean => line === '?? skillpack.json' || line === '?? LICENSE' || line === '?? skills/' || line.startsWith('?? skills/');
+const dirtyEntries = (porcelain: string): string => withoutUnpublishedPackFiles(withoutPhysicalRootMetadata(porcelain));
+
 function git(root: string, args: string[]): string {
   return execFileSync('git', ['-C', root, ...args], {
     encoding: 'utf8', timeout: 2_000, maxBuffer: 1024 * 1024,
@@ -85,6 +98,7 @@ function worktreeDirty(root: string): Promise<boolean> {
   return new Promise((resolve, reject) => {
     const child = spawn('git', ['-C', root, 'status', '--porcelain'], { stdio: ['ignore', 'pipe', 'ignore'], env: backupGitEnv() });
     let pending = '';
+    let held = '';
     let settled = false;
     const settle = (result: boolean | Error) => {
       if (settled) return;
@@ -98,10 +112,12 @@ function worktreeDirty(root: string): Promise<boolean> {
     child.stdout!.on('data', (chunk: string) => {
       const lines = (pending + chunk).split('\n');
       pending = lines.pop()!;
-      if (withoutPhysicalRootMetadata(lines.join('\n')).length > 0 || pending.length > 1024 * 1024) settle(true);
+      // Pack-path lines wait for the manifest line, which sorts after LICENSE.
+      held += lines.filter(packCandidate).map(line => `${line}\n`).join('');
+      if (withoutPhysicalRootMetadata(lines.filter(line => !packCandidate(line)).join('\n')).length > 0 || pending.length > 1024 * 1024 || held.length > 1024 * 1024) settle(true);
     });
     child.on('error', settle);
-    child.on('close', (code: number | null) => settle(code === 0 ? withoutPhysicalRootMetadata(pending).length > 0 : new Error(`git status exited ${code}`)));
+    child.on('close', (code: number | null) => settle(code === 0 ? dirtyEntries(held + pending).length > 0 : new Error(`git status exited ${code}`)));
   });
 }
 
