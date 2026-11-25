@@ -56,6 +56,20 @@ impl Brain {
         })
     }
 
+    /// `readPagePrivacyHidden(sourceId, slug, honorAliases)`: whether the live page fails the privacy part alone.
+    #[napi]
+    pub fn read_page_privacy_hidden<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+        honor_aliases: bool,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_page_privacy_hidden(&source_id, &slug, honor_aliases)
+        })
+    }
+
     /// `readCallerPageAccess(pages, policy)`: the pairs that name a page row, and whether each reads.
     #[napi]
     pub fn read_caller_page_access<'env>(

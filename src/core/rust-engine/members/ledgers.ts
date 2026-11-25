@@ -20,6 +20,7 @@ export const LEDGER_MEMBERS = {
   listTakePreimages: 'takes',
   deleteTakesByIds: 'takes',
   findTakeId: 'takes',
+  readChronicleBackfillBatch: 'pages',
   // The grade_takes verdict cache and `gbrain takes grades` (store A 0x05, takes/grades.rs).
   listLatestTakeGrades: 'takes',
   readTakeGrade: 'takes',

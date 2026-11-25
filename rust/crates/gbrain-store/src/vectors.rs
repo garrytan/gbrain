@@ -12,6 +12,9 @@
 //! the differences listed in `rust/docs/store/vectors.md`:
 //! - Every stored vector is scored, so there is no candidate pool, no HNSW index and no pool
 //!   escalation; every filter applies inside the scan, before ranking.
+//! - `searchVector` scores every vector first, then reads pages in order of the best score each
+//!   can reach and stops once the result is settled (`bounded_scan`); the answer is the full
+//!   scan's (`full_scan`), which still runs when the bound does not apply.
 //! - The score is the cosine of the stored float32 vectors, summed in float64 and kept in
 //!   [-1, 1] as pgvector keeps it. A zero vector on either side gives NaN, which ranks above every
 //!   number (Postgres orders NaN as the largest value).
@@ -39,7 +42,8 @@ use crate::{Store, env::iso};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{BinaryHeap, HashMap};
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex};
 
 /// `limit` default of `searchVector` (`clampSearchLimit(opts.limit, 20, cap)`).
@@ -156,6 +160,11 @@ pub(crate) struct VectorIndex {
     generation: u64,
     chunks: Vec<IndexedVector>,
     takes: Vec<IndexedVector>,
+    /// Each page's run of vectors in `chunks`, as `start..end`, in page id order (a page's
+    /// vectors are adjacent because `chunks` is in page id order).
+    page_runs: Vec<(usize, usize)>,
+    /// The width every chunk vector has; `None` when the widths differ or there is no vector.
+    chunk_width: Option<usize>,
 }
 
 impl VectorIndex {
@@ -170,10 +179,22 @@ impl VectorIndex {
             takes.push(IndexedVector::new(v));
             true
         })?;
+        let mut page_runs = Vec::new();
+        let mut start = 0;
+        for group in chunks.chunk_by(|a, b| a.id == b.id) {
+            page_runs.push((start, start + group.len()));
+            start += group.len();
+        }
+        let chunk_width = chunks
+            .first()
+            .map(|v| v.vector.len())
+            .filter(|width| chunks.iter().all(|v| v.vector.len() == *width));
         Ok(VectorIndex {
             generation,
             chunks,
             takes,
+            page_runs,
+            chunk_width,
         })
     }
 }
@@ -543,38 +564,44 @@ struct Hit {
     score: f64,
 }
 
-fn search_chunks(
-    read: &dyn KvRead,
-    index: &VectorIndex,
-    query: &[f64],
-    options: &VectorSearchOptions,
-) -> Result<Vec<Value>> {
-    let query = check_query(query)?;
-    let limit = options.limit.unwrap_or(DEFAULT_VECTOR_LIMIT);
-    let offset = resolve_offset(&options.offset, limit)?;
-    let limit = limit as usize;
-    let bounds = ScanBounds::parse(options)?;
-    let query_norm_sq = dot(&query, &query);
-    // Read once, and only when the guard needs it.
-    let mut migrating: Option<bool> = None;
-    let mut archived: HashMap<String, bool> = HashMap::new();
-    let mut owner_only = OwnerOnlyCache::default();
-    let mut hits: Vec<Hit> = Vec::new();
+/// The page and chunk filters of one `searchVector` call, with the caches its page checks share.
+struct ChunkScan<'a> {
+    read: &'a dyn KvRead,
+    options: &'a VectorSearchOptions,
+    bounds: ScanBounds,
+    query_len: usize,
+    /// Read once, and only when the guard needs it.
+    migrating: Option<bool>,
+    archived: HashMap<String, bool>,
+    owner_only: OwnerOnlyCache,
+}
 
-    for group in index.chunks.chunk_by(|a, b| a.id == b.id) {
+impl ChunkScan<'_> {
+    /// The best admitted chunk of one page, whose vectors are `group` (one page's run of the
+    /// index), or `None` when the page or every chunk is filtered out. `raw(i)` is
+    /// `1 - (embedding <=> q)` for `group[i]`; both scans call this, so they apply the same filters,
+    /// guard, factor, tie rule and refusals.
+    fn best_chunk(
+        &mut self,
+        group: &[IndexedVector],
+        raw: impl Fn(usize, &IndexedVector) -> f64,
+    ) -> Result<Option<Hit>> {
+        let (read, options) = (self.read, self.options);
+        #[cfg(test)]
+        tests::PAGES_READ.with(|n| n.set(n.get() + 1));
         let page_id = group[0].id;
         let Some(page) = read_page_by_id(read, page_id)? else {
-            continue;
+            return Ok(None);
         };
         if !page_passes(
             read,
             &page,
             options,
-            &bounds,
-            &mut archived,
-            &mut owner_only,
+            &self.bounds,
+            &mut self.archived,
+            &mut self.owner_only,
         )? {
-            continue;
+            return Ok(None);
         }
         let mut chunks: HashMap<u32, ChunkRecord> = visible_chunks(read, page_id)?
             .into_iter()
@@ -582,27 +609,27 @@ fn search_chunks(
             .collect();
         let factor = source_factor(&page, &options.source_factors);
         let mut best: Option<(f64, ChunkRecord)> = None;
-        for stored in group {
+        for (i, stored) in group.iter().enumerate() {
             let Some(chunk) = chunks.get(&stored.chunk_index) else {
                 continue;
             };
             if !chunk_passes(chunk, options) {
                 continue;
             }
-            if stored.vector.len() != query.len() {
-                return Err(dims_mismatch(query.len(), stored.vector.len()));
+            if stored.vector.len() != self.query_len {
+                return Err(dims_mismatch(self.query_len, stored.vector.len()));
             }
             let fresh = match options.model.as_deref() {
                 Some(model) => written_by(chunk, model),
-                None => {
-                    !*migrating.get_or_insert(read_config(read, MIGRATION_STATE_KEY)?.is_some())
-                }
+                None => !*self
+                    .migrating
+                    .get_or_insert(read_config(read, MIGRATION_STATE_KEY)?.is_some()),
             };
             if !fresh {
                 continue;
             }
             // `1 - (embedding <=> q)`, then the source factor.
-            let raw = 1.0 - (1.0 - cosine(&query, query_norm_sq, stored));
+            let raw = raw(i, stored);
             let score = if raw.is_nan() { f64::NAN } else { raw * factor };
             let replace = match &best {
                 None => true,
@@ -617,16 +644,289 @@ fn search_chunks(
                 best = Some((score, chunk));
             }
         }
-        if let Some((score, chunk)) = best {
-            hits.push(Hit { page, chunk, score });
+        Ok(best.map(|(score, chunk)| Hit { page, chunk, score }))
+    }
+}
+
+/// The result order: score (NaN first), then page id, then chunk id.
+fn hit_order(a: &Hit, b: &Hit) -> Ordering {
+    score_desc(a.score, b.score)
+        .then(a.page.id.cmp(&b.page.id))
+        .then(a.chunk.id.cmp(&b.chunk.id))
+}
+
+/// A hit in a max-heap whose top is the hit that ranks last.
+struct Ranked(Hit);
+
+impl PartialEq for Ranked {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+impl Eq for Ranked {}
+impl PartialOrd for Ranked {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for Ranked {
+    fn cmp(&self, other: &Self) -> Ordering {
+        hit_order(&self.0, &other.0)
+    }
+}
+
+/// `GBRAIN_RUST_VECTOR_SCAN=full` makes every `searchVector` take the full scan (the bench and
+/// its verify mode compare the two paths on one store). Read on every call.
+fn full_scan_forced() -> bool {
+    std::env::var_os("GBRAIN_RUST_VECTOR_SCAN").is_some_and(|v| v == "full")
+}
+
+/// Below this many vectors the raw scores are computed on the calling thread.
+const PARALLEL_MIN_VECTORS: usize = 4096;
+
+/// Helper threads the raw-score passes of all searches hold right now. The process-wide budget is
+/// the core count minus one, so concurrent searches share the cores instead of each starting a
+/// thread per core.
+static HELPERS_IN_USE: AtomicUsize = AtomicUsize::new(0);
+
+/// Up to `wanted` helper threads from the process-wide budget, given back when dropped.
+struct Helpers(usize);
+
+impl Helpers {
+    fn take(wanted: usize) -> Self {
+        let budget = std::thread::available_parallelism().map_or(1, |n| n.get()) - 1;
+        let mut used = HELPERS_IN_USE.load(AtomicOrdering::Relaxed);
+        loop {
+            let granted = wanted.min(budget.saturating_sub(used));
+            if granted == 0 {
+                return Helpers(0);
+            }
+            match HELPERS_IN_USE.compare_exchange_weak(
+                used,
+                used + granted,
+                AtomicOrdering::AcqRel,
+                AtomicOrdering::Relaxed,
+            ) {
+                Ok(_) => return Helpers(granted),
+                Err(now) => used = now,
+            }
         }
     }
+}
 
-    hits.sort_by(|a, b| {
-        score_desc(a.score, b.score)
-            .then(a.page.id.cmp(&b.page.id))
-            .then(a.chunk.id.cmp(&b.chunk.id))
+impl Drop for Helpers {
+    fn drop(&mut self) {
+        if self.0 > 0 {
+            HELPERS_IN_USE.fetch_sub(self.0, AtomicOrdering::AcqRel);
+        }
+    }
+}
+
+/// `1 - (embedding <=> q)` of every vector, in index order, split across the machine's cores
+/// for a large index. Each value is computed exactly as the full scan computes it.
+fn raw_scores(query: &[f32], query_norm_sq: f64, vectors: &[IndexedVector]) -> Vec<f64> {
+    let score = |stored: &IndexedVector| 1.0 - (1.0 - cosine(query, query_norm_sq, stored));
+    let mut out = vec![0.0; vectors.len()];
+    let helpers = if vectors.len() < PARALLEL_MIN_VECTORS {
+        Helpers(0)
+    } else {
+        Helpers::take(vectors.len() / (PARALLEL_MIN_VECTORS / 2))
+    };
+    // The calling thread scores one part too.
+    let threads = helpers.0 + 1;
+    if threads <= 1 {
+        for (slot, stored) in out.iter_mut().zip(vectors) {
+            *slot = score(stored);
+        }
+        return out;
+    }
+    let per = vectors.len().div_ceil(threads);
+    let failed = std::thread::scope(|scope| {
+        let mut failed = false;
+        let mut parts = out.chunks_mut(per).zip(vectors.chunks(per));
+        let own = parts.next();
+        for (slots, part) in parts {
+            let work = move || {
+                for (slot, stored) in slots.iter_mut().zip(part) {
+                    *slot = score(stored);
+                }
+            };
+            failed |= std::thread::Builder::new()
+                .spawn_scoped(scope, work)
+                .is_err();
+        }
+        if let Some((slots, part)) = own {
+            for (slot, stored) in slots.iter_mut().zip(part) {
+                *slot = score(stored);
+            }
+        }
+        failed
     });
+    drop(helpers);
+    // A thread the system could not start left its part unscored: score everything here.
+    if failed {
+        for (slot, stored) in out.iter_mut().zip(vectors) {
+            *slot = score(stored);
+        }
+    }
+    out
+}
+
+/// The largest score a page whose raw scores are `raws` can reach under any factor in `factors`:
+/// the score is one raw times one factor, and a product is monotone in the raw for a fixed
+/// factor, so the largest product over the raws' maximum and minimum bounds it. A NaN raw makes
+/// the bound NaN, which ranks above every number, as the score would.
+fn page_bound(raws: &[f64], factors: &[f64]) -> f64 {
+    let (mut high, mut low) = (raws[0], raws[0]);
+    for &raw in raws {
+        if raw.is_nan() {
+            return f64::NAN;
+        }
+        if raw.total_cmp(&high).is_gt() {
+            high = raw;
+        }
+        if raw.total_cmp(&low).is_lt() {
+            low = raw;
+        }
+    }
+    let mut bound = high * factors[0];
+    for factor in factors {
+        for product in [high * factor, low * factor] {
+            if product.total_cmp(&bound).is_gt() {
+                bound = product;
+            }
+        }
+    }
+    bound
+}
+
+/// The bounded scan: score every vector first (arithmetic only), then read pages in order of the
+/// largest score each can reach, and stop once the best `keep` hits are settled. Every page that
+/// could rank goes through `ChunkScan::best_chunk`, as in the full scan, so the hits are the
+/// full scan's. Returns `None` when this read must take the full scan instead.
+fn bounded_scan(
+    scan: &mut ChunkScan<'_>,
+    index: &VectorIndex,
+    query: &[f32],
+    query_norm_sq: f64,
+    keep: usize,
+) -> Result<Option<Vec<Hit>>> {
+    let options = scan.options;
+    // A stored vector of another width refuses in the full scan, at the first one the filters
+    // admit; and a factor that is not a finite number has no bound. Both take the full scan.
+    if index.chunks.is_empty() {
+        return Ok(Some(Vec::new()));
+    }
+    if index.chunk_width != Some(query.len())
+        || options.source_factors.iter().any(|(_, f)| !f.is_finite())
+    {
+        return Ok(None);
+    }
+    if keep == 0 {
+        return Ok(Some(Vec::new()));
+    }
+    // With no model, a running embedding migration hides every vector.
+    if options.model.is_none() {
+        let migrating = read_config(scan.read, MIGRATION_STATE_KEY)?.is_some();
+        scan.migrating = Some(migrating);
+        if migrating {
+            return Ok(Some(Vec::new()));
+        }
+    }
+    let raws = raw_scores(query, query_norm_sq, &index.chunks);
+    let factors: Vec<f64> = std::iter::once(1.0)
+        .chain(options.source_factors.iter().map(|(_, f)| *f))
+        .collect();
+    let mut order: Vec<(f64, usize)> = index
+        .page_runs
+        .iter()
+        .enumerate()
+        .map(|(run, &(start, end))| (page_bound(&raws[start..end], &factors), run))
+        .collect();
+    order.sort_unstable_by(|a, b| score_desc(a.0, b.0).then(a.1.cmp(&b.1)));
+    let mut best: BinaryHeap<Ranked> = BinaryHeap::new();
+    for (bound, run) in order {
+        // Every page left can reach at most `bound`. Once that ranks below the last kept hit,
+        // no page left can enter (a tie can, by a lower page id, so a tie is still read).
+        if best.len() >= keep
+            && best
+                .peek()
+                .is_some_and(|last| score_desc(bound, last.0.score) == Ordering::Greater)
+        {
+            break;
+        }
+        let (start, end) = index.page_runs[run];
+        let page_raws = &raws[start..end];
+        if let Some(hit) = scan.best_chunk(&index.chunks[start..end], |i, _| page_raws[i])? {
+            best.push(Ranked(hit));
+            if best.len() > keep {
+                best.pop();
+            }
+        }
+    }
+    Ok(Some(best.into_iter().map(|ranked| ranked.0).collect()))
+}
+
+/// The full scan: every page with a vector, in page id order.
+fn full_scan(
+    scan: &mut ChunkScan<'_>,
+    index: &VectorIndex,
+    query: &[f32],
+    query_norm_sq: f64,
+) -> Result<Vec<Hit>> {
+    let mut hits = Vec::new();
+    for &(start, end) in &index.page_runs {
+        let score =
+            |_: usize, stored: &IndexedVector| 1.0 - (1.0 - cosine(query, query_norm_sq, stored));
+        if let Some(hit) = scan.best_chunk(&index.chunks[start..end], score)? {
+            hits.push(hit);
+        }
+    }
+    Ok(hits)
+}
+
+fn search_chunks(
+    read: &dyn KvRead,
+    index: &VectorIndex,
+    query: &[f64],
+    options: &VectorSearchOptions,
+) -> Result<Vec<Value>> {
+    search_chunks_by(read, index, query, options, full_scan_forced())
+}
+
+/// `searchVector` over one snapshot; `full` takes the full scan whatever the bounded scan could do.
+fn search_chunks_by(
+    read: &dyn KvRead,
+    index: &VectorIndex,
+    query: &[f64],
+    options: &VectorSearchOptions,
+    full: bool,
+) -> Result<Vec<Value>> {
+    let query = check_query(query)?;
+    let limit = options.limit.unwrap_or(DEFAULT_VECTOR_LIMIT);
+    let offset = resolve_offset(&options.offset, limit)?;
+    let limit = limit as usize;
+    let query_norm_sq = dot(&query, &query);
+    let mut scan = ChunkScan {
+        read,
+        options,
+        bounds: ScanBounds::parse(options)?,
+        query_len: query.len(),
+        migrating: None,
+        archived: HashMap::new(),
+        owner_only: OwnerOnlyCache::default(),
+    };
+    let bounded = if full {
+        None
+    } else {
+        let keep = offset.saturating_add(limit);
+        bounded_scan(&mut scan, index, &query, query_norm_sq, keep)?
+    };
+    let mut hits = match bounded {
+        Some(hits) => hits,
+        None => full_scan(&mut scan, index, &query, query_norm_sq)?,
+    };
+    hits.sort_by(hit_order);
     hits.into_iter()
         .skip(offset)
         .take(limit)
@@ -827,6 +1127,12 @@ mod tests {
     use crate::sources::SourceInput;
     use crate::takes::TakeInput;
     use crate::test_support::store;
+
+    thread_local! {
+        /// Pages `ChunkScan::best_chunk` read on this thread, so a test can show the bounded scan
+        /// reads fewer pages than the full scan.
+        pub(super) static PAGES_READ: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
 
     #[test]
     fn a_query_value_beyond_float4_range_is_refused_not_turned_into_infinity() {
@@ -1766,5 +2072,312 @@ mod tests {
         assert_eq!(js_number(1e-7), "1e-7");
         assert_eq!(js_number(1.5e21), "1.5e+21");
         assert_eq!(js_number(f64::NEG_INFINITY), "-Infinity");
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // The bounded scan answers what the full scan answers.
+
+    /// Both paths over one snapshot, as the text a caller would see (rows or the refusal).
+    fn both_paths(s: &Store, query: &[f64], options: &VectorSearchOptions) -> (String, String) {
+        let read = s.read().unwrap();
+        let index = load_index(&*read, Some(&s.vectors)).unwrap();
+        let text = |r: Result<Vec<Value>>| match r {
+            Ok(rows) => serde_json::to_string(&rows).unwrap(),
+            Err(e) => format!("error: {e}"),
+        };
+        (
+            text(search_chunks_by(&*read, &index, query, options, false)),
+            text(search_chunks_by(&*read, &index, query, options, true)),
+        )
+    }
+
+    #[test]
+    fn bounded_scan_matches_full_scan_on_ties_nan_factors_and_offsets() {
+        let s = corpus();
+        page(&s, "default", "f-zero", &[vec![0.0; 4]], json!({}));
+        page(
+            &s,
+            "default",
+            "g-tie3",
+            &[vec![0.0, 1.0, 1.0, 0.0], vec![0.0, 1.0, 1.0, 0.0]],
+            json!({}),
+        );
+        let queries = [
+            q(&[1.0, 0.0, 0.0, 0.0]),
+            q(&[0.0, 1.0, 1.0, 0.0]),
+            q(&[0.0; 4]),
+            q(&[-1.0, 0.5, 0.0, 0.0]),
+        ];
+        let factor_sets = [
+            json!([]),
+            json!([["b-", 2.0], ["d-", 0.5]]),
+            json!([["a-", -1.0], ["e-", 0.0]]),
+            json!([["c-", 1.0], ["g-", 3.0]]),
+        ];
+        for query in &queries {
+            for factors in &factor_sets {
+                for (limit, offset) in [
+                    (0, json!(0)),
+                    (1, json!(0)),
+                    (2, json!(1)),
+                    (3, json!(5)),
+                    (20, json!(0)),
+                    (2, json!(1e18)),
+                    (2, json!("Infinity")),
+                ] {
+                    let o =
+                        opts(json!({"limit": limit, "offset": offset, "source_factors": factors}));
+                    let (bounded, full) = both_paths(&s, query, &o);
+                    assert_eq!(
+                        bounded, full,
+                        "query {query:?} factors {factors} limit {limit} offset {offset}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_bounded_scan_reads_only_the_pages_that_can_rank() {
+        let s = store();
+        page(&s, "default", "best", &[axis(0, 4)], json!({}));
+        for i in 0..30 {
+            page(
+                &s,
+                "default",
+                &format!("far-{i:02}"),
+                &[vec![0.1, 1.0, 0.0, 0.0]],
+                json!({}),
+            );
+        }
+        let query = q(&[1.0, 0.0, 0.0, 0.0]);
+        let read = s.read().unwrap();
+        let index = load_index(&*read, Some(&s.vectors)).unwrap();
+        let o = opts(json!({"limit": 1}));
+        let mut reads = [0usize; 2];
+        let mut rows = Vec::new();
+        for (slot, full) in [false, true].into_iter().enumerate() {
+            PAGES_READ.with(|n| n.set(0));
+            rows.push(search_chunks_by(&*read, &index, &query, &o, full).unwrap());
+            reads[slot] = PAGES_READ.with(|n| n.get());
+        }
+        assert_eq!(names(&rows[0]), ["best#0 1.0000"]);
+        assert_eq!(rows[0], rows[1]);
+        assert_eq!(reads, [1, 31]);
+    }
+
+    #[test]
+    fn a_page_that_only_ties_the_last_kept_hit_is_still_read() {
+        // `y-low` scores 0.25 * 2 = 0.5 and `x-high` scores 0.5 * 1 = 0.5, a tie the lower page id
+        // wins. `x-high` reaches the bound 0.5 * 2 = 1.0 first, so the scan meets `y-low` with a
+        // full heap whose last hit ties `y-low`'s bound: stopping there would drop the winner.
+        let s = store();
+        let mut wide = vec![1.0f32; 16];
+        page(&s, "default", "y-low", &[wide.clone()], json!({}));
+        wide[4..].iter_mut().for_each(|v| *v = 0.0);
+        page(&s, "default", "x-high", &[wide], json!({}));
+        let mut query = vec![0.0; 16];
+        query[0] = 1.0;
+        let o = opts(json!({"limit": 1, "source_factors": [["y-", 2.0]]}));
+        let (bounded, full) = both_paths(&s, &query, &o);
+        assert_eq!(bounded, full);
+        assert_eq!(
+            names(&s.search_vector(&query, &o).unwrap()),
+            ["y-low#0 0.5000"]
+        );
+    }
+
+    #[test]
+    fn mixed_widths_and_bad_factors_take_the_full_scan_and_refuse_alike() {
+        let s = corpus();
+        page(
+            &s,
+            "default",
+            "z-wide",
+            &[vec![1.0, 0.0, 0.0, 0.0, 0.0]],
+            json!({}),
+        );
+        for limit in [0, 1, 5] {
+            let o = opts(json!({"limit": limit}));
+            let (bounded, full) = both_paths(&s, &q(&[1.0, 0.0, 0.0, 0.0]), &o);
+            assert!(full.starts_with("error: "), "{full}");
+            assert_eq!(bounded, full);
+        }
+        let s = corpus();
+        for factor in [f64::INFINITY, f64::NAN] {
+            let o = VectorSearchOptions {
+                limit: Some(3),
+                source_factors: vec![("a-".to_string(), factor)],
+                ..VectorSearchOptions::default()
+            };
+            let (bounded, full) = both_paths(&s, &q(&[1.0, 0.0, 0.0, 0.0]), &o);
+            assert_eq!(bounded, full);
+        }
+        // A query of another width than every stored vector refuses on both paths.
+        let (bounded, full) = both_paths(&s, &q(&[1.0, 0.0]), &opts(json!({})));
+        assert!(full.starts_with("error: "), "{full}");
+        assert_eq!(bounded, full);
+    }
+
+    #[test]
+    fn raw_scores_split_across_threads_equal_the_serial_scores() {
+        let mut rng = 0x1234_5678_u64;
+        let mut next = || {
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            ((rng >> 40) as f32 / (1u64 << 24) as f32) - 0.5
+        };
+        let vectors: Vec<IndexedVector> = (0..PARALLEL_MIN_VECTORS * 2 + 7)
+            .map(|i| {
+                let v: Vec<f32> = (0..9).map(|_| next()).collect();
+                IndexedVector::new(&StoredVector {
+                    id: i as u64,
+                    chunk_index: 0,
+                    model: String::new(),
+                    embedded_at_us: 0,
+                    vector: if i % 997 == 0 { vec![0.0; 9] } else { v },
+                })
+            })
+            .collect();
+        let query: Vec<f32> = (0..9).map(|_| next()).collect();
+        let norm = dot(&query, &query);
+        let parallel = raw_scores(&query, norm, &vectors);
+        let serial: Vec<f64> = vectors
+            .iter()
+            .map(|v| 1.0 - (1.0 - cosine(&query, norm, v)))
+            .collect();
+        assert_eq!(parallel.len(), serial.len());
+        for (a, b) in parallel.iter().zip(&serial) {
+            assert_eq!(a.to_bits(), b.to_bits());
+        }
+        assert_eq!(HELPERS_IN_USE.load(AtomicOrdering::Relaxed), 0);
+    }
+
+    mod differential {
+        //! Random small brains: the bounded scan's bytes equal the full scan's for every filter,
+        //! factor set, limit and offset drawn.
+        use super::*;
+        use proptest::prelude::*;
+
+        const PREFIXES: &[&str] = &["a/", "b/", "c/", "test/"];
+
+        #[derive(Debug, Clone)]
+        struct PageSpec {
+            prefix: usize,
+            side: bool,
+            concept: bool,
+            stub: bool,
+            hidden: bool,
+            chunks: Vec<Vec<f32>>,
+        }
+
+        fn page_spec() -> impl Strategy<Value = PageSpec> {
+            let component = prop::sample::select(vec![-1.0f32, 0.0, 0.5, 1.0]);
+            (
+                0..PREFIXES.len(),
+                any::<bool>(),
+                any::<bool>(),
+                prop::bool::weighted(0.2),
+                prop::bool::weighted(0.1),
+                prop::collection::vec(prop::collection::vec(component, 3), 1..4),
+            )
+                .prop_map(|(prefix, side, concept, stub, hidden, chunks)| PageSpec {
+                    prefix,
+                    side,
+                    concept,
+                    stub,
+                    hidden,
+                    chunks,
+                })
+        }
+
+        fn options() -> impl Strategy<Value = Value> {
+            let factor = prop::sample::select(vec![-1.0f64, 0.0, 0.5, 1.0, 1.3, 2.0]);
+            (
+                0u64..8,
+                0u64..4,
+                prop::collection::vec(factor, PREFIXES.len()),
+                prop::collection::vec(any::<bool>(), PREFIXES.len()),
+                0..4usize,
+                any::<bool>(),
+                any::<bool>(),
+            )
+                .prop_map(|(limit, offset, factors, on, filter, low, model)| {
+                    let source_factors: Vec<Value> = PREFIXES
+                        .iter()
+                        .zip(factors.iter().zip(&on))
+                        .filter(|(_, (_, on))| **on)
+                        .map(|(p, (f, _))| json!([p, f]))
+                        .collect();
+                    let mut o =
+                        json!({"limit": limit, "offset": offset, "source_factors": source_factors});
+                    match filter {
+                        1 => o["source_ids"] = json!(["side"]),
+                        2 => o["types"] = json!(["concept"]),
+                        3 => o["hard_excludes"] = json!([]),
+                        _ => {}
+                    }
+                    if low {
+                        o["detail"] = json!("low");
+                    }
+                    if model {
+                        o["model"] = json!(MODEL);
+                    }
+                    o
+                })
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig {
+                cases: 48,
+                // No regression files in the source tree, as the crate's other property tests.
+                failure_persistence: None,
+                ..ProptestConfig::default()
+            })]
+            #[test]
+            fn bounded_equals_full(
+                pages in prop::collection::vec(page_spec(), 1..12),
+                query in prop::collection::vec(prop::sample::select(vec![-1.0f64, 0.0, 0.5, 1.0]), 3),
+                runs in prop::collection::vec(options(), 1..6),
+            ) {
+                let s = store();
+                s.upsert_source(&SourceInput { id: "side".to_string(), ..SourceInput::default() }).unwrap();
+                for (i, spec) in pages.iter().enumerate() {
+                    let mut fm = json!({});
+                    if spec.stub {
+                        fm = json!({"provenance": "auto-extracted", "status": "unverified"});
+                    }
+                    if spec.hidden {
+                        fm["quarantine"] = json!(true);
+                    }
+                    let extra = json!({
+                        "type": if spec.concept { "concept" } else { "note" },
+                        "frontmatter": fm,
+                    });
+                    let source = if spec.side { "side" } else { "default" };
+                    page(&s, source, &format!("{}p{i}", PREFIXES[spec.prefix]), &spec.chunks, extra);
+                }
+                for run in runs {
+                    let o = opts(run.clone());
+                    let (bounded, full) = both_paths(&s, &query, &o);
+                    prop_assert_eq!(bounded, full, "options {}", run);
+                }
+            }
+
+            #[test]
+            fn page_bound_is_at_least_every_score(
+                raws in prop::collection::vec(-1.0f64..=1.0, 1..6),
+                factors in prop::collection::vec(prop::sample::select(vec![-2.0f64, -0.5, 0.0, 0.3, 1.0, 1.5]), 0..4),
+            ) {
+                let set: Vec<f64> = std::iter::once(1.0).chain(factors.iter().copied()).collect();
+                let bound = page_bound(&raws, &set);
+                for raw in &raws {
+                    for factor in &set {
+                        prop_assert!((raw * factor).total_cmp(&bound).is_le());
+                    }
+                }
+            }
+        }
     }
 }

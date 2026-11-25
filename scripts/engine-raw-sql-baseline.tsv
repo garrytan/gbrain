@@ -138,7 +138,7 @@ src/core/access/handover.ts	execute_raw	14	GBRA-582 item 9 (handover PR 2): the 
 src/core/access/implicit-placement.ts	execute_raw	1	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/core/access/labelled-only.ts	execute_raw	1
 src/core/access/member-facts.ts	execute_raw	2	GST-2897 B (#9670, opened before this ratchet): one access_members lookup to see whether the member a share is about is enabled; no typed engine method exists yet
-src/core/access/member-sources.ts	execute_raw	8
+src/core/access/member-sources.ts	execute_raw	7
 src/core/access/members.ts	sql_template	1
 src/core/access/open-pages.ts	execute_raw	1	the statement timeout bounded() sets on a Postgres transaction (SET LOCAL statement_timeout); PGLite and the Rust engine never run it
 src/core/access/open-twins.ts	execute_raw	1
@@ -178,7 +178,6 @@ src/core/bootstrap/verify.ts	execute_raw	3
 src/core/brainstorm/domain-bank.ts	execute_raw	1
 src/core/calibration/domain-aggregators.ts	execute_raw	4
 src/core/calibration/think-ab.ts	execute_raw	2
-src/core/chronicle/backfill.ts	execute_raw	1
 src/core/chunkers/symbol-resolver.ts	execute_raw	7
 src/core/claw-test/seed-pglite.ts	driver_call	1
 src/core/code-graph-readiness.ts	execute_raw	1
@@ -285,9 +284,11 @@ src/core/imessage/imessage-source.ts	execute_raw	2	#9634, pre-ratchet: reads the
 src/core/import-file.ts	execute_raw	1
 src/core/import-identity.ts	execute_raw	1
 src/core/ingestion/applied-captures.ts	execute_raw	4
-src/core/learning/derive.ts	execute_raw	4	nightly learning PR 1: the learning_items ledger (v334) is a new table with no typed engine methods yet; the derive pass records ledger pointers with INSERT ... SELECT per kind, prunes pointers whose target is gone and reads the watermark window
+src/core/learning/decide.ts	execute_raw	3	nightly learning PR 2: the learning_items ledger (v334) has no typed engine methods yet; keep and undo read item states, mark decided items and list the page versions after an enrich write
+src/core/learning/derive.ts	execute_raw	6	nightly learning PR 1: the learning_items ledger (v334) is a new table with no typed engine methods yet; the derive pass records ledger pointers with INSERT ... SELECT per kind, prunes pointers whose target is gone and reads the watermark window; PR 2 expires unseen pointers after 7 days and closes answered conflict questions
 src/core/learning/kinds.ts	execute_raw	1	nightly learning PR 1: the learning_items ledger (v334) is a new table with no typed engine methods yet; learningTablePresent probes to_regclass so a brain behind the migration skips cleanly
-src/core/learning/duplicates.ts	execute_raw	2	nightly learning PR 3: the learning_items ledger (v334) has no typed engine methods yet; the duplicate step records the top person groups' anchor pages (and counts them on a dry run)
+src/core/learning/duplicates.ts	execute_raw	3	nightly learning PR 3: the learning_items ledger (v334) has no typed engine methods yet; the duplicate step records the top person groups' anchor pages (and counts them on a dry run); PR 2 closes duplicate questions the preview no longer offers
+src/core/learning/push.ts	execute_raw	1	nightly learning PR 2: the learning_items ledger (v334) has no typed engine methods yet; the session-start line counts unseen pending items
 src/core/learning/read.ts	execute_raw	4	nightly learning PR 1: the learning_items ledger (v334) is a new table with no typed engine methods yet; the learned read joins each pointer to its live target under the caller filters and stamps shown_at; PR 3 adds one page read-policy probe over duplicate members
 src/core/learning/stats.ts	execute_raw	1	nightly learning PR 1: the learning_items ledger (v334) is a new table with no typed engine methods yet; learned --stats reads ledger rows by night
 src/core/line-grammar-config.ts	execute_raw	2
@@ -374,7 +375,7 @@ src/core/persistence/connector-google-receipts.ts	execute_raw	1
 src/core/persistence/connector-path.ts	execute_raw	3
 src/core/persistence/connector-reset.ts	execute_raw	1
 src/core/persistence/connector-state.ts	execute_raw	5
-src/core/persistence/connector-sync.ts	execute_raw	27	#9990: callReads forwards a connector call's reads through one memoized call site; it adds no SQL
+src/core/persistence/connector-sync.ts	execute_raw	25	#9990: callReads forwards a connector call's reads through one memoized call site; it adds no SQL
 src/core/persistence/consumer-lane.ts	execute_raw	2
 src/core/persistence/consumer.ts	execute_raw	3
 src/core/persistence/context.ts	execute_raw	1
@@ -440,7 +441,7 @@ src/core/persistence/page-append.ts	execute_raw	2
 src/core/persistence/page-mutations.ts	execute_raw	5
 src/core/persistence/page-prepare.ts	execute_raw	9
 src/core/persistence/page-upload.ts	execute_raw	15
-src/core/persistence/page-visibility.ts	execute_raw	7
+src/core/persistence/page-visibility.ts	execute_raw	5
 src/core/persistence/pending-import.ts	execute_raw	1
 src/core/persistence/physical-root.ts	execute_raw	13
 src/core/persistence/plain-directory-drift.ts	execute_raw	2	#8079: reads and records whether a page revision was written with its file in step (journal receipt join plus agreement checkpoint); persistence protocol state, no typed checkpoint methods yet.
@@ -552,6 +553,8 @@ src/core/repair/readers.ts	execute_raw	3
 src/core/repair/rename-identity.ts	execute_raw	6
 src/core/repair/segmented-tiling.ts	execute_raw	6
 src/core/repair/slug-autoheal.ts	execute_raw	1
+src/core/repair/slug-spelling-guards.ts	execute_raw	4	Carrying purge tombstones to the moved page's normal name in the page's own transaction, the row-security lookup over every brain table that refuses the repair for a role row security applies to, and the pages lookup the doctor check runs (raised from 3: the check covers every table the move re-keys, not a fixed list); like the sibling repairs, a typed method comes with the Rust store serving these members.
+src/core/repair/slug-spelling.ts	execute_raw	9	The preview scan and the per-page re-check read pages, sources and files with SQL like the sibling repairs (legacy-twins, rename-identity), and the collision check looks up every stored spelling of a name through the spelling index; a typed method comes with the Rust store serving these members.
 src/core/repair/unwithdrawn-facts.ts	execute_raw	3
 src/core/repair/url-clone-fences.ts	execute_raw	2
 src/core/repair/visibility.ts	execute_raw	7
@@ -615,6 +618,7 @@ src/core/shared-skills/source-opt-out.ts	execute_raw	2
 src/core/similar-pages.ts	execute_raw	1
 src/core/skillpack/shared-brain-bridge.ts	execute_raw	4
 src/core/slack/slack-source.ts	execute_raw	3
+src/core/slug-spelling-key.ts	execute_raw	1	Reads the server encoding (SHOW server_encoding) so the spelling index migration and the slug-spelling repair skip or refuse on a database that cannot evaluate the key; like the database_encoding doctor check.
 src/core/sources-ops.ts	execute_raw	1	#9634, pre-ratchet: +1 is the INSERT that registers a database-only api source row (imessage); no typed engine method exists yet
 src/core/sql-query.ts	execute_raw	2
 src/core/storage-manifest/adopt.ts	execute_raw	4
@@ -654,7 +658,7 @@ src/core/trust/label-lowerings.ts	execute_raw	1
 src/core/trust/marker-repair.ts	execute_raw	4
 src/core/trust/owner-actions.ts	execute_raw	6
 src/core/trust/page-handlers.ts	execute_raw	7
-src/core/trust/page-write.ts	execute_raw	2
+src/core/trust/page-write.ts	execute_raw	1
 src/core/trust/propagation.ts	execute_raw	4
 src/core/trust/release-publish.ts	execute_raw	2
 src/core/trust/review.ts	execute_raw	15

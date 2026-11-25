@@ -6,7 +6,8 @@
  *
  * The store has no lock or statement timeout, so the effect transaction's limits do nothing. The writer's read policy
  * is rendered as PGLite renders it and served only when it equals the no-caller member-access rendering or a fresh
- * record's rendering for the writer's one reader identity (the forms `page_hidden` in facts/privacy.rs implements); any
+ * record's rendering for the writer's one reader identity, with or without the owner flag the owner's own call renders (the forms
+ * `page_hidden` in facts/privacy.rs implements); any
  * other writer (folder rules, an owner record, a labelled-only grant, several identities) refuses with
  * `engine_capability_missing`, before any read. What each member answers and why: rust/docs/store/remote-links.md.
  */
@@ -44,8 +45,16 @@ function writerPolicy(policy: WriterReadPolicy): StorePrivacyPolicy {
   const fragment = (record: Parameters<typeof renderForStoreCaller>[0]) =>
     `(${renderForStoreCaller(record, () => callerAccessAllowedSql('p'))} AND TRUE)`;
   if (text === fragment({})) return off;
+  // A writer with no identity (an unbound or anonymous writer): its policy renders in a record of its own folder
+  // coverage, so the store reads that coverage instead of the live pending prefixes (callerRecord).
+  const folderCoverage = policy.folderCoverage.map(c => ({ source_id: c.source_id, prefix: c.prefix }));
+  if (!policy.identities.length && text === fragment({ identity: [], satisfiedRuleIds: [], folderCoverage })) {
+    return { ...off, identity: [], ...(folderCoverage.length ? { folderCoverage } : {}), callerRecord: true };
+  }
   const [identity] = policy.identities;
-  if (policy.identities.length === 1 && identity && text === fragment({ identity: [...identity], privateReadableSources: [], hidePrivate: true })) {
+  // The owner speaking for itself renders the same text without the owner-only clause (CallerAccess.owner), which `off` reads as no test.
+  const oneIdentity = (owner: boolean) => policy.identities.length === 1 && identity && text === fragment({ identity: [...identity], privateReadableSources: [], hidePrivate: true, ...(owner ? { owner } : {}) });
+  if (oneIdentity(false) || oneIdentity(true)) {
     return { ...off, identity: [...identity], privateReadableSources: [] };
   }
   refuseMember('readLinkTargetPages', 'a writer whose folder rules, owner record, labelled-only grant or identities widen the member-access policy');

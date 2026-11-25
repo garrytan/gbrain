@@ -9,7 +9,7 @@
  * alone). The caller picks the part: remoteReadPolicySql's choice, or `access` for a caller that refuses privacy itself.
  */
 import { ANY_OWNER_ONLY_SQL, OWNER_ONLY_LINEAGE_PRESENT_SQL, READ_SOURCE_OWNER_ONLY_SQL } from '../access/owner-only.ts';
-import { callerAccessAllowedSql, privatePagesFilterForCaller, readPolicyFragment } from '../search/private-visibility.ts';
+import { callerAccessAllowedSql, privacyPartSql, privatePagesFilterForCaller, readPolicyFragment } from '../search/private-visibility.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { sqlFragment, trustedSql } from './fragment.ts';
 
@@ -58,6 +58,17 @@ export async function readWriteVisibilityProbe(exec: LegacyUnscopedRead, sourceI
       WHERE source_id=${sourceId} AND slug=${slug} AND NOT (${trustedSql(readPolicyFragment('pages', [], true))}) LIMIT 1) AS identity_may_open,
           EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = ${sourceId} AND ${trustedSql(READ_SOURCE_OWNER_ONLY_SQL)}) AS owner_only_source, ${trustedSql(ownerOnlyLineage ? OWNER_ONLY_LINEAGE_PRESENT_SQL : ANY_OWNER_ONLY_SQL)} AS owner_only_any`);
   return row;
+}
+
+/**
+ * Whether the live page `slug` of `sourceId` fails the privacy part of the remote read policy (privacyPartSql: visibility,
+ * privacy aliases, pinned questions, derived types and lineage); null when it has no live page. The caller reads
+ * visibility.honor_aliases first (readHonorAliases), as remote reads do. The text is what ownerRewriteOf sent through `executeRaw`.
+ */
+export async function readPagePrivacyHidden(exec: LegacyUnscopedRead, sourceId: string, slug: string): Promise<boolean | null> {
+  const { rows: [row] } = await exec.run<{ hidden: boolean }>(sqlFragment`SELECT NOT (${trustedSql(privacyPartSql('p'))}) AS hidden FROM pages p
+    WHERE p.source_id = ${sourceId} AND p.slug = ${slug} AND p.deleted_at IS NULL`);
+  return row ? row.hidden === true : null;
 }
 
 const OAUTH_CLIENT_FENCE_SQL = 'SELECT bound_slug_prefixes AS prefixes FROM oauth_clients WHERE client_id=$1';

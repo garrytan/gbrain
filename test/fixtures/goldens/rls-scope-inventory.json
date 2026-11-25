@@ -5654,6 +5654,39 @@
         ],
         "flagOnScopes": []
       },
+      "readChronicleBackfillBatch#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readChronicleBackfillBatch#source": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readChronicleBackfillBatch#sources-since": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readChronicleDepthRow#default": {
         "flagOffLanes": [
           "pool"
@@ -10556,6 +10589,7 @@
         "readChatUsage": "none",
         "readCheckpointManifestRow": "none",
         "readChildCompletions": "none",
+        "readChronicleBackfillBatch": "none",
         "readChronicleDepthRow": "none",
         "readChronicleDuplicateEvents": "none",
         "readChronicleLedgerStats": "none",
@@ -10712,6 +10746,7 @@
         "readJournalCeiling": "none",
         "readJournalLimitRows": "none",
         "readKnowledgeRevisionNotNull": "none",
+        "readLabelGuardTiers": "none",
         "readLastAutopilotCycles": "none",
         "readLastCompletedJobAt": "none",
         "readLastContradictionsPromptVersion": "none",
@@ -10841,6 +10876,7 @@
         "readPageLabelRow": "none",
         "readPageNameText": "none",
         "readPageOrigin": "none",
+        "readPagePrivacyHidden": "none",
         "readPageProvenanceComplete": "none",
         "readPageRedactionRow": "none",
         "readPageRedactionRows": "none",

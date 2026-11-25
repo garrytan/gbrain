@@ -10,6 +10,63 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.771.0] - 2026-11-25
+
+**`gbrain repair ghost-pages` and sync's opt-in deletion of held pages now keep a page whose file moved in the cases the previous fix missed.**
+
+### Fixed
+- When the commit that deleted a file also rewrote another file to the deleted file's content, `gbrain repair ghost-pages` did not see the move and could approve the old page for soft-delete. It now lists that page as `moved_to` (or `move_unproven`), and `gbrain repair moved-pages` can fold it once the rewritten file's page holds the old page's lines (until sync imports the rewrite, it is held `survivor_differs`). A symlink replaced by the moved content counts too, and so does a rewrite committed before the deletion.
+- A ghost page with more than five same-name files elsewhere in the source was treated as having no linked file, because the preview reads history for at most five. It is now kept as `move_unproven` instead.
+- A move committed after a ghost-page soft-delete was prepared, but before it was written, slipped past the move check. The soft-delete now checks again when a commit landed in between.
+- With `sync.apply_held_deletions` on, sync deleted a held page without checking whether its file moved. A page whose file moved now stays held, with `meta.held_deletion.refused` set to `file_moved`; when Git cannot read whether it moved, the next sync checks again. If a commit lands between the move check and the deletion, the deletion waits for a later sync to check it at the new commit, and the rest of that sync still goes through.
+
+### Changed
+- The move check reads the history of every ghost's last committed content in one pass per run instead of once per ghost. On a synthetic repository with 3,000 commits and 100 moved pages, the `gbrain repair ghost-pages` preview went from 31 seconds to 16.
+
+<!-- behavior-change: ghost_pages_move_gaps_gst3648 -->
+
+**One member's personal sources now stay away from other members' keys, and the `--as` preview shows that view.**
+
+### Fixed
+- A key bound to a member other than the owner that has no source list (for example a token from `gbrain auth create --member`) no longer reads another member's personal source, a source bound with `gbrain access member source add`, whether or not that source is federated, the `default` source included. It keeps its own member's personal sources and every shared source. Naming another member's personal source is refused with `permission_denied`, as for a source outside the grant. A local stdio server bound to a member follows the same rule, including one pinned with `GBRAIN_SOURCE` or `.gbrain-source`. The owner and every key bound to the owner lose nothing, and a key whose source list names a personal source keeps reading it. `gbrain access check --token` reports the new read set.
+- `gbrain <read> --as <member>` now applies personal-source bindings the same way: `get`, `search`, `query`, `find` and `--source __all__` leave out other members' personal sources, naming one is refused with `permission_denied`, and `fetch` of one of its pages answers like a missing page. Writes under `--as` keep their usual source checks. The owner's preview is unchanged.
+- Under `--as <member>`, `gbrain get` on a page the member cannot read (a folder rule or `readable_by`) now gives exactly the not-found answer a missing slug gives, text and JSON. Before, its hint named the source the page lives in. The plain local CLI keeps that hint.
+
+<!-- behavior-change: member_keys_personal_sources_gst3747 -->
+
+**`gbrain doctor` now also refuses a missing brain behind a leftover lock, under `--alert`, and when the folder moves while doctor waits for the lock.**
+
+### Fixed
+- A brain folder with no `PG_VERSION` that still holds a leftover `.gbrain-lock` whose metadata is unreadable is refused as `brain_missing`, like any other missing datastore. Before, the leftover lock read as held, the folder test was skipped, and doctor built an empty brain.
+- When the folder is moved or unmounted while doctor waits for the datastore's lock, doctor looks again once it holds the lock, refuses, releases it and creates no datastore. The empty `.gbrain-owner.lock` file beside the folder, and the folder's parent directories if the whole drive path is gone, can still be left behind.
+- With `--alert` (and `--alert --json`) the refusal is the alert contract: exit 17, `alert.level` `act`, and an `alert.items` entry with code `brain_missing` and the same ask-the-user fix, so a monitor pages on it instead of seeing a bare exit 1. Without `--alert`, doctor still exits 1 with the same `brain_missing` envelope.
+
+<!-- behavior-change: doctor_missing_brain_followup_10114 -->
+
+**A Google sync that ends `partial` now says why, and the loops catch-up stops at a usage limit instead of failing every remaining thread.**
+
+### Fixed
+- A Google (Gmail, Calendar, Contacts) sync run that ends `partial` now records its causes in the job result as `partial_causes` (one line each: every run-level cause, such as a failed service sweep, a missing scope, an abort or a usage limit, plus up to 5 failed threads or items), and `gbrain doctor`'s sync_freshness result shows them, for example `completed (partial: gmail sweep failed: upstream error)`. Before, such a run gave no reason anywhere.
+- The loops catch-up on a gbrain.io source kept reading every waiting thread after the daily usage limit was reached, failing each read. It now stops at the first usage-limit error, logs one line, and reads the rest on a later sweep.
+- A usage limit hit while moving pages for the private-senders list now ends the run as a usage-limit stop (`stopped_on: usage_limit`), so doctor's usage-limit warning applies, instead of a partial failure.
+- `gbrain jobs list --name <name>` ignored the filter and listed every job. It now lists only jobs of that name, locally and against a remote brain.
+
+**Re-auditing an existing shared team brain can run its history purge again, and the Google, meeting-ingestion and purge skills say what they send and where their checks stop.**
+
+### Fixed
+- The history purge for an existing shared team repo (`skills/company-brainify/HISTORY-PURGE.md`) stopped with "no export list" before committing anything, because only the new-team-brain path wrote that list. This was a regression since v0.60.761.0. The re-audit path now writes the export list from every file already in the shared repo's six folders (the team can already read them), so the purge runs as it did in v0.60.761.0. The new-team-brain path keeps its fail-closed check that every file shipped got the full read.
+- `skills/cold-start`: before `gbrain google setup`, the agent now also tells the user that synced mail and calendar text goes to the configured model provider for open-loop and atom extraction (both on by default), and names the two settings that turn that off.
+- `skills/meeting-ingestion`: the final save after verification keeps `facts_backstop: false` when the user declined extraction, matching the paragraph above it.
+- `skills/company-brainify/HISTORY-PURGE.md`: a note at the leased push says that a branch or tag created after the remote check carries no lease, and that the verify step catches it.
+
+**The Rust engine research maps now describe current gbrain instead of the November 16 code.**
+
+### Documentation
+- The engine map under `docs/research/rust-engine/` lists every current `BrainEngine` member, 360 in all, and says the Rust engine is now part of gbrain.
+- The CLI map and agent-contract overview list the current 237 public commands, 652 flags, 188 MCP tools and 773 error codes. They include the new `learned`, `secrets`, `dedupe`, `identity`, `apple-contacts` and `skills` subcommands.
+- The background-jobs map has the 33 cycle phases, the new connector kinds and the autopilot restart rules. The markdown-format map has the new slug normal form, frontmatter rules and the reserved `.gbrain-owned` folder.
+- The machine-readable snapshots in `docs/research/rust-engine/data/` were regenerated with the script next to them.
+
 ## [0.60.770.0] - 2026-11-24
 
 **`gbrain dedupe classes` and `gbrain dedupe sample` no longer stop on a chat page stored in segments.**
