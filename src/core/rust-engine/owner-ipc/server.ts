@@ -299,6 +299,83 @@ function runnableCall(
   return undefined;
 }
 
+/**
+ * The JSON-line writer of one Unix-socket connection. `member` names the call a result answers; `reply` passes it
+ * because it drops the call from `calls` first. A frame over the cap becomes `response_too_large` for its call.
+ */
+function lineSender(socket: Socket, calls: Map<number, PendingCall>, maxFrameBytes: number): (frame: object, member?: string) => void {
+  return (frame, member) => {
+    if (socket.destroyed) return;
+    const line = frameLine(frame, maxFrameBytes);
+    if (line !== null) { socket.write(line); return; }
+    const id = (frame as { id?: number }).id;
+    const name = member ?? (id === undefined ? undefined : calls.get(id)?.member);
+    if ((frame as { t?: string }).t === 'result' && name !== undefined) {
+      socket.write(frameLine({ t: 'result', id, ok: false, error: encodeError(ownerResponseTooLarge(name, maxFrameBytes)) })!);
+    }
+  };
+}
+
+/** A v3 call whose connection's credential stopped working while it waited never runs (served/auth.ts); true if refused. */
+function refusedStale(call: PendingCall): boolean {
+  const stale = call.served?.staleCredential?.();
+  if (!stale) return false;
+  call.timer?.clear();
+  call.reply({ t: 'result', id: call.id, ok: false, error: callError(call, stale) });
+  return true;
+}
+
+/** A connection that closes aborts every call it started; calls of other connections keep running. */
+function endConnectionCalls(calls: Map<number, PendingCall>, leaveQueue: (call: PendingCall) => void): void {
+  for (const call of calls.values()) {
+    call.done = true;
+    call.timer?.clear();
+    leaveQueue(call);
+    call.served?.neverRan?.(call);
+    call.controller.abort(new DOMException('The client closed its connection.', 'AbortError'));
+  }
+  calls.clear();
+}
+
+/** The caller's cancel: the call ends with nothing more sent; a call that never started forgets its request id. */
+function cancelOneCall(calls: Map<number, PendingCall>, id: number, leaveQueue: (call: PendingCall) => void): void {
+  const call = calls.get(id);
+  if (!call) return;
+  calls.delete(call.id);
+  call.done = true;
+  call.timer?.clear();
+  leaveQueue(call);
+  if (!call.started) call.served?.neverRan?.(call);
+  call.controller.abort(new DOMException('The caller cancelled the call.', 'AbortError'));
+}
+
+/**
+ * Serves one network connection (served/listener.ts) with the owner's dispatcher: protocol v3 only, with the owner's
+ * permits, queue and bounds; past the connection cap it gets a `refused` frame.
+ */
+function attachServedSocket(socket: Socket, owner: {
+  closing: () => boolean; sockets: Set<Socket>; maxConnections: number; side: ServedServerSide; options: ServedServerOptions;
+  hello: OwnerHello; endCalls: (calls: Map<number, PendingCall>) => void;
+}): void {
+  socket.on('error', () => { /* a lost client only ends its own calls */ });
+  if (owner.closing()) { socket.destroy(); return; }
+  if (owner.sockets.size >= owner.maxConnections) {
+    const drain = setTimeout(() => socket.destroy(), OWNER_IPC_REFUSED_DRAIN_MS);
+    drain.unref();
+    socket.once('close', () => clearTimeout(drain));
+    socket.end(encodeLengthFrame({ t: 'refused', error: encodeError(ownerBusy('connections', null, owner.maxConnections)) })!);
+    return;
+  }
+  owner.sockets.add(socket);
+  const calls = new Map<number, PendingCall>();
+  const session = servedSession(owner.side, owner.options, { transport: 'tcp', socket, calls: calls as unknown as Map<number, ServedCall>, hello: owner.hello });
+  socket.once('close', () => {
+    owner.sockets.delete(socket);
+    session.close();
+    owner.endCalls(calls);
+  });
+}
+
 export async function serveOwnerEngine(
   engine: BrainEngine,
   legacySocketPath: string,
@@ -357,14 +434,7 @@ export async function serveOwnerEngine(
 
   const start = (call: PendingCall) => {
     call.queued = false;
-    // A v3 call whose connection's credential stopped working while it waited never runs (served/auth.ts).
-    const stale = call.served?.staleCredential?.();
-    if (stale) {
-      call.timer?.clear();
-      call.reply({ t: 'result', id: call.id, ok: false, error: callError(call, stale) });
-      releaseBytes(call);
-      return;
-    }
+    if (refusedStale(call)) { releaseBytes(call); return; }
     call.started = true;
     active++;
     started.add(call);
@@ -389,28 +459,8 @@ export async function serveOwnerEngine(
     serve: opts.serve === true,
   };
 
-  // A connection that closes aborts every call it started; calls of other connections keep running.
-  const closeConnectionCalls = (calls: Map<number, PendingCall>) => {
-    for (const call of calls.values()) {
-      call.done = true;
-      call.timer?.clear();
-      leaveQueue(call);
-      call.served?.neverRan?.(call);
-      call.controller.abort(new DOMException('The client closed its connection.', 'AbortError'));
-    }
-    calls.clear();
-  };
-
-  const cancelCall = (calls: Map<number, PendingCall>, id: number) => {
-    const call = calls.get(id);
-    if (!call) return;
-    calls.delete(call.id);
-    call.done = true;
-    call.timer?.clear();
-    leaveQueue(call);
-    if (!call.started) call.served?.neverRan?.(call);
-    call.controller.abort(new DOMException('The caller cancelled the call.', 'AbortError'));
-  };
+  const closeConnectionCalls = (calls: Map<number, PendingCall>) => endConnectionCalls(calls, leaveQueue);
+  const cancelCall = (calls: Map<number, PendingCall>, id: number) => cancelOneCall(calls, id, leaveQueue);
 
   const onConnection = (socket: Socket) => {
     socket.on('error', () => { /* a lost client only ends its own calls */ });
@@ -441,17 +491,7 @@ export async function serveOwnerEngine(
     // `helloed` turns on with a hello of this version. `refused` turns on with a hello of another version: the owner
     // answers with its own hello so the client can name both versions, then reads nothing more from the connection.
     const conn = { helloed: false, refused: false };
-    // `member` names the call a result answers; `reply` passes it because it drops the call from `calls` first.
-    const send = (frame: object, member?: string) => {
-      if (socket.destroyed) return;
-      const line = frameLine(frame, maxFrameBytes);
-      if (line !== null) { socket.write(line); return; }
-      const id = (frame as { id?: number }).id;
-      const name = member ?? (id === undefined ? undefined : calls.get(id)?.member);
-      if ((frame as { t?: string }).t === 'result' && name !== undefined) {
-        socket.write(frameLine({ t: 'result', id, ok: false, error: encodeError(ownerResponseTooLarge(name, maxFrameBytes)) })!);
-      }
-    };
+    const send = lineSender(socket, calls, maxFrameBytes);
     // Set by a protocol v3 hello (only when `served` is on); from then on the session reads every frame.
     let session: ServedSession | null = null;
     socket.once('close', () => {
@@ -590,26 +630,9 @@ export async function serveOwnerEngine(
     cancel: (calls, id) => cancelCall(calls as unknown as Map<number, PendingCall>, id),
   };
 
-  // A network connection (served/listener.ts): protocol v3 only, with the owner's permits, queue and bounds.
-  const attachServed = opts.served ? (socket: Socket) => {
-    socket.on('error', () => { /* a lost client only ends its own calls */ });
-    if (closing) { socket.destroy(); return; }
-    if (sockets.size >= maxConnections) {
-      const drain = setTimeout(() => socket.destroy(), OWNER_IPC_REFUSED_DRAIN_MS);
-      drain.unref();
-      socket.once('close', () => clearTimeout(drain));
-      socket.end(encodeLengthFrame({ t: 'refused', error: encodeError(ownerBusy('connections', null, maxConnections)) })!);
-      return;
-    }
-    sockets.add(socket);
-    const calls = new Map<number, PendingCall>();
-    const session = servedSession(servedSide, opts.served!, { transport: 'tcp', socket, calls: calls as unknown as Map<number, ServedCall>, hello });
-    socket.once('close', () => {
-      sockets.delete(socket);
-      session.close();
-      closeConnectionCalls(calls);
-    });
-  } : undefined;
+  const attachServed = opts.served ? (socket: Socket) => attachServedSocket(socket, {
+    closing: () => closing, sockets, maxConnections, side: servedSide, options: opts.served!, hello, endCalls: closeConnectionCalls,
+  }) : undefined;
 
   const server: Server = net.createServer(onConnection);
   server.once('close', () => { void binding.release(); });

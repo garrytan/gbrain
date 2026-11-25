@@ -47,7 +47,7 @@ export async function ownerTokenIds(engine: Pick<BrainEngine, 'getConfig'>): Pro
     const raw = await engine.getConfig(OWNER_TOKEN_IDS_CONFIG_KEY);
     const parsed = raw ? JSON.parse(raw) as unknown : [];
     return new Set(Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string' && v !== '') : []);
-  } catch { return new Set(); }
+  } catch { return new Set(); } // silent-read-ok: an unreadable owner list is the empty list, so every network token refuses (fail closed)
 }
 
 type AuthInfo = Record<string, unknown> & { principal?: { kind?: unknown; id?: unknown }; scopes?: unknown; expiresAt?: unknown };

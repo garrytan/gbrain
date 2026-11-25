@@ -16,7 +16,8 @@ import {
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 
-const shared = ENGINE_CAPABILITIES.filter(c => c !== 'single_owner' && c !== 'postgres_admin');
+// `served` is reported only by a served Rust client (multi-user Rust, rust-engine/served/), never by a SQL engine.
+const shared = ENGINE_CAPABILITIES.filter(c => c !== 'single_owner' && c !== 'postgres_admin' && c !== 'served');
 
 describe('engine capabilities', () => {
   // Never connected: capabilities are known without opening a database.
@@ -38,6 +39,11 @@ describe('engine capabilities', () => {
     expect(hasCapability(engine, 'single_owner')).toBe(true);
     expect(hasCapability(engine, 'postgres_admin')).toBe(false);
     expect(engine.capabilities.size).toBe(shared.length + 1);
+  });
+
+  test('neither SQL engine reports served', () => {
+    expect(pglite.capabilities.has('served')).toBe(false);
+    expect(postgres.capabilities.has('served')).toBe(false);
   });
 
   test('Postgres reports every shared capability, raw_sql and postgres_admin, and is not single-owner', () => {

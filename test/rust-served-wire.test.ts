@@ -28,6 +28,7 @@ import { OWNER_TOKEN_IDS_CONFIG_KEY } from '../src/core/rust-engine/served/auth.
 import { decodeError, decodeValue, encodeValue, type Wire } from '../src/core/rust-engine/owner-ipc/codec.ts';
 import { withRemoteCaller } from '../src/core/remote-caller.ts';
 import type { ServedServerOptions } from '../src/core/rust-engine/served/session.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const OWNER_TOKEN = 'gbrain_owner_test_token';
 const NARROW_TOKEN = 'gbrain_narrow_test_token';
@@ -366,16 +367,14 @@ describe('off is identical', () => {
     const { servedServerOptionsFor } = await import('../src/core/rust-engine/served/serve-listen.ts');
     const { servedTargetFor } = await import('../src/core/rust-engine/served/engine.ts');
     const { ownerWholeOperations } = await import('../src/core/rust-engine/owner-ipc/owner-ops.ts');
-    const was = process.env.GBRAIN_RUST_MULTIUSER;
-    delete process.env.GBRAIN_RUST_MULTIUSER;
-    try {
+    await withEnv({ GBRAIN_RUST_MULTIUSER: undefined }, async () => {
       expect(servedServerOptionsFor(fake, null)).toBeUndefined();
       expect(servedServerOptionsFor(fake, { multiuser: false })).toBeUndefined();
       // The store's resolved answer wins: a brain on through its own config row serves v3 with the environment unset.
       expect(servedServerOptionsFor(fake, { multiuser: true })).toBeDefined();
       expect(servedTargetFor({ engine: 'rust', rust_server: { url: 'gbrain+tls://h:1' } }, { GBRAIN_RUST_SERVER_URL: 'gbrain+tls://h:1' })).toBeNull();
       expect(Object.keys(ownerWholeOperations())).toContain('importClientFile');
-    } finally { if (was !== undefined) process.env.GBRAIN_RUST_MULTIUSER = was; }
+    });
   });
 
   test('the v3-only file import is refused on v2 exactly as an operation the owner does not run', async () => {

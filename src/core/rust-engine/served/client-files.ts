@@ -10,7 +10,8 @@
  */
 import { lstatSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, isAbsolute, join, normalize, sep } from 'node:path';
+import { dirname, join, normalize, sep } from 'node:path';
+import { relativeEscapesRoot } from '../../path-confine.ts';
 import type { BrainEngine } from '../../engine.ts';
 import { ownerIpcRefusal } from '../owner-ipc/routes.ts';
 
@@ -29,7 +30,7 @@ export function readClientFile(filePath: string): ClientFilePayload {
 /** A relative path with no `..`, no root and no empty segment; anything else refuses. */
 function safeRelative(relativePath: string): string {
   const norm = normalize(relativePath);
-  if (!relativePath || isAbsolute(relativePath) || norm.startsWith('..') || norm.split(sep).some(part => part === '..' || part === '')) {
+  if (!relativePath || norm === '.' || relativeEscapesRoot(norm) || norm.split(sep).some(part => part === '..' || part === '')) {
     throw ownerIpcRefusal(IMPORT_CLIENT_FILE, 'its relative path leaves the import root');
   }
   return norm;
