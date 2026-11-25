@@ -22,8 +22,8 @@
 
 use crate::config::ConfigValueRow;
 use crate::error::{
-    INVALID_ARGUMENT, INVALID_STATE, ORIGIN_CLAIMED, RESTORE_REFUSED, Result, STORE_CORRUPT,
-    StoreError,
+    INVALID_ARGUMENT, INVALID_STATE, ORIGIN_CLAIMED, READ_ONLY_TRANSACTION, RESTORE_REFUSED,
+    Result, STORE_CORRUPT, StoreError,
 };
 use crate::kv::{KvRead, KvWrite, prefix_end, scan_prefix};
 use crate::pages::{PageRecord, claimed_origin};
@@ -621,9 +621,13 @@ impl Store {
                 "a restore changes the brain's identity and cannot run inside a transaction",
             ));
         }
-        // A handle that cannot write refuses here, before `FORMAT` is repaired or anything else is touched:
-        // the probe begins a write and drops it, which commits nothing.
-        drop(self.kv.begin_write()?);
+        // A handle that cannot write refuses here, before `FORMAT` is repaired or anything else is touched.
+        if self.kv.is_read_only() {
+            return Err(StoreError::new(
+                READ_ONLY_TRANSACTION,
+                "this brain was opened read-only; nothing was written",
+            ));
+        }
         // One restore at a time: a second one rotating the id while the first has not yet written `FORMAT`
         // could leave `FORMAT` behind the record by more than one rotation, which an open refuses.
         let _one_at_a_time = RESTORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
