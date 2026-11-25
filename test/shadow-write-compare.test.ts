@@ -27,7 +27,7 @@ import { encodeArgs } from '../src/shadow/codec.ts';
 import { configDir } from '../src/core/config.ts';
 import { shadowRoot } from '../src/shadow/state.ts';
 import { scratchRootDefault } from '../src/shadow/write-compare-child.ts';
-import { movedOutsideFootprint, pageRefs, readWriteTally, writeTallyPath, WriteTally, type WriteEvent } from '../src/shadow/write-compare.ts';
+import { lostPath, movedOutsideFootprint, pageRefs, readWriteTally, recordLost, writeTallyPath, WriteTally, type WriteEvent } from '../src/shadow/write-compare.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { defineWriteCompareScenarios, fakeComparer, page, row5, settle, tallyOn, watchPreimage } from './helpers/shadow-write-compare-scenarios.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -76,6 +76,41 @@ describe('the locked write tally', () => {
   /** A saved passing tally: 1,000 comparable writes, none unexplained. */
   const saved = (dir: string, epoch: string): void => writeFileSync(writeTallyPath(dir), JSON.stringify({ version: 1, epoch_id: epoch, updated_at: '', comparable: 1000, unexplained_difference: 0, uncomparable: 0, capability_missing: 0, capability_missing_by_family: {}, uncomparable_by_reason: {}, in_flight: [] }));
   const status = (dir: string) => buildFollowStatus(dir, STATE, NOW).write_comparisons;
+
+  test('lost samples the serving process recorded are folded once into the owner child\'s epoch as uncomparable; until then status reads no evidence, and another epoch\'s lines never count', () => {
+    const dir = tmp();
+    const { tally, epoch, counts } = tallyOn(dir); saved(dir, epoch);
+    expect(recordLost(dir, epoch, 'send_shed')).toBe(true);
+    recordLost(dir, epoch, 'send_shed'); recordLost(dir, 'a-retired-epoch', 'send_shed');
+    appendFileSync(lostPath(dir, process.pid), 'not json\n'); // a line that cannot be read is counted too, never skipped
+    expect(status(dir)).toMatchObject({ state: 'capability_missing', unresolved_replays: 3 }); // two readable lines of this epoch and the unreadable one, none folded
+    expect(row5({ write_comparisons: status(dir) as ShadowStatus['write_comparisons'] }).state).toBe('missing');
+    tally.save();
+    expect(counts()).toMatchObject({ comparable: 1000, uncomparable: 3, uncomparable_by_reason: { send_shed: 2, lost_unreadable: 1 } });
+    expect(status(dir)).toMatchObject({ state: 'measured', comparable: 1000 });
+    expect(status(dir).unresolved_replays).toBeUndefined();
+    tally.save();
+    expect(counts().uncomparable).toBe(3); // each line is added once
+    appendFileSync(lostPath(dir, process.pid), `{"epoch_id":"${epoch}","reason":"readback_`); // a line still being appended waits for its newline
+    tally.save();
+    expect(counts().uncomparable).toBe(3);
+    appendFileSync(lostPath(dir, process.pid), 'abandoned"}\n');
+    tally.save();
+    expect(counts()).toMatchObject({ uncomparable: 4, uncomparable_by_reason: { readback_abandoned: 1 } });
+    expect(recordLost(join(dir, 'gone'), epoch, 'send_shed')).toBe(false); // not recorded: the sampler then carries the count on its next line
+  });
+
+  test('a lost sample of one epoch is never added to the next epoch (the owner child takes lines for its own fixed epoch only)', () => {
+    const dir = tmp();
+    const first = tallyOn(dir);
+    recordLost(dir, first.epoch, 'send_shed');
+    const second = ensureEpoch(dir, { seed_id: 's2', rust_addon_sha256: 'b', comparator_version: 1, adapter_version: 'x', capability_set_hash: null, readiness_policy_hash: 'p' }, NOW.getTime()).epoch_id;
+    expect(second).not.toBe(first.epoch);
+    const next = new WriteTally(dir, () => second, () => true, process.pid);
+    next.note('comparable');
+    expect(readWriteTally(dir, second)).toMatchObject({ comparable: 1, uncomparable: 0 });
+    expect(status(dir).unresolved_replays).toBeUndefined(); // the first epoch is retired: its lost line is not this epoch's
+  });
 
   test('two children: a mismatch the second saves is never lost when the first saves late, and neither clears the other\'s mark', () => {
     const dir = tmp();

@@ -27,8 +27,8 @@ export interface WriteSamplerOptions {
   /** The serving process's write count (follower.published): a move beyond the sampled write's own marks the sample `moved`. */
   generation?: () => number | undefined;
   active: () => boolean;
-  /** Counts a sample that will never reach the child (`send_shed`, `readback_abandoned`) as uncomparable, straight into the tally. Without it the count rides on the next accepted line. */
-  lost?: (reason: string) => void;
+  /** Records a sample that will never reach the child (`send_shed`, `readback_abandoned`) for the child to count uncomparable; false when it could not be recorded, and the count then rides on the next accepted line. */
+  lost?: (reason: string) => boolean;
   /** How long the preimage read may hold a write; default PREIMAGE_TIMEOUT_MS (a seam for tests). */
   preimageTimeoutMs?: number;
 }
@@ -108,7 +108,7 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
     try {
       let line = JSON.stringify({ ...event, ...(dropped ? { dropped } : {}) }) + '\n';
       if (Buffer.byteLength(line) > MAX_SAMPLE_BYTES) line = JSON.stringify({ t: 'write', op: event.op, outcome: 'uncomparable', reason: 'sample_too_large', ...(dropped ? { dropped } : {}) }) + '\n';
-      if (o.send(line)) dropped = 0; else if (o.lost) o.lost('send_shed'); else dropped++;
+      if (o.send(line)) dropped = 0; else if (!o.lost?.('send_shed')) dropped++;
     } catch { /* the shadow never fails a write */ }
   };
   const uncomparable = (op: string, reason: string): void => send({ t: 'write', op, outcome: 'uncomparable', reason });
@@ -120,7 +120,7 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
       let timer: ReturnType<typeof setTimeout> | undefined;
       await Promise.race([idle, new Promise((resolve) => { timer = setTimeout(resolve, ms); })]);
       clearTimeout(timer);
-      for (const r of reading) { r.abandoned = true; try { o.lost?.('readback_abandoned'); } catch { /* the shadow never fails a write */ } }
+      for (const r of reading) { r.abandoned = true; if (!(o.lost?.('readback_abandoned'))) dropped++; } // not sent later, so a count that cannot be recorded rides on the next line
       reading.clear();
     },
     wrap(name, fn, ctx) {

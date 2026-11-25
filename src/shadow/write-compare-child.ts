@@ -125,7 +125,7 @@ export function createWriteComparer(d: WriteComparerDeps): { handle(event: Write
       queued++; waiting.add(event);
       chain = chain.then(() => run(event)).finally(() => { queued--; });
     },
-    idle: () => chain,
+    idle: () => chain.then(() => { d.tally.save(); }), // the last save also folds the lost samples the serving process recorded
     /** At the child's exit deadline: replays still queued will never run, so each is counted `uncomparable`, then one last save. The running replay keeps its in-flight mark. */
     abandon() {
       if (waiting.size) d.tally.note('uncomparable', 'child_exit_deadline', waiting.size);
