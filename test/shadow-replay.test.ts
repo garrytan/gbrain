@@ -596,13 +596,23 @@ describe('fix round (review of aefcd32430)', () => {
     expect(report.diffs.some(d => d.member === 'sweep:getTimeline')).toBe(true);
   });
 
-  test('#5 volatile values pair one to one, equal ones included', () => {
-    const t = Date.parse('2026-11-22T00:00:00Z');
-    const n = new NormState(new Set(), { from: t, to: t + 1000 });
-    const a = new Date(t).toISOString();
-    const b = new Date(t + 1).toISOString();
+  test('#5 volatile ids pair one to one, equal ones included', () => {
+    const n = new NormState(new Set(), { from: 0, to: 0 });
+    const a = 'aaaaaaaa-0000-4000-8000-000000000001';
+    const b = 'bbbbbbbb-0000-4000-8000-000000000001';
     expect(n.same(a, a)).toBe(true);
     expect(n.same(a, b)).toBe(false);
+  });
+
+  test('two writes in one millisecond on one arm and in two on the other still match (stress seed 427335)', () => {
+    // The shape that seed hit: the first comparison sees the same time on both arms; the second sees that time on
+    // PGLite and the next millisecond on Rust, because Rust's second write landed one millisecond later.
+    const t = Date.parse('2026-11-22T00:00:00Z');
+    const n = new NormState(new Set(), { from: t, to: t + 1000 });
+    const same = new Date(t).toISOString();
+    const later = new Date(t + 1).toISOString();
+    expect(firstDiff({ updated_at: same }, { updated_at: same }, n)).toBeNull();
+    expect(firstDiff({ updated_at: same }, { updated_at: later }, n)).toBeNull();
   });
 
   test('#6 a user object with a codec-shaped key keeps every field, in a write argument and in a comparison', () => {

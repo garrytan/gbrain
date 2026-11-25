@@ -112,7 +112,9 @@ export class NormState {
 
   same(x: string, y: string): boolean {
     if (!this.volatile(x) || !this.volatile(y) || UUID_RE.test(x) !== UUID_RE.test(y)) return x === y;
-    // Volatile values pair one to one, equal ones included: after T=T, T=U is a difference.
+    // Ids pair one to one, equal ones included: after A=A, A=B is a difference. Equal times just match: two writes in
+    // one millisecond share a time on one arm and not on the other, so times pair one to one only when they differ.
+    if (x === y && !UUID_RE.test(x)) return true;
     const ix = this.a.get(x);
     const iy = this.b.get(y);
     if (ix === undefined && iy === undefined) { this.n++; this.a.set(x, this.n); this.b.set(y, this.n); return true; }
