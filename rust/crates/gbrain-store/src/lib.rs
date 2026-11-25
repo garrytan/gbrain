@@ -622,6 +622,10 @@ impl Store {
 
     /// The commit sequence of the latest commit.
     pub fn commit_version(&self) -> Result<u64> {
+        // Inside an optimistic transaction (multi-user mode): its snapshot's, checked at its commit.
+        if let Some(seen) = self.bound_commit_version() {
+            return seen;
+        }
         self.kv.version()
     }
 

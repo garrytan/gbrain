@@ -227,7 +227,9 @@ impl KeyLocks {
         };
         let mut held = self.held.lock().unwrap_or_else(|p| p.into_inner());
         for key in keys {
+            let mut waited = false;
             while held.get(key).is_some_and(|o| *o != owner) {
+                waited = true;
                 held = match deadline {
                     None => self.released.wait(held).unwrap_or_else(|p| p.into_inner()),
                     Some(at) => {
@@ -247,6 +249,15 @@ impl KeyLocks {
                             .0
                     }
                 };
+            }
+            // A key freed just as the deadline passed is not taken after it.
+            if waited && deadline.is_some_and(|at| Instant::now() >= at) {
+                drop(held);
+                drop(guard);
+                return Err(StoreError::timeout(
+                    "key_wait",
+                    "the write waited for a busy key past its deadline; nothing was committed",
+                ));
             }
             if held.insert(key.clone(), owner).is_none() {
                 self.count.fetch_add(1, Ordering::Release);
@@ -359,6 +370,9 @@ struct Request {
     reads: Vec<(Vec<u8>, Vec<u8>)>,
     /// Commit-time checks: the latest committed value of the key must be <= the bound.
     guards: Vec<(Vec<u8>, i64)>,
+    /// The transaction read the commit sequence (`KvWrite::observe_sequence`): any commit accepted
+    /// after its snapshot refuses it.
+    observes_sequence: bool,
     writes: BTreeMap<Vec<u8>, Op>,
     reply: SyncSender<Result<u64>>,
 }
@@ -560,6 +574,9 @@ impl Pipeline {
         if let Some(key) = self.index.first_conflict(req.snapshot, &req.reads) {
             return Err(conflict(&key));
         }
+        if req.observes_sequence && (req.snapshot < self.version || !resolved.is_empty()) {
+            return Err(conflict(&[]));
+        }
         for (key, bound) in &req.guards {
             let current = self.current(key, resolved, latest)?;
             if decode_i64(current.as_deref())? > *bound {
@@ -727,6 +744,7 @@ impl OccKv {
             reads: RefCell::new(Vec::new()),
             writes: BTreeMap::new(),
             guards: Vec::new(),
+            observes_sequence: std::cell::Cell::new(false),
             locks,
             exclusive,
         }))
@@ -794,6 +812,8 @@ struct OccTxn {
     reads: RefCell<Vec<(Vec<u8>, Vec<u8>)>>,
     writes: BTreeMap<Vec<u8>, Op>,
     guards: Vec<(Vec<u8>, i64)>,
+    /// Set by `observe_sequence` (see `Request::observes_sequence`).
+    observes_sequence: std::cell::Cell<bool>,
     locks: Option<LockGuard>,
     /// Set on an exclusive write: its commit goes here, and dropping it lets the pipeline go on.
     exclusive: Option<SyncSender<Request>>,
@@ -1056,7 +1076,15 @@ impl KvWrite for OccTxn {
             }
         };
         self.check_lock(key)?;
-        let seen = decode_i64(self.snap.get(key)?.as_deref())?;
+        let raw = self.snap.get(key)?;
+        let seen = match decode_i64(raw.as_deref()) {
+            Ok(v) => v,
+            Err(e) => {
+                // The failure depends on the stored value: a read like any other.
+                self.record(key.to_vec(), key_successor(key));
+                return Err(e);
+            }
+        };
         if seen + pending >= cap {
             // The refusal depends on the value: read it like any other read.
             self.record(key.to_vec(), key_successor(key));
@@ -1065,6 +1093,43 @@ impl KvWrite for OccTxn {
         Ok(CounterCheck::Admitted {
             bound: cap - 1 - pending,
         })
+    }
+
+    fn snapshot_sequence(&self) -> Option<u64> {
+        Some(self.version)
+    }
+
+    fn observe_sequence(&self) -> Option<u64> {
+        if self.exclusive.is_none() {
+            self.observes_sequence.set(true);
+        }
+        Some(self.version)
+    }
+
+    fn refresh_snapshot(&mut self) -> Result<bool> {
+        if self.exclusive.is_some()
+            || !self.writes.is_empty()
+            || !self.guards.is_empty()
+            || self.observes_sequence.get()
+        {
+            return Ok(false);
+        }
+        // Register the new floor before the snapshot, as `begin_inner` does, then drop the old one.
+        let floor = self.shared.published.load(Ordering::Acquire);
+        self.shared.register(floor);
+        let snapshot = match self.shared.base.versioned_snapshot() {
+            Ok(s) => s,
+            Err(e) => {
+                self.shared.unregister(floor);
+                return Err(e);
+            }
+        };
+        self.shared.unregister(self.registered);
+        self.registered = floor;
+        self.snap = snapshot.0;
+        self.version = snapshot.1;
+        self.reads.get_mut().clear();
+        Ok(true)
     }
 
     fn add_guard(&mut self, key: &[u8], bound: i64) -> Result<()> {
@@ -1085,6 +1150,7 @@ impl KvWrite for OccTxn {
             reads: std::mem::take(this.reads.get_mut()),
             guards: std::mem::take(&mut this.guards),
             writes: std::mem::take(&mut this.writes),
+            observes_sequence: this.observes_sequence.get(),
             reply,
         };
         if let Some(end) = this.exclusive.take() {

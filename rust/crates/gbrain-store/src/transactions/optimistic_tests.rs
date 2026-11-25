@@ -3,9 +3,7 @@
 
 use super::*;
 use crate::error::{TIMEOUT, WRITE_CONFLICT};
-use crate::occ_kv::OccKv;
-use crate::redb_kv::RedbKv;
-use crate::test_support::{FlakyFile, occ_store};
+use crate::test_support::{FlakyFile, mu_store, mu_store_on_file};
 use std::time::Duration;
 
 fn optimistic() -> TxnOptions {
@@ -42,17 +40,6 @@ fn held(slug: &str) -> HeldKey {
     ("default".into(), slug.into())
 }
 
-/// A brain behind the concurrent-writer engine on `file`: created on first open, reopened after.
-fn occ_store_on_file(file: &FlakyFile) -> Store {
-    let kv = RedbKv::open_backend(Box::new(file.clone())).unwrap();
-    Store::open_kv(
-        Arc::new(OccKv::new(kv).unwrap()),
-        Arc::new(crate::env::SystemEnv),
-        crate::OpenOptions::default(),
-    )
-    .unwrap()
-}
-
 #[test]
 fn an_optimistic_transaction_on_a_single_writer_store_runs_serialized() {
     let s = crate::test_support::store();
@@ -65,7 +52,7 @@ fn an_optimistic_transaction_on_a_single_writer_store_runs_serialized() {
 /// serialized transaction would make this plain write wait forever).
 #[test]
 fn c13_other_writers_commit_while_an_optimistic_transaction_is_open() {
-    let s = occ_store();
+    let s = mu_store();
     let t = s.begin_bound(optimistic()).unwrap();
     assert!(t.transaction_optimistic());
     t.write(|w| w.put(b"ya", b"from the transaction")).unwrap();
@@ -90,7 +77,7 @@ fn c13_other_writers_commit_while_an_optimistic_transaction_is_open() {
 /// C12: each transaction reads its own uncommitted writes and never the other's.
 #[test]
 fn c12_two_transactions_read_only_their_own_writes() {
-    let s = occ_store();
+    let s = mu_store();
     let a = s.begin_bound(optimistic()).unwrap();
     let b = s.begin_bound(optimistic()).unwrap();
     a.write(|w| w.put(b"ya", b"a")).unwrap();
@@ -112,7 +99,7 @@ fn c12_two_transactions_read_only_their_own_writes() {
 
 #[test]
 fn a_stale_read_refuses_the_commit_and_keeps_none_of_its_writes() {
-    let s = occ_store();
+    let s = mu_store();
     let t = s.begin_bound(optimistic()).unwrap();
     assert_eq!(get(&t, b"yk"), None);
     t.write(|w| w.put(b"yj", b"mine")).unwrap();
@@ -129,7 +116,7 @@ fn a_stale_read_refuses_the_commit_and_keeps_none_of_its_writes() {
 /// the second commit, so the "at most one of x and y" rule holds.
 #[test]
 fn write_skew_is_refused() {
-    let s = occ_store();
+    let s = mu_store();
     let a = s.begin_bound(optimistic()).unwrap();
     let b = s.begin_bound(optimistic()).unwrap();
     for t in [&a, &b] {
@@ -145,7 +132,7 @@ fn write_skew_is_refused() {
 
 #[test]
 fn a_phantom_in_a_scanned_range_is_refused() {
-    let s = occ_store();
+    let s = mu_store();
     let t = s.begin_bound(optimistic()).unwrap();
     let mut seen = 0;
     t.read()
@@ -164,7 +151,7 @@ fn a_phantom_in_a_scanned_range_is_refused() {
 
 #[test]
 fn a_rollback_never_overwrites_another_writers_commit() {
-    let s = occ_store();
+    let s = mu_store();
     s.write(|w| w.put(b"yk", b"first")).unwrap();
     let t = s.begin_bound(optimistic()).unwrap();
     t.write(|w| w.put(b"yk", b"rolled back")).unwrap();
@@ -183,7 +170,7 @@ fn ids_of_a_transaction_that_did_not_commit_are_never_handed_out_again_after_a_r
     for end in ["refused", "rollback", "drop"] {
         let file = FlakyFile::default();
         let handed = {
-            let s = occ_store_on_file(&file);
+            let s = mu_store_on_file(&file);
             let t = s.begin_bound(optimistic()).unwrap();
             let handed = t
                 .write(|w| crate::pages::next_id(w, "next_probe_id"))
@@ -199,7 +186,7 @@ fn ids_of_a_transaction_that_did_not_commit_are_never_handed_out_again_after_a_r
             }
             handed
         };
-        let s = occ_store_on_file(&file);
+        let s = mu_store_on_file(&file);
         let next = s
             .write(|w| crate::pages::next_id(w, "next_probe_id"))
             .unwrap();
@@ -214,7 +201,7 @@ fn ids_of_a_transaction_that_did_not_commit_are_never_handed_out_again_after_a_r
 /// one shared counter all commit, and the total is exact.
 #[test]
 fn concurrent_counter_bumps_in_transactions_never_conflict_and_sum_exactly() {
-    let s = occ_store();
+    let s = mu_store();
     let txns: Vec<Store> = (0..8)
         .map(|_| s.begin_bound(optimistic()).unwrap())
         .collect();
@@ -232,7 +219,7 @@ fn concurrent_counter_bumps_in_transactions_never_conflict_and_sum_exactly() {
 
 #[test]
 fn a_dropped_savepoint_or_statement_leaves_no_counter_delta_and_no_check() {
-    let s = occ_store();
+    let s = mu_store();
     let t = s.begin_bound(optimistic()).unwrap();
     t.write(|w| w.add_i64(b"ycount", 1)).unwrap();
     let depth = t.savepoint().unwrap();
@@ -254,7 +241,7 @@ fn a_dropped_savepoint_or_statement_leaves_no_counter_delta_and_no_check() {
 
 #[test]
 fn a_kept_admission_check_refuses_the_commit_when_the_cap_was_reached_meanwhile() {
-    let s = occ_store();
+    let s = mu_store();
     let a = s.begin_bound(optimistic()).unwrap();
     let b = s.begin_bound(optimistic()).unwrap();
     for t in [&a, &b] {
@@ -284,7 +271,7 @@ fn a_kept_admission_check_refuses_the_commit_when_the_cap_was_reached_meanwhile(
 
 #[test]
 fn a_swallowed_conflict_dooms_the_transaction() {
-    let s = occ_store();
+    let s = mu_store();
     let t = s.begin_bound(optimistic()).unwrap();
     t.write(|w| w.put(b"ya", b"kept?")).unwrap();
     let _ = t.write(|_| -> Result<()> { Err(StoreError::new(WRITE_CONFLICT, "lost")) });
@@ -300,7 +287,7 @@ fn a_swallowed_conflict_dooms_the_transaction() {
 /// J: the deadline ends a statement and the commit with `timeout`, nothing committed.
 #[test]
 fn the_deadline_ends_statements_and_the_commit_with_timeout() {
-    let s = occ_store();
+    let s = mu_store();
     let past = TxnOptions {
         deadline: Some(Instant::now()),
         ..optimistic()
@@ -330,7 +317,7 @@ fn the_deadline_ends_statements_and_the_commit_with_timeout() {
 /// C15: single flight holds only its keys, sorted, never two holders, released at commit and abort.
 #[test]
 fn c15_single_flight_holds_its_keys_until_commit_or_abort() {
-    let s = occ_store();
+    let s = mu_store();
     let flights = s.single_flight_table();
     let a = s.begin_bound(optimistic()).unwrap();
     let keys = a.hold_page_keys(&[page("b"), page("a")], false).unwrap();
@@ -361,7 +348,7 @@ fn c15_single_flight_holds_its_keys_until_commit_or_abort() {
 
 #[test]
 fn a_savepoint_rollback_gives_back_only_the_keys_it_took() {
-    let s = occ_store();
+    let s = mu_store();
     let flights = s.single_flight_table();
     let t = s.begin_bound(optimistic()).unwrap();
     t.hold_page_keys(&[page("a")], false).unwrap();
@@ -380,7 +367,7 @@ fn a_savepoint_rollback_gives_back_only_the_keys_it_took() {
 /// F5: a wait that times out part way, or a refusal part way, gives back the keys the call already took.
 #[test]
 fn a_timed_out_or_refused_acquisition_frees_the_keys_it_took_first() {
-    let s = occ_store();
+    let s = mu_store();
     let flights = s.single_flight_table();
     // Older than the holder: it waits for `b` and times out.
     let older = s.begin_bound(with_deadline(30)).unwrap();
@@ -426,7 +413,7 @@ fn a_timed_out_or_refused_acquisition_frees_the_keys_it_took_first() {
 /// younger's key and gets it once the younger ends. A rerun that keeps its age gets through.
 #[test]
 fn c20_two_pages_locked_in_both_orders_never_deadlock() {
-    let s = Arc::new(occ_store());
+    let s = Arc::new(mu_store());
     let a = s.begin_bound(with_deadline(5_000)).unwrap();
     let b = s.begin_bound(optimistic()).unwrap();
     let b_age = b.transaction_age().unwrap();
@@ -462,7 +449,7 @@ fn c20_two_pages_locked_in_both_orders_never_deadlock() {
 /// commit, so it does not conflict for certain.
 #[test]
 fn a_pristine_waiter_reads_the_holders_commit_and_commits() {
-    let s = Arc::new(occ_store());
+    let s = Arc::new(mu_store());
     let holder = s.begin_bound(optimistic()).unwrap();
     holder.hold_page_keys(&[page("p")], false).unwrap();
     holder.write(|w| w.put(b"yrow", b"1")).unwrap();
@@ -486,7 +473,7 @@ fn a_pristine_waiter_reads_the_holders_commit_and_commits() {
 /// commit, and takes no single-flight key.
 #[test]
 fn a_serialized_transaction_is_unchanged() {
-    let s = Arc::new(occ_store());
+    let s = Arc::new(mu_store());
     let t = s.begin_transaction(false).unwrap();
     assert!(!t.transaction_optimistic());
     t.hold_page_keys(&[page("a")], false).unwrap();
@@ -532,7 +519,7 @@ fn a_key_wait_ends_at_the_call_deadline_and_frees_its_prefix() {
 /// (reason `key_wait`) at the deadline the binding installed for the call, writing nothing.
 #[test]
 fn the_call_deadline_reaches_a_retried_store_write() {
-    let s = occ_store();
+    let s = mu_store();
     let mut busy = std::collections::BTreeSet::new();
     busy.insert(b"yk".to_vec());
     // Another retried writer queues on `yk` and holds it.
@@ -556,7 +543,7 @@ fn the_call_deadline_reaches_a_retried_store_write() {
 
 #[test]
 fn the_facade_matches_the_frozen_interface() {
-    let s = occ_store();
+    let s = mu_store();
     let t = s.begin_with(optimistic()).unwrap();
     s.single_flight(
         &t,
@@ -591,7 +578,7 @@ fn the_facade_matches_the_frozen_interface() {
 /// wait ends at the deadline.
 #[test]
 fn a_rerun_queues_for_the_keys_it_lost_on() {
-    let s = Arc::new(occ_store());
+    let s = Arc::new(mu_store());
     let hot = || TxnOptions {
         retry_keys: vec![b"yhot".to_vec()],
         ..with_deadline(5_000)
@@ -635,7 +622,7 @@ fn a_rerun_queues_for_the_keys_it_lost_on() {
 /// the record is a plain row standing in for the lease row; L5's own test covers `assert_lease`.
 #[test]
 fn a_lease_record_that_moved_after_the_check_refuses_the_optimistic_commit() {
-    let s = Arc::new(occ_store());
+    let s = Arc::new(mu_store());
     s.write(|w| w.put(b"ylease", b"epoch=1")).unwrap();
     let t = s.begin_bound(optimistic()).unwrap();
     assert_eq!(get(&t, b"ylease").as_deref(), Some(&b"epoch=1"[..]));

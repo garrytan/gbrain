@@ -424,6 +424,11 @@ export class RustEngine implements BrainEngine {
    */
   async _admit(member: string): Promise<void> {
     if (this._txScope) return;
+    // Multi-user mode: a callback that resumes after its transaction ended (a deadline) is refused too, so it
+    // cannot write through the outer engine after its caller was told nothing committed.
+    if (this.multiuser && transactionContext.getStore()?.some((scope) => scope.root === this && scope.ended)) {
+      throw mapStoreError({ code: 'store_closed' }, { member });
+    }
     if (transactionContext.getStore()?.some((scope) => scope.root === this && scope.live)) {
       throw opError('internal_error', `${member} was called on the engine from inside its own transaction(fn), and would wait forever for the writer that transaction holds.`,
         'Make every call inside transaction(fn) on the engine passed to fn, not on the outer engine.', { reason: 'transaction_reentry', detail: `member=${member}` });

@@ -392,9 +392,8 @@ mod tests {
         //   the format upgrade (no page records; the format-5 carry-over in `seed/format_5.rs` writes
         //   purge tombstones, generations and oauth clients on it);
         // - `transactions.rs`: a transaction's base handle, exclusive (serialized) or optimistic (plain,
-        //   or queued for the keys an earlier run lost on), and
-        //   the fresh optimistic base a pristine single-flight waiter takes (twice: `lockPageKeys`
-        //   and `single_flight`); its statements run through the bound arm of `Store::write`. A
+        //   or queued for the keys an earlier run lost on); its statements run through the bound arm
+        //   of `Store::write`. A
         //   serialized rollback writes its counters forward on that same handle; an optimistic one
         //   that did not commit raises them in one write of `raise_counter` operations only
         //   (`raise_forward`), which writes no page record;
@@ -422,7 +421,7 @@ mod tests {
             ("redb_kv.rs", 7),
             ("seed/v0_60_766_tests.rs", 1),
             ("test_support.rs", 4),
-            ("transactions.rs", 6),
+            ("transactions.rs", 4),
             ("transactions/optimistic_tests.rs", 4),
         ];
         let opens = |c: &str| {

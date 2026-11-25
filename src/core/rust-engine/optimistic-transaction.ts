@@ -95,6 +95,12 @@ function contentionExhausted(attempts: number, last: unknown): Error {
     { reason: 'transaction_contention', detail: `member=transaction attempts=${attempts} written=nothing${key ? ` last_conflict_key=${key}` : ''}`, retryable: true }) as Error;
 }
 
+/** True for a store failure (the disk or the records), mapped or not: never run again. */
+function isStoreFailure(error: unknown): boolean {
+  const code = storeErrorCode(error);
+  return code === 'store_io' || code === 'store_corrupt' || code === 'rust_store_unreadable';
+}
+
 /** True when `error` (thrown out of the callback or the commit) is a lost conflict. */
 function isConflict(error: unknown): boolean {
   return storeErrorCode(error) === 'write_conflict';
@@ -182,10 +188,12 @@ async function runAttempt<T>(
       value = await raceDeadline(work, deadlineAt, () => { scope.live = false; scope.ended = true; });
     } catch (error) {
       scope.live = false;
-      const conflicted = isConflict(error)
+      // A store failure is never a conflict to run again, even when the transaction was doomed before it.
+      const conflicted = isConflict(error) || (!scope.ended && !isStoreFailure(error)
         // silent-read-ok: a failed probe means "not known to be a conflict"; the callback's own error is rethrown
-        || (!scope.ended && await (brain.transactionConflicted() as Promise<boolean>).catch(() => false));
-      await settle(brain.rollbackTransaction());
+        && await (brain.transactionConflicted() as Promise<boolean>).catch(() => false));
+      // A rollback that fails (its ids could not be written forward) ends the call with that failure.
+      try { await brain.rollbackTransaction(); } catch (rollback) { if (conflicted) throw mapStoreError(rollback, { member: 'transaction' }); }
       if (conflicted) return { kind: 'conflict', error };
       throw error;
     }
@@ -219,12 +227,12 @@ export async function endOptimisticTransactions(state: OptimisticTransactions, w
   const outcome = await Promise.race([Promise.all([...state.open.values()]).then(() => 'done' as const), waited]);
   clearTimeout(timer);
   if (outcome === 'done') return;
-  for (const scope of [...state.open.keys()]) {
-    scope.ended = true;
-    scope.live = false;
-    await settle(scope.brain.rollbackTransaction());
-    await settle(scope.brain.close());
-  }
+  // Every attempt is ended and every rollback sent before any is awaited: an attempt waiting for a key another
+  // holds runs its rollback only after the holder's rollback gives the key back.
+  const scopes = [...state.open.keys()];
+  for (const scope of scopes) { scope.ended = true; scope.live = false; }
+  await Promise.all(scopes.map((scope) => settle(scope.brain.rollbackTransaction())));
+  await Promise.all(scopes.map((scope) => settle(scope.brain.close())));
 }
 
 /** A store handle whose calls run under the caller's deadline (multi-user mode; `brain` itself when there is none). */

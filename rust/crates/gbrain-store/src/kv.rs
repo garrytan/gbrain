@@ -95,6 +95,25 @@ pub trait KvWrite: KvRead + Send {
         })
     }
 
+    /// The commit sequence this write reads at, when it reads from a snapshot (the concurrent store);
+    /// `None` for a write that holds the writer.
+    fn snapshot_sequence(&self) -> Option<u64> {
+        None
+    }
+
+    /// [`KvWrite::snapshot_sequence`], and a dependency on it: the commit is refused when any other
+    /// commit was accepted after this write's snapshot (a value derived from the sequence would be
+    /// stale). `None` for a write that holds the writer (nothing commits meanwhile).
+    fn observe_sequence(&self) -> Option<u64> {
+        None
+    }
+
+    /// Moves a write that has read nothing and written nothing to the latest committed state, keeping
+    /// any keys it queued for. False when the write cannot (it read or wrote, or holds the writer).
+    fn refresh_snapshot(&mut self) -> Result<bool> {
+        Ok(false)
+    }
+
     /// Keeps a commit-time check from [`KvWrite::counter_check`]: the commit fails with `write_conflict`
     /// when the latest committed value of `key` is above `bound`. A store that holds its writer ignores it.
     fn add_guard(&mut self, key: &[u8], bound: i64) -> Result<()> {

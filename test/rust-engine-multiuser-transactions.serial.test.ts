@@ -267,4 +267,48 @@ describe('Rust engine in multi-user mode', () => {
     for (let i = 0; i < 50 && live() > before; i++) await new Promise((resolve) => setTimeout(resolve, 20));
     expect(live()).toBeLessThanOrEqual(before);
   });
+
+  // Second-model review 2.3: a callback that resumes after its deadline cannot write through the outer engine.
+  withAddon('a callback resumed after its deadline cannot write through the outer engine', async () => {
+    const engine = await open(true);
+    process.env.GBRAIN_RUST_TXN_DEADLINE_MS = '100';
+    let late: Promise<string> | undefined;
+    const err = await errorOf(() => engine.transaction(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      late = engine.setConfig('l1.late', 'written').then(() => 'written', (e: { code?: string }) => e.code ?? 'refused');
+    }));
+    expect(err.code).toBe('timeout');
+    delete process.env.GBRAIN_RUST_TXN_DEADLINE_MS;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(await late).not.toBe('written');
+    expect(await engine.getConfig('l1.late')).toBeNull();
+  });
+
+  // Second-model review 3.1: disconnect ends a transaction that waits for a key another open one holds.
+  withAddon('disconnect ends an older transaction waiting on a key a younger one holds', async () => {
+    const engine = await open(true);
+    const key = { sourceId: 'default', slug: 'notes/p' };
+    const olderOpen = gate();
+    const youngerHolds = gate();
+    const never = new Promise<void>(() => undefined);
+    const older = engine.transaction(async (tx) => {
+      olderOpen.open();
+      await youngerHolds.wait;
+      await tx.lockPageKeys([key]);
+    }).catch(() => 'ended');
+    await olderOpen.wait;
+    const younger = engine.transaction(async (tx) => {
+      await tx.lockPageKeys([key]);
+      youngerHolds.open();
+      await never;
+    }).catch(() => 'ended');
+    await youngerHolds.wait;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const closed = await Promise.race([
+      engine.disconnect().then(() => 'closed'),
+      new Promise((resolve) => setTimeout(() => resolve('hung'), 15_000)),
+    ]);
+    expect(closed).toBe('closed');
+    void older; void younger;
+  }, 30_000);
 });

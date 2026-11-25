@@ -258,6 +258,7 @@ impl SingleFlight {
         };
         let mut held = lock(&self.held);
         for key in keys {
+            let mut waited = false;
             loop {
                 let holder_age = match held.get(key) {
                     None => break,
@@ -269,6 +270,7 @@ impl SingleFlight {
                     return Err(single_flight_conflict(key));
                 }
                 grant.waited = true;
+                waited = true;
                 held = match deadline {
                     None => self.released.wait(held).unwrap_or_else(|p| p.into_inner()),
                     Some(at) => {
@@ -289,6 +291,17 @@ impl SingleFlight {
                             .0
                     }
                 };
+            }
+            // A key freed just as the deadline passed is not taken after it.
+            if waited && deadline_passed(deadline) {
+                drop(held);
+                return Err(StoreError::timeout(
+                    "key_wait",
+                    format!(
+                        "the transaction waited for the page key {}/{} past its deadline; nothing was committed",
+                        key.0, key.1
+                    ),
+                ));
             }
             if !held.contains_key(key) {
                 held.insert(key.clone(), (owner, age));
@@ -496,6 +509,21 @@ thread_local! {
     /// Test seam: runs on the rolling-back thread right after the rollback releases the writer.
     static ROLLBACK_RELEASED_WRITER: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         std::cell::RefCell::new(None);
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test seam: runs in an optimistic commit right after its savepoints merged, before the deadline
+    /// is checked again.
+    static AFTER_SAVEPOINT_MERGE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
+}
+
+fn after_savepoint_merge() {
+    #[cfg(test)]
+    if let Some(hook) = AFTER_SAVEPOINT_MERGE.with(|h| h.borrow_mut().take()) {
+        hook();
+    }
 }
 
 /// Where a rollback has released the store's writer: the test seam runs here.
@@ -778,8 +806,17 @@ impl State {
             let value = decode_le_i64(self.get(key)?.as_deref())?;
             return Ok((value >= cap).then_some(value));
         }
+        let Some(base_cap) = cap.checked_sub(pending) else {
+            // The cap minus the pending delta is out of range: decide on the value itself (a read).
+            let value = decode_le_i64(self.get(key)?.as_deref())?;
+            return Ok(match value.checked_add(pending) {
+                Some(total) if total < cap => None,
+                Some(total) => Some(total),
+                None => Some(if pending > 0 { i64::MAX } else { i64::MIN }),
+            });
+        };
         let base = self.base.as_mut().ok_or_else(closed)?;
-        match base.counter_check(key, cap.wrapping_sub(pending))? {
+        match base.counter_check(key, base_cap)? {
             CounterCheck::Refused(value) => Ok(Some(value.wrapping_add(pending))),
             CounterCheck::Admitted { bound } => {
                 let layer = match self.statement.as_mut() {
@@ -959,8 +996,9 @@ struct TxReader(Arc<OpenTransaction>);
 
 impl KvRead for TxReader {
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        let result = lock(&self.0.state).get(key);
-        self.0.note(result)
+        // Noted while the state is locked, so a commit cannot pass its check in between.
+        let state = lock(&self.0.state);
+        self.0.note(state.get(key))
     }
     fn scan(
         &self,
@@ -979,8 +1017,10 @@ impl KvRead for TxReader {
 struct StatementWriter<'a>(&'a OpenTransaction);
 
 impl KvRead for StatementWriter<'_> {
+    /// A conflict met here dooms the transaction at once, even when the statement catches it.
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        lock(&self.0.state).get(key)
+        let state = lock(&self.0.state);
+        self.0.note(state.get(key))
     }
     fn scan(
         &self,
@@ -989,7 +1029,8 @@ impl KvRead for StatementWriter<'_> {
         reverse: bool,
         f: &mut dyn FnMut(&[u8], &[u8]) -> bool,
     ) -> Result<()> {
-        scan_unlocked(&self.0.state, start, end, reverse, f)
+        let result = scan_unlocked(&self.0.state, start, end, reverse, f);
+        self.0.note(result)
     }
 }
 
@@ -1013,17 +1054,19 @@ impl KvWrite for StatementWriter<'_> {
     }
     fn add_i64(&mut self, key: &[u8], delta: i64) -> Result<()> {
         if !self.0.optimistic {
-            let value = decode_le_i64(self.get(key)?.as_deref())?.wrapping_add(delta);
+            // The trait's own default, error message included.
+            let value = crate::kv::read_i64(&*self, key)?.wrapping_add(delta);
             return self.put(key, &value.to_le_bytes());
         }
         lock(&self.0.state).write_top_op(key, LayerOp::Add(delta))
     }
     fn counter_below(&mut self, key: &[u8], cap: i64) -> Result<Option<i64>> {
         if !self.0.optimistic {
-            let value = decode_le_i64(self.get(key)?.as_deref())?;
+            let value = crate::kv::read_i64(&*self, key)?;
             return Ok((value >= cap).then_some(value));
         }
-        lock(&self.0.state).counter_below(key, cap)
+        let result = lock(&self.0.state).counter_below(key, cap);
+        self.0.note(result)
     }
     fn commit(self: Box<Self>) -> Result<u64> {
         Err(StoreError::new(
@@ -1070,7 +1113,9 @@ impl OpenTransaction {
     /// Why an optimistic transaction can no longer commit, if it cannot.
     fn refusal(&self) -> Option<StoreError> {
         if !self.optimistic {
-            return None;
+            // A deadline is set only in multi-user mode; a brain whose records opened on the
+            // single-writer store still keeps it.
+            return deadline_passed(self.deadline).then(transaction_deadline);
         }
         if let Some(error) = lock(&self.doomed).clone() {
             return Some(error);
@@ -1102,7 +1147,11 @@ impl OpenTransaction {
         };
         match result {
             Ok(value) => {
-                state.merge_down(layer)?;
+                if let Err(error) = state.merge_down(layer) {
+                    // Part of the layer may be in the layer below: nothing of this transaction commits.
+                    self.doom(&error);
+                    return Err(error);
+                }
                 Ok(value)
             }
             Err(error) => {
@@ -1111,6 +1160,16 @@ impl OpenTransaction {
                     state.restore_counters()?;
                 }
                 Err(error)
+            }
+        }
+    }
+
+    /// Marks the transaction as unable to commit (optimistic mode): its commit returns `error`.
+    fn doom(&self, error: &StoreError) {
+        if self.optimistic {
+            let mut doomed = lock(&self.doomed);
+            if doomed.is_none() {
+                *doomed = Some(error.clone());
             }
         }
     }
@@ -1157,7 +1216,9 @@ impl Store {
                 "a transaction is already open on this store; nest with a savepoint",
             ));
         }
-        let optimistic = options.mode == TxnMode::Optimistic && self.kv.occ_stats().is_some();
+        let optimistic = options.mode == TxnMode::Optimistic
+            && self.multiuser()
+            && self.kv.occ_stats().is_some();
         if deadline_passed(options.deadline) {
             return Err(transaction_deadline());
         }
@@ -1267,7 +1328,11 @@ impl Store {
         let mut state = lock(&tx.state);
         Self::top_savepoint(&state, depth)?;
         let layer = state.savepoints.pop().unwrap_or_default();
-        state.merge_down(layer)
+        let merged = state.merge_down(layer);
+        if let Err(error) = &merged {
+            tx.doom(error);
+        }
+        merged
     }
 
     /// Rolls back the innermost savepoint: its writes, checks and page keys are dropped (an
@@ -1307,6 +1372,13 @@ impl Store {
         let mut state = lock(&tx.state);
         state.base()?;
         if !tx.optimistic {
+            // Only a transaction begun with a deadline (multi-user mode) can refuse here.
+            if let Some(error) = tx.refusal() {
+                state.roll_back(&tx.kv)?;
+                drop(state);
+                self.vectors.clear();
+                return Err(error);
+            }
             while let Some(layer) = state.savepoints.pop() {
                 state.merge_down(layer)?;
             }
@@ -1321,16 +1393,28 @@ impl Store {
             }
             return base.commit();
         }
-        if let Some(error) = tx.refusal() {
+        // Every end that commits nothing below goes through this: data dropped, ids written
+        // forward, single-flight keys given back last. A failure to write the ids forward is the
+        // answer (a store failure, never a conflict to run again).
+        let abort = |state: &mut State, error: StoreError| -> Result<u64> {
             let cleanup = state.roll_back(&tx.kv);
-            drop(state);
             self.vectors.clear();
             tx.release_flights();
             cleanup?;
-            return Err(error);
+            Err(error)
+        };
+        if let Some(error) = tx.refusal() {
+            return abort(&mut state, error);
         }
         while let Some(layer) = state.savepoints.pop() {
-            state.merge_down(layer)?;
+            if let Err(error) = state.merge_down(layer) {
+                return abort(&mut state, error);
+            }
+        }
+        after_savepoint_merge();
+        // Merging can take time: the deadline is checked again right before the commit is handed on.
+        if deadline_passed(tx.deadline) {
+            return abort(&mut state, transaction_deadline());
         }
         let base = state.base.take().ok_or_else(closed)?;
         state.root_locks.clear();
@@ -1338,24 +1422,39 @@ impl Store {
         let counters = state.take_counters();
         drop(state);
         let outcome = if tx.opened_read_only {
+            // The sequence it read at, not a later commit's.
+            let seen = base.snapshot_sequence();
             drop(base);
-            tx.kv.version()
+            seen.map_or_else(|| tx.kv.version(), Ok)
         } else {
             base.commit()
         };
-        // A refused commit wrote nothing; its ids are written forward. Any other failure may or may
-        // not be on disk and stops the pipeline, so nothing more is written.
+        // A definite refusal (a conflict, a record the pipeline could not apply) wrote nothing: its
+        // ids are written forward. A store failure may or may not be on disk and stops the
+        // pipeline, so nothing more is written then.
         let cleanup = match &outcome {
-            Err(error) if error.code == WRITE_CONFLICT => raise_forward(&tx.kv, counters),
+            Err(error) if error.code != crate::error::STORE_IO => raise_forward(&tx.kv, counters),
             _ => Ok(()),
         };
         if outcome.is_err() {
             self.vectors.clear();
         }
         tx.release_flights();
-        let value = outcome?;
         cleanup?;
-        Ok(value)
+        outcome
+    }
+
+    /// The commit sequence a store bound to an optimistic transaction reads: its snapshot's, fixed for
+    /// the transaction, and a dependency its commit checks (`KvWrite::observe_sequence`). `None` for
+    /// any other store, which reads the latest commit.
+    pub(crate) fn bound_commit_version(&self) -> Option<Result<u64>> {
+        let tx = self.bound.as_ref().filter(|tx| tx.optimistic)?;
+        let state = lock(&tx.state);
+        Some(state.base().and_then(|base| {
+            state.touched.set(true);
+            base.observe_sequence()
+                .ok_or_else(|| StoreError::new(INVALID_STATE, "the transaction reads no snapshot"))
+        }))
     }
 
     /// Rolls the transaction back. Counters it advanced are written forward before the writer is
@@ -1408,8 +1507,8 @@ impl Store {
             && state.pristine()
         {
             // Nothing was read yet: read on from after the holder's commit, as a Postgres row lock
-            // does, instead of conflicting for certain.
-            state.base = Some(tx.kv.begin_write()?);
+            // does, instead of conflicting for certain. The base keeps the retry keys it queued for.
+            state.base.as_mut().ok_or_else(closed)?.refresh_snapshot()?;
         }
         // Each source is read once; every key is checked against it, so a later hinted key of a
         // source is held to the same incarnation check as the first.
@@ -1491,7 +1590,7 @@ impl Store {
             && grant.waited
             && state.pristine()
         {
-            state.base = Some(tx.kv.begin_write()?);
+            state.base.as_mut().ok_or_else(closed)?.refresh_snapshot()?;
         }
         match state.savepoints.last_mut() {
             Some(layer) => layer.locks.extend(wanted),
@@ -1538,6 +1637,9 @@ impl KvRead for StateRead<'_> {
 
 #[cfg(test)]
 mod optimistic_tests;
+
+#[cfg(test)]
+mod review_tests;
 
 #[cfg(test)]
 mod tests {
