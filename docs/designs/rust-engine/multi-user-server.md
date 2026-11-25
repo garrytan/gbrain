@@ -403,6 +403,10 @@ impl Store {
   the lease work is on the multi-user branch; no stub lease is used before then. File locks do not fence writers on
   two hosts, so managed mode on Rust is single-host until that swap.
 
+- **I-5, cycle lock fence (2026-11-25).** On a multi-user store the cycle lock carries the host fence (the I-5 epoch
+  and token), so a host that lost its lease cannot run a cycle: its cycle writes are refused at commit like any other
+  stale holder's. With the multi-user switch off, the cycle lock is unchanged.
+
 ### I-6. Scope (per-user access)
 
 ```rust
