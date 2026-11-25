@@ -82,6 +82,12 @@ export const renameBeliefLifetime: Member<'renameBeliefLifetime'> = (brain, life
 
 export const readMovedBeliefLifetimes: Member<'readMovedBeliefLifetimes'> = (brain, pageIds) =>
   storeCall({ member: 'readMovedBeliefLifetimes' }, () => brain.readMovedBeliefLifetimes([...pageIds]));
+/** Orphaned lifetimes, from the store's lifetime and event records (trust/belief_lifetimes.rs list_orphan_belief_lifetimes). */
+export const listOrphanLifetimes: Member<'listOrphanLifetimes'> = async (brain, sourceId, limit, deep) => {
+  const found = await storeCall({ member: 'listOrphanLifetimes', sourceId }, () => brain.listOrphanBeliefLifetimes(sourceId, Math.max(1, Math.floor(limit)), deep)) as
+    { total: number; rows: Array<{ slug: string; page_lifetime: string; reason: 'no_page' | 'no_lifetime' }> };
+  return { count: found.total, samples: found.rows };
+};
 
 /**
  * The streams' raw state. A page's `visible` is judged by the no-caller page policy (`privatePagesFilterFragment`), as

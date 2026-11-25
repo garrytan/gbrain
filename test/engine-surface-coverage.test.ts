@@ -656,7 +656,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // Belief ledger writes (engine-sql/belief-ledger.ts)
   'readLegacyClaimFingerprints', 'readLegacyBeliefTombstones', 'readLatestBeliefCoverage', 'hasBeliefBaseline', 'listBeliefBaselinePending', 'countBeliefBaselineSlugs',
   'readBeliefTombstones', 'readBeliefRedactions', 'insertBeliefRedaction', 'releaseBeliefRedactions', 'insertBeliefEvents',
-  'markBeliefCommits', 'readOpenBeliefLifetimes', 'endBeliefLifetime', 'mintBeliefLifetime', 'renameBeliefLifetime', 'readMovedBeliefLifetimes',
+  'markBeliefCommits', 'readOpenBeliefLifetimes', 'endBeliefLifetime', 'mintBeliefLifetime', 'renameBeliefLifetime', 'readMovedBeliefLifetimes', 'listOrphanLifetimes',
   // Belief ledger state reads (engine-sql/belief-state.ts)
   'readBeliefStateRows', 'readBeliefFactsById',
   // The belief side of a purge (engine-sql/belief-purge.ts)

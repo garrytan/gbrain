@@ -176,6 +176,7 @@ export const LEDGER_MEMBERS = {
   mintBeliefLifetime: 'belief_ledger',
   renameBeliefLifetime: 'belief_ledger',
   readMovedBeliefLifetimes: 'belief_ledger',
+  listOrphanLifetimes: 'belief_ledger',
   readBeliefStateRows: 'belief_ledger',
   readBeliefFactsById: 'belief_ledger',
   bumpSourcePurgeEpoch: 'facts',

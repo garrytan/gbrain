@@ -3870,6 +3870,28 @@
         ],
         "flagOnScopes": []
       },
+      "listOrphanLifetimes#deep": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listOrphanLifetimes#routine": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listOrphanedChronicleOwners#default": {
         "flagOffLanes": [
           "pool"
@@ -10163,6 +10185,7 @@
         "listOrphanBindings": "none",
         "listOrphanConnectorCheckpoints": "none",
         "listOrphanGenerationCandidates": "none",
+        "listOrphanLifetimes": "none",
         "listOrphanWorkspaceSources": "none",
         "listOrphanedAliasCounts": "none",
         "listOrphanedChronicleOwners": "none",

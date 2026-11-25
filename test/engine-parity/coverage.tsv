@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2403/2427
+# covered: 2404/2428
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -57,7 +57,7 @@
 # facts_trust: 56/57
 # facts_recall: 9/9
 # facts_conversation: 30/30
-# belief_ledger: 19/19
+# belief_ledger: 20/20
 # belief_purge: 6/6
 # trust_tier_reads: 22/22
 # derivation_trust: 3/3
@@ -135,7 +135,7 @@ getPage	pages	yes	278	yes	yes	yes	serves
 readPageSnapshot	pages	yes	100	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1321	yes	yes	yes	serves
+putPage	pages	yes	1320	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	43	yes	yes	yes	serves
@@ -780,7 +780,7 @@ applyTransactionSettings	import_guards	yes	110	no	yes	yes	serves
 beginSnapshotRead	import_guards	yes	3	no	yes	yes	serves
 readCurrentWriteTrust	import_guards	yes	1	no	yes	yes	serves
 setWriteContext	import_guards	yes	4	no	yes	yes	serves
-readLedgerSource	import_guards	yes	25	no	yes	yes	serves
+readLedgerSource	import_guards	yes	24	no	yes	yes	serves
 listCoveredSources	import_guards	yes	3	no	yes	yes	serves
 isFolderRestricted	import_guards	yes	5	no	yes	yes	serves
 claimNotifierLease	persistence_journal	yes	4	no	yes	yes	serves
@@ -1809,6 +1809,7 @@ endBeliefLifetime	belief_ledger	yes	3	no	yes	yes	serves
 mintBeliefLifetime	belief_ledger	yes	3	no	yes	yes	serves
 renameBeliefLifetime	belief_ledger	yes	2	no	yes	yes	serves
 readMovedBeliefLifetimes	belief_ledger	yes	2	no	yes	yes	serves
+listOrphanLifetimes	belief_ledger	yes	1	no	yes	yes	serves
 readBeliefStateRows	belief_ledger	yes	1	no	yes	yes	serves
 readBeliefFactsById	belief_ledger	yes	1	no	yes	yes	serves
 bumpSourcePurgeEpoch	belief_purge	yes	3	no	yes	yes	serves

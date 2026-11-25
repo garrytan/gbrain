@@ -184,6 +184,21 @@ impl Brain {
         })
     }
 
+    /// `listOrphanBeliefLifetimes(sourceId, limit, deep)`: `{ total, rows: [{ slug, page_lifetime, reason }] }` by slug
+    /// and lifetime bytes; `reason` is `no_page`, or `no_lifetime` for the events a `deep` read finds.
+    #[napi]
+    pub fn list_orphan_belief_lifetimes<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        limit: u32,
+        deep: bool,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_orphan_belief_lifetimes(&source_id, limit as usize, deep)
+        })
+    }
+
     /// `readBeliefHistoryRows(query)`: resolves one page of history rows.
     #[napi]
     pub fn read_belief_history_rows<'env>(

@@ -3350,6 +3350,17 @@ const PINS: Pin[] = [
       ORDER BY updated_at, slug COLLATE "C" LIMIT $4`],
   },
   {
+    // An equivalent statement: coverage-report.ts spliced the limit into the text (LIMIT ${n}); it is bound as $3 here.
+    from: 'src/core/belief/coverage-report.ts:309 orphanLifetimes (at 7c85d5696f)',
+    case: { method: 'listOrphanLifetimes', variant: 'routine', run: e => e.listOrphanLifetimes('default', 20, false) },
+    texts: [`SELECT slug, page_lifetime, reason, count(*) OVER ()::int AS total FROM (
+      SELECT l.slug, l.page_lifetime::text AS page_lifetime, 'no_page' AS reason FROM belief_page_lifetimes l JOIN sources s ON s.id = l.source_id AND s.incarnation = l.source_incarnation
+      WHERE l.source_id = $1 AND l.ended_at IS NULL AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = l.source_id AND p.slug = l.slug)
+      UNION ALL SELECT DISTINCT e.slug, e.page_lifetime::text, 'no_lifetime' FROM belief_events e
+      WHERE $2::boolean AND e.source_id = $1 AND e.page_lifetime IS NOT NULL AND NOT EXISTS (SELECT 1 FROM belief_page_lifetimes l WHERE l.page_lifetime = e.page_lifetime)
+    ) o ORDER BY slug COLLATE "C", page_lifetime COLLATE "C" LIMIT $3`],
+  },
+  {
     from: 'src/core/access/federation-exposure.ts:32 remotePagesFederationExposes, privacy part on (at 0af1a6ecf0)',
     case: { method: 'readFederationExposedPages', variant: 'hidden', run: e => e.readFederationExposedPages('default', true) },
     texts: () => { const hidden = ` AND ${privacyPartSql('p')}`; return [`WITH open AS (SELECT p.id, p.slug, p.revision_principal_kind, p.revision_principal_id FROM pages p

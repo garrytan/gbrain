@@ -38,7 +38,7 @@ function event(incarnation: string, key: string, lifetime: string, slug: string)
 
 describe('engine parity: the orphan lifetime check', () => {
   parityTest('orphanLifetimes finds open lifetimes with no page, and deep finds events naming no lifetime, sampled by bytes', {
-    methods: ['putPage', 'readLedgerSource', 'mintBeliefLifetime', 'endBeliefLifetime', 'insertBeliefEvents'],
+    methods: ['listOrphanLifetimes', 'mintBeliefLifetime', 'endBeliefLifetime', 'insertBeliefEvents'],
     timeout: 90_000,
   }, async (engine: BrainEngine, backend) => {
     await createSource(engine, backend, 'other-example');

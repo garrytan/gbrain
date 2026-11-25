@@ -59,6 +59,8 @@ export interface LedgerMembers {
   renameBeliefLifetime(lifetime: string, slug: string, pageId: number): Promise<void>;
   /** The open lifetime of each of `pageIds` whose page still has the lifetime's slug. No set order. */
   readMovedBeliefLifetimes(pageIds: readonly number[]): Promise<BeliefLedgerSql.BeliefMovedLifetimeRow[]>;
+  /** Orphaned lifetimes of a source: open with no page at their slug, and (`deep`) named by an event with no lifetime; by bytes, at most `limit`, with the count. */
+  listOrphanLifetimes(sourceId: string, limit: number, deep: boolean): Promise<BeliefLedgerSql.OrphanLifetimeSamples>;
   /** The raw state of belief streams in one read (belief/state.ts shapes it): pages, write counters, facts, takes, owned links and transitions, their endpoints and the writer tier. Restores `plan_cache_mode` to `input.planModePrev` (null: no net change). */
   readBeliefStateRows(input: BeliefStateSql.BeliefStateRowsInput): Promise<BeliefStateSql.BeliefStateRows>;
   /** Fact rows by id in the state read's columns, for a guard event whose row is outside the batch's streams. No set order. */

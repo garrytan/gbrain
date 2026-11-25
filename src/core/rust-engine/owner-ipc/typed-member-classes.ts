@@ -251,7 +251,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readJobPrincipal', 'readLatestBeliefCoverage', 'readLegacyBeliefTombstones', 'readLegacyClaimFingerprints',
   'readLiveFactRowTier', 'readLivePageByPath',
   'readLivePagesByIds', 'readLoopFactState', 'readMaxFactRowNum', 'readMigrationPageColumns',
-  'readMigrationRows', 'readMovedBeliefLifetimes', 'readOpCheckpointRecord', 'readOpenBeliefLifetimes',
+  'readMigrationRows', 'readMovedBeliefLifetimes', 'listOrphanLifetimes', 'readOpCheckpointRecord', 'readOpenBeliefLifetimes',
   'readOriginIndexState', 'readPageDatabaseOnlyReason', 'readProjectionHead', 'readProjectionJobReason',
   'readPurgeReplaySchema', 'readReceiptCompactionWindow', 'readRepairBusyRows', 'readSourceDeleteImpact',
   'readSourcePurgeEpoch', 'readTakeRowTier', 'readTakeRowTierByClaim', 'readTimelineVersionBody',

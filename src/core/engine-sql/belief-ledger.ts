@@ -212,3 +212,23 @@ export async function readBeliefCoverageEvents(exec: Pick<SqlExecutor, 'executeR
     FROM belief_events e JOIN sources s ON s.id = e.source_id AND s.incarnation = e.source_incarnation
     WHERE e.source_id = $1 AND e.subject_kind = 'coverage' AND e.subject_key = $2 ORDER BY e.id`, [sourceId, COVERAGE_KEY]);
 }
+
+/** Why a lifetime is orphaned: an open lifetime with no page at its slug, or (deep) an event naming no lifetime. */
+export type OrphanLifetimeReason = 'no_page' | 'no_lifetime';
+export interface OrphanLifetimeSamples { count: number; samples: Array<{ slug: string; page_lifetime: string; reason: OrphanLifetimeReason }> }
+
+/**
+ * Open lifetimes of the source's current incarnation with no page at their slug (an untracked hard delete), and (`deep`, a
+ * whole-ledger read) the source's events naming a lifetime that does not exist; by slug then lifetime bytes, at most
+ * `limit` (at least 1), with the count of all. The statement is the one coverage-report.ts `orphanLifetimes` ran, except
+ * that the limit is a bound parameter (`$3`) instead of a number spliced into the text.
+ */
+export async function listOrphanLifetimes(exec: LegacyUnscopedRead, sourceId: string, limit: number, deep: boolean): Promise<OrphanLifetimeSamples> {
+  const rows = await exec.executeRaw<{ slug: string; page_lifetime: string; reason: OrphanLifetimeReason; total: number }>(`SELECT slug, page_lifetime, reason, count(*) OVER ()::int AS total FROM (
+      SELECT l.slug, l.page_lifetime::text AS page_lifetime, 'no_page' AS reason FROM belief_page_lifetimes l JOIN sources s ON s.id = l.source_id AND s.incarnation = l.source_incarnation
+      WHERE l.source_id = $1 AND l.ended_at IS NULL AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = l.source_id AND p.slug = l.slug)
+      UNION ALL SELECT DISTINCT e.slug, e.page_lifetime::text, 'no_lifetime' FROM belief_events e
+      WHERE $2::boolean AND e.source_id = $1 AND e.page_lifetime IS NOT NULL AND NOT EXISTS (SELECT 1 FROM belief_page_lifetimes l WHERE l.page_lifetime = e.page_lifetime)
+    ) o ORDER BY slug COLLATE "C", page_lifetime COLLATE "C" LIMIT $3`, [sourceId, deep, Math.max(1, Math.floor(limit))]);
+  return { count: Number(rows[0]?.total ?? 0), samples: rows.map(r => ({ slug: r.slug, page_lifetime: r.page_lifetime, reason: r.reason })) };
+}

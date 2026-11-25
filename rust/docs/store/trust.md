@@ -368,7 +368,7 @@ because enable refused on this engine before it, so no store could hold a baseli
 - `mintBeliefLifetime` answers the lifetime already open at the pair, or fails on the primary key for a lifetime id
   already used. `renameBeliefLifetime` moves an open or an ended lifetime; an open one moved onto a pair with
   another open lifetime fails on `belief_page_lifetimes_open`. `readOpenBeliefLifetimes` answers a pair given twice
-  twice, as the `unnest` join does. `readMovedBeliefLifetimes` matches the page by id in any source, deleted or not.
+  twice, as the `unnest` join does. `readMovedBeliefLifetimes` matches the page by id in any source, deleted or not. `listOrphanLifetimes` (`list_orphan_belief_lifetimes`) answers the open lifetimes of the source's current incarnation whose slug has no page row (a soft-deleted page is a row; `no_page`) and, with `deep`, the lifetimes the source's events (any incarnation) name that no lifetime record holds (`no_lifetime`), by slug then lifetime bytes, at most `max(1, limit)`, with the count of all.
 - `readBeliefRedactions` answers each matching suppression once, in id order. `releaseBeliefRedactions` updates the
   listed ids in any source.
 - `readBeliefTombstones` reads the fact half from the fact purge ledger (`F 0x0F`, any visibility and any subject)
