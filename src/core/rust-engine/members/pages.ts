@@ -234,6 +234,7 @@ export const PAGES_MEMBERS = {
   readFederationExposedPages: 'sources',
   readLiveSlugAliases: 'pages',
   readSourceSlugProbe: 'pages',
+  readStoredSlugSpellings: 'pages',
   advanceSyncCheckpoint: 'sources',
   readSourceState: 'sources',
   readAdmissionSource: 'sources',

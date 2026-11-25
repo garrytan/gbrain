@@ -1,6 +1,6 @@
 /**
  * A read whose scan for other stored spellings of a slug fails with a real database error falls back to the normal
- * form of the slug; only an engine that cannot run raw SQL (a typed capability refusal) is treated as "no other spelling
+ * form of the slug; only an engine that does not serve the scan (a typed capability refusal) is treated as "no other spelling
  * known" and keeps looking at the spellings it already read.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
@@ -10,8 +10,8 @@
  *  2. Regression: master's silent read-catch guard (#9902) flagged chooseSpelling's empty catch, which turned every scan
  *     failure into "no other spelling" and then answered a soft-deleted spelling as if the scan had found nothing.
  *  3. Existing coverage: test/slug-legacy-rows.test.ts and test/slug-normalize-reads.test.ts cover the scan when it works.
- *  4. Seam: the engine handed to the wrapper throws on the stored-spelling scan's SQL only; every other call reaches a
- *     real PGLite engine.
+ *  4. Seam: the engine handed to the wrapper throws from the typed stored-spelling scan (`readStoredSlugSpellings`, the
+ *     member chooseSpelling calls) only; every other call reaches a real PGLite engine.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -23,7 +23,6 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 const RAW = 'Notes/Cafe\u0301-scan';
 const STORED = 'notes/cafe\u0301-scan';
 const NORMAL = 'notes/caf\u00e9-scan';
-const SCAN_SQL = 'COLLATE "C" AS s FROM pages';
 
 let engine: PGLiteEngine;
 
@@ -31,9 +30,7 @@ let engine: PGLiteEngine;
 function failingScan(fail: () => never): BrainEngine {
   return new Proxy(engine, {
     get(target, prop, receiver) {
-      if (prop === 'executeRaw') {
-        return (sql: string, params?: unknown[]) => sql.includes(SCAN_SQL) ? fail() : target.executeRaw(sql, params as never);
-      }
+      if (prop === 'readStoredSlugSpellings') return () => fail();
       const value = Reflect.get(target, prop, receiver);
       return typeof value === 'function' ? value.bind(target) : value;
     },
@@ -69,8 +66,9 @@ describe('a failed stored-spelling scan', () => {
     expect(slug).toBe(NORMAL);
   });
 
-  test('a capability refusal (an engine without raw SQL) still answers the soft-deleted spelling it read', async () => {
-    const refusal = Object.assign(new Error('raw SQL is not supported'), { code: 'engine_capability_missing' });
+  test('a capability refusal (an engine that does not serve the scan) still answers the soft-deleted spelling it read', async () => {
+    const refusal = Object.assign(new Error('the engine does not serve readStoredSlugSpellings'), { code: 'engine_capability_missing', reason: 'pages',
+      detail: 'member=readStoredSlugSpellings capability=pages outcome=none written=nothing' });
     const slug = await slugHandedToRead(failingScan(() => { throw refusal; }));
     expect(slug).toBe(STORED);
   });

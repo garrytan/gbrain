@@ -14,6 +14,7 @@ import type { ListReadMembers } from './engine-members/list-reads.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type * as AccessMembersSql from './engine-sql/access-members.ts';
 import type * as LinkSlugReadsSql from './engine-sql/link-slug-reads.ts';
+import type * as SlugSpellingsSql from './engine-sql/slug-spellings.ts';
 import type * as FederationExposureSql from './engine-sql/federation-exposure.ts';
 import type * as DreamCycleSql from './engine-sql/dream-cycle.ts';
 import type * as FilesOpsSql from './engine-sql/files-ops.ts';
@@ -2252,6 +2253,8 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   readLiveSlugAliases(sourceId: string, targets: readonly string[]): Promise<LinkSlugReadsSql.LiveSlugAliasRow[]>;
   /** Link preparation's slug fingerprint of a source and the slugs above `afterId` (engine-sql/link-slug-reads.ts). */
   readSourceSlugProbe(sourceId: string, afterId: number): Promise<LinkSlugReadsSql.SourceSlugProbe>;
+  /** A scalar slug read's stored-spelling scan: up to 200 stored slugs with spelling key `key`, after `after` by bytes (engine-sql/slug-spellings.ts). */
+  readStoredSlugSpellings(key: string, scope: SlugSpellingsSql.StoredSpellingScope, after: string): Promise<string[]>;
 
   // Chunks
   /**
