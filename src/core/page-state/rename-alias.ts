@@ -84,8 +84,8 @@ export async function recordSlugLineAlias(tx: Pick<BrainEngine, 'transaction'>, 
  * page and yield to the moved ones. A secret occurrence moves only when it is the renamed page's own (its
  * page_id is that page, or the stale row a fallback rename retires, or none): an occurrence another page holds under
  * an older slug stays with that page. The page's attachments (`files` rows bound to it by page_id, or to the stale
- * row a fallback rename retires) move too, so `file_list` finds them under the new slug; a row that names no page
- * stays. An ontology observation the new slug
+ * row a fallback rename retires) move too, so `file_list` finds them under the new slug; a row that names the page only by
+ * slug moves when the old slug named just this page (below), else it stays. An ontology observation the new slug
  * already holds is dropped before its key moves (B-10, dropRekeyDuplicates).
  * A brain whose schema predates the facts or alias tables skips them inside a
  * savepoint.
