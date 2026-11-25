@@ -15,10 +15,11 @@
  *    `bun run rust:build` writes; it skips without it (GBRAIN_TEST_REQUIRE_RUST_ADDON=1 makes a missing addon an error).
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
+import { localIpcSocketPath } from '../src/core/context/ipc-path.ts';
 import { ownerSocketPath } from '../src/core/rust-engine/owner-ipc/protocol.ts';
 import { packagedSharedSkills } from '../src/core/shared-skills/setup-bundle.ts';
 import { compareVersions } from '../src/core/migration-ledger.ts';
@@ -107,7 +108,8 @@ const describeRust = HAVE_ADDON ? describe : describe.skip;
 
 describeRust('apply-migrations as a client of a swapped Rust brain\'s serve, with a populated content root', () => {
   beforeAll(async () => {
-    root = mkdtempSync(join(tmpdir(), 'gbrain-rust-client-'));
+    // Resolved, so a symlinked temp dir (macOS /var) is not refused as a content root ancestor.
+    root = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-rust-client-')));
     home = join(root, 'home');
     mkdirSync(join(home, '.gbrain'), { recursive: true });
     mkdirSync(join(root, 'bin'));
@@ -133,7 +135,8 @@ describeRust('apply-migrations as a client of a swapped Rust brain\'s serve, wit
     writeFileSync(manifest, JSON.stringify(JSON.parse(readFileSync(manifest, 'utf8')), null, 4) + '\n');
     // gbrain serve owns the brain from here on; every CLI run below is its client.
     serve = Bun.spawn(['bun', 'run', CLI, 'serve'], { cwd: root, env: childEnv(), stdin: 'pipe', stdout: 'ignore', stderr: 'ignore' });
-    const socket = ownerSocketPath(join(root, 'brain.rust'));
+    // The socket the owner binds: the store's path, or its short fallback when that path is too long for a socket.
+    const socket = localIpcSocketPath(ownerSocketPath(join(root, 'brain.rust')));
     const deadline = Date.now() + 60_000;
     while (!existsSync(socket) && Date.now() < deadline) await Bun.sleep(250);
     expect(existsSync(socket)).toBe(true);
