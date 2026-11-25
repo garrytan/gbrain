@@ -321,15 +321,17 @@ Refused writes a caller never saw land (`lost_caller_writes`) have their own rep
 
 A running sync is not one of these: `gbrain repair fences` now runs during a catch-up for every candidate the sync does not still name ([fence repair during a sync](repair.md#fence-repair-during-a-sync)), and a candidate it does name is `sync_in_progress`, not `owner_unavailable`.
 
-<a id="rust-addon-install"></a>**`gbrain engine install rust`, `gbrain engine shadow start` or a Rust brain refused `rust_engine_addon_missing` or `rust_engine_addon_mismatch`?** The `reason` says which step stopped. Every refusal leaves the installed addon as it was ([installing the addon](../ENGINES.md)).
+<a id="rust-addon-install"></a>**Rust addon refused?** The installed addon is kept.
 
-| `reason` | What it means | Next |
+| reason | Meaning | Next |
 |---|---|---|
-| `not_installed` | No addon for this gbrain version is installed in the gbrain home. | `gbrain engine install rust`, then `gbrain engine status --json` (`rust_addon.installed`). |
-| `unsupported_target` | Releases publish no addon for this platform (they carry linux-x64-glibc and darwin-arm64). | Nothing to install here: keep this brain on PGLite or Postgres. |
-| `not_published` | The release of the running version has no addon (an older release, or a source checkout between releases). | Upgrade gbrain to a release that publishes it, or build one with `bun run rust:build` and set `GBRAIN_RUST_ENGINE_ADDON`. |
-| `fetch_failed` | The download, or the GitHub attestation read, failed. Nothing was installed. | Run `gbrain engine install rust` again once the network is back; GitHub limits unauthenticated attestation reads per hour. |
-| `verification_failed` | A downloaded file did not match the manifest's SHA-256 or has no attestation from the gbrain release workflow. It was deleted. | There is no bypass: report it with `gbrain engine status --json`. |
+| `not_installed` | None for this version | `gbrain engine install rust` |
+| `unsupported_target` | Platform not covered | Keep PGLite/Postgres |
+| `not_published` | This release has none | Upgrade |
+| `fetch_failed` | Download failed | Retry later |
+| `verification_failed` | Checksum/attestation mismatch, deleted | Report it |
+
+`engine status --json` `rust_addon`: `target`, `preview_target`, `override`, `installed`, `path`, `sha256`, `pinned_sha256`, `engine_build`.
 
 <a id="write-capacity"></a>**Managed writes refused with `queue_capacity`, or doctor warns `persistence_capacity`?** A per-principal or per-brain write-journal limit (`persistence.limits.*`) is full (`queue_capacity`), or doctor sees lifetime request IDs or receipt bytes at 80% or more (`persistence_capacity`). For the cumulative limits (lifetime request IDs and receipt bytes), the warning and the refusal print a `gbrain config set persistence.limits.<limit> <value>` sized for about one more year; run it on the brain host, then retry with the same request ID. For outstanding-request or queued-byte limits, let outstanding writes finish and check `gbrain sources writer status`. Receipt compaction age is `persistence.receipt_retention_days` (default 30). Limits and defaults: [bounded admission and retention](concurrent-writes.md#bounded-admission-and-retention).
 
