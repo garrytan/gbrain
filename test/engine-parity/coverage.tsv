@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2279/2293
+# covered: 2287/2301
 # lifecycle: 12/12
 # pages: 133/134
 # search: 8/8
@@ -256,6 +256,14 @@ readPredictionLedgerEvents	pages	yes	2	no	yes	yes	serves
 readTakeHorizonRows	pages	yes	1	no	yes	yes	serves
 readLatestTakeGrades	pages	yes	2	no	yes	yes	serves
 readBeliefCoverageEvents	pages	yes	2	no	yes	yes	serves
+listHandoverReaderPages	pages	yes	1	no	yes	yes	serves
+listHandoverPrefixPages	pages	yes	1	no	yes	yes	serves
+countMemberPage	pages	yes	1	no	yes	yes	serves
+countMemberPageFacts	pages	yes	1	no	yes	yes	serves
+countMemberBoundCredentials	pages	yes	1	no	yes	yes	serves
+readLastUndoneHandoverId	pages	yes	1	no	yes	yes	serves
+readHandoverRow	pages	yes	2	no	yes	yes	serves
+listMemberSourceRows	pages	yes	1	no	yes	yes	serves
 searchKeyword	search	yes	52	yes	yes	yes	serves
 countKeywordPages	search	yes	13	no	yes	yes	serves
 searchKeywordPages	search	yes	18	no	yes	yes	serves
@@ -1619,7 +1627,7 @@ listAliasOnlyPrivatePages	facts_repair	yes	1	no	yes	yes	serves
 countPurgedPageFacts	facts_repair	yes	5	no	yes	yes	serves
 listUnwithdrawnFacts	facts_repair	yes	4	no	yes	yes	serves
 listWorldFactsFromPrivateSources	facts_repair	yes	5	no	yes	yes	serves
-listActiveSourceIds	facts_repair	yes	1	no	yes	yes	serves
+listActiveSourceIds	facts_repair	yes	2	no	yes	yes	serves
 readRepairBrainId	facts_repair	yes	1	no	yes	yes	serves
 listAgentSessionTakeCandidates	facts_repair	yes	2	no	yes	yes	serves
 listSettledSessionFacts	facts_repair	yes	1	no	yes	yes	serves
@@ -2494,7 +2502,7 @@ writeCheckpointManifest	session_state	yes	3	no	yes	yes	serves
 ageOutSessionState	session_state	yes	2	no	yes	yes	serves
 capSessionStatePerClient	session_state	yes	5	no	yes	yes	serves
 listAccessMemberStatuses	doctor_join	yes	1	no	yes	yes	serves
-listAccessGroupMemberships	doctor_join	yes	1	no	yes	yes	serves
+listAccessGroupMemberships	doctor_join	yes	2	no	yes	yes	serves
 listPagesReadByNobody	doctor_join	yes	1	no	yes	yes	serves
 listRulePagesReadByNobody	doctor_join	yes	1	no	yes	yes	serves
 listGoogleSourceMembers	doctor_join	yes	1	no	yes	yes	serves

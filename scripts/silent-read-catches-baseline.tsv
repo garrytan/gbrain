@@ -423,6 +423,7 @@ src/commands/whoknows.ts#findExperts	promise_catch_empty	1
 src/core/access/caller.ts#appliedAccessSummary	catch_empty	1
 src/core/access/caller.ts#resolveAudienceIdentities	catch_empty	1
 src/core/access/caller.ts#stdioMemberId	catch_empty	1
+src/core/access/labelled-only.ts#labelledOnlyFor	capability_refusal_swallowed	1
 src/core/access/lineage.ts#membersReadLineageOn	catch_empty	1
 src/core/access/member-sources.ts#hiddenPersonalSources	capability_refusal_swallowed	1
 src/core/access/members.ts#audienceMemberIds	catch_empty	1

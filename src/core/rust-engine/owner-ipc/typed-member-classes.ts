@@ -356,7 +356,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'listUnretiredPagesBySlugPattern', 'listUntiledSegmentedPageRows', 'listVisibilityCandidatePages',
   'listVolunteerChannels', 'listWorktreeBlockerRequests', 'listWorktreeIds', 'lockActiveAccessTokens',
   'lockAllSourceRows', 'lockLegacyAccessTokens', 'lockSharedSkillBrainId', 'matchHeadStems',
-  'oauthClientHoldsAuthorization', 'oauthClientLive', 'originIndexPresent', 'pagePrefixSamples', 'pageTypeTotals', 'countLivePagesAtPathPrefix', 'probeUntypedPathPrefix', 'hasLabelledOnlyMemberAmong', 'readAccessReadLog', 'listAccessReadPageRefs', 'readAccessReadsOfPages', 'tallyAccessReadsOfPages',
+  'oauthClientHoldsAuthorization', 'oauthClientLive', 'originIndexPresent', 'pagePrefixSamples', 'pageTypeTotals', 'listHandoverReaderPages', 'listHandoverPrefixPages', 'countMemberPage', 'countMemberPageFacts', 'countMemberBoundCredentials', 'readLastUndoneHandoverId', 'readHandoverRow', 'listMemberSourceRows', 'countLivePagesAtPathPrefix', 'probeUntypedPathPrefix', 'hasLabelledOnlyMemberAmong', 'readAccessReadLog', 'listAccessReadPageRefs', 'readAccessReadsOfPages', 'tallyAccessReadsOfPages',
   'pingStore', 'probePageTypes', 'readAccessGroups', 'readAccessMemberLink', 'readAccessTokenAttest', 'readAccessTokenMemberGrant',
   'readAccessTokenReceiptGrant', 'readActiveAccessTokenByHash', 'readActiveAccessTokenGrant', 'readAdmissionSample',
   'readAtomProvenanceCounts', 'readBriefEditPage', 'readBriefEmailAliasPages', 'readBriefEntityPages',

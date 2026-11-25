@@ -1,20 +1,23 @@
 /**
- * The handover preview's private-fact and bound-credential counts surface an engine refusal instead of showing zero.
+ * The handover preview's private-fact and bound-credential counts surface an engine refusal instead of showing zero,
+ * and a handover's apply and undo refuse on an engine without raw SQL before they read or write anything.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: previewHandover counts the leaver's private facts and bound credentials; a count it could not read on a
- *    current schema is an error, never 0. Only a brain whose schema lacks the facts table or the member_id columns
- *    (an older brain) reads 0.
- *  - Regression: both counts once caught every error and showed 0, so an engine that refused the read (a Rust brain
- *    refuses raw SQL with engine_capability_missing) printed "0 private fact(s)" and "bound_credentials: 0".
- *  - Why existing coverage misses it: the handover tests run on PGLite and Postgres, where both reads succeed.
- *  - Seam: a PGLite brain whose executeRaw refuses exactly one of the two count statements.
+ *  - Contract: previewHandover counts the leaver's private facts and bound credentials through the typed members
+ *    countMemberPageFacts and countMemberBoundCredentials; a count it could not read on a current schema is an error,
+ *    never 0. Only a brain whose schema lacks the facts table or the member_id column (an older brain) reads 0.
+ *    `gbrain access member handover --yes` and `--undo` on an engine without raw SQL refuse engine_capability_missing
+ *    before any engine call, so nothing is half written.
+ *  - Regression: both counts once caught every error and showed 0; an apply on the Rust engine reached its writes.
+ *  - Why existing coverage misses it: the handover tests run on PGLite and Postgres, where every read succeeds.
+ *  - Seam: a PGLite brain whose typed count member throws, and a recording engine that reports no raw_sql.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { addMember } from '../src/core/access/members.ts';
 import { DEFAULT_CHOICES, previewHandover } from '../src/core/access/handover.ts';
+import { handoverCmd } from '../src/commands/access-handover.ts';
 import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
 
 let engine: PGLiteEngine;
@@ -28,52 +31,64 @@ beforeAll(async () => {
 });
 afterAll(async () => { await engine.disconnect(); });
 
-/** The brain with executeRaw refusing (or failing) the one statement whose text contains `needle`. */
-function refusing(needle: string, error: () => unknown): BrainEngine {
+/** The brain with one typed member throwing `error()`. */
+function throwing(member: 'countMemberPageFacts' | 'countMemberBoundCredentials', error: () => unknown): BrainEngine {
   return new Proxy(engine, {
     get(target, key, receiver) {
-      if (key !== 'executeRaw') return Reflect.get(target, key, receiver);
-      return (sql: string, params?: unknown[]) => sql.includes(needle) ? Promise.reject(error()) : target.executeRaw(sql, params);
+      if (key === member) return async () => { throw error(); };
+      const value = Reflect.get(target, key, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
     },
   }) as unknown as BrainEngine;
 }
 
-const FACTS = 'FROM facts f JOIN pages p';
-const CREDS = 'FROM access_tokens WHERE member_id';
+const memoryNote = (p: Awaited<ReturnType<typeof previewHandover>>) => p.groups.find(g => g.group === 'memory')!.note ?? '';
+const refused = () => capabilityMissing('raw_sql', 'executeRaw');
 
 describe('handover preview counts', () => {
   test('both counts read 0 when nothing is stored', async () => {
     const p = await previewHandover(engine, 'bob-example', DEFAULT_CHOICES);
-    expect({ creds: p.bound_credentials, note: p.groups.find(g => g.group === 'memory')!.note })
+    expect({ creds: p.bound_credentials, note: memoryNote(p) })
       .toEqual({ creds: 0, note: '0 private fact(s); never opened. The owner reads them on the brain host.' });
   });
 
-  for (const [name, needle] of [['private-fact', FACTS], ['bound-credential', CREDS]] as const) {
-    test(`a refused ${name} count fails the preview instead of reading 0`, async () => {
-      const err = await previewHandover(refusing(needle, () => capabilityMissing('raw_sql', 'executeRaw')), 'bob-example', DEFAULT_CHOICES)
-        .then(() => null, (e: unknown) => e as { code?: string });
+  for (const member of ['countMemberPageFacts', 'countMemberBoundCredentials'] as const) {
+    test(`a refused ${member} fails the preview instead of reading 0`, async () => {
+      const err = await previewHandover(throwing(member, refused), 'bob-example', DEFAULT_CHOICES).then(() => null, (e: unknown) => e as { code?: string });
       expect(err?.code).toBe('engine_capability_missing');
     });
   }
 
-  // The private-fact count once joined on a column the facts table does not have, so it always failed and read 0.
-  test('the counts name the facts on the member page and the credentials bound to the member', async () => {
-    await engine.putPage('memory/members/bob-example', { type: 'note', title: 'bob', compiled_truth: 'notes', timeline: '', frontmatter: { readable_by: ['member:bob-example'] } });
-    await engine.insertFacts([1, 2].map(row_num => ({ fact: `bob fact ${row_num}`, kind: 'fact', visibility: 'private', notability: 'medium', source: 'test',
-      entity_slug: 'people/bob-example', row_num, source_markdown_slug: 'memory/members/bob-example' })) as never, { source_id: 'default' });
-    await engine.insertAccessToken({ name: 'bob-key', token_hash: 'hash-bob', scopes: ['read'], permissions: {}, source_grant: 'default', source_id: null,
-      federated_read: null, allowed_operations: null, takes_holders: null, member_id: 'bob-example' });
-    const p = await previewHandover(engine, 'bob-example', DEFAULT_CHOICES);
-    expect({ creds: p.bound_credentials, note: p.groups.find(g => g.group === 'memory')!.note })
-      .toEqual({ creds: 1, note: '2 private fact(s); never opened. The owner reads them on the brain host.' });
-  });
-
   test('a schema without the facts table or the member_id column still reads 0', async () => {
     const missingTable = () => Object.assign(new Error('relation "facts" does not exist'), { code: '42P01', table_name: 'facts' });
     const missingColumn = () => Object.assign(new Error('column "member_id" does not exist'), { code: '42703', column_name: 'member_id' });
-    const facts = await previewHandover(refusing(FACTS, missingTable), 'bob-example', DEFAULT_CHOICES);
-    const creds = await previewHandover(refusing(CREDS, missingColumn), 'bob-example', DEFAULT_CHOICES);
-    expect({ facts: facts.groups.find(g => g.group === 'memory')!.note!.startsWith('0 private'), creds: creds.bound_credentials })
-      .toEqual({ facts: true, creds: 0 });
+    const facts = await previewHandover(throwing('countMemberPageFacts', missingTable), 'bob-example', DEFAULT_CHOICES);
+    const creds = await previewHandover(throwing('countMemberBoundCredentials', missingColumn), 'bob-example', DEFAULT_CHOICES);
+    expect({ facts: memoryNote(facts).startsWith('0 private'), creds: creds.bound_credentials }).toEqual({ facts: true, creds: 0 });
   });
+});
+
+describe('handover apply and undo on an engine without raw SQL', () => {
+  /** An engine that reports no raw_sql and records every member it is asked for. */
+  function noRawSql(): { engine: BrainEngine; touched: string[] } {
+    const touched: string[] = [];
+    const caps = new Set(['pages', 'access_control', 'config']);
+    const fake = new Proxy({}, {
+      get(_t, key) {
+        if (key === 'capabilities') return caps;
+        if (key === 'kind') return 'rust';
+        if (typeof key === 'string' && key !== 'then') touched.push(key);
+        return undefined;
+      },
+    });
+    return { engine: fake as BrainEngine, touched };
+  }
+
+  for (const [label, args] of [['--yes', ['bob-example', '--yes', '--expect', 'abc123']], ['--undo', ['bob-example', '--undo', 'h-1']], ['--undo with no member', ['--undo', 'h-1']]] as const) {
+    test(`${label} refuses engine_capability_missing before any engine call`, async () => {
+      const { engine: fake, touched } = noRawSql();
+      const err = await handoverCmd(fake, [...args], true).then(() => null, (e: unknown) => e as { code?: string });
+      expect({ code: err?.code, touched }).toEqual({ code: 'engine_capability_missing', touched: [] });
+    });
+  }
 });
