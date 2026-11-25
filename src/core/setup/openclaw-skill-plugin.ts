@@ -459,7 +459,7 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
     if (bin && !host) out.notes.push(`agent ${id}: \`openclaw gateway call skills.status\` and \`openclaw skills list --json --agent ${id}\` failed, so skills OpenClaw hides from this agent were not filtered out of ${catalog}`);
     else if (host && !catalogIds.some((n) => host.listed.has(n))) out.notes.push(`agent ${id}: OpenClaw lists none of ${catalog}'s skills for this agent, so the catalog was not filtered (check that the agent's workspace is ${dirs[0]})`);
     else if (host) hidden = catalogIds.filter((n) => !host.visible.has(n));
-    const shadowed = host ? host.skills.filter((s) => s.filePath && files.get(s.name) && realOr(s.filePath) !== files.get(s.name) && !hidden.includes(s.name)).map((s) => s.name) : [];
+    const shadowed = host ? host.skills.filter((s) => s.filePath && files.get(s.name) && realOr(s.filePath) !== realOr(files.get(s.name)!) && !hidden.includes(s.name)).map((s) => s.name) : [];
     if (shadowed.length) out.notes.push(`agent ${id}: for ${shadowed.length} skill(s) OpenClaw loads a different copy than ${catalog} holds, so they are never suggested: ${someNames(shadowed)}`);
     const missing = host ? host.skills.filter((s) => s.visible && !files.has(s.name)).map((s) => s.name) : [];
     if (missing.length) out.notes.push(`agent ${id}: ${missing.length} skill(s) OpenClaw loads for this agent are not in ${catalog} (their folder is in no root setup found): ${someNames(missing)}`);

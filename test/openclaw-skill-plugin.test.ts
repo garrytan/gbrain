@@ -23,7 +23,7 @@
  * workspace; doctor reads "listing off, resolver live".
  */
 import { afterAll, describe, expect, setDefaultTimeout, test } from 'bun:test';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -438,6 +438,19 @@ describe.skipIf(!NODE)('every skill source OpenClaw loads', () => {
     expect(a.skill_roots.map((x: any) => x.source)).toEqual(['openclaw-workspace', 'openclaw-bundled', 'openclaw-extra']);
     expect(Object.keys(a.skill_files).sort()).toEqual(['calendar-sync', 'deploy-service', 'email-triage', 'invoice-maker', 'sun-dial', 'weather-report']);
     expect(readFileSync(b.calls, 'utf8').split('\n').filter((l) => l.startsWith('skills info'))).toEqual(['skills info weather-report --json --agent main']);
+  });
+
+  test('a skill folder symlinked into the workspace (gstack-style install) is the copy OpenClaw loads, so it stays suggestible', async () => {
+    const b = box();
+    const s = sources(b);
+    const checkout = join(b.root, 'checkout');
+    skill(checkout, 'notes-sync', 'Use when you sync meeting notes to the shared drive');
+    symlinkSync(join(checkout, 'notes-sync'), join(ws(b), 'notes-sync'));
+    const r = await setup(b, ['--skill-loading', 'resolve'], status(b, [...hostEntries(b, s), entry('notes-sync', 'openclaw-workspace', realpathSync(join(checkout, 'notes-sync', 'SKILL.md')))]));
+    expectExit(r, 0);
+    const a = readState(b).agents.main;
+    expect(a.exclude_ids).toEqual([]);
+    expect(drive(b, [['turn', { text: 'sync meeting notes to the shared drive' }]])[0].appendContext).toContain('notes-sync');
   });
 
   test('a skill whose loaded copy is not the one the catalog holds is never suggested, and setup says so', async () => {
