@@ -230,6 +230,49 @@ export async function decideWriteGateHold(exec: SqlExecutor, id: number, status:
   return rows.length > 0;
 }
 
+/** A rule `addTrustAllowRule` inserts, as trust/allow-rules.ts normalized it; `createdBy` is the principal label. */
+export interface TrustAllowRuleInsert {
+  sourceId: string;
+  uriPrefix: string | null;
+  reasonFamily: string | null;
+  createdBy: string;
+  reason: string | null;
+}
+
+/** What `addTrustAllowRule` did: `source_active: false` wrote nothing; else the rule and whether this call inserted it. */
+export interface TrustAllowRuleAdd { source_active: boolean; row: Record<string, unknown> | null; created: boolean }
+
+/**
+ * `gbrain trust allow add`: refuses a source that is not active (nothing written), then inserts the rule, or reads the
+ * active rule with the same (source, prefix, family) when the partial unique index already holds one.
+ */
+export async function addTrustAllowRule(exec: SqlExecutor, rule: TrustAllowRuleInsert): Promise<TrustAllowRuleAdd> {
+  const [source] = await exec.executeRaw<{ id: string }>('SELECT id FROM sources WHERE id = $1 AND NOT archived', [rule.sourceId]);
+  if (!source) return { source_active: false, row: null, created: false };
+  const [inserted] = await exec.executeRaw<Record<string, unknown>>(
+    `INSERT INTO trust_allow_rules (source_id, uri_prefix, reason_family, created_by, reason) VALUES ($1, $2, $3, $4, $5)
+      ON CONFLICT DO NOTHING RETURNING *`, [rule.sourceId, rule.uriPrefix, rule.reasonFamily, rule.createdBy, rule.reason]);
+  if (inserted) return { source_active: true, row: inserted, created: true };
+  const [existing] = await exec.executeRaw<Record<string, unknown>>(
+    `SELECT * FROM trust_allow_rules WHERE removed_at IS NULL AND source_id = $1
+       AND uri_prefix IS NOT DISTINCT FROM $2 AND reason_family IS NOT DISTINCT FROM $3 ORDER BY id LIMIT 1`,
+    [rule.sourceId, rule.uriPrefix, rule.reasonFamily]);
+  return { source_active: true, row: existing ?? null, created: false };
+}
+
+/** `gbrain trust allow remove`: marks the active rule removed (the row stays as the receipt); null when none is active. */
+export async function removeTrustAllowRule(exec: SqlExecutor, id: number, removedBy: string): Promise<Record<string, unknown> | null> {
+  const [row] = await exec.executeRaw<Record<string, unknown>>(
+    'UPDATE trust_allow_rules SET removed_at = now(), removed_by = $2 WHERE id = $1 AND removed_at IS NULL RETURNING *', [id, removedBy]);
+  return row ?? null;
+}
+
+/** One rule by id, active or removed, or null. */
+export async function readTrustAllowRule(exec: LegacyUnscopedRead, id: number): Promise<Record<string, unknown> | null> {
+  const [row] = await exec.executeRaw<Record<string, unknown>>('SELECT * FROM trust_allow_rules WHERE id = $1', [id]);
+  return row ?? null;
+}
+
 /** The filter of `listTrustAllowRuleRows`: the sources to read (all when absent or empty), and whether removed rules count. */
 export interface TrustAllowRuleListOpts { sourceIds?: string[]; includeRemoved?: boolean }
 

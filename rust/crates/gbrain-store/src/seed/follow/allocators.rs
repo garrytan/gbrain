@@ -42,6 +42,10 @@ const ALLOCATORS: &[(&str, Counter)] = &[
     ("open_loops", Counter::Meta(crate::facts::loops::COUNTER)),
     ("trust_proposals", Counter::Meta("trust_proposals")),
     (
+        "trust_allow_rules",
+        Counter::Meta(crate::trust::allow_rules::COUNTER),
+    ),
+    (
         "wanted_links",
         Counter::Meta(crate::wanted_links::ID_COUNTER),
     ),

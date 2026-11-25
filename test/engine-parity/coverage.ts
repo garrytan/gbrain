@@ -411,7 +411,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'readFactCacheWatermark', 'readTrustGeneration', 'upsertWriteGateReceipt', 'upsertPageWriteGateReceipt',
     'deleteStalePageWriteGateReceipts', 'listWriteGateReceiptsFor', 'deleteStaleWriteGateReceipts',
     'upsertWriteGateHold', 'listWriteGateHoldRows', 'getWriteGateHoldRow', 'decideWriteGateHold',
-    'listTrustAllowRuleRows', 'readSourcePurgeFlags', 'lockFactForWithdrawal', 'queueWithdrawalReview',
+    'listTrustAllowRuleRows', 'addTrustAllowRule', 'removeTrustAllowRule', 'readTrustAllowRule', 'readSourcePurgeFlags', 'lockFactForWithdrawal', 'queueWithdrawalReview',
     'listSegmentedPagesBySlug', 'bumpWithdrawnPageRevisions', 'readPageRevisions', 'appendFactForgetReason',
     'readFactWithdrawnRow', 'readFactWithdrawnBacking'],
   open_loops: ['upsertOpenLoop', 'listOpenLoops', 'readEntityOpenLoops', 'closeOpenLoop', 'countOpenLoopsByCounterpartyEmail'],

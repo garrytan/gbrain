@@ -29,7 +29,7 @@ import {
 import { countSeedGaps } from '../src/shadow/seed-gaps.ts';
 import { shadowBrainKey, shadowDirFor, writeShadowState, SHADOW_STATE_VERSION } from '../src/shadow/state.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { expectSeedReadParity, fillSeedFixture, insertSeedFixtureJobs, primaryDigests, seedInto } from './helpers/shadow-seed-fixture.ts';
+import { expectSeedReadParity, fillSeedFixture, insertSeedFixtureJobs, primaryDigests, seedAllowRules, seedInto } from './helpers/shadow-seed-fixture.ts';
 
 const TARGET = detectAddonTarget();
 const BUILT = join(import.meta.dir, '..', 'rust', 'target', 'addon', `gbrain_engine.${TARGET ?? 'unsupported'}.node`);
@@ -105,6 +105,17 @@ describe('shadow seed from PGLite', () => {
     expect(record.non_terminal_jobs).toBe(1);
     expect(record.losses.not_copied.find(n => n.table === 'minion_jobs')?.rows).toBe(2);
     expect(record.segmented_pages).toBe(0);
+  });
+
+  withAddon('the owner allow rules arrive on Rust with the same rows, ids and removed-rule receipts, and count as no gap', async () => {
+    addon ??= await loadRustAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: BUILT } });
+    const out = await seedAllowRules(primary, addon, tempDir(), 'pglite');
+    expect(out.primary.length).toBe(2);
+    expect(out.primary[1]!.removed_at).not.toBeNull();
+    expect(out.rust).toEqual(out.primary);
+    expect(out.next).toBe(Math.max(...out.primary.map(r => r.id)) + 1);
+    expect(out.record.relations.trust_allow_rules?.imported).toBe(2);
+    expect(out.record.unseeded_gap_rows.trust_allow_rules ?? 0).toBe(0);
   });
 
   // Every logged member read appends to access_read_log, so a shadow copy of it would differ from the primary by design:

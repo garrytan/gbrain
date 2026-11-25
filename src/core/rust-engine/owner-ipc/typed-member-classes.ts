@@ -149,7 +149,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'listSubagentTimelineAppendCalls', 'listSubagentToolExecutions', 'listSubagentWriteOutcomes',
   'listSymbolTypesForName', 'listSynopsisSourceIds', 'listSynthesisCompletionKeys', 'listSynthesisPageBodies',
   'listTakeHoldersAtRows', 'listTakeIdsLeavingFence', 'listTakeNudges', 'listTakePreimages', 'listTakeRowsForPage', 'listTakeSupersessionCandidates',
-  'listTimelineOrphanPages', 'listTrueUpRequests', 'listTrustAllowRuleRows', 'listTrustProposals',
+  'listTimelineOrphanPages', 'listTrueUpRequests', 'listTrustAllowRuleRows', 'listTrustProposals', 'readTrustAllowRule',
   'listTrustScanRows', 'filterUnarchivedSourceIds', 'listUnattributedFacts', 'listUnbackedConversationRows',
   'listUnfencedFactRows', 'listUnlinkedConversationRows', 'listUnlinkedConversationSlugs',
   'listUnpreviewedTrustFacts', 'listUnreviewedJobs', 'listUnwithdrawnFacts', 'listValidTimeIdentities',
@@ -624,6 +624,8 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   deactivateDerivedTakes: 'listTakes for that page', deleteTakesByIds: 'listTakes for that page',
   refreshConsolidatedTakeSource: 'listTakes for that page', retireSessionTakes: 'listTakes for that page',
   decideWriteGateHold: 'getWriteGateHoldRow for that hold', upsertWriteGateHold: 'getWriteGateHoldRow for that hold',
+  // A lost reply to `trust allow add` or `remove` is checked by reading the rule: the add's active key returns the same rule on a rerun.
+  addTrustAllowRule: 'listTrustAllowRuleRows for that source', removeTrustAllowRule: 'readTrustAllowRule for that id',
   deleteChunksForPages: 'getChunks for that page', deletePurgedChunks: 'getChunks for that page',
   deleteConsumerRow: 'listHostConsumerRows', renewConsumerRow: 'listHostConsumerRows',
   stampWorktreeHeartbeats: 'listHostConsumerRows',

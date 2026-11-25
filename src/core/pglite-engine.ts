@@ -5773,6 +5773,9 @@ export class PGLiteEngine implements BrainEngine {
   upsertWriteGateHold(input: trustWriteGateImpl.WriteGateHoldRowInput) { return trustWriteGateImpl.upsertWriteGateHold(this.engineSql, input); }
   listWriteGateHoldRows(opts: trustWriteGateImpl.WriteGateHoldListOpts) { return trustWriteGateImpl.listWriteGateHoldRows(unscopedExecutor(this.engineSql, 'trust: the write gate read ran through executeRaw unscoped'), opts); }
   listTrustAllowRuleRows(opts: trustWriteGateImpl.TrustAllowRuleListOpts = {}) { return trustWriteGateImpl.listTrustAllowRuleRows(unscopedExecutor(this.engineSql, 'trust: the allow rule read ran through executeRaw unscoped'), opts); }
+  addTrustAllowRule(rule: trustWriteGateImpl.TrustAllowRuleInsert) { return trustWriteGateImpl.addTrustAllowRule(this.engineSql, rule); }
+  removeTrustAllowRule(id: number, removedBy: string) { return trustWriteGateImpl.removeTrustAllowRule(this.engineSql, id, removedBy); }
+  readTrustAllowRule(id: number) { return trustWriteGateImpl.readTrustAllowRule(unscopedExecutor(this.engineSql, 'trust: the allow rule read ran through executeRaw unscoped'), id); }
   getWriteGateHoldRow(id: number) { return trustWriteGateImpl.getWriteGateHoldRow(unscopedExecutor(this.engineSql, 'trust: the write gate read ran through executeRaw unscoped'), id); }
   decideWriteGateHold(id: number, status: 'released' | 'dropped', decidedBy: string) { return trustWriteGateImpl.decideWriteGateHold(this.engineSql, id, status, decidedBy); }
   // Decide proposals (group C; engine-sql/decide-proposals.ts).

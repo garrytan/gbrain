@@ -283,6 +283,9 @@ export const DOMAIN_OF: Record<string, string> = {
   'upsertWriteGateHold': OOS.trustWriteGate,
   'upsertWriteGateReceipt': OOS.trustWriteGate,
   'listTrustAllowRuleRows': OOS.trustWriteGate,
+  'addTrustAllowRule': OOS.trustWriteGate,
+  'removeTrustAllowRule': OOS.trustWriteGate,
+  'readTrustAllowRule': OOS.trustWriteGate,
   // Group 5 facts statements, the minion queue and the raw transaction seam (merged into rust-engine/cli-members).
   'assertCycleLease': OOS.cycleLocks,
   'closedLoopWithActiveFact': OOS.factsRepair,

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2401/2425
+# covered: 2404/2428
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -69,7 +69,7 @@
 # code_edges: 10/10
 # eval_capture: 5/5
 # salience_enrich: 6/6
-# trust: 31/31
+# trust: 34/34
 # open_loops: 5/5
 # loop_mutes: 8/8
 # source_archive: 6/6
@@ -1720,7 +1720,7 @@ listCaptureDuplicateCandidates	facts_trust	yes	1	no	yes	yes	serves
 computeFactFingerprints	facts_trust	yes	2	no	yes	yes	serves
 listClaimConflictPairs	facts_trust	yes	2	no	yes	yes	serves
 countClaimConflictPairs	facts_trust	yes	2	no	yes	yes	serves
-listUnarchivedSourceRows	facts_trust	yes	1	no	yes	yes	refuses:facts
+listUnarchivedSourceRows	facts_trust	yes	1	no	yes	yes	serves
 listAllUnarchivedSourceIds	facts_trust	no	0	no	-	-	-
 readPendingWriteReceipt	facts_trust	yes	1	no	yes	yes	serves
 lockSourceShared	facts_trust	yes	1	no	yes	yes	serves
@@ -1911,7 +1911,10 @@ listWriteGateReceiptsFor	trust	yes	10	no	yes	yes	serves
 deleteStaleWriteGateReceipts	trust	yes	1	no	yes	yes	serves
 upsertWriteGateHold	trust	yes	15	no	yes	yes	serves
 listWriteGateHoldRows	trust	yes	7	no	yes	yes	serves
-listTrustAllowRuleRows	trust	yes	2	no	yes	yes	serves
+listTrustAllowRuleRows	trust	yes	3	no	yes	yes	serves
+addTrustAllowRule	trust	yes	2	no	yes	yes	serves
+removeTrustAllowRule	trust	yes	2	no	yes	yes	serves
+readTrustAllowRule	trust	yes	2	no	yes	yes	serves
 getWriteGateHoldRow	trust	yes	1	no	yes	yes	serves
 decideWriteGateHold	trust	yes	5	no	yes	yes	serves
 upsertOpenLoop	open_loops	yes	32	no	yes	yes	serves
