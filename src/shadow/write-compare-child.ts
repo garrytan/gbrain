@@ -42,7 +42,7 @@ export function createWriteComparer(d: WriteComparerDeps): { handle(event: Write
       if (!pid || Number(pid) === process.pid) continue;
       try { process.kill(Number(pid), 0); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') rmSync(join(scratchRoot, name), { recursive: true, force: true }); }
     }
-  } catch { /* an unreadable temp directory leaves old stores for the system to clean */ }
+  } catch { /* silent-read-ok: an unreadable temp directory only leaves old scratch stores for the system to clean; nothing is counted from it */ }
   let chain: Promise<void> = Promise.resolve();
   let queued = 0;
   let runs = 0;
