@@ -651,7 +651,8 @@ export function buildCoverage(): CoverageReport {
       const refusal = rustRefusal(m);
       return refusal === null ? 'serves' : `refuses:${refusal}`;
     }
-    if (reqs.some((r) => armHas(arm, r))) return 'yes';
+    // The coverage list describes the default arms; the lifted-hold test mode never changes it.
+    if (reqs.some((r) => armHas(arm, r, {}))) return 'yes';
     return missingCapability(reqs.find((r) => r !== undefined)!).label;
   };
   const legacy = legacyMethods(methods);
