@@ -14,7 +14,7 @@
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -96,7 +96,7 @@ describe('renderers', () => {
   test('an import of a Memory.md holding GBrain\'s block skips the block and keeps the user\'s own lines', () => {
     const file = mergeMuseBlock('# Memory\n\n## Food\n- Likes ramen\n', renderMuseBlock(selectFacts(BLOCK, true).facts)) + '- Drinks oat milk\n';
     const plan = planImport(file, 'auto');
-    expect(plan.items.map(i => [i.fact, i.facet])).toEqual([['Likes ramen', 'diet'], ['Drinks oat milk', 'other']]);
+    expect(plan.items.map(i => [i.fact, i.facet])).toEqual([['Likes ramen', 'diet'], ['Drinks oat milk', 'diet']]);
     expect(plan.dropped).toEqual([{ line: 6, reason: expect.stringMatching(/^GBrain's own exported block/) }]);
   });
 
@@ -136,9 +136,20 @@ describe('renderers', () => {
     expect(renderMarkdown(BLOCK, [outside])).toContain('- Likes jazz (from an outside source, not confirmed by you)');
   });
 
-  test('the GBrain block ends the heading before it, so the user\'s later bullets keep their own facet', () => {
-    const file = mergeMuseBlock('# Memory\n\n## Allergies\n- Peanuts\n', renderMuseBlock([fact({})])) + '- Likes tea\n';
-    expect(planImport(file, 'muse-memory').items.map(i => [i.fact, i.facet])).toEqual([['Peanuts', 'allergy'], ['Likes tea', 'other']]);
+  test('the GBrain block leaves the heading the user\'s later bullets sit under as it was', () => {
+    const file = mergeMuseBlock('# Memory\n\n## Diet\n- Vegetarian\n', renderMuseBlock([fact({})])) + '- No dairy\n';
+    expect(planImport(file, 'muse-memory').items.map(i => [i.fact, i.facet])).toEqual([['Vegetarian', 'diet'], ['No dairy', 'diet']]);
+    const dated = mergeMuseBlock('[2026-01-01] - Likes tea\n', renderMuseBlock([fact({})])) + '[2026-01-02] - Likes coffee\n';
+    const plan = planImport(dated, 'memory-text');
+    expect(plan.items.map(i => i.fact)).toEqual(['Likes tea', 'Likes coffee']);
+    expect(plan.dropped).toHaveLength(1);
+  });
+
+  test('marker lines inside a fenced code block are an example, not the block', () => {
+    const example = '# Notes\n```markdown\n<!-- gbrain:profile begin rev=000000000000 -->\n- example\n<!-- gbrain:profile end -->\n```\n- mine\n';
+    const block = renderMuseBlock([fact({})]);
+    expect(mergeMuseBlock(example, block)).toBe(example.replace(/\n$/, '') + '\n\n' + block + '\n');
+    expect(planImport(example, 'muse-memory').dropped.filter(d => d.reason.startsWith("GBrain's own"))).toEqual([]);
   });
 
   test('facts the credential cannot read and facts cut at the read limit are named, never dropped silently', async () => {
@@ -237,6 +248,39 @@ describe('local export on a single-user keyless brain', () => {
     symlinkSync(join(home, 'loop-a.md'), join(home, 'loop-b.md'));
     const refused = await refusal(() => exportCli(['--format', 'muse-memory', '--into', join(home, 'loop-a.md')], localCall(engine)));
     expect(refused).toMatchObject({ code: 'invalid_params', message: expect.stringContaining('symlink loop') });
+  }, 60_000);
+
+  test('--include-private makes the file owner-only, even when it was readable by others', async () => {
+    const file = join(home, 'Shared.md');
+    writeFileSync(file, '# Memory\n', { mode: 0o644 });
+    chmodSync(file, 0o644);
+    await exportCli(['--format', 'muse-memory', '--into', file, '--include-private'], localCall(engine));
+    expect(readFileSync(file, 'utf8')).toContain('canaryexportallergy');
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+  }, 60_000);
+
+  test('--into resolves a relative symlink against its real directory, and refuses a looping parent cleanly', async () => {
+    const real = join(home, 'real-dir', 'profile');
+    mkdirSync(real, { recursive: true });
+    mkdirSync(join(home, 'real-dir', 'shared'));
+    symlinkSync(real, join(home, 'muse-link'));
+    symlinkSync('../shared/Memory.md', join(real, 'Memory.md'));
+    await exportCli(['--format', 'muse-memory', '--into', join(home, 'muse-link', 'Memory.md')], localCall(engine));
+    expect(readFileSync(join(home, 'real-dir', 'shared', 'Memory.md'), 'utf8')).toContain('<!-- gbrain:profile begin rev=');
+    expect(existsSync(join(home, 'shared'))).toBe(false);
+    symlinkSync(join(home, 'dir-loop-b'), join(home, 'dir-loop-a'));
+    symlinkSync(join(home, 'dir-loop-a'), join(home, 'dir-loop-b'));
+    const refused = await refusal(() => exportCli(['--format', 'muse-memory', '--into', join(home, 'dir-loop-a', 'Memory.md')], localCall(engine)));
+    expect(refused.code).toBe('invalid_params');
+  }, 60_000);
+
+  test('--into refuses an incomplete profile read and leaves the file as it was', async () => {
+    const file = join(home, 'Partial.md');
+    writeFileSync(file, '# Memory\n- mine\n');
+    const partial: ImportCall = async (tool, p) => { const out = await localCall(engine)(tool, p); return { ...out, profile: { ...(out.profile as R), partial: true } }; };
+    const refused = await refusal(() => exportCli(['--format', 'muse-memory', '--into', file], partial));
+    expect(refused.code).toBe('unavailable');
+    expect(readFileSync(file, 'utf8')).toBe('# Memory\n- mine\n');
   }, 60_000);
 });
 

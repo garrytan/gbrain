@@ -76,10 +76,19 @@ export function renderMarkdown(block: ProfileBlock, facts: ProfileFact[]): strin
 
 /**
  * The one gbrain:profile block's begin and end line indexes, or null when there is none. Refuses, so the caller changes
- * nothing, when a marker line is malformed, repeated, unpaired, or an end comes before its begin.
+ * nothing, when a marker line is malformed, repeated, unpaired, or an end comes before its begin. A marker inside a
+ * fenced code block is an example, not a marker.
  */
 function museBlock(lines: string[], refusal: string, fix: string): { begin: number; end: number } | null {
-  const marks = lines.flatMap((l, i) => MARKER_RE.test(l) ? [{ i, kind: MARKER_RE.exec(l)![1]!, ok: l.trim() === MUSE_END || MUSE_BEGIN_RE.test(l.trim()) }] : []);
+  let fence: string | null = null;
+  const inFence = lines.map(l => {
+    const open = /^\s*(`{3,}|~{3,})/.exec(l)?.[1];
+    if (!open) return fence !== null;
+    if (fence === null) { fence = open[0]!; return true; }
+    if (open[0] === fence) fence = null;
+    return true;
+  });
+  const marks = lines.flatMap((l, i) => !inFence[i] && MARKER_RE.test(l) ? [{ i, kind: MARKER_RE.exec(l)![1]!, ok: l.trim() === MUSE_END || MUSE_BEGIN_RE.test(l.trim()) }] : []);
   const begins = marks.filter(m => m.kind === 'begin');
   const ends = marks.filter(m => m.kind === 'end');
   const bad = marks.find(m => !m.ok);

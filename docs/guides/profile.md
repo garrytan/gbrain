@@ -169,11 +169,14 @@ out (`withheld`) or a fact over 500 characters was cut (`cut`).
 With `--into`, the block replaces the previous GBrain block in that file and leaves every other line as it was; a
 file with no block gets it appended, and a missing file is created. A file whose block is damaged (two blocks, a
 begin with no end, an end before its begin, or a marker line that is not exactly as above) is refused with
-`invalid_params` and left untouched: delete the damaged lines and export again. The standing line is there because
+`invalid_params` and left untouched: delete the damaged lines and export again. Marker lines inside a fenced code
+block are an example and are left alone. The standing line is there because
 an assistant that searches its own memory first can otherwise answer without ever asking GBrain. `profile import`
 skips the GBrain block, so importing that Memory.md later never reads your exported profile back as new facts; it
 refuses a file whose block is damaged the same way. The file is read after your profile, just before it is written, and
 a symlinked Memory.md is updated at its target; a file that changes while the export writes it is left as it is, and
-the export asks you to run it again.
+the export asks you to run it again. With `--include-private` the file becomes readable only by you. When the brain
+returns an incomplete profile, `--into` refuses and leaves the file as it was, so a partial read never replaces a
+complete block.
 
 To connect Muse itself, hand it the [Muse connector brief](../connectors/muse.md).

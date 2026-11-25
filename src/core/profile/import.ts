@@ -126,8 +126,7 @@ const credential = (pattern: string): Raw => ({ line: 0, skip: `credential-shape
 export function planImport(text: string, format: ImportFormat | 'auto'): ImportPlan {
   const fmt = format === 'auto' ? sniffFormat(text) : format;
   const own = fmt === 'claude-memories' ? new Set<number>() : museBlockLines(text);
-  const first = own.size ? Math.min(...own) : 0;
-  const body = own.size ? text.split(/\r?\n/).map((l, i) => i + 1 === first ? '# GBrain' : own.has(i + 1) ? '' : l).join('\n') : text;
+  const body = own.size ? text.split(/\r?\n/).map((l, i) => own.has(i + 1) ? '' : l).join('\n') : text;
   const parsed = fmt === 'claude-memories' ? claudeMemories(text) : fmt === 'memory-text' ? memoryText(body) : bullets(body);
   const inFile = fmt === 'claude-memories' ? new Map<number, string>() : credentialLines(text);
   const facts = parsed.filter(r => !('skip' in r)) as Array<Extract<Raw, { fact: string }>>;
