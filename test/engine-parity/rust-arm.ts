@@ -144,12 +144,17 @@ async function serveRustBrain(owned: RustBrainDir): Promise<RustBrainDir> {
   const client = openRustEngine({ addon: addon!, databasePath: owned.dir, served: { url: `gbrain+tls://localhost:${listener.port}`, token, ca: tls.cert } });
   await client.connect({ engine: 'rust', database_path: owned.dir } as never);
   Object.defineProperty(client, 'openStore', { value: (member: string) => owner.openStore(member), configurable: true, writable: true });
-  Object.defineProperty(client, 'servedOwner', { value: owner, configurable: true });
-  const leave = client.disconnect.bind(client);
-  Object.defineProperty(client, 'disconnect', {
-    value: async () => { await leave(); await listener.close(); await owner.disconnect(); }, configurable: true, writable: true,
-  });
+  // The arm closes the server with the client (closeRustBrain); the client's own disconnect and reconnect stay its own.
+  servedBehind.set(client, async () => { await listener.close(); await owner.disconnect(); });
   return { engine: client, dir: owned.dir };
+}
+
+/** The server behind a served arm engine, closed after the engine (closeRustBrain). */
+const servedBehind = new WeakMap<object, () => Promise<void>>();
+
+/** Disconnects an arm engine and, for the served variant, the listener and owner behind it. */
+export async function closeRustBrain(engine: { disconnect(): Promise<void> }): Promise<void> {
+  try { await engine.disconnect(); } finally { await servedBehind.get(engine)?.(); }
 }
 
 export function removeBrainDir(dir: string): void {

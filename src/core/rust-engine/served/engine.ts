@@ -15,9 +15,12 @@ import type { EngineConfig } from '../../types.ts';
 import { opError } from '../../ops/contract.ts';
 import { installOwnerClient, missingOnRustOwner } from '../owner-ipc/client.ts';
 import { capabilityMissing } from '../errors.ts';
+import { RECEIPT_STOP_OWNERS } from '../receipt-stops.ts';
 import { OWNER_IPC_ROUTES, ownerIpcRefusal } from '../owner-ipc/routes.ts';
 import { rustMultiuserFromEnv } from '../multiuser-switch.ts';
 import { connectServed, type ServedConnection } from './client.ts';
+import { recordHeldPageKeys, type HeldPageKeys } from '../../page-state/guards.ts';
+import type { PageKey } from '../../page-state/types.ts';
 import { SERVED_STORE_CALL, STORE_RETURNING_MEMBERS } from './store-returning.ts';
 
 export const RUST_SERVER_URL_ENV = 'GBRAIN_RUST_SERVER_URL';
@@ -67,15 +70,24 @@ function storeProxy(connection: ServedConnection, member: string, ref: string | 
  * `transaction(fn)` opens a savepoint there. `own` is true for a transaction this client opened (it commits it);
  * a handle the server lent to a callback is ended by the server.
  */
-function transactionHandle(engine: object, connection: ServedConnection, ref: string): BrainEngine {
+function transactionHandle(engine: object, connection: ServedConnection, ref: string, parentHeld: HeldPageKeys | null = null): BrainEngine {
   const handle = Object.create(engine) as EngineRecord;
+  // The page keys the transaction holds: taken on the server's transaction, recorded here as a local transaction
+  // records them, so a caller's held-key check (page-state/guards.ts assertHeldPageKeys) answers the same.
+  const held: HeldPageKeys = { keys: new Set(), parent: parentHeld };
   for (const [member, route] of Object.entries(OWNER_IPC_ROUTES)) {
     if (route === 'local') continue;
     const missing = missingOnRustOwner(connection.hello, member);
     const value = missing !== null
-      ? () => Promise.reject(capabilityMissing(missing, member))
+      ? () => Promise.reject(capabilityMissing(missing, member, 'none', RECEIPT_STOP_OWNERS[member]))
       : member === 'transaction' || member === 'transactionDirect'
-        ? (fn: (tx: BrainEngine) => Promise<unknown>, opts?: TransactionOptions) => runTransaction(engine, connection, fn, opts, ref)
+        ? (fn: (tx: BrainEngine) => Promise<unknown>, opts?: TransactionOptions) => runTransaction(engine, connection, fn, opts, ref, held)
+        : member === 'lockPageKeys'
+          ? async (...args: unknown[]) => {
+            const value = await connection.request('call', member, args, { txn: ref });
+            recordHeldPageKeys(held, (Array.isArray(args[0]) ? args[0] : []) as PageKey[]);
+            return value;
+          }
         : STORE_RETURNING_MEMBERS.has(member)
           ? async () => storeProxy(connection, member, ref)
         : route === 'refuse'
@@ -84,18 +96,15 @@ function transactionHandle(engine: object, connection: ServedConnection, ref: st
     Object.defineProperty(handle, member, { value, writable: true, configurable: true, enumerable: false });
   }
   Object.defineProperty(handle, '__servedTxRef', { value: ref, enumerable: false });
-  // The page keys the transaction holds live on the server's transaction; this marks the handle as one that holds
-  // them, as a local transaction handle is marked (persistence/origin-guard.ts reads it), and lockPageKeys on it
-  // takes them there.
-  Object.defineProperty(handle, '_heldPageKeys', { value: Object.freeze({ served: true }), enumerable: false });
+  Object.defineProperty(handle, '_heldPageKeys', { value: held, enumerable: false });
   return handle as unknown as BrainEngine;
 }
 
 async function runTransaction<T>(engine: object, connection: ServedConnection, fn: (tx: BrainEngine) => Promise<T>,
-  opts: TransactionOptions | undefined, parent?: string): Promise<T> {
+  opts: TransactionOptions | undefined, parent?: string, parentHeld: HeldPageKeys | null = null): Promise<T> {
   if (opts?.signal?.aborted) throw opError('cancelled', 'The transaction was cancelled before it began; nothing was written.', 'Retry the transaction.', { detail: 'member=transaction via=served' });
   const ref = String(await connection.txn('begin', { ...(parent ? { txn: parent } : {}), ...(opts?.readOnly ? { readOnly: true } : {}) }));
-  const tx = transactionHandle(engine, connection, ref);
+  const tx = transactionHandle(engine, connection, ref, parentHeld);
   let value: T;
   try { value = await fn(tx); }
   catch (error) {
@@ -103,6 +112,8 @@ async function runTransaction<T>(engine: object, connection: ServedConnection, f
     throw error;
   }
   await connection.txn('commit', { txn: ref });
+  // A released savepoint's keys stay held by its parent; a rolled-back one's do not (page-state/guards.ts).
+  if (parentHeld) for (const key of (tx as unknown as { _heldPageKeys: HeldPageKeys })._heldPageKeys.keys) parentHeld.keys.add(key);
   return value;
 }
 
@@ -116,6 +127,14 @@ export async function connectServedEngine(engine: object, target: ServedTarget):
   const capabilities = record.capabilities as Set<string> | undefined;
   capabilities?.add('served');
   connection.txProxy = ref => transactionHandle(engine, connection, ref);
+  const refusals: string[] = [];
+  // A member the server's engine lacks refuses as the Rust engine in process does, its known stop included.
+  for (const member of Object.keys(RECEIPT_STOP_OWNERS)) {
+    const missing = missingOnRustOwner(connection.hello, member);
+    if (missing === null) continue;
+    Object.defineProperty(record, member, { value: () => Promise.reject(capabilityMissing(missing, member, 'none', RECEIPT_STOP_OWNERS[member])), writable: true, configurable: true, enumerable: false });
+    refusals.push(member);
+  }
   for (const member of STORE_RETURNING_MEMBERS) {
     if (missingOnRustOwner(connection.hello, member) !== null) continue;
     Object.defineProperty(record, member, { value: async () => storeProxy(connection, member, undefined), writable: true, configurable: true, enumerable: false });
@@ -128,5 +147,5 @@ export async function connectServedEngine(engine: object, target: ServedTarget):
       });
     }
   }
-  return () => { for (const member of ['transaction', 'transactionDirect', ...STORE_RETURNING_MEMBERS]) delete record[member]; undo(); };
+  return () => { for (const member of ['transaction', 'transactionDirect', ...STORE_RETURNING_MEMBERS, ...refusals]) delete record[member]; undo(); };
 }
