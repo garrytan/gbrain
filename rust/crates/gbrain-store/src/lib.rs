@@ -52,6 +52,7 @@ pub mod shared_skill_catalog;
 pub mod shared_skill_members;
 pub mod shared_skill_publication;
 pub mod slug_spellings;
+pub mod snapshot;
 pub mod sources;
 #[cfg(test)]
 mod test_support;
@@ -136,6 +137,7 @@ pub mod timeline_queries;
 pub mod transactions;
 pub mod trust;
 pub mod vectors;
+pub mod verify;
 mod version_prune;
 pub mod volunteer_events;
 pub mod wanted_links;
@@ -239,6 +241,9 @@ pub struct Store {
     /// True when the open-time scan could not store the member-access flag and this process reads
     /// it as `'1'` (`access_flag::scan_at_open`).
     pub(crate) flag_assumed: bool,
+    /// The brain directory, when the store was opened on one (`open_dir`, `open_dir_read_only`):
+    /// the snapshot copies its `FORMAT` (`snapshot.rs`). `None` over `open_kv`.
+    dir: Option<std::path::PathBuf>,
 }
 
 /// The record file of a brain directory, with one writer or many. Only for the storage bake-off:
@@ -343,7 +348,8 @@ impl Store {
             }
         }
         let kv = open_records(dir, options.concurrent_writes)?;
-        let store = Store::open_kv_in(kv, Arc::new(SystemEnv), options.clone(), known)?;
+        let mut store = Store::open_kv_in(kv, Arc::new(SystemEnv), options.clone(), known)?;
+        store.dir = Some(dir.to_path_buf());
         // FORMAT follows the records: written when missing (a crash before it, or a deleted
         // file) and repaired when it is behind the records.
         let record = store.format_record(&options)?;
@@ -378,7 +384,8 @@ impl Store {
             keyword_index_builder: false,
             ..OpenOptions::default()
         };
-        let store = Store::open_kv_in(kv, Arc::new(SystemEnv), options, FORMAT_VERSIONS)?;
+        let mut store = Store::open_kv_in(kv, Arc::new(SystemEnv), options, FORMAT_VERSIONS)?;
+        store.dir = Some(dir.to_path_buf());
         if existing.is_some_and(|on_disk| on_disk.brain_id != store.info.brain_id) {
             return Err(StoreError::new(
                 error::STORE_CORRUPT,
@@ -457,6 +464,7 @@ impl Store {
             builder: Mutex::new(None),
             runs_builder: options.keyword_index_builder,
             flag_assumed,
+            dir: None,
         })
         .inspect(|store| {
             if index.needs_build && store.runs_builder {
@@ -477,6 +485,7 @@ impl Store {
             builder: Mutex::new(None),
             runs_builder: false,
             flag_assumed: self.flag_assumed,
+            dir: self.dir.clone(),
         }
     }
 
@@ -544,6 +553,7 @@ impl Store {
             builder: Mutex::new(None),
             runs_builder: false,
             flag_assumed: self.flag_assumed,
+            dir: self.dir.clone(),
         }
     }
 

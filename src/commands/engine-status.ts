@@ -24,6 +24,7 @@ import type { GraduationPathState } from '../core/persistence/engine-graduation.
 import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { OperationError } from '../core/ops/contract.ts';
+import type { RustAddonStatus } from '../core/rust-engine/addon-install.ts';
 
 import {
   envShadowDetected,
@@ -160,6 +161,8 @@ interface EngineStatusReport {
   /** Engine graduation (file reads only): path state, manifest state, marker, tombstone, redacted target. */
   graduation?: GraduationStatusBlock;
   config_diagnosis?: PgAccessDiagnosis;
+  /** The Rust engine addon on disk (no load, no network), for a brain on the Rust engine or with shadow mode on. */
+  rust_addon?: RustAddonStatus;
   probe?: ProbeResult;
 }
 
@@ -381,6 +384,10 @@ export async function runEngineStatus(args: string[]): Promise<number> {
     }
     const graduation = graduationBlock(cfg?.engine === 'pglite' ? dataDir : null);
     if (graduation) report.graduation = graduation;
+    const { configuredBrainUsesRust } = await import('./rust-addon-upgrade.ts');
+    if (configuredBrainUsesRust(cfg as import('../core/types.ts').EngineConfig | null)) {
+      report.rust_addon = (await import('../core/rust-engine/addon-install.ts')).rustAddonStatus(process.env);
+    }
 
     if (!cfg && !thin) {
       report.config_diagnosis = diagnoseDbConfig({ source, envShadowed: shadowed, brainId }) ?? undefined;
@@ -445,6 +452,10 @@ function printHuman(r: EngineStatusReport): void {
   }
   if (r.graduation) {
     lines.push(`Graduation: ${r.graduation.state}${r.graduation.manifest_state ? ` (run ${r.graduation.run_id}, ${r.graduation.manifest_state})` : ''}${r.graduation.target ? ` -> ${r.graduation.target}` : ''}`);
+  }
+  if (r.rust_addon) {
+    const a = r.rust_addon;
+    lines.push(`Addon:   ${a.override ? 'GBRAIN_RUST_ENGINE_ADDON override' : a.installed ? `installed ${a.path} (${a.target})` : `not installed for ${a.target ?? 'this platform'}${a.preview_target ? ' (run gbrain engine install rust)' : ' (no release addon for this platform)'}`}`);
   }
   if (r.config_diagnosis) {
     lines.push(`Status:  ${r.config_diagnosis.reason} — ${r.config_diagnosis.remediation}`);
