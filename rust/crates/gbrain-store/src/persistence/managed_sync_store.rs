@@ -51,12 +51,12 @@ fn blank(value: &Option<String>) -> bool {
 // ---------------------------------------------------------------------------------------------
 // Parameters, as the statement's `$n` reads them.
 
-fn param<'a>(p: &'a [Value], i: usize) -> Result<&'a Value> {
+pub(super) fn param<'a>(p: &'a [Value], i: usize) -> Result<&'a Value> {
     p.get(i)
         .ok_or_else(|| StoreError::invalid(format!("a sync statement needs parameter ${}", i + 1)))
 }
 
-fn text(p: &[Value], i: usize) -> Result<String> {
+pub(super) fn text(p: &[Value], i: usize) -> Result<String> {
     match param(p, i)? {
         Value::String(s) => Ok(s.clone()),
         Value::Null => Err(StoreError::invalid(format!("parameter ${} is null", i + 1))),
@@ -64,7 +64,7 @@ fn text(p: &[Value], i: usize) -> Result<String> {
     }
 }
 
-fn opt_text(p: &[Value], i: usize) -> Result<Option<String>> {
+pub(super) fn opt_text(p: &[Value], i: usize) -> Result<Option<String>> {
     match param(p, i)? {
         Value::Null => Ok(None),
         Value::String(s) => Ok(Some(s.clone())),
@@ -72,7 +72,7 @@ fn opt_text(p: &[Value], i: usize) -> Result<Option<String>> {
     }
 }
 
-fn texts(p: &[Value], i: usize) -> Result<Vec<String>> {
+pub(super) fn texts(p: &[Value], i: usize) -> Result<Vec<String>> {
     match param(p, i)? {
         Value::Array(items) => Ok(items
             .iter()
@@ -93,7 +93,7 @@ fn opt_texts(p: &[Value], i: usize) -> Result<Option<Vec<String>>> {
 }
 
 /// A `bigint` parameter: a JSON number or its text.
-fn big(value: &Value) -> Result<i64> {
+pub(super) fn big(value: &Value) -> Result<i64> {
     match value {
         Value::Number(n) => n
             .as_i64()
@@ -115,7 +115,7 @@ fn opt_big(p: &[Value], i: usize) -> Result<Option<i64>> {
 }
 
 /// `completed_keys` text parameter (`$n::text::jsonb`).
-fn jsonb_param(p: &[Value], i: usize) -> Result<Value> {
+pub(super) fn jsonb_param(p: &[Value], i: usize) -> Result<Value> {
     let raw = text(p, i)?;
     serde_json::from_str(&raw).map_err(|_| StoreError::invalid("a jsonb parameter is not valid JSON"))
 }
@@ -124,7 +124,7 @@ fn jsonb_param(p: &[Value], i: usize) -> Result<Value> {
 // op_checkpoints rows.
 
 /// Every parent row of `op`, in fingerprint byte order.
-fn op_rows(read: &dyn KvRead, op: &str) -> Result<Vec<(String, HousekeepingRow)>> {
+pub(super) fn op_rows(read: &dyn KvRead, op: &str) -> Result<Vec<(String, HousekeepingRow)>> {
     let mut prefix = vec![keys::PERSISTENCE, HOUSEKEEPING];
     prefix.extend_from_slice(op.as_bytes());
     prefix.push(0);
@@ -146,21 +146,21 @@ fn op_rows(read: &dyn KvRead, op: &str) -> Result<Vec<(String, HousekeepingRow)>
     Ok(out)
 }
 
-fn op_row(read: &dyn KvRead, op: &str, fingerprint: &str) -> Result<Option<HousekeepingRow>> {
+pub(super) fn op_row(read: &dyn KvRead, op: &str, fingerprint: &str) -> Result<Option<HousekeepingRow>> {
     get_json::<HousekeepingRow>(read, &parent_key(op, fingerprint)?)
 }
 
 /// `completed_keys->0`: the first element, or None for an empty or non-array value.
-fn first(row: &HousekeepingRow) -> Option<&Value> {
+pub(super) fn first(row: &HousekeepingRow) -> Option<&Value> {
     row.completed_keys.as_array().and_then(|a| a.first())
 }
 
 /// `completed_keys->0->>key`.
-fn first_text(row: &HousekeepingRow, key: &str) -> Option<String> {
+pub(super) fn first_text(row: &HousekeepingRow, key: &str) -> Option<String> {
     first(row).and_then(|v| json_text(v.get(key)))
 }
 
-fn put_row(tx: &mut dyn KvWrite, env: &dyn Env, op: &str, fingerprint: &str, completed_keys: Value) -> Result<()> {
+pub(super) fn put_row(tx: &mut dyn KvWrite, env: &dyn Env, op: &str, fingerprint: &str, completed_keys: Value) -> Result<()> {
     put_json(
         tx,
         &parent_key(op, fingerprint)?,
@@ -184,11 +184,11 @@ fn jsonb_timestamp(micros: i64) -> String {
 // ---------------------------------------------------------------------------------------------
 // Request and page helpers.
 
-fn request_is(r: &super::RequestRecord, wanted: &[&str]) -> bool {
+pub(super) fn request_is(r: &super::RequestRecord, wanted: &[&str]) -> bool {
     wanted.contains(&r.state.as_str())
 }
 
-fn kind_of(r: &super::RequestRecord) -> Option<String> {
+pub(super) fn kind_of(r: &super::RequestRecord) -> Option<String> {
     json_text(r.intent.get("kind"))
 }
 
@@ -204,7 +204,7 @@ fn page_row_deleted_at(p: &PageRecord) -> Value {
     p.deleted_at_us.map_or(Value::Null, |us| json!(iso(us)))
 }
 
-fn rows(items: Vec<Value>) -> Value {
+pub(super) fn rows(items: Vec<Value>) -> Value {
     Value::Array(items)
 }
 
@@ -215,12 +215,20 @@ fn count_stamp_ids(ids: &HashSet<String>, prefix: &str, value: &str) -> bool {
 impl Store {
     /// One read statement of the managed sync (`syncStoreRows`).
     pub fn sync_store_rows(&self, name: &str, params: &[Value]) -> Result<Value> {
-        run_read(&*self.read()?, &*self.env, name, params)
+        let read = self.read()?;
+        // Lane LM slice 2 part B: the status, page-fault, older-cursor and freshness statements (managed_sync_status.rs).
+        if let Some(rows) = super::managed_sync_status::read(&*read, &*self.env, name, params)? {
+            return Ok(rows);
+        }
+        run_read(&*read, &*self.env, name, params)
     }
 
     /// One write statement of the managed sync (`syncStoreWrite`); its `RETURNING` rows.
     pub fn sync_store_write(&self, name: &str, params: &[Value]) -> Result<Value> {
-        self.write(|tx| run_write(tx, &*self.env, name, params))
+        self.write(|tx| match super::managed_sync_status::write(tx, &*self.env, name, params)? {
+            Some(rows) => Ok(rows),
+            None => run_write(tx, &*self.env, name, params),
+        })
     }
 }
 
@@ -753,7 +761,7 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
         }
 
         // ---- the apply round and the folded stamp
-        "live_slugs" => {
+        "live_slugs" | "landing_live_slugs" => {
             let (source, slugs) = (text(p, 0)?, texts(p, 1)?);
             rows(all_pages(read)?
                 .into_iter()

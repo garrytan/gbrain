@@ -38,9 +38,7 @@ const day = (at: number) => new Date(at).toISOString().slice(0, 10);
 export async function recordSoakEvent(engine: Exec, kind: SoakKind, n = 1): Promise<void> {
   if (n <= 0) return;
   const today = day(Date.now());
-  await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,jsonb_build_array(jsonb_build_object('day',$2::text,$3::text,$4::int)))
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=jsonb_build_array(op_checkpoints.completed_keys->0
-      || jsonb_build_object($3::text, COALESCE((op_checkpoints.completed_keys->0->>$3)::int,0)+$4::int)), updated_at=now()`, [SOAK_COUNTERS_OP, today, kind, n]).catch(() => undefined);
+  await syncRows(engine, 'soak_counter_add', [SOAK_COUNTERS_OP, today, kind, n]).catch(() => undefined);
 }
 
 /** The intervention a sync invocation's flags make, if any. */
@@ -67,9 +65,7 @@ export async function sweepNeedsHumanHolds(engine: BrainEngine, sourceId: string
   const auto = await fenceAutoRepairFor(engine, records);
   const stamp = new Date(now).toISOString();
   for (const record of records.filter(hold => holdVerdict(hold, auto, now).needs_human).slice(0, SWEEP_LIMIT)) {
-    const updated = await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,meta,needs_human_at}',to_jsonb($3::text))
-      WHERE op=$1 AND fingerprint=$2 AND completed_keys->0->>'code'=$4 AND NOT (completed_keys->0->'meta' ? 'needs_human_at') RETURNING 1`,
-    [GIT_HOLD_OP, gitHoldFingerprint(sourceId, source.incarnation, record.path), stamp, record.code]);
+    const updated = await syncRows(engine, 'hold_needs_human_stamp', [GIT_HOLD_OP, gitHoldFingerprint(sourceId, source.incarnation, record.path), stamp, record.code]);
     if (updated.length) counted[record.code === 'file_drift' ? 'file_drift_hold' : 'needs_human']++;
   }
   await recordSoakEvent(engine, 'needs_human', counted.needs_human);

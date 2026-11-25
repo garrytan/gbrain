@@ -25,10 +25,19 @@ import { performSync } from '../src/commands/sync.ts';
 import { runManagedSourceLifecycle } from '../src/core/persistence/source-lifecycle.ts';
 import { assertWriterAdminUnlocked } from '../src/core/persistence/admin-lock.ts';
 import { hostIdFor } from '../src/core/persistence/identity.ts';
+import { SYNC_STATEMENTS, type SyncStatementName } from '../src/core/engine-sql/managed-sync-store.ts';
+import { idempotentDeletionProof, pageChangeProof } from '../src/core/persistence/sync-page-fault.ts';
+import { readDryRunWriterState } from '../src/core/persistence/sync-dry-run-writer.ts';
+import { recordedStop } from '../src/core/persistence/sync-stop-class.ts';
+import { readSyncStatus } from '../src/core/persistence/sync-status.ts';
+import { readLandingGaps } from '../src/core/persistence/landing-gaps.ts';
+import { sweepNeedsHumanHolds, recordSoakEvent } from '../src/core/persistence/soak-counters.ts';
 
 const refusal = (run: () => Promise<unknown>) => run().then(() => null, (e: { code?: string; detail?: unknown }) => ({
   code: e?.code ?? String(e), member: /member=(\w+)/.exec(String(e?.detail ?? ''))?.[1] ?? null, capability: /capability=(\w+)/.exec(String(e?.detail ?? ''))?.[1] ?? null }));
 const RAW = { code: 'engine_capability_missing', member: 'executeRaw', capability: 'raw_sql' };
+/** What a status read and the landing-gaps read of a claimed source answered on a held brain before part B typed their statements: the status refuses naming executeRaw, the landing read's own catch says `not_applicable`. */
+const BASE_STATUS = { status: RAW, landing: 'not_applicable' };
 /** The base's refusal of a managed sync: performManagedSync names managed_persistence before discovery. */
 const SYNC_REFUSAL = { code: 'engine_capability_missing', member: 'performManagedSync', capability: 'managed_persistence' };
 
@@ -114,5 +123,48 @@ describe.skipIf(!rustArmRequested())('a user\'s Rust brain keeps refusing manage
       expect(after).toEqual(before);
       expect(after.page).toBeNull();
       expect(after.stamped).toBeNull();
+    }), 120_000);
+  /** The statements of the page-fault proofs, the older cursor's publication, `sync status`, the hold sweep and the freshness read (lane LM slice 2, part B). */
+  const PART_B: SyncStatementName[] = ['page_revision_writer', 'request_writer', 'page_deleted_revision_writer', 'live_page_at_origin', 'manifest_entry', 'cursor_keys_locked', 'manifest_length',
+    'cursor_mark_done', 'failure_supersession', 'source_company_brain', 'source_live_incarnation', 'knock_on_requests', 'live_cursor_rows', 'open_writer_requests', 'recorded_stop',
+    'freshness_aggregate', 'soak_counter_add', 'hold_needs_human_stamp', 'landing_binding', 'landing_receipts', 'landing_live_slugs'];
+
+  test('the page-fault proofs, the dry-run writer state, the stop record, the hold sweep and every part-B statement refuse as executeRaw did; nothing changed', () =>
+    withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
+      expect(engine.capabilities.has('managed_persistence')).toBe(false);
+      const root = join(home, 'checkout');
+      if (!await engine.getSource('work')) {
+        mkdirSync(join(root, 'notes'), { recursive: true });
+        execFileSync('git', ['-C', root, 'init', '-q', '-b', 'main']);
+        writeFileSync(join(root, 'notes', 'alice-example.md'), '---\ntitle: Alice Example\n---\nWorks at acme-example.\n');
+        execFileSync('git', ['-C', root, 'add', '.']);
+        execFileSync('git', ['-C', root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', 'notes']);
+        await createRustSource(engine, 'work', {}, root);
+        const reviewed = async (operation: string) => ({ admin_intent: operation, expected_state: await writerAdminState(engine) });
+        await runPersistenceAdministration(engine, 'writer_claim', { source_id: 'work', path: root, ...await reviewed('writer_claim') });
+        await runPersistenceAdministration(engine, 'writer_activate', { confirm_quiesced: true, ...await reviewed('writer_activate') });
+      }
+      const incarnation = (await engine.readSourceMembership('work'))!.incarnation;
+      const before = { source: await engine.readSourceMembership('work'), page: await engine.getPage('notes/alice-example', { sourceId: 'work' }), files: readdirSync(join(root, 'notes')).sort() };
+      const statements = Object.fromEntries(await Promise.all(PART_B.map(async name => [name, await refusal(() => engine.runSyncStatement(name, ['work', 'work', 'work', 'work'])).then(r => ({ kind: (SYNC_STATEMENTS as Record<string, { kind: string } | undefined>)[name]?.kind ?? 'new', ...r }))])));
+      const out = {
+        pageChange: await refusal(() => pageChangeProof(engine, { sourceId: 'work', incarnation, pageId: 1, expectedRevision: 'revision-example' })),
+        deletion: await refusal(() => idempotentDeletionProof(engine, { sourceId: 'work', incarnation, pageId: 1, revision: 'revision-example', sourcePath: 'notes/alice-example.md' })),
+        dryRunWriter: await refusal(() => readDryRunWriterState(engine, 'work')),
+        recordedStop: await refusal(() => recordedStop(engine, 'cursor-example', 'run-example')),
+        sweep: await refusal(() => sweepNeedsHumanHolds(engine, 'work')),
+      };
+      // The soak counter write never throws (its refusal is swallowed by design); the row it would add is not there.
+      await recordSoakEvent(engine as never, 'needs_human', 1);
+      expect(out).toEqual({ pageChange: RAW, deletion: RAW, dryRunWriter: RAW, recordedStop: RAW, sweep: RAW });
+      expect(Object.values(statements).every(r => (r as { code: string }).code === RAW.code && (r as { member: string }).member === RAW.member && (r as { capability: string }).capability === RAW.capability)).toBe(true);
+      expect(Object.keys(statements).sort()).toEqual([...PART_B].sort());
+      // A status read of a source the hold keeps out of managed mode answers what it did before this part typed its statements.
+      const status = await refusal(() => readSyncStatus(engine, 'work'));
+      const landing = await readLandingGaps(engine, 'work').then(r => r.status, (e: { code?: string }) => `refused: ${e?.code}`);
+      expect({ status, landing }).toEqual(BASE_STATUS);
+      const after = { source: await engine.readSourceMembership('work'), page: await engine.getPage('notes/alice-example', { sourceId: 'work' }), files: readdirSync(join(root, 'notes')).sort() };
+      expect(after).toEqual(before);
+      expect(after.page).toBeNull();
     }), 120_000);
 });

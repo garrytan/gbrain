@@ -148,6 +148,78 @@ export const SYNC_STATEMENTS = {
   // The drain lease fence and the database clock (db-lock.ts fenceLockRow, sync-pass-run.ts databaseNow).
   lease_fence: { kind: 'read', sql: 'SELECT 1 FROM gbrain_cycle_locks WHERE id=$1 AND acquisition_token=$2::uuid AND ttl_expires_at > now() FOR KEY SHARE' },
   database_now: { kind: 'read', sql: 'SELECT now() AS at' },
+  // Managed sync, lane LM slice 2 part B (sync-page-fault.ts, sync-prepare.ts, sync-status.ts, sync-dry-run-writer.ts, sync-stop-class.ts, sync-freshness.ts).
+  // The page and request reads of the page-fault proofs (sync-page-fault.ts pageChangeProof, idempotentDeletionProof): the text of the typed
+  // readPageRevisionWriter and readRevisionWriterRequest (engine-sql/sync-run-reads.ts), kept as statements so that a held Rust brain refuses them as executeRaw did.
+  page_revision_writer: { kind: 'read', sql: 'SELECT knowledge_revision::text AS revision, revision_write_request_id::text AS writer FROM pages WHERE id=$1 AND source_id=$2' },
+  request_writer: { kind: 'read', sql: `SELECT request_id::text, operation, intent->>'kind' AS kind, state, source_incarnation::text AS incarnation, page_id FROM persistence_requests WHERE id=$1::uuid` },
+  page_deleted_revision_writer: { kind: 'read', sql: 'SELECT knowledge_revision::text AS revision, revision_write_request_id::text AS writer, deleted_at IS NOT NULL AS deleted FROM pages WHERE id=$1 AND source_id=$2' },
+  live_page_at_origin: { kind: 'read', sql: 'SELECT 1 FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND id<>$2 AND source_path=$3 LIMIT 1' },
+  // The older cursor's manifest and checkpoint publication (sync-prepare.ts resolveSyncOrigin, applyManagedSyncCheckpoint).
+  manifest_entry: { kind: 'read', sql: "SELECT completed_keys->$2::integer AS entry FROM op_checkpoints WHERE op='managed-sync-manifest' AND fingerprint=$1" },
+  cursor_keys_locked: { kind: 'read', sql: "SELECT completed_keys FROM op_checkpoints WHERE op='managed-sync' AND fingerprint=$1 FOR UPDATE" },
+  manifest_length: { kind: 'read', sql: "SELECT jsonb_array_length(completed_keys) AS count FROM op_checkpoints WHERE op='managed-sync-manifest' AND fingerprint=$1" },
+  cursor_mark_done: { kind: 'write', sql: "UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,done}','true'::jsonb),updated_at=now() WHERE op='managed-sync' AND fingerprint=$1" },
+  // `gbrain sync status` (sync-status.ts): the failure's clock against the newest commit and admission, the company-brain test, the live incarnation, the knock-on receipts and the live cursors.
+  failure_supersession: { kind: 'read', sql: `SELECT now() AS now_at,
+      (SELECT f.updated_at FROM op_checkpoints f WHERE f.op='managed-sync-failure' AND f.fingerprint=$2) AS failure_at,
+      (SELECT max(r.completed_at) FROM persistence_source_bindings b JOIN persistence_requests r ON r.worktree_id=b.worktree_id AND r.source_incarnation=b.source_incarnation
+        WHERE b.source_id=$1 AND r.state='committed' AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%') AS committed_at,
+      (SELECT max(r.created_at) FROM persistence_source_bindings b JOIN persistence_requests r ON r.worktree_id=b.worktree_id AND r.source_incarnation=b.source_incarnation
+        WHERE b.source_id=$1 AND r.state<>'committed' AND r.intent->>'kind' IN ('managed_sync_import','managed_sync_delete')) AS admitted_at` },
+  source_company_brain: { kind: 'read', sql: "SELECT id FROM sources WHERE id=$1 AND config->'company_brain' IS NOT NULL" },
+  source_live_incarnation: { kind: 'read', sql: 'SELECT incarnation::text AS incarnation FROM sources WHERE id=$1 AND archived IS NOT TRUE' },
+  // `syncKnockOnSql('r')` written out (a composed `$1` statement is not allowed here; test/persistence-sync-statements pins the text against it). A Rust brain
+  // takes the predicate's strings (sync-knock-on.ts) as one extra trailing parameter, added by its store member.
+  knock_on_requests: { kind: 'read', sql: `SELECT request_id::text AS request_id FROM persistence_requests r
+    WHERE r.request_id::text = ANY($1::text[]) AND COALESCE((r.state IN ('cancelled','failed','conflict') AND r.recovery IS NULL AND NOT COALESCE(r.publication_started,false)
+    AND (r.error_detail->>'origin' = 'sync_knock_on'
+      OR (r.state='cancelled' AND r.error_code='cancelled' AND (r.error_message IN ('An earlier page of the same sync did not commit; this page was not published and is re-frozen after that failure is resolved.','An earlier page of the same sync did not commit after lock_timeout on its lane group; this page was not published and is re-frozen on the next sync pass.','An earlier page of the same sync did not commit after statement_timeout on its lane group; this page was not published and is re-frozen on the next sync pass.','An earlier page of the same bulk sync group failed; this page was not published and is re-frozen after that failure is resolved.')
+        OR r.error_message LIKE 'Its predecessor request % was never admitted; this page was not published and is re-frozen on the next sync pass.' OR r.error_message LIKE 'The first page of its group (request %) was cancelled because its predecessor request % was never admitted; this page was not published and is re-frozen on the next sync pass.'))
+      OR (r.state IN ('conflict','failed') AND r.error_code='revision_conflict' AND r.error_message='An earlier page of this sync did not commit.'))), false)` },
+  live_cursor_rows: { kind: 'read', sql: `SELECT c.fingerprint, c.completed_keys->0 AS header, to_char(c.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at, r.state
+       FROM op_checkpoints c LEFT JOIN persistence_requests r ON r.source_id=$1 AND r.request_id::text=c.completed_keys->0->'pending'->>'requestId'
+      WHERE c.op='managed-sync' AND c.completed_keys->0->>'sourceId'=$1 AND c.completed_keys->0->>'incarnation'=$2 ORDER BY c.updated_at DESC LIMIT 20` },
+  // The dry run's open writer requests (sync-dry-run-writer.ts), the stop a run recorded (sync-stop-class.ts) and the freshness aggregate (sync-freshness.ts; the sample and the visible-chunk predicates written out).
+  open_writer_requests: { kind: 'read', sql: `SELECT count(*) AS n, EXTRACT(EPOCH FROM now() - min(created_at)) AS age
+    FROM persistence_requests WHERE source_id=$1 AND state IN ('queued','running','recovering')` },
+  recorded_stop: { kind: 'read', sql: "SELECT completed_keys->0->>'gbrain_version' AS gbrain_version FROM op_checkpoints WHERE op='managed-sync-failure' AND fingerprint=$1 AND completed_keys->0->>'run_id'=$2" },
+  // chunk-visibility-ok: chunkVisibleFilter('p', 'cc', currentTextProjectionFilter) written out in the text (test/persistence-journal-statements.test.ts pins it)
+  freshness_aggregate: { kind: 'read', sql: `WITH c AS (SELECT key AS target, to_timestamp(value::double precision) AS committed_at FROM jsonb_each_text($4::text::jsonb)),
+      sample AS (SELECT r.source_id, r.slug, r.sequence, r.page_id, r.completed_at, c.committed_at
+        FROM persistence_requests r JOIN c ON c.target=r.intent->>'target' WHERE r.worktree_id=$1::uuid AND r.source_incarnation=$2::uuid AND r.state='committed' AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%'
+    AND r.completed_at > now() - ($3::int * interval '1 hour') AND r.intent->>'kind'='managed_sync_import' AND r.intent->>'from' IS NOT NULL
+    AND COALESCE(r.intent->>'working','false') <> 'true'),
+      later AS MATERIALIZED (SELECT l.source_id, l.slug, max(l.sequence) AS sequence FROM persistence_requests l
+        WHERE l.state='committed' AND l.source_id IN (SELECT source_id FROM sample) AND l.sequence > (SELECT min(sequence) FROM sample) GROUP BY l.source_id, l.slug),
+      s AS (SELECT r.completed_at, r.committed_at, COALESCE(r.page_id, (SELECT p.id FROM pages p WHERE p.source_id=r.source_id AND p.slug=r.slug LIMIT 1)) AS page_id,
+          COALESCE(later.sequence > r.sequence, false) AS superseded
+        FROM sample r LEFT JOIN later ON later.source_id=r.source_id AND later.slug=r.slug),
+      e AS (SELECT s.completed_at, s.committed_at, s.superseded, ch.n, ch.missing, ch.last_at FROM s
+        LEFT JOIN LATERAL (SELECT count(*) AS n, count(*) FILTER (WHERE cc.embedded_at IS NULL) AS missing, max(cc.embedded_at) AS last_at FROM content_chunks cc JOIN pages p ON p.id=cc.page_id
+          WHERE cc.page_id=s.page_id AND ((p.text_projection_revision = p.knowledge_revision) IS TRUE
+       AND (cc.body_generation IS NULL OR cc.body_generation <= p.body_generation))) ch ON true),
+      l AS (SELECT GREATEST(0, extract(epoch FROM completed_at - committed_at)) AS searchable,
+          CASE WHEN NOT superseded AND n > 0 AND missing = 0 AND last_at >= completed_at THEN GREATEST(0, extract(epoch FROM last_at - committed_at)) END AS embedded,
+          (NOT superseded AND n > 0 AND missing > 0) AS pending FROM e)
+      SELECT count(*) AS samples, percentile_cont(0.5) WITHIN GROUP (ORDER BY searchable) AS s50, percentile_cont(0.95) WITHIN GROUP (ORDER BY searchable) AS s95,
+        count(embedded) AS embedded, percentile_cont(0.5) WITHIN GROUP (ORDER BY embedded) AS e50, percentile_cont(0.95) WITHIN GROUP (ORDER BY embedded) AS e95,
+        count(*) FILTER (WHERE pending) AS pending FROM l` },
+  // The soak counters and the needs-human stamp of the hold sweep (soak-counters.ts) and the landing gaps of `sync status` (landing-gaps.ts; its receipt limit, LANDING_RECEIPT_LIMIT, written out).
+  soak_counter_add: { kind: 'write', sql: `INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,jsonb_build_array(jsonb_build_object('day',$2::text,$3::text,$4::int)))
+    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=jsonb_build_array(op_checkpoints.completed_keys->0
+      || jsonb_build_object($3::text, COALESCE((op_checkpoints.completed_keys->0->>$3)::int,0)+$4::int)), updated_at=now()` },
+  hold_needs_human_stamp: { kind: 'write', sql: `UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,meta,needs_human_at}',to_jsonb($3::text))
+      WHERE op=$1 AND fingerprint=$2 AND completed_keys->0->>'code'=$4 AND NOT (completed_keys->0->'meta' ? 'needs_human_at') RETURNING 1` },
+  landing_binding: { kind: 'read', sql: `SELECT b.worktree_id::text AS worktree_id, b.source_incarnation::text AS incarnation
+    FROM persistence_source_bindings b JOIN sources s ON s.id=b.source_id AND s.incarnation=b.source_incarnation WHERE b.source_id=$1` },
+  landing_live_slugs: { kind: 'read', sql: 'SELECT slug FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND slug = ANY($2::text[])' },
+  landing_receipts: { kind: 'read', sql: `SELECT DISTINCT ON (w.slug COLLATE "C") w.slug, w.kind, w.completed_at, extract(epoch FROM now() - w.completed_at)::float8 AS age FROM (
+        SELECT r.slug, r.sequence, r.completed_at, r.intent->>'kind' AS kind FROM persistence_requests r
+         WHERE r.worktree_id=$1::uuid AND r.source_incarnation=$2::uuid AND r.state='committed' AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%'
+           AND r.completed_at > now() - ($3::int * interval '1 hour') AND r.slug IS NOT NULL
+         ORDER BY r.completed_at DESC, r.sequence DESC LIMIT 2000) w
+      ORDER BY w.slug COLLATE "C", w.sequence DESC` },
   // Markers, the withheld-deletes record and the origin checks (sync-markers.ts).
   source_commit_config: { kind: 'read', sql: 'SELECT last_commit, config FROM sources WHERE id=$1' },
   source_state: { kind: 'read', sql: 'SELECT incarnation::text AS incarnation, last_commit, config FROM sources WHERE id=$1' },

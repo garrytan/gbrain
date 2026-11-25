@@ -36,7 +36,8 @@ import { resolveRepairScope, type RepairKind, type RepairResult } from '../repai
 import type { RepairKindSpec } from '../repair/registry.ts';
 import { headCommittedBytes } from './sync-page-fault.ts';
 import { laneFaultInMessage } from './sync-window.ts';
-import { cursorFenceCause, syncKnockOnSql } from './sync-knock-on.ts';
+import { cursorFenceCause } from './sync-knock-on.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
 import { listIncompleteSyncReceipts, type SyncSettledIndexes } from './checkpoint-validation.ts';
 import { drainEstimate, engineStallProbe } from './sync-drain.ts';
 import { readCheckoutRoot } from './applied-watermark.ts';
@@ -398,12 +399,7 @@ export async function readSyncStatus(engine: BrainEngine, sourceId: string, opts
       + `Retire it with ${repairPreview.argv!.join(' ')} (preview, then --apply with the printed hash).`, phase: 'resume', first_seen: retired.first_seen, attempts: 1, ...classifySyncFault({ code: 'cursor_incarnation_retired' }) } : null;
   const iso = (value: Date | string | null | undefined) => value == null ? null : new Date(value).toISOString();
   if (failure && lastError) {
-    const [seen] = await engine.executeRaw<{ failure_at: Date | string | null; committed_at: Date | string | null; admitted_at: Date | string | null; now_at: Date | string }>(`SELECT now() AS now_at,
-      (SELECT f.updated_at FROM op_checkpoints f WHERE f.op='managed-sync-failure' AND f.fingerprint=$2) AS failure_at,
-      (SELECT max(r.completed_at) FROM persistence_source_bindings b JOIN persistence_requests r ON r.worktree_id=b.worktree_id AND r.source_incarnation=b.source_incarnation
-        WHERE b.source_id=$1 AND r.state='committed' AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%') AS committed_at,
-      (SELECT max(r.created_at) FROM persistence_source_bindings b JOIN persistence_requests r ON r.worktree_id=b.worktree_id AND r.source_incarnation=b.source_incarnation
-        WHERE b.source_id=$1 AND r.state<>'committed' AND r.intent->>'kind' IN ('managed_sync_import','managed_sync_delete')) AS admitted_at`, [sourceId, failure.cursor_key]);
+    const [seen] = await syncRows<{ failure_at: Date | string | null; committed_at: Date | string | null; admitted_at: Date | string | null; now_at: Date | string }>(engine, 'failure_supersession', [sourceId, failure.cursor_key]);
     // #7243: the newest pass (its row rides the source read) is evidence too: it pinned, and it read the level unless it stopped before.
     const pass = source.pass_value?.telemetry;
     const levelRead = pass && (pass.outcome === 'up_to_date' || Object.keys(pass.timings_ms ?? {}).length > 0) ? pass.started_at : null;
@@ -556,7 +552,7 @@ function statusState(s: { human: boolean; heldForHuman: boolean; oldest: SyncSta
  * A company-brain source syncs to its approved revision, never to HEAD, so commits past it are not waiting.
  */
 async function commitsPastLastSync(engine: BrainEngine, sourceId: string, lastCommit: string): Promise<number | null> {
-  const [company] = await engine.executeRaw<{ id: string }>("SELECT id FROM sources WHERE id=$1 AND config->'company_brain' IS NOT NULL", [sourceId]);
+  const [company] = await syncRows<{ id: string }>(engine, 'source_company_brain', [sourceId]);
   if (company) return null;
   const root = (await readCheckoutRoot(engine, sourceId).catch(() => undefined))?.root;
   const lag = root ? await readGitBehind(root, lastCommit).catch(() => null) : null;
@@ -598,7 +594,7 @@ function recoveryAction(sourceId: string, first: { request_id: string; slug: str
  * (doctor's terminal-failure summary reuses them; it never recomputes the checkpoint's rule).
  */
 export async function readCheckpointBlockers(engine: BrainEngine, sourceId: string): Promise<NonNullable<SyncStatus['checkpoint_blockers']>> {
-  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1 AND archived IS NOT TRUE', [sourceId]);
+  const [source] = await syncRows<{ incarnation: string }>(engine, 'source_live_incarnation', [sourceId]);
   if (!source) return [];
   const failures = (await readManagedSyncFailures(engine, [sourceId])).filter(failure => failure.code !== 'sync_incomplete');
   const selected = await cursorHeader(engine, sourceId, source.incarnation, failures[0]?.cursor_key ?? null);
@@ -613,8 +609,7 @@ async function checkpointBlockers(engine: BrainEngine, header: CursorHeader | nu
   const intent = header?.pending?.intent;
   if (!header || header.done || intent?.kind !== 'managed_sync_checkpoint' || !header.binding?.worktree_id) return { checkpoint_blockers: [] };
   const rows = await listIncompleteSyncReceipts(engine, header.binding.worktree_id, header.runId, intent.supersededRequests ?? [], intent.settled ?? null);
-  const knockOns = new Set(rows.length ? (await engine.executeRaw<{ request_id: string }>(`SELECT request_id::text AS request_id FROM persistence_requests r
-    WHERE r.request_id::text = ANY($1::text[]) AND ${syncKnockOnSql('r')}`, [rows.map(row => row.request_id)])).map(row => row.request_id) : []);
+  const knockOns = new Set(rows.length ? (await syncRows<{ request_id: string }>(engine, 'knock_on_requests', [rows.map(row => row.request_id)])).map(row => row.request_id) : []);
   return { checkpoint_blockers: rows.map(row => ({ ...row, recovery: row.recovery === true, knock_on: knockOns.has(row.request_id) })) };
 }
 
@@ -633,11 +628,8 @@ export interface SyncStatusCursor {
 }
 
 async function liveCursors(engine: BrainEngine, sourceId: string, incarnation: string, shownKey: string | null, failures: Array<{ cursor_key: string; code: string }>): Promise<SyncStatusCursor[]> {
-  const rows = await engine.executeRaw<{ fingerprint: string; header: CursorHeader & { authority?: { writer?: { principal?: { kind: string; id: string } } }; pending?: { requestId?: string; intent?: { kind?: string } } };
-    updated_at: string; state: string | null }>(
-    `SELECT c.fingerprint, c.completed_keys->0 AS header, to_char(c.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at, r.state
-       FROM op_checkpoints c LEFT JOIN persistence_requests r ON r.source_id=$1 AND r.request_id::text=c.completed_keys->0->'pending'->>'requestId'
-      WHERE c.op='managed-sync' AND c.completed_keys->0->>'sourceId'=$1 AND c.completed_keys->0->>'incarnation'=$2 ORDER BY c.updated_at DESC LIMIT 20`, [sourceId, incarnation]);
+  const rows = await syncRows<{ fingerprint: string; header: CursorHeader & { authority?: { writer?: { principal?: { kind: string; id: string } } }; pending?: { requestId?: string; intent?: { kind?: string } } };
+    updated_at: string; state: string | null }>(engine, 'live_cursor_rows', [sourceId, incarnation]);
   return rows.map(row => ({ key_prefix: row.fingerprint.slice(0, 12), run_id: row.header.runId, index: Number(row.header.index), total: Number(row.header.total), done: !!row.header.done,
     writer: row.header.authority?.writer?.principal ?? null,
     pending: row.header.pending?.requestId ? { request_id: row.header.pending.requestId, kind: row.header.pending.intent?.kind ?? null, state: row.state } : null,
@@ -738,7 +730,7 @@ export async function observeDirtyEditors(engine: BrainEngine, sourceId: string,
  * writes nothing.
  */
 export async function unblockSync(engine: BrainEngine, sourceId: string, opts: UnblockOptions): Promise<UnblockOutcome> {
-  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1 AND archived IS NOT TRUE', [sourceId]);
+  const [source] = await syncRows<{ incarnation: string }>(engine, 'source_live_incarnation', [sourceId]);
   if (!source) throw Object.assign(new Error(`Source ${sourceId} does not exist.`), { code: 'not_found' });
   const holds = await observeDirtyEditors(engine, sourceId, source.incarnation,
     ((await readGitSourceHolds(engine, { sourceIds: [sourceId] }))[0]?.holds ?? []).filter(hold => hold.incarnation === source.incarnation));
