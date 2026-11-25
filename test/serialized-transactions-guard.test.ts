@@ -48,7 +48,7 @@ const SITES: Readonly<Record<string, readonly string[]>> = {
   'rust/crates/gbrain-store/src/page_body.rs': ['lockBodyStagingState'],
   'rust/crates/gbrain-store/src/page_body/segment_rewrite.rs': ['lockSegmentedGenerationPage'],
   'rust/crates/gbrain-store/src/pages.rs': ['lockPageKeys'],
-  'rust/crates/gbrain-store/src/persistence.rs': ['lockPersistenceCounters'],
+  'rust/crates/gbrain-store/src/persistence.rs': ['lockPersistenceCounters', 'selectClaimableWrite'],
   'rust/crates/gbrain-store/src/persistence/effect_retry_reads.rs': ['lockEffectRow'],
   'rust/crates/gbrain-store/src/persistence/effect_worker.rs': ['selectClaimableEffect', 'lockEffectClaimRow'],
   'rust/crates/gbrain-store/src/persistence/noop_settle.rs': ['lockNoopEmbeddingWindow'],
@@ -62,7 +62,7 @@ const SITES: Readonly<Record<string, readonly string[]>> = {
   'rust/crates/gbrain-store/src/trust/withdrawal_commit.rs': ['lockFactForWithdrawal'],
   'rust/crates/gbrain-store/src/wanted_links.rs': ['lockRegisteredSourceIds'],
   'rust/crates/gbrain-store/src/write_guards.rs': ['listOriginClaims'],
-  'src/core/persistence/managed-mode.ts': ['readManagedMode', 'readPersistenceBrain'],
+  'src/core/persistence/managed-mode.ts': ['readManagedMode', 'readManagedMode.afterRead', 'readPersistenceBrain', 'readPersistenceBrain.afterRead'],
   'src/core/rust-engine/store-members/access-grants.ts': ['readOAuthClientReceiptGrant', 'readAccessTokenReceiptGrant', 'readOAuthClientMemberGrant', 'readAccessTokenMemberGrant', 'readLocalWriterMemberGrant'],
   'src/core/rust-engine/store-members/access-members.ts': ['readCredentialBindingForUpdate', 'readOauthClientAttest'],
   'src/core/rust-engine/store-members/cli-sources.ts': ['lockAllSourceRows', 'lockSourceRow', 'lockSourceForUpdate'],
@@ -79,12 +79,13 @@ const SITES: Readonly<Record<string, readonly string[]>> = {
   'src/core/rust-engine/store-members/jobs-client-grants.ts': ['readOauthClientForUpdate', 'lockOauthClientName', 'readSourceArchivedForShare'],
   'src/core/rust-engine/store-members/jobs-queue.ts': ['lockOAuthClient'],
   'src/core/rust-engine/store-members/jobs.ts': ['admitJob'],
+  'src/core/rust-engine/store-members/link-queries.ts': ['replaceDerivedLinks.wanted', 'replaceDerivedLinksBatch.wanted'],
   'src/core/rust-engine/store-members/managed-sync-orphans.ts': ['retireManagedSyncPassSlugMode', 'readConfigForUpdate'],
   'src/core/rust-engine/store-members/memory-mutation-reads.ts': ['readForgetTarget', 'readFactWithdrawalClaim'],
   'src/core/rust-engine/store-members/mention-pass.ts': ['lockMentionSources', 'readMentionPageRevisions', 'lockMentionEntries', 'readMentionGenerations'],
   'src/core/rust-engine/store-members/noop-settle.ts': ['readNoopEmbeddingCandidates'],
   'src/core/rust-engine/store-members/persistence-admission.ts': ['readWorktreeAdmission'],
-  'src/core/rust-engine/store-members/persistence.ts': ['readLocalWriterRow', 'readOAuthClientWriteGrant', 'readAccessTokenWriteGrant', 'shareLockWriteCredential', 'lockWriteRequest', 'lockWriteRequestsById', 'selectClaimableWrite', 'readSourceMembership'],
+  'src/core/rust-engine/store-members/persistence.ts': ['readLocalWriterRow', 'readOAuthClientWriteGrant', 'readAccessTokenWriteGrant', 'shareLockWriteCredential', 'lockWriteRequest', 'lockWriteRequestsById', 'readSourceMembership'],
   'src/core/rust-engine/store-members/publication-journal.ts': ['publicationJournal.shareWorktreeOwner', 'publicationJournal.shareWorktree', 'publicationJournal.lockSource', 'publicationJournal.recoveryStaging'],
   'src/core/rust-engine/store-members/repair-applies.ts': ['lockApprovedFacts'],
   'src/core/rust-engine/store-members/repair-bookkeeping.ts': ['readLoopFactState', 'listConnectorSources'],
@@ -97,7 +98,7 @@ const SITES: Readonly<Record<string, readonly string[]>> = {
   'src/core/rust-engine/store-members/write-guards.ts': ['readLiveStoredBody'],
   'src/core/rust-engine/store-members/write-misc.ts': ['readSourceState', 'readScopeSourceConfigs'],
   'src/core/rust-engine/store-members/writer-admin.ts': ['readWriterAdminState', 'writerAdmin.lockBrain', 'writerAdmin.assertAdminUnlocked', 'writerAdmin.lockWorktree'],
-  'src/core/rust-engine/store-members/writer-release.ts': ['writerRelease.shareBrain', 'writerRelease.lockWorktreesAndSources', 'writerRelease.lockCycleLocks', 'writerRelease.shareWorktree'],
+  'src/core/rust-engine/store-members/writer-release.ts': ['writerRelease.shareBrain', 'writerRelease.lockWorktreesAndSources', 'writerRelease.lockCycleLocks', 'writerRelease.shareWorktree', 'writerRelease.configuredSources'],
 };
 
 /** Rust-served members whose SQL takes a lock but that hold no site of their own name: the sites that cover them, or why none is needed. */
@@ -132,8 +133,8 @@ const DISPOSITIONS: Readonly<Record<string, Disposition>> = {
   readFactSnapshots: { refuses: 'a lock request refuses outright (facts-repair.ts refuseMember)' },
   reclaimStalledJobs: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
   replaceDerivedAliases: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
-  replaceDerivedLinks: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
-  replaceDerivedLinksBatch: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
+  replaceDerivedLinks: { sites: ['replaceDerivedLinks.wanted'] },
+  replaceDerivedLinksBatch: { sites: ['replaceDerivedLinksBatch.wanted'] },
   reserveChronicleJudgeSlot: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
   reserveClientSpend: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
   reserveGroupSpend: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
@@ -153,7 +154,7 @@ const DISPOSITIONS: Readonly<Record<string, Disposition>> = {
   upsertChunks: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
   upsertOpFileRow: { atomic: 'one store write: atomic in both store modes, the SQL lock covers only rows the same statement writes' },
   writerAdminStore: { sites: ['writerAdmin.lockBrain', 'writerAdmin.lockWorktree', 'writerAdmin.assertAdminUnlocked'] },
-  writerReleaseStore: { sites: ['writerRelease.shareBrain', 'writerRelease.lockWorktreesAndSources', 'writerRelease.lockCycleLocks', 'writerRelease.shareWorktree'] },
+  writerReleaseStore: { sites: ['writerRelease.shareBrain', 'writerRelease.lockWorktreesAndSources', 'writerRelease.lockCycleLocks', 'writerRelease.shareWorktree', 'writerRelease.configuredSources'] },
 };
 
 /** Files that state the single-writer model or name a SQL lock, and hold no skip of their own: why. */

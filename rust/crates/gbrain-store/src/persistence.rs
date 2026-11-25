@@ -1777,6 +1777,7 @@ impl Store {
     /// `selectClaimableWrite(spec)`: the row `claimNextWrite` claims next, or `None`; the claim's
     /// stamp is `stamp_write_claim`.
     pub fn select_claimable_write(&self, spec: &ClaimableSpec) -> Result<Option<Value>> {
+        self.assert_serialized_transactions("selectClaimableWrite")?;
         select_claimable_write_in(&*self.read()?, &*self.env, spec)
     }
 

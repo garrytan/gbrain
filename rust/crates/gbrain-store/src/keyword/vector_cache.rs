@@ -193,7 +193,7 @@ pub(crate) mod scope {
         Scope(CURRENT.with(|c| c.borrow_mut().replace(cache.clone())))
     }
 
-    pub(super) fn current() -> Option<Arc<KeywordVectors>> {
+    pub(crate) fn current() -> Option<Arc<KeywordVectors>> {
         CURRENT.with(|c| c.borrow().clone())
     }
 }

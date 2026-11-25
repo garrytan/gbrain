@@ -13,7 +13,7 @@
  * through the test seam `withholdSerializedTransactions` (the store's `OpenOptions::withhold_serialized_transactions`).
  */
 import { afterEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadRustAddon, type RustAddon } from '../src/core/rust-engine/addon-loader.ts';
@@ -25,6 +25,7 @@ import { assertStoreSerializedTransactions } from '../src/core/rust-engine/store
 import { mapStoreError } from '../src/core/rust-engine/store-errors.ts';
 import { storePromisesSerializedTransactions } from '../src/core/rust-engine/store.ts';
 import { readManagedMode } from '../src/core/persistence/managed-mode.ts';
+import { ownerSocketPath } from '../src/core/rust-engine/owner-ipc/protocol.ts';
 import { capabilitiesForEngineKind, type Capability } from '../src/core/engine-capabilities.ts';
 import type { OperationError } from '../src/core/ops/contract.ts';
 
@@ -116,9 +117,9 @@ describe('serialized_transactions: where the capability comes from', () => {
     }
   });
 
-  test('assertStoreSerializedTransactions passes true and null (a closed handle) and refuses anything else', () => {
+  test('assertStoreSerializedTransactions passes true, refuses a closed handle (null) engine_closed, and anything else', () => {
     expect(refusal(() => assertStoreSerializedTransactions({ serializedTransactions: true }, 'lockX'))).toBeUndefined();
-    expect(refusal(() => assertStoreSerializedTransactions({ serializedTransactions: null }, 'lockX'))).toBeUndefined();
+    expect(refusal(() => assertStoreSerializedTransactions({ serializedTransactions: null }, 'lockX'))?.code).toBe('engine_closed');
     for (const serializedTransactions of [false, undefined] as const) {
       expectRefusal(refusal(() => assertStoreSerializedTransactions({ serializedTransactions } as never, 'lockX')), 'lockX');
     }
@@ -144,8 +145,29 @@ describe('serialized_transactions: the lifecycle on a real store', () => {
     expect(engine.capabilities.has('serialized_transactions')).toBe(false);
     expect((await brainOf(engine)).serializedTransactions).toBe(false);
     // Everything else the engine reports is unchanged.
-    expect([...engine.capabilities].sort()).toEqual([...servedCapabilities()].sort());
+    // The write journal needs serialized transactions (declarePersistence asserts it), so it is withheld too.
+    for (const c of ['persistence_journal', 'managed_persistence'] as const) expect(engine.capabilities.has(c)).toBe(false);
+    const rest = [...servedCapabilities()].filter(c => c !== 'persistence_journal' && c !== 'managed_persistence');
+    expect([...engine.capabilities].sort()).toEqual(rest.sort());
     await engine.transaction(async tx => { expect(tx.capabilities.has('serialized_transactions')).toBe(false); });
+  });
+
+  withAddon('a normal open reports the write journal it serves alongside it', async () => {
+    const engine = await open();
+    expect(engine.capabilities.has('persistence_journal')).toBe(servedCapabilities().has('persistence_journal'));
+  });
+
+  withAddon('a connect that fails after the store opened leaves the capability withheld', async () => {
+    const dir = newDir();
+    mkdirSync(dir, { recursive: true });
+    // A regular file where the owner socket goes: the store opens, then the owner server cannot listen.
+    writeFileSync(ownerSocketPath(dir), 'not a socket');
+    addon ??= await loadRustAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: BUILT } });
+    const engine = openRustEngine({ addon, databasePath: dir, ownerWaitMs: 2_000 });
+    engines.push(engine);
+    expect(await rejection(() => engine.connect({ engine: 'pglite', database_path: dir } as never))).toBeDefined();
+    expect(engine.connected).toBe(false);
+    expect(engine.capabilities.has('serialized_transactions')).toBe(false);
   });
 
   withAddon('disconnect withholds it, and a reopen reports it again from the new store', async () => {
@@ -205,6 +227,31 @@ describe('serialized_transactions: refusals end to end, nothing written', () => 
     expectRefusal(await rejection(() => readManagedMode(engine as never, { lock: 'update' })), 'readManagedMode');
     // Without a lock the read is not a skip and answers as before.
     expect(await readManagedMode(engine as never)).toBe(false);
+  });
+
+  withAddon('a lock check made before a takeover is made again on the store that ran the read', async () => {
+    const dir = newDir();
+    const owner = await open(dir);
+    const client = await open(dir, { withhold: true });
+    expect(client.capabilities.has('serialized_transactions')).toBe(true);
+    await owner.disconnect();
+    // The read elects this engine, whose own store withholds the capability: the lock request refuses after the read.
+    expectRefusal(await rejection(() => readManagedMode(client as never, { lock: 'update' })), 'readManagedMode');
+    expect(client.ownerRole).toBe('owner');
+  });
+
+  withAddon('a derived-link replacement with wanted rows refuses before it publishes anything', async () => {
+    const engine = await open(newDir(), { withhold: true });
+    await engine.putPage('notes/a', { type: 'note', title: 'A', compiled_truth: 'Body.', timeline: '' } as never);
+    await engine.putPage('notes/b', { type: 'note', title: 'B', compiled_truth: 'Body.', timeline: '' } as never);
+    const snap = (await engine.readPageSnapshot('notes/a', { sourceId: 'default' }))!;
+    const before = await engine.getLinks('notes/a');
+    const err = await rejection(() => engine.replaceDerivedLinks(
+      { slug: 'notes/a', sourceId: 'default', expectedRevision: snap.revision, sourceIncarnation: snap.sourceIncarnation },
+      [{ from_slug: 'notes/a', to_slug: 'notes/b', link_type: 'mentions', context: 'b', link_source: 'markdown', from_source_id: 'default', to_source_id: 'default' }] as never,
+      { wanted: { producers: ['markdown'], rows: [], readAt: null } } as never));
+    expectRefusal(err, 'replaceDerivedLinks.wanted');
+    expect(await engine.getLinks('notes/a')).toEqual(before);
   });
 
   withAddon('a refusal crosses the owner socket with its code and reason', async () => {

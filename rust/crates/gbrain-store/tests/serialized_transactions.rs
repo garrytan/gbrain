@@ -223,6 +223,14 @@ fn select_claimable_effect_refuses_on_a_store_that_does_not_serialize() {
 }
 
 #[test]
+fn select_claimable_write_refuses_on_a_store_that_does_not_serialize() {
+    let (_dir, store) = unserialized_store();
+    refuses(&store, "selectClaimableWrite", |s| {
+        s.select_claimable_write(&gbrain_store::persistence::ClaimableSpec::default())
+    });
+}
+
+#[test]
 fn lock_effect_claim_row_refuses_on_a_store_that_does_not_serialize() {
     let (_dir, store) = unserialized_store();
     refuses(&store, "lockEffectClaimRow", |s| s.lock_effect_claim_row(1));
@@ -441,6 +449,9 @@ fn calls_on_a_normal_store(store: Store) {
     accepts(&store, "selectClaimableEffect", |s| {
         s.select_claimable_effect("host", &[])
     });
+    accepts(&store, "selectClaimableWrite", |s| {
+        s.select_claimable_write(&gbrain_store::persistence::ClaimableSpec::default())
+    });
     accepts(&store, "lockEffectClaimRow", |s| s.lock_effect_claim_row(1));
     accepts(&store, "lockEffectRow", |s| s.lock_effect_row("1"));
     accepts(&store, "lockNoopEmbeddingWindow", |s| {
@@ -566,4 +577,4 @@ fn the_cases_above_are_exactly_the_sites_in_the_source() {
     assert_eq!(in_source.len(), SITE_COUNT);
 }
 
-const SITE_COUNT: usize = 31;
+const SITE_COUNT: usize = 32;

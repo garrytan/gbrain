@@ -5,15 +5,16 @@
  * `readWorktreeAdmission` reads the worktree row and the source binding the worktree binding wrote
  * (persistence/worktree_rows.rs): the worktree's state and owner epoch, its active refresh, and whether the binding names
  * this incarnation, worktree and topology generation. No consumer row exists on this engine yet, so `hasDeferralRoom`
- * is true (no live consumer lacks the capability). The row lock a `lockRefresh` asks for is skipped while explicit
- * transactions hold the writer (`serialized_transactions`); the member asserts it. These members are classified `managed_persistence`, which this engine reports
+ * is true (no live consumer lacks the capability). The worktree row's share lock (always) and the refresh row lock
+ * a `lockRefresh` asks for are skipped while explicit transactions hold the writer (`serialized_transactions`); the
+ * member asserts it. These members are classified `managed_persistence`, which this engine reports
  * (store-capabilities.ts).
  */
 import type { RefreshTiming, WorktreeAdmission, WorktreeAdmissionKey } from '../../engine-sql/persistence-admission.ts';
 import { assertStoreSerializedTransactions, storeCall, type StoreMember } from './common.ts';
 
-export const readWorktreeAdmission: StoreMember<[key: WorktreeAdmissionKey, opts?: { lockRefresh?: boolean }], WorktreeAdmission> = async (brain, key, opts) => {
-  if (opts?.lockRefresh) assertStoreSerializedTransactions(brain, 'readWorktreeAdmission');
+export const readWorktreeAdmission: StoreMember<[key: WorktreeAdmissionKey, opts?: { lockRefresh?: boolean }], WorktreeAdmission> = async (brain, key) => {
+  assertStoreSerializedTransactions(brain, 'readWorktreeAdmission');
   return storeCall({ member: 'readWorktreeAdmission' }, () => brain.readWorktreeAdmission(key.worktreeId, key.sourceId, key.sourceIncarnation,
     key.topologyGeneration == null ? null : String(key.topologyGeneration)));
 };

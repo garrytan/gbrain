@@ -62,7 +62,10 @@ function rustWriterReleaseStore(brain: StoreBrain): WriterReleaseStore {
     sourceBindingCount: () => rows('source_binding_count'),
     liveBoundSourceCount: () => rows('live_bound_source_count'),
     writerProtocolCount: async () => 0,
-    configuredSources: () => rows('configured_sources'),
+    configuredSources: lock => {
+      if (lock) assertStoreSerializedTransactions(brain, 'writerRelease.configuredSources');
+      return rows('configured_sources');
+    },
     ownerHostBinding: (worktreeId, hostId) => call(() => brain.readHostBinding(worktreeId, hostId)),
     sourceLocalPaths: () => rows('source_local_paths'),
     hostBindingRoots: () => rows('host_binding_roots'),

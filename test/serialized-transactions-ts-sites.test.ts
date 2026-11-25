@@ -33,6 +33,7 @@ import * as secretStore from '../src/core/rust-engine/store-members/secret-store
 import * as transactionsMembers from '../src/core/rust-engine/store-members/transactions.ts';
 import * as noopSettle from '../src/core/rust-engine/store-members/noop-settle.ts';
 import * as jobs from '../src/core/rust-engine/store-members/jobs.ts';
+import * as linkQueries from '../src/core/rust-engine/store-members/link-queries.ts';
 import * as mentionPass from '../src/core/rust-engine/store-members/mention-pass.ts';
 import * as persistenceAdmission from '../src/core/rust-engine/store-members/persistence-admission.ts';
 import * as persistence from '../src/core/rust-engine/store-members/persistence.ts';
@@ -64,6 +65,25 @@ const rustEngine = (brain: StoreBrain) => ({
   capabilities: new Set(brain.serializedTransactions ? ['serialized_transactions'] : []),
 }) as never;
 
+/**
+ * A Rust engine that reports the capability until its read runs, then loses it when `brain` does not serialize: the
+ * read elected a new owner whose store promises none (a takeover between the check and the read).
+ */
+const takenOverEngine = (brain: StoreBrain) => {
+  const capabilities = new Set(['serialized_transactions']);
+  const lose = () => { if (!brain.serializedTransactions) capabilities.delete('serialized_transactions'); };
+  const state = JSON.stringify({ brain: { id: 'b', enabled: false, mode_epoch: 1, skill_bundles_enabled: false, writer_protocol_floor: 1 },
+    sources: null, worktrees: null, embedding_leases: null });
+  return {
+    kind: 'rust', capabilities,
+    readManagedModeRows: async () => { lose(); return [{ enabled: false }]; },
+    readWriterAdminState: async () => { lose(); return state; },
+  } as never;
+};
+
+const WANTED = { wanted: { producers: ['p'], rows: [], readAt: null } } as never;
+const ORIGIN = { sourceId: 's', slug: 'a', expectedRevision: null } as never;
+
 /** The engine the store-factory members run on (`this`); none of them reads it before the call. */
 const thisEngine = {} as RustEngine;
 
@@ -88,6 +108,10 @@ async function storeOf<T>(factory: (this: RustEngine, brain: StoreBrain) => Prom
 const CASES: Array<[site: string, run: (brain: StoreBrain) => Promise<unknown>]> = [
   ['readManagedMode', async brain => readManagedMode(rustEngine(brain), { lock: 'update' })],
   ['readPersistenceBrain', async brain => readPersistenceBrain(rustEngine(brain), { lock: 'update' })],
+  ['readManagedMode.afterRead', async brain => readManagedMode(takenOverEngine(brain), { lock: 'update' })],
+  ['readPersistenceBrain.afterRead', async brain => readPersistenceBrain(takenOverEngine(brain), { lock: 'update' })],
+  ['replaceDerivedLinks.wanted', brain => linkQueries.replaceDerivedLinks(brain, ORIGIN, [], WANTED)],
+  ['replaceDerivedLinksBatch.wanted', brain => linkQueries.replaceDerivedLinksBatch(brain, [{ origin: ORIGIN, links: [], opts: WANTED }] as never)],
   ['readOAuthClientReceiptGrant', brain => accessGrants.readOAuthClientReceiptGrant(brain, 'c', { lock: true })],
   ['readAccessTokenReceiptGrant', brain => accessGrants.readAccessTokenReceiptGrant(brain, UUID, { lock: true })],
   ['readOAuthClientMemberGrant', brain => accessGrants.readOAuthClientMemberGrant(brain, 'c', { lock: true })],
@@ -120,13 +144,12 @@ const CASES: Array<[site: string, run: (brain: StoreBrain) => Promise<unknown>]>
   ['readMentionPageRevisions', brain => mentionPass.readMentionPageRevisions(brain, [1], { forShare: true })],
   ['lockMentionEntries', brain => mentionPass.lockMentionEntries(brain, 's')],
   ['readMentionGenerations', brain => mentionPass.readMentionGenerations(brain, ['s'], true)],
-  ['readWorktreeAdmission', brain => persistenceAdmission.readWorktreeAdmission(brain, KEY, { lockRefresh: true })],
   ['readLocalWriterRow', brain => persistence.readLocalWriterRow(brain, 'w', { lock: true })],
+  ['readWorktreeAdmission', brain => persistenceAdmission.readWorktreeAdmission(brain, KEY)],
   ['readLocalWriterMemberGrant', brain => accessGrants.readLocalWriterMemberGrant(brain, UUID)],
   ['readNoopEmbeddingCandidates', brain => noopSettle.readNoopEmbeddingCandidates(brain, { hostId: UUID, signature: 's', expectedModel: 'm', window: [], pageIds: [], column: 'embedding' } as never)],
   ['listSecretHoldingPages', brain => secretStore.listSecretHoldingPages(brain, 's', ['a'], UUID)],
   ['declarePersistence', brain => transactionsMembers.declarePersistence.call(thisEngine, brain)],
-  ['selectClaimableWrite', brain => persistence.selectClaimableWrite(brain, {} as never)],
   ['admitJob', brain => jobs.admitJob.call(thisEngine, brain, {} as never, { checkCapacity: async () => undefined } as never)],
   ['readOAuthClientWriteGrant', brain => persistence.readOAuthClientWriteGrant(brain, 'c', { lock: true })],
   ['readAccessTokenWriteGrant', brain => persistence.readAccessTokenWriteGrant(brain, UUID, { lock: true })],
@@ -157,6 +180,7 @@ const CASES: Array<[site: string, run: (brain: StoreBrain) => Promise<unknown>]>
   ['writerAdmin.lockBrain', async brain => (await writerAdmin.writerAdminStore.call(thisEngine, brain)).lockBrain()],
   ['writerAdmin.lockWorktree', async brain => (await writerAdmin.writerAdminStore.call(thisEngine, brain)).lockWorktree(UUID)],
   ['writerAdmin.assertAdminUnlocked', async brain => (await writerAdmin.writerAdminStore.call(thisEngine, brain)).assertAdminUnlocked()],
+  ['writerRelease.configuredSources', async brain => (await writerRelease.writerReleaseStore.call(thisEngine, brain)).configuredSources(true)],
   ['writerRelease.shareBrain', async brain => (await writerRelease.writerReleaseStore.call(thisEngine, brain)).shareBrain()],
   ['writerRelease.lockWorktreesAndSources', async brain => (await writerRelease.writerReleaseStore.call(thisEngine, brain)).lockWorktreesAndSources()],
   ['writerRelease.lockCycleLocks', async brain => (await writerRelease.writerReleaseStore.call(thisEngine, brain)).lockCycleLocks()],
@@ -167,6 +191,8 @@ const CASES: Array<[site: string, run: (brain: StoreBrain) => Promise<unknown>]>
 const NO_LOCK: Array<[site: string, run: (brain: StoreBrain) => Promise<unknown>]> = [
   ['readManagedMode', async brain => readManagedMode(rustEngine(brain))],
   ['readPersistenceBrain', async brain => readPersistenceBrain(rustEngine(brain))],
+  ['replaceDerivedLinks.wanted', brain => linkQueries.replaceDerivedLinks(brain, ORIGIN, [])],
+  ['writerRelease.configuredSources', async brain => (await writerRelease.writerReleaseStore.call(thisEngine, brain)).configuredSources(false)],
   ['readOAuthClientReceiptGrant', brain => accessGrants.readOAuthClientReceiptGrant(brain, 'c')],
   ['readAccessTokenReceiptGrant', brain => accessGrants.readAccessTokenReceiptGrant(brain, UUID, { lock: false })],
   ['readOAuthClientMemberGrant', brain => accessGrants.readOAuthClientMemberGrant(brain, 'c')],
@@ -178,7 +204,6 @@ const NO_LOCK: Array<[site: string, run: (brain: StoreBrain) => Promise<unknown>
   ['readFactWithdrawalClaim', brain => memoryMutationReads.readFactWithdrawalClaim(brain, { id: 1, sourceId: 's', worldOnly: false, memberPage: null, remoteFloor: false })],
   ['readMentionPageRevisions', brain => mentionPass.readMentionPageRevisions(brain, [1], { forShare: false })],
   ['readMentionGenerations', brain => mentionPass.readMentionGenerations(brain, ['s'], false)],
-  ['readWorktreeAdmission', brain => persistenceAdmission.readWorktreeAdmission(brain, KEY)],
   ['readLocalWriterRow', brain => persistence.readLocalWriterRow(brain, 'w')],
   ['readOAuthClientWriteGrant', brain => persistence.readOAuthClientWriteGrant(brain, 'c')],
   ['readAccessTokenWriteGrant', brain => persistence.readAccessTokenWriteGrant(brain, UUID)],
@@ -232,8 +257,9 @@ describe('TypeScript lock skips refuse without serialized_transactions', () => {
     expect(isRefusal(await thrown(() => run(fakeBrain(false))))).toBe(false);
   });
 
-  test('a closed store handle (serializedTransactions null) passes the store-member assertion', async () => {
+  test('a closed store handle (serializedTransactions null) refuses engine_closed, so a lock is never acknowledged on an ended transaction', async () => {
     const closed = new Proxy({}, { get: (_t, name) => { if (name === 'serializedTransactions') return null; throw new Error(`store call ${String(name)} reached`); } }) as unknown as StoreBrain;
-    expect(isRefusal(await thrown(() => cliSources.lockSourceForUpdate(closed, 's')))).toBe(false);
+    const error = await thrown(() => cliSources.lockSourceForUpdate(closed, 's')) as OperationError | undefined;
+    expect(error?.code).toBe('engine_closed');
   });
 });

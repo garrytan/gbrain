@@ -72,7 +72,10 @@ export async function readManagedMode(engine: RawSqlEngine, opts: ManagedModeRea
   // while explicit transactions hold the writer (`serialized_transactions`); a lock asked for asserts it. SQL engines keep the statement below.
   if (isRustBrain(engine)) {
     if (opts.lock) assertSerializedTransactions(engine, 'readManagedMode');
-    return managedModeFromRows(await (engine as unknown as Pick<BrainEngine, 'readManagedModeRows'>).readManagedModeRows(), opts.refusal).enabled;
+    const rows = await (engine as unknown as Pick<BrainEngine, 'readManagedModeRows'>).readManagedModeRows();
+    // The read can elect a new owner (a takeover), whose store may not promise the capability: check again.
+    if (opts.lock) assertSerializedTransactions(engine, 'readManagedMode.afterRead');
+    return managedModeFromRows(rows, opts.refusal).enabled;
   }
   const sql = opts.lock ? `${MANAGED_MODE_SQL} FOR ${opts.lock.toUpperCase()}` : MANAGED_MODE_SQL;
   const rows = await engine.executeRaw<{ enabled: unknown }>(sql, undefined, opts.signal ? { signal: opts.signal } : undefined);
@@ -96,7 +99,9 @@ export async function readPersistenceBrain(engine: RawSqlEngine, opts: ManagedMo
   // As in readManagedMode: the lock is skipped while explicit transactions hold the writer (`serialized_transactions`).
   if (isRustBrain(engine)) {
     if (opts.lock) assertSerializedTransactions(engine, 'readPersistenceBrain');
-    return managedModeFromRows(await rustPersistenceBrainRows(engine), opts.refusal);
+    const rows = await rustPersistenceBrainRows(engine);
+    if (opts.lock) assertSerializedTransactions(engine, 'readPersistenceBrain.afterRead');
+    return managedModeFromRows(rows, opts.refusal);
   }
   const sql = opts.lock ? `${PERSISTENCE_BRAIN_SQL} FOR ${opts.lock.toUpperCase()}` : PERSISTENCE_BRAIN_SQL;
   const rows = await engine.executeRaw<Omit<PersistenceBrainRow, 'enabled'> & { enabled: unknown }>(sql, undefined, opts.signal ? { signal: opts.signal } : undefined);

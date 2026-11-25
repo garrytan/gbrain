@@ -130,6 +130,9 @@ function isReadMember(member: string): boolean {
 }
 
 /** Builds the Rust engine around an addon the loader has already verified. Nothing is opened or written yet. */
+/** Capabilities withheld with `serialized_transactions`: every write-journal transaction asserts it (declarePersistence). */
+const NEEDS_SERIALIZED_TRANSACTIONS: readonly Capability[] = ['persistence_journal', 'managed_persistence'];
+
 export function openRustEngine(opts: OpenRustEngineOptions): RustEngine {
   return new RustEngine(opts);
 }
@@ -195,8 +198,15 @@ export class RustEngine implements BrainEngine {
    */
   private _applyStoreGuarantees(): void {
     const caps = this.capabilities as Set<Capability>;
-    if (this._store?.serializedTransactions === true) caps.add('serialized_transactions');
-    else caps.delete('serialized_transactions');
+    if (this._store?.serializedTransactions === true) {
+      caps.add('serialized_transactions');
+      for (const c of NEEDS_SERIALIZED_TRANSACTIONS) if (servedCapabilities().has(c)) caps.add(c);
+    } else {
+      caps.delete('serialized_transactions');
+      // An open store that promises none cannot run the write journal: its transactions assert the capability
+      // (declarePersistence), so an owner must not advertise the journal it would refuse.
+      if (this._store) for (const c of NEEDS_SERIALIZED_TRANSACTIONS) caps.delete(c);
+    }
   }
 
   /** True between `connect()` and `disconnect()`. */
@@ -290,7 +300,7 @@ export class RustEngine implements BrainEngine {
           return async () => {
             opened = null;
             this._claiming = false;
-            if (this._store === store) this._store = null;
+            if (this._store === store) { this._store = null; this._applyStoreGuarantees(); }
             await store.close().catch(() => undefined);
           };
         },
@@ -312,7 +322,7 @@ export class RustEngine implements BrainEngine {
       if (role.role === 'owner') {
         await role.server.close().catch(() => undefined);
         const store = opened as RustStore | null;
-        if (store && this._store === store) this._store = null;
+        if (store && this._store === store) { this._store = null; this._applyStoreGuarantees(); }
         await store?.close().catch(() => undefined);
         await role.lock.release().catch(() => undefined);
       } else role.connection.close();
