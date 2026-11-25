@@ -147,7 +147,6 @@ src/core/page-state/projections.ts	kind_compare	1
 src/core/page-state/rebuild-estimate.ts	kind_compare	1
 src/core/page-state/transactions.ts	kind_compare	1
 src/core/persistence/bounded-reads.ts	kind_compare	2
-src/core/persistence/checkpoint-validation.ts	kind_compare	1
 src/core/persistence/consumer-diagnostics.ts	kind_compare	4
 src/core/persistence/consumer-election.ts	kind_compare	2
 src/core/persistence/consumer-heartbeat.ts	kind_compare	3
