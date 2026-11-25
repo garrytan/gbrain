@@ -1948,7 +1948,7 @@ switchAccessMigration	write_misc	yes	1	no	yes	yes	serves
 listAccessPolicySources	write_misc	yes	1	no	yes	yes	serves
 countPeopleFolderPages	write_misc	yes	1	no	yes	yes	serves
 countOpenPages	write_misc	yes	3	no	yes	yes	serves
-readAccessMembers	write_misc	yes	18	no	yes	yes	serves
+readAccessMembers	write_misc	yes	19	no	yes	yes	serves
 readAccessCredentials	write_misc	yes	5	no	yes	yes	serves
 revokeAccessTokensNamed	write_misc	yes	4	no	yes	yes	serves
 revokeAccessToken	write_misc	yes	13	no	yes	yes	serves
