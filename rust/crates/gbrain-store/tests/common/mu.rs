@@ -118,13 +118,28 @@ pub struct SingleFlightKey {
 /// `#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd)] pub struct CommitPosition`, ordered by
 /// (sequence, index); the single-writer index is always 0. The field order is what makes the derived
 /// `Ord` the right one.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[derive(
+    Copy, Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize,
+)]
 pub struct CommitPosition {
     pub sequence: u64,
     pub index: u32,
 }
 
 impl CommitPosition {
+    pub const fn new(sequence: u64, index: u32) -> Self {
+        Self { sequence, index }
+    }
+
+    /// The position a completion that commits nothing reports when it saw batch `sequence`: after every commit of that batch and
+    /// before the first of the next.
+    pub const fn end_of(sequence: u64) -> Self {
+        Self {
+            sequence,
+            index: u32::MAX,
+        }
+    }
+
     /// The read token string, `cp1:<sequence>.<index>`.
     pub fn token(&self) -> String {
         format!("cp1:{}.{}", self.sequence, self.index)
@@ -133,128 +148,31 @@ impl CommitPosition {
 
 // ---- I-4 ---------------------------------------------------------------------------------------
 
-/// One operation of a commit record (I-4: op u8, key, operand; the operand is the full value for a put, never a reference).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CommitOp {
-    /// 1 put, 2 delete, 3 add_i64, 4 raise_counter.
-    pub op: u8,
-    pub key: Vec<u8>,
-    pub operand: Vec<u8>,
+/// One logical change of a commit, as `gbrain_store::commit_log::LogOp` has it on the commit-log branch (record op codes 1 put, 2
+/// delete, 3 add_i64 as the delta, 4 raise_counter as the value).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LogOp {
+    Put(Vec<u8>),
+    Delete,
+    AddI64(i64),
+    RaiseCounter(u64),
 }
 
-/// A commit record as I-4.v2 lays it out, decoded: the position it sits at, who wrote it, its commit time, the request ids and
-/// the ops. JSON form (wire, tests) adds `commit_time_us`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// One commit record, as `gbrain_store::commit_log::CommitRecord` has it on the commit-log branch.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommitRecord {
-    /// The record version; only 2 is read.
-    pub version: u8,
     pub position: CommitPosition,
     pub origin: WriteOrigin,
-    /// Microseconds since the Unix epoch, UTC; strictly rises in position order across the whole log.
-    pub commit_time_us: i64,
+    /// The commit's time: strictly increasing in position order across the log. (JSON form, where a record is decoded to JSON,
+    /// says `commit_time_us`.)
+    pub commit_time: i64,
     pub write_ids: Vec<String>,
-    pub ops: Vec<CommitOp>,
+    /// In key order; at most one op per key.
+    pub ops: Vec<(Vec<u8>, LogOp)>,
 }
 
-fn put_str(out: &mut Vec<u8>, s: &[u8]) {
-    out.extend_from_slice(&(s.len() as u32).to_be_bytes());
-    out.extend_from_slice(s);
-}
-
-impl CommitRecord {
-    /// The v2 value: `[2][host_id][incarnation][writer_id][commit_time i64 BE][write_ids: u32 BE count, each length-prefixed]
-    /// [ops: u32 BE count, each: op u8, key, operand]`, every string or byte run a u32 BE length then its bytes.
-    pub fn encode_v2(&self) -> Vec<u8> {
-        let mut out = vec![2u8];
-        for field in [
-            &self.origin.host_id,
-            &self.origin.incarnation,
-            &self.origin.writer_id,
-        ] {
-            put_str(&mut out, field.as_bytes());
-        }
-        out.extend_from_slice(&self.commit_time_us.to_be_bytes());
-        out.extend_from_slice(&(self.write_ids.len() as u32).to_be_bytes());
-        for id in &self.write_ids {
-            put_str(&mut out, id.as_bytes());
-        }
-        out.extend_from_slice(&(self.ops.len() as u32).to_be_bytes());
-        for op in &self.ops {
-            out.push(op.op);
-            put_str(&mut out, &op.key);
-            put_str(&mut out, &op.operand);
-        }
-        out
-    }
-
-    /// Reads a v2 value at `position`. Any other version, version 1 included, is `format_unknown`, not corruption; a short or
-    /// overlong value is `store_corrupt`.
-    pub fn decode_v2(position: CommitPosition, bytes: &[u8]) -> gbrain_store::Result<CommitRecord> {
-        fn corrupt() -> StoreError {
-            StoreError::new("store_corrupt", "a commit record is cut short")
-        }
-        fn take<'a>(b: &mut &'a [u8], n: usize) -> gbrain_store::Result<&'a [u8]> {
-            if b.len() < n {
-                return Err(corrupt());
-            }
-            let (head, tail) = b.split_at(n);
-            *b = tail;
-            Ok(head)
-        }
-        fn u32_be(b: &mut &[u8]) -> gbrain_store::Result<u32> {
-            Ok(u32::from_be_bytes(take(b, 4)?.try_into().unwrap()))
-        }
-        fn run<'a>(b: &mut &'a [u8]) -> gbrain_store::Result<&'a [u8]> {
-            let n = u32_be(b)? as usize;
-            take(b, n)
-        }
-        fn text(b: &mut &[u8]) -> gbrain_store::Result<String> {
-            String::from_utf8(run(b)?.to_vec()).map_err(|_| corrupt())
-        }
-        let mut b = bytes;
-        let version = take(&mut b, 1)?[0];
-        if version != 2 {
-            return Err(StoreError::new(
-                "format_unknown",
-                format!("a commit record of version {version}; only 2 is read"),
-            ));
-        }
-        let origin = WriteOrigin {
-            host_id: text(&mut b)?,
-            incarnation: text(&mut b)?,
-            writer_id: text(&mut b)?,
-        };
-        let commit_time_us = i64::from_be_bytes(take(&mut b, 8)?.try_into().unwrap());
-        let mut write_ids = Vec::new();
-        for _ in 0..u32_be(&mut b)? {
-            write_ids.push(text(&mut b)?);
-        }
-        let mut ops = Vec::new();
-        for _ in 0..u32_be(&mut b)? {
-            let op = take(&mut b, 1)?[0];
-            ops.push(CommitOp {
-                op,
-                key: run(&mut b)?.to_vec(),
-                operand: run(&mut b)?.to_vec(),
-            });
-        }
-        if !b.is_empty() {
-            return Err(corrupt());
-        }
-        Ok(CommitRecord {
-            version,
-            position,
-            origin,
-            commit_time_us,
-            write_ids,
-            ops,
-        })
-    }
-}
-
-/// `LogPage { records, oldest_retained, newest, snapshot_required }`. The interface list leaves the position field types
-/// open; positions are `Option<CommitPosition>`. Records are decoded I-4.v2 records.
-#[derive(Clone, Debug, Default)]
+/// One page of the log, read from one snapshot (`gbrain_store::commit_log::LogPage`).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogPage {
     pub records: Vec<CommitRecord>,
     pub oldest_retained: Option<CommitPosition>,
@@ -265,7 +183,7 @@ pub struct LogPage {
 /// The clock floor of a server that takes over as primary from the log (I-4.v2): the larger of its own `M\0ctime` and the last
 /// applied record's commit time. `None` when there is neither.
 pub fn clock_floor(local_ctime: Option<i64>, last_applied: Option<&CommitRecord>) -> Option<i64> {
-    match (local_ctime, last_applied.map(|r| r.commit_time_us)) {
+    match (local_ctime, last_applied.map(|r| r.commit_time)) {
         (Some(a), Some(b)) => Some(a.max(b)),
         (a, b) => a.or(b),
     }

@@ -5,7 +5,7 @@
 //! A key that changed with no record fails; a record whose change is not in the store fails. Pure over `Image`, so a control can
 //! show it fails.
 
-use super::mu::{CommitRecord, Image};
+use super::mu::{CommitRecord, Image, LogOp};
 
 fn describe(key: &[u8]) -> String {
     key.iter().map(|b| format!("{b:02x}")).collect()
@@ -16,50 +16,33 @@ fn describe(key: &[u8]) -> String {
 pub fn replay(before: &Image, records: &[CommitRecord]) -> Result<Image, String> {
     let mut image = before.clone();
     for record in records {
-        for op in &record.ops {
-            match op.op {
-                1 => {
-                    image.insert(op.key.clone(), op.operand.clone());
+        for (key, op) in &record.ops {
+            match op {
+                LogOp::Put(value) => {
+                    image.insert(key.clone(), value.clone());
                 }
-                2 => {
-                    image.remove(&op.key);
+                LogOp::Delete => {
+                    image.remove(key);
                 }
-                3 => {
-                    let delta: [u8; 8] = op.operand.as_slice().try_into().map_err(|_| {
-                        format!(
-                            "add_i64 of key {} has a {}-byte operand",
-                            describe(&op.key),
-                            op.operand.len()
-                        )
-                    })?;
+                LogOp::AddI64(delta) => {
                     let old = image
-                        .get(&op.key)
+                        .get(key)
                         .map(|b| <[u8; 8]>::try_from(b.as_slice()).map(i64::from_le_bytes))
                         .transpose()
                         .map_err(|_| {
-                            format!("add_i64 onto a non-counter at key {}", describe(&op.key))
+                            format!("add_i64 onto a non-counter at key {}", describe(key))
                         })?
                         .unwrap_or(0);
-                    let new = old.wrapping_add(i64::from_le_bytes(delta));
-                    image.insert(op.key.clone(), new.to_le_bytes().to_vec());
+                    image.insert(key.clone(), old.wrapping_add(*delta).to_le_bytes().to_vec());
                 }
-                4 => {
-                    let value: [u8; 8] = op.operand.as_slice().try_into().map_err(|_| {
-                        format!(
-                            "raise_counter of key {} has a {}-byte operand",
-                            describe(&op.key),
-                            op.operand.len()
-                        )
-                    })?;
-                    let value = u64::from_be_bytes(value);
+                LogOp::RaiseCounter(value) => {
                     let old = image
-                        .get(&op.key)
+                        .get(key)
                         .and_then(|b| <[u8; 8]>::try_from(b.as_slice()).ok())
                         .map(u64::from_be_bytes)
                         .unwrap_or(0);
-                    image.insert(op.key.clone(), old.max(value).to_be_bytes().to_vec());
+                    image.insert(key.clone(), old.max(*value).to_be_bytes().to_vec());
                 }
-                other => return Err(format!("a record holds op {other}, which no replay knows")),
             }
         }
     }

@@ -2602,45 +2602,6 @@ fn the_clock_checks_pass_a_rising_log_and_fail_each_violation() {
     assert_eq!(mu::clock_floor(Some(6_000), Some(&last)), Some(7_000));
 }
 
-/// A commit record is the I-4.v2 layout: it round-trips through its bytes, carries `commit_time_us` in its JSON form, and a
-/// reader refuses version 1, or any version but 2, with `format_unknown` (not `store_corrupt`).
-#[test]
-fn a_commit_record_v2_round_trips_and_other_versions_are_format_unknown() {
-    let mut record = clock::record(4, 2, 1_795_619_334_140_229);
-    record.write_ids = vec!["00000000-0000-4000-8000-000000000001".into()];
-    record.ops = vec![
-        mu::CommitOp {
-            op: 1,
-            key: b"p/a".to_vec(),
-            operand: b"value".to_vec(),
-        },
-        mu::CommitOp {
-            op: 2,
-            key: b"p/b".to_vec(),
-            operand: Vec::new(),
-        },
-    ];
-    let bytes = record.encode_v2();
-    assert_eq!(bytes[0], 2);
-    assert_eq!(
-        mu::CommitRecord::decode_v2(record.position, &bytes).unwrap(),
-        record
-    );
-    let json = serde_json::to_value(&record).unwrap();
-    assert_eq!(json["commit_time_us"], 1_795_619_334_140_229i64);
-    for version in [0u8, 1, 3] {
-        let mut other = bytes.clone();
-        other[0] = version;
-        let refused = mu::CommitRecord::decode_v2(record.position, &other).unwrap_err();
-        assert_eq!(
-            refused.code, "format_unknown",
-            "version {version}: {refused}"
-        );
-    }
-    let cut = mu::CommitRecord::decode_v2(record.position, &bytes[..bytes.len() - 1]).unwrap_err();
-    assert_eq!(cut.code, "store_corrupt", "{cut}");
-}
-
 /// The adapter's stubs are still stubs, each naming its owner. Landing a member means editing `common/mu.rs` and this list
 /// together, so an un-pend never happens by accident.
 #[test]

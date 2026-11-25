@@ -16,7 +16,7 @@ mod common;
 mod memory_env;
 
 use common::mu::{
-    self, CommitOp, CommitPosition, CommitRecord, Image, L3_SERVER, L5_HOSTS, LostReason, MuStore,
+    self, CommitPosition, CommitRecord, Image, L3_SERVER, L5_HOSTS, LogOp, LostReason, MuStore,
     MuTxn, TxnMode, TxnOptions, UpkeepKind, WriteOrigin,
 };
 use common::{TempDir, clock, logged};
@@ -70,15 +70,11 @@ fn page_created_us(s: &Store, slug: &str) -> i64 {
     gbrain_store::env::parse_iso(snap["page"]["created_at"].as_str().unwrap()).unwrap()
 }
 
-fn op(op: u8, key: &str, operand: &[u8]) -> CommitOp {
-    CommitOp {
-        op,
-        key: key.as_bytes().to_vec(),
-        operand: operand.to_vec(),
-    }
+fn op(key: &str, op: LogOp) -> (Vec<u8>, LogOp) {
+    (key.as_bytes().to_vec(), op)
 }
 
-fn record(sequence: u64, time: i64, ops: Vec<CommitOp>) -> CommitRecord {
+fn record(sequence: u64, time: i64, ops: Vec<(Vec<u8>, LogOp)>) -> CommitRecord {
     CommitRecord {
         ops,
         ..clock::record(sequence, 0, time)
@@ -103,14 +99,21 @@ fn the_write_path_check_passes_an_exact_replay_and_fails_each_unlogged_change() 
         ("seq", &5u64.to_be_bytes()),
     ]);
     let records = vec![
-        record(1, 10, vec![op(1, "a", b"2"), op(1, "new", b"y")]),
+        record(
+            1,
+            10,
+            vec![
+                op("a", LogOp::Put(b"2".to_vec())),
+                op("new", LogOp::Put(b"y".to_vec())),
+            ],
+        ),
         record(
             2,
             11,
             vec![
-                op(2, "gone", b""),
-                op(3, "n", &counter(4)),
-                op(4, "seq", &9u64.to_be_bytes()),
+                op("gone", LogOp::Delete),
+                op("n", LogOp::AddI64(4)),
+                op("seq", LogOp::RaiseCounter(9)),
             ],
         ),
     ];
@@ -122,7 +125,7 @@ fn the_write_path_check_passes_an_exact_replay_and_fails_each_unlogged_change() 
     ]);
     logged::log_explains_change(&before, &after, &records).unwrap();
     // raise_counter never lowers a counter.
-    let lower = vec![record(1, 10, vec![op(4, "seq", &2u64.to_be_bytes())])];
+    let lower = vec![record(1, 10, vec![op("seq", LogOp::RaiseCounter(2))])];
     logged::log_explains_change(&before, &before, &lower).unwrap();
 
     // A write that bypasses the log: a key in the store with no record.
@@ -152,8 +155,8 @@ fn the_write_path_check_passes_an_exact_replay_and_fails_each_unlogged_change() 
     let mut leaked = before.clone();
     leaked.insert(b"p/rolled-back".to_vec(), b"page".to_vec());
     assert!(logged::log_explains_change(&before, &leaked, &[]).is_err());
-    // A record no replay can apply fails rather than passing.
-    let broken = vec![record(1, 10, vec![op(3, "n", b"short")])];
+    // A record no replay can apply fails rather than passing: a counter delta onto a key that is not a counter.
+    let broken = vec![record(1, 10, vec![op("a", LogOp::AddI64(1))])];
     assert!(logged::log_explains_change(&before, &before, &broken).is_err());
 }
 
@@ -254,7 +257,7 @@ fn opened_brain_is_explained_by_its_log(kind: UpkeepKind) {
             assert!(
                 records
                     .iter()
-                    .any(|r| r.ops.iter().any(|o| o.key == format_key)),
+                    .any(|r| r.ops.iter().any(|(k, _)| *k == format_key)),
                 "the upgrade did not log the format record"
             );
         }
@@ -288,7 +291,7 @@ fn every_write_path_is_logged_rolled_back_transaction_multi_writer() {
             records
                 .iter()
                 .flat_map(|r| &r.ops)
-                .all(|o| o.op == 3 || o.op == 4),
+                .all(|(_, o)| matches!(o, LogOp::AddI64(_) | LogOp::RaiseCounter(_))),
             "a rolled-back transaction left a data record: {records:?}"
         );
         assert!(
@@ -318,7 +321,7 @@ fn every_write_path_is_logged_aborted_then_retried_optimistic_commit_multi_write
         records
             .iter()
             .flat_map(|r| &r.ops)
-            .all(|o| o.op == 3 || o.op == 4),
+            .all(|(_, o)| matches!(o, LogOp::AddI64(_) | LogOp::RaiseCounter(_))),
         "an aborted transaction left a data record: {records:?}"
     );
     logged::log_explains_change(&before, &mu::image_of(&*brain.kv), &records)
@@ -329,7 +332,7 @@ fn every_write_path_is_logged_aborted_then_retried_optimistic_commit_multi_write
     let (records, _) = log_since(store, start);
     let data_records: Vec<&CommitRecord> = records
         .iter()
-        .filter(|r| r.ops.iter().any(|o| o.op == 1))
+        .filter(|r| r.ops.iter().any(|(_, o)| matches!(o, LogOp::Put(_))))
         .collect();
     assert_eq!(
         data_records.len(),
@@ -373,7 +376,7 @@ fn second_host_promotion_keeps_clock_floor_and_positions_multi_writer() {
         }
         let (a_records, a_last) = log_since(&a.store, None);
         let a_last = a_last.expect("A's log has a newest position");
-        let a_time = a_records.last().expect("A committed").commit_time_us;
+        let a_time = a_records.last().expect("A committed").commit_time;
         clock::replay_clock_checks(
             &a_records,
             a.store.last_commit_time().unwrap_or_else(|e| panic!("{e}")),
@@ -405,7 +408,7 @@ fn second_host_promotion_keeps_clock_floor_and_positions_multi_writer() {
         assert!(floor >= a_time);
         // Every key A's records touched holds A's value on B at the handover position.
         let b_image = mu::image_of(&*b.kv);
-        for key in a_records.iter().flat_map(|r| r.ops.iter().map(|o| &o.key)) {
+        for key in a_records.iter().flat_map(|r| r.ops.iter().map(|(k, _)| k)) {
             assert_eq!(
                 b_image.get(key),
                 a_image.get(key),
@@ -430,7 +433,7 @@ fn second_host_promotion_keeps_clock_floor_and_positions_multi_writer() {
         across.extend(b_records.clone());
         clock::commit_times_rise(&across).unwrap_or_else(|e| panic!("across the move: {e}"));
         assert!(
-            b_records[0].commit_time_us >= floor,
+            b_records[0].commit_time >= floor,
             "the first commit after the move is below the floor"
         );
         let times: Vec<i64> = (0..4)
