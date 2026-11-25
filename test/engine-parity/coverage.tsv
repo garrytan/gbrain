@@ -134,6 +134,8 @@ readCatalogSchemaVersion	lifecycle	yes	1	no	yes	yes	serves
 listCatalogForeignKeys	lifecycle	yes	1	no	yes	yes	serves
 getPage	pages	yes	288	yes	yes	yes	serves
 readPageSnapshot	pages	yes	103	no	yes	yes	serves
+getPage	pages	yes	284	yes	yes	yes	serves
+readPageSnapshot	pages	yes	100	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
 putPage	pages	yes	1361	yes	yes	yes	serves
@@ -147,6 +149,9 @@ softDeletePages	pages	yes	4	yes	yes	yes	serves
 restorePage	pages	yes	18	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	12	no	yes	yes	serves
 listPages	pages	yes	22	yes	yes	yes	serves
+restorePage	pages	yes	15	yes	yes	yes	serves
+purgeDeletedPages	pages	yes	10	no	yes	yes	serves
+listPages	pages	yes	24	yes	yes	yes	serves
 findPages	pages	yes	5	no	yes	yes	serves
 countPagesBy	pages	yes	1	no	yes	yes	serves
 pageTypeTotals	pages	yes	2	no	yes	yes	serves
@@ -772,6 +777,7 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	2	no	yes	yes	serves
 getConfig	config	yes	61	no	yes	yes	serves
+getConfig	config	yes	59	no	yes	yes	serves
 setConfig	config	yes	97	no	yes	yes	serves
 unsetConfig	config	yes	4	no	yes	yes	serves
 listConfigKeys	config	yes	5	no	yes	yes	serves
@@ -1989,6 +1995,7 @@ listHostTopologyRows	write_misc	yes	2	no	yes	yes	serves
 listWorktreeMembers	write_misc	yes	2	no	yes	yes	serves
 worktreeClaimStore	write_misc	yes	43	no	yes	yes	serves
 readWriterAdminState	write_misc	yes	12	no	yes	yes	serves
+readWriterAdminState	write_misc	yes	10	no	yes	yes	serves
 readWorktreeManifest	write_misc	yes	1	no	yes	yes	serves
 writerAdminStore	write_misc	yes	3	no	yes	yes	serves
 writerReleaseStore	write_misc	yes	14	no	yes	yes	serves
