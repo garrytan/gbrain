@@ -954,6 +954,7 @@ fn the_not_copied_list_is_pinned_sorted_and_disjoint_from_the_relations() {
     assert_eq!(
         tables,
         [
+            "access_read_log",
             "chat_usage_log",
             "code_traversal_cache",
             "conversation_parser_llm_cache",

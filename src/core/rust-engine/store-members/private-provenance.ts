@@ -80,6 +80,8 @@ export interface StorePrivacyPolicy {
    * (`access.restrictions_present`) decides the rest (`open` in privacy.rs).
    */
   open?: boolean;
+  /** The owner read rule (`ownerReadPolicyFragment`): a derived page's origins are judged by `identity`. */
+  ownerRead?: boolean;
   /** The folder rules the caller satisfies (`CallerAccess.satisfiedRuleIds`, `source:rule_id`); a page under only these passes. */
   satisfiedRuleIds?: string[];
   /** The prefixes the caller's record reads as nobody (`CallerAccess.folderCoverage`): a page under one is hidden. */
@@ -200,31 +202,35 @@ export function storePrivacyPolicy(
 /**
  * The store policy for the remote provenance floor, remoteProvenanceFloorSql('facts'): the provenance page judged by
  * the plain page fragment (alias pp, world flag on), which reads no caller identity, plus the owner-only conjunct. The
- * store serves it when the text equals the no-caller rendering (judgeWidenedCaller); a labelled-only caller (its
- * own conjunct) or an owner read refuses.
+ * store serves the no-caller rendering, and the rendering for a fresh record of the caller's `restricted` and `owner`
+ * settings and remote policy: a caller record has no live pending-coverage test, an owner read drops the owner-only
+ * test, and `restricted: false` renders the short member-access form (the store's `open`). A labelled-only caller, folder
+ * coverage or a relaxed privacy setting renders other text and refuses.
  */
 export function storeFloorPolicy(member: string): StorePrivacyPolicy {
-  const policy = judgeWidenedCaller<StorePrivacyPolicy>(() => {
-    const text = normalizeConceptInputs(remoteProvenanceFloorSql('facts'));
-    const baseline = renderForStoreCaller({}, () => remoteProvenanceFloorSql('facts'));
-    return text === normalizeConceptInputs(baseline) ? { ...factPolicyFlags(baseline), entityPrivacy: false, provenanceOnly: true } : undefined;
-  });
-  if (policy) return policy;
-  refuseMember(member, 'the remote provenance floor for a caller whose labelled-only grant or owner read changes it');
+  const text = normalizeConceptInputs(remoteProvenanceFloorSql('facts'));
+  const floor = (sql: string, open: boolean): StorePrivacyPolicy =>
+    ({ ...factPolicyFlags(sql), entityPrivacy: false, provenanceOnly: true, ...(open ? { open: true } : {}) });
+  const unscoped = withoutCallerAccess(() => remoteProvenanceFloorSql('facts'));
+  if (text === normalizeConceptInputs(unscoped)) return floor(unscoped, false);
+  const { restricted, owner } = currentCallerAccess();
+  const fresh = renderForStoreCaller({ restricted, owner }, () => remoteProvenanceFloorSql('facts'));
+  if (text === normalizeConceptInputs(fresh)) return floor(fresh, !restricted);
+  refuseMember(member, 'the remote provenance floor for a caller whose labelled-only grant, folder coverage or relaxed privacy changes it');
 }
 
 /**
  * The store policy for the page policy of a page's member, `readPolicyFragment('pp', identity, true, satisfied)`: what
  * `readMemberPageWithdrawal` judges the provenance and entity pages by, for the member whose page a save lands on (not
- * the caller's own record). The store serves it for a member that is not the brain owner and meets no folder rule: the
- * owner read (`lineageAccessSql`, `ownerReadPolicyFragment`) and a satisfied folder rule are not modelled, so both refuse.
+ * the caller's own record). The store serves it for a member that meets no folder rule: a satisfied folder rule is not
+ * modelled, so it refuses. For the brain owner it is the owner read rule ({@link storeOwnerReadPolicy}).
  * The text is compared with the same fragment for a fresh record of the caller's remote policy (the one that picks the
  * owner-only and concept-input forms), under the short member-access form when the caller renders it (`open`). An
  * identity the fragment drops as invalid (`validIdentity`) refuses, as the store would apply it as written.
  */
 export function storeMemberReadPolicy(member: string, q: { owner: boolean; identity: readonly string[]; satisfied: readonly string[] }): StorePrivacyPolicy {
-  if (q.owner) refuseMember(member, 'the owner read of a member page (lineage access is not modelled)');
   if (q.satisfied.length > 0) refuseMember(member, 'a member page whose reader meets a folder rule');
+  if (q.owner) return storeOwnerReadPolicy(member, q.identity);
   const text = normalizeConceptInputs(readPolicyFragment('p', q.identity, true, q.satisfied));
   const open = currentCallerAccess().restricted === false;
   const reference = renderForStoreCaller(open ? { restricted: false } : {}, () => readPolicyFragment('p', q.identity, true, []));
@@ -249,7 +255,7 @@ export function storeMemberReadPolicy(member: string, q: { owner: boolean; ident
  * (`validIdentity`, `validQualifiedRuleId`), which the store would not, so a set the text dropped refuses; the owner
  * text always renders the full form, so it decides this when the other is the short form.
  */
-export function storeOwnerReadPolicy(member: string, q: { identity: readonly string[]; satisfied: readonly string[] }): StorePrivacyPolicy {
+export function storeOwnerReachPolicy(member: string, q: { identity: readonly string[]; satisfied: readonly string[] }): StorePrivacyPolicy {
   const access = currentCallerAccess();
   const open = access.restricted === false;
   const folderCoverage = access.folderCoverage.map(c => ({ source_id: c.source_id, prefix: c.prefix }));
@@ -284,6 +290,24 @@ export function storeOwnerReadPolicy(member: string, q: { identity: readonly str
     }
   }
   refuseMember(member, 'an owner read of a fact\'s pages whose policy is not one the store models');
+}
+
+/**
+ * The owner read rule, `ownerReadPolicyFragment('pp', identity, [])` (GST-2346, GST-2490 with the opt-in off): the
+ * owner's readers and the privacy part, with a derived page's origins judged by the owner's identity
+ * (`gbrain_access_origin_hidden_for`, the store's `ownerRead`) and no owner-only test. The text is compared with the
+ * same fragment for a fresh record of the caller's remote policy. An identity with no valid member principal renders
+ * `FALSE` (the owner reads no page but its own) and refuses, and so does an identity the fragment drops as invalid.
+ */
+function storeOwnerReadPolicy(member: string, identity: readonly string[]): StorePrivacyPolicy {
+  const text = normalizeConceptInputs(ownerReadPolicyFragment('p', identity, []));
+  const reference = normalizeConceptInputs(renderForStoreCaller({}, () => ownerReadPolicyFragment('p', identity, [])));
+  const named = identity.every(id => text.includes(`'${id}'`));
+  if (text !== 'FALSE' && text === reference && named) {
+    const flags = pagePolicyFlags(reference);
+    if (flags.ownerOnly === 'off') return { ...flags, identity: [...identity], ownerRead: true };
+  }
+  refuseMember(member, 'an owner read of a member page whose policy is not the one the store models');
 }
 
 /** The process-setting flags of a rendered fact policy, and its owner-only form. */

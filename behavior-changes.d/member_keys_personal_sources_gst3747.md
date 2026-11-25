@@ -1,0 +1,5 @@
+---
+kind: breaking
+exception: security
+---
+A key bound to a member other than the brain owner that has no source list (for example a token from gbrain auth create --member) no longer reads another member's personal source, a source bound with gbrain access member source add, even when that source is federated. Before, such a key read every federated source, other members' personal sources included. It still reads its own member's personal sources and every shared source, and a local stdio server bound to a member follows the same rule. The owner and every key bound to the owner lose nothing (the owner is the member gbrain access owner set named; with no owner set, every member-bound key takes the rule), and a key whose source list names a personal source keeps reading it. To let a key read another member's personal source on purpose, name it in the key's grant: gbrain auth rescope --token <name> --sources <write-source>,<personal-source>. gbrain access check --token <name> shows what a key reads now.

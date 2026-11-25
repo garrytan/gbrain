@@ -16,6 +16,7 @@ pub mod access_migrations;
 pub mod access_policy;
 pub mod access_rules;
 mod cascade;
+pub mod chronicle_reads;
 pub mod chunks;
 pub mod cli_reads;
 pub mod config;
@@ -26,6 +27,7 @@ mod fingerprint_fixture;
 #[cfg(feature = "fjall")]
 pub mod fjall_kv;
 pub mod format;
+pub mod git_gap_census;
 pub mod journal;
 pub(crate) mod jsonb;
 pub mod keys;
@@ -43,11 +45,13 @@ mod page_withdrawals;
 pub mod pages;
 pub mod read_shared;
 pub mod redb_kv;
+pub mod retrieval_feedback;
 pub mod search;
 pub mod seed;
 pub mod shared_skill_catalog;
 pub mod shared_skill_members;
 pub mod shared_skill_publication;
+pub mod slug_spellings;
 pub mod sources;
 #[cfg(test)]
 mod test_support;
@@ -55,6 +59,7 @@ pub mod timeline;
 
 // One module per planned family (docs/designs/RUST_ENGINE_INTERFACES.md). Each is listed once, here,
 // so building a family never edits this list.
+pub mod access_read_log;
 pub mod alias_fanout_reads;
 pub mod aliases;
 pub mod budget_ledger;
@@ -68,6 +73,7 @@ pub mod contradictions;
 mod derivation_walks;
 pub mod dream;
 pub mod dream_config;
+pub mod dream_reads;
 pub mod drift_conflicts;
 pub mod edge_proposals;
 pub mod embedding_catalog;
@@ -82,6 +88,7 @@ pub mod facts;
 pub mod federation_exposure;
 pub mod field_usage;
 pub mod generations;
+pub mod handover_reads;
 pub mod identity_auto;
 pub mod identity_reviews;
 pub mod import_members;
@@ -98,6 +105,7 @@ pub mod moved_page_reads;
 pub mod ontology;
 pub mod page_body;
 pub mod page_embedding_budget;
+pub mod page_mutation_reads;
 pub mod page_ops;
 pub mod page_visibility;
 pub mod persistence;
@@ -121,6 +129,7 @@ pub mod session_state;
 pub mod source_cr_mode;
 pub mod stats;
 pub mod synopsis_tier;
+pub mod tail_reads;
 pub mod takes;
 pub mod telemetry;
 pub mod timeline_queries;
@@ -128,6 +137,7 @@ pub mod transactions;
 pub mod trust;
 pub mod vectors;
 mod version_prune;
+pub mod volunteer_events;
 pub mod wanted_links;
 pub mod write_attribution;
 pub mod write_guards;
@@ -263,7 +273,47 @@ pub(crate) fn get_json<T: DeserializeOwned>(read: &dyn KvRead, key: &[u8]) -> Re
 }
 
 pub(crate) fn put_json<T: Serialize>(tx: &mut dyn KvWrite, key: &[u8], value: &T) -> Result<()> {
-    tx.put(key, &serde_json::to_vec(value)?)
+    let bytes = serde_json::to_vec(value)?;
+    // `get_json` and every other reader decode with serde_json's nesting limit, so a record nested
+    // deeper than that would be stored and then read back only as `store_corrupt`. Refuse it here,
+    // before anything is written, as the caller's own input.
+    if json_depth(&bytes) > READABLE_JSON_DEPTH {
+        return Err(StoreError::invalid(format!(
+            "a value nested more than {READABLE_JSON_DEPTH} levels deep (with the record around it) cannot be stored"
+        )));
+    }
+    tx.put(key, &bytes)
+}
+
+/// The deepest nesting serde_json reads back with its default recursion limit (128 frames: a record
+/// 128 levels deep fails with "recursion limit exceeded").
+const READABLE_JSON_DEPTH: usize = 127;
+
+/// The deepest array or object nesting of serialized JSON, ignoring brackets inside strings.
+fn json_depth(bytes: &[u8]) -> usize {
+    let (mut depth, mut max, mut in_string, mut escaped) = (0usize, 0usize, false, false);
+    for &b in bytes {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if b == b'\\' {
+                escaped = true;
+            } else if b == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_string = true,
+            b'[' | b'{' => {
+                depth += 1;
+                max = max.max(depth);
+            }
+            b']' | b'}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    max
 }
 
 impl Store {
@@ -1126,5 +1176,18 @@ mod older_build_tests {
             FORMAT_VERSIONS,
             (1..=FORMAT_VERSION).collect::<Vec<_>>().as_slice()
         );
+    }
+}
+
+#[cfg(test)]
+mod json_depth_tests {
+    use super::json_depth;
+
+    #[test]
+    fn brackets_inside_strings_and_escaped_quotes_do_not_count() {
+        assert_eq!(json_depth(br#"1"#), 0);
+        assert_eq!(json_depth(br#"{"a":[1,{"b":[]}]}"#), 4);
+        assert_eq!(json_depth(br#"{"a":"[[[{{{","b":"\"[["}"#), 1);
+        assert_eq!(json_depth(br#"["\\",[[]]]"#), 3);
     }
 }

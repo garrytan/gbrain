@@ -222,7 +222,7 @@ impl Store {
     /// `chronicle_page_state.source_id` and `.page_id`, checked in that order), else it refuses `source_not_found` or
     /// `page_not_found` and writes nothing. A soft-deleted page keeps its row in `pages`, so it passes. The check and
     /// the upsert run under one writer: a bound store's own transaction, else a transaction opened here.
-    pub fn upsert_chronicle_row_checked(&self, w: &ChronicleRowInput) -> Result<bool> {
+    pub fn upsert_chronicle_row(&self, w: &ChronicleRowInput) -> Result<bool> {
         if self.transaction_open() {
             return self.checked_upsert(w);
         }
@@ -255,6 +255,11 @@ impl Store {
                 ));
             }
         }
+        self.upsert_chronicle_row_unchecked(w)
+    }
+
+    /// The same checked upsert under its older binding name (`upsertChronicleRowChecked`, which the engine member calls).
+    pub fn upsert_chronicle_row_checked(&self, w: &ChronicleRowInput) -> Result<bool> {
         self.upsert_chronicle_row(w)
     }
 

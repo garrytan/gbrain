@@ -1,6 +1,6 @@
 /**
  * Which owner read rules the Rust engine's ownerReachesFact serves for an owner bound to a member
- * (src/core/rust-engine/store-members/private-provenance.ts storeOwnerReadPolicy).
+ * (src/core/rust-engine/store-members/private-provenance.ts storeOwnerReachPolicy).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: the owner's identity and satisfied folder rules reach the store when both fragments of the SQL
@@ -14,13 +14,13 @@
  *  - Seam: none. The translator runs in process under withCallerAccess; no engine is opened.
  */
 import { describe, expect, test } from 'bun:test';
-import { storeOwnerReadPolicy } from '../src/core/rust-engine/store-members/private-provenance.ts';
+import { storeOwnerReachPolicy } from '../src/core/rust-engine/store-members/private-provenance.ts';
 import { withCallerAccess } from '../src/core/search/private-visibility.ts';
 
 const ALICE = ['member:alice-example'];
 
 function judged(identity: string[], satisfied: string[], record: Record<string, unknown> | null) {
-  const run = () => storeOwnerReadPolicy('ownerReachesFact', { identity, satisfied });
+  const run = () => storeOwnerReachPolicy('ownerReachesFact', { identity, satisfied });
   try {
     return record ? withCallerAccess(record as never, run) : run();
   } catch (error) {

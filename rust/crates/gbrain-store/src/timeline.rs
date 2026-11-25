@@ -234,7 +234,8 @@ pub(crate) fn remove_entry_by_id(
     else {
         return Ok(false);
     };
-    remove_entry(tx, &old)?;
+    // The shadow follow copies the primary's marks, so this delete writes none.
+    remove_entry_unmarked(tx, &old)?;
     recompute_latest(tx, page_id)?;
     Ok(true)
 }
@@ -310,8 +311,27 @@ pub(crate) fn latest_entry_micros(read: &dyn KvRead, page_id: u64) -> Result<Opt
 
 /// Deletes one entry: its `E` key, and its `D` key when that still points at the entry (a later
 /// entry that took the dedup slot keeps it). The page's `G` is not touched; call
-/// `recompute_latest` once after the deletes of one statement.
+/// `recompute_latest` once after the deletes of one statement. Before it goes, an owner-only entry
+/// (by its own lineage or its page's) marks what was derived from it (v322's trigger on
+/// `timeline_entries`).
 pub(crate) fn remove_entry(tx: &mut dyn KvWrite, entry: &TimelineRecord) -> Result<()> {
+    mark_entry_before_delete(tx, entry)?;
+    remove_entry_unmarked(tx, entry)
+}
+
+/// `owner_only_marks::mark_row_before_delete` for one timeline entry.
+pub(crate) fn mark_entry_before_delete(tx: &mut dyn KvWrite, entry: &TimelineRecord) -> Result<()> {
+    crate::owner_only_marks::mark_row_before_delete(
+        tx,
+        "timeline_entries",
+        entry.id,
+        None,
+        Some(entry.page_id),
+    )
+}
+
+/// [`remove_entry`] without the owner-only mark (the shadow follow copies the primary's marks).
+fn remove_entry_unmarked(tx: &mut dyn KvWrite, entry: &TimelineRecord) -> Result<()> {
     tx.delete(&keys::timeline(entry.page_id, &entry.date, entry.id))?;
     let dedup = entry.dedup_key();
     if tx.get(&dedup)?.and_then(|b| keys::be8(&b)) == Some(entry.id) {
@@ -343,8 +363,12 @@ pub(crate) fn recompute_latest(tx: &mut dyn KvWrite, page_id: u64) -> Result<()>
     }
 }
 
-/// `ON DELETE CASCADE` of `timeline_entries.page_id`.
+/// `ON DELETE CASCADE` of `timeline_entries.page_id`. Each entry is marked first when it is
+/// owner-only, as the cascade fires v322's row trigger on every entry it deletes.
 pub(crate) fn remove_page_timeline(tx: &mut dyn KvWrite, page_id: u64) -> Result<()> {
+    for entry in crate::owner_only_marks::timeline_rows(&*tx, Some(page_id))? {
+        mark_entry_before_delete(tx, &entry)?;
+    }
     let mut doomed = Vec::new();
     for prefix in [
         keys::timeline_prefix(page_id),
@@ -598,7 +622,14 @@ impl Store {
                 && (!options.eligible_only || eligible_page(&page))
             {
                 let keep = |row: &TimelineRecord| -> Result<bool> {
-                    if !trust.admits(&*read, "timeline_entries", row.id, row.trust.tier())? {
+                    if !trust.admits(&*read, "timeline_entries", row.id, row.trust.tier())?
+                        || (options.eligible_only
+                            && crate::generations::needs_rederive::is_marked(
+                                &*read,
+                                "timeline_entries",
+                                row.id,
+                            )?)
+                    {
                         return Ok(false);
                     }
                     match &options.exclude_private {
@@ -625,8 +656,8 @@ impl Store {
 /// The page part of `projectionEligibleSql('timeline_entries', 'te', ..)` (the row part, `floor`
 /// and `suppressFlagged`, is the `TrustPolicy` of `get_timeline`). Every row of `getTimeline` hangs on `page` (`te.page_id = p.id`), so a
 /// soft-deleted page, or a page whose frontmatter has a `quarantine` key (any value), hides all of its
-/// rows. The third clause hides rows listed in `needs_rederive`, which only a raw-SQL purge writes;
-/// this engine has no such rows.
+/// rows. The third clause, a row a purge marked in `needs_rederive` (`generations/needs_rederive.rs`),
+/// is checked per row by `get_timeline`.
 pub(crate) fn eligible_page(page: &PageRecord) -> bool {
     page.deleted_at_us.is_none() && !page.frontmatter.contains_key("quarantine")
 }

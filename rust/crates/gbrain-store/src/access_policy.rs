@@ -229,6 +229,15 @@ pub(crate) fn stamp_page_put(tx: &mut dyn KvWrite, prior: Option<u64>, value: &[
     }
 }
 
+/// The rule ids the last restamp or page write kept for page `page_id` (`pages.folder_rule_ids`), none when it keeps none.
+pub(crate) fn kept_rule_ids(
+    read: &dyn KvRead,
+    source_id: &str,
+    page_id: u64,
+) -> Result<Option<Vec<String>>> {
+    get_json(read, &stamp_key(source_id, page_id))
+}
+
 /// The rule records of the ids the last restamp or page write kept for page `page_id`
 /// (`pages.folder_rule_ids`), empty when it keeps none. An id whose rule is gone reads as a rule
 /// that covers no derived page, as `gbrain_access_lineage_rules` finds no row for it.
@@ -252,6 +261,40 @@ pub(crate) fn kept_rules(
             covers_derived: false,
             created_by: None,
         }));
+    }
+    Ok(out)
+}
+
+/// The ids the last restamp or page write kept for page `page_id` whose rule is no longer a rule
+/// of its source, each as a rule no caller satisfies: no readers, and it covers derived pages, so
+/// the origin tests close too. After a rule is removed and before the restamp, SQL keeps the
+/// deleted id in `pages.folder_rule_ids`, so the page stays hidden (`folder_rule_ids <@ satisfied`
+/// fails; `gbrain_access_lineage_rules` keeps a stamped id whose rule is gone, "fail closed").
+/// Empty when the page keeps no stamp or every kept id is a live rule.
+pub(crate) fn retired_rules(
+    read: &dyn KvRead,
+    source_id: &str,
+    page_id: u64,
+) -> Result<Vec<AccessRuleRecord>> {
+    let kept: Option<Vec<String>> = get_json(read, &stamp_key(source_id, page_id))?;
+    let mut out = Vec::new();
+    for id in kept.unwrap_or_default() {
+        let (source, rule_id) = id.split_once(':').unwrap_or((source_id, id.as_str()));
+        if read
+            .get(&key(RULE, &[source.as_bytes(), rule_id.as_bytes()]))?
+            .is_some()
+        {
+            continue;
+        }
+        out.push(AccessRuleRecord {
+            source_id: source.to_string(),
+            rule_id: rule_id.to_string(),
+            prefix: String::new(),
+            readable_by: Vec::new(),
+            revision: 0,
+            covers_derived: true,
+            created_by: None,
+        });
     }
     Ok(out)
 }

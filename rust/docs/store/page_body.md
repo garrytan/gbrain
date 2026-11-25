@@ -128,11 +128,12 @@ above "Segment chunks" in `rust/crates/gbrain-store/src/chunks.rs`). In one stor
 
 The chunks stay out of `getChunks` and keyword search until a flip publishes their generation. The
 TypeScript member normalises them as `upsertChunks` does (`prepareChunks`), refuses a chunk that
-carries an image vector (`engine_capability_missing`: image vectors are not stored), keeps a text
-vector a chunk carries (a vector a replace reuses: dimensions checked, a model required, embedded
-now with its recorded input; a chunk without one has no pending time, where Postgres stamps
-`embedding_pending_since`) and takes the default model
-label from `opts.embeddingColumn` as PGLite does. The option is served for the store's one vector
+carries an image vector (`engine_capability_missing`: image vectors are not stored) and takes the
+default model label from `opts.embeddingColumn` as PGLite does. A chunk that carries a text vector
+(a vector a re-chunk reuses) is stored with it: the store checks its dimensions against the brain's,
+labels it with the chunk's model (a vector with no model refuses), and stamps it embedded now with
+its recorded input. A chunk without one is pending from the write, with a pending stamp of
+now, as Postgres stamps `embedding_pending_since` there. The option is served for the store's one vector
 column only, as on `upsertChunks` (embeddings.md, "Chunk writes"). Deleting a page for good
 also deletes the chunks family's segment view of the page (`chunks::forget_segment_view`).
 
@@ -156,6 +157,67 @@ PGLite overlays the page's withdrawals and global purges on the stored lead firs
 identity: the seal reads the stored lead directly and the store keeps no purge markers, so the stored lead is the
 lead sealed. `readPageSnapshot` does report the page's withdrawals, for the overlay a reader applies to a
 segmented page's lead.
+
+## Segmented write statements
+
+A streamed segmented import (`importStreamedMarkdownFile`), the segmented re-chunk
+(`runSegmentedRechunk`) and a fence rewrite (`page-body/segment-rewrite.ts`, with the derivation
+delete in `page-body/segment-derive.ts`) make reads and writes around the flip that PGLite and Postgres run from
+`src/core/engine-sql/segmented-writes.ts`. The store serves each one from
+`rust/crates/gbrain-store/src/page_body/segmented_writes.rs`, through
+`src/core/rust-engine/store-members/segmented-writes.ts`. Each write is one store write. The
+fence-rewrite members are in `rust/crates/gbrain-store/src/page_body/segment_rewrite.rs`; the
+segmented-embed members (`page-body/segmented-embedding.ts`) are in
+`rust/crates/gbrain-store/src/page_body/segmented_embedding.rs`.
+
+| Member | Serves |
+| --- | --- |
+| `lockBodyStagingState(stagingId)` | the staging's state, or `null`. Writes are serialized, so no row lock |
+| `deleteUnstagedSegmentChunks(pageId, generation, keepIndexes)` | deletes the page's segment chunks of `generation` whose index is not kept |
+| `readSegmentedLivePage(pageId)` | the page a write diffs against, deleted or not: id, generation, storage, title, type, body flags |
+| `listChunkedOccurrences(pageId, occurrenceIds, generation)` | the members of `occurrenceIds`, in order, with a chunk row at or below `generation` |
+| `readRetiredChunkVectors(pageId, occurrences, column)` | each chunk of those occurrences with a stored vector and recorded input, newest generation first: its text, vector, recorded input and model, so a re-chunk reuses the vector of an unchanged text |
+| `hasStaleSegmentChunks(pageId, generation, live)` | whether a chunk row exists that `generation` does not hold |
+| `retireStaleSegmentChunks(pageId, generation, live, maxRows)` | deletes up to `maxRows` of those rows and returns the count |
+| `readSegmentedProjectionPage(sourceId, slug)` | the live segmented page row a projection builds from |
+| `listSegmentedRechunkCandidates(chunkerVersion, scope)` | ids of live, sealed segmented pages below `chunkerVersion`, by source, then slug |
+| `readSegmentedRechunkPage(pageId)` | the segmented page row a re-chunk plans and flips from |
+| `listOccurrenceChunks(pageId, occurrences)` | the visible chunk rows of those occurrences, by occurrence, then ordinal |
+| `readMaterializingRevision()`, `setMaterializingRevision(revision)` | the `gbrain.materializing_revision` setting, kept in the transaction's settings map; `null` and a no-op outside a transaction |
+| `restorePageUpdatedAt(pageId, updatedUs)` | sets `updated_at` back (a re-chunk is not an edit); a missing page is a no-op |
+| `readSegmentedRewritePage(pageId)` | the page row a live fence rewrite reads, deleted or not, with its tags in byte order (Postgres sorts them `COLLATE "C"`); an inline page reads at generation 0; `null` when missing |
+| `restorePageDeletedAt(pageId, deletedAt)` | sets `deleted_at` back after the rewrite's flip; a change gives the page a new knowledge revision and clears its text projection revision, as the pages trigger does. The pages trigger also notes the page for each open derivation purge request of its source; the store keeps those requests (`recordDerivationPurgeRow`, `purge_record.rs`) and its derivation sweep reads them at its own pass (`derivation_sweep.rs`), so the restore writes no per-page note. A missing page is a no-op |
+| `lockSegmentedGenerationPage(pageId)` | the page's slug, source, body flags, storage and generation. Writes are serialized, so no row lock |
+| `splitManifestGeneration(pageId, generation, stagingId)` | copies the manifest rows that span `generation + 1` into the staging, ends the published rows at `generation`, and deletes the rows that start at it |
+| `publishRebuiltGeneration(pageId, generation, stagingId)` | publishes the staging's rows; the rows that start at `generation` end at `generation + 1` |
+| `setSegmentedVersionHash(pageId, generation, contentHash, bodyBytes)` | sets the content hash and byte count of the segmented version of `generation` |
+| `readSegmentedEmbedPage(ref)` | the segmented page an embed reads, by `{ id }` or `{ sourceId, slug }`: live, sealed and in a live source; `null` otherwise |
+| `hasLiveSegmentedPage(sourceId, slug)` | whether that page is segmented, live and in a live source, sealed or not |
+| `countSegmentedEmbedRows(pageId, column)` | a sealed page's visible chunk rows and those without a vector |
+| `listSegmentedStaleRows(pageId, column, opts)` | a sealed page's visible rows without a vector (any with `includeEmbedded`), newest index first, below `beforeChunkIndex`, in `occurrenceIds`, at most `limit` |
+| `readSegmentChunkInputHashes(pageId, chunkIndexes)` | the recorded input of the visible rows at those indexes, sealed or not |
+| `installSegmentedVectors(pageId, column, model, vectors)` | stores each vector on the visible row with the same index and text whose recorded input is still `expected`, in one store write; returns the count. The dimensions must be the brain's; the model is `model`, else the brain's |
+| `listLiveEmbedSegments(pageId)` | the live manifest rows, highest `seq` first: occurrence, digest and entry state |
+| `listSegmentChunkRows(pageId, occurrenceId)` | a sealed page's visible rows of one occurrence in index order, with their recorded inputs |
+
+The embed members serve the column `embedding` only (the store's one vector column); another column
+refuses `engine_capability_missing`. The embed lease (`takePageEmbeddingLease`, `renewPageEmbeddingLease`,
+`releasePageEmbeddingLease`) and the per-page embedding budget (`reservePageEmbedding`,
+`settlePageEmbeddingReservation`, in `page_embedding_budget.rs`) and the vectorless chunk read
+(`listVectorlessChunkIndexes`, `page_body/page_spend.rs`) are served by the store, so `embedSegmentedRows`
+runs on a Rust brain. The derivation spend ledger (`page_derivation_spend`, `page-spend.ts`) still runs
+raw SQL.
+
+A chunk row is stale for generation `g` with live occurrences `live` as in Postgres's
+`STALE_CHUNKS_SQL`: a segment chunk of a live occurrence when its generation is below the newest
+generation at or below `g` among that occurrence's chunks; a chunk of any other occurrence when its
+generation is at or below `g`; an inline chunk always.
+
+`flipBodyGeneration` sends the transaction's materializing revision as `keepRevision`. When it names
+the page's revision and the flip leaves the page's source, slug, type, kind, title, frontmatter and
+deletion unchanged, the flip keeps the revision and the seal, as Postgres's
+`gbrain_advance_page_revision` trigger does. Otherwise the flip gives the page a new revision and
+unseals its text projection.
 
 ## The sweep
 
@@ -210,13 +272,6 @@ still needs. Deleting a source removes its texts and stagings, and refuses
 `constraint_violation` while a manifest row of any page names one of its texts (PGLite's manifest
 foreign key to the texts has no cascade).
 
-## Not served
-
-The TypeScript engine refuses these with `engine_capability_missing`:
-
-- A segmented page inside `transaction`: the store has no transactions yet, so the parity cases that
-  stage inside one stop on that refusal.
-
 ## Known differences from PGLite
 
 - `stageSegmentChunks` reads occurrence ids, ordinals and byte spans as unsigned numbers; a negative
@@ -242,7 +297,8 @@ The TypeScript engine refuses these with `engine_capability_missing`:
 the purge gave them), keyed by the purge request under `b 0x09 <request uuid>`. A second record of the same request keeps nothing
 (`ON CONFLICT (request_id) DO NOTHING`); the request id is read as Postgres reads a uuid (upper or lower case, compact, brace-wrapped, a hyphen after any group of four digits) and kept in its canonical hyphenated form, so every spelling is one request; a request id that is not a uuid, a page id outside
 `integer` and, for a new record, an unknown source refuse as Postgres does (the source's foreign key). `readDerivationPurgeState(requestId)`
-answers `{ state: 'pending', reason: null }` for a record and null for none. A claim that normalizes to nothing records nothing, in
+answers `{ state: 'pending', reason: null }` for a record and null for none. A source delete removes the source's records with their
+index entries (`ON DELETE CASCADE`), so a deleted source's request answers null. A claim that normalizes to nothing records nothing, in
 TypeScript before the call.
 
 While a record is there, `upsertSegmentDerivations` does what the trigger `gbrain_refuse_purging_derivation` does: a row of the record's

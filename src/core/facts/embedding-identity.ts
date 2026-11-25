@@ -8,7 +8,7 @@ const WITHDRAWAL_SUBJECTS = "CASE WHEN starts_with(COALESCE(f.source_markdown_sl
 
 // #6960: one anti-join per fingerprint, each an equality on fact_hash, so the
 // planner hashes or index-probes the fingerprint once per fact. A single
-// `fact_hash IN (fp, fp_v1)` left both fingerprints in the join filter,
+// `fact_hash IN (fp, fp_v2, fp_v1)` left every fingerprint in the join filter,
 // recomputed for every (fact, withdrawal) pair.
 export const retainedFactEmbedding = `f.expired_at IS NULL AND f.superseded_by IS NULL
   AND (f.valid_until IS NULL OR f.valid_until>now())
@@ -18,7 +18,10 @@ export const retainedFactEmbedding = `f.expired_at IS NULL AND f.superseded_by I
     AND w.fact_hash = gbrain_fact_fingerprint(f.fact))
   AND NOT EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id
     AND w.visibility=f.visibility AND w.subject = ANY(${WITHDRAWAL_SUBJECTS})
-    AND w.fact_hash = gbrain_fact_fingerprint_v1(f.fact))`;
+    AND w.fact_hash = gbrain_fact_fingerprint_v1(f.fact))
+  AND NOT EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id
+    AND w.visibility=f.visibility AND w.subject = ANY(${WITHDRAWAL_SUBJECTS})
+    AND w.fact_hash = gbrain_fact_fingerprint_v2(f.fact))`;
 
 export const eligibleFactEmbedding = `${retainedFactEmbedding}
   AND EXISTS (SELECT 1 FROM sources s WHERE s.id=f.source_id AND NOT s.archived)

@@ -869,6 +869,55 @@ impl Brain {
         })
     }
 
+    /// `readIdentityDowngradeOldPage(sourceId, path, slug)`: the soft-deleted page an identity
+    /// downgrade record names, or null.
+    #[napi]
+    pub fn read_identity_downgrade_old_page<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        path: String,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_identity_downgrade_old_page(&source_id, &path, &slug)
+        })
+    }
+
+    /// `countIdentityDowngradeCarry(sourceId, slug, pageId)`: the facts, links and aliases an old
+    /// page carries.
+    #[napi]
+    pub fn count_identity_downgrade_carry<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+        page_id: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.count_identity_downgrade_carry(&source_id, &slug, page_id.max(0.0) as u64)
+        })
+    }
+
+    /// `readIdentityRemedySide(sourceId, pageId, slug)`: one page of the source by id (when given)
+    /// or slug, deleted or not, or null.
+    #[napi]
+    pub fn read_identity_remedy_side<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        page_id: Option<f64>,
+        slug: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_identity_remedy_side(
+                &source_id,
+                page_id.filter(|id| *id >= 1.0).map(|id| id as u64),
+                slug.as_deref(),
+            )
+        })
+    }
+
     /// `probeIdleWork(spec)`: whether any worker of this host has work, and where the resident
     /// projection window stands (`{ work, projection_work, projection_last, high_water }`).
     #[napi]

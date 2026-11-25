@@ -217,9 +217,9 @@ export const factClaimDatesRepair: RepairHandler = {
   },
   async apply(ctx, entry): Promise<RepairItemOutcome> {
     const { approved, hash, last } = entry as ClaimItem;
-    // The page move goes through the page write door and the fact move updates facts, both raw SQL, so a Rust brain stops
-    // here by name, before its first write.
-    requireRawSql(ctx.engine, approved.page ? 'repair fact-claim-dates page write' : 'repair fact-claim-dates fact write');
+    // The page move rewrites a facts fence through put_page, whose fence projection the Rust engine does not serve yet, so a
+    // Rust brain stops a page move here by name, before its first write; a database-only move is typed.
+    if (approved.page) requireRawSql(ctx.engine, 'repair fact-claim-dates page write');
     const outcome = approved.page ? await movePage(ctx, entry, approved.page) : await moveFacts(ctx.engine, approved.facts!);
     if (last) await clearApprovedSet(ctx.engine, { command: 'fact-claim-dates', hash });
     return outcome;
@@ -242,11 +242,7 @@ async function movePage(ctx: Parameters<RepairHandler['apply']>[0], entry: Repai
 /** Database-only facts on an unmanaged brain: one maintenance transaction; a fact edited since the preview is left alone. */
 async function moveFacts(engine: BrainEngine, plan: FactsPlan): Promise<RepairItemOutcome> {
   if (await managedPersistenceEnabled(engine)) return { applied: false, outcome: 'changed_since_preview', reason: 'the brain is managed now; database-only facts are kept' };
-  const moved = await maintenanceTransaction(engine, tx => tx.executeRaw<{ id: number | string }>(`UPDATE facts f
-      SET valid_from = (r.date || 'T00:00:00Z')::timestamptz
-     FROM jsonb_to_recordset($2::text::jsonb) AS r(id bigint, valid_from text, date text)
-    WHERE f.source_id = $1 AND f.id = r.id AND f.valid_from = r.valid_from::timestamptz AND f.expired_at IS NULL AND f.row_num IS NULL
-    RETURNING f.id`, [plan.source_id, JSON.stringify(plan.rows.map(({ id, valid_from, date }) => ({ id, valid_from, date })))]));
+  const moved = await maintenanceTransaction(engine, tx => tx.moveFactClaimDates(plan.source_id, plan.rows));
   if (!moved.length) return { applied: false, outcome: 'changed_since_preview', reason: 'every fact was edited or expired since the preview' };
   return { applied: true, outcome: 'updated', detail: { facts: moved.length }, ...(moved.length < plan.rows.length
     ? { reason: `${plan.rows.length - moved.length} fact(s) were edited or expired since the preview and kept` } : {}) };

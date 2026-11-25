@@ -18,6 +18,7 @@ import type { BrainEngine } from '../engine.ts';
 import { readRecentMutations } from './mutate-audit.ts';
 import { classifyStoredType, sanitizeTypeForDisplay, safeCliToken } from './type-usage.ts';
 import { NESTED_QUANTIFIER_RE } from './redos-guard.ts';
+import { isEngineCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 export type LintSeverity = 'error' | 'warning';
 
@@ -324,13 +325,10 @@ export const extractableEmptyCorpus: LintRule = async (manifest, opts) => {
     let totalPages = 0;
     for (const p of t.path_prefixes) {
       try {
-        const rows = await opts.engine.executeRaw(
-          `SELECT COUNT(*)::text AS cnt FROM pages WHERE deleted_at IS NULL AND source_path LIKE $1`,
-          [`${p}%`],
-        ) as Array<{ cnt?: string }>;
-        const cnt = rows[0]?.cnt ? parseInt(rows[0].cnt, 10) : 0;
-        totalPages += cnt;
-      } catch {
+        totalPages += await opts.engine.countLivePagesAtPathPrefix(p);
+      } catch (e) {
+        // An engine that cannot count (it refuses the read) is reported, never read as an empty corpus.
+        if (isEngineCapabilityRefusal(e)) throw e;
         // Engine call failed (no `pages` table on a fresh PGLite install?); skip.
         return [];
       }

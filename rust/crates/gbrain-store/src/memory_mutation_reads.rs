@@ -244,8 +244,8 @@ impl Store {
     }
 
     /// `factReadableUnder`: whether fact `id` of `source_id` passes the caller's visibility rule,
-    /// `projectionEligibleSql('facts')` (deleted and quarantined provenance pages, the trust floor and flag
-    /// suppression; the store keeps no `needs_rederive` queue, so that clause hides nothing) and, with
+    /// `projectionEligibleSql('facts')` (deleted and quarantined provenance pages, a row marked in
+    /// `needs_rederive`, the trust floor and flag suppression) and, with
     /// `excludePrivate`, the private-provenance policy.
     pub fn fact_readable_under(&self, q: &FactReadableQuery) -> Result<bool> {
         no_nul("factReadableUnder", &[("sourceId", &q.source_id)])?;
@@ -261,6 +261,7 @@ impl Store {
             && (q.any_visibility || row.visibility == "world")
             && !hidden_by_deleted_page(&*read, &row)?
             && !hidden_by_quarantine(&*read, &row)?
+            && !crate::facts::hidden_by_rederive(&*read, &row)?
             && trust.admits(&*read, "facts", row.id, row.tier())?
             && !hidden_by_policy(&*read, &row, &q.exclude_private)?)
     }

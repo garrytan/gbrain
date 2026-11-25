@@ -17,7 +17,10 @@ one SQL copy in `src/core/engine-sql/` and a store function here; the parity cas
 | `listRestorableAtoms`, `countKeptAtomRetirements` | `atoms-restore` | `atom-restore-reads.ts` | `src/page_ops/atom_restore.rs` | `atomRetirementsSql` as rows: each re-extraction retirement of the sources with its origin, replacement and latest-generation flags. With an atom id only that atom; its origin group, and so its flags, are the same under the narrower SQL scope. |
 | `listLivePagesBySourcePaths`, `listLivePagesByFileName`, `listLivePagesSharingFrontmatterId`, `hasSegmentedHistory`, `readLivePagesByIds` | `moved-pages` verdict and apply recheck | `moved-page-reads.ts` | `src/moved_page_reads.rs` | Slugs sort in byte order (the SQL's order under the C collation). |
 
-Steps that stay raw and refuse by name on an engine without raw SQL: the page writes of `accepted-takes`,
-`overwritten-edits` and a fenced `redacted-facts` restore (lane 7's writer), the `moved-pages` access comparison and
-the `private-labels` scan (both read the privacy predicate, which the store does not evaluate), and the `moved-pages`
+`overwritten-edits` restores through `revert_version`, whose version read is `readPageVersionRow` (`overwrite-reads.ts`,
+`src/pages.rs`); the `moved-pages` access comparison is `listPageAccessKeys` and the `private-labels` preview reads are
+typed (repair-applies.md), so those run on every engine.
+
+Steps that stay raw and refuse by name on an engine without raw SQL: the page writes of `accepted-takes` and a fenced
+`redacted-facts` restore (the fence projection of the page write), the `private-labels` apply, and the `moved-pages`
 fold (`mergeTwinInto`, batch 6b).

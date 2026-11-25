@@ -1,6 +1,6 @@
 //! The files commands and file operations of the PGLite engine (`src/core/engine-sql/files-ops.ts`).
 //!
-//! Members: listFileRowsForSlug, listAllFileRows, listFileRowsForVerify, hasFileWithHash, upsertCliFileRow,
+//! Members: listFileRowsForVerify, hasFileWithHash, upsertCliFileRow,
 //! upsertRawFileRow, upsertSyncFileRow, upsertOpFileRow, registerFileRow, readFileOwner, claimFilePage,
 //! countFilesRegisteredElsewhere, readPageIdInSource, listReadableFileRows, listReadableFilePaths,
 //! readReadableFileForUrl, readReadableFileForVerify, readReadablePageId, countUnreadableFilesAt.
@@ -13,10 +13,11 @@
 
 use super::{
     FILE, FileRecord, FileSpec, NEXT_FILE_ID, collect_values, file_page_key, foreign_key, int4,
-    jsonb, jsonb_order, not_null, put_file, read_file, whole,
+    jsonb, not_null, put_file, read_file, whole,
 };
 use crate::error::{INVALID_ARGUMENT, Result, StoreError};
 use crate::facts::{PrivacyPolicy, page_hidden};
+use crate::jsonb::order as jsonb_order;
 use crate::kv::{KvRead, KvWrite};
 use crate::links::no_nul;
 use crate::pages::{next_id, read_page, read_page_by_id};
@@ -45,7 +46,7 @@ fn all_files(read: &dyn KvRead) -> Result<Vec<FileRecord>> {
     Ok(rows.into_iter().map(|(_, file)| file).collect())
 }
 
-/// `ORDER BY page_slug, filename` (nulls last), then the path for a tie.
+/// `ORDER BY page_slug, filename, id` (nulls last): equal names fall to the file id, lowest first.
 fn by_slug_then_name(a: &FileRecord, b: &FileRecord) -> Ordering {
     let slugs = match (&a.page_slug, &b.page_slug) {
         (Some(x), Some(y)) => x.cmp(y),
@@ -55,13 +56,12 @@ fn by_slug_then_name(a: &FileRecord, b: &FileRecord) -> Ordering {
     };
     slugs
         .then_with(|| a.filename.cmp(&b.filename))
-        .then_with(|| a.storage_path.cmp(&b.storage_path))
+        .then_with(|| a.id.cmp(&b.id))
 }
 
+/// `ORDER BY filename, id`.
 fn by_name(a: &FileRecord, b: &FileRecord) -> Ordering {
-    a.filename
-        .cmp(&b.filename)
-        .then_with(|| a.storage_path.cmp(&b.storage_path))
+    a.filename.cmp(&b.filename).then_with(|| a.id.cmp(&b.id))
 }
 
 fn by_path(a: &FileRecord, b: &FileRecord) -> Ordering {
@@ -143,9 +143,10 @@ fn spec_texts(spec: &FileSpec) -> Vec<(&'static str, &str)> {
 }
 
 impl Store {
-    /// `listFileRowsForSlug(slug)`, `listAllFileRows()` and `listFileRowsForVerify()`: `kind` is `slug`, `all` or
-    /// `verify`. Every `files` column of up to 100 rows (1000 for verify): by file name for one page's, by page then
-    /// name for all, by storage path for verify. `slug` is read only for `slug`.
+    /// `listFileRowsForVerify()` is `kind` `verify`; `slug` and `all` (one page's rows, every row) have no engine
+    /// member since `files list` reads the served `listFiles`. Every `files` column of up to 100 rows (1000 for
+    /// verify): by file name for one page's, by page then name for all, by storage path for verify. `slug` is read
+    /// only for `slug`.
     pub fn list_file_rows(&self, kind: &str, slug: Option<&str>) -> Result<Vec<Value>> {
         const OP: &str = "listFileRows";
         let read = self.read()?;

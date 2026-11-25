@@ -38,7 +38,7 @@ export async function upgradeWithdrawalEffect(engine: BrainEngine, effect: Persi
     const requested = await tx.executeRaw<WithdrawalClaim>(`SELECT w.visibility,w.fact_hash,w.subject,f.fact AS claim
       FROM persistence_requests r JOIN facts f ON r.intent->>'id' ~ '^[0-9]+$' AND f.id=(r.intent->>'id')::bigint AND f.source_id=$1
       JOIN fact_withdrawals w ON w.source_id=f.source_id AND w.visibility=f.visibility
-        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact))
+        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v2(f.fact),gbrain_fact_fingerprint_v1(f.fact))
         AND ${withdrawalCoversFactSql('w', 'f')}
       WHERE r.id=$2::uuid ORDER BY w.visibility,w.fact_hash,w.subject`, [effect.source_id, effect.request_id]);
     const claims = requested.length ? requested : await tx.listFactWithdrawalKeys(effect.source_id, WITHDRAWAL_LIMITS.targets + 1);
