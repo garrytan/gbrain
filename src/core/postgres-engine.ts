@@ -218,7 +218,7 @@ export function cancelSettleMs(): number {
   const raw = Number(process.env.GBRAIN_CANCEL_SETTLE_MS);
   return Number.isFinite(raw) && raw >= 100 ? raw : DEFAULT_CANCEL_SETTLE_MS;
 }
-import type { SqlExecutor } from './engine-sql/executor.ts';
+import type { RawQuery, SqlExecutor } from './engine-sql/executor.ts';
 import { scopedRead, unscopedExecutor } from './engine-sql/brands.ts';
 import { writerStamp } from './persistence/writer-versions.ts';
 import { wellFormedJson } from './text-safe.ts';
@@ -1144,6 +1144,16 @@ export class PostgresEngine implements BrainEngine {
   // Group A (decide store). The reads a doctor check reaches run bounded: they honour a read deadline as the typed preparation reads do (statement-deadline.ts BOUNDED_TYPED_READS).
   private async decideRead<T>(fn: (exec: ReturnType<typeof unscopedExecutor>) => Promise<T>): Promise<T> { throwIfRequestAborted(); return this.preparationRead(exec => fn(unscopedExecutor(exec, 'decide store: master engine.executeRaw, unscoped (it refused an aborted request, GBRA-156)'))); }
 
+  /**
+   * A source read that master issued through `executeRaw`. Without a read deadline it goes through this engine's own `executeRaw`
+   * (instance wrappers, request abort and retry stay as on master); inside the doctor's deadline (`withReadDeadline`) it runs as a
+   * preparation read does, so the server ends it at the deadline and the signal discards its connection.
+   */
+  private sourceRead<T>(fn: (exec: RawQuery) => Promise<T>): Promise<T> {
+    if (this._pageTransaction || readDeadline() === undefined) return fn(this);
+    return this.preparationRead(exec => fn(exec));
+  }
+
   private async engineRead<T>(fn: (exec: ReturnType<typeof unscopedExecutor>) => Promise<T>): Promise<T> { throwIfRequestAborted(); return this.preparationRead(exec => fn(unscopedExecutor(abortGuarded(exec), 'N3 typed read: master engine.executeRaw, unscoped (it refused an aborted request and kept its deadline)'))); } // master's executeRaw reads: refuse an aborted request (GBRA-156); end at a doctor deadline or preparation clock (BOUNDED_TYPED_READS, TYPED_PREPARATION_READS)
   readDecideState(key: string) { return this.decideRead(exec => decideStoreImpl.readDecideState(exec, key)); }
   upsertDecideState(key: string, value: string) { return decideStoreImpl.upsertDecideState(this, key, value); }
@@ -1171,16 +1181,16 @@ export class PostgresEngine implements BrainEngine {
   isFolderRestricted(sourceId: string, slug: string) { return this.preparationRead(exec => accessControlImpl.isFolderRestricted(unscopedExecutor(exec, 'access: folder rule read ran unscoped through executeRaw'), sourceId, slug)); }
   readIgnoredPrivacyLabelPages(sourceId: string, scope: { slugs: readonly string[] } | { since: string }, opts?: { limit?: number; timeoutMs?: number }) { return entityReadsImpl.readIgnoredPrivacyLabelPages(this, sourceId, scope, opts); }
   readLivePageFrontmatter(sourceId: string, slug: string, opts?: { timeoutMs?: number }) { return entityReadsImpl.readLivePageFrontmatter(this, sourceId, slug, opts); }
-  listLocalPathSources() { return sourcesImpl.listLocalPathSources(this); }
-  listSourceRoutingRows() { return sourcesImpl.listSourceRoutingRows(this); }
-  countDefaultSourceSplit() { return sourcesImpl.countDefaultSourceSplit(this); }
-  readSourceRow(sourceId: string) { return sourcesImpl.readSourceRow(this, sourceId); }
+  listLocalPathSources() { return this.sourceRead(exec => sourcesImpl.listLocalPathSources(exec)); }
+  listSourceRoutingRows() { return this.sourceRead(exec => sourcesImpl.listSourceRoutingRows(exec)); }
+  countDefaultSourceSplit() { return this.sourceRead(exec => sourcesImpl.countDefaultSourceSplit(exec)); }
+  readSourceRow(sourceId: string) { return this.sourceRead(exec => sourcesImpl.readSourceRow(exec, sourceId)); }
   markSourceSynced(sourceId: string) { return sourcesImpl.markSourceSynced(this.autocommitSql, sourceId); } // autocommitSql: keeps executeRaw's read-only-default retry (#7183)
   async listSourceLocalPaths(): Promise<string[]> {
     return this.preparationRead(exec => sourcesImpl.listSourceLocalPaths(unscopedExecutor(exec, 'sources: unscoped on master (the filesystem lock read it through executeRaw)')));
   }
-  listSourceRecords() { return cliReadsImpl.listSourceRecords(this); }
-  listActiveSourceConfigs() { return sourcesImpl.listActiveSourceConfigs(this); }
+  listSourceRecords() { return this.sourceRead(exec => cliReadsImpl.listSourceRecords(exec)); }
+  listActiveSourceConfigs() { return this.sourceRead(exec => sourcesImpl.listActiveSourceConfigs(exec)); }
   readSourceIncarnation(sourceId: string) { return cliReadsImpl.readSourceIncarnation(this, sourceId); }
   hasCompanyBrainReceipt(sourceId: string) { return cliReadsImpl.hasCompanyBrainReceipt(this, sourceId); }
   readGuestSourceRow(sourceId: string) { return cliReadsImpl.readGuestSourceRow(this, sourceId); }
@@ -3048,9 +3058,14 @@ export class PostgresEngine implements BrainEngine {
     });
   }
 
-  async getConfig(key: string): Promise<string | null> {
+  async getConfig(key: string, opts?: { timeoutMs?: number }): Promise<string | null> {
     const held = await requestConfigValue(this, key);
     if (held !== undefined) return held;
+    // A caller that bounds the read (the privacy notice) gets a statement the server ends at the bound, not a read the client walks away from.
+    if (opts?.timeoutMs) {
+      const rows = await this.executeRaw<{ value: string }>('SELECT value FROM config WHERE key = $1', [key], { timeoutMs: opts.timeoutMs });
+      return rows.length > 0 ? rows[0].value : null;
+    }
     // #1603: a transient pooler drop on this read used to throw / fall through
     // to defaults silently — which on remote Postgres surfaces as the wrong
     // search mode/knobs and empty-stdout queries.

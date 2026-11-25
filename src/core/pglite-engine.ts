@@ -3120,7 +3120,7 @@ export class PGLiteEngine implements BrainEngine {
   async readPageBodySizes(pageId: number) { return largePageImpl.readPageBodySizes(this, pageId); }
 
   // Config
-  async getConfig(key: string): Promise<string | null> {
+  async getConfig(key: string, _opts?: { timeoutMs?: number }): Promise<string | null> { // PGLite has no statement deadline: it ignores the bound
     const held = await requestConfigValue(this, key);
     if (held !== undefined) return held;
     const { rows } = await this.db.query('SELECT value FROM config WHERE key = $1', [key]);

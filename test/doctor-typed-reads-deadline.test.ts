@@ -56,6 +56,13 @@ const CASES: Case[] = [
   { member: 'readMaxTimelineEntryId', table: 'timeline_entries', call: (e) => e.readMaxTimelineEntryId() },
   { member: 'storedTimelineRowsByPageIds', table: 'timeline_entries', call: (e) => e.storedTimelineRowsByPageIds([1]) },
   { member: 'countSegmentedTimelinePages', table: 'timeline_entries', call: (e) => e.countSegmentedTimelinePages(['default'], 10) },
+  // Part A: the source reads source resolution makes inside a doctor check (the cycle-freshness check resolves its source), each a statement the doctor bounded through executeRaw on master.
+  { member: 'listLocalPathSources', table: 'sources', call: (e) => e.listLocalPathSources() },
+  { member: 'listSourceRoutingRows', table: 'sources', call: (e) => e.listSourceRoutingRows() },
+  { member: 'countDefaultSourceSplit', table: 'pages', call: (e) => e.countDefaultSourceSplit() },
+  { member: 'readSourceRow', table: 'sources', call: (e) => e.readSourceRow('default') },
+  { member: 'listActiveSourceConfigs', table: 'sources', call: (e) => e.listActiveSourceConfigs() },
+  { member: 'listSourceRecords', table: 'sources', call: (e) => e.listSourceRecords() },
 ];
 
 test('the bounded typed reads are exactly the members a doctor check reaches', () => {

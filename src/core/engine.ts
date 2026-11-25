@@ -3039,7 +3039,7 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   ): Promise<{ migrated: number }>;
 
   // Config
-  getConfig(key: string): Promise<string | null>;
+  getConfig(key: string, opts?: { timeoutMs?: number }): Promise<string | null>;
   setConfig(key: string, value: string): Promise<void>;
   /**
    * v0.32.3 — delete a config row. Returns the number of rows deleted (0 or 1).
