@@ -173,7 +173,7 @@ describe('full CI on pull requests', () => {
     }
   });
 
-  test('tree.json lists the executed test files only from a complete manifest of the same run, attempt and commit', () => {
+  test('tree.json lists the executed test files only from a complete manifest of the same run and commit, from this attempt or an earlier one', () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-full-suite-files-'));
     try {
       const git = (...args: string[]) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { cwd: dir, encoding: 'utf8' });
@@ -193,20 +193,33 @@ describe('full CI on pull requests', () => {
         ],
         failures: [], ...over,
       });
-      const record = (doc: unknown) => {
+      const record = (doc: unknown, receipts = 'success') => {
         const path = join(dir, 'ci-manifest.json');
         if (doc === undefined) rmSync(path, { force: true }); else writeFileSync(path, JSON.stringify(doc));
         const out = join(dir, 'out');
         const result = bash(`bash ${join(root, 'scripts/ci-full-suite-tree.sh')}`,
-          { ARTIFACT_DIR: out, RUN_ID: '42', RUN_ATTEMPT: '2', WORKFLOW: 'Test', EVENT: 'workflow_dispatch', MANIFEST: path, GITHUB_STEP_SUMMARY: join(dir, 'summary.md') }, dir);
+          { ARTIFACT_DIR: out, RUN_ID: '42', RUN_ATTEMPT: '2', WORKFLOW: 'Test', EVENT: 'workflow_dispatch', MANIFEST: path, EXECUTED_RECEIPTS: receipts, GITHUB_STEP_SUMMARY: join(dir, 'summary.md') }, dir);
         expect(result.status, result.stderr).toBe(0);
         return { tree: JSON.parse(readFileSync(join(out, 'tree.json'), 'utf8')), stdout: result.stdout };
       };
       const base = { tree: git('rev-parse', 'HEAD^{tree}').stdout.trim(), sha, workflow: 'Test', event: 'workflow_dispatch', run_id: 42, run_attempt: 2, profile: 'full' };
       expect(record(manifest()).tree).toEqual({ ...base, files: ['test/a.test.ts', 'test/b.test.ts', 'test/e2e/c.test.ts'], tests: 8 });
+      const earlier = record(manifest({ run_attempt: 1 }));
+      expect(earlier.stdout).not.toContain('::warning::');
+      expect(earlier.tree).toEqual({ ...base, files: ['test/a.test.ts', 'test/b.test.ts', 'test/e2e/c.test.ts'], tests: 8 });
+      for (const receipts of ['failure', 'cancelled', '']) {
+        const stale = record(manifest({ run_attempt: 1 }), receipts);
+        expect(stale.tree).toEqual(base);
+        expect(stale.stdout).toContain(`ci-manifest.json is from attempt 1 and executed-receipts did not succeed (result ${receipts || 'unknown'}), so it may have run again by attempt 2 without replacing it`);
+      }
+      expect(record(manifest(), 'failure').tree.files).toEqual(['test/a.test.ts', 'test/b.test.ts', 'test/e2e/c.test.ts']);
       for (const [doc, why] of [
         [undefined, 'no ci-manifest.json from this run'],
-        [manifest({ run_attempt: 1 }), 'belongs to run 42 attempt 1, not run 42 attempt 2 (re-run the whole workflow, not only its failed jobs)'],
+        [manifest({ run_attempt: 3 }), 'belongs to run 42 attempt 3, newer than this attempt 2'],
+        [manifest({ run_attempt: null }), 'has run_attempt null, not an attempt number'],
+        [manifest({ run_attempt: 1, sha: 'f'.repeat(40) }), `belongs to commit ${'f'.repeat(40)}`],
+        [manifest({ run_attempt: 1, complete: false, problems: ['unit shard 3 has no receipt'] }), 'is incomplete: unit shard 3 has no receipt'],
+        [manifest({ run_attempt: 1, failures: [{ file: 'test/a.test.ts', lane: 'unit', name: 'a1' }] }), 'lists 1 failing test(s)'],
         [manifest({ run_id: 41 }), 'belongs to run 41 attempt 2'],
         [manifest({ sha: 'f'.repeat(40) }), `belongs to commit ${'f'.repeat(40)}`],
         [manifest({ complete: false, problems: ['unit shard 3 has no receipt'] }), 'is incomplete: unit shard 3 has no receipt'],
@@ -230,6 +243,10 @@ describe('full CI on pull requests', () => {
       expect(steps[download]!['continue-on-error']).toBe(true);
       expect(download).toBeLessThan(steps.findIndex(s => s.name === 'Record the tested tree'));
       expect(step(w.jobs[job]!, 'Record the tested tree').env!.MANIFEST).toBe('${{ runner.temp }}/ci-manifest/ci-manifest.json');
+      expect(step(w.jobs[job]!, 'Record the tested tree').env!.EXECUTED_RECEIPTS).toBe('${{ needs.executed-receipts.result }}');
+      const writers = Object.entries(w.jobs).filter(([, j]) => (j.steps ?? []).some(s => s.uses?.startsWith('actions/upload-artifact@') && String(s.with?.name ?? '').startsWith('receipts-'))).map(([id]) => id);
+      expect(writers.length).toBeGreaterThan(0);
+      expect(writers.filter(id => !w.jobs['executed-receipts']!.needs!.includes(id))).toEqual([]);
       const ledger = w.jobs['executed-receipts']!.steps!.find(s => s.run?.includes('scripts/ci-manifest.ts'))!;
       expect(ledger.run).toContain('--out "$RUNNER_TEMP/ci-manifest.json"');
     }

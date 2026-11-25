@@ -127,6 +127,7 @@ import { factTakeVectorsEntry } from './checks/vector-coverage.ts';
 import { decideHealthEntry } from './checks/decide.ts';
 import { learningNoteEntry } from './checks/learning-note.ts';
 import { memoryProposalsEntry } from './checks/memory-proposals.ts';
+import { policyValidEntry } from './checks/policy-valid.ts';
 import { supersessionCalibrationEntry } from './checks/supersession-calibration.ts';
 import { factAdmissionFloorsEntry } from './checks/fact-admission-floors.ts';
 import { unlinkedFactsEntry } from './checks/unlinked-facts.ts';
@@ -342,6 +343,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   decideHealthEntry,
   learningNoteEntry,
   memoryProposalsEntry,
+  policyValidEntry,
   unlinkedFactsEntry,
   edgeValidityEntry,
   autoChronicleEntry,

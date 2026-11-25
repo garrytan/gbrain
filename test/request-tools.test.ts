@@ -156,8 +156,9 @@ describe('request_tools catalog (no args)', () => {
     // #4098: the generic queue ops (get/list/progress/cancel) are
     // agentCallable with an owner-client fence, so the honest agent-lane
     // catalog includes them alongside the submit_agent/get_agent_job pair.
+    // GST-3824 L1: capabilities is agentCallable so any token can ask what it can call.
     expect(names).toEqual([
-      'cancel_job', 'get_agent_job', 'get_job', 'get_job_progress',
+      'cancel_job', 'capabilities', 'get_agent_job', 'get_job', 'get_job_progress',
       'list_jobs', 'request_tools', 'submit_agent', 'wait_job',
     ]);
   });
