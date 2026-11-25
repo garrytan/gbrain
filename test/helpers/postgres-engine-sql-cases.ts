@@ -1040,6 +1040,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readPageHiddenFromCaller': OOS.pageVisibility,
   'readCallerPageAccess': OOS.pageVisibility,
   'readWriteVisibilityProbe': OOS.pageVisibility,
+  'readPagePrivacyHidden': OOS.pageVisibility,
   'readWriterSlugFence': OOS.pageVisibility,
   'setEffectTransactionLimits': OOS.remoteLinks,
   'readOwnedLinks': OOS.remoteLinks,
@@ -1062,7 +1063,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listFenceRetireCandidates': OOS.trustFence,
   'readFactPreimages': OOS.callerRawSql,
   'restoreFactPreimage': OOS.callerRawSql, 'listFactIdsBySourcePrefix': OOS.callerRawSql, 'readGenerationPageRows': OOS.callerRawSql, 'readAtomOriginInput': OOS.callerRawSql, 'lowerTrustTier': OOS.callerRawSql, 'countDerivedRowTaint': OOS.callerRawSql, 'stampPageFrontmatter': OOS.callerRawSql, 'listProducerVersionRows': OOS.callerRawSql, 'listAtomWriteReceipts': OOS.callerRawSql, 'expireFactRows': OOS.callerRawSql, 'readGenerationRestored': OOS.callerRawSql, 'clearTieHeldGenerationRows': OOS.callerRawSql,
-  'readChronicleDepthRow': OOS.callerRawSql, 'listChronicleOwnedHashes': OOS.callerRawSql, 'listRetiredGenerationItemKeys': OOS.callerRawSql, 'listEventProjectionRows': OOS.callerRawSql, 'listPageContentHashes': OOS.callerRawSql, 'listLiveGenerationItems': OOS.callerRawSql, 'readEventProjectionId': OOS.callerRawSql, 'pageSlugExists': OOS.callerRawSql, 'deleteEventProjections': OOS.callerRawSql, 'restoreEventProjection': OOS.callerRawSql, 'hasChronicleSkipDecision': OOS.callerRawSql, 'listOrphanedChronicleOwners': OOS.callerRawSql, 'listChronicleEventSlotRows': OOS.callerRawSql, 'listChronicleCoverageGapRows': OOS.callerRawSql,
+  'readChronicleBackfillBatch': OOS.callerRawSql, 'readChronicleDepthRow': OOS.callerRawSql, 'listChronicleOwnedHashes': OOS.callerRawSql, 'listRetiredGenerationItemKeys': OOS.callerRawSql, 'listEventProjectionRows': OOS.callerRawSql, 'listPageContentHashes': OOS.callerRawSql, 'listLiveGenerationItems': OOS.callerRawSql, 'readEventProjectionId': OOS.callerRawSql, 'pageSlugExists': OOS.callerRawSql, 'deleteEventProjections': OOS.callerRawSql, 'restoreEventProjection': OOS.callerRawSql, 'hasChronicleSkipDecision': OOS.callerRawSql, 'listOrphanedChronicleOwners': OOS.callerRawSql, 'listChronicleEventSlotRows': OOS.callerRawSql, 'listChronicleCoverageGapRows': OOS.callerRawSql,
   'listFenceFactRows': OOS.trustFence,
 
 
@@ -1720,6 +1721,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listOriginDependents': OOS.labelDoor,
   'listCheckoutFiles': OOS.labelDoor,
   'readPageLabelRow': OOS.labelDoor,
+  'readLabelGuardTiers': OOS.labelDoor,
   'writePageLabelGuard': OOS.labelDoor,
   'listPurgeClaimFacts': OOS.pagePurge,
   'listPurgeClaimTakes': OOS.pagePurge,
@@ -2732,6 +2734,11 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('readGenerationPageRows', [['slug', (e) => e.readGenerationPageRows({ sourceId: SRC, match: 'slug', slug: 'dream/summary' })], ['synthesis', (e) => e.readGenerationPageRows({ sourceId: SRC, match: 'synthesis', slugs: ['synth/a'], locator: 'loc.md' })], ['atoms-source-slug', (e) => e.readGenerationPageRows({ sourceId: SRC, match: 'atoms', slugs: ['atoms/a'], field: 'source_slug', value: 'notes/a' })], ['atoms-source-path', (e) => e.readGenerationPageRows({ sourceId: SRC, match: 'atoms', slugs: ['atoms/a'], field: 'source_path', value: 'notes/a.md' })], ['chronicle', (e) => e.readGenerationPageRows({ sourceId: SRC, match: 'chronicle', slugs: ['events/a'], depth: 'year' })]]),
   ...variants('readAtomOriginInput', [['default', (e) => e.readAtomOriginInput(SRC, 'notes/origin')]]),
   ...variants('readChronicleDepthRow', [['default', (e) => e.readChronicleDepthRow(SRC, 'people/a')]]),
+  ...variants('readChronicleBackfillBatch', [
+    ['default', (e) => e.readChronicleBackfillBatch({ types: ['meeting'], slugPatterns: ['meetings/%'], extractorVersion: 2, afterId: 0 })],
+    ['sources-since', (e) => e.readChronicleBackfillBatch({ types: ['meeting'], slugPatterns: ['meetings/%'], extractorVersion: 2, sourceIds: ['default'], since: '2026-01-01', afterId: 0 })],
+    ['source', (e) => e.readChronicleBackfillBatch({ types: ['meeting'], slugPatterns: ['meetings/%'], extractorVersion: 2, sourceId: 'default', afterId: 0 })],
+  ]),
   ...variants('listChronicleOwnedHashes', [['default', (e) => e.listChronicleOwnedHashes(SRC, 7)]]),
   ...variants('listRetiredGenerationItemKeys', [['default', (e) => e.listRetiredGenerationItemKeys(SRC, 'chronicle_event', ['events/a'])]]),
   ...variants('listEventProjectionRows', [['default', (e) => e.listEventProjectionRows([3, 1])]]),

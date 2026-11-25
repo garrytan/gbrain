@@ -137,7 +137,7 @@ every live token is unbound and no key reads a source; a client registered with 
 | `filterUnarchivedSourceIds(ids)` | the ids of `ids` that name a source that is not archived (`listAllSources`) | `UNARCHIVED_SOURCE_IDS_SQL` |
 | `countCompanyPages(sourceId)` | `{ pages, calls }`: the live pages of the source and those under `company/calls/` (`listAccessPrefixSlugs`) | `COMPANY_PAGE_COUNTS_SQL` |
 | `listAccessPolicySources()` | every source with access state, archived ones too, by id in code-unit order | `POLICY_STATE_SOURCES_SQL` |
-| `countOpenPages(sources, exclude)` | `{ source, folder, type, visible, pages }` for each group of live pages the empty-identity member-access policy admits in `sources`, less each excluded prefix; `visible` is whether the page policy admits the page too; no set order (`listAccessPrefixSlugs`, then `readLivePageTypes` under each policy); refuses unless both rendered policies equal the no-caller policies or, inside a caller record, the record form with no readers and no folder coverage (openPageSql reads the pending prefixes live there, as the store does) | `openPagesStatement` |
+| `countOpenPages(sources, exclude)` | `{ source, folder, type, visible, pages }` for each group of live pages the empty-identity member-access policy admits in `sources`, less each excluded prefix; `visible` is whether the page policy admits the page too; no set order (`listAccessPrefixSlugs`, then `readLivePageTypes` under each policy); inside a caller record the floor must equal a fresh record's rendering for the empty identity with the caller's folder coverage, which the store judges together with its live pending prefixes (`openPageSql` adds them), and the page policy is judged for that empty identity; any other rendering refuses | `openPagesStatement` |
 | `countPeopleFolderPages()` | `{ source_id, folder, pages }` for each `people/<folder>/` holding live pages, by source then folder in code-unit order | `PEOPLE_FOLDER_PAGES_SQL` |
 | `brain.readUnfinishedAccessMigration(sourceId)` | `{ id, phase, direction, receipts }` of the newest migration of the source that has not switched, or null | `UNFINISHED_MIGRATION_SQL` |
 | `brain.insertAccessMigration(id, sourceId, direction)` | starts a migration at `started` with `{}` receipts; a source with no access state, a direction other than `to_git` or `to_database`, or a used id refuses | `INSERT_MIGRATION_SQL` |
@@ -177,7 +177,11 @@ a Postgres server whose collation is not `C` gives the byte order PGLite and the
   watermark moves when a rule or a pending prefix changes.
 - `crates/gbrain-store/src/access_migrations.rs` (unit tests): the unfinished migration is the newest that has not
   switched, and a migration write the table refuses (a source with no access state, a direction or phase it does not
-  allow, a used id) writes nothing.
+  allow, a used id) writes nothing; an id one source used is refused for another; a switch keeps its receipts and stamps
+  an update time after the creation time; and the newest is by creation time when ids are in reverse key order.
+- `test/engine-parity/access-migrate.test.ts`: on every arm, the whole `gbrain access rule migrate` flow: `--to database`
+  from no store, `--to git` with its files and commits, a resume after a stop, the refusal of the other way, and `resume`
+  in the preview.
 - `test/engine-parity/access-setup.test.ts`: on every arm, a brain with no access tokens has nothing unbound, no live
   key and no key reading a source, the unarchived source ids, the company and people-folder page counts, the sources
   with access state, and a policy-store migration from its start until it switches.

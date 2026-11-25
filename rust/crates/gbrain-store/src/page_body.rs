@@ -1000,7 +1000,7 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
     for staging in &stagings {
         delete_staging(tx, staging)?;
     }
-    Ok(())
+    purge_record::remove_source_records(tx, source_id)
 }
 
 /// Adds this family's `getPage` columns to a page (`page_columns::add_page_columns`): a segmented

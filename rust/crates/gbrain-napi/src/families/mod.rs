@@ -8,6 +8,7 @@ mod belief_ledger;
 mod belief_purge;
 mod brief_reads;
 mod chronicle_events;
+mod chronicle_reads;
 mod chunks;
 mod cli_entities;
 mod cli_reads_admin;

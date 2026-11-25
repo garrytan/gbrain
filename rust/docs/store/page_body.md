@@ -244,7 +244,8 @@ The TypeScript engine refuses these with `engine_capability_missing`:
 the purge gave them), keyed by the purge request under `b 0x09 <request uuid>`. A second record of the same request keeps nothing
 (`ON CONFLICT (request_id) DO NOTHING`); the request id is read as Postgres reads a uuid (upper or lower case, compact, brace-wrapped, a hyphen after any group of four digits) and kept in its canonical hyphenated form, so every spelling is one request; a request id that is not a uuid, a page id outside
 `integer` and, for a new record, an unknown source refuse as Postgres does (the source's foreign key). `readDerivationPurgeState(requestId)`
-answers `{ state: 'pending', reason: null }` for a record and null for none. A claim that normalizes to nothing records nothing, in
+answers `{ state: 'pending', reason: null }` for a record and null for none. A source delete removes the source's records with their
+index entries (`ON DELETE CASCADE`), so a deleted source's request answers null. A claim that normalizes to nothing records nothing, in
 TypeScript before the call.
 
 While a record is there, `upsertSegmentDerivations` does what the trigger `gbrain_refuse_purging_derivation` does: a row of the record's

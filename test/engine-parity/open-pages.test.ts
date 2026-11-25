@@ -106,6 +106,19 @@ describe('open-page count and the access reads around it', () => {
     return { outside, inside };
   });
 
+  // Inside a caller record the floor reads the record's folder coverage and openPageSql adds the live pending prefixes:
+  // a page under either is not open. The Rust arm once refused every count asked inside a record.
+  parityTest('the count inside a caller record hides pages under its folder coverage and under a live pending prefix', {
+    methods: ['countOpenPages'],
+  }, async (engine, backend) => {
+    await seedPages(engine, backend);
+    const inside = sorted(await withCallerAccess({ identity: [], owner: false, applyRemoteReadPolicy: true, hidePrivate: true,
+      folderCoverage: [{ source_id: 'default', prefix: 'notes/' }] }, () => engine.countOpenPages(['default'], [])));
+    const folders = [...new Set(inside.map(r => r.folder))].sort();
+    expect(folders).toEqual(['(root)', 'chats', 'private', 'skip', 'skip-not']);
+    return inside;
+  });
+
   parityTest('openPages counts enabled members and the sources their live keys read, the same under a remote caller', {
     methods: ['countOpenPages', 'readAccessMembers', 'readAccessCredentials', 'readJobPrincipal', 'listOauthClients', 'readAccessStateUnreadable', 'insertAccessMember', 'insertAccessToken', 'insertOauthClient', 'writeCredentialBinding', 'revokeAccessTokenById'],
   }, async (engine, backend) => {

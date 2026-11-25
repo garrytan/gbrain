@@ -7,10 +7,10 @@
  * gbrain-store `access_migrations`. What each member answers: rust/docs/store/access_rules.md.
  */
 import type { AccessMigrationRow, LiveAccessTokenRow, MemberKeyReadingRow, OpenPageCount, OpenPageExclusion, PeopleFolderCount } from '../../engine-sql/access-setup.ts';
-import { accessAllowedSql, callerAccessAllowedSql, privacyPartSql, privatePagesFilterForCaller } from '../../search/private-visibility.ts';
+import { accessAllowedSql, callerAccessAllowedSql, currentCallerAccess, privacyPartSql, withCallerAccess } from '../../search/private-visibility.ts';
 import type { StoreBrain } from '../store.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
-import { ownerOnlyFormIn, pagePolicyFlags, renderForStoreCaller, storePageTextPolicy, type StorePrivacyPolicy } from './private-provenance.ts';
+import { ownerOnlyFormIn, renderForStoreCaller, storePageTextPolicy, type StorePrivacyPolicy } from './private-provenance.ts';
 
 export const listUnboundTokenNames: StoreMember<[], string[]> = (brain) =>
   storeCall({ member: 'listUnboundTokenNames' }, () => brain.listUnboundTokenNames()) as Promise<string[]>;
@@ -95,38 +95,36 @@ export const countPeopleFolderPages: StoreMember<[], PeopleFolderCount[]> = asyn
 };
 
 /**
- * The two store policies of the open-page count: the empty-identity floor (`accessAllowedSql('p', [], [])`) and the floor
- * with the privacy part. Outside a caller record they are the no-caller policies (the page one through
- * storePageTextPolicy). Inside a caller record the floor renders as the record form with no readers and no folder
- * coverage (no pending-coverage or unreadable-state clause), and openPageSql adds the live pending coverage back
- * (`liveCoverageSql`); the store reads the pending prefixes live and the unreadable state is always false here, so
- * that is the no-caller policy again and is served as it. Any other rendering refuses before any read.
- */
-function openPagePolicies(): { access: StorePrivacyPolicy; page: StorePrivacyPolicy } {
-  const floor = accessAllowedSql('p', [], []);
-  const pageText = `(${floor} AND ${privacyPartSql('p')})`;
-  const base: StorePrivacyPolicy = { honorAliases: false, entityPrivacy: false, ownerOnly: ownerOnlyFormIn(floor, 'pages', 'p') };
-  if (floor === renderForStoreCaller({}, () => callerAccessAllowedSql('p'))) {
-    return { access: base, page: storePageTextPolicy('countOpenPages', () => pageText) };
-  }
-  const record = { folderCoverage: [] };
-  if (floor === renderForStoreCaller(record, () => callerAccessAllowedSql('p'))
-    && pageText === renderForStoreCaller(record, () => privatePagesFilterForCaller('p'))) {
-    return { access: base, page: pagePolicyFlags(pageText) };
-  }
-  refuseMember('countOpenPages', 'an open-page floor rendered in a caller record that widens or narrows the record form');
-}
-
-/**
  * The open-page count (engine-sql/access-setup.ts countOpenPages). The SQL engines render the empty-identity floor
  * (`accessAllowedSql('p', [], [])`) and the privacy part in the current access context; the store judges a page by
  * the no-caller policies it implements (`page_hidden` in facts/privacy.rs). The member serves the read only when the
- * floor and the floor with the privacy part render as the no-caller policies or as a caller record's policies with no
- * readers (openPagePolicies); any other rendering refuses before any read, so the count is never wider.
+ * floor equals the no-caller member-access rendering and the floor with the privacy part equals the no-caller page
+ * policy (storePageTextPolicy). Inside a caller record (a remote caller asking) the floor is the same test for a
+ * fresh record with no identity and the caller's folder coverage; openPageSql still adds the live pending prefixes, so
+ * the store judges the record's coverage and its own pending prefixes both (no `callerRecord`). The page policy is then
+ * judged for that empty identity; it only decides `visible` for pages already open. Any other rendering (an owner
+ * record, private-readable sources) refuses before any read, so the count is never wider.
  * A page is open when the member-access policy admits it, and visible when the page policy does too.
  */
 export const countOpenPages: StoreMember<[sources: readonly string[], exclude: readonly OpenPageExclusion[]], OpenPageCount[]> = async (brain, sources, exclude) => {
-  const { access, page } = openPagePolicies();
+  const floor = accessAllowedSql('p', [], []);
+  const pageText = `(${accessAllowedSql('p', [], [])} AND ${privacyPartSql('p')})`;
+  const base: StorePrivacyPolicy = { honorAliases: false, entityPrivacy: false, ownerOnly: ownerOnlyFormIn(floor, 'pages', 'p') };
+  let access: StorePrivacyPolicy;
+  if (floor === renderForStoreCaller({}, () => callerAccessAllowedSql('p'))) {
+    access = base;
+  } else {
+    const caller = currentCallerAccess();
+    const folderCoverage = caller.folderCoverage.map(c => ({ source_id: c.source_id, prefix: c.prefix }));
+    const record = { identity: [], satisfiedRuleIds: [], folderCoverage, restricted: caller.restricted };
+    if (floor !== renderForStoreCaller(record, () => callerAccessAllowedSql('p'))) {
+      refuseMember('countOpenPages', 'an open-page floor rendered in a caller record');
+    }
+    access = { ...base, ...(folderCoverage.length ? { folderCoverage } : {}), ...(caller.restricted ? {} : { open: true }) };
+  }
+  // The page policy for the empty identity, judged against the text the caller's record renders.
+  const page = withCallerAccess({ identity: [], privateReadableSources: [] },
+    () => storePageTextPolicy('countOpenPages', () => pageText, { callerReaders: true }));
   const groups = new Map<string, OpenPageCount>();
   for (const source of new Set(sources)) {
     const skip = exclude.filter(x => x.source === source).map(x => x.prefix);

@@ -167,7 +167,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readAccessCredentials', 'readAccessMembers', 'readAccessTokenWriteGrant', 'readAdmissionRate',
   'readAdmissionSource', 'readAgentClientSpend', 'readAudiencePrincipals', 'readBeliefHistoryRows',
   'readBodyManifestMeta', 'readBodyManifestOutline', 'readBodyManifestRows', 'readCallerPageAccess',
-  'readCanonicalTwin', 'readCapacityForecastInputs', 'readChatUsage', 'readChildCompletions',
+  'readCanonicalTwin', 'readCapacityForecastInputs', 'readChatUsage', 'readChildCompletions', 'readChronicleBackfillBatch',
   'readChunkVectorColumn', 'readClientBudgetUsd', 'readClientOpUsage', 'readConsolidationTakesMaxRowNum',
   'readConversationSlotValueHash', 'readCounterRows', 'readCurrentWriteTrust', 'readCursorEdition',
   'readDatabaseClock', 'readDeletePageRequest', 'readDeletedPageBody', 'readDreamDeferralReceipt',
@@ -284,7 +284,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   // The federation warning's exposed-pages read (engine-sql/federation-exposure.ts, federation_exposure.rs): a SELECT and a store read only.
   'readFederationExposedPages',
   'readOwnedLinks', 'readOwnerHostBinding', 'readPageRevisionWriter', 'readPageSizeRows',
-  'readPageSynopses', 'readPrefixCandidates', 'readPrefixDirs', 'readPrefixTitleMatches',
+  'readPageSynopses', 'readPagePrivacyHidden', 'readPrefixCandidates', 'readPrefixDirs', 'readPrefixTitleMatches',
   'readReasonPurgeTombstones', 'readRefreshTiming', 'readRenameIdentityRows', 'readRetiredManagedSyncCursor',
   'readRevisionWriterRequest', 'readSeedTitleSlugs', 'readSegmentRegions', 'readSegmentedGateEvidence',
   'readSourceCheckoutRoot', 'readSourceMovementRows', 'readStoredConfigValue', 'readSyncAdmissionEffects', 'readSyncConversionRows',
@@ -398,7 +398,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'listTakeHorizons', 'listTakeProposalTombstones', 'listWaveAppliedTakeIds', 'listWriteRequestsByRequestId', 'lockHeldConcept', 'lockLiveConceptMembers',
   'lockSourceForUpdate', 'readCatalogSchemaVersion', 'readDerivationPurgeState', 'readEffectBytes', 'readExtractReceiptSeal',
   'readExtractReceiptSlot', 'readHeadBlockerRows', 'readHeldConcept', 'readIncompleteSyncReceipt', 'readIncompleteSyncReceiptRows', 'readJournalCeiling',
-  'readLiveTakePage', 'readOpCheckpointDoc', 'readOpenPassWork', 'readPageLabelRow', 'readPrivacyOrigin', 'readPurgePageBody',
+  'readLiveTakePage', 'readOpCheckpointDoc', 'readOpenPassWork', 'readLabelGuardTiers', 'readPageLabelRow', 'readPrivacyOrigin', 'readPurgePageBody',
   'readRecoveringHeadRow', 'readStrandedTakeProposalClaim', 'readTakeClaim', 'readTakeGrade', 'readTakeProposal', 'readTombstoneWindow',
   'relationExists', 'sweepJournalChunk', 'takeProposalCached',
   // the write-time chronicle decision's reads (engine-sql/chronicle-ledger.ts): SELECTs only

@@ -173,4 +173,23 @@ describe('engine parity: the derivation sweep record of a fact purge', () => {
     expect(negative).toEqual({ code: 'derivation_purge_pending', refused: 1 });
     return { twice, afterTwice, repeated, negative, afterNegative };
   });
+
+  // A source delete cascades to the sweep records of the source (`page_segment_derivation_purges.source_id ... ON DELETE
+  // CASCADE`): the deleted source's record goes, another source's stays.
+  parityTest('a source delete removes the sweep records of that source and keeps the others', {
+    methods: ['transaction', 'readDerivationPurgeState', 'deleteSourceRecord'],
+    timeout: 120_000,
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'doomed', {});
+    await createSource(engine, backend, OTHER, {});
+    await record(engine, REQ3, [], [CLAIM], 'doomed');
+    await record(engine, REQ4, [], [CLAIM], OTHER);
+    const before = { doomed: await derivationPurgeState(engine, REQ3), other: await derivationPurgeState(engine, REQ4) };
+    const deleted = await engine.deleteSourceRecord('doomed');
+    const after = { doomed: await derivationPurgeState(engine, REQ3), other: await derivationPurgeState(engine, REQ4) };
+    const out = { before: { doomed: before.doomed?.state ?? null, other: before.other?.state ?? null }, deleted: !!deleted,
+      after: { doomed: after.doomed?.state ?? null, other: after.other?.state ?? null } };
+    expect(out).toEqual({ before: { doomed: 'pending', other: 'pending' }, deleted: true, after: { doomed: null, other: 'pending' } });
+    return out;
+  });
 });

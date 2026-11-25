@@ -730,6 +730,19 @@ pub(crate) fn delete_fact(
     trust: &WriteTrust,
     row: &FactRecord,
 ) -> Result<()> {
+    // Before it goes: an owner-only fact marks what was derived from it (v322's trigger on `facts`).
+    crate::owner_only_marks::mark_row_before_delete(
+        tx,
+        "facts",
+        row.id,
+        Some(&row.source_id),
+        None,
+    )?;
+    delete_fact_unmarked(tx, trust, row)
+}
+
+/// [`delete_fact`] without the owner-only mark: the row, its index entries and the referrers' `superseded_by`.
+fn delete_fact_unmarked(tx: &mut dyn KvWrite, trust: &WriteTrust, row: &FactRecord) -> Result<()> {
     for (key, _) in index_keys(row) {
         tx.delete(&key)?;
     }
@@ -758,7 +771,8 @@ pub(crate) fn remove_fact(
         return Ok(false);
     };
     if clear_referrers {
-        delete_fact(tx, trust, &row)?;
+        // The shadow follow copies the primary's marks, so this delete writes none.
+        delete_fact_unmarked(tx, trust, &row)?;
     } else {
         for (key, _) in index_keys(&row) {
             tx.delete(&key)?;

@@ -45,6 +45,7 @@ export const PAGES_MEMBERS = {
   readPageHiddenFromCaller: 'pages',
   readCallerPageAccess: 'pages',
   readWriteVisibilityProbe: 'pages',
+  readPagePrivacyHidden: 'pages',
   readStoredBodyBytes: 'pages',
   readAdmittedPageRefs: 'pages',
   readPageSynopses: 'pages',
@@ -367,6 +368,7 @@ export const PAGES_MEMBERS = {
   listOriginDependents: 'pages',
   listCheckoutFiles: 'pages',
   readPageLabelRow: 'pages',
+  readLabelGuardTiers: 'pages',
   writePageLabelGuard: 'pages',
   // Writer activation, deactivation and the pre-activation release; a topology receipt's counter charges.
   writerReleaseStore: 'persistence_journal',
