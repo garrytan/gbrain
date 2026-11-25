@@ -1,6 +1,6 @@
 # Key files: Agent policy and capability probe
 
-[Subsystem index](../KEY_FILES.md). Read only the entries relevant to your change.
+[Subsystem index](../KEY_FILES.md) · [Previous entries](security-continued.md). Read only the entries relevant to your change.
 Current behavior and load-bearing invariants; history belongs in Git and CHANGELOG.
 User guide: `docs/guides/agent-policy.md`. Advisory only: nothing here blocks an action.
 

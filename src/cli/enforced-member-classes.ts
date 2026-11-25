@@ -25,6 +25,7 @@ export interface EnforcedSubcommands {
 const READ_OPS = [
   'search', 'query', 'search_exact', 'list_pages', 'find_pages', 'get_page', 'get_backlinks', 'get_timeline', 'get_links',
   'get_tags', 'get_versions', 'get_stats', 'whoami', 'entity', 'whois', 'traverse_graph',
+  'policy_check', 'agent_policy', 'capabilities',
 ] as const;
 
 const WRITE_OPS = [

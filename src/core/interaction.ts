@@ -30,7 +30,7 @@ export function agentProcessMarker(env: NodeJS.ProcessEnv = process.env): string
 /** Variables a human's own shell sets, so their presence says nothing about an agent. */
 const HUMAN_SHELL_VARS: ReadonlySet<string> = new Set(['CODEX_HOME', 'OPENCLAW_HOME']);
 /** gbrain's own child processes: an agent job, the in-agent setup flow, a session agent. */
-const GBRAIN_AGENT_CHILD_MARKERS = ['GBRAIN_JOB_CHILD', 'GBRAIN_JOB_CHILD_CLI', 'GBRAIN_IN_AGENT_SETUP', 'GBRAIN_SESSION_AGENT'] as const;
+const AGENT_CHILD_MARKER_VARS = ['GBRAIN_JOB_CHILD', 'GBRAIN_JOB_CHILD_CLI', 'GBRAIN_IN_AGENT_SETUP', 'GBRAIN_SESSION_AGENT'] as const;
 
 /**
  * The wider net an owner-only write uses (agent policy): AGENT_MARKERS, any other CODEX_* or
@@ -40,7 +40,7 @@ const GBRAIN_AGENT_CHILD_MARKERS = ['GBRAIN_JOB_CHILD', 'GBRAIN_JOB_CHILD_CLI', 
 export function ownerWriteAgentMarker(env: NodeJS.ProcessEnv = process.env): string | null {
   const direct = agentProcessMarker(env);
   if (direct) return direct;
-  for (const k of GBRAIN_AGENT_CHILD_MARKERS) if (env[k]) return k;
+  for (const k of AGENT_CHILD_MARKER_VARS) if (env[k]) return k;
   for (const k of Object.keys(env).sort()) {
     if (env[k] && !HUMAN_SHELL_VARS.has(k) && (k.startsWith('CODEX_') || k.startsWith('OPENCLAW_'))) return k;
   }
