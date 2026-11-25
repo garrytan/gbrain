@@ -82,4 +82,24 @@ describe('engine parity: repair slug-spelling', () => {
       });
     } finally { rmSync(home, { recursive: true, force: true }); }
   });
+
+  // A brain whose slugs are all normal (the only kind a Rust brain holds): the preview lists nothing to move, on every
+  // engine. A non-ASCII normal slug passes the SQL prefilter and is counted as inspected. The apply is not run here: every
+  // repair apply records a soak counter through raw SQL (persistence/soak-counters.ts recordSoakEvent, best effort), which
+  // the Rust engine refuses and the command swallows; that gap is not this repair's.
+  parityTest('on a brain whose slugs are all normal the preview lists nothing to move', {
+    methods: ['putPage'], timeout: 90_000,
+  }, async (engine) => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-parity-slug-spelling-normal-'));
+    try {
+      return await withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home, GBRAIN_INTERACTIVE: '0', CI: '1' }, async () => {
+        _resetCliExitVerdictForTests();
+        for (const slug of ['notes/plain', 'notes/caf\u00e9', 'people/\u65e5\u672c']) await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `${slug}.`, timeline: '' });
+        const preview = await repairJson(engine, ['slug-spelling', '--source', 'default']) as Record<string, unknown>;
+        const result = { listing: preview.listing, residuals: preview.residuals, hashed: typeof preview.preview_hash === 'string' };
+        expect(result).toEqual({ listing: [], residuals: { move: 0, needs_human: 0, rename_file_first: 0, inspected: 2 }, hashed: true });
+        return result;
+      });
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
 });

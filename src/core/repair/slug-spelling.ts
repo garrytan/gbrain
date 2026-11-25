@@ -44,14 +44,14 @@ import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
 import { resolveRecordedSourceFilePath, sourceGitScope } from '../markdown.ts';
 import type { SlugRootMode } from '../sync-anchor.ts';
 import { normalizeSlug, validateSlug, withStoredSlug } from '../utils.ts';
-import { SCAN_KEY_SQL, serverEncoding, SPELLING_KEY_SQL, spellingKeys } from '../slug-spelling-key.ts';
+import { serverEncoding, spellingKeys } from '../slug-spelling-key.ts';
 import { lockedBeliefBatch } from '../belief/writers.ts';
 import { markBeliefCommits } from '../belief/append.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { slugSpellingPreviewArgv } from '../persistence/legacy-slug-put.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
-import { assertGuardTablesReadable, carryGuards } from './slug-spelling-guards.ts';
+import { assertGuardTablesReadable, carryGuards, rekeyAttachments } from './slug-spelling-guards.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
 
 const DOCS = 'docs/guides/repair.md#slug-spelling';
@@ -231,19 +231,15 @@ const fileBlocks = (evidence: FileEvidence, recorded: boolean): string | null =>
   return null;
 };
 
-/** The source row the preview and the move read: its checkout, its incarnation and its slug-root mode (null: git-root, the default). */
-const SOURCE_SQL = "SELECT local_path, incarnation::text AS incarnation, CASE WHEN config->>'slug_root_mode' IN ('git-root', 'source-root') THEN config->>'slug_root_mode' END AS slug_root_mode FROM sources WHERE id=$1";
-
 /** One source's pages whose slug is not normal, classified; bounded by `SLUG_SPELLING_LIMIT` listed and `SLUG_SPELLING_SCAN_LIMIT` read. */
-export async function scanSlugSpellings(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<SpellingScan> {
-  const [source] = await engine.executeRaw<{ local_path: string | null; incarnation: string; slug_root_mode: SlugRootMode | null }>(SOURCE_SQL, [sourceId]);
+export async function scanSlugSpellings(engine: Pick<BrainEngine, 'readSlugRepairSource' | 'listSourceSlugSpellingCandidates' | 'readSpellingKeyPages'>, sourceId: string): Promise<SpellingScan> {
+  const source = await engine.readSlugRepairSource(sourceId);
   if (!source) throw new OperationError('invalid_params', `Source '${sourceId}' does not exist.`, 'Run `gbrain sources list` and pass an active source id.');
   const candidates: PageRow[] = [];
   let inspected = 0, truncated = false, after = 0;
   for (;;) {
     // A slug that is not normal has a capital or a character outside printable ASCII; the check below is the exact one.
-    const rows = await engine.executeRaw<PageRow>(`SELECT id, slug, knowledge_revision::text AS revision, source_path, deleted_at IS NOT NULL AS deleted FROM pages
-      WHERE source_id=$1 AND id > $2 AND (slug <> lower(slug) OR slug ~ '[^ -~]') ORDER BY id LIMIT ${BATCH}`, [sourceId, after]);
+    const rows: PageRow[] = await engine.listSourceSlugSpellingCandidates(sourceId, after);
     for (const row of rows) {
       if (inspected >= scanLimit) { truncated = true; break; }
       inspected++;
@@ -271,7 +267,7 @@ export async function scanSlugSpellings(engine: Pick<BrainEngine, 'executeRaw'>,
  * collision lookup compares composed Unicode (`SPELLING_KEY_SQL`), which such a database cannot evaluate, and a page it
  * missed would be merged into another.
  */
-async function assertUtf8(db: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<void> {
+async function assertUtf8(db: Pick<BrainEngine, 'readServerEncoding'>, sourceId: string): Promise<void> {
   const encoding = await serverEncoding(db);
   if (encoding === 'UTF8') return;
   throw new OperationError('slug_spelling_encoding',
@@ -285,21 +281,18 @@ async function assertUtf8(db: Pick<BrainEngine, 'executeRaw'>, sourceId: string)
  * answer never depends on how many candidates the preview read. The preview classes a page by it, and the apply reads it
  * again under the page locks.
  */
-async function samePrintedName(db: Pick<BrainEngine, 'executeRaw'>, sourceId: string, normal: string, pageId: number): Promise<Array<{ page_id: number; slug: string }>> {
-  const keys = spellingKeys(normal);
-  const rows = await db.executeRaw<{ id: number | string; slug: string }>(
-    `SELECT id, slug FROM pages WHERE ${keys ? `${SPELLING_KEY_SQL} = ANY($1::text[])` : `${SCAN_KEY_SQL} = $1`} AND source_id = $2 AND id <> $3 ORDER BY id`,
-    [keys ?? normal.replace(/[^a-z0-9]/g, ''), sourceId, pageId]);
+async function samePrintedName(db: Pick<BrainEngine, 'readSpellingKeyPages'>, sourceId: string, normal: string, pageId: number): Promise<Array<{ page_id: number; slug: string }>> {
+  const rows = await db.readSpellingKeyPages(sourceId, spellingKeys(normal), normal.replace(/[^a-z0-9]/g, ''), pageId);
   return rows.filter(row => normalizeSlug(row.slug) === normal).map(row => ({ page_id: Number(row.id), slug: row.slug }));
 }
 
 /** Per source, how many pages are stored under an older spelling (the doctor check; a count, not the preview's classes). */
-export async function countSlugSpellings(engine: Pick<BrainEngine, 'executeRaw'>): Promise<{ by_source: Array<{ source_id: string; count: number }>; truncated: boolean }> {
+export async function countSlugSpellings(engine: Pick<BrainEngine, 'listSlugSpellingCandidates'>): Promise<{ by_source: Array<{ source_id: string; count: number }>; truncated: boolean }> {
   const counts = new Map<string, number>();
   let inspected = 0, truncated = false, after = 0;
   for (;;) {
-    const rows = await engine.executeRaw<{ id: number | string; source_id: string; slug: string }>(`SELECT id, source_id, slug FROM pages
-      WHERE id > $1 AND (slug <> lower(slug) OR slug ~ '[^ -~]') ORDER BY id LIMIT ${BATCH}`, [after]);
+    // The typed candidate read (engine-sql/slug-spelling-repair.ts): BATCH rows a call, after the last id.
+    const rows = await engine.listSlugSpellingCandidates(after);
     for (const row of rows) {
       if (inspected >= SLUG_SPELLING_SCAN_LIMIT) { truncated = true; break; }
       inspected++;
@@ -345,9 +338,8 @@ function item(sourceId: string, page: SpellingPage, incarnation: string, moved?:
 const hashParts = (scope: RepairScope, scan: SpellingScan) => ({ kind: 'slug-spelling-v1', brain_id: scope.brain_id, source_id: scan.source_id, incarnation: scan.incarnation,
   truncated: scan.truncated, entries: scan.entries });
 
-async function localRoot(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<string | null> {
-  const [source] = await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1', [sourceId]);
-  return source?.local_path ?? null;
+async function localRoot(engine: Pick<BrainEngine, 'readSourceLocalPath'>, sourceId: string): Promise<string | null> {
+  return engine.readSourceLocalPath(sourceId);
 }
 
 export const slugSpellingRepair: RepairHandler = {
@@ -399,9 +391,9 @@ export const slugSpellingRepair: RepairHandler = {
       if (incarnation !== scan.incarnation) throw changedSincePreview(sourceId, page.slug, 'the source was replaced (its incarnation changed)');
       const current = now.get(page.page_id);
       if (!current) {
-        const [row] = await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE id=$1 AND source_id=$2', [page.page_id, sourceId]);
-        if (row?.slug === page.normal) { items.push(item(sourceId, page, incarnation, true)); continue; }
-        throw changedSincePreview(sourceId, page.slug, row ? `the page is now ${row.slug}` : 'the page is gone');
+        const slug = await engine.readPageSlugInSource(page.page_id, sourceId);
+        if (slug === page.normal) { items.push(item(sourceId, page, incarnation, true)); continue; }
+        throw changedSincePreview(sourceId, page.slug, slug !== null ? `the page is now ${slug}` : 'the page is gone');
       }
       const why = changedFact(page, current);
       if (why) throw changedSincePreview(sourceId, page.slug, why);
@@ -456,9 +448,9 @@ async function movePageUnderStoredSlug(engine: BrainEngine, sourceId: string, pa
     await tx.lockPageKeys([{ sourceId, slug: page.slug }, { sourceId, slug: page.normal }]);
     // Row security is checked before anything is read: a table it applies to can come back short.
     await assertGuardTablesReadable(tx, sourceId);
-    const [source] = await tx.executeRaw<{ local_path: string | null; incarnation: string; slug_root_mode: SlugRootMode | null }>(SOURCE_SQL, [sourceId]);
+    const source = await tx.readSlugRepairSource(sourceId);
     if (source?.incarnation !== incarnation) throw changedSincePreview(sourceId, page.slug, 'the source was replaced (its incarnation changed)');
-    const [row] = await tx.executeRaw<PageRow>('SELECT id, slug, knowledge_revision::text AS revision, source_path, deleted_at IS NOT NULL AS deleted FROM pages WHERE id=$1 AND source_id=$2', [page.page_id, sourceId]);
+    const row: PageRow | null = await tx.readSlugRepairPage(page.page_id, sourceId);
     if (!row || row.slug !== page.slug) throw changedSincePreview(sourceId, page.slug, row ? `the page is now ${row.slug}` : 'the page is gone');
     if (String(row.revision) !== page.revision) throw changedSincePreview(sourceId, page.slug, 'the page has a new revision');
     if ((row.deleted === true) !== page.deleted) throw changedSincePreview(sourceId, page.slug, 'the page was deleted or restored');
@@ -475,7 +467,8 @@ async function movePageUnderStoredSlug(engine: BrainEngine, sourceId: string, pa
       // updateSlug moves the bound ones (moveSlugBindings); the rows with no page id stay there, but the older spelling
       // names exactly this one page under the page locks, so this repair moves those itself.
       if (await tx.updateSlug(page.slug, page.normal, { sourceId }) !== 1) throw changedSincePreview(sourceId, page.slug, `page ${page.slug} could not move to ${page.normal}`);
-      await tx.executeRaw('UPDATE files SET page_slug = $3 WHERE source_id = $1 AND page_slug = $2 AND page_id IS NULL', [sourceId, page.slug, page.normal]);
+      // Attachments carry the page's slug beside its id: updateSlug moved the bound rows; this moves the rows with no page id that name the old slug. The report counts both, as counted before the move (`own`).
+      await rekeyAttachments(tx, sourceId, page.slug, page.normal, page.page_id);
       attachments = Number(own?.n ?? 0);
       guards = await carryGuards(tx, sourceId, page.slug, page.normal);
     });

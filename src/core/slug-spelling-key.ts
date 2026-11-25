@@ -32,9 +32,8 @@ export const SPELLING_KEY_SQL = `normalize(translate(replace(replace(slug, chr(3
 export const SCAN_KEY_SQL = `regexp_replace(${SPELLING_KEY_SQL}, '[^a-z0-9]', '', 'g')`;
 
 /** The database's server encoding. `SPELLING_KEY_SQL` can be evaluated only when it is UTF8 (PGLite always is). */
-export async function serverEncoding(db: Pick<BrainEngine, 'executeRaw'>): Promise<string> {
-  const [row] = await db.executeRaw<{ server_encoding: string }>('SHOW server_encoding');
-  return row?.server_encoding ?? 'unknown';
+export async function serverEncoding(db: Pick<BrainEngine, 'readServerEncoding'>): Promise<string> {
+  return db.readServerEncoding();
 }
 
 /** The index the lookup probes: the key, then the source, so a lookup in one source never reads another's rows. */

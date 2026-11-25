@@ -42,6 +42,8 @@ const EXEMPT_FILES: Record<string, string> = {
 };
 
 const CONSTANT_ALLOWLIST: Record<string, string> = {
+  SPELLING_KEY_SQL: 'src/core/slug-spelling-key.ts: the constant spelling-index key expression over pages.slug (no input); the migration v335 index uses the same text, so the planner matches it',
+  SCAN_KEY_SQL: 'src/core/slug-spelling-key.ts: the constant ASCII scan key expression over pages.slug (no input)',
   EFFECT_BYTES_SQL: 'src/core/persistence/receipt-bytes.ts: constant per-row byte expression over persistence_effects columns (no input); spliced by engine-sql/page-purge-journal.ts readEffectBytes',
   ENRICH_ORDER_SQL: 'src/core/types.ts: ORDER BY text keyed by the EnrichCandidatesOpts order union (whitelisted enum)',
   SOURCE_CONFIG_OBJECT_SQL: 'src/core/source-config-sql.ts: static sources.config coercion expression (no input)',

@@ -149,6 +149,7 @@ import * as timelineImpl from './engine-sql/timeline.ts';
 import * as sourcesImpl from './engine-sql/sources.ts';
 import * as linkSlugReadsImpl from './engine-sql/link-slug-reads.ts';
 import * as slugSpellingsImpl from './engine-sql/slug-spellings.ts';
+import * as slugSpellingRepairImpl from './engine-sql/slug-spelling-repair.ts';
 import * as federationExposureImpl from './engine-sql/federation-exposure.ts';
 import * as notifierImpl from './engine-sql/notifier.ts';
 import * as cliReadsImpl from './engine-sql/cli-reads-import.ts';
@@ -2668,6 +2669,15 @@ export class PostgresEngine implements BrainEngine {
   readLiveSlugAliases(sourceId: string, targets: readonly string[]) { return this.engineSqlRead(exec => linkSlugReadsImpl.readLiveSlugAliases(unscopedExecutor(exec, 'link preparation: the live alias targets read unscoped through executeRaw'), sourceId, targets)); }
   readSourceSlugProbe(sourceId: string, afterId: number) { return this.engineSqlRead(exec => linkSlugReadsImpl.readSourceSlugProbe(unscopedExecutor(exec, 'link preparation: the source slug fingerprint read unscoped through executeRaw'), sourceId, afterId)); }
   readStoredSlugSpellings(key: string, scope: slugSpellingsImpl.StoredSpellingScope, after: string, keys?: readonly string[] | null) { return this.engineSqlRead(exec => slugSpellingsImpl.readStoredSlugSpellings(unscopedExecutor(exec, 'slug params: the stored-spelling scan read unscoped through executeRaw'), key, scope, after, keys)); }
+  readRowSecurityTables(tables: readonly string[]) { return this.engineSqlRead(exec => slugSpellingRepairImpl.readRowSecurityTables(unscopedExecutor(exec, 'slug spelling: the row-security table read unscoped through executeRaw'), tables)); }
+  listSlugSpellingCandidates(afterId: number) { return this.engineSqlRead(exec => slugSpellingRepairImpl.listSlugSpellingCandidates(unscopedExecutor(exec, 'slug spelling: the candidate page scan unscoped through executeRaw'), afterId)); }
+  readServerEncoding() { return this.engineSqlRead(exec => slugSpellingRepairImpl.readServerEncoding(unscopedExecutor(exec, 'slug spelling: the server encoding read unscoped through executeRaw'))); }
+  readRowSecurityBrainTables() { return this.engineSqlRead(exec => slugSpellingRepairImpl.readRowSecurityBrainTables(unscopedExecutor(exec, 'slug spelling: the row-security brain table read unscoped through executeRaw'))); }
+  readSlugRepairSource(sourceId: string) { return this.engineSqlRead(exec => slugSpellingRepairImpl.readSlugRepairSource(unscopedExecutor(exec, 'slug spelling: the source row read unscoped through executeRaw'), sourceId)); }
+  listSourceSlugSpellingCandidates(sourceId: string, afterId: number) { return this.engineSqlRead(exec => slugSpellingRepairImpl.listSourceSlugSpellingCandidates(unscopedExecutor(exec, 'slug spelling: the source candidate scan unscoped through executeRaw'), sourceId, afterId)); }
+  readSpellingKeyPages(sourceId: string, keys: readonly string[] | null, scanKey: string, excludeId: number) { return this.engineSqlRead(exec => slugSpellingRepairImpl.readSpellingKeyPages(unscopedExecutor(exec, 'slug spelling: the same-printed-name read unscoped through executeRaw'), sourceId, keys, scanKey, excludeId)); }
+  readPageSlugInSource(pageId: number, sourceId: string) { return this.engineSqlRead(exec => slugSpellingRepairImpl.readPageSlugInSource(unscopedExecutor(exec, 'slug spelling: the page slug re-check unscoped through executeRaw'), pageId, sourceId)); }
+  readSlugRepairPage(pageId: number, sourceId: string) { return this.engineSqlRead(exec => slugSpellingRepairImpl.readSlugRepairPage(unscopedExecutor(exec, 'slug spelling: the page re-read unscoped through executeRaw'), pageId, sourceId)); }
   lockSourceRow(sourceId: string) { return sourcesImpl.lockSourceRow(this.autocommitSql, sourceId); }
   lockSourceForUpdate(sourceId: string) { return sourcesImpl.lockSourceForUpdate(this.autocommitSql, sourceId); }
   isSourceClaimed(sourceId: string) { return sourcesImpl.isSourceClaimed(unscopedExecutor(this.engineSql, 'sources: sync-authority read the claim unscoped through executeRaw'), sourceId); }

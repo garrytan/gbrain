@@ -20,8 +20,28 @@ import type { FileFinding, PageFinding, ScanRecord } from '../fence-repair/censu
 import type { PageReadScope } from '../types.ts';
 import type * as ProjectionBacklogSql from '../engine-sql/projection-backlog.ts';
 import type * as DoctorJoinSql from '../engine-sql/doctor-join.ts';
+import type * as SlugSpellingRepairSql from '../engine-sql/slug-spelling-repair.ts';
 
 export interface DoctorMembers {
+  // The legacy_slug_spellings check and gbrain repair slug-spelling (engine-sql/slug-spelling-repair.ts).
+  /** The tables of `tables` that row-level security applies to for the running role, in name order. */
+  readRowSecurityTables(tables: readonly string[]): Promise<string[]>;
+  /** Pages of every source (deleted included) whose slug has a capital or a non-printable-ASCII character, id above `afterId`, id order, 5000 a call. */
+  listSlugSpellingCandidates(afterId: number): Promise<SlugSpellingRepairSql.SlugSpellingCandidateRow[]>;
+  /** The database's server encoding (`SHOW server_encoding`; the spelling key needs UTF8). */
+  readServerEncoding(): Promise<string>;
+  /** The tables on the search path that row-level security applies to for the running role, in name order. */
+  readRowSecurityBrainTables(): Promise<string[]>;
+  /** The source row the slug-spelling preview reads (checkout, incarnation, slug-root mode), or null. */
+  readSlugRepairSource(sourceId: string): Promise<SlugSpellingRepairSql.SlugRepairSourceRow | null>;
+  /** One source's pages (deleted included) that may not be normal, id above `afterId`, id order, 5000 a call. */
+  listSourceSlugSpellingCandidates(sourceId: string, afterId: number): Promise<SlugSpellingRepairSql.SourceSlugSpellingCandidateRow[]>;
+  /** The source's pages other than `excludeId` whose spelling index key is one of `keys` (or, keys null, whose scan key is `scanKey`), id order. */
+  readSpellingKeyPages(sourceId: string, keys: readonly string[] | null, scanKey: string, excludeId: number): Promise<SlugSpellingRepairSql.SpellingKeyPageRow[]>;
+  /** The page row the slug-spelling move re-reads under its locks, or null. */
+  readSlugRepairPage(pageId: number, sourceId: string): Promise<SlugSpellingRepairSql.SourceSlugSpellingCandidateRow | null>;
+  /** The slug of page `pageId` when it belongs to `sourceId`, or null. */
+  readPageSlugInSource(pageId: number, sourceId: string): Promise<string | null>;
   // Doctor reads (engine-sql/doctor-reads.ts): the statements doctor checks ran through executeRaw.
 
   // Doctor reads, second set (engine-sql/doctor-derived.ts): the statements more doctor checks and their repairs ran through executeRaw.

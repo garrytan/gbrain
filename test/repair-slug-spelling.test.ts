@@ -598,13 +598,15 @@ describe('doctor check legacy_slug_spellings', () => {
     const { SLUG_SPELLING_SCAN_LIMIT } = await import('../src/core/repair/slug-spelling.ts');
     // Every candidate is a page already in normal form (a non-ASCII name), and there are more than the scan reads.
     let served = 0;
-    const scanning = { executeRaw: async (sql: string, params?: unknown[]) => {
-      if (!/FROM pages/.test(sql)) return engine.executeRaw(sql, params as never);
-      const after = Number((params ?? [0])[0]);
-      const rows = [] as Array<{ id: number; source_id: string; slug: string }>;
-      for (let i = 1; i <= 5_000 && served < SLUG_SPELLING_SCAN_LIMIT + 10_000; i++, served++) rows.push({ id: after + i, source_id: 'default', slug: `notes/caf\u00e9-${after + i}` });
-      return rows;
-    } };
+    // The seam is the typed members the check calls (readRowSecurityTables, listSlugSpellingCandidates), never statement text.
+    const scanning = {
+      readRowSecurityTables: (tables: readonly string[]) => engine.readRowSecurityTables(tables),
+      listSlugSpellingCandidates: async (after: number) => {
+        const rows = [] as Array<{ id: number; source_id: string; slug: string }>;
+        for (let i = 1; i <= 5_000 && served < SLUG_SPELLING_SCAN_LIMIT + 10_000; i++, served++) rows.push({ id: after + i, source_id: 'default', slug: `notes/caf\u00e9-${after + i}` });
+        return rows;
+      },
+    };
     const [finding] = (await legacySlugSpellingsEntry.run({ engine: scanning } as unknown as DoctorContext)) as unknown as Array<{ status: string; message: string; details?: Record<string, any> }>;
     expect(finding!.details!.truncated).toBe(true);
     expect(finding!.status).not.toBe('ok');

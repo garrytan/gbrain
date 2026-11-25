@@ -134,6 +134,7 @@ import * as timelineImpl from './engine-sql/timeline.ts';
 import * as sourcesImpl from './engine-sql/sources.ts';
 import * as linkSlugReadsImpl from './engine-sql/link-slug-reads.ts';
 import * as slugSpellingsImpl from './engine-sql/slug-spellings.ts';
+import * as slugSpellingRepairImpl from './engine-sql/slug-spelling-repair.ts';
 import * as federationExposureImpl from './engine-sql/federation-exposure.ts';
 import * as notifierImpl from './engine-sql/notifier.ts';
 import * as cliReadsImpl from './engine-sql/cli-reads-import.ts';
@@ -2926,6 +2927,15 @@ export class PGLiteEngine implements BrainEngine {
   readLiveSlugAliases(sourceId: string, targets: readonly string[]) { return linkSlugReadsImpl.readLiveSlugAliases(unscopedExecutor(this.engineSql, 'link preparation: the live alias targets read unscoped through executeRaw'), sourceId, targets); }
   readSourceSlugProbe(sourceId: string, afterId: number) { return linkSlugReadsImpl.readSourceSlugProbe(unscopedExecutor(this.engineSql, 'link preparation: the source slug fingerprint read unscoped through executeRaw'), sourceId, afterId); }
   readStoredSlugSpellings(key: string, scope: slugSpellingsImpl.StoredSpellingScope, after: string, keys?: readonly string[] | null) { return slugSpellingsImpl.readStoredSlugSpellings(unscopedExecutor(this.engineSql, 'slug params: the stored-spelling scan read unscoped through executeRaw'), key, scope, after, keys); }
+  readRowSecurityTables(tables: readonly string[]) { return slugSpellingRepairImpl.readRowSecurityTables(unscopedExecutor(this.engineSql, 'slug spelling: the row-security table read unscoped through executeRaw'), tables); }
+  listSlugSpellingCandidates(afterId: number) { return slugSpellingRepairImpl.listSlugSpellingCandidates(unscopedExecutor(this.engineSql, 'slug spelling: the candidate page scan unscoped through executeRaw'), afterId); }
+  readServerEncoding() { return slugSpellingRepairImpl.readServerEncoding(unscopedExecutor(this.engineSql, 'slug spelling: the server encoding read unscoped through executeRaw')); }
+  readRowSecurityBrainTables() { return slugSpellingRepairImpl.readRowSecurityBrainTables(unscopedExecutor(this.engineSql, 'slug spelling: the row-security brain table read unscoped through executeRaw')); }
+  readSlugRepairSource(sourceId: string) { return slugSpellingRepairImpl.readSlugRepairSource(unscopedExecutor(this.engineSql, 'slug spelling: the source row read unscoped through executeRaw'), sourceId); }
+  listSourceSlugSpellingCandidates(sourceId: string, afterId: number) { return slugSpellingRepairImpl.listSourceSlugSpellingCandidates(unscopedExecutor(this.engineSql, 'slug spelling: the source candidate scan unscoped through executeRaw'), sourceId, afterId); }
+  readSpellingKeyPages(sourceId: string, keys: readonly string[] | null, scanKey: string, excludeId: number) { return slugSpellingRepairImpl.readSpellingKeyPages(unscopedExecutor(this.engineSql, 'slug spelling: the same-printed-name read unscoped through executeRaw'), sourceId, keys, scanKey, excludeId); }
+  readPageSlugInSource(pageId: number, sourceId: string) { return slugSpellingRepairImpl.readPageSlugInSource(unscopedExecutor(this.engineSql, 'slug spelling: the page slug re-check unscoped through executeRaw'), pageId, sourceId); }
+  readSlugRepairPage(pageId: number, sourceId: string) { return slugSpellingRepairImpl.readSlugRepairPage(unscopedExecutor(this.engineSql, 'slug spelling: the page re-read unscoped through executeRaw'), pageId, sourceId); }
   lockSourceRow(sourceId: string) { return sourcesImpl.lockSourceRow(this.engineSql, sourceId); }
   lockSourceForUpdate(sourceId: string) { return sourcesImpl.lockSourceForUpdate(this.engineSql, sourceId); }
   isSourceClaimed(sourceId: string) { return sourcesImpl.isSourceClaimed(unscopedExecutor(this.engineSql, 'sources: sync-authority read the claim unscoped through executeRaw'), sourceId); }
