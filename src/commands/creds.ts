@@ -21,6 +21,8 @@ import { readFileSync, writeFileSync } from 'node:fs';
 
 import { exportBundle, importBundle, type EncryptedBundle } from '../core/creds/export.ts';
 import {
+  grantGeneration,
+  isGrantVault,
   openVault,
   type CredentialEntry,
   type ProviderClientRecord,
@@ -130,6 +132,14 @@ async function runExport(args: string[]): Promise<void> {
     const c = await vault.getClient(p);
     if (c) clients.push(c);
   }
+  // Personal-mode accounts carry their own client record (GST-3849).
+  if (isGrantVault(vault)) {
+    for (const e of entries) {
+      if (!e.meta.client_id) continue;
+      const own = await vault.getClientById(e.provider, e.meta.client_id, e.meta.account);
+      if (own?.account && !clients.some((c) => c.client_id === own.client_id && c.account === own.account)) clients.push(own);
+    }
+  }
 
   const passphrase = await passphraseFrom(args);
   const bundle = exportBundle({ credentials: entries, clients }, passphrase);
@@ -196,7 +206,12 @@ async function runImport(args: string[]): Promise<void> {
   }
   const vault = openVault();
   for (const c of payload.clients) await vault.putClient(c);
-  for (const e of payload.credentials) await vault.put(e);
+  // Each grant gets a fresh generation on this vault, so a refresh already in
+  // flight against the grant it replaces can never write into it.
+  for (const e of payload.credentials) {
+    if (isGrantVault(vault)) await vault.commitGrant({ entry: e, expectedGeneration: grantGeneration(await vault.get(e.id)) });
+    else await vault.put(e);
+  }
   if (json) {
     process.stdout.write(
       JSON.stringify({

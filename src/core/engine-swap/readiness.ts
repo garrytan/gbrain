@@ -32,6 +32,8 @@ export interface ShadowStatus {
     unexplained_difference?: number;
     uncomparable?: number;
     capability_missing?: number;
+    /** Sampled writes outside the page and link pilot, by family (shadow/write-compare.ts). */
+    capability_missing_by_family?: Record<string, number>;
   };
   fingerprints?: {
     checked_rows?: number;
@@ -104,8 +106,10 @@ export const MIN_BENCH_PAIRS = 100;
 
 /** What a criterion 5 pass covers, said wherever write comparisons are shown (the shadow status line, this report). */
 export const WRITE_COVERAGE_LIMIT = 'a criterion 5 pass covers page and link writes only';
-/** Said beside it until the locked tally lands: a comparison changes no criterion 5 state yet. */
-export const WRITE_NOT_RECORDED = 'write comparisons are not recorded yet; the locked tally follows in a separate PR';
+/** And on which brains: a PGLite brain's single connection cannot bound the read a sampled write waits for, so it samples no writes and criterion 5 stays missing. */
+export const WRITE_PGLITE_LIMIT = 'PGLite brains record no write comparisons';
+/** And by whom: only the shadow child that owns the Rust store records; a client child adds no evidence and can never make criterion 5 pass. */
+export const WRITE_CLIENT_LIMIT = 'client shadow children record no write comparisons';
 
 const DAY_MS = 86_400_000;
 
@@ -242,7 +246,8 @@ function writeComparisons(r: Reader): Check {
     return fails.length ? { state: 'fail', detail: fails.join('; ') } : { state: 'pass', detail: `${comparable} comparable, zero unexplained` };
   });
   // The coverage limit rides on every outcome. Only page and link writes are compared; every other write family is capability_missing.
-  const limit = `${WRITE_NOT_RECORDED}; ${WRITE_COVERAGE_LIMIT}; every other write family is capability_missing`;
+  const named = Object.entries(r.peek<Record<string, number>>('write_comparisons.capability_missing_by_family') ?? {}).filter(([, n]) => num(n) && n > 0).map(([f, n]) => `${f} ${n}`);
+  const limit = `${WRITE_COVERAGE_LIMIT}; ${WRITE_PGLITE_LIMIT}; ${WRITE_CLIENT_LIMIT}; every other write family is capability_missing${named.length ? ` (sampled so far: ${named.join(', ')})` : ''}`;
   return { ...out, detail: out.detail ? `${out.detail}; ${limit}` : limit };
 }
 
