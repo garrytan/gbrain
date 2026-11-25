@@ -1,4 +1,0 @@
-**Each night, your brain's recorded engine calls can be replayed on private PGLite and Rust copies, to find where the Rust engine answers differently.**
-
-### Added
-- `gbrain engine shadow replay [--json] [--budget-minutes <n>]`. It needs shadow capture on (`gbrain engine shadow capture on --yes`). The first run seeds the copies from one snapshot of the brain. Each later run seals the night's recording, replays it on the copies in a child process with a throwaway home, no API keys and no network, compares the copies with each other, reads back every page a write named, and writes a local report plus a summary that holds only operation, field path and keyed hash. Everything stays on the brain's machine. A Postgres replay copy is not in this release: setting `GBRAIN_SHADOW_REPLAY_POSTGRES_URL` stops the run by name. Guide: `docs/guides/shadow-replay.md`.
