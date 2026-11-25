@@ -171,6 +171,9 @@ Reserved tags:
 | session_state | `y` | `SESSION_STATE` | no |
 | persistence_journal, the `derived_generations` ledger | `h` | `DERIVED_GENERATION` | no (a source delete removes its rows) |
 | access_members | `x`, sub-tags `0x01` members, `0x02` groups, `0x03` group members | `ACCESS_MEMBERS` | no |
+| pinned_questions (`jobs/pinned_questions.rs`) | `~q` (two-byte), sub-tags `0x01` a pin, `0x02` the `(source_id, slug)` index | `QUESTIONS` | no |
+
+`~q` is the interfaces lane's two-byte allotment for pinned_questions (`~` then `q`; `family_tag(b'q')` under `FAMILY_ESCAPE` on rust-engine/main, where it is a "Tag registry" row with status `branch rust-engine/collate-equal` until the constant reaches main). It replaced this branch's earlier claim of `m 0x2D`/`m 0x2E`, which main holds for `OAUTH_CODE` and `AUDIT`. Moving the claim rewrites nothing on a shipped disk, so `FORMAT_VERSION` does not change.
 
 The telemetry family (`telemetry.rs`) holds search telemetry (`src/core/search/telemetry.ts`), MCP usage
 (`src/core/mcp-usage.ts`), retrieval feedback (`src/core/feedback/`) and the budget ledger

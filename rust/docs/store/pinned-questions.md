@@ -5,8 +5,8 @@ apply.
 
 The store keeps a pin as its whole row: the 30 columns of `pinned_questions` that the TypeScript row reads (`updated_at`
 is not kept: no member reads it). The SQL for the PGLite and PostgreSQL engines is in
-`src/core/engine-sql/collate-store-reads.ts`; the store serves the same members (`jobs/pinned_questions.rs`, keys `m 0x2D`
-and `m 0x2E`).
+`src/core/engine-sql/collate-store-reads.ts`; the store serves the same members (`jobs/pinned_questions.rs`, keys `~q 0x01`
+(a pin) and `~q 0x02` (the `(source_id, slug)` index), the family's own two-byte tag `keys::QUESTIONS`).
 
 | Member | Returns |
 | --- | --- |

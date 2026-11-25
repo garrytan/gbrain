@@ -4,10 +4,10 @@
 //!
 //! Members: insertPinnedQuestion, readPinnedQuestion, listPinnedQuestions.
 //!
-//! Keys, all under `keys::JOBS` (`m`), sub-tags 0x2D and 0x2E (this file only):
-//! - `m 0x2D id -> PinRecord`: one pin, the whole row (30 columns, with the defaults the table gives them), the id the
-//!   `BIGSERIAL` of the `pinned_questions_id` sequence (`m 0x00 pinned_questions`).
-//! - `m 0x2E source_id \0 slug -> id`: the unique `(source_id, slug)` index (`pinned_questions_source_slug_key`).
+//! Keys, under the family's own two-byte tag `keys::QUESTIONS` (`~q`, the interfaces lane's allotment; this file only):
+//! - `~q 0x01 id -> PinRecord`: one pin, the whole row (30 columns, with the defaults the table gives them), the id the
+//!   `BIGSERIAL` of the `pinned_questions_id` sequence (`m 0x00 pinned_questions`, the jobs family's sequence store).
+//! - `~q 0x02 source_id \0 slug -> id`: the unique `(source_id, slug)` index (`pinned_questions_source_slug_key`).
 //!
 //! Kept: every column the TypeScript row reads. Not kept: `updated_at` (no member reads it) and the secondary index
 //! `pinned_questions_state_idx` (a listing scans the table). The pin's state changes, its refresh lease and its answer
@@ -18,19 +18,26 @@ use super::*;
 use crate::env::iso;
 use crate::links::no_nul;
 
-const PIN: u8 = 0x2D;
-const PIN_SLUG: u8 = 0x2E;
+const PIN: u8 = 0x01;
+const PIN_SLUG: u8 = 0x02;
 const SEQUENCE: &str = "pinned_questions";
 const OP_INSERT: &str = "insertPinnedQuestion";
 
+/// `~q <sub>`: the start of every key of one pinned-questions table.
+fn questions(sub: u8) -> Vec<u8> {
+    let mut k = keys::QUESTIONS.to_vec();
+    k.push(sub);
+    k
+}
+
 fn pin_key(id: i64) -> Vec<u8> {
-    let mut k = prefix(PIN);
+    let mut k = questions(PIN);
     k.extend_from_slice(&signed_key(id));
     k
 }
 
 fn slug_key(source_id: &str, slug: &str) -> Vec<u8> {
-    let mut k = prefix(PIN_SLUG);
+    let mut k = questions(PIN_SLUG);
     k.extend_from_slice(source_id.as_bytes());
     k.push(0);
     k.extend_from_slice(slug.as_bytes());
@@ -154,7 +161,7 @@ fn not_null(column: &str) -> StoreError {
 fn all_pins(read: &dyn KvRead) -> Result<Vec<PinRecord>> {
     let mut rows = Vec::new();
     let mut bad = None;
-    scan_prefix(read, &prefix(PIN), false, &mut |_, v| {
+    scan_prefix(read, &questions(PIN), false, &mut |_, v| {
         match serde_json::from_slice::<PinRecord>(v) {
             Ok(r) => rows.push(r),
             Err(e) => {
@@ -293,7 +300,10 @@ mod key_layout {
         let mut row = vec![b'~', b'q', 0x01];
         row.extend_from_slice(&signed_key(7));
         assert_eq!(pin_key(7), row);
-        assert_eq!(slug_key("default", "notes/a"), b"~q\x02default\x00notes/a".to_vec());
+        assert_eq!(
+            slug_key("default", "notes/a"),
+            b"~q\x02default\x00notes/a".to_vec()
+        );
         assert_ne!(pin_key(7)[0], keys::JOBS);
     }
 }

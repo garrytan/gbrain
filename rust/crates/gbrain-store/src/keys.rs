@@ -320,3 +320,8 @@ pub fn timeline_dedup_prefix(page_id: u64) -> Vec<u8> {
 pub fn timeline_latest(page_id: u64) -> Vec<u8> {
     id_key(TIMELINE_LATEST, &[page_id])
 }
+
+/// Family `pinned_questions` (`jobs/pinned_questions.rs`): the pins and their `(source_id, slug)` index, under the
+/// two-byte tag `~q` (`~` then `q`; on rust-engine/main this is `family_tag(b'q')` under `FAMILY_ESCAPE`). The byte after
+/// the tag names the table: `0x01` a pin row, `0x02` the unique index.
+pub const QUESTIONS: [u8; 2] = [b'~', b'q'];
