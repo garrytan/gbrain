@@ -583,6 +583,8 @@ fn crash_run(
     let mode = modes[rng.below(modes.len())];
     let disk = SimDisk::new(seed, FaultPlan::none());
     let kv = open_as(&disk, logged).map_err(|e| e.to_string())?;
+    // The version the run starts from: 0, or the log activation commit on a logged run.
+    let base_version = kv.version().map_err(|e| e.to_string())?;
     let setup = disk.stats().io_ops;
     disk.set_plan(FaultPlan {
         fsync_error_pm: if kind == Kind::FsyncFault {
@@ -600,6 +602,7 @@ fn crash_run(
     drop(kv);
     check_ids(&h)?;
     let (acked_model, acked_last) = replay_acked(&h.acked)?;
+    let acked_last = acked_last.max(base_version);
     let mut with_doubt = acked_model.clone();
     let doubt: Vec<&Txn> = h.in_doubt.iter().collect();
     replay_batch(&mut with_doubt, &doubt).map_err(|e| format!("the in-doubt batch: {e}"))?;

@@ -1592,6 +1592,7 @@ mod older_build_tests {
             multiuser: true,
             multiuser_writes: MultiUserWrites {
                 commit_log: true,
+                host_id: Some("d0000000-0000-4000-8000-0000000000d1".into()),
                 ..MultiUserWrites::default()
             },
             keyword_index_builder: false,
