@@ -64,3 +64,15 @@ describe('remote dispatch on an engine without access control', () => {
     expect(reason).not.toBe('access_control');
   });
 });
+
+describe("the brain owner's remote read on an engine that does not model the owner lineage read", () => {
+  test('a Rust engine refuses the owner lineage read by name, and nothing else', async () => {
+    const { ownerLineageRefusal } = await import('../src/mcp/engine-access-refusal.ts');
+    const refused = ownerLineageRefusal({ kind: 'rust' }, 'get_page', { owner: true, lineage: true });
+    expect(refused?.code).toBe('engine_capability_missing');
+    expect(String(refused?.message)).toContain("get_page for the brain owner's remote read (the owner lineage read)");
+    expect(ownerLineageRefusal({ kind: 'rust' }, 'get_page', { owner: false, lineage: true })).toBeNull();
+    expect(ownerLineageRefusal({ kind: 'rust' }, 'get_page', { owner: true, lineage: false })).toBeNull();
+    for (const kind of ['pglite', 'postgres']) expect(ownerLineageRefusal({ kind }, 'get_page', { owner: true, lineage: true })).toBeNull();
+  });
+});

@@ -25,11 +25,11 @@
  *    OAuth provider as serve --http does, owner set by setOwner and credentials bound by bindCredential). The members are
  *    seeded by addMember (typed). The folder rules go through the real policy path (proposeRevision), which applies on every
  *    arm, the Rust one included (asserted: `applied:applied`). Embeddings are off, so search and query run keyword-only.
- *  - State when written (rust-engine/main a59ee3ca58): PGLite and Postgres pass the first two cases. The Rust arm answers the
- *    unbound and local callers like PGLite but refuses (engine_capability_missing, or recall's `unavailable`) every read for
- *    a caller bound to a member, the owner included, because the store members refuse an `excludePrivate` that member pages,
- *    grants or lineage widen (rust-engine/store-members/private-provenance.ts, page-visibility.ts). The third case differs
- *    between PGLite and Postgres on recall's page arm, before Rust is involved.
+ *  - The owner on the Rust arm: the store does not model the owner's lineage read yet, so every remote owner read refuses
+ *    by name before any work (ownerLineageRefusal, src/mcp/engine-access-refusal.ts); the owner cases assert that every
+ *    cell refused that way and leaked no page or fact, then stop on the pin in test/rust-stop-pins/remote-access.tsv.
+ *  - Every page is sealed before the reads (seed drains the projection queue): an unsealed page is left out of keyword
+ *    search, and whether the background resealer reached it depends on what ran before on the arm.
  *
  * Each cell is observed twice: `seen` (the fixture pages and facts whose canary or slug the answer names) is asserted
  * inline against the expected table, engine-independent; `payload` (the whole parsed answer, with only ids and timestamps
@@ -93,15 +93,16 @@ const GROUPS = {
   owner: ['owner-http', 'owner-stdio'],
 } as const satisfies Record<string, readonly (typeof CALLERS)[number][]>;
 type Group = keyof typeof GROUPS;
-/** On the Rust arm an owner read refuses: a typed refusal, or recall's `unavailable` when its facts read refuses. */
-const OWNER_UNSERVED = ['engine_capability_missing', 'unavailable'];
+/** On the Rust arm every owner read refuses by name (mcp/engine-access-refusal.ts ownerLineageRefusal) before any work. */
+const OWNER_REFUSAL = "for the brain owner's remote read (the owner lineage read)";
 const ownerUnserved = (group: Group, backend: ParityBackend) => group === 'owner' && backend === 'rust';
 /** The typed refusals the unserved owner cells of the running case answered, in call order. */
 let unservedRefusals: Array<Record<string, unknown>> = [];
 /** An unserved owner cell: refused, and nothing of any page or fact in the answer. */
 function expectUnserved(who: Caller, what: string, cell: Cell): void {
-  expect({ who, what, refused: OWNER_UNSERVED.includes(cell.error ?? ''), pages: cell.pages, facts: cell.facts })
-    .toEqual({ who, what, refused: true, pages: [], facts: [] });
+  const message = String((cell.body as { message?: unknown } | null)?.message ?? '');
+  expect({ who, what, error: cell.error, named: message.includes(OWNER_REFUSAL), pages: cell.pages, facts: cell.facts })
+    .toEqual({ who, what, error: 'engine_capability_missing', named: true, pages: [], facts: [] });
   if (cell.error === 'engine_capability_missing') unservedRefusals.push(cell.body as Record<string, unknown>);
 }
 /**
@@ -336,8 +337,7 @@ describe('engine parity: remote read-access matrix over MCP', () => {
         expect(verdict(who, `recall ${JSON.stringify(params)}`, cell)).toEqual({ who, what: `recall ${JSON.stringify(params)}`, error: null, pages: [], facts: FACTS[who] });
         mine[`recall ${JSON.stringify(params)}`] = cell.payload;
       }
-      // The owner's recall-by-canary cells ride in this case: on the Rust arm recall answers `unavailable` (its facts read
-      // refused), which carries no typed refusal to stop on, so a case of only those cells could not be pinned.
+      // The owner's recall-by-canary cells ride in this case, so the owner's reads stop on one pinned refusal per case.
       if (group === 'owner') {
         for (const key of KEYS) {
           const cell = await observe(engine, fx, who, 'recall', { query: canaryOf(key), limit: 100 });
