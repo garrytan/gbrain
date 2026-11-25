@@ -1,12 +1,13 @@
 /**
  * The contradiction statements outside the stored-finding store: the edge-contradiction dream phase and its
- * proposals (`link_edge_proposals`), the scoped reader's live re-reads of judged chunks and takes, and the two
- * small eval reads (last prompt version, captured queries). The text and binds are the ones the callers built
- * inline; the engines run them through typed members.
+ * proposals (`link_edge_proposals`), the `gbrain edge-proposals` command's own reads and writes of those proposals,
+ * the scoped reader's live re-reads of judged chunks and takes, and the two small eval reads (last prompt version,
+ * captured queries). The text and binds are the ones the callers built inline; the engines run them through typed
+ * members.
  */
 import { ownerOnlyTakeAllowedSql } from '../search/private-visibility.ts';
 import type { EngineRawRead } from './cli-reads-ops.ts';
-import { renderFragment, sqlFragment } from './fragment.ts';
+import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 import { NON_EMPLOYER_PREFIXES, NON_EMPLOYER_TYPES } from '../link-target-roles.ts';
 import { entityTypePredicateSql, type EntityTypeFilter } from '../schema-pack/entity-types.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
@@ -179,6 +180,69 @@ export async function markRevertedEdgeProposals(raw: EngineRawRead): Promise<num
           AND t.occurred_on = p.close_date)
       RETURNING p.id`);
   return rows.length;
+}
+
+// ─── gbrain edge-proposals (src/commands/edge-proposals.ts) ─────────────
+
+/** One proposal as `gbrain edge-proposals` lists and shows it: the subject, the two targets and the ending page as slugs. */
+export interface EdgeProposalCliRow {
+  id: number | string; status: string; link_type: string; subject: string; a_target: string; b_target: string; ending: string | null;
+  close_date: unknown; born_closed: boolean; model: string | null; confidence: number | null; generated_line: string | null; created_at: unknown;
+}
+
+/** The proposals the command reads: every one, those with one of `statuses`, the one with `id`, or that one only while it is undated. */
+export type EdgeProposalCliFilter = { kind: 'all' } | { kind: 'statuses'; statuses: string[] } | { kind: 'id'; id: number } | { kind: 'undated'; id: number };
+
+/** The WHERE clause of each filter, with its `$1` bind. */
+const EDGE_PROPOSAL_CLI_WHERE = {
+  all: 'TRUE',
+  statuses: 'p.status = ANY($1::text[])',
+  id: 'p.id = $1',
+  undated: `p.id = $1 AND p.status = 'undated_unresolved'`,
+} as const satisfies Record<EdgeProposalCliFilter['kind'], string>;
+
+/**
+ * The proposals of `filter`, newest first, at most `limit` (a whole number from 1 to 1000, which the command clamps);
+ * a proposal whose subject or target page is gone is not listed.
+ */
+export async function listEdgeProposalCliRows(raw: EngineRawRead, filter: EdgeProposalCliFilter, limit: number): Promise<EdgeProposalCliRow[]> {
+  if (!Number.isFinite(limit) || !Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new Error(`listEdgeProposalCliRows: limit ${limit} is not a whole number from 1 to 1000`);
+  const where = trustedSql(EDGE_PROPOSAL_CLI_WHERE[filter.kind]);
+  const cap = trustedSql(`${limit}`);
+  const { text } = renderFragment(sqlFragment`SELECT p.id, p.status, p.link_type, f.slug AS subject, ta.slug AS a_target, tb.slug AS b_target, te.slug AS ending,
+            p.close_date::text AS close_date, p.born_closed, p.model, p.confidence, p.generated_line, p.created_at
+       FROM link_edge_proposals p
+       JOIN pages f ON f.id = p.from_page_id JOIN pages ta ON ta.id = p.a_to_page_id JOIN pages tb ON tb.id = p.b_to_page_id
+       LEFT JOIN pages te ON te.id = p.ending_to_page_id
+      WHERE ${where} ORDER BY p.created_at DESC, p.id DESC LIMIT ${cap}`);
+  const params = filter.kind === 'all' ? [] : filter.kind === 'statuses' ? [filter.statuses] : [filter.id];
+  return raw<EdgeProposalCliRow>(text, params);
+}
+
+/** `retry --all-held`: deletes the judge errors held after their attempts; the deleted ids. */
+export async function deleteHeldEdgeProposalErrors(raw: EngineRawRead): Promise<Array<{ id: number }>> {
+  return raw<{ id: number }>(`DELETE FROM link_edge_proposals WHERE status = 'error' AND detail LIKE 'held after %' RETURNING id`);
+}
+
+/** `undo --all-applied`: the applied proposals, in id order. */
+export async function listAppliedEdgeProposalIds(raw: EngineRawRead): Promise<Array<{ id: number }>> {
+  return raw<{ id: number }>(`SELECT id FROM link_edge_proposals WHERE status = 'applied' ORDER BY id`);
+}
+
+/** `retry <id>`: deletes the proposal while it is a judge error; the deleted id, none when it was not one. */
+export async function deleteEdgeProposalError(raw: EngineRawRead, id: number): Promise<Array<{ id: number }>> {
+  return raw<{ id: number }>(`DELETE FROM link_edge_proposals WHERE id = $1 AND status = 'error' RETURNING id`, [id]);
+}
+
+/** `date`: the source of the proposal, null when there is no such proposal. */
+export async function readEdgeProposalSourceId(raw: EngineRawRead, id: number): Promise<string | null> {
+  const [row] = await raw<{ source_id: string }>(`SELECT source_id FROM link_edge_proposals WHERE id = $1`, [id]);
+  return row?.source_id ?? null;
+}
+
+/** `date`: rejects the proposal the user dated. */
+export async function markEdgeProposalDated(raw: EngineRawRead, id: number): Promise<void> {
+  await raw(`UPDATE link_edge_proposals SET status = 'rejected', detail = 'dated by user', updated_at = now() WHERE id = $1`, [id]);
 }
 
 // ─── The scoped contradiction reader ─────────────────────────────────────

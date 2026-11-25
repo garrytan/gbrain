@@ -12,8 +12,8 @@
  * landed. No migration or upgrade step runs this.
  */
 import type { BrainEngine } from '../engine.ts';
+import type { SegmentedRechunkPageRow } from '../engine-sql/segmented-writes.ts';
 import { isQuarantined } from '../quarantine.ts';
-import { chunkGenerationFilter } from '../search/safe-chunks.ts';
 import { newFenceChunkBudget, type FenceChunkBudget } from '../markdown-chunks.ts';
 import { reuseSegmentChunkVectors } from '../import-chunk-reuse.ts';
 import { maintenanceAttribution } from '../persistence/attribution.ts';
@@ -22,7 +22,7 @@ import { withPageTierKept } from '../trust/fence-append.ts';
 import { openSegmentedStaging, segmentWriteScope, stageOccurrenceChunks } from './ingest.ts';
 import { readPageBodyPolicy, stageBatchBytes } from './limits.ts';
 import { SEGMENTED_CHUNKER_VERSION } from './segment-chunks.ts';
-import type { JsonObject, ManifestRow, SegmentChunkInput } from './types.ts';
+import type { ManifestRow, SegmentChunkInput } from './types.ts';
 
 export interface SegmentedRechunkPage {
   source_id: string;
@@ -52,30 +52,13 @@ export interface SegmentedRechunkReceipt {
 /** @internal Work counts for the re-chunk tests: staging batches chunked, batches that flipped, rows staged and vectors reused. */
 export const rechunkWork = { batches: 0, flips: 0, staged: 0, reused: 0 };
 
-interface RechunkPageRow {
-  id: number; slug: string; source_id: string; title: string; type: string; page_kind: string; frontmatter: JsonObject | null;
-  body_generation: number | string; body_flags: JsonObject | null; chunker_version: number | null; contextual_retrieval_mode: string | null;
-  corpus_generation: string | null; knowledge_revision: string; sealed: boolean; updated_us: string; deleted_at: string | null;
-  content_hash: string; body_bytes: number | string; truth_bytes: number | string; body_lines: number | string; segment_count: number;
-  segmenter_version: number; truth_lead: string | null; timeline_lead: string | null;
-}
+type RechunkPageRow = SegmentedRechunkPageRow;
 
 class PageMoved extends Error {}
 
-const PAGE_SQL = `SELECT id, slug, source_id, title, type, page_kind, frontmatter, body_generation, body_flags, chunker_version,
-    contextual_retrieval_mode, corpus_generation, knowledge_revision::text AS knowledge_revision,
-    (text_projection_revision = knowledge_revision) IS TRUE AS sealed, (extract(epoch FROM updated_at) * 1000000)::bigint::text AS updated_us, deleted_at, content_hash, body_bytes, truth_bytes,
-    body_lines, segment_count, segmenter_version, truth_lead, timeline_lead
-  FROM pages WHERE id=$1 AND body_storage='segmented'`;
-
 /** Sealed, live segmented pages below the current segmented chunker, in a stable order. */
 async function candidates(engine: BrainEngine, scope: { sourceId?: string; slug?: string }): Promise<Array<{ id: number }>> {
-  const params: unknown[] = [SEGMENTED_CHUNKER_VERSION];
-  let where = '';
-  if (scope.sourceId) { params.push(scope.sourceId); where += ` AND source_id=$${params.length}`; }
-  if (scope.slug) { params.push(scope.slug); where += ` AND slug=$${params.length}`; }
-  return engine.executeRaw<{ id: number }>(`SELECT id FROM pages WHERE body_storage='segmented' AND deleted_at IS NULL
-    AND chunker_version < $1 AND (text_projection_revision = knowledge_revision) IS TRUE${where} ORDER BY source_id, slug`, params);
+  return (await engine.listSegmentedRechunkCandidates(SEGMENTED_CHUNKER_VERSION, scope)).map(id => ({ id }));
 }
 
 /** The tier and corpus generation the page's stored vectors were embedded under, so reuse admits them as a write would. */
@@ -106,11 +89,7 @@ async function planBatch(exec: BrainEngine, page: RechunkPageRow, batch: readonl
     occurrences: batch, title: page.title, frontmatter, flags: page.body_flags ?? {},
     chunking: { quarantined: isQuarantined(frontmatter), ...reuseTier(page) }, retiredOccurrences: [], hold: held, fenceBudget });
   const ids = batch.map(row => Number(row.occurrenceId));
-  const stored = await exec.executeRaw<{ occurrence_id: unknown; chunk_source: string; chunk_text: string; raw_byte_start: unknown; raw_byte_end: unknown;
-    projected_byte_start: unknown; projected_byte_end: unknown }>(`SELECT c.occurrence_id, c.chunk_source, c.chunk_text, c.raw_byte_start, c.raw_byte_end,
-      c.projected_byte_start, c.projected_byte_end FROM content_chunks c JOIN pages p ON p.id = c.page_id
-     WHERE c.page_id = $1 AND c.occurrence_id = ANY($2::bigint[]) AND ${chunkGenerationFilter('p', 'c')}
-     ORDER BY c.occurrence_id, c.local_ordinal`, [page.id, ids]);
+  const stored = await exec.listOccurrenceChunks(page.id, ids);
   const before = new Map<number, Array<{ key: string; text: string }>>();
   for (const row of stored) {
     const id = Number(row.occurrence_id);
@@ -137,8 +116,8 @@ async function planBatch(exec: BrainEngine, page: RechunkPageRow, batch: readonl
   return plan;
 }
 
-async function readPage(exec: Pick<BrainEngine, 'executeRaw'>, id: number): Promise<RechunkPageRow | null> {
-  return (await exec.executeRaw<RechunkPageRow>(PAGE_SQL, [id]))[0] ?? null;
+function readPage(exec: Pick<BrainEngine, 'readSegmentedRechunkPage'>, id: number): Promise<RechunkPageRow | null> {
+  return exec.readSegmentedRechunkPage(id);
 }
 
 /** Under the page lock: the page is still the sealed, live generation this run expects, else it moved. */
@@ -163,8 +142,8 @@ async function flipBatch(tx: BrainEngine, page: RechunkPageRow, plan: BatchPlan,
   const indexes = await tx.stageSegmentChunks(page.id, next, plan.held);
   await tx.setBodyStagingState(stagingId, 'prepared');
   // The body is unchanged: the flip keeps the knowledge revision (and so the seal), as a materialization does.
-  const [prior] = await tx.executeRaw<{ revision: string | null }>("SELECT current_setting('gbrain.materializing_revision', true) AS revision");
-  await tx.executeRaw("SELECT set_config('gbrain.materializing_revision', $1, true)", [page.knowledge_revision]);
+  const prior = await tx.readMaterializingRevision();
+  await tx.setMaterializingRevision(page.knowledge_revision);
   const applied = await withPageTierKept(tx, { sourceId: page.source_id, slug: page.slug }, () => applySegmentedBody(tx, {
     slug: page.slug, sourceId: page.source_id, pageId: page.id, promotion: false, retireMaxRows,
     meta: { title: page.title, type: page.type as never, frontmatter: page.frontmatter ?? {}, page_kind: page.page_kind as never },
@@ -176,9 +155,9 @@ async function flipBatch(tx: BrainEngine, page: RechunkPageRow, plan: BatchPlan,
         truth_lead: page.truth_lead ?? '', timeline_lead: page.timeline_lead ?? '', body_flags: page.body_flags ?? {} } } }));
   if (!applied.complete) throw new Error(`The re-chunk flip of ${page.slug} left rows to retire after its transaction.`);
   // A re-chunk is not an edit: the page keeps its updated_at, restored exactly (microseconds survive no driver date round trip).
-  await tx.executeRaw(`UPDATE pages SET updated_at = 'epoch'::timestamptz + $2::bigint * interval '1 microsecond' WHERE id=$1`, [page.id, page.updated_us]);
+  await tx.restorePageUpdatedAt(page.id, page.updated_us);
   await sealSegmentedPage(tx, page.id);
-  await tx.executeRaw("SELECT set_config('gbrain.materializing_revision', $1, true)", [prior?.revision ?? '']);
+  await tx.setMaterializingRevision(prior ?? '');
   rechunkWork.flips++;
   rechunkWork.staged += indexes.length;
   rechunkWork.reused += reused;

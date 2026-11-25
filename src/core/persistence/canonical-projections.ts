@@ -30,7 +30,6 @@ import { propagateFactLowering } from '../trust/propagation.ts';
 import { loadWriteGateConfig } from '../trust/gate-outcomes.ts';
 import { fenceOwnerKey, readFenceBlocks, TAKE_FENCE_KIND } from '../generations/fence.ts';
 import { projectFactFenceGeneration } from '../generations/adapters/fact-rows.ts';
-import { openedFactRowSql } from './context.ts';
 import { fenceRowKeys, moveKeptRows, pageFenceRowKeys } from '../generations/fence-evidence.ts';
 import { projectTakeFenceGeneration } from '../generations/adapters/take-rows.ts';
 import { linksFenceProjectionRows, projectLinksFence } from '../links-fence-projection.ts';
@@ -598,7 +597,7 @@ function timelineChunks(timeline: ReadonlyMap<string, ExtractedTimelineEntry>): 
 
 /**
  * #6574: a page's canonical timeline rows in one statement per chunk, in body order. The publication already holds the page's
- * row lock (lockPageKeys), so the rows go straight to its id; free text is sanitized as addTimelineEntry does (#2011).
+ * row lock (lockPageKeys), so the rows go straight to its id; the engine sanitizes free text as addTimelineEntry does (#2011).
  */
 function insertCanonicalTimeline(tx: BrainEngine, pageId: number, entries: ExtractedTimelineEntry[]) {
   return tx.insertCanonicalTimelineRows(pageId, entries.map(entry => ({ date: entry.date, source: sanitizeForJsonb(entry.source || ''),
@@ -631,14 +630,13 @@ async function refuseQuotedFenceLoss(tx: BrainEngine, pageId: number, quoted: { 
   const refuse = (fence: 'facts' | 'takes', lost: Array<{ row_num: number; section: FenceSection }>) => fenceOperationError({ reason: 'quoted_fence_rows', fence,
     section: lost[0]!.section, rows: [...new Set(lost.map(r => Number(r.row_num)))].slice(0, FENCE_ROWS_MAX), columns: [], line: null }, slug, sourceId);
   if (quoted.takes.size && takeRowsGone.length) {
-    const gone = await tx.executeRaw<{ row_num: number; claim: string }>('SELECT row_num,claim FROM takes WHERE page_id=$1 AND row_num=ANY($2::integer[])', [pageId, takeRowsGone]);
+    const gone = await tx.listQuotedTakeRows(pageId, takeRowsGone);
     const lost = gone.flatMap(r => { const section = quoted.takes.get(`${r.row_num}:${r.claim}`); return section ? [{ row_num: r.row_num, section }] : []; });
     if (lost.length) throw refuse('takes', lost);
   }
   if (quoted.facts.size) {
     const kept = new Set(factRows.map(f => `${f.row_num}:${f.fact}:${f.visibility}`));
-    const live = await tx.executeRaw<{ row_num: number; fact: string; visibility: string }>(`SELECT row_num,fact,visibility FROM facts
-      WHERE source_id=$1 AND source_markdown_slug=$2 AND row_num IS NOT NULL`, [sourceId, slug]);
+    const live = await tx.listPageFenceFactCells(sourceId, slug);
     const lost = live.flatMap(r => { const section = kept.has(`${r.row_num}:${r.fact}:${r.visibility}`) ? undefined : quoted.facts.get(`${r.row_num}:${r.fact}`);
       return section ? [{ row_num: r.row_num, section }] : []; });
     if (lost.length) throw refuse('facts', lost);
@@ -676,9 +674,7 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
   // An inline body parses without a statement; a segmented one is read from its segments only when the page has positioned facts.
   const priorFenceKeys = !prior || !projectFences ? null
     : !isSegmentedPage(prior.page) ? fenceRowKeys(prior.page, slug, sourceId)
-    : (await engine.executeRaw(`SELECT 1 FROM facts WHERE source_id=$1 AND source_markdown_slug=$2
-        AND row_num IS NOT NULL AND COALESCE(source,'') NOT LIKE 'cli:extract-conversation-facts%' LIMIT 1`, [sourceId, slug])).length
-      ? await pageFenceRowKeys(engine, prior.page, slug, sourceId) : null;
+    : await engine.hasPositionedPageFacts(sourceId, slug) ? await pageFenceRowKeys(engine, prior.page, slug, sourceId) : null;
   const { timeline, exactIncoming, pinned } = classifyTimeline(storedRows, page, prior_?.rows ?? null, slug, writer, policy);
   const deletionRows = pinned.filter(row => row.action === 'delete')
     .map(({ id, date, source, summary, detail, state }) => ({ id, date, source, summary, detail, removed: state === 'removed' || state === 'removed_marked' }));
@@ -687,16 +683,14 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
     .filter(row => row.next !== row.detail);
   // GBRA-161 PR 2: a write that dropped the takes fence was held and left its rows stored; once a fence parses again it
   // is compared with those rows, not with the fenceless body before it.
-  const heldTakeFence = !!prior && projectFences && fenceReads.takes.state === 'parsed' && (await engine.executeRaw(
-    `SELECT 1 FROM derived_generations WHERE source_id=$1 AND kind=$2 AND owner_key=$3 AND state='held' AND held_reason='fence_absent'`,
-    [sourceId, TAKE_FENCE_KIND, fenceOwnerKey(slug)])).length > 0;
+  const heldTakeFence = !!prior && projectFences && fenceReads.takes.state === 'parsed' && await engine.hasFenceAbsentHold(sourceId, TAKE_FENCE_KIND, fenceOwnerKey(slug));
   const priorTakes = heldTakeFence
-    ? new Set([...(prior_?.takeRows ?? []), ...(await engine.executeRaw<{ row_num: number }>('SELECT row_num FROM takes WHERE page_id=$1', [prior!.page.id])).map(r => Number(r.row_num))])
+    ? new Set([...(prior_?.takeRows ?? []), ...await engine.listPageTakeRowNums(prior!.page.id)])
     : prior_?.takeRows ?? new Set<number>();
   // TE1 (#6188): when the prior takes fence does not parse, its stored rows count as prior canonical rows, so a
   // row Tier 1 normalized (same number, holder `system` -> `brain`) updates its stored take instead of colliding.
   const priorCanonical = prior && prior_?.takesWarn
-    ? new Set([...priorTakes, ...(await engine.executeRaw<{ row_num: number }>('SELECT row_num FROM takes WHERE page_id=$1', [prior.page.id])).map(r => Number(r.row_num))])
+    ? new Set([...priorTakes, ...await engine.listPageTakeRowNums(prior.page.id)])
     : priorTakes;
   const newTakes = takes.filter(t => !priorCanonical.has(t.rowNum)).map(t => ({ row_num: t.rowNum, claim: t.claim, kind: t.kind, holder: t.holder }));
   const takeRowsGone = [...priorTakes].filter(n => !takes.some(t => t.rowNum === n));
@@ -736,29 +730,13 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
     // #8819: only the rows the fact generation found a fence held (`retireIds`) expire. #8194: never a row `gbrain repair
     // open-facts` opens in place (context.ts openedFactRowSql); fence-guard moves it to world with its id.
     const incoming = JSON.stringify(factRows.map(f => ({ row_num: f.row_num, fact: f.fact, visibility: f.visibility })));
-    const expireFacts = (ids: number[]) => () => tx.executeRaw(`UPDATE facts f SET expired_at=COALESCE(expired_at,now()),row_num=NULL
-      WHERE source_id=$1 AND source_markdown_slug=$2 AND row_num IS NOT NULL AND f.id=ANY($4::bigint[])
-      AND (COALESCE(f.source,'') NOT LIKE 'cli:extract-conversation-facts%'
-        OR EXISTS (SELECT 1 FROM jsonb_to_recordset($3::text::jsonb) AS c(row_num integer) WHERE c.row_num=f.row_num))
-      AND NOT EXISTS (SELECT 1 FROM jsonb_to_recordset($3::text::jsonb) AS n(row_num integer,fact text,visibility text)
-        WHERE n.row_num=f.row_num AND n.fact=f.fact AND n.visibility=f.visibility)
-      AND NOT ${openedFactRowSql('f', '$3')}`, [sourceId, slug, incoming, ids]);
+    const expireFacts = (ids: number[]) => () => tx.expireFenceFacts(sourceId, slug, incoming, ids);
     // #6574: every fence row's fields refresh in one statement, not one round trip per row.
     const fieldRows = JSON.stringify([...new Map(factRows.map(fact => [fact.row_num, fact])).values()].map(fact => ({ row_num: fact.row_num, kind: fact.kind, notability: fact.notability,
       context: fact.context, valid_from: fact.valid_from?.toISOString() ?? null, valid_until: fact.valid_until?.toISOString() ?? null,
       expired_at: fact.expired_at?.toISOString() ?? null, source: fact.source, confidence: fact.confidence, claim_metric: fact.claim_metric ?? null,
       claim_value: fact.claim_value ?? null, claim_unit: fact.claim_unit ?? null, claim_period: fact.claim_period ?? null, attributed_to: fact.attributed_to ?? null })));
-    const factFields = () => factRows.length ? tx.executeRaw(`UPDATE facts f SET kind=r.kind,notability=r.notability,context=r.context,
-        valid_from=COALESCE(r.valid_from::timestamptz,f.valid_from),valid_until=r.valid_until::timestamptz,expired_at=r.expired_at::timestamptz,
-        source=r.source,confidence=r.confidence,claim_metric=r.claim_metric,claim_value=r.claim_value,claim_unit=r.claim_unit,
-        claim_period=r.claim_period,attributed_to=r.attributed_to
-      FROM jsonb_to_recordset($3::text::jsonb) AS r(row_num integer,kind text,notability text,context text,valid_from text,valid_until text,
-        expired_at text,source text,confidence real,claim_metric text,claim_value double precision,claim_unit text,claim_period text,attributed_to text)
-      WHERE f.source_id=$1 AND f.source_markdown_slug=$2 AND f.row_num=r.row_num
-        AND (f.kind,f.notability,f.context,f.valid_from,f.valid_until,f.expired_at,f.source,f.confidence,f.claim_metric,f.claim_value,f.claim_unit,
-          f.claim_period,f.attributed_to) IS DISTINCT FROM (r.kind,r.notability,r.context,COALESCE(r.valid_from::timestamptz,f.valid_from),
-          r.valid_until::timestamptz,r.expired_at::timestamptz,r.source,r.confidence,r.claim_metric,r.claim_value,r.claim_unit,r.claim_period,r.attributed_to)`,
-      [sourceId, slug, fieldRows]) : Promise.resolve([]);
+    const factFields = () => factRows.length ? tx.refreshFenceFactFields(sourceId, slug, fieldRows) : Promise.resolve();
     const checkTakes = () => refuseCollisions(tx, id);
     const dropTakes = (held: boolean) => () => held ? Promise.resolve([])
       : tx.deleteTakeRows(id, takeRowsGone.filter(n => !heldRowNums.has(n)));
@@ -768,23 +746,13 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
     // the guard decided before any of these statements run (W1 #6783 §6.2).
     const fenceResolved = projectedTakes.filter(take => take.resolvedAt !== undefined || take.resolvedQuality !== undefined);
     const claims = JSON.stringify(projectedTakes.map(take => ({ row_num: take.rowNum, claim: take.claim })));
-    const clearChangedResolutions = () => projectedTakes.length ? tx.executeRaw(`UPDATE takes k SET resolved_at=NULL,resolved_quality=NULL,
-        resolved_outcome=NULL,resolved_source=NULL,resolved_value=NULL,resolved_unit=NULL,resolved_by=NULL
-      FROM jsonb_to_recordset($2::text::jsonb) AS n(row_num integer,claim text)
-      WHERE k.page_id=$1 AND k.row_num=n.row_num AND k.resolved_at IS NOT NULL AND k.claim IS DISTINCT FROM n.claim`, [id, claims]) : Promise.resolve([]);
+    const clearChangedResolutions = () => projectedTakes.length ? tx.clearChangedTakeResolutions(id, claims) : Promise.resolve();
     const resolutions = JSON.stringify(fenceResolved.map(take => ({ row_num: take.rowNum, resolved_at: take.resolvedAt ?? null,
       resolved_quality: take.resolvedQuality ?? null,
       resolved_outcome: take.resolvedQuality === 'correct' ? true : take.resolvedQuality === 'incorrect' ? false : null,
       resolved_source: take.resolvedEvidence ?? null, resolved_value: take.resolvedValue ?? null, resolved_unit: take.resolvedUnit ?? null,
       resolved_by: take.resolvedBy ?? null })));
-    const resolveTakes = () => fenceResolved.length ? tx.executeRaw(`UPDATE takes k SET resolved_at=r.resolved_at::timestamptz,resolved_quality=r.resolved_quality,
-        resolved_outcome=r.resolved_outcome,resolved_source=r.resolved_source,resolved_value=r.resolved_value,resolved_unit=r.resolved_unit,
-        resolved_by=r.resolved_by
-      FROM jsonb_to_recordset($2::text::jsonb) AS r(row_num integer,resolved_at text,resolved_quality text,resolved_outcome boolean,
-        resolved_source text,resolved_value real,resolved_unit text,resolved_by text)
-      WHERE k.page_id=$1 AND k.row_num=r.row_num AND (k.resolved_at,k.resolved_quality,k.resolved_outcome,k.resolved_source,k.resolved_value,k.resolved_unit,
-        k.resolved_by) IS DISTINCT FROM (r.resolved_at::timestamptz,r.resolved_quality,r.resolved_outcome,r.resolved_source,r.resolved_value,r.resolved_unit,
-        r.resolved_by)`, [id, resolutions]) : Promise.resolve([]);
+    const resolveTakes = () => fenceResolved.length ? tx.writeFenceTakeResolutions(id, resolutions) : Promise.resolve();
     // Event-page references have a different canonical origin and remain intact;
     // new rows carry their Markdown detail on insert, pinned rows refresh only from their preimage.
     const timelineRows = [

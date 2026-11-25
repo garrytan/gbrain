@@ -457,8 +457,8 @@ async function memberSourceCmd(engine: BrainEngine, args: string[], json: boolea
       return print(json, r, () => [
         `${r.applied ? 'Bound' : r.changed ? 'Would bind' : 'Already bound:'} ${r.binding.source_id} to ${r.binding.member_id}`,
         `  Owners of ${r.binding.source_id}: ${r.owners.join(', ')}`,
-        `  Attested calls for anyone else, and every scope read, stop reading ${r.binding.source_id}; it is read only where a credential already grants it.`,
-        ...(r.changed && !r.applied ? ['Apply without --dry-run.'] : r.applied ? ['Takes effect on the next attested call.'] : [])]);
+        `  Attested calls for anyone else, every scope read, and keys bound to other members (not the owner) with no source list stop reading ${r.binding.source_id}; a key whose source list names it keeps reading it.`,
+        ...(r.changed && !r.applied ? ['Apply without --dry-run.'] : r.applied ? ['Takes effect on the next call.'] : [])]);
     }
     case 'remove': {
       if (!member || !source) throw usageError('access member source remove needs a member and a source.', 'gbrain access member source remove <id> <source> [--yes]');

@@ -8,6 +8,7 @@ import type { BodyManifestMeta, BodyManifestOutline, BodyManifestRow, ExportPage
 import type { BriefEntityPageOpts, BriefEntityPageRow, ReflexPageMatch, ReflexPageRow, ReflexScope } from '../engine-sql/reflex-reads.ts';
 import type * as BriefReadsSql from '../engine-sql/brief-reads.ts';
 import type * as EmbeddingCatalogSql from '../engine-sql/embedding-catalog.ts';
+import type * as ChronicleReadsSql from '../engine-sql/chronicle-reads.ts';
 import type { EntityAnchoredPages, EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, FuzzyEntityCandidateRow, IgnoredLabelPageRow, InboundLinkerCountRow, LivePageTypeRow, MentionDueQuery, MentionIndexRecount, MentionIndexStatusRow, NameVariantCandidateQuery, NameVariantCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, SlugPatternPageRow, TextMentionPageRow, TrigramCandidateQuery, TrigramCandidateRow } from '../engine-sql/entity-reads.ts';
 import type { ExactBatchRow, ExactScanOpts } from '../search/exact-scan.ts';
 import type { ExactIdentityRow, ExactIdentityStatementOpts } from '../engine-sql/exact-identity.ts';
@@ -27,6 +28,8 @@ import type { PurgedSlugStoreRows } from '../engine-sql/purge-slug-stores.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 
 export interface ReadStatementMembers {
+  /** revert_version: the whole row of version `versionId` of page `pageId`, or null. Reads page_versions. */
+  readPageVersionRow(versionId: number, pageId: number): Promise<import('../page-state/version-types.ts').PageVersion | null>;
   // Read-command statements (engine-sql/cli-reads-ops.ts). Each runs the statement its op ran through executeRaw.
   /**
    * One exact-phrase scan batch: the next `batchPages` in-scope pages after `afterPageId`, in id order, with their
@@ -355,6 +358,10 @@ export interface ReadStatementMembers {
   deleteTakesByIds(ids: readonly number[]): Promise<void>;
   /** The id of the page's take at `rowNum`, or null. */
   findTakeId(pageId: number, rowNum: number): Promise<number | null>;
+  /** One page batch of `chronicle-backfill`: chronicle-shaped live pages after `q.afterId`, in id order (engine-sql/chronicle-reads.ts). */
+  readChronicleBackfillBatch(q: ChronicleReadsSql.ChronicleBackfillBatchQuery): Promise<ChronicleReadsSql.ChronicleBackfillPage[]>;
+  /** The distinct holders of the page's takes at `rowNums`, in no set order. */
+  listTakeHoldersAtRows(pageId: number, rowNums: readonly number[]): Promise<string[]>;
   /** Resolved takes stamped `mcp:` by the MCP server, in the caller's source and holder scope. */
   countMcpResolvedTakes(spec: McpResolvedSpec): Promise<number>;
   /** A holder's 25 heaviest active resolved takes (the calibration pattern drill-down). */

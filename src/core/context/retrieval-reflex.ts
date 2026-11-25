@@ -640,11 +640,15 @@ function wholeWordIncludes(haystack: string, needle: string): boolean {
   return new RegExp(`(^|\\W)${esc}(\\W|$)`).test(haystack);
 }
 
+/** How an agent on the starter tool list (which does not list get_page) reaches the call a pointer names. */
+export const GET_PAGE_REACH = 'If get_page is not in your tool list, call request_tools {tools: ["get_page"]} first; if it still is not callable, this connection cannot open pages, so say that rather than answer from memory.';
+
 export function renderPointerBlock(pointers: ReflexPointer[]): string {
   const lines = [
     '## Brain pages mentioned this turn',
     'You referenced entities with existing brain pages. Open the page before relying on',
     'details — do not answer from memory.',
+    GET_PAGE_REACH,
     '',
   ];
   for (const p of pointers) lines.push(renderPointerLine(p));
@@ -659,7 +663,7 @@ export function renderPointerBlock(pointers: ReflexPointer[]): string {
 export function renderPointerLine(p: Pick<ReflexPointer, 'display' | 'slug' | 'synopsis' | 'trust_tier' | 'origin' | 'unconfirmed'>): string {
   const trusted = p.trust_tier ? ` ${renderTrustedInline(p.synopsis, { trust_tier: p.trust_tier, origin: p.origin ?? 'legacy', ...(p.unconfirmed ? { unconfirmed: true as const } : {}) })}` : '';
   const syn = p.trust_tier ? (trusted ? ` —${trusted}` : '') : p.synopsis ? ` — ${p.synopsis}` : '';
-  return `- **${p.display}** → \`${p.slug}\`${syn} (use get_page before relying on details)`;
+  return `- **${p.display}** → \`${p.slug}\`${syn} (use get_page {slug: ${JSON.stringify(p.slug)}} before relying on details)`;
 }
 
 /**

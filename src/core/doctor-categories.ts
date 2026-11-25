@@ -90,7 +90,7 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'trust_release_unpreviewed_fields',
   // Held writes the v333 upgrade could not tie to one page (doctor/checks/write-gate-hold-ambiguous.ts).
   'write_gate_hold_ambiguous',
-  // Held writes whose page was renamed or removed (doctor/checks/write-gate-holds-stranded.ts).
+  // Held writes no live page matches: held for a soft-deleted page, or for no page (doctor/checks/write-gate-holds-stranded.ts).
   'write_gate_holds_stranded',
   'credential_projection_pending',
   'derived_visibility',
@@ -284,6 +284,10 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'person_title_duplicates',
   // plan autoplan-20261117192252 PR 1: likely duplicate person and company pages (read-only, gbrain dedupe --preview).
   'entity_duplicates',
+  // GST-3609 PR C: the person links gbrain dedupe auto --apply made in the last 24 hours (informational, always ok).
+  'dedupe_auto_links',
+  // Nightly learning: the newest learning_derive run and the kept/undone share of the note (doctor/checks/learning-note.ts).
+  'learning_note',
   // Git-canonical G1: the database compared with the commit at HEAD per source, informational (doctor/checks/db-ahead-of-git.ts).
   'db_ahead_of_git',
   // Git-canonical G3: how far each strict source's index trails HEAD (doctor/checks/git-index-lag.ts).
@@ -316,6 +320,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'slug_path_mismatch',
   // #6729: inexact renames whose identity sync did not keep, until the pair gets a disposition (doctor/checks/rename-identity-downgrades.ts).
   'rename_identity_downgrades',
+  // Pages stored under an older spelling of their name, until `gbrain repair slug-spelling` moves them (doctor/checks/legacy-slug-spellings.ts).
+  'legacy_slug_spellings',
   // #6609: live pages of a classic checkout whose recorded file a full sync would not find (doctor/checks/missing-recorded-files.ts).
   'missing_recorded_files',
   // #7130: soft-deleted pages a managed sync removed although Git never held their file (doctor/checks/uncommitted-sync-deletions.ts).

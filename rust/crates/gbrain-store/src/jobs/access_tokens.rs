@@ -389,6 +389,11 @@ impl TokenRecord {
             "private_pages": self.private_pages,
             "private_facts": self.private_facts,
             "member_id": self.member_id,
+            "source_grant": self.source_grant,
+            "source_id": self.source_id,
+            "federated_read": self.federated_read,
+            "grant_revision": self.grant_revision,
+            "read_shared_revision": self.read_shared_revision,
         })
     }
 }
@@ -463,13 +468,33 @@ impl Store {
 
     /// `readActiveAccessTokenByHash(hash)`: the whole row (`SELECT *`) of the token not revoked with this hash, or None,
     /// for the bearer checks. The columns not kept read as the table's defaults (NULL, and `'none'` for the two private
-    /// grants). The row leaves out `token_hash`: the caller passed it, and no member returns a hash.
+    /// grants). The row leaves out `token_hash`: the caller passed it, and no member returns a hash. A record that
+    /// cannot be read is skipped, so one corrupt record does not refuse other sign-ins, unless it could be the token
+    /// asked for: a JSON record whose `token_hash` is this hash, or a record that is not JSON at all and whose bytes
+    /// hold this hash. Then the read fails closed.
     pub fn read_active_access_token_by_hash(&self, hash: &str) -> Result<Option<Value>> {
         let read = self.read()?;
-        Ok(all_tokens(&*read)?
-            .into_iter()
-            .find(|t| t.revoked_at.is_none() && t.token_hash == hash)
-            .map(|t| t.whole_row()))
+        let (mut found, mut target_unreadable) = (None, None);
+        scan_prefix(&*read, &prefix(TOKEN), false, &mut |_, v| {
+            match serde_json::from_slice::<TokenRecord>(v) {
+                Ok(t) if t.revoked_at.is_none() && t.token_hash == hash => found = Some(t),
+                Ok(_) => {}
+                Err(e) => {
+                    let is_target = match serde_json::from_slice::<Value>(v) {
+                        Ok(j) => j.get("token_hash").and_then(Value::as_str) == Some(hash),
+                        Err(_) => {
+                            !hash.is_empty() && v.windows(hash.len()).any(|w| w == hash.as_bytes())
+                        }
+                    };
+                    if is_target {
+                        target_unreadable =
+                            Some(StoreError::invalid(format!("unreadable token record: {e}")));
+                    }
+                }
+            }
+            true
+        })?;
+        target_unreadable.map_or(Ok(found.map(|t| t.whole_row())), Err)
     }
 
     /// `convertLegacyAccessTokenGrant(id, columns)`: the first-read conversion of a token still on the legacy shape. A
@@ -605,22 +630,27 @@ impl Store {
     /// 60 seconds (`last_used_at IS NULL OR last_used_at < now() - interval '60 seconds'`), in one write. `unified` is
     /// the statement that only touches a row whose `source_grant` is not NULL: a row still on the legacy shape is left
     /// to its first-read conversion. A token no row has, or a revoked one, is stamped the same as the statement does
-    /// (it has no revoked filter); nothing changes for an id no token has.
+    /// (it has no revoked filter); nothing changes for an id no token has. Read first: nothing due opens no write; the
+    /// write re-checks.
     pub fn touch_access_token_last_used(&self, id: &str, unified: bool) -> Result<()> {
         let id = id.to_ascii_lowercase();
+        let due = |t: &TokenRecord, now: i64| {
+            !(unified && t.source_grant.is_none())
+                && !t.last_used_at.is_some_and(|last| last >= now - 60_000_000)
+        };
+        let peek = get_json::<TokenRecord>(&*self.read()?, &token_key(&id))?;
+        if !peek.is_some_and(|t| due(&t, self.env.now_micros())) {
+            return Ok(());
+        }
         self.write(|tx| {
-            let Some(mut t) = get_json::<TokenRecord>(&*tx, &token_key(&id))? else {
-                return Ok(());
-            };
-            if unified && t.source_grant.is_none() {
-                return Ok(());
-            }
             let now = self.env.now_micros();
-            if t.last_used_at.is_some_and(|last| last >= now - 60_000_000) {
-                return Ok(());
+            match get_json::<TokenRecord>(&*tx, &token_key(&id))? {
+                Some(mut t) if due(&t, now) => {
+                    t.last_used_at = Some(now);
+                    put_json(tx, &token_key(&id), &t)
+                }
+                _ => Ok(()),
             }
-            t.last_used_at = Some(now);
-            put_json(tx, &token_key(&id), &t)
         })
     }
 
@@ -791,5 +821,112 @@ impl Store {
         Ok(Value::Array(
             tokens.iter().map(TokenRecord::whole_row).collect(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kv::{Kv, KvRead, KvWrite};
+    use std::sync::{Arc, atomic::AtomicUsize, atomic::Ordering::SeqCst};
+
+    /// Counts the write transactions a store opens (test-only; a read opens none).
+    struct CountingKv(Arc<dyn Kv>, Arc<AtomicUsize>);
+    impl Kv for CountingKv {
+        fn snapshot(&self) -> Result<Box<dyn KvRead>> {
+            self.0.snapshot()
+        }
+        fn versioned_snapshot(&self) -> Result<(Box<dyn KvRead + Send>, u64)> {
+            self.0.versioned_snapshot()
+        }
+        fn begin_write(&self) -> Result<Box<dyn KvWrite>> {
+            self.1.fetch_add(1, SeqCst);
+            self.0.begin_write()
+        }
+        fn version(&self) -> Result<u64> {
+            self.0.version()
+        }
+    }
+
+    fn insert(s: &Store, hash: &str, grant: Option<&str>) -> String {
+        let row = json!({ "name": hash, "token_hash": hash, "source_grant": grant });
+        let row = serde_json::from_value(row).unwrap();
+        s.insert_access_token(&row).unwrap()
+    }
+
+    #[test]
+    fn an_unreadable_record_fails_the_sign_in_only_when_it_is_the_target() {
+        let s = crate::test_support::store();
+        insert(&s, "good", Some("default"));
+        let put = |bytes: &[u8]| s.write(|tx| tx.put(&token_key("bad"), bytes)).unwrap();
+        let by_hash = || s.read_active_access_token_by_hash("good");
+        for other in [&br#"{"token_hash":"other"}"#[..], b"\xff not json"] {
+            put(other);
+            assert_eq!(by_hash().unwrap().unwrap()["name"], json!("good"));
+        }
+        for target in [&br#"{"token_hash":"good"}"#[..], b"\xff good \xff"] {
+            put(target);
+            assert!(by_hash().unwrap_err().message.contains("unreadable"));
+        }
+        assert!(s.list_access_tokens().is_err(), "other readers stay strict");
+        // An empty hash names no token: a record that is not JSON is skipped, never matched by a zero-length window.
+        put(b"\xff not json");
+        assert_eq!(by_hash_of(&s, ""), None);
+    }
+
+    fn by_hash_of(s: &Store, hash: &str) -> Option<Value> {
+        s.read_active_access_token_by_hash(hash).unwrap()
+    }
+
+    /// The store clock, set by the test.
+    struct Clock(std::sync::atomic::AtomicI64);
+    impl crate::env::Env for Clock {
+        fn now_micros(&self) -> i64 {
+            self.0.load(SeqCst)
+        }
+        fn new_uuid(&self) -> String {
+            crate::SystemEnv.new_uuid()
+        }
+    }
+
+    #[test]
+    fn a_touch_that_writes_nothing_opens_no_write_transaction() {
+        let writes = Arc::new(AtomicUsize::new(0));
+        let kv = CountingKv(crate::test_support::mem_kv(), writes.clone());
+        let clock = Arc::new(Clock(std::sync::atomic::AtomicI64::new(
+            1_700_000_000_000_000,
+        )));
+        let s = Store::open_kv(Arc::new(kv), clock.clone(), crate::OpenOptions::default()).unwrap();
+        let (id, legacy) = (insert(&s, "a", Some("default")), insert(&s, "b", None));
+        let base = writes.load(SeqCst);
+        let touch = |id: &str| s.touch_access_token_last_used(id, true).unwrap();
+        touch("00000000-0000-4000-8000-000000000000");
+        touch(&legacy);
+        assert_eq!(writes.load(SeqCst) - base, 0, "missing id, no source_grant");
+        touch(&id);
+        assert_eq!(writes.load(SeqCst) - base, 1, "a due touch writes once");
+        touch(&id);
+        assert_eq!(writes.load(SeqCst) - base, 1, "inside 60 s: no write");
+        // At exactly 60 s the stamp is not due (`last_used_at < now() - interval '60 seconds'`).
+        clock.0.fetch_add(60_000_000, SeqCst);
+        touch(&id);
+        assert_eq!(writes.load(SeqCst) - base, 1, "at 60 s: no write");
+        // Past the debounce the token is stamped again, with the new time, in exactly one write; the id is compared
+        // lower-cased, so an upper-case id finds it.
+        clock.0.fetch_add(1, SeqCst);
+        touch(&id.to_ascii_uppercase());
+        assert_eq!(writes.load(SeqCst) - base, 2, "past 60 s: one more write");
+        // Without `unified` a row with no source_grant is stamped too.
+        s.touch_access_token_last_used(&legacy, false).unwrap();
+        assert_eq!(
+            writes.load(SeqCst) - base,
+            3,
+            "not unified: the legacy row is stamped"
+        );
+        let row = by_hash_of(&s, "a").unwrap();
+        assert_eq!(
+            row["last_used_at"].as_str().map(str::to_owned),
+            Some(iso(clock.0.load(SeqCst)))
+        );
     }
 }

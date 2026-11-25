@@ -203,6 +203,7 @@ in its module header:
 | `0x0E` | `TELEMETRY_CHRONICLE_ROW` | `chronicle_page_state` (a page or source delete removes its rows, `chronicle_state.rs`) |
 | `0x0F` | `TELEMETRY_CHRONICLE_RESERVATION` | `chronicle_judge_reservations` (read by `countRecentChronicleReservations`) |
 | `0x10` | `TELEMETRY_CHRONICLE_SEQUENCE` | the `chronicle_judge_reservations` id counter |
+| `0x11` | `TELEMETRY_ACCESS_READ_LOG` | `access_read_log` (`access_read_log.rs`) |
 
 `eval_candidates` stays with eval_capture (`Z`). A new telemetry table takes the next unused sub-tag in a reviewed
 change to this table and to `keys.rs`.
@@ -581,8 +582,9 @@ store keeps the same rule in `pages.rs`.
   `write_guards.rs`, and `bindPageOrigin` runs the same origin check as `putPage`. See
   [`rust/docs/store/write-guards.md`](../../rust/docs/store/write-guards.md).
 - **Page visibility guards.** A remote page write's reads of whether the caller sees a page, which of a list of
-  pages it reads, the opening probe of its visibility check, and a stored writer's slug fence are typed engine members
-  (`readPageHiddenFromCaller`, `readCallerPageAccess`, `readWriteVisibilityProbe`, capability `pages`;
+  pages it reads, the opening probe of its visibility check, whether a live page fails the privacy part alone, and a
+  stored writer's slug fence are typed engine members (`readPageHiddenFromCaller`, `readCallerPageAccess`,
+  `readWriteVisibilityProbe`, `readPagePrivacyHidden`, capability `pages`;
   `readWriterSlugFence`, capability `persistence_journal`; SQL in
   `engine-sql/page-visibility.ts`). The store answers the page reads in `page_visibility.rs` and the fence from
   its local writer registration; an OAuth client's fence and an unrendered caller policy refuse. See
@@ -1015,11 +1017,11 @@ Facts and their supersession chains.
     (`facts/repair_previews.rs`); the apply of each still writes through raw SQL. Pinned by
     `test/engine-parity/repair-facts-previews.test.ts`.
     The previews of `fact-claim-dates` (`listFactsOnValidDay`), `url-clone-fences` (`readLivePageByPath`) and `purged-page-facts`
-    (`listPurgedPageFactCandidates`) are typed the same way, and the `captured-facts` preview was already served. The applies of
-    `captured-facts`, `url-clone-fences` and `purged-page-facts` stop on a Rust brain by name (`engine_capability_missing`, raw_sql:
-    "repair captured-facts page write", "repair url-clone-fences page write", "repair purged-page-facts expire") before their first
-    write, until the page write door and the fact expiry move to typed members. Pinned by `test/engine-parity/repair-facts-previews-2.test.ts`.
-    The scan of `facts-home` (`listFactsHomeCandidates`, `listHeldHomeRows`, `listOrphanedFenceRows`) and `readFacts`' snapshots (`readFactSnapshots`) are served from `facts/repair_home.rs`, so a strict source's preview of facts that need no folder-access read is equal on Rust; `holdingPageFor` rethrows a capability refusal rather than reading it as `access_unreadable`. `visibility` (except its `facts` class) and `open-facts` stop by name before any read (`engine_capability_missing`, raw_sql: "repair visibility privacy scan", "repair open-facts privacy scan"), as their reads build privacy predicates the store does not carry; the applies of `facts-home` and `visibility` stop at "repair facts-home page write" and "repair visibility page write". Pinned by `test/engine-parity/repair-facts-previews-3.test.ts`.
+    (`listPurgedPageFactCandidates`) are typed the same way, and the `captured-facts` preview was already served. Their applies
+    are typed too (`engine-sql/repair-applies.ts`, `rust/docs/store/repair-applies.md`), so they run on a Rust brain; a
+    `fact-claim-dates` page move stops by name ("repair fact-claim-dates page write"). Pinned by
+    `test/engine-parity/repair-facts-previews-2.test.ts`.
+    The scan of `facts-home` (`listFactsHomeCandidates`, `listHeldHomeRows`, `listOrphanedFenceRows`) and `readFacts`' snapshots (`readFactSnapshots`) are served from `facts/repair_home.rs`, so a strict source's preview of facts that need no folder-access read is equal on Rust; `holdingPageFor` rethrows a capability refusal rather than reading it as `access_unreadable`. The `visibility` and `open-facts` previews are typed (`engine-sql/visibility-scans.ts`, `open-facts-scans.ts`, `open-twins.ts`); a `visibility` page item or fenced fact stops at "repair visibility page write" and the `open-facts` apply at "repair open-facts privacy scan". Pinned by `test/engine-parity/repair-facts-previews-3.test.ts`.
   - Held fence cells. The world-only fact read's check of which facts-fence row lines a caller may not see
     (`eligibility/stamp.ts` `heldFenceLines`, under get_page, get_chunks, think and search_exact) is the typed member
     `listHeldFenceCells` (capability `facts`, SQL in `engine-sql/cli-reads-ops.ts`, one statement for PGLite and

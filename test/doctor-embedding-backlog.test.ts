@@ -34,6 +34,7 @@ import { runMigrations } from '../src/core/migrate.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { installFixtureChunks } from './helpers/page-projection.ts';
 import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 async function runCheck(ctx: DoctorContext): Promise<Check[]> {
   return await embeddingsEntry.run(ctx) as Check[];
@@ -166,12 +167,25 @@ describe('embeddings doctor check: backlog age', () => {
     expect((await runCheck(other))[0].status).toBe('ok');
   });
 
+  // The keyless fix comes from loadConfig() (check-fix.ts keylessEnablementFix): with no config it is absent, with one it
+  // is the user-consented enablement (`gbrain embeddings enable`, which may name paid consent), never the paid catch-up
+  // drain. A DATABASE_URL in the environment makes loadConfig return a config, so both states are pinned here instead of
+  // read from whatever environment the run inherits.
   test('a keyless brain is info even with an old backlog', async () => {
-    const [check] = await runCheck(ctxFor(0, 50_000, { embedding_disabled: 'true' }, { ageS: 90 * DAY }));
-    expect(check.status).toBe('ok');
-    expect(check.severity).toBe('info');
-    expect(check.readiness_state).toBe('disabled_by_choice');
-    expect(check.fix?.consent ?? []).not.toContain('paid');
+    const keyless = async () => {
+      const [check] = await runCheck(ctxFor(0, 50_000, { embedding_disabled: 'true' }, { ageS: 90 * DAY }));
+      expect(check.status).toBe('ok');
+      expect(check.severity).toBe('info');
+      expect(check.readiness_state).toBe('disabled_by_choice');
+      expect(check.message).not.toContain('catch-up');
+      expect(check.fix?.argv ?? []).not.toContain('--catch-up');
+      expect((check.fix?.argv ?? []).slice(0, 2)).not.toEqual(['gbrain', 'embed']);
+      return check;
+    };
+    expect((await withEnv({ DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, keyless)).fix).toBeUndefined();
+    const fix = (await withEnv({ DATABASE_URL: 'postgresql://keyless-doctor-probe.invalid/gbrain', GBRAIN_DATABASE_URL: undefined }, keyless)).fix!;
+    expect(fix.argv?.slice(0, 3)).toEqual(['gbrain', 'embeddings', 'enable']);
+    expect(fix.user_message).toBeTruthy();
   });
 });
 

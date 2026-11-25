@@ -493,6 +493,9 @@ fn slug_key(
         "eval_candidates.retrieved_slugs" => count_retrieved_slug(read, source_id, slug),
         "files" => crate::raw_files::purge::count_detached_named(read, source_id, slug),
         "write_gate_holds" => crate::trust::write_gate::count_for_slug(read, source_id, slug),
+        "mention_gazetteer_entries" => {
+            crate::mention_state::count_for_target(read, source_id, slug)
+        }
         other => Err(invalid(format!("{op}: the {other} rows are not kept"))),
     }
 }

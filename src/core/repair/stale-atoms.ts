@@ -46,7 +46,6 @@ import { stampDerivedRetirement } from '../persistence/derived-retirement-hold.t
 import { publishGeneration } from '../generations/publish.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
-import { requireRawSql } from '../rust-engine/errors.ts';
 
 export const STALE_ATOMS_RETIRED_BY = 'stale-atoms';
 export const STALE_ATOMS_INTENT = 'managed_maintenance_retire_stale_atoms';
@@ -144,9 +143,6 @@ async function retireStaleAtom(ctx: OperationContext, atom: StaleAtom): Promise<
   const row = (await atomGenerationAdapter.readItems(engine, key, [atom.slug])).get(atom.slug);
   if (!row?.live) return changed('the atom was removed');
   const approved = { retire: [atom.slug], retiredBy: STALE_ATOMS_RETIRED_BY, expect: { [atom.slug]: row.identityHash } } as const;
-  // The retirement publishes an atom generation and bumps the origin's atom ledger (lane 7's writer): an engine without
-  // raw SQL stops here, before it.
-  requireRawSql(engine, 'repair stale-atoms retirement');
   try {
     const session = await managedAtomSession(engine, atom.source_id);
     if (session) {

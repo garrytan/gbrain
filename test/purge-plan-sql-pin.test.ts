@@ -8,7 +8,7 @@
  *
  * Protects: each member's recorded text and params equal the old raw statement byte for byte (the texts below were
  * recorded from the raw callers before the move, with the byte-order sorts and the nearest-fact tie-break the main join added
- * to the page-body scan, the nearest-fact read and the probe item list), and the whole plan plus dry run still sends the same 99 statements,
+ * to the page-body scan, the nearest-fact read and the probe item list), and the whole plan plus dry run still sends the same 101 statements,
  * in the same order and on the same lane (pool or transaction), as a sha256 of their texts, params and lanes.
  * Fails when a member reorders a clause, renumbers a placeholder, binds a value as text or moves a probe off the
  * transaction.
@@ -135,10 +135,15 @@ test('listPurgeProbeItems names the rows of a named probe, 20 at most, in byte o
   expect(last()).toEqual({ text: `SELECT item FROM (${select}) probe_items ORDER BY item COLLATE "C" LIMIT 20`, params: OLD.s49.params });
 });
 
-/** sha256 of the 99 statements (text, params, lane) the plan and dry run below sent before the move. */
-const SEQUENCE_SHA256 = "d1dfcd0ec350e0c269f870ec0716e95e794087c5fbc9a4b42d4185104c189276";
+/**
+ * sha256 of the 101 statements (text, params, lane) the plan and dry run below send: the 99 recorded before the move, plus
+ * the learning_items.subject_slug probe (its statement_timeout and its bounded count, on the transaction, after ingest_log)
+ * that master #10193 added to src/core/deletion-inventory.ts. The withdrawal-discovery key read also matches
+ * gbrain_fact_fingerprint_v2 (migration v341, segment-pending-stamp), which changes the digest.
+ */
+const SEQUENCE_SHA256 = "cfd632242d68cb5af88173307fdf3d06ff5ff6f8c50e141f3ca62682012d95cc";
 
-test('the plan, dry run and request finders send the same 99 statements as before, in order, on the same lanes', async () => {
+test('the plan, dry run and request finders send the same 101 statements as before (99 plus the learning_items probe), in order, on the same lanes', async () => {
   const { engine, fake } = recordingEngine(stmt => {
     const t = stmt.text;
     if (t.startsWith('SELECT DISTINCT k.id,k.page_id FROM takes')) return [{ id: 1, page_id: 9 }];
@@ -154,6 +159,6 @@ test('the plan, dry run and request finders send the same 99 statements as befor
   await findRequestsHoldingStagings(engine, 'src-a', ['00000000-0000-0000-0000-0000000000aa']);
   await derivedRowsFrom(engine, [{ table: 'facts', id: '7' }]);
   const sent = fake.statements().map(s => ({ text: s.text, params: s.params, lane: s.lane }));
-  expect(sent.length).toBe(99);
+  expect(sent.length).toBe(101);
   expect(createHash('sha256').update(JSON.stringify(sent)).digest('hex')).toBe(SEQUENCE_SHA256);
 });

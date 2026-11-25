@@ -23,6 +23,9 @@ Under contract v1 an `error` value never changes. Where a surface sends a legacy
 | `invalid_params` | `not_found` | The requested resource does not exist or is not visible to this caller. |
 | `page_identity_changed` | `page_not_found` | No page with that slug exists in the selected source. |
 | `invalid_params` | `page_too_large_for_inline` | The whole page does not fit one result on this connection, so get_page did not return its body. |
+| `invalid_params` | `profile_entity_not_self` | remember with facet named an entity other than the caller's own profile, or came from a credential that has no profile; nothing was saved. |
+| `invalid_params` | `profile_facet_unknown` | remember's facet is not one of the profile facets (size.<item>, brand, diet, allergy, style, constraint, schedule, household, other); nothing was saved. |
+| `invalid_params` | `profile_metric_reserved` | remember's claim_metric used the reserved profile. prefix, or was passed together with facet; nothing was saved. |
 | `invalid_params` | `result_too_large` | The tool's result is larger than this connection can carry in one response, so it was replaced by this error; nothing was cut. |
 | `invalid_params` | `revision_changed` | The page changed since the cursor or chunk id was issued, so that position no longer names the same text. |
 | `permission_denied` | `trusted_local_only` | The operation runs only from the trusted local CLI on the brain host; no MCP connection can call it. |
@@ -285,6 +288,16 @@ More: [docs/guides/retrieval-feedback.md#ambiguous_ref](../../docs/guides/retrie
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | This name belongs to multiple authorized sources. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### ambiguous_slug
+
+<a id="ambiguous_slug"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Sent as the `detail` of an invalid_params refusal: the slug asked for names no stored page exactly, and two pages stored under older spellings both normalize to it. | A read answers the page the exact input names; with two stored spellings (for example one decomposed, one composed, both with capitals) there is no single page to answer, so the refusal lists both. | Ask for one of the stored spellings the refusal names exactly. gbrain repair slug-spelling --source <id> lists the pair as needs_human so a person can merge them. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/repair.md#slug-spelling](../../docs/guides/repair.md#slug-spelling)
 
 ### answer_not_yours
 
@@ -1674,7 +1687,15 @@ More: [docs/guides/repair.md#managed-sync-orphans](../../docs/guides/repair.md#m
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| gbrain dedupe confirm, reject or reconcile refused because this brain's duplicate decisions are kept in git in its home source and this host sees no git work tree for that source, so nothing was written. | On a brain with a repository git is the record of every duplicate decision and the database only its projection; a decision written to the database alone would be dropped by the next sync of the checkout and lost with the database. | Run the command on the host that holds the checkout, or restore the checkout and run gbrain dedupe reconcile there. Run: gbrain sources list --json | user | `gbrain doctor --json` | 1 | no |
+| gbrain dedupe confirm, reject, decide, undo or reconcile refused because this brain's duplicate decisions are kept in git in its home source and this host sees no git work tree for that source, so nothing was written. | On a brain with a repository git is the record of every duplicate decision and the database only its projection; a decision written to the database alone would be dropped by the next sync of the checkout and lost with the database. | Run the command on the host that holds the checkout, or restore the checkout and run gbrain dedupe reconcile there. Run: gbrain sources list --json | user | `gbrain doctor --json` | 1 | no |
+
+### dedupe_decision_unknown
+
+<a id="dedupe_decision_unknown"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain dedupe undo was given a decision id that no recorded duplicate decision has, so nothing was removed. | A decision id is a hash of the decision's member pages, printed by gbrain dedupe decide and stored as .gbrain/identity/<id>.md or a database row; removing only some of the ids given would leave a half-undone choice. | Pass the ids gbrain dedupe decide printed for the line to undo (each line prints its undo command). Run: gbrain entity-identity-list --json | agent | `repeat the read that failed` | 1 | no |
 
 ### dedupe_exa_off
 
@@ -3598,6 +3619,16 @@ Reasons: `live_holder`, `network_filesystem`, `filesystem_unverified`.
 
 More: [docs/ENGINES.md#legacy-pglite-lock](../../docs/ENGINES.md#legacy-pglite-lock)
 
+### legacy_slug_spelling
+
+<a id="legacy_slug_spelling"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Sent as the `detail` of an invalid_params refusal: a put by the exact older spelling (capitals, or decomposed Unicode) of a stored page is refused, and nothing was changed. | Writes store slugs in the normal form (lowercase, Unicode NFC), so a put by the older spelling would create a second page that prints the same name or move the stored one. An import of the page's file is held for the same reason. The page stays readable by either spelling and takes small edits by its stored spelling. | Preview the move with gbrain repair slug-spelling --source <id> and apply the command it prints after the owner agrees. On a managed brain the repair is unavailable and a person has to decide how to rename the page. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/repair.md#slug-spelling](../../docs/guides/repair.md#slug-spelling)
+
 ### legacy_twin_mass_merge_refused
 
 <a id="legacy_twin_mass_merge_refused"></a>
@@ -3734,7 +3765,7 @@ More: [docs/guides/write-refusals.md#managed_pull_skipped](../../docs/guides/wri
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| gbrain repair rename-identity cannot carry a page identity on a managed source; nothing was written. | On a managed brain page tables change only through coordinated publications, and the carry is a classic-source maintenance transaction, so on a managed source the remedy can only close the pair. | Release the purge hold without carrying identity: preview gbrain repair rename-identity --source <id> --slug <new-slug> --close, then run the apply command it prints after the user agrees; or keep the old page as its own page with gbrain restore <old-slug> --source-id <id> --force. | agent | `repeat the read that failed` | 1 | no |
+| A gbrain repair that rewrites page rows (rename-identity carry, slug-spelling) cannot run on a managed brain; nothing was written. | On a managed brain page tables change only through coordinated publications, and these repairs are classic-brain maintenance transactions. For rename-identity the remedy is to close the pair; for slug-spelling a person has to decide how to rename the page (it stays readable and editable by its stored spelling), and the refusal names no repair command that would refuse again. | rename-identity: release the purge hold without carrying identity: preview gbrain repair rename-identity --source <id> --slug <new-slug> --close, then run the apply command it prints after the user agrees; or keep the old page as its own page with gbrain restore <old-slug> --source-id <id> --force. slug-spelling: tell the owner a person is needed; nothing to run. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/repair.md#rename-identity](../../docs/guides/repair.md#rename-identity)
 
@@ -4558,6 +4589,26 @@ More: [docs/guides/repair.md#preview-changed](../../docs/guides/repair.md#previe
 
 More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
 
+### profile_entity_not_self
+
+<a id="profile_entity_not_self"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| remember with facet named an entity other than the caller's own profile, or came from a credential that has no profile; nothing was saved. | A profile fact is about the person the credential speaks for. A member's profile is its own member page, so a member credential never writes a profile fact onto another page (the owner's included); a credential that is neither the owner nor a member, such as one asserting an audience, has no profile at all. | Omit entity to save the fact on your own profile, or drop facet to save an ordinary fact about that entity. | agent | `repeat the read that failed` | 2 | no |
+
+More: [docs/guides/profile.md#who-a-profile-belongs-to](../../docs/guides/profile.md#who-a-profile-belongs-to)
+
+### profile_facet_unknown
+
+<a id="profile_facet_unknown"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| remember's facet is not one of the profile facets (size.<item>, brand, diet, allergy, style, constraint, schedule, household, other); nothing was saved. | Profile facts are typed by a fixed facet list so every connected agent reads the same profile shape; an unlisted facet would be a facet no reader knows. | Pass one of the listed facets (size takes an item, e.g. size.shoe), or "other", or omit facet to save an ordinary fact. | agent | `repeat the read that failed` | 2 | no |
+
+More: [docs/guides/profile.md#facets](../../docs/guides/profile.md#facets)
+
 ### profile_incompatible
 
 <a id="profile_incompatible"></a>
@@ -4565,6 +4616,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The stored profile is incompatible with this operation. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### profile_metric_reserved
+
+<a id="profile_metric_reserved"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| remember's claim_metric used the reserved profile. prefix, or was passed together with facet; nothing was saved. | The profile.<facet> metric is validated in one place and set only by facet, so no hand-written metric, import or extractor can create a profile fact outside the facet list. | Pass facet (e.g. facet: "diet") instead of a profile. claim_metric; claim_value, claim_unit and claim_period may still ride with it. | agent | `repeat the read that failed` | 2 | no |
+
+More: [docs/guides/profile.md#facets](../../docs/guides/profile.md#facets)
 
 ### projection_owner_resident
 
@@ -4964,7 +5025,7 @@ More: [docs/guides/repair.md#recovery-prior-stage-unavailable](../../docs/guides
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| An earlier write left state that must be inspected and recovered before new writes. | Details name the exit when there is one: physical_root_device_changed (the checkout's filesystem device number changed; re-stamped by itself when ownership verifies) and physical_root_directory_changed (the directory at the recorded path was recreated, or its birth time drifted beyond 1 µs; the relocated-root self-transfer, `transfer prepare/accept <source> --self-transfer --confirm-relocated-root`, re-stamps it) and physical_root_moved (the checkout was moved to a new path or its parent folder renamed; `sources add`, `set-path` and `writer claim`, dry runs included, name the recorded path and the symlink-then-set-path or move-back exit, and a remote caller sees no path). All three are explained in docs/guides/write-refusals.md. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
+| An earlier write left state that must be inspected and recovered before new writes. | Details name the exit when there is one: physical_root_device_changed (the checkout's filesystem device number changed; re-stamped by itself when ownership verifies) and physical_root_directory_changed (the directory at the recorded path was recreated, or its birth time drifted beyond 1 µs; the relocated-root self-transfer, `transfer prepare/accept <source> --self-transfer --confirm-relocated-root`, re-stamps it) and physical_root_moved (the checkout was moved to a new path or its parent folder renamed; `sources add`, `set-path` and `writer claim`, dry runs included, name the recorded path and the symlink-then-set-path or move-back exit, and a remote caller sees no path) and ownership_reservation_missing (the reservation beside the checkout is gone while its stamp still identifies this exact directory; the plain self-transfer, `transfer prepare/accept <source> --self-transfer` without --confirm-relocated-root, re-creates it, and refuses with checkout_git_missing while a Git-synced checkout has also lost its .git). All four are explained in docs/guides/write-refusals.md. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
 
 ### recovery_version_unsupported
 
@@ -5135,6 +5196,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 | Google connect credential error: relay unreachable. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
 
 More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
+
+### rename_file_first
+
+<a id="rename_file_first"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain repair slug-spelling did not move a page because its file in the source's checkout is not at the path of the normal slug (or is missing); nothing was written. | Moving only the database row would split the page from its file, and the next sync would create a second page from the file. Renaming the file in Git first lets sync carry the page identity to the new path. | git mv the file to the path of the normal slug, commit, and sync; then preview again with gbrain repair slug-spelling --source <id>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/repair.md#slug-spelling](../../docs/guides/repair.md#slug-spelling)
 
 ### rename_held
 
@@ -5366,9 +5437,9 @@ More: [docs/guides/troubleshooting.md#runtime-build-skew](../../docs/guides/trou
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The Rust engine addon on this machine does not match what this gbrain release expects (checksum, engine_abi, engine_build or target), so it was not used and gbrain wrote nothing. | A different addon build could read or write the brain with a different on-disk format, so only the addon the running release names, with the checksum in its manifest, is loaded. A file that fails the check is left as it was. | Rebuild the addon with bun run rust:build and point GBRAIN_RUST_ENGINE_ADDON at the path it prints, or install the gbrain release that matches the addon, or switch engine in the gbrain config back to pglite or postgres. | user | `gbrain doctor --json` | 1 | no |
+| The Rust engine addon on this machine does not match what this gbrain release expects (checksum, engine_abi, engine_build or target), so it was not used and gbrain wrote nothing. | A different addon build could read or write the brain with a different on-disk format, so only the addon the running release names, with the checksum in its manifest, is loaded. A file that fails the check is left as it was. | Run gbrain engine install rust to replace it with the addon this release names. verification_failed means a downloaded addon or manifest did not match its checksum or build attestation: it was deleted, the installed addon was left as it was, and there is no bypass, so report it. For a build you made, rebuild it with bun run rust:build and point GBRAIN_RUST_ENGINE_ADDON at the path it prints. Or switch engine in the gbrain config back to pglite or postgres. | user | `gbrain doctor --json` | 1 | no |
 
-Reasons: `digest`, `engine_abi`, `engine_build`, `target`, `load_failed`.
+Reasons: `digest`, `engine_abi`, `engine_build`, `target`, `load_failed`, `verification_failed`.
 
 ### rust_engine_addon_missing
 
@@ -5376,9 +5447,19 @@ Reasons: `digest`, `engine_abi`, `engine_build`, `target`, `load_failed`.
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The Rust engine is selected (engine: rust), but no addon for this gbrain release is installed on this machine, or no addon is published for this platform, so gbrain opened nothing and wrote nothing. | The Rust engine ships as a separate addon file kept in the gbrain home, checked against the checksum in this release's manifest before it loads. Without a checked addon the engine cannot open, and gbrain refuses before touching the brain. | Point GBRAIN_RUST_ENGINE_ADDON at an addon you built with bun run rust:build, or switch engine in the gbrain config back to pglite or postgres. | user | `gbrain doctor --json` | 1 | yes |
+| The Rust engine is selected (engine: rust), but no addon for this gbrain release is installed on this machine, or no addon is published for this platform, so gbrain opened nothing and wrote nothing. | The Rust engine ships as a separate addon file kept in the gbrain home, checked against the checksum in this release's manifest before it loads. Without a checked addon the engine cannot open, and gbrain refuses before touching the brain. | Run gbrain engine install rust to download and check the addon this release names (not_published means this release has none: use a release that does, or keep pglite or postgres; unsupported_target means no release has one for this platform). For a build you made, point GBRAIN_RUST_ENGINE_ADDON at it (bun run rust:build). Or switch engine in the gbrain config back to pglite or postgres. | user | `gbrain doctor --json` | 1 | yes |
 
-Reasons: `unsupported_target`, `not_installed`, `override_not_found`.
+Reasons: `unsupported_target`, `not_installed`, `override_not_found`, `not_published`, `fetch_failed`.
+
+### rust_snapshot_stopped
+
+<a id="rust_snapshot_stopped"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A Rust brain's snapshot did not run or did not finish, and nothing of it remains; `reason` says why. | A snapshot copies the whole brain at one committed generation while writers keep going. The owner runs one at a time (`busy`), stops it when its caller has gone or cancelled it (`cancelled`), when the disk of the target or of the brain falls below max(2 GiB, 5 % of the filesystem) (`disk_pressure`: the copy holds old pages of the brain until it ends, so it can grow the brain's file on a busy brain), or when it has run past its age budget (`age_budget`, 2 hours). The call ends only after the owner has released its read of the brain and removed what the copy wrote, so a caller may delete its scratch space once it sees this error. | Wait for a running snapshot to end, free disk space, or start the snapshot again when the brain is quieter. Run: gbrain doctor --json | agent | `repeat the read that failed` | 1 | yes |
+
+Reasons: `busy`, `cancelled`, `disk_pressure`, `age_budget`.
 
 ### rust_store_locked
 
@@ -6113,6 +6194,26 @@ More: [docs/guides/write-refusals.md#slug_page_mismatch](../../docs/guides/write
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | A managed sync of a subdirectory source ran under one slug-root mode while the source pins the other (sources.config.slug_root_mode), so its checkpoint did not advance. | At a subdirectory the two modes give different slugs (git-root keeps the subdirectory prefix, source-root does not), and the pin exists so a later sync never re-namespaces the source; the pages this run wrote already carry its mode. The pin changed after the run was discovered. A source rooted at its repository root never gets this code: both modes give it identical slugs, and its checkpoint keeps the pin it has. Older releases reported this refusal as revision_conflict. | Ask the user which mode the source keeps. To keep the mode the run used, set sources.config.slug_root_mode back to it and run gbrain sync --no-pull --source <id>; the refused checkpoint is retried by itself. To keep the new pin, preview gbrain repair managed-sync-orphans --source <id> (it lists the refused cursor as slug_mode_refused), apply it with the hash it prints, and run gbrain sync --no-pull --source <id>, which discovers the source again under the pin; the pages the refused run wrote keep their old slugs beside the new ones. Run: gbrain sync status --source '{source_id}' --json | user | `repeat the read that failed` | 1 | no |
+
+### slug_spelling_collision
+
+<a id="slug_spelling_collision"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain repair slug-spelling did not move a page because another page in the source already prints its normal name, or two stored spellings share it; nothing was written. | Moving the page would merge two pages, which is destructive and never done automatically. The preview lists each such page with the pages it collides with and the commands to compare them. | Compare the pages (gbrain get --source <id> -- <slug>), keep the content you want in one, soft-delete the other with gbrain delete <slug> --source-id <id>, then preview again with gbrain repair slug-spelling --source <id>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/repair.md#slug-spelling](../../docs/guides/repair.md#slug-spelling)
+
+### slug_spelling_encoding
+
+<a id="slug_spelling_encoding"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain repair slug-spelling did not move any page because the database's encoding is not UTF8; nothing was written. | Finding every stored spelling of a name compares composed Unicode text, which only a UTF8 database can evaluate; without it the repair could miss another page that prints the same name and merge two pages. | Move the brain to a database created with UTF8 encoding (gbrain doctor reports database_encoding), then preview again with gbrain repair slug-spelling --source <id>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/repair.md#slug-spelling](../../docs/guides/repair.md#slug-spelling)
 
 ### source_binding_required
 

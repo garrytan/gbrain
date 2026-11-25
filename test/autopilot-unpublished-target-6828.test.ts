@@ -117,6 +117,9 @@ function harness(label: string, opts: { spec?: string; cache?: string } = {}): H
     '  --version) echo "gbrain ${FAKE_INSTALLED_VERSION}"; exit 0;;',
     '  --help) exit "${FAKE_HELP_EXIT:-0}";;',
     `  upgrade) shift; exec "${process.execPath}" "${upgradeDriver}" "$@";;`,
+    // The addon install records whether the swap receipt still exists: it does inside the swap, and settling the
+    // swap deletes it. FAKE_ADDON_EXIT makes the install fail.
+    `  engine) if [ -e "$GBRAIN_HOME/.gbrain/swap-receipt.json" ]; then r=present; else r=absent; fi; printf 'addon-install swap-receipt=%s\\n' "$r" >> "${argvLog}"; exit "\${FAKE_ADDON_EXIT:-0}";;`,
     'esac',
     'exit 0',
     '',
@@ -234,6 +237,39 @@ describe('#6828: auto-update while master is ahead of latest-stable', () => {
     expect(tick.su.attempting_version).toBe(MASTER_AHEAD);
     expect(tick.upgradeState).toBe(true);
     expect(tick.audit.at(-1)).toMatchObject({ action: 'apply', outcome: 'applied', reason: 'swapped; exiting for supervisor relaunch' });
+  }, 90_000);
+});
+
+describe('Rust engine addon after an automatic upgrade', () => {
+  test('a real swap on a Rust brain runs the new binary\'s addon install before the relaunch; a PGLite brain does not', async () => {
+    const rust = harness('rust-addon', { cache: `UPGRADE_AVAILABLE ${VERSION} ${MASTER_AHEAD}` });
+    const cfgPath = join(rust.home, '.gbrain', 'config.json');
+    writeFileSync(cfgPath, JSON.stringify({ ...JSON.parse(readFileSync(cfgPath, 'utf8')), engine: 'rust', database_path: join(rust.home, '.gbrain', 'brain.rust') }));
+    const tick = await run(rust, rust.driver, { FAKE_TARGET_VERSION: MASTER_AHEAD, FAKE_INSTALLED_VERSION: MASTER_AHEAD });
+    expect(tick.out).toContain('EXIT_CALLED 0');
+    expect(tick.calls).toContain('gbrain engine install rust --json');
+    // After the swap is settled (its receipt is gone), so the install never runs under the swap's own time limit.
+    expect(tick.calls).toContain('addon-install swap-receipt=absent');
+    expect(tick.calls.indexOf('gbrain engine install rust --json')).toBeGreaterThan(tick.calls.findIndex((c) => c.startsWith('gbrain upgrade --swap-only')));
+    expect(tick.audit.at(-1)).toMatchObject({ action: 'apply', outcome: 'applied' });
+
+    const pglite = harness('pglite-addon', { cache: `UPGRADE_AVAILABLE ${VERSION} ${MASTER_AHEAD}` });
+    const plain = await run(pglite, pglite.driver, { FAKE_TARGET_VERSION: MASTER_AHEAD, FAKE_INSTALLED_VERSION: MASTER_AHEAD });
+    expect(plain.out).toContain('EXIT_CALLED 0');
+    expect(plain.calls.filter((c) => c.startsWith('gbrain engine'))).toEqual([]);
+  }, 90_000);
+
+  test('a failed addon install still relaunches and does not mark the installed release known-bad', async () => {
+    const rust = harness('rust-addon-fail', { cache: `UPGRADE_AVAILABLE ${VERSION} ${MASTER_AHEAD}` });
+    const cfgPath = join(rust.home, '.gbrain', 'config.json');
+    writeFileSync(cfgPath, JSON.stringify({ ...JSON.parse(readFileSync(cfgPath, 'utf8')), engine: 'rust', database_path: join(rust.home, '.gbrain', 'brain.rust') }));
+    const tick = await run(rust, rust.driver, { FAKE_TARGET_VERSION: MASTER_AHEAD, FAKE_INSTALLED_VERSION: MASTER_AHEAD, FAKE_ADDON_EXIT: '1' });
+    expect(tick.calls).toContain('gbrain engine install rust --json');
+    expect(tick.err).toContain('Run gbrain engine install rust');
+    expect(tick.out).toContain('EXIT_CALLED 0');
+    expect(tick.audit.at(-1)).toMatchObject({ action: 'apply', outcome: 'applied', reason: 'swapped; exiting for supervisor relaunch' });
+    expect(tick.su.failed_versions).toBeUndefined();
+    expect(tick.justUpgraded).toBe(true);
   }, 90_000);
 });
 

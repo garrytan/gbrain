@@ -72,7 +72,7 @@ pub use repair_reads::{
 pub use site_reads::{
     DeleteTimelineRowsInput, SegmentedTimelineInput, TimelineOrphanInput, TimelineRowDeletion,
 };
-pub(crate) use twin_move::move_twin_timeline;
+pub(crate) use twin_move::{move_twin_timeline, twin_timeline_reference};
 
 const MICROS_PER_DAY: i64 = 86_400_000_000;
 /// Second byte of an event index key.
@@ -143,6 +143,7 @@ pub(crate) fn remove_event_projections(tx: &mut dyn KvWrite, event_page_id: u64)
     for (key, value) in rows {
         let date = String::from_utf8_lossy(&key[prefix.len()..]).into_owned();
         if let Some(entry) = indexed_entry(&*tx, &value, event_page_id, &date)? {
+            crate::timeline::mark_entry_before_delete(tx, &entry)?;
             tx.delete(&keys::timeline(entry.page_id, &entry.date, entry.id))?;
             let dedup = entry.dedup_key();
             if tx.get(&dedup)?.and_then(|b| keys::be8(&b)) == Some(entry.id) {

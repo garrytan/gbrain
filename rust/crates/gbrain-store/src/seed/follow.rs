@@ -384,6 +384,78 @@ fn interval_digest(entries: &[(Vec<u8>, Entry)]) -> IntervalDigest {
     }
 }
 
+/// [`Store::relation_digest`] over one read, in the same bytes ([`interval_digest`]), without
+/// keeping the entries: each is hashed as the scan reaches it, so the memory is one entry however
+/// large the relation. A digest entry is checked for its 32-byte digest and generation, not for
+/// its identity JSON, which the digest does not use. `lo` and `hi` are raw sort-key bounds
+/// (`None`: unbounded), as `relation_digest` takes them after hex parsing. The store snapshot
+/// (`snapshot.rs`) calls it for every relation of the seed.
+pub fn relation_digest_stream(
+    read: &dyn KvRead,
+    relation: &str,
+    lo: Option<&[u8]>,
+    hi: Option<&[u8]>,
+) -> Result<IntervalDigest> {
+    relation_digest_stream_until(read, relation, lo, hi, &|| false)?.ok_or_else(|| {
+        StoreError::new(crate::error::STORE_CORRUPT, "the digest scan stopped early")
+    })
+}
+
+/// [`relation_digest_stream`] that asks `stop` before every entry and returns `None` the moment
+/// it says yes, with nothing hashed kept. The store snapshot passes its cancellation here, so a
+/// cancelled copy gives its pinned read back at the next entry, not at the end of the relation.
+pub(crate) fn relation_digest_stream_until(
+    read: &dyn KvRead,
+    relation: &str,
+    lo: Option<&[u8]>,
+    hi: Option<&[u8]>,
+    stop: &dyn Fn() -> bool,
+) -> Result<Option<IntervalDigest>> {
+    let prefix = digest_prefix(relation);
+    let start = digest_key(relation, lo.unwrap_or_default());
+    let end = match hi {
+        Some(hi) => digest_key(relation, hi),
+        None => prefix_end(&prefix).unwrap_or_else(|| vec![0xFF; 64]),
+    };
+    let mut hasher = Sha256::new();
+    let mut rows = 0u64;
+    let mut failure = None;
+    let mut stopped = false;
+    if start < end {
+        read.scan(&start, &end, false, &mut |k, v| {
+            if stop() {
+                stopped = true;
+                return false;
+            }
+            if v.len() < 40 {
+                failure = Some(StoreError::new(
+                    crate::error::STORE_CORRUPT,
+                    "bad shadow digest entry",
+                ));
+                return false;
+            }
+            let sort = &k[prefix.len()..];
+            hasher.update((sort.len() as u32).to_be_bytes());
+            hasher.update(sort);
+            hasher.update(&v[..32]);
+            rows += 1;
+            true
+        })?;
+    }
+    if stopped {
+        return Ok(None);
+    }
+    failure.map_or_else(
+        || {
+            Ok(Some(IntervalDigest {
+                rows,
+                digest: to_hex(&hasher.finalize()),
+            }))
+        },
+        Err,
+    )
+}
+
 // ---- the calls -----------------------------------------------------------------------------
 
 /// One call's state.
