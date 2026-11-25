@@ -446,16 +446,6 @@ impl Store {
         );
         let concurrent = options.concurrent_writes || options.multiuser || config_on;
         let kv = open_records(dir, concurrent)?;
-        let mut store = Store::open_kv_in(kv, Arc::new(SystemEnv), options.clone(), known)?;
-        // The peek above reads nothing from a file redb had to repair first; the open repaired it and read the
-        // config row. A brain that turned out to be in multi-user mode reopens on the concurrent store.
-        if store.multiuser && !concurrent {
-            drop(store);
-            let kv = open_records(dir, true)?;
-            store = Store::open_kv_in(kv, Arc::new(SystemEnv), options.clone(), known)?;
-        }
-        let concurrent = options.concurrent_writes || options.multiuser || config_on;
-        let kv = open_records(dir, concurrent)?;
         let mut store = Store::open_kv_in(
             kv,
             Arc::new(SystemEnv),
@@ -693,31 +683,15 @@ impl Store {
         let schema_version = config::read_config(&*kv.snapshot()?, "version")?
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
-        // Multi-user mode: the caller's resolved switch, or the brain's own config row.
-        let multiuser = options.multiuser
-            || multiuser_config_on(
-                config::read_config(&*kv.snapshot()?, MULTIUSER_CONFIG_KEY)?
-                    .as_deref()
-                    .map(str::as_bytes),
-            );
-        // Multi-user mode: the store's clock never runs below the last committed time (`clock_floor.rs`).
-        let env: Arc<dyn Env> = if multiuser {
-            let floor = clock_floor::read_high_water(&*kv.snapshot()?)?;
-            // A brain with no high-water mark yet (just created, or just turned on) records one now, so the records
-            // it was seeded with stay below the floor of every later open.
-            // A read-only open writes nothing; its clock still starts at the floor it read.
-            if floor == 0 {
-                let recorded = kv.begin_write().and_then(|mut tx| {
-                    clock_floor::raise_high_water(&mut *tx, env.clock_micros())?;
-                    tx.commit()
-                });
-                match recorded {
-                    Err(e) if e.code == error::READ_ONLY_TRANSACTION => {}
-                    other => {
-                        other?;
-                    }
-                }
+        // Multi-user mode: the store's clock never runs below the newest durable commit time (`M\0ctime`,
+        // I-4.v2.1; `clock_floor.rs`). A brain with no commit time yet (just created or just turned on) commits one
+        // now, so the records it was seeded with stay below the floor of every later open; a read-only open writes
+        // nothing.
+        let env: Arc<dyn Env> = if multiuser_on {
+            if !read_only && kv.last_commit_time()?.is_none() {
+                kv.begin_write()?.commit()?;
             }
+            let floor = kv.last_commit_time()?.unwrap_or(0);
             Arc::new(clock_floor::ClockFloor::new(env, floor))
         } else {
             env
@@ -733,7 +707,6 @@ impl Store {
                 format_version: stored.format_version,
                 schema_version,
                 created,
-                multiuser,
                 commit_log: commit_log_on,
                 multiuser: multiuser_on,
             },
@@ -743,7 +716,6 @@ impl Store {
             runs_builder: options.keyword_index_builder,
             flag_assumed,
             dir: None,
-            multiuser,
             stamp_rows: multiuser.write_origin && origin.is_some(),
             origin,
             multiuser: multiuser_on,
@@ -935,11 +907,6 @@ impl Store {
         if let Some(tx) = &self.bound {
             // A bound store's env is the transaction's clock (`transactions.rs`, "Time").
             let _clock = crate::env::transaction_clock::open(self.env.clone());
-            let _trust = crate::write_trust::stamp_context::open(stamp_trust()?);
-            return tx.statement(|w| {
-                let value = write_chain(w, &mut f)?;
-                if self.multiuser {
-                    clock_floor::raise_high_water(w, self.env.clock_micros())?;
             let trust = stamp_trust()?;
             let meta = self.meta_scope(&trust);
             let _trust = crate::write_trust::stamp_context::open(trust);
@@ -965,13 +932,6 @@ impl Store {
                 let meta = self.meta_scope(&trust);
                 let _trust = crate::write_trust::stamp_context::open(trust);
                 match write_chain(&mut *tx, &mut f) {
-                    Ok(value) if self.multiuser => {
-                        match clock_floor::raise_high_water(&mut *tx, self.env.clock_micros()) {
-                            Ok(()) => tx.commit().map(|_| value),
-                            Err(e) => Err(e),
-                        }
-                    }
-                    Ok(value) => tx.commit().map(|_| value),
                     Ok(value) => {
                         if let Some(meta) = meta.meta() {
                             tx.set_commit_meta(meta);
