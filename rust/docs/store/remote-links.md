@@ -27,6 +27,7 @@ text without the owner-only clause, which the store reads as no owner-only test,
 other writer (folder rules, any other owner record, a labelled-only grant, several identities, an empty policy object)
 refuses `engine_capability_missing` before any read. The remote page write check (`authorizePageVisibility`) reads the
 live page against the writer's policy through this member.
+Also served, for a writer with no identity: a fresh record of its own folder coverage (sent as `folder_coverage` with `caller_record`, so the record's prefixes replace the store's live pending prefixes, as `coverageSql` reads them inside a record). Satisfied folder rules, an owner record other than the owner speaking for itself, a labelled-only grant and several identities still refuse (see above).
 
 An OAuth client writer (the HTTP transport) is not served: `readWriterSlugFence` refuses for `oauth_client`, since the
 store keeps no OAuth client write grant yet.
