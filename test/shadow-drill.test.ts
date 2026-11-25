@@ -26,6 +26,7 @@ import type { StoreSnapshotManifest, StoreVerifyReport } from '../src/core/rust-
 import type { SnapshotStatus } from '../src/core/rust-engine/store-snapshot.ts';
 import { ADDON_SHA, evalUrl, gatesObject, pinFor, SEED, TARGET, TAG, writeEpoch, writeStoreFiles } from './helpers/shadow-drill-fixtures.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { VERSION } from '../src/version.ts';
 
 const MANIFEST: StoreSnapshotManifest = {
   version: 1, brain_id: 'b', generation: 42, engine_format_version: 5, schema_version: 1, keys: 10, bytes: 1000,
@@ -488,6 +489,48 @@ describe('review round 1: the lock, the probe, persistence, the addon and the di
     const expected = new Bun.CryptoHasher('sha256').update('addon bytes').digest('hex');
     await withEnv({ GBRAIN_RUST_ENGINE_ADDON: file }, async () => { expect(addonFileSha256({ engineBuild: 'b', target: 't' })).toBe(expected); });
     await withEnv({ GBRAIN_RUST_ENGINE_ADDON: join(dir, 'missing.node') }, async () => { expect(addonFileSha256({ engineBuild: 'b', target: 't' })).toBeNull(); });
+  });
+
+  describe('a release-installed addon (master: <build>/<target>-<sha256>.node, no override)', () => {
+    const bytes = 'installed addon bytes';
+    const sha = new Bun.CryptoHasher('sha256').update(bytes).digest('hex');
+    /** A temp GBRAIN_HOME holding the current version's cached manifest and, unless `file` is false, only the content-addressed file. */
+    const installed = (file: boolean, manifest = true): string => {
+      const home = mkdtempSync(join(tmpdir(), 'gbrain-home-'));
+      dirs.push(home);
+      const rust = join(home, '.gbrain', 'engines', 'rust');
+      mkdirSync(join(rust, 'build-1'), { recursive: true });
+      if (manifest) writeFileSync(join(rust, `manifest-${VERSION}.json`), JSON.stringify({ gbrain_version: VERSION, engine_abi: 1, engine_build: 'build-1', targets: { t: { asset: 'a.node', sha256: sha, bytes: bytes.length } } }));
+      if (file) writeFileSync(join(rust, 'build-1', `t-${sha}.node`), bytes);
+      return home;
+    };
+    const noOverride = (home: string): Record<string, string | undefined> => ({ GBRAIN_HOME: home, GBRAIN_RUST_ENGINE_ADDON: undefined });
+
+    test('the digest is the content-addressed file the cached manifest names, whatever engineBuild the addon reports', async () => {
+      await withEnv(noOverride(installed(true)), async () => {
+        expect(addonFileSha256({ engineBuild: 'build-1', target: 't' })).toBe(sha);
+        expect(addonFileSha256({ engineBuild: 'not-the-manifest-build', target: 't' })).toBe(sha);
+      });
+    });
+
+    test('no manifest, a manifest naming no such target, or a named file that is missing is null, never a digest', async () => {
+      await withEnv(noOverride(installed(false)), async () => { expect(addonFileSha256({ target: 't' })).toBeNull(); });
+      await withEnv(noOverride(installed(true, false)), async () => { expect(addonFileSha256({ target: 't' })).toBeNull(); });
+      await withEnv(noOverride(installed(true)), async () => { expect(addonFileSha256({ target: 'other-target' })).toBeNull(); });
+    });
+
+    test('a drill with the real digest reader passes on the installed addon, and refuses addon_mismatch when the file cannot be read', async () => {
+      const real = (extra: Partial<DrillDeps> = {}): DrillDeps => ({ ...deps(fakeOwner(), extra), addonSha256: undefined, loadAddon: async () => ({ ok: true, addon: { target: 't' } as never }) });
+      const { dir } = shadow();
+      writeEpoch(dir, { addon: sha });
+      await withEnv(noOverride(installed(true)), async () => { expect(await runBackupDrill(dir, real())).toMatchObject({ pass: true, addon_sha256: sha }); });
+      const { dir: other } = shadow();
+      writeEpoch(other, { addon: sha });
+      await withEnv(noOverride(installed(false)), async () => {
+        expect(await runBackupDrill(other, real())).toMatchObject({ pass: false, reason: 'addon_mismatch', addon_sha256: null });
+      });
+      expect(existsSync(join(other, 'drills'))).toBe(false);
+    });
   });
 
   test('a copy an earlier drill left behind is cleared before the disk check, so it cannot hold the space it needs', async () => {

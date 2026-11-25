@@ -23,10 +23,9 @@ import { createHash, randomBytes } from 'node:crypto';
 import { appendFileSync, closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statfsSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { BACKUP_ARCHIVE_MAX_BYTES } from '../core/backup/archive.ts';
-import { gbrainPath } from '../core/config.ts';
 import { withRequestSignal } from '../core/request-signal.ts';
 import type { BrainEngine } from '../core/engine.ts';
-import type { RustEngineAddonLoad } from '../core/rust-engine/addon-loader.ts';
+import { loadedAddonPath, type RustEngineAddonLoad } from '../core/rust-engine/addon-loader.ts';
 import { resolveHardExcludes } from '../core/search/source-boost.ts';
 import type { SnapshotStatus, SnapshotStoreOptions } from '../core/rust-engine/store-snapshot.ts';
 import type { StoreSnapshotManifest, StoreVerifyReport } from '../core/rust-engine/store.ts';
@@ -189,10 +188,10 @@ function removePendingIf(dir: string, opId: string): void {
   if (readPending(dir)?.op_id === opId) rmSync(pendingPath(dir), { force: true });
 }
 
-/** SHA-256 of the addon file the loader opened, as the shadow child records it in the epoch (child.ts `addonFileSha256`). */
+/** SHA-256 of the addon file the loader opened, as the shadow child records it in the epoch (child.ts `addonFileSha256`; the same `loadedAddonPath`). */
 export function addonFileSha256(addon: object): string | null {
-  const a = addon as { engineBuild?: unknown; target?: unknown };
-  const path = process.env.GBRAIN_RUST_ENGINE_ADDON?.trim() || join(gbrainPath('engines', 'rust'), String(a.engineBuild), `${String(a.target)}.node`);
+  const path = loadedAddonPath(addon, process.env.GBRAIN_RUST_ENGINE_ADDON);
+  if (!path) return null;
   try { return createHash('sha256').update(readFileSync(path)).digest('hex'); } catch { return null; } // silent-read-ok: null is the typed marker; the drill refuses on it
 }
 
