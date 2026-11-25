@@ -53,7 +53,8 @@ for (const kind of testBackends()) describe(`brain copied into a container (${ki
     recreateRoot(f.root, { keepStamp: true });
     const live = statSync(f.root, { bigint: true });
     recordDevice(f.root, (live.dev + 1n).toString());
-    await expect(acquireWorktree(f.binding)).rejects.toMatchObject({ code: 'recovery_required', detail: 'physical_root_directory_changed' });
+    await expect(acquireWorktree(f.binding)).rejects.toMatchObject({ code: 'recovery_required', detail: 'physical_root_directory_changed',
+      suggestion: expect.stringContaining('a new directory on another filesystem device; owner token, brain, worktree and root match') });
 
     const prepared = await administer('writer_transfer_prepare', { source_id: f.source, self_transfer: true, confirm_relocated_root: true });
     await administer('writer_transfer_accept', { source_id: f.source, path: f.root, expected_epoch: prepared.owner_epoch, manifest: prepared.manifest.digest,

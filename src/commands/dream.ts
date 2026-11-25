@@ -928,7 +928,8 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
   const failed = report.status === 'failed' || failedPhases.length > 0;
   // #7646: a phase that needs the user (sync_anchor_relative) fails again on every rerun; its ask_user fix leads instead.
   const askPhase = report.phases.find(p => failedPhases.includes(p.phase) && p.fix?.next === 'ask_user');
-  if (engine && !opts.dryRun && phases === undefined && !failed && ['ok', 'clean', 'partial'].includes(report.status)) {
+  if (engine && !opts.dryRun && phases === undefined && (resolvedSourceId === undefined || fullImplicitSourceCycle)
+    && !failed && ['ok', 'clean', 'partial'].includes(report.status)) {
     await recordDreamFullCycle(engine, report)
       .catch(e => console.warn(`[dream] could not record the completed cycle for gbrain status: ${e instanceof Error ? e.message : String(e)}`));
   }

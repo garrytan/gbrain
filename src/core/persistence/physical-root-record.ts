@@ -351,6 +351,7 @@ const DIRECTORY_CHANGED_MESSAGE = 'The checkout directory at the recorded root i
 /** A stored refusal message (a write receipt keeps code and message only) that is the #5914 directory-changed refusal. */
 const NEW_DEVICE_DIRECTORY_MESSAGE = 'The checkout directory at the recorded root is not the one this owner stamped (it is a new directory on another filesystem device, as a brain copied into a container is) while the owner token, brain, worktree and root still match. '
   + 'Inspect writer status and use the deliberate self-transfer that confirms a relocated root to re-stamp this same path.';
+export const isNewDeviceDirectoryMessage = (message: string | null | undefined): boolean => message === NEW_DEVICE_DIRECTORY_MESSAGE;
 export const isPhysicalRootDirectoryChangedMessage = (message: string | null | undefined): boolean => message === DIRECTORY_CHANGED_MESSAGE || message === NEW_DEVICE_DIRECTORY_MESSAGE;
 /**
  * #7671: the relocated-root self-transfer as the refusal's fix, a host-admin step: prepare, then accept. `root` and

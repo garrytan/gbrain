@@ -6,7 +6,7 @@
  * cycle" names it instead of "never run".
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -58,6 +58,20 @@ describe('gbrain status on a keyless repo-less brain', () => {
     }
   });
 
+  test('a source-scoped gbrain dream is not recorded as the full cycle', async () => {
+    await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ('scoped-example', 'scoped-example', '{}')`);
+    const log = spyOn(console, 'log').mockImplementation(() => {});
+    const write = spyOn(process.stdout, 'write').mockImplementation(() => true);
+    try {
+      await withEnv({ GBRAIN_HOME: home }, () => runDream(engine, ['--json', '--source', 'scoped-example']));
+    } finally {
+      log.mockRestore();
+      write.mockRestore();
+      await engine.executeRaw(`DELETE FROM sources WHERE id = 'scoped-example'`);
+    }
+    expect(await engine.getConfig('dream.last_full_cycle')).toBeNull();
+  }, 120_000);
+
   test('a completed gbrain dream shows as the last full cycle', async () => {
     expect(await status()).toContain('Last full cycle: never run');
     const log = spyOn(console, 'log').mockImplementation(() => {});
@@ -72,4 +86,19 @@ describe('gbrain status on a keyless repo-less brain', () => {
     expect(out).not.toContain('Last full cycle: never run');
     expect(out).toMatch(/Last full cycle: \d{4}-\d{2}-\d{2}T/);
   }, 120_000);
+
+  test('a never-synced source with a local folder is not called repo-less', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-status-plain-'));
+    writeFileSync(join(dir, 'a.md'), '# A');
+    await engine.executeRaw(`INSERT INTO sources (id, name, local_path, config) VALUES ('plain-example', 'plain-example', $1, '{}')`, [dir]);
+    try {
+      const line = (await status()).split('\n').find(l => /\] plain-example\b/.test(l))!;
+      expect(line).toBeDefined();
+      expect(line).not.toContain('repo-less');
+      expect(line).toContain('never');
+    } finally {
+      await engine.executeRaw(`DELETE FROM sources WHERE id = 'plain-example'`);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
