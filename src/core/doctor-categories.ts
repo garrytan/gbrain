@@ -284,6 +284,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'person_title_duplicates',
   // plan autoplan-20261117192252 PR 1: likely duplicate person and company pages (read-only, gbrain dedupe --preview).
   'entity_duplicates',
+  // Nightly learning: the newest learning_derive run and the kept/undone share of the note (doctor/checks/learning-note.ts).
+  'learning_note',
   // Git-canonical G1: the database compared with the commit at HEAD per source, informational (doctor/checks/db-ahead-of-git.ts).
   'db_ahead_of_git',
   // Git-canonical G3: how far each strict source's index trails HEAD (doctor/checks/git-index-lag.ts).
