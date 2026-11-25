@@ -51,6 +51,15 @@ async function remote(who: string, op: string, params: Record<string, unknown>):
 const total = (r: { json: any }) => Object.entries(r.json.counts).filter(([k]) => k !== 'invalid').reduce((n, [, v]) => n + Number(v), 0);
 const titles = (r: { json: any }) => (r.json.items ?? []).map((i: any) => i.title) as string[];
 
+const md = (fm: Record<string, unknown>, body: string) => ['---', ...Object.entries(fm).map(([k, v]) => k + ': ' + JSON.stringify(v)), '---', '', body].join('\n');
+
+/** Rewrites a page's frontmatter (and optionally its body) through put_page as one caller, from what is stored. */
+async function rewrite(who: string, slug: string, change: (fm: Record<string, unknown>) => Record<string, unknown>, body?: string) {
+  const page = await engine.getPage(slug);
+  const { revision } = await local('get_page', { slug });
+  return remote(who, 'put_page', { slug, expected_revision: revision, content: md(change({ title: page!.title, ...page!.frontmatter }), body ?? page!.compiled_truth) });
+}
+
 beforeAll(async () => {
   tripwire = installTripwire();
   engine = new PGLiteEngine();
@@ -227,6 +236,71 @@ describe('household privacy over remote MCP', () => {
     expect((await engine.getPage('people/robin-example'))!.frontmatter.household_role).toBe('child');
     __resetPrivateVisibilityCacheForTests();
     expect(titles(await remote(HELPER, 'household_due', ALL)).filter(x => x.startsWith('Robin'))).toEqual([]);
+  });
+
+  test('a remote write that drops the child from a record\'s about is refused, and the record stays adults only (specialist#1)', async () => {
+    const slug = slugs.get('Field trip form')!;
+    const put = await rewrite(ADULT, slug, fm => ({ ...fm, about: [] }));
+    expect(put.isError).toBe(true);
+    expect(put.text).toContain('household_reclassify');
+    const after = await engine.getPage(slug);
+    expect(after!.frontmatter.about).toEqual(['people/robin-example']);
+    expect(after!.frontmatter.household_audience).toBe('adults');
+    __resetPrivateVisibilityCacheForTests();
+    expect((await remote(HELPER, 'get_page', { slug })).isError).toBe(true);
+  });
+
+  test('a remote write cannot retype a household record to another type (red-team#2)', async () => {
+    const slug = slugs.get('Robin birthday')!;
+    const put = await rewrite(ADULT, slug, fm => ({ type: 'note', ...fm }));
+    expect(put.isError).toBe(true);
+    expect(put.text).toContain('household_reclassify');
+    expect((await engine.getPage(slug))!.type).toBe('household');
+  });
+
+  test('a remote write cannot retype a child\'s page to a household record, and a household record\'s household_role classifies nothing (red-team#1)', async () => {
+    const put = await rewrite(ADULT, 'people/robin-example', fm => ({ type: 'household', ...fm }));
+    expect(put.isError).toBe(true);
+    expect(put.text).toContain('household_reclassify');
+    expect((await engine.getPage('people/robin-example'))!.type).toBe('person');
+    await local('put_page', { slug: 'people/quinn-example', content: md({ type: 'household', title: 'quinn-example', kind: 'supply', household_role: 'adult' }, 'Not a person page.') });
+    const added = await local('household_add', { kind: 'supply', title: 'Quinn snacks', cadence: '30d', about: ['people/quinn-example'] });
+    expect(added.audience).toBe('adults');
+    expect((await engine.getPage(added.slug))!.frontmatter.household_audience).toBe('adults');
+  });
+
+  test('an author\'s narrower readable_by is kept, and a remote write cannot drop it (adversarial-native#1)', async () => {
+    const slug = slugs.get('Batteries')!;
+    const narrowed = await rewrite(OWNER, slug, fm => ({ ...fm, readable_by: ['alice-example'] }));
+    expect(narrowed.isError).toBe(false);
+    expect((await engine.getPage(slug))!.frontmatter.readable_by).toEqual(['alice-example']);
+    __resetPrivateVisibilityCacheForTests();
+    expect((await remote(HELPER, 'get_page', { slug })).isError).toBe(true);
+    expect((await remote(ADULT, 'get_page', { slug })).isError).toBe(true);
+    const widened = await rewrite(OWNER, slug, ({ readable_by: _r, ...fm }) => fm);
+    expect(widened.isError).toBe(true);
+    expect(widened.text).toContain('household_reclassify');
+    expect((await engine.getPage(slug))!.frontmatter.readable_by).toEqual(['alice-example']);
+  });
+
+  test('a subject with live records cannot be deleted remotely, nor locally while records about it are shared (outside#2)', async () => {
+    const robin = await local('get_page', { slug: 'people/robin-example' });
+    const del = await remote(ADULT, 'delete_page', { slug: 'people/robin-example', expected_revision: robin.revision });
+    expect(del.isError).toBe(true);
+    expect(del.text).toContain('household_reclassify');
+    expect(await engine.getPage('people/robin-example')).not.toBeNull();
+    const alice = await local('get_page', { slug: 'people/alice-example' });
+    const err = await local('delete_page', { slug: 'people/alice-example', expected_revision: alice.revision }).catch(e => e);
+    expect(err.code).toBe('household_reclassify');
+    expect(await engine.getPage('people/alice-example')).not.toBeNull();
+  });
+
+  test('a full account or card number in a record\'s body is refused on a remote put_page (outside#3)', async () => {
+    const slug = slugs.get('Water filter')!;
+    const put = await rewrite(ADULT, slug, fm => fm, 'Card on file 4111 1111 1111 1111.');
+    expect(put.isError).toBe(true);
+    expect(put.text).toContain('account_number_key');
+    expect((await engine.getPage(slug))!.compiled_truth).not.toContain('4111');
   });
 
   test('record text is quoted data in the digest, never an instruction line', async () => {

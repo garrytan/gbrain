@@ -329,10 +329,11 @@ page_types:
   # Household records (agent platform H1): bills, supplies, birthdays, school
   # deadlines, returns and credits, one page each, read through household_due.
   # Not extractable: no model reads them, and their text never becomes facts.
+  # Set via frontmatter only (household_add writes type: household), so a page
+  # that merely sits under household/ is never made a record by its folder.
   - name: household
     primitive: annotation
-    path_prefixes:
-      - household/
+    path_prefixes: []
     aliases: []
     extractable: false
     expert_routing: false

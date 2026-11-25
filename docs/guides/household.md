@@ -55,7 +55,10 @@ Each record's readers come from one placement table, recomputed on every write:
 
 A child is a subject page with `household_role: child` (`--child` on `household add` writes it). A subject GBrain
 cannot classify (no page, or no `household_role`) is treated as private: the record stays adults only until the
-subject is classified. You can narrow a shared record with `--audience adults`; nothing widens a record past the table.
+subject is classified. You can narrow a shared record with `--audience adults`, or by writing your own `readable_by`
+on it: GBrain keeps the readers you name that the table allows (on a brain that serves one person, exactly as you
+wrote them). Nothing widens a record past the table. A record is a page with `type: household`; a page that only
+sits in a `household/` folder is not one.
 
 On a brain that serves one person, records carry no reader list and you read everything. On a brain that serves several
 people, each record names the owner and the `household-adults`, `household-helpers` and `household-chats` groups
@@ -63,6 +66,10 @@ its row allows. To reclassify a subject, run `gbrain household replace --about <
 (or `household add --child` with a new record): it narrows the records about the subject to adults first, then sets
 the role. An edit or sync that narrows a subject while records about it are still shared is refused
 ([household_reclassify](#household_reclassify)), and only the owner can turn a child into another role.
+Every write path runs these checks against the stored page and the new one: `put_page`, `edit_page`, the household
+tools, sync and imports (a household page too large for the streamed import is held), and `delete_page`. A remote
+agent cannot widen a record: it cannot change its type, drop a child from its `about`, remove `audience: adults`,
+change it to a shared kind, or widen its `readable_by`. It also cannot delete a subject that records are about.
 `gbrain household replace` with no `--about` recomputes every record's readers, for example when the brain starts
 serving several people.
 
@@ -74,18 +81,21 @@ serving several people.
 ## household_scale
 
 `household_due` found more household records than it reads in one call (2,000), so it returned nothing rather than a
-partial ranking. Narrow the read with `kinds`, `about`, `handled_by` or `source_id`, and archive records you no
+partial ranking. Archived records and records your filters leave out do not count toward the 2,000. Narrow the read with `kinds`, `about`, `handled_by` or `source_id`, and archive records you no
 longer need (`gbrain household mark <slug> archive`).
 
 ## household_reclassify
 
-A write changed a subject page's `household_role` in a way that would leave household records readable by people the
-table no longer allows, so nothing was written. Two cases: a remote agent tried to take a child out of `household_role: child`
+A write or delete would have let more people read household records than the placement table allows, so nothing was
+written. For a record: a remote agent tried to change its type, drop a child from its `about`, remove
+`audience: adults`, change it to a shared kind or widen its `readable_by`. Keep those fields as stored, or ask the
+brain's owner, who can make the change with a local write. For a subject page: a remote agent tried to take a child out of `household_role: child`
 (changing or removing it), or to give a subject a role that would widen records already kept to adults because of it
 (only the owner can), or the subject was narrowed (made a child, or its role removed) while records about it were still shared
 with helpers. Run `gbrain household replace --about <slug> --role <role>` on the brain host: it narrows those records
 to adults (`audience: adults` on each) and then sets the role. To remove a role, run it without `--role`, then edit
-the page again.
+the page again. A subject that records are about can be deleted only on the brain host, and only once no record
+about it is still shared with helpers (run `gbrain household replace --about <slug>` first).
 
 ## household_transition
 
@@ -96,5 +106,6 @@ when the old one is archived. This applies to every write, `put_page` and `edit_
 
 ## account_number_key
 
-A field looked like a full account, card or routing number, so nothing was saved and the value is not repeated back.
+A field, the body or the timeline of a household record looked like a full account, card or routing number (on any
+write: the household tools, `put_page`, `edit_page` or sync), so nothing was saved and the value is not repeated back.
 Leave the number out (the last four digits in a title are fine) and keep it in your bank or password manager.

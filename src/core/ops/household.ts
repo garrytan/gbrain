@@ -29,7 +29,7 @@ import {
   RECURS, readHouseholdRecord, strictDate, strictMonthDay, type HouseholdIssue, type HouseholdKind, type HouseholdRecord,
 } from '../household/record.ts';
 import { assessHouseholdRecord, calendarDay, rankAssessments, type HouseholdAssessment, type HouseholdState } from '../household/assess.ts';
-import { classifySubjects, placeHouseholdFrontmatter, placeRecord, roleClass, type SubjectClass } from '../household/placement.ts';
+import { aboutOf, classifySubjects, placeHouseholdFrontmatter, placeRecord, refuseAccountNumbers, roleClass, type SubjectClass } from '../household/placement.ts';
 
 /** Records one household_due call reads at most; past it the answer is partial with no counts. */
 export const HOUSEHOLD_SCAN_CAP = 2_000;
@@ -139,7 +139,9 @@ const household_due: Operation = {
     const scope = await requestSourceScope(ctx, requested, undefined);
     assertRemoteScope(ctx, requested, scope);
     const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
-    const rows = scope.sourceIds?.length === 0 ? [] : await ctx.engine.listPages({ type: HOUSEHOLD_TYPE as never, limit: HOUSEHOLD_SCAN_CAP + 1, excludePrivate, sort: 'updated_desc', ...scope }) as unknown as HouseholdPage[];
+    const about = typeof p.about === 'string' ? p.about.trim().toLowerCase() : undefined;
+    const handledBy = typeof p.handled_by === 'string' ? p.handled_by.trim().toLowerCase() : undefined;
+    const rows = scope.sourceIds?.length === 0 ? [] : await scanRecords(ctx, { excludePrivate, kinds, about, handledBy, scope });
     if (rows.length > HOUSEHOLD_SCAN_CAP) {
       return { state: 'partial', code: 'household_scale', items: [], counts: null, invalid: [], truncated: true, as_of: day, timezone,
         narrow_with: ['kinds', 'about', 'handled_by', 'source_id'],
@@ -148,8 +150,6 @@ const household_due: Operation = {
     }
     const invalid: HouseholdIssue[] = [];
     const assessed: HouseholdAssessment[] = [];
-    const about = typeof p.about === 'string' ? p.about.trim().toLowerCase() : undefined;
-    const handledBy = typeof p.handled_by === 'string' ? p.handled_by.trim().toLowerCase() : undefined;
     const records: HouseholdRecord[] = [];
     for (const row of rows) {
       const read = readHouseholdRecord({ slug: row.slug, source_id: row.source_id, title: row.title, frontmatter: row.frontmatter, tags: row.tags });
@@ -176,6 +176,31 @@ const household_due: Operation = {
   },
 };
 
+const SCAN_BATCH = 500;
+
+/**
+ * The live household records in scope that the filters keep, read a batch at a time as frontmatter only (never page
+ * bodies). Archived records and records the filters leave out never count toward HOUSEHOLD_SCAN_CAP; the scan stops at
+ * the first record past it.
+ */
+async function scanRecords(ctx: OperationContext, opts: { excludePrivate: boolean; kinds: string[] | null | undefined; about?: string; handledBy?: string;
+  scope: Awaited<ReturnType<typeof requestSourceScope>> }): Promise<HouseholdPage[]> {
+  const kept: HouseholdPage[] = [];
+  for (let offset = 0; ; offset += SCAN_BATCH) {
+    const batch = await ctx.engine.listPages({ type: HOUSEHOLD_TYPE as never, limit: SCAN_BATCH, offset, excludePrivate: opts.excludePrivate, sort: 'slug', omitBodies: true,
+      ...(opts.kinds ? { where: { kind: opts.kinds } } : {}), ...opts.scope }) as unknown as HouseholdPage[];
+    for (const row of batch) {
+      const fm = row.frontmatter ?? {};
+      if (String(fm.status ?? '').trim().toLowerCase() === 'archived') continue;
+      if (opts.about && !aboutOf(fm.about).includes(opts.about)) continue;
+      if (opts.handledBy && String(fm.handled_by ?? '').trim().toLowerCase() !== opts.handledBy) continue;
+      kept.push(row);
+      if (kept.length > HOUSEHOLD_SCAN_CAP) return kept;
+    }
+    if (batch.length < SCAN_BATCH) return kept;
+  }
+}
+
 /**
  * Records whose stored audience is wider than the placement table now says (a subject became a child, or lost its
  * classification, after the record's last write). A remote read leaves them out until `gbrain household replace`
@@ -195,12 +220,6 @@ async function stalePlacements(ctx: OperationContext, records: HouseholdRecord[]
     }
   }
   return out;
-}
-
-function refuseAccountNumbers(fields: string[]): void {
-  if (!fields.length) return;
-  throw opError('account_number_key', `Nothing was written: ${fields.join(', ')} looks like a full account or card number.`,
-    'Household records never hold full account or card numbers. Leave the number out (the last four digits in the title are fine) and submit again.');
 }
 
 function serializeRecord(fm: Record<string, unknown>, title: string, body: string, timeline: string, tags: string[]): string {
@@ -238,9 +257,9 @@ async function classifySubjectPages(ctx: OperationContext, sourceId: string, abo
 
 /** Rewrites every record (optionally only those about `about`) whose stored placement differs from the table; `pin` first narrows each to adults. */
 export async function replaceHouseholdRecords(ctx: OperationContext, sourceId: string, about?: readonly string[], opts: { pin?: boolean } = {}): Promise<{ checked: number; replaced: string[] }> {
-  const wanted = about?.length ? new Set(about) : null;
-  const rows = (await ctx.engine.listPages({ type: HOUSEHOLD_TYPE as never, sourceId, sort: 'slug', limit: HOUSEHOLD_SCAN_CAP + 1 }) as unknown as HouseholdPage[])
-    .filter(row => !wanted || (Array.isArray(row.frontmatter?.about) && (row.frontmatter.about as unknown[]).some(s => wanted.has(String(s)))));
+  const wanted = about?.length ? new Set(aboutOf(about)) : null;
+  const rows = (await ctx.engine.listPages({ type: HOUSEHOLD_TYPE as never, sourceId, sort: 'slug', limit: 100_000, omitBodies: true }) as unknown as HouseholdPage[])
+    .filter(row => !wanted || aboutOf(row.frontmatter?.about).some(s => wanted.has(s)));
   if (rows.length > HOUSEHOLD_SCAN_CAP) throw opError('household_scale', `More than ${HOUSEHOLD_SCAN_CAP} household records are in source ${sourceId}, so none were re-placed.`, 'Archive records you no longer need, then run gbrain household replace again.');
   const replaced: string[] = [];
   for (const { slug } of rows) {
@@ -302,7 +321,7 @@ const household_add: Operation = {
     refuseAccountNumbers(accountNumberFields(Object.fromEntries(Object.entries(p).filter(([k]) => k !== 'request_id'))));
     const role = p.child === true ? 'child' : p.about_role as string | undefined;
     if (role !== undefined && !(HOUSEHOLD_ROLES as readonly string[]).includes(role)) throw invalidParam(ctx, 'household_add', 'about_role', 'household_add: unknown role.', { choices: ROLE_ENUM });
-    const about = (listParam(p.about) ?? []).map(s => s.replace(/\.md$/, ''));
+    const about = aboutOf((listParam(p.about) ?? []).map(s => s.trim().replace(/\.md$/i, '')));
     if (role && !about.length) throw invalidParam(ctx, 'household_add', 'about', 'household_add: about_role and child need about to name the subject page.', { example: ['people/alice-example'] });
     const fm: Record<string, unknown> = { kind, household_schema: HOUSEHOLD_SCHEMA, status: 'active' };
     if (about.length) fm.about = about;
@@ -327,12 +346,18 @@ const household_add: Operation = {
       const first = check.issues[0]!;
       throw invalidParam(ctx, 'household_add', first.field, `household_add: ${first.field} ${first.reason}. ${first.fix}`, {});
     }
+    if (kind === 'birthday' && fm.gift !== undefined && fm.gift !== 'none') {
+      const { day } = await brainDay(ctx, undefined, 'household_add');
+      fm.gift_for = Number((assessHouseholdRecord(check.record, day, { windowDays: 366 }).next_due ?? day).slice(0, 4));
+    }
     const sourceId = pageMutationSource(ctx, p, 'household_add');
-    const subjectClasses: SubjectClass[] = role ? about.map(() => (role === 'child' ? 'child' : 'not_child')) : [...(await classifySubjects(ctx.engine, sourceId, about)).values()];
+    const stored = [...(await classifySubjects(ctx.engine, sourceId, about)).values()];
+    const subjectClasses: SubjectClass[] = role ? about.map(() => (role === 'child' ? 'child' : 'not_child')) : stored;
+    if (role === 'child' && stored.includes('not_child')) fm.audience = 'adults';
     const decision = placeRecord({ kind, school: p.school === true, subjects: subjectClasses, requested: fm.audience });
     const tail = slugifySegment(String(p.slug ?? title)).toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '') || 'record';
     const slug = `${decision.folder}${tail}`;
-    const existing = await ctx.engine.readPageSnapshot(slug, { sourceId });
+    const existing = await ctx.engine.readPageSnapshot(slug, { sourceId, includeDeleted: true });
     const requestId = parseWriteRequestId(p.request_id);
     const replay = existing && requestId ? await getWriteRequest(ctx.engine, await requestPrincipalForContext(ctx), requestId) : null;
     if (existing && !existing.page.deleted_at && !(replay && replay.slug === slug && replay.source_id === sourceId)) {
@@ -340,10 +365,10 @@ const household_add: Operation = {
         'Record an event on the existing record with household_mark, or pass slug to name this one differently.',
         { fix: readFix('Shows the existing household records.', { argv: ['gbrain', 'household', 'list', '--json'], mcp: { tool: 'household_due', arguments: { include: 'all' } } }) });
     }
-    const { classified, pinned } = role ? await classifySubjectPages(ctx, sourceId, about, role) : { classified: [], pinned: [] };
     const body = capText(p.note, 2_000) ?? `# ${title}`;
-    const result = await submitPageMutation(ctx, { operation: 'put_page', params: {
-      slug, source_id: sourceId, content: serializeRecord(fm, title, body, '', tags), ...(typeof p.request_id === 'string' ? { request_id: p.request_id } : {}) } });
+    const result = await submitPageMutation(ctx, { operation: 'put_page', params: { slug, source_id: sourceId, content: serializeRecord(fm, title, body, '', tags),
+      ...(existing?.page.deleted_at ? { expected_revision: existing.revision } : {}), ...(typeof p.request_id === 'string' ? { request_id: p.request_id } : {}) } });
+    const { classified, pinned } = role ? await classifySubjectPages(ctx, sourceId, about, role) : { classified: [], pinned: [] };
     const replaced = [...new Set([...pinned, ...(classified.length ? (await replaceHouseholdRecords(ctx, sourceId, classified)).replaced : [])])].filter(s => s !== slug).sort();
     return { ...result, slug, kind, audience: decision.audience, placement_basis: decision.basis, subjects_classified: classified, records_replaced: replaced };
   },
@@ -366,8 +391,11 @@ function applyEvent(ctx: OperationContext, record: HouseholdRecord, fm: Record<s
   }
   if (record.kind === 'supply' || record.kind === 'appointment') {
     if (event === 'booked') { if (!due) refuse('booked needs due, the booked date (YYYY-MM-DD).'); fm.due = due; return; }
+    const oneOff = record.kind === 'appointment' && record.cadence_days === null;
+    if (oneOff && event === 'skip') refuse('skip applies only to an appointment with a cadence.');
     fm.last_done = event === 'skip' ? (now.next_due ?? day) : day;
     if (typeof fm.due === 'string' && fm.due <= String(fm.last_done)) delete fm.due;
+    if (oneOff) fm.status = 'done';
     return;
   }
   if (record.recurs === 'none') { if (event === 'skip') refuse('skip applies only to a recurring record.'); fm.done_through = record.due; fm.status = 'done'; return; }
@@ -411,6 +439,11 @@ const household_mark: Operation = {
     if (!read.record) {
       const first = read.issues[0]!;
       throw opError('invalid_params', `${slug} is not a valid household record (${first.field}: ${first.reason}), so nothing was marked.`, first.fix);
+    }
+    const requestId = typeof p.request_id === 'string' ? parseWriteRequestId(p.request_id) : null;
+    const prior = requestId ? await getWriteRequest(ctx.engine, await requestPrincipalForContext(ctx), requestId) : null;
+    if (prior && !prior.error_code && prior.slug === slug && prior.source_id === sourceId) {
+      return { replayed: true, request_id: p.request_id, slug, event, on: day, status: snap.page.frontmatter?.status ?? 'active' };
     }
     assertInlineBody(snap.page, 'household_mark');
     const fm = { ...(snap.page.frontmatter ?? {}) };
