@@ -116,6 +116,7 @@ src/core/belief/keys.ts	module_collection	1	W6: per-engine state, or mark as a c
 src/core/belief/ledger.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context
 src/core/belief/preimages.ts	process_env	2	W6: settings plane out of the core
 src/core/belief/purge-mirror.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/belief/purge-mirror.ts	module_collection	1	shadow capture: the purge listener set lets a recording process delete its recordings at the moment of a purge
 src/core/belief/state.ts	module_collection	2	W6: per-engine state, or mark as a constant table
 src/core/binary-self-update.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/binary-self-update.ts	spawn_import	1	W7: process-wide effects move to src/cli
