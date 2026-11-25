@@ -47,6 +47,8 @@ const HELP_WITHOUT_BRAIN = [
   // through SELF_HELP_WITHOUT_ENGINE's table entries.
   'conversation-parser', 'advisor', 'anomalies', 'backfill', 'book-mirror', 'edges-backfill', 'features',
   'founder', 'graph-query', 'orphans', 'salience', 'think',
+  // Lane 3 P1: runProfile prints its usage before the engine.
+  'profile',
   // D5: selfHelp handlers that already answered --help before the engine but
   // were reached only after connect; now SELF_HELP_WITHOUT_ENGINE table entries.
   'brainstorm', 'lsd', 'migrate', 'pages', 'pricing', 'whoknows',
@@ -191,10 +193,10 @@ describe('--help without a configured brain', () => {
 
   // Value: protects=init --help names the surface the printed registration really pins; fails_when=the help says default full while readiness pins REGISTRATION_SURFACE (starter); why_new=the help line was written before the starter default (#7983 item 5); seam=none; no_claim=the registration argv itself (readiness tests)
   test('init --help names the registration surface default', async () => {
-    const { REGISTRATION_SURFACE } = await import('../src/core/mcp-registration.ts');
+    const { registrationProfile } = await import('../src/core/mcp-registration.ts');
     const r = await runCli(['init', '--help']);
     expect(r.code).toBe(0);
-    expect(r.out).toContain(`(default: ${REGISTRATION_SURFACE}, listing the memory verbs and request_tools)`);
+    expect(r.out).toContain(`(default per harness: Codex ${registrationProfile('codex').surface}; others ${registrationProfile('claude-code').surface}, listing the memory verbs and request_tools)`);
   }, 60_000);
 
   test('the known-unfixed set is exactly what it claims', async () => {

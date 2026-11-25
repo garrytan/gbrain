@@ -45,6 +45,7 @@ export const SNAPSHOT_DYNAMIC_IMPORTS_NOT_HASHED: Readonly<Record<string, string
   'ops/context.ts': 'verbs.ts request-time verb handlers (synthesize source scope, #7147)',
   'grants/shared-exposure.ts': 'grants/legacy-token.ts reads a rescoped token\'s resolved read set before and after at request time (GST-2898)',
   'ops/facts.ts': 'verbs.ts request-time verb handlers (remember TTL parsing, #7147)',
+  'profile/remember.ts': 'verbs.ts request-time verb handlers (remember facet, lane 3 P1)',
   'ai/gateway.ts': 'search/projection-statistics.ts embed-drain refresh reads the configured embedding model at request time (#7083)',
   'persistence/memory-mutations.ts': 'verbs.ts request-time verb handlers',
   'persistence/verb-errors.ts': 'verbs.ts request-time verb handlers',

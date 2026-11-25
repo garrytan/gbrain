@@ -28,7 +28,7 @@ import type { Check } from '../../doctor.ts';
 import { agentFix, checkError } from '../check-fix.ts';
 import { boundUnknownDetails } from '../bounded-unknown.ts';
 import { connectedEngine, doctorSourceIds, type DoctorContext, type DoctorEntry } from '../context.ts';
-import { isEngineCapabilityRefusal } from '../../../core/engine-capability-refusal.ts';
+import { isEngineCapabilityRefusal, rethrowCapabilityRefusal } from '../../../core/engine-capability-refusal.ts';
 import type { BrainEngine } from '../../../core/engine.ts';
 import { holdAppliesToPageSql, holdReachCte } from '../../../core/write-gate-binding.ts';
 import { isMissingSchemaObject } from '../../../core/utils.ts';
@@ -48,7 +48,7 @@ const MESSAGE_CAP = 5;
 type HoldClass = 'page_deleted' | 'no_page';
 type Counts = Record<HoldClass, number>;
 interface Item { hold_ref: string; kind: string; source_id: string; slug: string; class: HoldClass }
-interface Scan { scanned: number; stopped: 'row_limit' | 'deadline' | null; items: Item[]; hidden: string[] }
+interface Scan { scanned: number; stopped: 'row_limit' | 'deadline' | null; items: Item[]; hidden: string[]; awaitingSweep?: number }
 
 interface HoldRow { hold_id: string; kind: string; source_id: string; slug: string }
 interface Verdict { id: string; page_deleted: boolean }
@@ -135,7 +135,35 @@ async function scanHolds(engine: BrainEngine, scope: string[] | undefined, deadl
     const last = rows[rows.length - 1]!;
     after = { source: last.source_id, id: last.hold_id };
   }
-  return { scanned, stopped, items, hidden };
+  return { scanned, stopped, items, hidden, awaitingSweep: await awaitingSweep(engine, items) };
+}
+
+/**
+ * How many of the listed held writes a purge noted for the maintenance sweep (write-gate-recheck.ts): the next
+ * `bookkeeping_gc` run removes the ones no page row is left for. Read only when something is listed; undefined on a
+ * schema before the notes table.
+ */
+async function awaitingSweep(engine: BrainEngine, items: Item[]): Promise<number | undefined> {
+  if (!items.length) return undefined;
+  try {
+    // A count this role cannot read in full (no privilege, or row security) is not reported at all (never a hidden zero).
+    // Privilege is checked first in its own statement: a statement naming a table the role may not read fails as a whole.
+    const [readable] = await engine.executeRaw<{ ok: boolean | null }>(
+      `SELECT pg_catalog.has_table_privilege(t.oid, 'SELECT') AND NOT pg_catalog.row_security_active(t.oid) AS ok
+         FROM (SELECT pg_catalog.to_regclass('write_gate_hold_rechecks') AS oid) t WHERE t.oid IS NOT NULL`);
+    if (!readable?.ok) return undefined;
+    const [row] = await engine.executeRaw<{ n: number }>('SELECT count(DISTINCT hold_id)::int AS n FROM write_gate_hold_rechecks WHERE hold_id = ANY($1::text[]::bigint[])',
+      [items.map(i => i.hold_ref.slice(1))]);
+    return Number(row?.n ?? 0);
+  } catch (error) {
+    rethrowCapabilityRefusal(error);
+    if (isMissingSchemaObject(error, 'table', 'write_gate_hold_rechecks')) return undefined; // silent-read-ok: a schema before the notes table has nothing noted.
+    throw error;
+  }
+}
+
+function sweepNote(scan: Scan): string {
+  return scan.awaitingSweep ? ` ${scan.awaitingSweep} of them were kept by a purge for another page and are noted for a recheck by the next maintenance run (bookkeeping_gc).` : '';
 }
 
 const NEXT_STEP = 'This check only detects and changes nothing. The one next step is the read-only gbrain trust review, which lists the held writes.';
@@ -182,7 +210,7 @@ function report(scan: Scan): Omit<Check, 'name'> {
   const ordered = scan.items;
   const { counts, bySource } = tally(ordered);
   const base = { scanned: scan.scanned, stranded: counts, by_source: bySource, items: ordered.slice(0, ITEM_CAP), items_truncated: ordered.length > ITEM_CAP,
-    row_budget: ROW_BUDGET };
+    row_budget: ROW_BUDGET, ...(scan.awaitingSweep !== undefined ? { awaiting_sweep: scan.awaitingSweep } : {}) };
   const found = counts.page_deleted + counts.no_page;
   if (scan.stopped) {
     const why = scan.stopped === 'row_limit' ? `the row limit of ${ROW_BUDGET} held writes` : 'its time limit';
@@ -196,7 +224,7 @@ function report(scan: Scan): Omit<Check, 'name'> {
   if (found > 0) {
     return { status: 'ok', severity: 'info', readiness_state: 'degraded', details: { complete: true, ...base },
       message: `No held write is lifted by a rename: holds follow their page.${otherClasses(counts)} Held: ${[examples(ordered, 'page_deleted'), examples(ordered, 'no_page')].filter(Boolean).join('; ')}. `
-        + 'Nothing is leaking through these, and the check does not change them; gbrain trust review lists them.',
+        + `Nothing is leaking through these, and the check does not change them; gbrain trust review lists them.${sweepNote(scan)}`,
       fix: reviewFix() };
   }
   return { status: 'ok', details: { complete: true, ...base },

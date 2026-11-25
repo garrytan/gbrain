@@ -49,6 +49,7 @@ export const SECTIONS: DocSection[] = [
       { title: "Inside an existing agent", path: "docs/guides/in-agent-setup.md", description: "Isolated setup, absolute launcher, receipts, keyless maintenance, complete private backup and safe restoration.", includeInFull: false },
       { title: "Owner turns in a shared room", path: "docs/guides/rooms.md", description: "Declare the group chat an answer goes into (X-Gbrain-Room, _meta.room, a room argument): the owner's read is unchanged and every page and fact is marked room_access with whether the room could have read it; reasons, notices, who may ask, and keeping raw results out of the group transcript.", includeInFull: false },
       { title: "Guest notes", path: "docs/guides/guest-notes.md", description: "Keep what outside guests in a group chat say apart from your own pages: a database-only guest source (`gbrain guests init`), the writer list, how the broker saves a note with its sender and group, the warning every read shows, `gbrain guests promote`, `gbrain guests grant-owner-clients` and the guest_source doctor check.", includeInFull: false },
+      { title: "Portable profile", path: "docs/guides/profile.md", description: "Save your sizes, diet, allergies and constraints with remember --facet; any connected agent reads them with context_pack {profile: true} or gbrain profile, scoped to the caller (a member reads only its own).", includeInFull: false },
       { title: "Memory boundaries", path: "docs/guides/memory-boundaries.md", description: "Durable shared preferences versus harness state; remote graph maintenance, provider text disclosure, authorization and full-backup limits; large pages (segmented storage up to 256 MiB on Postgres, append_page / gbrain append, upload sessions, windowed reads, limits per entry point).", includeInFull: false },
       { title: "Page history", path: "docs/guides/page-history.md", description: "Why a page changed: an optional reason on page writes, replaced_because in get_versions, the gbrain-reason commit trailer, remote visibility and repo-less brains.", includeInFull: false },
       { title: "The morning note", path: "docs/guides/morning-note.md", description: "What the nightly cycle learned and how to answer it: gbrain learned, learned-keep and learned-undo, the session-start count line, expiry and the defaults that turn nightly learning on.", includeInFull: false },
@@ -225,6 +226,10 @@ export const SECTIONS: DocSection[] = [
         title: "docs/guides/live-sync.md",
         description: "Incremental markdown sync setup.",
         path: "docs/guides/live-sync.md",
+        // Linked, not inlined: a one-time setup runbook (56 KB) that AGENTS.md (inlined) links
+        // under Configure; dropping it, with MEMORY_VERBS_v1.md, restored about 140 KB of
+        // FULL_SIZE_BUDGET after the bundle reached 799,998 bytes.
+        includeInFull: false,
       },
       {
         title: "docs/guides/on-commit-sync.md",
@@ -392,6 +397,9 @@ export const SECTIONS: DocSection[] = [
         description:
           "The frozen memory-verb protocol (recall/remember/entity/synthesize/forget plus context_pack and delta): response envelopes, error contract, additive-forever versioning, surface modes, conformance certification, per-harness installs.",
         path: "docs/protocol/MEMORY_VERBS_v1.md",
+        // Linked, not inlined: an 85 KB frozen wire spec for harness and server implementers;
+        // `gbrain protocol --json` emits the same contract and CLAUDE.md (inlined) routes to it.
+        includeInFull: false,
       },
     ],
   },
