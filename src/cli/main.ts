@@ -168,7 +168,7 @@ const SELF_HELP_WITHOUT_ENGINE: Record<string, true | (() => Promise<(engine: ne
   agent: async () => (await import('../commands/agent.ts')).runAgent as never,
   // D3: post-connect records whose handler answers --help before the engine; run through the table.
   advisor: true, anomalies: true, feedback: true, backfill: true, 'book-mirror': true, 'edges-backfill': true, embed: true, features: true,
-  founder: true, 'graph-query': true, orphans: true, salience: true, think: true,
+  founder: true, profile: true, 'graph-query': true, orphans: true, salience: true, think: true,
   brainstorm: true, lsd: true, migrate: true, pages: true, pricing: true, 'retrieval-upgrade': true, whoknows: true, core: true, trust: true, wakeshift: true,
   secrets: true,
   dedupe: true, identity: true, 'apple-contacts': true,
@@ -2470,7 +2470,7 @@ async function prepareConnectedDispatch(command: string, args: string[]): Promis
 
   // These handlers already call their MCP twin on a thin client and never touch
   // the engine there; run them engine-free instead of opening one (#5102).
-  if ((command === 'salience' || command === 'anomalies' || command === 'graph-query' || command === 'whoknows' || command === 'founder') &&
+  if ((command === 'salience' || command === 'anomalies' || command === 'graph-query' || command === 'whoknows' || command === 'founder' || command === 'profile') &&
     isThinClient(loadConfig())) {
     await dispatchConnectedCommand(command, null as never, args);
     return null;
