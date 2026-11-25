@@ -81,7 +81,7 @@ export const matchSavedFacts: Member<'matchSavedFacts'> = async (brain, q) => {
     pats: q.pats,
     supersede: q.supersede,
     // The SQL reads `privateFactFilterForReader('f', true)`; `true` only adds a plan hint (OFFSET 0).
-    excludePrivate: storePrivacyPolicy(member, q.excludePrivate, () => privateFactFilterForReader('facts'), { callerReaders: true }),
+    excludePrivate: storePrivacyPolicy(member, q.excludePrivate, () => privateFactFilterForReader('facts'), { callerReaders: true, fragment: 'for_reader' }),
     worldOnly: q.worldOnly,
     minTrust: q.minTrust || null,
   }));
@@ -109,7 +109,7 @@ export const readEntityNewestFacts: Member<'readEntityNewestFacts'> = async (bra
     sourceId: q.sourceId,
     slugs: q.slugs,
     // A local caller reads no visibility or private-provenance rule; a remote one reads privateFactFilterForReader('f').
-    excludePrivate: storePrivacyPolicy(member, q.remote, () => privateFactFilterForReader('facts'), { callerReaders: true }),
+    excludePrivate: storePrivacyPolicy(member, q.remote, () => privateFactFilterForReader('facts'), { callerReaders: true, fragment: 'for_reader' }),
     worldOnly: q.remote && q.worldOnly,
     minTrust: q.minTrust || null,
   }));

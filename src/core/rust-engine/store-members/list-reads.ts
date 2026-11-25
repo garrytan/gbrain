@@ -127,7 +127,7 @@ export const listEnabledLabelledOnlyMemberIds: StoreMember<[], string[]> = async
  * store applies that rule's page policy (`noReaders`).
  */
 export const readChatCensusRows: StoreMember<[sourceIds: readonly string[], chatTypes: readonly string[], dmTypes: readonly string[], hidePrivate: boolean], ChatCensusRow[]> = async (brain, sourceIds, chatTypes, dmTypes, hidePrivate) => {
-  const excludePrivate = hidePrivate ? storePageTextPolicy('readChatCensusRows', () => privatePagesFilterFragment('p'), { noReaders: true }) : null;
+  const excludePrivate = hidePrivate ? storePageTextPolicy('readChatCensusRows', () => privatePagesFilterFragment('p'), { noReaders: true, fragment: 'plain' }) : null;
   return (await storeCall({ member: 'readChatCensusRows' }, () => brain.readChatCensusRows({ sourceIds: [...sourceIds], chatTypes: [...chatTypes], dmTypes: [...dmTypes], excludePrivate }))) as ChatCensusRow[];
 };
 

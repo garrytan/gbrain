@@ -124,7 +124,7 @@ export const countOpenPages: StoreMember<[sources: readonly string[], exclude: r
   }
   // The page policy for the empty identity, judged against the text the caller's record renders.
   const page = withCallerAccess({ identity: [], privateReadableSources: [] },
-    () => storePageTextPolicy('countOpenPages', () => pageText, { callerReaders: true }));
+    () => storePageTextPolicy('countOpenPages', () => pageText, { callerReaders: true, fragment: 'plain' }));
   const groups = new Map<string, OpenPageCount>();
   for (const source of new Set(sources)) {
     const skip = exclude.filter(x => x.source === source).map(x => x.prefix);

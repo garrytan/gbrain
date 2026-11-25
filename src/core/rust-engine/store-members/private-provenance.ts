@@ -49,6 +49,8 @@ import {
   withoutCallerAccess,
   privateProvenanceFilterUnderPolicy,
   privateFactFilterForCaller,
+  privateFactFilterForReader,
+  privatePagesFilterFragment,
   remoteProvenanceFloorSql,
   remoteReadFloorSql,
   readPolicyFragment,
@@ -60,6 +62,7 @@ import { ownerOnlyFactSql, ownerOnlyPageSql, ownerOnlyTakeSql, ownerOnlyTimeline
 import type { HybridSearchOpts, PostFusionOpts } from '../../search/hybrid.ts';
 import type { PageReadScope } from '../../types.ts';
 import { refuseMember } from './common.ts';
+import { accessSelfCheckMismatch, accessSelfCheckOn, selfChecked } from '../access-self-check.ts';
 
 /** The policy flags the store reads (`PrivacyPolicy` in rust/crates/gbrain-store/src/facts/privacy.rs). */
 export interface StorePrivacyPolicy {
@@ -109,6 +112,32 @@ export function ownerOnlyFormIn(sql: string, table: 'pages' | 'facts' | 'takes' 
   const rendered = (form: 'mode' | 'fn' | 'closed') => render(alias, form);
   if (sql.includes(rendered('fn')) || sql.includes(rendered('mode'))) return 'fn';
   return sql.includes(rendered('closed')) ? 'closed' : 'off';
+}
+
+/**
+ * The page fragment a page-text policy renders (`PageFragment` in rust/crates/gbrain-store/src/access_derive.rs):
+ * the caller's page policy, the remote read floor, or the no-caller fragment (which `readPolicyFragment('p', [], true)`
+ * renders too). Only the self-check reads it; it checks the label against the rendered text first.
+ */
+export type StorePageFragment = 'caller' | 'floor' | 'plain';
+/** The fact fragment a fact policy renders (`FactFragment` in access_derive.rs). */
+export type StoreFactFragment = 'under_policy' | 'for_caller' | 'for_reader';
+
+const PAGE_FRAGMENTS: Readonly<Record<StorePageFragment, () => string>> = {
+  caller: () => privatePagesFilterForCaller('p'),
+  floor: () => remoteReadFloorSql('p'),
+  plain: () => privatePagesFilterFragment('p'),
+};
+const FACT_FRAGMENTS: Readonly<Record<StoreFactFragment, () => string>> = {
+  under_policy: () => privateProvenanceFilterUnderPolicy('facts'),
+  for_caller: () => privateFactFilterForCaller('facts'),
+  for_reader: () => privateFactFilterForReader('facts'),
+};
+
+/** Under the self-check: the call site's fragment label renders the call site's own text, or the read refuses. */
+function checkFragment(member: string, mode: string, rendered: () => string, labelled: (() => string) | undefined): void {
+  if (!labelled) throw accessSelfCheckMismatch(member, mode, '$fragment (no label)');
+  if (normalizeConceptInputs(rendered()) !== normalizeConceptInputs(labelled())) throw accessSelfCheckMismatch(member, mode, '$fragment');
 }
 
 /** The page aliases the policies judge: the fact policy's two, and `p` of a page read. */
@@ -163,7 +192,19 @@ export function storePrivacyPolicy(
   member: string,
   excludePrivate: unknown,
   rendered: () => string,
-  opts: { callerReaders?: boolean } = {},
+  opts: { callerReaders?: boolean; fragment?: StoreFactFragment } = {},
+): StorePrivacyPolicy | undefined {
+  if (!accessSelfCheckOn()) return storePrivacyPolicyRendered(member, excludePrivate, rendered, opts);
+  checkFragment(member, 'fact', rendered, opts.fragment ? FACT_FRAGMENTS[opts.fragment] : undefined);
+  return selfChecked(member, { mode: 'fact', excludePrivate: excludePrivate === true, fragment: opts.fragment!, callerReaders: opts.callerReaders === true },
+    () => storePrivacyPolicyRendered(member, excludePrivate, rendered, opts));
+}
+
+function storePrivacyPolicyRendered(
+  member: string,
+  excludePrivate: unknown,
+  rendered: () => string,
+  opts: { callerReaders?: boolean },
 ): StorePrivacyPolicy | undefined {
   if (excludePrivate !== true) return undefined;
   const openFlag = currentCallerAccess().restricted === false ? { open: true } : {};
@@ -208,6 +249,10 @@ export function storePrivacyPolicy(
  * coverage or a relaxed privacy setting renders other text and refuses.
  */
 export function storeFloorPolicy(member: string): StorePrivacyPolicy {
+  return selfChecked(member, { mode: 'floor_policy' }, () => storeFloorPolicyRendered(member));
+}
+
+function storeFloorPolicyRendered(member: string): StorePrivacyPolicy {
   const text = normalizeConceptInputs(remoteProvenanceFloorSql('facts'));
   const floor = (sql: string, open: boolean): StorePrivacyPolicy =>
     ({ ...factPolicyFlags(sql), entityPrivacy: false, provenanceOnly: true, ...(open ? { open: true } : {}) });
@@ -229,6 +274,11 @@ export function storeFloorPolicy(member: string): StorePrivacyPolicy {
  * identity the fragment drops as invalid (`validIdentity`) refuses, as the store would apply it as written.
  */
 export function storeMemberReadPolicy(member: string, q: { owner: boolean; identity: readonly string[]; satisfied: readonly string[] }): StorePrivacyPolicy {
+  return selfChecked(member, { mode: 'member_read', owner: q.owner, identity: [...q.identity], satisfied: [...q.satisfied] },
+    () => storeMemberReadPolicyRendered(member, q));
+}
+
+function storeMemberReadPolicyRendered(member: string, q: { owner: boolean; identity: readonly string[]; satisfied: readonly string[] }): StorePrivacyPolicy {
   if (q.satisfied.length > 0) refuseMember(member, 'a member page whose reader meets a folder rule');
   if (q.owner) return storeOwnerReadPolicy(member, q.identity);
   const text = normalizeConceptInputs(readPolicyFragment('p', q.identity, true, q.satisfied));
@@ -278,7 +328,7 @@ export function storePagePolicy(
   opts: { callerReaders?: boolean } = {},
 ): StorePrivacyPolicy | undefined {
   if (!excludePrivate) return undefined;
-  return storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), opts);
+  return storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { ...opts, fragment: 'caller' });
 }
 
 /**
@@ -295,7 +345,18 @@ export function storePagePolicy(
 export function storePageTextPolicy(
   member: string,
   rendered: () => string,
-  opts: { callerReaders?: boolean; noReaders?: boolean } = {},
+  opts: { callerReaders?: boolean; noReaders?: boolean; fragment?: StorePageFragment } = {},
+): StorePrivacyPolicy {
+  if (!accessSelfCheckOn()) return storePageTextPolicyRendered(member, rendered, opts);
+  checkFragment(member, 'page_text', rendered, opts.fragment ? PAGE_FRAGMENTS[opts.fragment] : undefined);
+  return selfChecked(member, { mode: 'page_text', fragment: opts.fragment!, callerReaders: opts.callerReaders === true, noReaders: opts.noReaders === true },
+    () => storePageTextPolicyRendered(member, rendered, opts));
+}
+
+function storePageTextPolicyRendered(
+  member: string,
+  rendered: () => string,
+  opts: { callerReaders?: boolean; noReaders?: boolean },
 ): StorePrivacyPolicy {
   const openFlag = currentCallerAccess().restricted === false ? { open: true } : {};
   const policy = judgeWidenedCaller<StorePrivacyPolicy>(callerReaders => {
@@ -435,7 +496,7 @@ void HYBRID_BAG_KEYS_COMPLETE;
  */
 export function reflexPolicy(member: string, privacy: ReflexPrivacy): StorePrivacyPolicy | null {
   if (privacy === 'none') return null;
-  if (privacy === 'caller') return storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true });
-  if (privacy === 'floor') return storePageTextPolicy(member, () => remoteReadFloorSql('p'), { callerReaders: true });
+  if (privacy === 'caller') return storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true, fragment: 'caller' });
+  if (privacy === 'floor') return storePageTextPolicy(member, () => remoteReadFloorSql('p'), { callerReaders: true, fragment: 'floor' });
   refuseMember(member, `privacy ${String(privacy)}`);
 }

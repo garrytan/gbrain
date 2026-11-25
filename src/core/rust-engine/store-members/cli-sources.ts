@@ -166,7 +166,7 @@ export const writeSourceUpstreamObservation: StoreMember<[sourceId: string, obse
  */
 export const readSourcesNotReadable: StoreMember<[readable: readonly string[], opts: SourcesNotReadableOpts], boolean> = async (brain, readable, opts) => {
   const member = 'readSourcesNotReadable';
-  const policy = opts.excludePrivate ? storePageTextPolicy(member, () => remoteReadFloorSql('p'), { callerReaders: true }) : null;
+  const policy = opts.excludePrivate ? storePageTextPolicy(member, () => remoteReadFloorSql('p'), { callerReaders: true, fragment: 'floor' }) : null;
   return (await storeCall({ member }, () => brain.readSourcesNotReadable([...readable], opts.facts, policy))) === true;
 };
 

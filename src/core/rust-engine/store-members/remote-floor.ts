@@ -4,6 +4,7 @@
  */
 import { currentCallerAccess, privacyAliasSql, remoteProvenanceFloorSql, withCallerAccess, withoutCallerAccess } from '../../search/private-visibility.ts';
 import { refuseMember } from './common.ts';
+import { selfChecked } from '../access-self-check.ts';
 import { normalizeConceptInputs, ownerOnlyFormIn, type StoreOwnerOnlyForm } from './private-provenance.ts';
 
 /**
@@ -15,6 +16,10 @@ import { normalizeConceptInputs, ownerOnlyFormIn, type StoreOwnerOnlyForm } from
  * both sent as settings. Any other rendering refuses.
  */
 export function storeRemoteFloor(member: string): { honorAliases: boolean; restricted: boolean; ownerOnly: StoreOwnerOnlyForm } {
+  return selfChecked(member, { mode: 'remote_floor' }, () => storeRemoteFloorRendered(member));
+}
+
+function storeRemoteFloorRendered(member: string): { honorAliases: boolean; restricted: boolean; ownerOnly: StoreOwnerOnlyForm } {
   const got = normalizeConceptInputs(remoteProvenanceFloorSql('facts'));
   const floor = (text: string, restricted: boolean) =>
     ({ honorAliases: text.includes(privacyAliasSql('pp')), restricted, ownerOnly: ownerOnlyFormIn(text, 'facts', 'facts') });

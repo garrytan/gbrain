@@ -793,6 +793,18 @@ function readSchemaVersion(): number | undefined {
   return remotePolicy ? remotePolicy.schemaVersion : scoped ? schemaVersionSeen(scoped) : undefined;
 }
 
+/**
+ * Multi-user lane L4: the settings the policy renderers read in the current context, for the store's own derivation
+ * (rust/crates/gbrain-store/src/access_derive.rs `AccessSettings`): the aliases setting, the process privacy hatch
+ * (the no-record default of hidePrivate) and the engine scope's recorded schema version, which a record with no remote
+ * policy renders with. It never fabricates a remote policy; the record's own one travels with the record.
+ */
+export function accessSettingsSnapshot(): { honorAliases: boolean; processPrivacyRelaxed: boolean; scopeSchemaVersion?: number } {
+  const scoped = engineScopeStore.getStore();
+  const version = scoped ? schemaVersionSeen(scoped) : undefined;
+  return { honorAliases: honorAliases(), processPrivacyRelaxed: processPrivacyRelaxed(), ...(version !== undefined ? { scopeSchemaVersion: version } : {}) };
+}
+
 function derivedOriginPrivateSql(p: string, shadowedPages: boolean): string {
   const privateOrigin = (atom: string, alias: string) => `EXISTS (SELECT 1 FROM pages ${alias} WHERE ${alias}.source_id = ${atom}.source_id
       AND ${alias}.slug = ANY(${atomOriginSlugsSql(atom)}) AND ${alias}.frontmatter->>'visibility' = 'private')`;
