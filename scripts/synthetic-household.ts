@@ -6,31 +6,31 @@
  * The brain lives at <gbrain-home>/.gbrain/brain.pglite with a keyless config, so `GBRAIN_HOME=<gbrain-home> gbrain serve`
  * serves it. It refuses a directory that already holds a brain. Every name in it is invented.
  */
-import { existsSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync, rmSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { handleToolCall } from '../src/mcp/server.ts';
 import { gbrainPath, saveConfig, type GBrainConfig } from '../src/core/config.ts';
 import { seedSyntheticHousehold, TIMEZONE } from '../test/fixtures/synthetic-household/household.ts';
 
 export async function seedSyntheticHouseholdBrain(dir: string): Promise<Map<string, string>> {
-  const home = resolve(dir);
-  for (const f of ['config.json', 'brain.pglite']) {
-    if (existsSync(join(home, '.gbrain', f))) throw new Error(`${join(home, '.gbrain', f)} already exists; the synthetic household seeds only a new, empty directory.`);
-  }
   const saved = process.env.GBRAIN_HOME;
-  process.env.GBRAIN_HOME = home;
+  process.env.GBRAIN_HOME = resolve(dir);
   try {
     const dbPath = gbrainPath('brain.pglite');
+    for (const f of [gbrainPath('config.json'), dbPath]) {
+      if (existsSync(f)) throw new Error(`${f} already exists; the synthetic household seeds only a new, empty directory.`);
+    }
     const engine = new PGLiteEngine();
-    await engine.connect({ database_path: dbPath, engine: 'pglite' });
-    await engine.initSchema();
-    let slugs: Map<string, string>;
+    let slugs: Map<string, string> | undefined;
     try {
+      await engine.connect({ database_path: dbPath, engine: 'pglite' });
+      await engine.initSchema();
       await engine.setConfig('brain.timezone', TIMEZONE);
       slugs = await seedSyntheticHousehold((op, params) => handleToolCall(engine, op, params) as Promise<any>);
     } finally {
       await engine.disconnect();
+      if (!slugs) rmSync(dbPath, { recursive: true, force: true });
     }
     saveConfig({ engine: 'pglite', database_path: dbPath, embedding_disabled: true } as unknown as GBrainConfig);
     return slugs;

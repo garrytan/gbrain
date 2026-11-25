@@ -9,9 +9,10 @@
  *      item cited by slug.
  *   3. The native baseline: the same two steps with gbrain disconnected, using each harness's own memory (an
  *      AGENTS.md notes file in the working directory, which Claude Code reads through CLAUDE.md and Codex reads as its
- *      project instructions). The pass bar is that it misses at least one item of the ranking.
+ *      project instructions). It is reported, not asserted: the log names the items it missed and added, and a model
+ *      that gets every item right from its notes alone does not fail the check.
  *
- * Opt-in and paid: GBRAIN_TEST_HOUSEHOLD_LIVE=1 GBRAIN_TEST_KEEP_PROVIDER_KEYS=1 bun test <this file>, with the claude and
+ * Opt-in and paid: GBRAIN_TEST_LIVE_HOUSEHOLD=1 GBRAIN_TEST_KEEP_PROVIDER_KEYS=1 bun test <this file>, with the claude and
  * codex commands and their keys (ANTHROPIC_API_KEY; CODEX_API_KEY or OPENAI_API_KEY). An opted-in run that is missing any
  * of them, or whose claude is older than 2.1.280 (Opus 5.5 needs it), fails instead of skipping. Every home is a temp
  * dir (HOME, CLAUDE_CONFIG_DIR and CODEX_HOME), every name is invented.
@@ -34,13 +35,13 @@ const CODEX_MODEL = process.env.GBRAIN_TEST_HOUSEHOLD_CODEX_MODEL || 'gpt-6.2-so
 const CODEX_KEY = process.env.CODEX_API_KEY || process.env.OPENAI_API_KEY || '';
 const CLAUDE_BIN = resolveClaudeBinary();
 const CODEX_BIN = resolveCodexBinary();
-const LIVE = process.env.GBRAIN_TEST_HOUSEHOLD_LIVE === '1';
+const LIVE = process.env.GBRAIN_TEST_LIVE_HOUSEHOLD === '1';
 const MISSING = [
   !CLAUDE_BIN && 'the claude command', !CODEX_BIN && 'the codex command', !hasClaudeAuth() && 'ANTHROPIC_API_KEY',
   !CODEX_KEY && !existsSync(join(homedir(), '.codex', 'auth.json')) && 'CODEX_API_KEY or OPENAI_API_KEY',
 ].filter(Boolean);
 if (LIVE && MISSING.length) {
-  throw new Error(`GBRAIN_TEST_HOUSEHOLD_LIVE=1 but this run is missing ${MISSING.join(', ')}. Provider keys reach tests only with GBRAIN_TEST_KEEP_PROVIDER_KEYS=1.`);
+  throw new Error(`GBRAIN_TEST_LIVE_HOUSEHOLD=1 but this run is missing ${MISSING.join(', ')}. Provider keys reach tests only with GBRAIN_TEST_KEEP_PROVIDER_KEYS=1.`);
 }
 const READY = LIVE && !MISSING.length;
 
@@ -184,7 +185,7 @@ describe.skipIf(!READY)('household outcome across Claude Code and Codex (W1a, li
     expect(passed, evidence).toBe(true);
   }, 1_500_000);
 
-  test('native baseline: the same two steps with gbrain disconnected miss at least one item of the ranking', async () => {
+  test('native baseline: the same two steps with gbrain disconnected, reported against the ranking', async () => {
     const cwd = temp(gitDir('gb-w1a-native-'));
     writeFileSync(join(cwd, 'AGENTS.md'), householdNotes());
     writeFileSync(join(cwd, 'CLAUDE.md'), '@AGENTS.md\n');
@@ -208,6 +209,5 @@ describe.skipIf(!READY)('household outcome across Claude Code and Codex (W1a, li
     const sameOrder = JSON.stringify(titles) === JSON.stringify(AT_RISK.map(t => t.toLowerCase()));
     console.log(`[baseline step 2 codex] exit=${answer.exitCode} listed=${titles.length} missing=${JSON.stringify(missing)} extra=${JSON.stringify(extra)} sameOrder=${sameOrder}\n${answer.finalText.slice(0, 2000)}`);
     expect(titles.length, answer.finalText).toBeGreaterThan(0);
-    expect(missing.length, `the baseline listed every item: ${answer.finalText}`).toBeGreaterThan(0);
   }, 900_000);
 });

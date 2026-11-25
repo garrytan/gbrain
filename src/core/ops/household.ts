@@ -235,8 +235,6 @@ function timelineLine(day: string, event: string, note: string | null): string {
   return `- **${day}** | household — ${event}${note ? `: ${note}` : ''}`;
 }
 
-/** On a brain that serves several people, only the owner's remote connection makes a subject a child: one refusal, whatever records exist. */
-
 /**
  * Writes `household_role` on each subject page (creating a minimal page when none exists). A subject that goes from another
  * role to child first has the records about it narrowed to adults (`audience: adults`), so none is shared for a moment.

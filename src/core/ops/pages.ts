@@ -33,7 +33,7 @@ import { sanitizeRemoteBody } from '../remote-body.ts';
 import { getContentFlag } from '../quarantine.ts';
 import { fileHeldField, readHeldPages } from '../persistence/held-reads.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
-import { ownerFenceView, resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs, isPrivatePageForCaller } from '../search/private-visibility.ts';
+import { callerIsOwner, ownerFenceView, resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs, isPrivatePageForCaller } from '../search/private-visibility.ts';
 import { heldRowsForCaller } from '../eligibility/fence-overlay.ts';
 import { unquoteAnyTranscriptText } from '../search/transcript-quote.ts';
 import { withIgnoredPrivacyLabelNotice } from '../search/ignored-privacy-labels.ts';
@@ -464,7 +464,7 @@ const delete_page: Operation = {
       }
       return { dry_run: true, action: p.purge === true ? 'purge_page' : 'delete_page', slug: p.slug };
     }
-    if (typeof p.slug === 'string') await (await import('../household/placement.ts')).householdDeleteAdmission(ctx.engine, sourceId, p.slug, ctx.remote);
+    if (typeof p.slug === 'string') await (await import('../household/placement.ts')).householdDeleteAdmission(ctx.engine, sourceId, p.slug, ctx.remote, callerIsOwner());
     return (await import('../repair/origin-carry.ts')).deletePageCarryingPrivate(ctx, p, sourceId);
   },
   cliHints: { name: 'delete', positional: ['slug'] },

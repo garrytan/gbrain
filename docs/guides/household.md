@@ -65,7 +65,10 @@ people, each record names the owner and the `household-adults`, `household-helpe
 its row allows. To reclassify a subject, run `gbrain household replace --about <slug> --role <role>` on the brain host
 (or `household add --child` with a new record): it narrows the records about the subject to adults first, then sets
 the role. On a brain that serves several people, only the owner's MCP connection can make a subject a child with
-`household_add` or `put_page`, or remove a subject's role; any other connection is refused with `household_reclassify`, the same way whatever records exist, so the refusal says nothing about records it cannot read. An edit or sync that narrows a subject while records about it are still shared is refused
+`household_add`, `put_page` or `edit_page`, remove a subject's role, or delete a subject page; any other connection is refused with `household_reclassify`, the same way whatever records exist, so the refusal says nothing about records it cannot read.
+Giving a subject with no role a role like `adult` is refused only when a record about it is kept to adults by the
+placement table alone (every adult reads those); a record whose `readable_by` was written narrower keeps that list, so
+it never blocks the change. An edit or sync that narrows a subject while records about it are still shared is refused
 ([household_reclassify](#household_reclassify)), and so is making a child of a subject page that sync deleted and
 wrote again; only the owner can turn a child into another role.
 Every write path runs these checks against the stored page and the new one: `put_page`, `edit_page`, the household
@@ -89,10 +92,10 @@ checks that with real agents on a keyless brain with no git repository, seeded w
 2. A new Codex session, with gbrain connected, answers "what's at risk at home this week?" through `household_due`.
    Its list has to match a ranking worked out by hand, in order, with each item's page slug.
 3. The same two steps run again with gbrain disconnected, using only each tool's own notes file (`AGENTS.md`). That
-   answer has to miss at least one item, which shows the brain is what got the list right.
+   answer is reported, not checked: the log lists the items it missed and added, next to the brain's list.
 
 It costs a few dollars of model use, so it runs only when you ask:
-`GBRAIN_TEST_HOUSEHOLD_LIVE=1 GBRAIN_TEST_KEEP_PROVIDER_KEYS=1 bun test test/e2e/household-cross-harness-real.serial.test.ts`,
+`GBRAIN_TEST_LIVE_HOUSEHOLD=1 GBRAIN_TEST_KEEP_PROVIDER_KEYS=1 bun test test/e2e/household-cross-harness-real.serial.test.ts`,
 with the `claude` (2.1.280 or newer, for Opus 5.5) and `codex` commands, and `ANTHROPIC_API_KEY` plus `CODEX_API_KEY`
 or `OPENAI_API_KEY`. If you ask for it and something is missing, it fails and names what. It uses no judge and publishes
 no number. The seed script refuses a directory that already holds a brain.
@@ -116,7 +119,8 @@ written. For a record: a remote agent tried to change its type, drop a child fro
 brain's owner, who can make the change with a local write. For a subject page: a remote agent tried to take a child out of `household_role: child`
 (changing or removing it), or to give a subject a role that would widen records already kept to adults because of it
 (only the owner can), or the subject was narrowed (made a child, or its role removed) while records about it were still shared
-with helpers. Run `gbrain household replace --about <slug> --role <role>` on the brain host: it narrows those records
+with helpers. On a brain that serves several people, a connection other than the owner's is refused for making a
+subject a child, removing its role or deleting it, whatever records exist. Run `gbrain household replace --about <slug> --role <role>` on the brain host: it narrows those records
 to adults (`audience: adults` on each) and then sets the role. To remove a role, run it without `--role`, then edit
 the page again. A subject that records are about can be deleted only on the brain host, and only once no record
 about it is still shared with helpers (run `gbrain household replace --about <slug>` first).
