@@ -34,7 +34,7 @@ export const PURGE_OWNERS = {
   receipts: 'lane 13 step 3',
   /** The receipt's four reads (source-prose scan, source path, purge request, purge effects): rust-engine/rust-5a 90e7bea933 (not merged here). */
   receiptReads: 'lane 4 (rust-5a 90e7bea933)',
-  /** The recorded-value probe of the receipt's ledger report: rust-engine/rust-belief-purge e211982aba serves it (not merged here). */
+  /** The recorded-value probe of the receipt's ledger report: rust-engine/rust-belief-purge e211982aba serves it (carried here). */
   beliefProbe: 'lane 3 (rust-belief-purge e211982aba)',
   /** The fact-context probe of the receipt's ledger report. */
   factContextProbe: 'lane 4 (rust-5a 90e7bea933)',
@@ -52,7 +52,7 @@ export const PURGE_OWNERS = {
  * stops served on other branches (request index, origin twin, publication stamp, generation-ledger scrub) are due Nov 25,
  * the last landing date. The fact purge's transaction statements, served on rust-5a, are due Nov 23 (the step 6 ruling).
  */
-export const PURGE_DUE = { nov23: '5 PM PST Nov 23', nov24: '5 PM PST Nov 24', nov25: '5 PM PST Nov 25' } as const;
+export const PURGE_DUE = { nov23: '5 PM PST Nov 23', nov24: '5 PM PST Nov 24', nov25: '5 PM PST Nov 25', nov28: '5 PM PST Nov 28' } as const;
 
 export type PurgeEntryPoint = 'delete_page' | 'retention';
 
@@ -60,7 +60,11 @@ export type PurgeEntryPoint = 'delete_page' | 'retention';
  * `due`: when the owning lane lifts the stop. Every stop another lane owns carries one (test/page-purge-path-members.test.ts).
  * `entry`: the entry point that alone reaches the entry (`E`; the page purge's is `retention`, the fact purge's `purge`).
  */
-interface Base<E extends string = 'retention'> { owner: string; entry?: E; due?: string }
+/**
+ * `ledger`: reached only when the purge's source records belief events (`hasBeliefEvents`), so the check counts it as a stop
+ * only for such a source.
+ */
+interface Base<E extends string = 'retention'> { owner: string; entry?: E; due?: string; ledger?: true }
 /** A BrainEngine member the purge calls. `stop`: not served on Rust (must match the classification). `refuses`: served, but refuses the purge's arguments. */
 export interface PurgePathMember<E extends string = 'retention'> extends Base<E> { member: keyof BrainEngine & string; stop?: string; refuses?: string }
 /** A raw-SQL site, named `function (file under src/core)` as the recording test attributes it. */
@@ -68,7 +72,7 @@ export interface PurgePathSite<E extends string = 'retention'> extends Base<E> {
 export type PurgePathEntry<E extends string = 'retention'> = PurgePathMember<E> | PurgePathSite<E>;
 
 const { ours, beliefProbe, requestIndexes } = PURGE_OWNERS;
-const { nov24, nov25 } = PURGE_DUE;
+const { nov25 } = PURGE_DUE;
 const served = (owner: string, ...members: Array<keyof BrainEngine & string>): PurgePathMember[] => members.map(member => ({ member, owner }));
 
 /** Retention-only raw sites: the carry's parks and the candidate selection of purgeDeletedPagesCoordinated. */
@@ -133,7 +137,8 @@ export const PURGE_PATH: readonly PurgePathEntry[] = [
   // verifyPagePurge: the receipt. Its store probes (`countPurgeProbe`) are served, the fact purge's `fingerprint` and
   // `claim_text` probes included.
   // ledgerReports: runs for every purge whose page has fact claims, belief ledger or not.
-  { member: 'listBeliefEventsForPurgeProbe', owner: beliefProbe, due: nov24, stop: 'the receipt pages the recorded values for the purged claims; not served until e211982aba is merged' },
+  // The receipt pages the recorded values for the purged claims (trust/belief_purge.rs).
+  ...served(beliefProbe, 'listBeliefEventsForPurgeProbe'),
   // The members the purge calls and the Rust engine serves.
   ...served(ours,
     // the purge itself

@@ -16,7 +16,7 @@
  * `for_each_table_row`, so a count stops at its bound. The store keeps no raw upload part, derivation sweep record or
  * retrieval event, feedback or weight record, so a probe of those finds nothing. The belief ledger's table probe is a plain
  * count of the store's own events; the receipt's ledger report reads the recorded values through lane 3's member instead
- * (`listBeliefEventsForPurgeProbe`), which stays a stop. A named `raw_data` probe names its rows by the `raw_data.id` the store keeps; it refuses
+ * (`listBeliefEventsForPurgeProbe`, served by belief-purge.ts). A named `raw_data` probe names its rows by the `raw_data.id` the store keeps; it refuses
  * its item list only when a matching record was written before the store kept that id (its next putRawData adds one).
  *
  * A page purge receipt's store probes (engine-sql/purge-verify.ts) run through the same two members, as

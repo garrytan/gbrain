@@ -238,11 +238,11 @@ describe('engine parity: the store probes of a fact purge receipt', () => {
     return out;
   });
 
-  parityTest('a fact purge receipt reports the same stores on every engine, or stops naming the ledger read it cannot serve and its owner', {
+  parityTest('a fact purge receipt reports the same stores on every engine', {
     methods: ['putPage', 'insertFact', 'loadPurgeTarget', 'addTakesBatch', 'insertTakeProposal', 'upsertChunks', 'createVersion', 'transaction', 'countPurgeProbe', 'setPurgeProbeTimeout',
-      'countLegacyDerivedPages', 'countFactFingerprintLeftovers'],
+      'countLegacyDerivedPages', 'countFactFingerprintLeftovers', 'listBeliefEventsForPurgeProbe'],
     timeout: 120_000,
-  }, async (engine, backend) => {
+  }, async (engine) => {
     const page = await engine.putPage('notes/doomed', note('Doomed', `The page says ${CLAIM}.`));
     await engine.upsertChunks('notes/doomed', [{ chunk_index: 0, chunk_text: `The page says ${CLAIM}.`, chunk_source: 'compiled_truth' }]);
     await engine.createVersion('notes/doomed');
@@ -252,15 +252,8 @@ describe('engine parity: the store probes of a fact purge receipt', () => {
     const target = (await engine.loadPurgeTarget(row.id, SRC))!;
     const plan = await planFactPurge(engine, target, false);
     expect(reasonNeedle(CLAIM).length).toBeGreaterThan(0);
-    // A typed refusal is rethrown, not swallowed: the case stops on it, and the Rust arm counts it as stopped. The refusal names its
-    // owner and due date: lane 3 for the ledger's recorded values, due 5 PM PST Nov 24 (lane 4's fact contexts, due the same time, are read right after them).
-    const { tell_user_to_run: _engineAdvice, ...receipt } = await verifyFactPurge(engine, { target, plan, dryRun: false }).catch((error: unknown) => {
-      if (backend === 'rust') {
-        expect((error as Error).message).toContain('listBeliefEventsForPurgeProbe (owner lane 3 (rust-belief-purge e211982aba), due 5 PM PST Nov 24)');
-        expect((error as { detail?: unknown }).detail).toBe('member=listBeliefEventsForPurgeProbe capability=facts outcome=none written=nothing owner="lane 3 (rust-belief-purge e211982aba)" due="5 PM PST Nov 24"');
-      }
-      throw error;
-    }) as Awaited<ReturnType<typeof verifyFactPurge>> & { tell_user_to_run?: unknown };
+    const { tell_user_to_run: _engineAdvice, ...receipt } = await verifyFactPurge(engine, { target, plan, dryRun: false }) as
+      Awaited<ReturnType<typeof verifyFactPurge>> & { tell_user_to_run?: unknown };
     // The physical-copy residual and the operator's VACUUM advice name the engine's own storage; every other line is engine-independent.
     const residuals = receipt.residuals.map(r => (r.store === 'database_physical' ? { ...r, detail: '<engine vacuum advice>' } : r));
     expect(receipt.fact_id).toBe(row.id);

@@ -252,9 +252,9 @@ describe('the fact purge calls only what the list names', () => {
       ['belief ledger: real', 'rich page: real', 'rich page: resume', 'segmented page and staged upload: real']);
     for (const trace of runs) {
       const called = trace.names.filter(name => stops.has(name));
-      // With lane 4's rust-5a the purge transaction's members are served: a real run still reaches the receipt's belief
-      // probe stop (and a segmented page the raw-SQL stops); a resume reaches none.
-      expect(called.length).toBeGreaterThanOrEqual(trace.phase === 'resume' ? 0 : 1);
+      // The purge transaction's members and the receipt's belief probe are served on Rust: only a real run on a source that
+      // records belief events still reaches stops (the belief-ledger raw sites); a resume reaches none.
+      expect(called.length).toBeGreaterThanOrEqual(trace.scenario === 'belief ledger' && trace.phase === 'real' ? 1 : 0);
       // Lists, not sets: the order in which a run first made each call, against the order of the list.
       expect({ run: `${trace.scenario}: ${trace.phase}`, called }).toEqual({ run: `${trace.scenario}: ${trace.phase}`, called: [...called].sort((a, b) => rank(a) - rank(b)) });
     }
