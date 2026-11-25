@@ -3,7 +3,7 @@
 Part of the store contract in [rust/README.md](../../README.md) ("The brain store"): the rules there apply to every method here.
 
 A page's text is indexed as chunks (`chunk_source` is `compiled_truth`, `timeline`, `fenced_code` or
-`image_asset`; a chunk is one record plus one posting per word). The store's own `putPage`, unless it is
+`image_asset`; a chunk is one record; its keyword postings belong to the keyword index, `keyword.md`). The store's own `putPage`, unless it is
 given `index: false`, installs the chunks in the same transaction as the page: `opts.chunks` when the
 caller passes `ChunkInput[]`, otherwise the built-in chunker (paragraphs packed to about 1500 characters;
 simpler than the TypeScript chunker). The TypeScript engine does not use that: its `putPage` passes
@@ -38,4 +38,4 @@ index. `opts` is the arm's options (`limit`, `offset`, `type`, `types`, `sources
 `detailLow`, `where`, `afterDate`, `beforeDate` and the rest of `KeywordOptions`). Until store format 13 it was a BM25
 search over its own word postings (`T`), which no TypeScript member called; format 13 dropped those postings and
 their upkeep on every chunk write, and its upgrade deletes them in one write transaction (`legacy_postings.rs`).
-The TypeScript `searchKeyword` member is unchanged: it runs the arm and its retries (`keyword.md`).
+The TypeScript `searchKeyword` member is unchanged, and it runs the arm and its retries (`keyword.md`).
