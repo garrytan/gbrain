@@ -111,6 +111,22 @@ describe('reservation and engine guards', () => {
     const points = await rustFindTrajectory(brain as never, { entitySlug: 'memory/owner', sourceId: 'default', remote: false, limit: 2 } as never);
     expect(points.map(p => p.text)).toEqual(['mrr2', 'mrr3']);
   });
+  test('Rust trajectory: pages the native read past more profile rows than one native read returns', async () => {
+    const at = (i: number) => new Date(Date.UTC(2026, 0, 1) + i * 60_000).toISOString();
+    const row = (metric: string, i: number) => ({ fact_id: i, metric, text: metric + i, valid_from: at(i), valid_until: null });
+    const native = [row('mrr', 1), row('mrr', 2), row('mrr', 3), ...Array.from({ length: 1200 }, (_, i) => row('profile.diet', 10 + i))];
+    const reads: Array<string | undefined> = [];
+    const brain = { findTrajectory: async (o: { limit: number; until?: string }) => {
+      reads.push(o.until);
+      const upTo = native.filter(r => o.until === undefined || r.valid_from <= o.until);
+      return upTo.slice(Math.max(0, upTo.length - o.limit));
+    } };
+    const points = await rustFindTrajectory(brain as never, { entitySlug: 'memory/owner', sourceId: 'default', remote: false, limit: 2 } as never);
+    expect(points.map(p => p.text)).toEqual(['mrr2', 'mrr3']);
+    const all = await rustFindTrajectory(brain as never, { entitySlug: 'memory/owner', sourceId: 'default', remote: false, limit: 50 } as never);
+    expect(all.map(p => p.text)).toEqual(['mrr1', 'mrr2', 'mrr3']);
+    expect(reads.length).toBeGreaterThan(2);
+  });
 });
 
 describe('gbrain profile output', () => {
