@@ -9047,6 +9047,7 @@
         "addLoopSuppression": "none",
         "addPageTagsById": "none",
         "addPersistenceCounters": "none",
+        "addSoakCounterEvent": "none",
         "addSynthesisEvidence": "none",
         "addTag": "none",
         "addTakesBatch": "none",

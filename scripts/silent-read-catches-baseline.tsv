@@ -1170,8 +1170,6 @@ src/core/persistence/root-registry.ts#isGitDirectory	catch_empty	1
 src/core/persistence/schema-admission.ts#readSchemaBehind	catch_empty	1
 src/core/persistence/segmented-mirror-gate.ts#resumeGatedMirrors	catch_empty	1
 src/core/persistence/service.ts#awaitWrite	promise_catch_empty	3
-src/core/persistence/soak-counters.ts#recordSoakEvent	capability_refusal_swallowed	1
-src/core/persistence/soak-counters.ts#recordSoakEvent	promise_catch_empty	1
 src/core/persistence/source-lifecycle.ts#runManagedSourceLifecycle	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/source-lifecycle.ts#runManagedSourceLifecycle<anon@3>	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/source-lifecycle.ts#runManagedSourceLifecycle<anon@3>>retireBatch	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)

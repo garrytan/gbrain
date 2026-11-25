@@ -20,7 +20,7 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
-import { readSoakCounters } from '../../src/core/persistence/soak-counters.ts';
+import { readSoakCounters, SOAK_COUNTERS_OP } from '../../src/core/persistence/soak-counters.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { _resetCliExitVerdictForTests } from '../../src/core/cli-force-exit.ts';
 
@@ -50,7 +50,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 describe('engine parity: soak counter writes', () => {
   parityTest('gbrain repair --apply counts its interventions and content decisions in the soak counters on every engine', {
-    methods: ['readSoakCounterRows'], timeout: 60_000,
+    methods: ['addSoakCounterEvent', 'readSoakCounterRows'], timeout: 60_000,
   }, async (engine) => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-parity-soak-'));
     try {
@@ -71,5 +71,21 @@ describe('engine parity: soak counter writes', () => {
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
+  });
+
+  parityTest('addSoakCounterEvent creates the day row, adds to a counter, and keeps the other counters of the day', {
+    methods: ['addSoakCounterEvent', 'readSoakCounterRows'],
+  }, async (engine) => {
+    await engine.addSoakCounterEvent(SOAK_COUNTERS_OP, '2026-01-02', 'repair_apply', 1);
+    await engine.addSoakCounterEvent(SOAK_COUNTERS_OP, '2026-01-02', 'repair_apply', 3);
+    await engine.addSoakCounterEvent(SOAK_COUNTERS_OP, '2026-01-02', 'needs_human', 2);
+    await engine.addSoakCounterEvent(SOAK_COUNTERS_OP, '2026-01-03', 'retry_held', 1);
+    const rows = await engine.readSoakCounterRows(SOAK_COUNTERS_OP, ['2026-01-02', '2026-01-03', '2026-01-04', '2026-01-02']);
+    const byDay = Object.fromEntries(rows.map(r => [String(r.day), r]));
+    expect(byDay).toEqual({
+      '2026-01-02': { day: '2026-01-02', repair_apply: 4, needs_human: 2 },
+      '2026-01-03': { day: '2026-01-03', retry_held: 1 },
+    });
+    return byDay;
   });
 });

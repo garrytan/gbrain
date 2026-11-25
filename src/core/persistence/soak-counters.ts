@@ -14,11 +14,13 @@
  * Storage: one `op_checkpoints` row per UTC day (op `sync-soak-counters`, fingerprint `YYYY-MM-DD`), each counter
  * incremented in one upsert; the 7-day checkpoint purge drops a day once it leaves the window. A hold's transition is
  * counted once: `needs_human_at` is stamped on the hold (and kept across re-holds with the same code), and the sweep
- * after each managed sync counts holds that turned since. Recording is best effort and never fails the command.
+ * after each managed sync counts holds that turned since. Recording is best effort (a database error never fails the
+ * command), but an engine that cannot record refuses, so the soak never undercounts without a sign.
  * Reader: doctor `sync_soak_counters` (`readSoakCounters`).
  */
 import type { BrainEngine } from '../engine.ts';
 import { GIT_HOLD_OP, gitHoldFingerprint } from './sync-holds.ts';
+import { rethrowCapabilityMissing } from '../rust-engine/errors.ts';
 
 export const SOAK_COUNTERS_OP = 'sync-soak-counters';
 export const SOAK_WINDOW_DAYS = 7;
@@ -30,16 +32,22 @@ export const NON_PLAIN_SYNC_FLAGS = ['--retry-failed', '--full', '--skip-failed'
 /** Holds the sweep stamps per sync; the rest are counted by the next sync. */
 const SWEEP_LIMIT = 500;
 
-type Exec = Pick<BrainEngine, 'executeRaw' | 'readSoakCounterRows'>;
+type Exec = Pick<BrainEngine, 'addSoakCounterEvent' | 'readSoakCounterRows'>;
 const day = (at: number) => new Date(at).toISOString().slice(0, 10);
 
-/** Adds `n` to one counter of today's row. Never throws. */
+/**
+ * Adds `n` to one counter of today's row, through the typed write (engine-sql/soak-counters.ts) every engine serves.
+ * Best effort: a database error is reported on stderr and never fails the command; an engine that cannot record the
+ * event refuses instead of letting the soak undercount without a sign.
+ */
 export async function recordSoakEvent(engine: Exec, kind: SoakKind, n = 1): Promise<void> {
   if (n <= 0) return;
-  const today = day(Date.now());
-  await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,jsonb_build_array(jsonb_build_object('day',$2::text,$3::text,$4::int)))
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=jsonb_build_array(op_checkpoints.completed_keys->0
-      || jsonb_build_object($3::text, COALESCE((op_checkpoints.completed_keys->0->>$3)::int,0)+$4::int)), updated_at=now()`, [SOAK_COUNTERS_OP, today, kind, n]).catch(() => undefined);
+  try {
+    await engine.addSoakCounterEvent(SOAK_COUNTERS_OP, day(Date.now()), kind, n);
+  } catch (e) {
+    rethrowCapabilityMissing(e);
+    process.stderr.write(`[soak-counters] could not record ${kind}: ${e instanceof Error ? e.message : String(e)}\n`);
+  }
 }
 
 /** The intervention a sync invocation's flags make, if any. */
