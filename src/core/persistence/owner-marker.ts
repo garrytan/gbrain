@@ -74,18 +74,19 @@ export function ownershipReservationMissingError(sourceId?: string, binding?: { 
  * source that sync imported from Git (`lastCommit`). Whatever a file-sync client or cleanup left behind cannot be shown
  * to be this brain's checkout, so nothing is prepared until the person restores the folder.
  */
-export function checkoutGitMissingError(sourceId: string, root: string, lastCommit: string): OperationError {
+export function checkoutGitMissingError(sourceId: string, synced: { sourceId: string; folder: string; lastCommit: string }): OperationError {
+  const { folder, lastCommit } = synced;
   const prepare = ['gbrain', 'sources', 'writer', 'transfer', 'prepare', sourceId, '--self-transfer', '--dry-run'];
   const error = new OperationError('recovery_required',
     'The checkout lost its ownership reservation and its Git repository (.git), so its identity cannot be verified and ownership was not re-established.',
-    `Source ${sourceId}'s checkout at ${root} has no .git, though sync last imported commit ${lastCommit} from it. Nothing was changed. Restore the folder's .git first: from the file-sync client's or a backup's copy of ${root}, `
-      + `or clone the source's remote into a new folder and move its .git into ${root}. Check that git -C ${root} status works, then run gbrain sources writer transfer prepare ${sourceId} --self-transfer --dry-run again. Never move, copy or delete the ownership stamp.`,
+    `Source ${synced.sourceId}'s folder ${folder} has no .git, though sync last imported commit ${lastCommit} from it. Nothing was changed. Restore that folder's .git first: from the file-sync client's or a backup's copy of ${folder}, `
+      + `or clone source ${synced.sourceId}'s remote into a new folder and move its .git into ${folder}. Check that git -C ${folder} status works, then run gbrain sources writer transfer prepare ${sourceId} --self-transfer --dry-run again. Never move, copy or delete the ownership stamp.`,
     RESERVATION_DOCS);
   error.detail = 'checkout_git_missing';
   error.fix = { ask_user: true, consent: [], actor: 'user', requires_exclusive: false, docs: RESERVATION_DOCS,
     why: `The checkout's .git is gone along with its ownership reservation; restoring the folder is the user's call.`,
-    user_message: `The folder for source ${sourceId} (${root}) lost its .git directory, probably to a file-sync client or a cleanup. Please restore it from the sync client's or a backup's copy, or by cloning the source's remote into a new folder and moving its .git in. Then gbrain can re-establish ownership.`,
-    verify: { argv: ['git', '-C', root, 'rev-parse', '--verify', 'HEAD'] },
+    user_message: `The folder for source ${synced.sourceId} (${folder}) lost its .git directory, probably to a file-sync client or a cleanup. Please restore it from the sync client's or a backup's copy, or by cloning that source's remote into a new folder and moving its .git in. Then gbrain can re-establish ownership.`,
+    verify: { argv: ['git', '-C', folder, 'rev-parse', '--verify', 'HEAD'] },
     then: { argv: prepare, consent: [], actor: 'host_admin', requires_exclusive: false, why: 'Previews the self-transfer again once the .git is back; it changes nothing.' } };
   return error;
 }

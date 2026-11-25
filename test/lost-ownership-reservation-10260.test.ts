@@ -19,7 +19,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -190,6 +190,11 @@ for (const kind of testBackends()) describe(`#10260 lost ownership reservation (
     expect((await getWorktreeBinding(engine, subId))!.worktree_id).toBe(s.binding.worktree_id);
     await withSyncedCommit(subId, git(sub, 'rev-parse', 'HEAD'));
     rmSync(physicalRootReservationPath(s.root));
+    // The source folder that lost its own .git is the one the refusal names, never the root.
+    renameSync(join(sub, '.git'), join(s.root, 'sub-git-aside'));
+    expect(await refused(administer('writer_transfer_prepare', { source_id: s.id, self_transfer: true }))).toMatchObject({ detail: 'checkout_git_missing',
+      fix: { verify: { argv: ['git', '-C', sub, 'rev-parse', '--verify', 'HEAD'] } } });
+    renameSync(join(s.root, 'sub-git-aside'), join(sub, '.git'));
     const prepared = await administer('writer_transfer_prepare', { source_id: s.id, self_transfer: true }) as { owner_epoch: string; manifest: { digest: string } };
     await administer('writer_transfer_accept', { source_id: s.id, path: s.root, expected_epoch: prepared.owner_epoch, manifest: prepared.manifest.digest, self_transfer: true });
     expect(existsSync(physicalRootReservationPath(s.root))).toBe(true);

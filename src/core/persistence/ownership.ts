@@ -375,7 +375,7 @@ export async function prepareWriterTransfer(engine: BrainEngine, sourceId: strin
       if (pending.length || mirrors.length) throw opError('recovery_required', 'Resolve outstanding publication before transfer.',
         `Source ${sourceId}'s worktree still has a write or mirror effect publishing or recovering, so no transfer was prepared. Inspect writer status and wait for it to settle on the owner before preparing again.`,
         { fix: writerStatusFix(sourceId) });
-      const [brain] = await tx.executeRaw<{ brain_id: string; synced: Array<{ path: string; commit: string }> | null }>(`SELECT brain_id,(SELECT json_agg(json_build_object('path',b.relative_path,'commit',s.last_commit) ORDER BY s.id)
+      const [brain] = await tx.executeRaw<{ brain_id: string; synced: Array<{ source: string; path: string; commit: string }> | null }>(`SELECT brain_id,(SELECT json_agg(json_build_object('source',s.id,'path',b.relative_path,'commit',s.last_commit) ORDER BY s.id)
         FROM persistence_source_bindings b JOIN sources s ON s.id=b.source_id AND s.incarnation=b.source_incarnation WHERE b.worktree_id=$1::uuid AND s.last_commit IS NOT NULL) AS synced
         FROM persistence_brain WHERE singleton=1`, [binding.worktree_id]);
       let recovery: PhysicalRootRecovery | undefined;
@@ -389,7 +389,7 @@ export async function prepareWriterTransfer(engine: BrainEngine, sourceId: strin
         }
         // #10260: re-creating a lost reservation over a checkout whose Git repository is gone too would adopt whatever was left behind.
         const gitless = recovery.before.reservation ? undefined : brain.synced?.find(source => !gitRepositoryWithin(binding.local_path!, source.path));
-        if (gitless) throw checkoutGitMissingError(sourceId, binding.local_path!, gitless.commit);
+        if (gitless) throw checkoutGitMissingError(sourceId, { sourceId: gitless.source, folder: resolve(binding.local_path!, gitless.path), lastCommit: gitless.commit });
       }
       if (!opts.selfTransfer) assertPhysicalRoot(binding.local_path!, { worktreeId: binding.worktree_id, coordinationPath: binding.coordination_path });
       if (hashed instanceof Error) throw hashed;
