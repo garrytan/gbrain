@@ -192,7 +192,9 @@ describe('release.yml addon_dry_run publishes nothing', () => {
   const doc = load(WORKFLOW) as any;
   const jobs = doc.jobs as Record<string, any>;
   /** The jobs a dry run may run: they read, build and test, and publish nothing. */
-  const DRY_RUN_JOBS = ['version', 'rust-addon', 'rust-addon-package', 'rust-addon-dry-run-check'];
+  const DRY_RUN_JOBS = ['version', 'build', 'rust-addon', 'rust-addon-package', 'rust-addon-dry-run-check'];
+  /** Dry-run jobs that hold attestation permissions; their attest step is gated on !inputs.addon_dry_run. */
+  const ATTESTING = ['build', 'rust-addon-package'];
   const publishes = (job: any) => {
     const perms = job.permissions ?? {};
     const text = JSON.stringify(job.steps ?? []);
@@ -220,10 +222,27 @@ describe('release.yml addon_dry_run publishes nothing', () => {
           expect({ name, step: step.name, if: step.if }).toEqual({ name, step: step.name, if: '${{ !inputs.addon_dry_run }}' });
         }
       }
-      if (name !== 'rust-addon-package') expect({ name, publishes: publishes(jobs[name]) }).toEqual({ name, publishes: false });
+      if (!ATTESTING.includes(name)) expect({ name, publishes: publishes(jobs[name]) }).toEqual({ name, publishes: false });
     }
     expect(jobs['rust-addon-dry-run-check'].if).toContain('inputs.addon_dry_run');
     expect(jobs['rust-addon-dry-run-check'].permissions).toEqual({ contents: 'read' });
+  });
+
+  test('a dry run builds and smoke-tests every platform binary, then runs it as a fresh install', () => {
+    const build = jobs.build;
+    expect(build.if).toContain('inputs.addon_dry_run ||');
+    expect(build.if).toContain("needs.version.result == 'success'");
+    expect(build.steps[0].with.ref).toBe('${{ needs.ci-gate.outputs.sha || github.sha }}');
+    const names = (build.steps as any[]).map(s => String(s.name ?? s.uses));
+    for (const smoke of ['Verify embedded native writer locks and compiled process exclusion', 'Verify the admin UI with the actual release executable', 'Smoke-test the compiled binary']) {
+      expect({ smoke, gated: build.steps.find((s: any) => s.name === smoke)?.if }).toEqual({ smoke, gated: undefined });
+    }
+    const install = build.steps.find((s: any) => s.name === 'Run the binary as an install from an empty directory (dry run)');
+    expect(install.if).toBe('${{ inputs.addon_dry_run }}');
+    expect(install.run).toContain('--version');
+    expect(install.run).toContain('doctor --json');
+    expect(names.indexOf(install.name)).toBeLessThan(names.findIndex(n => n.includes('upload-artifact')));
+    expect(jobs.release.if).toContain('!inputs.addon_dry_run');
   });
 });
 
