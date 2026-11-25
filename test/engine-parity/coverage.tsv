@@ -1238,7 +1238,7 @@ listPrivateQueueHealth	minion_queue	yes	1	no	yes	yes	serves
 readWedgeSignals	minion_queue	yes	1	no	yes	yes	serves
 readOldestWaitingAge	minion_queue	yes	1	no	yes	yes	serves
 countWaitingJobs	minion_queue	yes	3	no	yes	yes	serves
-countWaitingJobsForNames	minion_queue	yes	1	no	yes	yes	serves
+countWaitingJobsForNames	minion_queue	yes	2	no	yes	yes	serves
 listStuckActiveJobsByName	minion_queue	yes	1	no	yes	yes	serves
 listStalledEmbedBackfillSources	minion_queue	yes	1	no	yes	yes	serves
 readGlobalMaintenanceDeaths	minion_queue	yes	1	no	yes	yes	serves
