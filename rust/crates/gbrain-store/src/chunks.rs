@@ -1891,15 +1891,8 @@ mod segment_tests {
         let records = read_chunks(&*store.read().unwrap(), id).unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].segment.map(|p| p.occurrence_id), Some(5));
-        // Still staged above the view: no posting.
-        assert!(
-            store
-                .read()
-                .unwrap()
-                .get(&keys::posting("rewritten", id, 1))
-                .unwrap()
-                .is_none()
-        );
+        // Still staged above the view: keyword search does not find it.
+        assert_eq!(hits(&store, "rewritten"), 0);
     }
 
     #[test]
