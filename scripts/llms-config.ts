@@ -145,6 +145,12 @@ export const SECTIONS: DocSection[] = [
         includeInFull: false,
       },
       {
+        title: "docs/guides/engine-shadow-drill.md",
+        description: "Rust engine shadow mode, criterion 10: `gbrain engine shadow drill`, the restore drill on the shadow store and the eval-gates fetch, what they check and keep, and what status and the swap read.",
+        path: "docs/guides/engine-shadow-drill.md",
+        includeInFull: false,
+      },
+      {
         title: "docs/guides/move-to-postgres.md",
         description:
           "Move a PGLite brain to Postgres with its history: --url-env target setup, plan (exit 3) then --yes --expect, status/resume/rollback, what moves vs stays on this computer, recovery by error code.",

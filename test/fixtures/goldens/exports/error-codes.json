@@ -604,6 +604,7 @@
     "setup_owner_conflict",
     "setup_serves_several",
     "setup_serves_unreadable",
+    "shadow_drill_failed",
     "shared_skills_unavailable",
     "shared_skills_unmanifested",
     "shared_skills_unsupported",
