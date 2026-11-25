@@ -122,7 +122,10 @@ describe('computeExtractAtomsBacklogCheck (issue #1678)', () => {
     const check = await withEnv({ GBRAIN_HOME: EMPTY_HOME }, () =>
       computeExtractAtomsBacklogCheck(engine));
     expect(check.status).toBe('warn');
-    expect(check.message).toContain('--drain');
+    expect(check.message).toContain(
+      'With auto-drain enabled on PostgreSQL, Autopilot schedules eligible drains separately from schema pack phases',
+    );
+    expect(check.details?.fix_hint).toBe('gbrain dream --phase extract_atoms --drain --source default --window 120');
     expect((check.details as { pack_declares_phase: boolean }).pack_declares_phase).toBe(false);
     expect((check.details as { known_approximation: string }).known_approximation).toContain('page backlog only');
   });
@@ -154,7 +157,7 @@ describe('computeExtractAtomsBacklogCheck (issue #1678)', () => {
       .toEqual([{ source_id: 'gbrain-raw', backlog: 11 }]);
   });
 
-  it('multi-source fix hint folds the declare suggestion INTO the trailing parenthetical (exactly one closing paren)', async () => {
+  it('lists all backlog sources in the manual drain hint', async () => {
     await addSource(engine, { id: 'src-alpha' });
     await addSource(engine, { id: 'src-beta' });
     for (let i = 0; i < 6; i++) await seedArticle(`alpha-article-${i}`, 'src-alpha');
@@ -164,12 +167,10 @@ describe('computeExtractAtomsBacklogCheck (issue #1678)', () => {
       computeExtractAtomsBacklogCheck(engine));
     expect(check.status).toBe('warn');
     const fix = (check.details as { fix_hint: string }).fix_hint;
-    expect(fix).toContain('--source src-alpha --window 120 (repeat for backlog source(s): src-alpha, src-beta;');
-    expect(fix).toContain('or declare extract_atoms in your active schema pack');
-    // The fold replaces the closing paren instead of appending a second
-    // parenthetical: "…; or declare …)" — one trailing ')', never "))" or ") (".
-    expect(fix).toMatch(/[^)]\)$/);
-    expect(fix).not.toContain(') (or declare');
+    expect(fix).toBe(
+      'gbrain dream --phase extract_atoms --drain --source src-alpha --window 120 ' +
+      '(repeat for backlog source(s): src-alpha, src-beta)',
+    );
     expect(check.message).toContain(fix);
   });
 });
