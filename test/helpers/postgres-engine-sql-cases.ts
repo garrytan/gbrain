@@ -331,7 +331,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'getStats': OOS.stats, 'getHealth': OOS.stats,
   'getConfig': OOS.config, 'setConfig': OOS.config, 'unsetConfig': OOS.config, 'listConfigKeys': OOS.config, 'getAllConfig': OOS.config, 'getConfigValues': OOS.config,
   // import guards (typed reads and writes the default import path runs)
-  'listLocalPathSources': 'sources', 'listSourceRoutingRows': 'sources', 'countDefaultSourceSplit': 'sources', 'readSourceRow': 'sources', 'markSourceSynced': 'sources', 'listSourceRecords': OOS.cliReadsImport, 'readSourceIncarnation': OOS.cliReadsImport, 'readIgnoredPrivacyLabelPages': OOS.entityReads, 'readLivePageFrontmatter': OOS.callerRawSql, 'readImageSealProbe': OOS.callerRawSql, 'readPageChunkerVersion': OOS.callerRawSql, 'readGuestSourceRow': OOS.cliReadsImport, 'hasCompanyBrainReceipt': OOS.cliReadsImport, 'ownsSchemaTables': OOS.journal, 'readWriterAdminState': OOS.writerAdmin,
+  'listLocalPathSources': 'sources', 'listSourceRoutingRows': 'sources', 'countDefaultSourceSplit': 'sources', 'readSourceRow': 'sources', 'listActiveSourceConfigs': 'sources', 'markSourceSynced': 'sources', 'listSourceRecords': OOS.cliReadsImport, 'readSourceIncarnation': OOS.cliReadsImport, 'readIgnoredPrivacyLabelPages': OOS.entityReads, 'readLivePageFrontmatter': OOS.callerRawSql, 'readGuestSourceRow': OOS.cliReadsImport, 'hasCompanyBrainReceipt': OOS.cliReadsImport, 'ownsSchemaTables': OOS.journal, 'readWriterAdminState': OOS.writerAdmin, 'readImageSealProbe': OOS.callerRawSql, 'readPageChunkerVersion': OOS.callerRawSql,
   'readManagedModeRows': OOS.importGuards, 'getSourceStrictness': OOS.importGuards, 'readPersistenceBrainId': OOS.importGuards,
   'readLocalWriterRow': OOS.importGuards, 'insertLocalWriterRow': OOS.importGuards, 'readTransactionSettings': OOS.importGuards,
   'applyTransactionSettings': OOS.importGuards, 'readLedgerSource': OOS.importGuards, 'isFolderRestricted': OOS.importGuards,
@@ -722,6 +722,7 @@ export const SQL_CASES: SqlCase[] = [
   ...variants('listSourceRoutingRows', [['default', (e) => e.listSourceRoutingRows()]]),
   ...variants('countDefaultSourceSplit', [['default', (e) => e.countDefaultSourceSplit()]]),
   ...variants('readSourceRow', [['default', (e) => e.readSourceRow(SRC)]]),
+  ...variants('listActiveSourceConfigs', [['default', (e) => e.listActiveSourceConfigs()]]),
   ...variants('markSourceSynced', [['default', (e) => e.markSourceSynced(SRC)]]),
 
   // ── files ──

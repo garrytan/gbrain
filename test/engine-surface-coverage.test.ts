@@ -47,10 +47,13 @@ const DIM = 1536;
  * method) is asserted separately on the instance in the smoke block.
  */
 const INTERFACE_METHODS: readonly string[] = [
-  // Whether this role owns the schema tables (persistence-journal.ts), asked by the import's guest lookup.
-  'ownsSchemaTables',
-  // The active sources with their raw config (engine-sql/sources.ts), the read that scopes a legacy remote caller.
-  'listActiveSourceConfigs',
+  // The import path's typed reads (part A), each the statement a raw executeRaw call ran on master:
+  // sources (engine-sql/sources.ts): the resolver's local-path, routing, default-split and one-row reads, the active-source configs that scope a legacy remote caller, and the folder-import stamp.
+  'listLocalPathSources', 'listSourceRoutingRows', 'countDefaultSourceSplit', 'readSourceRow', 'listActiveSourceConfigs', 'markSourceSynced',
+  // cli reads (engine-sql/cli-reads-import.ts): the source list, a source's incarnation and company-brain receipt, and the guest lookup.
+  'listSourceRecords', 'readSourceIncarnation', 'hasCompanyBrainReceipt', 'readGuestSourceRow',
+  // entity reads and writer state: the ignored-privacy-label notice reads, the committed page's frontmatter, the writer-admin state, and whether this role owns the schema tables.
+  'readIgnoredPrivacyLabelPages', 'readLivePageFrontmatter', 'readWriterAdminState', 'ownsSchemaTables',
   // Cycle-lock leases
   'acquireCycleLock', 'refreshCycleLock', 'releaseCycleLock', 'readCycleLocks', 'deleteCycleLock', 'deleteCycleLockIfStale',
   // Alias fan-out reads (engine-sql/alias-fanout-reads.ts; master text pinned by test/n3-sql-move-parity.test.ts)

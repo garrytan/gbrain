@@ -148,7 +148,7 @@ import * as takesImpl from './engine-sql/takes.ts';
 import { PgliteCheckpointGuard, guardedHandle, writesWal } from './pglite-engine/checkpoint-guard.ts';
 import { pgliteExecutor } from './engine-sql/dialect-pglite.ts';
 import type { SqlExecutor } from './engine-sql/executor.ts';
-import { scopedRead, unscopedExecutor, type LegacyUnscopedRead } from './engine-sql/brands.ts';
+import { scopedRead, unscopedExecutor } from './engine-sql/brands.ts';
 import * as codeEdgesImpl from './engine-sql/code-edges.ts';
 import * as codeTraversalCache from './engine-sql/code-traversal-cache.ts';
 import { getEdgesByChunk as getEdgesByChunkPglite, type PgliteCodeEdgesDeps } from './pglite-engine/code-edges.ts';
@@ -1468,13 +1468,6 @@ export class PGLiteEngine implements BrainEngine {
   // Read-command statements (engine-sql/cli-reads-ops.ts), through executeRaw as before; PGLite has no statement deadline or JIT, so it ignores those bounds as it did.
   private get untimedRead(): entityReadsImpl.TimedRawRead { return { executeRaw: (sql, params) => this.executeRaw(sql, params) }; }
 
-  /**
-   * An executor whose reads go through this engine's `executeRaw`: a typed read that replaced an `engine.executeRaw` call keeps what
-   * that call had (an instance wrapper, the request-abort check, the retry and deadline), as master's statement did.
-   */
-  private get viaExecuteRaw(): LegacyUnscopedRead {
-    return unscopedExecutor({ executeRaw: (sql: string, params?: unknown[]) => this.executeRaw(sql, params) } as unknown as SqlExecutor, 'reads that ran through executeRaw on master');
-  }
   private get rawRead(): cliReadsOpsImpl.EngineRawRead { return (sql, params) => this.executeRaw(sql, params); }
   listExportPageKeys(q: exportReadsImpl.ExportPageKeyQuery) { return exportReadsImpl.listExportPageKeys(this, q); }
   readExportWithdrawalLedgerBytes(sourceId: string) { return exportReadsImpl.readExportWithdrawalLedgerBytes(this, sourceId); }
@@ -1524,22 +1517,22 @@ export class PGLiteEngine implements BrainEngine {
   readLivePageFrontmatter(sourceId: string, slug: string, opts?: { timeoutMs?: number }) { return entityReadsImpl.readLivePageFrontmatter(this.untimedRead, sourceId, slug, opts); }
   readImageSealProbe(sourceId: string, slug: string) { return entityReadsImpl.readImageSealProbe(this.untimedRead, sourceId, slug); }
   readPageChunkerVersion(pageId: number) { return entityReadsImpl.readPageChunkerVersion(this.untimedRead, pageId); }
-  listLocalPathSources() { return sourcesImpl.listLocalPathSources(this.viaExecuteRaw); }
-  listSourceRoutingRows() { return sourcesImpl.listSourceRoutingRows(this.viaExecuteRaw); }
-  countDefaultSourceSplit() { return sourcesImpl.countDefaultSourceSplit(this.viaExecuteRaw); }
-  readSourceRow(sourceId: string) { return sourcesImpl.readSourceRow(this.viaExecuteRaw, sourceId); }
+  listLocalPathSources() { return sourcesImpl.listLocalPathSources(this); }
+  listSourceRoutingRows() { return sourcesImpl.listSourceRoutingRows(this); }
+  countDefaultSourceSplit() { return sourcesImpl.countDefaultSourceSplit(this); }
+  readSourceRow(sourceId: string) { return sourcesImpl.readSourceRow(this, sourceId); }
   markSourceSynced(sourceId: string) { return sourcesImpl.markSourceSynced(this.engineSql, sourceId); }
   async listSourceLocalPaths(): Promise<string[]> {
     return sourcesImpl.listSourceLocalPaths(unscopedExecutor(this.engineSql, 'sources: unscoped on master (the filesystem lock read it through executeRaw)'));
   }
-  listSourceRecords() { return cliReadsImpl.listSourceRecords(this.cliReads); }
-  listActiveSourceConfigs() { return sourcesImpl.listActiveSourceConfigs(this.viaExecuteRaw); }
-  readSourceIncarnation(sourceId: string) { return cliReadsImpl.readSourceIncarnation(this.cliReads, sourceId); }
-  hasCompanyBrainReceipt(sourceId: string) { return cliReadsImpl.hasCompanyBrainReceipt(this.cliReads, sourceId); }
-  readGuestSourceRow(sourceId: string) { return cliReadsImpl.readGuestSourceRow(this.cliReads, sourceId); }
+  listSourceRecords() { return cliReadsImpl.listSourceRecords(this); }
+  listActiveSourceConfigs() { return sourcesImpl.listActiveSourceConfigs(this); }
+  readSourceIncarnation(sourceId: string) { return cliReadsImpl.readSourceIncarnation(this, sourceId); }
+  hasCompanyBrainReceipt(sourceId: string) { return cliReadsImpl.hasCompanyBrainReceipt(this, sourceId); }
+  readGuestSourceRow(sourceId: string) { return cliReadsImpl.readGuestSourceRow(this, sourceId); }
 
   // The CLI import and extract reads that ran unscoped through executeRaw (engine-sql/cli-reads-import.ts), on the current connection.
-  private get cliReads() { return this.viaExecuteRaw; }
+  private get cliReads() { return unscopedExecutor(this.engineSql, 'cli reads: the import and extract paths ran these unscoped through executeRaw'); }
 
   /** Page-write reads (engine-sql/write-misc.ts). */
   private get writeMiscReads() { return unscopedExecutor(this.engineSql, 'write misc: page writes ran these unscoped through executeRaw'); }
