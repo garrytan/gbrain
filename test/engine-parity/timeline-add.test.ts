@@ -28,7 +28,7 @@ import { parityArms } from './harness.ts';
 import { isCapabilityRefusal } from './arm-capabilities.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
-import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
+import { acceptedPendingReceipt, dispatchToolCall } from '../../src/mcp/dispatch.ts';
 import { operations } from '../../src/core/operations.ts';
 import { formatResult, makeContext, normalizeLocalResult, parseOpArgs } from '../../src/cli/main.ts';
 
@@ -69,9 +69,17 @@ async function seed(engine: BrainEngine): Promise<void> {
   await engine.putPage(SLUG, { type: 'person' as never, title: 'Alice Example', compiled_truth: 'Alice Example is a person.', timeline: '', frontmatter: {} });
 }
 
-/** One MCP call over the stdio options: the parsed JSON answer and whether it is an error. */
+/**
+ * One MCP call over the stdio options: the parsed JSON answer and whether it is an error. The call waits the agent
+ * default for its commit (AGENT_WRITE_WAIT_MS, 5 s); on a loaded runner the commit can take longer, and the server then
+ * answers write_pending: the write is accepted, not failed. As the operator protocol tells an agent, the call follows
+ * that receipt with the same arguments and request_id until the write commits, so a case sees the committed answer.
+ */
 async function tool(engine: BrainEngine, params: Record<string, unknown>): Promise<{ isError: boolean; body: Record<string, unknown> }> {
-  const out = await dispatchToolCall(engine, 'add_timeline_entry', { ...params }, STDIO as never);
+  let out = await dispatchToolCall(engine, 'add_timeline_entry', { ...params }, STDIO as never);
+  for (let pending = acceptedPendingReceipt(out); pending; pending = acceptedPendingReceipt(out)) {
+    out = await dispatchToolCall(engine, 'add_timeline_entry', { ...params, request_id: pending.request_id }, STDIO as never);
+  }
   const text = out.content.map(c => c.text).join('\n');
   let body: Record<string, unknown>;
   try { body = JSON.parse(text); } catch { body = { text }; }
