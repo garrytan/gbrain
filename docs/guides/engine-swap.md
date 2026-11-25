@@ -70,7 +70,7 @@ never a pass. With no shadow running, every criterion is `missing`.
    private, so it lives in a `scratch/` directory in your gbrain data home beside `shadow/` (mode 0700, owned by the user
    who runs gbrain, never in a shared temp directory), for one comparison only: it is deleted when the comparison ends,
    however it ends, and a killed shadow's leftovers are swept the next time shadow mode starts. The shadow's own evidence
-   files hold no page content. The row counts as `comparable` when they match and `unexplained_difference` when they do not.
+   files hold no page content. The comparison counts as `comparable` when the two read-backs match and `unexplained_difference` when they do not.
    A write that cannot be checked (the copy could not be read or loaded, the write failed on either side, it ran inside a
    transaction, another write landed in between, it touched too many rows, a copied page is soft-deleted, the source holds
    a withdrawn or purged fact (the primary then serves a redacted body the copy does not have), the Rust store cannot keep
@@ -92,13 +92,13 @@ never a pass. With no shadow running, every criterion is `missing`.
 
    **Only the owner child records.** Shadow mode runs one child per gbrain process, and only the child that owns the Rust store has a
    fixed evidence epoch; a client of another process's store has none. A client child records no write comparison at all: it adds no
-   evidence and can never make criterion 5 pass (it counts its sampled writes as unrecorded and replays nothing), and `gbrain engine
+   evidence and can never make criterion 5 pass (it drops its sampled writes and replays nothing), and `gbrain engine
    shadow status` and the swap report say "client shadow children record no write comparisons". The cost is fewer comparable writes,
    so criterion 5 reaches 1,000 later. Because the owner's epoch never changes during its life, an epoch change while a replay is
    running cannot count that replay's result in the new epoch.
 
    **How the counts are kept.** Counts live in `write-comparisons.json` in the shadow directory, per evidence epoch, and
-   change only under one cross-process lock (the same lock code as the epoch manifest, where a lock whose holder died is taken over through a separate takeover file, so two processes never both enter; a takeover file, or a lock file left empty by a crash between creating it and writing it, refuses the lock until it is removed by hand, because neither can be told apart from a live one, and the tally then records nothing, which is no evidence, never a pass). Each update adds this child's
+   change only under one cross-process lock (the same lock code as the epoch manifest, where a lock whose holder died is taken over through a separate takeover file, so two processes never both enter; a takeover file a crash left behind (it blocks the takeover of a dead holder's lock), or a lock file left empty by a crash between creating it and writing it, refuses the lock until it is removed by hand, because neither can be told apart from a live one, and the tally then records nothing further: a sample it cannot record is no evidence, never a pass). Each update adds this child's
    unsaved results to what the file holds at that moment; it never writes back a copy it read earlier, so one child
    cannot erase a difference another saved, and a result whose save failed is kept and added at the next save. Before a
    replay starts, the child writes its process id into the file's in-flight list, and the replay runs only if that write
@@ -107,11 +107,10 @@ never a pass. With no shadow running, every criterion is `missing`.
    been a difference, so a dead process's mark counts `unexplained_difference`. The cost is that a hard kill of the shadow
    child during a replay fails criterion 5 for that epoch. While any mark stands, `write_comparisons.state` reads
    `capability_missing` and this criterion is `missing` (no evidence), not a pass; `gbrain engine shadow status` says how
-   many replays have no result yet. Once a result exists the state is `measured`, and the pass rule is unchanged. The
+   many replays have no result yet. Once a comparison has a verdict (`comparable` or `unexplained_difference`) and no mark stands, the state is `measured`, and the pass rule is unchanged. The
    sample share is the write sample rate, 0.05 unless `gbrain engine shadow start --write-sample-rate <rate>` (above 0,
    at most 1) sets another; it is separate from the read sample rate. Every sampled write of another family is counted
-   `capability_missing`, by family, never compared, so `gbrain engine shadow status` and the swap plan name every family
-   still unchecked. A sampled write outside a transaction waits (at most 2 seconds) for one small read of the rows it
+   `capability_missing`, by family, never compared, so `gbrain engine shadow status` and the swap plan name the families sampled so far, which stay unchecked. A sampled write outside a transaction waits (at most 2 seconds) for one small read of the rows it
    touches before it runs; if that read is slow, the write goes ahead untouched. `put_page` and import run their page
    write inside a transaction, so those are `uncomparable`: only link operations outside a transaction (`add_link`,
    `remove_link`, a by-mention extract batch) can make a write `comparable`. Comparing a page write that ran inside a

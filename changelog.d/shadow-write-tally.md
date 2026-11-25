@@ -17,4 +17,4 @@
 
 ### Fixed
 - On a Postgres brain, the data fence now checks the origin page of a link as well as its two pages, type and source, so another process's link between the same two pages with another origin is no longer taken for the write's own link and can no longer fail criterion 5 by mistake. A link that names no origin counts as the write's own only when the stored link has none.
-- A withdrawn or purged fact now also covers a `putPage` target that does not exist yet, so a new page in such a source is counted `uncomparable` on PGLite and Postgres instead of showing a false difference.
+- A withdrawn or purged fact now also covers a `putPage` target that does not exist yet, so a new page in such a source is counted `uncomparable` on Postgres instead of showing a false difference.
