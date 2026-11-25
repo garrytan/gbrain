@@ -615,7 +615,7 @@ async function setFilePlaneKey(key: string, value: string, tail: string[]): Prom
     }
     cfg.mcp = { ...(cfg.mcp ?? {}), [key.slice('mcp.'.length)]: value };
     saveConfig(cfg);
-    console.log(`Set ${key} = ${value} (file plane: ~/.gbrain/config.json). gbrain setup uses it for new entries${key === 'mcp.default_surface_codex' ? ', and its next run moves Codex entries that follow the default; an entry pinned with --surface stays as it is' : key === 'mcp.default_surface_hermes' ? ', and its next run without --surface rewrites the gbrain entry in Hermes to it' : '; an existing entry keeps its surface until you re-run setup with --surface'}.`);
+    console.log(`Set ${key} = ${value} (file plane: ~/.gbrain/config.json). gbrain setup uses it for new entries${key === 'mcp.default_surface_codex' ? ', and its next run moves Codex entries that follow the default; an entry pinned with --surface stays as it is' : '; an existing entry keeps its surface until you re-run setup with --surface'}.`);
   } else if (key === 'mcp.instructions') {
     // #4748: deployment identity appended to the MCP initialize contract.
     // Takes effect on the next `gbrain serve` start (the response is

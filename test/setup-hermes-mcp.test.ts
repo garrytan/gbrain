@@ -129,6 +129,15 @@ describe('gbrain setup hermes registers MCP through hermes mcp add', () => {
     expect(doc.hooks.pre_llm_call).toHaveLength(1);
   });
 
+  test('a bare re-run keeps the surface an earlier --surface chose', async () => {
+    const b = box({ hermes: true });
+    await setup(b, ['--surface', 'full']);
+    const again = await setup(b, []);
+    expect(again.doc.mcp.setup).toBe('keep');
+    expect((load(config(b)) as any).mcp_servers.gbrain.args).toEqual([b.bin, 'serve', '--surface', 'full']);
+    expect(calls(b).filter((c) => c.argv[1] === 'add')).toHaveLength(1);
+  });
+
   test('without a hermes command, setup prints the one command to run and writes no MCP entry', async () => {
     const b = box({ hermes: false });
     const r = await setup(b, []);
