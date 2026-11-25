@@ -149,7 +149,7 @@ describe('gbrain setup hermes registers MCP through hermes mcp add', () => {
     expect(again.doc.mcp.setup).toBe('keep');
     expect(readFileSync(join(v.home, '.hermes', 'SOUL.md'), 'utf8')).toContain('`recall` for what was said or decided');
     expect(config(v)).toContain('mcp__gbrain__remember');
-  }, 30_000);
+  });
 
   test('a malformed config.yaml is an MCP error on a bare run, and the rest of setup still runs', async () => {
     const b = box({ hermes: true });
