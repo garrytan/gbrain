@@ -18,7 +18,7 @@ export interface ShadowCaptureIo {
 }
 
 function captureStatus(cap: string) {
-  const { purgeIfLogChanged, readEpoch, epochDir, recordersDir } = require('../shadow/capture.ts') as typeof import('../shadow/capture.ts');
+  const { purgeIfLogChanged, purgePending, readEpoch, epochDir, recordersDir } = require('../shadow/capture.ts') as typeof import('../shadow/capture.ts');
   const purged = purgeIfLogChanged(cap);
   const epoch = readEpoch(cap);
   const dir = epoch ? epochDir(cap, epoch.id) : null;
@@ -28,9 +28,10 @@ function captureStatus(cap: string) {
     on: captureIsOn(cap),
     killed_by_env: captureKilledByEnv(),
     off_marker: existsSync(captureOffMarker(cap)),
-    epoch: epoch ? { id: epoch.id, state: epoch.state, started_at: epoch.started_at } : null,
+    epoch: epoch ? { id: epoch.id, state: epoch.state, started_at: epoch.started_at, ...(epoch.unverified ? { unverified: epoch.unverified } : {}) } : null,
     invalidated_now: purged,
-    recording_processes: existsSync(recordersDir(cap)) ? readdirSync(recordersDir(cap)).length : 0,
+    purge_cleanup_pending: purgePending(cap),
+    recording_processes: existsSync(recordersDir(cap)) ? readdirSync(recordersDir(cap)).filter(f => f.endsWith('.json')).length : 0,
     segment_bytes: files.filter(f => f.endsWith('.jsonl')).reduce((n, f) => n + statSync(join(dir!, f)).size, 0),
     directory: cap,
   };
@@ -44,10 +45,15 @@ export async function runShadowCaptureCommand(rest: string[], io: ShadowCaptureI
       io.out(`Capture records every call this brain makes to its storage engine (reads and writes, with their arguments) into\n${cap}/ (owner-only files). Nothing leaves this machine. This release only records: there is no replay yet.\nRestart long-running gbrain processes (serve, MCP) afterwards: only engines opened after capture is on record.\nRun again with --yes to turn it on.`);
       return 1;
     }
-    writePrivateJson(join(cap, 'state.json'), { version: CAPTURE_STATE_VERSION, enabled: true, turned_on_at: io.now().toISOString() });
+    const { purgeIfLogChanged, purgePending, readEpoch, startEpoch } = await import('../shadow/capture.ts');
+    purgeIfLogChanged(cap); // a purge while capture was off, or an unfinished purge, deletes the old recordings first
+    if (purgePending(cap)) throw new ReplayError('shadow_replay_purged', `a purge could not delete every recording under ${cap} yet; run capture on again`);
+    const wasOn = readCaptureState(cap)?.enabled === true && !existsSync(captureOffMarker(cap));
+    // Off then on starts a fresh recording, before capture reads as on: calls made while it was off are not in any
+    // recording, so the old one cannot be continued as if it were complete.
+    if (!wasOn || readEpoch(cap)?.state !== 'recording') startEpoch(cap, undefined, io.now());
+    if (!wasOn) writePrivateJson(join(cap, 'state.json'), { version: CAPTURE_STATE_VERSION, enabled: true, turned_on_at: io.now().toISOString() });
     rmSync(captureOffMarker(cap), { force: true });
-    const { readEpoch, startEpoch } = await import('../shadow/capture.ts');
-    if (readEpoch(cap)?.state !== 'recording') startEpoch(cap, undefined, io.now());
     io.out(captureKilledByEnv() ? 'Capture is on, but GBRAIN_SHADOW_CAPTURE=off in this environment keeps it off for processes started with it.' : 'Capture is on. Recording starts with the next gbrain process that opens this brain.');
     return 0;
   }

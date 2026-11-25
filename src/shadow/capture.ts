@@ -48,10 +48,16 @@ export interface EpochPointer {
   id: string;
   state: 'recording' | 'sealing' | 'sealed' | 'invalidated';
   started_at: string;
-  /** While sealing: calls that started before this belong to this epoch; later ones to the next. */
+  /** When the seal began (informational: membership comes from the epoch each call saw at its start). */
   sealing_since?: string;
   purge_log: PurgeBaseline;
   reason?: string;
+  /** The sealed epoch this one follows: calls that started while it was sealing belong here. */
+  after?: string;
+  /** Recorders that died uncleanly after acknowledging the previous seal: this epoch may miss their first calls. */
+  unverified?: number;
+  /** A purge's deletion: `done` once nothing is left; anything else is retried at the next check. */
+  cleanup?: 'pending' | 'done';
 }
 
 export interface CaptureRecord {
@@ -113,12 +119,12 @@ export function purgeLogChanged(baseline: PurgeBaseline, home = configDir()): bo
 }
 
 /** Starts a new recording epoch (the caller seeds its base copies next). */
-export function startEpoch(cap: string, home = configDir(), now = new Date()): EpochPointer {
+export function startEpoch(cap: string, home = configDir(), now = new Date(), link: { after?: string; unverified?: number } = {}): EpochPointer {
   const baseline = purgeBaseline(home);
   if (baseline === null) throw new ReplayError('shadow_replay_purged', 'the purge log cannot be read, so no epoch starts');
   const id = `${now.toISOString().replace(/[-:.]/g, '').slice(0, 15)}-${randomBytes(4).toString('hex')}`;
   mkdirSync(epochDir(cap, id), { recursive: true, mode: 0o700 });
-  const pointer: EpochPointer = { version: 1, id, state: 'recording', started_at: now.toISOString(), purge_log: baseline };
+  const pointer: EpochPointer = { version: 1, id, state: 'recording', started_at: now.toISOString(), purge_log: baseline, ...link };
   writePrivateJson(epochPointerPath(cap), pointer);
   return pointer;
 }
@@ -139,6 +145,13 @@ function runCopies(cap: string): string[] {
   const runs = join(cap, '..', 'replay');
   if (existsSync(runs)) for (const run of readdirSync(runs)) for (const sub of ['work', 'segments', 'home', 'fresh', 'run.json']) out.push(join(runs, run, sub));
   return out;
+}
+
+/** True while any recording or copy a purge must delete is still on disk. */
+function captureDataLeft(cap: string): boolean {
+  const bases = join(cap, 'bases');
+  return (existsSync(cap) && readdirSync(cap).some(f => f.startsWith('epoch-') || f === 'retry.json'))
+    || (existsSync(bases) && readdirSync(bases).length > 0) || runCopies(cap).some(existsSync);
 }
 
 function removeAll(paths: string[]): string[] {
@@ -167,20 +180,39 @@ export function deleteAllCaptureData(cap: string): string[] {
 
 /**
  * THE purge owner; every purge entry point calls it (test "purge entry points" checks the source). Whatever the pointer
- * says: flip it to invalidated, then delete every epoch, base copy, run copy and retry record. Safe to repeat.
+ * says: flip it to invalidated (cleanup pending), then delete every epoch, base copy, run copy and retry record, then
+ * mark the cleanup done once nothing is left. A pointer that cannot be written never stops the deletion; a deletion
+ * that leaves something behind stays pending and purgeIfLogChanged retries it. Safe to repeat.
  */
 export function purgeCapture(cap: string): true {
   const pointer = readEpoch(cap);
-  if (pointer && !(pointer.state === 'invalidated' && pointer.reason === 'purge')) setEpochState(cap, pointer, 'invalidated', 'purge');
+  let marked: EpochPointer | null = null;
+  try {
+    if (pointer) { marked = { ...pointer, state: 'invalidated', reason: 'purge', cleanup: 'pending' }; writePrivateJson(epochPointerPath(cap), marked); }
+  } catch { marked = null; } // the deletion still runs; the unchanged pointer (or the changed purge log) brings the purge back
   deleteAllCaptureData(cap);
+  if (marked && !captureDataLeft(cap)) {
+    try { writePrivateJson(epochPointerPath(cap), { ...marked, cleanup: 'done' }); } catch { /* stays pending: retried at the next check */ }
+  }
   return true;
 }
 
-/** Runs purgeCapture when the purge log changed (or cannot be read) since the current epoch began. True when it did. */
+/**
+ * Runs purgeCapture when the purge log changed (or cannot be read) since the current epoch began, or when an earlier
+ * purge's deletion did not finish (a crash, a file that could not be removed). True when it ran.
+ */
 export function purgeIfLogChanged(cap: string, home?: string): boolean {
   const pointer = readEpoch(cap);
-  if (!pointer || pointer.state === 'invalidated' || !purgeLogChanged(pointer.purge_log, home)) return false;
+  if (!pointer) return false;
+  if (pointer.state === 'invalidated') return pointer.reason === 'purge' && pointer.cleanup !== 'done' ? purgeCapture(cap) : false;
+  if (!purgeLogChanged(pointer.purge_log, home)) return false;
   return purgeCapture(cap);
+}
+
+/** True when a purge's deletion is still unfinished (nothing new may start until it is). */
+export function purgePending(cap: string): boolean {
+  const pointer = readEpoch(cap);
+  return pointer?.state === 'invalidated' && pointer.reason === 'purge' && pointer.cleanup !== 'done';
 }
 
 /** Retires one epoch that ends without a purge (never seeded, seed failed): that epoch only. */
@@ -202,22 +234,18 @@ export function watchPurges(cap: string): void {
   onPurgeIntent(() => { try { purgeCapture(cap); } catch { /* fail open */ } });
 }
 
-/** Finishes an interrupted cleanup before anything new starts (the nightly run, under its lock). */
-export function resumeInvalidatedCleanup(cap: string): void {
-  const pointer = readEpoch(cap);
-  if (pointer?.state === 'invalidated' && pointer.reason === 'purge') purgeCapture(cap);
-  else if (pointer?.state === 'invalidated') deleteEpochData(cap, pointer.id);
-}
-
 const SEAL_TICK_MS = 100;
 
 /**
- * Seals the recording epoch (a nightly replay's first step). The handshake: the pointer flips to `sealing` at time T;
- * calls that started before T belong to this epoch, later ones to the next. Every recorder registers before its first
- * record exists, so every recorder that can hold a record of this epoch is in the registry when the sealer reads it.
- * Each live recorder drains its records of this epoch and acknowledges; the sealer waits for them (dead ones flushed
- * at exit), then marks the epoch sealed and starts the next one at T. `unacked`: live recorders that did not
- * acknowledge in time, whose last calls may be missing, so a replay of this epoch cannot claim complete coverage.
+ * Seals the recording epoch (a nightly replay's first step). The handshake: the pointer flips to `sealing`. Each call
+ * belongs to the epoch the pointer named when the call started: `recording` (this epoch) or `sealing` (the next one).
+ * Every recorder registers before it reads the pointer, so every recorder that can hold a call of this epoch is in
+ * the registry when the sealer reads it. Each live recorder waits for its calls of this epoch and its pending
+ * appends, writes them, and acknowledges; the sealer waits for them, then marks the epoch sealed and starts the next.
+ * A clean exit removes its registration; a dead recorder still registered died uncleanly and may have lost records.
+ * `unacked`: recorders whose calls of this epoch may be missing (no acknowledgement in time, an incomplete one, or a
+ * death before acknowledging), so a replay of this epoch cannot claim complete coverage. A death after acknowledging
+ * puts the doubt on the next epoch instead (its `unverified`).
  */
 export async function sealEpoch(cap: string, opts: { home?: string; timeoutMs?: number; now?: () => Date } = {}):
   Promise<{ sealed: EpochPointer; next: EpochPointer; unacked: number } | null> {
@@ -227,24 +255,34 @@ export async function sealEpoch(cap: string, opts: { home?: string; timeoutMs?: 
   const sealing: EpochPointer = { ...pointer, state: 'sealing', sealing_since: t.toISOString() };
   writePrivateJson(epochPointerPath(cap), sealing);
   const deadline = Date.now() + (opts.timeoutMs ?? 10_000);
+  const dir = epochDir(cap, pointer.id);
   let pending: string[] = [];
+  let diedBefore = 0;
+  let diedAfter = 0;
   for (;;) {
     if (readEpoch(cap)?.state !== 'sealing') return null; // a purge invalidated it meanwhile
     pending = [];
     const reg = recordersDir(cap);
     for (const f of existsSync(reg) ? readdirSync(reg).filter(f => f.endsWith('.json')) : []) {
       const proc = f.slice(0, -5);
+      const acked = existsSync(join(dir, `ack-${proc}`));
       let pid: number | undefined;
       try { pid = (JSON.parse(readFileSync(join(reg, f), 'utf8')) as { pid?: number }).pid; } catch { pid = undefined; } // silent-read-ok: an unreadable registration counts as live until it acknowledges
-      if (pid !== undefined && !processAlive(pid)) { rmSync(join(reg, f), { force: true }); continue; }
-      if (!existsSync(join(epochDir(cap, pointer.id), `ack-${proc}`))) pending.push(proc);
+      if (pid !== undefined && !processAlive(pid)) {
+        if (acked) diedAfter++; else diedBefore++; // still registered: it died without its exit flush
+        rmSync(join(reg, f), { force: true });
+        continue;
+      }
+      if (!acked) pending.push(proc);
     }
     if (!pending.length || Date.now() >= deadline) break;
     await new Promise(r => setTimeout(r, SEAL_TICK_MS / 2));
   }
+  const incomplete = existsSync(dir) ? readdirSync(dir).filter(f => f.startsWith('ack-') && readFileSync(join(dir, f), 'utf8') !== '').length : 0;
   const sealed: EpochPointer = { ...sealing, state: 'sealed' };
   writePrivateJson(epochPointerPath(cap), sealed);
-  return { sealed, next: startEpoch(cap, opts.home, t), unacked: pending.length };
+  const next = startEpoch(cap, opts.home, t, { after: pointer.id, ...(diedAfter ? { unverified: diedAfter } : {}) });
+  return { sealed, next, unacked: pending.length + diedBefore + incomplete };
 }
 
 /** Reads one segment file; a torn last line is skipped and reported. */
@@ -259,34 +297,52 @@ export function readSegment(path: string): { records: CaptureRecord[]; torn: boo
   return { records, torn };
 }
 
-/** One process's segment writer. */
+/**
+ * One engine's segment writer. Every call carries a tag, the epoch the pointer named when the call started: its id
+ * while recording, `>id` while it was sealing (the call belongs to the epoch that follows it). A record lands only in
+ * the epoch its tag names, so a purge, a seal or an off-then-on never moves a record into another epoch.
+ */
 export class CaptureWriter {
   readonly proc = `${process.pid}-${randomBytes(3).toString('hex')}`;
   private seq = 0;
-  private buffer: Array<{ t0: number; line: string }> = [];
+  private buffer: Array<{ tag: string; line: string }> = [];
   private bytes = 0;
-  private dropped = 0;
-  private dropReason = '';
+  /** Records lost per tag (full buffer, budget, append error), written as a gap into that tag's epoch. */
+  private readonly lost = new Map<string, { count: number; reason: string }>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private flushing: Promise<void> | null = null;
   private registered = false;
-  /** Start times of calls still running; a seal is acknowledged only when none started before it. */
-  private readonly inFlight = new Map<number, number>();
+  private ticker: ReturnType<typeof setInterval> | null = null;
+  private closingSince = 0;
+  /** Running calls per tag; a seal is acknowledged only when none of its epoch still runs. */
+  private readonly inFlight = new Map<string, number>();
   private freeCheckedAt = 0;
   private lowDisk = false;
 
-  constructor(readonly cap: string, readonly home = configDir(), readonly env: Record<string, string | undefined> = process.env) {}
+  constructor(readonly cap: string, readonly home = configDir(), readonly env: Record<string, string | undefined> = process.env,
+    readonly hooks: { active?: () => void; retire?: () => void } = {}) {}
 
   nextSeq(): number { return ++this.seq; }
 
-  push(rec: Omit<CaptureRecord, 'v' | 'proc' | 'seq'>): void {
+  /**
+   * The tag of a call that starts now, or null when it must not be recorded (capture off, no recording epoch). The
+   * recorder registers before it reads the pointer (see sealEpoch).
+   */
+  begin(): string | null {
+    if (!captureIsOn(this.cap, this.env)) return null;
+    this.markActive();
+    const p = readEpoch(this.cap);
+    return p?.state === 'recording' ? p.id : p?.state === 'sealing' ? `>${p.id}` : null;
+  }
+
+  push(tag: string, rec: Omit<CaptureRecord, 'v' | 'proc' | 'seq'>): void {
     let line: string;
-    try { line = JSON.stringify({ v: 1, proc: this.proc, seq: this.nextSeq(), ...rec }); } catch { return this.drop('encode'); }
+    try { line = JSON.stringify({ v: 1, proc: this.proc, seq: this.nextSeq(), ...rec }); } catch { return this.lose(tag, 'encode'); }
     if (line.length > CAPTURE_LIMITS.recordBytes) {
       line = JSON.stringify({ v: 1, proc: this.proc, seq: this.seq, t0: rec.t0, t1: rec.t1, kind: 'gap', member: rec.member, reason: 'too_large', tx: rec.tx });
     }
-    if (this.bytes + line.length > CAPTURE_LIMITS.bufferBytes) return this.drop('buffer_full');
-    this.buffer.push({ t0: rec.t0, line });
+    if (this.bytes + line.length > CAPTURE_LIMITS.bufferBytes) return this.lose(tag, 'buffer_full');
+    this.buffer.push({ tag, line });
     this.bytes += line.length + 1;
     if (!this.timer) {
       this.timer = setTimeout(() => { this.timer = null; void this.flush(); }, CAPTURE_LIMITS.flushMs);
@@ -294,65 +350,113 @@ export class CaptureWriter {
     }
   }
 
-  /**
-   * Registers this process as a recorder, once, at the start of its first recorded call (before the call's record
-   * exists, so a seal that started later sees it), and starts the seal watcher that drains and acknowledges a seal.
-   */
+  /** Registers this process as a recorder and starts the seal watcher, until close() retires them. */
   markActive(): void {
-    if (this.registered) return;
+    this.closingSince = 0;
+    if (this.registered && this.ticker) return;
     this.registered = true;
     try { writePrivateJson(join(recordersDir(this.cap), `${this.proc}.json`), { pid: process.pid, since: new Date().toISOString() }); } catch { /* best effort */ }
-    // Lives as long as the process (unref'd): a reconnect or an idle resident process still drains and acknowledges.
-    const timer = setInterval(() => { try { this.drainForSeal(); } catch { /* a capture fault never reaches the brain process */ } }, SEAL_TICK_MS);
-    (timer as { unref?: () => void }).unref?.();
+    // unref'd: an idle resident process still drains and acknowledges a seal, and never stays alive for it.
+    this.ticker = setInterval(() => this.tick(), SEAL_TICK_MS);
+    (this.ticker as { unref?: () => void }).unref?.();
+    this.hooks.active?.();
+  }
+
+  private tick(): void {
+    try {
+      this.drainForSeal();
+      if (!this.closingSince) return;
+      if ((this.buffer.length || this.lost.size) && !this.flushing) void this.flush();
+      this.retireIfIdle();
+    } catch { /* a capture fault never reaches the brain process */ }
+  }
+
+  /** The engine disconnected: write what is left, then stop the watcher and unregister once nothing is owed. */
+  async close(): Promise<void> {
+    this.closingSince = Date.now();
+    try { await this.flush(); this.drainForSeal(); } catch { /* never fails a disconnect */ }
+    this.retireIfIdle();
+  }
+
+  private retireIfIdle(): void {
+    if (!this.closingSince || !this.ticker) return;
+    const owed = this.buffer.length || this.lost.size || this.flushing || this.inFlight.size || this.sealUnacked();
+    // After a minute it stops polling anyway; it stays registered, so a seal reports it unacknowledged.
+    if (owed && Date.now() - this.closingSince < 60_000) return;
+    clearInterval(this.ticker);
+    this.ticker = null;
+    if (!owed) { rmSync(join(recordersDir(this.cap), `${this.proc}.json`), { force: true }); this.registered = false; }
+    this.hooks.retire?.();
+  }
+
+  private sealUnacked(): boolean {
+    const p = readEpoch(this.cap);
+    return p?.state === 'sealing' && !existsSync(join(epochDir(this.cap, p.id), `ack-${this.proc}`));
   }
 
   /**
-   * The recorder's half of the seal handshake: when the epoch is sealing, write every buffered record of a call that
-   * started before the seal into it (later calls stay buffered for the next epoch), then acknowledge.
+   * The recorder's half of the seal handshake: when the epoch is sealing and none of its calls still runs here and no
+   * append is pending, write this recorder's records of it (under the same checks as a flush) and acknowledge. An
+   * acknowledgement with content says the records are incomplete (capture off, budget, the process exiting mid-call).
    */
-  drainForSeal(): void {
+  drainForSeal(exiting = false): void {
     const epoch = readEpoch(this.cap);
-    if (!epoch || epoch.state !== 'sealing' || !epoch.sealing_since) return;
-    const ack = join(epochDir(this.cap, epoch.id), `ack-${this.proc}`);
-    const until = Date.parse(epoch.sealing_since);
-    if (existsSync(ack) || [...this.inFlight.keys()].some(t0 => t0 < until)) return; // a call of this epoch still runs
-    const data = this.take(epoch, until);
-    if (data) appendFileSync(join(epochDir(this.cap, epoch.id), `${this.proc}.jsonl`), data, { mode: 0o600 });
-    writeFileSync(ack, '', { mode: 0o600 });
-  }
-
-
-  /** Marks a call running from `t0`; the returned function marks it done. */
-  enter(t0: number): () => void {
-    this.inFlight.set(t0, (this.inFlight.get(t0) ?? 0) + 1);
-    return () => { const n = (this.inFlight.get(t0) ?? 1) - 1; if (n > 0) this.inFlight.set(t0, n); else this.inFlight.delete(t0); };
-  }
-
-  private drop(reason: string): void { this.dropped++; this.dropReason = reason; }
-
-  /**
-   * Discards the buffer when nothing may be written. Off, a purge or no epoch need no record (nothing is being
-   * replayed); a budget stop (low disk, epoch over budget) keeps the count, so the next write that lands is a gap and
-   * the replay says its coverage is incomplete.
-   */
-  private discard(stop: string): void {
-    if (stop === 'sealing') return; // later calls stay buffered for the next epoch
-    const lost = this.buffer.length;
-    this.buffer = [];
-    this.bytes = 0;
-    if (stop === 'budget' || stop === 'error') { this.dropped += lost; this.dropReason = stop; } else this.dropped = 0;
-  }
-
-  /** The segment path to append to now, or null (and the reason) when nothing may be written. */
-  private target(): { path: string; epoch: EpochPointer } | { stop: string } {
-    if (!captureIsOn(this.cap, this.env)) return { stop: 'off' };
-    if (purgeIfLogChanged(this.cap, this.home)) return { stop: 'purged' };
-    const epoch = readEpoch(this.cap);
-    if (epoch?.state === 'sealing') { this.drainForSeal(); return { stop: 'sealing' }; }
-    if (!epoch || epoch.state !== 'recording') return { stop: 'no_epoch' };
+    if (!epoch || epoch.state !== 'sealing') return;
     const dir = epochDir(this.cap, epoch.id);
-    if (!existsSync(dir)) return { stop: 'no_epoch' };
+    const ack = join(dir, `ack-${this.proc}`);
+    if (existsSync(ack)) return;
+    const running = (this.inFlight.get(epoch.id) ?? 0) > 0;
+    if (!exiting && (running || this.flushing)) return;
+    const mine = (tag: string) => tag === epoch.id;
+    const later = (tag: string) => tag === `>${epoch.id}`;
+    let note = running || this.flushing ? 'exited' : '';
+    if (!captureIsOn(this.cap, this.env)) { this.take(() => false, later); note = 'off'; }
+    else if (purgeIfLogChanged(this.cap, this.home)) return; // the epoch is gone; the sealer stops
+    else {
+      if (this.overBudget(dir)) { this.shed(mine, 'budget'); note = 'budget'; }
+      const data = this.take(mine, later);
+      if (data) appendFileSync(join(dir, `${this.proc}.jsonl`), data, { mode: 0o600 });
+    }
+    writeFileSync(ack, note, { mode: 0o600 });
+  }
+
+  /** Marks a call with `tag` running; the returned function marks it done. */
+  enter(tag: string): () => void {
+    this.inFlight.set(tag, (this.inFlight.get(tag) ?? 0) + 1);
+    return () => { const n = (this.inFlight.get(tag) ?? 1) - 1; if (n > 0) this.inFlight.set(tag, n); else this.inFlight.delete(tag); };
+  }
+
+  private lose(tag: string, reason: string, n = 1): void {
+    const l = this.lost.get(tag);
+    this.lost.set(tag, { count: (l?.count ?? 0) + n, reason });
+  }
+
+  /** Moves the buffered records `match` selects into the lost count (their epoch gets a gap). */
+  private shed(match: (tag: string) => boolean, reason: string): void {
+    const keep = this.buffer.filter(b => { if (!match(b.tag)) return true; this.lose(b.tag, reason); return false; });
+    this.buffer = keep;
+    this.bytes = keep.reduce((n, b) => n + b.line.length + 1, 0);
+  }
+
+  /**
+   * The lines (records and gaps) `match` selects, removed from the buffer; records `keep` selects stay buffered; any
+   * other record belongs to an epoch that ended, was purged or was recorded before capture went off, and is dropped.
+   */
+  private take(match: (tag: string) => boolean, keep: (tag: string) => boolean): string {
+    const lines: string[] = [];
+    const kept: Array<{ tag: string; line: string }> = [];
+    for (const b of this.buffer) { if (match(b.tag)) lines.push(b.line); else if (keep(b.tag)) kept.push(b); }
+    this.buffer = kept;
+    this.bytes = kept.reduce((n, b) => n + b.line.length + 1, 0);
+    for (const [tag, l] of [...this.lost]) {
+      if (match(tag)) lines.push(JSON.stringify({ v: 1, proc: this.proc, seq: this.nextSeq(), t0: Date.now(), t1: Date.now(), kind: 'gap', reason: l.reason, count: l.count }));
+      if (!keep(tag)) this.lost.delete(tag);
+    }
+    return lines.length ? lines.join('\n') + '\n' : '';
+  }
+
+  /** Low disk or the epoch over its byte budget (checked at most every 5 s). */
+  private overBudget(dir: string): boolean {
     const now = Date.now();
     if (now - this.freeCheckedAt > 5000) {
       this.freeCheckedAt = now;
@@ -365,50 +469,64 @@ export class CaptureWriter {
           || used > CAPTURE_LIMITS.epochBytes;
       } catch { this.lowDisk = true; }
     }
-    if (this.lowDisk) return { stop: 'budget' };
-    return { path: join(dir, `${this.proc}.jsonl`), epoch };
+    return this.lowDisk;
+  }
+
+  /** The segment to append to now and the tags it takes, or why nothing may be written. */
+  private target(): { path: string; tag: string; match: (tag: string) => boolean } | { stop: 'off' | 'purged' | 'sealing' | 'no_epoch' | 'budget' } {
+    if (!captureIsOn(this.cap, this.env)) return { stop: 'off' };
+    if (purgeIfLogChanged(this.cap, this.home)) return { stop: 'purged' };
+    const epoch = readEpoch(this.cap);
+    if (epoch?.state === 'sealing') return { stop: 'sealing' }; // the seal watcher drains this epoch's records
+    if (!epoch || epoch.state !== 'recording') return { stop: 'no_epoch' };
+    const dir = epochDir(this.cap, epoch.id);
+    if (!existsSync(dir)) return { stop: 'no_epoch' };
+    if (this.overBudget(dir)) return { stop: 'budget' };
+    const prev = epoch.after ? `>${epoch.after}` : null;
+    return { path: join(dir, `${this.proc}.jsonl`), tag: epoch.id, match: tag => tag === epoch.id || tag === prev };
   }
 
   /**
-   * The buffered lines for `epoch`: a record whose call started before the epoch began belongs to an earlier one (which
-   * a purge may have invalidated since) and is dropped, never written into the new recording. With `until` (a seal's
-   * drain), records of calls that started at or after it stay buffered for the next epoch.
+   * Applies a stop. Off, a purge or no epoch: the buffer goes (nothing is being recorded). Budget or a fault: the
+   * records count as lost, so their epoch gets a gap once writing resumes. Sealing: everything stays buffered.
    */
-  private take(epoch: EpochPointer, until = Infinity): string {
-    const since = Date.parse(epoch.started_at);
-    const lines: string[] = [];
-    const keep: Array<{ t0: number; line: string }> = [];
-    for (const b of this.buffer) { if (b.t0 >= until) keep.push(b); else if (b.t0 >= since) lines.push(b.line); else this.drop('earlier_epoch'); }
-    this.buffer = keep;
-    this.bytes = keep.reduce((n, b) => n + b.line.length + 1, 0);
-    if (this.dropped) {
-      lines.push(JSON.stringify({ v: 1, proc: this.proc, seq: this.nextSeq(), t0: Date.now(), t1: Date.now(), kind: 'gap', reason: this.dropReason, count: this.dropped }));
-      this.dropped = 0;
-    }
-    return lines.length ? lines.join('\n') + '\n' : '';
+  private apply(stop: string): void {
+    if (stop === 'sealing') return;
+    if (stop === 'budget' || stop === 'error') { this.shed(() => true, stop); return; }
+    this.buffer = [];
+    this.bytes = 0;
+    this.lost.clear();
   }
 
   flush(): Promise<void> {
     if (this.flushing) return this.flushing.then(() => this.flush());
     const run = async () => {
-      if (!this.buffer.length && !this.dropped) return;
-      let t: ReturnType<CaptureWriter['target']>;
+      if (!this.buffer.length && !this.lost.size) return;
+      let t: ReturnType<CaptureWriter['target']> | { stop: 'error' };
       try { t = this.target(); } catch { t = { stop: 'error' }; } // a capture fault never reaches the brain process
-      if ('stop' in t) { this.discard(t.stop); return; }
-      const data = this.take(t.epoch);
-      try { await appendFile(t.path, data, { mode: 0o600 }); } catch { this.drop('append_error'); }
+      if ('stop' in t) { this.apply(t.stop); return; }
+      const data = this.take(t.match, () => false);
+      try { await appendFile(t.path, data, { mode: 0o600 }); } catch { this.lose(t.tag, 'append_error', data.split('\n').length - 1); }
     };
-    this.flushing = run().catch(() => { this.drop('flush_error'); }).finally(() => { this.flushing = null; });
+    this.flushing = run().catch(() => { /* target() and take() do not throw; appendFile's failure is counted above */ }).finally(() => { this.flushing = null; });
     return this.flushing;
   }
 
-  /** Synchronous flush for process exit. */
+  /**
+   * Synchronous flush for process exit: drains a seal in progress, writes what may be written, and removes this
+   * recorder's registration when nothing is left unwritten (a dead recorder still registered died uncleanly).
+   */
   flushSync(): void {
-    if (!this.buffer.length && !this.dropped) return;
-    let t: ReturnType<CaptureWriter['target']>;
-    try { t = this.target(); } catch { t = { stop: 'error' }; } // exit hook: a capture fault never fails shutdown
-    if ('stop' in t) { this.discard(t.stop); return; }
-    try { appendFileSync(t.path, this.take(t.epoch), { mode: 0o600 }); } catch { /* exit: nothing left to do */ }
+    try {
+      this.drainForSeal(true);
+      if (this.buffer.length || this.lost.size) {
+        let t: ReturnType<CaptureWriter['target']> | { stop: 'error' };
+        try { t = this.target(); } catch { t = { stop: 'error' }; }
+        if ('stop' in t) this.apply(t.stop);
+        else appendFileSync(t.path, this.take(t.match, () => false), { mode: 0o600 });
+      }
+      if (!this.buffer.length && !this.lost.size && this.registered) rmSync(join(recordersDir(this.cap), `${this.proc}.json`), { force: true });
+    } catch { /* exit hook: a capture fault never fails shutdown */ }
   }
 }
 
@@ -439,15 +557,16 @@ function errorCode(e: unknown): string {
 }
 
 /** Wraps `engine` so every call is recorded through `writer`. */
-export function wrapCaptureEngine<E extends BrainEngine>(engine: E, writer: CaptureWriter, tx?: string): E {
+export function wrapCaptureEngine<E extends BrainEngine>(engine: E, writer: CaptureWriter, tx?: string, txTag?: string): E {
   let txSeq = 0;
   const cache = new Map<PropertyKey, { original: Function; wrapped: Function }>();
 
   const record = (member: string, fn: Function): Function => function captured(...args: unknown[]) {
-    writer.markActive(); // registered before this call's record exists, so a seal that starts later waits for it
+    const tag = txTag ?? writer.begin(); // a call inside a transaction belongs to the transaction's epoch
+    if (tag === null) return fn.apply(engine, args);
     const t0 = Date.now();
     if (GAP_MEMBERS.has(member) || hasFunctionArg(args)) {
-      writer.push({ t0, t1: t0, kind: 'gap', member, reason: GAP_MEMBERS.has(member) ? 'raw' : 'function_arg', tx });
+      writer.push(tag, { t0, t1: t0, kind: 'gap', member, reason: GAP_MEMBERS.has(member) ? 'raw' : 'function_arg', tx });
       return fn.apply(engine, args);
     }
     let encoded: unknown;
@@ -457,13 +576,13 @@ export function wrapCaptureEngine<E extends BrainEngine>(engine: E, writer: Capt
       const a = callerAccessRecord();
       access = a ? encodeValue(a) : undefined;
     } catch (err) {
-      writer.push({ t0, t1: t0, kind: 'gap', member, reason: err instanceof CaptureTooLargeError ? 'too_large' : 'encode', tx });
+      writer.push(tag, { t0, t1: t0, kind: 'gap', member, reason: err instanceof CaptureTooLargeError ? 'too_large' : 'encode', tx });
       return fn.apply(engine, args);
     }
-    const leave = writer.enter(t0);
+    const leave = writer.enter(tag);
     const done = (o: { ok: boolean; h?: string; code?: string }) => {
       leave();
-      try { writer.push({ t0, t1: Date.now(), kind: 'engine', member, args: encoded, ...(access ? { access } : {}), ...o, ...(tx ? { tx } : {}) }); } catch { /* never fails a call */ }
+      try { writer.push(tag, { t0, t1: Date.now(), kind: 'engine', member, args: encoded, ...(access ? { access } : {}), ...o, ...(tx ? { tx } : {}) }); } catch { /* never fails a call */ }
     };
     let out: unknown;
     try { out = fn.apply(engine, args); } catch (e) { done({ ok: false, code: errorCode(e) }); throw e; }
@@ -473,14 +592,15 @@ export function wrapCaptureEngine<E extends BrainEngine>(engine: E, writer: Capt
 
   const transaction = (member: string, fn: Function): Function => function capturedTx(cb: unknown, ...rest: unknown[]) {
     if (typeof cb !== 'function') return fn.apply(engine, [cb, ...rest]);
+    const tag = txTag ?? writer.begin();
+    if (tag === null) return fn.apply(engine, [cb, ...rest]);
     const id = `${writer.proc}:${tx ? `${tx}.` : ''}${++txSeq}`;
-    writer.markActive();
     const t0 = Date.now();
-    const leave = writer.enter(t0);
-    writer.push({ t0, t1: t0, kind: 'tx', phase: 'begin', member, tx: id, ...(tx ? { parent_tx: tx } : {}) });
-    const end = (phase: 'committed' | 'rolled_back') => { leave(); writer.push({ t0, t1: Date.now(), kind: 'tx', phase, member, tx: id, ...(tx ? { parent_tx: tx } : {}) }); };
+    const leave = writer.enter(tag);
+    writer.push(tag, { t0, t1: t0, kind: 'tx', phase: 'begin', member, tx: id, ...(tx ? { parent_tx: tx } : {}) });
+    const end = (phase: 'committed' | 'rolled_back') => { leave(); writer.push(tag, { t0, t1: Date.now(), kind: 'tx', phase, member, tx: id, ...(tx ? { parent_tx: tx } : {}) }); };
     let out: unknown;
-    try { out = fn.apply(engine, [(inner: BrainEngine) => (cb as (e: BrainEngine) => unknown)(inner && typeof inner === 'object' ? wrapCaptureEngine(inner, writer, id) : inner), ...rest]); } catch (e) { leave(); throw e; }
+    try { out = fn.apply(engine, [(inner: BrainEngine) => (cb as (e: BrainEngine) => unknown)(inner && typeof inner === 'object' ? wrapCaptureEngine(inner, writer, id, tag) : inner), ...rest]); } catch (e) { leave(); throw e; }
     if (!isThenable(out)) { leave(); return out; }
     return out.then(r => { end('committed'); return r; }, e => { end('rolled_back'); throw e; });
   };
@@ -505,11 +625,13 @@ export function wrapCaptureEngine<E extends BrainEngine>(engine: E, writer: Capt
 
 /** The engine factory's entry point: the recording engine, with its exit flush (the factory installs `watchPurges`). */
 export function attachCapture<E extends BrainEngine>(engine: E, cap: string): E {
-  const writer = new CaptureWriter(cap);
   const onExit = () => writer.flushSync();
-  process.once('exit', onExit);
-  engine.registerBeforeDisconnect(async () => {
-    try { await writer.flush(); } finally { process.removeListener('exit', onExit); }
+  // The exit hook lives while the writer is active (from its first call until it retires with everything written),
+  // so a seal pending at disconnect still drains, and a reconnect gets it back.
+  const writer = new CaptureWriter(cap, undefined, undefined, {
+    active: () => { process.removeListener('exit', onExit); process.once('exit', onExit); },
+    retire: () => process.removeListener('exit', onExit),
   });
+  engine.registerBeforeDisconnect(() => writer.close());
   return wrapCaptureEngine(engine, writer);
 }

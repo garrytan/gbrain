@@ -11,18 +11,19 @@
  * Real PGLite runs in test/shadow-capture.serial.test.ts.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { appendPurgeIntent } from '../src/core/belief/purge-mirror.ts';
 import {
-  attachCapture, basesDir, CaptureWriter, epochDir, purgeIfLogChanged, purgeCapture, retireEpoch, readEpoch, readSegment,
+  attachCapture, basesDir, CAPTURE_LIMITS, CaptureWriter, epochDir, purgeIfLogChanged, purgeCapture, retireEpoch, readEpoch, readSegment,
   recordersDir, sealEpoch, startEpoch, watchPurges, wrapCaptureEngine, type CaptureRecord,
 } from '../src/shadow/capture.ts';
 import { captureDir, captureOffMarker, writePrivateJson } from '../src/shadow/capture-state.ts';
 import { acquireReplayLock } from '../src/shadow/capture-lock.ts';
-import { decodeValue } from '../src/shadow/codec.ts';
+import { decodeValue, encodeArgs } from '../src/shadow/codec.ts';
 
 const dirs: string[] = [];
 const tmp = () => { const d = mkdtempSync(join(tmpdir(), 'gbrain-capture-')); dirs.push(d); return d; };
@@ -391,6 +392,166 @@ describe('seal handshake', () => {
     expect(readdirSync(recordersDir(cap)).length).toBe(1);
     release();
     await pending;
+  });
+});
+
+describe('review round 1: consent, purge retry, seal accounting', () => {
+  function slowEngine() {
+    let release!: () => void;
+    const e = { ...fakeEngine(), getPage: () => new Promise(r => { release = () => r(null); }) } as unknown as BrainEngine;
+    return { e, release: () => release() };
+  }
+  const recordsIn = (cap: string, id: string) => existsSync(epochDir(cap, id))
+    ? readdirSync(epochDir(cap, id)).filter(f => f.endsWith('.jsonl')).flatMap(f => readSegment(join(epochDir(cap, id), f)).records) : [];
+  const captureIo = (shadowDir: string) => ({ out: () => {}, err: () => {}, now: () => new Date(), brain: { key: 'pglite-abc', dir: shadowDir } });
+  /** A pid that no process has: a child that already exited. */
+  const deadPid = () => spawnSync(process.execPath, ['-e', '0']).pid!;
+
+  test('capture turned off (marker or environment) while a seal waits: the drain writes no argument and says the epoch is incomplete', async () => {
+    for (const how of ['marker', 'env'] as const) {
+      const { cap, home } = recordingCapture();
+      const sealedId = readEpoch(cap)!.id;
+      const env: Record<string, string | undefined> = {};
+      const { e, release } = slowEngine();
+      const pending = wrapCaptureEngine(e, new CaptureWriter(cap, home, env)).getPage(PRIVATE.slug);
+      const seal = sealEpoch(cap, { home, timeoutMs: 5_000 });
+      if (how === 'marker') writeFileSync(captureOffMarker(cap), 'off\n'); else env.GBRAIN_SHADOW_CAPTURE = 'off';
+      release();
+      await pending;
+      const r = (await seal)!;
+      expect(JSON.stringify(recordsIn(cap, sealedId))).not.toContain(PRIVATE.slug);
+      expect(r.unacked).toBe(1);
+    }
+  });
+
+  test('a seal waits for an append still in progress before it is acknowledged', async () => {
+    const { cap, home } = recordingCapture();
+    const writer = new CaptureWriter(cap, home, {});
+    await wrapCaptureEngine(fakeEngine() as unknown as BrainEngine, writer).getStats();
+    let finish!: () => void;
+    (writer as unknown as { flushing: Promise<void> | null }).flushing = new Promise<void>(r => { finish = r; }); // an append held by the disk
+    const seal = sealEpoch(cap, { home, timeoutMs: 5_000 });
+    await Bun.sleep(400);
+    expect(readEpoch(cap)!.state).toBe('sealing');
+    (writer as unknown as { flushing: Promise<void> | null }).flushing = null;
+    finish();
+    expect((await seal)!.unacked).toBe(0);
+  });
+
+  test('a purge whose pointer cannot be written still deletes every recording', () => {
+    const { cap, home } = recordingCapture();
+    const id = readEpoch(cap)!.id;
+    writeFileSync(join(epochDir(cap, id), 'p.jsonl'), `${JSON.stringify({ args: [PRIVATE.slug] })}\n`);
+    mkdirSync(`${join(cap, 'epoch.json')}.${process.pid}.tmp`); // the pointer's temp file cannot be created
+    expect(() => purgeCapture(cap)).not.toThrow();
+    expect(existsSync(epochDir(cap, id))).toBe(false);
+    void home;
+  });
+
+  test('a purge whose deletion stopped part way (crash, undeletable file) is finished by the next check and before capture on', async () => {
+    for (const via of ['check', 'capture on'] as const) {
+      const { cap, shadowDir } = recordingCapture();
+      const p = readEpoch(cap)!;
+      writeFileSync(join(epochDir(cap, p.id), 'p.jsonl'), `${JSON.stringify({ args: [PRIVATE.slug] })}\n`);
+      writePrivateJson(join(cap, 'epoch.json'), { ...p, state: 'invalidated', reason: 'purge' }); // the crash came right after this write
+      if (via === 'check') expect(purgeIfLogChanged(cap)).toBe(true);
+      else {
+        const { runShadowCaptureCommand } = await import('../src/commands/engine-shadow-capture.ts');
+        expect(await runShadowCaptureCommand(['on', '--yes'], captureIo(shadowDir) as never)).toBe(0);
+      }
+      expect(existsSync(epochDir(cap, p.id))).toBe(false);
+      expect(purgeIfLogChanged(cap)).toBe(false); // done: not repeated
+    }
+  });
+
+  test('a data field named signal is recorded; a real cancellation signal is left out', () => {
+    const [enc] = encodeArgs([{ frontmatter: { signal: 'buy' }, signal: new AbortController().signal }]) as Array<Record<string, unknown>>;
+    expect(enc).toEqual({ frontmatter: { signal: 'buy' } });
+  });
+
+  test('a call that started while capture was off is never recorded, even if it finishes after capture is on again', async () => {
+    const { cap, shadowDir, home } = recordingCapture();
+    writeFileSync(captureOffMarker(cap), 'off\n');
+    const writer = new CaptureWriter(cap, home, {});
+    const { e, release } = slowEngine();
+    const pending = wrapCaptureEngine(e, writer).getPage(PRIVATE.slug);
+    const { runShadowCaptureCommand } = await import('../src/commands/engine-shadow-capture.ts');
+    await runShadowCaptureCommand(['on', '--yes'], captureIo(shadowDir) as never);
+    release();
+    await pending;
+    await writer.flush();
+    expect(JSON.stringify(segmentRecords(cap))).not.toContain(PRIVATE.slug);
+  });
+
+  test('capture off then on starts a fresh recording; on while already on keeps it', async () => {
+    const { cap, shadowDir } = recordingCapture();
+    const first = readEpoch(cap)!.id;
+    const { runShadowCaptureCommand } = await import('../src/commands/engine-shadow-capture.ts');
+    await runShadowCaptureCommand(['on', '--yes'], captureIo(shadowDir) as never);
+    expect(readEpoch(cap)!.id).toBe(first);
+    await runShadowCaptureCommand(['off'], captureIo(shadowDir) as never);
+    await runShadowCaptureCommand(['on', '--yes'], captureIo(shadowDir) as never);
+    expect(readEpoch(cap)!.id).not.toBe(first);
+  });
+
+  test('a record buffered before a purge never lands in a new epoch, even one that starts at the same instant or earlier', async () => {
+    const { cap, home } = recordingCapture();
+    const writer = new CaptureWriter(cap, home, {});
+    await wrapCaptureEngine(fakeEngine() as unknown as BrainEngine, writer).getPage(PRIVATE.slug);
+    appendPurgeIntent({ request: 'r20', request_id: 'q', source_id: 'default', source_incarnation: 'i', scope: 'page', purge_epoch: 1, facts: [], takes: [], lifetimes: [] }, home);
+    purgeIfLogChanged(cap, home);
+    startEpoch(cap, home, new Date(Date.now() - 60_000)); // a clock set back
+    await writer.flush();
+    expect(JSON.stringify(segmentRecords(cap))).not.toContain(PRIVATE.slug);
+  });
+
+  test('a disconnected engine stops its seal watcher and unregisters once everything is written', async () => {
+    const { cap, home } = recordingCapture();
+    const writer = new CaptureWriter(cap, home, {});
+    await wrapCaptureEngine(fakeEngine() as unknown as BrainEngine, writer).getStats();
+    expect(readdirSync(recordersDir(cap))).toHaveLength(1);
+    await writer.close();
+    expect(readdirSync(recordersDir(cap))).toHaveLength(0);
+    expect((writer as unknown as { ticker: unknown }).ticker).toBeNull();
+    expect(segmentRecords(cap).some(r => r.member === 'getStats')).toBe(true);
+  });
+
+  test('a recorder that died without its exit flush is never counted as complete; a clean exit is', async () => {
+    const { cap, home } = recordingCapture();
+    writePrivateJson(join(recordersDir(cap), 'dead-1.json'), { pid: deadPid() });
+    const r1 = (await sealEpoch(cap, { home, timeoutMs: 1_000 }))!;
+    expect(r1.unacked).toBe(1);
+    // Died after acknowledging a seal: the doubt goes to the next epoch.
+    const writer = new CaptureWriter(cap, home, {});
+    await wrapCaptureEngine(fakeEngine() as unknown as BrainEngine, writer).getStats();
+    await writer.flush();
+    const proc = readdirSync(recordersDir(cap)).find(f => f.endsWith('.json'))!;
+    writePrivateJson(join(recordersDir(cap), 'dead-2.json'), { pid: deadPid() });
+    writeFileSync(join(epochDir(cap, readEpoch(cap)!.id), 'ack-dead-2'), '');
+    const r2 = (await sealEpoch(cap, { home, timeoutMs: 1_000 }))!;
+    expect(r2.next.unverified).toBe(1);
+    // A clean exit removes its registration: the next seal does not wait for it or count it.
+    writer.flushSync();
+    expect(existsSync(join(recordersDir(cap), proc))).toBe(false);
+    expect((await sealEpoch(cap, { home, timeoutMs: 1_000 }))!.unacked).toBe(0);
+  });
+
+  test('calls lost while a seal waits are counted in the epoch they belong to, not the sealed one', async () => {
+    const { cap, home } = recordingCapture();
+    const sealedId = readEpoch(cap)!.id;
+    const writer = new CaptureWriter(cap, home, {});
+    const { e, release } = slowEngine();
+    const slow = wrapCaptureEngine(e, writer).getPage('notes/before');
+    const seal = sealEpoch(cap, { home, timeoutMs: 5_000 });
+    const limit = CAPTURE_LIMITS.bufferBytes;
+    CAPTURE_LIMITS.bufferBytes = 1;
+    try { await wrapCaptureEngine(fakeEngine() as unknown as BrainEngine, writer).getStats(); } finally { CAPTURE_LIMITS.bufferBytes = limit; }
+    release();
+    await slow;
+    const r = (await seal)!;
+    await writer.flush();
+    expect(recordsIn(cap, sealedId).some(x => x.kind === 'gap')).toBe(false);
+    expect(recordsIn(cap, r.next.id).some(x => x.kind === 'gap' && x.reason === 'buffer_full' && x.count === 1)).toBe(true);
   });
 });
 
