@@ -15,10 +15,10 @@
  *    addon; ids, timestamps and the temp directory are left out of the compared answer.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parityArms } from './harness.ts';
+import { createSource, parityArms, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { rustStandIn } from '../helpers/rust-stand-in.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
@@ -77,6 +77,29 @@ async function markdownScenario(engine: BrainEngine) {
   return { first, again, pages: await stored(engine) };
 }
 
+/**
+ * A registered folder source: imported, a body changed, a file moved, then imported again. The first clean run stamps the
+ * source's last sync (readSourceRow, markSourceSynced); the second rewrites a changed page and moves another's file path
+ * (the origin guard, the alias and chunk writes).
+ */
+async function folderScenario(engine: BrainEngine, backend: ParityBackend, setup: BrainEngine = engine) {
+  const dir = markdownDir();
+  await createSource(setup, backend, 'folder', {}, dir);
+  const run = async () => {
+    try { return await runImport(engine, [dir, '--no-embed', '--json', '--source', 'folder']); }
+    catch (error) { throw isCapabilityMissing(error) ? new Error(`folder import refused: ${(error as Error).message}`) : error; }
+  };
+  const first = count(await run());
+  writeFileSync(join(dir, 'notes', 'widgets.md'), '---\ntype: note\ntitle: Widgets\ntags: [company, gears]\n---\n# Widgets\n\nWidgets Inc makes sprockets and gears.\n');
+  renameSync(join(dir, 'people', 'alice-example.md'), join(dir, 'people', 'alice-moved.md'));
+  const changed = count(await run());
+  expect(first).toEqual({ imported: 2, skipped: 0, errors: 0, chunksCreated: first.chunksCreated, failures: [] });
+  expect({ errors: changed.errors, failures: changed.failures }).toEqual({ errors: 0, failures: [] });
+  const source = await engine.getSource('folder');
+  expect(source?.last_sync_at).not.toBeNull();
+  return { first, changed, pages: await stored(engine) };
+}
+
 /** An image imported, then imported again unchanged: the second is skipped. */
 async function imageScenario(engine: BrainEngine) {
   const dir = mkdtempSync(join(tmpdir(), 'gbrain-import-image-'));
@@ -99,6 +122,10 @@ describe('engine parity: gbrain import --no-embed ends in no refusal on any arm'
   parityTest('a markdown directory imports, then re-imports unchanged, with the same pages, tags and chunks', {
     methods: ['listPages', 'getChunks', 'getTags'], timeout: 180_000,
   }, (engine) => markdownScenario(engine));
+
+  parityTest('a registered folder source imports, then re-imports a changed body and a moved file, and stamps its last sync', {
+    methods: ['listPages', 'getSource'], timeout: 180_000,
+  }, (engine, backend) => folderScenario(engine, backend));
 
   parityTest('an unchanged image re-import is skipped without a refusal', {
     methods: ['getPage'], timeout: 120_000,
@@ -128,6 +155,16 @@ describe('Rust-engine stand-in: the same import over PGLite ends in no refusal',
     const refused: string[] = [];
     const reference = await markdownScenario(plain);
     const answer = await markdownScenario(rustStandIn(standIn, refused)).catch((error: Error) => { expect({ refused, error: error.message }).toEqual({ refused: [], error: null }); });
+    expect({ refused }).toEqual({ refused: [] });
+    expect(answer).toEqual(reference);
+  }, 180_000);
+
+  test('folder source: the stand-in answers what PGLite answers, with no refusal', async () => {
+    await resetPgliteState(plain);
+    await resetPgliteState(standIn);
+    const refused: string[] = [];
+    const reference = await folderScenario(plain, 'pglite');
+    const answer = await folderScenario(rustStandIn(standIn, refused), 'pglite', standIn).catch((error: Error) => { expect({ refused, error: error.message }).toEqual({ refused: [], error: null }); });
     expect({ refused }).toEqual({ refused: [] });
     expect(answer).toEqual(reference);
   }, 180_000);
