@@ -274,7 +274,7 @@ normalised relative path. Segmented storage of a Markdown file over 24 MiB is no
 `served` is in `MULTIUSER_CAPABILITIES` (I-8.v2), not `ENGINE_CAPABILITIES`, so with the switch off every
 capability set and the error catalogue's list of capabilities stay as they were.
 
-### Follower frames (codecs only; the served apply path waits for L2's napi methods)
+### Follower frames
 
 `src/core/rust-engine/served/follower-frames.ts` defines the frames that carry `gbrain_store::follower` over protocol
 v3. They are offered under a capability `follower` that the server does not list yet, so every hello and every existing
@@ -288,6 +288,12 @@ frame is unchanged. Records ship as the store's raw record bytes (I-4.v2); TypeS
 | `repl_snap_chunk` | primary to follower | `{ id, xfer, file, off, tail_len }` + tail: bytes `[off, off + tail_len)` of `file`. Files in order, each from 0 with no gap. |
 | `repl_snap_window` | follower to primary | `{ id, xfer, file, through }`: bytes durably written; the primary keeps at most 64 MiB unacknowledged. |
 | `repl_snap_end` | primary to follower | `{ id, xfer }`. Each file's size and sha256 must match and `SNAPSHOT.json` must equal the begin manifest; only then is `SNAPSHOT.json` written, and the follower calls `install_snapshot(dir, Some(&manifest))`, whose answer is sent as `repl_ack` with `seq: 0`. |
+
+The served path is `src/core/rust-engine/served/follower-apply.ts`: on the primary, `primaryRecordsFrame` reads the
+commit log with `Brain#readCommitLogRaw` and `primarySnapshotFrames` copies the brain with `snapshotTo`; on the
+follower, `FollowerApplier` stages a snapshot and calls L2's napi `Follower#applyRaw` and `#installSnapshot`. Store
+refusals (`snapshot_required`, `invalid_state`) cross back in `repl_ack` with the store's code and message unchanged.
+The follower is opened only with `Follower.open`. No connection offers the frames yet (`follower` is not a server cap).
 
 Positions are JSON integers: a sequence must be a safe integer (below 2^53), an index at most `u32::MAX` (the
 `end_of` position included). A refusal is `owner_ipc_protocol` reason `frame_malformed`; nothing of the frame is
