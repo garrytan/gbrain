@@ -508,9 +508,8 @@ export function removeCodexTomlTopLevelInt(configPath: string, key: string, valu
   const before = parseToml(lines.join('\n'));
   if (!(key in before)) return 'absent';
   const firstHeader = lines.findIndex((l) => /^\s*\[/.test(l));
-  if (!/^[A-Za-z0-9_]+$/.test(key)) return 'unlocatable';
-  const line = new RegExp(String.raw`^\s*${key}\s*=\s*${Math.trunc(value)}\s*$`);
-  const hits = lines.map((l, i) => (line.test(l) && (firstHeader < 0 || i < firstHeader) ? i : -1)).filter((i) => i >= 0);
+  const isLine = (l: string) => { const eq = l.indexOf('='); return eq > 0 && l.slice(0, eq).trim() === key && l.slice(eq + 1).trim() === String(Math.trunc(value)); };
+  const hits = lines.map((l, i) => (isLine(l) && (firstHeader < 0 || i < firstHeader) ? i : -1)).filter((i) => i >= 0);
   if (hits.length !== 1) return 'unlocatable';
   let from = hits[0]!, to = hits[0]! + 1;
   if (from > 0 && lines[from - 1]!.startsWith('# gbrain setup')) from--;
