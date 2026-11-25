@@ -14,7 +14,6 @@
  *    first of them before anything is written, so on Rust the case pins that exact list (member and owner, nothing
  *    else), proves nothing was written and ends on the refusal: the harness counts it stopped (never equal). The pin
  *    fails as soon as an entry is served, so RUST_KNOWN_STOP must shrink with the lane that serves it:
- *      readRequestIndexStates                       lane 14, rust-engine/doctor-checks-3 b78e56edb9 (contains 8d4d809039)
  *      isOriginTwinPage                             lane 10, rust-engine/repair-rust b5945d814f (readPageDatabaseOnlyReason)
  *      the publication_started stamp                 lane 5, rust-engine/bound-write-rust 075a30ef45 (journal.markPublicationStarted)
  *      scrubGenerationLedger                         lane 4, 61b18fbbc (scrubGenerationPageRows, scrubGenerationTextRows)
@@ -49,7 +48,6 @@ type R = Record<string, unknown>;
 
 /** What the Rust arm still cannot serve on the purge path, in the order the check names them: member or site, owner and due date. */
 const RUST_KNOWN_STOP = [
-  { name: 'readRequestIndexStates (persistence/checkpoint-validation.ts)', owner: 'lane 14 (doctor-checks-3 b78e56edb9, contains 8d4d809039)', due: '5 PM PST Nov 25' },
   { name: 'listBeliefEventsForPurgeProbe', owner: 'lane 3 (rust-belief-purge e211982aba)', due: '5 PM PST Nov 24' },
 ];
 
