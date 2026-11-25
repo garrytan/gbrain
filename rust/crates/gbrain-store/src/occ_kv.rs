@@ -739,6 +739,12 @@ impl Kv for OccKv {
         self.begin_exclusive()
     }
 
+    /// An exclusive write still holds the whole writer here (`begin_exclusive`): nothing else
+    /// commits until it ends.
+    fn serializes_explicit_transactions(&self) -> bool {
+        true
+    }
+
     fn version(&self) -> Result<u64> {
         Ok(self.shared.published.load(Ordering::Acquire))
     }

@@ -15,7 +15,7 @@ import type { RustEngine } from '../../rust-engine.ts';
 import { withDates } from '../store-codec.ts';
 import type { StoreBrain } from '../store.ts';
 import { storeErrorCode } from '../store-errors.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { assertStoreSerializedTransactions, refuseMember, storeCall, type StoreMember } from './common.ts';
 import type { FenceOpts } from '../../engine-sql/lease-token.ts';
 
 /** The `timestamptz` columns of `minion_jobs`. */
@@ -81,11 +81,14 @@ async function settled(out: StoreAdmit, policy: AdmitJobPolicy): Promise<AdmitJo
  *
  * A delegated client's admission (a `lock` or a `checkCapacity` policy) runs in one engine transaction, in the SQL
  * order: the lock, then a store probe that answers a coalesce or stops where the capacity check runs, then the
- * policy's capacity check on the transaction, then the store admission. The policy's reads see the transaction's state,
- * and the store admits one write transaction at a time, so the check and the insert are one admission.
+ * policy's capacity check on the transaction, then the store admission. The policy's reads see the transaction's state.
+ * The SQL's admission and quota advisory locks are skipped: while explicit transactions hold the writer
+ * (`serialized_transactions`), which a capacity-checked admission asserts, the check and the insert are one admission.
+ * The `lock` policy asserts in the member it calls (lockOAuthClient).
  */
 export const admitJob = async function admitJob(this: RustEngine, brain: StoreBrain, spec: AdmitJobSpec, policy: AdmitJobPolicy): Promise<AdmitJobResult> {
   if (!policy.lock && !policy.checkCapacity) return settled(await storeAdmit(brain, spec), policy);
+  if (policy.checkCapacity) assertStoreSerializedTransactions(brain, 'admitJob');
   return this.transaction(async (tx) => {
     const txBrain = (await (tx as unknown as RustEngine).storeFor('admitJob')).brain;
     const limit = policy.lock ? await policy.lock(tx) : null;

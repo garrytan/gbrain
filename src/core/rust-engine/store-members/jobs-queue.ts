@@ -15,7 +15,7 @@ import { WATCHDOG_SUSPECT_MARK } from '../../minions/watchdog-attribution.ts';
 import type { RustEngine } from '../../rust-engine.ts';
 import { withDates } from '../store-codec.ts';
 import type { StoreBrain } from '../store.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { assertStoreSerializedTransactions, storeCall, type StoreMember } from './common.ts';
 import type { FenceOpts } from '../../engine-sql/lease-token.ts';
 
 /** The `timestamptz` columns of `minion_jobs`, `minion_inbox` and `minion_attachments`. */
@@ -135,11 +135,13 @@ export const retryJob = async function retryJob(this: RustEngine, _brain: StoreB
 };
 
 /**
- * Locks a delegated client's `oauth_clients` row until the transaction ends on the SQL engines. The store admits one
- * write transaction at a time, so inside one the lock is already held, and outside one Postgres releases it at once:
- * the member resolves with nothing to do on every engine. It waits for an open transaction, as a write does.
+ * Locks a delegated client's `oauth_clients` row until the transaction ends on the SQL engines. The lock is skipped
+ * while explicit transactions hold the writer (`serialized_transactions`); the member asserts it. Outside a transaction
+ * Postgres releases the lock at once.
  */
-export const lockOAuthClient: StoreMember<[clientId: string], void> = async () => undefined;
+export const lockOAuthClient: StoreMember<[clientId: string], void> = async brain => {
+  assertStoreSerializedTransactions(brain, 'lockOAuthClient');
+};
 
 // ---------------------------------------------------------------- inbox
 

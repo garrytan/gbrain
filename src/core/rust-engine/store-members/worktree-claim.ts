@@ -5,8 +5,8 @@
  * its own inserts and a throw keeps none.
  *
  * Differences from the SQL engines, and why:
- * - No `synchronous_commit` and no row locks: the store commits durably and runs one write transaction at a time, so
- *   the brain-row and source-row locks change nothing.
+ * - No `synchronous_commit` and no row locks: the store commits durably, and the brain-row and source-row locks are
+ *   skipped while explicit transactions hold the writer (`serialized_transactions`); `lockSource` asserts it.
  * - `assertAdminState(expected)` compares a reviewed `--expected-state` with the digest of the transaction's own
  *   readWriterAdminState (store-members/writer-admin.ts), as the SQL engines do.
  * - `assertAdminUnlocked()` reads the operator lock through the typed config read and refuses as the SQL engines do.
@@ -24,7 +24,7 @@ import { assertWriterAdminState } from '../../persistence/admin-intent.ts';
 import { assertWriterAdminLockValue } from '../../persistence/admin-lock.ts';
 import type { RustEngine } from '../../rust-engine.ts';
 import type { StoreBrain } from '../store.ts';
-import { storeCall } from './common.ts';
+import { assertStoreSerializedTransactions, storeCall } from './common.ts';
 import { readPersistenceBrainId } from './persistence-identity.ts';
 
 const MEMBER = 'worktreeClaimStore';
@@ -35,9 +35,13 @@ function rustWorktreeClaimStore(brain: StoreBrain, tx: BrainEngine): WorktreeCla
   return {
     assertAdminState: expected => assertWriterAdminState(tx, expected),
     async assertAdminUnlocked() {
+      assertStoreSerializedTransactions(brain, 'worktreeClaim.assertAdminUnlocked');
       assertWriterAdminLockValue(await call<string | null>(() => brain.getConfig(WRITER_ADMIN_LOCK_KEY)));
     },
-    lockSource: sourceId => call<ClaimSourceRow | null>(() => brain.readSourceMembership(sourceId), sourceId),
+    async lockSource(sourceId) {
+      assertStoreSerializedTransactions(brain, 'worktreeClaim.lockSource');
+      return call<ClaimSourceRow | null>(() => brain.readSourceMembership(sourceId), sourceId);
+    },
     binding: (sourceId, hostId) => call<WorktreeBinding | null>(() => brain.getWorktreeBinding(sourceId, hostId), sourceId),
     hostWorktrees: hostId => call<HostWorktreeRow[]>(() => brain.listHostWorktrees(hostId)),
     brainId: () => readPersistenceBrainId(brain),
@@ -51,5 +55,7 @@ function rustWorktreeClaimStore(brain: StoreBrain, tx: BrainEngine): WorktreeCla
 
 /** `worktreeClaimStore()`: the claim store over this engine's store handle; called on a transaction, every call runs in it. */
 export const worktreeClaimStore = async function worktreeClaimStore(this: RustEngine, brain: StoreBrain): Promise<WorktreeClaimStore> {
+  // The SQL store locks the brain row FOR UPDATE first; skipped while explicit transactions hold the writer.
+  assertStoreSerializedTransactions(brain, 'worktreeClaimStore');
   return rustWorktreeClaimStore(brain, this as unknown as BrainEngine);
 };

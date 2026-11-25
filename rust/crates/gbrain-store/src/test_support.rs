@@ -216,4 +216,7 @@ impl crate::kv::Kv for FaultyKv {
     fn version(&self) -> crate::Result<u64> {
         self.inner.version()
     }
+    fn serializes_explicit_transactions(&self) -> bool {
+        self.inner.serializes_explicit_transactions()
+    }
 }

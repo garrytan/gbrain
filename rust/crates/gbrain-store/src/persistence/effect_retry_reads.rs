@@ -67,9 +67,10 @@ impl Store {
         Ok(effects.iter().map(|e| e.to_row()).collect())
     }
 
-    /// `lockEffectRow(id)`: effect `id` as `SELECT *` returns it, or `None`. The store runs one
-    /// write at a time, so the row lock `FOR UPDATE` takes holds already.
+    /// `lockEffectRow(id)`: effect `id` as `SELECT *` returns it, or `None`. The `FOR UPDATE` row lock is skipped while
+    /// explicit transactions hold the writer (`serialized_transactions`), which this fn asserts.
     pub fn lock_effect_row(&self, id: &str) -> Result<Option<Value>> {
+        self.assert_serialized_transactions("lockEffectRow")?;
         let id: i64 = id
             .trim()
             .parse()

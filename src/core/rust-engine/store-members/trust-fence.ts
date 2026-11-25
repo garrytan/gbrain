@@ -13,8 +13,9 @@
  * rust/docs/store/facts.md, "The fence guard's reads".
  *
  * `listHeldRows` (the held-row read of trust/fence-guard.ts `heldRows`) is served for take and timeline rows, which the
- * store stamps with their tier (rust/docs/store/takes.md, rust/docs/store/timeline.md). The store runs one write at a time,
- * so the SQL's `FOR UPDATE` lock has nothing to add.
+ * store stamps with their tier (rust/docs/store/takes.md, rust/docs/store/timeline.md). The SQL's `FOR UPDATE` lock is
+ * skipped while explicit transactions hold the writer (`serialized_transactions`); the store asserts it. `listFenceFactRows`
+ * skips the same lock and asserts it here.
  *
  * `listGuardedTakeRows` (the batch guard of trust/fence-guard.ts `guardTakeRows`) reads the same stamped take tiers, with
  * the writer's tier from the write trust context.
@@ -23,10 +24,11 @@ import type { FenceFactRow, GuardedTakeRow, GuardedTakeRowsQuery, HeldRowsQuery,
 import type { FenceOverlayIncomingRow, FenceOverlayRow, FenceRowKey, FenceRowTrust, HeldFenceCellKey, HeldFenceCellRow } from '../../engine-sql/cli-reads-ops.ts';
 import { callerMember, grantedPrivateFactSql, memberFactAdmitSql, memberPageSlug } from '../../access/member-facts.ts';
 import { privateFactSources, privatePagesFilterForCaller } from '../../search/private-visibility.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { assertStoreSerializedTransactions, refuseMember, storeCall, type StoreMember } from './common.ts';
 import { storePageTextPolicy } from './private-provenance.ts';
 
 export const listFenceFactRows: StoreMember<[target: { sourceId: string; slug: string; incoming: string }], FenceFactRow[]> = async (brain, target) => {
+  assertStoreSerializedTransactions(brain, 'listFenceFactRows');
   const rows = await storeCall({ member: 'listFenceFactRows', slug: target.slug, sourceId: target.sourceId },
     () => brain.listFenceFactRows({ sourceId: target.sourceId, slug: target.slug, incoming: target.incoming })) as FenceFactRow[];
   return rows.map((row) => ({ ...row, id: Number(row.id), row_num: Number(row.row_num) }));

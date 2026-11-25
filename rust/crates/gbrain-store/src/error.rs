@@ -64,6 +64,11 @@ pub const READ_ONLY_TRANSACTION: &str = "read_only_transaction";
 /// An input written in a form the store does not read the way Postgres does (a resolved date with
 /// a zone it does not know). Nothing was written; the engine refuses the call by name.
 pub const UNMODELED_INPUT: &str = "unmodeled_input";
+/// The store cannot give a guarantee the call relies on, so the call refused before it read or
+/// wrote anything. Today the only such guarantee is `serialized_transactions`
+/// ([`crate::Store::assert_serialized_transactions`]); the message is `<capability>: <site> ...`.
+/// The TypeScript engine reports it as `engine_capability_missing` with that capability.
+pub const ENGINE_CAPABILITY_MISSING: &str = "engine_capability_missing";
 
 /// A lease fence failed (`leases.rs`): the lease's epoch or token moved, it was released or expired, a protected
 /// entry point on a multi-user store had no fence, or the claim was taken under another epoch. Nothing was written.

@@ -45,7 +45,7 @@ const STACKDEPTH: usize = 32;
 /// `MAXSTRPOS` check never bounds them.
 const MAX_QUERY_ITEMS: usize = 1 << 17;
 /// A query of more items than this is walked on a thread with `DEEP_STACK_BYTES` of stack.
-const DEEP_QUERY_ITEMS: usize = 1024;
+pub(super) const DEEP_QUERY_ITEMS: usize = 1024;
 /// Stack of the thread that walks a deep query. The address space is reserved, not committed.
 const DEEP_STACK_BYTES: usize = 256 << 20;
 
@@ -66,11 +66,14 @@ pub(crate) fn with_query_stack<R: Send>(items: usize, f: impl FnOnce() -> R + Se
     let spawns = DEEP_SPAWNS.with(|c| c.borrow().clone());
     #[cfg(test)]
     spawns.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    // The store call's keyword vector cache is thread-local (`vector_cache::scope`): carry it over.
+    let vectors = super::vector_cache::scope::current();
     std::thread::scope(|scope| {
         let handle = std::thread::Builder::new()
             .stack_size(DEEP_STACK_BYTES)
             .spawn_scoped(scope, move || {
                 ON_DEEP_STACK.with(|on| on.set(true));
+                let _vectors = vectors.as_ref().map(super::vector_cache::scope::open);
                 // A spawn inside counts toward the caller's tally.
                 #[cfg(test)]
                 DEEP_SPAWNS.with(|c| *c.borrow_mut() = spawns);

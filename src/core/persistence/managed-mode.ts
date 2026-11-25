@@ -7,6 +7,7 @@
  */
 import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
+import { assertSerializedTransactions } from '../rust-engine/errors.ts';
 import type { RawSqlEngine } from './model.ts';
 import type { BrainEngine } from '../engine.ts';
 import { MANAGED_MODE_SQL, MANAGED_MODE_ROWS_JSON_SQL } from '../engine-sql/persistence-state.ts';
@@ -67,10 +68,14 @@ async function rustPersistenceBrainRows(engine: RawSqlEngine): Promise<Persisten
 }
 /** Whether the brain is managed: `true` or `false` from a well-formed singleton, `storage_error` otherwise; a query error propagates. */
 export async function readManagedMode(engine: RawSqlEngine, opts: ManagedModeReadOptions = {}): Promise<boolean> {
-  // A Rust brain has no SQL dialect: it answers through the typed member. Its store runs one writer at a time, so
-  // the row lock a SQL engine takes here has nothing to wait for. SQL engines keep the statement below.
+  // A Rust brain has no SQL dialect: it answers through the typed member. The row lock a SQL engine takes here is skipped
+  // while explicit transactions hold the writer (`serialized_transactions`); a lock asked for asserts it. SQL engines keep the statement below.
   if (isRustBrain(engine)) {
-    return managedModeFromRows(await (engine as unknown as Pick<BrainEngine, 'readManagedModeRows'>).readManagedModeRows(), opts.refusal).enabled;
+    if (opts.lock) assertSerializedTransactions(engine, 'readManagedMode');
+    const rows = await (engine as unknown as Pick<BrainEngine, 'readManagedModeRows'>).readManagedModeRows();
+    // The read can elect a new owner (a takeover), whose store may not promise the capability: check again.
+    if (opts.lock) assertSerializedTransactions(engine, 'readManagedMode.afterRead');
+    return managedModeFromRows(rows, opts.refusal).enabled;
   }
   const sql = opts.lock ? `${MANAGED_MODE_SQL} FOR ${opts.lock.toUpperCase()}` : MANAGED_MODE_SQL;
   const rows = await engine.executeRaw<{ enabled: unknown }>(sql, undefined, opts.signal ? { signal: opts.signal } : undefined);
@@ -91,8 +96,13 @@ export async function inspectPersistenceBrain(engine: RawSqlEngine): Promise<{ r
 }
 /** The singleton with its identity and epoch, under the same contract as `readManagedMode`. */
 export async function readPersistenceBrain(engine: RawSqlEngine, opts: ManagedModeReadOptions = {}): Promise<PersistenceBrainRow> {
-  // As in readManagedMode: the Rust store runs one writer at a time, so the lock has nothing to wait for.
-  if (isRustBrain(engine)) return managedModeFromRows(await rustPersistenceBrainRows(engine), opts.refusal);
+  // As in readManagedMode: the lock is skipped while explicit transactions hold the writer (`serialized_transactions`).
+  if (isRustBrain(engine)) {
+    if (opts.lock) assertSerializedTransactions(engine, 'readPersistenceBrain');
+    const rows = await rustPersistenceBrainRows(engine);
+    if (opts.lock) assertSerializedTransactions(engine, 'readPersistenceBrain.afterRead');
+    return managedModeFromRows(rows, opts.refusal);
+  }
   const sql = opts.lock ? `${PERSISTENCE_BRAIN_SQL} FOR ${opts.lock.toUpperCase()}` : PERSISTENCE_BRAIN_SQL;
   const rows = await engine.executeRaw<Omit<PersistenceBrainRow, 'enabled'> & { enabled: unknown }>(sql, undefined, opts.signal ? { signal: opts.signal } : undefined);
   return managedModeFromRows(rows, opts.refusal);

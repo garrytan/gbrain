@@ -417,9 +417,10 @@ describe('Rust engine on the store', () => {
     expect(await engine.getConfig('access.restrictions_present')).toBe('1');
   });
 
-  withAddon('a brain on a partial capability set reports exactly what the store serves', async () => {
+  withAddon('a brain on a partial capability set reports exactly what the store serves, plus what the open store promised', async () => {
     const { engine } = await open();
-    expect([...engine.capabilities].sort()).toEqual([...servedCapabilities()].sort());
+    // serialized_transactions comes from the open store (store.ts storePromisesSerializedTransactions), not the static set.
+    expect([...engine.capabilities].sort()).toEqual([...servedCapabilities(), 'serialized_transactions' as const].sort());
   });
 
   withAddon('search on a Rust brain carries the freshness notice once the brain opts in, and none before', async () => {

@@ -9,9 +9,9 @@
 //! - `M mention_page \0 <page id, 20 digits>` holds a [`PageState`]: one `page_mention_state` row.
 //! - `M mention_entry \0 source \0 name_norm \0 target_slug \0 0|1` is empty: one saved entry.
 //!
-//! The pass's advisory locks (`lockMentionSources`, `lockMentionEntries`) have nothing to take: a
-//! store write transaction holds the store's one writer, so no other write runs between them.
-//! `FOR SHARE` reads are plain reads for the same reason.
+//! The pass's advisory locks (`lockMentionSources`, `lockMentionEntries`) are skipped while explicit transactions
+//! hold the writer (`serialized_transactions`), so no other write runs between them. `FOR SHARE` reads are plain
+//! reads for the same reason.
 //!
 //! A hard page delete removes the page's state row (`ON DELETE CASCADE` of `page_id`), and a source
 //! delete removes the source's status row, entries and state rows (`ON DELETE CASCADE` of

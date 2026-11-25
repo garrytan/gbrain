@@ -38,6 +38,14 @@ export const CAPABILITY_REQUIRES: Partial<Record<Capability, readonly Capability
   managed_persistence: ['persistence_journal', 'transactions'],
 };
 
+/**
+ * Capabilities that come from the open store, never from this static set: `serialized_transactions` (an explicit
+ * transaction holds the store's whole writer) is a promise the store makes when it opens (`Store::serialized_transactions`,
+ * the open result's `serialized_transactions`). RustEngine adds it from that answer on every open, reopen and takeover
+ * (`applyStoreGuarantees` in rust-engine.ts) and withholds it when the answer is false or absent.
+ */
+export const STORE_GUARANTEES: readonly Capability[] = ['serialized_transactions'];
+
 export function servedCapabilities(): EngineCapabilities {
   const refusing = new Set<string>(Object.keys(HELD_FOR_CALLERS));
   const present = new Set<string>();

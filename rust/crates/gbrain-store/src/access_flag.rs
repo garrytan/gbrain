@@ -407,6 +407,9 @@ mod tests {
         //   transaction fail like a disk and passes every call on (4 calls and definitions);
         // - `leases_tests.rs`, a whole file under `#[cfg(test)]` whose read-set test opens raw write transactions on the
         //   concurrent store to show a lease read is checked again at commit (3 calls).
+        // - `kv.rs`'s `Unserialized`, which wraps a record store to withhold
+        //   `serialized_transactions` and passes every call on (6 calls and definitions beside the
+        //   trait's 5).
         let allowed: &[(&str, usize)] = &[
             ("access_flag.rs", 1),
             ("facts/entity_order_tests.rs", 1),
@@ -414,7 +417,7 @@ mod tests {
             ("keyword/index_build.rs", 1),
             ("keyword/index_build/tests.rs", 1),
             ("keyword/index_writer/tests.rs", 2),
-            ("kv.rs", 5),
+            ("kv.rs", 11),
             ("leases_tests.rs", 3),
             ("lib.rs", 4),
             ("occ_kv.rs", 4),

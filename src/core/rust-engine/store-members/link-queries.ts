@@ -48,7 +48,7 @@ import { CONNECTOR_SOURCE_KINDS } from '../../persistence/connector-kinds.ts';
 import type { EntityTypeFilter } from '../../schema-pack/entity-types.ts';
 import { mapStoreError, storeErrorCode } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
-import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
+import { assertStoreSerializedTransactions, refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { getConfig } from './config.ts';
 import { linkRelationshipKeysTouching, refreshOnStore, temporalStore } from './link-refresh.ts';
 import { readPageSnapshot } from './pages.ts';
@@ -267,6 +267,9 @@ async function publish(brain: StoreBrain, member: string, origins: DerivedLinkOr
 
 export const replaceDerivedLinks: StoreMember<[origin: DerivedLinkOrigin, links: LinkBatchInput[], opts?: DerivedLinkReplacementOptions], Counts> =
   async (brain, origin, links, opts) => {
+    // Wanted rows lock registered sources (lockRegisteredSourceIds) after the store publish commits: assert first, so a
+    // store without serialized_transactions refuses before the replacement is written.
+    if (opts?.wanted?.producers.length) assertStoreSerializedTransactions(brain, 'replaceDerivedLinks.wanted');
     const item = derivedItem('replaceDerivedLinks', origin, links, opts);
     const [prepared] = await prepareDerived(brain, [origin], [opts]);
     const [result] = await publish(brain, 'replaceDerivedLinks', [origin], [item]);
@@ -278,6 +281,7 @@ export const replaceDerivedLinksBatch: StoreMember<[items: readonly DerivedLinkB
   async (brain, items) => {
     const wire = items.map(item => derivedItem('replaceDerivedLinksBatch', item.origin, item.links, item.opts));
     if (!wire.length) return [];
+    if (items.some(item => item.opts?.wanted?.producers.length)) assertStoreSerializedTransactions(brain, 'replaceDerivedLinksBatch.wanted');
     const prepared = await prepareDerived(brain, items.map(item => item.origin), items.map(item => item.opts));
     const results = await publish(brain, 'replaceDerivedLinksBatch', items.map(item => item.origin), wire);
     for (const [i, item] of items.entries()) await finishDerived(brain, prepared[i]!, wire[i]!, item.opts);

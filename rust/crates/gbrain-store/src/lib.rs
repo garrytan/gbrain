@@ -199,6 +199,10 @@ pub struct OpenOptions {
     /// caller per brain). It implies `concurrent_writes`, and protected entry points then require a lease fence
     /// (`leases.rs`). Off (the default), the store behaves exactly as without the field.
     pub multiuser: bool,
+    /// Test seam (groundwork G1): open over [`kv::Unserialized`], so the store reports no
+    /// `serialized_transactions` and every lock skip refuses `engine_capability_missing`. Off by
+    /// default; nothing in production turns it on.
+    pub withhold_serialized_transactions: bool,
 }
 
 impl Default for OpenOptions {
@@ -213,6 +217,7 @@ impl Default for OpenOptions {
             initial_config: Vec::new(),
             write_gate_detector_version: None,
             multiuser: false,
+            withhold_serialized_transactions: false,
         }
     }
 }
@@ -229,6 +234,9 @@ pub struct StoreInfo {
     /// so an open with the mode off reports exactly what it did before.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub multiuser: bool,
+    /// The `serialized_transactions` capability this store promises for as long as it is open
+    /// ([`Store::serialized_transactions`]); the TypeScript engine reports the capability from it.
+    pub serialized_transactions: bool,
 }
 
 /// The config row that turns multi-user mode on for one brain (I-0): `engine.rust.multiuser` set to `true` or `1`.
@@ -250,6 +258,9 @@ pub struct Store {
     /// only.
     #[allow(dead_code)] // the vector search family reads it
     pub(crate) vectors: vectors::VectorCache,
+    /// The keyword vectors rebuilt for searches and write checks (`keyword/vector_cache.rs`): one
+    /// cache per open brain, shared with its transactions' stores and its index builder's store.
+    keyword_vectors: Arc<keyword::KeywordVectors>,
     /// The write trust context: the transaction-local trust settings (`write_trust.rs`).
     pub(crate) write_context: write_trust::WriteContextSlot,
     info: StoreInfo,
@@ -444,6 +455,12 @@ impl Store {
         options: OpenOptions,
         known: &[u32],
     ) -> Result<Store> {
+        let kv: Arc<dyn Kv> = if options.withhold_serialized_transactions {
+            Arc::new(kv::Unserialized(kv))
+        } else {
+            kv
+        };
+        let serialized_transactions = kv.serializes_explicit_transactions();
         let snapshot = kv.snapshot()?;
         let stored: Option<StoredFormat> = get_json(&*snapshot, &keys::meta("format"))?;
         drop(snapshot);
@@ -504,6 +521,7 @@ impl Store {
             kv,
             env,
             vectors: vectors::VectorCache::default(),
+            keyword_vectors: Arc::default(),
             write_context: write_trust::WriteContextSlot::default(),
             info: StoreInfo {
                 brain_id: stored.brain_id,
@@ -511,6 +529,7 @@ impl Store {
                 schema_version,
                 created,
                 multiuser,
+                serialized_transactions,
             },
             bound: None,
             builder: Mutex::new(None),
@@ -532,6 +551,7 @@ impl Store {
             kv: self.kv.clone(),
             env: self.env.clone(),
             vectors: vectors::VectorCache::default(),
+            keyword_vectors: self.keyword_vectors.clone(),
             write_context: write_trust::WriteContextSlot::default(),
             info: self.info.clone(),
             bound: None,
@@ -574,6 +594,7 @@ impl Store {
         &self,
         max_pages: Option<u64>,
     ) -> Result<keyword::KeywordIndexReport> {
+        let _vectors = self.keyword_vector_scope();
         keyword::verify_index(&*self.read()?, max_pages)
     }
 
@@ -599,6 +620,9 @@ impl Store {
             // writes, so its store starts with an empty cache of its own, which a savepoint or
             // transaction rollback clears (`transactions.rs`).
             vectors: vectors::VectorCache::default(),
+            // Keyword vectors are a pure function of their text, so the transaction shares the
+            // brain's cache (`keyword/vector_cache.rs`).
+            keyword_vectors: self.keyword_vectors.clone(),
             // The write trust context belongs to the transaction's handle, not the shared store: it
             // starts empty and ends with the handle (`write_trust.rs`, "Lifetime").
             write_context: write_trust::WriteContextSlot::default(),
@@ -610,6 +634,12 @@ impl Store {
             dir: self.dir.clone(),
             multiuser: self.multiuser,
         }
+    }
+
+    /// Opens this store's keyword vector cache for the store call running on this thread
+    /// (`keyword/vector_cache.rs`); it closes when the returned scope drops.
+    pub(crate) fn keyword_vector_scope(&self) -> keyword::VectorScope {
+        keyword::open_vector_scope(&self.keyword_vectors)
     }
 
     pub fn info(&self) -> &StoreInfo {
@@ -634,6 +664,30 @@ impl Store {
     /// the brain was opened over a single-writer `Kv`).
     pub fn occ_stats(&self) -> Option<occ_kv::OccStatsSnapshot> {
         self.kv.occ_stats()
+    }
+
+    /// The `serialized_transactions` capability: true while explicit transactions hold the store's
+    /// writer ([`kv::Kv::serializes_explicit_transactions`]). True in both store modes today.
+    pub fn serialized_transactions(&self) -> bool {
+        self.kv.serializes_explicit_transactions()
+    }
+
+    /// The one assertion a lock skip calls. On this path a SQL engine takes a lock (a row lock, an
+    /// advisory lock, `SKIP LOCKED`, a page-key lock) and the store takes none: while explicit
+    /// transactions hold the writer (`serialized_transactions`), no other commit lands inside the
+    /// caller's transaction. On a store without that capability it refuses
+    /// `engine_capability_missing` naming `site`, before anything is read or written, so a skip
+    /// never races. Every call site is counted by `test/serialized-transactions-guard.test.ts`.
+    pub fn assert_serialized_transactions(&self, site: &str) -> Result<()> {
+        if self.serialized_transactions() {
+            return Ok(());
+        }
+        Err(StoreError::new(
+            error::ENGINE_CAPABILITY_MISSING,
+            format!(
+                "serialized_transactions: {site} skips a lock that only explicit transactions holding the store's writer make safe, and this store does not serialize explicit transactions"
+            ),
+        ))
     }
 
     /// Releases the brain: the record file closes and its lock is given up when the last
@@ -691,6 +745,7 @@ impl Store {
         trust: Option<crate::trust::WriteTrust>,
         mut f: impl FnMut(&mut dyn KvWrite) -> Result<T>,
     ) -> Result<T> {
+        let _vectors = self.keyword_vector_scope();
         let stamp_trust = || -> Result<crate::trust::WriteTrust> {
             match &trust {
                 Some(trust) => Ok(trust.clone()),

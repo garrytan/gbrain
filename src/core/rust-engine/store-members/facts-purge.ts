@@ -5,7 +5,8 @@
  *
  * `listFactsReconcileBacklog`, `settleFactsReconcile` and `selectFactsReconcileDrain` read and write the store's
  * `page_facts_reconcile` watermark (facts/reconcile.rs). `lockReconcileRevision` reads the page inside the caller's store
- * transaction, whose single writer is the lock, so the extract_facts commit step (lock, then 'complete' settle) runs whole.
+ * transaction; the lock is skipped while explicit transactions hold the writer (`serialized_transactions`) and the store
+ * asserts it, so the extract_facts commit step (lock, then 'complete' settle) runs whole.
  * `listSingleFactMetadata` is served by facts-trust-reads.ts. `readPurgeSourceLocalPath` and `lockPurgeSource` read the
  * source record, as memory-mutation-reads.ts's `readSourceLocalPath` and `readSourceWriteRow` do.
  * `recordDerivationEdges` and `listDerivedRows` (src/core/engine-sql/facts-trust.ts) write and walk one hop of the store's
@@ -20,7 +21,7 @@ import { privateProvenanceFilterUnderPolicy } from '../../search/private-visibil
 import { withDates } from '../store-codec.ts';
 import { FACTS_FENCE_BEGIN } from '../../facts-fence.ts';
 import { FACTLESS_SETTLE_LIMIT } from '../../engine-sql/facts-purge.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { assertStoreSerializedTransactions, refuseMember, storeCall, type StoreMember } from './common.ts';
 import type { StoreBrain } from '../store.ts';
 import { mapStoreError, storeErrorCode } from '../store-errors.ts';
 import { storeFloorPolicy, storePrivacyPolicy } from './private-provenance.ts';
@@ -51,7 +52,7 @@ export const settleFactsReconcile: Member<'settleFactsReconcile'> = (brain, sour
     await brain.settleFactsReconcile({ sourceId, slug, outcome, revision: revision ?? null, anyRevision: revision === undefined });
   });
 
-/** `lockReconcileRevision`: the store's transaction holds its single writer until commit, which is the row lock. */
+/** `lockReconcileRevision`: the row lock is skipped while explicit transactions hold the writer (`serialized_transactions`); the store asserts it. */
 export const lockReconcileRevision: Member<'lockReconcileRevision'> = (brain, sourceId, slug, revision) =>
   storeCall({ member: 'lockReconcileRevision' }, () => brain.lockReconcileRevision({ sourceId, slug, revision }));
 
@@ -132,14 +133,15 @@ export const readPurgeSourceLocalPath: Member<'readPurgeSourceLocalPath'> = (bra
   storeCall({ member: 'readPurgeSourceLocalPath' }, () => brain.readSourceLocalPath(sourceId));
 
 /**
- * `lockPurgeSource`: the source's incarnation and archived flag from the source record. FOR UPDATE changes nothing
- * here. The purge runs in `engine.transaction`, and the store opens every explicit transaction with the writer held
+ * `lockPurgeSource`: the source's incarnation and archived flag from the source record. The FOR UPDATE is skipped
+ * while explicit transactions hold the writer (`serialized_transactions`); the member asserts it. The purge runs in `engine.transaction`, and the store opens every explicit transaction with the writer held
  * until it ends (`Store::begin_transaction` in rust/crates/gbrain-store/src/transactions.rs: `Kv::begin_write` on
  * redb; `Kv::begin_write_exclusive` when concurrent writes are on, where the commit pipeline lands nothing else until
  * the transaction ends and a concurrent writer that read the source record reruns). So no other write reaches the
  * source record before the purge commits or rolls back.
  */
 export const lockPurgeSource: Member<'lockPurgeSource'> = async (brain, sourceId) => {
+  assertStoreSerializedTransactions(brain, 'lockPurgeSource');
   const row: { incarnation: string; archived: boolean } | null = await storeCall({ member: 'lockPurgeSource' }, () => brain.readSourceWriteRow(sourceId));
   return row ? { incarnation: row.incarnation, archived: row.archived } : null;
 };

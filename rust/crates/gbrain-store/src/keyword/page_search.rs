@@ -67,6 +67,7 @@ impl Store {
         with_stale: bool,
         mut visit: impl FnMut(PageRecord, Best) -> bool + Send,
     ) -> Result<()> {
+        let _vectors = self.keyword_vector_scope();
         if query.trim().is_empty() {
             return Ok(());
         }

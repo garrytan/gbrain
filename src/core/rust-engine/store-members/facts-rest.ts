@@ -8,12 +8,13 @@
  *
  * `readLiveFactEntityPage` under `excludePrivate` serves the remote read floor for a caller with no widening member pages,
  * grants or lineage, and `listContestedProposalPairs` serves the fact privacy policy of `privateFactFilterForCaller` the
- * same way (reader identities and private-readable grants included); any other caller refuses. The store has one writer,
- * so `lockAgentWritebackSetting` has nothing to take: it answers as the SQL does, with nothing.
+ * same way (reader identities and private-readable grants included); any other caller refuses.
+ * `lockAgentWritebackSetting` skips the advisory lock while explicit transactions hold the writer
+ * (`serialized_transactions`), and asserts it.
  */
 import type { BrainEngine } from '../../engine.ts';
 import { privateFactFilterForCaller, remoteReadFloorSql } from '../../search/private-visibility.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { assertStoreSerializedTransactions, storeCall, type StoreMember } from './common.ts';
 import { storePageTextPolicy, storePrivacyPolicy } from './private-provenance.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
@@ -44,8 +45,10 @@ export const listContestedProposalPairs: Member<'listContestedProposalPairs'> = 
   return rows as never;
 };
 
-/** The advisory lock serializes writers of one setting; the store runs one writer at a time, so there is nothing to take. */
-export const lockAgentWritebackSetting: Member<'lockAgentWritebackSetting'> = async () => undefined;
+/** The advisory lock of one setting is skipped while explicit transactions hold the writer (`serialized_transactions`); it asserts that. */
+export const lockAgentWritebackSetting: Member<'lockAgentWritebackSetting'> = async brain => {
+  assertStoreSerializedTransactions(brain, 'lockAgentWritebackSetting');
+};
 
 export const expireFactsOfGonePages: Member<'expireFactsOfGonePages'> = async (brain, sourceIds, slugs) => {
   await storeCall({ member: 'expireFactsOfGonePages' }, () => brain.expireFactsOfGonePages({ sourceIds, slugs }));

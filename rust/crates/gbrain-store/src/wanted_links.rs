@@ -458,8 +458,10 @@ pub(crate) fn replace_rows_in(
 
 impl Store {
     /// `lockRegisteredSourceIds(sourceIds)`: the registered ids among `sourceIds`, sorted, once
-    /// each. The store's write is already exclusive, so nothing is locked.
+    /// each. The lock is skipped while explicit transactions hold the writer
+    /// (`serialized_transactions`), which this fn asserts.
     pub fn lock_registered_source_ids(&self, source_ids: &[String]) -> Result<Vec<String>> {
+        self.assert_serialized_transactions("lockRegisteredSourceIds")?;
         let read = self.read()?;
         let mut out = BTreeSet::new();
         for id in source_ids {

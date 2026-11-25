@@ -29,7 +29,7 @@ import { opError } from '../../ops/contract.ts';
 import { capabilityMissing } from '../errors.ts';
 import { mapStoreError, storeErrorCode } from '../store-errors.ts';
 import type { RustStore, StoreBrain } from '../store.ts';
-import { storeCall } from './common.ts';
+import { assertStoreSerializedTransactions, storeCall } from './common.ts';
 import { readPersistenceBrainId } from './persistence-identity.ts';
 
 type TransactionFn<T> = (engine: BrainEngine) => Promise<T>;
@@ -144,11 +144,13 @@ export const applyTransactionSettings = async function applyTransactionSettings(
 
 /**
  * The persistence protocol declaration: protocol 2 for the rest of the transaction, then the brain id. The store
- * commits every transaction durably through its one writer and has no lock or statement timeouts, so the durable
- * settings change nothing here. The id is the one `readPersistenceBrainId` reads (null for a store without one).
+ * commits every transaction durably and has no lock or statement timeouts, so the durable settings change nothing here.
+ * The id is the one `readPersistenceBrainId` reads (null for a store without one); the SQL reads it `FOR SHARE`, which
+ * is skipped while explicit transactions hold the writer (`serialized_transactions`), and asserted.
  * Outside a transaction nothing is kept, as on PGLite, where the setting ends with its statement.
  */
 export const declarePersistence = async function declarePersistence(this: RustEngine, brain: StoreBrain, _opts?: Parameters<BrainEngine['declarePersistence']>[0]): Promise<string | null> {
+  assertStoreSerializedTransactions(brain, 'declarePersistence');
   const scope = this._txScope;
   if (scope) {
     if (scope.ended) throw mapStoreError({ code: 'store_closed' }, { member: 'declarePersistence' });
@@ -173,6 +175,8 @@ function boundEngine(parent: RustEngine, scope: RustTransactionScope, held: Held
     brain: scope.brain, close: async () => undefined,
     // The transaction runs on its brain's store, in that store's mode (I-0).
     multiuser: parent.openStoreIfOpen('transaction')?.multiuser === true,
+    // The transaction runs on the parent's store, so it carries that store's promise.
+    serializedTransactions: parent.capabilities.has('serialized_transactions'),
     importRelation: refuseSeed('importRelation'), replaceRelationRows: refuseSeed('replaceRelationRows'), replaceInterval: refuseSeed('replaceInterval'),
     relationDigest: refuseSeed('relationDigest'), relationEntries: refuseSeed('relationEntries'), allocatorCheck: refuseSeed('allocatorCheck'),
     factFingerprints: refuseSeed('factFingerprints'), seedPlan: refuseSeed('seedPlan'),

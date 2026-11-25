@@ -9,8 +9,8 @@
 //! setPageType.
 //!
 //! Locks: PGLite takes an advisory lock per origin spelling before it lists the claims, so two
-//! writes of one file queue. The store runs one write transaction at a time, so every lock is
-//! already held and `listOriginClaims` takes none.
+//! writes of one file queue. `listOriginClaims` takes none: the locks are skipped while explicit
+//! transactions hold the writer (`serialized_transactions`), which it asserts when asked for `lock_keys`.
 //!
 //! Keys: this family adds none. It reads and writes page records through `pages.rs` (the page
 //! key, the id key and the origin key `o`) and the search timeline record, and it reads the
@@ -236,6 +236,9 @@ impl Store {
         spellings: &[String],
         opts: &OriginClaimOptions,
     ) -> Result<Vec<OriginClaimRow>> {
+        if !opts.lock_keys.is_empty() {
+            self.assert_serialized_transactions("listOriginClaims")?;
+        }
         let read = self.read()?;
         let except = opts.exclude_page_id.and_then(|id| u64::try_from(id).ok());
         let mut pages = Vec::new();

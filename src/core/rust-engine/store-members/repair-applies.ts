@@ -3,7 +3,7 @@
  * facts/repair_applies.rs: restoreConsolidationTie (consolidate-ties), listLiveDuplicateRows, supersedeDuplicateFacts
  * and linkStruckDuplicateFacts (duplicate-facts), listCommittedRestorePages, listActivePositionedFactIds,
  * readFactRestorePage and restoreExtractorFact (extractor-facts), moveFactClaimDates (fact-claim-dates), lockApprovedFacts
- * (no store call: the store's write transaction already holds every row) and expireApprovedFacts (purged-page-facts), tightenDatabaseFactVisibility (visibility), listPageAccessKeys (moved-pages),
+ * (no store call: the row locks are skipped while explicit transactions hold the writer, `serialized_transactions`) and expireApprovedFacts (purged-page-facts), tightenDatabaseFactVisibility (visibility), listPageAccessKeys (moved-pages),
  * detachFenceRowFacts and hasDatabaseOnlyClaim (url-clone-fences) and readSourceCloneRow (the url-clone check). The fact writes go through the store's fact writer, so the trust stamp, the
  * withdrawal guard and the unique indexes run as their triggers and indexes do on SQL.
  *
@@ -11,7 +11,7 @@
  */
 import type { BrainEngine } from '../../engine.ts';
 import { privacyAliasSql, privateSnapshotFilterFragment } from '../../search/private-visibility.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { assertStoreSerializedTransactions, refuseMember, storeCall, type StoreMember } from './common.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
@@ -56,8 +56,9 @@ export const moveFactClaimDates: Member<'moveFactClaimDates'> = (brain, sourceId
   storeCall({ member: 'moveFactClaimDates' }, () =>
     brain.moveFactClaimDates({ sourceId, rows: rows.map(({ id, valid_from, date }) => ({ id, valid_from, date })) }));
 
-/** No store call: a store write transaction holds the whole store until it ends, as the SQL's `FOR UPDATE` holds the rows. */
-export const lockApprovedFacts: Member<'lockApprovedFacts'> = async (_brain, _sourceId, ids) => {
+/** No store call: the `FOR UPDATE` is skipped while explicit transactions hold the writer (`serialized_transactions`); the member asserts it. */
+export const lockApprovedFacts: Member<'lockApprovedFacts'> = async (brain, _sourceId, ids) => {
+  assertStoreSerializedTransactions(brain, 'lockApprovedFacts');
   wholeIds('lockApprovedFacts', ids);
 };
 

@@ -237,13 +237,17 @@ compares the full result bytes, and `writes` times durable `put_page` calls and 
 ## The vector cache
 
 The store keeps no `search_vector`, so each member rebuilds a chunk's or a page's vector from its text. Rebuilt
-vectors go into a process-wide cache (`keyword/vector_cache.rs`):
+vectors go into a cache that each open brain owns (`keyword/vector_cache.rs`):
 
 - The key is the exact input: the text search configuration (`english`), the vector kind (chunk, sealed page vector,
   trigger page vector), and every text the vector is built from, each with its byte length. A vector is a pure function
   of its key, so a hit is always the vector a rebuild gives. No write clears the cache; it is safe for a store bound to a
-  transaction and across stores in one process.
-- The bound is `VECTOR_CACHE_BYTES`, 64 MiB of keys and vectors (an estimate of their heap size). The cache keeps two
+  transaction.
+- One cache per `Store`, made when the brain opens and shared with the stores of its transactions and its keyword index
+  builder; another brain open in the same process has its own. `Store::write` and the search members open the store's
+  cache for the call (a thread-local scope, as the write trust context is opened); a rebuild outside a store call is not
+  cached.
+- The bound is `VECTOR_CACHE_BYTES`, 64 MiB of keys and vectors per open brain (an estimate of their heap size). The cache keeps two
   generations: a hit in the older one moves to the newer one; when the newer one holds half the bound, the older one is
   dropped. An entry larger than half the bound is not cached. A rebuild that fails (a vector over the size limit) is not
   cached.

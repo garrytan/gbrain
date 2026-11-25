@@ -478,6 +478,7 @@ impl Store {
 
     /// `selectClaimableEffect(hostId, deadOwners)`: the next effect to claim as its row, or null.
     pub fn select_claimable_effect(&self, host_id: &str, dead_owners: &[String]) -> Result<Value> {
+        self.assert_serialized_transactions("selectClaimableEffect")?;
         let now = self.env.now_micros();
         Ok(
             select_claimable_effect_in(&*self.read()?, now, host_id, dead_owners)?
@@ -486,8 +487,9 @@ impl Store {
     }
 
     /// `lockEffectClaimRow(effectId)`: the effect's `{ state, execution_token }`, or null when no
-    /// effect has the id. The store write is exclusive, so the row lock PGLite takes is the read.
+    /// effect has the id. The row lock PGLite takes is skipped while explicit transactions hold the writer (`serialized_transactions`), which this fn asserts; the fn is the read.
     pub fn lock_effect_claim_row(&self, effect_id: i64) -> Result<Value> {
+        self.assert_serialized_transactions("lockEffectClaimRow")?;
         Ok(effect_by_id(&*self.read()?, effect_id)?.map_or(
             Value::Null,
             |e| json!({ "state": e.state, "execution_token": e.execution_token }),

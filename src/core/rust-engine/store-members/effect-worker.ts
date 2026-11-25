@@ -8,13 +8,13 @@
  * Each settle statement matches only the effect still claimed under the token, as the Postgres `WHERE id=$1 AND
  * execution_token=$2::uuid` does, and refuses the arguments the Postgres casts refuse (an id that is not a bigint, a
  * token that is not a uuid, JSON that does not parse). The store runs every statement in its own write, so the direct
- * lane changes nothing here.
+ * lane needs nothing more here.
  *
  * What each member answers and why: rust/docs/store/persistence.md ("Effect worker").
  */
 import type { EffectClaim, EffectClaimRef, EffectWorktreeOwner, MirrorGateRow } from '../../engine-sql/persistence-effect-worker.ts';
 import type { IdleProbeRow, IdleProbeSpec } from '../../engine-sql/persistence-idle-probe.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { assertStoreSerializedTransactions, storeCall, type StoreMember } from './common.ts';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -50,10 +50,11 @@ export const readMirrorGateRows: StoreMember<[requestIds: readonly string[]], Mi
   storeCall({ member: 'readMirrorGateRows' }, () => brain.readMirrorGateRows([...requestIds]));
 
 /**
- * The effect guard's locks: the store runs one write at a time, so the share locks have nothing to wait for, and a
- * Rust brain keeps no worktrees, so no worktree row is found. A worktree id that is not a uuid refuses as `::uuid` does.
+ * The effect guard's locks: the share locks are skipped while explicit transactions hold the writer
+ * (`serialized_transactions`), and the member asserts it. A Rust brain keeps no worktrees, so no worktree row is found. A worktree id that is not a uuid refuses as `::uuid` does.
  */
-export const lockEffectGuard: StoreMember<[worktreeId: string | null], EffectWorktreeOwner | null> = async (_brain, worktreeId) => {
+export const lockEffectGuard: StoreMember<[worktreeId: string | null], EffectWorktreeOwner | null> = async (brain, worktreeId) => {
+  assertStoreSerializedTransactions(brain, 'lockEffectGuard');
   if (worktreeId !== null && !UUID.test(worktreeId)) throw new Error(`invalid input syntax for type uuid: "${worktreeId}"`);
   return null;
 };

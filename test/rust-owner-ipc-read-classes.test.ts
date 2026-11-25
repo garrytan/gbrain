@@ -420,6 +420,8 @@ function buildStoreDecls(): Map<string, Decl[]> {
       const isBrain = (e: ts.Expression) => (ts.isIdentifier(e) && (e.text === 'brain' || e.text === '_brain'))
         || (ts.isPropertyAccessExpression(e) && e.name.text === 'brain');
       const walk = (n: ts.Node): void => {
+        // `assertStoreSerializedTransactions(brain, site)` only reads a getter of the handle (no store call, no write).
+        if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === 'assertStoreSerializedTransactions') return;
         if (ts.isCallExpression(n)) {
           const e = n.expression;
           if (ts.isIdentifier(e)) d.calls.add(e.text);

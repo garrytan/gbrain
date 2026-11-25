@@ -328,6 +328,7 @@ impl Store {
         candidates_cap: f64,
         options: &KeywordOptions,
     ) -> Result<Vec<Value>> {
+        let _vectors = self.keyword_vector_scope();
         let cap = row_count(candidates_cap, "LIMIT")?;
         let windows = attempts
             .iter()

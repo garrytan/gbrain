@@ -57,6 +57,7 @@ impl Store {
         rank_query: &str,
         options: &KeywordOptions,
     ) -> Result<Vec<Value>> {
+        let _vectors = self.keyword_vector_scope();
         let limit = row_count(options.limit.unwrap_or(20.0), "LIMIT")?;
         let inner = match options.inner_limit {
             Some(n) => row_count(n, "LIMIT")?,
@@ -141,6 +142,7 @@ impl Store {
     /// reads every page whose served text projection holds the chunk, with no source scope, and
     /// a word whose query has no lexemes (a stopword) matches nothing.
     pub fn keyword_rare_term_pages(&self, terms: &[String], cap: f64) -> Result<Vec<Value>> {
+        let _vectors = self.keyword_vector_scope();
         let cap = row_count(cap, "LIMIT")?;
         let queries = terms
             .iter()
@@ -207,6 +209,33 @@ mod tests {
         rows.iter()
             .map(|r| r["slug"].as_str().unwrap().to_string())
             .collect()
+    }
+
+    /// Each open brain keeps its own keyword vector cache (`vector_cache.rs`), shared with the stores
+    /// of its transactions: a search on one brain fills that brain's cache and never another's.
+    #[test]
+    fn keyword_vectors_are_cached_per_brain_and_shared_with_its_transactions() {
+        let (a, b) = (crate::test_support::store(), crate::test_support::store());
+        assert!(!std::sync::Arc::ptr_eq(
+            &a.keyword_vectors,
+            &b.keyword_vectors
+        ));
+        let tx = a.begin_transaction(true).unwrap();
+        assert!(std::sync::Arc::ptr_eq(
+            &tx.keyword_vectors,
+            &a.keyword_vectors
+        ));
+        tx.rollback_transaction().unwrap();
+        put(&a, "notes/a", "heron wades");
+        let b_before = b.keyword_vectors.bytes();
+        let o = opts(json!({ "limit": 20.0 }));
+        assert_eq!(
+            slugs(&a.search_keyword_chunks("heron", &o).unwrap()),
+            ["notes/a"]
+        );
+        assert!(a.keyword_vectors.bytes() > 0);
+        assert_eq!(b.keyword_vectors.bytes(), b_before);
+        assert!(b.search_keyword_chunks("heron", &o).unwrap().is_empty());
     }
 
     #[test]

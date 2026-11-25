@@ -1625,11 +1625,12 @@ impl Store {
             .count() as u64)
     }
 
-    /// `lockPageKeys(keys)`: one process owns the brain, and each store call is one transaction
-    /// that serializes with every other one it conflicts with (`occ_kv`), so every key a call
-    /// touches is already held for that call. The store has no transaction that spans calls, so
-    /// there is nothing more to hold. The call checks that the keys are well formed.
+    /// `lockPageKeys(keys)`: each store call is one transaction that serializes with every other one it
+    /// conflicts with (`occ_kv`), so every key a call touches is already held for that call. Holding keys
+    /// across calls is skipped while explicit transactions hold the writer (`serialized_transactions`), which
+    /// this fn asserts. The call checks that the keys are well formed.
     pub fn lock_page_keys(&self, keys: &[PageKey]) -> Result<()> {
+        self.assert_serialized_transactions("lockPageKeys")?;
         for key in keys {
             validate_slug(&key.slug)?;
             if key.source_id.is_empty() || key.source_id.contains('\0') {

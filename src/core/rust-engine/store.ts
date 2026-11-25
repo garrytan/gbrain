@@ -26,6 +26,16 @@ export interface StoreOpenOptions {
   writeGateDetectorVersion?: number;
   /** Multi-user mode from the environment (I-0, multiuser-switch.ts); sent only when true, so an open with the switch off is unchanged. */
   multiuser?: boolean;
+  /** Test seam (groundwork G1): the store reports no `serialized_transactions`, so every lock skip refuses. */
+  withholdSerializedTransactions?: boolean;
+}
+
+/**
+ * Whether the open store promises `serialized_transactions` (explicit transactions hold its writer): its open result says
+ * `serialized_transactions: true`. Anything else (false, absent, not a boolean, no result) withholds the capability.
+ */
+export function storePromisesSerializedTransactions(opened: unknown): boolean {
+  return typeof opened === 'object' && opened !== null && (opened as { serialized_transactions?: unknown }).serialized_transactions === true;
 }
 
 /** The strategy the SQL engines' schema seeds as config `chunk_strategy` (src/schema.sql). */
@@ -50,6 +60,8 @@ export async function seedEmbeddingIdentity(engine: object): Promise<{ model: st
 /** The napi `Brain`: every method returns a promise and rejects with an `Error` carrying a `code`. */
 export interface StoreBrain {
   readonly isOpen: boolean;
+  /** The store's `serialized_transactions` capability: true while explicit transactions hold the writer; null while closed. */
+  readonly serializedTransactions: boolean | null;
   open(path: string, options?: StoreOpenOptions): Promise<unknown>;
   close(): Promise<void>;
   // The store's methods are documented in rust/README.md; each member module types what it sends and reads.
@@ -64,6 +76,8 @@ export interface RustStore {
   readonly brain: StoreBrain;
   /** True when the store runs in multi-user mode (I-0): the environment switch or the brain's own config row. */
   readonly multiuser: boolean;
+  /** The store's open-time promise of `serialized_transactions` (storePromisesSerializedTransactions). */
+  readonly serializedTransactions: boolean;
   /**
    * Copies one batch of a primary relation into this store for the shadow seed (rust/docs/store/seed.md).
    * Every value is the column's text form (`::text`, UTC) or null. Not a BrainEngine member.
@@ -277,19 +291,22 @@ export interface SeedImportResult {
  * Opens (or creates) the brain store at `databasePath`. A second open of the same directory rejects `rust_store_locked`.
  * A created brain records `embedding` as its embedding identity; an existing brain keeps its own.
  */
-export async function openRustStore(addon: object, databasePath: string, embedding?: { model: string; dimensions: number }): Promise<RustStore> {
+export async function openRustStore(addon: object, databasePath: string, embedding?: { model: string; dimensions: number },
+  opts: { withholdSerializedTransactions?: boolean } = {}): Promise<RustStore> {
   const { Pool, Brain } = addon as StoreAddon;
   const pool = new Pool(STORE_POOL_THREADS);
   const brain = new Brain(pool);
   let multiuser = false;
+  let opened: unknown;
   try {
-    const info = await brain.open(databasePath, {
+    opened = await brain.open(databasePath, {
       schemaVersion: LATEST_SCHEMA_VERSION, createdBy: 'gbrain', chunkStrategy: SEED_CHUNK_STRATEGY,
       writeGateDetectorVersion: WRITE_GATE_DETECTOR_VERSION,
       ...(embedding ? { embeddingModel: embedding.model, embeddingDimensions: embedding.dimensions } : {}),
       ...(rustMultiuserFromEnv() ? { multiuser: true } : {}),
-    }) as { multiuser?: unknown } | null;
-    multiuser = info?.multiuser === true;
+      ...(opts.withholdSerializedTransactions ? { withholdSerializedTransactions: true } : {}),
+    });
+    multiuser = (opened as { multiuser?: unknown } | null)?.multiuser === true;
   } catch (error) {
     await pool.shutdown(0).catch(() => undefined);
     throw mapStoreError(error, { member: 'connect' });
@@ -305,6 +322,7 @@ export async function openRustStore(addon: object, databasePath: string, embeddi
   return {
     brain,
     multiuser,
+    serializedTransactions: storePromisesSerializedTransactions(opened),
     importRelation: (seedId, relation, rows, digests) => call('importRelation', () => brain.importRelation(seedId, relation, rows, digests ?? null)),
     replaceRelationRows: (seedId, relation, generation, keys, rows, digests) =>
       call('replaceRelationRows', () => brain.replaceRelationRows(seedId, relation, generation, keys, rows, digests)),

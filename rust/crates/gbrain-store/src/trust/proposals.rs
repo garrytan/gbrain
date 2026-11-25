@@ -18,8 +18,8 @@
 //!
 //! Gaps: the proposer principal and write request (`proposer_principal_kind`,
 //! `proposer_principal_id`, `write_request_id`) are NULL, because the store's write trust context
-//! does not carry the attribution settings PGLite reads them from. `lock` (`FOR UPDATE`) needs
-//! nothing: the store has one writer.
+//! does not carry the attribution settings PGLite reads them from. `lock` (`FOR UPDATE`) is skipped
+//! while explicit transactions hold the writer (`serialized_transactions`).
 
 use crate::env::{iso, parse_iso};
 use crate::error::{CONSTRAINT_VIOLATION, Result, STORE_CORRUPT, StoreError};

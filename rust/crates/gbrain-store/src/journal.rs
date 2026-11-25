@@ -2,8 +2,8 @@
 //! receipt the TypeScript write path reads back.
 //!
 //! This ports the semantics of `src/core/persistence/` (`journal.ts`, `page-mutations.ts`,
-//! `identity.ts`), not its SQL. One process owns the brain and the store runs one write
-//! transaction at a time, so admission needs no row locks; what survives from the original is the
+//! `identity.ts`), not its SQL. One process owns the brain and, while explicit transactions hold the writer
+//! (`serialized_transactions`), admission needs no row locks; what survives from the original is the
 //! contract:
 //!
 //! - A write is identified by `(principal kind, principal id, request_id)`. Admitting the same

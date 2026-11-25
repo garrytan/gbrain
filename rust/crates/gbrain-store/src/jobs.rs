@@ -52,7 +52,7 @@
 //! Postgres transaction reads one `now()`. A millisecond duration becomes `round(ms * 1000)` µs.
 //!
 //! Two claims never take the same `waiting` row, which is what `FOR UPDATE SKIP LOCKED` gives the
-//! SQL engines. With one writer, the write transaction is the lock. With concurrent writes on, a
+//! SQL engines. While explicit transactions hold the writer (`serialized_transactions`), the write transaction is the lock. With concurrent writes on, a
 //! claim reads the claim index up to the row it takes; when another claim, completion or
 //! submission commits a change to that part of the index first, the claim conflicts and runs
 //! again on the new state, so it takes the next job. `FOR KEY SHARE` on a lease (the fence) has
@@ -1926,7 +1926,8 @@ impl Store {
             .collect())
     }
 
-    /// `assertCycleLease`: the lease is held under this token and unexpired.
+    /// `assertCycleLease`: the lease is held under this token and unexpired. The fence's `FOR KEY SHARE` is skipped while
+    /// explicit transactions hold the writer (`serialized_transactions`), which this fn asserts.
     pub fn assert_cycle_lease(&self, lock_id: &str, acquisition_token: &str) -> Result<bool> {
         self.assert_cycle_lease_fenced(lock_id, acquisition_token, None)
     }
@@ -1939,6 +1940,7 @@ impl Store {
         acquisition_token: &str,
         fence: Option<&LeaseToken>,
     ) -> Result<bool> {
+        self.assert_serialized_transactions("assertCycleLease")?;
         uuid_arg("assertCycleLease", acquisition_token)?;
         let now = self.env.now_micros();
         let read = self.read()?;

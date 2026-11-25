@@ -127,19 +127,21 @@ Rules for every method:
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
 | `new Brain(pool)` | the handle, closed | `PGLiteEngine` constructor |
-| `brain.open(path, options?)` | `{ brain_id, format_version, schema_version, created }` | `connect` and `initSchema` |
+| `brain.open(path, options?)` | `{ brain_id, format_version, schema_version, created, serialized_transactions }` | `connect` and `initSchema` |
 | `brain.close()` | `undefined`; a closed handle is a no-op | `disconnect` |
 | `brain.info()` | the same record as `open` | `readBrainIdentity` (`persistence/identity.ts`) |
 | `brain.isOpen` | `boolean` (a getter, not a promise) | none |
+| `brain.serializedTransactions` | `boolean`, or `null` while closed (a getter, not a promise): the store's `serialized_transactions` capability, true while explicit transactions hold the writer | none |
 
 `options` is `{ schemaVersion?: number, createdBy?: string, concurrentWrites?: boolean,
 embeddingModel?: string, embeddingDimensions?: number, chunkStrategy?: string,
-writeGateDetectorVersion?: number }`. `schemaVersion` is what a fresh brain stores as config
+writeGateDetectorVersion?: number, withholdSerializedTransactions?: boolean }`. `schemaVersion` is what a fresh brain stores as config
 `version`; pass `LATEST_SCHEMA_VERSION`. `embeddingModel`, `embeddingDimensions` and `chunkStrategy`
 are config entries a fresh brain records ([docs/store/config.md](docs/store/config.md));
 `writeGateDetectorVersion` is the detector version of the write gate's scan baseline;
 `concurrentWrites` lets many write transactions run at once (off unless true or
-`GBRAIN_RUST_CONCURRENT_WRITES=1`). `close` waits for calls already running, then gives up the lock.
+`GBRAIN_RUST_CONCURRENT_WRITES=1`). `withholdSerializedTransactions` is a test seam: the store opens without promising
+`serialized_transactions`, so every lock skip refuses (off unless true). `close` waits for calls already running, then gives up the lock.
 
 ### Methods by family
 
@@ -208,6 +210,7 @@ Errors from the addon are real `Error` objects with a `code`:
 | `snapshot_cancelled` | `snapshotTo` was cancelled with `snapshotCancel`. It removed what it wrote and released its read before it rejected. |
 | `read_only_transaction` | A write inside a read-only transaction (Postgres SQLSTATE `25006`). Nothing was written. |
 | `unmodeled_input` | An input written in a form the store does not read the way Postgres does (a resolved date with a zone followed by an offset such as `PST+1`, or a date after 2037 in a zone with daylight saving time). Nothing was written; the engine refuses the call as `engine_capability_missing`, naming the member and the input. |
+| `engine_capability_missing` | The store cannot give a guarantee the call relies on; today only `serialized_transactions`, which every lock skip asserts (`Store::assert_serialized_transactions`). The message is `serialized_transactions: <site> ...`. Nothing was read or written; the engine refuses the call as `engine_capability_missing` with that capability. |
 | `invalid_argument` | A malformed argument. |
 | `invalid_slug` | The slug failed `validateSlug`. |
 | `source_not_found` | A page write named a source that does not exist. |

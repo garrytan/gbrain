@@ -147,8 +147,10 @@ impl Store {
 
     /// `readOauthCodeForUpdate(hash, clientId)`: the whole row of the code with this hash held by this client, or null
     /// (any other client's code reads null). `created_at` is `+00:00`-style ISO text. An expired code is returned too:
-    /// the caller refuses it from `expires_at`. The single write transaction is the lock `FOR UPDATE` takes elsewhere.
+    /// the caller refuses it from `expires_at`. The `FOR UPDATE` lock is skipped while explicit transactions hold the writer
+    /// (`serialized_transactions`), which this fn asserts.
     pub fn read_oauth_code_for_update(&self, hash: &str, client_id: &str) -> Result<Value> {
+        self.assert_serialized_transactions("readOauthCodeForUpdate")?;
         let read = self.read()?;
         Ok(match load_code(&*read, hash)? {
             Some(r) if r.client_id == client_id => json!({

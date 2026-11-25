@@ -5,8 +5,9 @@
  *
  * - `writerReleaseStore` returns the same narrow store the SQL engines return. Each read is one
  *   `writerReleaseRows({ kind, ... })` call (gbrain-store `persistence::ReleaseRead`) with the rows of the SQL it
- *   replaces. `begin`, `shareBrain`, `lockWorktreesAndSources`, `lockCycleLocks` and `shareWorktree` change nothing:
- *   the store commits durably and runs one write transaction at a time. `writerProtocolCount` is 0: no writer protocol
+ *   replaces. `begin` changes nothing: the store commits durably.
+ *   `shareBrain`, `lockWorktreesAndSources`, `lockCycleLocks` and `shareWorktree` skip their locks while explicit
+ *   transactions hold the writer (`serialized_transactions`), and each asserts it. `writerProtocolCount` is 0: no writer protocol
  *   registration exists on this engine. `ownerHostBinding` is the claim's host-binding read.
  * - `setBrainEnabled` moves the stored brain mode (gbrain-store `persistence::worktrees::release`), which
  *   `readWriterAdminState`, `readManagedModeRows`, `readLedgerSource` and `readSyncDispatchRow` report.
@@ -21,7 +22,7 @@ import type { CounterColumn, WriterReleaseStore } from '../../engine-sql/writer-
 import { WRITER_ADMIN_LOCK_KEY } from '../../persistence/admin-contract.ts';
 import type { RustEngine } from '../../rust-engine.ts';
 import type { StoreBrain } from '../store.ts';
-import { storeCall } from './common.ts';
+import { assertStoreSerializedTransactions, storeCall } from './common.ts';
 
 const MEMBER = 'writerReleaseStore';
 
@@ -38,10 +39,18 @@ function rustWriterReleaseStore(brain: StoreBrain): WriterReleaseStore {
   return {
     begin: none,
     adminLockValue: () => call<string | null>(() => brain.getConfig(WRITER_ADMIN_LOCK_KEY)),
-    shareBrain: none,
-    lockWorktreesAndSources: none,
-    lockCycleLocks: none,
-    shareWorktree: none,
+    async shareBrain() {
+      assertStoreSerializedTransactions(brain, 'writerRelease.shareBrain');
+    },
+    async lockWorktreesAndSources() {
+      assertStoreSerializedTransactions(brain, 'writerRelease.lockWorktreesAndSources');
+    },
+    async lockCycleLocks() {
+      assertStoreSerializedTransactions(brain, 'writerRelease.lockCycleLocks');
+    },
+    async shareWorktree() {
+      assertStoreSerializedTransactions(brain, 'writerRelease.shareWorktree');
+    },
     blockingRequests: limit => rows('blocking_requests', { limit }),
     recoveringTopologyChanges: () => rows('recovering_topology_changes'),
     releaseEffects: which => rows('release_effects', { which }),
@@ -53,7 +62,10 @@ function rustWriterReleaseStore(brain: StoreBrain): WriterReleaseStore {
     sourceBindingCount: () => rows('source_binding_count'),
     liveBoundSourceCount: () => rows('live_bound_source_count'),
     writerProtocolCount: async () => 0,
-    configuredSources: () => rows('configured_sources'),
+    configuredSources: lock => {
+      if (lock) assertStoreSerializedTransactions(brain, 'writerRelease.configuredSources');
+      return rows('configured_sources');
+    },
     ownerHostBinding: (worktreeId, hostId) => call(() => brain.readHostBinding(worktreeId, hostId)),
     sourceLocalPaths: () => rows('source_local_paths'),
     hostBindingRoots: () => rows('host_binding_roots'),

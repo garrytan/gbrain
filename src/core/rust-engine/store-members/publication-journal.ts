@@ -6,8 +6,9 @@
  * - `publicationJournalStore` returns the same narrow store the SQL engines return. Each read is one
  *   `publicationJournalRows({ kind, ... })` call and each write one `publicationJournalWrite({ kind, ... })` call
  *   (gbrain-store `persistence::PublicationRead` / `PublicationWrite`), with the answers of the SQL they replace.
- * - `lockSource`, `shareWorktree` and `stagingDurability` change nothing: the store commits durably and runs one write
- *   transaction at a time. `shareWorktreeOwner` is the worktree owner read (`readWorktreeOwner`).
+ * - `lockSource`, `shareWorktree`, `shareWorktreeOwner` (the worktree owner read, `readWorktreeOwner`) and `recoveryStaging`
+ *   skip their row locks (FOR UPDATE / FOR SHARE) while explicit transactions hold the writer (`serialized_transactions`),
+ *   and assert it. `stagingDurability` changes nothing: the store commits durably.
  * - A counter release below zero refuses as the CHECK (>= 0) does; a missing counter row changes nothing.
  *
  * What each member answers and why: rust/docs/store/persistence.md ("Publication journal").
@@ -16,7 +17,7 @@ import type { PublicationJournalStore, WorktreeOwnerRow } from '../../engine-sql
 import type { WriteRequest } from '../../persistence/model.ts';
 import type { RustEngine } from '../../rust-engine.ts';
 import type { StoreBrain } from '../store.ts';
-import { storeCall } from './common.ts';
+import { assertStoreSerializedTransactions, storeCall } from './common.ts';
 
 const MEMBER = 'publicationJournalStore';
 
@@ -30,11 +31,16 @@ function rustPublicationJournalStore(brain: StoreBrain): PublicationJournalStore
     recoveryBlocker: (worktreeId, excludeId) => rows('recovery_blocker', { worktreeId, excludeId }),
     ownerPath: worktreeId => rows('owner_path', { worktreeId }),
     async shareWorktreeOwner(worktreeId) {
+      assertStoreSerializedTransactions(brain, 'publicationJournal.shareWorktreeOwner');
       const owner = await call<WorktreeOwnerRow | null>(() => brain.readWorktreeOwner(worktreeId));
       return owner ? { owner_host_id: owner.owner_host_id, owner_epoch: owner.owner_epoch, state: owner.state } : null;
     },
-    shareWorktree: none,
-    lockSource: none,
+    async shareWorktree() {
+      assertStoreSerializedTransactions(brain, 'publicationJournal.shareWorktree');
+    },
+    async lockSource() {
+      assertStoreSerializedTransactions(brain, 'publicationJournal.lockSource');
+    },
     recordRecovery: ({ id, executionToken, recovery, bytes, keys, fence }, checked) =>
       write('record_recovery', { id, executionToken, recovery, bytes, keys, checked, ...(fence ? { fence } : {}) }),
     clearKnownRecovery: (id, keys, recovery) => write('clear_known_recovery', { id, keys, recovery }),
@@ -48,7 +54,10 @@ function rustPublicationJournalStore(brain: StoreBrain): PublicationJournalStore
     blockRecovery: (id, reason) => write<WriteRequest | null>('block_recovery', { id, reason }),
     requeueRecovered: (id, kept, clearError) => write<WriteRequest | null>('requeue_recovered', { id, kept, clearError }),
     stagingDurability: none,
-    recoveryStaging: (table, id) => rows('recovery_staging', { table, id }),
+    recoveryStaging: async (table, id) => {
+      assertStoreSerializedTransactions(brain, 'publicationJournal.recoveryStaging');
+      return rows('recovery_staging', { table, id });
+    },
     async growRecoveryStaging(table, id, recovery, extra) { await write('grow_recovery_staging', { table, id, recovery, extra }); },
   };
 }

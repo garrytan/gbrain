@@ -165,6 +165,7 @@ impl Store {
 
     /// `readPageRevisionForShare(sourceId, slug)`: the live page's content revision.
     pub fn read_page_revision_for_share(&self, source_id: &str, slug: &str) -> Result<Vec<Value>> {
+        self.assert_serialized_transactions("readPageRevisionForShare")?;
         let read = self.read()?;
         Ok(live_page(&*read, source_id, slug)?
             .map(|p| serde_json::json!({ "revision": p.knowledge_revision }))

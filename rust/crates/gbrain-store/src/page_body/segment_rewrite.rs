@@ -3,8 +3,8 @@
 //! of `src/core/engine-sql/segmented-writes.ts`: the page a live rewrite reads and the
 //! `deleted_at` it puts back, the page row a retained-generation rewrite locks, the manifest split
 //! and publish that give a retained generation rows of its own, the version hash it restamps, and
-//! the derivation rows a rewrite drops. Each write is one `Store::write`; the store serializes
-//! writes, so the lock is a plain read.
+//! the derivation rows a rewrite drops. Each write is one `Store::write`; the lock is a plain read,
+//! skipped while explicit transactions hold the writer (`serialized_transactions`).
 
 use super::{
     ManifestRow, NIL_STAGING, live_published, manifest_key, manifest_rows, page_u64,
@@ -122,12 +122,13 @@ impl Store {
         })
     }
 
-    /// `lockSegmentedGenerationPage(pageId)`: the page's body columns, or None. Store writes are
-    /// serialized, so no other write can move the page under the caller's transaction.
+    /// `lockSegmentedGenerationPage(pageId)`: the page's body columns, or None. The lock is skipped while
+    /// explicit transactions hold the writer (`serialized_transactions`), which this fn asserts.
     pub fn lock_segmented_generation_page(
         &self,
         page_id: i64,
     ) -> Result<Option<SegmentedGenerationLock>> {
+        self.assert_serialized_transactions("lockSegmentedGenerationPage")?;
         let read = self.read()?;
         let Some(page) = page_by_id(&*read, page_id)? else {
             return Ok(None);

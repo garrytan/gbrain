@@ -8,7 +8,7 @@ import type {
   ConnectorSourceRow, LoopFactState, OrphanBinding, OrphanCheckpointBounds, OrphanCheckpointRow,
 } from '../../engine-sql/repair-bookkeeping.ts';
 import { isConnectorSourceKind } from '../../persistence/connector-kinds.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { assertStoreSerializedTransactions, refuseMember, storeCall, type StoreMember } from './common.ts';
 
 /** Each named source's incarnation, in id order (`ORDER BY id COLLATE "C"`); a missing source is left out. */
 export const listSourceIncarnations: StoreMember<[sourceIds: readonly string[]], SourceIncarnationListRow[]> =
@@ -35,9 +35,10 @@ export const deleteOrphanBinding: StoreMember<[binding: Pick<OrphanBinding, 'sou
   (brain, binding) => storeCall({ member: 'deleteOrphanBinding', sourceId: binding.source_id },
     () => brain.deleteOrphanBinding(binding.source_id, binding.source_incarnation)) as Promise<boolean>;
 
-/** A loop, its fact and whether another open loop shares it. `lock` is moot: the store serializes its writes. */
+/** A loop, its fact and whether another open loop shares it. `lock` skips the row lock while explicit transactions hold the writer (`serialized_transactions`); it asserts that. */
 export const readLoopFactState: StoreMember<[loopId: number, opts?: { lock?: boolean }], LoopFactState> =
-  async (brain, loopId) => {
+  async (brain, loopId, opts) => {
+    if (opts?.lock) assertStoreSerializedTransactions(brain, 'readLoopFactState');
     if (!Number.isSafeInteger(loopId)) refuseMember('readLoopFactState', 'a loop id that is not a safe integer');
     const state: LoopFactState = await storeCall({ member: 'readLoopFactState' }, () => brain.readLoopFactState(loopId));
     const loop = state.loop
@@ -62,9 +63,11 @@ export const expireSourceFactNow: StoreMember<[factId: number, sourceId: string]
 
 /**
  * Every source whose config kind is a connector kind, archived ones included. `lock` returns them in id order, as the
- * share-locking read does; the store serializes its writes, so there is no lock to take.
+ * share-locking read does; the share lock is skipped while explicit transactions hold the writer
+ * (`serialized_transactions`), and `lock` asserts it.
  */
 export const listConnectorSources: StoreMember<[opts?: { lock?: boolean }], ConnectorSourceRow[]> = async (brain, opts) => {
+  if (opts?.lock) assertStoreSerializedTransactions(brain, 'listConnectorSources');
   const records: Array<{ id: string; local_path: string | null; config: unknown; archived?: boolean }> =
     await storeCall({ member: 'listConnectorSources' }, () => brain.listSourceRecords());
   const out: ConnectorSourceRow[] = [];

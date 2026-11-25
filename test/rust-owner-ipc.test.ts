@@ -772,7 +772,8 @@ describe('an owner that exits', () => {
     return { child, pid: ready.pid as number };
   }
   /** A store with one config key, so a call this process serves itself is told apart from one the owner served. */
-  class ConfigBrain { async open() {} async close() {} async getConfig(key: string): Promise<string | null> { return key === 'who' ? 'this-process' : null; } }
+  // `open` resolves the store's open result, which promises serialized_transactions as the real store does.
+  class ConfigBrain { async open(): Promise<unknown> { return { serialized_transactions: true }; } async close() {} async getConfig(key: string): Promise<string | null> { return key === 'who' ? 'this-process' : null; } }
   const configAddon = { target: 'linux-x64-glibc', engine_abi: 1, Pool: class { async shutdown() {} }, Brain: ConfigBrain } as never;
 
   test('a client installed without rejoin: calls in flight end outcome_unknown and later calls fail fast with not_sent', async () => {
@@ -853,7 +854,7 @@ describe('an owner that exits', () => {
       expect(await Promise.all([brain.getConfig('who'), brain.getConfig('who')])).toEqual(['this-process', 'this-process']);
       expect(rust.ownerRole).toBe('owner');
       expect(rust.ownerStats()).not.toBeNull();
-      expect([...rust.capabilities].sort()).toEqual([...servedCapabilities()].sort());
+      expect([...rust.capabilities].sort()).toEqual([...servedCapabilities(), 'serialized_transactions' as const].sort());
       // A process that opens the brain now is a client of this one.
       const { engine, close } = await clientOf(ownerSocketPath(db));
       try { expect(await engine.getConfig('who')).toBe('this-process'); } finally { close(); }

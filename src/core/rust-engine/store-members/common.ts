@@ -41,6 +41,20 @@ export function refuseMember(member: string, what: string): never {
   throw capabilityMissing(memberCapability(member), `${member} (${what})`);
 }
 
+/**
+ * The assertion of a lock skip in a store member (`assertSerializedTransactions` in rust-engine/errors.ts, read from the
+ * store itself): the member skips a lock PGLite and Postgres take, which is safe only while explicit transactions hold the
+ * store's writer (`serialized_transactions`). A store that answers anything but true refuses `engine_capability_missing`
+ * naming `member`, before any store call; a closed handle (null) refuses `engine_closed`, since a skip that makes no
+ * later store call would otherwise acknowledge a lock on a transaction that already ended.
+ * Every call site is counted by test/serialized-transactions-guard.test.ts.
+ */
+export function assertStoreSerializedTransactions(brain: Pick<StoreBrain, 'serializedTransactions'>, member: string): void {
+  const serialized = brain.serializedTransactions;
+  if (serialized === null) throw mapStoreError({ code: 'store_closed' }, { member });
+  if (serialized !== true) throw capabilityMissing('serialized_transactions', member);
+}
+
 /** Runs one store call and maps a rejection. `ctx` names the page and source for the errors that need them. */
 /**
  * Refuses a member when the brain's config makes PGLite read another vector column than `embedding`, the one vector

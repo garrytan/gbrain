@@ -45,6 +45,7 @@ impl Store {
         query: &str,
         options: &KeywordOptions,
     ) -> Result<Vec<Value>> {
+        let _vectors = self.keyword_vector_scope();
         let limit = row_count(options.limit.unwrap_or(20.0), "LIMIT")?;
         let offset = row_count(options.offset.unwrap_or(0.0), "OFFSET")?;
         let q = websearch_to_tsquery(query)?;

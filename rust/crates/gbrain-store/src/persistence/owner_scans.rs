@@ -209,6 +209,7 @@ impl Store {
         import_from: Option<&str>,
         max_wait_ms: f64,
     ) -> Result<bool> {
+        self.assert_serialized_transactions("lockOverdueHold")?;
         let now = self.env.now_micros();
         lock_overdue_hold(&*self.read()?, now, hold, id, import_from, max_wait_ms)
     }

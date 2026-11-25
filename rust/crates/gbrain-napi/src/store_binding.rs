@@ -74,6 +74,9 @@ pub struct BrainOpenOptions {
     /// Multi-user mode (I-0), resolved by the caller for this brain (`GBRAIN_RUST_MULTIUSER=1` or the brain's config
     /// `engine.rust.multiuser: true`). It implies concurrent writes. Absent or false: the open is unchanged.
     pub multiuser: Option<bool>,
+    /// Test seam (groundwork G1): open a store that reports no `serialized_transactions`, so every
+    /// lock skip refuses `engine_capability_missing`. Off unless this is true.
+    pub withhold_serialized_transactions: Option<bool>,
 }
 
 #[napi]
@@ -171,6 +174,14 @@ impl Brain {
             .is_some_and(|s| s.multiuser())
     }
 
+    /// The open store's `serialized_transactions` capability (`Store::serialized_transactions`):
+    /// true while explicit transactions hold the writer; `null` while no brain is open. Read
+    /// synchronously by the lock skips of the TypeScript store members.
+    #[napi(getter)]
+    pub fn serialized_transactions(&self) -> Option<bool> {
+        self.current().map(|store| store.serialized_transactions())
+    }
+
     /// `open(path, options?)`: opens the brain in directory `path` (created when empty) and
     /// resolves `{ brain_id, format_version, schema_version, created }`.
     ///
@@ -218,6 +229,8 @@ impl Brain {
                 }
                 opts.write_gate_detector_version = options.write_gate_detector_version;
                 opts.multiuser = options.multiuser.unwrap_or(false);
+                opts.withhold_serialized_transactions =
+                    options.withhold_serialized_transactions == Some(true);
             }
             // Holding the slot while opening makes a second `open` on this handle wait, then see
             // the brain open.

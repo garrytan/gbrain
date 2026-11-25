@@ -58,7 +58,8 @@ pub struct AcceptedMarkArgs {
     pub mark: String,
 }
 
-/// `readPairFactRow(id, lock)`: the row lock changes nothing here, as every write is serialised.
+/// `readPairFactRow(id, lock)`: the row lock is skipped while explicit transactions hold the writer
+/// (`serialized_transactions`); the fn asserts that when `lock` is true.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PairFactArgs {
@@ -352,6 +353,9 @@ impl Store {
 
     /// `readPairFactRow`: one fact of a supersede pair by id (any source).
     pub fn read_pair_fact_row(&self, args: &PairFactArgs) -> Result<Option<Value>> {
+        if args.lock == Some(true) {
+            self.assert_serialized_transactions("readPairFactRow")?;
+        }
         let Some(id) = fact_number("readPairFactRow", args.id)? else {
             return Ok(None);
         };
@@ -472,6 +476,9 @@ impl Store {
     /// for a fact that is gone, in another source or, under `excludePrivate`, hidden by the remote floor: a row of
     /// `ownPage` stays.
     pub fn read_replacement_target(&self, args: &ReplacementTargetArgs) -> Result<Option<Value>> {
+        if args.lock == Some(true) {
+            self.assert_serialized_transactions("readReplacementTarget")?;
+        }
         const OP: &str = "readReplacementTarget";
         no_nul(OP, &[("sourceId", &args.source_id)])?;
         let Some(id) = fact_number(OP, args.target_id)? else {

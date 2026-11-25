@@ -10,8 +10,8 @@
  * withdrawal queues (insertPublicationEffects, insertWithdrawalEffects). The dream cycle's journal reads
  * (readDreamDeferralReceipt, listLaterPersistenceRequests, listCommittedOutputRequests) are in dream-journal.ts.
  *
- * Each store call is one store write transaction, so the row locks PGLite takes (FOR SHARE, FOR UPDATE, the counter
- * lock) change nothing here: no other write can run between the read and the write that follows it. The callers that
+ * The row locks PGLite takes (FOR SHARE, FOR UPDATE, the counter lock) are skipped here while explicit transactions hold
+ * the writer (`serialized_transactions`); each member that stands for one asserts it. The callers that
  * run these members inside `transaction` still refuse until this engine serves transactions.
  *
  * What each member answers and why: rust/docs/store/journal.md ("TypeScript journal members") and
@@ -30,7 +30,7 @@ import type { DreamDeferralReceipt } from '../../engine-sql/dream-cycle.ts';
 import { PAGE_BODY_CONFIG_KEYS } from '../../page-body/limits.ts';
 import { requestRow, topologyRow, uuidText, withDates } from '../store-codec.ts';
 import { withdrawalEffectsData } from '../../engine-sql/persistence-journal.ts';
-import { requireTextColumn, storeCall, type StoreMember } from './common.ts';
+import { assertStoreSerializedTransactions, requireTextColumn, storeCall, type StoreMember } from './common.ts';
 import type { RustEngine } from '../../rust-engine.ts';
 import type { StoreBrain } from '../store.ts';
 import { readOauthClient } from './jobs-oauth-clients.ts';
@@ -44,12 +44,13 @@ export const readManagedModeRows: StoreMember<[], Array<{ enabled: unknown }>> =
   [{ enabled: (await readBrainMode(brain, 'readManagedModeRows')).enabled }];
 
 /**
- * The registration row of a local writer, or undefined. `lock` asks PGLite for FOR SHARE so a revocation waits; the
- * store runs one write transaction at a time, so a read never overlaps a revocation and the option changes nothing.
+ * The registration row of a local writer, or undefined. `lock` asks PGLite for FOR SHARE so a revocation waits; it is
+ * skipped while explicit transactions hold the writer (`serialized_transactions`), and asserts that.
  * `revoked_at` comes back as a Date, as PGLite returns a timestamptz.
  */
 export const readLocalWriterRow: StoreMember<[id: string, opts?: { lock?: boolean }], LocalWriterRow | undefined> =
-  async (brain, id) => {
+  async (brain, id, opts) => {
+    if (opts?.lock) assertStoreSerializedTransactions(brain, 'readLocalWriterRow');
     const row = await storeCall({ member: 'readLocalWriterRow' }, () => brain.readLocalWriter(id)) as
       { lane: string; credential_hash: string; grant_ceiling: LocalWriterRow['grant_ceiling']; revoked_at: string | null } | null;
     if (!row) return undefined;
@@ -153,20 +154,23 @@ export const ownsSchemaTables: StoreMember<[], boolean> = async () => true;
 /**
  * The grant row of the OAuth client or legacy access token that owns a write, deleted or revoked rows included (the
  * caller reads `deleted_at` and `revoked_at`, as Dates), or null; gbrain-store `jobs::credential_binding`. `lock`
- * changes nothing: the store runs one write transaction at a time, so no revocation can land between the read and the
- * write.
+ * skips the FOR SHARE while explicit transactions hold the writer (`serialized_transactions`), and asserts that.
  */
-export const readOAuthClientWriteGrant: StoreMember<[clientId: string, opts?: { lock?: boolean }], OAuthClientWriteGrant | null> = async (brain, clientId) => {
+export const readOAuthClientWriteGrant: StoreMember<[clientId: string, opts?: { lock?: boolean }], OAuthClientWriteGrant | null> = async (brain, clientId, opts) => {
+  if (opts?.lock) assertStoreSerializedTransactions(brain, 'readOAuthClientWriteGrant');
   const row = await storeCall({ member: 'readOAuthClientWriteGrant' }, () => brain.readOauthClientWriteGrant(clientId)) as OAuthClientWriteGrant | null;
   return row ? withDates(row, ['deleted_at']) : null;
 };
-export const readAccessTokenWriteGrant: StoreMember<[tokenId: string, opts?: { lock?: boolean }], AccessTokenWriteGrant | null> = async (brain, tokenId) => {
+export const readAccessTokenWriteGrant: StoreMember<[tokenId: string, opts?: { lock?: boolean }], AccessTokenWriteGrant | null> = async (brain, tokenId, opts) => {
+  if (opts?.lock) assertStoreSerializedTransactions(brain, 'readAccessTokenWriteGrant');
   const id = uuidText(tokenId);
   const row = await storeCall({ member: 'readAccessTokenWriteGrant' }, () => brain.readAccessTokenWriteGrant(id)) as AccessTokenWriteGrant | null;
   return row ? withDates(row, ['revoked_at']) : null;
 };
-/** The store runs one write transaction at a time, so the share lock has nothing to hold off. */
-export const shareLockWriteCredential: StoreMember<[kind: 'oauth_client' | 'legacy_token', id: string], void> = async () => {};
+/** The share lock is skipped while explicit transactions hold the writer (`serialized_transactions`); it asserts that. */
+export const shareLockWriteCredential: StoreMember<[kind: 'oauth_client' | 'legacy_token', id: string], void> = async brain => {
+  assertStoreSerializedTransactions(brain, 'shareLockWriteCredential');
+};
 
 /** The existing counter rows of `keys` in key byte order (`COLLATE "C"`), unlocked; a missing key has no row. */
 export const readCounterRows: StoreMember<[keys: readonly string[]], CounterRow[]> = (brain, keys) =>
@@ -179,9 +183,12 @@ export const readAdmissionRate: StoreMember<[principal: { kind: string; id: stri
   return opts?.sample === false ? { first_request_id: rate.first_request_id, admissions: 0, age_seconds: null, gross: null, net: null } : rate;
 };
 
-/** Request `id`, or null. FOR UPDATE changes nothing in one store write (see the header). */
+/** Request `id`, or null. The FOR UPDATE is skipped while explicit transactions hold the writer (`serialized_transactions`); it asserts that. */
 export const lockWriteRequest: StoreMember<[id: string], WriteRequest | null> =
-  async (brain, id) => requestRow(await storeCall({ member: 'lockWriteRequest' }, () => brain.readWriteRequestById(id)));
+  async (brain, id) => {
+    assertStoreSerializedTransactions(brain, 'lockWriteRequest');
+    return requestRow(await storeCall({ member: 'lockWriteRequest' }, () => brain.readWriteRequestById(id)));
+  };
 
 /** The named counter rows, created at zero, in key order (bytewise, as COLLATE "C"). */
 export const lockPersistenceCounters: StoreMember<[keys: readonly string[]], CounterRow[]> = (brain, keys) =>
@@ -249,9 +256,10 @@ export const cancelWriteRow: StoreMember<[cancel: WriteCancellation], WriteCance
 
 /**
  * The requests with these ids in id order (uuid order is the order of their lowercase text), each once; an unknown id reads
- * nothing. FOR UPDATE changes nothing in one store write (see the header).
+ * nothing. The FOR UPDATE is skipped while explicit transactions hold the writer (`serialized_transactions`); the member asserts it.
  */
 export const lockWriteRequestsById: StoreMember<[ids: readonly string[]], WriteRequest[]> = async (brain, ids) => {
+  assertStoreSerializedTransactions(brain, 'lockWriteRequestsById');
   const ordered = [...new Set(ids.map(id => id.toLowerCase()))].sort();
   const rows: WriteRequest[] = [];
   for (const id of ordered) {
@@ -327,12 +335,14 @@ export const hasClaimableWrite: StoreMember<[hostId: string, excludeRoots: strin
  * The request a FIFO claim takes next, or null. The whole spec goes to the store: the lease holder ranks a managed-sync
  * row whose drain lease another process holds last, and the host id, nonce and sync-seen map select worktree rows (a
  * row on a worktree refuses `engine_capability_missing` until the store can read its worktree). One process owns the
- * store, so no row is locked against another.
+ * store. The SQL's `FOR UPDATE OF r SKIP LOCKED` is skipped while explicit transactions hold the writer
+ * (`serialized_transactions`), which the store fn asserts (`Store::select_claimable_write`).
  */
-export const selectClaimableWrite: StoreMember<[spec: ClaimHeadSpec], WriteRequest | null> = async (brain, spec) =>
-  requestRow<WriteRequest>(await storeCall({ member: 'selectClaimableWrite' }, () => brain.selectClaimableWrite({
+export const selectClaimableWrite: StoreMember<[spec: ClaimHeadSpec], WriteRequest | null> = async (brain, spec) => {
+  return requestRow<WriteRequest>(await storeCall({ member: 'selectClaimableWrite' }, () => brain.selectClaimableWrite({
     hostId: spec.hostId, excludeRoots: spec.excludeRoots, fifoRoots: spec.fifoRoots, laneRoots: spec.laneRoots, nonce: spec.nonce,
     syncSeen: spec.syncSeen, priority: spec.priority, leaseHolder: spec.leaseHolder, ...(spec.fence ? { fence: spec.fence } : {}) })));
+};
 
 // The consumer rows. With multi-user mode off one process owns this engine's brain, so the store keeps no consumer
 // heartbeat rows and no worktrees: the reads answer none (PGLite's callers answer the same without a read) and the writes
@@ -360,9 +370,11 @@ export const stampWorktreeHeartbeats: StoreMember<[hostId: string, opts?: { sign
   await storeCall({ member: 'stampWorktreeHeartbeats' }, () => brain.stampWorktreeHeartbeats(hostId));
 };
 
-/** A source's incarnation and archive flag, or null. FOR SHARE changes nothing in one store write. */
-export const readSourceMembership: StoreMember<[sourceId: string, opts?: { lock?: boolean | 'update' }], SourceMembership | null> = (brain, sourceId) =>
-  storeCall({ member: 'readSourceMembership' }, () => brain.readSourceMembership(sourceId));
+/** A source's incarnation and archive flag, or null. `lock` skips the row lock while explicit transactions hold the writer (`serialized_transactions`); it asserts that. */
+export const readSourceMembership: StoreMember<[sourceId: string, opts?: { lock?: boolean | 'update' }], SourceMembership | null> = async (brain, sourceId, opts) => {
+  if (opts?.lock) assertStoreSerializedTransactions(brain, 'readSourceMembership');
+  return storeCall({ member: 'readSourceMembership' }, () => brain.readSourceMembership(sourceId));
+};
 
 /** The first of `requestIds` a lifecycle change of local writer `principalId` used, as `[{ request_id }]`, or []. */
 export const findTopologyChanges: StoreMember<[principalId: string, requestIds: string[]], Array<{ request_id: string }>> = (brain, principalId, requestIds) =>

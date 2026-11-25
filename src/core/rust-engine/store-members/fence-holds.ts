@@ -5,13 +5,13 @@
  * in its `derived_generations` family (rust/crates/gbrain-store/src/generations.rs). The held list reads those rows and
  * clearing a hold deletes the key's held row when it waits for a readable fence (`fence_absent`, `no_proof`).
  *
- * The generation key lock is the store's write: a `transaction` holds the store's writer gate from open to commit or
- * rollback, so two writers of one key already run one after the other, and the lock adds nothing.
+ * The generation key lock is skipped while explicit transactions hold the writer (`serialized_transactions`);
+ * `lockGenerationKey` asserts it.
  *
  * The two page reads answer from the store's pages by exact slug (no alias), as the SQL reads `pages`.
  */
 import type { FenceHoldFileRow, FenceHoldKey, FenceHoldRow } from '../../engine-sql/fence-holds.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { assertStoreSerializedTransactions, storeCall, type StoreMember } from './common.ts';
 
 /** The held rows of `kinds` in `sourceIds` (one owner with `ownerKey`), oldest first; `created_at` is `timestamptz::text`. */
 export const listFenceHoldRows: StoreMember<[sourceIds: readonly string[], kinds: readonly string[], ownerKey?: string], FenceHoldRow[]> =
@@ -28,8 +28,10 @@ export const readFenceOriginGone: StoreMember<[sourceId: string, slug: string], 
   return snapshot === null || snapshot.page.deleted_at != null;
 };
 
-/** The store's write is the generation key lock (see the module comment). */
-export const lockGenerationKey: StoreMember<[lockKey: string], void> = async () => {};
+/** The generation key lock is skipped while explicit transactions hold the writer (`serialized_transactions`); it asserts that. */
+export const lockGenerationKey: StoreMember<[lockKey: string], void> = async brain => {
+  assertStoreSerializedTransactions(brain, 'lockGenerationKey');
+};
 
 /** Deletes the key's held row when it waits for a readable fence (see the module comment). */
 export const clearFenceHoldRows: StoreMember<[key: FenceHoldKey], void> = async (brain, key) => {

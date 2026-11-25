@@ -19,23 +19,26 @@ import { LIVE_PAGES_NAMING_READER_LIMIT, PAGES_NAMING_READER_LIMIT } from '../..
 import type { ScopeSourceLock } from '../../engine-sql/access-credentials.ts';
 import type { DrainHolderProgressRow } from '../../engine-sql/persistence-journal.ts';
 import { readOauthClient } from './jobs-oauth-clients.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { assertStoreSerializedTransactions, storeCall, type StoreMember } from './common.ts';
 import { uuidText } from '../store-codec.ts';
 import { OWNER_MEMBER_KEY } from '../../search/private-visibility.ts';
 
 /**
  * The source's incarnation, archived flag, local path and config, or null. `lock: 'share'` asks the SQL engines to hold
- * the row FOR SHARE; the store runs one write transaction at a time, so the option changes nothing here.
+ * the row FOR SHARE; it is skipped while explicit transactions hold the writer (`serialized_transactions`), and asserts that.
  */
-export const readSourceState: StoreMember<[sourceId: string, opts?: SourceStateOptions], SourceStateRow | null> = (brain, sourceId) =>
-  storeCall({ member: 'readSourceState', sourceId }, () => brain.readSourceState(sourceId));
+export const readSourceState: StoreMember<[sourceId: string, opts?: SourceStateOptions], SourceStateRow | null> = async (brain, sourceId, opts) => {
+  if (opts?.lock) assertStoreSerializedTransactions(brain, 'readSourceState');
+  return storeCall({ member: 'readSourceState', sourceId }, () => brain.readSourceState(sourceId));
+};
 
 /**
  * The scope-source check's read (engine-sql/access-credentials.ts readScopeSourceConfigs): the id and config of each
- * known source among `ids`, in id order, from the same source read. The store runs one write transaction at a time, so
- * the lock changes nothing here.
+ * known source among `ids`, in id order, from the same source read. `lock` skips the row lock while explicit
+ * transactions hold the writer (`serialized_transactions`), and asserts that.
  */
-export const readScopeSourceConfigs: StoreMember<[ids: readonly string[], lock?: ScopeSourceLock], { id: string; config: unknown }[]> = async (brain, ids) => {
+export const readScopeSourceConfigs: StoreMember<[ids: readonly string[], lock?: ScopeSourceLock], { id: string; config: unknown }[]> = async (brain, ids, lock) => {
+  if (lock) assertStoreSerializedTransactions(brain, 'readScopeSourceConfigs');
   const rows: { id: string; config: unknown }[] = [];
   for (const id of [...new Set(ids)].sort()) {
     const row: SourceStateRow | null = await storeCall({ member: 'readScopeSourceConfigs', sourceId: id }, () => brain.readSourceState(id));

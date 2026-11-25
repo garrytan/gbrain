@@ -5,8 +5,8 @@
 //! gives one (a name that is no tier ranks 0, as the rank `CASE` does) and the store's write trust
 //! context otherwise ([`FenceContext`], `unknown` when undeclared).
 //!
-//! Takes are keyed by id, so each listed id is one lookup. `FOR UPDATE` needs nothing: the store
-//! has one writer. Rows come back by id.
+//! Takes are keyed by id, so each listed id is one lookup. `FOR UPDATE` is skipped while explicit transactions
+//! hold the writer (`serialized_transactions`; `listHeldTakeRows` asserts it). Rows come back by id.
 
 use super::read_take;
 use crate::Store;
@@ -37,6 +37,7 @@ impl Store {
         spec: &HeldTakeSpec,
         ctx: &FenceContext,
     ) -> Result<Vec<Value>> {
+        self.assert_serialized_transactions("listHeldTakeRows")?;
         let wanted: BTreeSet<u64> = spec
             .ids
             .iter()
