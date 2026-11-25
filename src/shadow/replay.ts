@@ -44,6 +44,8 @@ export interface RunSpec {
   cut: { before: number; after: number | null };
   seed_losses_present: boolean;
   segments: string;
+  /** Recording processes still alive when the epoch was sealed: their last buffered calls may be missing. */
+  tail_unverified?: number;
   /** Ids (UUIDs) the seed copied into every arm: stored values, compared literally, never normalized. */
   seeded_ids?: string;
 }
@@ -291,7 +293,7 @@ export function renderReport(spec: RunSpec, arms: ArmName[], counts: Record<stri
   by.match = counts.compared_calls! - diffs.length;
   return {
     schema_version: REPLAY_REPORT_VERSION, epoch: spec.epoch, arms, seed_losses_present: spec.seed_losses_present,
-    coverage: counts.gaps || counts.orphaned || counts.sweep_skipped || counts.writes_not_swept || torn ? 'incomplete' : 'complete',
+    coverage: counts.gaps || counts.orphaned || counts.sweep_skipped || counts.writes_not_swept || counts.recorders_alive_at_seal || torn ? 'incomplete' : 'complete',
     counts: Object.fromEntries(Object.entries({ ...counts, torn_segments: torn }).sort()), by_class: by, diffs,
   };
 }
@@ -393,6 +395,8 @@ function rowSlugs(row: Record<string, unknown>, fallbackSource: string | null): 
 }
 
 /** Engine members whose page source is the plain second argument: `(slug, sourceId, ...)`. */
+/** Writes no sweep read covers yet (page_aliases): counted as not read back, so the report says incomplete. */
+const UNSWEPT_MEMBERS = new Set(['setPageAliases', 'replaceDerivedAliases']);
 const POSITIONAL_SOURCE_MEMBERS = new Set(['refreshPageBody', 'replaceDerivedAliases', 'setPageAliases', 'updatePageContextualRetrievalState']);
 
 /**
@@ -407,7 +411,7 @@ function writtenSlugs(units: Unit[], into: Set<string>): number {
     const m = u.rec.member!;
     if (m in SHADOW_READ_MEMBERS || /^(get|list|search|find|count|read|resolve)/.test(m)) continue;
     const args = (decodeValue(u.rec.args) as unknown[]) ?? [];
-    if (POSITIONAL_SOURCE_MEMBERS.has(m) && typeof args[1] !== 'string') { unresolved++; continue; } // source unknown: not swept
+    if (UNSWEPT_MEMBERS.has(m) || (POSITIONAL_SOURCE_MEMBERS.has(m) && typeof args[1] !== 'string')) { unresolved++; continue; } // not read back
     const source = (POSITIONAL_SOURCE_MEMBERS.has(m) ? args[1] as string : sourceOf(args)) ?? null;
     const first = args[0];
     const pairs: Array<[string | null, string]> = [];
@@ -496,7 +500,7 @@ export async function runReplayChild(runDir: string, deps: ChildDeps, now: () =>
       for (const a of arms) outs[a] = await callOn(engines[a], { member: 'getStats', args: [] } as unknown as CaptureRecord);
       compare('sweep:stats', 'sweep:getStats', outs);
     }
-    const report = renderReport(spec, arms, { ...plan.counts, compared_calls: compared, swept_pages: Math.min(slugs.size, SWEEP_LIMIT), sweep_skipped: Math.max(0, slugs.size - SWEEP_LIMIT), writes_not_swept: writesNotSwept }, diffs, torn);
+    const report = renderReport(spec, arms, { ...plan.counts, compared_calls: compared, swept_pages: Math.min(slugs.size, SWEEP_LIMIT), sweep_skipped: Math.max(0, slugs.size - SWEEP_LIMIT), writes_not_swept: writesNotSwept, recorders_alive_at_seal: spec.tail_unverified ?? 0 }, diffs, torn);
     const out = join(runDir, 'out');
     mkdirSync(out, { recursive: true, mode: 0o700 });
     writeOwnerOnly(join(out, 'report.json'), JSON.stringify(report, null, 2) + '\n');

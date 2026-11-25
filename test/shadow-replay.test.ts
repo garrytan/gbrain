@@ -22,7 +22,7 @@ import {
 } from '../src/shadow/capture.ts';
 import { captureDir, captureOffMarker, writePrivateJson } from '../src/shadow/capture-state.ts';
 import { checkLocalPostgresUrl, FanOutSeedTarget } from '../src/shadow/replay-copy.ts';
-import { acquireReplayLock, runNightlyReplay, settleSeededEpoch } from '../src/shadow/replay-run.ts';
+import { acquireReplayLock, liveRecorders, runNightlyReplay, settleSeededEpoch } from '../src/shadow/replay-run.ts';
 import { decodeValue } from '../src/shadow/codec.ts';
 import {
   buildUnits, childEnv, classify, firstDiff, NormState, redactPath, runReplayChild, SWEEP_LIMIT, type ArmName, type RunSpec,
@@ -33,8 +33,9 @@ const tmp = () => { const d = mkdtempSync(join(tmpdir(), 'gbrain-replay-')); dir
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 
 /** A small in-memory brain. `dropWrites` returns the right receipt but stores nothing (the negative control). */
-function fakeEngine(opts: { dropWrites?: boolean; dropSource?: string; alterFrontmatter?: boolean; idPrefix?: string; due?: string; strictRevision?: boolean; wrongTimeline?: boolean; wrongChunks?: boolean } = {}) {
+function fakeEngine(opts: { dropAliases?: boolean; dropWrites?: boolean; dropSource?: string; alterFrontmatter?: boolean; idPrefix?: string; due?: string; strictRevision?: boolean; wrongTimeline?: boolean; wrongChunks?: boolean } = {}) {
   const chunks = new Map<string, Array<{ chunk_text: string }>>();
+  const aliases = new Map<string, string[]>();
   const timeline = new Map<string, Array<{ summary: string }>>();
   const pages = new Map<string, { slug: string; title: string; compiled_truth: string; frontmatter: Record<string, unknown>; updated_at: string }>();
   const scoped = new Map<string, { slug: string; title: string }>();
@@ -53,8 +54,11 @@ function fakeEngine(opts: { dropWrites?: boolean; dropSource?: string; alterFron
     async refreshPageBody(slug: string, sourceId: string, body: string) {
       if (opts.dropSource !== sourceId) scoped.set(`${sourceId}:${slug}`, { slug, title: body });
     },
-    async replaceDerivedAliases(slug: string, sourceId: string) {
-      if (opts.dropSource !== sourceId) scoped.set(`${sourceId}:${slug}`, { slug, title: 'aliases' });
+    async replaceDerivedAliases(slug: string, sourceId: string, rows: Array<{ alias_norm: string }>) {
+      if (!opts.dropAliases) aliases.set(`${sourceId}:${slug}`, rows.map(r => r.alias_norm));
+    },
+    async setPageAliases(slug: string, sourceId: string, norms: string[]) {
+      if (!opts.dropAliases) aliases.set(`${sourceId}:${slug}`, norms);
     },
     async getEmbeddingsByChunkIds(_ids: unknown, column?: unknown) { return { column_given: column !== undefined, column_null: column === null }; },
     async getTags() { return []; },
@@ -472,6 +476,15 @@ describe('review fixes (ship pass 1, adversarial)', () => {
     expect(specs.map(s => !!s.arms.postgres)).toEqual([true, false]);
   });
 
+  test('the nightly run tells the replay how many recording processes were still alive at the seal', async () => {
+    const { cap, id, deps } = sealedEpoch();
+    writePrivateJson(join(epochDir(cap, id), 'proc-live.json'), { pid: process.pid, epoch: id, since: new Date().toISOString() });
+    const specs: RunSpec[] = [];
+    const watching = { ...deps, spawnChild: (runDir: string) => { specs.push(JSON.parse(readFileSync(join(runDir, 'run.json'), 'utf8'))); return { exited: Promise.resolve(1), kill() {} }; } } as typeof deps;
+    await expect(runNightlyReplay(watching)).rejects.toThrow(/without a report/);
+    expect(specs[0]?.tail_unverified).toBe(1);
+  });
+
   test('a seed that fails reports its own error, not a purge', async () => {
     const { cap, deps } = sealedEpoch();
     writePrivateJson(join(cap, 'state.json'), { version: 1, enabled: true, turned_on_at: '2026-11-22T00:00:00.000Z' });
@@ -648,13 +661,44 @@ describe('review fixes (ship final review of the queued head)', () => {
     expect(positional).toEqual(['refreshPageBody', 'replaceDerivedAliases', 'setPageAliases', 'updatePageContextualRetrievalState']);
   });
 
-  for (const member of ['refreshPageBody', 'replaceDerivedAliases'] as const) {
+  for (const member of ['refreshPageBody'] as const) {
     test(`the read-back sweep reads a ${member} write in the source its second argument names`, async () => {
       const { run } = await replayOnFakes({ dropSource: 'other' }, e => (e as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>)[member]!('notes/same', 'other', 'body', '', 'h'));
       const { report } = await run();
       expect(report.diffs.some(d => d.member === 'sweep:getPage')).toBe(true);
     });
   }
+
+  test('alias writes are not read back, so they mark the report incomplete instead of matching', async () => {
+    const row = { alias_norm: 'acme', origin: 'declared', case_sensitive: false, alias_text: 'Acme' };
+    const { run } = await replayOnFakes({ dropAliases: true }, async e => {
+      const x = e as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>;
+      await x.replaceDerivedAliases!('companies/acme-example', 'default', [row]);
+      await x.setPageAliases!('companies/acme-example', 'default', ['acme']);
+    });
+    const { report } = await run();
+    expect(report.counts.writes_not_swept).toBe(2);
+    expect(report.coverage).toBe('incomplete');
+  });
+
+  test('a recording process still alive at the seal marks the sealed replay incomplete', async () => {
+    const { cap, home } = recordingCapture();
+    await recordSession(cap, home);
+    const id = readEpoch(cap)!.id;
+    // recordSession's own writer left a heartbeat for this (live) test process; a dead process's heartbeat does not count.
+    for (const f of readdirSync(epochDir(cap, id)).filter(f => f.startsWith('proc-'))) rmSync(join(epochDir(cap, id), f));
+    expect(liveRecorders(epochDir(cap, id))).toBe(0);
+    writePrivateJson(join(epochDir(cap, id), 'proc-live.json'), { pid: process.pid, epoch: id, since: new Date().toISOString() });
+    writePrivateJson(join(epochDir(cap, id), 'proc-gone.json'), { pid: 999999999, epoch: id, since: new Date().toISOString() });
+    expect(liveRecorders(epochDir(cap, id))).toBe(1);
+    const runDir = join(tmp(), 'run');
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, 'run.json'), JSON.stringify({ version: 1, epoch: id, brain_key: 'pglite-abc', hmac_key: 'ab'.repeat(32), arms: { pglite: 'x', rust: 'y' },
+      cut: { before: 0, after: 0 }, seed_losses_present: false, segments: epochDir(cap, id), tail_unverified: 1 } satisfies RunSpec));
+    const report = await runReplayChild(runDir, { blockNetwork: () => {}, openArm: async () => fakeEngine() as unknown as BrainEngine });
+    expect(report.counts.recorders_alive_at_seal).toBe(1);
+    expect(report.coverage).toBe('incomplete');
+  });
 
   test('a positional-source write whose source cannot be told marks the report incomplete', async () => {
     const { run } = await replayOnFakes({}, e => (e as unknown as { refreshPageBody(...a: unknown[]): Promise<unknown> }).refreshPageBody('notes/x', null, 'body'));

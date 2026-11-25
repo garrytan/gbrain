@@ -8,7 +8,7 @@
  * The first night only seeds. Nothing here writes to the brain.
  */
 import { randomBytes } from 'node:crypto';
-import { closeSync, existsSync, linkSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from 'node:fs';
+import { closeSync, existsSync, linkSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../core/engine.ts';
 import type { RustEngineAddonLoad } from '../core/rust-engine/addon-loader.ts';
@@ -168,7 +168,7 @@ function seedLosses(m: BaseManifest): boolean {
     || r.unmapped_columns.length > 0 || Object.values(r.losses).some(n => n > 0));
 }
 
-async function replayEpoch(deps: NightlyDeps, cap: string, sealed: EpochPointer, budgetMs: number, retry = false): Promise<{ report: ReplayReport; dir: string }> {
+async function replayEpoch(deps: NightlyDeps, cap: string, sealed: EpochPointer, budgetMs: number, retry = false, aliveAtSeal = 0): Promise<{ report: ReplayReport; dir: string }> {
   const manifest = JSON.parse(readFileSync(join(basesDir(cap, sealed.id), 'manifest.json'), 'utf8')) as BaseManifest;
   // The Postgres copy is one database, replayed in place and reseeded for the next epoch: a retry cannot start from
   // this epoch's snapshot there, so a retry runs on PGLite and Rust only.
@@ -187,7 +187,7 @@ async function replayEpoch(deps: NightlyDeps, cap: string, sealed: EpochPointer,
     version: 1, epoch: sealed.id, brain_key: deps.brainKey, hmac_key: hmacKey(cap), seeded_ids: paths.seededIds,
     arms: { pglite: paths.pglite, rust: paths.rust, ...(manifest.postgres ? { postgres: { url_env: REPLAY_POSTGRES_ENV } } : {}) },
     ...(deps.rustDir ? { rust_dir: deps.rustDir } : {}),
-    cut: manifest.cut, seed_losses_present: seedLosses(manifest), segments: paths.segments,
+    cut: manifest.cut, seed_losses_present: seedLosses(manifest), segments: paths.segments, ...(aliveAtSeal ? { tail_unverified: aliveAtSeal } : {}),
   };
   writePrivateJson(join(runDir, 'run.json'), spec);
   const child = deps.spawnChild(runDir, childEnv(deps.env, paths.home, scratchUrl ? { name: REPLAY_POSTGRES_ENV, url: scratchUrl } : null));
@@ -224,6 +224,19 @@ export async function settleSeededEpoch(cap: string, next: EpochPointer, home: s
   return false;
 }
 
+/**
+ * Recording processes of an epoch still alive now (heartbeat files whose process runs): a call one of them finished
+ * just before the seal may still sit in its buffer, so the sealed replay cannot claim complete coverage.
+ */
+export function liveRecorders(dir: string): number {
+  if (!existsSync(dir)) return 0;
+  let n = 0;
+  for (const f of readdirSync(dir).filter(f => f.startsWith('proc-') && f.endsWith('.json'))) {
+    try { if (processAlive((JSON.parse(readFileSync(join(dir, f), 'utf8')) as { pid?: number }).pid)) n++; } catch { n++; } // silent-read-ok: an unreadable heartbeat counts as alive (incomplete, never a false complete)
+  }
+  return n;
+}
+
 const retryPath = (cap: string) => join(cap, 'retry.json');
 type Retained = { pointer: EpochPointer; attempts: number };
 
@@ -235,10 +248,10 @@ function readRetained(cap: string): Retained | null {
  * Replays one sealed epoch and retires it. A purge deletes it; any other failure keeps its recording and copies for
  * one retry the next night (retry.json), and a second failure retires it. Returns the report, or throws.
  */
-async function replayAndRetire(deps: NightlyDeps, cap: string, sealed: EpochPointer, attempts: number, budgetMs: number, home: string) {
+async function replayAndRetire(deps: NightlyDeps, cap: string, sealed: EpochPointer, attempts: number, budgetMs: number, home: string, aliveAtSeal: number) {
   try {
     if (purgeLogChanged(sealed.purge_log, home)) throw new ReplayError('shadow_replay_purged', 'before the replay');
-    const out = await replayEpoch(deps, cap, sealed, budgetMs, attempts > 0);
+    const out = await replayEpoch(deps, cap, sealed, budgetMs, attempts > 0, aliveAtSeal);
     deleteEpochData(cap, sealed.id);
     rmSync(retryPath(cap), { force: true });
     return out;
@@ -280,6 +293,7 @@ export async function runNightlyReplay(deps: NightlyDeps, opts: { budgetMinutes?
       catch (e) { throw new ReplayError('shadow_replay_seed_failed', `the brain cannot be opened for the seed (${(e as { code?: unknown }).code ?? (e as Error).name}); nothing was retired`); }
     }
     if (sealed) setEpochState(cap, sealed, 'sealed');
+    const aliveAtSeal = sealed ? liveRecorders(epochDir(cap, sealed.id)) : 0;
     const next = on ? startEpoch(cap, home, deps.now?.()) : null;
     if (next) result.started_epoch = next.id;
     let failure: unknown = null;
@@ -290,7 +304,7 @@ export async function runNightlyReplay(deps: NightlyDeps, opts: { budgetMinutes?
     ];
     for (const item of queue) {
       try {
-        const { report, dir } = await replayAndRetire(deps, cap, item.pointer, item.attempts, budgetMs, home);
+        const { report, dir } = await replayAndRetire(deps, cap, item.pointer, item.attempts, budgetMs, home, item.pointer.id === sealed?.id ? aliveAtSeal : 1);
         Object.assign(result, { status: 'replayed', replayed_epoch: item.pointer.id, coverage: report.coverage, by_class: report.by_class, report: join(dir, 'report.md'), summary: join(dir, 'summary.json') });
       } catch (e) {
         if (e instanceof ReplayError && e.code === 'shadow_replay_purged') { result.status = 'purged'; break; }

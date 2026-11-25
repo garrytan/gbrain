@@ -82,6 +82,9 @@ difference only shows that PGLite and Rust disagree.
   name, and chunk writes are read back with their chunks and embeddings,
   sealed or not. The sweep reads up to 5,000 pages; past that the report says `incomplete` and counts `sweep_skipped`. A page
   write whose page the replay cannot tell is counted as `writes_not_swept` and also makes the report `incomplete`.
+  Alias writes are not read back yet and count there too.
+- When a gbrain process that records was still running at the moment the nightly run closed the recording, its last
+  calls may still have been in memory; the report counts it as `recorders_alive_at_seal` and says `incomplete`.
 - A replay that fails for any reason other than a purge keeps its recording and copies for one retry the next night;
   a second failure retires them. A purge always deletes them.
 - Recording stays bounded on the brain's own calls: an argument over 1 MiB is recorded as a `gaps` entry before it is
