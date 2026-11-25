@@ -1752,7 +1752,7 @@ lowerTrustTier	derivation_trust	yes	3	no	yes	yes	serves
 countDerivedRowTaint	derivation_trust	yes	2	no	yes	yes	serves
 stampPageFrontmatter	derivation_trust	yes	2	no	yes	yes	serves
 readSourceWriteRow	memory_mutation_reads	yes	1	no	yes	yes	serves
-readSourceLocalPath	memory_mutation_reads	yes	1	no	yes	yes	serves
+readSourceLocalPath	memory_mutation_reads	yes	3	no	yes	yes	serves
 readFactEntitySlug	memory_mutation_reads	yes	1	no	yes	yes	serves
 hasLiveFileBackedPage	memory_mutation_reads	yes	1	no	yes	yes	serves
 factReadableUnder	memory_mutation_reads	yes	1	no	yes	yes	serves
@@ -1870,7 +1870,7 @@ readSourceState	write_misc	yes	14	no	yes	yes	serves
 readAdmissionSource	write_misc	yes	2	no	yes	yes	serves
 sharedSkillPackTablePresent	write_misc	yes	1	no	yes	yes	serves
 listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
-getWorktreeBinding	write_misc	yes	24	no	yes	yes	serves
+getWorktreeBinding	write_misc	yes	25	no	yes	yes	serves
 worktreeClaimStore	write_misc	yes	28	no	yes	yes	serves
 readWriterAdminState	write_misc	yes	9	no	yes	yes	serves
 readWorktreeManifest	write_misc	yes	1	no	yes	yes	serves
@@ -1887,6 +1887,8 @@ reserveChronicleJudgeSlot	write_misc	yes	4	no	yes	yes	serves
 pruneChronicleReservations	write_misc	yes	2	no	yes	yes	serves
 insertConfigIfAbsent	write_misc	yes	1	no	yes	yes	serves
 readPageTruthLead	write_misc	yes	2	no	yes	yes	serves
+readStoredPageHead	write_misc	yes	2	no	yes	yes	serves
+readVersionSourcePath	write_misc	yes	2	no	yes	yes	serves
 listActiveAccessMembers	write_misc	yes	7	no	yes	yes	serves
 hasLabelledOnlyMember	write_misc	yes	1	no	yes	yes	serves
 listAccessTokens	write_misc	yes	8	no	yes	yes	serves

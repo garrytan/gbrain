@@ -145,6 +145,7 @@ mod ontology;
 mod ontology_repair;
 mod page_body;
 mod page_embedding_budget;
+mod page_mutation_reads;
 mod page_ops;
 mod page_purge;
 mod page_purge_holds;

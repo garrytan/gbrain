@@ -3385,6 +3385,17 @@ const PINS: Pin[] = [
     case: { method: 'readPageTruthLead', variant: 'default', run: e => e.readPageTruthLead(1) },
     texts: ['SELECT truth_lead FROM pages WHERE id=$1'],
   },
+  // The reads a page write makes before admission (engine-sql/page-mutation-reads.ts), from page-mutations.ts at e4420913f5.
+  {
+    from: 'src/core/persistence/page-mutations.ts:350 unquotedPutContent, at e4420913f5',
+    case: { method: 'readStoredPageHead', variant: 'default', run: e => e.readStoredPageHead('default', 'notes/a') },
+    texts: ['SELECT type, trust_tier, title, frontmatter FROM pages WHERE source_id = $1 AND slug = $2'],
+  },
+  {
+    from: 'src/core/persistence/page-mutations.ts:585 preparePageAdmission (a revert\'s version file), at e4420913f5',
+    case: { method: 'readVersionSourcePath', variant: 'default', run: e => e.readVersionSourcePath(1, 1) },
+    texts: ['SELECT source_path FROM page_versions WHERE id=$1 AND page_id=$2'],
+  },
   {
     from: 'src/core/persistence/intent-redaction.ts:248 cancelRequestsHoldingStagings (at b220b0df91)',
     case: { method: 'lockWriteRequestsById', variant: 'default', run: e => e.lockWriteRequestsById(['b0000000-0000-4000-8000-0000000000d1']) },

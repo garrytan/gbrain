@@ -56,8 +56,10 @@ export const PAGES_MEMBERS = {
   movePageVersions: 'pages',
   recordRenameAlias: 'pages',
   readPageSnapshot: 'pages',
-  // the chronicle decision's stored truth lead (engine-sql/chronicle-ledger.ts)
+  // the chronicle decision's stored truth lead and a page write's pre-admission reads (engine-sql/page-mutation-reads.ts)
   readPageTruthLead: 'pages',
+  readStoredPageHead: 'pages',
+  readVersionSourcePath: 'pages',
   readPageSnapshotsBatch: 'pages',
   putPage: 'pages',
   findDuplicatePage: 'pages',

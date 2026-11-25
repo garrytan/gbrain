@@ -7330,6 +7330,17 @@
         ],
         "flagOnScopes": []
       },
+      "readVersionSourcePath#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readWantedMarkers#all": {
         "flagOffLanes": [
           "pool"
@@ -11020,6 +11031,7 @@
         "readStoredBodyBytes": "none",
         "readStoredConfigValue": "none",
         "readStoredConversationEntry": "none",
+        "readStoredPageHead": "none",
         "readStoredPageTier": "none",
         "readStoredSlugSpellings": "none",
         "readStrandedTakeProposalClaim": "none",
@@ -11063,6 +11075,7 @@
         "readUploadSessionByRequest": "none",
         "readVersionAttributions": "none",
         "readVersionContent": "none",
+        "readVersionSourcePath": "none",
         "readVoiceGateHealth": "none",
         "readWaitingQueueDepths": "none",
         "readWaitingScopeState": "none",
