@@ -1596,7 +1596,7 @@
   },
   {
     "name": "request_tools",
-    "description": "More tools and params: no arguments lists your catalog; {tools: [names]} returns full schemas, every optional param included; {surface} widens it (per client or stdio session).",
+    "description": "More tools and params: no arguments lists your catalog; {tools: [names]} returns schemas with every param you may pass; {surface} widens it (per client or stdio session).",
     "inputSchema": {
       "type": "object",
       "properties": {
