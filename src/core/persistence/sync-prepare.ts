@@ -1013,7 +1013,7 @@ async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _c
         // `old -> new` in slug_aliases; the file content is then prepared against it.
         if (await tx.updateSlug(renamed.slug, row.slug, source) !== 1) throw syncPublicationRefusal('page_identity_changed', 'The renamed page could not move to its new slug.', row, p,
           `Page ${renamed.slug} could not move to ${row.slug}.`);
-        if (renamedType) await tx.setPageType(row.source_id, row.slug, renamedType);
+        if (renamedType) await syncRows(tx, 'page_set_type', [row.source_id, row.slug, renamedType]);
         let movedImport: PreparedContentImport | undefined;
         await importFromContent(tx, row.slug, importContent, { ...importOptions, reuseSegments: ready.segmented,
           prepare: async value => { movedImport = value; return value.result; } });
