@@ -110,7 +110,7 @@ export async function lockSourceRow(exec: SqlExecutor, sourceId: string): Promis
 }
 
 /** One source with the columns import and contextual retrieval read, or null for an unknown id. Rows come back as the driver returns them. */
-export async function getSource(exec: LegacyUnscopedRead, sourceId: string): Promise<SourceDetailRow | null> {
+export async function getSource(exec: RawQuery, sourceId: string): Promise<SourceDetailRow | null> {
   const rows = await exec.executeRaw<SourceDetailRow>(
     `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at,
             contextual_retrieval_mode, trust_frontmatter_overrides

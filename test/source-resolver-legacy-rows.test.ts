@@ -4,7 +4,8 @@
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { resolveSourceId, resolveSourceWithTier } from '../src/core/source-resolver.ts';
+import { __resetSourceGuardQueryShape, resolveSourceId, resolveSourceWithTier, sourceGuardBlocksWrite } from '../src/core/source-resolver.ts';
+import { sourceHasRepo } from '../src/core/search/ignored-privacy-labels.ts';
 import { PRIVACY_LABEL_KEYS } from '../src/core/search/ignored-privacy-labels.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 
@@ -99,5 +100,47 @@ describe('the typed reads the import path asks for', () => {
     const state = JSON.parse(await engine.readWriterAdminState()) as { brain: unknown; sources: Array<[string, ...unknown[]]>; legacy_locks: unknown };
     expect(Object.keys(state).sort()).toEqual(['bindings', 'brain', 'fallback', 'hosts', 'legacy_locks', 'sources', 'worktrees']);
     expect(state.sources.map(row => row[0])).toContain('admin-state');
+  });
+});
+
+describe('the three fault paths the final review reproduced', () => {
+  const timingOut = () => new Proxy(engine, {
+    get(target, key) {
+      if (key === 'listSourceRoutingRows') return async () => { throw Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' }); };
+      const value = (target as unknown as Record<PropertyKey, unknown>)[key];
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+
+  test('a failed routing read does not route a bare command to a storage_manifest source', async () => {
+    await seed('default', null, false);
+    await seed('shelf', '/vaults/shelf', false, '{"role": "storage_manifest"}');
+    const picked = await resolveSourceWithTier(timingOut(), null, '/nowhere/in/particular');
+    expect({ source: picked.source_id, tier: picked.tier }).toEqual({ source: 'default', tier: 'seed_default' });
+  });
+
+  test('sourceHasRepo reads the source with the notice bound, and gives up on a config read that does not answer', async () => {
+    let boundSeen: number | undefined;
+    const stub = {
+      getSource: async (_id: string, opts?: { timeoutMs?: number }) => { boundSeen = opts?.timeoutMs; return { id: 'default', local_path: null, config: {} }; },
+      getConfig: () => new Promise<string | null>(() => {}),
+    } as unknown as Parameters<typeof sourceHasRepo>[0];
+    const started = Date.now();
+    const answer = await sourceHasRepo(stub, 'default');
+    expect({ boundSeen, answer, quick: Date.now() - started < 3000 }).toEqual({ boundSeen: 1000, answer: true, quick: true });
+  });
+
+  test('sourceHasRepo reads a config that is not JSON as a source with no repository', async () => {
+    const stub = { getSource: async () => ({ id: 'plain', local_path: null, config: 'not-json' }), getConfig: async () => null } as unknown as Parameters<typeof sourceHasRepo>[0];
+    expect(await sourceHasRepo(stub, 'plain')).toBe(false);
+  });
+
+  test('one source whose config is not JSON does not make a sole-source write look ambiguous', async () => {
+    __resetSourceGuardQueryShape();
+    await seed('default', null, false);
+    await engine.executeRaw(`UPDATE sources SET config = to_jsonb('not-json'::text) WHERE id = 'default'`);
+    expect(await sourceGuardBlocksWrite(engine, 'seed_default')).toBe(false);
+    await seed('second', null, false);
+    expect(await sourceGuardBlocksWrite(engine, 'seed_default')).toBe(true);
   });
 });
