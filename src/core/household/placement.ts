@@ -1,0 +1,109 @@
+/**
+ * The household placement table (agent platform plan, lane 2): the one place a household record's folder and audience
+ * are decided. household_add, write admission (every write and every sync projection of a `type: household` page,
+ * import-file.ts) and H2's template all read it.
+ *
+ * - bill and credit: household/money/<kind>/<slug>, adults only; return: household/returns/<slug>, adults only.
+ * - supply, appointment, birthday and deadline (household/school/ when tagged school, else household/deadlines/):
+ *   adults, helpers and family chats.
+ * - A record whose about[] names a child (the subject page carries `household_role: child`) goes to
+ *   household/kids/<kind>/<slug> and is adults only, whatever its kind.
+ * - A record whose subject cannot be classified (no page, no household_role, another source) is adults only: the
+ *   classification fails closed.
+ * - A record's own `audience: adults` can narrow it; nothing a caller writes widens it.
+ *
+ * The folder is only a default (a record is never moved). The binding control is the record's explicit readable_by,
+ * recomputed from this table on every write: on a brain that serves several people it names the owner and the
+ * audience's groups; on a brain that serves one person it is left off, so the owner's own callers read every record.
+ */
+import type { BrainEngine } from '../engine.ts';
+import { brainServes } from '../access/serves.ts';
+import { ownerMemberId } from '../access/owner.ts';
+import { HOUSEHOLD_KINDS, HOUSEHOLD_ROLES, type HouseholdKind } from './record.ts';
+
+export type HouseholdAudience = 'adults' | 'shared';
+export type SubjectClass = 'child' | 'not_child' | 'unclassified';
+
+/** Template-namespaced groups (H2 creates them), so a brain's existing groups are never reused or widened. */
+export const HOUSEHOLD_GROUPS = { adults: 'household-adults', helpers: 'household-helpers', chats: 'household-chats' } as const;
+
+export const PLACEMENT: Readonly<Record<HouseholdKind, { folder: string; audience: HouseholdAudience; school_folder?: string }>> = {
+  bill: { folder: 'household/money/bill/', audience: 'adults' },
+  credit: { folder: 'household/money/credit/', audience: 'adults' },
+  return: { folder: 'household/returns/', audience: 'adults' },
+  supply: { folder: 'household/supplies/', audience: 'shared' },
+  appointment: { folder: 'household/appointments/', audience: 'shared' },
+  birthday: { folder: 'household/birthdays/', audience: 'shared' },
+  deadline: { folder: 'household/deadlines/', audience: 'shared', school_folder: 'household/school/' },
+};
+
+export const kidsFolder = (kind: HouseholdKind): string => `household/kids/${kind}/`;
+
+export interface PlacementDecision {
+  folder: string;
+  audience: HouseholdAudience;
+  /** Why the audience is what it is. */
+  basis: 'kind' | 'child_subject' | 'unclassified_subject' | 'requested' | 'unknown_kind';
+}
+
+/** Where a record goes and who reads it. Pure: the caller resolves its subjects' classes. */
+export function placeRecord(input: { kind: unknown; school?: boolean; subjects: readonly SubjectClass[]; requested?: unknown }): PlacementDecision {
+  const kind = input.kind as HouseholdKind;
+  if (!HOUSEHOLD_KINDS.includes(kind)) return { folder: 'household/', audience: 'adults', basis: 'unknown_kind' };
+  const row = PLACEMENT[kind];
+  const folder = kind === 'deadline' && input.school && row.school_folder ? row.school_folder : row.folder;
+  if (input.subjects.includes('child')) return { folder: kidsFolder(kind), audience: 'adults', basis: 'child_subject' };
+  if (input.subjects.includes('unclassified')) return { folder, audience: 'adults', basis: 'unclassified_subject' };
+  if (row.audience === 'shared' && input.requested === 'adults') return { folder, audience: 'adults', basis: 'requested' };
+  return { folder, audience: row.audience, basis: 'kind' };
+}
+
+/** The readers an audience names: the owner (when one is set) and the audience's household groups. */
+export function audienceReaders(audience: HouseholdAudience, owner: string | null): string[] {
+  const groups = audience === 'adults' ? [HOUSEHOLD_GROUPS.adults] : Object.values(HOUSEHOLD_GROUPS);
+  return [...(owner ? [`member:${owner}`] : []), ...groups.map(g => `group:${g}`)].sort();
+}
+
+/** The folder rules H2 generates from the table: every folder with the readers of its audience. */
+export function placementFolderRules(owner: string | null): Array<{ prefix: string; readable_by: string[] }> {
+  const rows = new Map<string, HouseholdAudience>();
+  for (const kind of HOUSEHOLD_KINDS) {
+    const row = PLACEMENT[kind];
+    rows.set(row.folder, row.audience);
+    if (row.school_folder) rows.set(row.school_folder, row.audience);
+    rows.set(kidsFolder(kind), 'adults');
+  }
+  return [...rows].sort(([a], [b]) => a.localeCompare(b)).map(([prefix, audience]) => ({ prefix, readable_by: audienceReaders(audience, owner) }));
+}
+
+/** The class of each subject slug, read from its page's household_role in the record's own source (trusted internal read). */
+export async function classifySubjects(engine: Pick<BrainEngine, 'getPage'>, sourceId: string, about: readonly string[]): Promise<Map<string, SubjectClass>> {
+  const pages = await Promise.all(about.map(slug => engine.getPage(slug, { sourceId })));
+  return new Map(about.map((slug, i) => {
+    const raw = pages[i]?.frontmatter?.household_role;
+    const role = typeof raw === 'string' ? raw.trim().toLowerCase() : null;
+    return [slug, role === 'child' ? 'child' : role && (HOUSEHOLD_ROLES as readonly string[]).includes(role) ? 'not_child' : 'unclassified'];
+  }));
+}
+
+function aboutOf(value: unknown): string[] {
+  const list = typeof value === 'string' ? [value] : Array.isArray(value) ? value : [];
+  return [...new Set(list.filter((v): v is string => typeof v === 'string').map(v => v.trim().toLowerCase()).filter(Boolean))];
+}
+
+/**
+ * Write admission for a household record: recomputes `household_audience` and `readable_by` from the table (server
+ * owned; whatever the caller sent for them is replaced). Runs on every import of a `type: household` page, so put_page,
+ * edit_page, household_add, household_mark and sync projection all apply it. Mutates `frontmatter`.
+ */
+export async function placeHouseholdFrontmatter(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig' | 'getPage'>, sourceId: string,
+  frontmatter: Record<string, unknown>, tags: readonly string[]): Promise<PlacementDecision> {
+  const about = aboutOf(frontmatter.about);
+  const classes = await classifySubjects(engine, sourceId, about);
+  const decision = placeRecord({ kind: frontmatter.kind, school: tags.map(t => t.toLowerCase()).includes('school'), subjects: [...classes.values()], requested: frontmatter.audience });
+  frontmatter.household_audience = decision.audience;
+  const [serves, owner] = await Promise.all([brainServes(engine as BrainEngine), ownerMemberId(engine)]);
+  if (serves.serves === 'several') frontmatter.readable_by = audienceReaders(decision.audience, owner).map(p => p.startsWith('member:') ? p.slice(7) : p).sort();
+  else delete frontmatter.readable_by;
+  return decision;
+}

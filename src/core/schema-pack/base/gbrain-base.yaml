@@ -326,6 +326,17 @@ page_types:
     extractable: false
     expert_routing: false
 
+  # Household records (agent platform H1): bills, supplies, birthdays, school
+  # deadlines, returns and credits, one page each, read through household_due.
+  # Not extractable: no model reads them, and their text never becomes facts.
+  - name: household
+    primitive: annotation
+    path_prefixes:
+      - household/
+    aliases: []
+    extractable: false
+    expert_routing: false
+
   # Pinned question page (C4): the question and the owner's notes; the answer
   # lives in pinned_questions. Owner-private and never evidence. Set via
   # frontmatter only, so an existing questions/ folder keeps its own types.

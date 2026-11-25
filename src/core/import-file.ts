@@ -479,6 +479,7 @@ export async function importFromContent(
     // Sort tags in place first to preserve the pre-#3694 downstream behavior
     // (parsedPage.tags was sorted by the old inline `.sort()` mutation).
     const suppliedTrustMarker = parsed.frontmatter.trust_tier; // CEO-21: the no-op check also reads the caller's own marker
+    if (parsed.type === 'household') await (await import('./household/placement.ts')).placeHouseholdFrontmatter(engine, sourceId ?? 'default', parsed.frontmatter, parsed.tags);
     if (opts.prepare) opts.prepareFrontmatter?.(parsed);
     parsed.tags.sort();
     const hash = contentHash({
