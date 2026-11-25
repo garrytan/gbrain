@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
-import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { pipelined } from '../page-state/transactions.ts';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError, opError } from '../ops/contract.ts';
@@ -23,7 +23,7 @@ import { nativeFilesystemPath } from './root-registry.ts';
 import { assertWriterAdminState } from './admin-intent.ts';
 import { readGraduationRow } from './graduation-schema.ts';
 import { checkoutGitMissingError, ownerMarkerMissingError, ownershipReservationMissingError } from './owner-marker.ts';
-import { classifyGitCheckout } from '../git-checkout.ts';
+import { isGitCheckoutRoot } from '../git-checkout.ts';
 import { assertWriterAdminUnlocked } from './admin-lock.ts';
 import { inspectPhysicalRootRecovery, repairPhysicalRoot, type PhysicalRootRecovery } from './physical-root-recovery.ts';
 import type { ContentReceiptRebind } from '../shared-skills/receipt-root.ts';
@@ -51,6 +51,14 @@ export interface WorktreeBinding {
   canonical_git?: boolean | null;
 }
 export type GitDurabilitySetting = 'enabled' | 'disabled' | null;
+/** #10260: whether a `.git` sits at the source folder `relativePath` of `root` or a folder between it and `root`; folders above `root` never count. */
+function gitRepositoryWithin(root: string, relativePath: string): boolean {
+  for (let at = resolve(root, relativePath); containsPath(root, at); at = dirname(at)) {
+    if (isGitCheckoutRoot(at)) return true;
+    if (at === root) break;
+  }
+  return false;
+}
 export function containsPath(root: string, path: string): boolean {
   const rel = relative(root, path);
   return !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`);
@@ -367,8 +375,8 @@ export async function prepareWriterTransfer(engine: BrainEngine, sourceId: strin
       if (pending.length || mirrors.length) throw opError('recovery_required', 'Resolve outstanding publication before transfer.',
         `Source ${sourceId}'s worktree still has a write or mirror effect publishing or recovering, so no transfer was prepared. Inspect writer status and wait for it to settle on the owner before preparing again.`,
         { fix: writerStatusFix(sourceId) });
-      const [brain] = await tx.executeRaw<{ brain_id: string; last_commit: string | null }>(`SELECT brain_id,(SELECT s.last_commit FROM persistence_source_bindings b JOIN sources s
-        ON s.id=b.source_id AND s.incarnation=b.source_incarnation WHERE b.worktree_id=$1::uuid AND s.last_commit IS NOT NULL ORDER BY s.id LIMIT 1) AS last_commit
+      const [brain] = await tx.executeRaw<{ brain_id: string; synced: Array<{ path: string; commit: string }> | null }>(`SELECT brain_id,(SELECT json_agg(json_build_object('path',b.relative_path,'commit',s.last_commit) ORDER BY s.id)
+        FROM persistence_source_bindings b JOIN sources s ON s.id=b.source_id AND s.incarnation=b.source_incarnation WHERE b.worktree_id=$1::uuid AND s.last_commit IS NOT NULL) AS synced
         FROM persistence_brain WHERE singleton=1`, [binding.worktree_id]);
       let recovery: PhysicalRootRecovery | undefined;
       if (opts.selfTransfer) {
@@ -380,7 +388,8 @@ export async function prepareWriterTransfer(engine: BrainEngine, sourceId: strin
           throw error;
         }
         // #10260: re-creating a lost reservation over a checkout whose Git repository is gone too would adopt whatever was left behind.
-        if (!recovery.before.reservation && brain.last_commit && classifyGitCheckout(binding.local_path!) === 'not_git') throw checkoutGitMissingError(sourceId, binding.local_path!, brain.last_commit);
+        const gitless = recovery.before.reservation ? undefined : brain.synced?.find(source => !gitRepositoryWithin(binding.local_path!, source.path));
+        if (gitless) throw checkoutGitMissingError(sourceId, binding.local_path!, gitless.commit);
       }
       if (!opts.selfTransfer) assertPhysicalRoot(binding.local_path!, { worktreeId: binding.worktree_id, coordinationPath: binding.coordination_path });
       if (hashed instanceof Error) throw hashed;

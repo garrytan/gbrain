@@ -10,8 +10,9 @@
  *     shared-skill activation all point at it; it previews first and changes nothing until its admin intent is given.
  * (b) A stamp that no longer identifies this exact directory keeps the generic refusal, and the self-transfer refuses it.
  * (c) A source sync imported from Git whose checkout lost its .git too is refused `checkout_git_missing`, with the
- *     steps to restore it; nothing is prepared.
- * (d) A checkout that never was a Git repository (a repo-less brain's folder) recovers the same way.
+ *     steps to restore it; nothing is prepared. A repository in a folder above the checkout does not count.
+ * (d) A checkout that never was a Git repository (a repo-less brain's folder) recovers the same way, also when a source
+ *     folder inside it is its own Git repository.
  *
  * Synthetic content only. PGLite and, with DATABASE_URL, Postgres.
  */
@@ -53,9 +54,9 @@ for (const kind of testBackends()) describe(`#10260 lost ownership reservation (
   });
   const env = () => ({ GBRAIN_HOME: directory, GBRAIN_BRAIN_ID: 'host', GBRAIN_SOURCE: undefined });
 
-  /** A managed source claimed on this host; `gitRepo: false` leaves the folder without Git, as on a repo-less brain. */
-  async function managedSource(gitRepo = true) {
-    const id = `res-${randomUUID().replace(/-/g, '').slice(0, 16)}`, root = join(directory, id);
+  /** A managed source claimed on this host under `parent`; `gitRepo: false` leaves the folder without Git, as on a repo-less brain. */
+  async function managedSource(gitRepo = true, parent = directory) {
+    const id = `res-${randomUUID().replace(/-/g, '').slice(0, 16)}`, root = join(parent, id);
     mkdirSync(join(root, 'notes'), { recursive: true });
     writeFileSync(join(root, 'notes', 'a.md'), note('A'));
     if (gitRepo) {
@@ -71,6 +72,11 @@ for (const kind of testBackends()) describe(`#10260 lost ownership reservation (
   const refused = (promise: Promise<unknown>) => promise.then(() => null, (error: unknown) => error as Refusal);
   const administer = async (operation: 'writer_transfer_prepare' | 'writer_transfer_accept', params: Record<string, unknown>) =>
     runPersistenceAdministration(engine, operation, { ...params, ...await reviewedWriterIntent(engine, operation) });
+  const withSyncedCommit = async (sourceId: string, commit: string) => {
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+    await engine.executeRaw('UPDATE sources SET last_commit=$2 WHERE id=$1', [sourceId, commit]);
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+  };
 
   test('(a) a lost reservation names the plain self-transfer everywhere it refuses, and that self-transfer re-creates it', () => withEnv(env(), async () => {
     const s = await managedSource();
@@ -147,9 +153,7 @@ for (const kind of testBackends()) describe(`#10260 lost ownership reservation (
   test('(c) a Git-synced checkout that lost its .git too refuses checkout_git_missing and prepares nothing', () => withEnv(env(), async () => {
     const s = await managedSource();
     const head = git(s.root, 'rev-parse', 'HEAD');
-    await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
-    await engine.executeRaw('UPDATE sources SET last_commit=$2 WHERE id=$1', [s.id, head]);
-    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    await withSyncedCommit(s.id, head);
     rmSync(physicalRootReservationPath(s.root));
     rmSync(join(s.root, '.git'), { recursive: true, force: true });
     for (const dryRun of [true, false]) {
@@ -161,6 +165,34 @@ for (const kind of testBackends()) describe(`#10260 lost ownership reservation (
     }
     expect((await getWorktreeBinding(engine, s.id))!.state).toBe('active');
     expect(existsSync(physicalRootReservationPath(s.root))).toBe(false);
+  }), 120_000);
+
+  test('(c) a Git repository in a folder above the checkout does not stand in for the checkout\'s own .git', () => withEnv(env(), async () => {
+    const parent = join(directory, `outer-${randomUUID().slice(0, 8)}`);
+    mkdirSync(parent); git(parent, 'init', '-q');
+    const s = await managedSource(true, parent);
+    await withSyncedCommit(s.id, git(s.root, 'rev-parse', 'HEAD'));
+    rmSync(physicalRootReservationPath(s.root));
+    rmSync(join(s.root, '.git'), { recursive: true, force: true });
+    await expect(administer('writer_transfer_prepare', { source_id: s.id, self_transfer: true })).rejects.toMatchObject({ code: 'recovery_required', detail: 'checkout_git_missing' });
+    expect(existsSync(physicalRootReservationPath(s.root))).toBe(false);
+  }), 120_000);
+
+  test('(d) a non-Git checkout holding a Git-synced source folder of its own recovers', () => withEnv(env(), async () => {
+    const s = await managedSource(false);
+    const sub = join(s.root, 'sub'), subId = `${s.id}-sub`;
+    mkdirSync(sub); writeFileSync(join(sub, 'b.md'), note('B')); git(sub, 'init', '-q'); git(sub, 'add', '-A');
+    git(sub, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', 'fixture');
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+    await engine.executeRaw('INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,$3::text::jsonb)', [subId, sub, '{}']);
+    await claimWorktree(engine, subId, sub);
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    expect((await getWorktreeBinding(engine, subId))!.worktree_id).toBe(s.binding.worktree_id);
+    await withSyncedCommit(subId, git(sub, 'rev-parse', 'HEAD'));
+    rmSync(physicalRootReservationPath(s.root));
+    const prepared = await administer('writer_transfer_prepare', { source_id: s.id, self_transfer: true }) as { owner_epoch: string; manifest: { digest: string } };
+    await administer('writer_transfer_accept', { source_id: s.id, path: s.root, expected_epoch: prepared.owner_epoch, manifest: prepared.manifest.digest, self_transfer: true });
+    expect(existsSync(physicalRootReservationPath(s.root))).toBe(true);
   }), 120_000);
 
   test('(d) a checkout that never was a Git repository recovers the same way', () => withEnv(env(), async () => {
