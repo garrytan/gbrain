@@ -77,10 +77,12 @@ async function seedHere(dir: string): Promise<{ record: SeedRecord; storePath: s
 describe('shadow seed from PGLite', () => {
   withAddon('the seeded store answers the same reads as the primary', async () => {
     await fill();
+    // Alice is edited after Acme is inserted: her generation (3) is above Acme's (2), against the id order.
+    await primary.putPage('people/alice-example', { type: 'person', title: 'Alice Example', compiled_truth: 'Alice runs the widget team, and the widgets.', timeline: '' });
     const { record, storePath } = await seedHere(tempDir());
     expect(record.relations.pages?.imported).toBe(2);
-    // pages.generation is a cache clock (the second page holds 2); the store recomputes it, so it is named, not kept.
-    expect(record.relations.pages?.unmapped_columns).toEqual(['generation']);
+    // pages.generation is kept: the store keeps the same per-page counter as the primary's trigger.
+    expect(record.relations.pages?.unmapped_columns).toEqual([]);
     await expectSeedReadParity(primary, addon!, storePath);
   });
 

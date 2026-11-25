@@ -1,14 +1,16 @@
 /**
- * The pinned-question stops on the Rust engine: the reads that return or compare pages.generation, and the pin record
- * reads and writes, refuse with a typed engine_capability_missing that names the member and the missing piece, before
- * any engine call.
+ * The pinned-question stops on the Rust engine: the pin record reads and writes refuse with a typed
+ * engine_capability_missing that names the member and the missing piece, before any engine call. The reads that return
+ * or compare pages.generation are served (the store keeps the counter: test/engine-parity/page-generation.test.ts) and
+ * name no stop.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: each stopped question read refuses on the Rust engine naming pages.generation (or the pin records) with
- *    an owner and due date; each pin store function refuses on an engine without raw SQL naming itself, and sends no
- *    statement; on an engine with raw SQL the same functions run their statement.
+ *  - Contract: each pin record read refuses on the Rust engine naming the pin records with an owner and due date; each
+ *    pin store function refuses on an engine without raw SQL naming itself, and sends no statement; on an engine with
+ *    raw SQL the same functions run their statement; the generation reads are members the store serves, and the stop
+ *    list holds exactly the two pin record reads.
  *  - Regression: these sites sent raw SQL, so a Rust brain refused them as a bare `executeRaw` raw_sql refusal that
- *    named neither the read nor what was missing.
+ *    named neither the read nor what was missing; and the generation reads named a stop after the store served them.
  *  - Why existing coverage misses it: the parity file (test/engine-parity/question-reads.test.ts) counts these as
  *    stops; it does not pin the refusal's text.
  *  - Seam: the Rust engine's refusing member (no store is opened: the refusal runs before any work), an engine
@@ -16,7 +18,8 @@
  *    typed candidate read is replaced by a refusal (the refresh must surface it, not report a failed refresh).
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { RustEngine } from '../src/core/rust-engine.ts';
+import { RustEngine, rustMemberCapability } from '../src/core/rust-engine.ts';
+import { QUESTION_STOP_OWNERS } from '../src/core/rust-engine/question-stops.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { addSpend, getPin, listPins, releaseLease } from '../src/core/questions/store.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -44,13 +47,13 @@ async function refusal(member: string): Promise<Refusal> {
 }
 
 describe('pinned-question stops on the Rust engine', () => {
-  test.each([...GENERATION_READS])('%s refuses naming the missing page generation, its owner and due date', async (member: string) => {
-    const e = await refusal(member);
-    expect(e.code).toBe('engine_capability_missing');
-    expect(e.message).toContain(member);
-    expect(e.message).toContain('pages.generation');
-    expect(e.message).toContain('due 5 PM PST Nov 29');
-    expect(e.detail).toContain('written=nothing');
+  test.each([...GENERATION_READS])('%s is served: it names no stop and is not a refusal', (member: string) => {
+    expect(rustMemberCapability(member)).toBeNull();
+    expect(QUESTION_STOP_OWNERS[member]).toBeUndefined();
+  });
+
+  test('the stop list holds exactly the pin record reads', () => {
+    expect(Object.keys(QUESTION_STOP_OWNERS).sort()).toEqual([...PIN_RECORD_READS].sort());
   });
 
   test.each([...PIN_RECORD_READS])('%s refuses naming the missing pin records', async (member: string) => {

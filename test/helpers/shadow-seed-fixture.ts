@@ -65,6 +65,20 @@ export async function expectSeedReadParity(primary: BrainEngine, addon: RustAddo
     expect(facts(await rust.listFactsByEntity('default', 'people/alice-example'))).toEqual(facts(await primary.listFactsByEntity('default', 'people/alice-example')));
     const hits = async (e: BrainEngine) => (await e.searchKeyword('widgets')).map(h => h.slug).sort();
     expect(await hits(rust as unknown as BrainEngine)).toEqual(await hits(primary));
+    // The seed copies each page's generation as the primary holds it, and the next insert takes the highest plus one.
+    const generations = async (e: BrainEngine) => ({
+      pages: await Promise.all(SEED_FIXTURE_SLUGS.map(async slug => (await e.readQuestionPageRow('default', slug))?.generation ?? null)),
+      clock: (await e.readQuestionEvidenceClock('default')).generation,
+    });
+    const seeded = await generations(rust as unknown as BrainEngine);
+    expect(seeded).toEqual(await generations(primary));
+    expect(seeded.clock).toBeGreaterThan(1);
+    const next = { type: 'note' as const, title: 'After the seed', compiled_truth: 'Written after the seed.', timeline: '' };
+    await primary.putPage('notes/after-the-seed', next);
+    await rust.putPage('notes/after-the-seed', next);
+    const inserted = async (e: BrainEngine) => (await e.readQuestionPageRow('default', 'notes/after-the-seed'))?.generation;
+    expect(await inserted(rust as unknown as BrainEngine)).toBe(seeded.clock + 1);
+    expect(await inserted(rust as unknown as BrainEngine)).toBe(await inserted(primary));
   } finally {
     await rust.disconnect();
   }

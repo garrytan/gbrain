@@ -42,6 +42,8 @@ mod page_index;
 mod page_projection;
 mod page_withdrawals;
 pub mod pages;
+#[cfg(test)]
+mod page_generation_tests;
 pub mod read_shared;
 pub mod redb_kv;
 pub mod search;
