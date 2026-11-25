@@ -4,7 +4,9 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: a labelled-only member (access_members.labelled_only) reads only pages that name it, so its remote put_page
  *    or capture may not rewrite an open page that does not name it, and may not create a page that does not name it. The
- *    write is refused on every arm (the rewrite's code differs on Rust, below) and nothing is written: the body, the version count and the page list stay as they were.
+ *    write is refused on every arm and nothing is written: the body, the version count and the page list stay as they were.
+ *    A rewrite of a page is refused with page_not_found, the same bytes on every arm, unless the page names the member (its
+ *    readable_by holds the member or one of its groups) or a folder rule the member satisfies is stamped on it.
  *  - Regression: the Rust opening probe (readWriteVisibilityProbe) always answered `any_labelled: false` and never read
  *    access_members, so the write check treated the writer as unlabelled and returned early for a page open to everyone.
  *  - Why existing coverage misses it: the labelled-only write cases (test/access-labelled-only-*.test.ts) run on PGLite and
@@ -16,7 +18,8 @@ import { describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { createSource, parityArms, resetArm, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
-import { addMember, bindCredential, disableMember, removeMember } from '../../src/core/access/members.ts';
+import { addGroup, addMember, bindCredential, disableMember, removeMember } from '../../src/core/access/members.ts';
+import { proposeRevision } from '../../src/core/access/policy.ts';
 import { setMemberLabelledOnly } from '../../src/core/access/labelled-only.ts';
 import { setOwner } from '../../src/core/access/owner.ts';
 import { mintLegacyToken } from '../../src/core/token-mint.ts';
@@ -30,10 +33,6 @@ const SRC = 'work';
 const OWNER = 'alice-example';
 const LABELLED = 'carol-example';
 const PLAIN = 'bob-example';
-// On PGLite and Postgres the rewrite is judged by the labelled-only page policy and refused page_not_found. Rust does not serve
-// that writer policy yet (row 32e-b-3), so the probe now sees the labelled-only writer and the check ends on the raw read the
-// engine refuses: a loud refusal with nothing written. When 32e-b-3 lands Rust answers page_not_found and this reverts to it.
-const RUST_REWRITE_REFUSAL = 'engine_capability_missing';
 
 async function seed(engine: BrainEngine, backend: ParityBackend): Promise<void> {
   await createSource(engine, backend, SRC);
@@ -70,9 +69,10 @@ async function pageState(engine: BrainEngine, slug: string): Promise<{ body: str
 }
 
 describe('engine parity: a labelled-only member\'s remote writes', () => {
-  // Not a parityTest: on Rust a labelled-only member's call also reaches a raw read the engine refuses (row 32e-b), so a create or
-  // a capture ends on engine_capability_missing there, and the harness fails a case that caught a refusal. What must match on every
-  // arm is that the write is refused and nothing is stored; the rewrite of an open page is refused on every arm, with a different code on Rust (below).
+  // Not a parityTest: on Rust a labelled-only member's create or capture still reaches a raw read the engine refuses (row 32e-b-3), so
+  // it ends on engine_capability_missing there, and the harness fails a case that caught a refusal. What must match on every arm is
+  // that the write is refused and nothing is stored, and the rewrite of an open page is refused with the same code (the cases below
+  // compare the whole answer).
   test('a labelled-only member\'s put_page rewrite of an open page, and its put_page or capture of a new page, that do not name it are refused and write nothing on every arm', async () => {
     for (const arm of arms()) {
       await resetArm(arm);
@@ -87,7 +87,7 @@ describe('engine parity: a labelled-only member\'s remote writes', () => {
       const create = await labelledWrite(engine, 'put_page', { slug: 'notes/fresh', content: '---\ntitle: Fresh\n---\nNew page.' });
       const capture = await labelledWrite(engine, 'capture', { slug: 'notes/captured', content: '---\ntitle: Captured\n---\nCaptured page.' });
       expect({ backend: arm.backend, rewrite, createWritten: create === 'written', captureWritten: capture === 'written', after: await snapshot() })
-        .toEqual({ backend: arm.backend, rewrite: arm.backend === 'rust' ? RUST_REWRITE_REFUSAL : 'page_not_found', createWritten: false, captureWritten: false, after: before });
+        .toEqual({ backend: arm.backend, rewrite: 'page_not_found', createWritten: false, captureWritten: false, after: before });
       expect(before).toEqual({ open: { body: 'First.', versions: 0 }, fresh: { body: null, versions: 0 }, captured: { body: null, versions: 0 }, pages: 1 });
     }
     expect(arms().length).toBeGreaterThan(0);
@@ -114,6 +114,49 @@ describe('engine parity: writers a labelled-only member does not change', () => 
       expect({ owner: owner.outcome, plain: plain.outcome }).toEqual({ owner: 'written', plain: 'written' });
       expect({ owner: owner.page.body, plain: plain.page.body }).toEqual({ owner: 'Owner text.', plain: 'Member text.' });
       return { state, owner, plain };
+    });
+  }
+});
+
+describe('engine parity: a labelled-only member\'s rewrite of a page, by what the page names', () => {
+  const TEAM_RULE = { id: 'team', prefix: 'notes/', readable_by: [`member:${LABELLED}`] };
+  const OTHER_RULE = { id: 'others', prefix: 'notes/', readable_by: [`member:${OWNER}`] };
+  const named = (...readers: string[]) => ({ readable_by: readers });
+  /** One page shape: the page's frontmatter, the folder rules stamped on it, whether the stamp is then retired (the rule removed, no restamp yet), and the answer. */
+  const shapes: Array<{ name: string; frontmatter: Record<string, unknown>; rules?: typeof TEAM_RULE[]; retire?: boolean; group?: boolean; answer: 'written' | 'page_not_found' }> = [
+    { name: 'an open page that names nobody', frontmatter: {}, answer: 'page_not_found' },
+    { name: 'a page that names the member', frontmatter: named(`member:${LABELLED}`), answer: 'written' },
+    { name: 'a page that names a group the member is in', frontmatter: named('group:team'), group: true, answer: 'written' },
+    { name: 'a page that names only another member', frontmatter: named(`member:${OWNER}`), answer: 'page_not_found' },
+    { name: 'a page whose readable_by is malformed', frontmatter: { readable_by: 5 }, answer: 'page_not_found' },
+    { name: 'a page under a folder rule that lists the member', frontmatter: {}, rules: [TEAM_RULE], answer: 'written' },
+    { name: 'a page under a folder rule that lists only another member', frontmatter: {}, rules: [OTHER_RULE], answer: 'page_not_found' },
+    { name: 'a page that names the member, under a folder rule that lists only another member', frontmatter: named(`member:${LABELLED}`), rules: [OTHER_RULE], answer: 'page_not_found' },
+    { name: 'a page that names only another member, under a folder rule that lists the member', frontmatter: named(`member:${OWNER}`), rules: [TEAM_RULE], answer: 'page_not_found' },
+    { name: 'a page stamped with a folder rule that was removed before its restamp', frontmatter: {}, rules: [TEAM_RULE], retire: true, answer: 'page_not_found' },
+  ];
+  for (const shape of shapes) {
+    parityTest(`the rewrite of ${shape.name} answers ${shape.answer} on every arm`, { methods: ['readWriteVisibilityProbe', 'readLinkTargetPages'] }, async (engine, backend) => {
+      await seed(engine, backend);
+      if (shape.group) await addGroup(engine, 'team', [LABELLED]);
+      if (shape.rules) await proposeRevision(engine, SRC, shape.rules, { origin: 'cli', store: 'database' });
+      await engine.putPage('notes/open', { type: 'note', title: 'Open', compiled_truth: 'First.', timeline: '', frontmatter: shape.frontmatter }, { sourceId: SRC });
+      if (shape.retire) {
+        await engine.transaction(async tx => {
+          await tx.lockAccessPolicy(SRC);
+          await tx.applyAccessRuleChanges(SRC, { remove: [TEAM_RULE.id], insert: [], pending: [], revision: 2, actor: 'parity' });
+        });
+      }
+      const before = await pageState(engine, 'notes/open');
+      const revision = (await engine.getPage('notes/open', { sourceId: SRC }))?.knowledge_revision;
+      // The rewrite keeps the page's readers when they name the member; a list that leaves the writer out is refused earlier (readable_by_invalid), so it is not resent.
+      const keep = shape.frontmatter.readable_by !== undefined && JSON.stringify(shape.frontmatter.readable_by).includes(shape.group ? 'group:team' : LABELLED);
+      const readers = keep ? `readable_by: ${JSON.stringify(shape.frontmatter.readable_by)}\n` : '';
+      const outcome = await memberWriteOutcome(engine, LABELLED, 'put_page', { slug: 'notes/open', content: `---\ntitle: Open\n${readers}---\nTaken over.`, expected_revision: revision });
+      const after = await pageState(engine, 'notes/open');
+      expect({ answer: outcome === 'written' ? 'written' : (outcome as { code?: unknown }).code }).toEqual({ answer: shape.answer });
+      expect(after).toEqual(shape.answer === 'written' ? { body: 'Taken over.', versions: 1 } : before);
+      return { outcome, before, after };
     });
   }
 });
