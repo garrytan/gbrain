@@ -386,8 +386,8 @@ mod tests {
         //   `RedbSink`'s three redb transactions on the new record file a store snapshot fills: no
         //   brain store has that file open, so no store write handle exists to flag),
         //   `fjall_kv.rs`, and
-        //   `occ_kv.rs` (its trait methods, the deadline-bounded locked begin, and the commit onto
-        //   the base store);
+        //   `occ_kv.rs` (its trait methods, the deadline-bounded locked begin, the commit onto
+        //   the base store, and two in its `sim` feature test module);
         // - `lib.rs`: the brain-create write, the three arms of `Store::write`'s unbound loop, and
         //   the format upgrade (no page records; the format-5 carry-over in `seed/format_5.rs` writes
         //   purge tombstones, generations and oauth clients on it);
@@ -423,7 +423,7 @@ mod tests {
             ("kv.rs", 7),
             ("leases_tests.rs", 3),
             ("lib.rs", 5),
-            ("occ_kv.rs", 6),
+            ("occ_kv.rs", 8),
             ("page_body/purge_record.rs", 1),
             ("redb_kv.rs", 7),
             ("seed/v0_60_766_tests.rs", 1),

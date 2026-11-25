@@ -1314,7 +1314,7 @@ impl KvWrite for OccTxn {
 #[cfg(all(test, feature = "sim"))]
 mod sim_seam_tests {
     use super::*;
-    use crate::kv::{Kv, KvRead, KvWrite};
+    use crate::kv::Kv;
 
     fn stepped() -> Arc<OccKv> {
         let kv = crate::redb_kv::RedbKv::open_backend(Box::new(
