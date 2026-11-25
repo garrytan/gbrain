@@ -20,7 +20,7 @@ import { registerEngineView } from './switches.ts';
 import { materializeTimeline, prepareCanonicalProjections } from './canonical-projections.ts';
 import { digest, sha256 } from './digest.ts';
 import { admitWriteInTransaction, assertReplayIntent, getWriteRequest, getWriteRequestById, intentDigest, receiptFor } from './journal.ts';
-import { acquireWorktree, containsPath, getWorktreeBinding, probeWorktreeWriter, readManagedMode, WORKTREE_BINDING_SQL, type WorktreeBinding } from './ownership.ts';
+import { acquireWorktree, containsPath, getWorktreeBinding, probeWorktreeWriter, readManagedMode, sharedWorktreeBinding, WORKTREE_BINDING_SQL, type WorktreeBinding } from './ownership.ts';
 import { hostIdFor } from './identity.ts';
 import { assertPersistenceAccepting, startPersistenceConsumer, waitForWrite, writeResponse } from './service.ts';
 import { maintenancePublishWaitMs } from './maintenance-wait.ts';
@@ -113,6 +113,14 @@ function callReads(engine: BrainEngine): BrainEngine {
     };
     // The typed form of the local writer read master memoized as a statement (authority.ts `sharedWriterRow`): once per call, a missing row read again.
     if (key === 'readLocalWriterRow') return sharedWriterRow(target, typedReads, once);
+    // The typed forms of the owner binding, mirror-mode and slug-root-mode reads master memoized as statements
+    // (WORKTREE_BINDING_SQL, MIRROR_READ_ONLY_SQL, SLUG_ROOT_MODE_SQL): once per call, each caller gets its own copy.
+    if (key === 'getWorktreeBinding') return sharedWorktreeBinding(typedReads, once, (sourceId, hostId) => target.getWorktreeBinding(sourceId, hostId));
+    if (key === 'readSourceState') return (sourceId: string, opts?: Parameters<BrainEngine['readSourceState']>[1]) => opts?.lock
+      ? target.readSourceState(sourceId, opts)
+      : once(JSON.stringify(['readSourceState', sourceId]), () => target.readSourceState(sourceId)).then(row => structuredClone(row));
+    if (key === 'getSource') return (sourceId: string) =>
+      once(JSON.stringify(['getSource', sourceId]), () => target.getSource(sourceId)).then(row => structuredClone(row));
     const value = Reflect.get(target, key, target);
     return typeof value === 'function' ? value.bind(target) : value;
   } }), engine);
@@ -841,9 +849,7 @@ export class ManagedConnectorSync {
     const attribution = await maintenanceAttribution(this.engine);
     await this.engine.transaction(async tx => {
       await this.assertLease(tx);
-      await withCoordinatedWrite(tx, [this.sourceId], () => tx.executeRaw(
-        'UPDATE sources SET last_sync_at=now(),newest_content_at=COALESCE($3::timestamptz,newest_content_at) WHERE id=$1 AND incarnation=$2::uuid',
-        [this.sourceId, this.source.incarnation, newestContentAt ?? null]), attribution);
+      await withCoordinatedWrite(tx, [this.sourceId], () => stampConnectorFresh(tx, this.sourceId, this.source.incarnation, newestContentAt), attribution);
     });
   }
   /** The run's remaining wait allowance; the caller's own deadline arrives through the lease signal. */
@@ -1292,6 +1298,18 @@ export class ManagedConnectorSync {
   }
 }
 
+/**
+ * The managed connector sync's freshness stamp: sets the source's last sync time to the database clock and, when the run
+ * saw newer content, its newest content time (null or absent keeps the stored value), only while the source is still the
+ * incarnation the run bound (`markSourceSynced` with `incarnation` and `newestContentAt`, engine-sql/sources.ts, so a Rust
+ * brain stamps too). Runs inside the caller's transaction: `stampFreshness` (a run whose checkpoint save was skipped, in
+ * a coordinated write) and the `connector_v2_checkpoint` publication below (a fresh checkpoint). Returns whether the
+ * source was stamped; callers do not read it, as they did not read the raw statement's rows.
+ */
+export async function stampConnectorFresh(tx: BrainEngine, sourceId: string, incarnation: string, newestContentAt?: string | null): Promise<boolean> {
+  return tx.markSourceSynced(sourceId, { incarnation, newestContentAt: newestContentAt ?? null });
+}
+
 export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRequest): Promise<PreparedMutation> {
   const p = row.intent as ConnectorIntent | null;
   if (!p || !CONNECTOR_V2_KINDS.includes(p.kind) ||
@@ -1342,8 +1360,7 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
       { fix: receiptFix(row.request_id, 'The receipt confirms the checkpoint save did not commit.') });
     await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES('managed-connector',$1,$2::text::jsonb)
       ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`, [p.checkpointKey, JSON.stringify(p.checkpointAfter)]);
-    if (p.fresh) await tx.executeRaw('UPDATE sources SET last_sync_at=now(),newest_content_at=COALESCE($3::timestamptz,newest_content_at) WHERE id=$1 AND incarnation=$2::uuid',
-      [row.source_id, row.source_incarnation, p.newestContentAt ?? null]);
+    if (p.fresh) await stampConnectorFresh(tx, row.source_id, row.source_incarnation, p.newestContentAt);
     return { status: 'checkpointed', source_id: row.source_id };
   } };
   // #9062: a page stored in segments is read back as strings (up to PAGE_MAX_BYTES), so its re-render carries its timeline and fences like an inline page's.

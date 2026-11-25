@@ -60,6 +60,27 @@ fn row_key(source_id: &str, page_id: i64, content_hash: &str, version: i32) -> V
     k
 }
 
+/// The backfill batch's `done` (`engine-sql/chronicle-reads.ts`, `chronicle_reads.rs`): the page's row at its
+/// content hash and extractor version is extracted, or is a pending or failed backfill row with attempts left.
+pub(crate) fn backfill_done(
+    read: &dyn crate::kv::KvRead,
+    source_id: &str,
+    page_id: i64,
+    content_hash: &str,
+    version: i32,
+    max_attempts: i32,
+) -> Result<bool> {
+    let Some(r) =
+        get_json::<LedgerRecord>(read, &row_key(source_id, page_id, content_hash, version))?
+    else {
+        return Ok(false);
+    };
+    Ok(r.state == "extracted"
+        || (matches!(r.state.as_str(), "pending" | "failed")
+            && r.trigger == "backfill"
+            && r.attempts < max_attempts))
+}
+
 /// One `chronicle_page_state` row; the times are microseconds.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct LedgerRecord {
@@ -190,11 +211,12 @@ fn scan<T: for<'de> Deserialize<'de>>(
 }
 
 impl Store {
-    /// `upsertChronicleRow(w)`: inserts the row, or replaces the decision columns of the row at the same key and
-    /// stamps it now. Returns false when a guard leaves the old row alone: an automatic decision never overwrites a
-    /// pending or failed backfill row, and an extracted row yields only to a different generation of the page that
-    /// was extracted after it.
-    pub fn upsert_chronicle_row(&self, w: &ChronicleRowInput) -> Result<bool> {
+    /// The upsert of `upsertChronicleRow(w)` without its foreign-key checks (`Store::upsert_chronicle_row`, in
+    /// chronicle_state.rs, checks the row's source and page first): inserts the row, or replaces the decision columns of
+    /// the row at the same key and stamps it now. Returns false when a guard leaves the old row alone: an automatic
+    /// decision never overwrites a pending or failed backfill row, and an extracted row yields only to a different
+    /// generation of the page that was extracted after it.
+    pub(crate) fn upsert_chronicle_row_unchecked(&self, w: &ChronicleRowInput) -> Result<bool> {
         no_nul(
             OP_UPSERT,
             &[
