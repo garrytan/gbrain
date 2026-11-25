@@ -366,6 +366,7 @@ test/engine-parity/managed-on-rust.test.ts
 test/engine-parity/managed-recovery-on-rust.test.ts
 test/engine-parity/managed-refresh-on-rust.test.ts
 test/engine-parity/managed-sync-on-rust.test.ts
+test/engine-parity/managed-sync-run-on-rust.test.ts
 test/engine-parity/mcp-get-tags.test.ts
 test/engine-parity/meeting-pages.test.ts
 test/engine-parity/meetings-sync.test.ts
