@@ -21,6 +21,7 @@ import { ENGLISH_STOPWORDS } from '../src/shadow/english-stopwords.ts';
 import { buildDrillStatus } from '../src/shadow/drill-status.ts';
 import { runEngineShadow } from '../src/commands/engine-shadow.ts';
 import { __stopForTests } from '../src/commands/engine-shadow.ts';
+import { takeDrillLockForDelete } from '../src/shadow/drill.ts';
 import { ensureEpoch } from '../src/shadow/evidence-epoch.ts';
 import { shadowBrainKey, shadowDirFor } from '../src/shadow/state.ts';
 import type { StoreSnapshotManifest, StoreVerifyReport } from '../src/core/rust-engine/store.ts';
@@ -463,6 +464,33 @@ describe('review round 1: the lock, the probe, persistence, the addon and the di
     expect(during).toBe(1);
     expect(lines.join('\n')).toMatch(/drill_running.*Nothing was stopped or deleted/);
     expect(await __stopForTests({ key: 'pglite-abc', dir, engine: 'pglite' }, true, () => {})).toBe(0);
+    expect(existsSync(dir)).toBe(false);
+  });
+
+  test('delete reservation excludes the first backup: with no drills directory yet, stop --delete still holds the drill lock', async () => {
+    const { dir } = shadow();
+    expect(existsSync(join(dir, 'drills'))).toBe(false);
+    const release = takeDrillLockForDelete(dir)!;
+    try {
+      expect((await runBackupDrill(dir, deps(fakeOwner()))).reason).toBe('drill_running');
+    } finally { release(false); }
+  });
+
+  test('stop --delete keeps the drill lock until the shadow is gone, and removes the drills directory with it', async () => {
+    const { dir } = shadow();
+    expect(await __stopForTests({ key: 'pglite-abc', dir, engine: 'pglite' }, true, () => {})).toBe(0);
+    expect(existsSync(dir)).toBe(false);
+  });
+
+  test('each open the drill makes is given a check that turns false once the shadow is gone (the imports before a connect are an await)', async () => {
+    const { dir } = shadow();
+    const seen: unknown[] = [];
+    const owner = fakeOwner();
+    const rec = await runBackupDrill(dir, deps(owner, {
+      openOwner: async (_addon, _store, check) => { seen.push(check?.()); rmSync(dir, { recursive: true, force: true }); seen.push(check?.()); return owner; },
+    }));
+    expect(seen).toEqual([true, false]);
+    expect(rec).toMatchObject({ pass: false, reason: 'shadow_gone' });
     expect(existsSync(dir)).toBe(false);
   });
 

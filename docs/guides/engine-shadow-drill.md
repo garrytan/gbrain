@@ -38,6 +38,6 @@ gbrain engine shadow drill [--backup] [--evals] [--json]   # restore drill on th
   before the copy until the result is written and the marker removed, on every path, so a second drill meanwhile is
   refused with `drill_running` and cannot overwrite a slower drill's result. A lock whose process is dead is taken over; a
   lock that cannot be read, or a `drills/drill.lock.takeover` left by a crash, keeps the drill refused until you remove it
-  by hand. `gbrain engine shadow stop --delete` takes the same lock first: while a drill holds it, the stop refuses (exit 1,
-  `drill_running`) and stops and deletes nothing, so run it again once the drill ends. The drill also never opens a store
-  that is gone: before each open (the shadow's own store, then the copy) it checks the shadow and the store still exist.
+  by hand. `gbrain engine shadow stop --delete` takes the same lock first (it makes `drills/` for the purpose when no drill has run yet, so a first drill cannot start under the delete): while a drill holds it, the stop refuses (exit 1,
+  `drill_running`) and stops and deletes nothing, so run it again once the drill ends. The delete holds the lock until the rest of the shadow directory is gone, then removes `drills/` last. The drill also never opens a store
+  that is gone: before each open (the shadow's own store, then the copy) it checks the shadow and the store still exist, and again after the imports that come right before the open.

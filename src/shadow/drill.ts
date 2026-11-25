@@ -20,7 +20,7 @@
  * Records carry codes, counts and ids, never a key, a value, a path of the brain's content or an error message.
  */
 import { createHash, randomBytes } from 'node:crypto';
-import { appendFileSync, closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statfsSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, rmdirSync, rmSync, statfsSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { BACKUP_ARCHIVE_MAX_BYTES } from '../core/backup/archive.ts';
 import { flushDirectory } from '../core/fs-durable.ts';
@@ -92,12 +92,12 @@ export interface OpenCheck { pages: number; searchHits: number | null }
 
 export interface DrillDeps {
   loadAddon?: () => Promise<RustEngineAddonLoad>;
-  openOwner?: (addon: object, storePath: string) => Promise<DrillOwner>;
+  openOwner?: (addon: object, storePath: string, live?: () => boolean) => Promise<DrillOwner>;
   verify?: (addon: object, dir: string, expected: StoreSnapshotManifest) => Promise<StoreVerifyReport>;
   /** Reads what the copy holds after phase 2's open (no manifest); null when it cannot. */
   verifyAfter?: (addon: object, dir: string) => Promise<StoreVerifyReport | null>;
   /** Phase 2: opens the copy the normal way, searches once and counts pages. */
-  openCopy?: (addon: object, dir: string, expectKeywordHit: boolean) => Promise<OpenCheck>;
+  openCopy?: (addon: object, dir: string, expectKeywordHit: boolean, live?: () => boolean) => Promise<OpenCheck>;
   /** The SHA-256 of the addon file the loader opened (child.ts `addonFileSha256`); null when it cannot be read. */
   addonSha256?: (addon: object) => string | null;
   statfs?: (path: string) => { bavail: number | bigint; bsize: number | bigint };
@@ -186,14 +186,29 @@ function takeLock(dir: string, now: number): (() => void) | null {
 
 /**
  * The drill lock for `stop --delete`: a delete never runs under a drill (a drill's opens create the directories they find
- * missing). A shadow with no drills directory has no drill to wait for; null means a drill holds the lock (or it cannot be read).
+ * missing), and no first drill starts under a delete. The drills directory is created if it is not there yet (never the
+ * shadow root: a missing root means nothing is left to protect), so the one real lock excludes a drill that has not run
+ * before. The caller's `done(true)` after the shadow is deleted releases the lock and only then removes the drills
+ * directory (`stop` leaves it), so the lock is held until nothing a drill admits on is left. Null: a drill holds the lock.
  */
-export function takeDrillLockForDelete(dir: string, now: number = Date.now()): (() => void) | null {
-  if (!existsSync(drillsDir(dir))) return () => undefined;
-  try { return takeLock(dir, now); } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return () => undefined; // the drills directory went while we looked: no drill runs there
+export function takeDrillLockForDelete(dir: string, now: number = Date.now()): ((deleted: boolean) => void) | null {
+  const nothing = (): ((deleted: boolean) => void) => () => undefined;
+  try { mkdirSync(drillsDir(dir), { mode: 0o700 }); } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return nothing();
+    if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+  }
+  let release: (() => void) | null;
+  try { release = takeLock(dir, now); } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return nothing(); // the shadow went while we looked
     throw e;
   }
+  if (!release) return null;
+  return deleted => {
+    release!();
+    if (!deleted) return;
+    rmSync(drillsDir(dir), { recursive: true, force: true });
+    try { rmdirSync(dir); } catch { /* a new run's files appeared: they stay */ }
+  };
 }
 
 /** Removes `backup.json` and syncs the drills directory; false when the record is still there (or its removal cannot be confirmed). */
@@ -254,11 +269,13 @@ const snapshotReason = (error: unknown): DrillReason => {
 };
 
 /** The Rust owner of `storePath` as the drill uses it: a client of the shadow's child, or this process when the store is free. */
-async function openRealOwner(addon: object, storePath: string): Promise<DrillOwner> {
+async function openRealOwner(addon: object, storePath: string, live: () => boolean = () => true): Promise<DrillOwner> {
   const [{ openRustEngine }, { forwardWholeOperation }, { snapshotStatus, snapshotStore }, { socketHasLiveListener }, { ownerSocketPath }] = await Promise.all([
     import('../core/rust-engine.ts'), import('../core/rust-engine/owner-ipc/whole-op.ts'), import('../core/rust-engine/store-snapshot.ts'),
     import('../core/context/resolve-ipc.ts'), import('../core/rust-engine/owner-ipc/protocol.ts'),
   ]);
+  // The imports above are an await: the check runs after them, right before the connect that creates missing directories.
+  if (!live()) throw new Error('the shadow is gone: the store is not opened');
   const engine = openRustEngine({ addon: addon as Parameters<typeof openRustEngine>[0]['addon'], databasePath: storePath });
   await engine.connect({ database_path: storePath } as never);
   return {
@@ -314,8 +331,9 @@ export async function probeCopy(engine: ProbeEngine, expectKeywordHit: boolean):
   throw Object.assign(new Error('no word of the copy is answered by its keyword search'), { drillReason: 'no_probe_term' });
 }
 
-async function openCopyReal(addon: object, dir: string, expectKeywordHit: boolean): Promise<OpenCheck> {
+async function openCopyReal(addon: object, dir: string, expectKeywordHit: boolean, live: () => boolean = () => true): Promise<OpenCheck> {
   const { openRustEngine } = await import('../core/rust-engine.ts');
+  if (!live()) throw new Error('the shadow or its copy is gone: not opened');
   const engine = openRustEngine({ addon: addon as Parameters<typeof openRustEngine>[0]['addon'], databasePath: dir });
   await engine.connect({ database_path: dir } as never);
   try {
@@ -416,7 +434,7 @@ export async function runBackupDrill(dir: string, deps: DrillDeps = {}): Promise
       // `stop --delete` removed is never opened, and the store is checked right before the open.
       if (!shadowLive()) return finish('shadow_gone', true);
       if (!existsSync(records)) return finish('no_store', false);
-      owner = await (deps.openOwner ?? openRealOwner)(load.addon, storePath);
+      owner = await (deps.openOwner ?? openRealOwner)(load.addon, storePath, () => shadowLive() && existsSync(records));
       rec.via = owner.via;
 
       // A copy an earlier drill left behind: its scratch goes only after the owner says that copy ended.
@@ -468,8 +486,10 @@ export async function runBackupDrill(dir: string, deps: DrillDeps = {}): Promise
         // Phase 2 (open check): a normal open of the throwaway copy, kept apart from the evidence above.
         if (reason === null) {
           try {
-            if (!shadowLive() || !existsSync(restored)) throw new Error('the shadow or its copy is gone: not opened'); // `finish` reads a gone shadow as shadow_gone
-            const check = await (deps.openCopy ?? openCopyReal)(load.addon, restored, keywordState === 'complete');
+            // `finish` reads a gone shadow as shadow_gone; each open also checks again after its own imports, before it connects.
+            const copyLive = (): boolean => shadowLive() && existsSync(restored);
+            if (!copyLive()) throw new Error('the shadow or its copy is gone: not opened');
+            const check = await (deps.openCopy ?? openCopyReal)(load.addon, restored, keywordState === 'complete', copyLive);
             if (check.pages > 0 && check.searchHits === null) throw Object.assign(new Error('no search ran on a populated copy'), { drillReason: 'no_probe_term' });
             const after = await (deps.verifyAfter ?? verifyAfterOpen)(load.addon, restored);
             rec.post_open = { generation_after: after?.generation ?? null, keyword_state: after?.keyword_index?.state ?? keywordState, pages: check.pages, search_hits: check.searchHits };
