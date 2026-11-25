@@ -783,9 +783,9 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
         + (standalone > 0 ? `, ${standalone} standalone (invariant only, not compared with PGLite)` : ''));
       // The ledger: each case that stopped, with the member that refused it (the tally above only counts them).
       for (const stop of tally.stops ?? []) console.log(`[${rustLabel} arm] ${testFile} stopped: "${stop.name}" on ${stop.member} (${stop.capability})${stop.pinned ? ` pinned until ${stop.pinned.due} (${stop.pinned.owner})` : ''}`);
-      if (muGaps.length > 0) console.log(`[${rustLabel} arm] ${testFile}: ${muGaps.length} case(s) the matrix holds pending on rust-mu but runs on rust, counted as the off pin counts them: ${muGaps.join(', ')}`);
-      // A standalone pass is not equal to PGLite: for the pin it counts as skipped, so the sum check still holds.
-      const better = checkRustTally(testFile, { ...tally, skipped: skipped + standalone }, registered);
+      if (muGaps.length > 0) console.log(`[${rustLabel} arm] ${testFile}: ${muGaps.length} known gap(s), skipped here and not counted as equal: the matrix holds them pending on rust-mu but runs them on rust (the pin check allows for them): ${muGaps.join(', ')}`);
+      // The standalone count is summed by checkRustTally itself (rust-tally.ts), so `skipped` stays the skipped cases only.
+      const better = checkRustTally(testFile, { ...tally, skipped, ...(muRoute !== null && { muView: true, knownGaps: muGaps.length }) }, registered);
       if (better !== null) console.log(better);
     }
   }, 60_000);
@@ -803,13 +803,9 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
         tally.compared += counts.compared;
         tally.standalone = (tally.standalone ?? 0) + counts.standalone;
         // rust-mu view: a compared case the matrix runs on `rust` but holds pending on `rust-mu` is a known gap of the
-        // multi-user view, not a regression. It is counted against the file's (off) pin as the Rust arm counts it, and
-        // named, so the pin check still proves "multi-user on never answers fewer cases than off" for everything else.
-        if (muRoute !== null && counts.skipped > 0 && row.reference === 'compare' && mwArmPlan(row, 'rust').action === 'run') {
-          skipped -= 1;
-          tally.compared += 1;
-          muGaps.push(row.id);
-        }
+        // multi-user view, not a regression. It stays skipped (its scenario did not run, so it is never counted as equal);
+        // the pin check allows for it by name (rust-tally.ts `knownGaps`), so everything else is still held to the off pin.
+        if (muRoute !== null && row.reference === 'compare' && mwArmPlan(row, 'rust').action === 'run' && mwArmPlan(row, rustLabel).action === 'skip') muGaps.push(row.id);
         return;
       }
       for (const arm of arms) {

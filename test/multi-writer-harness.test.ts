@@ -234,6 +234,39 @@ describe('the rust-tally sum check with skipped and standalone cases', () => {
     expect(checkRustTally('test/engine-parity/x.test.ts', { compared: 2, refused: 0, diverged: 0, skipped: 0, standalone: 1 }, 3, pins, {})).toBeNull();
   });
 
+  test('a passing standalone case beside a deficient compare pin still fails the pin (standalone is summed once, not twice)', () => {
+    // 2 cases: 1 compared, 1 standalone; skipped excludes the standalone one. The pin wants 2 equal, so the file must fail.
+    expect(() => checkRustTally('test/engine-parity/x.test.ts', { compared: 1, refused: 0, diverged: 0, skipped: 0, standalone: 1 }, 2, pins, {})).toThrow(/1 equal and 0 stopped, but rust-tally\.tsv pins 2 equal/);
+  });
+
+  test('rust-mu known gaps: skipped cases are allowed against the pin only on the rust-mu view, only as named gaps, and never counted as equal', () => {
+    const tally = { compared: 1, refused: 0, diverged: 0, skipped: 1 };
+    const file = 'test/engine-parity/x.test.ts';
+    expect(checkRustTally(file, { ...tally, muView: true, knownGaps: 1 }, 2, pins, {})).toBeNull();
+    // The same counts on the off arm, or on rust-mu with no named gap, fail the pin: a skipped case is not an equal one.
+    expect(() => checkRustTally(file, tally, 2, pins, {})).toThrow(/pins 2 equal/);
+    expect(() => checkRustTally(file, { ...tally, knownGaps: 1 }, 2, pins, {})).toThrow(/pins 2 equal/);
+    expect(() => checkRustTally(file, { ...tally, muView: true, knownGaps: 0 }, 2, pins, {})).toThrow(/pins 2 equal/);
+    // Gaps do not cover a refusal that grew.
+    expect(() => checkRustTally(file, { compared: 1, refused: 1, diverged: 0, skipped: 0, muView: true, knownGaps: 1 }, 2, pins, {})).toThrow(/stopped/);
+  });
+
+  test('a rust-mu run never writes the regenerate output; the off arm does', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-tally-out-'));
+    try {
+      const out = join(dir, 'rows.tsv');
+      writeFileSync(out, '');
+      const file = 'test/engine-parity/x.test.ts';
+      const tally = { compared: 2, refused: 0, diverged: 0, skipped: 0 };
+      expect(checkRustTally(file, { ...tally, muView: true }, 2, pins, { GBRAIN_TEST_PARITY_TALLY_OUT: out })).toBeNull();
+      expect(readFileSync(out, 'utf8')).toBe('');
+      expect(checkRustTally(file, tally, 2, pins, { GBRAIN_TEST_PARITY_TALLY_OUT: out })).toBeNull();
+      expect(readFileSync(out, 'utf8')).toBe(`${file}\t2\t0\n`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('a file without standalone cases sums exactly as before', () => {
     expect(checkRustTally('test/engine-parity/x.test.ts', { compared: 1, refused: 0, diverged: 0, skipped: 1 }, 3, pins, {})).toBeNull();
     expect(() => checkRustTally('test/engine-parity/x.test.ts', { compared: 1, refused: 0, diverged: 0, skipped: 1 }, 2, pins, {})).toThrow(/pins 2 equal/);

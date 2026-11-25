@@ -399,6 +399,15 @@ export async function runBar(opts: BarOptions): Promise<BarReport> {
         markAll('ERROR');
       } else {
         const ignored = parseIgnoredList(readText(log('list')) ?? '');
+        // Every declared pending name must be an `#[ignore]`d test of the file, whatever the row's cells say: a runnable test with
+        // a pending twin (a plain cNN plus cNN_multi_writer) is checked here too, and a missing twin fails the bar.
+        const absentPending = new Map<string, string[]>();
+        for (const row of entries) {
+          const absent = row.storeTests.pending.filter((n) => !ignored.has(n));
+          if (absent.length === 0) continue;
+          absentPending.set(row.id, absent);
+          failures.push({ code: 'store_pending_missing', message: `[store] ${row.id}: the matrix lists pending store tests that are not \`#[ignore]\`d tests of ${STORE_TEST_TARGET}: ${absent.join(', ')}`, log: log('list'), rerun });
+        }
         for (const arm of selectedStore) {
           const runnable = unique(entries.filter((r) => r.cells[arm].status === 'runs').flatMap((r) => [...r.storeTests.runnable]));
           const armLog = log(`run-${arm}`);
@@ -410,11 +419,7 @@ export async function runBar(opts: BarOptions): Promise<BarReport> {
               failures.push({ code: 'store_cell_empty', message: `[${arm}] ${row.id}: the cell is ${status} but the matrix names no ${status === 'runs' ? 'runnable' : 'pending'} store test`, rerun });
               merge(cells, `${row.id}:${arm}`, 'MISSING');
             } else if (status === 'pending') {
-              const absent = names.filter((n) => !ignored.has(n));
-              if (absent.length > 0) {
-                failures.push({ code: 'store_pending_missing', message: `[${arm}] ${row.id}: the matrix lists pending store tests that are not \`#[ignore]\`d tests of ${STORE_TEST_TARGET}: ${absent.join(', ')}`, log: log('list'), rerun });
-                merge(cells, `${row.id}:${arm}`, 'MISSING');
-              } else merge(cells, `${row.id}:${arm}`, 'pending');
+              merge(cells, `${row.id}:${arm}`, absentPending.has(row.id) ? 'MISSING' : 'pending');
             }
           }
           if (runnable.length === 0) continue;

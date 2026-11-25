@@ -374,6 +374,8 @@ describe('variants and both rust-mu routes', () => {
   });
 });
 
+const report = (r: { cells: Map<string, string> }, key: string) => r.cells.get(key);
+
 describe('the Rust store half', () => {
   const storeOnly = (r: Rig, commands: Partial<BarCommands>, over: Partial<BarOptions> = {}) =>
     runBar(r.opts({ arms: ['store-single'], commands: { ...r.opts().commands, ...commands }, ...over }));
@@ -390,6 +392,17 @@ describe('the Rust store half', () => {
     expect(codes(report.failures)).toEqual(['store_pending_missing']);
     expect(report.failures[0]!.message).toContain('c01_ok_multi_writer');
     expect(marksOf(r)).not.toContain('run:c01_ok_multi_writer');
+  });
+
+  test('a runnable test with a pending twin: the twin is validated against the ignored list even though the cell runs (a missing twin fails)', async () => {
+    const r = rig();
+    // C01 runs c01_ok on store-single and names c01_ok_multi_writer as its pending twin.
+    const missing = await storeOnly(r, { storeList: () => ['sh', '-c', 'printf "other: test\\n"'] });
+    expect(codes(missing.failures)).toEqual(['store_pending_missing']);
+    expect(missing.failures[0]!.message).toContain('c01_ok_multi_writer');
+    expect(report(missing, 'C01:store-single')).toBe('pass'); // the runnable baseline still ran and passed
+    const present = await storeOnly(r, {});
+    expect(present.failures).toEqual([]);
   });
 
   test('a failing store test: store_case_failed (and store_run_failed for the non-zero exit), the cell is FAIL', async () => {
