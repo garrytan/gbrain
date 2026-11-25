@@ -315,7 +315,7 @@ export async function listDecideReplayReceipts(tx: Raw, slot: string, sinceHours
   const rows = await tx.executeRaw<Record<string, unknown>>(
     `SELECT decision_id, answer_value, protected, rank, min_keep, outcome FROM decision_receipts
       WHERE slot = $1 AND created_at >= now() - ($2::int * interval '1 hour') AND outcome IN ('kept','pruned','margin_hold','pass','reject','quarantine','insufficient_context')
-      ORDER BY decision_id COLLATE "C", rank`,
+      ORDER BY decision_id COLLATE "C", rank, id`,
     [slot, sinceHours],
   );
   return rows.map((r) => ({
@@ -326,14 +326,14 @@ export async function listDecideReplayReceipts(tx: Raw, slot: string, sinceHours
 
 export interface DecideResolvedModel { slot: string; provider: string; model_resolved: string; n: number; last_at: Date }
 
-/** Each (slot, provider, resolved model) seen over the last `sinceHours` hours, with its count and latest time, latest first. */
+/** Each (slot, provider, resolved model) seen over the last `sinceHours` hours, with its count and latest time, latest first; groups with one latest time in byte order of slot, provider and model. */
 export async function listDecideResolvedModels(tx: Raw, sinceHours: number): Promise<DecideResolvedModel[]> {
   if (windowHoldsNothing(sinceHours)) return [];
   const rows = await tx.executeRaw<Record<string, unknown>>(
     `SELECT slot, provider, model_resolved, COUNT(*)::int AS n, MAX(created_at) AS last_at FROM decision_receipts
       WHERE model_resolved IS NOT NULL AND created_at >= now() - ($1::int * interval '1 hour')
       GROUP BY slot, provider, model_resolved
-      ORDER BY MAX(created_at) DESC`,
+      ORDER BY MAX(created_at) DESC, slot COLLATE "C", provider COLLATE "C", model_resolved COLLATE "C"`,
     [sinceHours],
   );
   return rows.map((r) => ({
