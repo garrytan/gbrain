@@ -377,7 +377,7 @@ const request_tools: Operation = {
         if (!outside.length) return { tools: buildToolDefs(picked, { strictParams }), listed: true, note: reload ? `These tools are now listed by this server (tools/list_changed was sent). ${reload}` : 'These tools are now in your tool list (tools/list_changed was sent); call them directly.' };
         return {
           tools: buildToolDefs(picked, { strictParams }), listed: false,
-          note: `${reachable.length ? `${reachable.map(n => `\`${n}\``).join(', ')} are now ${reload ? 'listed by this server' : 'in your tool list'} (tools/list_changed was sent). ${reload ? `${reload} ` : ''}` : ''}${outside.join(', ')} are outside this session's '${ceiling}' surface, so they are not listed and cannot be called yet: call request_tools {"surface":"full"} to add them to this session, then call them by name.`,
+          note: `${reachable.length ? `${reachable.map(n => `\`${n}\``).join(', ')} are now ${reload ? 'listed by this server' : 'in your tool list'} (tools/list_changed was sent). ${reload ? `${reload} ` : ''}` : ''}${outside.join(', ')} are outside this session's '${ceiling}' surface, so they are not listed and cannot be called yet: call request_tools {"surface":"full"} to add them to this session${reload ? '' : ', then call them by name'}.`,
         };
       }
       return { tools: buildToolDefs(picked, { strictParams }) };

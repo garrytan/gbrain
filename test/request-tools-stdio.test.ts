@@ -145,6 +145,12 @@ describe('request_tools {surface} on stdio', () => {
       expect(res.note).not.toContain('call them directly');
       await waitFor(() => s.listChanged() > 0, { timeoutMs: 10_000 });
       expect(await names(s)).toContain('get_page');
+
+      const mixed = parsed(await s.client.callTool({ name: 'request_tools', arguments: { tools: ['list_pages', 'get_health'] } })) as { listed: boolean; note: string };
+      expect(mixed.listed).toBe(false);
+      expect(mixed.note).toContain('OpenClaw builds its tool list when a run starts');
+      expect(mixed.note).toContain('`get_health`');
+      expect(mixed.note).not.toContain('then call them by name');
     } finally {
       await s.close();
     }

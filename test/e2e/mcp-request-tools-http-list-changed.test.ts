@@ -29,6 +29,8 @@ describe('GST-3791 request_tools on HTTP: persist -> tools/list_changed -> tools
   let env: Record<string, string>;
   let clientId = '';
   let clientSecret = '';
+  let quietId = '';
+  let quietSecret = '';
 
   const gbrain = (args: string[], input?: string) =>
     execFileSync(process.execPath, ['--no-env-file', CLI, ...args], { cwd: process.cwd(), env, encoding: 'utf8', input });
@@ -43,6 +45,11 @@ describe('GST-3791 request_tools on HTTP: persist -> tools/list_changed -> tools
     clientId = /Client ID:\s+(\S+)/.exec(reg)?.[1] ?? '';
     clientSecret = /Client Secret:\s+(\S+)/.exec(reg)?.[1] ?? '';
     if (!clientId || !clientSecret) throw new Error(`register-client did not yield credentials:\n${reg}`);
+    const quiet = gbrain(['auth', 'register-client', 'oauth-gst3791-quiet', '--grant-types', 'client_credentials', '--scopes', 'read write',
+      '--token-endpoint-auth-method', 'client_secret_post']);
+    quietId = /Client ID:\s+(\S+)/.exec(quiet)?.[1] ?? '';
+    quietSecret = /Client Secret:\s+(\S+)/.exec(quiet)?.[1] ?? '';
+    if (!quietId || !quietSecret) throw new Error(`register-client did not yield credentials:\n${quiet}`);
     gbrain(['config', 'set', 'mcp.default_surface_dcr', 'starter']);
   }, 120_000);
 
@@ -88,10 +95,10 @@ describe('GST-3791 request_tools on HTTP: persist -> tools/list_changed -> tools
     }
   }, 120_000);
 
-  test('a request_tools call that changes nothing sends no notification', async () => {
+  test('request_tools calls that persist nothing send no notification', async () => {
     const server = await startServeHttp({ cwd: process.cwd(), env });
     try {
-      const minted = await mintClientCredentialsToken(`${server.base}/token`, clientId, clientSecret, { scope: 'read write' });
+      const minted = await mintClientCredentialsToken(`${server.base}/token`, quietId, quietSecret, { scope: 'read write' });
       if (!minted.ok) throw new Error(`client_credentials mint failed: ${JSON.stringify(minted)}`);
       const transport = new StreamableHTTPClientTransport(new URL(`${server.base}/mcp`), {
         requestInit: { headers: { Authorization: `Bearer ${minted.token.access_token}` } },
@@ -101,9 +108,13 @@ describe('GST-3791 request_tools on HTTP: persist -> tools/list_changed -> tools
       client.setNotificationHandler(ToolListChangedNotificationSchema, async () => { changed++; });
       await client.connect(transport);
       try {
-        const res = await client.callTool({ name: 'request_tools', arguments: { tools: ['get_tags'] } }) as { isError?: boolean };
-        expect(res.isError ?? false).toBe(false);
+        const preview = await client.callTool({ name: 'request_tools', arguments: { surface: 'full', dry_run: true } }) as { isError?: boolean; content: Array<{ text: string }> };
+        expect(preview.isError ?? false).toBe(false);
+        expect(JSON.parse(preview.content[0]!.text)).toMatchObject({ persisted: false, dry_run: true });
+        const described = await client.callTool({ name: 'request_tools', arguments: { tools: ['get_tags'] } }) as { isError?: boolean };
+        expect(described.isError ?? false).toBe(false);
         expect(changed).toBe(0);
+        expect((await client.listTools()).tools.map(t => t.name)).not.toContain('get_tags');
       } finally {
         try { await client.close(); } catch { /* best-effort */ }
       }
