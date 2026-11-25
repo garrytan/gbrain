@@ -48,6 +48,7 @@ export const PAGES_MEMBERS = {
   readPagePrivacyHidden: 'pages',
   readStoredBodyBytes: 'pages',
   readAdmittedPageRefs: 'pages',
+  readAdmittedPageDateFields: 'pages',
   readPageSynopses: 'pages',
   readSeedTitleSlugs: 'pages',
   readPageBodySizes: 'pages',

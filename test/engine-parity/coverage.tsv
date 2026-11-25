@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2401/2425
+# covered: 2403/2427
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -55,7 +55,7 @@
 # projection_rebuild: 32/33
 # facts_repair: 75/75
 # facts_trust: 56/57
-# facts_recall: 9/9
+# facts_recall: 10/10
 # facts_conversation: 30/30
 # belief_ledger: 19/19
 # belief_purge: 6/6
@@ -87,7 +87,7 @@
 # remote_links: 5/5
 # facts_backstop: 2/2
 # large_page: 2/2
-# relational_reads: 3/3
+# relational_reads: 4/4
 # trust_fence: 4/4
 # trust_proposals: 8/8
 # connect_gate: 4/4
@@ -640,7 +640,7 @@ readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
 readLiveFactRowTier	facts	yes	1	no	yes	yes	serves
 insertFact	facts	yes	198	yes	yes	yes	serves
-insertFacts	facts	yes	269	no	yes	yes	serves
+insertFacts	facts	yes	272	no	yes	yes	serves
 deleteFactsForPage	facts	yes	8	no	yes	yes	serves
 expireFact	facts	yes	94	no	yes	yes	serves
 listFactsByEntity	facts	yes	62	yes	yes	yes	serves
@@ -1756,6 +1756,7 @@ listBeliefStreamSlugs	facts_trust	yes	1	no	yes	yes	serves
 readFactsEmbeddingColumn	facts_recall	yes	5	no	yes	yes	serves
 listNearestFacts	facts_recall	yes	5	no	yes	yes	serves
 listFactSourcePages	facts_recall	yes	1	no	yes	yes	serves
+listFactHoldingRefs	facts_recall	yes	2	no	yes	yes	serves
 listSlotRows	facts_recall	yes	10	no	yes	yes	serves
 listPoolUnbackedKeys	facts_recall	yes	6	no	yes	yes	serves
 listCallOffCueFacts	facts_recall	yes	5	no	yes	yes	serves
@@ -2208,6 +2209,7 @@ hasCompletedFactsExtraction	facts_backstop	yes	1	no	yes	yes	serves
 readStoredBodyBytes	large_page	yes	1	no	yes	yes	serves
 readPageBodySizes	large_page	yes	1	no	yes	yes	serves
 readAdmittedPageRefs	relational_reads	yes	2	no	yes	yes	serves
+readAdmittedPageDateFields	relational_reads	yes	2	no	yes	yes	serves
 readPageSynopses	relational_reads	yes	2	no	yes	yes	serves
 readSeedTitleSlugs	relational_reads	yes	1	no	yes	yes	serves
 listFenceFactRows	trust_fence	yes	5	no	yes	yes	serves

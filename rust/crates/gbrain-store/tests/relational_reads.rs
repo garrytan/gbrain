@@ -278,3 +278,50 @@ fn the_title_seed_names_at_most_two_live_unretired_typed_pages() {
             .is_empty()
     );
 }
+
+#[test]
+fn the_date_field_read_admits_what_the_ref_read_admits_and_carries_frontmatter() {
+    let dir = TempDir::new("relational-date-fields");
+    let store = seeded(&dir);
+    let hidden = PageReadScope {
+        exclude_private: Some(PrivacyPolicy {
+            honor_aliases: true,
+            entity_privacy: true,
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    for scope in [PageReadScope::default(), hidden] {
+        let rows = store
+            .read_admitted_page_date_fields(&refs(), &scope)
+            .unwrap();
+        let keys: Vec<String> = rows
+            .iter()
+            .map(|row| {
+                format!(
+                    "{}:{}",
+                    row["source_id"].as_str().unwrap(),
+                    row["slug"].as_str().unwrap()
+                )
+            })
+            .collect();
+        assert_eq!(keys, admitted(&store, &scope));
+    }
+    let rows = store
+        .read_admitted_page_date_fields(
+            &[r("default", "companies/private")],
+            &PageReadScope::default(),
+        )
+        .unwrap();
+    assert_eq!(
+        rows,
+        vec![json!({ "source_id": "default", "slug": "companies/private",
+            "frontmatter": { "visibility": "private" }, "import_filename": null })]
+    );
+    assert!(
+        store
+            .read_admitted_page_date_fields(&[], &PageReadScope::default())
+            .unwrap()
+            .is_empty()
+    );
+}

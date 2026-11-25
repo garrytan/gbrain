@@ -564,7 +564,7 @@ src/core/schema-verify.ts	execute_raw	2
 src/core/search-vector-backfill.ts	execute_raw	3
 src/core/search/dedup.ts	execute_raw	1
 src/core/search/entity-anchor.ts	execute_raw	1
-src/core/search/evidence-date.ts	execute_raw	3
+src/core/search/evidence-date.ts	execute_raw	1
 src/core/search/facts-arm.ts	execute_raw	2
 src/core/search/feedback-boost.ts	execute_raw	1
 src/core/search/private-visibility.ts	execute_raw	1

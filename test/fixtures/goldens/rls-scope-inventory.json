@@ -3347,6 +3347,17 @@
         ],
         "flagOnScopes": []
       },
+      "listFactHoldingRefs#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listFactIdsBySourcePrefix#default": {
         "flagOffLanes": [
           "pool"
@@ -5541,6 +5552,28 @@
         "flagOn": "unscoped",
         "flagOnLanes": [
           "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "readAdmittedPageDateFields#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readAdmittedPageDateFields#scoped": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
         ],
         "flagOnScopes": []
       },
@@ -9945,6 +9978,7 @@
         "listExtractionPendingPages": "none",
         "listExtractorFactsForClassification": "none",
         "listFactContextsForPurgeProbe": "none",
+        "listFactHoldingRefs": "none",
         "listFactIdsBySourcePrefix": "none",
         "listFactIdsStillOnPage": "none",
         "listFactProvenance": "none",
@@ -10625,6 +10659,7 @@
         "readAdmissionRate": "none",
         "readAdmissionSample": "none",
         "readAdmissionSource": "none",
+        "readAdmittedPageDateFields": "none",
         "readAdmittedPageRefs": "none",
         "readAdmittedWriteRequests": "none",
         "readAgentClientSpend": "none",

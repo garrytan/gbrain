@@ -62,6 +62,41 @@ impl Store {
         Ok(out)
     }
 
+    /// `readAdmittedPageDateFields(refs, scope)`: `{ source_id, slug, frontmatter, import_filename }` for each ref
+    /// that names a live, unquarantined page of an unarchived source the scope admits (as `readAdmittedPageRefs`), in
+    /// ref order; a ref listed twice answers twice. `frontmatter` is the stored object.
+    pub fn read_admitted_page_date_fields(
+        &self,
+        refs: &[PageRef],
+        scope: &PageReadScope,
+    ) -> Result<Vec<Value>> {
+        if refs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let read = self.read()?;
+        let sources = sources_by_id(&*read)?;
+        let trust = TrustPolicy::parse(scope.min_trust.as_deref(), scope.suppress_flagged)?;
+        let scope = PageReadScope {
+            live: true,
+            ..scope.clone()
+        };
+        let mut owner_only = OwnerOnlyCache::default();
+        let mut out = Vec::new();
+        for r in refs {
+            if let Some(page) = read_page(&*read, &r.source_id, &r.slug)?
+                && passes_read_scope(&*read, &page, &scope, &trust, &sources, &mut owner_only)?
+            {
+                out.push(json!({
+                    "source_id": page.source_id,
+                    "slug": page.slug,
+                    "frontmatter": Value::Object(page.frontmatter.clone()),
+                    "import_filename": page.import_filename,
+                }));
+            }
+        }
+        Ok(out)
+    }
+
     /// `readPageSynopses(refs, scope)`: `{ page_id, slug, source_id, title, type, synopsis }` for each
     /// ref that names a page the scope admits and the search visibility clause shows (live, a served
     /// text projection, an unarchived source, unquarantined, no `pinned_question` key, and the

@@ -308,3 +308,34 @@ describe('the Rust arm check: a rustStop pin', () => {
     expect(t).toEqual({ compared: 0, refused: 0, diverged: 0 });
   });
 });
+
+describe('rustCaughtRefusalPin: a case that returns after catching a known open refusal', () => {
+  /** A raw-SQL refusal whose stack names `frame`, as a refusal caught inside that function's body reads. */
+  const refusedAt = (frame: string): Error => Object.assign(capabilityMissing('raw_sql', 'executeRaw'), { stack: `Error: refused\n    at ${frame} (/src/x.ts:1:1)` });
+  const openSwallowSite = () => refusedAt('openSwallowSite');
+  const otherSite = () => refusedAt('otherSite');
+  const caughtPin = (frames = ['openSwallowSite']) => ({ frames, site: 'src/x.ts:1', owner: 'lane-x', due: '2999-01-01' });
+  const caughtCase = (refusals: unknown[], frames?: string[]) => rustCase({
+    opts: { methods: [SERVED] as never, rustCaughtRefusalPin: caughtPin(frames) }, calls: new Set([SERVED, REFUSED]), refusals,
+    reference: { backend: 'pglite', value: 'pglite answer' }, run: async () => 'rust answer without what the refusal hid',
+  });
+
+  test('counts as stopped, without comparing the value, while every caught refusal came through a pinned frame', async () => {
+    const t: RustTally = { ...tally(), stops: [] };
+    await checkRustArm(caughtCase([openSwallowSite(), openSwallowSite()]), t);
+    expect(t).toMatchObject({ compared: 0, refused: 1, diverged: 0 });
+    expect(t.stops).toEqual([{ name: 'case', member: 'openSwallowSite', capability: 'caught' }]);
+  });
+
+  test('fails once the case catches no refusal: the pin must go', async () => {
+    await expect(checkRustArm(caughtCase([]), tally())).rejects.toThrow('no longer catches a typed refusal; remove its rustCaughtRefusalPin');
+  });
+
+  test('fails on a refusal caught at a frame the pin does not name', async () => {
+    await expect(checkRustArm(caughtCase([openSwallowSite(), otherSite()]), tally())).rejects.toThrow('refusals at other frames: 1');
+  });
+
+  test('fails when a pinned frame caught nothing: a fixed site leaves the pin', async () => {
+    await expect(checkRustArm(caughtCase([openSwallowSite()], ['openSwallowSite', 'fixedSite']), tally())).rejects.toThrow('frames not seen: ["fixedSite"]');
+  });
+});

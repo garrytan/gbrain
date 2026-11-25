@@ -101,6 +101,14 @@ export interface ParityCaseOpts {
    * `due` name the code and the lane whose fix removes it. PGLite and Postgres ignore it.
    */
   rustPendingStop?: { capability: string; member: string; site: string; frame?: string; owner: string; due: string };
+  /**
+   * Rust only: the case returns a value, but only after the code it drives caught a typed refusal it should not have
+   * (a known open swallow site on main). It counts as stopped, and its value is not compared, only while every refusal
+   * it caught has one of `frames` in its stack and each frame caught at least one. A case that catches no refusal, or
+   * one at another frame, fails and says to update or remove the pin; `site`, `owner` and `due` name the code and the
+   * lane whose fix removes it. PGLite and Postgres ignore it.
+   */
+  rustCaughtRefusalPin?: { frames: string[]; site: string; owner: string; due: string };
   timeout?: number;
 }
 
@@ -953,6 +961,13 @@ export async function checkRustArm<T>(c: RustCase<T>, tally: RustTally): Promise
   }
 
   if (pendingPin) throw new Error(`[rust] "${c.name}" no longer stops; remove its rustPendingStop pin (${pinText})`);
+  const caughtPin = c.opts.rustCaughtRefusalPin;
+  if (caughtPin) {
+    checkCaughtRefusalPin(c.name, caughtPin, c.refusals.filter(refusedBy));
+    tally.refused++;
+    tally.stops?.push({ name: c.name, member: caughtPin.frames.join(', '), capability: 'caught' });
+    return;
+  }
   // It returned. A case that reaches a refusing member, or caught a refusal, must not finish as if nothing happened.
   expect({ backend: 'rust', case: c.name, reachesRefusingMember: refusing.length > 0 && capabilities.size > 0, caughtRefusals: caught })
     .toEqual({ backend: 'rust', case: c.name, reachesRefusingMember: false, caughtRefusals: 0 });
@@ -991,6 +1006,19 @@ function checkPendingStop(name: string, pin: NonNullable<ParityCaseOpts['rustPen
   if (message.includes('write_pending') && named) return;
   throw new Error(`[rust] "${name}" does not stop as its rustPendingStop pin says (${pinText}); update or remove the pin. `
     + `write_pending: ${message.includes('write_pending')}; typed refusals: ${JSON.stringify([...new Set(refusals.map(detail))])}; error: ${message}`);
+}
+
+/** A case pinned on caught refusals passes only while each caught refusal came through one of the pinned frames, and each frame caught one. */
+function checkCaughtRefusalPin(name: string, pin: NonNullable<ParityCaseOpts['rustCaughtRefusalPin']>, caught: unknown[]): void {
+  const text = `${pin.site}; owner ${pin.owner}, due ${pin.due}`;
+  if (!caught.length) throw new Error(`[rust] "${name}" no longer catches a typed refusal; remove its rustCaughtRefusalPin (${text})`);
+  const stack = (e: unknown) => String((e as Error | null)?.stack ?? '');
+  const stray = caught.filter((e) => !pin.frames.some((f) => stack(e).includes(f)));
+  const unseen = pin.frames.filter((f) => !caught.some((e) => stack(e).includes(f)));
+  if (stray.length || unseen.length) {
+    throw new Error(`[rust] "${name}" does not catch refusals as its rustCaughtRefusalPin says (${text}); update or remove the pin. `
+      + `frames not seen: ${JSON.stringify(unseen)}; refusals at other frames: ${stray.length}`);
+  }
 }
 
 /** Sorted copy, for order-free comparisons. */

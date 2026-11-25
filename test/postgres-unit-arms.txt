@@ -290,6 +290,7 @@ test/engine-parity/fact-relink-writes.test.ts
 test/engine-parity/fact-trajectory-widening.test.ts
 test/engine-parity/fact-update-guard.test.ts
 test/engine-parity/fact-visibility-widening.test.ts
+test/engine-parity/facts-arm-query-strict.test.ts
 test/engine-parity/facts-conversation-sites.test.ts
 test/engine-parity/facts-cycle-sites.test.ts
 test/engine-parity/facts-cycle.test.ts

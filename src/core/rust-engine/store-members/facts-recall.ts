@@ -23,6 +23,13 @@ const rows = <T>(list: Row[]): T[] => list.map(row => withDates(row, POOL_DATES)
 export const readFactsEmbeddingColumn: Member<'readFactsEmbeddingColumn'> = async brain =>
   storeCall({ member: 'readFactsEmbeddingColumn' }, () => brain.readFactsEmbeddingColumn());
 
+/** The observed-date read's holding refs (BrainEngine listFactHoldingRefs), from the store's facts (facts/recall.rs). */
+export const listFactHoldingRefs: Member<'listFactHoldingRefs'> = async (brain, ids) => {
+  if (!ids.length) return [];
+  if (!ids.every(Number.isSafeInteger)) refuseMember('listFactHoldingRefs', 'a fact id that is not an integer');
+  return await storeCall({ member: 'listFactHoldingRefs' }, () => brain.listFactHoldingRefs([...ids])) as Awaited<ReturnType<BrainEngine['listFactHoldingRefs']>>;
+};
+
 /** The facts arm's source-page read (BrainEngine listFactSourcePages), from the store's facts and pages (facts/recall.rs). */
 export const listFactSourcePages: Member<'listFactSourcePages'> = async (brain, ids) => {
   if (!ids.length) return [];
