@@ -45,6 +45,7 @@ const SCAN_BATCH = 500;
 export const MAX_SINCE_DAYS = 3660;
 const RESERVE_LOCK_ID = 'gbrain-ledger-reserve';
 const RESERVE_WAIT_MS = 10_000;
+const LEDGER_WRITE_STALE_S = 120;
 
 export type LedgerReader = { kind: 'brain' } | { kind: 'member'; identities: readonly (readonly string[])[] } | { kind: 'none' };
 
@@ -104,7 +105,7 @@ function writeRequestId(actor: string, requestId: string): string {
 async function readStored(engine: BrainEngine, slug: string): Promise<{ record: ActionRecord; revision: string; frontmatter: Record<string, unknown> } | null> {
   const page = await withoutCallerAccess(() => engine.getPage(slug, { sourceId: ACTION_SOURCE }));
   if (!page || page.type !== AGENT_ACTION_TYPE) return null;
-  const checked = validateActionFrontmatter(page.frontmatter ?? {});
+  const checked = validateActionFrontmatter(page.frontmatter ?? {}, { read: true });
   return checked.ok ? { record: checked.record, revision: String(page.knowledge_revision ?? ''), frontmatter: page.frontmatter } : null;
 }
 
@@ -129,12 +130,12 @@ export async function scanActions(engine: BrainEngine, reader: LedgerReader, sin
     const prefix = `actions/${month.getUTCFullYear()}/${String(month.getUTCMonth() + 1).padStart(2, '0')}/`;
     let after = prefix + low;
     for (;;) {
-      const pages = await withoutCallerAccess(() => engine.listPages({ type: AGENT_ACTION_TYPE as never, slugPrefix: prefix, slugAfter: after, sort: 'slug', limit: SCAN_BATCH, sourceId: ACTION_SOURCE }));
+      const pages = await withoutCallerAccess(() => engine.listPages({ type: AGENT_ACTION_TYPE as never, slugPrefix: prefix, slugAfter: after, sort: 'slug', limit: SCAN_BATCH, sourceId: ACTION_SOURCE, omitBodies: true }));
       for (const page of pages) {
         if (page.slug.slice(prefix.length, prefix.length + 10) >= high) return { rows, partial: false, scanned };
         if (++read > LEDGER_RAW_SCAN_MAX) return { rows, partial: true, scanned };
         if (!isActionSlug(page.slug) || !readable(reader, page.frontmatter)) continue;
-        const checked = validateActionFrontmatter(page.frontmatter ?? {});
+        const checked = validateActionFrontmatter(page.frontmatter ?? {}, { read: true });
         if (!checked.ok) continue;
         const at = Date.parse(checked.record.action.at);
         if (!(at >= since.getTime() && at < until.getTime()) && !(liveHoldsAt && holdLive(checked.record, liveHoldsAt))) continue;
@@ -245,11 +246,17 @@ function replayConflict(requestId: string, slug: string): OperationError {
     'Use a new request_id for each new call; reuse one only to retry the exact same call.');
 }
 
-/** Any ledger write still publishing; a reserve waits for them, so a hold that was accepted always counts. */
-async function settleLedgerWrites(engine: BrainEngine, deadline: number): Promise<void> {
+/**
+ * Any ledger write still publishing; a reserve waits for them, so a hold that was accepted always counts. Only action
+ * pages of the source's current incarnation count, and a write whose claim expired or that has not moved for
+ * LEDGER_WRITE_STALE_S is left to recovery, so one stuck write never blocks every reserve.
+ */
+export async function settleLedgerWrites(engine: BrainEngine, deadline: number): Promise<void> {
   for (;;) {
     const pending = await engine.executeRaw<{ n: number }>(
-      "SELECT 1 AS n FROM persistence_requests WHERE source_id = $1 AND slug LIKE 'actions/%' AND state NOT IN ('committed', 'conflict', 'failed', 'cancelled') LIMIT 1", [ACTION_SOURCE]);
+      `SELECT 1 AS n FROM persistence_requests r JOIN sources s ON s.id = r.source_id AND s.incarnation = r.source_incarnation
+        WHERE r.source_id = $1 AND r.slug LIKE 'actions/____/__/%' AND r.state IN ('queued', 'deferred', 'running', 'recovering')
+          AND (r.claim_expires_at IS NULL OR r.claim_expires_at > now()) AND r.updated_at > now() - make_interval(secs => $2::int) LIMIT 1`, [ACTION_SOURCE, LEDGER_WRITE_STALE_S]);
     if (!pending.length) return;
     if (Date.now() >= deadline) throw opError('ledger_busy', 'An earlier action is still being written, so this reservation was not checked or held.', 'Retry in a few seconds with the same request_id.', { retryable: true });
     await new Promise(r => setTimeout(r, 50));
@@ -292,7 +299,9 @@ export async function logAction(ctx: OperationContext, input: LogActionInput, no
       throw opError('idempotency_conflict', `request_id ${requestId} already ${stored.record.request_id === requestId ? 'created' : 'moved'} ${replay}, so this different call was not applied.`,
         'Use a new request_id for each new call; settle a reservation with its action_id and a request_id of its own.');
     }
-    if (stored?.record.last_request?.id === requestId && stored.record.last_request.hash !== hash) throw replayConflict(requestId, replay);
+    const first = stored?.record.request_id === requestId ? stored.record.request_hash : undefined;
+    const latest = stored?.record.last_request?.id === requestId ? stored.record.last_request.hash : undefined;
+    if ((first ?? latest) !== undefined && (first ?? latest) !== hash) throw replayConflict(requestId, replay);
     if (stored) return { action_id: replay, status: stored.record.action.status, claim_basis: stored.record.claim_basis, evidence: (stored.record.evidence ?? []).map(e => ({ ref: e.ref, resolved: stored.record.claim_basis === 'evidenced' })), replayed: true };
   }
   const existing = input.action_id ? await readStored(ctx.engine, input.action_id) : null;
@@ -345,6 +354,7 @@ export async function logAction(ctx: OperationContext, input: LogActionInput, no
     claim_basis: claim,
     ...(keepHold ? { hold: prior!.hold } : {}),
     request_id: prior?.request_id ?? requestId,
+    ...(prior ? (prior.request_hash ? { request_hash: prior.request_hash } : {}) : { request_hash: hash }),
     last_request: { id: requestId, hash },
   };
   const checked = validateActionFrontmatter(fm);
@@ -387,6 +397,7 @@ export async function policyReserve(ctx: OperationContext, input: ReserveInput, 
   const remote = ctx.remote !== false;
   assertLedgerWriteGrant(ctx, remote);
   const reader = ledgerReader(remote, ctx);
+  await settleLedgerWrites(ctx.engine, Date.now() + RESERVE_WAIT_MS);
   return underReserveLock(ctx.engine, async () => {
     const actor = actorFor(remote);
     const requestId = input.request_id ?? randomUUID();
@@ -394,7 +405,7 @@ export async function policyReserve(ctx: OperationContext, input: ReserveInput, 
     const replay = await priorWrite(ctx, writeRequestId(actor, requestId));
     const stored = replay ? await readStored(ctx.engine, replay) : null;
     if (stored && stored.record.request_id === requestId) {
-      const created = stored.record.last_request?.id === requestId ? stored.record.last_request.hash : undefined;
+      const created = stored.record.request_hash ?? (stored.record.last_request?.id === requestId ? stored.record.last_request.hash : undefined);
       if (created !== undefined && created !== hash) throw replayConflict(requestId, replay!);
       const answer = await checkPolicy(ctx.engine, { verb: input.verb, amount: input.amount, merchant: input.merchant, to: input.to }, callerScopes(remote),
         { usage: usageLookup(ctx.engine, reader, now, replay!) });
@@ -419,7 +430,7 @@ export async function policyReserve(ctx: OperationContext, input: ReserveInput, 
         ...(input.counterparty ?? input.merchant ? { counterparty: input.counterparty ?? input.merchant } : {}), ...(input.harness ? { harness: input.harness } : {}), actor },
       evidence: [],
       approval: { by: answer.decision === 'allow' ? 'policy' : 'none', ...(answer.rule_id ? { rule: answer.rule_id } : {}), ...(answer.policy_revision ? { policy_revision: answer.policy_revision } : {}) },
-      claim_basis: 'estimated', hold, request_id: requestId, last_request: { id: requestId, hash },
+      claim_basis: 'estimated', hold, request_id: requestId, request_hash: hash, last_request: { id: requestId, hash },
     };
     const checked = validateActionFrontmatter(fm);
     if (!checked.ok) throw invalid(checked.field, checked.message);

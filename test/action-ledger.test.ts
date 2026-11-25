@@ -28,7 +28,7 @@ import { parsePolicyFence, renderPolicyFence, type PolicyRule } from '../src/cor
 import type { TerminalProbe } from '../src/core/policy/authority.ts';
 import { withCallerAccess } from '../src/core/search/private-visibility.ts';
 import { actionSlug, validateActionFrontmatter } from '../src/core/ledger/action.ts';
-import { HOLD_TTL_MS, MAX_SINCE_DAYS, confirmAction, ledgerReader, ledgerReport, logAction, parseSince, policyReserve, usageLookup } from '../src/core/ledger/store.ts';
+import { HOLD_TTL_MS, MAX_SINCE_DAYS, confirmAction, ledgerReader, ledgerReport, logAction, parseSince, policyReserve, settleLedgerWrites, usageLookup } from '../src/core/ledger/store.ts';
 import { ledgerTotals, renderDigest, windowStart, windowUsage, type StoredAction } from '../src/core/ledger/totals.ts';
 import { runLedger } from '../src/commands/ledger.ts';
 import { ruleFromArgs } from '../src/commands/policy.ts';
@@ -305,6 +305,32 @@ for (const kind of testBackends()) describe(`action ledger (L2, ${kind}, repo-le
     expect((await reserve).reservation).toBeTruthy();
   });
 
+  test('a reserve waits only for a live ledger write: one whose claim expired, or that stopped moving, is left to recovery', async () => {
+    const stuck = await logAction(ctxFor(engine, false), { verb: 'send', summary: 'Sent a card', estimated: true });
+    const set = (sql: string) => engine.executeRaw(`UPDATE persistence_requests SET ${sql} WHERE slug=$1`, [stuck.action_id]);
+    try {
+      await set("state='running', claim_expires_at=now() + interval '1 hour', updated_at=now()");
+      expect((await caught(() => settleLedgerWrites(engine, Date.now() + 200)) as { code: string }).code).toBe('ledger_busy');
+      await set("state='running', claim_expires_at=now() - interval '1 hour'");
+      await settleLedgerWrites(engine, Date.now() + 200);
+      await set("state='queued', claim_expires_at=NULL, updated_at=now() - interval '1 hour'");
+      await settleLedgerWrites(engine, Date.now() + 200);
+    } finally {
+      await set("state='committed'");
+    }
+  });
+
+  test('an action a newer gbrain wrote, with a field this one does not know, still counts', async () => {
+    const ctx = ctxFor(engine, false);
+    const since = new Date(Date.now() - 3600_000);
+    const a = await logAction(ctx, { verb: 'spend', summary: 'Paid a locksmith', spent: 80, currency: 'USD', estimated: true, counterparty: 'locksmith-example' });
+    await engine.executeRaw(`UPDATE pages SET frontmatter = frontmatter || '{"future_field": {"x": 1}}'::jsonb WHERE slug=$1`, [a.action_id]);
+    const report = await ledgerReport(engine, ledgerReader(false), { since, until: new Date(Date.now() + 1000), counterparty: 'locksmith-example' });
+    if (report.state !== 'complete') throw new Error('partial');
+    expect(report.totals.spent.estimated).toEqual({ USD: 80 });
+    expect(validateActionFrontmatter({ future_field: 1 }).ok).toBe(false);
+  });
+
   test('a retry with the same request_id but a changed call is refused, a reserve replay keeps its first answer, and a failed write replays its failure', async () => {
     const ctx = ctxFor(engine, false);
     const request_id = randomUUID();
@@ -323,6 +349,8 @@ for (const kind of testBackends()) describe(`action ledger (L2, ${kind}, repo-le
     await applyPolicyChange(engine, { scope: 'owner', rules: [{ id: 'spend', verb: 'spend', decision: 'ask' }], change: 'restore', probe: owner });
     const move = { verb: 'spend' as const, action_id: res.reservation!.action_id, status: 'cancelled' as const, request_id: randomUUID() };
     await logAction(ctx, move);
+    const changedAfterCancel = await caught(() => policyReserve(ctx, { ...input, amount: { amount: 30, currency: 'USD' } }));
+    expect((changedAfterCancel as { code: string }).code).toBe('idempotency_conflict');
     await engine.executeRaw("UPDATE persistence_requests SET state='failed', error_code='storage_error', error_message='disk full' WHERE id = (SELECT id FROM persistence_requests WHERE slug=$1 ORDER BY created_at DESC LIMIT 1)", [res.reservation!.action_id]);
     const failed = await caught(() => logAction(ctx, move));
     expect((failed as { code: string }).code).toBe('storage_error');

@@ -85,7 +85,7 @@ The window holds more actions you can read than one read totals (5,000), or more
 
 ### ledger_busy
 
-Another reservation was being checked, or an earlier action was still being written. Retry `policy_reserve` in a few seconds with the same `request_id`.
+Another reservation was being checked, or an earlier action was still being written. Retry `policy_reserve` in a few seconds with the same `request_id`. A write that stopped moving (its claim expired, or it has not changed for two minutes) is left to recovery and never holds up a reservation.
 
 ### ledger_confirm_required
 
