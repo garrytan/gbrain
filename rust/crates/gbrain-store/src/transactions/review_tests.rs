@@ -279,12 +279,20 @@ fn origin(host: &str) -> crate::write_origin::WriteOrigin {
 #[test]
 fn transaction_assert_lease_is_checked_again_at_commit() {
     let s = Arc::new(mu_store());
-    let a = s.acquire_lease("job-runner", &origin("a"), 60_000).unwrap().unwrap();
+    let a = s
+        .acquire_lease("job-runner", &origin("a"), 60_000)
+        .unwrap()
+        .unwrap();
     let t = s.begin_with(optimistic()).unwrap();
     t.assert_lease(&a).unwrap();
-    t.store().write(|w| w.put(b"yprotected", b"under epoch 1")).unwrap();
+    t.store()
+        .write(|w| w.put(b"yprotected", b"under epoch 1"))
+        .unwrap();
     s.release_lease(&a).unwrap();
-    let b = s.acquire_lease("job-runner", &origin("b"), 60_000).unwrap().unwrap();
+    let b = s
+        .acquire_lease("job-runner", &origin("b"), 60_000)
+        .unwrap()
+        .unwrap();
     assert!(b.epoch > a.epoch);
     assert_eq!(t.commit().unwrap_err().code, WRITE_CONFLICT);
     assert_eq!(get(&s, b"yprotected"), None);
@@ -295,10 +303,18 @@ fn transaction_assert_lease_is_checked_again_at_commit() {
     let old = b.clone();
     let takeover = std::thread::spawn(move || store.release_lease(&old));
     std::thread::sleep(Duration::from_millis(50));
-    assert!(!takeover.is_finished(), "a takeover landed inside a serialized transaction");
-    x.store().write(|w| w.put(b"yprotected", b"under epoch 2")).unwrap();
+    assert!(
+        !takeover.is_finished(),
+        "a takeover landed inside a serialized transaction"
+    );
+    x.store()
+        .write(|w| w.put(b"yprotected", b"under epoch 2"))
+        .unwrap();
     x.assert_lease(&b).unwrap();
     x.commit().unwrap();
     takeover.join().unwrap().unwrap();
-    assert_eq!(get(&s, b"yprotected").as_deref(), Some(&b"under epoch 2"[..]));
+    assert_eq!(
+        get(&s, b"yprotected").as_deref(),
+        Some(&b"under epoch 2"[..])
+    );
 }
