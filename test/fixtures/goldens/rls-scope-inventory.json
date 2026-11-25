@@ -4351,6 +4351,17 @@
         ],
         "flagOnScopes": []
       },
+      "listSlugSpellingCandidates#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listSourceIds#default": {
         "flagOffLanes": [
           "pool"
@@ -7012,6 +7023,17 @@
         "flagOnScopes": []
       },
       "readRetirementHop#none": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readRowSecurityTables#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -10185,6 +10207,7 @@
         "listSlotRows": "none",
         "listSlugAliases": "none",
         "listSlugPathCandidates": "none",
+        "listSlugSpellingCandidates": "none",
         "listSourceBindingsForMovement": "none",
         "listSourceCheckpointRecords": "none",
         "listSourceHoldRecords": "none",
@@ -10899,6 +10922,7 @@
         "readReviewAcceptedMark": "none",
         "readRevisionWriterRequest": "none",
         "readRowAttribution": "none",
+        "readRowSecurityTables": "none",
         "readRowTrustRows": "none",
         "readScopeSourceConfigs": "none",
         "readSearchStats": "none",

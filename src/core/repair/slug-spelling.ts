@@ -294,12 +294,12 @@ async function samePrintedName(db: Pick<BrainEngine, 'executeRaw'>, sourceId: st
 }
 
 /** Per source, how many pages are stored under an older spelling (the doctor check; a count, not the preview's classes). */
-export async function countSlugSpellings(engine: Pick<BrainEngine, 'executeRaw'>): Promise<{ by_source: Array<{ source_id: string; count: number }>; truncated: boolean }> {
+export async function countSlugSpellings(engine: Pick<BrainEngine, 'listSlugSpellingCandidates'>): Promise<{ by_source: Array<{ source_id: string; count: number }>; truncated: boolean }> {
   const counts = new Map<string, number>();
   let inspected = 0, truncated = false, after = 0;
   for (;;) {
-    const rows = await engine.executeRaw<{ id: number | string; source_id: string; slug: string }>(`SELECT id, source_id, slug FROM pages
-      WHERE id > $1 AND (slug <> lower(slug) OR slug ~ '[^ -~]') ORDER BY id LIMIT ${BATCH}`, [after]);
+    // The typed candidate read (engine-sql/slug-spelling-repair.ts): BATCH rows a call, after the last id.
+    const rows = await engine.listSlugSpellingCandidates(after);
     for (const row of rows) {
       if (inspected >= SLUG_SPELLING_SCAN_LIMIT) { truncated = true; break; }
       inspected++;

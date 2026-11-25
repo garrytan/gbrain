@@ -3123,6 +3123,17 @@ const PINS: Pin[] = [
       FROM pages WHERE source_id=$1`],
   },
   {
+    from: 'src/core/repair/slug-spelling-guards.ts:43 rowSecurityTables (at f9592f7a7e)',
+    case: { method: 'readRowSecurityTables', variant: 'default', run: e => e.readRowSecurityTables(['pages']) },
+    texts: ['SELECT t FROM unnest($1::text[]) AS t WHERE pg_catalog.row_security_active(t) ORDER BY t'],
+  },
+  {
+    from: 'src/core/repair/slug-spelling.ts:301 countSlugSpellings (at f9592f7a7e; LIMIT ${BATCH} rendered, BATCH 5_000)',
+    case: { method: 'listSlugSpellingCandidates', variant: 'default', run: e => e.listSlugSpellingCandidates(0) },
+    texts: [`SELECT id, source_id, slug FROM pages
+      WHERE id > $1 AND (slug <> lower(slug) OR slug ~ '[^ -~]') ORDER BY id LIMIT 5000`],
+  },
+  {
     from: 'src/core/access/federation-exposure.ts:32 remotePagesFederationExposes, privacy part on (at 0af1a6ecf0)',
     case: { method: 'readFederationExposedPages', variant: 'hidden', run: e => e.readFederationExposedPages('default', true) },
     texts: () => { const hidden = ` AND ${privacyPartSql('p')}`; return [`WITH open AS (SELECT p.id, p.slug, p.revision_principal_kind, p.revision_principal_id FROM pages p

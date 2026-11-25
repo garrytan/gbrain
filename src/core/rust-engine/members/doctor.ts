@@ -130,6 +130,9 @@ export const DOCTOR_MEMBERS = {
   listReaderCandidatePages: 'health',
   listContentBlockedReceipts: 'persistence_journal',
   listPassAdmittedReceipts: 'persistence_journal',
+  // The legacy_slug_spellings check: row security (the store has none) and the candidate page scan
+  readRowSecurityTables: 'health',
+  listSlugSpellingCandidates: 'health',
   // Doctor sync reads: the managed-sync cursor, failure and orphan statements doctor ran through executeRaw
   listManagedSyncCursorFailureRows: 'persistence_journal',
   listManagedSyncOrphanRowsets: 'persistence_journal',

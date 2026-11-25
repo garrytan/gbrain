@@ -20,8 +20,14 @@ import type { FileFinding, PageFinding, ScanRecord } from '../fence-repair/censu
 import type { PageReadScope } from '../types.ts';
 import type * as ProjectionBacklogSql from '../engine-sql/projection-backlog.ts';
 import type * as DoctorJoinSql from '../engine-sql/doctor-join.ts';
+import type * as SlugSpellingRepairSql from '../engine-sql/slug-spelling-repair.ts';
 
 export interface DoctorMembers {
+  // The legacy_slug_spellings check and gbrain repair slug-spelling (engine-sql/slug-spelling-repair.ts).
+  /** The tables of `tables` that row-level security applies to for the running role, in name order. */
+  readRowSecurityTables(tables: readonly string[]): Promise<string[]>;
+  /** Pages of every source (deleted included) whose slug has a capital or a non-printable-ASCII character, id above `afterId`, id order, 5000 a call. */
+  listSlugSpellingCandidates(afterId: number): Promise<SlugSpellingRepairSql.SlugSpellingCandidateRow[]>;
   // Doctor reads (engine-sql/doctor-reads.ts): the statements doctor checks ran through executeRaw.
 
   // Doctor reads, second set (engine-sql/doctor-derived.ts): the statements more doctor checks and their repairs ran through executeRaw.

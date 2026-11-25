@@ -275,6 +275,8 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readNotifierSources', 'readNotifierStatusRows', 'readOpCheckpointRecords', 'readOrphanedManagedSyncFailureRows',
   // Link preparation's slug reads (engine-sql/link-slug-reads.ts, link_slug_reads.rs): SELECTs and a store read only.
   'readLiveSlugAliases', 'readSourceSlugProbe',
+  // The legacy_slug_spellings check (engine-sql/slug-spelling-repair.ts, slug_spelling_repair.rs): a catalog SELECT and a page scan only.
+  'readRowSecurityTables', 'listSlugSpellingCandidates',
   // The federation warning's exposed-pages read (engine-sql/federation-exposure.ts, federation_exposure.rs): a SELECT and a store read only.
   'readFederationExposedPages',
   'readOwnedLinks', 'readOwnerHostBinding', 'readPageRevisionWriter', 'readPageSizeRows',

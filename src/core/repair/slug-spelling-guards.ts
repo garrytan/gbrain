@@ -39,8 +39,8 @@ async function rowSecurityBrainTables(db: Pick<BrainEngine, 'executeRaw'>): Prom
  * The tables of `tables` that row-level security applies to for the running role, in name order. A policy's existence does
  * not prove it shows every row (a `USING (false)` policy hides them all), so a read of such a table can come back short.
  */
-export async function rowSecurityTables(db: Pick<BrainEngine, 'executeRaw'>, tables: readonly string[]): Promise<string[]> {
-  return (await db.executeRaw<{ t: string }>('SELECT t FROM unnest($1::text[]) AS t WHERE pg_catalog.row_security_active(t) ORDER BY t', [[...tables]])).map(row => row.t);
+export async function rowSecurityTables(db: Pick<BrainEngine, 'readRowSecurityTables'>, tables: readonly string[]): Promise<string[]> {
+  return db.readRowSecurityTables(tables);
 }
 
 /**

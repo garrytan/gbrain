@@ -177,6 +177,7 @@ import * as doctorJoin from './doctor-join.ts';
 import * as doctorCheckpoints from './doctor-checkpoints.ts';
 import * as doctorTerminal from './doctor-terminal.ts';
 import * as doctorBrain from './doctor-brain.ts';
+import * as slugSpellingRepair from './slug-spelling-repair.ts';
 import * as doctorSync from './doctor-sync.ts';
 import * as doctorFactsTrust from './doctor-facts-trust.ts';
 import * as fenceCensus from './fence-census.ts';
@@ -356,6 +357,8 @@ export const STORE_MEMBERS = {
   ...doctorTerminal,
   // Doctor brain reads: the page, tag, fact, source and checkpoint statements the storage, archive, backup, git-hold and connector checks ran through executeRaw (rust/docs/store/cli-reads-doctor-brain.md).
   ...doctorBrain,
+  // The legacy_slug_spellings doctor check's reads: row security (none in the store) and the candidate page scan (rust/docs/store/slug-spelling-repair.md).
+  ...slugSpellingRepair,
   // Doctor sync reads: the managed-sync cursor, failure and orphan statements doctor ran through executeRaw (rust/docs/store/cli-reads-doctor-sync.md).
   ...doctorSync,
   // The doctor reads over sources (rust/docs/store/cli-reads-doctor-src.md).
