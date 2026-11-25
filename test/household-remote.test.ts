@@ -39,9 +39,9 @@ const tokens: Record<string, string> = {};
 const local = (op: string, params: Record<string, unknown>) => handleToolCall(engine, op, params) as Promise<any>;
 const provider = () => new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
 
-async function remote(who: string, op: string, params: Record<string, unknown>): Promise<{ isError: boolean; text: string; json: any }> {
+async function remote(who: string, op: string, params: Record<string, unknown>, extra: Record<string, unknown> = {}): Promise<{ isError: boolean; text: string; json: any }> {
   const auth = await provider().verifyAccessToken(tokens[who]!) as unknown as AuthInfo;
-  const out = await dispatchToolCall(engine, op, params, { remote: true, transport: 'http', auth, sourceId: 'default', takesHoldersAllowList: ['world'], inboundFrameBytes: 4 * 1024 * 1024 } as never);
+  const out = await dispatchToolCall(engine, op, params, { remote: true, transport: 'http', auth, sourceId: 'default', takesHoldersAllowList: ['world'], inboundFrameBytes: 4 * 1024 * 1024, ...extra } as never);
   const text = out.content.map((c: { text: string }) => c.text).join('\n');
   let json: any = {};
   try { json = JSON.parse(text); } catch { /* prose */ }
@@ -73,9 +73,10 @@ beforeAll(async () => {
   await setOwner(engine, OWNER);
   await setMemberLabelledOnly(engine, LABELLED, true, { remote: false });
   await engine.executeRaw("INSERT INTO sources (id, name, config) VALUES ('other-src', 'other-src', '{}'::jsonb) ON CONFLICT (id) DO NOTHING");
-  for (const who of [OWNER, ADULT, HELPER, LABELLED, 'unbound', 'other-source']) {
+  for (const who of [OWNER, ADULT, HELPER, LABELLED, 'unbound', 'other-source', 'owner-for-self']) {
     const minted = await mintLegacyToken(engine, { name: 'hh-' + who, scopes: ['read', 'write'], takesHolders: ['world'], ...(who === 'other-source' ? { sourceGrant: ['other-src'] } : {}) });
-    if (who !== 'unbound' && who !== 'other-source') await bindCredential(engine, { kind: 'token', id: minted.id }, { member: who });
+    if (who === 'owner-for-self') await bindCredential(engine, { kind: 'token', id: minted.id }, { member: OWNER, mayActFor: ['member:' + OWNER] });
+    else if (who !== 'unbound' && who !== 'other-source') await bindCredential(engine, { kind: 'token', id: minted.id }, { member: who });
     tokens[who] = minted.token;
   }
   __resetPrivateVisibilityCacheForTests();
@@ -438,6 +439,52 @@ describe('household privacy over remote MCP', () => {
     const owner = await remote(OWNER, 'household_add', { kind: 'supply', title: 'Vic paints', cadence: '30d', about: ['people/vic-example'], child: true });
     expect(owner.isError).toBe(false);
     expect((await engine.getPage('people/vic-example'))!.frontmatter.household_role).toBe('child');
+  });
+
+  test('a remote non-owner put_page cannot narrow a subject, with one refusal that counts no records (W1a put_page leak)', async () => {
+    for (const who of ['xena', 'yuri', 'zed']) await local('put_page', { slug: 'people/' + who + '-example', content: md({ type: 'person', title: who + '-example', household_role: 'adult' }, who + '.') });
+    const hidden = await local('household_add', { kind: 'supply', title: 'Xena snacks', cadence: '30d', about: ['people/xena-example'] });
+    const page = await engine.getPage(hidden.slug);
+    const { revision } = await local('get_page', { slug: hidden.slug });
+    await local('put_page', { slug: hidden.slug, expected_revision: revision, content: md({ title: page!.title, ...page!.frontmatter, readable_by: [HELPER] }, page!.compiled_truth) });
+    for (const title of ['Yuri snacks', 'Yuri paints']) await local('household_add', { kind: 'supply', title, cadence: '30d', about: ['people/yuri-example'] });
+    __resetPrivateVisibilityCacheForTests();
+    const strip = (out: { json: any }, who: string) => JSON.stringify({ code: out.json.code, message: out.json.message, fix: out.json.fix }).replaceAll(who + '-example', 'X');
+    const asChild = await Promise.all(['xena', 'yuri', 'zed'].map(async who => strip((await rewrite(ADULT, 'people/' + who + '-example', fm => ({ ...fm, household_role: 'child' }))), who)));
+    expect(asChild[0]).toContain('household_reclassify');
+    expect(asChild[0]).not.toMatch(/\d+ household record/);
+    expect(asChild[1]).toBe(asChild[0]);
+    expect(asChild[2]).toBe(asChild[0]);
+    const edited = await Promise.all(['xena', 'zed'].map(async who => {
+      const { revision } = await local('get_page', { slug: 'people/' + who + '-example' });
+      return strip(await remote(ADULT, 'edit_page', { slug: 'people/' + who + '-example', expected_revision: revision, edits: [{ old_text: 'household_role: adult', new_text: 'household_role: child' }] }), who);
+    }));
+    expect(edited[0]).toBe(asChild[0]);
+    expect(edited[1]).toBe(asChild[0]);
+    const unrole = await Promise.all(['xena', 'zed'].map(async who => strip((await rewrite(ADULT, 'people/' + who + '-example', ({ household_role: _, ...fm }) => fm)), who)));
+    expect(unrole[0]).toContain('household_reclassify');
+    expect(unrole[0]).not.toMatch(/\d+ household record/);
+    expect(unrole[1]).toBe(unrole[0]);
+    for (const who of ['xena', 'yuri', 'zed']) expect((await engine.getPage('people/' + who + '-example'))!.frontmatter.household_role).toBe('adult');
+    const owner = await rewrite(OWNER, 'people/zed-example', fm => ({ ...fm, household_role: 'child' }));
+    expect(owner.isError).toBe(false);
+    expect((await engine.getPage('people/zed-example'))!.frontmatter.household_role).toBe('child');
+  });
+
+  test('the owner acting for itself can make a subject a child through household_add, with nothing left half done (W1a final review)', async () => {
+    await local('put_page', { slug: 'people/oona-example', content: md({ type: 'person', title: 'oona-example', household_role: 'adult' }, 'Oona.') });
+    const snack = await local('household_add', { kind: 'supply', title: 'Oona snacks', cadence: '30d', about: ['people/oona-example'] });
+    __resetPrivateVisibilityCacheForTests();
+    const out = await remote('owner-for-self', 'household_add', { kind: 'supply', title: 'Oona paints', cadence: '30d', about: ['people/oona-example'], child: true }, { onBehalfOf: { header: 'member:' + OWNER } });
+    expect(out.isError, out.text).toBe(false);
+    expect((await engine.getPage('people/oona-example'))!.frontmatter.household_role).toBe('child');
+    expect((await engine.getPage(snack.slug))!.frontmatter).toMatchObject({ household_audience: 'adults' });
+  });
+
+  test('a trusted local import on the brain host still makes a subject a child when no records are shared (W1a final review)', async () => {
+    await local('put_page', { slug: 'people/ivy-example', content: md({ type: 'person', title: 'ivy-example', household_role: 'adult' }, 'Ivy.') });
+    await importFromContent(engine, 'people/ivy-example', md({ type: 'person', title: 'ivy-example', household_role: 'child' }, 'Ivy.'), { sourceId: 'default', noEmbed: true });
+    expect((await engine.getPage('people/ivy-example'))!.frontmatter.household_role).toBe('child');
   });
 
   test('a subject the owner changes back to adult after the pre-check is not made a child by a non-owner (merged-head review #2)', async () => {
