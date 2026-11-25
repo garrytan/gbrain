@@ -1,0 +1,4 @@
+---
+kind: fix
+---
+`gbrain setup codex` now sets `mcp_optional_startup_grace_ms = 0` at the top of `$CODEX_HOME/config.toml`. Codex 0.147 and newer otherwise wait one second for an MCP server that is not marked required and then run the whole session without it, so a Codex session sometimes had no gbrain tools when gbrain started slowly. With the key at 0, Codex 0.151 and newer wait for each MCP server in that config up to its own `startup_timeout_sec` (10 seconds unless set) and start without a server that is broken. Codex 0.147 to 0.150 have no such setting and ignore the key, except that `codex exec --strict-config` refuses a config that has it. Setup writes the key only when it is not already set, keeps any value you set yourself, and `gbrain setup codex --remove` deletes it only while it is still 0. Re-run `gbrain setup codex` to add it to an existing install; the Codex plugin and `codex mcp add` paths do not write it.

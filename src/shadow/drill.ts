@@ -31,7 +31,7 @@ import { resolveHardExcludes } from '../core/search/source-boost.ts';
 import type { SnapshotStatus, SnapshotStoreOptions } from '../core/rust-engine/store-snapshot.ts';
 import type { StoreSnapshotManifest, StoreVerifyReport } from '../core/rust-engine/store.ts';
 import { backupRecordPath, drillsDir, DRILL_METHOD, DRILL_VERSION, pendingPath } from './drill-status.ts';
-import { dirIdentity } from './eval-gates.ts';
+import { pinDir, type DirPin } from './eval-gates.ts';
 import { isEnglishStopword } from './english-stopwords.ts';
 import { readEpoch } from './evidence-epoch.ts';
 import { readSeedRecord } from './seed.ts';
@@ -359,9 +359,11 @@ export async function runBackupDrill(dir: string, deps: DrillDeps = {}): Promise
   // The shadow directory this drill started in (taken once admission has found its files) and its drills directory. A
   // drill never creates the shadow root: when `stop --delete` removed it (or a new one took its place) while the drill ran,
   // nothing is published and the drill is `shadow_gone`, the same rule the ledger and usage writers follow.
-  let rootId: string | null = null;
-  let drillsId: string | null = null;
-  const shadowLive = (): boolean => rootId !== null && dirIdentity(dir) === rootId && drillsId !== null && dirIdentity(drillsDir(dir)) === drillsId;
+  // Both are held open (see `pinDir`) until the drill returns, so a directory deleted and recreated at the same path is told apart.
+  let rootPin: DirPin | null = null;
+  let drillsPin: DirPin | null = null;
+  const shadowLive = (): boolean => rootPin !== null && rootPin.live() && drillsPin !== null && drillsPin.live();
+  const releasePins = (): void => { rootPin?.close(); drillsPin?.close(); };
   let published = false;
   const finish = (reason: DrillReason | null, persist: boolean): DrillRecord => {
     const gone = persist && !shadowLive();
@@ -409,14 +411,22 @@ export async function runBackupDrill(dir: string, deps: DrillDeps = {}): Promise
   rec.addon_sha256 = (deps.addonSha256 ?? addonFileSha256)(load.addon);
   const epochAddon = epoch.inputs.rust_addon_sha256;
   if (rec.addon_sha256 === null || epochAddon === null || epochAddon === 'unreadable' || rec.addon_sha256 !== epochAddon) return finish('addon_mismatch', false);
-  rootId = dirIdentity(dir);
-  try { mkdirSync(drillsDir(dir), { mode: 0o700 }); } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return finish('shadow_gone', false);
-    if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+  // The holds and the lock are taken together: a failure on the way (a full disk, a read-only drills directory) releases the
+  // holds already taken, and once the lock is taken the `finally` below releases both.
+  let release: (() => void) | null = null;
+  try {
+    rootPin = pinDir(dir);
+    try { mkdirSync(drillsDir(dir), { mode: 0o700 }); } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') { releasePins(); return finish('shadow_gone', false); }
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+    }
+    drillsPin = pinDir(drillsDir(dir));
+    release = takeLock(dir, now());
+  } catch (e) {
+    releasePins();
+    throw e;
   }
-  drillsId = dirIdentity(drillsDir(dir));
-  const release = takeLock(dir, now());
-  if (!release) return finish('drill_running', false);
+  if (!release) { releasePins(); return finish('drill_running', false); }
   // The lock is held through the whole drill, the write of its result and the removal of its pending marker, on every path:
   // an older drill that is slow to publish must not be overtaken by a newer one and then overwrite its result.
   try {
@@ -517,6 +527,7 @@ export async function runBackupDrill(dir: string, deps: DrillDeps = {}): Promise
     return result;
   } finally {
     release();
+    releasePins();
   }
 }
 

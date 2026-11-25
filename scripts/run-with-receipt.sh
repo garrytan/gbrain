@@ -12,6 +12,8 @@
 #
 # <lane> names the identity lane (unit, slow, tier1, ...); <tag> must be unique
 # per invocation inside that lane. Test files are the *.test.ts arguments.
+# GBRAIN_TEST_RECEIPT_ARM sets the receipt's arm, so matrix cells that run the
+# same lane and file (one per OpenClaw version) stay separate identities.
 # Without GBRAIN_TEST_RECEIPT_DIR the command runs unchanged. Exit code: the
 # command's.
 
@@ -32,6 +34,8 @@ shift 4
 
 cd "$(dirname "$0")/.."
 GBRAIN_TEST_RECEIPT_LANE="$lane"
+arm="${GBRAIN_TEST_RECEIPT_ARM:-}"
+unset GBRAIN_TEST_RECEIPT_ARM
 . scripts/lib/test-env.sh
 receipts_init "$lane" || exit 2
 
@@ -53,7 +57,7 @@ if [ "${#files[@]}" -eq 0 ]; then
   exit 2
 fi
 
-receipt_begin primary "$tag" "" "" "" "${files[@]}"
+receipt_begin primary "$tag" "" "" "$arm" "${files[@]}"
 rc=0
 bun $bun_flag test ${RECEIPT_ARGS[@]+"${RECEIPT_ARGS[@]}"} "$@" || rc=$?  # "$@" carries --timeout (refused above otherwise)
 receipt_end "$rc"
