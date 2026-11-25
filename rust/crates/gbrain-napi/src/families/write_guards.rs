@@ -202,4 +202,17 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.set_page_type(&source_id, &slug, &page_type))
     }
+
+    /// `listRevivalPages(slug, sourceId)`: `[{ id, source_id }]` of the tombstones a restore revives.
+    #[napi]
+    pub fn list_revival_pages<'env>(
+        &self,
+        env: &'env Env,
+        slug: String,
+        source_id: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_revival_pages(&slug, source_id.as_deref())
+        })
+    }
 }

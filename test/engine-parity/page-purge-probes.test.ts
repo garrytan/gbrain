@@ -145,10 +145,12 @@ describe('engine parity: the store probes of a page purge receipt', () => {
       'transaction', 'countPurgeProbe', 'setPurgeProbeTimeout'],
     timeout: 120_000,
   }, async (engine, backend) => {
-    await seed(engine, backend);
+    const { pageId, keeperId } = await seed(engine, backend);
     const stores = ['pages', 'facts', 'take_proposals', 'open_loops', 'core_edit_notices', 'page_aliases', 'slug_aliases', 'retrieval_event_pages', 'retrieval_event_links',
       'retrieval_feedback', 'retrieval_weights', 'eval_candidates.retrieved_slugs', 'context_volunteer_events', 'mention_gazetteer_entries', 'files', 'write_gate_holds'] as const;
-    const probe = (store: typeof stores[number], sourceId: string, slug: string): PurgeStoreProbe => ({ kind: 'slug_key', store, sourceId, slug });
+    // A hold follows its page id (master #10200): the probe is told the id the slug has, as the purge verifier does.
+    const ids: Record<string, number> = { [SLUG]: pageId, 'notes/keeper': keeperId };
+    const probe = (store: typeof stores[number], sourceId: string, slug: string): PurgeStoreProbe => ({ kind: 'slug_key', store, sourceId, slug, ...(sourceId === SRC && ids[slug] !== undefined ? { pageId: ids[slug] } : {}) });
     const answers: Record<string, Record<string, number | string>> = {};
     for (const store of stores) {
       answers[store] = {

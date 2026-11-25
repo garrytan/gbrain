@@ -96,6 +96,15 @@ const HAS_VECTORS_SQL: Readonly<Record<EmbeddingStore, string>> = {
   takes: 'SELECT EXISTS (SELECT 1 FROM takes WHERE embedding IS NOT NULL) AS present',
 };
 
+// chunk-visibility-ok: image vectors live on image pages, which are never segmented (chooseBodyStorage)
+const HAS_CHUNK_IMAGE_VECTORS_SQL = 'SELECT EXISTS (SELECT 1 FROM content_chunks WHERE embedding_image IS NOT NULL) AS present';
+
+/** Whether any chunk holds an image vector (`embedding_image`), the one column the cross-modal image arm reads. */
+export async function hasChunkImageVectors(raw: EngineRawRead): Promise<boolean> {
+  const [row] = await raw<{ present: boolean | string }>(HAS_CHUNK_IMAGE_VECTORS_SQL);
+  return row?.present === true || row?.present === 't';
+}
+
 /** Whether any row of `store` holds a vector. */
 export async function hasStoredVectors(raw: EngineRawRead, store: EmbeddingStore): Promise<boolean> {
   const sql = HAS_VECTORS_SQL[store];

@@ -543,7 +543,7 @@ export async function verifyPagePurge(engine: BrainEngine, input: { sourceId: st
     else if (result.count) stores.push({ store, status: 'incomplete', remaining: result.count, removed: n });
     else stores.push({ store, status: n ? 'deleted' : 'not_present', removed: n });
   };
-  const bySlug = (store: PurgeSlugKeyStore) => keyed(store, { kind: 'slug_key', store, sourceId: src, slug });
+  const bySlug = (store: PurgeSlugKeyStore) => keyed(store, { kind: 'slug_key', store, sourceId: src, slug, pageId: context?.pageId ?? null });
   await bySlug('pages');
   if (context) for (const store of ['content_chunks', 'page_versions', 'takes', 'timeline_entries'] as const) await keyed(store, { kind: 'page_rows', store, pageId: context.pageId });
   for (const store of ['facts', 'take_proposals', 'open_loops', 'core_edit_notices', 'page_aliases', 'slug_aliases', 'retrieval_event_pages', 'retrieval_event_links',

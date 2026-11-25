@@ -206,9 +206,21 @@ export async function applyGazetteerEntryChanges(raw: MentionRaw, sourceId: stri
   }
 }
 
-/** Mark pages due for the reconcile: every page of `sourceIds`, or the pages in `pageIds`. */
-export async function resetMentionRevisions(raw: MentionRaw, by: { sourceIds: readonly string[] } | { pageIds: readonly number[] }): Promise<void> {
-  if ('sourceIds' in by) await raw.executeRaw('UPDATE page_mention_state SET mention_revision = NULL WHERE source_id = ANY($1::text[])', [by.sourceIds]);
+/**
+ * What `resetMentionRevisions` marks due: every page of `sourceIds`, the pages in `pageIds`, or `pageIds` plus every page of
+ * `sourceIds` after page id `afterPageId` (the tail a deadline-stopped scan did not read).
+ */
+export type MentionResetBy = { sourceIds: readonly string[] } | { pageIds: readonly number[] }
+  | { pageIds: readonly number[]; sourceIds: readonly string[]; afterPageId: number };
+
+/** Mark pages due for the reconcile (see `MentionResetBy`). */
+export async function resetMentionRevisions(raw: MentionRaw, by: MentionResetBy): Promise<void> {
+  if ('afterPageId' in by) {
+    await raw.executeRaw(
+      `UPDATE page_mention_state SET mention_revision = NULL
+          WHERE page_id = ANY($1::int[]) OR ($3::int IS NOT NULL AND source_id = ANY($2::text[]) AND page_id > $3::int)`,
+      [by.pageIds, by.sourceIds, by.afterPageId]);
+  } else if ('sourceIds' in by) await raw.executeRaw('UPDATE page_mention_state SET mention_revision = NULL WHERE source_id = ANY($1::text[])', [by.sourceIds]);
   else await raw.executeRaw('UPDATE page_mention_state SET mention_revision = NULL WHERE page_id = ANY($1::int[])', [by.pageIds]);
 }
 

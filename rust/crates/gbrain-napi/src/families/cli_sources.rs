@@ -242,4 +242,28 @@ impl Brain {
             s.insert_source(&id, &name, local_path.as_deref(), &config)
         })
     }
+
+    /// `readSourcesNotReadable(readable, facts, policy)`: whether an unscoped remote read over
+    /// `readable` reads nothing while another live source holds a page; a `null` policy reads
+    /// every page.
+    #[napi]
+    pub fn read_sources_not_readable<'env>(
+        &self,
+        env: &'env Env,
+        readable: Vec<String>,
+        facts: bool,
+        policy: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let policy = policy
+                .map(|v| {
+                    required::<gbrain_store::facts::PrivacyPolicy>(
+                        v,
+                        "readSourcesNotReadable policy",
+                    )
+                })
+                .transpose()?;
+            s.read_sources_not_readable(&readable, facts, policy.as_ref())
+        })
+    }
 }

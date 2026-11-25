@@ -1,5 +1,6 @@
 //! Source-resolution reads: `listLocalPathSources`, `listSourceRoutingRows`,
-//! `countDefaultSourceSplit` and `countSourcePages` (SQL in `src/core/engine-sql/sources.ts`).
+//! `countDefaultSourceSplit`, `countSourcePages` and `readSourcesNotReadable` (SQL in
+//! `src/core/engine-sql/sources.ts`).
 //! Each reads one snapshot. `insertSource` is the CLI's plain source insert.
 //! `listSourcePathPages` and `readRenameIdentityRows` are the page reads of a git sync: the live
 //! pages a full sync reconciles, and the stored side a rename's identity check compares.
@@ -7,6 +8,7 @@
 
 use crate::cli_reads::pg_text::fm_text;
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
+use crate::facts::{OwnerOnlyCache, PrivacyPolicy};
 use crate::kv::{KvRead, scan_prefix};
 use crate::pages::PageRecord;
 use crate::sources::{
@@ -16,6 +18,9 @@ use crate::{Store, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
+
+/// The frontmatter key that marks a quarantined page (`QUARANTINE_KEY`).
+const QUARANTINE_KEY: &str = "quarantine";
 
 /// The source a plain-directory sync reads (`PlainSyncSourceRow`). `last_commit` is the one
 /// `advance_source_commit` stored.
@@ -84,6 +89,49 @@ pub(super) fn scan_live_pages(
         },
     )?;
     failure.map_or(Ok(()), Err)
+}
+
+/// Whether the source holds a live page with no `quarantine` frontmatter key that `policy`
+/// (when given) does not hide.
+fn any_visible_page(
+    read: &dyn KvRead,
+    source_id: &str,
+    policy: Option<&PrivacyPolicy>,
+    owner_only: &mut OwnerOnlyCache,
+) -> Result<bool> {
+    let mut found = false;
+    let mut failure: Option<StoreError> = None;
+    scan_prefix(
+        read,
+        &keys::text(keys::PAGE, &[source_id, ""]),
+        false,
+        &mut |_, v| {
+            let page = match serde_json::from_slice::<PageRecord>(v) {
+                Ok(page) => page,
+                Err(e) => {
+                    failure = Some(e.into());
+                    return false;
+                }
+            };
+            if page.deleted_at_us.is_some() || page.frontmatter.contains_key(QUARANTINE_KEY) {
+                return true;
+            }
+            match policy.map_or(Ok(false), |policy| {
+                owner_only.page_hidden(read, &page, policy)
+            }) {
+                Ok(true) => true,
+                Ok(false) => {
+                    found = true;
+                    false
+                }
+                Err(e) => {
+                    failure = Some(e);
+                    false
+                }
+            }
+        },
+    )?;
+    failure.map_or(Ok(found), Err)
 }
 
 fn default_has_live_pages(read: &dyn KvRead) -> Result<bool> {
@@ -439,6 +487,53 @@ impl Store {
             },
         )?;
         failure.map_or(Ok(n), Err)
+    }
+
+    /// `readSourcesNotReadable(readable, { facts, excludePrivate })`: whether an unscoped remote
+    /// read over `readable` reads nothing while other sources hold pages. True when no live,
+    /// unquarantined page of `readable` passes `policy` (with `facts`, and no active world fact
+    /// of `readable` exists) and such a page lives in a source outside `readable` that is not
+    /// archived. A `None` policy judges every page visible.
+    pub fn read_sources_not_readable(
+        &self,
+        readable: &[String],
+        facts: bool,
+        policy: Option<&PrivacyPolicy>,
+    ) -> Result<bool> {
+        let read = self.read()?;
+        let mut owner_only = OwnerOnlyCache::default();
+        for source_id in readable {
+            if source_id.contains('\0') {
+                continue;
+            }
+            if any_visible_page(&*read, source_id, policy, &mut owner_only)? {
+                return Ok(false);
+            }
+        }
+        if facts {
+            let now = self.env.now_micros();
+            for source_id in readable {
+                if source_id.contains('\0') {
+                    continue;
+                }
+                let rows = crate::facts::source_rows(&*read, source_id)?;
+                if rows
+                    .iter()
+                    .any(|f| f.visibility == "world" && f.active(now))
+                {
+                    return Ok(false);
+                }
+            }
+        }
+        for source in all_sources(&*read)? {
+            if source.archived || readable.contains(&source.id) {
+                continue;
+            }
+            if any_visible_page(&*read, &source.id, policy, &mut owner_only)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// `insertSource(row)`: creates a source with this name, path and config. Like the SQL

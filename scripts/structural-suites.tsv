@@ -476,7 +476,7 @@ test/sync-failures.test.ts	Bug 9 — doctor surfaces sync failures	2	doctor-sour
 test/sync-failures.test.ts	Bug 9 — sync.ts CLI flag wiring	6	bun-file,doctor-source-helper,source-surface-helper
 test/sync-flag-table-6712.test.ts	(file-level)	5	readFileSync
 test/sync-include-hidden.test.ts	sync.ts delta path threads includeHidden (#4027 merge guard)	1	source-surface-helper
-test/sync-legacy-slug-adoption-6727.test.ts	(file-level)	8	readFileSync
+test/sync-legacy-slug-adoption-6727.test.ts	(file-level)	9	readFileSync
 test/sync.test.ts	buildSyncManifest	9	source-surface-helper
 test/sync.test.ts	isSyncable	8	source-surface-helper
 test/sync.test.ts	resolveSlugByPathOrSourcePath (CJK wave v0.32.7, codex F4)	3	source-surface-helper

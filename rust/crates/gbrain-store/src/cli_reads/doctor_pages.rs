@@ -164,7 +164,7 @@ impl Store {
 
     /// `listScraperJunkCandidates(limit)`: live pages, most recently updated first (`limit` of them; `None` is every
     /// page, in id order), with the title, the first 2048 characters of the body (NULL for a segmented page), the first
-    /// 1024 of the timeline and the frontmatter.
+    /// 1024 of the timeline, the frontmatter and whether the page is segmented.
     pub fn list_scraper_junk_candidates(&self, limit: Option<i64>) -> Result<Vec<Value>> {
         let read = self.read()?;
         let mut pages = live_pages(&*read)?;
@@ -191,6 +191,7 @@ impl Store {
                     "body_head": p.compiled_truth.as_deref().map(|t| left(t, 2048)),
                     "tl_head": timeline_head(&p, 1024),
                     "frontmatter": jsonb_value(&Value::Object(p.frontmatter.clone())),
+                    "segmented": crate::chunks::segmented(&p),
                 })
             })
             .collect())

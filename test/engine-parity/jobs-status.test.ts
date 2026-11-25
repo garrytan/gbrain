@@ -204,6 +204,73 @@ describe('engine parity: minion status reads', () => {
       return rows.map(r => ({ queue: r.queue, depth: r.depth }));
     });
 
+  parityTest('readLastFinishedJobAt reads the latest finished_at of a completed job of one name, in UTC ISO seconds',
+    { methods: ['admitJob', 'claimNextJob', 'completeJob', 'failJob', 'getJob', 'readLastFinishedJobAt'] }, async (engine) => {
+      const name = 'autopilot-global-maintenance';
+      const empty = await engine.readLastFinishedJobAt(name);
+      await finished(engine, name, 'failed');
+      await finished(engine, 'other-job', 'completed');
+      const noneCompleted = await engine.readLastFinishedJobAt(name);
+      await finished(engine, name, 'completed');
+      const last = await finished(engine, name, 'completed');
+      const at = await engine.readLastFinishedJobAt(name);
+      const finishedAt = (await engine.getJob(last))?.finished_at;
+      const seconds = finishedAt == null ? null : new Date(finishedAt as string | Date).toISOString().slice(0, 19) + 'Z';
+      return { empty, noneCompleted, shape: typeof at === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(at), latest: at === seconds };
+    });
+
+  parityTest('listRecentSourceCycleFailures counts whole-cycle failures of autopilot-cycle jobs by source, leaving out failed phases, no source id and other jobs',
+    { methods: ['admitJob', 'claimNextJob', 'completeJob', 'failJob', 'getJob', 'listRecentSourceCycleFailures'] }, async (engine) => {
+      const cycle = (source: unknown) => ({ data: { source_id: source } } as Partial<JobInsertValues>);
+      const a1 = await active(engine, 'autopilot-cycle', cycle('a'));
+      await engine.failJob(a1, `st:${a1}`, 'boom', 'dead');
+      const a2 = await active(engine, 'autopilot-cycle', cycle('a'));
+      await engine.failJob(a2, `st:${a2}`, 'boom', 'failed');
+      const b = await active(engine, 'autopilot-cycle', cycle('b'));
+      await engine.failJob(b, `st:${b}`, 'boom', 'dead');
+      const phase = await active(engine, 'autopilot-cycle', cycle('c'));
+      await engine.failJob(phase, `st:${phase}`, 'phase failed', 'failed', undefined, { job_outcome: 'phase_failed' });
+      const other = await active(engine, 'autopilot-cycle', cycle('c'));
+      await engine.failJob(other, `st:${other}`, 'boom', 'dead', undefined, { job_outcome: 'blocked_by_failures' });
+      for (const data of [{}, { source_id: null }]) {
+        const id = await active(engine, 'autopilot-cycle', { data });
+        await engine.failJob(id, `st:${id}`, 'boom', 'dead');
+      }
+      const work = await active(engine, 'work', cycle('d'));
+      await engine.failJob(work, `st:${work}`, 'boom', 'dead');
+      await finished(engine, 'autopilot-cycle', 'completed', cycle('f'));
+      await add(engine, 'autopilot-cycle', cycle('e'));
+      const past = '2000-01-01T00:00:00.000Z';
+      const view = (rows: Array<{ source_id: string; fail_count: number; last_failed_at: Date }>) => rows.map(r => ({ source_id: r.source_id, fail_count: r.fail_count, dated: r.last_failed_at instanceof Date }));
+      const lastOfA = (await engine.listRecentSourceCycleFailures({ cutoff: past, sourceId: 'a' }))[0]!.last_failed_at;
+      return {
+        all: view(await engine.listRecentSourceCycleFailures({ cutoff: past })),
+        onlyB: view(await engine.listRecentSourceCycleFailures({ cutoff: past, sourceId: 'b' })),
+        phaseOnly: view(await engine.listRecentSourceCycleFailures({ cutoff: past, sourceId: 'd' })),
+        none: await engine.listRecentSourceCycleFailures({ cutoff: FAR }),
+        lastIsLatestFinish: lastOfA.getTime() === time((await engine.getJob(a2))?.finished_at),
+      };
+    });
+
+  parityTest('listRecentSourceCycleFailures names a source by its jsonb text (objects and arrays with Postgres spacing, numbers, booleans), and an empty source filter is no filter',
+    { methods: ['admitJob', 'claimNextJob', 'failJob', 'listRecentSourceCycleFailures'] }, async (engine) => {
+      const ids: unknown[] = [{ x: 1 }, { a: [1, { b: 'c' }] }, [1, 2], ['a'], 5, true, 'plain'];
+      for (const source of ids) {
+        const id = await active(engine, 'autopilot-cycle', { data: { source_id: source } });
+        await engine.failJob(id, `st:${id}`, 'boom', 'dead');
+      }
+      const past = '2000-01-01T00:00:00.000Z';
+      const names = (rows: Array<{ source_id: string; fail_count: number }>) => rows.map(r => [r.source_id, r.fail_count]);
+      const all = await engine.listRecentSourceCycleFailures({ cutoff: past });
+      return {
+        all: names(all),
+        emptyFilter: names(await engine.listRecentSourceCycleFailures({ cutoff: past, sourceId: '' })),
+        nullFilter: names(await engine.listRecentSourceCycleFailures({ cutoff: past, sourceId: null })),
+        object: names(await engine.listRecentSourceCycleFailures({ cutoff: past, sourceId: '{"x": 1}' })),
+        compactMiss: names(await engine.listRecentSourceCycleFailures({ cutoff: past, sourceId: '{"x":1}' })),
+      };
+    });
+
   parityTest('readLastCompletedJobAt reads the freshest updated_at of a completed job, and nothing else moves it',
     { methods: ['admitJob', 'claimNextJob', 'completeJob', 'failJob', 'getJob', 'readLastCompletedJobAt'] }, async (engine) => {
       const empty = await engine.readLastCompletedJobAt();

@@ -369,10 +369,9 @@ const nextAttempt = (reason: string, resetsAt?: string): string | null => reason
 /** Records the lane's verdict on the hold, stamped with this lane's version (#6865) and whether the named page has no file. */
 async function recordState(engine: BrainEngine, cand: Pick<Candidate, 'src' | 'path' | 'hold'>, state: Omit<ContentHoldRepairState, 'at'>): Promise<void> {
   if (!cand.hold) return;
-  const [named] = state.named ? await engine.executeRaw<{ source_path: string | null }>('SELECT source_path FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL LIMIT 1',
-    [cand.src.id, state.named]).catch(() => []) : [];
+  const named = state.named ? await engine.getPage(state.named, { sourceId: cand.src.id }) : null;
   await recordContentHoldRepair(engine, { sourceId: cand.src.id, incarnation: cand.src.incarnation, path: cand.path, upstreamVersion: cand.hold.upstream_version,
-    state: { ...state, ...(named && named.source_path == null ? { named_db_only: true as const } : {}), lane_version: CONTENT_REPAIR_LANE_VERSION, at: new Date().toISOString() } }).catch(() => false);
+    state: { ...state, ...(named && named.source_path == null ? { named_db_only: true as const } : {}), lane_version: CONTENT_REPAIR_LANE_VERSION, at: new Date().toISOString() } });
 }
 
 function item(entry: ApprovedConflict, index: number, hash: string | null, last: boolean): ConflictItem {
@@ -819,8 +818,7 @@ async function reportConflicts(ctx: OperationContext, scope: RepairScope, result
     const unattempted = result.affected - result.applied - result.skipped - result.failed.length;
     if (unattempted > 0 && result.stopped) remaining[result.stopped.reason] = (remaining[result.stopped.reason] ?? 0) + unattempted;
   } else if (result.affected) remaining.pending_repair = result.affected;
-  const [oldest] = await ctx.engine.executeRaw<{ held_at: string | null }>(`SELECT min(completed_keys->0->>'held_at') AS held_at FROM op_checkpoints
-    WHERE op='sync-hold' AND completed_keys->0->>'code'='frontmatter_slug_conflict' AND completed_keys->0->>'source_id'=ANY($1::text[])`, [scope.source_ids]).catch(() => [{ held_at: null }]);
+  const oldest = { held_at: await ctx.engine.readOldestSyncHoldAt('frontmatter_slug_conflict', scope.source_ids) };
   const verification: SlugConflictsVerification = { candidates: result.affected + Object.entries(result.residuals).filter(([reason]) => !skips.has(reason)).reduce((a, [, b]) => a + b, 0),
     repaired_by_tier: repairedByTier, held_by_reason: Object.fromEntries(Object.entries(remaining).filter(([reason]) => reason !== 'pending_repair')), oldest_hold_at: oldest?.held_at ?? null,
     llm_judgments: judgments, llm_usd: typeof result.cost.llm_usd === 'number' ? result.cost.llm_usd : 0 };

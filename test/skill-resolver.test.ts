@@ -32,6 +32,8 @@ import { appendDailyLog, appendDailyLogSync, DAILY_LOG_DAY_CAP_BYTES, dailyLogFi
 import { EXCLUDE_MAX, STAT_CHECK_SLICE } from '../src/core/skills/resolver/resolve.ts';
 import { RACY_MTIME_MS } from '../src/core/skills/resolver/build.ts';
 import { TOP_GATE_DEFAULT } from '../src/core/skills/resolver/limits.ts';
+import { DEFAULT_SESSION_TOKEN_BUDGET } from '../src/core/skills/resolver/config.ts';
+import { CODES } from '../src/core/error-registry.ts';
 
 const scratch: string[] = [];
 afterAll(() => { for (const d of scratch) rmSync(d, { recursive: true, force: true }); });
@@ -349,7 +351,8 @@ describe('sessions', () => {
     for (let t = 1; t <= 50; t++) {
       const s = strong.indexOf(t);
       const message = s >= 0 ? `can you ${targets[s]!.name} this` : `${pool[t % 12]} ${pool[(t + 5) % 12]}`;
-      const r = await resolveSkills({ message, session_id: 'fifty', top_gate: 0 }, { home });
+      // pregate-literal: DEFAULT_SESSION_TOKEN_BUDGET=2000 this test pins the old budget on purpose to check pacing under a tight budget
+      const r = await resolveSkills({ message, session_id: 'fifty', top_gate: 0 }, { home, sessionTokenBudget: 2000 });
       perTurn.push({ turn: t, n: r.output.suggestions.length, tokens: r.output.block_tokens });
       expect(await r.commit()).toBe(true);
     }
@@ -366,9 +369,23 @@ describe('sessions', () => {
     await jsonCatalog(home, 'c', BASIC);
     const key = sessionKey('on', undefined, 'k');
     await commitSession(home, key, { tokens: 1000, suggested: [], resuggested: [], reset: false });
-    expect((await resolveSkills({ message: 'reports', session_id: 'k' }, { home })).output.ranker.k).toBe(3);
+    expect((await resolveSkills({ message: 'reports', session_id: 'k' }, { home, sessionTokenBudget: 2000 })).output.ranker.k).toBe(3);
     await commitSession(home, key, { tokens: 600, suggested: [], resuggested: [], reset: false });
-    expect((await resolveSkills({ message: 'reports', session_id: 'k' }, { home })).output.ranker.k).toBe(1);
+    expect((await resolveSkills({ message: 'reports', session_id: 'k' }, { home, sessionTokenBudget: 2000 })).output.ranker.k).toBe(1);
+  });
+
+  test('with no budget set, a session gets 8,000 tokens: 2,000 spent leaves k at 5 and the block shown', async () => {
+    const home = tmp();
+    await jsonCatalog(home, 'c', BASIC);
+    await commitSession(home, sessionKey('on', undefined, 'default-budget'), { tokens: 2000, suggested: [], resuggested: [], reset: false });
+    const r = await resolveSkills({ message: 'deploy', session_id: 'default-budget' }, { home });
+    expect([r.output.budget_exhausted, r.output.ranker.k]).toEqual([false, 5]);
+    expect(r.output.block).not.toBe('');
+    expect(sessionStatus('default-budget', { home }).budget).toBe(8000);
+  });
+
+  test('the config error names the current default budget', () => {
+    expect(CODES.skill_resolver_config_invalid.suggestion).toContain(`default budget ${DEFAULT_SESSION_TOKEN_BUDGET}`);
   });
 
   test('budget exhaustion empties the block until a compaction resets the session', async () => {
@@ -376,9 +393,9 @@ describe('sessions', () => {
     await jsonCatalog(home, 'c', BASIC);
     const key = sessionKey('on', 'claude-code', 'b');
     await commitSession(home, key, { tokens: 2000, suggested: [], resuggested: [], reset: false });
-    const spent = await resolveSkills({ message: 'deploy', session_id: 'b', harness: 'claude-code' }, { home });
+    const spent = await resolveSkills({ message: 'deploy', session_id: 'b', harness: 'claude-code' }, { home, sessionTokenBudget: 2000 });
     expect([spent.output.budget_exhausted, spent.output.block]).toEqual([true, '']);
-    const reset = await resolveSkills({ message: 'deploy', session_id: 'b', harness: 'claude-code', reset_session: true }, { home });
+    const reset = await resolveSkills({ message: 'deploy', session_id: 'b', harness: 'claude-code', reset_session: true }, { home, sessionTokenBudget: 2000 });
     expect(reset.output.budget_exhausted).toBe(false);
     expect(reset.output.block).not.toBe('');
     await reset.commit();
@@ -390,10 +407,10 @@ describe('sessions', () => {
     await jsonCatalog(home, 'c', BASIC);
     await commitSession(home, sessionKey('on', 'claude-code', 'a'), { tokens: 2000, suggested: [], resuggested: [], reset: false });
     for (const message of ['ok thanks', 'zzqxv']) {
-      const r = await resolveSkills({ message, session_id: 'a', harness: 'claude-code' }, { home });
+      const r = await resolveSkills({ message, session_id: 'a', harness: 'claude-code' }, { home, sessionTokenBudget: 2000 });
       expect([r.output.no_skill, r.output.budget_exhausted, r.output.block_reason]).toEqual([true, true, message === 'zzqxv' ? 'no_match' : 'ack']);
     }
-    expect((await resolveSkills({ message: 'ok thanks', session_id: 'fresh', harness: 'claude-code' }, { home })).output.budget_exhausted).toBe(false);
+    expect((await resolveSkills({ message: 'ok thanks', session_id: 'fresh', harness: 'claude-code' }, { home, sessionTokenBudget: 2000 })).output.budget_exhausted).toBe(false);
   });
 
   test('block_reason says why a block is empty: deduped, paced, budget_exhausted, filtered, shadow', async () => {
@@ -405,12 +422,12 @@ describe('sessions', () => {
     const again = await resolveSkills({ message: 'deploy', session_id: 'd' }, { home, sessionTokenBudget: 50_000 });
     expect([again.output.block, again.output.block_reason]).toEqual(['', 'deduped']);
     await commitSession(home, sessionKey('on', undefined, 'p'), { tokens: 1000, suggested: [], resuggested: [], reset: false });
-    const paced = await resolveSkills({ message: 'team status', session_id: 'p' }, { home });
+    const paced = await resolveSkills({ message: 'team status', session_id: 'p' }, { home, sessionTokenBudget: 2000 });
     expect([paced.output.block, paced.output.block_reason]).toEqual(['', 'paced']);
     await commitSession(home, sessionKey('on', undefined, 'p'), { tokens: 1000, suggested: [], resuggested: [], reset: false });
-    expect((await resolveSkills({ message: 'team status', session_id: 'p' }, { home })).output.block_reason).toBe('budget_exhausted');
-    expect((await resolveSkills({ message: 'deploy', exclude: ['gbrain:deploy'], min_match_strength: 'name' }, { home })).output.block_reason).toBe('filtered');
-    const shadow = await resolveSkills({ message: 'deploy', shadow: true }, { home });
+    expect((await resolveSkills({ message: 'team status', session_id: 'p' }, { home, sessionTokenBudget: 2000 })).output.block_reason).toBe('budget_exhausted');
+    expect((await resolveSkills({ message: 'deploy', exclude: ['gbrain:deploy'], min_match_strength: 'name' }, { home, sessionTokenBudget: 2000 })).output.block_reason).toBe('filtered');
+    const shadow = await resolveSkills({ message: 'deploy', shadow: true }, { home, sessionTokenBudget: 2000 });
     expect([shadow.output.block_reason, shadow.shadowOutput?.block_reason]).toEqual(['shadow', null]);
   });
 
@@ -419,7 +436,7 @@ describe('sessions', () => {
     await jsonCatalog(home, 'c', BASIC);
     const key = sessionKey('on', 'claude-code', 'n');
     await commitSession(home, key, { tokens: 2000, suggested: [], resuggested: [], reset: false });
-    const r = await resolveSkills({ message: 'run the deploy skill and write the reports', session_id: 'n', harness: 'claude-code' }, { home });
+    const r = await resolveSkills({ message: 'run the deploy skill and write the reports', session_id: 'n', harness: 'claude-code' }, { home, sessionTokenBudget: 2000 });
     expect(r.output.budget_exhausted).toBe(true);
     expect(r.output.suggestions.map(s => [s.id, s.match_strength])).toEqual([['gbrain:deploy', 'named']]);
     expect(r.output.block).toContain('id: "gbrain:deploy"');

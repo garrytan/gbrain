@@ -176,6 +176,15 @@ export async function insertTopologyChange(exec: SqlExecutor, row: TopologyChang
   return inserted!;
 }
 
+/**
+ * The digest a topology change with request id `requestId` recorded for source `sourceId`, whichever principal wrote
+ * it, or null: the `sources add` replay read (source-default-search.ts acceptedChoice).
+ */
+export async function readTopologyChangeDigest(exec: LegacyUnscopedRead, requestId: string, sourceId: string): Promise<string | null> {
+  const [prior] = await exec.executeRaw<{ digest: string }>('SELECT digest FROM persistence_topology_changes WHERE request_id = $1::uuid AND source_id = $2', [requestId, sourceId]);
+  return prior ? prior.digest : null;
+}
+
 /** The first of `requestIds` a topology change of local writer `principalId` already used (a lifecycle id), as `[{ request_id }]`, or []. */
 export function findTopologyChanges(exec: LegacyUnscopedRead, principalId: string, requestIds: string[]): Promise<Array<{ request_id: string }>> {
   return exec.executeRaw<{ request_id: string }>('SELECT request_id FROM persistence_topology_changes WHERE principal_id=$1::uuid AND request_id=ANY($2::uuid[]) LIMIT 1',
