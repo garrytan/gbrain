@@ -88,7 +88,15 @@ jobs:
           # can repair it.
           assets="$(gh release view "v$version" --repo "$GITHUB_REPOSITORY" \
             --json assets --jq '[.assets[].name] | sort | join(",")' 2>/dev/null || true)"
-          if [ "$assets" = "gbrain-darwin-arm64,gbrain-engine-rust-darwin-arm64.node,gbrain-engine-rust-linux-x64-glibc.node,gbrain-engine-rust.sha256.json,gbrain-linux-x64,gbrain-skill-resolver.mjs,gbrain-skill-resolver.mjs.sha256" ]; then
+          # A subset check: later jobs may attach more assets (gbrain-eval-gates.pin.json,
+          # .github/workflows/eval-gates-pin.yml), and an extra asset must not read as incomplete.
+          expected="gbrain-darwin-arm64,gbrain-engine-rust-darwin-arm64.node,gbrain-engine-rust-linux-x64-glibc.node,gbrain-engine-rust.sha256.json,gbrain-linux-x64,gbrain-skill-resolver.mjs,gbrain-skill-resolver.mjs.sha256"
+          complete=true
+          IFS=, read -ra names <<< "$expected"
+          for name in "${names[@]}"; do
+            case ",$assets," in *",$name,"*) ;; *) complete=false ;; esac
+          done
+          if [ "$complete" = "true" ]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "Release v$version already published with all assets — nothing to do."
           else

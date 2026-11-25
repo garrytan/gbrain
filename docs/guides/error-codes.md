@@ -5815,6 +5815,48 @@ More: [docs/guides/repair.md#setup-harness-unsupported](../../docs/guides/repair
 |---|---|---|---|---|---|---|
 | gbrain setup --serves several would turn a brain that serves one person shared while it holds pages no rule restricts, and nobody chose what happens to them, so setup wrote nothing. | Each member key setup mints reads every page no rule or readable_by restricts, so the owner's journal, DMs, chat, mail and conversation archive would reach every member; only the admin can decide that. | Run setup again with --labelled-only to keep that history private (each member reads only pages labelled for them) or with --open-history to let the members read it. Run: gbrain doctor --only open_shared_pages --json | agent | `repeat the read that failed` | 1 | no |
 
+### setup_history_decision_expired
+
+<a id="setup_history_decision_expired"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The history import decision gbrain setup offered expired before it was answered, so nothing was imported. | A decision imports exactly the sessions its preview showed; an old preview no longer describes what is on disk, so it is never applied late. | Run gbrain setup again to preview the import and get a new decision. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/conversation-archive.md#setup-history-import](../../docs/guides/conversation-archive.md#setup-history-import)
+
+### setup_history_decision_unavailable
+
+<a id="setup_history_decision_unavailable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| No pending history import decision with that id can be used on this brain, so nothing was imported. | A decision belongs to one install, one preview and one archive source; a newer preview replaces it, a no removes it, and a changed archive source refuses it. | Run gbrain setup again to preview the import and get a new decision. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/conversation-archive.md#setup-history-import](../../docs/guides/conversation-archive.md#setup-history-import)
+
+### setup_history_failed
+
+<a id="setup_history_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The history import gbrain setup ran wrote nothing: every reader or day it tried failed. | The import reads the previewed session files and writes through the conversation archive; a reader or write error is reported per harness and day. | Run gbrain transcripts archive status for each reader's error, then run gbrain setup again. Run: gbrain transcripts archive status --json | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/conversation-archive.md#setup-history-import](../../docs/guides/conversation-archive.md#setup-history-import)
+
+### setup_history_ineligible
+
+<a id="setup_history_ineligible"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The setup history import runs only on a new personal install, and this brain is not one, so nothing was read or written. | An upgrade, a restored or imported brain, a pinned project and a team, shared or member-bound brain never get the import: it is offered once, to the owner of a brain setup just created, and never changes what other people can read. | Import history yourself with gbrain transcripts archive backfill --from YYYY-MM-DD, or gbrain transcripts ingest <export>. | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `existing_brain`, `pages_present`, `shared_brain`, `audience_unproven`, `archive_off`, `pinned_source`, `team_brain`, `member_bound`.
+
+More: [docs/guides/conversation-archive.md#setup-history-import](../../docs/guides/conversation-archive.md#setup-history-import)
+
 ### setup_hosted_connection
 
 <a id="setup_hosted_connection"></a>
@@ -5852,6 +5894,16 @@ More: [docs/guides/repair.md#setup-owner-conflict](../../docs/guides/repair.md#s
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | gbrain setup could not read whether the existing brain serves several people, so it wrote nothing. | Setup writes an unbound connection only on a brain it knows serves one person; a brain it cannot read might serve several. | Run gbrain access serves --json to see why the brain cannot be read, fix that, then run setup again. Run: gbrain access serves --json | agent | `repeat the read that failed` | 1 | no |
+
+### shadow_drill_failed
+
+<a id="shadow_drill_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| `gbrain engine shadow drill` did not run, or its restore drill of the shadow store did not pass; `reason` says why, and a drill that copied leaves its record, with the counts, under `<shadow dir>/drills/`. | The drill copies the shadow's Rust store through its owner, checks the copy without opening it normally and opens it once; swap criterion 10 needs a passed drill in the current evidence epoch. It refuses before copying when the shadow has no seed (`no_seed`), no evidence epoch (`no_epoch`), no store (`no_store`) or no installed addon (`addon_unavailable`), when the disk has less than twice the store file plus 2 GiB free (`disk_space`), when another drill runs, or a lock it cannot read or a takeover file a crash left is in the way (`drill_running`), when an earlier copy has not ended (`cleanup_pending`), or when the addon this process loads is not the one the evidence epoch started on (`addon_mismatch`). Every refusal before the copy (`no_seed`, `no_epoch`, `no_store`, `addon_unavailable`, `disk_space`, `addon_mismatch`, `drill_running`, `cleanup_pending`, `cleanup_failed` (an earlier copy's scratch space or the old `backup.json` could not be removed; the pending marker stays)) is printed but writes no record under `drills/`, so status and the swap keep reading the earlier record (`backup_drill_missing` when there is none); only the record `--json` prints for a refused drill carries the digest that was checked. A copy the owner stopped is `snapshot_busy`, `snapshot_cancelled`, `snapshot_disk_pressure` or `snapshot_age_budget`; a copy that differs from the owner's manifest is `copy_mismatch`, a damaged one `copy_integrity`, an unreadable one `copy_unreadable`, one that will not open `open_failed`; a copy with pages is never a pass unless a keyword search ran on it, and once the copy's keyword index is complete that search must get a hit: when no stored word got one (stop words and words the tokenizer drops are skipped, search-excluded pages are not used) the reason is `no_probe_term`, and on a copy whose index is not complete a miss is allowed but a query must still have run; scratch space that could not be removed is `cleanup_failed`; a shadow directory that was deleted or replaced while the drill ran is `shadow_gone` and nothing is written for it. | Read the reason, fix it (free disk space, wait for the earlier copy, seed the shadow) and run `gbrain engine shadow drill` again; the shadow keeps following while a drill runs. Run: gbrain engine shadow status --json | agent | `repeat the read that failed` | 1 | yes |
+
+Reasons: `no_seed`, `no_epoch`, `no_store`, `addon_unavailable`, `disk_space`, `drill_running`, `cleanup_pending`, `snapshot_busy`, `snapshot_cancelled`, `snapshot_disk_pressure`, `snapshot_age_budget`, `snapshot_failed`, `copy_mismatch`, `copy_integrity`, `copy_unreadable`, `open_failed`, `cleanup_failed`, `drill_error`, `addon_mismatch`, `no_probe_term`, `shadow_gone`.
 
 ### shared_skills_unavailable
 
