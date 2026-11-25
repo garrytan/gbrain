@@ -11,6 +11,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, AtomicU32, AtomicU64, Ordering};
 
+// The store modes and `both_modes!`, shared with `common` (see the note in that file).
+#[path = "../common/mode.rs"]
+#[allow(clippy::duplicate_mod)]
+pub mod mode;
+pub use mode::StoreMode;
+#[allow(unused_imports)]
+pub(crate) use mode::both_modes;
+
 static NEXT: AtomicU32 = AtomicU32::new(0);
 
 /// 2027-01-15T08:00:00Z.
@@ -66,6 +74,16 @@ impl Drop for Brain {
 }
 
 pub fn brain(name: &str) -> Brain {
+    let concurrent = std::env::var("GBRAIN_RUST_CONCURRENT_WRITES").is_ok_and(|v| v == "1");
+    brain_with(name, concurrent)
+}
+
+/// A brain in an explicit mode on the same injected clock, whatever the environment says.
+pub fn brain_in(name: &str, mode: StoreMode) -> Brain {
+    brain_with(name, mode.optimistic())
+}
+
+fn brain_with(name: &str, concurrent: bool) -> Brain {
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!(
         "mem-{name}-{}-{}",
         std::process::id(),
@@ -77,7 +95,6 @@ pub fn brain(name: &str) -> Brain {
         now: AtomicI64::new(T0),
         ids: AtomicU64::new(1),
     });
-    let concurrent = std::env::var("GBRAIN_RUST_CONCURRENT_WRITES").is_ok_and(|v| v == "1");
     #[cfg(feature = "fjall")]
     if std::env::var("GBRAIN_RUST_BAKEOFF_STORE").is_ok_and(|v| v == "fjall") {
         use gbrain_store::fjall_kv::FjallKv;
