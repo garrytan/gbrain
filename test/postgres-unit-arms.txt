@@ -48,6 +48,7 @@ test/access-unborn-head-gbra706.test.ts
 test/access-ungranted-member-writes.test.ts
 test/access-who-can-read-owner-only.test.ts
 test/access-writes.test.ts
+test/action-ledger.test.ts
 test/activation-unbound-rooted-6449.test.ts
 test/adopt-local-edit.test.ts
 test/agent-policy.test.ts
