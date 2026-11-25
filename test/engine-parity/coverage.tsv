@@ -95,6 +95,7 @@ listSourceRoutingRows	pages	no	0	no	-	-	-
 countDefaultSourceSplit	pages	no	0	no	-	-	-
 readSourceRow	pages	no	0	no	-	-	-
 markSourceSynced	pages	no	0	no	-	-	-
+listActiveSourceConfigs	pages	no	0	no	-	-	-
 listPrefixSampledPages	pages	yes	1	no	yes	yes	serves
 listCorpusSample	pages	yes	1	no	yes	yes	serves
 getPageSealState	pages	yes	1	no	yes	yes	serves

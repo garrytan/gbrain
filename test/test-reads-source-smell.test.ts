@@ -54,7 +54,6 @@ const GRANDFATHERED: Record<string, number> = {
   'agent-register.test.ts': 2,
   'ai/silent-drop-regression.test.ts': 1,
   'apply-migrations.test.ts': 2,
-  'archived-source-scoping.test.ts': 1,
   'autopilot-cycle-failure-classification.test.ts': 1,
   'autopilot-fanout-wiring.test.ts': 1,
   'autopilot-pause-marker.test.ts': 1,

@@ -102,6 +102,7 @@ export const RUST_ENGINE_MEMBERS = {
   countDefaultSourceSplit: 'sources',
   readSourceRow: 'sources',
   listSourceRecords: 'sources',
+  listActiveSourceConfigs: 'sources',
   readSourceIncarnation: 'sources',
   hasCompanyBrainReceipt: 'sources',
   readGuestSourceRow: 'sources',
