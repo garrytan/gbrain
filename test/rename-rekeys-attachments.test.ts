@@ -83,6 +83,9 @@ for (const backend of testBackends()) {
       commit(s.root, 'move and edit');
       const split = await s.sync();
       expect(split.identityDowngrades?.map(e => [e.from, e.to])).toEqual([['notes/plan.md', 'notes/roadmap.md']]);
+      // An attachment uploaded to the provisional page the split created, before the carry.
+      const provisional = await pageId(s.id, 'notes/roadmap');
+      await attach(s.id, 'notes/roadmap', provisional, 'sketch.png');
       const { runRepairCommand } = await import('../src/commands/repair.ts');
       const run = async (args: string[]) => {
         let printed = '';
@@ -95,8 +98,23 @@ for (const backend of testBackends()) {
       const preview = await run(['rename-identity', '--source', s.id, '--slug', 'notes/roadmap']);
       expect(await run(['rename-identity', '--source', s.id, '--slug', 'notes/roadmap', '--apply', '--expect', preview.preview_hash, '--yes'])).toMatchObject({ applied: 1 });
       expect(await pageId(s.id, 'notes/roadmap')).toBe(old);
-      expect(await fileSlugs(s.id)).toEqual([['diagram.png', 'notes/roadmap']]);
+      expect(await fileSlugs(s.id)).toEqual([['diagram.png', 'notes/roadmap'], ['sketch.png', 'notes/roadmap']]);
+      // Both now belong to the surviving page, so a later rename or a purge of the retired row treats them as its own.
+      const owners = await engine.executeRaw<{ filename: string; page_id: number }>('SELECT filename, page_id FROM files WHERE source_id=$1 ORDER BY filename', [s.id]);
+      expect(owners.map(o => [o.filename, Number(o.page_id)])).toEqual([['diagram.png', old], ['sketch.png', old]]);
     }), 240_000);
+
+    test('a fallback rename (the stale row retired onto the page that materialized) gives the stale row\'s attachments to the surviving page', () => withEnv(env, async () => {
+      const id = `f${randomUUID().replace(/-/g, '').slice(0, 14)}`;
+      await engine.executeRaw("INSERT INTO sources(id,name,config) VALUES($1,$1,'{}')", [id]);
+      for (const slug of ['notes/stale', 'notes/fresh']) await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: 'x', timeline: '' }, { sourceId: id });
+      const stale = await pageId(id, 'notes/stale'), fresh = await pageId(id, 'notes/fresh');
+      await attach(id, 'notes/stale', stale, 'old.png');
+      const { carryRenameIdentity } = await import('../src/commands/sync/renames.ts');
+      await carryRenameIdentity(engine, id, 'notes/stale', 'notes/fresh');
+      const rows = await engine.executeRaw<{ page_slug: string; page_id: number }>('SELECT page_slug, page_id FROM files WHERE source_id=$1', [id]);
+      expect(rows.map(r => [r.page_slug, Number(r.page_id)])).toEqual([['notes/fresh', fresh]]);
+    }), 60_000);
 
     test('the backfill moves an attachment a past rename left behind, by its page id, and leaves one that names no page', () => withEnv(env, async () => {
       const id = `b${randomUUID().replace(/-/g, '').slice(0, 14)}`;
@@ -104,6 +122,11 @@ for (const backend of testBackends()) {
       await engine.putPage('notes/now', { type: 'note', title: 'Now', compiled_truth: 'x', timeline: '' }, { sourceId: id });
       await attach(id, 'notes/then', await pageId(id, 'notes/now'), 'stale.png');
       await attach(id, 'notes/then', null, 'orphan.png');
+      // A row bound to a retired (soft-deleted) row keeps the name it is listed under; the retired row is not its owner now.
+      await engine.putPage('notes/gone', { type: 'note', title: 'Gone', compiled_truth: 'x', timeline: '' }, { sourceId: id });
+      const gone = await pageId(id, 'notes/gone');
+      await engine.executeRaw("UPDATE pages SET slug = 'notes/gone~purged-1', deleted_at = now() WHERE id = $1", [gone]);
+      await attach(id, 'notes/now', gone, 'kept.png');
       const backfill = MIGRATIONS.find(m => m.name === 'files_follow_page_slug');
       expect(backfill).toBeDefined();
       await engine.transaction(async tx => {
@@ -111,7 +134,7 @@ for (const backend of testBackends()) {
         if (sql) await tx.executeRaw(sql);
         if (backfill!.handler) await backfill!.handler(tx);
       });
-      expect(await fileSlugs(id)).toEqual([['orphan.png', 'notes/then'], ['stale.png', 'notes/now']]);
+      expect(await fileSlugs(id)).toEqual([['kept.png', 'notes/now'], ['orphan.png', 'notes/then'], ['stale.png', 'notes/now']]);
     }), 60_000);
   });
 }
