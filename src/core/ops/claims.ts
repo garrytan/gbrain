@@ -3,10 +3,11 @@
  * (type: facts with claims: allowed) the caller can read. Matching is deterministic (core/claims/check.ts). Pages are
  * read the way get_page reads them for this caller: source scope, private pages, the read floor and the privacy fences,
  * so a line the caller cannot read never supports or contradicts anything and its claim reads not_found.
- * A page counts only while its precedence is approved or record (eligibility/precedence.ts): a guest or external page
- * marked claims: allowed is ignored.
+ * A page counts only while its precedence is approved or record (eligibility/precedence.ts) and its trust tier is
+ * neither agent_written nor external_untrusted: a guest, external or agent-written page marked claims: allowed is ignored.
  */
 import { allowedLines, checkClaim, extractClaims, type AllowedLine } from '../claims/check.ts';
+import { SELF_APPROVAL_TIERS } from '../eligibility/precedence.ts';
 import type { Operation } from './contract.ts';
 import { assertExplicitSourceLive, federatedSearchScope, parseSourceIdParam, readPolicyOpts } from './context.ts';
 import { invalidParam } from './op-fix.ts';
@@ -43,6 +44,7 @@ const check_claims: Operation = {
       if ((page.frontmatter as Record<string, unknown> | null)?.claims !== 'allowed' || page.body_storage === 'segmented') continue;
       const readable = await pageTrustForRead(ctx, page, undefined);
       if (!readable || (readable.trust.precedence !== 'approved' && readable.trust.precedence !== 'record')) continue;
+      if ((SELF_APPROVAL_TIERS as readonly string[]).includes(readable.trust.trust_tier)) continue;
       const visible = ctx.remote === false ? page : await stripPrivacyFencesForRemoteReader(ctx, page);
       read++;
       lines.push(...allowedLines({ slug: page.slug, source_id: page.source_id, body: visible.compiled_truth ?? '' }));
@@ -53,7 +55,9 @@ const check_claims: Operation = {
       claims,
       summary: { supported: count('supported'), conflicts: count('conflicts'), not_found: count('not_found') },
       allowed_pages: read,
-      note: 'not_found means no allowed claim covers the sentence, not that it is false.',
+      ...(pages.length >= MAX_ALLOWED_PAGES ? { pages_truncated: true } : {}),
+      note: 'not_found means no allowed claim covers the sentence, not that it is false.'
+        + (pages.length >= MAX_ALLOWED_PAGES ? ` Only the ${MAX_ALLOWED_PAGES} newest type: facts pages were read, so an older allowed-claims page may be missing.` : ''),
     };
   },
   scope: 'read',

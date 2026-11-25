@@ -222,7 +222,8 @@ something said in a chat. Lean search rows show it only when it is not
 `curated`.
 
 - A page of `type: rule`, or a `type: facts` page with `claims: allowed` in its
-  front matter, is `approved`.
+  front matter, is `approved`, unless an agent or an outside sender wrote it
+  (`agent_written` or `external_untrusted`): a page cannot approve itself.
 - The conversation archive, meeting and Google sources are `chat`; a guest
   source is `external`; everything else is `curated`.
 - `gbrain sources set-precedence <id> <class>` sets a source's class, and
@@ -235,7 +236,8 @@ Before an agent states a number, `gbrain claims check "<draft>"` (MCP tool
 `check_claims`) checks each number in the draft against the dated lines
 (`2026-03-01: ARR is $2.1M`) on your allowed-claims facts pages. Each claim
 comes back `supported` with the line it matched, `conflicts` when a line says
-another number, or `not_found`. New brains mark `me/facts` and
+another number, or `not_found`. A sentence with several numbers is supported
+only when every number is. New brains mark `me/facts` and
 `company/facts` as allowed-claims pages; on an older brain, add
 `claims: allowed` to a facts page's front matter. Both work the same on a
 brain with no git repository.

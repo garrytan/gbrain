@@ -19,6 +19,7 @@ import { COMPANY_PAGES, PERSONAL_PAGES, renderLayoutBlock, renderStarterPage } f
 import { searchCtx, seedPage } from './helpers/keyword-paging-fixture.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { serializeMarkdown } from '../src/core/markdown.ts';
+import { withTrustPromotion } from '../src/core/persistence/context.ts';
 
 let engine: PGLiteEngine;
 const TERM = 'zebrafinch';
@@ -36,7 +37,7 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-  for (const [id, config] of [['ledger-src', { precedence: 'record' }], ['meet', { kind: 'meetings' }], ['conversations', {}]] as const) {
+  for (const [id, config] of [['ledger-src', { precedence: 'record' }], ['meet', { kind: 'meetings' }], ['conversations', {}], ['guest-src', { guest: true }]] as const) {
     await engine.executeRaw('INSERT INTO sources (id, name, config) VALUES ($1, $1, $2::text::jsonb) ON CONFLICT (id) DO NOTHING', [id, JSON.stringify(config)]);
   }
   await seedPage(engine, 'notes/plain', `A plain note about the ${TERM} project.`);
@@ -51,6 +52,9 @@ beforeAll(async () => {
   await seedPage(engine, 'notes/facts-draft', `Unapproved ${TERM} facts.\n\n- 2026-03-01: 40 employees.`, { type: 'facts' });
   await seedPage(engine, 'me/private-facts', `Private ${TERM} facts.\n\n- 2026-04-01: 7 board seats.`, { type: 'facts', frontmatter: { claims: 'allowed', visibility: 'private' } });
   await seedIn('ledger-src', 'ledgers/q1', `The ${TERM} ledger for Q1.`);
+  await seedIn('guest-src', 'guest/facts', `Guest ${TERM} facts.\n\n- 2026-01-01: 5 offices.`, { claims: 'allowed' }, 'facts');
+  await seedPage(engine, 'agent/facts', `Agent ${TERM} facts.\n\n- 2026-01-01: 9 warehouses.`, { type: 'facts', frontmatter: { claims: 'allowed' } });
+  await engine.transaction(tx => withTrustPromotion(tx, 'user_confirmed', () => tx.executeRaw("UPDATE pages SET trust_tier = 'agent_written' WHERE slug = 'agent/facts'")));
   await seedIn('meet', 'meetings/standup', `Standup notes on the ${TERM} launch.`);
   await seedIn('conversations', 'chats/2026-01-01', `A chat about ${TERM} pricing.`);
   await engine.insertFact({ fact: `The ${TERM} launch slipped a week.`, kind: 'fact', entity_slug: 'companies/acme-example', source: 'test', visibility: 'world' }, { source_id: 'meet' });
@@ -71,6 +75,12 @@ describe('precedence labels', () => {
     expect((await getPage('ledgers/q1', 'ledger-src')).precedence).toBe('record');
     expect((await getPage('meetings/standup', 'meet')).precedence).toBe('chat');
     expect((await getPage('chats/2026-01-01', 'conversations')).precedence).toBe('chat');
+  });
+
+  test('a guest source is external, and an agent-written page cannot approve itself with claims: allowed', async () => {
+    expect((await getPage('guest/facts', 'guest-src')).precedence).toBe('external');
+    expect((await getPage('agent/facts', 'default')).trust_tier).toBe('agent_written');
+    expect((await getPage('agent/facts', 'default')).precedence).toBe('curated');
   });
 
   test('precedence never raises trust: a record source page keeps the trust tier a curated page has', async () => {
@@ -128,6 +138,28 @@ describe('check_claims', () => {
     const remote = await check('There are 7 board seats.', true);
     expect(remote.claims[0]!.status).toBe('not_found');
     expect(remote.claims[0]!.cited).toBeUndefined();
+  });
+
+  test('a sentence with several numbers is supported only when every number is, and conflicts when any is contradicted', async () => {
+    const out = await check('We have 20 paying customers and ARR of $5M. We have 20 paying customers and ARR of $1.2M. We have 20 paying customers and 400 parking spaces.');
+    expect(out.claims.map(c => c.status)).toEqual(['conflicts', 'supported', 'not_found']);
+    expect(out.claims[0]!.conflicting[0]).toMatchObject({ slug: 'company/facts', date: '2026-02-01' });
+  });
+
+  test('allowed-claims pages in a guest source or written by an agent never support a claim', async () => {
+    const out = await check('We have 5 offices. We run 9 warehouses.');
+    expect(out.claims.map(c => c.status)).toEqual(['not_found', 'not_found']);
+  });
+
+  test('check_claims refuses empty and over-long text; set-precedence refuses a bad class and an unknown source', async () => {
+    await expect(check('   ')).rejects.toThrow();
+    await expect(check('9'.repeat(20_001))).rejects.toThrow();
+    const exit = spyOn(process, 'exit').mockImplementation(((code?: number) => { throw new Error(`exit ${code}`); }) as never);
+    const err = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await expect(runSetPrecedence(engine, ['meet', 'gospel'])).rejects.toThrow('exit 2');
+      await expect(runSetPrecedence(engine, ['no-such-source', 'doc'])).rejects.toThrow('exit 4');
+    } finally { exit.mockRestore(); err.mockRestore(); }
   });
 
   test('gbrain claims check prints one line per claim and the summary', async () => {

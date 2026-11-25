@@ -9,6 +9,9 @@
  *              says a different number (the newest supporting line is cited);
  *   conflicts  a line about the same thing (it shares content words) says a different number, or a newer one does;
  *   not_found  no allowed line covers it. That means "no allowed claim covers this", never "this is false".
+ *
+ * A sentence with several numbers is checked one clause per number: supported only when every number is, conflicts
+ * when any number is contradicted, otherwise not_found.
  */
 
 export interface AllowedLine { slug: string; source_id: string; line: number; date: string; text: string }
@@ -70,8 +73,35 @@ export function allowedLines(page: { slug: string; source_id: string; body: stri
 }
 
 export function checkClaim(claim: string, lines: readonly AllowedLine[]): ClaimCheck {
-  const claimNums = numbers(claim);
-  const claimWords = words(claim);
+  const parts = numberClauses(claim);
+  if (parts.length < 2) return checkPart(claim, claim, lines);
+  const results = parts.map(part => checkPart(claim, part, lines));
+  const conflicting = results.filter(r => r.status === 'conflicts');
+  if (conflicting.length) {
+    return { claim, status: 'conflicts', conflicting: conflicting.flatMap(r => r.conflicting ?? []).slice(0, MAX_CONFLICTS) };
+  }
+  return results.every(r => r.status === 'supported') ? { claim, status: 'supported', cited: results[0]!.cited } : { claim, status: 'not_found' };
+}
+
+/**
+ * A sentence with two or more numbers, split so each number is checked with the words of its own clause; a clause with
+ * no number joins the next one. One number: the whole sentence.
+ */
+function numberClauses(claim: string): string[] {
+  if (numbers(claim).length < 2) return [claim];
+  const out: string[] = [];
+  let pending = '';
+  for (const clause of claim.split(/[,;]\s*|\s+(?:and|but|while|whereas)\s+/i)) {
+    pending = pending ? `${pending} ${clause}` : clause;
+    if (numbers(clause).length) { out.push(pending); pending = ''; }
+  }
+  if (pending && out.length) out[out.length - 1] += ` ${pending}`;
+  return out;
+}
+
+function checkPart(claim: string, part: string, lines: readonly AllowedLine[]): ClaimCheck {
+  const claimNums = numbers(part);
+  const claimWords = words(part);
   const need = Math.min(2, claimWords.size);
   const scored = lines.map(l => {
     const body = l.text.replace(/\bsource:.*$/i, '');
