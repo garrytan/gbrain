@@ -9,6 +9,7 @@
  * workflow is read as text.
  */
 import { describe, expect, test } from 'bun:test';
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildPin, githubSource, planPins, type PinSource, type ReleaseInfo } from '../scripts/eval-gates-pin.ts';
@@ -196,8 +197,25 @@ describe('the workflow', () => {
   });
 
   test('release.yml\'s completeness check is a subset check, so the extra pin asset is allowed', () => {
-    expect(release).toContain('gbrain-darwin-arm64,gbrain-linux-x64,gbrain-skill-resolver.mjs,gbrain-skill-resolver.mjs.sha256');
+    expect(release).toContain('expected="gbrain-darwin-arm64,gbrain-engine-rust-darwin-arm64.node,gbrain-engine-rust-linux-x64-glibc.node,gbrain-engine-rust.sha256.json,gbrain-linux-x64,gbrain-skill-resolver.mjs,gbrain-skill-resolver.mjs.sha256"');
     expect(release).toContain('complete=true');
     expect(release).not.toContain('[ "$assets" = "gbrain-darwin-arm64');
+  });
+
+  // The completeness block of the version job, run for real: an extra asset is fine, any one missing name is not.
+  const block = ((): string => {
+    const start = release.indexOf('          expected="gbrain-darwin-arm64');
+    const end = release.indexOf('          done\n', start) + '          done\n'.length;
+    return release.slice(start, end);
+  })();
+  const complete = (assets: string): string => execFileSync('bash', ['-c', `assets="$1"\n${block}\necho "$complete"`, 'bash', assets], { encoding: 'utf8' }).trim();
+  const expected = /expected="([^"]+)"/.exec(block)?.[1]?.split(',') ?? [];
+
+  test('the subset check passes with every expected asset plus an extra one, and fails when any one name is missing', () => {
+    expect(expected).toHaveLength(7);
+    expect(complete(expected.join(','))).toBe('true');
+    expect(complete([...expected, 'gbrain-eval-gates.pin.json'].sort().join(','))).toBe('true');
+    for (const name of expected) expect(complete(expected.filter(n => n !== name).join(','))).toBe('false');
+    expect(complete('')).toBe('false');
   });
 });
