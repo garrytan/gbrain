@@ -5,6 +5,7 @@
 import type { BrainEngine } from '../../engine.ts';
 import { importFromContent, importFromFile, importImageFile } from '../../import-file.ts';
 import { importManagedFiles } from '../../persistence/import-mutations.ts';
+import { snapshotStatus, snapshotStore, type SnapshotStoreOptions } from '../store-snapshot.ts';
 import type { OwnerWholeOperation } from './server.ts';
 import type { WholeOperationName } from './whole-op.ts';
 
@@ -16,5 +17,7 @@ export function ownerWholeOperations(): Readonly<Record<WholeOperationName, Owne
     importFromFile: (engine, ...args) => importFromFile(engine, ...(args as Args<typeof importFromFile>)),
     importImageFile: (engine, ...args) => importImageFile(engine, ...(args as Args<typeof importImageFile>)),
     importManagedFiles: (engine, ...args) => importManagedFiles(engine, ...(args as Args<typeof importManagedFiles>)),
+    snapshotStore: (engine, target, options) => snapshotStore(engine, String(target), options as SnapshotStoreOptions),
+    snapshotStatus: (_engine, opId) => Promise.resolve(snapshotStatus(String(opId))),
   };
 }
