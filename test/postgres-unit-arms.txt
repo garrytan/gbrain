@@ -1181,6 +1181,7 @@ test/repair-unwithdrawn-facts-8819.test.ts
 test/repair-visibility-propose-gst2670.test.ts
 test/request-tools-combined-gbra449.test.ts
 test/requester-scope.test.ts
+test/rescope-target-old-schema.test.ts
 test/restated-private-cross-entity-2891.test.ts
 test/retrieval-coverage-notices.test.ts
 test/rust-derived-generations.test.ts
