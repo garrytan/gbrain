@@ -975,4 +975,18 @@ mod tests {
         assert_eq!(slug("loose.png").as_deref(), Some("notes/moved"));
         assert_eq!(slug("foreign.png").as_deref(), Some("notes/move-me"));
     }
+
+    #[test]
+    fn a_slug_only_row_left_by_an_earlier_rename_stays_when_the_name_is_reused() {
+        let store = store();
+        put(&store, "notes/reused");
+        assert_eq!(store.update_slug("notes/reused", "notes/first-owner", None).unwrap(), 1);
+        let mut spec = file("left.png", None);
+        spec.page_slug = Some("notes/reused".into());
+        store.upsert_file(&spec).unwrap();
+        put(&store, "notes/reused");
+        assert_eq!(store.update_slug("notes/reused", "notes/second-owner", None).unwrap(), 1);
+        let slug = read_file(&*store.read().unwrap(), "left.png").unwrap().unwrap().page_slug;
+        assert_eq!(slug.as_deref(), Some("notes/reused"));
+    }
 }

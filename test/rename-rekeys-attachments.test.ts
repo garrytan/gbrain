@@ -154,6 +154,38 @@ for (const backend of testBackends()) {
       expect(await fileSlugs(id)).toEqual([['shared.png', 'notes/stale'], ['solo.png', 'notes/solo-renamed']]);
     }), 60_000);
 
+    test('a slug-only attachment an earlier rename left behind does not move to an unrelated page that reused the name', () => withEnv(env, async () => {
+      const id = `r${randomUUID().replace(/-/g, '').slice(0, 14)}`;
+      await engine.executeRaw("INSERT INTO sources(id,name,config) VALUES($1,$1,'{}')", [id]);
+      await engine.putPage('notes/old', { type: 'note', title: 'A', compiled_truth: 'x', timeline: '' }, { sourceId: id });
+      expect(await engine.updateSlug('notes/old', 'notes/b', { sourceId: id })).toBe(1);
+      // Left under the old name by a rename before this fix (the history now records old -> b).
+      await attach(id, 'notes/old', null, 'left.png');
+      await engine.putPage('notes/old', { type: 'note', title: 'C', compiled_truth: 'y', timeline: '' }, { sourceId: id });
+      expect(await engine.updateSlug('notes/old', 'notes/d', { sourceId: id })).toBe(1);
+      expect(await fileSlugs(id)).toEqual([['left.png', 'notes/old']]);
+    }), 60_000);
+
+    test('re-uploading a CLI attachment onto a page that reused its old name names that page and its slug together', () => withEnv(env, async () => {
+      const storageDir = mkdtempSync(join(tmpdir(), 'gbrain-rename-files-storage-'));
+      mkdirSync(join(home, '.gbrain'), { recursive: true });
+      writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ engine: backend, storage: { backend: 'local', bucket: 'b', localPath: storageDir } }));
+      const upload = join(home, 'reuse-card.txt');
+      const { runFiles } = await import('../src/commands/files.ts');
+      const quiet = async (args: string[]) => { const log = console.log; console.log = () => {}; try { await runFiles(engine, args); } finally { console.log = log; } };
+      await engine.putPage('notes/reuse-old', { type: 'note', title: 'First', compiled_truth: 'x', timeline: '' });
+      writeFileSync(upload, 'first bytes\n');
+      await quiet(['upload', upload, '--page', 'notes/reuse-old']);
+      expect(await engine.updateSlug('notes/reuse-old', 'notes/reuse-new', { sourceId: 'default' })).toBe(1);
+      await engine.putPage('notes/reuse-old', { type: 'note', title: 'Second', compiled_truth: 'y', timeline: '' });
+      writeFileSync(upload, 'second bytes\n');
+      await quiet(['upload', upload, '--page', 'notes/reuse-old']);
+      const [row] = await engine.executeRaw<{ page_slug: string; page_id: number }>("SELECT page_slug, page_id FROM files WHERE filename = 'reuse-card.txt'");
+      expect([row?.page_slug, Number(row?.page_id)]).toEqual(['notes/reuse-old', await pageId('default', 'notes/reuse-old')]);
+      rmSync(join(home, '.gbrain', 'config.json'), { force: true });
+      rmSync(storageDir, { recursive: true, force: true });
+    }), 120_000);
+
     test('the backfill moves an attachment a past rename left behind, by its page id, and leaves one that names no page', () => withEnv(env, async () => {
       const id = `b${randomUUID().replace(/-/g, '').slice(0, 14)}`;
       await engine.executeRaw("INSERT INTO sources(id,name,config) VALUES($1,$1,'{}')", [id]);

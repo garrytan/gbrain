@@ -264,7 +264,24 @@ describe('engine parity: attachments follow a renamed page', () => {
       await file('a/foreign.png', other);
       expect(await engine.updateSlug('notes/move-me', 'notes/moved', { sourceId: 'default' })).toBe(1);
       const slugOf = async (path: string) => (await engine.getFile('default', path))?.page_slug ?? null;
-      return { bound: await slugOf('a/bound.png'), loose: await slugOf('a/loose.png'), foreign: await slugOf('a/foreign.png') };
+      const out = { bound: await slugOf('a/bound.png'), loose: await slugOf('a/loose.png'), foreign: await slugOf('a/foreign.png') };
+      expect(out).toEqual({ bound: 'notes/moved', loose: 'notes/moved', foreign: 'notes/move-me' });
+      return out;
+    },
+  );
+
+  parityTest(
+    'updateSlug leaves a slug-only attachment an earlier rename left behind when an unrelated page reused the name',
+    { methods: ['putPage', 'upsertFile', 'updateSlug', 'getFile'] },
+    async (engine) => {
+      await engine.putPage('notes/reused', { type: 'note', title: 'A', compiled_truth: 'x', timeline: '' });
+      expect(await engine.updateSlug('notes/reused', 'notes/first-owner', { sourceId: 'default' })).toBe(1);
+      await engine.upsertFile({ source_id: 'default', page_slug: 'notes/reused', page_id: null, filename: 'left.png', storage_path: 'b/left.png', mime_type: 'image/png', size_bytes: 1, content_hash: 'h', metadata: {} });
+      await engine.putPage('notes/reused', { type: 'note', title: 'C', compiled_truth: 'y', timeline: '' });
+      expect(await engine.updateSlug('notes/reused', 'notes/second-owner', { sourceId: 'default' })).toBe(1);
+      const left = (await engine.getFile('default', 'b/left.png'))?.page_slug ?? null;
+      expect(left).toBe('notes/reused');
+      return { left };
     },
   );
 });
