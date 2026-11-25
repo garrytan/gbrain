@@ -61,7 +61,8 @@ and `grant_repair_reasons` `{}`, `bound_max_concurrent` 1, `delegated_namespace`
 `persistence/page-visibility.ts` (`defaultSourceMemberWriter`, the client's `member_id`) and the Rust store member
 `readOAuthClientWriteGrant` (the grant `authorizeWrite` re-checks, [journal.md](journal.md)).
 `listOauthClients` serves `listClientRows` (`commands/auth-client-rows.ts`, behind `gbrain auth clients`), which picks the
-columns it shows out of each row; a brain from before a column returns rows without it, so the old six-step projection
+columns it shows out of each row, and the duplicate-name check of `src/commands/agent-register.ts`, which filters the rows by
+`client_name` and `deleted_at`; a brain from before a column returns rows without it, so the old six-step projection
 ladder is gone and the surface and source columns read as null there, as before. The listing's order is now byte order
 (`COLLATE "C"`) where it followed the database's collation on PostgreSQL. `readOauthClient` also
 returns every column, so a caller that named columns checks the ones it needs with `requireOauthClientColumns`, which
