@@ -78,7 +78,11 @@ describe('remote history uses strict body sanitization', () => {
           // Remote history reads each version's stamped trust tier through the typed member; none is stamped here.
           listVersionTrustTiers: (async () => []) as never,
           listVersionReasonWriters: (async () => []) as never,
+          // Remote history reads the live page rows (quarantine check) through the typed member; none are recorded here.
+          readPagesForVersionHistory: (async () => []) as never,
           readRowTrustRows: (async () => []) as never,
+          // The facts-table overlay (held and low-trust rows) is a typed member too; no row is held here.
+          readFenceOverlayRows: (async () => []) as never,
           // Even an operator opt-out cannot disable the Facts/Takes boundary.
           getConfig: async () => 'visible',
         }, { remote: remote as boolean, sourceId: 'default', takesHoldersAllowList }), { slug: 'example-page', include_body: true }) as Array<{ compiled_truth: string }>;
