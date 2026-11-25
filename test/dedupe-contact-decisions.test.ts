@@ -365,4 +365,26 @@ describe('with a repository', () => {
     expect((await h.decisions()).map(r => r.decision_id)).not.toContain(ignore);
     expect((await h.waiting()).map(r => r[0])).toContain('people/c-carol');
   });
+
+  test('new for contacts whose names have no letters or digits makes one page per contact, never people/.md', async () => {
+    await h.contact('c-party', '🎉🎉', ['party@example.invalid']);
+    await h.contact('c-bang', '!!!', ['bang@example.invalid']);
+    const out = await h.json(['decide', '--source', 'gc', '--file', h.choices([
+      { contact_slug: 'people/c-party', action: 'new' },
+      { contact_slug: 'people/c-bang', action: 'new' },
+    ])]);
+    expect(out.lines.map((l: { status: string }) => l.status)).toEqual(['recorded', 'recorded']);
+    const made = out.lines.map((l: { page: string }) => l.page.replace(/^default:/, '')) as string[];
+    expect(new Set(made).size).toBe(2);
+    for (const slug of made) expect(slug).toMatch(/^people\/[a-z0-9][a-z0-9-]*$/);
+    expect(() => git(root, 'show', 'HEAD:people/.md')).toThrow();
+    for (const slug of made) expect(git(root, 'show', `HEAD:${slug}.md`)).toContain('type: person');
+    const party = (await h.linkOf('people/c-party', 'gc'))?.entity_id;
+    const bang = (await h.linkOf('people/c-bang', 'gc'))?.entity_id;
+    expect(party).toBeTruthy();
+    expect(bang).toBeTruthy();
+    expect(party).not.toBe(bang);
+    expect(party).toBe((await h.linkOf(made[0]!, 'default'))?.entity_id);
+    expect(bang).toBe((await h.linkOf(made[1]!, 'default'))?.entity_id);
+  });
 });

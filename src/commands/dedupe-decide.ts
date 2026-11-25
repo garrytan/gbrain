@@ -149,7 +149,8 @@ export async function decideContacts(engine: BrainEngine, sourceId: string, choi
         entityId = held ?? entityFor(person);
       } else {
         if (!row.title?.trim()) { refuse('no_title', `${line.contact_slug} has no name to give a new person page.`); continue; }
-        const base = slugifyEntity(row.title, 'person');
+        const named = slugifyEntity(row.title, 'person');
+        const base = named.endsWith('/') ? `${named}contact-${createHash('sha256').update(`${sourceId}:${row.slug}`).digest('hex').slice(0, 12)}` : named;
         let slug = base;
         for (let i = 2; taken.has(slug) || (home && existsSync(join(home.root, `${slug}.md`)))
           || await engine.getPage(slug, { sourceId: DEFAULT_SOURCE_ID, includeDeleted: true }); i++) slug = `${base}-${i}`;
