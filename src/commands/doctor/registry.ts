@@ -360,7 +360,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   trustSourcesUnclaimedEntry,
   trustReleaseUnpreviewedEntry,
   writeGateHoldAmbiguousEntry,
-  // A held write names a page by slug only; a rename or delete can leave it stranded (doctor/checks/write-gate-holds-stranded.ts).
+  // Held writes no live page matches: held for a soft-deleted page, or for no page (doctor/checks/write-gate-holds-stranded.ts).
   writeGateHoldsStrandedEntry,
   coreMemoryEntry,
   persistenceConsumersEntry,
