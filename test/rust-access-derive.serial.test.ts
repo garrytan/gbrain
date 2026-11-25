@@ -19,7 +19,7 @@ import { storeVisibility } from '../src/core/rust-engine/store-members/fact-visi
 import { readPageHiddenFromCaller, readPagePrivacyHidden } from '../src/core/rust-engine/store-members/page-visibility.ts';
 import {
   __resetPrivateVisibilityCacheForTests, privateFactFilterForCaller, privateFactFilterForReader, privatePagesFilterForCaller,
-  privatePagesFilterFragment, privateProvenanceFilterUnderPolicy, readHonorAliases, remoteReadFloorSql, withCallerAccess,
+  privatePagesFilterFragment, privateProvenanceFilterUnderPolicy, readHonorAliases, callerAccessRecord, remoteReadFloorSql, withCallerAccess,
   type CallerAccess,
 } from '../src/core/search/private-visibility.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -143,6 +143,9 @@ function cases(): Case[] {
       out.push({ request: { mode: 'page_text', fragment, ...opts }, run: () => storePageTextPolicy('m', PAGE_THUNKS[fragment], { ...opts, fragment }) });
     }
   }
+  // A fragment rendered in the caller's record, judged inside the empty-identity record (countOpenPages).
+  out.push({ request: { mode: 'page_text', fragment: 'plain', callerReaders: true, renderedIn: { record: null } },
+    run: () => { throw new Error('replaced per record'); } });
   for (const fragment of ['under_policy', 'for_caller', 'for_reader'] as const) {
     for (const callerReaders of [false, true]) {
       for (const excludePrivate of [true, false]) {
@@ -203,6 +206,15 @@ async function runCorpus(records: Array<Partial<CallerAccess> | null>, settings:
     const patch = records[i]!;
     for (const c of all) {
       const once = async () => {
+        if (c.request.mode === 'page_text' && c.request.renderedIn) {
+          const record = JSON.parse(JSON.stringify(callerAccessRecord()));
+          const text = PAGE_THUNKS.plain();
+          const request = { ...c.request, renderedIn: { record } };
+          return withCallerAccess({ identity: [], privateReadableSources: [] }, async () => ({
+            ts: await tsOutcome(() => storePageTextPolicy('m', () => text, { callerReaders: true, fragment: 'plain', renderedIn: { record } })),
+            store: storeOutcome(request),
+          }));
+        }
         const ts = await tsOutcome(c.run);
         const store = storeOutcome(c.request);
         return { ts, store };
@@ -258,7 +270,7 @@ describe('store access derivation equals the TypeScript policy helpers', () => {
     await setHonorAliases(true);
     const seen = new Map<string, Set<string>>();
     for (const patch of records) {
-      for (const c of cases()) {
+      for (const c of cases().filter(c => !(c.request.mode === 'page_text' && c.request.renderedIn))) {
         const out = patch === null ? storeOutcome(c.request) : withCallerAccess(patch, () => storeOutcome(c.request));
         const kind = (out as { $refuse?: boolean }).$refuse ? 'refuse' : (out as { $none?: boolean }).$none ? 'none' : 'value';
         const key = c.request.mode;
@@ -279,7 +291,7 @@ describe('store access derivation equals the TypeScript policy helpers', () => {
     await setHonorAliases(true);
     const distinct = new Map<string, Set<string>>();
     for (const patch of records) {
-      for (const c of cases()) {
+      for (const c of cases().filter(c => !(c.request.mode === 'page_text' && c.request.renderedIn))) {
         const out = patch === null ? storeOutcome(c.request) : withCallerAccess(patch, () => storeOutcome(c.request));
         if ((out as { $refuse?: boolean }).$refuse) continue;
         if (!distinct.has(c.request.mode)) distinct.set(c.request.mode, new Set());

@@ -22,7 +22,7 @@ import { rustMultiuserFromEnv, rustMultiuserSubSwitch } from './multiuser-switch
 
 /** What a helper asks the store to derive (`DeriveRequest` in access_derive.rs). */
 export type AccessDeriveRequest =
-  | { mode: 'page_text'; fragment: 'caller' | 'floor' | 'plain'; callerReaders?: boolean; noReaders?: boolean }
+  | { mode: 'page_text'; fragment: 'caller' | 'floor' | 'plain'; callerReaders?: boolean; noReaders?: boolean; renderedIn?: { record: unknown } }
   | { mode: 'fact'; excludePrivate: boolean; fragment: 'under_policy' | 'for_caller' | 'for_reader'; callerReaders?: boolean }
   | { mode: 'floor_policy' }
   | { mode: 'member_read'; owner: boolean; identity: string[]; satisfied: string[] }

@@ -345,11 +345,16 @@ export function storePagePolicy(
 export function storePageTextPolicy(
   member: string,
   rendered: () => string,
-  opts: { callerReaders?: boolean; noReaders?: boolean; fragment?: StorePageFragment } = {},
+  opts: { callerReaders?: boolean; noReaders?: boolean; fragment?: StorePageFragment; renderedIn?: { record: CallerAccess | null } } = {},
 ): StorePrivacyPolicy {
   if (!accessSelfCheckOn()) return storePageTextPolicyRendered(member, rendered, opts);
-  checkFragment(member, 'page_text', rendered, opts.fragment ? PAGE_FRAGMENTS[opts.fragment] : undefined);
-  return selfChecked(member, { mode: 'page_text', fragment: opts.fragment!, callerReaders: opts.callerReaders === true, noReaders: opts.noReaders === true },
+  const labelled = opts.fragment ? PAGE_FRAGMENTS[opts.fragment] : undefined;
+  const at = opts.renderedIn;
+  checkFragment(member, 'page_text', rendered, labelled && at
+    ? () => withoutCallerAccess(() => at.record ? withCallerAccess(at.record, labelled) : labelled())
+    : labelled);
+  const renderedIn = at ? { renderedIn: { record: at.record ? JSON.parse(JSON.stringify(at.record)) : null } } : {};
+  return selfChecked(member, { mode: 'page_text', fragment: opts.fragment!, callerReaders: opts.callerReaders === true, noReaders: opts.noReaders === true, ...renderedIn },
     () => storePageTextPolicyRendered(member, rendered, opts));
 }
 

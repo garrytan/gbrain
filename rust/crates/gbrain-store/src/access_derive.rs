@@ -1026,6 +1026,10 @@ pub enum DeriveRequest {
         caller_readers: bool,
         #[serde(default, rename = "noReaders")]
         no_readers: bool,
+        /// The record the call site rendered its fragment in, when that is not the current one (the
+        /// text is then fixed: countOpenPages renders it before it enters the empty-identity record).
+        #[serde(default, rename = "renderedIn")]
+        rendered_in: Option<RenderedIn>,
     },
     /// `storePrivacyPolicy(member, excludePrivate, rendered, opts)`.
     Fact {
@@ -1050,6 +1054,14 @@ pub enum DeriveRequest {
     },
     /// `pagePolicyFlags(privacyPartSql('p')).honorAliases` (readPagePrivacyHidden).
     PrivacyPartAliases {},
+}
+
+/// The context a fixed fragment text was rendered in: a record, or none.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RenderedIn {
+    #[serde(default)]
+    pub record: Option<CallerRecord>,
 }
 
 /// The per-call derivation context: immutable, everything the renderer read.
@@ -1127,13 +1139,21 @@ fn with_open(mut v: Map<String, Value>, open: bool) -> Value {
 }
 
 /// `storePageTextPolicy`.
-fn derive_page_text(cur: &Cur, s: &AccessSettings, fragment: PageFragment, caller_readers: bool, no_readers: bool) -> Derived {
+fn derive_page_text(
+    cur: &Cur,
+    s: &AccessSettings,
+    fragment: PageFragment,
+    caller_readers: bool,
+    no_readers: bool,
+    rendered_in: Option<&RenderedIn>,
+) -> Derived {
     let open_flag = !eff(cur, s).restricted;
     let cx = Cx { s, norm: true };
+    let fixed = rendered_in.map(|r| page_fragment(fragment, &r.record, cx));
     let policy = judge_widened(cur, s, |cur2, caller_readers_rec| {
         let access = eff(cur2, s);
         let open = !access.restricted;
-        let text = page_fragment(fragment, cur2, cx);
+        let text = fixed.clone().unwrap_or_else(|| page_fragment(fragment, cur2, cx));
         let base_patch = if open { Patch { restricted: Some(false), ..Patch::default() } } else { Patch::default() };
         let baseline_cur = reference(cur2, base_patch, !open, s);
         let baseline = page_caller(&baseline_cur, cx);
@@ -1490,8 +1510,8 @@ pub fn derive(ctx: &AccessContext) -> Derived {
     let cur = &ctx.record;
     let s = &ctx.settings;
     match &ctx.request {
-        DeriveRequest::PageText { fragment, caller_readers, no_readers } => {
-            derive_page_text(cur, s, *fragment, *caller_readers, *no_readers)
+        DeriveRequest::PageText { fragment, caller_readers, no_readers, rendered_in } => {
+            derive_page_text(cur, s, *fragment, *caller_readers, *no_readers, rendered_in.as_ref())
         }
         DeriveRequest::Fact { exclude_private, fragment, caller_readers } => {
             derive_fact(cur, s, *exclude_private, *fragment, *caller_readers)
