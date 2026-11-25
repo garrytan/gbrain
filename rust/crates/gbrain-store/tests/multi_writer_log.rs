@@ -270,7 +270,7 @@ fn opened_brain_is_explained_by_its_log(kind: UpkeepKind) {
             "{kind:?}, optimistic={optimistic}: no open-time upkeep marker was logged by the open"
         );
         assert!(
-            closed.image.get(&scan).is_none() && after.get(&scan).is_some(),
+            !closed.image.contains_key(&scan) && after.contains_key(&scan),
             "the access-flag scan marker did not appear at open"
         );
         if kind == UpkeepKind::OlderBase {
@@ -282,8 +282,8 @@ fn opened_brain_is_explained_by_its_log(kind: UpkeepKind) {
             );
             assert!(
                 logged_key(&secret_new)
-                    && closed.image.get(&secret_new).is_none()
-                    && after.get(&secret_new).is_some(),
+                    && !closed.image.contains_key(&secret_new)
+                    && after.contains_key(&secret_new),
                 "the format upgrade did not move the token secret"
             );
         }
