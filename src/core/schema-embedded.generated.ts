@@ -868,9 +868,8 @@ CREATE TABLE IF NOT EXISTS oauth_codes (
   created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Composite indexes for admin dashboard request log queries
+-- Time-first index for the unfiltered request log. The token-first index is built online by its migration.
 CREATE INDEX IF NOT EXISTS idx_mcp_log_time_agent ON mcp_request_log(created_at, token_name);
-CREATE INDEX IF NOT EXISTS idx_mcp_log_agent_time ON mcp_request_log(agent_name, created_at DESC);
 
 -- ============================================================
 -- op_checkpoints: shared checkpoint table for long-running ops

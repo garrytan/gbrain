@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 332,
+    "count": 333,
     "gaps": [
       17,
       18,
@@ -57,6 +57,7 @@
       "SPELLING_KEY_INDEX": "b628f88d0108db25686d3d4f2c9ac694d4e65c015b771831162e60889e876ab1",
       "SPELLING_KEY_INDEX_SQL": "33d4476063b14d9b8df54b55b659242f622ab796cc7f262549f1dff4907f5ae5",
       "TABLES": "3fc77a0fccb525f9b791098f9eae27b19adaa3f5dadbabcff2a719137cbc3ef8",
+      "TOKEN_INDEX": "059881cbae7e492662d8ce2ba3376acc39ca7481a5f6d1108c5230f29a50905e",
       "TOKEN_TTL_MAX_SECONDS": "f4a45bec6ec0bacc859dc57732ceb76cec7eb72f242b5a6c89d47190d0525ab4",
       "TOKEN_TTL_MIN_SECONDS": "441d8ce6bd21f753de90abd3013eaa9992a469ea60c590f1005533618199aa25",
       "analyzeAfterIndexBuild": "8d627df6b496e1c197a244f8519aeaf3aebcd23e3f7cf514576d453a4270e33a",
@@ -89,6 +90,7 @@
       "migrateLegacyTokens": "6e4abe3670127e7a495b56ecbf9f5789edd3a7362d45704656c2210a85b27f4c",
       "migrationNotice": "9a6607b26a9719ef1833571b137bc8ebfcd1e16d545e89ff8728cf3ccbcbb409",
       "migrationStatementTimeoutMs": "2883be5073d2cd96cc17136e2f7d3223c6bdafebe3ef3c7a6836be320867251d",
+      "opError": "dbd0618776511b644a20c07da308ad563e86ef5349dc8f4fa522c212c7438101",
       "originTwinsRepairCommand": "fb3c721e48d9f2a98845ef91231836d4a37eb5929e9a9b62f8dfab5ce395c462",
       "ownerOnlyTriggersLeftLine": "e2e038846f7bd002831fc04b96dfd907fda768129de2971f934f199c87a6e83c",
       "pageSearchVectorTriggerFnSql": "2e418d7069473de186e9d38a726afa009b71902ce20d704638decf299f14757b",
@@ -112,7 +114,7 @@
       "widenIdentityIndex": "86a6176bd7637d964dbc1d3cd3b1bdfa3ca0161e1ee248c37d7380a1471282e6",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 337,
+    "latest": 338,
     "records": [
       {
         "handler": {
@@ -5509,6 +5511,39 @@
         "transaction": "absent",
         "verify": "absent",
         "version": 337
+      },
+      {
+        "handler": {
+          "form": "arrow",
+          "helpers": [
+            "PLANNER_REPAIR_TABLES",
+            "TOKEN_INDEX",
+            "analyzeAfterIndexBuild",
+            "analyzeDeferred",
+            "analyzeYieldingToVacuum",
+            "buildIndexOnline",
+            "dropInvalidConcurrentIndex",
+            "lockTableForAnalyze",
+            "migrationNotice",
+            "migrationStatementTimeoutMs",
+            "opError",
+            "quietMigrationNotices",
+            "runMigrationStatement",
+            "tableRows",
+            "withSchemaLockTimeout"
+          ],
+          "sha256": "d9eb4d950d7873e9bddb3ca77c9e2b8290591528cd820aab98cd3a4b147b7286"
+        },
+        "idempotent": true,
+        "name": "mcp_request_log_token_index",
+        "sql": {
+          "length": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "sqlFor": "absent",
+        "transaction": false,
+        "verify": "absent",
+        "version": 338
       }
     ],
     "versions": [
@@ -5843,7 +5878,8 @@
       334,
       335,
       336,
-      337
+      337,
+      338
     ]
   },
   "normalizer": "migrations-record-v1"

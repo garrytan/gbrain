@@ -452,7 +452,6 @@ CREATE TABLE IF NOT EXISTS oauth_codes (
 );
 
 CREATE INDEX IF NOT EXISTS idx_mcp_log_time_agent ON mcp_request_log(created_at, token_name);
-CREATE INDEX IF NOT EXISTS idx_mcp_log_agent_time ON mcp_request_log(agent_name, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS op_checkpoints (
   op             TEXT NOT NULL,

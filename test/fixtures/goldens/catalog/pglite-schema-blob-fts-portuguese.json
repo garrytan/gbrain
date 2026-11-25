@@ -957,7 +957,6 @@
       "idx_links_source": "CREATE INDEX idx_links_source ON public.links USING btree (link_source)",
       "idx_links_supersedes_to": "CREATE INDEX idx_links_supersedes_to ON public.links USING btree (to_page_id) WHERE (link_type = 'supersedes'::text)",
       "idx_links_to": "CREATE INDEX idx_links_to ON public.links USING btree (to_page_id)",
-      "idx_mcp_log_agent_time": "CREATE INDEX idx_mcp_log_agent_time ON public.mcp_request_log USING btree (agent_name, created_at DESC)",
       "idx_mcp_log_time_agent": "CREATE INDEX idx_mcp_log_time_agent ON public.mcp_request_log USING btree (created_at, token_name)",
       "idx_minion_attachments_job": "CREATE INDEX idx_minion_attachments_job ON public.minion_attachments USING btree (job_id)",
       "idx_minion_inbox_child_done": "CREATE INDEX idx_minion_inbox_child_done ON public.minion_inbox USING btree (job_id, sent_at) WHERE ((payload ->> 'type'::text) = 'child_done'::text)",
