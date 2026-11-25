@@ -8,6 +8,7 @@
 
 ### Changed
 - An agent policy change from an agent session, or with no terminal, is refused with `policy_confirm_required` and waits as a pending revision. `gbrain config set policy.approved.*` is refused, and remote writes to the policy page get `policy_owner_only`.
+- Only local, owner and unbound callers read the owner's policy; member, group, guest and shared-audience tokens and attested scope reads read the company policy. `gbrain migrate --to` carries an approved policy to the new engine.
 - The brain-first policy line is off by default: `gbrain config set brain_first.policy_line on` adds it, `off` removes it.
 
 <!-- behavior-change: agent_policy_l1_gst3824 -->

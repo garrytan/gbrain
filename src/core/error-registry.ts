@@ -780,7 +780,7 @@ export const CODES = {
     docs: 'docs/guides/agent-policy.md#policy_confirm_required',
     suggestion: 'Ask the owner to run the command in fix in their own terminal, outside the agent session; do not retry it from the agent.' },
   policy_malformed: { class: 'caller', retryable: false, summary: "The agent policy fence could not be parsed (the error names the line and column), so nothing was changed or approved.",
-    why: 'policy_check serves only an owner-approved, well-formed policy; a malformed page is never approved, and while the page is malformed every verb answers ask.',
+    why: 'policy_check serves only an owner-approved, well-formed policy; a malformed page is never approved, and while it is malformed agents get the last approved revision, or ask for every verb when nothing was ever approved.',
     docs: 'docs/guides/agent-policy.md#policy_malformed',
     suggestion: 'Run gbrain policy show --check to see the problem, then fix it with gbrain policy edit.',
     fix: { argv: ['gbrain', 'policy', 'show', '--check'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Shows where the policy fence is malformed.' } },

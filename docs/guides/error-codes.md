@@ -4559,7 +4559,7 @@ More: [docs/guides/agent-policy.md#policy_confirm_required](../../docs/guides/ag
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The agent policy fence could not be parsed (the error names the line and column), so nothing was changed or approved. | policy_check serves only an owner-approved, well-formed policy; a malformed page is never approved, and while the page is malformed every verb answers ask. | Run gbrain policy show --check to see the problem, then fix it with gbrain policy edit. Run: gbrain policy show --check | agent | `repeat the read that failed` | 1 | no |
+| The agent policy fence could not be parsed (the error names the line and column), so nothing was changed or approved. | policy_check serves only an owner-approved, well-formed policy; a malformed page is never approved, and while it is malformed agents get the last approved revision, or ask for every verb when nothing was ever approved. | Run gbrain policy show --check to see the problem, then fix it with gbrain policy edit. Run: gbrain policy show --check | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/agent-policy.md#policy_malformed](../../docs/guides/agent-policy.md#policy_malformed)
 
