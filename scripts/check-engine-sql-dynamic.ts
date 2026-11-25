@@ -65,8 +65,6 @@ const CONSTANT_ALLOWLIST: Record<string, string> = {
   UNVERIFIED_ARCHIVE_SQL: 'src/core/engine-sql/sources.ts: constant missing-or-epoch archive-time predicate over sources (no input)',
   CREDENTIAL_RESEAL_HELD: 'src/core/page-state/credential-reseal-hold.ts: constant live-credential-re-chunk-hold predicate over the pages alias p; the op and producer are module constants (no input)',
   NOT_CONVERSATION_SLOT_SQL: 'src/core/chronicle/ontology.ts: constant conversation-source prefix exclusion over the facts source column (no input)',
-  SPELLING_KEY_SQL: 'src/core/slug-spelling-key.ts: constant spelling-key expression over pages.slug (template of ASCII capital constants; the index and the lookup share this one text) (no input)',
-  SCAN_KEY_SQL: 'src/core/slug-spelling-key.ts: constant ASCII-only key expression over pages.slug built from SPELLING_KEY_SQL (no input)',
 };
 
 const VETTED_BUILDERS: Record<string, string> = {
