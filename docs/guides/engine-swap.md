@@ -76,7 +76,8 @@ never a pass. With no shadow running, every criterion is `missing`.
    sample rate. A sampled write outside a transaction waits (at most 2 seconds) for one small read of the rows it touches
    before it runs; if that read is slow, the write goes ahead and the sample is `uncomparable`. `put_page` and import run
    their page write inside a transaction, so those are `uncomparable` today: only link operations outside a transaction
-   (`add_link`, `remove_link`, a by-mention extract batch) can make a write `comparable`.
+   (`add_link`, `remove_link`, a by-mention extract batch) can make a write `comparable`. Comparing a page write that ran
+   inside a transaction is a planned follow-up, not part of this check.
 6. Zero `privacy_diverged` events (the field is absent, not zero, while any privacy check of the last 7 days is unsettled, so criterion 6 has no evidence until it settles).
 7. Zero fingerprint mismatches, a passed fingerprint probe and a passed allocator verification.
 8. Speed: paired bench samples. **Reported, not gating.** D23 (the maintainer's C1 ruling of 2026-11-19) makes the

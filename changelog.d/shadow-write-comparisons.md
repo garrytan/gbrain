@@ -9,3 +9,6 @@
 - `write_comparisons.state` in `gbrain engine shadow status --json` is `capability_missing` until at least one write comparison reaches a verdict, then `measured`. Criterion 5 stays `missing` until then, and below 1,000 comparable writes it fails and says how many there are. The pass rule is unchanged.
 - A sampled write outside a transaction now waits, at most 2 seconds, for one small read of the rows it touches before it runs; a slow read lets the write go ahead and counts the sample as `uncomparable`. Nothing else on the write path waits for the shadow.
 - Writes inside a transaction are `uncomparable`. `put_page` and import run their page write inside a transaction, so today only link operations outside a transaction (`add_link`, `remove_link`, a by-mention extract batch) can count as `comparable`.
+
+### Not done yet
+- Comparing a `putPage` that ran inside a transaction (every `put_page` and import) is a follow-up. Until it lands, criterion 5 has little to count on a brain whose writes are mostly pages, and it fails closed.
