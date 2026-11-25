@@ -640,6 +640,7 @@ describe('review round 1: the lock, the probe, persistence, the addon and the di
 
 describe('the stop word list is the Rust engine list (review round 2)', () => {
   test('ENGLISH_STOPWORDS equals the list in rust/crates/gbrain-store/src/keyword/stem.rs, word for word and in order', () => {
+    // test-reads-source-ok[structural]: the addon does not export its stop word list (src/shadow/english-stopwords.ts), so the hand copy is checked against the Rust source it must equal.
     const source = readFileSync(join(import.meta.dir, '..', 'rust', 'crates', 'gbrain-store', 'src', 'keyword', 'stem.rs'), 'utf8');
     const block = /const ENGLISH_STOPWORDS: \[&str; (\d+)\] = \[([^\]]*)\];/.exec(source);
     expect(block).not.toBeNull();

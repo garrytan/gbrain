@@ -7,7 +7,9 @@
  * scratch space is deleted (or reads as a pass) while the owner may still be copying, or when the next drill cannot clear
  * it once the owner says the copy ended. (3) The fake-owner tests (test/shadow-drill.test.ts) cannot show any of this: the
  * lifecycle is the addon's. (4) The real addon (`bun run rust:build`), a real owner child process, the real verifier;
- * skips without the addon (GBRAIN_TEST_RUST_ADDON_REQUIRED=1 makes that an error, as the CI addon job sets).
+ * skips without the addon (GBRAIN_TEST_REQUIRE_RUST_ADDON=1 or GBRAIN_TEST_RUST_ADDON_REQUIRED=1 makes that an error). The Rust
+ * engine workflow runs it through its rust-store receipt lane with GBRAIN_TEST_REQUIRE_RUST_ADDON=1, so the stress gate does
+ * not stress it where no addon exists (scripts/stress/README.md).
  */
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
@@ -27,8 +29,8 @@ import { withEnv } from './helpers/with-env.ts';
 const TARGET = detectAddonTarget();
 const BUILT = join(import.meta.dir, '..', 'rust', 'target', 'addon', `gbrain_engine.${TARGET ?? 'unsupported'}.node`);
 const HAVE_ADDON = TARGET !== null && existsSync(BUILT);
-if (!HAVE_ADDON && process.env.GBRAIN_TEST_RUST_ADDON_REQUIRED === '1') {
-  throw new Error(`GBRAIN_TEST_RUST_ADDON_REQUIRED=1 but ${BUILT} does not exist; run bun run rust:build`);
+if (!HAVE_ADDON && (process.env.GBRAIN_TEST_REQUIRE_RUST_ADDON === '1' || process.env.GBRAIN_TEST_RUST_ADDON_REQUIRED === '1')) {
+  throw new Error(`GBRAIN_TEST_REQUIRE_RUST_ADDON=1 or GBRAIN_TEST_RUST_ADDON_REQUIRED=1 but ${BUILT} does not exist; run bun run rust:build`);
 }
 // The drill checks the digest of the addon it loads against the epoch's: the epoch of these tests names this file's.
 const BUILT_SHA = HAVE_ADDON ? createHash('sha256').update(readFileSync(BUILT)).digest('hex') : '';

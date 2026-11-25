@@ -300,7 +300,7 @@ jobs:
           GBRAIN_TEST_RUST_ARM: '1'
         run: |
           set -euo pipefail
-          bun test --timeout=60000 test/rust-engine-store.test.ts test/rust-engine-shell.test.ts test/rust-engine-differential.test.ts test/rust-engine-store-snapshot.test.ts test/shadow-drill-addon.test.ts
+          bun test --timeout=60000 test/rust-engine-store.test.ts test/rust-engine-shell.test.ts test/rust-engine-differential.test.ts test/rust-engine-store-snapshot.test.ts
           for file in test/engine-parity/*.test.ts; do
             bun test --timeout=60000 "$file"
           done
@@ -328,6 +328,14 @@ jobs:
           GBRAIN_TEST_REQUIRE_RUST_ADDON: '1'
           GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
         run: bash scripts/run-with-receipt.sh rust-store writer-seed -- bun test --timeout=60000 test/shadow-writer-seed.test.ts
+      # The shadow restore drill on a real owner and a real store. Same ownership rule as above: a missing addon is an
+      # error here, and the next step fails the lane when no test ran.
+      - name: The restore drill copies a live shadow store
+        shell: bash
+        env:
+          GBRAIN_TEST_REQUIRE_RUST_ADDON: '1'
+          GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
+        run: bash scripts/run-with-receipt.sh rust-store drill-addon -- bun test --timeout=60000 test/shadow-drill-addon.test.ts
       - name: Fail the withdrawn-lead lane when no test ran
         shell: bash
         run: bun scripts/require-executed-tests.ts "$RUNNER_TEMP/receipts" rust-store
