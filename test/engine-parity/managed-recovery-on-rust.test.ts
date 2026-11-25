@@ -183,7 +183,7 @@ describe('managed clone and recovery on a Rust brain, hold kept for users', () =
           served: { info: server.requests.some(r => r.includes('/info/refs?service=git-upload-pack')), pack: server.requests.some(r => r.startsWith('POST') && r.includes('/git-upload-pack')) },
           leftovers: leftovers(home), recovering: (await engine.listTopologyRecoveries(localHostId(), null, 16)).length };
       });
-      expect(answer).toEqual({ fileTransport: null, plain: { refused: 'invalid_params' }, loopback: { refused: 'invalid_params' },
+      expect(answer).toEqual({ fileTransport: null, plain: { refused: 'unsupported_scheme' }, loopback: { refused: 'internal_target' },
         receipt: expect.objectContaining({ state: 'committed', cloned: true, operation: 'add', local_path: '<home>/cloned-over-https' }),
         source: { registered: true, archived: false }, refusedSources: [null, null], note: true, bound: { local: true, state: 'active' },
         served: { info: true, pack: true }, leftovers: [], recovering: 0 });
