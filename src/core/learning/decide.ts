@@ -17,10 +17,11 @@ import { opError, type Operation, type OperationContext } from '../ops/contract.
 import { operationScopesAllowed } from '../scope.ts';
 import { enforceBoundClientOpAllowList } from '../ops/context.ts';
 import { enforceReadTrustFloor } from '../eligibility/registry.ts';
+import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
 import { CHANGE_KINDS } from './kinds.ts';
 import { callerFilters, liveItems, LEARNED_MAX_LIMIT, LEARNED_WINDOW_DAYS, type LearnedItem } from './read.ts';
 
-export type DecisionStatus = 'kept' | 'undone' | 'answered' | 'already' | 'refused' | 'not_found' | 'owner_command' | 'dry_run';
+export type DecisionStatus = 'kept' | 'undone' | 'answered' | 'already' | 'refused' | 'not_found' | 'owner_command' | 'dry_run' | 'pending';
 export interface Decision {
   id: string;
   kind?: string;
@@ -126,7 +127,7 @@ async function undoOne(engine: BrainEngine, ctx: OperationContext, item: Learned
     const { rejectProposal } = await import('../facts/proposal-supersede.ts');
     const result = await rejectProposal(engine, proposal);
     if (result.status !== 'rejected') return { ...base, status: 'refused', reason: result.reason ?? result.status };
-    await mark(engine, ctx, [item.id], 'answered', ['pending']);
+    await mark(engine, ctx, [item.id], 'answered', ['pending', 'expired']);
     return { ...base, status: 'answered', result };
   }
   let result: unknown;
@@ -164,6 +165,11 @@ export async function undoItems(engine: BrainEngine, ctx: OperationContext, sour
     try {
       out.push(await undoOne(engine, ctx, item, reason));
     } catch (e) {
+      const pending = acceptedPendingReceipt(e);
+      if (pending) {
+        out.push({ id: item.id, kind: item.kind, status: 'pending', reason: 'the write was accepted and has not committed yet; the item stays pending until it does', command: ['gbrain', 'write-request', pending.request_id] });
+        continue;
+      }
       const code = (e as { code?: unknown }).code;
       out.push({ id: item.id, kind: item.kind, status: 'refused', reason: `${typeof code === 'string' ? code + ': ' : ''}${e instanceof Error ? e.message : String(e)}` });
     }
@@ -174,6 +180,7 @@ export async function undoItems(engine: BrainEngine, ctx: OperationContext, sour
 const STATUS_TEXT: Record<DecisionStatus, string> = {
   kept: 'kept', undone: 'undone', answered: 'answered', already: 'already decided', refused: 'not changed',
   not_found: 'not found (or not readable here)', owner_command: 'run on the brain host', dry_run: 'dry run, nothing changed',
+  pending: 'accepted, still being written',
 };
 
 /** The CLI's text form of a keep or undo result: one line per item, then any command the owner runs. */

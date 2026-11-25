@@ -1,8 +1,9 @@
 /**
  * v0.41.39 (issue #1700) — cycle phase `enrich_thin`.
  *
- * Opt-in autopilot trickle around `runEnrichCore`. Default OFF; enable with
- * `gbrain config set cycle.enrich_thin.enabled true`. Each tick develops a few
+ * Autopilot trickle around `runEnrichCore`. With `cycle.enrich_thin.enabled` unset it runs when a chat model key is
+ * configured (one the user supplied) and is off otherwise; a stored value always wins, so
+ * `gbrain config set cycle.enrich_thin.enabled false` turns it off. Each tick develops a few
  * thin (stub) pages per source so the brain gets smarter over time, not just
  * bigger — the issue's explicit payoff.
  *
@@ -28,9 +29,9 @@
  *     keyless SQL, so dry-run and keyless runs report it and spend nothing.
  *
  * Config keys (defaults explicit):
- *   cycle.enrich_thin.enabled                (false)
+ *   cycle.enrich_thin.enabled                (unset: on when a chat model key is configured, else off)
  *   cycle.enrich_thin.max_cost_usd           (1.00)   per source per tick
- *   cycle.enrich_thin.max_total_cost_usd     (5.00)   brain-wide per tick
+ *   cycle.enrich_thin.max_total_cost_usd     (0.50)   brain-wide per tick
  *   cycle.enrich_thin.max_total_walltime_min (30)     brain-wide per tick
  *   cycle.enrich_thin.max_pages_per_tick     (3)      per source per tick
  *   cycle.enrich_thin.types                  (["person","company"])
@@ -90,6 +91,8 @@ export interface EnrichThinDailySpend { day: string; spent_usd: number; pages: n
 
 interface ResolvedConfig {
   enabled: boolean;
+  /** config: cycle.enrich_thin.enabled is stored; chat_key_default: unset, so on exactly when a chat model key is configured. */
+  enabledBy: 'config' | 'chat_key_default';
   maxCostUsd: number;          // per source per tick
   maxTotalCostUsd: number;     // brain-wide per tick
   maxTotalWalltimeMin: number; // brain-wide per tick
@@ -122,11 +125,7 @@ async function loadCfg(engine: BrainEngine): Promise<ResolvedConfig> {
       get('max_daily_pages'),
     ]);
 
-  const enabledFlag = (() => {
-    if (enabled == null) return false;
-    const v = enabled.trim().toLowerCase();
-    return !['false', '0', 'no', 'off', ''].includes(v);
-  })();
+  const enabledFlag = enabled == null ? isAvailable('chat') : !['false', '0', 'no', 'off', ''].includes(enabled.trim().toLowerCase());
 
   const parseFloatOrDefault = (raw: string | null, fallback: number): number => {
     if (raw == null) return fallback;
@@ -180,8 +179,9 @@ async function loadCfg(engine: BrainEngine): Promise<ResolvedConfig> {
 
   return {
     enabled: enabledFlag,
+    enabledBy: enabled == null ? 'chat_key_default' : 'config',
     maxCostUsd: parseCostOrDefault(maxCost, 1.0),
-    maxTotalCostUsd: parseCostOrDefault(maxTotalCost, 5.0),
+    maxTotalCostUsd: parseCostOrDefault(maxTotalCost, 0.5),
     maxTotalWalltimeMin: parseFloatOrDefault(maxTotalWall, 30),
     maxPagesPerTick: parseIntOrDefault(maxPages, 3),
     types,
@@ -270,14 +270,16 @@ export async function runPhaseEnrichThin(
 
   if (!cfg.enabled) {
     if (!opts.once) {
+      const byDefault = cfg.enabledBy === 'chat_key_default';
       return {
         phase: 'enrich_thin',
         status: 'skipped',
         duration_ms: 0,
-        summary: 'cycle.enrich_thin.enabled=false (default OFF)',
+        summary: byDefault ? 'off: no chat model key is configured (it turns on by itself once one is)' : 'cycle.enrich_thin.enabled=false',
         details: {
           reason: 'disabled',
-          enable_hint: 'gbrain config set cycle.enrich_thin.enabled true',
+          enabled_by: cfg.enabledBy,
+          enable_hint: byDefault ? 'export ANTHROPIC_API_KEY=<your key>' : 'gbrain config set cycle.enrich_thin.enabled true',
         },
       };
     }
@@ -440,6 +442,7 @@ export async function runPhaseEnrichThin(
     duration_ms: Date.now() - startedAt,
     summary,
     details: {
+      enabled_by: cfg.enabledBy,
       sources_count: sources.length,
       sources_processed: totals.sources_processed,
       pages_enriched: totals.enriched,

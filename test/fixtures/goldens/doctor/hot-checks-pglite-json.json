@@ -3486,6 +3486,13 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
+            "message": "The nightly cycle has not recorded anything it learned yet.",
+            "name": "learning_note",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
             "message": "No memory proposals await the owner.",
             "name": "memory_proposals_pending",
             "status": "ok"
@@ -9117,6 +9124,13 @@
             "elapsed_ms": "<volatile>",
             "message": "System One is off (every decide slot is off; nothing is sent).",
             "name": "decide_health",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "The nightly cycle has not recorded anything it learned yet.",
+            "name": "learning_note",
             "status": "ok"
           },
           {

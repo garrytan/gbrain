@@ -51,3 +51,19 @@ gbrain config set learning.note.push false
 ```
 
 The note itself stays available with `gbrain learned`.
+
+## What runs by default
+
+Two nightly steps feed the note without any setup:
+
+- **Facts that disagree.** Each dream cycle compares typed facts (a metric with a value, unit and period) and files a
+  "which one is right?" question when two disagree. It needs no key and changes no fact until you answer. Turn it off
+  with `gbrain config set dream.claim_conflicts.mode off`.
+- **Thin pages filled in.** When a chat model key you supplied is configured (for example `ANTHROPIC_API_KEY`), each
+  run fills up to 3 thin person and company pages per source from what the brain already knows, at about $0.01 a page,
+  and stops at $0.50 per run. Without a key it stays off. Turn it off with
+  `gbrain config set cycle.enrich_thin.enabled false`, and cap a whole day with
+  `gbrain config set cycle.enrich_thin.max_daily_cost_usd <usd>`.
+
+A value you already set for these keys is kept. `gbrain doctor` reports the newest run and how much of the note you
+kept or undid (`learning_note`).

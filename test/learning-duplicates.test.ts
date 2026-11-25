@@ -236,11 +236,15 @@ for (const backend of testBackends()) {
       const view = await local();
       expect(view.thin_contacts).toEqual({
         count: 2, text: keylessLine,
-        commands: [['export', 'ANTHROPIC_API_KEY=<your key>'], ['gbrain', 'config', 'set', 'cycle.enrich_thin.enabled', 'true']],
+        commands: [['export', 'ANTHROPIC_API_KEY=<your key>']],
         cost: { usd: 0.02, basis: 'per_page_estimate' },
       });
       expect(formatLearned(view)).toContain(keylessLine);
-      expect(formatLearned(view)).toContain('gbrain config set cycle.enrich_thin.enabled true');
+      expect(formatLearned(view)).not.toContain('gbrain config set cycle.enrich_thin.enabled true');
+      await engine.setConfig('cycle.enrich_thin.enabled', 'false');
+      expect((await local()).thin_contacts?.commands).toEqual([['export', 'ANTHROPIC_API_KEY=<your key>'], ['gbrain', 'config', 'set', 'cycle.enrich_thin.enabled', 'true']]);
+      expect(formatLearned(await local())).toContain('gbrain config set cycle.enrich_thin.enabled true');
+      await engine.unsetConfig('cycle.enrich_thin.enabled');
       expect(await engine.getConfig('enrich_thin.daily_spend')).toBeNull();
       await engine.setConfig('cycle.enrich_thin.max_daily_cost_usd', '0.5');
       await derive();

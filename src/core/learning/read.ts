@@ -208,10 +208,12 @@ async function thinContactsLine(engine: BrainEngine, now: Date): Promise<ThinCon
   const count = Number(stored.count);
   const age = now.getTime() - Date.parse(String(stored.recorded_at));
   if (!Number.isInteger(count) || count <= 0 || !(age <= LEARNED_WINDOW_DAYS * 86_400_000)) return null;
+  const enabled = (await engine.getConfig('cycle.enrich_thin.enabled'))?.trim().toLowerCase();
+  const switchedOff = enabled != null && ['false', '0', 'no', 'off', ''].includes(enabled);
   return {
     count,
     text: count === 1 ? '1 close contact has a thin page; a chat key would fill it.' : count + ' close contacts have thin pages; a chat key would fill them.',
-    commands: [['export', 'ANTHROPIC_API_KEY=<your key>'], ['gbrain', 'config', 'set', 'cycle.enrich_thin.enabled', 'true']],
+    commands: [['export', 'ANTHROPIC_API_KEY=<your key>'], ...(switchedOff ? [['gbrain', 'config', 'set', 'cycle.enrich_thin.enabled', 'true']] : [])],
     cost: { usd: Number(stored.cost_usd), basis: stored.cost_basis === 'daily_cap' ? 'daily_cap' : 'per_page_estimate' },
   };
 }
