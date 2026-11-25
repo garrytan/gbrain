@@ -44,12 +44,13 @@ describe('a refused sync read surfaces instead of reading as empty', () => {
   });
 
   test('loadActivationPendingSourceIds (sync-policy.ts): a refused binding read surfaces, an unreadable table marks none', async () => {
-    const unmanaged = async (sql: string) => sql.includes('persistence_brain') ? [{ enabled: false }] : broken();
-    const store = (boundSourceIds: () => Promise<string[]>) => async () => ({ boundSourceIds });
-    expect(await code(() => loadActivationPendingSourceIds({ executeRaw: unmanaged, writerReleaseStore: store(async () => refused()) } as never)))
-      .toBe('engine_capability_missing');
-    expect(await loadActivationPendingSourceIds({ executeRaw: unmanaged, writerReleaseStore: store(async () => broken()) } as never)).toEqual(new Set());
-    expect(await loadActivationPendingSourceIds({ executeRaw: unmanaged, writerReleaseStore: store(async () => ['b', 'a']) } as never)).toEqual(new Set(['a', 'b']));
+    // The mode read and the binding read are both typed members (readManagedModeRows, writerReleaseStore().boundSourceIds),
+    // so the refusal is injected at the member the code calls, never at a statement's text.
+    const engine = (boundSourceIds: () => Promise<string[]>) =>
+      ({ kind: 'rust', readManagedModeRows: async () => [{ enabled: false }], writerReleaseStore: async () => ({ boundSourceIds }) }) as never;
+    expect(await code(() => loadActivationPendingSourceIds(engine(async () => refused())))).toBe('engine_capability_missing');
+    expect(await loadActivationPendingSourceIds(engine(async () => broken()))).toEqual(new Set());
+    expect(await loadActivationPendingSourceIds(engine(async () => ['b', 'a']))).toEqual(new Set(['a', 'b']));
   });
 
   test('identityRemedyParts (sync-identity-downgrades.ts) binds the brain id the typed read returns, and a refused read surfaces', async () => {
