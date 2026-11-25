@@ -426,9 +426,12 @@ name), `commit_log` (when the log is on), `served` (the engine is a client of a 
 
 These answer questions raised while building the leases (I-5) and the switch (I-0) and are part of the contracts above.
 
-1. **Clock (I-5).** Times written by the store first follow one rule: never below the last committed time seen at
-   open, and never backwards on one server. Then the commit pipeline gains an `on_accept(commit_time)` hook, and lease
-   and claim times are stamped from it.
+1. **Clock (I-5).** Times written by the store follow one rule: never below the last committed time seen at open,
+   and never backwards on one server. Lease and claim times (`acquired_at`, `renewed_at`, `expires_at`) are the
+   writing transaction's clock time under I-4.v2.1: written inside the transaction from the store's own clock
+   (`Env::clock_micros`, the floored clock in multi-user mode), never below the floor, never from the commit
+   pipeline's `on_accept(commit_time)` hook and never from a caller's clock. The claim-epoch side records hold no
+   time. Fencing is decided by epoch and token through the transaction's read set, never by time order.
 2. **Switch (I-0).** The config half of the switch is the row `engine.rust.multiuser` in the brain's own config
    table, read by the store at open, so each brain resolves its own mode. The environment half is
    `GBRAIN_RUST_MULTIUSER=1`. Both are resolved in `src/core/rust-engine/multiuser-switch.ts`; the store's decision
