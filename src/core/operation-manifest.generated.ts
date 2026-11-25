@@ -4124,6 +4124,28 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     }
   },
   {
+    "name": "check_claims",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": "retrieval",
+    "description": "Check the numbers in a draft against allowed-claims pages (type: facts, claims: allowed) before stating them. Per claim: supported (with the cited dated line), conflicts (lines that say another number) or not_found, which means no allowed claim covers it, not that it is false.",
+    "params": {
+      "text": {
+        "type": "string",
+        "required": true,
+        "description": "The draft to check (max 20000 characters)."
+      },
+      "source_id": {
+        "type": "string",
+        "description": "One source, or '__all__'."
+      }
+    },
+    "scope": "read",
+    "cliHints": {
+      "hidden": true
+    }
+  },
+  {
     "name": "submit_job",
     "idempotent": false,
     "outputRedaction": {
