@@ -10,7 +10,9 @@
  *     shared-skill activation all point at it; it previews first and changes nothing until its admin intent is given.
  * (b) A stamp that no longer identifies this exact directory keeps the generic refusal, and the self-transfer refuses it.
  * (c) A source sync imported from Git whose checkout lost its .git too is refused `checkout_git_missing`, with the
- *     steps to restore it; nothing is prepared. A repository in a folder above the checkout does not count.
+ *     steps to restore it; nothing is prepared. A repository in a folder above the checkout does not count, nor does a
+ *     fresh repository without the last imported commit, and a .git lost between prepare and accept refuses at accept.
+ *     An archived source's folder is not checked.
  * (d) A checkout that never was a Git repository (a repo-less brain's folder) recovers the same way, also when a source
  *     folder inside it is its own Git repository.
  *
@@ -29,7 +31,7 @@ import { acquireWorktree, claimWorktree, getWorktreeBinding } from '../src/core/
 import { PHYSICAL_ROOT_MARKER, physicalRootReservationPath } from '../src/core/persistence/physical-root-record.ts';
 import { writerOnboardingPreflight } from '../src/core/persistence/onboarding.ts';
 import { activateSharedSkillPersistence } from '../src/core/persistence/skill-activation.ts';
-import { storedCheckoutRefusal } from '../src/core/persistence/verb-errors.ts';
+import { storedCheckoutRefusal, writeFailureDiagnostic } from '../src/core/persistence/verb-errors.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { reviewedWriterIntent } from './helpers/writer-admin-intent.ts';
@@ -95,6 +97,12 @@ for (const kind of testBackends()) describe(`#10260 lost ownership reservation (
     expect(storedCheckoutRefusal('ownership_reservation_missing', s.id, 'notes/a')).toMatchObject({ code: 'recovery_required', detail: 'ownership_reservation_missing',
       fix: { argv: expect.arrayContaining(['prepare', s.id, '--self-transfer']) } });
 
+    // A terminal write receipt explains the refusal and asks for a new request_id: the refused one replays its outcome.
+    const diagnostic = writeFailureDiagnostic(refusal!.code, refusal!.message);
+    expect(diagnostic).toMatchObject({ reason: 'ownership_reservation_missing' });
+    expect(diagnostic.suggestion).toContain('new request_id');
+    expect(diagnostic.suggestion).not.toContain('--confirm-relocated-root (each');
+
     // Writer status says why and names the same fix.
     const [status] = (await writerOnboardingPreflight(engine, s.id)).sources as Refusal[];
     expect(status).toMatchObject({ state: 'recovery_required', physical_fix: { argv: expect.arrayContaining(['prepare', s.id, '--self-transfer']) } });
@@ -159,7 +167,7 @@ for (const kind of testBackends()) describe(`#10260 lost ownership reservation (
     for (const dryRun of [true, false]) {
       const refusal = await refused(dryRun ? runPersistenceAdministration(engine, 'writer_transfer_prepare', { source_id: s.id, self_transfer: true, dry_run: true })
         : administer('writer_transfer_prepare', { source_id: s.id, self_transfer: true }));
-      expect(refusal).toMatchObject({ code: 'recovery_required', detail: 'checkout_git_missing', fix: { ask_user: true, actor: 'user', verify: { argv: ['git', '-C', s.root, 'rev-parse', '--verify', 'HEAD'] } } });
+      expect(refusal).toMatchObject({ code: 'recovery_required', detail: 'checkout_git_missing', fix: { ask_user: true, actor: 'user', verify: { argv: ['git', '-C', s.root, 'cat-file', '-e', `${head}^{commit}`] } } });
       expect(refusal!.suggestion).toContain(head);
       expect(refusal!.suggestion).toContain('.git');
     }
@@ -178,6 +186,56 @@ for (const kind of testBackends()) describe(`#10260 lost ownership reservation (
     expect(existsSync(physicalRootReservationPath(s.root))).toBe(false);
   }), 120_000);
 
+  test('(c) a fresh repository without the last imported commit does not stand in for the lost one', () => withEnv(env(), async () => {
+    const s = await managedSource();
+    await withSyncedCommit(s.id, git(s.root, 'rev-parse', 'HEAD'));
+    rmSync(physicalRootReservationPath(s.root));
+    rmSync(join(s.root, '.git'), { recursive: true, force: true });
+    git(s.root, 'init', '-q'); git(s.root, 'add', '-A');
+    git(s.root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', 'replacement');
+    await expect(administer('writer_transfer_prepare', { source_id: s.id, self_transfer: true })).rejects.toMatchObject({ code: 'recovery_required', detail: 'checkout_git_missing' });
+    expect((await getWorktreeBinding(engine, s.id))!.state).toBe('active');
+  }), 120_000);
+
+  test('(c) a source folder\'s .git lost between prepare and accept refuses at accept and re-creates nothing', () => withEnv(env(), async () => {
+    // A non-Git root records a tree manifest that skips .git, so only the accept-time Git check sees this.
+    const s = await managedSource(false);
+    const sub = join(s.root, 'sub'), subId = `${s.id}-sub`;
+    mkdirSync(sub); writeFileSync(join(sub, 'b.md'), note('B')); git(sub, 'init', '-q'); git(sub, 'add', '-A');
+    git(sub, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', 'fixture');
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+    await engine.executeRaw('INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,$3::text::jsonb)', [subId, sub, '{}']);
+    await claimWorktree(engine, subId, sub);
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    await withSyncedCommit(subId, git(sub, 'rev-parse', 'HEAD'));
+    rmSync(physicalRootReservationPath(s.root));
+    const prepared = await administer('writer_transfer_prepare', { source_id: s.id, self_transfer: true }) as { owner_epoch: string; manifest: { digest: string } };
+    renameSync(join(sub, '.git'), join(directory, `${s.id}-git-aside`));
+    const accept = { source_id: s.id, path: s.root, expected_epoch: prepared.owner_epoch, manifest: prepared.manifest.digest, self_transfer: true };
+    await expect(administer('writer_transfer_accept', accept)).rejects.toMatchObject({ code: 'recovery_required', detail: 'checkout_git_missing' });
+    expect(existsSync(physicalRootReservationPath(s.root))).toBe(false);
+    renameSync(join(directory, `${s.id}-git-aside`), join(sub, '.git'));
+    await administer('writer_transfer_accept', accept);
+    expect(existsSync(physicalRootReservationPath(s.root))).toBe(true);
+  }), 120_000);
+
+  test('(c) an archived source whose folder is gone does not hold back the active sources of its worktree', () => withEnv(env(), async () => {
+    const s = await managedSource(false);
+    const sub = join(s.root, 'old'), subId = `${s.id}-old`;
+    mkdirSync(sub); writeFileSync(join(sub, 'b.md'), note('B')); git(sub, 'init', '-q'); git(sub, 'add', '-A');
+    git(sub, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', 'fixture');
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+    await engine.executeRaw('INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,$3::text::jsonb)', [subId, sub, '{}']);
+    await claimWorktree(engine, subId, sub);
+    await engine.executeRaw('UPDATE sources SET last_commit=$2, archived=true WHERE id=$1', [subId, git(sub, 'rev-parse', 'HEAD')]);
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    rmSync(physicalRootReservationPath(s.root));
+    rmSync(sub, { recursive: true, force: true });
+    const prepared = await administer('writer_transfer_prepare', { source_id: s.id, self_transfer: true }) as { owner_epoch: string; manifest: { digest: string } };
+    await administer('writer_transfer_accept', { source_id: s.id, path: s.root, expected_epoch: prepared.owner_epoch, manifest: prepared.manifest.digest, self_transfer: true });
+    expect(existsSync(physicalRootReservationPath(s.root))).toBe(true);
+  }), 120_000);
+
   test('(d) a non-Git checkout holding a Git-synced source folder of its own recovers', () => withEnv(env(), async () => {
     const s = await managedSource(false);
     const sub = join(s.root, 'sub'), subId = `${s.id}-sub`;
@@ -193,7 +251,7 @@ for (const kind of testBackends()) describe(`#10260 lost ownership reservation (
     // The source folder that lost its own .git is the one the refusal names, never the root.
     renameSync(join(sub, '.git'), join(s.root, 'sub-git-aside'));
     expect(await refused(administer('writer_transfer_prepare', { source_id: s.id, self_transfer: true }))).toMatchObject({ detail: 'checkout_git_missing',
-      fix: { verify: { argv: ['git', '-C', sub, 'rev-parse', '--verify', 'HEAD'] } } });
+      fix: { verify: { argv: ['git', '-C', sub, 'cat-file', '-e', `${git(join(s.root, 'sub-git-aside'), 'rev-parse', 'HEAD')}^{commit}`] } } });
     renameSync(join(s.root, 'sub-git-aside'), join(sub, '.git'));
     const prepared = await administer('writer_transfer_prepare', { source_id: s.id, self_transfer: true }) as { owner_epoch: string; manifest: { digest: string } };
     await administer('writer_transfer_accept', { source_id: s.id, path: s.root, expected_epoch: prepared.owner_epoch, manifest: prepared.manifest.digest, self_transfer: true });

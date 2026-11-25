@@ -566,9 +566,10 @@ neither relaxes anything else:
   Run the self-transfer **without** `--confirm-relocated-root`: prepare checks
   the stamp against this brain and the worktree this host owns under the
   worktree lock, accept re-creates the reservation with the stamp's token
-  (exclusive create, so a racing claimant wins and accept refuses). A source
-  sync imported from Git whose checkout also lost its `.git` refuses
-  `checkout_git_missing` until the folder is restored.
+  (exclusive create, so a racing claimant wins and accept refuses). An active
+  source sync imported from Git whose folder no longer has a `.git` holding its
+  last imported commit refuses `checkout_git_missing`, at prepare and again at
+  accept, until the folder is restored.
 - *Recorded path now a symlink to the moved checkout:* run
   `gbrain sources set-path <source> <recorded-or-real-path>` on the owner host.
   When the recorded path resolves to the target and the reservation under the

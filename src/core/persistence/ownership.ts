@@ -24,6 +24,7 @@ import { assertWriterAdminState } from './admin-intent.ts';
 import { readGraduationRow } from './graduation-schema.ts';
 import { checkoutGitMissingError, ownerMarkerMissingError, ownershipReservationMissingError } from './owner-marker.ts';
 import { isGitCheckoutRoot } from '../git-checkout.ts';
+import { hardenedGitSync } from '../hardened-git.ts';
 import { assertWriterAdminUnlocked } from './admin-lock.ts';
 import { inspectPhysicalRootRecovery, repairPhysicalRoot, type PhysicalRootRecovery } from './physical-root-recovery.ts';
 import type { ContentReceiptRebind } from '../shared-skills/receipt-root.ts';
@@ -52,9 +53,10 @@ export interface WorktreeBinding {
 }
 export type GitDurabilitySetting = 'enabled' | 'disabled' | null;
 /** #10260: whether a `.git` sits at the source folder `relativePath` of `root` or a folder between it and `root`; folders above `root` never count. */
-function gitRepositoryWithin(root: string, relativePath: string): boolean {
+function gitRepositoryHolding(root: string, relativePath: string, commit: string): boolean {
+  if (!/^[0-9a-f]{7,64}$/i.test(commit)) return false;
   for (let at = resolve(root, relativePath); containsPath(root, at); at = dirname(at)) {
-    if (isGitCheckoutRoot(at)) return true;
+    if (isGitCheckoutRoot(at)) return hardenedGitSync(at, ['rev-parse', '--verify', '--quiet', `${commit}^{commit}`], { timeoutMs: 30_000, maxBytes: 4096 }).ok;
     if (at === root) break;
   }
   return false;
@@ -376,9 +378,9 @@ export async function prepareWriterTransfer(engine: BrainEngine, sourceId: strin
         `Source ${sourceId}'s worktree still has a write or mirror effect publishing or recovering, so no transfer was prepared. Inspect writer status and wait for it to settle on the owner before preparing again.`,
         { fix: writerStatusFix(sourceId) });
       const [brain] = await tx.executeRaw<{ brain_id: string; synced: Array<{ source: string; path: string; commit: string }> | null }>(`SELECT brain_id,(SELECT json_agg(json_build_object('source',s.id,'path',b.relative_path,'commit',s.last_commit) ORDER BY s.id)
-        FROM persistence_source_bindings b JOIN sources s ON s.id=b.source_id AND s.incarnation=b.source_incarnation WHERE b.worktree_id=$1::uuid AND s.last_commit IS NOT NULL) AS synced
+        FROM persistence_source_bindings b JOIN sources s ON s.id=b.source_id AND s.incarnation=b.source_incarnation WHERE b.worktree_id=$1::uuid AND s.last_commit IS NOT NULL AND NOT s.archived) AS synced
         FROM persistence_brain WHERE singleton=1`, [binding.worktree_id]);
-      let recovery: PhysicalRootRecovery | undefined;
+      let recovery: PhysicalRootRecovery | undefined, gitChecked: Array<{ source: string; path: string; commit: string }> | undefined;
       if (opts.selfTransfer) {
         try {
           recovery = inspectPhysicalRootRecovery(binding.local_path!, { brainId: brain.brain_id, worktreeId: binding.worktree_id, hostId, coordinationPath: binding.coordination_path! },
@@ -388,12 +390,13 @@ export async function prepareWriterTransfer(engine: BrainEngine, sourceId: strin
           throw error;
         }
         // #10260: re-creating a lost reservation over a checkout whose Git repository is gone too would adopt whatever was left behind.
-        const gitless = recovery.before.reservation ? undefined : brain.synced?.find(source => !gitRepositoryWithin(binding.local_path!, source.path));
+        if (!recovery.before.reservation) gitChecked = brain.synced ?? [];
+        const gitless = gitChecked?.find(source => !gitRepositoryHolding(binding.local_path!, source.path, source.commit));
         if (gitless) throw checkoutGitMissingError(sourceId, { sourceId: gitless.source, folder: resolve(binding.local_path!, gitless.path), lastCommit: gitless.commit });
       }
       if (!opts.selfTransfer) assertPhysicalRoot(binding.local_path!, { worktreeId: binding.worktree_id, coordinationPath: binding.coordination_path });
       if (hashed instanceof Error) throw hashed;
-      const manifest: StoredWorktreeManifest = { ...hashed, ...(recovery ? { self_transfer: recovery } : {}) };
+      const manifest: StoredWorktreeManifest = { ...hashed, ...(recovery ? { self_transfer: recovery } : {}), ...(gitChecked?.length ? { recovery_git: gitChecked } : {}) };
       if (!opts.dryRun) await tx.executeRaw(`UPDATE persistence_worktrees SET state='draining',manifest=$2::text::jsonb||jsonb_build_object('prepared_at',now()) WHERE id=$1::uuid`,
         [binding.worktree_id, JSON.stringify(manifest)]);
       return { worktree_id: binding.worktree_id, owner_epoch: String(owner.owner_epoch), manifest };
@@ -470,7 +473,7 @@ export async function acceptWriterTransfer(engine: BrainEngine, sourceId: string
       await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
       await assertWriterAdminState(tx, expectedAdminState);
       await assertWriterAdminUnlocked(tx);
-      const [owner] = await tx.executeRaw<{ owner_epoch: string; state: string; manifest: { digest: string; self_transfer?: PhysicalRootRecovery } }>('SELECT owner_epoch,state,manifest FROM persistence_worktrees WHERE id=$1::uuid FOR UPDATE', [binding.worktree_id]);
+      const [owner] = await tx.executeRaw<{ owner_epoch: string; state: string; manifest: StoredWorktreeManifest }>('SELECT owner_epoch,state,manifest FROM persistence_worktrees WHERE id=$1::uuid FOR UPDATE', [binding.worktree_id]);
       if (!owner || owner.state !== 'draining' || String(owner.owner_epoch) !== expectedEpoch || owner.manifest?.digest !== expectedManifest) throw opError('writer_transfer_conflict', 'Transfer preparation or epoch changed.',
         `Source ${sourceId} is no longer prepared at epoch ${expectedEpoch} with manifest ${expectedManifest}, so nothing was accepted. Read writer status and use the epoch and manifest of the current preparation, or have the owner prepare again.`,
         { fix: writerStatusFix(sourceId) });
@@ -486,6 +489,9 @@ export async function acceptWriterTransfer(engine: BrainEngine, sourceId: string
       if (pending.length || mirrors.length) throw opError('recovery_required', 'Transfer state changed; prepare again.',
         `A write or mirror effect started publishing in source ${sourceId}'s worktree after preparation, so nothing was accepted. Wait for writer status to show it settled, then have the owner prepare the transfer again.`,
         { fix: writerStatusFix(sourceId) });
+      // #10260: a Git repository checked at prepare must still hold its source's last imported commit when the reservation is re-created.
+      const gitless = opts.selfTransfer ? owner.manifest.recovery_git?.find(source => !gitRepositoryHolding(root, source.path, source.commit)) : undefined;
+      if (gitless) throw checkoutGitMissingError(sourceId, { sourceId: gitless.source, folder: resolve(root, gitless.path), lastCommit: gitless.commit });
       if (opts.selfTransfer) repairPhysicalRoot(root, owner.manifest.self_transfer!, { hostId, worktreeId: binding.worktree_id, coordinationPath: coordination }, opts.dryRun);
       else if (!opts.dryRun) await preparePhysicalRootTransfer(tx, root, { hostId, worktreeId: binding.worktree_id, coordinationPath: coordination, expectedEpoch });
       if (opts.dryRun) return { content_receipts: [] };
