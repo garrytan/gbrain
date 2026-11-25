@@ -1000,7 +1000,8 @@ syncs keep ending `partial` or failing has none, however many pages it imported.
   sync is running. The message names the last attempt, read-only from the newest
   `sync` job and (on a managed brain) `gbrain sync status`: its time, result
   (`failed`, `completed (partial)`, a managed error code) and held files, or
-  `no attempt recorded`. `details.no_successful_sync[]` carries each source's
+  `no attempt recorded`. A Google run that ended `partial` also names why, as
+  in `completed (partial: gmail sweep failed: upstream error)`. `details.no_successful_sync[]` carries each source's
   `reason` and `fix`:
   - `attempt_queued`: a sync job is queued or running; wait.
   - `holds_pending`: files are held; inspect them with

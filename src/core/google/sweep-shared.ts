@@ -29,6 +29,8 @@ import type { LoopsExclusionPolicy } from './loops-exclusion.ts';
 
 /** The "my addresses" identity set: account + Gmail sendAs aliases. */
 import type { PrivateSenders } from './ingest-tiers.ts';
+import { CredentialError } from '../creds/errors.ts';
+import { jsonbSafeJson, truncateUtf8 } from '../text-safe.ts';
 
 export function myAddressSet(entry: CredentialEntry): Set<string> {
   const out = new Set<string>();
@@ -62,8 +64,32 @@ export interface GoogleSyncSummary {
   limitStopped?: boolean;
   /** GST-3452: items that failed on that limit (each also counted in failedFiles). */
   limitedItems?: number;
+  /** Why the run ended partial, one line each (every run-level cause, up to ITEM_CAUSE_LIMIT item failures), so the stored job result names the cause. */
+  partialCauses?: string[];
+  partialItemCauses?: number;
   /** Threads per ingest tier, when the source sorts threads into tiers (ingest-tiers.ts). */
   ingestTiers?: Record<string, number>;
+}
+
+/** GST-3452: a provider usage or rate limit (gbrain.io's allowance, Google's quota); the next sync resumes. */
+export const isUsageLimit = (e: unknown): boolean => e instanceof CredentialError && (e.code === 'gbrainio_limit_reached' || e.code === 'rate_limited');
+
+const ITEM_CAUSE_LIMIT = 5;
+
+/**
+ * Ends the run partial and records why. A repeated cause is kept once. A failed thread or item (`item`) is
+ * kept only while fewer than five are; a run-level cause (a failed service sweep, a guard refusal, a missing
+ * scope, an abort, a usage limit) is always kept, so item failures never crowd it out. Each cause is safe to
+ * store in the JSONB job result.
+ */
+export function markPartial(summary: GoogleSyncSummary, cause: string, item = false): void {
+  summary.status = 'partial';
+  const line = jsonbSafeJson(truncateUtf8(cause.split('\n')[0]!, 200));
+  const causes = summary.partialCauses ??= [];
+  const items = summary.partialItemCauses ?? 0;
+  if (causes.includes(line) || (item && items >= ITEM_CAUSE_LIMIT)) return;
+  causes.push(line);
+  if (item) summary.partialItemCauses = items + 1;
 }
 
 export interface GoogleSyncDeps {
