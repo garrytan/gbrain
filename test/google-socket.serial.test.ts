@@ -5,7 +5,7 @@
  * trust boundary: no remote-dispatchable operation reaches the socket modules.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import net from 'node:net';
@@ -124,6 +124,42 @@ describe('the socket', () => {
     const started = await startGoogleSocket({ home, log: () => {}, config: () => ({}), peerCred: { ok: false, reason: 'unsupported' }, uid: () => OWNER });
     expect(started).toMatchObject({ ok: false });
     expect(existsSync(googleSocketPath(home))).toBe(false);
+  });
+});
+
+describe('socket hardening', () => {
+  test('the 121st mint in a minute from one peer is rate_limited, and the window resets', async () => {
+    const home = brainHome();
+    let t = Date.parse('2026-11-25T12:00:00Z');
+    const started = await startGoogleSocket({ home, log: () => {}, config: () => ({}), vault: new FileVaultBackend(join(home, 'credentials.json')), fetchImpl: fakeFetch,
+      peerCred: { ok: true, read: () => OWNER }, uid: () => OWNER, now: () => t });
+    if (!started.ok) throw new Error(started.reason);
+    open.push(started.binding);
+    const mint = () => socketRequest(googleSocketPath(home), { op: 'mint', account: ACCOUNT, profile: 'ingest', caller: 'test' });
+    for (let i = 0; i < 120; i++) expect(await mint()).toMatchObject({ ok: true });
+    expect(await mint()).toMatchObject({ ok: false, code: 'rate_limited', retry_after_s: 60 });
+    t += 60_001;
+    expect(await mint()).toMatchObject({ ok: true });
+  });
+
+  test('a setup failure after the bind lock is taken releases the lock', async () => {
+    const home = brainHome();
+    mkdirSync(googleAuditPath(home), { recursive: true });
+    const failed = await start(home, OWNER);
+    expect(failed.started.ok).toBe(false);
+    rmSync(googleAuditPath(home), { recursive: true });
+    expect((await start(home, OWNER)).started.ok).toBe(true);
+  });
+
+  test('a client whose connection is closed unanswered gets peer_refused at once, not a 2-minute wait', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsk-close-'));
+    const path = join(dir, 's.sock');
+    const server = net.createServer(s => s.destroy());
+    await new Promise<void>(res => server.listen(path, res));
+    const t0 = Date.now();
+    await expect(socketRequest(path, { op: 'pending' })).rejects.toMatchObject({ code: 'peer_refused' });
+    expect(Date.now() - t0).toBeLessThan(5000);
+    server.close();
   });
 });
 

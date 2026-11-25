@@ -29,7 +29,8 @@ gbrain config set google.socket_peers 0          # e.g. a gateway running as roo
 ```
 
 In this release the socket file stays `0600`, so only the owner and root can
-open it; a non-root peer uid of its own cannot reach it yet. `call` is refused
+open it; a non-root peer uid of its own cannot reach it yet, and
+`gbrain google mint status` says so for each such uid. `call` is refused
 from the owner's own uid (`peer_refused`): the owner's connection is the
 approval channel, so the caller must be a different uid.
 
@@ -54,7 +55,8 @@ requests. Every request has `"v":4`. Versions 1, 2 and 3 get
 The token is Google's normal access token (about an hour), refreshed with the
 account's read-only scopes only and checked against what Google returned
 before it is handed out. Cache it and mint again 5 minutes before
-`expires_at`, or on a Google 401. Minted tokens are kept in the socket
+`expires_at`. On a Google 401, mint again with `"fresh":true`, which skips the
+socket's cached token. Minted tokens are kept in the socket
 process's memory and are never written to the vault, so sync's own token is
 untouched. `"profile":"act"` is refused with `act_not_mintable`: write
 actions go through `call`. More than 120 mints a minute from one peer uid get
@@ -82,9 +84,13 @@ Replies:
   `"owner_verdict":{"choice":"ALLOW_ONCE","for_request":"<request_id>"}`.
   Any other choice, including Google's "always" choices, is answered by the
   owner in `gbrain google approvals`. A held prompt expires after 10 minutes
-  and is dropped when the account is reconnected or disconnected.
+  and is dropped when the account is reconnected or disconnected. If Google
+  throttles the approved call (`rate_limited`), the approval is kept: send the
+  same verdict again after `retry_after_s`.
 - `owner_confirm_required`: a safety pause. The second invite to an address
-  outside the account's domain in one turn, and the eleventh trash in one
+  outside the account's domain in one turn (for a gmail.com, googlemail.com,
+  icloud.com, yahoo.com, outlook.com or hotmail.com account, every address but
+  the account's own is outside), and the eleventh trash in one
   turn, wait for the owner to confirm in `gbrain google approvals`; an
   `owner_verdict` doesn't pass them. After the owner confirms, repeat the call.
 - `tool_error` with `reason` `user_denied`, `admin_policy`,
@@ -139,8 +145,10 @@ it with the same `idempotency_key` after `retry_after_s`. Calls made at the same
 time in one turn count toward the caps and safety pauses as soon as each is
 accepted, before Google answers; a call that had no effect gives its place
 back. At most 64 calls wait for the owner at once; past that, a new call gets
-`rate_limited` until one is answered or expires. A connection idle for 5
-minutes is closed.
+`rate_limited` until one is answered or expires, while the repeat of a pause the
+owner already confirmed still goes through. A call that was waiting for its
+token when `google.broker_act` was turned off is not sent. A connection idle
+for 5 minutes is closed.
 
 ## Turning writes on
 
@@ -182,7 +190,9 @@ gbrain google approvals answer <request_id> ALLOW_ONCE
 
 Only the owner's own uid can list or answer held prompts over the socket, and
 `answer` runs only at a terminal. The list shows each held call's arguments so
-the owner can see what a safety pause would send. Turning `google.broker_act` off
+the owner can see what a safety pause would send: the outside invitees come
+first, and arguments longer than 600 characters are cut with a marker
+(`--json` shows all of them). Turning `google.broker_act` off
 stops held prompts too: an answer is refused while the broker is off.
 
 ## gwscli

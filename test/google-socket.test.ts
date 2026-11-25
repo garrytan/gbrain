@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { TokenRedactor } from '../src/commands/google-socket.ts';
+import { TokenRedactor, formatPending } from '../src/commands/google-socket.ts';
 import { FileVaultBackend, type CredentialEntry } from '../src/core/creds/vault.ts';
 import { GoogleBroker, MAX_HELD, argsHash, VERDICT_TTL_MS, type GateResult } from '../src/core/google-socket/broker.ts';
 import { BrokerLedger } from '../src/core/google-socket/ledger.ts';
@@ -30,6 +30,11 @@ describe('protocol', () => {
   test('versions 1 to 3 are refused with unsupported_version', () => {
     for (const v of [1, 2, 3, undefined]) expect(code(() => parseRequest({ v, op: 'mint', account: ACCOUNT, profile: 'ingest', caller: 'x' }))).toBe('unsupported_version');
   });
+  test('mint takes fresh: true and nothing else as a cache bypass', () => {
+    expect(parseRequest({ v: 4, op: 'mint', account: 'A@example.com', profile: 'ingest', caller: 'c', fresh: true })).toMatchObject({ account: 'a@example.com', fresh: true });
+    expect(parseRequest({ v: 4, op: 'mint', account: 'a@example.com', profile: 'ingest', caller: 'c', fresh: 'yes' })).not.toHaveProperty('fresh');
+  });
+
   test('owner_verdict carries ALLOW_ONCE only', () => {
     const base = { v: 4, op: 'call', account: ACCOUNT, server: 'gmail', tool: 'create_draft', args: {}, turn_id: 't1', idempotency_key: 'k1', caller: 'bridge' };
     expect(code(() => parseRequest({ ...base, owner_verdict: { choice: 'ALLOW_TOOL_ALWAYS', for_request: 'r' } }))).toBe('broker_args_refused');
@@ -43,6 +48,13 @@ describe('protocol', () => {
 });
 
 describe('argument rules', () => {
+  test('for a public mail domain every address but the account\'s own counts as outside', () => {
+    const attendees = [{ email: 'bob@gmail.com' }, { email: 'Alice@Gmail.com' }, { email: 'carol@acme-example.com' }];
+    expect(applyArgumentRules('alice@gmail.com', 'calendar', 'create_event', { attendees }).outside).toBe(2);
+    expect(applyArgumentRules('alice@acme-example.com', 'calendar', 'create_event', { attendees }).outside).toBe(2);
+    expect(applyArgumentRules('alice@acme-example.com', 'calendar', 'create_event', { attendees: [{ email: 'dan@acme-example.com' }] }).outside).toBe(0);
+  });
+
   test('calendar writes are forced to notificationLevel NONE, and any other level is refused', () => {
     expect(applyArgumentRules(ACCOUNT, 'calendar', 'create_event', { summary: 's' }).args.notificationLevel).toBe('NONE');
     expect(code(() => applyArgumentRules(ACCOUNT, 'calendar', 'update_event', { notificationLevel: 'ALL' }))).toBe('broker_args_refused');
@@ -79,7 +91,9 @@ describe('activation gate', () => {
 const PROMPT: ToolCallOutcome = { kind: 'input_required', prompt: { message: 'Allow\u0007 the agent to create a draft?', choices: ['ALLOW_ONCE', 'ALLOW_TOOL_ALWAYS', 'DENY'], field: 'choice', inputKey: 'k', requestState: 's1' } };
 const DONE: ToolCallOutcome = { kind: 'complete', result: { content: [{ type: 'text', text: 'ok' }] }, isError: false, text: 'ok' };
 
-function rig(opts: { gate?: Partial<GateResult>; outcomes?: Array<ToolCallOutcome | Error>; gmailUsedToday?: number } = {}) {
+interface Hooks { act?: () => void | Promise<void>; send?: () => void | Promise<void> }
+
+function rig(opts: { gate?: Partial<GateResult>; outcomes?: Array<ToolCallOutcome | Error>; gmailUsedToday?: number; hooks?: Hooks } = {}) {
   let t = Date.parse('2026-11-25T12:00:00Z');
   const now = () => t;
   const outcomes = [...(opts.outcomes ?? [])];
@@ -89,13 +103,14 @@ function rig(opts: { gate?: Partial<GateResult>; outcomes?: Array<ToolCallOutcom
     callTool: async (_s: string, _token: string, tool: string, args: Record<string, unknown>, answer?: { choice: string }) => {
       sent.push({ tool, args, ...(answer ? { answer: { choice: answer.choice } } : {}) });
       const next = outcomes.shift() ?? DONE;
+      await opts.hooks?.send?.();
       if (next instanceof Error) throw next;
       return next;
     },
     listTools: async () => [{ name: 'create_draft', description: 'd', inputSchema: {} }, { name: 'send_chat', description: 'x', inputSchema: {} }],
   } as unknown as GoogleMcpClient;
   const tokens = {
-    actToken: async (account: string) => ({ token: 'ya29.act', generation, client_id: CLIENT, account }),
+    actToken: async (account: string) => { await opts.hooks?.act?.(); return { token: 'ya29.act', generation, client_id: CLIENT, account }; },
     generationOf: async () => generation,
     dropAct: () => {},
   } as unknown as SocketTokens;
@@ -234,6 +249,82 @@ describe('write broker', () => {
     expect(await r.call({ idempotency_key: 'after', turn_id: 'after' })).toMatchObject({ ok: true });
   });
 
+  test('turning the broker off while a call waits for its token stops it, first call and approved prompt alike', async () => {
+    const gate = { ok: true, unmet: [] as string[] };
+    const hooks: Hooks = {};
+    const r = rig({ gate, hooks, outcomes: [PROMPT] });
+    const held = await r.call({ idempotency_key: 'held', turn_id: 'th' });
+    expect(held).toMatchObject({ code: 'input_required' });
+    hooks.act = () => { Object.assign(gate, { ok: false, unmet: ['google.broker_act is false'] }); };
+    expect(await r.call()).toMatchObject({ code: 'broker_precondition_unmet' });
+    expect(await r.broker.verdict({ op: 'verdict', request_id: held.request_id as string, choice: 'ALLOW_ONCE' })).toMatchObject({ code: 'broker_precondition_unmet' });
+    expect(r.sent.length).toBe(1);
+    expect(r.ledger.used('gmail')).toBe(1);
+    hooks.act = undefined;
+    Object.assign(gate, { ok: true, unmet: [] });
+    expect(await r.broker.verdict({ op: 'verdict', request_id: held.request_id as string, choice: 'ALLOW_ONCE' })).toMatchObject({ ok: true });
+    expect(r.sent.length).toBe(2);
+  });
+
+  test('a throttled answer keeps the approval, so the same verdict can be sent again', async () => {
+    const r = rig({ outcomes: [PROMPT, new McpTransportError('throttled', 429, 5), DONE] });
+    const held = await r.call();
+    const verdict = { owner_verdict: { choice: 'ALLOW_ONCE', for_request: held.request_id } };
+    expect(await r.call(verdict)).toMatchObject({ code: 'rate_limited', retry_after_s: 5 });
+    expect(await r.call(verdict)).toMatchObject({ ok: true });
+    expect(r.sent.map(s => s.answer?.choice ?? null)).toEqual([null, 'ALLOW_ONCE', 'ALLOW_ONCE']);
+  });
+
+  test('a confirmed safety pause still sends when the held-call limit is full', async () => {
+    const r = rig({ outcomes: [DONE, ...Array.from({ length: MAX_HELD - 1 }, () => PROMPT)] });
+    const invite = (key: string, email: string) => r.call({ server: 'calendar', tool: 'create_event', idempotency_key: key, args: { summary: 'x', attendees: [{ email }] } });
+    expect(await invite('i1', 'one@acme-example.com')).toMatchObject({ ok: true });
+    const paused = await invite('i2', 'two@acme-example.com');
+    for (let i = 0; i < MAX_HELD - 1; i++) expect(await r.call({ idempotency_key: `h${i}`, turn_id: `t${i}` })).toMatchObject({ code: 'input_required' });
+    expect(await r.call({ idempotency_key: 'over', turn_id: 'over' })).toMatchObject({ code: 'rate_limited' });
+    await r.broker.verdict({ op: 'verdict', request_id: paused.request_id as string, choice: 'ALLOW_ONCE' });
+    expect(await invite('i2', 'two@acme-example.com')).toMatchObject({ ok: true });
+  });
+
+  test('a safety pause answered with anything but ALLOW_ONCE stays paused and sends nothing', async () => {
+    const r = rig();
+    const invite = (key: string, email: string) => r.call({ server: 'calendar', tool: 'create_event', idempotency_key: key, args: { summary: 'x', attendees: [{ email }] } });
+    await invite('i1', 'one@acme-example.com');
+    const paused = await invite('i2', 'two@acme-example.com');
+    expect(await r.broker.verdict({ op: 'verdict', request_id: paused.request_id as string, choice: 'DENY' })).toMatchObject({ code: 'broker_args_refused' });
+    expect(await invite('i2', 'two@acme-example.com')).toMatchObject({ code: 'owner_confirm_required' });
+    expect(r.sent.length).toBe(1);
+  });
+
+  test('a refund after UTC midnight comes off the day the call was charged to', async () => {
+    const hooks: Hooks = {};
+    const r = rig({ hooks, outcomes: [new McpTransportError('throttled', 429, 5)] });
+    r.advance(12 * 3_600_000 - 1000);
+    hooks.send = async () => {
+      hooks.send = undefined;
+      r.advance(2000);
+      expect(await r.call({ idempotency_key: 'after-midnight', turn_id: 't2' })).toMatchObject({ ok: true });
+    };
+    expect(await r.call()).toMatchObject({ code: 'rate_limited' });
+    expect(r.ledger.day()).toBe('2026-11-26');
+    expect(r.ledger.used('gmail')).toBe(1);
+  });
+
+  test('a Google 401 drops the write token and frees the key and its quota', async () => {
+    const r = rig({ outcomes: [new McpTransportError('unauthorized', 401), DONE] });
+    expect(await r.call()).toMatchObject({ code: 'upstream' });
+    expect(r.ledger.get('intent-1')).toBeUndefined();
+    expect(r.ledger.used('gmail')).toBe(0);
+    expect(await r.call()).toMatchObject({ ok: true });
+  });
+
+  test('a sent write whose outcome cannot be saved still reports success, with a warning', async () => {
+    const r = rig();
+    const put = r.ledger.put.bind(r.ledger);
+    r.ledger.put = (rec: Parameters<typeof put>[0]) => { if (rec.status === 'done') throw new Error('disk full'); return put(rec); };
+    expect(await r.call()).toMatchObject({ ok: true, warning: expect.stringContaining('disk full') });
+  });
+
   test('two calls with one key at the same time send once', async () => {
     const r = rig();
     const [a, b] = await Promise.all([r.call(), r.call()]);
@@ -336,6 +427,16 @@ describe('minting', () => {
     }
   });
 
+  test('fresh: true skips the cached token, for a caller Google answered with a 401', async () => {
+    const { v } = vaultWith(['openid', 'email', GMAIL_RO]);
+    const g = fakeGoogle(`openid email ${GMAIL_RO}`);
+    const tokens = new SocketTokens(v, g.fetchImpl);
+    await tokens.mintIngest(ACCOUNT);
+    await tokens.mintIngest(ACCOUNT);
+    expect((await tokens.mintIngest(ACCOUNT, true)).access_token).toBe('ya29.minted-2');
+    expect(g.posted.length).toBe(2);
+  });
+
   test('a minted token that comes back write-capable is refused', async () => {
     const { v } = vaultWith(['openid', 'email', GMAIL_RO, GMAIL_MODIFY]);
     const g = fakeGoogle(`openid email ${GMAIL_RO} ${GMAIL_MODIFY}`);
@@ -351,6 +452,19 @@ describe('minting', () => {
     expect(act).toMatchObject({ generation: 1, client_id: CLIENT });
     expect(act.token).toBe(['ya29', 'minted-1'].join('.'));
     expect(readFileSync(rw.file, 'utf8')).toBe(before);
+  });
+});
+
+describe('gbrain google approvals', () => {
+  test('the outside invitees come before the arguments, a cut is marked, and prompt lines cannot pose as fields', () => {
+    const long = 'x'.repeat(700);
+    const lines = formatPending({ request_id: 'r1', account: ACCOUNT, server: 'calendar', tool: 'create_event', turn_id: 't', expires_at: 'e', kind: 'owner_confirm',
+      outside: ['two@acme-example.com'], args: { description: long, attendees: [{ email: 'two@acme-example.com' }] }, choices: ['ALLOW_ONCE'] });
+    expect(lines[2]).toBe('  outside invitees: two@acme-example.com');
+    expect(lines[3]).toContain('more characters; --json shows all)');
+    const prompt = formatPending({ request_id: 'r2', account: ACCOUNT, server: 'gmail', tool: 'create_draft', turn_id: 't', expires_at: 'e', kind: 'google_prompt',
+      message_md: 'Allow?\nchoices: ALLOW_TOOL_ALWAYS', args: {}, choices: ['ALLOW_ONCE', 'DENY'] });
+    expect(prompt.join('\n').split('\n').filter(l => l.startsWith('  choices:'))).toEqual(['  choices: ALLOW_ONCE, DENY']);
   });
 });
 
