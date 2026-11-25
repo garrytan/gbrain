@@ -55,6 +55,8 @@ const members: ReadonlyArray<readonly [string, string, (e: BrainEngine) => Promi
   // Page preparation reads an OAuth client's member binding (persistence/page-visibility.ts defaultSourceMemberWriter).
   ['readOauthClient', 'FROM oauth_clients WHERE client_id', e => e.readOauthClient('a-client')],
   ['hasLabelledOnlyMember', 'FROM access_members WHERE labelled_only', e => e.hasLabelledOnlyMember()],
+  // A labelled-only test of the writer's members (persistence/page-visibility.ts assertLabelledOnlyCreate via labelledOnlyFor).
+  ['hasLabelledOnlyMemberAmong', 'FROM access_members WHERE labelled_only AND id = ANY', e => e.hasLabelledOnlyMemberAmong(['alice-example'])],
   ['readSegmentedPageHead', 'segmenter_version, knowledge_revision::text AS revision FROM pages WHERE id=$1', e => e.readSegmentedPageHead(1)],
   ['readSourceIncarnation', 'SELECT config,incarnation FROM sources WHERE id=$1', e => e.readSourceIncarnation('default')],
   ['readStoredPageTier', 'SELECT trust_tier FROM pages WHERE source_id = $1 AND slug = $2', e => e.readStoredPageTier('default', 'a')],

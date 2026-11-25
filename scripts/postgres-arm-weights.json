@@ -438,6 +438,7 @@
   "test/engine-parity/spend-log.test.ts": 12073,
   "test/engine-parity/stats-vectors.test.ts": 7844,
   "test/engine-parity/stats.test.ts": 9790,
+  "test/engine-parity/surfaced-reads.test.ts": 6000,
   "test/engine-parity/sweep-reads.test.ts": 11400,
   "test/engine-parity/sync-admission-effects.test.ts": 8500,
   "test/engine-parity/sync-admission.test.ts": 7800,

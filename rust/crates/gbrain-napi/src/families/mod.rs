@@ -3,6 +3,7 @@
 //! so building a family never edits this list.
 
 mod access_members;
+mod access_read_log;
 mod access_rules;
 mod belief_ledger;
 mod belief_purge;

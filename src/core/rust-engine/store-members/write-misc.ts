@@ -21,6 +21,7 @@ import type { DrainHolderProgressRow } from '../../engine-sql/persistence-journa
 import { readOauthClient } from './jobs-oauth-clients.ts';
 import { storeCall, type StoreMember } from './common.ts';
 import { uuidText } from '../store-codec.ts';
+import { OWNER_MEMBER_KEY } from '../../search/private-visibility.ts';
 
 /**
  * The source's incarnation, archived flag, local path and config, or null. `lock: 'share'` asks the SQL engines to hold
@@ -105,6 +106,18 @@ export const hasExtractedEvents: StoreMember<[sourceId: string, pageId: number],
  */
 export const hasLabelledOnlyMember: StoreMember<[], boolean> = async (brain) =>
   (await readAccessMembers(brain, { includeRemoved: true })).some(row => row.labelled_only === true);
+
+/**
+ * Whether one of `memberIds` carries the labelled-only grant and is not the configured owner: the store's member records
+ * (live or not, as the SQL reads every row) and the config `access.owner_member` with its spaces trimmed (`btrim`); no
+ * owner row leaves every listed member eligible, as `id IS DISTINCT FROM NULL` is true.
+ */
+export const hasLabelledOnlyMemberAmong: StoreMember<[memberIds: readonly string[]], boolean> = async (brain, memberIds) => {
+  const raw = await storeCall({ member: 'hasLabelledOnlyMemberAmong' }, () => brain.getConfig(OWNER_MEMBER_KEY)) as string | null;
+  const owner = raw === null ? null : raw.replace(/^ +| +$/g, '');
+  const wanted = new Set(memberIds);
+  return (await readAccessMembers(brain, { includeRemoved: true })).some(row => row.labelled_only === true && wanted.has(row.id) && row.id !== owner);
+};
 
 /**
  * The store's brain id and commit sequence (`readProjectionReadinessGeneration`). Every commit advances it, a page write

@@ -352,7 +352,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'listUnretiredPagesBySlugPattern', 'listUntiledSegmentedPageRows', 'listVisibilityCandidatePages',
   'listVolunteerChannels', 'listWorktreeBlockerRequests', 'listWorktreeIds', 'lockActiveAccessTokens',
   'lockAllSourceRows', 'lockLegacyAccessTokens', 'lockSharedSkillBrainId', 'matchHeadStems',
-  'oauthClientHoldsAuthorization', 'oauthClientLive', 'originIndexPresent', 'pagePrefixSamples', 'pageTypeTotals',
+  'oauthClientHoldsAuthorization', 'oauthClientLive', 'originIndexPresent', 'pagePrefixSamples', 'pageTypeTotals', 'countLivePagesAtPathPrefix', 'probeUntypedPathPrefix', 'hasLabelledOnlyMemberAmong', 'readAccessReadLog', 'listAccessReadPageRefs', 'readAccessReadsOfPages', 'tallyAccessReadsOfPages',
   'pingStore', 'probePageTypes', 'readAccessGroups', 'readAccessMemberLink', 'readAccessTokenAttest', 'readAccessTokenMemberGrant',
   'readAccessTokenReceiptGrant', 'readActiveAccessTokenByHash', 'readActiveAccessTokenGrant', 'readAdmissionSample',
   'readAtomProvenanceCounts', 'readBriefEditPage', 'readBriefEmailAliasPages', 'readBriefEntityPages',
@@ -426,6 +426,7 @@ const nothingLock = 'nothing: the lock is released when the call ends, so runnin
 
 /** Typed writes and the read that confirms each. */
 export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> = {
+  invalidateQueryCacheRows: 'nothing: the delete removes cached search results only, so running it again deletes none of what the first run removed',
   // repair-rust batches 6b and 6c: the twin merge's moves, the rename alias, the segmented chunk retire, the code edge clear, the secret store writes and
   // the secret-spans page rewrites. Each is one store write (`self.write`).
   moveTwinRelationships: 'getLinks and getBacklinks for the survivor page (the twin\'s derived links and transitions are on it)',
@@ -639,6 +640,8 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   lockReconcileRevision: nothingLock, lockSourceRow: nothingLock, lockSourceShared: nothingLock,
   lockWriteRequest: nothingLock, lockWriteRequestsById: nothingLock, shareLockWriteCredential: nothingLock,
   logChatUsage: 'readChatUsage',
+  insertAccessReadLogRows: 'readAccessReadLog over the batch window (the rows are there only when the insert committed)',
+  pruneAccessReadLog: nothingPurge,
   logMcpRequest: 'readMcpLifetimeUsage', pruneMcpRequestLogBatch: 'readMcpLifetimeUsage',
   markEdgeProposalStale: 'readEdgeProposal for that proposal',
   markEdgeProposalUndone: 'readEdgeProposal for that proposal',

@@ -264,11 +264,13 @@ describe('engine parity: telemetry', () => {
     const members = Object.entries(RUST_ENGINE_MEMBERS).filter(([, cls]) => cls === 'telemetry').map(([m]) => m).sort();
     expect(members).toEqual([
       'chronicleStore', 'countMcpRequestLogRows', 'countMcpRequestsLastDay', 'countMcpRequestsLastDayByToken',
-      'countRecentChronicleReservations', 'hasMcpLogRowsPastWindow', 'hasPendingAutoChronicleRow', 'logChatUsage',
-      'logMcpRequest', 'pruneChronicleReservations', 'pruneMcpRequestLogBatch', 'readChatUsage', 'readChronicleRow',
-      'readClientOpUsage', 'readMcpLifetimeUsage', 'readMcpLogPruneCutoff', 'readMcpRequestLogBytes',
-      'readMcpRequestLogPage', 'readMcpRollupPrunedBefore', 'readPendingWriteHealth', 'readSearchStats',
-      'recordSearchTelemetry', 'reserveChronicleJudgeSlot', 'upsertChronicleRow',
+      'countRecentChronicleReservations', 'hasMcpLogRowsPastWindow', 'hasPendingAutoChronicleRow',
+      'insertAccessReadLogRows', 'listAccessReadPageRefs', 'logChatUsage', 'logMcpRequest', 'pruneAccessReadLog',
+      'pruneChronicleReservations', 'pruneMcpRequestLogBatch', 'readAccessReadLog', 'readAccessReadsOfPages',
+      'readChatUsage', 'readChronicleRow', 'readClientOpUsage', 'readMcpLifetimeUsage', 'readMcpLogPruneCutoff',
+      'readMcpRequestLogBytes', 'readMcpRequestLogPage', 'readMcpRollupPrunedBefore', 'readPendingWriteHealth',
+      'readSearchStats', 'recordSearchTelemetry', 'reserveChronicleJudgeSlot', 'tallyAccessReadsOfPages',
+      'upsertChronicleRow',
     ]);
     const served = members.filter((m) => m in STORE_MEMBERS);
     const reported = servedCapabilities();

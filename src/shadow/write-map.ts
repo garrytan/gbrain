@@ -222,6 +222,8 @@ export const IGNORED_MEMBERS: ReadonlySet<string> = new Set([
   // Segmented-body staging and derivation tables (not copied).
   'allocateBodyOccurrenceIds', 'stageSegmentTexts', 'stageManifestRows', 'openBodyStaging', 'setBodyStagingState',
   'upsertSegmentDerivations', 'retireSegmentDerivations',
+  // The schema-pack query-cache invalidation: query_cache is a cache the seed leaves behind (rust/docs/store/seed.md).
+  'invalidateQueryCacheRows',
   // The memory proposal queue: the Rust store does not serve memory_proposals yet (rust/docs/store/seed.md lists it under "Gaps: not served by the Rust store"),
   // so the seed does not copy it, nothing follows it, and a row in it blocks a swap.
   'expireMemoryProposals', 'purgeMemoryProposals',
@@ -275,6 +277,8 @@ export const READ_ONLY_MEMBERS: ReadonlySet<string> = new Set([
   'probeRetypeRows', 'probeTargetRows',
   // Batch 12: row-lock and existence reads (SELECTs only) of the persistence, repair and secret-store lanes.
   'filterPageIdsByFrontmatter', 'lockEffectRow', 'secretEntryExists',
+  // Lane 15 reads whose names carry no read prefix: the schema-pack sync probe and the who-read tally.
+  'probeUntypedPathPrefix', 'tallyAccessReadsOfPages',
 ]);
 
 /**
@@ -321,7 +325,7 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'expireSourceFactNow', 'expireSpendReservations', 'expireStaleWriteClaims', 'expireSupersededFact', 'failEffectRow',
   'failJob', 'failParentJob', 'failSubagentToolExecution', 'fetchSyncImportPageCursor', 'finishAccessRestamp',
   'forgetWakeCredential', 'forgetWakeMember', 'holdPageEmbedding', 'insertAccessMember', 'insertAccessMemberLink',
-  'insertAccessMigration', 'insertAccessPolicyRevision', 'insertAccessToken', 'insertBeliefEvents',
+  'insertAccessMigration', 'insertAccessPolicyRevision', 'insertAccessReadLogRows', 'insertAccessToken', 'insertBeliefEvents',
   'insertBeliefRedaction', 'insertCalibrationProfile', 'insertCanonicalTimelineRows', 'insertDerivedAliasRows',
   'insertFactPurge', 'insertFactWithdrawal', 'insertHoldingPagePurges', 'insertJobAttachment', 'insertLeasePressure',
   'insertOauthClient', 'insertOauthClientGrant', 'insertOauthCode', 'insertOauthGrantAudit', 'insertOauthToken',
@@ -339,7 +343,7 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'markRevertedEdgeProposals', 'markSourceSynced', 'markSpendUsageUnknown', 'mintBeliefLifetime',
   'moveConversationSourceWindows', 'moveFactToPage', 'moveFactWithdrawalSubject', 'moveKeptFactRows',
   'openPageEmbeddingHold', 'openWakeWatch', 'parkEffectRow', 'patchOauthClient', 'pauseJob', 'persistOauthClientGrant',
-  'placeRelinkedFact', 'postInboxMessage', 'promoteDelayedJobs', 'pruneHoldingPageVersions', 'pruneJobs',
+  'placeRelinkedFact', 'postInboxMessage', 'promoteDelayedJobs', 'pruneAccessReadLog', 'pruneHoldingPageVersions', 'pruneJobs',
   'pruneMcpRequestLogBatch', 'pruneSatisfiedWantedMarkers', 'publicationJournalStore', 'purgeCalibrationProfilesByWave',
   'purgeStaleAppliedCaptures', 'purgeStaleCheckpoints', 'queuePageProjectionJob', 'queueWakeForget', 'queueWithdrawalReview', 'rearmLinksEffects',
   'reattributeSessionFacts', 'rebindSharedSkillMember', 'reclaimStalledJobs', 'recordAccessMigrationPhase',

@@ -9,6 +9,7 @@
 import { GUEST_SOURCES_HIDDEN_SQL } from '../guests/note.ts';
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
+import { OWNER_MEMBER_KEY } from '../search/private-visibility.ts';
 import type { SqlExecutor } from './executor.ts';
 
 /** A source's identity and state as a write reads it (`readSourceState`); `config` is always an object. */
@@ -223,6 +224,16 @@ export async function listActiveAccessMembers(exec: LegacyUnscopedRead): Promise
  */
 export async function hasLabelledOnlyMember(exec: LegacyUnscopedRead): Promise<boolean> {
   return (await exec.executeRaw('SELECT 1 FROM access_members WHERE labelled_only LIMIT 1')).length > 0;
+}
+
+/**
+ * Whether one of `memberIds` carries the labelled-only grant and is not the configured owner (`access.owner_member`):
+ * the read a remote read or write runs to decide its caller is labelled-only (access/labelled-only.ts labelledOnlyFor).
+ * A disabled or removed member counts, as the statement reads every row. A failed read is thrown; the caller decides.
+ */
+export async function hasLabelledOnlyMemberAmong(exec: LegacyUnscopedRead, memberIds: readonly string[]): Promise<boolean> {
+  return (await exec.executeRaw(`SELECT 1 FROM access_members WHERE labelled_only AND id = ANY($1::text[])
+      AND id IS DISTINCT FROM (SELECT btrim(value) FROM config WHERE key = $2) LIMIT 1`, [[...memberIds], OWNER_MEMBER_KEY])).length > 0;
 }
 
 /** `attachSourcePath` options: a non-null `name` replaces the name; a non-null `federated` sets `config.federated`. */

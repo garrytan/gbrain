@@ -203,6 +203,7 @@ in its module header:
 | `0x0E` | `TELEMETRY_CHRONICLE_ROW` | `chronicle_page_state` (a page or source delete removes its rows, `chronicle_state.rs`) |
 | `0x0F` | `TELEMETRY_CHRONICLE_RESERVATION` | `chronicle_judge_reservations` (read by `countRecentChronicleReservations`) |
 | `0x10` | `TELEMETRY_CHRONICLE_SEQUENCE` | the `chronicle_judge_reservations` id counter |
+| `0x11` | `TELEMETRY_ACCESS_READ_LOG` | `access_read_log` (`access_read_log.rs`) |
 
 `eval_candidates` stays with eval_capture (`Z`). A new telemetry table takes the next unused sub-tag in a reviewed
 change to this table and to `keys.rs`.

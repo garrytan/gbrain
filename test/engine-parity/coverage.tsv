@@ -8,7 +8,7 @@
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
 # covered: 2279/2293
 # lifecycle: 12/12
-# pages: 124/125
+# pages: 133/134
 # search: 8/8
 # search_reads: 9/9
 # link_reads: 15/15
@@ -188,7 +188,7 @@ readPageIdentity	pages	yes	2	no	yes	yes	serves
 markSourceSynced	pages	yes	7	no	yes	yes	serves
 advanceSyncCheckpoint	pages	yes	2	no	yes	yes	serves
 countSourcePages	pages	yes	6	no	yes	yes	serves
-readSourcesNotReadable	pages	yes	2	no	yes	yes	serves
+readSourcesNotReadable	pages	yes	3	no	yes	yes	serves
 insertSource	pages	yes	16	no	yes	yes	serves
 deleteSourceRecord	pages	yes	8	no	yes	yes	serves
 readSourceDeleteImpact	pages	yes	2	no	yes	yes	serves
@@ -217,7 +217,7 @@ writeConnectorDbCursor	pages	yes	2	no	yes	yes	serves
 readLivePagesByIds	pages	yes	1	no	yes	yes	serves
 listStaleAtoms	pages	yes	2	no	yes	yes	serves
 getPageSealState	pages	yes	6	no	yes	yes	serves
-refreshPageOrigin	pages	yes	8	no	yes	yes	serves
+refreshPageOrigin	pages	yes	10	no	yes	yes	serves
 readLivePageIdBySlug	pages	yes	10	no	yes	yes	serves
 readPageTierRef	pages	yes	1	no	yes	yes	serves
 readPageTierRows	pages	yes	1	no	yes	yes	serves
@@ -1970,6 +1970,7 @@ listAudienceAccessMembers	write_misc	yes	6	no	yes	yes	serves
 readAccessGroups	write_misc	yes	4	no	yes	yes	serves
 listPagesNamingReader	write_misc	yes	5	no	yes	yes	serves
 purgeStaleAppliedCaptures	write_misc	yes	1	no	yes	yes	serves
+hasLabelledOnlyMemberAmong	write_misc	yes	1	no	yes	yes	serves
 listSourceIncarnations	repair_bookkeeping	yes	14	no	yes	yes	serves
 listOrphanBindings	repair_bookkeeping	yes	4	no	yes	yes	serves
 deleteOrphanBinding	repair_bookkeeping	yes	3	no	yes	yes	serves
@@ -2193,11 +2194,11 @@ readOAuthClientMemberGrant	access_grants	yes	1	no	yes	yes	serves
 readAccessTokenMemberGrant	access_grants	yes	1	no	yes	yes	serves
 readLocalWriterMemberGrant	access_grants	yes	6	no	yes	yes	serves
 readSharedSkillServingEpoch	access_grants	yes	5	no	yes	yes	serves
-insertAccessMember	access_members	yes	34	no	yes	yes	serves
+insertAccessMember	access_members	yes	35	no	yes	yes	serves
 setAccessMemberDisabled	access_members	yes	16	no	yes	yes	serves
 setAccessMemberEmail	access_members	yes	2	no	yes	yes	serves
 setAccessMemberKind	access_members	yes	2	no	yes	yes	serves
-setAccessMemberLabelledOnly	access_members	yes	3	no	yes	yes	serves
+setAccessMemberLabelledOnly	access_members	yes	4	no	yes	yes	serves
 tombstoneAccessMember	access_members	yes	15	no	yes	yes	serves
 addAccessGroupMembers	access_members	yes	3	no	yes	yes	serves
 removeAccessGroupMembers	access_members	yes	1	no	yes	yes	serves

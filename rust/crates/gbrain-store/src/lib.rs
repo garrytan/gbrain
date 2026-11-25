@@ -57,6 +57,7 @@ pub mod timeline;
 
 // One module per planned family (docs/designs/RUST_ENGINE_INTERFACES.md). Each is listed once, here,
 // so building a family never edits this list.
+pub mod access_read_log;
 pub mod alias_fanout_reads;
 pub mod aliases;
 pub mod budget_ledger;
