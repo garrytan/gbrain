@@ -156,21 +156,31 @@ export function deleteAllCaptureData(cap: string): string[] {
 
 
 /**
- * Invalidates the current epoch when the purge log changed since it began (or `force`): the pointer flips first, so
- * every recorder stops appending to it, then the data is deleted. Returns true when it invalidated.
+ * THE purge owner; every purge entry point calls it (test "purge entry points" checks the source). Whatever the pointer
+ * says: flip it to invalidated, delete every epoch, base copy, run copy and retry record, drop the scratch Postgres copy
+ * (true once gone; a failed drop stays pending and blocks replay, status and seed). Safe to repeat.
  */
-export function invalidateIfPurged(cap: string, opts: { home?: string; force?: string } = {}): boolean {
+export function purgeCapture(cap: string): Promise<boolean> {
   const pointer = readEpoch(cap);
-  // A purge cleans up whatever the pointer says: a recording kept for retry may outlive an invalidated next epoch.
-  if (opts.force === 'purge' && pointer?.state === 'invalidated') { deleteAllCaptureData(cap); return true; }
-  if (!pointer || pointer.state === 'invalidated') return false;
-  if (!opts.force && !purgeLogChanged(pointer.purge_log, opts.home)) return false;
-  const reason = opts.force ?? 'purge';
-  setEpochState(cap, pointer, 'invalidated', reason);
-  // A purge deletes everything; a seed failure or an unseeded epoch only that epoch (a retained failed replay stays).
-  if (reason === 'purge') deleteAllCaptureData(cap); else deleteEpochData(cap, pointer.id);
-  scheduleScratchDrop(cap);
+  if (pointer && !(pointer.state === 'invalidated' && pointer.reason === 'purge')) setEpochState(cap, pointer, 'invalidated', 'purge');
+  deleteAllCaptureData(cap);
+  return scheduleScratchDrop(cap);
+}
+
+/** Runs purgeCapture when the purge log changed (or cannot be read) since the current epoch began. True when it did. */
+export function purgeIfLogChanged(cap: string, home?: string): boolean {
+  const pointer = readEpoch(cap);
+  if (!pointer || pointer.state === 'invalidated' || !purgeLogChanged(pointer.purge_log, home)) return false;
+  void purgeCapture(cap);
   return true;
+}
+
+/** Retires one epoch that ends without a purge (never seeded, seed failed): that epoch only, and the scratch copy. */
+export function retireEpoch(cap: string, reason: 'unseeded' | 'seed_failed'): Promise<boolean> {
+  const pointer = readEpoch(cap);
+  if (pointer && pointer.state !== 'invalidated') setEpochState(cap, pointer, 'invalidated', reason);
+  if (pointer) deleteEpochData(cap, pointer.id);
+  return scheduleScratchDrop(cap);
 }
 
 // ---- the scratch Postgres copy --------------------------------------------------------------------------------
@@ -270,21 +280,19 @@ export function watchPurges(engine: BrainEngine, cap: string): void {
   // engine) must not leave the engine deaf to purges. Disconnect only waits for a drop it started.
   if (!purgeWatched.has(cap)) {
     purgeWatched.add(cap);
-    onPurgeIntent(() => { try { if (!invalidateIfPurged(cap, { force: 'purge' })) scheduleScratchDrop(cap); } catch { /* fail open */ } });
+    onPurgeIntent(() => { try { void purgeCapture(cap); } catch { /* fail open */ } });
   }
   engine.registerBeforeDisconnect(async () => { await scratchDrops.get(cap); });
 }
 
 /**
- * Finishes the cleanup of an invalidated epoch (a crash or a failed removal can interrupt it): deletes every recording
- * and copy again and drops the scratch copy. Only the nightly run (under its lock) and the capture commands call it,
- * never a recorder, so it cannot race a new epoch's seed. True when nothing is left to clean.
+ * Finishes an interrupted cleanup before anything new starts (the nightly run, under its lock): a purge's runs again in
+ * full, a retirement's deletes its epoch again. True when nothing is left to clean.
  */
 export async function resumeInvalidatedCleanup(cap: string): Promise<boolean> {
   const pointer = readEpoch(cap);
-  if (pointer?.state !== 'invalidated') return scratchCleared(cap);
-  if (pointer.reason === 'purge') deleteAllCaptureData(cap); else deleteEpochData(cap, pointer.id);
-  scheduleScratchDrop(cap);
+  if (pointer?.state === 'invalidated' && pointer.reason === 'purge') return purgeCapture(cap);
+  if (pointer?.state === 'invalidated') deleteEpochData(cap, pointer.id);
   return scratchCleared(cap);
 }
 
@@ -319,7 +327,6 @@ export class CaptureWriter {
   nextSeq(): number { return ++this.seq; }
 
   push(rec: Omit<CaptureRecord, 'v' | 'proc' | 'seq'>): void {
-    this.heartbeat(); // visible to a nightly seal from the first call, not only after a flush
     let line: string;
     try { line = JSON.stringify({ v: 1, proc: this.proc, seq: this.nextSeq(), ...rec }); } catch { return this.drop('encode'); }
     if (line.length > CAPTURE_LIMITS.recordBytes) {
@@ -334,8 +341,8 @@ export class CaptureWriter {
     }
   }
 
-  /** Writes this process's heartbeat into the current recording epoch, once per epoch. */
-  private heartbeat(): void {
+  /** Writes this process's heartbeat into the current recording epoch, once per epoch (at a call's start). */
+  markActive(): void {
     const epoch = readEpoch(this.cap);
     if (!epoch || epoch.state !== 'recording' || this.heartbeatFor === epoch.id || !existsSync(epochDir(this.cap, epoch.id))) return;
     this.heartbeatFor = epoch.id;
@@ -359,7 +366,7 @@ export class CaptureWriter {
   /** The segment path to append to now, or null (and the reason) when nothing may be written. */
   private target(): { path: string; epoch: EpochPointer } | { stop: string } {
     if (!captureIsOn(this.cap, this.env)) return { stop: 'off' };
-    if (invalidateIfPurged(this.cap, { home: this.home })) return { stop: 'purged' };
+    if (purgeIfLogChanged(this.cap, this.home)) return { stop: 'purged' };
     const epoch = readEpoch(this.cap);
     if (!epoch || epoch.state !== 'recording') return { stop: 'no_epoch' };
     const dir = epochDir(this.cap, epoch.id);
@@ -377,7 +384,7 @@ export class CaptureWriter {
       } catch { this.lowDisk = true; }
     }
     if (this.lowDisk) return { stop: 'budget' };
-    this.heartbeat();
+    this.markActive();
     return { path: join(dir, `${this.proc}.jsonl`), epoch };
   }
 
@@ -455,6 +462,7 @@ export function wrapCaptureEngine<E extends BrainEngine>(engine: E, writer: Capt
 
   const record = (member: string, fn: Function): Function => function captured(...args: unknown[]) {
     const t0 = Date.now();
+    writer.markActive(); // a nightly seal sees this process from the call's start, while the call still runs
     if (GAP_MEMBERS.has(member) || hasFunctionArg(args)) {
       writer.push({ t0, t1: t0, kind: 'gap', member, reason: GAP_MEMBERS.has(member) ? 'raw' : 'function_arg', tx });
       return fn.apply(engine, args);

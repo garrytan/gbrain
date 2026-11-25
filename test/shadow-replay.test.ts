@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { appendPurgeIntent } from '../src/core/belief/purge-mirror.ts';
 import {
-  __setScratchOpenerForTests, attachCapture, deleteEpochData, dropScratchPostgres, resumeInvalidatedCleanup, basesDir, CaptureWriter, epochDir, invalidateIfPurged, readEpoch, readSegment, scratchCleared,
+  __setScratchOpenerForTests, attachCapture, deleteEpochData, dropScratchPostgres, resumeInvalidatedCleanup, basesDir, CaptureWriter, epochDir, purgeIfLogChanged, purgeCapture, retireEpoch, readEpoch, readSegment, scratchCleared,
   scratchPendingPath, scratchRecordPath, startEpoch, watchPurges, wrapCaptureEngine, type CaptureRecord,
 } from '../src/shadow/capture.ts';
 import { captureDir, captureOffMarker, writePrivateJson } from '../src/shadow/capture-state.ts';
@@ -168,7 +168,7 @@ describe('capture', () => {
     const id = readEpoch(cap)!.id;
     mkdirSync(join(basesDir(cap, id), 'pglite'), { recursive: true });
     appendPurgeIntent({ request: 'r1', request_id: 'q1', source_id: 'default', source_incarnation: 'i', scope: 'page', purge_epoch: 1, facts: [], takes: [], lifetimes: [] }, home);
-    expect(invalidateIfPurged(cap, { home })).toBe(true);
+    expect(purgeIfLogChanged(cap, home)).toBe(true);
     expect(readEpoch(cap)!.state).toBe('invalidated');
     expect(existsSync(epochDir(cap, id))).toBe(false);
     expect(existsSync(basesDir(cap, id))).toBe(false);
@@ -210,7 +210,7 @@ describe('capture', () => {
     __setScratchOpenerForTests(async () => { throw Object.assign(new Error('down'), { code: 'ECONNREFUSED' }); });
     try {
       appendPurgeIntent({ request: 'r9', request_id: 'q', source_id: 'default', source_incarnation: 'i', scope: 'page', purge_epoch: 1, facts: [], takes: [], lifetimes: [] }, home);
-      expect(invalidateIfPurged(cap, { home })).toBe(true);
+      expect(purgeIfLogChanged(cap, home)).toBe(true);
       expect(await scratchCleared(cap)).toBe(false);
       expect(existsSync(scratchPendingPath(cap))).toBe(true);
       __setScratchOpenerForTests(ownedScratch([]));
@@ -223,7 +223,7 @@ describe('capture', () => {
     const { cap } = recordingCapture();
     const notADir = join(tmp(), 'file');
     writeFileSync(notADir, '');
-    expect(invalidateIfPurged(cap, { home: join(notADir, 'home') })).toBe(true);
+    expect(purgeIfLogChanged(cap, join(notADir, 'home'))).toBe(true);
   });
 });
 
@@ -335,7 +335,7 @@ describe('review fixes (ship pass 1)', () => {
     const { cap, home, shadowDir } = recordingCapture();
     for (const p of [join(cap, 'epoch-old'), join(cap, 'bases', 'old', 'pglite'), join(shadowDir, 'replay', 'run-x', 'segments'), join(shadowDir, 'replay', 'run-x', 'work'), join(shadowDir, 'replay', 'run-x', 'out')]) mkdirSync(p, { recursive: true });
     appendPurgeIntent({ request: 'r7', request_id: 'q', source_id: 'default', source_incarnation: 'i', scope: 'page', purge_epoch: 1, facts: [], takes: [], lifetimes: [] }, home);
-    expect(invalidateIfPurged(cap, { home })).toBe(true);
+    expect(purgeIfLogChanged(cap, home)).toBe(true);
     for (const p of [join(cap, 'epoch-old'), join(cap, 'bases', 'old'), join(shadowDir, 'replay', 'run-x', 'segments'), join(shadowDir, 'replay', 'run-x', 'work')]) expect(existsSync(p)).toBe(false);
     expect(existsSync(join(shadowDir, 'replay', 'run-x', 'out'))).toBe(true);
   });
@@ -388,7 +388,7 @@ describe('review fixes (ship pass 1, red team)', () => {
     const { cap, home } = recordingCapture();
     const next = readEpoch(cap)!;
     appendPurgeIntent({ request: 'r8', request_id: 'q', source_id: 'default', source_incarnation: 'i', scope: 'page', purge_epoch: 1, facts: [], takes: [], lifetimes: [] }, home);
-    invalidateIfPurged(cap, { home });
+    purgeIfLogChanged(cap, home);
     mkdirSync(join(basesDir(cap, next.id), 'pglite'), { recursive: true }); // the seed kept writing after the first cleanup
     expect(await settleSeededEpoch(cap, next, home)).toBe(false);
     expect(existsSync(basesDir(cap, next.id))).toBe(false);
@@ -529,7 +529,7 @@ describe('review fixes (ship pass 1, outside voice)', () => {
     const e = wrapCaptureEngine(fakeEngine() as unknown as BrainEngine, writer);
     await e.getPage(PRIVATE.slug); // buffered, not flushed yet
     appendPurgeIntent({ request: 'r10', request_id: 'q', source_id: 'default', source_incarnation: 'i', scope: 'page', purge_epoch: 1, facts: [], takes: [], lifetimes: [] }, home);
-    invalidateIfPurged(cap, { home });
+    purgeIfLogChanged(cap, home);
     await Bun.sleep(5);
     startEpoch(cap, home);
     await writer.flush();
@@ -719,7 +719,7 @@ describe('review fixes (last read-only review, 8e7a0f5630)', () => {
     mkdirSync(join(basesDir(cap, kept), 'pglite'), { recursive: true });
     writePrivateJson(join(cap, 'retry.json'), { pointer: readEpoch(cap), attempts: 1 });
     startEpoch(cap, home); // the next epoch, whose seed then failed
-    invalidateIfPurged(cap, { home, force: 'seed_failed' });
+    retireEpoch(cap, 'seed_failed');
     expect(existsSync(epochDir(cap, kept))).toBe(true);
     const e = fakeEngine() as unknown as BrainEngine;
     watchPurges(e, cap);
@@ -768,6 +768,67 @@ describe('review fixes (last read-only review, 8e7a0f5630)', () => {
     });
     const { report } = await run();
     expect(report.diffs.some(d => d.member === 'sweep:getPage')).toBe(true);
+  });
+});
+
+describe('purge and destructive-delete owners (rework at bb8e6bf11f)', () => {
+  const PURGE = { request: 'r13', request_id: 'q', source_id: 'default', source_incarnation: 'i', scope: 'page' as const, purge_epoch: 1, facts: [], takes: [], lifetimes: [] };
+
+  test('a purge on an already-invalidated epoch still drops a scratch copy an earlier failed drop left behind', async () => {
+    const { cap, home } = recordingCapture();
+    writePrivateJson(scratchRecordPath(cap), { url: 'postgresql://localhost/x', brain: 'pglite-abc', verified: true });
+    writePrivateJson(join(cap, 'epoch.json'), { ...readEpoch(cap)!, state: 'invalidated', reason: 'purge' });
+    const sql: string[] = [];
+    __setScratchOpenerForTests(ownedScratch(sql));
+    const hooks: Array<() => Promise<void>> = [];
+    try {
+      watchPurges({ registerBeforeDisconnect: (fn: () => Promise<void>) => hooks.push(fn) } as unknown as BrainEngine, cap);
+      appendPurgeIntent(PURGE, home);
+      for (const fn of hooks) await fn();
+    } finally { __setScratchOpenerForTests(null); }
+    expect(sql.some(q => q.startsWith('DROP SCHEMA'))).toBe(true);
+  });
+
+  test('shadow stop --delete refuses while a replay holds the lock, and deletes nothing', async () => {
+    const { cap, shadowDir } = recordingCapture();
+    const unlock = acquireReplayLock(join(shadowDir, 'replay'), 60_000);
+    try {
+      const { __stopForTests } = await import('../src/commands/engine-shadow.ts');
+      await expect(__stopForTests({ key: 'pglite-abc', dir: shadowDir, engine: 'pglite' }, true, () => {})).rejects.toThrow(/shadow_replay_busy/);
+      expect(existsSync(epochDir(cap, readEpoch(cap)!.id))).toBe(true);
+      expect(existsSync(join(shadowDir, 'replay', 'lock'))).toBe(true);
+    } finally { unlock(); }
+  });
+
+  test('a first call still running at the seal is visible: the heartbeat is written at call start', async () => {
+    const { cap, home } = recordingCapture();
+    const dir = epochDir(cap, readEpoch(cap)!.id);
+    let release!: () => void;
+    const slow = { ...fakeEngine(), getPage: () => new Promise(r => { release = () => r(null); }) } as unknown as BrainEngine;
+    const pending = wrapCaptureEngine(slow, new CaptureWriter(cap, home, {})).getPage('notes/x');
+    expect(liveRecorders(dir)).toBe(1);
+    release();
+    await pending;
+  });
+
+  test('purge entry points: every function that sees a purge calls purgeCapture, and only purgeCapture deletes everything', () => {
+    const root = join(import.meta.dir, '..', 'src');
+    const files = ['shadow/capture.ts', 'shadow/capture-state.ts', 'shadow/replay.ts', 'shadow/replay-run.ts', 'shadow/replay-copy.ts', 'commands/engine-shadow-replay.ts', 'commands/engine-shadow.ts'];
+    const fns: Array<{ file: string; name: string; body: string }> = [];
+    for (const f of files) {
+      const text = readFileSync(join(root, f), 'utf8');
+      for (const m of text.matchAll(/^(?:export )?(?:async )?function (\w+)[^]*?\n}\n/gm)) fns.push({ file: f, name: m[1]!, body: m[0] });
+    }
+    const named = (re: RegExp) => fns.filter(f => re.test(f.body.slice(f.body.indexOf('{')))).map(f => f.name).sort();
+    // Who sees a purge (the purge log moved, or a purge intent fired) ...
+    expect(named(/purgeLogChanged\(|onPurgeIntent\(/)).toEqual(['purgeIfLogChanged', 'replayAndRetire', 'replayEpoch', 'runNightlyReplay', 'settleSeededEpoch', 'watchPurges']);
+    // ... must hand it to the purge owner.
+    for (const f of fns.filter(f => /purgeLogChanged\(|onPurgeIntent\(/.test(f.body.slice(f.body.indexOf('{'))))) expect(`${f.name}: ${/purgeCapture\(/.test(f.body)}`).toBe(`${f.name}: true`);
+    expect(named(/deleteAllCaptureData\(/)).toEqual(['purgeCapture']);
+    // Destructive deletes go through deleteReplayState only (it takes the replay lock).
+    expect(named(/deleteReplayState\(/)).toEqual(['runShadowReplayCommand', 'stop']);
+    const commandRm = fns.filter(f => f.file.startsWith('commands/') && /rmSync\([^)]*(brain\.dir|join\(cap|runs)/.test(f.body)).map(f => f.name);
+    expect(commandRm).toEqual([]);
   });
 });
 

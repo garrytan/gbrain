@@ -585,13 +585,12 @@ async function stop(brain: { key: string; dir: string; engine: string }, del: bo
     }
   }
   if (del) {
-    // Shadow replay keeps the only record of its local Postgres copy under this directory: drop that copy first.
-    const { scheduleScratchDrop } = await import('../shadow/capture.ts');
-    if (!await scheduleScratchDrop(join(brain.dir, 'capture'))) {
+    // One destructive-delete path with `capture delete`: the replay lock first, then the scratch copy, then the folder.
+    const { deleteReplayState } = await import('../shadow/replay-run.ts');
+    if (!(await deleteReplayState(brain.dir, { whole: true })).ok) {
       err('engine shadow: the shadow replay Postgres copy could not be dropped, so nothing was deleted. Make that database reachable and run this again.');
       return 1;
     }
-    rmSync(brain.dir, { recursive: true, force: true });
     out(`Shadow mode is off for brain ${brain.key}; ${brain.dir} is deleted.`);
   } else {
     out(state?.enabled ? `Shadow mode is off for brain ${brain.key}. Running processes stop mirroring within 30 seconds.` : `Shadow mode was already off for brain ${brain.key}.`);

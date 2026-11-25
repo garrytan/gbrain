@@ -101,7 +101,8 @@ schema. It also deletes recordings and copies a crashed nightly run left behind.
 before they write. A running replay is stopped within seconds. If the scratch database cannot be reached at that
 moment, a pending marker stays, and every later replay, status and seed refuses to go on until the drop succeeds
 (`capture status` shows `scratch_drop_pending`). Nothing purged is replayed. The next nightly run seeds new copies from
-the purged brain. Reports and summaries hold no content, so a purge has nothing to remove there.
+the purged brain. Every purge path runs the same full cleanup, and `capture delete` and `engine shadow stop --delete` share one delete
+path that refuses while a replay runs. Reports and summaries hold no content, so a purge has nothing to remove there.
 
 ## Stop and delete
 

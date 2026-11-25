@@ -8,13 +8,13 @@
  * The first night only seeds. Nothing here writes to the brain.
  */
 import { randomBytes } from 'node:crypto';
-import { closeSync, existsSync, linkSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, writeFileSync, writeSync } from 'node:fs';
+import { closeSync, existsSync, linkSync, mkdirSync, openSync, readdirSync, readFileSync, rmdirSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../core/engine.ts';
 import type { RustEngineAddonLoad } from '../core/rust-engine/addon-loader.ts';
 import { configDir } from '../core/config.ts';
 import {
-  basesDir, deleteAllCaptureData, deleteEpochData, epochDir, invalidateIfPurged, purgeLogChanged, readEpoch, scheduleScratchDrop, scratchCleared, scratchRecordPath,
+  basesDir, deleteEpochData, epochDir, purgeCapture, purgeIfLogChanged, purgeLogChanged, readEpoch, retireEpoch, scheduleScratchDrop, scratchCleared, scratchRecordPath,
   readScratchRecord, resumeInvalidatedCleanup, setEpochState, startEpoch, type EpochPointer,
 } from './capture.ts';
 import { captureDir, captureIsOn, writePrivateJson } from './capture-state.ts';
@@ -203,7 +203,7 @@ async function replayEpoch(deps: NightlyDeps, cap: string, sealed: EpochPointer,
   rmSync(join(runDir, 'work'), { recursive: true, force: true });
   rmSync(join(runDir, 'segments'), { recursive: true, force: true });
   rmSync(join(runDir, 'home'), { recursive: true, force: true });
-  if (stopped === 'purged' || purgeLogChanged(sealed.purge_log, deps.home)) { removeRun(runDir); await scheduleScratchDrop(cap); throw new ReplayError('shadow_replay_purged', 'during the replay'); }
+  if (stopped === 'purged' || purgeLogChanged(sealed.purge_log, deps.home)) { removeRun(runDir); await purgeCapture(cap); throw new ReplayError('shadow_replay_purged', 'during the replay'); }
   if (stopped === 'budget') throw new ReplayError('shadow_replay_budget', `${Math.round(budgetMs / 60_000)} minutes`);
   const reportPath = join(runDir, 'out', 'report.json');
   if (code !== 0 || !existsSync(reportPath)) throw new Error(`the replay child exited ${code} without a report (its stderr names the cause)`);
@@ -218,9 +218,7 @@ async function replayEpoch(deps: NightlyDeps, cap: string, sealed: EpochPointer,
 export async function settleSeededEpoch(cap: string, next: EpochPointer, home: string): Promise<boolean> {
   const now = readEpoch(cap);
   if (now?.id === next.id && now.state === 'recording' && !purgeLogChanged(next.purge_log, home)) return true;
-  invalidateIfPurged(cap, { home, force: 'purge' });
-  deleteAllCaptureData(cap);
-  await scheduleScratchDrop(cap);
+  await purgeCapture(cap);
   return false;
 }
 
@@ -235,6 +233,28 @@ export function liveRecorders(dir: string): number {
     try { if (processAlive((JSON.parse(readFileSync(join(dir, f), 'utf8')) as { pid?: number }).pid)) n++; } catch { n++; } // silent-read-ok: an unreadable heartbeat counts as alive (incomplete, never a false complete)
   }
   return n;
+}
+
+/**
+ * THE destructive delete (`capture delete`, `shadow stop --delete`): the replay lock first (shadow_replay_busy while a
+ * replay runs), then the scratch copy (nothing deleted if it cannot drop), then the data (`whole`: the shadow folder).
+ */
+export async function deleteReplayState(shadowDir: string, opts: { whole: boolean }): Promise<{ ok: true; gone: string[] } | { ok: false }> {
+  const replayDir = join(shadowDir, 'replay');
+  const cap = captureDir(shadowDir);
+  const unlock = acquireReplayLock(replayDir, 0);
+  const gone: string[] = [];
+  try {
+    if (!await scheduleScratchDrop(cap)) return { ok: false };
+    const rm = (p: string) => { rmSync(p, { recursive: true, force: true }); gone.push(p); };
+    if (opts.whole) { for (const f of readdirSync(shadowDir)) if (f !== 'replay') rm(join(shadowDir, f)); }
+    else if (existsSync(cap)) { for (const f of readdirSync(cap)) if (f !== 'state.json' && f !== 'off') rm(join(cap, f)); }
+    for (const f of readdirSync(replayDir)) if (f !== 'lock') rm(join(replayDir, f));
+    return { ok: true, gone };
+  } finally {
+    unlock();
+    if (opts.whole) for (const d of [replayDir, shadowDir]) { try { rmdirSync(d); } catch { /* a new run's lock appeared: it stays */ } }
+  }
 }
 
 const retryPath = (cap: string) => join(cap, 'retry.json');
@@ -257,8 +277,7 @@ async function replayAndRetire(deps: NightlyDeps, cap: string, sealed: EpochPoin
     return out;
   } catch (e) {
     if (e instanceof ReplayError && e.code === 'shadow_replay_purged') {
-      deleteAllCaptureData(cap);
-      await scheduleScratchDrop(cap);
+      await purgeCapture(cap);
     } else if (attempts < 1) {
       writePrivateJson(retryPath(cap), { pointer: sealed, attempts: attempts + 1 } satisfies Retained);
     } else {
@@ -276,12 +295,12 @@ export async function runNightlyReplay(deps: NightlyDeps, opts: { budgetMinutes?
   const unlock = acquireReplayLock(join(deps.shadowDir, 'replay'), budgetMs);
   const result: NightlyResult = { schema_version: 1, status: 'off' };
   try {
-    const purged = invalidateIfPurged(cap, { home });
+    const purged = purgeIfLogChanged(cap, home);
     // An interrupted cleanup of an invalidated epoch is finished before anything else may start.
     if (!await resumeInvalidatedCleanup(cap)) throw new ReplayError('shadow_replay_purged', 'the cleanup of a purged epoch could not finish yet (the scratch Postgres copy is unreachable)');
     let pointer = readEpoch(cap);
     if (pointer?.state === 'recording' && !existsSync(join(basesDir(cap, pointer.id), 'manifest.json'))) {
-      invalidateIfPurged(cap, { home, force: 'unseeded' });
+      await retireEpoch(cap, 'unseeded');
       pointer = readEpoch(cap);
     }
     const sealed = pointer && pointer.state !== 'invalidated' && existsSync(join(basesDir(cap, pointer.id), 'manifest.json')) ? pointer : null;
@@ -317,9 +336,8 @@ export async function runNightlyReplay(deps: NightlyDeps, opts: { budgetMinutes?
         await seedEpoch(deps, cap, next);
       } catch (e) {
         const purgedNow = purgeLogChanged(next.purge_log, home) || (e instanceof ReplayError && e.code === 'shadow_replay_purged');
-        invalidateIfPurged(cap, { home, force: purgedNow ? 'purge' : 'seed_failed' });
-        if (purgedNow) { await settleSeededEpoch(cap, next, home); result.status = 'purged'; return result; }
-        await scheduleScratchDrop(cap);
+        if (purgedNow) { await purgeCapture(cap); result.status = 'purged'; return result; }
+        await retireEpoch(cap, 'seed_failed');
         throw e instanceof ReplayError ? e : new ReplayError('shadow_replay_seed_failed', `error code ${(e as { code?: unknown }).code ?? (e as Error).name}`);
       }
       if (!await settleSeededEpoch(cap, next, home)) result.status = 'purged';
