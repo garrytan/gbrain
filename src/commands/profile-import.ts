@@ -8,9 +8,10 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { IMPORT_FORMATS, planImport, previewHash, type ImportFormat, type ImportTarget } from '../core/profile/import.ts';
 import { newReceipt, runImport, summarize, type ImportCall, type ImportReceipt } from '../core/profile/import-run.ts';
 import { setCliExitVerdict, writeJsonDocument } from '../core/cli-force-exit.ts';
+import { shellQuote } from '../core/agent-output.ts';
 
 export const IMPORT_HELP = `Usage:
-  gbrain profile import <file> [--format auto|${IMPORT_FORMATS.join('|')}] [--json]   preview
+  gbrain profile import <file> [--format auto|${IMPORT_FORMATS.join('|')}] [--source <id>] [--json]   preview
   gbrain profile import <file> --yes --preview <hash> [--format ...] [--json]        apply that preview
   gbrain profile import --status <receipt> [--json]                                  show a receipt
   gbrain profile import --resume <receipt> [--json]                                  finish an interrupted apply
@@ -22,7 +23,7 @@ The preview prints a hash; the apply refuses unless the file, the parse and your
 
 Guide: docs/guides/profile.md#import`;
 
-export interface ImportFlags { file?: string; format: ImportFormat | 'auto'; yes: boolean; preview?: string; status?: string; resume?: string; json: boolean }
+export interface ImportFlags { file?: string; format: ImportFormat | 'auto'; yes: boolean; preview?: string; status?: string; resume?: string; source?: string; json: boolean }
 
 export function parseImportArgs(args: string[]): ImportFlags | { error: string } {
   const f: ImportFlags = { format: 'auto', yes: false, json: false };
@@ -35,6 +36,7 @@ export function parseImportArgs(args: string[]): ImportFlags | { error: string }
       else if (a === '--preview') f.preview = value();
       else if (a === '--status') f.status = value();
       else if (a === '--resume') f.resume = value();
+      else if (a === '--source') f.source = value();
       else if (a === '--format') {
         const v = value();
         if (v !== 'auto' && !(IMPORT_FORMATS as readonly string[]).includes(v)) return { error: `--format takes auto, ${IMPORT_FORMATS.join(', ')}; got ${JSON.stringify(v)}.` };
@@ -66,9 +68,9 @@ export function saveReceipt(path: string, r: ImportReceipt): void {
 
 export const receiptPath = (dir: string, hash: string) => join(dir, 'profile-imports', `${hash}.json`);
 
-async function report(r: ImportReceipt, path: string, json: boolean, global: string[]): Promise<void> {
+async function report(r: ImportReceipt, path: string, json: boolean, global: string[], scope: string[]): Promise<void> {
   const s = summarize(r);
-  const resume = ['gbrain', ...global, 'profile', 'import', '--resume', path];
+  const resume = ['gbrain', ...global, 'profile', 'import', '--resume', path, ...scope];
   if (json) {
     await writeJsonDocument(JSON.stringify({ receipt: path, preview: r.preview, profile: r.target.profile, ...s,
       ...(r.batches.some(b => b.state === 'failed') ? { batch_errors: r.batches.filter(b => b.error).map(b => ({ batch: b.index, ...b.error })) } : {}),
@@ -80,22 +82,27 @@ async function report(r: ImportReceipt, path: string, json: boolean, global: str
   for (const f of s.failed) console.log(`  failed: line ${f.line} ${f.error?.code ?? ''} ${f.error?.message ?? ''}`.trimEnd());
   for (const b of r.batches.filter(b => b.state === 'failed')) console.log(`  batch ${b.index} refused: ${b.error?.code} ${b.error?.message}`);
   if (s.failed.length) console.log('Failed lines are not retried: fix them in the file, then preview and apply again (saved lines come back as duplicates, not new facts).');
-  if (!s.complete) console.log(`Finish it with: ${resume.join(' ')}`);
+  if (!s.complete) console.log(`Finish it with: ${shellQuote(resume)}`);
 }
 
 /**
  * Runs the import subcommand with `call` reaching the brain and `target` naming the caller and its profile; `global` are the
- * global flags (`--brain <id>`) the printed apply and resume commands repeat.
+ * global flags (`--brain <id>`) the printed apply and resume commands repeat, with the `--source` the import was given.
  */
 export async function runProfileImport(args: string[], call: ImportCall, target: () => Promise<ImportTarget>, homeDir: string, global: string[] = []): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) { console.log(IMPORT_HELP); return; }
   const { opError } = await import('../core/ops/contract.ts');
   const f = parseImportArgs(args);
   if ('error' in f) throw opError('invalid_params', f.error, 'gbrain profile import --help lists the forms.');
-  if (f.status) { await report(loadReceipt(f.status), f.status, f.json, global); return; }
+  const scope = f.source ? ['--source', f.source] : [];
+  if (f.status) { await report(loadReceipt(f.status), f.status, f.json, global, scope); return; }
   const prior = f.resume ? loadReceipt(f.resume) : null;
   const file = prior ? prior.file : resolve(f.file!);
-  const plan = planImport(readFileSync(file, 'utf8'), prior ? prior.format : f.format);
+  let text: string;
+  try { text = readFileSync(file, 'utf8'); } catch (e) {
+    throw opError('invalid_params', `profile import: cannot read ${file} (${(e as NodeJS.ErrnoException).code ?? (e as Error).message}); nothing was sent.`, 'Pass the path of the exported memory file.');
+  }
+  const plan = planImport(text, prior ? prior.format : f.format);
   const who = await target();
   const hash = previewHash(plan, who);
   if (prior && (hash !== prior.preview || who.principal !== prior.target.principal || who.profile !== prior.target.profile)) {
@@ -105,12 +112,12 @@ export async function runProfileImport(args: string[], call: ImportCall, target:
   if (!prior && !f.yes) {
     const byFacet: Record<string, number> = {};
     for (const i of plan.items) byFacet[i.facet] = (byFacet[i.facet] ?? 0) + 1;
-    const apply = ['gbrain', ...global, 'profile', 'import', file, '--format', plan.format, '--yes', '--preview', hash];
+    const apply = ['gbrain', ...global, 'profile', 'import', file, '--format', plan.format, '--yes', '--preview', hash, ...scope];
     if (f.json) { await writeJsonDocument(JSON.stringify({ preview: hash, format: plan.format, profile: who.profile, items: plan.items.length, by_facet: byFacet, facts: plan.items, dropped: plan.dropped, apply_argv: apply }, null, 2)); return; }
     console.log(`Preview ${hash}: ${plan.items.length} fact(s) from ${basename(file)} (${plan.format}) onto ${who.profile}, saved private and inferred.`);
     for (const i of plan.items) console.log(`  line ${i.line} [${i.facet}] ${i.fact.length > 100 ? i.fact.slice(0, 99) + '…' : i.fact}`);
     for (const d of plan.dropped) console.log(`  dropped line ${d.line}: ${d.reason}`);
-    console.log(`Apply: ${apply.join(' ')}`);
+    console.log(`Apply: ${shellQuote(apply)}`);
     return;
   }
   if (!prior && f.preview !== hash) {
@@ -122,7 +129,7 @@ export async function runProfileImport(args: string[], call: ImportCall, target:
   try { receipt = loadReceipt(path); } catch { receipt = newReceipt(plan, hash, file, who, `imported from ${basename(file)} (${plan.format}), preview ${hash}`); }
   saveReceipt(path, receipt);
   await runImport(plan, receipt, call, r => saveReceipt(path, r));
-  await report(receipt, path, f.json, global);
+  await report(receipt, path, f.json, global, scope);
   const s = summarize(receipt);
   if (receipt.batches.some(b => b.state === 'pending')) setCliExitVerdict(10);
   else if (!s.complete || s.failed.length) setCliExitVerdict(1);

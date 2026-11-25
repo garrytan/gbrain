@@ -13,12 +13,12 @@
  */
 import { afterAll, beforeAll, describe, expect, setSystemTime, spyOn, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { existsSync, linkSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { operationsByName, type OperationContext } from '../src/core/operations.ts';
+import { operations, operationsByName, type OperationContext } from '../src/core/operations.ts';
 import { __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
@@ -27,7 +27,8 @@ import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/privat
 import { addMember, bindCredential } from '../src/core/access/members.ts';
 import { setOwner } from '../src/core/access/owner.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
-import { facetHint, planImport, previewHash, sniffFormat, IMPORT_BATCH } from '../src/core/profile/import.ts';
+import { batchParams, facetHint, planImport, previewHash, sniffFormat, IMPORT_BATCH } from '../src/core/profile/import.ts';
+import { allowedOpNames } from '../src/mcp/surface.ts';
 import { newReceipt, runImport, summarize, type ImportCall } from '../src/core/profile/import-run.ts';
 import { loadReceipt, parseImportArgs, runProfileImport, saveReceipt } from '../src/commands/profile-import.ts';
 import { localPrincipal } from '../src/commands/profile.ts';
@@ -122,6 +123,21 @@ describe('parsers', () => {
     expect(other.items).toEqual([]);
     expect(other.dropped).toEqual([{ line: 1, reason: expect.stringMatching(/^no memories found/) }]);
   });
+  test('the same words under two headings are kept once per facet', () => {
+    const plan = planImport('## Food\n- Peanuts canarytwoheads\n## Allergies\n- Peanuts canarytwoheads\n- peanuts CANARYTWOHEADS', 'muse-memory');
+    expect(plan.items.map(i => [i.line, i.facet])).toEqual([[2, 'diet'], [4, 'allergy']]);
+  });
+  test('a JSON file that is null or a bare value names no memories; invalid JSON is refused before anything is sent', () => {
+    for (const text of ['null', '7', '"just text"']) {
+      const plan = planImport(text, 'claude-memories');
+      expect(plan.items).toEqual([]);
+      expect(plan.dropped).toEqual([{ line: 1, reason: expect.stringMatching(/^no memories found/) }]);
+    }
+    let err: R | undefined;
+    try { planImport('{"memories": [', 'claude-memories'); } catch (e) { err = e as R; }
+    expect(err?.code).toBe('invalid_params');
+    expect(String(err?.message)).toContain('not valid JSON');
+  });
   test('facet hints and sniffing', () => {
     expect(facetHint('Dietary notes', 'No pork')).toBe('diet');
     expect(facetHint(null, 'Ring size 7')).toBe('size.ring');
@@ -168,6 +184,23 @@ describe('preview binding', () => {
       previewHash(plan, { ...owner, profile: 'memory/members/alice-example' }),
       previewHash(plan, { ...owner, principal: 'remote:https://brain.example/mcp#c1' }),
     ]) expect(other).not.toBe(previewHash(plan, owner));
+  });
+  test('the printed apply line quotes a file name with spaces; --source is repeated in the apply and resume commands', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain profile import quote-'));
+    try {
+      const file = join(dir, 'my memories.md');
+      writeFileSync(file, '- Likes jazz canaryquote');
+      const apply = (await cli([file], async () => ({}), 'memory/owner', dir)).out.split('\n').find(l => l.startsWith('Apply: '))!;
+      expect(apply).toContain(`'${file}'`);
+      expect(parseImportArgs([file, '--source', 'notes-example'])).toMatchObject({ file, source: 'notes-example' });
+      const p = JSON.parse((await cli([file, '--source', 'notes-example', '--json'], async () => ({}), 'memory/owner', dir)).out);
+      expect(p.apply_argv.slice(-2)).toEqual(['--source', 'notes-example']);
+      const r = newReceipt(planImport('- Likes jazz canaryquote', 'auto'), p.preview, file, { principal: 'local:test', profile: 'memory/owner' }, 'test');
+      const path = join(dir, 'receipt.json');
+      saveReceipt(path, r);
+      const shown = JSON.parse((await cli(['--status', path, '--source', 'notes-example', '--json'], async () => ({}), 'memory/owner', dir)).out);
+      expect(shown.resume_argv.slice(-2)).toEqual(['--source', 'notes-example']);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
   test('the flags: apply needs --yes with --preview; one mode at a time', () => {
     expect(parseImportArgs(['f.md'])).toMatchObject({ file: 'f.md', format: 'auto', yes: false });
@@ -276,6 +309,24 @@ describe('local import on a single-user keyless brain', () => {
     expect(await count(engine)).toBe(before);
   }, 60_000);
 
+  test('an import never retires an unfaceted fact the user said in the same words', async () => {
+    const said = await localCall(engine)('remember', { fact: 'Allergic to shellfish canaryplainsaid', provenance: 'told me 2026-11-25', content_origin: 'user_said', visibility: 'private' });
+    const file = join(home, 'plain.md');
+    writeFileSync(file, '## Allergies\n- Allergic to shellfish canaryplainsaid');
+    const hash = JSON.parse((await cli([file, '--json'], localCall(engine), 'memory/owner', home)).out).preview;
+    const out = JSON.parse((await cli([file, '--yes', '--preview', hash, '--json'], localCall(engine), 'memory/owner', home)).out);
+    expect(out.complete).toBe(true);
+    const all = await rows(engine, 'canaryplainsaid');
+    expect(all.find(r => String(r.id) === String(said.id))).toMatchObject({ origin: 'user_said', expired_at: null, superseded_by: null });
+    expect(all.filter(r => r.expired_at === null && r.superseded_by === null)).toHaveLength(all.length);
+  }, 60_000);
+  test('a starter-surface client may send the import batch, content_origin included', async () => {
+    const plan = planImport('## Food\n- Likes figs canarystarter', 'muse-memory');
+    const res = await dispatchToolCall(engine, 'remember', batchParams(plan, 'starterhash', 0, plan.items, 'imported (test)'),
+      { remote: true, transport: 'stdio', surface: 'starter', allowedOps: allowedOpNames(operations, 'starter'), sourceId: 'default' });
+    expect(res.isError ?? false).toBe(false);
+    expect((await rows(engine, 'canarystarter'))[0]).toMatchObject({ origin: 'inferred', visibility: 'private' });
+  }, 60_000);
   test('an import never supersedes a fact the user said', async () => {
     const said = await localCall(engine)('remember', { fact: 'Eats pescatarian canarysaid', facet: 'diet', provenance: 'told me 2026-11-25', content_origin: 'user_said' });
     const file = join(home, 'said.md');
@@ -343,6 +394,18 @@ describe('the local CLI binds the brain it writes and writes as the user', () =>
       expect(await rows(a, 'canarybrains')).toHaveLength(1);
     } finally { rmSync(home, { recursive: true, force: true }); }
   }, 120_000);
+  test('--source reaches the context the local import writes through', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-profile-import-source-'));
+    try {
+      const file = join(home, 'Memory.md');
+      writeFileSync(file, '- Grows basil canarysource');
+      const seen: unknown[] = [];
+      const spyCtx = async (engine: BrainEngine, params: Record<string, unknown>) => { seen.push(params.source); return ctxFor('/brains/a.pglite')(engine, params); };
+      const p = JSON.parse(await out(() => runProfileCli(a, ['import', file, '--source', 'default', '--json'], { makeContext: spyCtx } as never)));
+      expect(seen).toEqual(['default']);
+      expect(p.apply_argv.slice(-2)).toEqual(['--source', 'default']);
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  }, 60_000);
 });
 
 describe('progress receipt', () => {
@@ -521,6 +584,23 @@ describe('the real CLI with no TTY', () => {
   }, 180_000);
   afterAll(() => { rmSync(home, { recursive: true, force: true }); });
 
+  test('a thin client refuses --brain and --source before anything is sent', async () => {
+    const thin = mkdtempSync(join(tmpdir(), 'gbrain-profile-import-thin-'));
+    try {
+      mkdirSync(join(thin, '.gbrain'));
+      writeFileSync(join(thin, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite', database_path: join(thin, '.gbrain', 'brain.pglite'), remote_mcp: {
+        issuer_url: 'http://127.0.0.1:9', mcp_url: 'http://127.0.0.1:9/mcp', oauth_client_id: 'fixture', oauth_client_secret: 'fixture' } }));
+      const file = join(thin, 'memories.txt');
+      writeFileSync(file, '[2026-01-05] - Likes figs canarythin');
+      const env = { GBRAIN_NO_BANNER: '1', GBRAIN_MODEL_DISCOVERY: 'off' };
+      const brain = await runCli(['--brain', 'work-example', 'profile', 'import', file], { home: thin, cwd: thin, timeoutMs: 20_000, env });
+      expect(brain.exitCode).not.toBe(0);
+      expect(brain.stdout + brain.stderr).toContain('--brain is not supported on a thin-client install');
+      const source = await runCli(['profile', 'import', file, '--source', 'notes-example'], { home: thin, cwd: thin, timeoutMs: 20_000, env });
+      expect(source.exitCode).not.toBe(0);
+      expect(source.stdout + source.stderr).toContain('does not accept --source on a thin-client install');
+    } finally { rmSync(thin, { recursive: true, force: true }); }
+  }, 60_000);
   test('preview, then --yes --preview applies without a prompt; apply without the hash refuses', async () => {
     const file = join(home, 'memories.txt');
     writeFileSync(file, '[2026-01-05] - Allergic to sesame canarycli\n[2026-01-06] - Prefers aisle seats canarycli');

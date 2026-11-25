@@ -9,6 +9,7 @@
 import { createHash } from 'node:crypto';
 import { scanText, scanTextSpans, TRANSCRIPT_LANE_SCAN_OPTS } from '../secret-scan.ts';
 import { isStrictIsoDateTime } from '../utils.ts';
+import { opError } from '../ops/contract.ts';
 import { canonicalFacet } from './facets.ts';
 
 export const IMPORT_FORMATS = ['muse-memory', 'claude-memories', 'memory-text'] as const;
@@ -74,8 +75,12 @@ function memoryText(text: string): Raw[] {
 }
 
 function claudeMemories(text: string): Raw[] {
-  const doc = JSON.parse(text) as unknown;
-  const list = Array.isArray(doc) ? doc : (doc as { memories?: unknown }).memories;
+  let doc: unknown;
+  try { doc = JSON.parse(text); } catch (e) {
+    throw opError('invalid_params', `profile import: the file is not valid JSON (${(e as Error).message}); nothing was sent.`,
+      'Pass the memories JSON from a Claude data export, or --format muse-memory or memory-text for a text file.');
+  }
+  const list = Array.isArray(doc) ? doc : doc && typeof doc === 'object' ? (doc as { memories?: unknown }).memories : undefined;
   const out: Raw[] = [];
   const take = (v: unknown, n: number) => {
     const secret = typeof v === 'string' ? scanText(v, TRANSCRIPT_LANE_SCAN_OPTS)[0] : undefined;
@@ -137,10 +142,11 @@ export function planImport(text: string, format: ImportFormat | 'auto'): ImportP
     const secret = scanText(fact, TRANSCRIPT_LANE_SCAN_OPTS)[0];
     if (secret) { dropped.push({ line: r.line, reason: `credential-shaped (${secret.pattern})` }); continue; }
     if (fact.length > FACT_MAX) { dropped.push({ line: r.line, reason: `longer than ${FACT_MAX} characters` }); continue; }
-    const key = fact.toLowerCase();
+    const facet = facetHint(r.heading, fact);
+    const key = JSON.stringify([fact.toLowerCase(), facet, r.valid_from ?? null]);
     if (seen.has(key)) continue;
     seen.add(key);
-    items.push({ line: r.line, fact, facet: facetHint(r.heading, fact), ...(r.valid_from ? { valid_from: r.valid_from } : {}) });
+    items.push({ line: r.line, fact, facet, ...(r.valid_from ? { valid_from: r.valid_from } : {}) });
   }
   return { format: fmt, content_sha256: createHash('sha256').update(text).digest('hex'), items, dropped };
 }

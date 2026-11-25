@@ -71,6 +71,16 @@ export async function runProfile(engine: BrainEngine | null, args: string[], mak
   if (args[0] !== 'import' && (args.includes('--help') || args.includes('-h'))) { console.log(HELP); return; }
   const { loadConfig, isThinClient, configDir } = await import('../core/config.ts');
   const cfg = loadConfig();
+  const { getCliOptions, THIN_CLIENT_BRAIN_FLAG_MESSAGE } = await import('../core/cli-options.ts');
+  const brain = getCliOptions().brain;
+  const { parseImportArgs } = await import('./profile-import.ts');
+  const importFlags = args[0] === 'import' ? parseImportArgs(args.slice(1)) : null;
+  const source = importFlags && !('error' in importFlags) ? importFlags.source : undefined;
+  if (isThinClient(cfg) && (brain || source)) {
+    const { opError } = await import('../core/ops/contract.ts');
+    throw brain ? opError('invalid_params', THIN_CLIENT_BRAIN_FLAG_MESSAGE, 'Remove --brain, or run from a machine with local mounts (`gbrain mounts list`).')
+      : opError('invalid_params', 'profile import does not accept --source on a thin-client install: the server writes to the source your credential is granted.', 'Remove --source.');
+  }
   let call: (tool: string, params: Record<string, unknown>) => Promise<Record<string, unknown>>;
   let ctx: OperationContext | null = null;
   if (isThinClient(cfg)) {
@@ -78,15 +88,13 @@ export async function runProfile(engine: BrainEngine | null, args: string[], mak
     call = async (tool, params) => unpackToolResult(await callRemoteTool(cfg!, tool, params, { timeoutMs: 30_000 }));
   } else if (args[0] !== 'import' || !(args.includes('--help') || args.includes('-h'))) {
     const { operationsByName } = await import('../core/operations.ts');
-    ctx = makeContext ? await makeContext(engine!, {}) : await fallbackContext(engine!, cfg);
+    ctx = makeContext ? await makeContext(engine!, source ? { source } : {}) : await fallbackContext(engine!, cfg, source);
     const local = ctx;
     call = async (tool, params) => await operationsByName[tool]!.handler(local, params) as Record<string, unknown>;
   } else call = async () => ({});
   if (args[0] === 'import') {
     const { runProfileImport } = await import('./profile-import.ts');
     const principal = isThinClient(cfg) || !ctx ? `remote:${cfg?.remote_mcp?.mcp_url}#${cfg?.remote_mcp?.oauth_client_id}` : await localPrincipal(ctx);
-    const { getCliOptions } = await import('../core/cli-options.ts');
-    const brain = getCliOptions().brain;
     const target = async () => {
       const entity = ((await call('context_pack', { profile: true, budget_tokens: 1 })).profile as ProfileBlock | undefined)?.entity;
       if (!entity) {
@@ -114,8 +122,8 @@ export async function runProfile(engine: BrainEngine | null, args: string[], mak
 }
 
 /** The trusted-local context when no CLI dispatcher supplied one (tests): the user's own interactive writes. */
-async function fallbackContext(engine: BrainEngine, cfg: unknown): Promise<OperationContext> {
+async function fallbackContext(engine: BrainEngine, cfg: unknown, source?: string): Promise<OperationContext> {
   const { resolveSourceId } = await import('../core/source-resolver.ts');
   return { engine, config: cfg ?? { engine: engine.kind }, logger: { info() {}, warn: console.error, error: console.error }, dryRun: false,
-    remote: false, admissionOrigin: 'interactive', sourceId: await resolveSourceId(engine, null) } as unknown as OperationContext;
+    remote: false, admissionOrigin: 'interactive', sourceId: await resolveSourceId(engine, source ?? null) } as unknown as OperationContext;
 }

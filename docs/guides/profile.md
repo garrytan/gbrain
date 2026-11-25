@@ -115,12 +115,16 @@ a line that is not a list item (in `memory-text`, not a dated memory or a list i
 calendar date is left off its fact. In `claude-memories`, a plain sentence under a heading is a fact too. The hash covers the file,
 how it was parsed, your profile, the credential doing the import and, locally, the brain and source it writes to, so the apply refuses with `preview_changed` if any
 of them changed since the preview; preview again and apply the new hash. Scripts and agents pass `--yes --preview
-<hash>`; nothing prompts. The printed apply and resume commands repeat `--brain` when you passed it.
+<hash>`; nothing prompts. The printed apply and resume commands repeat `--brain` and `--source` when you passed them.
+Locally, `--source <id>` picks the source the facts are saved in. A thin client refuses `--brain` and `--source`: the
+remote brain saves them in the source your credential is granted. A file that is not valid JSON is refused before
+anything is sent; the same words under two headings are kept once per facet.
 
 Every imported fact is saved through `remember`, 20 at a time, as `content_origin: inferred` and `visibility: private`,
 with provenance `imported from <file> (<format>), preview <hash>`. It lands on your own profile: the owner's page for the
 owner, your member page for a member credential. A member can never import onto the owner's profile. An import never
-replaces a fact you stated yourself (`user_said`); a line that repeats a saved fact comes back as a duplicate.
+replaces a fact you stated yourself (`user_said`), with or without a facet; a line that repeats a saved fact comes back as a
+duplicate.
 
 The apply keeps a receipt (`profile-imports/<hash>.json` in your gbrain config folder, readable only by you) with each
 line's result. Running the same apply again, or `--resume` after it stopped, sends only what was never saved, and first
