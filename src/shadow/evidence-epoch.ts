@@ -10,7 +10,7 @@
  * The epoch id is a hash of the inputs and of the epoch it replaces, so children that open the same new epoch
  * concurrently agree on it, and a return to earlier inputs is still a new epoch (it must not revive old rows).
  */
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import { detectAddonTarget } from '../core/rust-engine/addon-target.ts';
@@ -60,6 +60,9 @@ const sha = (text: string): string => createHash('sha256').update(text).digest('
 /** The inputs in one fixed key order, as text. */
 const canonical = (i: EpochInputs): string => JSON.stringify([i.seed_id, i.rust_addon_sha256, i.comparator_version, i.adapter_version, i.capability_set_hash, i.readiness_policy_hash]);
 
+/** Whether two input sets name the same candidate. */
+export const sameEpochInputs = (a: EpochInputs, b: EpochInputs): boolean => canonical(a) === canonical(b);
+
 /** A stable hash of the capability names the Rust engine reports. */
 export function capabilitySetHash(capabilities: Iterable<string>): string {
   return sha(JSON.stringify([...capabilities].sort())).slice(0, 16);
@@ -83,10 +86,10 @@ const LOCK_WAIT_MS = 10_000;
 
 const sleepSync = (ms: number): void => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); };
 
-/** A lock is stale when its holder process is gone, or (holder unknown) when it is older than LOCK_STALE_MS. */
-function staleLock(path: string): boolean {
+/** A lock is stale when its holder process is gone, or (holder unknown) when it is older than LOCK_STALE_MS. `text` is what the lock file said when it was read. */
+function staleLock(path: string, text: string): boolean {
   try {
-    const pid = Number.parseInt(readFileSync(path, 'utf8'), 10);
+    const pid = Number.parseInt(text, 10);
     if (Number.isInteger(pid) && pid > 0) {
       try { process.kill(pid, 0); } catch (e) { return (e as NodeJS.ErrnoException).code !== 'EPERM'; }
       return false;
@@ -95,24 +98,41 @@ function staleLock(path: string): boolean {
   } catch { return false; } // silent-read-ok: a lock that cannot be read is treated as held; the wait then times out and the caller records no epoch
 }
 
-/** Creates the lock file exclusively (O_EXCL): true when this process now holds it, false when another does. */
-function tryCreateLock(path: string): boolean {
-  try { const fd = openSync(path, 'wx', 0o600); writeSync(fd, String(process.pid)); closeSync(fd); return true; } catch (e) {
+/** Creates a file exclusively (O_EXCL) holding `body`: true when this process now holds it, false when another does. */
+function tryCreateLock(path: string, body: string): boolean {
+  try { const fd = openSync(path, 'wx', 0o600); writeSync(fd, body); closeSync(fd); return true; } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'EEXIST') return false;
     throw e;
   }
 }
 
-/** Runs `fn` while holding the lock file at `path` (created O_EXCL), so processes take turns. Throws (`epoch_lock_timeout`) when it stays held. The directory must exist. */
-export function withLock<T>(path: string, fn: () => T): T {
+const readText = (path: string): string | null => { try { return readFileSync(path, 'utf8'); } catch { return null; } }; // silent-read-ok: no readable lock is never taken over
+const removeIfOurs = (path: string, body: string): void => { try { if (readText(path) === body) unlinkSync(path); } catch { /* already gone */ } };
+
+/**
+ * Runs `fn` while holding the lock file at `path` (created O_EXCL; its text is `<pid>:<token>`), so processes take turns. Throws (`epoch_lock_timeout`)
+ * when it stays held. The directory must exist. A lock whose holder is gone is taken over only through `<path>.takeover`, created exclusively: the
+ * taker re-reads the lock under it and removes it only if it is still the very text it judged dead, so two takers never both enter and a lock another
+ * process just created is never removed (the drill lock's pattern). A takeover file a crash left behind refuses the lock until it is removed by hand.
+ * The release removes the lock only while it is still ours. `afterJudged` is a test seam: it runs right after a lock was judged dead.
+ */
+export function withLock<T>(path: string, fn: () => T, afterJudged?: () => void): T {
+  const body = `${process.pid}:${randomBytes(6).toString('hex')}`;
   const deadline = Date.now() + LOCK_WAIT_MS;
   for (;;) {
-    if (tryCreateLock(path)) break;
-    if (staleLock(path)) { try { unlinkSync(path); } catch { /* another process took it first */ } continue; }
+    if (tryCreateLock(path, body)) break;
+    const seen = readText(path);
+    if (seen !== null && staleLock(path, seen)) {
+      afterJudged?.();
+      if (tryCreateLock(`${path}.takeover`, body)) {
+        try { if (readText(path) === seen) unlinkSync(path); } catch { /* already gone */ } /* silent-read-ok: a lock that is already gone needs no removal; the loop then creates it */ finally { removeIfOurs(`${path}.takeover`, body); }
+        continue;
+      }
+    }
     if (Date.now() > deadline) throw Object.assign(new Error('the lock is held'), { code: 'epoch_lock_timeout' });
     sleepSync(20);
   }
-  try { return fn(); } finally { try { unlinkSync(path); } catch { /* already gone */ } }
+  try { return fn(); } finally { removeIfOurs(path, body); }
 }
 
 /** The epoch manifest's lock, `<dir>/evidence/epoch.lock`. */

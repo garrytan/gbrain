@@ -7,7 +7,11 @@
 
 ### Changed
 - A replay that was running when its process was killed counts as `unexplained_difference`, because it could have been a mismatch whose result was lost. This fails closed, and the cost is that a hard kill of the shadow child during a replay fails criterion 5 for that epoch.
-- The write sampler and its pre-read are on again. A sampled write outside a transaction waits at most 2 seconds for one small read of the rows it touches before it runs, and a slow read lets the write go ahead untouched. About 5% of direct page and link writes are sampled (`gbrain engine shadow start --write-sample-rate <rate>` changes it).
+- The write sampler and its pre-read are on again for Postgres brains. A sampled write outside a transaction waits at most 2 seconds for one small read of the rows it touches before it runs, and a slow read lets the write go ahead untouched. About 5% of direct page and link writes are sampled (`gbrain engine shadow start --write-sample-rate <rate>` changes it).
+- PGLite brains sample no writes and record no write comparisons, so criterion 5 stays `missing` on them. PGLite has one connection, and a read that runs past its 2 seconds cannot be stopped there. The status line and the swap report say so.
+- A save of the tally is flushed to disk (the file, then its directory) before a replay may start or a result counts as saved, and a save that may have landed is added once when it is retried.
+- A lock whose holder died is now taken over through a separate takeover file, so two shadow processes can never both hold the lock, and a process releases only the lock it took. The epoch manifest uses the same lock code.
+- A shadow child that is a client of another process's Rust store now records its write comparisons too, under the current epoch, as long as its own addon and inputs are the epoch's. It never opens or changes an epoch.
 - The status line and the swap report no longer say that comparisons are not recorded. They still say that a criterion 5 pass covers page and link writes only, and the pass rule (zero unexplained differences on at least 1,000 comparable writes) is unchanged.
 
 ### Fixed

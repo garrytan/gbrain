@@ -15,6 +15,7 @@ import { openReadSource, type ReadSource } from './read-pool.ts';
 import { Reconciler } from './reconcile.ts';
 import { createLsnWatch, makeAskHandler, type LsnWatch } from './checks.ts';
 import { epochWatch } from './evidence-epoch.ts';
+import { hasCapability } from '../core/engine-capabilities.ts';
 import { readSeedRecord } from './seed.ts';
 import { MirrorQueue, zeroUsage } from './mirror.ts';
 import { SampleRegistry } from './samples.ts';
@@ -141,8 +142,9 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
   });
   const follow = follower ? { sink: follower } : deps.follow;
   const onCommittedWrite = () => observer.note();
-  // Write comparisons need the seeded store's epoch to count under (a brain that was never seeded samples no writes) and a recorder for their outcomes (the child's locked tally).
-  const writes = reads && deps.recordsWriteComparisons ? createWriteSampler({ rate: writeSampleRate(state), random: deps.random, send: (line) => supervisor.send(line), generation: () => follower?.published, active: () => supervisor.active() }) : undefined;
+  // Write comparisons need the seeded store's epoch to count under (a brain that was never seeded samples no writes), a recorder for their outcomes (the child's locked tally) and a read the
+  // serving process can bound: Postgres stops it with a server-side statement timeout; PGLite has one connection and a running statement cannot be cancelled, so a PGLite brain samples no writes.
+  const writes = reads && deps.recordsWriteComparisons && hasCapability(engine, 'postgres_admin') ? createWriteSampler({ rate: writeSampleRate(state), random: deps.random, send: (line) => supervisor.send(line), generation: () => follower?.published, active: () => supervisor.active() }) : undefined;
   return { engine: wrapShadowEngine(engine, sink, { sampleRate: state.sample_rate, random: deps.random, follow, onCommittedWrite, writes }), queue, supervisor, follower, reconciler, observer, lsnWatch: watch };
 }
 

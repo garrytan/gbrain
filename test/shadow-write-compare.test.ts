@@ -9,12 +9,15 @@
  * reads anything. (3) Nothing else compares writes. (4) The real scratch replay needs the built addon and skips without it
  * (GBRAIN_TEST_REQUIRE_RUST_ADDON=1 or GBRAIN_TEST_RUST_ADDON_REQUIRED=1 makes that an error; the Rust engine workflow runs it that way through its rust-store receipt lane); everything else uses fake engines or no engine.
  */
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { WRITE_COVERAGE_LIMIT, type ShadowStatus } from '../src/core/engine-swap/readiness.ts';
+import { PassThrough } from 'node:stream';
 import { createEngine } from '../src/core/engine-factory.ts';
+import { runShadowChild } from '../src/shadow/child.ts';
+import { writeSeedRecord } from '../src/shadow/seed.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { loadRustAddon, type RustAddon } from '../src/core/rust-engine/addon-loader.ts';
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
@@ -156,6 +159,33 @@ describe('the locked write tally', () => {
     expect(b.counts()).toMatchObject({ unexplained_difference: 0, uncomparable: 1, in_flight: [OTHER] });
   });
 
+  test('begin() is true only when the mark is durable: a failed file or directory flush refuses the replay, and a save that may have landed is added once at the retry', async () => {
+    const dir = tmp();
+    const { epoch } = tallyOn(dir); saved(dir, epoch);
+    const durable = await import('../src/core/fs-durable.ts');
+    const mine = tallyOn(dir);
+    const flushFile = spyOn(durable, 'flushFile').mockImplementationOnce(() => { throw new Error('EIO'); });
+    expect(mine.tally.begin()).toBe(false); // the temp file could not be flushed: nothing was published
+    expect(readWriteTally(dir, epoch)!.in_flight).toEqual([]);
+    flushFile.mockRestore();
+    const flushDirectory = spyOn(durable, 'flushDirectory').mockImplementationOnce(() => { throw new Error('EIO'); });
+    expect(mine.tally.begin()).toBe(false); // renamed, but the rename may not survive a power loss: the replay is refused all the same
+    flushDirectory.mockRestore();
+    expect(mine.tally.begin()).toBe(true); // the retry publishes durably
+    // A verdict whose directory flush fails after the rename may have landed: it is kept, and counted once when saved again.
+    const again = spyOn(durable, 'flushDirectory').mockImplementationOnce(() => { throw new Error('EIO'); });
+    mine.tally.note('comparable', undefined, 1, true);
+    again.mockRestore();
+    expect(mine.counts().comparable).toBe(1001); // it did land
+    mine.tally.note('capability_missing', 'tags'); // the next save carries the earlier batch again: it is not added a second time
+    expect(mine.counts()).toMatchObject({ comparable: 1001, capability_missing: 1, in_flight: [] });
+    mine.tally.note('uncomparable', 'moved');
+    expect(mine.counts()).toMatchObject({ comparable: 1001, uncomparable: 1 });
+    const other = tallyOn(dir, OTHER); // another child's batches are numbered on their own
+    other.tally.note('comparable');
+    expect(other.counts().comparable).toBe(1002);
+  });
+
   test('a file that is there and not a tally is never written over (begin refuses), and a child of a retired epoch never replaces the current epoch\'s file', () => {
     const dir = tmp();
     const mine = tallyOn(dir);
@@ -171,6 +201,33 @@ describe('the locked write tally', () => {
     expect(readWriteTally(dir, mine.epoch)).toMatchObject({ comparable: 1, uncomparable: 0 });
   });
 
+  test('stale lock takeover is exclusive: with one contender slow between judging the lock dead and removing it, two real processes still never overlap and neither one\'s saved result is lost', async () => {
+    const dir = tmp(); const lock = join(dir, 'x.lock'); const counter = join(dir, 'counter.json'); const log = join(dir, 'log.txt'); const barrier = join(dir, 'a-entered');
+    writeFileSync(counter, '[]'); writeFileSync(log, ''); writeFileSync(lock, String(Bun.spawnSync(['true']).pid)); // a lock whose holder is gone
+    const slow = Bun.spawn(['bun', join(import.meta.dir, 'helpers', 'lock-contender.ts'), lock, counter, log, barrier, 'B'], { stdout: 'pipe', stderr: 'pipe' });
+    for (let i = 0; i < 400 && !existsSync(`${barrier}.judged`); i++) await new Promise((r) => setTimeout(r, 25)); // B has judged the lock dead and waits
+    const pause = (ms: number): void => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); };
+    withLock(lock, () => { // this process takes the lock over while B is still on its old judgment
+      appendFileSync(log, 'enter A\n'); writeFileSync(barrier, '1'); // B may go on now
+      const seen = JSON.parse(readFileSync(counter, 'utf8')) as string[];
+      pause(600);
+      writeFileSync(counter, JSON.stringify([...seen, 'A'])); appendFileSync(log, 'exit A\n');
+    });
+    expect(await slow.exited).toBe(0);
+    const lines = readFileSync(log, 'utf8').trim().split('\n');
+    expect(lines.length).toBe(4);
+    expect(lines.map((l) => l.split(' ')[0])).toEqual(['enter', 'exit', 'enter', 'exit']); // never two inside at once
+    expect(lines[0]).toBe('enter A'); expect(lines[1]).toBe('exit A');
+    expect((JSON.parse(readFileSync(counter, 'utf8')) as string[]).sort()).toEqual(['A', 'B']); // both results saved
+    expect(existsSync(lock)).toBe(false); expect(existsSync(`${lock}.takeover`)).toBe(false);
+  }, 30_000);
+
+  test('a lock is released only while it is still the releasing process\'s own', () => {
+    const dir = tmp(); const lock = join(dir, 'x.lock');
+    withLock(lock, () => { rmSync(lock); writeFileSync(lock, `${process.ppid}:another-holder`); }); // the lock was taken from under it (a takeover judged it dead)
+    expect(readFileSync(lock, 'utf8')).toBe(`${process.ppid}:another-holder`); // its release leaves the new holder's lock alone
+  });
+
   test('the lock is the epoch manifest\'s: a lock whose holder is gone is taken over, and the work inside runs once', () => {
     const dir = tmp(); const lock = join(dir, 'x.lock');
     writeFileSync(lock, String(Bun.spawnSync(['true']).pid));
@@ -181,6 +238,37 @@ describe('the locked write tally', () => {
     expect(() => withLock(join(dir, 'missing-directory', 'x.lock'), () => 1)).toThrow(); // it never creates the directory it locks in
     expect(existsSync(join(dir, 'missing-directory'))).toBe(false);
   });
+});
+
+describe('a client child records write comparisons when its inputs are the current epoch\'s', () => {
+  const ADDON = async () => ({ ok: true as const, addon: { target: 'linux-x64-glibc', engineAbi: 1, engineBuild: 'b1', catalogVersion: 3 } as never });
+  const BASE = { loadAddon: ADDON, capabilities: () => ['search', 'pages'], readinessPolicyHash: () => 'p1', heartbeatMs: 60_000, childId: 'c1' };
+  const sample = JSON.stringify({ t: 'write', op: 'addTag', outcome: 'capability_missing', family: 'tags' }) + '\n';
+  async function run(dir: string, role: 'owner' | 'client', sha: string, lines: string[]): Promise<void> {
+    const input = new PassThrough();
+    const done = runShadowChild(dir, { input, writeControl: () => {}, ...BASE, addonSha256: () => sha, openEngine: () => ({ ownerRole: role, async connect() {}, async disconnect() {} }) as never });
+    for (const l of lines) input.write(l);
+    input.end();
+    await done;
+  }
+  const seeded = (): string => { const d = tmp(); writeSeedRecord(d, { version: 1, seed_id: 'seed-1', started_at: '2026-01-01T00:00:00.000Z', finished_at: '2026-01-01T00:01:00.000Z', unseeded_gap_rows_total: 0, unseeded_gap_rows: {}, relations: {}, digests: true } as never); return d; };
+  const tags = (dir: string): number | undefined => (JSON.parse(readFileSync(writeTallyPath(dir), 'utf8')) as { capability_missing_by_family: Record<string, number> }).capability_missing_by_family.tags;
+
+  test('a client whose addon and inputs are the epoch\'s counts into it, and one whose addon is not neither counts nor changes the epoch', async () => {
+    await withEnv({ GBRAIN_HOME: tmp() }, async () => {
+      const dir = seeded();
+      await run(dir, 'owner', 'a'.repeat(64), [sample]); // the owner opens the epoch and counts one
+      const epoch = JSON.parse(readFileSync(join(dir, 'evidence', 'epoch.json'), 'utf8')).epoch_id as string;
+      expect(tags(dir)).toBe(1);
+      await run(dir, 'client', 'a'.repeat(64), [sample, sample]); // the same addon, as a client of another process's store: counted
+      expect(tags(dir)).toBe(3);
+      const before = readFileSync(writeTallyPath(dir), 'utf8');
+      await run(dir, 'client', 'b'.repeat(64), [sample]); // another addon: its comparisons belong to another epoch, so nothing is counted here
+      expect(readFileSync(writeTallyPath(dir), 'utf8')).toBe(before);
+      expect(JSON.parse(readFileSync(join(dir, 'evidence', 'epoch.json'), 'utf8')).epoch_id).toBe(epoch); // and the epoch is not opened or changed
+      expect(existsSync(join(dir, 'evidence', 'epochs.jsonl'))).toBe(false);
+    });
+  }, 60_000);
 });
 
 describe('write comparison rules (review findings)', () => {

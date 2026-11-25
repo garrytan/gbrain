@@ -9,8 +9,10 @@
  *
  * Counts live in `write-comparisons.json`, written only through the locked tally below; `status` reads them.
  */
+import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { flushDirectory, flushFile } from '../core/fs-durable.ts';
 import { readEpoch, withLock } from './evidence-epoch.ts';
 import { memberKind, WRITE_MAP } from './write-map.ts';
 
@@ -122,6 +124,8 @@ export interface WriteTallyFile {
   capability_missing_by_family: Record<string, number>; uncomparable_by_reason: Record<string, number>;
   /** Pids of children whose replay has no verdict written yet. A pid leaves only by its own verdict or when it is dead (counted `unexplained_difference`); while any stands, status reads no evidence. */
   in_flight: number[];
+  /** The last batch number of each child (`<pid>.<nonce>`) this file has taken: a save that may have landed is added once. */
+  applied?: Record<string, number>;
 }
 export const writeTallyPath = (dir: string): string => join(dir, 'write-comparisons.json');
 const OUTCOMES = ['comparable', 'unexplained_difference', 'uncomparable', 'capability_missing'] as const;
@@ -134,7 +138,7 @@ function loadTally(dir: string): WriteTallyFile | null {
   let text: string;
   try { text = readFileSync(writeTallyPath(dir), 'utf8'); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null; throw e; }
   const f = JSON.parse(text) as WriteTallyFile;
-  if (!(f?.version === 1 && typeof f.epoch_id === 'string' && OUTCOMES.every((o) => count(f[o])) && counts(f.capability_missing_by_family) && counts(f.uncomparable_by_reason) && Array.isArray(f.in_flight) && f.in_flight.every(Number.isInteger))) throw new Error('not a write tally');
+  if (!(f?.version === 1 && typeof f.epoch_id === 'string' && OUTCOMES.every((o) => count(f[o])) && counts(f.capability_missing_by_family) && counts(f.uncomparable_by_reason) && (f.applied === undefined || counts(f.applied)) && Array.isArray(f.in_flight) && f.in_flight.every(Number.isInteger))) throw new Error('not a write tally');
   return f;
 }
 
@@ -155,41 +159,56 @@ const running = (pid: number): boolean => { try { process.kill(pid, 0); return t
 
 /**
  * The write tally (swap criterion 5). The file changes only inside one cross-process lock, as a read-modify-write of THIS child's unsaved verdicts
- * (`delta`) onto what the file holds now: a held snapshot is never written back, so nothing another child saved can be overwritten, and a verdict whose
- * save failed is kept and added at the next save. A replay publishes its pid in `in_flight` (`begin`, true only when that reached the disk; the
- * caller refuses the replay on false) and only its own verdict, or the recovery of a dead pid, removes it. A mark whose replay never wrote a verdict
- * is one that could have been a mismatch, so a dead pid's counts `unexplained_difference`: a hard kill during a replay fails criterion 5 for the epoch.
+ * (`pending` batches) onto what the file holds now: a held snapshot is never written back, so nothing another child saved can be overwritten. A save
+ * is the temp file flushed, renamed over the file and the directory flushed; only then do its batches count as saved. A save that fails, at any point
+ * (even after the rename, where it may have landed), keeps its batches, and `applied` (the last batch number of this child the file has taken) makes the
+ * retry add each batch once. A replay publishes its pid in `in_flight` (`begin`, true only when that is durable on disk; the caller refuses the replay on
+ * false) and only its own verdict, or the recovery of a dead pid, removes it. A mark whose replay never wrote a verdict is one that could have been
+ * a mismatch, so a dead pid's counts `unexplained_difference`: a hard kill during a replay fails criterion 5 for the epoch.
  */
 export class WriteTally {
-  private delta: WriteTallyFile | null = null;
-  private ending = false;
-  constructor(private readonly dir: string, private readonly epoch: () => string | null, private readonly alive: () => boolean = () => existsSync(dir), private readonly pid: number = process.pid) {}
-  /** One locked read-modify-write: dead pids recovered, then this child's unsaved verdicts, then `change`. False when nothing was saved (the verdicts are kept). `fresh`: a mark under this pid is from an earlier process that had it. */
+  private pending: Array<{ seq: number; delta: WriteTallyFile; ending: boolean }> = [];
+  private sealed = 0; // how many pending batches a save that may have landed has tried: they are never added to
+  private seq = 0;
+  private readonly id: string;
+  constructor(private readonly dir: string, private readonly epoch: () => string | null, private readonly alive: () => boolean = () => existsSync(dir), private readonly pid: number = process.pid) { this.id = `${pid}.${randomBytes(4).toString('hex')}`; }
+  /** One locked read-modify-write: dead pids recovered, then this child's unsaved batches, then `change`. False when nothing was saved (the batches are kept). `fresh`: a mark under this pid is from an earlier process that had it. */
   private update(change?: (file: WriteTallyFile) => void, fresh = false): boolean {
     const epoch = this.epoch();
     if (epoch === null || !this.alive()) return false;
+    const batches = this.pending; let renamed = false;
     try {
       withLock(join(this.dir, 'write-comparisons.lock'), () => {
         if (readEpoch(this.dir)?.epoch_id !== epoch) throw new Error('not the current epoch'); // a child of a retired epoch must not replace the current epoch's file
         const saved = loadTally(this.dir);
         const file = saved?.epoch_id === epoch ? saved : blank(epoch);
+        file.applied ??= {};
         const dead = file.in_flight.filter((p) => (p === this.pid ? fresh : !running(p)));
         for (const p of dead) applyVerdict(file, 'unexplained_difference', undefined, 1);
         file.in_flight = file.in_flight.filter((p) => !dead.includes(p));
-        if (!change && !dead.length && !this.delta && !this.ending) return;
-        if (this.delta) { for (const o of OUTCOMES) file[o] += this.delta[o]; for (const [k, n] of Object.entries(this.delta.capability_missing_by_family)) bump(file.capability_missing_by_family, k, n); for (const [k, n] of Object.entries(this.delta.uncomparable_by_reason)) bump(file.uncomparable_by_reason, k, n); }
-        if (this.ending) file.in_flight = file.in_flight.filter((p) => p !== this.pid);
+        for (const id of Object.keys(file.applied)) if (id !== this.id && !running(Number.parseInt(id, 10))) delete file.applied[id];
+        const todo = batches.filter((b) => b.seq > (file.applied![this.id] ?? 0));
+        if (!change && !dead.length && !todo.length) return;
+        for (const b of todo) {
+          for (const o of OUTCOMES) file[o] += b.delta[o];
+          for (const [k, n] of Object.entries(b.delta.capability_missing_by_family)) bump(file.capability_missing_by_family, k, n);
+          for (const [k, n] of Object.entries(b.delta.uncomparable_by_reason)) bump(file.uncomparable_by_reason, k, n);
+          if (b.ending) file.in_flight = file.in_flight.filter((p) => p !== this.pid);
+          file.applied[this.id] = b.seq;
+        }
         change?.(file);
         file.updated_at = new Date().toISOString();
         const tmp = `${writeTallyPath(this.dir)}.${this.pid}.tmp`;
         writeFileSync(tmp, JSON.stringify(file) + '\n', { mode: 0o600 });
-        renameSync(tmp, writeTallyPath(this.dir));
+        flushFile(tmp);
+        renameSync(tmp, writeTallyPath(this.dir)); renamed = true;
+        flushDirectory(this.dir);
       });
-      this.delta = null; this.ending = false;
+      this.pending = []; this.sealed = 0;
       return true;
-    } catch { return false; } // silent-read-ok: false is the answer, never a pass: begin() refuses the replay, and note() keeps the unsaved verdicts for the next save
+    } catch { this.sealed = renamed ? batches.length : 0; return false; } // silent-read-ok: false is the answer, never a pass: begin() refuses the replay, and note() keeps the unsaved batches for the next save
   }
-  /** Publishes this pid as having a replay in flight. True only when that is on disk: on false the replay must not run. */
+  /** Publishes this pid as having a replay in flight. True only when that is durable on disk: on false the replay must not run. */
   begin(): boolean { return this.update((file) => { if (!file.in_flight.includes(this.pid)) file.in_flight.push(this.pid); }); }
   /** At child start: counts the marks of dead processes (and of an earlier process with this pid), and saves any verdict still unsaved. */
   recover(): void { this.update(undefined, true); }
@@ -197,8 +216,10 @@ export class WriteTally {
   note(outcome: WriteOutcome, key?: string, n = 1, ends = false): void {
     const epoch = this.epoch();
     if (epoch === null || !this.alive()) return;
-    applyVerdict(this.delta ??= blank(epoch), outcome, key, n);
-    this.ending ||= ends;
+    if (this.pending.length === this.sealed) this.pending.push({ seq: ++this.seq, delta: blank(epoch), ending: false });
+    const batch = this.pending.at(-1)!;
+    applyVerdict(batch.delta, outcome, key, n);
+    batch.ending ||= ends;
     this.update();
   }
 }

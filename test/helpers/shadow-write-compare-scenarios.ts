@@ -6,7 +6,7 @@
 import { describe, expect, spyOn, test } from 'bun:test';
 import { existsSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { evaluateReadiness, WRITE_COVERAGE_LIMIT, type ShadowStatus } from '../../src/core/engine-swap/readiness.ts';
+import { evaluateReadiness, WRITE_COVERAGE_LIMIT, WRITE_PGLITE_LIMIT, type ShadowStatus } from '../../src/core/engine-swap/readiness.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { RustAddon } from '../../src/core/rust-engine/addon-loader.ts';
 import { attachShadow, attachShadowParts } from '../../src/shadow/attach.ts';
@@ -167,7 +167,7 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       expect(out.tally).toMatchObject({ comparable: 0, unexplained_difference: 0, uncomparable: 1, uncomparable_by_reason: { moved: 1 } });
     }, 60_000);
 
-    test('a sampled comparison through a real child is recorded: status reads measured, and the swap row counts it', async () => {
+    test('a sampled comparison through a real child is recorded: status reads measured, and the swap row counts it (a PGLite brain samples no write: nothing is recorded)', async () => {
       const home = ctx.tempDir();
       await ctx.reset();
       await fillSeedFixture(primary());
@@ -182,17 +182,24 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
           await until(() => (readFollowerFile(home)?.applied_rows ?? 0) > 0 && attached.supervisor.childPid !== null, 90_000); // its write is published before the next sample starts: another write landing meanwhile would move it
           await attached.engine.addLink('people/alice-example', 'companies/acme-example', 'again', 'invests_in'); // a direct pilot write, sampled at 1
           pid = attached.supervisor.childPid ?? 0;
-          await until(() => { const w = buildFollowStatus(home, state as never, NOW).write_comparisons; return w.comparable + w.uncomparable > 0 && w.capability_missing > 0; }, 90_000); // the sample is read back off the request path, then replayed by the child
+          if (ctx.kind === 'postgres') await until(() => { const w = buildFollowStatus(home, state as never, NOW).write_comparisons; return w.comparable + w.uncomparable > 0 && w.capability_missing > 0; }, 90_000); // the sample is read back off the request path, then replayed by the child
+          else await new Promise((r) => setTimeout(r, 500)); // PGLite: a sample would have been sent by now
         } finally { attached.supervisor.stop(); attached.reconciler?.stop(); }
       });
       if (pid) await until(() => { try { process.kill(pid, 0); return false; } catch { return true; } }, 60_000); // the child drained what it was sent and exited
       const status = buildFollowStatus(home, state as never, NOW);
+      if (ctx.kind === 'pglite') { // the sampler is not built, so the child saw no sample and recorded nothing
+        expect(status.write_comparisons).toMatchObject({ state: 'capability_missing', comparable: 0, unexplained_difference: 0, uncomparable: 0, capability_missing: 0 });
+        expect(readdirSync(home).filter((f) => f.startsWith('write-comparisons'))).toEqual([]);
+        return;
+      }
       expect(status.write_comparisons).toMatchObject({ state: 'measured', sample_rate: 1, comparable: 1, unexplained_difference: 0, capability_missing: 1, capability_missing_by_family: { tags: 1 } });
       const row = row5({ write_comparisons: status.write_comparisons as ShadowStatus['write_comparisons'] });
       expect(row.state).toBe('fail'); // 1 of 1,000 comparable: the pass rule is unchanged
       expect(row.detail).toContain('1 of 1000 comparable');
       expect(row.detail).toContain(WRITE_COVERAGE_LIMIT);
       expect(row.detail).toContain('sampled so far: tags 1');
+      expect(row.detail).toContain(WRITE_PGLITE_LIMIT);
       expect(renderFollowStatus(status).join('\n')).toContain(`comparable 1, unexplained 0`);
     }, 180_000);
   });
@@ -500,7 +507,7 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       const raised = attach(0.9);
       await raised.engine.putPage('people/rate-example', page('Rate Example Again'));
       raised.supervisor.stop(); raised.reconciler?.stop();
-      expect(watch.count()).toBe(1);
+      expect(watch.count()).toBe(ctx.kind === 'postgres' ? 1 : 0); // a PGLite brain samples no write, whatever the rate
       watch.restore();
     }, 60_000);
 
@@ -521,7 +528,7 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       const on = attachShadowParts(primary(), seeded, state as never, { gbrainArgv: ['unused'], recordsWriteComparisons: true });
       await on.engine.putPage('people/seeded-example', page('Seeded Example'));
       on.supervisor.stop(); on.reconciler?.stop();
-      expect(watch.count()).toBe(1);
+      expect(watch.count()).toBe(ctx.kind === 'postgres' ? 1 : 0);
       watch.restore();
     }, 60_000);
 
@@ -542,8 +549,30 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       expect(await primary().getPage('people/quiet-example')).toBeNull(); // the writes themselves all went through
       const loud = attachShadowParts(primary(), seeded(), state as never, { gbrainArgv: ['unused'], recordsWriteComparisons: true }); // the same writes with a recorder wired do read
       try { await loud.engine.addLink('people/alice-example', 'companies/acme-example', 'again', 'invests_in'); } finally { loud.supervisor.stop(); loud.reconciler?.stop(); }
-      expect(watch.count()).toBe(1);
+      expect(watch.count()).toBe(ctx.kind === 'postgres' ? 1 : 0);
       watch.restore();
+    }, 60_000);
+
+    test('a PGLite brain samples no write even with a recorder wired: no pre-read, the write is unchanged, and status and the swap report say PGLite records none', async () => {
+      await ctx.reset();
+      await fillSeedFixture(primary());
+      const watch = watchPreimage(primary());
+      const home = ctx.tempDir(); writeFileSync(join(home, 'seed.json'), JSON.stringify({ version: 1, seed_id: 's', digests: true }));
+      const state = { version: 1, enabled: true, started_at: 'x', sample_rate: 1, write_sample_rate: 1, queue_bound: 64, plan_hash: 'h', brain: 'b', primary_engine: ctx.kind };
+      const attached = attachShadowParts(primary(), home, state as never, { gbrainArgv: ['unused'], recordsWriteComparisons: true });
+      try {
+        await attached.engine.addLink('people/alice-example', 'companies/acme-example', 'again', 'invests_in');
+        await attached.engine.addTag('people/alice-example', 'team');
+        await new Promise((r) => setTimeout(r, 300)); // a sampled write would have read before it ran and sent its sample after
+      } finally { attached.supervisor.stop(); attached.reconciler?.stop(); watch.restore(); }
+      expect(await primary().getLinks('people/alice-example')).toHaveLength(2); // the writes went through
+      if (ctx.kind === 'postgres') return; // Postgres samples (the recorded scenario above)
+      expect(watch.count()).toBe(0);
+      expect(readdirSync(home).filter((f) => f.startsWith('write-comparisons'))).toEqual([]);
+      const status = buildFollowStatus(home, state as never, NOW);
+      expect(status.write_comparisons.state).toBe('capability_missing');
+      expect(row5({ write_comparisons: status.write_comparisons as ShadowStatus['write_comparisons'] }).detail).toContain(WRITE_PGLITE_LIMIT);
+      expect(renderFollowStatus(status).join('\n')).toContain(`${WRITE_COVERAGE_LIMIT}; ${WRITE_PGLITE_LIMIT}`);
     }, 60_000);
 
     test('the engine factory\'s entry point (attachShadow) says the child records comparisons, so a seeded shadow samples writes and reads before them', async () => {
@@ -556,7 +585,8 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
         await withEnv({ GBRAIN_HOME: ctx.tempDir() }, async () => { // its child stops when the primary disconnects at the end of the file
           await attachShadow(primary(), home, state as never).addLink('people/alice-example', 'companies/acme-example', 'once more', 'invests_in');
         });
-        expect(watch.count()).toBeGreaterThanOrEqual(1); // the data fence may read once more on Postgres, off the request path
+        if (ctx.kind === 'postgres') expect(watch.count()).toBeGreaterThanOrEqual(1); // the data fence may read once more on Postgres, off the request path
+        else expect(watch.count()).toBe(0);
       } finally { watch.restore(); }
     }, 60_000);
   });

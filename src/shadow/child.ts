@@ -28,7 +28,7 @@ import { RERUN_DEADLINE_MS } from './checks.ts';
 import { createAsker, createSerialQueue, createWaiter, membersDigest, policyApplies, privacyVerdict, RERUN_QUEUE_BOUND, resultDigest, safeCode } from './child-checks.ts';
 import { classifyError, classifyResult, type Classification } from './classify.ts';
 import { decodeValue, encodeValue } from './codec.ts';
-import { adapterIdentity, capabilitySetHash, currentBuild, ensureEpoch, internalErrorRecorder, type EpochBuild, type EpochManifest } from './evidence-epoch.ts';
+import { adapterIdentity, capabilitySetHash, currentBuild, ensureEpoch, internalErrorRecorder, readEpoch, sameEpochInputs, type EpochBuild, type EpochInputs, type EpochManifest } from './evidence-epoch.ts';
 import { exactnessArm, qualifyMismatch, SHADOW_COMPARATOR_VERSION } from './exactness.ts';
 import { FollowChild, type FollowEvent, type FollowStore } from './follow-child.ts';
 import { appendFault, appendLedgerRows, writeSummaryFile, type ShadowLedgerRow, type ShadowSummaryFile } from './ledger.ts';
@@ -268,29 +268,33 @@ function createWedgeWatch(pending: () => Promise<unknown>, track: (chain: Promis
 function childEpoch(
   shadowDir: string, deps: ShadowChildDeps, load: Awaited<ReturnType<RustEngineAddonLoaderFn>>,
   deleted: () => boolean, isClient: () => boolean, now: () => number,
-): () => EpochManifest | null {
+): (() => EpochManifest | null) & { own: () => string | null } {
   let epoch: EpochManifest | null = null;
   let epochTried = false;
   const seed = readSeedRecord(shadowDir);
-  return () => {
+  const inputs = (): EpochInputs => ({
+    seed_id: seed!.seed_id,
+    rust_addon_sha256: load.ok ? ((deps.addonSha256 ?? addonFileSha256)(load.addon) ?? 'unreadable') : null,
+    comparator_version: SHADOW_COMPARATOR_VERSION,
+    adapter_version: adapterIdentity(RUST_ENGINE_ABI, load.ok ? String(load.addon.catalogVersion) : 'none', deps.adapterVersion),
+    capability_set_hash: load.ok ? capabilitySetHash((deps.capabilities ?? servedCapabilities)()) : null,
+    readiness_policy_hash: (deps.readinessPolicyHash ?? (() => policyHash(READINESS_POLICY)))(),
+  });
+  const epochNow = (): EpochManifest | null => {
     if (isClient()) return null;
     if (!epochTried) {
       epochTried = true;
       if (seed && !deleted()) { // a deleted shadow directory must not be recreated by the manifest
-        try {
-          epoch = ensureEpoch(shadowDir, {
-            seed_id: seed.seed_id,
-            rust_addon_sha256: load.ok ? ((deps.addonSha256 ?? addonFileSha256)(load.addon) ?? 'unreadable') : null,
-            comparator_version: SHADOW_COMPARATOR_VERSION,
-            adapter_version: adapterIdentity(RUST_ENGINE_ABI, load.ok ? String(load.addon.catalogVersion) : 'none', deps.adapterVersion),
-            capability_set_hash: load.ok ? capabilitySetHash((deps.capabilities ?? servedCapabilities)()) : null,
-            readiness_policy_hash: (deps.readinessPolicyHash ?? (() => policyHash(READINESS_POLICY)))(),
-          }, now(), (deps.build ?? currentBuild)());
-        } catch { epoch = null; }
+        try { epoch = ensureEpoch(shadowDir, inputs(), now(), (deps.build ?? currentBuild)()); } catch { epoch = null; }
       }
     }
     return epoch;
   };
+  /** The current epoch's id when it is the epoch of THIS child's own addon and inputs, whatever the role: a scratch replay runs on the addon this child loaded, not the owner's. It never opens or changes an epoch. */
+  const own = (): string | null => {
+    try { const m = seed && !deleted() ? readEpoch(shadowDir) : null; return m && sameEpochInputs(m.inputs, inputs()) ? m.epoch_id : null; } catch { return null; } // silent-read-ok: no matching epoch is no evidence
+  };
+  return Object.assign(epochNow, { own });
 }
 
 /** Runs the child loop until stdin closes. Resolves with the number of events handled. */
@@ -390,7 +394,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   };
 
   // Write comparisons (write-compare.ts): sampled page and link writes replayed on a scratch store, counted under the current epoch.
-  const writes = createWriteComparer({ dir: shadowDir, load, tally: new WriteTally(shadowDir, curEpoch, () => !deleted()), alive: () => !deleted(), openEngine: deps.openEngine, onError: recordRustError });
+  const writes = createWriteComparer({ dir: shadowDir, load, tally: new WriteTally(shadowDir, () => curEpoch() ?? epochNow.own(), () => !deleted()), alive: () => !deleted(), openEngine: deps.openEngine, onError: recordRustError });
   const session = deps.session ?? process.env.GBRAIN_SHADOW_SESSION ?? '';
   const ask = createAsker(deps.writeControl, session);
 
