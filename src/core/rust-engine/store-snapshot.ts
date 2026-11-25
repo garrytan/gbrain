@@ -116,7 +116,7 @@ export async function snapshotStore(
   const opId = String(options?.opId ?? '');
   // The open store, at once when there is one. A call that reaches an owner whose store is still opening waits for it
   // (`storeFor`), as every other served member does, and is refused only when the engine is not connected.
-  const served = engine as { openStore(member: string): RustStore; storeFor?(member: string, args?: unknown[]): Promise<RustStore> };
+  const served = engine as { openStore(member: string): RustStore; storeFor?(member: string, args?: unknown[]): Promise<RustStore>; disconnecting?: boolean };
   let store: RustStore;
   try {
     store = served.openStore('snapshotStore');
@@ -124,6 +124,9 @@ export async function snapshotStore(
     if (!served.storeFor) throw error;
     store = await served.storeFor('snapshotStore');
   }
+  // `disconnect()` captures its stop hooks in its first synchronous step and sets this flag in the same step, so a copy
+  // admitted after it would never be stopped before the store closes: it is refused here, before the native call.
+  if (served.disconnecting) throw stopped('cancelled', 'the engine is disconnecting');
   if (busyStores.has(store) || entries.get(opId)?.state === 'running') throw stopped('busy', `op=${busyStores.get(store) ?? opId}`);
   const now = deps.now ?? Date.now;
   const statfs = deps.statfs ?? ((path: string) => statfsSync(path) as FsStats);

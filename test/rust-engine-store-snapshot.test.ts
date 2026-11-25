@@ -9,7 +9,7 @@
  * caller that reaches the copy (in process or over the socket), a copy that holds a later commit.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadRustAddon, type RustAddon } from '../src/core/rust-engine/addon-loader.ts';
@@ -218,15 +218,35 @@ const plenty: FsStats = { bavail: 1_000_000_000, bsize: 4096, blocks: 2_000_000_
     expect(opened).toBe(true);
     expect(done.state).toBe('done');
   }, 30_000);
-  test('the default scratch target under the home folder is accepted, and a target directly in /tmp is refused before anything is made', async () => {
+  test('the default scratch target under the home folder is accepted, and a target directly in a world-writable directory is refused before anything is made', async () => {
     // The shape the shadow drill uses: <home>/.gbrain/shadow/<brain>/drills/<scratch>, every directory the user owns.
     const drills = join(root, 'home', '.gbrain', 'shadow', 'pglite-0123456789ab', 'drills');
     mkdirSync(drills, { recursive: true });
     expect((await snapshotStore(owner, join(drills, 'scratch-1'), { opId: nextId() }, { statfs: () => plenty })).state).toBe('done');
     if (process.platform === 'win32') return;
-    const shared = join(tmpdir(), `gbrain-direct-${process.pid}`);
-    const refused = await snapshotStore(owner, shared, { opId: nextId() }, { statfs: () => plenty }).then(() => undefined, (error: Error) => error);
-    expect(refused?.message).toMatch(/refusing snapshot:/);
-    expect(existsSync(shared)).toBe(false);
+    // A directory every user may write to (sticky, mode 1777), made here: the suite does not assume what tmpdir() is.
+    const shared = join(root, 'shared-dir');
+    mkdirSync(shared);
+    chmodSync(shared, 0o1777);
+    const direct = join(shared, 'copy-direct');
+    const refused = await snapshotStore(owner, direct, { opId: nextId() }, { statfs: () => plenty }).then(() => undefined, (error: Error) => error);
+    expect(refused?.message).toMatch(/refusing snapshot:.*shared-dir.*world-writable/);
+    expect(existsSync(direct)).toBe(false);
+  }, 30_000);
+  test('a copy asked for while the engine is disconnecting is refused before it starts, and the owner lock is not released under a copy', async () => {
+    const lone = join(root, 'lone-brain-closing');
+    const engine = openRustEngine({ addon, databasePath: lone });
+    await engine.connect({ engine: 'pglite', database_path: lone } as never);
+    for (let n = 0; n < 40; n++) {
+      await engine.putPage(`notes/c${n}`, { type: 'note', title: `C ${n}`, compiled_truth: `Body ${n} ${'filler '.repeat(40)}`, timeline: '' });
+    }
+    const target = join(root, 'copy-closing');
+    const closing = engine.disconnect();
+    // Admitted in the same tick, after disconnect() captured its stop hooks: it would miss the barrier.
+    const copying = snapshotStore(engine, target, { opId: nextId(), batchBytes: 4096, batchDelayMs: 100 }, { statfs: () => plenty });
+    const outcome = reason(copying);
+    await closing;
+    expect(await outcome).toBe('cancelled');
+    expect(existsSync(target)).toBe(false);
   }, 30_000);
 });
