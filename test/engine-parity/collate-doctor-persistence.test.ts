@@ -377,7 +377,7 @@ describe('doctor persistence reads sort text keys by byte', () => {
     await rollupDay(engine, 'takes', 9, { halt_count: 50, halt_reason: 'old', cost_usd: 5 });
     await rollupDay(engine, 'atoms', 1, { round_completed_count: 1, rollup_write_failures: 1 });
     const check = await computeExtractHealthCheck(engine);
-    const kinds = (detailsOf(check).kinds as Array<Record<string, unknown>>).map(({ last_updated_at, ...k }) =>
+    const kinds: Array<Record<string, unknown>> = (detailsOf(check).kinds as Array<Record<string, unknown>>).map(({ last_updated_at, ...k }) =>
       ({ ...k, updated: typeof last_updated_at === 'string' && !Number.isNaN(Date.parse(last_updated_at)) }));
     const takes = await engine.readExtractKindRollup7d('takes');
     const none = await engine.readExtractKindRollup7d('absent');
