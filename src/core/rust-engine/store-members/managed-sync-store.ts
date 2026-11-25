@@ -16,7 +16,7 @@ import { heldRefusal, managedServed } from './managed-hold.ts';
 
 /** While the managed hold is on (a user's Rust brain) the statement refuses as the `executeRaw` it replaced did (managed-hold.ts). */
 export const runSyncStatement = async function runSyncStatement(this: RustEngine, brain: StoreBrain, name: SyncStatementName, params: readonly unknown[] = [], _opts?: SyncStatementOptions): Promise<unknown[]> {
-  if (!managedServed(this)) throw heldRefusal();
+  if (!managedServed(this)) return heldRefusal(this);
   return storeCall({ member: 'runSyncStatement' }, () =>
     (SYNC_STATEMENTS[name].kind === 'write' ? brain.syncStoreWrite(name, [...params]) : brain.syncStoreRows(name, [...params])) as Promise<unknown[]>);
 };

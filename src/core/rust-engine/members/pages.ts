@@ -390,11 +390,13 @@ export const PAGES_MEMBERS = {
   addPersistenceCounters: 'persistence_journal',
   // A bound publication's request-row reads and writes around its files (engine-sql/publication-journal.ts).
   publicationJournalStore: 'persistence_journal',
-  gitDurabilityStore: 'managed_persistence',
-  gitEffectStore: 'managed_persistence',
-  topologyStore: 'managed_persistence',
-  manualLinkStore: 'managed_persistence',
-  runSyncStatement: 'managed_persistence',
+  // The managed-mode stores (lane LM) are classed by the capability of the statements they replaced: while the
+  // managed_persistence hold is on they refuse exactly as that executeRaw did (store-members/managed-hold.ts).
+  gitDurabilityStore: 'raw_sql',
+  gitEffectStore: 'raw_sql',
+  topologyStore: 'raw_sql',
+  manualLinkStore: 'raw_sql',
+  runSyncStatement: 'raw_sql',
   readWorktreeManifest: 'persistence_journal',
   // Writer status (engine-sql/writer-status.ts).
   readWriterDiagnosticRows: 'persistence_journal',

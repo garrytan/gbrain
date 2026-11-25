@@ -6,11 +6,15 @@
  * Each read is one `manualLinkRows({ kind, ... })` call and each write one `manualLinkWrite({ kind, ... })` call, with
  * the answers of the SQL they replace. `identityHasSource` is true: the store's link-transition identity always
  * carries the link source (schema v302's index).
+ *
+ * While the managed_persistence hold is on (every user's Rust brain), each call refuses exactly as the executeRaw it
+ * replaced did (managed-hold.ts).
  */
 import type { ManualLinkStore, ManualRelationship } from '../../engine-sql/manual-links.ts';
 import type { RustEngine } from '../../rust-engine.ts';
 import type { StoreBrain } from '../store.ts';
 import { storeCall } from './common.ts';
+import { heldStore } from './managed-hold.ts';
 
 const MEMBER = 'manualLinkStore';
 
@@ -42,5 +46,5 @@ function rustManualLinkStore(brain: StoreBrain): ManualLinkStore {
 
 /** `manualLinkStore()`: the store over this engine's store handle; called on a transaction, every call runs in it. */
 export const manualLinkStore = async function manualLinkStore(this: RustEngine, brain: StoreBrain): Promise<ManualLinkStore> {
-  return rustManualLinkStore(brain);
+  return heldStore(this, rustManualLinkStore(brain));
 };

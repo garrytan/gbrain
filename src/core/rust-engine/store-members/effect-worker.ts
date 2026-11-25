@@ -14,7 +14,9 @@
  */
 import type { CoalescedGitClaim, EffectClaim, EffectClaimRef, EffectWorktreeOwner, MirrorGateRow } from '../../engine-sql/persistence-effect-worker.ts';
 import type { IdleProbeRow, IdleProbeSpec } from '../../engine-sql/persistence-idle-probe.ts';
+import type { StoreBrain } from '../store.ts';
 import { storeCall, type StoreMember } from './common.ts';
+import { heldRefusal, managedServed } from './managed-hold.ts';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -34,8 +36,11 @@ export const stampEffectClaim: StoreMember<[claim: EffectClaim], Record<string, 
   storeCall({ member: 'stampEffectClaim' }, () => brain.stampEffectClaim({ ...claim, id: String(claim.id) }));
 
 /** The claimed rows of up to `limit` ready single-file Git effects of one worktree (#5530), in claim order. */
-export const claimCoalescedGitEffects: StoreMember<[input: CoalescedGitClaim], Record<string, unknown>[]> = (brain, input) =>
-  storeCall({ member: 'claimCoalescedGitEffects' }, () => brain.claimCoalescedGitEffects({ ...input, deadOwners: [...input.deadOwners] }));
+/** Refuses as the executeRaw it replaced did while the managed_persistence hold is on (managed-hold.ts). */
+export const claimCoalescedGitEffects = async function claimCoalescedGitEffects(this: unknown, brain: StoreBrain, input: CoalescedGitClaim): Promise<Record<string, unknown>[]> {
+  if (!managedServed(this)) return heldRefusal(this);
+  return storeCall({ member: 'claimCoalescedGitEffects' }, () => brain.claimCoalescedGitEffects({ ...input, deadOwners: [...input.deadOwners] }));
+};
 
 /** True while the effect runs under the token with no recovery; the direct lane is every store write. */
 export const renewEffectClaim: StoreMember<[claim: EffectClaimRef, opts?: { direct?: boolean }], boolean> = (brain, claim) =>
@@ -59,9 +64,11 @@ export const readMirrorGateRows: StoreMember<[requestIds: readonly string[]], Mi
  * here is in the read set). The worktree's owner and state come from its binding record (`readWorktreeOwner`), null when
  * the effect has no worktree or the row is gone. A worktree id that is not a uuid refuses as `::uuid` does.
  */
-export const lockEffectGuard: StoreMember<[worktreeId: string | null], EffectWorktreeOwner | null> = async (brain, worktreeId) => {
+export const lockEffectGuard = async function lockEffectGuard(this: unknown, brain: StoreBrain, worktreeId: string | null): Promise<EffectWorktreeOwner | null> {
   if (worktreeId !== null && !UUID.test(worktreeId)) throw new Error(`invalid input syntax for type uuid: "${worktreeId}"`);
-  if (worktreeId === null) return null;
+  // While the managed_persistence hold is on, no worktree effect is admitted, and the guard answers as it did before managed
+  // mode was served (no owner row).
+  if (worktreeId === null || !managedServed(this)) return null;
   const owner = await storeCall({ member: 'lockEffectGuard' }, () => brain.readWorktreeOwner(worktreeId)) as { owner_host_id: string | null; state: string } | null;
   return owner ? { owner_host_id: owner.owner_host_id as string, state: owner.state } : null;
 };

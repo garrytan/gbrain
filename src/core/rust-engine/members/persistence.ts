@@ -291,7 +291,8 @@ export const PERSISTENCE_MEMBERS = {
   listResumableRefreshes: 'persistence_journal',
   listSourceLastCommits: 'persistence_journal',
   stampEffectClaim: 'persistence_journal',
-  claimCoalescedGitEffects: 'persistence_journal',
+  // Refuses as the executeRaw it replaced did while the managed_persistence hold is on (store-members/managed-hold.ts).
+  claimCoalescedGitEffects: 'raw_sql',
   renewEffectClaim: 'persistence_journal',
   advanceEffectRow: 'persistence_journal',
   completeEffectRow: 'persistence_journal',
