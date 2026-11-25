@@ -56,7 +56,7 @@ import { migrationsNotice, pendingUpgradeMigrationsNotice } from './migrations-n
 import { opError, opOwnsSource } from '../core/ops/contract.ts';
 import { PAGE_MAX_BYTES } from '../core/page-size-policy.ts';
 import { opBooleanValue, opFlagValue, opParamValue, opStructuredValue } from './op-param-values.ts';
-import { parseGlobalFlags, setCliOptions, getCliOptions } from '../core/cli-options.ts';
+import { parseGlobalFlags, setCliOptions, getCliOptions, THIN_CLIENT_BRAIN_FLAG_MESSAGE } from '../core/cli-options.ts';
 import { runCliPreflight } from '../core/cli-preflight.ts';
 import { isBooleanLiteral, isKnownOpFlag } from '../core/op-flag-tokens.ts';
 import { conceptNudge } from '../core/search/query-intent.ts';
@@ -1834,7 +1834,6 @@ function thinRefusalSubcommand(command: string): string[] {
   return argv.includes(command) && /^[a-z][a-z0-9-]*$/.test(next) ? [next, ...(command === 'trust' && /^(?:(?:f|t|h|e|a|tp)\d{1,18}|p:[a-z0-9_-]{1,64}\/[a-z0-9][a-z0-9/_.-]{0,200})$/.test(ref) ? [ref] : [])] : [];
 }
 
-const THIN_CLIENT_BRAIN_FLAG_MESSAGE = '--brain is not supported on a thin-client install: the remote server is a single brain.';
 
 const ENGINE_CONNECT_HOOKS: EngineConnectHooks = { SELECTED_CONFIG_BY_ENGINE, completeStartup: completeEngineStartup };
 /** Dispatcher-owned pieces the command modules under src/cli/commands/ receive (see CliDispatchContext). */

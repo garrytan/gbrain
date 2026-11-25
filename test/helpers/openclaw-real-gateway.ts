@@ -102,7 +102,11 @@ export class RealOpenclaw {
     writeFileSync(join(this.workspace, 'skills', name, 'SKILL.md'), '---\nname: ' + name + '\ndescription: ' + JSON.stringify(description) + '\n---\n# ' + name + '\n' + description + '.\n');
   }
 
-  /** Start the fake model and write openclaw.json (loopback provider, no update check, no catalog download). */
+  /**
+   * Start the fake model and write openclaw.json (loopback provider, no update check, no catalog download).
+   * OpenClaw's own bundled, custodian and plugin skills stay loaded but hidden from the model, so a test's
+   * suggestions come from its synthetic skills alone whatever the OpenClaw version ships.
+   */
   async start(): Promise<void> {
     this.server = createServer(async (req, res) => {
       let body = '';
@@ -135,6 +139,7 @@ export class RealOpenclaw {
       agents: { defaults: { workspace: this.workspace, model: { primary: 'fixture/fixture' }, skipBootstrap: true } },
       gateway: { mode: 'local', port: this.gatewayPort, bind: 'loopback', auth: { mode: 'none' } },
       update: { checkOnStart: false },
+      skills: { allowBundled: [], entries: { 'browser-automation': { enabled: false }, canvas: { enabled: false } } },
       models: { mode: 'replace', catalogRefresh: { enabled: false }, providers: { fixture: {
         baseUrl: 'http://127.0.0.1:' + port + '/v1', api: 'openai-completions', apiKey: 'local-fixture',
         models: [{ id: 'fixture', name: 'Fixture', contextWindow: 65536, maxTokens: 512, reasoning: false, input: ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }],

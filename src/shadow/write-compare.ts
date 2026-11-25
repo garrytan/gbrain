@@ -7,9 +7,13 @@
  * of the changed rows. Every sampled write of another family is `capability_missing`, by family. Fail closed: a write
  * whose preimage could not be read or loaded, or that failed on one side, is `uncomparable` and never `comparable`.
  *
- * Nothing is recorded yet: outcomes go to a `WriteVerdictSink`, and none is wired, so status and criterion 5 stay `capability_missing`.
- * The locked tally that records them follows in a separate PR.
+ * Counts live in `write-comparisons.json`, written only through the locked tally below; `status` reads them.
  */
+import { randomBytes } from 'node:crypto';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { flushDirectory, flushFile } from '../core/fs-durable.ts';
+import { readEpoch, withLock } from './evidence-epoch.ts';
 import { memberKind, WRITE_MAP } from './write-map.ts';
 
 export const PILOT_WRITES: ReadonlySet<string> = new Set(['putPage', 'deletePage', 'addLink', 'addLinksBatch', 'removeLink']);
@@ -41,12 +45,12 @@ export function pageRefs(op: string, args: any[]): PageRef[] {
   return [...new Map(all.filter((r): r is PageRef => r !== null).map((r) => [`${r.source}\0${r.slug}`, r])).values()];
 }
 
-/** What a pilot write itself changes: the pages it writes or deletes, and the links it adds or removes (from, to, and the type and source it names; one it leaves out matches any). */
-export function footprint(op: string, args: any[]): { pages: PageRef[]; links: Array<{ from: PageRef; to: PageRef; type?: string; source?: string }> } {
+/** What a pilot write itself changes: the pages it writes or deletes, and the links it adds or removes (from, to, and the type and source it names; one it leaves out matches any). An added link also names its origin page: `null` is no origin, which only a row with no origin matches; a removal leaves `origin` out and matches any. */
+export function footprint(op: string, args: any[]): { pages: PageRef[]; links: Array<{ from: PageRef; to: PageRef; type?: string; source?: string; origin?: PageRef | null }> } {
   const o = (args[OPTS_AT[op] ?? 1] ?? {}) as Record<string, unknown>;
-  const link = (from: PageRef | null, to: PageRef | null, type?: unknown, source?: unknown) => (from && to ? [{ from, to, type: typeof type === 'string' ? type : undefined, source: typeof source === 'string' ? source : undefined }] : []);
-  if (op === 'addLinksBatch') return { pages: [], links: (args[0] as any[]).flatMap((l) => link(ref(l.from_slug, l.from_source_id), ref(l.to_slug, l.to_source_id), l.link_type, l.link_source)) };
-  if (op === 'addLink') return { pages: [], links: link(ref(args[0], o.fromSourceId), ref(args[1], o.toSourceId), args[3], args[4]) };
+  const link = (from: PageRef | null, to: PageRef | null, type?: unknown, source?: unknown, origin?: PageRef | null) => (from && to ? [{ from, to, type: typeof type === 'string' ? type : undefined, source: typeof source === 'string' ? source : undefined, origin }] : []);
+  if (op === 'addLinksBatch') return { pages: [], links: (args[0] as any[]).flatMap((l) => link(ref(l.from_slug, l.from_source_id), ref(l.to_slug, l.to_source_id), l.link_type, l.link_source, ref(l.origin_slug, l.origin_source_id))) };
+  if (op === 'addLink') return { pages: [], links: link(ref(args[0], o.fromSourceId), ref(args[1], o.toSourceId), args[3], args[4], ref(args[5], o.originSourceId)) };
   if (op === 'removeLink') return { pages: [], links: link(ref(args[0], o.fromSourceId), ref(args[1], o.toSourceId), args[2], args[3]) };
   return { pages: pageRefs(op, args), links: [] };
 }
@@ -67,8 +71,8 @@ export function movedOutsideFootprint(op: string, args: any[], pre: PreImage, no
   const key = (r: PageRef): string => `${r.source}\0${r.slug}`;
   const ids = new Map<string, string | null>([...pre.pages, ...now.pages].map((p) => [`${p.source_id}\0${p.slug}`, p.id ?? null]));
   const ownPages = new Set(fp.pages.map((r) => ids.get(key(r))));
-  const own = fp.links.map((l) => ({ from: ids.get(key(l.from)), to: ids.get(key(l.to)), type: l.type, source: l.source }));
-  const ownLink = (l: Row): boolean => own.some((w) => w.from === l.from_page_id && w.to === l.to_page_id && (w.type === undefined || w.type === l.link_type) && (w.source === undefined || w.source === l.link_source))
+  const own = fp.links.map((l) => ({ from: ids.get(key(l.from)), to: ids.get(key(l.to)), type: l.type, source: l.source, origin: l.origin === undefined ? undefined : l.origin ? ids.get(key(l.origin)) ?? null : null }));
+  const ownLink = (l: Row): boolean => own.some((w) => w.from === l.from_page_id && w.to === l.to_page_id && (w.type === undefined || w.type === l.link_type) && (w.source === undefined || w.source === l.link_source) && (w.origin === undefined || w.origin === (l.origin_page_id ?? null)))
     || (op === 'deletePage' && (ownPages.has(l.from_page_id) || ownPages.has(l.to_page_id)));
   const after = (rows: Row[]): Map<string | null, Row> => new Map(rows.map((r) => [r.id ?? null, r]));
   const pagesNow = after(now.pages); const linksNow = after(now.links);
@@ -114,5 +118,108 @@ export function writeFamily(op: string): string {
   return table === 'pages' || table === 'links' ? `${table}:${op}` : table;
 }
 
-/** Where a finished comparison's outcome goes (`key` is a family or reason name). Nothing records them yet: the locked tally that does follows in a separate PR, so a comparison changes no criterion 5 state. */
-export type WriteVerdictSink = (outcome: WriteOutcome, key?: string, count?: number) => void;
+export interface WriteTallyFile {
+  version: 1; epoch_id: string; updated_at: string;
+  comparable: number; unexplained_difference: number; uncomparable: number; capability_missing: number;
+  capability_missing_by_family: Record<string, number>; uncomparable_by_reason: Record<string, number>;
+  /** Pids of children whose replay has no verdict written yet. A pid leaves only by its own verdict or when it is dead (counted `unexplained_difference`); while any stands, status reads no evidence. */
+  in_flight: number[];
+  /** The last batch number of each child (`<pid>.<nonce>`) this file has taken: a save that may have landed is added once. */
+  applied?: Record<string, number>;
+}
+export const writeTallyPath = (dir: string): string => join(dir, 'write-comparisons.json');
+const OUTCOMES = ['comparable', 'unexplained_difference', 'uncomparable', 'capability_missing'] as const;
+const blank = (epoch: string): WriteTallyFile => ({ version: 1, epoch_id: epoch, updated_at: '', comparable: 0, unexplained_difference: 0, uncomparable: 0, capability_missing: 0, capability_missing_by_family: {}, uncomparable_by_reason: {}, in_flight: [] });
+const count = (n: unknown): boolean => Number.isInteger(n) && (n as number) >= 0;
+const counts = (m: unknown): boolean => typeof m === 'object' && m !== null && Object.values(m).every(count);
+
+/** The tally file as written: null when there is none, and a throw when there is one that is not a tally (it is never read as empty and written over). */
+function loadTally(dir: string): WriteTallyFile | null {
+  let text: string;
+  try { text = readFileSync(writeTallyPath(dir), 'utf8'); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null; throw e; }
+  const f = JSON.parse(text) as WriteTallyFile;
+  if (!(f?.version === 1 && typeof f.epoch_id === 'string' && OUTCOMES.every((o) => count(f[o])) && counts(f.capability_missing_by_family) && counts(f.uncomparable_by_reason) && (f.applied === undefined || counts(f.applied)) && Array.isArray(f.in_flight) && f.in_flight.every(Number.isInteger))) throw new Error('not a write tally');
+  return f;
+}
+
+/** The counts under `epochId`, or null when there are none (no file, an unreadable one, or another epoch's). */
+export function readWriteTally(dir: string, epochId: string | null): WriteTallyFile | null {
+  try { const f = loadTally(dir); return f && epochId !== null && f.epoch_id === epochId ? f : null; } catch { return null; } // silent-read-ok: no readable tally is no count; the status shows zero and criterion 5 stays missing
+}
+
+const MAX_KEYS = 64;
+const bump = (map: Record<string, number>, key: string, n: number): void => { const k = key in map || Object.keys(map).length < MAX_KEYS ? key : 'other'; map[k] = (map[k] ?? 0) + n; };
+function applyVerdict(file: WriteTallyFile, outcome: WriteOutcome, key: string | undefined, n: number): void {
+  file[outcome] += n;
+  const name = typeof key === 'string' && /^[A-Za-z][A-Za-z0-9_:]{0,59}$/.test(key) ? key : 'other'; // a name, never text that could hold content
+  if (outcome === 'capability_missing') bump(file.capability_missing_by_family, name, n);
+  if (outcome === 'uncomparable') bump(file.uncomparable_by_reason, name, n);
+}
+const running = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM'; } };
+
+/**
+ * The write tally (swap criterion 5). The file changes only inside one cross-process lock, as a read-modify-write of THIS child's unsaved verdicts
+ * (`pending` batches) onto what the file holds now: a held snapshot is never written back, so nothing another child saved can be overwritten. Only the child that owns the Rust store has an epoch (one fixed id for its life: `epoch()` is the owner's `curEpoch`, null for a client), so a client child records nothing and a retired epoch's results can never be added to another epoch's file (a save also refuses a file whose manifest epoch is not this child's). A save
+ * is the temp file flushed, renamed over the file and the directory flushed; only then do its batches count as saved. A save that fails, at any point
+ * (even after the rename, where it may have landed), keeps its batches, and `applied` (the last batch number of this child the file has taken) makes the
+ * retry add each batch once. A replay publishes its pid in `in_flight` (`begin`, true only when that is durable on disk; the caller refuses the replay on
+ * false) and only its own verdict, or the recovery of a dead pid, removes it. A mark whose replay never wrote a verdict is one that could have been
+ * a mismatch, so a dead pid's counts `unexplained_difference`: a hard kill during a replay fails criterion 5 for the epoch.
+ */
+export class WriteTally {
+  private pending: Array<{ seq: number; delta: WriteTallyFile; ending: boolean }> = [];
+  private sealed = 0; // the first `sealed` pending batches were in a save that may have landed: never added to, until a durable save takes them
+  private seq = 0;
+  private readonly id: string;
+  constructor(private readonly dir: string, private readonly epoch: () => string | null, private readonly alive: () => boolean = () => existsSync(dir), private readonly pid: number = process.pid) { this.id = `${pid}.${randomBytes(4).toString('hex')}`; }
+  /** One locked read-modify-write: dead pids recovered, then this child's unsaved batches, then `change`. False when nothing was saved (the batches are kept). `fresh`: a mark under this pid is from an earlier process that had it. */
+  private update(change?: (file: WriteTallyFile) => void, fresh = false): boolean {
+    const epoch = this.epoch();
+    if (epoch === null || !this.alive()) return false;
+    const batches = this.pending; let renamed = false;
+    try {
+      withLock(join(this.dir, 'write-comparisons.lock'), () => {
+        if (readEpoch(this.dir)?.epoch_id !== epoch) throw new Error('not the current epoch'); // a child of a retired epoch must not replace the current epoch's file
+        const saved = loadTally(this.dir);
+        const file = saved?.epoch_id === epoch ? saved : blank(epoch);
+        file.applied ??= {};
+        const dead = file.in_flight.filter((p) => (p === this.pid ? fresh : !running(p)));
+        for (const p of dead) applyVerdict(file, 'unexplained_difference', undefined, 1);
+        file.in_flight = file.in_flight.filter((p) => !dead.includes(p));
+        for (const id of Object.keys(file.applied)) if (id !== this.id && !running(Number.parseInt(id, 10))) delete file.applied[id];
+        const todo = batches.filter((b) => b.seq > (file.applied![this.id] ?? 0));
+        if (!change && !dead.length && !todo.length) return;
+        for (const b of todo) {
+          for (const o of OUTCOMES) file[o] += b.delta[o];
+          for (const [k, n] of Object.entries(b.delta.capability_missing_by_family)) bump(file.capability_missing_by_family, k, n);
+          for (const [k, n] of Object.entries(b.delta.uncomparable_by_reason)) bump(file.uncomparable_by_reason, k, n);
+          if (b.ending) file.in_flight = file.in_flight.filter((p) => p !== this.pid);
+          file.applied[this.id] = b.seq;
+        }
+        change?.(file);
+        file.updated_at = new Date().toISOString();
+        const tmp = `${writeTallyPath(this.dir)}.${this.pid}.tmp`;
+        writeFileSync(tmp, JSON.stringify(file) + '\n', { mode: 0o600 });
+        flushFile(tmp);
+        renameSync(tmp, writeTallyPath(this.dir)); renamed = true;
+        flushDirectory(this.dir);
+      });
+      this.pending = []; this.sealed = 0;
+      return true;
+    } catch { if (renamed) this.sealed = batches.length; return false; } // silent-read-ok: false is the answer, never a pass: begin() refuses the replay, and note() keeps the unsaved batches for the next save
+  }
+  /** Publishes this pid as having a replay in flight. True only when that is durable on disk: on false the replay must not run. */
+  begin(): boolean { return this.update((file) => { if (!file.in_flight.includes(this.pid)) file.in_flight.push(this.pid); }); }
+  /** At child start: counts the marks of dead processes (and of an earlier process with this pid), and saves any verdict still unsaved. */
+  recover(): void { this.update(undefined, true); }
+  /** Counts one outcome; `ends` is a replay's own verdict, which removes its mark. */
+  note(outcome: WriteOutcome, key?: string, n = 1, ends = false): void {
+    const epoch = this.epoch();
+    if (epoch === null || !this.alive()) return;
+    let batch = this.pending.at(-1);
+    if (!batch || this.pending.length === this.sealed) this.pending.push(batch = { seq: ++this.seq, delta: blank(epoch), ending: false });
+    applyVerdict(batch.delta, outcome, key, n);
+    batch.ending ||= ends;
+    this.update();
+  }
+}

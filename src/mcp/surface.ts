@@ -288,6 +288,7 @@ export const STARTER_CALLABLE_PARAMS: Readonly<Record<string, Readonly<Record<st
     infer_entity: 'false only turns entity inference off; the segmented-entity refusal\'s retry names it.',
     valid_from: 'Already accepted per item in items; it only dates the fact being written, to the same source under the same grant, and reads nothing.',
     facet: 'The brain-ops skill and docs/guides/profile.md name it; it only labels a fact for the caller\'s own profile, and the profile checks refuse any other page.',
+    content_origin: 'gbrain profile import labels each imported fact inferred; the label only lowers a write\'s trust tier, and an inferred write never supersedes a user_said fact.',
   },
   recall: {
     grep: 'A substring filter that only narrows the facts returned; gbrain\'s connection check passes it.',
