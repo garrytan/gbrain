@@ -464,6 +464,7 @@ describe('engine parity: decide receipts', () => {
         receipt('w1', { slot: 'zeta', outcome: 'error', error_reason: 'egress_x', input_tokens: 0 }),
       ]);
       const usage = await engine.decideSlotUsage(1);
+      await apart();
       const none = await engine.decideSlotUsage(0);
       expect(usage.map((r) => r.slot)).toEqual(['Alpha', 'alpha', 'conflict', 'zeta']);
       expect(usage[2]).toEqual({ slot: 'conflict', decisions: 11, rows: 12, input_tokens: 30, errors: 2, skipped: 8, egress: 4 });
@@ -485,6 +486,7 @@ describe('engine parity: decide receipts', () => {
         receipt('t1', { slot: 'triage', outcome: 'skipped', error_reason: 'no_entity' }),
       ]);
       const counts = await engine.decideConflictNoEntityCounts(1);
+      await apart();
       const none = await engine.decideConflictNoEntityCounts(0);
       expect(counts).toEqual({ receipts: 5, skipped: 2 });
       expect(none).toEqual({ receipts: 0, skipped: 0 });
@@ -513,6 +515,7 @@ describe('engine parity: decide receipts', () => {
       ]);
       const replay = await engine.listDecideReplayReceipts('conflict', 1);
       const triage = await engine.listDecideReplayReceipts('triage', 1);
+      await apart();
       const none = await engine.listDecideReplayReceipts('conflict', 0);
       expect(replay.map((r) => r.decision_id)).toEqual(['', 'B', 'a', 'a', 'a', 'b', 'b', 'b', '\u00e9']);
       expect(replay.filter((r) => r.decision_id === 'b').map((r) => r.rank)).toEqual([1, 2, null]);
@@ -542,6 +545,7 @@ describe('engine parity: decide receipts', () => {
       await engine.insertDecideReceipts([receipt('m7', { slot: 'triage', provider: 'typesafe:anthropic', model_resolved: 'claude-y', error_reason: 'mixed_model' })]);
       const models = await engine.listDecideResolvedModels(1);
       const mixed = await engine.listDecideMixedModelDecisions(1);
+      await apart();
       const noneModels = await engine.listDecideResolvedModels(0);
       const noneMixed = await engine.listDecideMixedModelDecisions(0);
       expect(models.every((r) => r.last_at instanceof Date && Math.abs(r.last_at.getTime() - Date.now()) < 3_600_000)).toBe(true);
