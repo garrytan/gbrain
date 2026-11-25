@@ -69,6 +69,12 @@ function afterVectorCommit(engine: BrainEngine, intervene: () => Promise<void>):
           if (sql.startsWith('UPDATE content_chunks SET')) wrote();
           return result;
         };
+        // The vector write is the typed installChunkEmbeddings member (page-state/projections.ts installPageEmbeddings).
+        if (key === 'installChunkEmbeddings') return async (...args: Parameters<BrainEngine['installChunkEmbeddings']>) => {
+          const result = await target.installChunkEmbeddings(...args);
+          wrote();
+          return result;
+        };
         const value = Reflect.get(target, key, target);
         return typeof value === 'function' ? value.bind(target) : value;
       },
