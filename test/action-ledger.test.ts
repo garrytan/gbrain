@@ -10,7 +10,7 @@
  * 2. Fails when: any of those leaks, double counts, or lets an agent label its own amount confirmed.
  * 3. Real seams: PGLite and Postgres engines, MCP dispatchToolCall with remote=true, the real page write path.
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -53,6 +53,7 @@ for (const kind of testBackends()) describe(`action ledger (L2, ${kind}, repo-le
   }, 60_000);
   afterAll(async () => { if (close) await close(); else if (engine) await engine.disconnect(); }, 60_000);
   beforeEach(() => _resetCliExitVerdictForTests());
+  afterEach(() => { _resetCliExitVerdictForTests(); process.exitCode = 0; });
 
   test('log_action over MCP: stamps the actor, computes claim_basis, and a replay names the same action', async () => {
     const request_id = randomUUID();
