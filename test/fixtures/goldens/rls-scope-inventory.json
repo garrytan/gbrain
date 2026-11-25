@@ -2887,6 +2887,17 @@
           "*"
         ]
       },
+      "readImageSealProbe#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readLedgerSource#batch": {
         "flagOffLanes": [
           "pool"
@@ -2932,6 +2943,17 @@
         "flagOnScopes": []
       },
       "readManagedModeRows#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readPageChunkerVersion#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -4280,6 +4302,7 @@
         "readGuestSourceRow": "none",
         "readHealthMemoClock": "none",
         "readIgnoredPrivacyLabelPages": "none",
+        "readImageSealProbe": "none",
         "readLedgerSource": "none",
         "readLivePageFrontmatter": "none",
         "readLocalWriterRow": "none",
@@ -4291,6 +4314,7 @@
         "readOpCheckpointKeys": "none",
         "readPageAliasRows": "none",
         "readPageBodySizes": "none",
+        "readPageChunkerVersion": "none",
         "readPageSnapshot": "direct",
         "readPageSnapshotsBatch": "direct",
         "readPageTitle": "none",
