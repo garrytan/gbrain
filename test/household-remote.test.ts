@@ -63,9 +63,10 @@ beforeAll(async () => {
   await addGroup(engine, 'household-chats', []);
   await setOwner(engine, OWNER);
   await setMemberLabelledOnly(engine, LABELLED, true, { remote: false });
-  for (const who of [OWNER, ADULT, HELPER, LABELLED, 'unbound']) {
-    const minted = await mintLegacyToken(engine, { name: 'hh-' + who, scopes: ['read', 'write'], takesHolders: ['world'] });
-    if (who !== 'unbound') await bindCredential(engine, { kind: 'token', id: minted.id }, { member: who });
+  await engine.executeRaw("INSERT INTO sources (id, name, config) VALUES ('other-src', 'other-src', '{}'::jsonb) ON CONFLICT (id) DO NOTHING");
+  for (const who of [OWNER, ADULT, HELPER, LABELLED, 'unbound', 'other-source']) {
+    const minted = await mintLegacyToken(engine, { name: 'hh-' + who, scopes: ['read', 'write'], takesHolders: ['world'], ...(who === 'other-source' ? { sourceGrant: ['other-src'] } : {}) });
+    if (who !== 'unbound' && who !== 'other-source') await bindCredential(engine, { kind: 'token', id: minted.id }, { member: who });
     tokens[who] = minted.token;
   }
   __resetPrivateVisibilityCacheForTests();
@@ -122,6 +123,15 @@ describe('household privacy over remote MCP', () => {
       expect(seen).toContain('Milk');
     });
   }
+
+  test('a token granted another source reads no household record here, and naming this source is refused', async () => {
+    const due = await remote('other-source', 'household_due', ALL);
+    expect(titles(due)).toEqual([]);
+    const named = await remote('other-source', 'household_due', { ...ALL, source_id: 'default' });
+    expect(named.isError).toBe(true);
+    expect(named.json.code).toBe('requester_scope_required');
+    expect(named.text).not.toContain('Water bill');
+  });
 
   test('an unbound token reads no household record', async () => {
     const due = await remote('unbound', 'household_due', ALL);
