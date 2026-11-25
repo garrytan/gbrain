@@ -63,6 +63,8 @@ on:
       - '**/test/rust-unit-arms.txt'
       - '**/scripts/rust-unit-arms.ts'
       - 'test/rust-cli-parity.serial.test.ts'
+      - 'test/apply-migrations-rust-swap.serial.test.ts'
+      - 'src/core/shared-skills/migration.ts'
       - 'test/token-member-cli-parity.serial.test.ts'
       - 'test/rust-mcp-receipts.serial.test.ts'
       - 'test/fixtures/rust-cli-parity-brain/**'
@@ -88,6 +90,8 @@ on:
       - '**/test/rust-unit-arms.txt'
       - '**/scripts/rust-unit-arms.ts'
       - 'test/rust-cli-parity.serial.test.ts'
+      - 'test/apply-migrations-rust-swap.serial.test.ts'
+      - 'src/core/shared-skills/migration.ts'
       - 'test/token-member-cli-parity.serial.test.ts'
       - 'test/rust-mcp-receipts.serial.test.ts'
       - 'test/fixtures/rust-cli-parity-brain/**'
@@ -365,6 +369,15 @@ jobs:
           GBRAIN_TEST_REQUIRE_RUST_ADDON: '1'
           GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
         run: bash scripts/run-with-receipt.sh rust-store withdrawn-lead -- bun test --timeout=60000 test/rust-engine-withdrawn-lead.test.ts
+      # An upgrade on a brain swapped from PGLite to Rust (apply-migrations, then post-upgrade). Same ownership rule as
+      # above: a missing addon is an error here, and the receipt check below fails the lane when no test ran.
+      - name: An upgrade on a brain swapped from PGLite to Rust exits 0
+        if: matrix.shard == '1'
+        shell: bash
+        env:
+          GBRAIN_TEST_REQUIRE_RUST_ADDON: '1'
+          GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
+        run: bash scripts/run-with-receipt.sh rust-store apply-migrations-rust-swap -- bun test --timeout=900000 test/apply-migrations-rust-swap.serial.test.ts
       # The shadow seed leaves the swap's writer-evidence tables behind (rust seed::NOT_COPIED). Same ownership rule as
       # above: a missing addon is an error here, and the next step fails the lane when no test ran.
       - name: The shadow seed skips the writer-evidence tables
