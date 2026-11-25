@@ -18,7 +18,7 @@
  */
 import type { OwnerOnlyForm } from '../../access/owner-only.ts';
 import { DELETE_BATCH_SIZE } from '../../engine-constants.ts';
-import { assertPurgeAge } from '../../engine-errors.ts';
+import { assertPurgeAge, TrustFloorError } from '../../engine-errors.ts';
 import type { FindPagesQuery, FoundPages } from '../../page-find.ts';
 import type { PageCountQuery, PageCounts, TypeGrouper } from '../../page-counts.ts';
 import { pageSnapshotKey, type PageSnapshotBatch } from '../../page-snapshot-batch.ts';
@@ -60,6 +60,8 @@ void READ_POLICY_KEYS_COMPLETE;
 function readScope(member: string, opts: PageReadScope | undefined): Record<string, unknown> {
   if (opts === undefined || opts === null) return {};
   const taken = takeOptions(member, opts, ['sourceId', 'sourceIds', 'excludePrivate', 'minTrust', 'suppressFlagged'], ['requireSafeChunks', 'takesHoldersAllowList', ...HYBRID_BAG_KEYS, ...WHOKNOWS_KEYS]);
+  // A floor that is not text names no trust tier: refuse it as the store does for text, before the napi decode (#10276).
+  if (taken.minTrust && typeof taken.minTrust !== 'string') throw new TrustFloorError(taken.minTrust);
   return {
     sourceId: taken.sourceId, sourceIds: taken.sourceIds, live: true,
     excludePrivate: storePagePolicy(member, taken.excludePrivate, { callerReaders: true }) ?? null,

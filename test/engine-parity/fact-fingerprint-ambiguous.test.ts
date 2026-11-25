@@ -7,7 +7,7 @@
  *    DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1): the fact guards neither refuse nor expire it, the take
  *    guard admits it, the withdrawal and purge checks answer false, and the fence overlays keep its row. The space
  *    spelling itself stays refused, expired and dropped.
- *  - Regression: Postgres matched every ledger hash also by the pre-v339 fingerprints (_v2, _v1), which fold the
+ *  - Regression: Postgres matched every ledger hash also by the pre-v341 fingerprints (_v2, _v1), which fold the
  *    locale's [[:space:]]; on en_US.utf8 that takes U+1680, so the old hash of "X\u1680Y" is the current hash of
  *    "X Y" and a purge of "X Y" refused "X\u1680Y" on Postgres only.
  *  - Why existing coverage misses it: the fingerprint tests seed ledger rows under the old fingerprint of a claim

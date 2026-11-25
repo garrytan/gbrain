@@ -12,12 +12,15 @@
  * once, in one read-only snapshot, and writes `seed.json` (src/shadow/seed.ts).
  */
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadConfig } from '../core/config.ts';
 import type { EngineConfig } from '../core/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
+import { OperationError } from '../core/ops/contract.ts';
 import type { RustEngineAddonLoad } from '../core/rust-engine/addon-loader.ts';
+import { buildBenchStatus, renderBenchStatus } from '../shadow/bench.ts';
+import { BENCH_DOCS, importBenchReceipt, sanitizeText } from '../shadow/bench-receipt.ts';
 import { renderEvidenceStatus } from '../shadow/evidence.ts';
 import { renderFollowStatus } from '../shadow/follow-status.ts';
 import { readManagedStorage, storageLine, type ManagedStorageRecord } from '../shadow/managed-gate.ts';
@@ -26,7 +29,7 @@ import { seedStatus, shadowStatusDocument } from '../shadow/status-document.ts';
 import { installWriterHooks, primaryTakesWriterHooks, removeWriterHooks } from '../shadow/writer-hooks.ts';
 import { buildProvisionalReport, renderProvisionalMarkdown, writeProvisionalReport } from '../shadow/report.ts';
 import {
-  brainIdentity, DEFAULT_SHADOW_QUEUE_BOUND, DEFAULT_SHADOW_SAMPLE_RATE, readShadowState, shadowBrainKey, shadowDirFor,
+  brainIdentity, DEFAULT_SHADOW_QUEUE_BOUND, DEFAULT_SHADOW_SAMPLE_RATE, readShadowState, shadowBrainKey, shadowDirFor, shadowStatePath,
   SHADOW_STATE_VERSION, writeShadowState, type ShadowState,
 } from '../shadow/state.ts';
 
@@ -62,6 +65,9 @@ Usage:
   gbrain engine shadow report [--json]
   gbrain engine shadow seed [--json] [--reseed]
   gbrain engine shadow reconcile [--full] [--json]
+  gbrain engine shadow capture on --yes | off | status [--json] | delete --yes
+  gbrain engine shadow replay [--json] [--budget-minutes <n>]
+  gbrain engine shadow bench --import <receipt.json> [--json]
 
 Shadow mode is off by default. When on, a sample of reads this brain answers is sent, after the answer, to a
 supervised child process that runs the same read on the Rust engine and records match, diff or why it could not
@@ -88,6 +94,10 @@ compares the whole store with the brain (digests per 500-row interval) and repai
 store to be free, so run it when no serving process holds it. Plain reconcile and --full both run a full pass. status
 shows the follower's lag and coverage, the last pass, fingerprint checks and the allocator check; the fingerprint and
 comparison counts are totals for the current seed.
+
+capture records every engine call (reads and writes) into owner-only files on this machine; it is off by default
+(docs/guides/shadow-capture.md). replay plays each night's recording on private PGLite and Rust copies and compares
+them (docs/guides/shadow-replay.md).
 
 The report is provisional and always says NOT READY.`;
 
@@ -199,6 +209,16 @@ export async function runEngineShadow(args: string[], deps: EngineShadowDeps = {
       });
       return await run(dir);
     }
+    if (sub === 'capture') {
+      const { runShadowCaptureCommand } = await import('./engine-shadow-capture.ts');
+      return await runShadowCaptureCommand(rest, { out, err, now, brain: await resolveBrain(deps) });
+    }
+    if (sub === 'replay' || sub === '__replay-child') {
+      const { runShadowReplayCommand } = await import('./engine-shadow-replay.ts');
+      const brain = sub === '__replay-child' ? { key: '', dir: '', engine: '' } : await resolveBrain(deps);
+      return await runShadowReplayCommand(sub, rest, { out, err, now, brain, config: deps.config ?? (() => loadConfig()), openPrimary: deps.openPrimary ?? openConfiguredPrimary });
+    }
+    if (sub === 'bench') return await bench(rest, deps, out, err, now);
     const brain = await resolveBrain(deps);
     if (sub === 'start') return await start(brain, parseStart(rest), deps, out, err, now);
     if (sub === 'status') return await status(brain, flags(rest, ['--json'], 'status').has('--json'), out, now);
@@ -379,6 +399,7 @@ async function status(brain: { key: string; dir: string }, json: boolean, out: (
   if (seedStorage) out(`  storage: ${seedStorage}`);
   if (seeded) for (const line of [...renderFollowStatus(doc), ...renderEvidenceStatus(doc)]) out(line);
   if (doc.evidence_epoch_unstable) out('  evidence epoch: it changed while this status was read, so the epoch-bound evidence is left out; run the status again');
+  for (const line of renderBenchStatus(doc.bench)) out(line);
   for (const f of faults) out(`  fault ${f.ts} ${f.kind}: ${f.detail}`);
   return 0;
 }
@@ -387,6 +408,68 @@ async function status(brain: { key: string; dir: string }, json: boolean, out: (
 export { seedStatus };
 
 const RESEED_STEP = `A Rust store is seeded once. To seed again, start from a new shadow directory: ${RESEED_STEPS}.`;
+
+const BENCH_IMPORT_FIX = 'gbrain engine shadow bench --import <receipt.json> [--json]';
+
+function benchRefusal(code: 'invalid_params' | 'not_found' | 'internal_error', message: string, fix: string): OperationError {
+  return new OperationError(code, message, fix, BENCH_DOCS);
+}
+
+/** The refusal of `bench`: stderr text with the safe fix, and with --json the error envelope on stdout; the exit code is the registered code's. */
+async function refuseBench(e: OperationError, json: boolean, out: (l: string) => void, err: (l: string) => void): Promise<number> {
+  const { renderCliError } = await import('../core/agent-output.ts');
+  const r = renderCliError(e, { json: true, command: 'engine shadow bench', tty: false });
+  if (json) out(r.stdout!.trimEnd());
+  err(`engine shadow bench: ${e.message} [${e.code}${e.docs ? `; ${e.docs}` : ''}]`);
+  if (e.suggestion) err(`Fix: ${e.suggestion}`);
+  return r.exitCode;
+}
+
+/**
+ * `bench --import <receipt>`: loads an engine-bench speed receipt into the shadow's swap-readiness evidence (criterion 8,
+ * reported and never gating). Replaying paired samples on this brain is not built, so plain `bench` refuses and says so.
+ * The import never starts a shadow and never opens the brain; with no shadow for this brain nothing is written.
+ */
+async function bench(args: string[], deps: EngineShadowDeps, out: (l: string) => void, err: (l: string) => void, now: () => Date): Promise<number> {
+  const json = args.includes('--json');
+  try {
+    let path: string | undefined;
+    for (let i = 0; i < args.length; i++) {
+      const a = args[i]!;
+      if (a === '--json') continue;
+      if (a !== '--import') return await refuseBench(benchRefusal('invalid_params', `unknown argument for engine shadow bench: ${sanitizeText(a, 60)}`, BENCH_IMPORT_FIX), json, out, err);
+      path = args[i + 1];
+      if (!path || path.startsWith('--')) return await refuseBench(benchRefusal('invalid_params', '--import needs the path of an engine-bench speed receipt', BENCH_IMPORT_FIX), json, out, err);
+      i++;
+    }
+    if (!path) {
+      return await refuseBench(benchRefusal('invalid_params', 'nothing to import: the owner-brain bench (gbrain engine shadow bench replaying paired samples on this brain) is not built, and --import loads an engine-bench speed receipt', BENCH_IMPORT_FIX), json, out, err);
+    }
+    let brain: { key: string; dir: string; engine: string };
+    try {
+      brain = await resolveBrain(deps);
+    } catch (e) {
+      if (!(e instanceof UsageError)) throw e;
+      return await refuseBench(benchRefusal('invalid_params', `${sanitizeText(e.message, 300)} Nothing was written.`, 'Run it without --brain (and with GBRAIN_BRAIN_ID unset) on a host with a configured brain.'), json, out, err);
+    }
+    if (!existsSync(shadowStatePath(brain.dir))) {
+      return await refuseBench(benchRefusal('not_found', 'no shadow for this brain, so there is nowhere to keep bench evidence; nothing was written', 'Ask the brain owner whether to start a shadow (gbrain engine shadow start --plan shows the plan). A bench import never starts one; once the owner has one, rerun the same import.'), json, out, err);
+    }
+    const res = importBenchReceipt(brain.dir, path, { now: now() });
+    if (!res.ok) return await refuseBench(res.error, json, out, err);
+    const { bench: block } = buildBenchStatus({ dir: brain.dir, primaryEngine: readShadowState(brain.dir)?.primary_engine ?? null });
+    if (json) out(JSON.stringify(block, null, 2));
+    else {
+      out(`Imported ${res.summary.source_file} (receipt ${res.summary.receipt_sha256.slice(0, 12)}) as the bench corpus evidence for brain ${brain.key}. Nothing else was changed.`);
+      for (const line of renderBenchStatus(block)) out(line);
+    }
+    return 0;
+  } catch (e) {
+    if (e instanceof OperationError) return await refuseBench(e, json, out, err);
+    const name = e instanceof Error ? e.name : 'Error';
+    return await refuseBench(benchRefusal('internal_error', `unexpected ${name} while importing the receipt: ${sanitizeText(e instanceof Error ? e.message : e, 160)}; nothing else was changed`, 'Rerun the same command once with --json; if it fails again, report it with the command and this message.'), json, out, err);
+  }
+}
 
 async function seed(
   brain: { key: string; dir: string; engine: string }, f: Set<string>, deps: EngineShadowDeps,
@@ -575,13 +658,17 @@ async function stop(brain: { key: string; dir: string; engine: string }, del: bo
     }
   }
   if (del) {
-    rmSync(brain.dir, { recursive: true, force: true });
+    // One destructive-delete path with `capture delete`: the replay lock first, then the folder.
+    const { deleteReplayState } = await import('../shadow/capture-lock.ts');
+    deleteReplayState(brain.dir, { whole: true });
     out(`Shadow mode is off for brain ${brain.key}; ${brain.dir} is deleted.`);
   } else {
     out(state?.enabled ? `Shadow mode is off for brain ${brain.key}. Running processes stop mirroring within 30 seconds.` : `Shadow mode was already off for brain ${brain.key}.`);
   }
   return hooksLeft ? 1 : 0;
 }
+/** Test seam: `stop` with no primary (a PGLite brain takes no writer hooks). */
+export const __stopForTests = (brain: { key: string; dir: string; engine: string }, del: boolean, out: (l: string) => void) => stop(brain, del, {}, out, out, () => new Date());
 
 function report(brain: { key: string; dir: string }, json: boolean, out: (l: string) => void, now: () => Date): number {
   const r = buildProvisionalReport(brain.dir, brain.key, readShadowState(brain.dir), now());
