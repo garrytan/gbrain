@@ -70,6 +70,13 @@ export const ENGINE_CAPABILITIES = [
 ] as const;
 
 /**
+ * Capabilities an engine reports about how it runs, never a reason a call is refused, so they are not
+ * `engine_capability_missing` reasons and no SQL engine reports them (I-8 in docs/designs/rust-engine/multi-user-server.md).
+ * `commit_log`: the Rust store keeps a commit log (multi-user mode, rust/docs/store/commit-log.md).
+ */
+export const MODE_CAPABILITIES = ['commit_log'] as const;
+
+/**
  * Capabilities reported only while multi-user Rust is on (interface I-8.v2): a separate list, so with the switch off
  * every engine's capability set and the error catalogue that lists ENGINE_CAPABILITIES stay as they are.
  * `served`: the engine is a client of a brain server over protocol v3 (rust-engine/served/); only a served Rust
@@ -77,7 +84,7 @@ export const ENGINE_CAPABILITIES = [
  */
 export const MULTIUSER_CAPABILITIES = ['served'] as const;
 
-export type Capability = (typeof ENGINE_CAPABILITIES)[number] | (typeof MULTIUSER_CAPABILITIES)[number];
+export type Capability = (typeof ENGINE_CAPABILITIES)[number] | (typeof MODE_CAPABILITIES)[number] | (typeof MULTIUSER_CAPABILITIES)[number];
 
 /** The read-only capability set an engine reports. */
 export type EngineCapabilities = ReadonlySet<Capability>;

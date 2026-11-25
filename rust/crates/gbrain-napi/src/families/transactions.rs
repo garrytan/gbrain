@@ -70,10 +70,12 @@ impl Brain {
         self.run(env, |s| s.set_transaction_read_only())
     }
 
-    /// `commitTransaction()`: commits and resolves the commit sequence.
+    /// `commitTransaction()`: commits and resolves the commit's position `{ sequence, index }`
+    /// (I-2; `index` is 0 on the single-writer store, and a transaction opened read-only resolves
+    /// the end of the batch it saw).
     #[napi]
     pub fn commit_transaction<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
-        self.run(env, |s| s.commit_transaction())
+        self.run(env, |s| s.commit_transaction_at())
     }
 
     /// `rollbackTransaction()`: rolls back (a no-op once ended). Resolves `null`.

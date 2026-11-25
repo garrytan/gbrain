@@ -234,6 +234,7 @@ branch, and the reserved ones, with the owner who claimed it. The rules:
 | `y` | `SESSION_STATE` | not named on the branch; the trunk names it at intake | branch rust-engine/sync-checkpoint and the branches that contain 4601da37e0 |
 | `0` | `GUEST_SOURCE` | not named on the branch; the trunk names it at intake | branch rust-engine/collate-equal |
 | `3` | `SECRET_STORE` | lane 10 | reserved (the trunk holds it for the secret store) |
+| `2` | `COMMIT_LOG` | multi-user lane L2 | branch rust-engine/mu-commit-log: the commit log (`commit_log.rs`, interface I-4), written only with multi-user mode and `GBRAIN_RUST_COMMIT_LOG=1`; declared in `commit_log.rs`, not `keys.rs`, so the keyspace catalog stays as it is while off |
 | `~` | `FAMILY_ESCAPE` | core | main once this lands: the escape for two-byte family tags |
 
 Free one-byte tags: the digits `4` to `9` (approved rows only) and punctuation other than `~`, which stays unclaimed
