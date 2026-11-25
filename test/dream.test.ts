@@ -882,8 +882,25 @@ describe('runDream — synthesize targeting flags', () => {
     const report = await dreamJson(['--input', missing]);
     expect(report.phases.map(p => p.phase)).toEqual(['synthesize']);
     expect(JSON.stringify(report.phases[0])).toContain(`could not read transcript at ${missing}`);
+    const explicitlyScoped = await dreamJson(['--phase', 'synthesize', '--input', missing]);
+    expect(JSON.stringify(explicitlyScoped.phases[0])).toContain(`could not read transcript at ${missing}`);
     const unscoped = await dreamJson(['--phase', 'synthesize']);
     expect(unscoped.phases[0].details).toMatchObject({ reason: 'not_configured' });
+  });
+
+  test('--input cannot silently fall through to a whole-source Atom run', async () => {
+    const input = join(repo, 'requested-transcript.txt');
+    const result = await dreamExit(['--phase', 'extract_atoms', '--input', input, '--dry-run']);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain('--input requires the synthesize phase');
+  });
+
+  test('missing and empty --input values are rejected before the cycle', async () => {
+    for (const input of [[], ['']]) {
+      const result = await dreamExit(['--phase', 'extract_atoms', '--dry-run', '--input', ...input]);
+      expect(result.code).toBe(2);
+      expect(result.stderr).toContain('--input needs a transcript file');
+    }
   });
 
   test('--date, --from and --to reach the synthesize phase as explicit targets (they bypass the cooldown)', async () => {
@@ -904,6 +921,16 @@ describe('runDream — synthesize targeting flags', () => {
 });
 
 describe('runDream — help and human totals', () => {
+  test('--help still displays usage with an incompatible input and phase', async () => {
+    const logSpy = spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await runDream(null, ['--phase', 'extract_atoms', '--input', 'fixture.txt', '--help']);
+      expect(logSpy.mock.calls.flat().join('\n')).toContain('Usage: gbrain dream');
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
   test('--help documents dry-run synthesis cost and the cycle timezone setting', async () => {
     const logSpy = spyOn(console, 'log').mockImplementation(() => {});
     try {

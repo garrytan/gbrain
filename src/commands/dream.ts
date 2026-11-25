@@ -148,6 +148,7 @@ function parseArgs(args: string[]): DreamArgs {
   // value is validated, order is preserved, repeats of the same value
   // collapse (same contract as the repeated --source handling below).
   const json = jsonRequested(args);
+  const wantsHelp = args.includes('--help') || args.includes('-h');
   const phaseValues = collectFlagValues(args, '--phase');
   if (phaseValues === null) {
     dreamExit(usageError('--phase <name>: missing value. Usage: gbrain dream --phase <name>', 'Example: gbrain dream --phase lint'), json);
@@ -177,6 +178,9 @@ function parseArgs(args: string[]): DreamArgs {
 
   const inputIdx = args.indexOf('--input');
   const inputFile = inputIdx !== -1 ? args[inputIdx + 1] ?? null : null;
+  if (inputIdx !== -1 && !inputFile && !wantsHelp) {
+    dreamExit(usageError('--input needs a transcript file', 'Run gbrain dream --input <file>.'), json);
+  }
 
   const dateIdx = args.indexOf('--date');
   const date = dateIdx !== -1 ? args[dateIdx + 1] ?? null : null;
@@ -205,8 +209,14 @@ function parseArgs(args: string[]): DreamArgs {
     dreamExit(usageError('--input cannot be combined with --date / --from / --to', 'Use --input <file> alone, or the date filters alone.'), json);
   }
 
-  // --input implies --phase synthesize.
-  if (inputFile && phases.length === 0) phases = ['synthesize'];
+  // --input is consumed only by synthesize. Reject an explicit phase set
+  // that would otherwise run without the requested input scope.
+  if (inputFile) {
+    if (phases.length === 0) phases = ['synthesize'];
+    else if (!wantsHelp && !phases.includes('synthesize')) {
+      dreamExit(usageError('--input requires the synthesize phase', 'Run gbrain dream --input <file> or include --phase synthesize.'), json);
+    }
+  }
 
   // v0.41.13: --source <id> (and the --source-id alias) drives per-source
   // cycle scoping. Resolution rules:
@@ -277,7 +287,6 @@ function parseArgs(args: string[]): DreamArgs {
   // "--help --source whatever prints help and exits 0" case — `gbrain
   // dream --help --once` (no --phase) must show help, not a usage error.
   const once = args.includes('--once');
-  const wantsHelp = args.includes('--help') || args.includes('-h');
   if (once && !phaseWasExplicit && !wantsHelp) {
     dreamExit(usageError(
       '--once requires an explicit --phase <name> (bypasses that one ' +
@@ -303,7 +312,7 @@ function parseArgs(args: string[]): DreamArgs {
     pull: args.includes('--pull'),
     phases,
     dir,
-    help: args.includes('--help') || args.includes('-h'),
+    help: wantsHelp,
     inputFile,
     date,
     from,
@@ -446,7 +455,7 @@ Options:
                       naming used by import/extract/graph-query.
 
   --input <file>      Synthesize a specific transcript file (implies
-                      --phase synthesize). Bypasses corpus-dir scan.
+                      --phase synthesize when omitted). Only scopes synthesis.
   --date YYYY-MM-DD   Synthesize transcripts dated for one specific day.
   --from YYYY-MM-DD   Backfill range start (use with --to).
   --to   YYYY-MM-DD   Backfill range end.
