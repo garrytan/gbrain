@@ -226,6 +226,53 @@ describe('profile core on a single-user keyless brain (local CLI)', () => {
   }, 60_000);
 });
 
+describe('profile core on a member-less brain (unbound remote credential, repo-less)', () => {
+  let engine: BrainEngine;
+  let token = '';
+  const provider = () => new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
+  const call = async (op: string, params: R) => {
+    const out = await dispatchToolCall(engine, op, params, { remote: true, transport: 'http', sourceId: 'default',
+      auth: await provider().verifyAccessToken(token) as unknown as AuthInfo });
+    let json: R = {};
+    try { json = JSON.parse(out.content[0]?.text ?? ''); } catch { /* prose */ }
+    return { isError: out.isError === true, json, all: out.content.map(c => c.text).join('\n') + JSON.stringify(out.structuredContent ?? {}) + JSON.stringify(out._meta ?? {}) };
+  };
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({ engine: 'pglite' } as never);
+    await engine.initSchema();
+    __resetPrivateVisibilityCacheForTests();
+    const c = await provider().registerClientManual('p1-unbound-' + randomUUID().slice(0, 8), ['client_credentials'], 'read write', [], 'default');
+    await readsUnscopedOnPurpose(engine, c.clientId, 'client');
+    token = (await provider().exchangeClientCredentials(c.clientId, c.clientSecret ?? '')).access_token;
+  }, 120_000);
+  afterAll(async () => { await engine.disconnect(); });
+
+  test('a remote allergy write stays private, and the remote read counts it and says so instead of dropping it silently', async () => {
+    const allergy = await call('remember', { fact: 'Allergic to sesame canaryunboundallergy', facet: 'allergy', provenance: 'told me 2026-11-25' });
+    expect(allergy.isError).toBe(false);
+    expect(allergy.all).toContain('profile_private_hidden');
+    expect(await factRow(engine, 'canaryunboundallergy')).toMatchObject({ entity_slug: 'memory/owner', claim_metric: 'profile.allergy', visibility: 'private' });
+    const diet = await call('remember', { fact: 'Eats vegetarian canaryunbounddiet', facet: 'diet', provenance: 'told me 2026-11-25' });
+    expect(diet.isError).toBe(false);
+
+    const read = await call('context_pack', { profile: true });
+    expect(read.isError).toBe(false);
+    expect(read.json.profile.entity.slug).toBe('memory/owner');
+    expect(read.json.profile.constraints).toEqual([]);
+    expect(read.json.profile.facets.map((f: R) => f.claim)).toEqual(['Eats vegetarian canaryunbounddiet']);
+    expect(read.json.profile.withheld).toBe(1);
+    expect(read.all).toContain('profile_private_hidden');
+    expect(read.all).toContain('gbrain access owner set');
+    expect(read.all).not.toContain('canaryunboundallergy');
+    expect(String(read.json.text)).toContain('[notice] 1 private profile fact is hidden from this credential');
+
+    const local = (await run(engine, 'context_pack', { profile: true })).profile;
+    expect(local.constraints.map((f: R) => f.claim)).toEqual(['Allergic to sesame canaryunboundallergy']);
+    expect(local.withheld).toBe(0);
+  }, 60_000);
+});
+
 describe('profile core with members (remote callers, repo-less)', () => {
   let engine: BrainEngine;
   const tokens: Record<string, string> = {};

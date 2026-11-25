@@ -68,10 +68,19 @@ An agent calls `context_pack {profile: true}` (add `budget_tokens` to cap it). T
 - `facets`: every other faceted fact;
 - `preferences`: facts on your page saved with `kind: preference` and no facet;
 - `relationships`: your page's typed links, with the line each came from;
-- `withheld`: how many of the rows you can read did not fit `budget_tokens`.
+- `withheld`: how many rows were left out: those that did not fit `budget_tokens`, plus, for an unbound credential on a
+  brain with no members, the owner's private profile facts it cannot read (see below).
 
 Each fact carries `fact_id`, `claim`, `provenance`, `content_origin`, `valid_from`, `visibility` and `confidence`.
 Facts you stated yourself (`content_origin: user_said`) come first, then the newest. Every row is read at the
-caller's own scope before anything is packed, so the withheld count never counts something the caller could not read.
+caller's own scope before anything is packed, so a member never learns a count of the owner's facts.
+
+On a brain with no members, a remote credential bound to nobody speaks for the owner: its facet writes land on your
+profile. It still reads world-visible facts only, so a private fact such as an allergy is saved but not read back by
+that credential. Private facts stay private. Instead, `remember` adds a `profile_private_hidden` notice, and
+`context_pack {profile: true}` counts those facts in `withheld` and adds the same notice and a `[notice]` line, so an
+agent never reads a missing allergy as none. To let that agent read them, add yourself as a member, name yourself the
+owner and bind the credential: `gbrain access member add <you>`, `gbrain access owner set <you>`, then
+`gbrain auth rescope --token <name> --member <you>`.
 The same block is rendered into the pack's `text` under its own heading, one labelled line per row: it is data about
 you, not instructions. The read makes no model call.

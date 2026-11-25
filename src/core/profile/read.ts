@@ -2,7 +2,9 @@
  * Lane 3 P1: the caller's own profile as one block for context_pack {profile: true}. Zero model calls. Every row is read
  * at the caller's scope before anything is packed: facts through the same engine reads and visibility, privacy and
  * eligibility options recall uses, relationships through the entity card's scoped edges. So a member reads only its own
- * member page's profile, and the withheld count only ever counts rows the caller could read.
+ * member page's profile and never learns a count of the owner's facts. One exception is counted, never shown: on a brain
+ * with no person members an unbound remote credential speaks for the owner but reads world facts only, so the owner's
+ * private profile rows it cannot read are counted in withheld and named by a profile_private_hidden notice.
  */
 import type { OperationContext } from '../ops/contract.ts';
 import type { FactRow } from '../engine.ts';
@@ -34,7 +36,7 @@ export interface ProfileBlock {
   constraints: ProfileFact[];
   relationships: ProfileRelationship[];
   preferences: ProfileFact[];
-  /** Rows the caller can read that the budget left out. */
+  /** Rows left out: what the budget cut, plus the owner's private profile rows an unbound credential cannot read. */
   withheld: number;
   /** Set when part of the profile could not be read (more than PROFILE_SCAN_CAP facts scanned, or a failed read), so rows may be missing. */
   partial?: true;
@@ -50,12 +52,15 @@ const originOf = (row: FactRow): string | null => {
   const o = row.write_origin as { content_origin?: unknown } | null | undefined;
   return typeof o?.content_origin === 'string' ? o.content_origin : null;
 };
+const isProfileRow = (r: FactRow): boolean => facetOfMetric(r.claim_metric) !== null || (!r.claim_metric && r.kind === 'preference');
+/** readProfile's result: the block before packing, plus the owner's private profile rows this caller cannot read. */
+export type ProfileRead = Omit<ProfileBlock, 'withheld'> & { private_hidden?: number };
 /** user_said before inferred, then newest first. */
 const order = (a: ProfileFact, b: ProfileFact): number =>
   (a.content_origin === 'user_said' ? 0 : 1) - (b.content_origin === 'user_said' ? 0 : 1) || b.valid_from.localeCompare(a.valid_from) || Number(b.fact_id) - Number(a.fact_id);
 
 /** The caller's readable profile rows and relationships, before packing. */
-export async function readProfile(ctx: OperationContext, readable: string[], eligibility: ReadEligibility): Promise<Omit<ProfileBlock, 'withheld'>> {
+export async function readProfile(ctx: OperationContext, readable: string[], eligibility: ReadEligibility): Promise<ProfileRead> {
   const self = await profileSelf(ctx);
   if (!self) return { entity: null, facets: [], constraints: [], relationships: [], preferences: [] };
   const sources = self.source_id ? readable.filter(s => s === self.source_id) : readable;
@@ -63,7 +68,9 @@ export async function readProfile(ctx: OperationContext, readable: string[], eli
     import('../search/private-visibility.ts'), import('../mentions/siblings.ts'), import('../eligibility/stamp.ts')]);
   const visibility = worldOnlyFacts(ctx.remote) ? ['world' as const] : undefined;
   const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
+  const hideOwnerPrivate = visibility !== undefined && self.kind === 'owner';
   const rows: FactRow[] = [];
+  const hidden: FactRow[] = [];
   let scanned = 0;
   let partial = false;
   for (const src of sources) {
@@ -73,12 +80,22 @@ export async function readProfile(ctx: OperationContext, readable: string[], eli
         if (scanned >= PROFILE_SCAN_CAP) { partial = true; break; }
         const page = await ctx.engine.listFactsByEntity(src, slug, { activeOnly: true, limit: PAGE, offset, visibility, excludePrivate, excludeAuditRows: true, eligibility });
         scanned += page.length;
-        rows.push(...page.filter(r => facetOfMetric(r.claim_metric) !== null || (!r.claim_metric && r.kind === 'preference')));
+        rows.push(...page.filter(isProfileRow));
+        if (page.length < PAGE) break;
+      }
+      for (let offset = 0; hideOwnerPrivate; offset += PAGE) {
+        if (scanned >= PROFILE_SCAN_CAP) { partial = true; break; }
+        const page = await ctx.engine.listFactsByEntity(src, slug, { activeOnly: true, limit: PAGE, offset, visibility: ['private'], excludePrivate, excludeAuditRows: true, eligibility });
+        scanned += page.length;
+        hidden.push(...page.filter(isProfileRow));
         if (page.length < PAGE) break;
       }
     }
   }
-  const unique = [...new Map(rows.map(r => [`${r.source_id}:${r.id}`, r])).values()];
+  const key = (r: FactRow) => `${r.source_id}:${r.id}`;
+  const unique = [...new Map(rows.map(r => [key(r), r])).values()];
+  const seen = new Set(rows.map(key));
+  const privateHidden = new Set(hidden.map(key).filter(k => !seen.has(k))).size;
   const stamped: Array<FactRow & { origin?: string }> = await stampRowTrust(ctx.engine, 'facts', unique, r => r.id).catch(() => { partial = true; return unique; });
   const items = stamped.map((r): ProfileFact => ({
     fact_id: String(r.id), source_id: r.source_id, facet: facetOfMetric(r.claim_metric), claim: r.fact.slice(0, CLAIM_CAP),
@@ -100,23 +117,27 @@ export async function readProfile(ctx: OperationContext, readable: string[], eli
     relationships,
     preferences: items.filter(i => i.facet === null),
     ...(partial ? { partial: true as const } : {}),
+    ...(privateHidden ? { private_hidden: privateHidden } : {}),
   };
 }
 
 /** context_pack {profile: true}: the caller's own profile, read at its scope and packed first into what the core and brief left. */
 export async function contextPackProfile(ctx: OperationContext, sources: string[], budget: number | null, eligibility: ReadEligibility): Promise<{ block: ProfileBlock; text: string; used: number }> {
-  return packProfile(await readProfile(ctx, sources, eligibility), budget);
+  const read = await readProfile(ctx, sources, eligibility);
+  if (read.private_hidden) ctx.emitNotice?.((await import('../interop-notices.ts')).profilePrivateHiddenNotice(read.private_hidden));
+  return packProfile(read, budget);
 }
 
 type Line = { kind: 'constraints' | 'facets' | 'preferences' | 'relationships' | 'notice'; item: ProfileFact | ProfileRelationship | null; line: string };
 const PROFILE_PARTIAL_LINE = '- [notice] This profile may be incomplete: some of it could not be read (too many facts on the page, or a failed read).';
+const privateHiddenLine = (n: number) => `- [notice] ${n} private profile fact${n === 1 ? ' is' : 's are'} hidden from this credential (allergies are private by default): it is not bound to the brain owner, so a missing allergy or constraint here does not mean none. The owner binds it with gbrain access owner set <member>.`;
 
 /**
  * Packs the profile into `budget` tokens (null: no cap): constraints first, then facets, unfaceted preferences and
  * relationships, each line priced as rendered. Returns the block with only what fits, its rendered lines (header
  * first when any line fits) and the tokens they use; `withheld` counts what the budget left out.
  */
-export async function packProfile(read: Omit<ProfileBlock, 'withheld'>, budget: number | null): Promise<{ block: ProfileBlock; text: string; used: number }> {
+export async function packProfile(read: ProfileRead, budget: number | null): Promise<{ block: ProfileBlock; text: string; used: number }> {
   const [{ renderFactLine }, { estimateTokens }, { neutralizeForPrompt }] = await Promise.all([
     import('../context/turn-context.ts'), import('../search/token-budget.ts'), import('../think/sanitize.ts')]);
   const factLine = (f: ProfileFact, label: string) => `- [${label}] ` + renderFactLine({ id: Number(f.fact_id), fact: f.claim.replace(/\s+/g, ' '), kind: 'fact', entity_slug: null,
@@ -132,9 +153,10 @@ export async function packProfile(read: Omit<ProfileBlock, 'withheld'>, budget: 
   const header = estimateTokens('\n\n' + PROFILE_HEADER + '\n');
   const kept: Line[] = [];
   let used = 0;
-  if (read.partial) {
-    const next = cost(PROFILE_PARTIAL_LINE) + header;
-    if (budget === null || next <= budget) { kept.push({ kind: 'notice', item: null, line: PROFILE_PARTIAL_LINE }); used = next; }
+  for (const line of [read.private_hidden ? privateHiddenLine(read.private_hidden) : null, read.partial ? PROFILE_PARTIAL_LINE : null]) {
+    if (!line) continue;
+    const next = used + cost(line) + (kept.length ? 0 : header);
+    if (budget === null || next <= budget) { kept.push({ kind: 'notice', item: null, line }); used = next; }
   }
   for (const c of candidates) {
     const next = used + cost(c.line) + (kept.length ? 0 : header);
@@ -146,7 +168,7 @@ export async function packProfile(read: Omit<ProfileBlock, 'withheld'>, budget: 
   const block: ProfileBlock = {
     entity: read.entity, facets: facts('facets'), constraints: facts('constraints'), preferences: facts('preferences'),
     relationships: kept.filter(k => k.kind === 'relationships').map(k => k.item as ProfileRelationship),
-    withheld: candidates.length - kept.filter(k => k.kind !== 'notice').length, ...(read.partial ? { partial: true } : {}),
+    withheld: candidates.length - kept.filter(k => k.kind !== 'notice').length + (read.private_hidden ?? 0), ...(read.partial ? { partial: true } : {}),
   };
   return { block, text: kept.length ? [PROFILE_HEADER, ...kept.map(k => k.line)].join('\n') : '', used };
 }

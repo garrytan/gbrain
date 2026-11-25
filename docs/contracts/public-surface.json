@@ -558,8 +558,6 @@
     "gbrain orient --days",
     "gbrain orient --entities",
     "gbrain orient --limit",
-    "gbrain profile --budget-tokens",
-    "gbrain profile --json",
     "gbrain prune-skill-revisions --source-id",
     "gbrain put --allow-empty",
     "gbrain put --allow-shrink",

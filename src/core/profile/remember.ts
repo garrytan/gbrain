@@ -104,6 +104,10 @@ export async function profileRemember(ctx: OperationContext, p: Record<string, u
   if (entity !== null && self?.kind === 'member' && entity !== self.slug) throw entityNotSelf(p, self.slug);
   if (entity !== null && ctx.remote !== false && !self) throw entityNotSelf(p, null);
   const privateDefault = PRIVATE_BY_DEFAULT_FACETS.includes(facetKind(facet)) && p.visibility === undefined && p.share !== true;
+  if ((privateDefault || p.visibility === 'private') && self?.kind === 'owner' && (entity === null || entity === self.slug)) {
+    const [{ worldOnlyFacts }, { profilePrivateHiddenNotice }] = await Promise.all([import('../search/private-visibility.ts'), import('../interop-notices.ts')]);
+    if (worldOnlyFacts(ctx.remote)) ctx.emitNotice?.(profilePrivateHiddenNotice());
+  }
   const { facet: _facet, ...rest } = p;
   return { ...rest, claim_metric: PROFILE_METRIC_PREFIX + facet, entity: entity ?? self!.slug, infer_entity: false,
     ...(privateDefault ? { visibility: 'private' } : {}) };

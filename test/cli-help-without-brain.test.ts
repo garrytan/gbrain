@@ -47,6 +47,8 @@ const HELP_WITHOUT_BRAIN = [
   // through SELF_HELP_WITHOUT_ENGINE's table entries.
   'conversation-parser', 'advisor', 'anomalies', 'backfill', 'book-mirror', 'edges-backfill', 'features',
   'founder', 'graph-query', 'orphans', 'salience', 'think',
+  // Lane 3 P1: runProfile prints its usage before the engine.
+  'profile',
   // D5: selfHelp handlers that already answered --help before the engine but
   // were reached only after connect; now SELF_HELP_WITHOUT_ENGINE table entries.
   'brainstorm', 'lsd', 'migrate', 'pages', 'pricing', 'whoknows',

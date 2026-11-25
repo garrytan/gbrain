@@ -8,6 +8,22 @@ import type { ProfileBlock, ProfileFact } from '../core/profile/read.ts';
 
 interface Flags { json: boolean; budget?: number }
 
+const HELP = `Usage: gbrain profile [--json] [--budget-tokens <n>]
+
+Your own profile: the facts remember saved with a facet (diet, allergy, size.<item>, brand, style, constraint,
+schedule, household, other), relationships from your page's links, and unfaceted preferences. The brain owner reads
+the owner's profile; a member credential reads its own. Read-only, zero model calls.
+
+Options:
+  --json               Print the profile block as one JSON document.
+  --budget-tokens <n>  Pack the profile into this many tokens; the rest is counted as withheld.
+
+Examples:
+  gbrain profile
+  gbrain profile --json --budget-tokens 400
+
+Guide: docs/guides/profile.md`;
+
 export function parseProfileArgs(args: string[]): Flags | { error: string } {
   const flags: Flags = { json: false };
   for (let i = 0; i < args.length; i++) {
@@ -35,12 +51,13 @@ export function renderProfile(block: ProfileBlock): string {
   section('Preferences:', block.preferences.map(f => line(f, 'preference')));
   section('Relationships:', block.relationships.map(r => `  - ${r.type} ${r.direction === 'out' ? '→' : '←'} ${r.slug}${r.context ? ` — ${r.context.replace(/\s+/g, ' ')}` : ''}`));
   if (out.length === 1) out.push('', 'No profile facts yet. Save one with: gbrain remember "<fact>" --facet diet --provenance "<where, with the date>"');
-  if (block.withheld) out.push('', `${block.withheld} more left out by --budget-tokens.`);
+  if (block.withheld) out.push('', `${block.withheld} more left out by --budget-tokens, or private and not readable by this credential.`);
   if (block.partial) out.push('', 'This profile may be incomplete: some of it could not be read (too many facts on your page, or a failed read).');
   return out.join('\n');
 }
 
 export async function runProfile(engine: BrainEngine | null, args: string[]): Promise<void> {
+  if (args.includes('--help') || args.includes('-h')) { console.log(HELP); return; }
   const flags = parseProfileArgs(args);
   if ('error' in flags) {
     const { opError } = await import('../core/ops/contract.ts');
