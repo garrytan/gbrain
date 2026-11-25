@@ -23,6 +23,8 @@ import { embeddingProviderIsFree } from '../../../core/embed-consent.ts';
 import { providerDeclineRecord } from '../../../core/setup/local-receipts.ts';
 import { providerConsentFix } from './provider-consent.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { capabilityRefusal, capabilityUnknownCheck } from '../budget.ts';
+import { rethrowCapabilityMissing } from '../../../core/rust-engine/errors.ts';
 
 /** The opt-in live probe: one ~9-token embedding request, so `paid` + `egress` (runs verbatim once approved). */
 export function embeddingProbeFix(model: string, free = false): Action {
@@ -87,12 +89,14 @@ async function runEmbeddingProvider(ctx: DoctorContext): Promise<Check[]> {
           let totalChunks = 0;
           let embeddedCount = 0;
           try {
-            const rows = await engine.executeRaw<{ total: number | string; embedded: number | string }>(
-              `SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE embedding IS NOT NULL)::int AS embedded FROM content_chunks`,
-            );
-            totalChunks = Number(rows?.[0]?.total ?? 0);
-            embeddedCount = Number(rows?.[0]?.embedded ?? 0);
-          } catch { /* table may be missing or fresh; treat as empty */ }
+            // The typed coverage read (engine-sql/embedding-catalog.ts), so a Rust brain answers it; pct is embedded/total*100.
+            const coverage = await engine.countChunkColumnCoverage('embedding');
+            totalChunks = coverage.total;
+            embeddedCount = Math.round(((coverage.pct ?? 0) * coverage.total) / 100);
+          } catch (e) {
+            // The table may be missing or fresh: treat it as empty. An engine that cannot read it refuses.
+            rethrowCapabilityMissing(e);
+          }
 
           if (totalChunks > 0) {
             const fix = `Existing brain (${totalChunks} chunks, ${embeddedCount} embedded). Keep a verified database backup and preview the brain-wide migration:\n        gbrain migrate embeddings --to ${configuredModel} --dim ${configuredDims} --dry-run\n      After reviewing the plan, replace --dry-run with --yes --max-cost-usd <approved-total>. Missing vectors do not mean the brain is empty. See docs/guides/embedding-migration.md#recovery.`;
@@ -108,9 +112,14 @@ async function runEmbeddingProvider(ctx: DoctorContext): Promise<Check[]> {
           }
         }
       }
-    } catch {
+    } catch (e) {
       // loadConfig may throw on a malformed config; let the existing
-      // available/probe branch surface the issue.
+      // available/probe branch surface the issue. A capability refusal reports the check unknown.
+      const refusal = capabilityRefusal(e);
+      if (refusal) {
+        checks.push(capabilityUnknownCheck('embedding_provider', refusal));
+        return checks;
+      }
     }
 
     if (surfacedUnconfiguredDrift) {

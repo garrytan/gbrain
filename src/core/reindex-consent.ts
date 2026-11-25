@@ -13,6 +13,7 @@
  * `--dry-run`, `--no-embed` and a keyless or free-provider brain spend
  * nothing and never ask.
  */
+import { rethrowCapabilityRefusal } from './engine-capability-refusal.ts';
 import type { BrainEngine } from './engine.ts';
 import { requireConsent, type Authorization } from './consent.ts';
 import { opError } from './ops/contract.ts';
@@ -41,7 +42,8 @@ export async function estimateReindexSpend(engine: BrainEngine, opts: { type: st
     const pending = Number(rows[0]?.n ?? 0);
     const chars = Number(rows[0]?.chars ?? 0) * (pending > 0 ? Math.min(1, opts.target / pending) : 1);
     return { pages: opts.target, est_usd: estimateCostFromChars(chars, price.pricePerMTok) };
-  } catch {
+  } catch (err) {
+    rethrowCapabilityRefusal(err); // null means "no known price": a refused read must not ask consent without an estimate
     return { pages: opts.target, est_usd: null };
   }
 }

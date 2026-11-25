@@ -44,7 +44,10 @@ number Postgres prints for it.
   in a `NOT NULL` column. A refused write records nothing (`invalid_argument` or `constraint_violation`).
 - `NaN` and `Infinity` reach Rust as `null` through JSON and are refused; Postgres would store them.
 - A window is a whole number of hours; a null or `NaN` window is refused and a non-whole one is `invalid_argument`. A window
-  that reaches before 4713 BC or past 294276 AD is refused as Postgres's "timestamp out of range".
+  that reaches before 4713 BC or past 294276 AD is refused as Postgres's "timestamp out of range". A window of zero or
+  fewer whole hours holds nothing: every engine answers empty (zeros for `decideConflictNoEntityCounts`) before it reads
+  the clock or a row, after the window and any slot are checked, so a receipt stamped in the read's own clock tick or
+  transaction is never counted.
 - Days are 24 hours (no daylight-saving nuance).
 - The SQL does not pin text orderings to `COLLATE "C"` (the calibration list, the receipt stats and slot usage, and the
   replay read order by `slot`, `decision_id` and similar text columns as written). PGLite and the Rust store sort text

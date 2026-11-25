@@ -369,7 +369,6 @@ describe('link and graph reads sort page slugs and provenance tags by byte', () 
 describe('page listings sort and page by byte slug and source id', () => {
   const ALL = SEVEN.map((k) => `s/${k}`);
   const ALL_BYTES = byteOrder(ALL);
-  const STAMP = '2026-08-10T12:00:00.000100Z';
 
   parityTest('listPages sorted by slug keeps the byte order through a slugAfter keyset and a limit cut', { methods: ['putPage', 'listPages'] }, async (engine) => {
     await putAll(engine, ALL);
@@ -387,17 +386,21 @@ describe('page listings sort and page by byte slug and source id', () => {
     return { cut, pages };
   });
 
-  // The Rust store cannot stamp one updated_at on many pages, so the tie that makes the slug decide stops it here.
+  // One transaction stamps every page with its start time (`now()` on the SQL engines, the store's transaction clock on
+  // Rust), so the seven pages tie on updated_at and the slug decides. The keyset resumes from `updated_at_iso`, the
+  // column's microseconds, as a paging caller does.
   parityTest('listPages sorted by updated time breaks a timestamp tie by byte slug (descending for updated_desc), and its keyset resumes in that order', {
-    methods: ['putPage', 'listPages', 'executeRaw'], requires: 'raw_sql',
+    methods: ['transaction', 'putPage', 'listPages'],
   }, async (engine) => {
-    await putAll(engine, ALL);
-    await engine.executeRaw(`UPDATE pages SET updated_at = $1::text::timestamptz WHERE slug LIKE 's/%'`, [STAMP]);
+    await engine.transaction(async (tx) => putAll(tx, ALL));
+    const stamps = new Set((await engine.listPages({ sort: 'updated_asc', limit: 10 })).map((p) => p.updated_at_iso));
+    expect(stamps.size).toBe(1);
+    const [stamp] = [...stamps] as [string];
     const asc = (await engine.listPages({ sort: 'updated_asc', limit: 3 })).map((p) => p.slug);
     const desc = (await engine.listPages({ sort: 'updated_desc', limit: 3 })).map((p) => p.slug);
     const walked: string[] = [];
     for (let slug: string | undefined; ;) {
-      const page = (await engine.listPages({ sort: 'updated_asc', limit: 2, ...(slug === undefined ? {} : { updatedAfterKeyset: { updatedAt: STAMP, slug } }) })).map((p) => p.slug);
+      const page = (await engine.listPages({ sort: 'updated_asc', limit: 2, ...(slug === undefined ? {} : { updatedAfterKeyset: { updatedAt: stamp, slug } }) })).map((p) => p.slug);
       if (page.length === 0) break;
       walked.push(...page);
       slug = page[page.length - 1];

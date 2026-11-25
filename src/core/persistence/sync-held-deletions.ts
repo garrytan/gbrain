@@ -9,7 +9,9 @@
  * - the page, at the revision the level read, equals the file's last committed bytes (the blob that commit's first parent
  *   held), by the canonical comparison the coordinator applies before it replaces a file (`fileMatchesSnapshot`);
  * - the page's revision is file-backed by the test `repair ghost-pages` applies (#7382, `ghostFileBacked`), so a page
- *   written in the database after its file last held it is never deleted, even with equal content.
+ *   written in the database after its file last held it is never deleted, even with equal content;
+ * - the file did not move to another live page by the test `repair ghost-pages` applies (`ghostMoveVeto`); a page whose
+ *   file moved stays held as `file_moved` (`move_unread`, retried, when Git could not read whether it moved).
  *
  * The deletion is an ordinary `managed_sync_delete`: a soft delete with the restore window every sync delete has, under
  * the mass-delete valve and the #7130 caps, leaving a tombstone the automatic purge holds. Its request carries
@@ -22,7 +24,8 @@ import type { BrainEngine } from '../engine.ts';
 import { execFile } from '../spawn.ts';
 import { gitChildEnv } from '../git-env.ts';
 import { HARDENED_GIT_ARGS, NO_LAZY_FETCH_ENV } from '../hardened-git.ts';
-import { ghostFileBacked } from '../repair/ghost-pages.ts';
+import type { GhostPage } from '../ghost-pages.ts';
+import { ghostFileBacked, ghostMoveVeto, primeGhostMoveVetoes } from '../repair/ghost-pages.ts';
 import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
 import { fileMatchesSnapshot } from './page-prepare.ts';
 import type { ManagedSyncContext } from './sync-discovery.ts';
@@ -42,9 +45,9 @@ const BLOB_MAX_BYTES = 8 * 1024 * 1024;
 
 /** The deleting commit and the blob the page was compared with: the receipt a held deletion's request carries. */
 export interface HeldDeletionProof { commit: string; blob_oid: string }
-/** Why the proof refused a held deletion. `provenance_unknown` and `blob_unreadable` are not recorded, so the next pass tries again. */
-export type HeldDeletionRefusal = 'not_deleted_by_commit' | 'provenance_unknown' | 'blob_unreadable' | 'content_differs' | 'database_ahead_of_file' | 'page_changed';
-const TRANSIENT: ReadonlySet<HeldDeletionRefusal> = new Set(['provenance_unknown', 'blob_unreadable']);
+/** Why the proof refused a held deletion. `provenance_unknown`, `blob_unreadable` and `move_unread` are not recorded, so the next pass tries again. */
+export type HeldDeletionRefusal = 'not_deleted_by_commit' | 'provenance_unknown' | 'blob_unreadable' | 'content_differs' | 'database_ahead_of_file' | 'file_moved' | 'move_unread' | 'page_changed';
+const TRANSIENT: ReadonlySet<HeldDeletionRefusal> = new Set(['provenance_unknown', 'blob_unreadable', 'move_unread']);
 
 export interface HeldDeletionState { screened: Set<string>; applied: number; refused: number }
 export const newHeldDeletionState = (): HeldDeletionState => ({ screened: new Set(), applied: 0, refused: 0 });
@@ -108,6 +111,7 @@ async function proveHeldDeletions(engine: BrainEngine, level: ShadowLevel, conte
   const blobs = await readBlobs(level.gitRoot, [...new Set([...parents.values()].flatMap(parent => parent.oid ? [parent.oid] : []))], BLOB_MAX_BYTES).catch(() => new Map<string, Buffer>());
   const activePack = (await loadActivePackForEngine(engine, { remote: false, sourceId: level.sourceId }).catch(() => null))?.manifest;
   const owner = { host_id: context.binding.owner_host_id ?? '', worktree_id: context.binding.worktree_id, owner_epoch: String(context.binding.owner_epoch), source_incarnation: level.incarnation };
+  const backed: Array<{ entry: ShadowPath; ghost: GhostPage; proof: HeldDeletionProof }> = [];
   for (const entry of batch) {
     const parent = parents.get(entry.path);
     if (!parent) continue;
@@ -118,8 +122,14 @@ async function proveHeldDeletions(engine: BrainEngine, level: ShadowLevel, conte
     const sourcePath = level.slugMode === 'source-root' ? holdPath(entry) : entry.path;
     const same = await fileMatchesSnapshot(engine, entry.slug!, bytes.toString('utf8'), snapshot, sourcePath, activePack).catch(() => false);
     if (!same) { verdicts.set(entry.path, { refused: 'content_differs' }); continue; }
-    const backed = await ghostFileBacked(engine, { source_id: level.sourceId, slug: entry.slug!, path: holdPath(entry), revision: entry.revision!, page_id: entry.pageId! }, owner);
-    verdicts.set(entry.path, backed ? { commit: parent.commit, blob_oid: parent.oid! } : { refused: 'database_ahead_of_file' });
+    const ghost = { source_id: level.sourceId, slug: entry.slug!, path: holdPath(entry), revision: entry.revision!, page_id: entry.pageId! };
+    if (!await ghostFileBacked(engine, ghost, owner, provenance.get(entry.path))) { verdicts.set(entry.path, { refused: 'database_ahead_of_file' }); continue; }
+    backed.push({ entry, ghost, proof: { commit: parent.commit, blob_oid: parent.oid! } });
+  }
+  await primeGhostMoveVetoes(engine, backed.map(item => item.ghost), owner);
+  for (const { entry, ghost, proof } of backed) {
+    const veto = await ghostMoveVeto(engine, ghost, owner);
+    verdicts.set(entry.path, veto ? { refused: veto.detail.unread ? 'move_unread' : 'file_moved' } : proof);
   }
   return verdicts;
 }

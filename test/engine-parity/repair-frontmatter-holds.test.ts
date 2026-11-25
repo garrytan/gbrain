@@ -12,12 +12,11 @@
  *    never one arm against another, and has no Rust arm.
  *  - Seam: none. Real managed sync, the delete intent and the repair preview, as the CLI runs them.
  *
- * Rust arm (known stop, pinned by name): managed sync, the delete intent and the repair read and write their rows
- * through `executeRaw` (the persistence journal, sync holds and deletion markers in `op_checkpoints`,
- * src/core/repair/frontmatter.ts), which the Rust engine refuses with `engine_capability_missing` naming `raw_sql`.
- * The case's first engine call is that raw SQL, so on Rust it ends on the refusal; the harness fails the arm if it
- * ever returns instead (then it must return what PGLite returns). Owner: the Rust persistence and repair members
- * (typed sync-hold, deletion-marker and page-state reads for `src/core/repair/`).
+ * Rust arm (known stop, pinned by name: managed_persistence held for callers): the fixture is written through typed
+ * members (the source, the writer claim, the brain mode), and the first managed sync then refuses with
+ * `engine_capability_missing` naming `managed_persistence`, because a Rust brain holds managed mode until the
+ * managed-persistence program lands. The harness fails the arm if it ever returns instead (then it must return what
+ * PGLite returns). Owner: the Rust managed-persistence program (managed sync, the delete intent and the repair reads).
  */
 import { describe, expect } from 'bun:test';
 import { execFileSync } from 'node:child_process';
@@ -36,7 +35,7 @@ import { readGitSourceHolds } from '../../src/core/persistence/sync-holds.ts';
 import { resolveRepairScope } from '../../src/core/repair/core.ts';
 import { repairRunner } from '../../src/core/repair/registry.ts';
 import type { FrontmatterPreviewDetails } from '../../src/core/repair/frontmatter.ts';
-import { parityArms } from './harness.ts';
+import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
 
@@ -60,8 +59,8 @@ async function gitEffectsSettled(engine: BrainEngine): Promise<void> {
 describe('engine parity: repair frontmatter over deleted-page holds', () => {
   parityTest(
     'held files of a purged and a soft-deleted page are needs_review for repair file-drift, and the preview brings neither back',
-    { methods: ['executeRaw', 'readPageSnapshot'], timeout: 240_000 },
-    async (engine) => {
+    { methods: ['writerReleaseStore', 'worktreeClaimStore'], requires: 'managed_persistence', timeout: 240_000 },
+    async (engine, backend) => {
       const home = mkdtempSync(join(tmpdir(), 'gbrain-parity-lc2-'));
       try {
         return await withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home, OPENAI_API_KEY: undefined, VOYAGE_API_KEY: undefined, ANTHROPIC_API_KEY: undefined }, async () => {
@@ -74,11 +73,11 @@ describe('engine parity: repair frontmatter over deleted-page holds', () => {
           writeFileSync(join(root, 'notes', 'ivy.md'), note('Ivy', 'Ivy private note. Okapi keyword.'));
           writeFileSync(join(root, 'notes', 'jon.md'), note('Jon', 'Jon note.'));
           commit(root, 'fixture');
-          // Rust stops here: raw_sql (see the header).
-          await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
-          await engine.executeRaw("INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,'{}')", [SOURCE, root]);
+          await (await engine.writerReleaseStore()).setBrainEnabled(false);
+          await createSource(engine, backend, SOURCE, {}, root);
           await claimWorktree(engine, SOURCE, root);
-          await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+          await (await engine.writerReleaseStore()).setBrainEnabled(true);
+          // Rust stops at the first managed sync: managed_persistence (see the header).
           const sync = () => performManagedSync(engine, { sourceId: SOURCE, noPull: true, noEmbed: true, noExtract: true });
           await sync();
           const ctx = { engine, config: { engine: engine.kind }, logger: quiet, dryRun: false, remote: false, sourceId: SOURCE } as unknown as OperationContext;

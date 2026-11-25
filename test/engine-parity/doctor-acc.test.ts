@@ -13,7 +13,7 @@
  *  - Seam: none. Typed methods only (no executeRaw). Byte sizes are not compared: each engine measures its own storage.
  */
 import { describe, expect } from 'bun:test';
-import { parityArms } from './harness.ts';
+import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { withWriteAttribution } from '../../src/core/persistence/context.ts';
@@ -267,4 +267,81 @@ describe('doctor reads, second set', () => {
       return { none, found, other };
     },
   );
+
+  // The store keeps access rules and members, so on a brain that holds them these doctor reads list them on every arm
+  // (they once answered none on Rust).
+  parityTest('listRawOnlyRules lists the raw-only rules by source and id, and listAccessMemberRows lists members with their groups', {
+    methods: ['ensureAccessPolicyState', 'lockAccessPolicy', 'applyAccessRuleChanges', 'insertAccessMember', 'setAccessMemberDisabled', 'tombstoneAccessMember',
+      'listRawOnlyRules', 'listAccessMemberRows'],
+  }, async (engine, backend) => {
+    for (const id of ['work', 'alpha']) {
+      await createSource(engine, backend, id);
+      await engine.ensureAccessPolicyState(id);
+      await engine.transaction(async tx => {
+        await tx.lockAccessPolicy(id);
+        await tx.applyAccessRuleChanges(id, { remove: [], pending: [], revision: 1, actor: 'parity', insert: [
+          { rule_id: 'raw-b', prefix: 'raw-b/', readable_by: ['member:bob-example'], covers_derived: false },
+          { rule_id: 'kept', prefix: 'kept/', readable_by: ['member:bob-example'], covers_derived: true },
+          { rule_id: 'raw-a', prefix: 'raw-a/', readable_by: ['group:team-a'], covers_derived: false },
+        ] });
+      });
+    }
+    const member = (id: string, groups: string[]) => ({ id, displayName: `${id} name`, email: null, kind: 'person' as const, groups, bindTokenId: null });
+    await engine.insertAccessMember(member('carol-example', ['team-b', 'team-a']));
+    await engine.insertAccessMember(member('bob-example', []));
+    await engine.insertAccessMember(member('dave-example', ['team-a']));
+    await engine.setAccessMemberDisabled('bob-example', true);
+    await engine.tombstoneAccessMember('dave-example');
+    const view = (rows: Array<Record<string, unknown>>) => rows.map(({ created_at, disabled_at, tombstoned_at, ...r }) =>
+      ({ ...r, created: created_at instanceof Date, disabled: disabled_at instanceof Date, removed: tombstoned_at instanceof Date }));
+    const out = {
+      rawOnly: await engine.listRawOnlyRules(),
+      members: view(await engine.listAccessMemberRows(true) as Array<Record<string, unknown>>),
+      live: view(await engine.listAccessMemberRows(false) as Array<Record<string, unknown>>),
+    };
+    expect(out.rawOnly.map(r => `${r.source_id}:${r.rule_id}`)).toEqual(['alpha:raw-a', 'alpha:raw-b', 'work:raw-a', 'work:raw-b']);
+    expect(out.live.map(r => (r as { id?: unknown }).id)).toEqual(['bob-example', 'carol-example']);
+    return out;
+  });
+
+  // The store keeps tokens and OAuth clients, so the three credential reads the grant, legacy-token and attest-read doctor
+  // checks run list them on every arm (they once answered none on Rust). The rows are whole: a token row carries its
+  // hash as `SELECT *` does, a client's attest row leaves its secret hash out, and the attest rows' times are to_jsonb text.
+  parityTest('listActiveAccessTokenRows, listActiveOauthClientRows and listAttestCredentialRows list the stored credentials', {
+    methods: ['insertAccessToken', 'insertOauthClient', 'writeCredentialBinding', 'listActiveAccessTokenRows', 'listActiveOauthClientRows', 'listAttestCredentialRows'],
+  }, async (engine) => {
+    const token = (name: string, created: string, extra: Record<string, unknown> = {}) => engine.insertAccessToken({
+      name, token_hash: `hash-${name}`, scopes: ['read'], permissions: { source_id: 'default' }, source_grant: 'scalar', source_id: 'default',
+      federated_read: null, allowed_operations: ['query'], takes_holders: ['world'], member_id: null, created_at: new Date(created), ...extra });
+    const alpha = await token('alpha-key', '2026-01-03T00:00:00.215Z');
+    const beta = await token('beta-key', '2026-01-02T08:30:00Z', { scopes: null });
+    const gone = await token('gone-key', '2026-01-01T00:00:00Z', { revoked_at: new Date('2026-01-04T00:00:00Z') });
+    const attest = { member: null, mayActFor: null, attestActor: 'slack', attestOps: ['query'], attestSources: ['default'], attestRead: 'person' as const };
+    await engine.writeCredentialBinding({ kind: 'token', id: alpha.id }, attest);
+    await engine.writeCredentialBinding({ kind: 'token', id: gone.id }, attest);
+    const created_at = new Date('2026-02-01T10:00:00.5Z');
+    await engine.insertOauthClient({ client_id: 'zed-app', client_name: 'Zed', client_secret_hash: 'secret-zed', grant_types: ['client_credentials'],
+      scope: 'read write', budget_usd_per_day: 2.5, client_id_issued_at: 1700000000, created_at, attest_actor: 'slack', attest_ops: ['query'],
+      attest_sources: ['default'], attest_read: 'scope', reads_unscoped: new Date('2026-02-02T00:00:00.125Z') });
+    await engine.insertOauthClient({ client_id: 'amy-app', client_name: 'Amy', created_at });
+    await engine.insertOauthClient({ client_id: 'old-app', client_name: 'Old', created_at, deleted_at: new Date('2026-02-03T00:00:00Z'), attest_actor: 'slack' });
+    // Token ids are generated; name them so the arms compare. A bigint column (client_id_issued_at) is a BigInt on
+    // Postgres and a number on PGLite from the same SELECT *; no doctor check reads it.
+    const ids = new Map([[alpha.id, 'id:alpha-key'], [beta.id, 'id:beta-key'], [gone.id, 'id:gone-key']]);
+    const plain = (row: Record<string, unknown>) => Object.fromEntries(Object.entries(row).sort(([a], [b]) => (a < b ? -1 : 1))
+      .map(([k, v]) => [k, v instanceof Date ? `Date:${v.toISOString()}` : typeof v === 'bigint' ? Number(v)
+        : typeof v === 'string' && ids.has(v) ? ids.get(v) : v]));
+    const out = {
+      tokens: (await engine.listActiveAccessTokenRows()).map(plain),
+      clients: (await engine.listActiveOauthClientRows()).map(plain),
+      attest: (await engine.listAttestCredentialRows()).map(r => ({ kind: r.kind, id: ids.get(r.id) ?? r.id, name: r.name,
+        row: plain(typeof r.row === 'string' ? JSON.parse(r.row) : r.row) })),
+    };
+    expect(out.tokens.map(t => t.name)).toEqual(['beta-key', 'alpha-key']);
+    expect(out.clients.map(c => c.client_id)).toEqual(['amy-app', 'zed-app']);
+    expect(out.attest.map(a => `${a.kind}:${a.name}`)).toEqual(['client:Zed', 'token:alpha-key']);
+    expect(out.attest[0]!.row.client_secret_hash).toBeUndefined();
+    expect(out.attest[1]!.row.created_at).toBe('2026-01-03T00:00:00.215+00:00');
+    return out;
+  });
 });

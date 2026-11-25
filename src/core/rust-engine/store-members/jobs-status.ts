@@ -5,7 +5,7 @@
  */
 import type {
   BudgetOwnerRow, EmbedBackfillState, FailedJobError, JobStatusCount, JobStatusFilter, LastAutopilotCycles, QueueDepth, SourceJobCounts,
-  TtlCancelledCount, WaitingScopeState,
+  SourceCycleFailureRow, TtlCancelledCount, WaitingScopeState,
 } from '../../engine-sql/jobs-status.ts';
 import { withDates } from '../store-codec.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
@@ -29,6 +29,11 @@ export const readWaitingQueueDepths: StoreMember<[], QueueDepth[]> = (brain) => 
 export const readLastCompletedJobAt: StoreMember<[], Date | null> = async (brain) => {
   const at: string | null = await call('readLastCompletedJobAt', () => brain.readLastCompletedJobAt());
   return at === null ? null : new Date(at);
+};
+
+export const listRecentSourceCycleFailures: StoreMember<[spec: { cutoff: string; sourceId?: string | null }], SourceCycleFailureRow[]> = async (brain, spec) => {
+  const rows: SourceCycleFailureRow[] = await call('listRecentSourceCycleFailures', () => brain.listRecentSourceCycleFailures(spec.cutoff, spec.sourceId || null));
+  return rows.map((row) => withDates(row, ['last_failed_at']));
 };
 
 export const countTtlCancelledByName: StoreMember<[reasonLike: string, withinSeconds: number], TtlCancelledCount[]> = (brain, reasonLike, withinSeconds) =>

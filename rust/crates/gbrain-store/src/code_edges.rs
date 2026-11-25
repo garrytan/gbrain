@@ -1,7 +1,7 @@
 //! Code call edges between chunks and symbols: the `code_edges_chunk` and `code_edges_symbol`
 //! tables of the PGLite engine.
 //!
-//! Members: addCodeEdges, deleteCodeEdgesForChunks, getCallersOf, getCalleesOf, getEdgesByChunk,
+//! Members: addCodeEdges, deleteCodeEdgesForChunks, clearCodeEdgesLeavingChunks, getCallersOf, getCalleesOf, getEdgesByChunk,
 //! hasCodeEdgesSymbol. The `code_traversal_cache` table, which memoises what these edges answer,
 //! is kept by the `traversal_cache` submodule under its own key tag (getCodeTraversalCache,
 //! putCodeTraversalCache, clearCodeTraversalCache).
@@ -283,6 +283,28 @@ fn delete_for_chunks(tx: &mut dyn KvWrite, chunk_ids: &[u64]) -> Result<()> {
     }
     for (table, id) in doomed {
         if let Some(edge) = read_edge(&*tx, table, id)? {
+            delete_edge(tx, &edge)?;
+        }
+    }
+    Ok(())
+}
+
+/// Deletes every row of either table whose `from_chunk_id` is one of `chunk_ids`; rows that only point at one stay.
+fn delete_leaving_chunks(tx: &mut dyn KvWrite, chunk_ids: &[u64]) -> Result<()> {
+    let leaving: BTreeSet<u64> = chunk_ids.iter().copied().collect();
+    let mut doomed: BTreeSet<(Table, u64)> = BTreeSet::new();
+    for chunk_id in &leaving {
+        scan_prefix(&*tx, &by_chunk_prefix(*chunk_id), false, &mut |k, _| {
+            if let Some(r) = tail_ref(k) {
+                doomed.insert(r);
+            }
+            true
+        })?;
+    }
+    for (table, id) in doomed {
+        if let Some(edge) = read_edge(&*tx, table, id)?
+            && leaving.contains(&edge.from_chunk_id)
+        {
             delete_edge(tx, &edge)?;
         }
     }
@@ -700,6 +722,25 @@ impl Store {
             return Ok(());
         }
         self.write(|tx| delete_for_chunks(tx, &chunk_ids))
+    }
+
+    /// `clearCodeEdgesLeavingChunks(ids)`: deletes the rows of both tables that leave one of `ids`
+    /// and keeps the chunk-table rows that only point at one. The SQL members also clear
+    /// `content_chunks.edges_backfilled_at`; the store keeps no such marker on a chunk, so that
+    /// statement has nothing to clear here.
+    pub fn clear_code_edges_leaving_chunks(&self, ids: &[Value]) -> Result<()> {
+        const OP: &str = "clearCodeEdgesLeavingChunks";
+        let mut chunk_ids = Vec::new();
+        for v in ids {
+            // A null element matches nothing (`= ANY` with a NULL is never true).
+            if let Some(id) = chunk_id(v, OP, "chunkIds")? {
+                chunk_ids.push(id);
+            }
+        }
+        if ids.is_empty() {
+            return Ok(());
+        }
+        self.write(|tx| delete_leaving_chunks(tx, &chunk_ids))
     }
 
     /// `getCallersOf(name, opts)`: rows pointing at `name` (or, with a chunk id, chunk-table rows

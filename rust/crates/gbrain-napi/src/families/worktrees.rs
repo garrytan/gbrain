@@ -174,6 +174,31 @@ impl Brain {
         self.run(env, move |s| s.reactivate_worktree(&id))
     }
 
+    /// `listOrphanBindings({ limit })`: the orphan source bindings by source id.
+    #[napi]
+    pub fn list_orphan_bindings<'env>(
+        &self,
+        env: &'env Env,
+        limit: Option<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_orphan_bindings(limit.filter(|n| *n >= 1.0).map(|n| n.floor() as usize))
+        })
+    }
+
+    /// `deleteOrphanBinding({ source_id, source_incarnation })`: whether it deleted the binding.
+    #[napi]
+    pub fn delete_orphan_binding<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        incarnation: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.delete_orphan_binding(&source_id, &incarnation)
+        })
+    }
+
     /// Records a worktree row.
     #[napi]
     pub fn insert_worktree<'env>(

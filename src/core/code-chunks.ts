@@ -26,9 +26,7 @@ export async function installCodeChunkEdges(engine: BrainEngine, slug: string, s
   const stored = await engine.getChunks(slug, { sourceId, includeUnsealed: true });
   if (!stored.length) return;
   const ids = stored.map(c => c.id);
-  await engine.executeRaw('DELETE FROM code_edges_chunk WHERE from_chunk_id = ANY($1::int[])', [ids]);
-  await engine.executeRaw('DELETE FROM code_edges_symbol WHERE from_chunk_id = ANY($1::int[])', [ids]);
-  await engine.executeRaw('UPDATE content_chunks SET edges_backfilled_at=NULL WHERE id = ANY($1::int[])', [ids]);
+  await engine.clearCodeEdgesLeavingChunks(ids);
   const ranges = stored.map(c => ({ id: c.id, startLine: c.start_line ?? 1,
     endLine: c.end_line ?? 1, symbol_name_qualified: c.symbol_name_qualified }));
   const edges = mapCodeEdges(prepared.edges, prepared.content, ranges, sourceId);

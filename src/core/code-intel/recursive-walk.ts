@@ -130,7 +130,8 @@ async function symbolLanguages(
       [sourceId, qualified],
     );
     return rows.map((r) => r.language as string);
-  } catch {
+  } catch (err) {
+    rethrowCapabilityRefusal(err); // no languages reads as "unsupported language": a refused read must say it is refused
     return [];
   }
 }

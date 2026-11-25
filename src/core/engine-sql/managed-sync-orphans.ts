@@ -234,6 +234,22 @@ export async function deleteManagedSyncFailureRow(exec: SqlExecutor, key: string
     RETURNING fingerprint`, [key, retired])).length > 0;
 }
 
+/** One recorded `managed-sync-failure` row of a source: its key, its record, and whether an unfinished cursor shares the key. */
+export interface SourceManagedSyncFailure<F = Record<string, unknown>> { key: string; failure: F; unfinished: boolean }
+
+/** The source's recorded `managed-sync-failure` rows (any incarnation), by byte key (persistence/sync-failures.ts). */
+export function listSourceManagedSyncFailures<F = Record<string, unknown>>(exec: LegacyUnscopedRead, sourceId: string): Promise<Array<SourceManagedSyncFailure<F>>> {
+  return exec.executeRaw<SourceManagedSyncFailure<F>>(`SELECT f.fingerprint AS key,f.completed_keys->0 AS failure,
+      EXISTS(SELECT 1 FROM op_checkpoints c WHERE c.op='managed-sync' AND c.fingerprint=f.fingerprint AND COALESCE(c.completed_keys->0->>'done','false')<>'true') AS unfinished
+    FROM op_checkpoints f WHERE f.op='managed-sync-failure' AND f.completed_keys->0->>'source_id'=$1 ORDER BY f.fingerprint COLLATE "C"`, [sourceId]);
+}
+
+/** Deletes the `managed-sync-failure` row under `key` while it still records `observationId`; false when it is gone or records another. */
+export async function deleteManagedSyncFailureObservation(exec: SqlExecutor, key: string, observationId: string): Promise<boolean> {
+  return (await exec.executeRaw(`DELETE FROM op_checkpoints WHERE op='managed-sync-failure' AND fingerprint=$1
+    AND completed_keys->0->>'observation_id'=$2 RETURNING fingerprint`, [key, observationId])).length > 0;
+}
+
 /** Deletes the run's `managed-sync-manifest` row while no `managed-sync` cursor names the run. */
 export async function deleteManagedSyncManifest(exec: SqlExecutor, runId: string): Promise<boolean> {
   return (await exec.executeRaw(`DELETE FROM op_checkpoints WHERE op='managed-sync-manifest' AND fingerprint=$1

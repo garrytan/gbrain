@@ -568,7 +568,7 @@ for (const [arm, databaseUrl] of [['pglite', undefined], ...(PG_URL ? [['postgre
       // A store row that does not read back keeps the spool file.
       const blind = new Proxy(w.engine, { get(target, prop) {
         const value = Reflect.get(target, prop);
-        if (prop === 'executeRaw') return (sql: string, params?: unknown[]) => sql.startsWith('SELECT id,source_id,rule,ciphertext') ? Promise.resolve([]) : target.executeRaw(sql, params);
+        if (prop === 'readSecretEntry') return () => Promise.resolve(null);
         return typeof value === 'function' ? value.bind(target) : value;
       } });
       expect(await drainSpool(blind)).toMatchObject({ moved: 0 });

@@ -178,9 +178,10 @@ export interface EmbeddingMismatchOpts {
    * PGLite vs Postgres branching. Required so the recipe matches the
    * brain's actual engine. Pre-v0.37 default was 'postgres' (the SQL
    * recipe), which produced the wrong recipe for the default install
-   * on PGLite.
+   * on PGLite. A Rust brain gets its own text: its store fixes the vector
+   * width when the brain is created, and no command changes it yet.
    */
-  engineKind: 'pglite' | 'postgres';
+  engineKind: 'pglite' | 'postgres' | 'rust';
   /**
    * Active PGLite database path. Used only for the PGLite branch; if
    * omitted, falls back to the default `gbrainPath('brain.pglite')`.
@@ -195,6 +196,20 @@ export function embeddingMismatchMessage(opts: EmbeddingMismatchOpts): string {
   const header = source === 'doctor'
     ? `Embedding dimension mismatch detected.`
     : `Refusing to silently re-template existing brain.`;
+
+  if (engineKind === 'rust') {
+    // Loss "no vector-width change on Rust" (docs/designs/RUST_ENGINE.md): no command changes or keeps the width, so
+    // the recipe names none.
+    return [
+      header,
+      ``,
+      `  Existing column: vector(${currentDims})`,
+      `  Requested:       vector(${requestedDims})${requestedModel ? `  (${requestedModel})` : ''}`,
+      ``,
+      `Nothing was changed. A Rust brain's vector width is fixed when the brain is created, and no command changes it yet.`,
+      `To embed now, set embedding_model and embedding_dimensions in your config back to a model at vector(${currentDims}).`,
+    ].join('\n');
+  }
 
   if (engineKind === 'pglite') {
     const activePath = databasePath ?? gbrainPath('brain.pglite');
