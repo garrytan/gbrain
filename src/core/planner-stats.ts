@@ -195,6 +195,8 @@ export async function readPostgresPlannerStats(engine: BrainEngine): Promise<Pla
 
 /** The engine's table states: the F4b deltas on PGLite (null before the migration), autovacuum's counters on Postgres. */
 export async function readPlannerTableStates(engine: BrainEngine): Promise<PlannerTableState[] | null> {
+  // Rust: the store has no planner and keeps no table statistics, so no table is stale (catalog probe).
+  if (answersFromCatalog(engine)) return [];
   return engine.kind === 'pglite' ? readPlannerStatsState(engine) : readPostgresPlannerStats(engine);
 }
 

@@ -14,6 +14,7 @@
  *   gbrain graph-query people/bob --depth 1
  */
 
+import { normalizeSlug } from '../core/utils.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import type { GraphPath } from '../core/types.ts';
 import { TRAVERSE_PATH_ROW_CAP } from '../core/engine-constants.ts';
@@ -56,7 +57,7 @@ function parseArgs(args: string[]): Args {
     else if (a === '--source') out.source = i + 1 < args.length ? args[++i] : '';
     else if (a.startsWith('--source=')) out.source = a.slice('--source='.length);
     else if (a === '--help' || a === '-h') out.showHelp = true;
-    else if (!a.startsWith('-') && !out.slug) out.slug = a;
+    else if (!a.startsWith('-') && !out.slug) out.slug = normalizeSlug(a);
   }
   return out;
 }

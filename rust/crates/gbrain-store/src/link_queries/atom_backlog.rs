@@ -92,6 +92,8 @@ impl Store {
             };
             if fm_text(&page.frontmatter, "imported_from").as_deref() == Some("markdown-greenfield")
                 || fm_text(&page.frontmatter, "dream_generated").as_deref() == Some("true")
+                // A record-tier or private email says `extract_atoms: false` (src/core/google/ingest-tiers.ts).
+                || fm_text(&page.frontmatter, "extract_atoms").as_deref() == Some("false")
                 || (page.page_type == "source" && page.frontmatter.contains_key("raw"))
             {
                 continue;

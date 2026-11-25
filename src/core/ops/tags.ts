@@ -5,6 +5,7 @@
  * ../operations.ts. Never import from '../operations.ts' here (cycle).
  */
 
+import { normalizeSlug } from '../utils.ts';
 import type { Operation, OperationContext } from './contract.ts';
 import { fenceTranscriptText, quotesStored, unquoteTranscriptText } from '../search/transcript-quote.ts';
 import { enforceClientSlugFence, readPolicyOpts } from './context.ts';
@@ -15,7 +16,7 @@ import { MERGE_PRECONDITION_PARAMS, WRITE_REQUEST_PARAM } from '../persistence/p
 
 /** #8384: a remote caller's tag copied out of a quoted read (get_tags, get_page, fetch) names the tag, not its fence. */
 function unquotedTag(ctx: OperationContext, p: Record<string, unknown>): Record<string, unknown> {
-  return ctx.remote === false || typeof p.tag !== 'string' || typeof p.slug !== 'string' ? p : { ...p, tag: unquoteTranscriptText(p.tag, p.slug.toLowerCase()) };
+  return ctx.remote === false || typeof p.tag !== 'string' || typeof p.slug !== 'string' ? p : { ...p, tag: unquoteTranscriptText(p.tag, normalizeSlug(p.slug)) };
 }
 
 const add_tag: Operation = {
@@ -87,9 +88,8 @@ const get_tags: Operation = {
     });
     if (ctx.remote === false || tags.length === 0) return tags;
     // #8384: a remote reader gets a quoted page's tags quoted, as get_page and fetch return them.
-    const pages = await ctx.engine.executeRaw<{ type: string | null; trust_tier: string | null }>(
-      'SELECT type, trust_tier FROM pages WHERE slug = $1 AND source_id = ANY($2::text[]) AND deleted_at IS NULL',
-      [p.slug, policy.sourceIds?.length ? policy.sourceIds : [policy.sourceId ?? 'default']]);
+    const pages = await ctx.engine.listPageQuoteTiers({
+      slug: p.slug as string, sourceIds: policy.sourceIds?.length ? policy.sourceIds : [policy.sourceId ?? 'default'] });
     return pages.length && pages.every(r => !quotesStored(r.type, r.trust_tier)) ? tags : tags.map(t => fenceTranscriptText(t, p.slug as string));
   },
   scope: 'read',

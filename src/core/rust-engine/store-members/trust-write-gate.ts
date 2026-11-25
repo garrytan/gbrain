@@ -16,7 +16,9 @@ type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infe
 
 const RECEIPT_DATES = ['created_at', 'last_seen_at'];
 const HOLD_DATES = ['created_at', 'last_seen_at', 'decided_at'];
-const toHoldRow = (row: Record<string, unknown>) => withDates(row, HOLD_DATES) as unknown as WriteGateHoldRow;
+// The Rust store keeps holds by slug only (the hold-by-page-id contract of master #10200 is a named swap row: a Rust hold does not follow its
+// page through a rename), so its rows carry no page binding.
+const toHoldRow = (row: Record<string, unknown>) => ({ page_id: null, page_candidates: null, ...withDates(row, HOLD_DATES) }) as unknown as WriteGateHoldRow;
 
 export const upsertWriteGateReceipt: Member<'upsertWriteGateReceipt'> = (brain, input) =>
   storeCall({ member: 'upsertWriteGateReceipt', sourceId: input.source_id ?? undefined }, () => brain.upsertWriteGateReceipt(input));
@@ -39,7 +41,7 @@ export const deleteStaleWriteGateReceipts: Member<'deleteStaleWriteGateReceipts'
   storeCall({ member: 'deleteStaleWriteGateReceipts' }, () => brain.deleteStaleWriteGateReceipts(olderThanDays));
 
 export const upsertWriteGateHold: Member<'upsertWriteGateHold'> = (brain, input) =>
-  storeCall({ member: 'upsertWriteGateHold', sourceId: input.source_id, slug: input.slug }, () => brain.upsertWriteGateHold(input));
+  storeCall({ member: 'upsertWriteGateHold', sourceId: input.source_id, slug: input.slug }, () => brain.upsertWriteGateHold((({ page_id: _page, ...rest }) => rest)(input)));
 
 export const listWriteGateHoldRows: Member<'listWriteGateHoldRows'> = async (brain, opts) => {
   const rows: Record<string, unknown>[] = await storeCall({ member: 'listWriteGateHoldRows', sourceId: opts.sourceId },

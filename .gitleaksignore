@@ -86,3 +86,26 @@ ef56be48bd4bca977ed5eee7012070573039b142:.gitleaksignore:generic-api-key:77
 44e49da06d44da87504ebf908fdcfd49ed67b46c:test/apple-contacts-write.test.ts:generic-api-key:123
 44e49da06d44da87504ebf908fdcfd49ed67b46c:test/apple-contacts-write.test.ts:generic-api-key:156
 44e49da06d44da87504ebf908fdcfd49ed67b46c:test/apple-contacts-write.test.ts:generic-api-key:157
+# Rust engine main fixtures (commits a7bad7a128 and 7a31297ba1, merged into every lane head that takes main): the doctor secret-marker
+# detector's test strings are PEM header lines with no key body, and the token id is a made-up UUID. History-only fingerprints, not credentials.
+a7bad7a1284c432d21ecd52bcabcc11ccb4e2b4b:rust/crates/gbrain-store/src/cli_reads/doctor_derived_health.rs:private-key:473
+a7bad7a1284c432d21ecd52bcabcc11ccb4e2b4b:rust/crates/gbrain-store/src/cli_reads/doctor_derived_health.rs:private-key:477
+a7bad7a1284c432d21ecd52bcabcc11ccb4e2b4b:rust/crates/gbrain-store/src/cli_reads/doctor_derived_health.rs:private-key:480
+a7bad7a1284c432d21ecd52bcabcc11ccb4e2b4b:rust/crates/gbrain-store/src/cli_reads/doctor_derived_health.rs:private-key:484
+a7bad7a1284c432d21ecd52bcabcc11ccb4e2b4b:rust/crates/gbrain-store/tests/cli_reads_doctor_derived_health.rs:private-key:220
+7a31297ba15da78af3b23a11a792cef1947347df:test/rust-engine-store.test.ts:generic-api-key:578
+# repair-rust B6c: a synthetic secret-store marker (rule github_token, entry id ss_0123456789ab) in test/engine-parity/repair-secret-spans.test.ts
+# (commit 7ea9c21a14) reads as generic-api-key; the tree now builds low-entropy ids (DIRECT_ID, KEY_ID). History-only fingerprints, not secrets.
+7ea9c21a149e196ba50f3d103ef643733cad38ed:test/engine-parity/repair-secret-spans.test.ts:generic-api-key:367
+7ea9c21a149e196ba50f3d103ef643733cad38ed:test/engine-parity/repair-secret-spans.test.ts:generic-api-key:380
+# #10191 Rust store snapshot: header-only private-key test strings (no key body) in the doctor secret-marker tests, in two commits of the PR branch (0ed8030e79, 37831faacb). The final tree builds these strings at runtime. History-only fingerprints, not credentials.
+37831faacb855a33fbedc5c9e9b9f2e76cd84798:rust/crates/gbrain-store/src/cli_reads/doctor_derived_health.rs:private-key:473
+37831faacb855a33fbedc5c9e9b9f2e76cd84798:rust/crates/gbrain-store/src/cli_reads/doctor_derived_health.rs:private-key:477
+37831faacb855a33fbedc5c9e9b9f2e76cd84798:rust/crates/gbrain-store/src/cli_reads/doctor_derived_health.rs:private-key:480
+37831faacb855a33fbedc5c9e9b9f2e76cd84798:rust/crates/gbrain-store/src/cli_reads/doctor_derived_health.rs:private-key:484
+37831faacb855a33fbedc5c9e9b9f2e76cd84798:rust/crates/gbrain-store/tests/cli_reads_doctor_derived_health.rs:private-key:221
+0ed8030e796de5f4099838e78ea53c9822ff5bf3:rust/crates/gbrain-store/src/cli_reads/doctor_derived_health.rs:private-key:473
+0ed8030e796de5f4099838e78ea53c9822ff5bf3:rust/crates/gbrain-store/src/cli_reads/doctor_derived_health.rs:private-key:477
+0ed8030e796de5f4099838e78ea53c9822ff5bf3:rust/crates/gbrain-store/src/cli_reads/doctor_derived_health.rs:private-key:480
+0ed8030e796de5f4099838e78ea53c9822ff5bf3:rust/crates/gbrain-store/src/cli_reads/doctor_derived_health.rs:private-key:484
+0ed8030e796de5f4099838e78ea53c9822ff5bf3:rust/crates/gbrain-store/tests/cli_reads_doctor_derived_health.rs:private-key:221

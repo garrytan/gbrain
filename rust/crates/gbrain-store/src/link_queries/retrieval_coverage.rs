@@ -233,7 +233,7 @@ pub(super) fn in_scope(
 
 /// `haystack ~ '(^|[^[:alnum:]])<term>([^[:alnum:]]|$)'`: `term` occurs with no alphanumeric character
 /// right before or after it. Every occurrence is tried, overlapping ones included.
-fn token_match(haystack: &str, term: &str) -> bool {
+pub(crate) fn token_match(haystack: &str, term: &str) -> bool {
     if term.is_empty() {
         return false;
     }

@@ -612,7 +612,7 @@ fn the_sync_checkpoint_advances_only_from_its_commit_and_keeps_a_pinned_mode() {
             .advance_sync_checkpoint(&SyncCheckpointAdvance {
                 source_id: "repo".into(),
                 incarnation: incarnation.clone(),
-                commit: commit.into(),
+                commit: Some(commit.into()),
                 from: from.map(str::to_string),
                 accept_at_commit: accept,
                 slug_mode: mode.into(),
@@ -655,4 +655,42 @@ fn the_sync_checkpoint_advances_only_from_its_commit_and_keeps_a_pinned_mode() {
     let source = store.get_source("repo").unwrap().unwrap();
     assert_eq!(source.last_commit.as_deref(), Some("c3"));
     assert_eq!(source.config["slug_root_mode"], "git-root");
+}
+
+#[test]
+fn a_first_sync_slice_restamps_a_null_checkpoint_and_a_null_commit_never_matches_at_commit() {
+    let dir = TempDir::new("src-checkpoint-null");
+    let store = open(&dir);
+    store.upsert_source(&input("repo", Some("/r"))).unwrap();
+    let incarnation = store.get_source_by_id("repo").unwrap().unwrap().incarnation;
+    let run = |commit: Option<&str>, from: Option<&str>, accept: bool| {
+        store
+            .advance_sync_checkpoint(&SyncCheckpointAdvance {
+                source_id: "repo".into(),
+                incarnation: incarnation.clone(),
+                commit: commit.map(str::to_string),
+                from: from.map(str::to_string),
+                accept_at_commit: accept,
+                slug_mode: "git-root".into(),
+                keep_pinned_slug_mode: false,
+            })
+            .unwrap()
+    };
+    // A first sync's unfinished slice: the checkpoint stays NULL, stamped, as `last_commit = NULL` does on Postgres.
+    assert_eq!(run(None, None, false)["advanced"], true);
+    let source = store.get_source("repo").unwrap().unwrap();
+    assert_eq!(source.last_commit, None);
+    assert!(source.last_sync_at.is_some());
+    // Past the first commit, a NULL commit with accept_at_commit does not match (`last_commit = NULL` is never true).
+    assert_eq!(run(Some("c1"), None, false)["advanced"], true);
+    assert_eq!(run(None, Some("c0"), true)["advanced"], false);
+    assert_eq!(
+        store
+            .get_source("repo")
+            .unwrap()
+            .unwrap()
+            .last_commit
+            .as_deref(),
+        Some("c1")
+    );
 }

@@ -22,6 +22,7 @@ import { runPhaseGradeTakes } from '../src/core/cycle/grade-takes.ts';
 import { runPhaseCalibrationProfile } from '../src/core/cycle/calibration-profile.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { withTakeProposalMembers } from './helpers/take-proposal-members.ts';
 
 function buildCtx(engine: BrainEngine): OperationContext {
   return {
@@ -42,7 +43,7 @@ function proposeEngine(pageCount: number): BrainEngine {
     source_id: 'default',
     compiled_truth: `page ${i} prose long enough to be processed by the loop.`,
   }));
-  return {
+  return withTakeProposalMembers({
     kind: 'pglite',
     async executeRaw<T>(sql: string): Promise<T[]> {
       if (sql.includes(PAGE_SQL_MARKER)) return pages as T[];
@@ -50,7 +51,7 @@ function proposeEngine(pageCount: number): BrainEngine {
       return [] as T[];
     },
     async getConfig() { return null; },
-  } as unknown as BrainEngine;
+  } as unknown as BrainEngine);
 }
 
 describe('effectivePhaseDeadlineMs (gbrain#4168)', () => {
@@ -108,14 +109,14 @@ describe('phases consume deadlineAtMs (red on master: option was ignored)', () =
 
   test('grade_takes with the job budget inside the reserve exits with deadline_hit before any take', async () => {
     let judgeCalls = 0;
-    const engine = {
+    const engine = withTakeProposalMembers({
       kind: 'pglite',
       async listTakes() {
         return [{ id: 't1', claim_text: 'c', since_date: '2020-01-01', holder: 'h', weight: 0.5 }];
       },
       async executeRaw<T>(): Promise<T[]> { return [] as T[]; },
       async getConfig() { return null; },
-    } as unknown as BrainEngine;
+    } as unknown as BrainEngine);
     const result = await runPhaseGradeTakes(buildCtx(engine), {
       judge: (async () => { judgeCalls++; return { verdict: 'right', confidence: 0.9, rationale: 'r' }; }) as never,
       deadlineAtMs: Date.now() - 1,
@@ -128,11 +129,11 @@ describe('phases consume deadlineAtMs (red on master: option was ignored)', () =
   });
 
   test('calibration_profile with the job budget inside the reserve skips cleanly (warn + deadline_hit)', async () => {
-    const engine = {
+    const engine = withTakeProposalMembers({
       kind: 'pglite',
       async executeRaw<T>(): Promise<T[]> { return [] as T[]; },
       async getConfig() { return null; },
-    } as unknown as BrainEngine;
+    } as unknown as BrainEngine);
     const result = await runPhaseCalibrationProfile(buildCtx(engine), {
       deadlineAtMs: Date.now() - 1,
     });
@@ -145,7 +146,7 @@ describe('phases consume deadlineAtMs (red on master: option was ignored)', () =
   test('grade_takes breaks MID-LOOP on the deadline: partial banked, warn status (review gap G5)', async () => {
     let judgeCalls = 0;
     const inserts: string[] = [];
-    const engine = {
+    const engine = withTakeProposalMembers({
       kind: 'pglite',
       async listTakes() {
         return [1, 2, 3].map(i => ({ id: i, row_num: i, page_slug: `p/${i}`, claim: `c${i}`, holder: 'h', weight: 0.5, since_date: '2020-01-01' }));
@@ -155,8 +156,12 @@ describe('phases consume deadlineAtMs (red on master: option was ignored)', () =
         if (sql.includes('FROM persistence_brain')) return [{ enabled: false } as unknown as T]; // #6482: the strict mode reader needs one well-formed unmanaged row.
         return [] as T[];
       },
+      // The verdict cache reads and writes through typed members (engine-sql/takes-reads.ts): no cached verdict.
+      async readTakeGrade() { return null; },
+      async insertTakeGrade() { inserts.push('take_grades'); },
+      async deleteTakeGrade() {},
       async getConfig() { return null; },
-    } as unknown as BrainEngine;
+    } as unknown as BrainEngine);
     const result = await runPhaseGradeTakes(buildCtx(engine), {
       judge: (async () => {
         judgeCalls++;

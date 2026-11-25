@@ -76,10 +76,9 @@ function ctxFor(engine: BrainEngine): OperationContext {
 }
 
 describe('engine parity: a whole remember that replaces an earlier fact', () => {
-  // The persistence consumer ends the old fact with a raw statement (src/core/persistence/memory-prepare.ts), which a Rust
-  // brain refuses (raw_sql), so on the Rust arm this case stops there; the reads before it are served.
+  // The persistence consumer ends the old fact through retireSupersededFact (src/core/persistence/memory-prepare.ts).
   parityTest('remember with replaces saves the new claim, ends the old fact and links it to the new one', {
-    methods: ['readReplacementTarget', 'readFactVisibility', 'listFactsForPage', 'getPage'],
+    methods: ['readReplacementTarget', 'readFactVisibility', 'retireSupersededFact', 'listFactsForPage', 'getPage'],
     timeout: 180_000,
   }, async (engine) => {
     opened.push(engine);
@@ -97,6 +96,34 @@ describe('engine parity: a whole remember that replaces an earlier fact', () => 
     const again = await remember(ctx, 'the example office is in denver.', { replaces: String(old.id) });
     const stale = await remember(ctx, 'the example office is in austin.', { replaces: String(old.id) });
     return { first, replaced, afterReplace, again, stale, after: await named(engine), page: (await engine.getPage(HOLDING)) !== null };
+  });
+
+  // The consumer's supersede member alone: an until ends the old fact there, none keeps its end, and an expired or
+  // other-source fact is left as it is.
+  parityTest('retireSupersededFact expires and links the old fact, ending it only at a given until', {
+    methods: ['retireSupersededFact', 'listFactsForPage', 'getPage'],
+    timeout: 180_000,
+  }, async (engine) => {
+    opened.push(engine);
+    const ctx = ctxFor(engine);
+    for (const city of ['boston', 'denver', 'austin']) await remember(ctx, `the example office is in ${city}.`);
+    const byCity = async (city: string) => (await facts(engine)).find((f) => f.fact.endsWith(`${city}.`))!;
+    const [boston, denver, austin] = [await byCity('boston'), await byCity('denver'), await byCity('austin')];
+    const counts = {
+      kept: await engine.retireSupersededFact({ oldId: boston.id, sourceId: SRC, newId: denver.id, until: null }),
+      again: await engine.retireSupersededFact({ oldId: boston.id, sourceId: SRC, newId: austin.id, until: null }),
+      otherSource: await engine.retireSupersededFact({ oldId: denver.id, sourceId: 'no-such-source', newId: austin.id, until: null }),
+      ended: await engine.retireSupersededFact({ oldId: String(denver.id), sourceId: SRC, newId: austin.id, until: new Date('2026-01-02T03:04:05Z') }),
+    };
+    const after = await named(engine);
+    expect(counts).toEqual({ kept: 1, again: 0, otherSource: 0, ended: 1 });
+    expect(after.map((r) => [r.fact, r.expired, r.ended, r.superseded_by])).toEqual([
+      ['the example office is in boston.', true, false, 'the example office is in denver.'],
+      ['the example office is in denver.', true, true, 'the example office is in austin.'],
+      ['the example office is in austin.', false, false, null],
+    ]);
+    const denverRow = (await engine.listFactsForPage(SRC, HOLDING)).find((f) => f.fact.endsWith('denver.'))!;
+    return { counts, after, denverUntil: new Date(denverRow.valid_until as unknown as string).toISOString() };
   });
 
   // The refusals read the target through readReplacementTarget and readFactVisibility and save nothing, so they run whole on

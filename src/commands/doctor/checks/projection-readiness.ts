@@ -81,8 +81,8 @@ export async function checkProjectionReadiness(engine: BrainEngine, scope: PageR
   }
   // Wave B: pages stored in segments whose chunks were not built after their write committed (not searchable yet);
   // counted brain-wide, so only for an unscoped (local) doctor.
-  const segmented = readiness.status === 'projection_pending' && Object.keys(scope).length === 0 ? Number((await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM pages
-    WHERE deleted_at IS NULL AND body_storage='segmented' AND text_projection_revision IS DISTINCT FROM knowledge_revision`).catch(() => []))[0]?.n ?? 0) : 0;
+  const segmented = readiness.status === 'projection_pending' && Object.keys(scope).length === 0
+    ? await engine.countLiveSegmentedPages({ projectionPending: true }) : 0;
   const segmentedNote = segmented ? ` ${segmented} page(s) stored in segments are not searchable yet; ${opts.resident
     ? 'the resident builds them too.' : '`gbrain projections drain` builds them as well.'}` : '';
   // GBRA-130 A-27: pages the v0.60.31 credential re-chunk held; remote callers get the count only.

@@ -102,7 +102,7 @@ export async function submissionAuthority(ctx: OperationContext, operation: stri
  * registration check just made answers the authorization that follows it (`withRegisteredLocalWriter`, once).
  */
 /** The engine authorization reads through: its raw statements plus the typed local writer and source membership reads. */
-export type AuthorityEngine = SqlEngine & Pick<BrainEngine, 'readLiveMember' | 'hasLabelledOnlyMember' | 'getConfig' | 'readAccessMembers' | 'readLinkedMember' | 'readLocalWriterRow' | 'readSourceMembership' | 'readWriterSlugFence' | 'readWriteVisibilityProbe' | 'readOauthClient' | 'readOAuthClientWriteGrant' | 'readAccessTokenWriteGrant' | 'shareLockWriteCredential'>;
+export type AuthorityEngine = SqlEngine & Pick<BrainEngine, 'readLiveMember' | 'readAccessTokenAttest' | 'readOauthClientAttest' | 'hasLabelledOnlyMember' | 'getConfig' | 'readAccessMembers' | 'readLinkedMember' | 'readLocalWriterRow' | 'readSourceMembership' | 'readWriterSlugFence' | 'readWriteVisibilityProbe' | 'readOauthClient' | 'readOAuthClientWriteGrant' | 'readAccessTokenWriteGrant' | 'shareLockWriteCredential'>;
 function localWriterRow(engine: AuthorityEngine, id: string, lock: boolean): Promise<Array<{ lane: string; revoked_at: unknown; grant_ceiling: LocalGrant }>> {
   const registered = lock ? undefined : takeRegisteredWriterRow(id);
   if (registered) return Promise.resolve([registered]);
@@ -313,6 +313,10 @@ function onceReads(engine: BrainEngine): BrainEngine {
       memo(JSON.stringify(['typed:visibility', sourceId, slug]), () => target.readWriteVisibilityProbe(sourceId, slug));
     if (key === 'readLocalWriterRow') return (id: string, opts?: { lock?: boolean }) => opts?.lock ? target.readLocalWriterRow(id, opts)
       : memo(JSON.stringify(['typed:writer', id]), () => target.readLocalWriterRow(id));
+    // attestRightOf's credential reads were plain executeRaw reads this memo answered once; as typed members they still are.
+    if (key === 'readAccessTokenAttest') return (id: string) => memo(JSON.stringify(['typed:token-attest', id]), () => target.readAccessTokenAttest(id));
+    if (key === 'readOauthClientAttest') return (id: string, opts?: { lock?: boolean }) =>
+      opts?.lock ? target.readOauthClientAttest(id, opts) : memo(JSON.stringify(['typed:client-attest', id]), () => target.readOauthClientAttest(id));
     const value = Reflect.get(target, key, target);
     return typeof value === 'function' ? value.bind(target) : value;
   } });

@@ -27,6 +27,7 @@ import {
   RARE_TERM_CHUNK_CAP, RARITY_MAX_TERMS, rankOrFallbackByRarity, type RareTermPages,
 } from '../../search/keyword-or-rarity.ts';
 import type { KeywordPageWindow } from '../../search/keyword-statement.ts';
+import type { FrontmatterWhere } from '../../search/frontmatter-where.ts';
 import { resolveBoostMap, resolveHardExcludes } from '../../search/source-boost.ts';
 import {
   boundWebsearchQuery, buildOrFallbackWebsearchQuery, collapseWebsearchDashRuns, orFallbackTokens,
@@ -185,6 +186,16 @@ export const searchKeywordChunks: StoreMember<[query: string, opts?: SearchOpts]
   const rows: Record<string, unknown>[] = await storeCall({ member: 'searchKeywordChunks' },
     () => brain.searchKeywordChunks(collapseWebsearchDashRuns(query), options));
   return rows.map(rowToSearchResult);
+};
+
+/**
+ * The frontmatter check on finished search rows (keepFrontmatterMatches): the store keeps the ids whose page holds
+ * every `where` key, by the rule the keyword and vector `where` filters use (whereFields; `frontmatter_holds`).
+ */
+export const filterPageIdsByFrontmatter: StoreMember<[ids: number[], where: FrontmatterWhere], number[]> = async (brain, ids, where) => {
+  if (!ids.every(id => Number.isSafeInteger(id) && id > 0)) refuseMember('filterPageIdsByFrontmatter', 'a page id that is not a positive integer');
+  return storeCall({ member: 'filterPageIdsByFrontmatter' },
+    () => brain.filterPageIdsByFrontmatter({ ids, where: whereFields('filterPageIdsByFrontmatter', where) })) as Promise<number[]>;
 };
 
 export const countKeywordPages: StoreMember<[query: string, opts?: SearchOpts & { timeoutMs?: number }], number> = async (brain, query, opts) => {

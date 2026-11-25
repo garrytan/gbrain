@@ -12,6 +12,30 @@ use crate::store_binding::{Brain, required};
 
 #[napi]
 impl Brain {
+    /// `listActiveAccessTokenRows()`: every token not revoked, whole with its hash, oldest first (doctor).
+    #[napi]
+    pub fn list_active_access_token_rows<'env>(
+        &self,
+        env: &'env Env,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_active_access_token_rows())
+    }
+
+    /// `listActiveOauthClientRows()`: every client not deleted, whole, by client id (doctor).
+    #[napi]
+    pub fn list_active_oauth_client_rows<'env>(
+        &self,
+        env: &'env Env,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_active_oauth_client_rows())
+    }
+
+    /// `listAttestCredentialRows()`: `[{ kind, id, name, row }]` of the live credentials with an attest actor (doctor).
+    #[napi]
+    pub fn list_attest_credential_rows<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_attest_credential_rows())
+    }
+
     /// `listAccessTokens()`: every token's listed row, newest first.
     #[napi]
     pub fn list_access_tokens<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {

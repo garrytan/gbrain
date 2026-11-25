@@ -1,8 +1,9 @@
 //! Raw source data and files attached to pages: the `raw_data` and `files` tables of the PGLite
 //! engine.
 //!
-//! Members: putRawData, getRawData, upsertFile, getFile, listFilesForPage; the files commands and file operations
-//! are in `ops.rs`.
+//! Members: putRawData, getRawData, upsertFile, getFile, listFilesForPage, and a page purge's
+//! `deletePurgedPageFiles` (`raw_files/purge.rs`); the files commands and file operations are in
+//! `ops.rs`.
 //!
 //! Keys (every record starts with `keys::RAW_FILES`, `r`):
 //! - `r 0x01 <page id u64 BE> 0x00 <source name>` -> `RawRecord` (JSON). One per (page, source),
@@ -30,6 +31,7 @@
 
 use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, PAGE_NOT_FOUND, Result, StoreError};
+use crate::facts::purge_probe::{EachRow, ProbeCell, ProbeRow, each_json};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::{PageRecord, next_id, read_page, read_page_by_id, scope_sources};
@@ -39,11 +41,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 mod ops;
+pub(crate) mod purge;
 
 const RAW: u8 = 0x01;
 const FILE: u8 = 0x02;
 const FILE_BY_PAGE: u8 = 0x03;
-const NEXT_FILE_ID: &str = "next_file_id";
+pub(crate) const NEXT_FILE_ID: &str = "next_file_id";
 const NEXT_RAW_DATA_ID: &str = "next_raw_data_id";
 
 fn raw_page_prefix(page_id: u64) -> Vec<u8> {
@@ -274,6 +277,42 @@ fn put_file(tx: &mut dyn KvWrite, record: &FileRecord) -> Result<()> {
     put_json(tx, &file_key(&record.storage_path), record)
 }
 
+/// The shadow seed (`seed.rs`): stores `record`, a file copied from another engine with its own id
+/// and `created_at`, with the page index entry `upsert_file` writes. `false` when the path already
+/// holds that file; the path held by another id is the unique `storage_path` violation. The caller
+/// checked the source and the page.
+pub(crate) fn seed_file(tx: &mut dyn KvWrite, record: &FileRecord) -> Result<bool> {
+    if let Some(stored) = read_file(&*tx, &record.storage_path)? {
+        if stored.id == record.id {
+            return Ok(false);
+        }
+        return Err(StoreError::new(
+            CONSTRAINT_VIOLATION,
+            "duplicate key value violates unique constraint on files (storage_path)",
+        ));
+    }
+    if let Some(page) = record.page_id {
+        tx.put(
+            &file_page_key(page, record.id),
+            &serde_json::to_vec(&record.storage_path)?,
+        )?;
+    }
+    put_file(tx, record)?;
+    Ok(true)
+}
+
+/// The shadow seed: stores `record`, raw data copied from another engine with its own `fetched_at`,
+/// where `put_raw_data` stores it. `false` when the page already holds raw data of that source.
+/// The caller checked the page.
+pub(crate) fn seed_raw_data(tx: &mut dyn KvWrite, record: &RawRecord) -> Result<bool> {
+    let key = raw_key(record.page_id, &record.source);
+    if tx.get(&key)?.is_some() {
+        return Ok(false);
+    }
+    put_json(tx, &key, record)?;
+    Ok(true)
+}
+
 /// The raw_data rows of page `page_id`, in key order (the export reads every row of a page).
 pub(crate) fn page_raw_rows(read: &dyn KvRead, page_id: u64) -> Result<Vec<RawRecord>> {
     Ok(
@@ -282,6 +321,44 @@ pub(crate) fn page_raw_rows(read: &dyn KvRead, page_id: u64) -> Result<Vec<RawRe
             .map(|(_, row)| row)
             .collect(),
     )
+}
+
+/// The `ordinal`th raw_data row of page `page_id` (from 1, in source order) with its key: the store keeps no serial id
+/// on a row, so `gbrain repair secret-spans` names a row by its position among the page's rows
+/// (`readRawDataValue`, `setRawDataValue`).
+fn raw_row_at(
+    read: &dyn KvRead,
+    page_id: u64,
+    ordinal: u64,
+) -> Result<Option<(Vec<u8>, RawRecord)>> {
+    let Some(index) = ordinal.checked_sub(1) else {
+        return Ok(None);
+    };
+    Ok(
+        collect_values::<RawRecord>(read, &raw_page_prefix(page_id))?
+            .into_iter()
+            .nth(usize::try_from(index).unwrap_or(usize::MAX)),
+    )
+}
+
+/// The data of the `ordinal`th raw_data row of page `page_id`, or `None` when the page has fewer rows.
+pub(crate) fn raw_row_data(read: &dyn KvRead, page_id: u64, ordinal: u64) -> Result<Option<Value>> {
+    Ok(raw_row_at(read, page_id, ordinal)?.map(|(_, row)| row.data))
+}
+
+/// `UPDATE raw_data SET data = $data WHERE id = ordinal` for page `page_id`: replaces the row's data and keeps its
+/// source and fetch time. A page with fewer rows changes nothing.
+pub(crate) fn set_raw_row_data(
+    tx: &mut dyn KvWrite,
+    page_id: u64,
+    ordinal: u64,
+    data: Value,
+) -> Result<()> {
+    let Some((key, mut row)) = raw_row_at(&*tx, page_id, ordinal)? else {
+        return Ok(());
+    };
+    row.data = data;
+    put_json(tx, &key, &row)
 }
 
 fn collect_values<T: serde::de::DeserializeOwned>(
@@ -353,6 +430,48 @@ pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Resul
             file.page_id = None;
             put_file(tx, &file)?;
         }
+    }
+    Ok(())
+}
+
+/// The twin merge's `UPDATE raw_data SET page_id = to WHERE page_id = from AND NOT EXISTS (a `to` row of the same
+/// source)`: the twin's raw data of a source the survivor lacks moves to the survivor, and the rest stays on the
+/// twin. A missing `to` page refuses as the foreign key does when a row would move.
+pub(crate) fn move_raw_data(tx: &mut dyn KvWrite, from: u64, to: u64) -> Result<()> {
+    for (key, mut row) in collect_values::<RawRecord>(&*tx, &raw_page_prefix(from))? {
+        let target = raw_key(to, &row.source);
+        if tx.get(&target)?.is_some() {
+            continue;
+        }
+        if read_page_by_id(&*tx, to)?.is_none() {
+            return Err(foreign_key("page_id"));
+        }
+        tx.delete(&key)?;
+        row.page_id = to;
+        put_json(tx, &target, &row)?;
+    }
+    Ok(())
+}
+
+/// The twin merge's `UPDATE files SET page_id = to, page_slug = to_slug WHERE page_id = from`: every file attached to
+/// the twin attaches to the survivor, with its page index entry. A missing `to` page refuses as the foreign key does.
+pub(crate) fn move_files(tx: &mut dyn KvWrite, from: u64, to: u64, to_slug: &str) -> Result<()> {
+    let attached: Vec<(Vec<u8>, String)> = collect_values(&*tx, &file_page_prefix(from))?;
+    if attached.is_empty() {
+        return Ok(());
+    }
+    if from != to && read_page_by_id(&*tx, to)?.is_none() {
+        return Err(foreign_key("page_id"));
+    }
+    for (key, path) in attached {
+        let Some(mut file) = read_file(&*tx, &path)? else {
+            continue;
+        };
+        tx.delete(&key)?;
+        file.page_id = Some(to);
+        file.page_slug = Some(to_slug.to_string());
+        tx.put(&file_page_key(to, file.id), &serde_json::to_vec(&path)?)?;
+        put_file(tx, &file)?;
     }
     Ok(())
 }
@@ -689,6 +808,50 @@ impl Store {
         files.truncate(limit as usize);
         Ok(files.iter().map(FileRecord::to_json).collect())
     }
+}
+
+/// The `files` rows as the table probe of a fact purge's receipt reads them (`facts/purge_probe.rs`): every source's, keyed by path.
+pub(crate) fn probe_files(read: &dyn KvRead, f: EachRow) -> Result<()> {
+    each_json::<FileRecord>(read, &[keys::RAW_FILES, FILE], &mut |_, file| {
+        f(ProbeRow {
+            source_id: Some(file.source_id.clone()),
+            cells: vec![
+                ("source_id", ProbeCell::text(&file.source_id)),
+                ("page_slug", ProbeCell::opt_text(file.page_slug.as_deref())),
+                ("filename", ProbeCell::text(&file.filename)),
+                ("storage_path", ProbeCell::text(&file.storage_path)),
+                ("mime_type", ProbeCell::opt_text(file.mime_type.as_deref())),
+                ("content_hash", ProbeCell::text(&file.content_hash)),
+                ("metadata", ProbeCell::jsonb(&file.metadata)),
+            ],
+        })
+    })
+}
+
+/// The shadow follow (`seed/follow.rs`): removes the file `id` stored at `storage_path`, with its
+/// page index entry. `false` when the path holds no file of that id.
+pub(crate) fn remove_file(tx: &mut dyn KvWrite, id: u64, storage_path: &str) -> Result<bool> {
+    let Some(old) = read_file(&*tx, storage_path)? else {
+        return Ok(false);
+    };
+    if old.id != id {
+        return Ok(false);
+    }
+    if let Some(page) = old.page_id {
+        tx.delete(&file_page_key(page, id))?;
+    }
+    tx.delete(&file_key(storage_path))?;
+    Ok(true)
+}
+
+/// The shadow follow: removes the raw data of `source` on a page. `false` when there is none.
+pub(crate) fn remove_raw_data(tx: &mut dyn KvWrite, page_id: u64, source: &str) -> Result<bool> {
+    let key = raw_key(page_id, source);
+    if tx.get(&key)?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&key)?;
+    Ok(true)
 }
 
 #[cfg(test)]

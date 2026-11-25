@@ -11,11 +11,13 @@
  * Fingerprints list in byte order, where the SQL orders by the database collation; the two agree on the ASCII paths
  * the parity tests hold.
  */
-import { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP, type HeldCoverageRow } from '../../engine-sql/persistence-journal.ts';
+import { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP, type HeldCoverageRow, type HeldHitQuery, type HeldHitRow } from '../../engine-sql/persistence-journal.ts';
+import { COVERAGE_COUNT_CAP } from '../../search/retrieval-coverage.ts';
+import { coveragePatternWord } from './coverage-pattern.ts';
 import { GIT_HOLD_RETRY_OP, type GitHoldRecordsQuery, type GitHoldReportInputs, type GitHoldSummaryRow } from '../../engine-sql/sync-hold-reads.ts';
 import {
-  GIT_HOLD_SUMMARY_COUNTERS, MANAGED_SYNC_PASS_OP, SYNC_CONVERSION_OP, gitHoldFingerprint, summaryFingerprint,
-  type GitHoldSummaryWeights, type SyncPassRowRead, type SyncPassRowWrite,
+  GIT_HOLD_SUMMARY_COUNTERS, MANAGED_SYNC_PASS_OP, SYNC_CONVERSION_KEEP, SYNC_CONVERSION_OP, gitHoldFingerprint, summaryFingerprint,
+  type GitHoldSummaryWeights, type SyncConversion, type SyncPassRowRead, type SyncPassRowWrite,
 } from '../../engine-sql/sync-hold-store.ts';
 import type { SourceStateRow } from '../../engine-sql/write-misc.ts';
 import type { SourceRow } from '../../engine.ts';
@@ -188,6 +190,18 @@ export const readHeldPageRows: StoreMember<[pageIds: string[]], Array<{ record: 
   return held.map(h => ({ record: h.record as never, revision: revisionOf.get(String(Number(h.pageId))) ?? null }));
 };
 
+/**
+ * The holds naming the hits' pages with their page revisions, by fingerprint, then the capped count of held files that
+ * could affect the read (persistence/diagnostic_checkpoints.rs). Each relevance pattern is sent as its query word.
+ */
+export const readHeldHitRows: StoreMember<[query: HeldHitQuery], Array<HeldHitRow<never>>> = async (brain, query) => {
+  const member = 'readHeldHitRows';
+  const terms = query.patterns.map(pattern => coveragePatternWord(member, pattern));
+  return await storeCall({ member }, () => brain.readHeldHitRows({
+    holdOp: GIT_HOLD_OP, pageIds: [...query.pageIds], sourceIds: [...query.sourceIds], types: [...query.types], terms, cap: COVERAGE_COUNT_CAP,
+  })) as Array<HeldHitRow<never>>;
+};
+
 /** The summary rows of unarchived sources' current incarnations with at least one held file, by source id. */
 export const readHeldCoverageRows: StoreMember<[sourceIds: string[] | null], HeldCoverageRow[]> = async (brain, sourceIds) => {
   const member = 'readHeldCoverageRows';
@@ -307,6 +321,29 @@ export const readSyncConversionRows: StoreMember<[sourceIds: readonly string[]],
   }
   return out;
 };
+
+/**
+ * Stamps the source's first connector sync attempt once: one store write that reads the source's incarnation, keys
+ * the state row as connectorStateKey does, and keeps an existing stamp (rust/crates/gbrain-store/src/persistence/connector_attempts.rs).
+ */
+export const recordConnectorSyncAttempt: StoreMember<[sourceId: string, at: string, seed: readonly unknown[]], boolean> =
+  (brain, sourceId, at, seed) =>
+    storeCall({ member: 'recordConnectorSyncAttempt', sourceId }, () => brain.recordConnectorSyncAttempt(sourceId, at, [...seed])) as Promise<boolean>;
+
+/** Writes an unmanaged connector's cursor row as engine-sql/connector-db-cursor.ts does: one store write (connector_attempts.rs). */
+export const writeConnectorDbCursor: StoreMember<[key: string, record: readonly unknown[]], void> = async (brain, key, record) => {
+  await storeCall({ member: 'writeConnectorDbCursor' }, () => brain.writeConnectorDbCursor(key, [...record]));
+};
+
+/**
+ * Puts the conversion first in the source incarnation's log, keeping the newest SYNC_CONVERSION_KEEP: one store write
+ * (rust/crates/gbrain-store/src/persistence/sync_conversions.rs).
+ */
+export const recordSyncConversion: StoreMember<[sourceId: string, incarnation: string, conversion: SyncConversion], void> =
+  async (brain, sourceId, incarnation, conversion) => {
+    await storeCall({ member: 'recordSyncConversion', sourceId },
+      () => brain.recordSyncConversion(sourceId, incarnation, { ...conversion }, SYNC_CONVERSION_KEEP));
+  };
 
 /** The pending `sources retry-held` request's keys for this fingerprint, or null. */
 export const readGitHoldRetryRequest: StoreMember<[fingerprint: string], Array<{ paths?: unknown }> | null> = async (brain, fingerprint) => {

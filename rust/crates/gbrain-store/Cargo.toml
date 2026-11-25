@@ -21,6 +21,9 @@ fjall = ["dep:fjall"]
 
 [dev-dependencies]
 gbrain-sim = { path = "../gbrain-sim" }
+# Property tests only (never linked into the addon). Default features off: no forking runner, no
+# timeout thread and no failure-persistence files, so a run writes nothing outside the test.
+proptest = { version = "1", default-features = false, features = ["std"] }
 
 # The bench tool's unit tests (the query generator) run with `cargo test`.
 [[example]]

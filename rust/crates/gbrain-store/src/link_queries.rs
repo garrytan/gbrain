@@ -452,7 +452,7 @@ fn touching(read: &dyn KvRead, page_id: u64) -> Result<Vec<LinkRecord>> {
 }
 
 /// Every link in the store.
-fn all_links(read: &dyn KvRead) -> Result<Vec<LinkRecord>> {
+pub(crate) fn all_links(read: &dyn KvRead) -> Result<Vec<LinkRecord>> {
     let mut raw = Vec::new();
     scan_prefix(read, &[keys::LINK], false, &mut |_, v| {
         raw.push(v.to_vec());

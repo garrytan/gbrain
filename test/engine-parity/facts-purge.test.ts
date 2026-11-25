@@ -32,7 +32,6 @@ import { lockReconcileRevision } from '../../src/core/facts/reconcile-watermark.
 import { withEngineScope } from '../../src/core/engine-scope.ts';
 import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
 import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
-import { derivedRowsFrom, recordDerivationInputs } from '../../src/core/facts/derivation-inputs.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -836,41 +835,32 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
     return { first, again, afterFirst, member, everyone, world, left, expired: history.map((r) => ({ visibility: r.visibility, expired: r.expired_at instanceof Date, closed: r.valid_until instanceof Date })) };
   });
 
-  // The derivation walk's edges are written only through raw SQL (recordDerivationInputs), which the Rust engine
-  // refuses, so only the SQL arms can record one; the Rust store keeps no derivation_inputs and every hop answers no
-  // rows. A page with no recorded derivation, an empty frontier and the walk itself answer the same on every arm.
-  parityTest('listDerivedRows answers one hop of the derivation walk; the Rust store records none and answers no rows', {
-    methods: ['putPage', 'listDerivedRows'],
-  }, async (engine, backend) => {
-    const id = async (slug: string) => String((await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `${slug} body` })).id);
-    const [input, mid, leaf, alone] = [await id('derive/input'), await id('derive/mid'), await id('derive/leaf'), await id('derive/alone')];
-    const slugOf = new Map([[input, 'input'], [mid, 'mid'], [leaf, 'leaf'], [alone, 'alone']]);
-    const name = (table: string, rowId: string) => (table === 'pages' ? slugOf.get(rowId) ?? rowId : rowId);
-    if (backend !== 'rust') {
-      await recordDerivationInputs(engine, { table: 'pages', id: mid, sourceId: SRC }, [{ table: 'pages', id: input }, { table: 'facts', id: '7' }]);
-      await recordDerivationInputs(engine, { table: 'pages', id: leaf, sourceId: SRC }, [{ table: 'pages', id: mid }]);
-      await recordDerivationInputs(engine, { table: 'takes', id: '3', sourceId: SRC }, [{ table: 'pages', id: input }]);
-    }
-    const hop = async (frontier: Array<{ table: string; id: string }>, limit: number) =>
-      (await engine.listDerivedRows(frontier, limit)).map((r) => `${r.derived_table}:${name(r.derived_table, r.derived_id)}`);
-    const fromInput = await hop([{ table: 'pages', id: input }], 10);
-    const capped = await hop([{ table: 'pages', id: input }, { table: 'facts', id: '7' }], 1);
-    const walk = await derivedRowsFrom(engine, [{ table: 'pages', id: input }]);
-    const walked = walk.rows.map((r) => `${r.table}:${name(r.table, r.id)}@${r.depth}`);
-    if (backend === 'rust') {
-      expect(fromInput).toEqual([]);
-      expect(capped).toEqual([]);
-      expect(walked).toEqual([]);
-    } else {
-      expect(fromInput).toEqual(['pages:mid', 'takes:3']);
-      expect(capped).toEqual(['pages:mid']);
-      expect(walked).toEqual(['pages:mid@1', 'takes:3@1', 'pages:leaf@2']);
-    }
-    expect(walk.truncated).toBe(false);
-    return {
-      unrecorded: await hop([{ table: 'pages', id: alone }], 10),
-      emptyFrontier: await hop([], 10),
-      unrecordedWalk: await derivedRowsFrom(engine, [{ table: 'pages', id: alone }]),
-    };
+  // recordDerivationEdges keeps each edge once (ON CONFLICT DO NOTHING) and listDerivedRows reads one hop back: the
+  // distinct rows derived from any frontier row, by table then id, at most `limit`. Ids share one width, so byte order
+  // and the Postgres collation agree.
+  parityTest('recordDerivationEdges records each input edge once and listDerivedRows reads one hop back', {
+    methods: ['recordDerivationEdges', 'listDerivedRows'],
+  }, async (engine) => {
+    const ref = (table: string, id: string) => ({ table, id });
+    await engine.recordDerivationEdges(ref('pages', '201'), SRC, [ref('pages', '101'), ref('facts', '301')]);
+    await engine.recordDerivationEdges(ref('pages', '201'), SRC, [ref('pages', '101')]);
+    await engine.recordDerivationEdges(ref('facts', '302'), SRC, [ref('pages', '101'), ref('pages', '201')]);
+    await engine.recordDerivationEdges(ref('takes', '401'), null, [ref('facts', '302')]);
+    await engine.recordDerivationEdges(ref('pages', '202'), SRC, []);
+    const hop = async (frontier: Array<{ table: string; id: string }>, limit = 10) =>
+      (await engine.listDerivedRows(frontier, limit)).map((r) => `${r.derived_table}:${r.derived_id}`);
+    const fromInput = await hop([ref('pages', '101')]);
+    expect(fromInput).toEqual(['facts:302', 'pages:201']);
+    const fromTwo = await hop([ref('pages', '101'), ref('pages', '201')]);
+    expect(fromTwo).toEqual(['facts:302', 'pages:201']);
+    const limited = await hop([ref('pages', '101'), ref('facts', '302')], 2);
+    expect(limited).toEqual(['facts:302', 'pages:201']);
+    const sourceless = await hop([ref('facts', '302')]);
+    expect(sourceless).toEqual(['takes:401']);
+    const leaf = await hop([ref('takes', '401')]);
+    expect(leaf).toEqual([]);
+    const empty = await hop([]);
+    expect(empty).toEqual([]);
+    return { fromInput, fromTwo, limited, sourceless, leaf, empty };
   });
 });

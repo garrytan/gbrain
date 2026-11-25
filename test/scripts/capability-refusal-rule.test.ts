@@ -77,6 +77,7 @@ describe('capability-refusal rule', () => {
     expect(flagged(`async function f(e) { try { return await e.getPage('a'); } catch { return null; } }`)).toBe(0);
     // The call runs inside a callback, not inside the try.
     expect(flagged(`function f(e) { try { schedule(() => e.executeRaw('x')); } catch { return null; } }`)).toBe(0);
+    expect(flagged(`async function f(e) { try { const g = async () => e.executeRaw('x'); return null; } catch { return null; } }`)).toBe(0);
   });
 
   test('flags a raw-SQL call reached through a promise a callback hands back', () => {
@@ -112,6 +113,34 @@ describe('capability-refusal rule', () => {
       `async function f(e, xs) { try { await e.executeRaw('x'); } catch (err) { xs.forEach(x => { return x; }); rethrowCapabilityRefusal(err); return []; } }`,
     ];
     for (const text of ok) expect({ text, n: flagged(text) }).toEqual({ text, n: 0 });
+  });
+
+  test('flags a raw-SQL call inside a callback the try awaits', () => {
+    expect(flagged(`async function f(e) { try { await e.transaction(async tx => { await tx.executeRaw('x'); }); } catch { return []; } }`)).toBe(1);
+    expect(flagged(`async function f(e) { try { await Promise.all(ids.map(async id => e.executeRaw('x', [id]))); } catch { return []; } }`)).toBe(1);
+    expect(flagged(`async function f(e) { try { await e.transaction(async tx => { schedule(() => tx.executeRaw('x')); }); } catch { return []; } }`)).toBe(0);
+    expect(flagged(`async function f(e) { return await Promise.resolve().then(() => e.executeRaw('x')).catch(() => ({ mode: 'git' })); }`)).toBe(1);
+  });
+
+  test('flags a bare executeRawJsonb call and the direct raw-SQL method', () => {
+    expect(flagged(`async function f(e) { try { await executeRawJsonb(e, 'x', [{}]); } catch { return []; } }`)).toBe(1);
+    expect(flagged(`async function f(e) { try { await e.executeRawDirect('x'); } catch { return []; } }`)).toBe(1);
+  });
+
+  test('a switch before the rethrow can answer first, so it does not count', () => {
+    expect(flagged(`async function f(e) { try { await e.executeRaw('x'); } catch (err) { switch (err.code) { case '42P01': break; default: return []; } rethrowCapabilityRefusal(err); return []; } }`)).toBe(1);
+  });
+
+  test('keeps flagging the shapes a looser rule would let through: a promise stored in a callback local, a helper on a shadowed or overwritten error', () => {
+    // A pin, not a fail-first test: the rule already flags every one of these. A change that follows callback locals
+    // or reads past a `switch` must keep each at one site, or a swallowed capability refusal slips through.
+    const swallowed = [
+      `async function f(e) { try { await e.transaction(tx => { let p; p = tx.executeRaw('x'); return p; }); } catch { return ['fallback']; } }`,
+      `async function f(e) { try { await e.transaction(tx => { const ps = []; ps.push(tx.executeRaw('x')); return Promise.all(ps); }); } catch { return ['fallback']; } }`,
+      `async function f(e) { try { await e.executeRaw('x'); } catch (err) { switch (err.code) { default: { const err = new Error('ordinary'); return rethrowCapabilityRefusal(err); } } rethrowCapabilityRefusal(err); return ['fallback']; } }`,
+      `async function f(e) { try { await e.executeRaw('x'); } catch (err) { switch (err.code) { default: ({ err } = { err: new Error('ordinary') }); } rethrowCapabilityRefusal(err); return ['fallback']; } }`,
+    ];
+    for (const text of swallowed) expect({ text, n: flagged(text) }).toEqual({ text, n: 1 });
   });
 
   test('ignores engine implementation files, which Rust never runs', () => {

@@ -90,6 +90,10 @@ export async function countGitHolds(exec: HoldStoreExec, sourceId: string, incar
 
 /** One row per source incarnation: the blocked requests recent managed syncs converted in place (sync-holds.ts re-exports it). */
 export const SYNC_CONVERSION_OP = 'sync-conversions';
+/** How many conversions a source's log keeps, newest first (sync-holds.ts re-exports it). */
+export const SYNC_CONVERSION_KEEP = 20;
+/** One logged conversion: the blocked request a managed sync converted in place and how (sync-holds.ts re-exports it). */
+export interface SyncConversion { request_id: string; path: string | null; slug: string | null; run_id: string; outcome: 'held' | 'refrozen'; converted_at: string }
 
 /** A row of the bounded hold listing: the source, its current incarnation and outstanding count, and one hold record (null when none is listed). */
 export interface GitHoldListingRow<R = Record<string, unknown>> { source_id: string; incarnation: string; count: number; record: R | null }
@@ -136,6 +140,20 @@ export function readSyncConversionRows<C = Record<string, unknown>>(exec: HoldSt
   if (!sourceIds.length) return Promise.resolve([]);
   return exec.executeRaw<{ source_id: string; conversions: C[] | null }>(`SELECT s.id AS source_id, c.completed_keys->0->'conversions' AS conversions
     FROM sources s JOIN op_checkpoints c ON c.op=$1 AND c.fingerprint=s.id||':'||s.incarnation::text WHERE s.id=ANY($2::text[])`, [SYNC_CONVERSION_OP, [...sourceIds]]);
+}
+
+/**
+ * Puts `conversion` first in the source incarnation's conversion log, keeping the newest SYNC_CONVERSION_KEEP; the
+ * first write creates the row. The other keys of the stored record stay. Call it in the transaction that saves the
+ * converted cursor.
+ */
+export async function recordSyncConversion(exec: HoldStoreExec, sourceId: string, incarnation: string, conversion: SyncConversion): Promise<void> {
+  await exec.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
+      VALUES($1,$2,jsonb_build_array(jsonb_build_object('source_id',$3::text,'incarnation',$4::text,'conversions',$5::text::jsonb)))
+    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=jsonb_build_array((op_checkpoints.completed_keys->0)||jsonb_build_object('conversions',
+      (SELECT COALESCE(jsonb_agg(c ORDER BY n),'[]'::jsonb) FROM jsonb_array_elements($5::text::jsonb||COALESCE(op_checkpoints.completed_keys->0->'conversions','[]'::jsonb))
+        WITH ORDINALITY AS e(c,n) WHERE n<=$6))),updated_at=now()`,
+  [SYNC_CONVERSION_OP, summaryFingerprint(sourceId, incarnation), sourceId, incarnation, JSON.stringify([conversion]), SYNC_CONVERSION_KEEP]);
 }
 
 /** A managed sync pass row as read: the stored value (null when the row holds none), its stamp and the database clock at the read. */

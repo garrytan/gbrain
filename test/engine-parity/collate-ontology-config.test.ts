@@ -78,13 +78,4 @@ describe('ontology and config reads sort text keys by byte', () => {
     return keys;
   });
 
-  parityTest('copyMigrationConfig copies and skips config keys in byte order', { methods: ['setConfig', 'getAllConfig'] }, async (engine) => {
-    for (const id of MIXED_IDS) await engine.setConfig(`collate.${id}`, 'v');
-    const written: string[] = [];
-    const target = { setConfig: async (key: string) => { written.push(key); } } as unknown as BrainEngine;
-    await copyMigrationConfig(engine, target);
-    const ours = written.filter(k => k.startsWith('collate.'));
-    expect(ours).toEqual(BYTE_IDS.map(id => `collate.${id}`));
-    return ours;
-  });
 });

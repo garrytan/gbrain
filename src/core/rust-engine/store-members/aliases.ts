@@ -31,10 +31,12 @@ async function detailed(
   sourceOrSources: string | readonly string[],
   opts: { excludePrivate?: boolean } | undefined,
 ): Promise<{ canonical_slug: string; source_id: string } | null> {
-  takeOptions(member, opts, []);
+  const o = takeOptions(member, opts, ['excludePrivate']) as { excludePrivate?: boolean };
   const sources = Array.isArray(sourceOrSources) ? [...sourceOrSources] : [sourceOrSources as string];
   if (sources.length === 0) return null;
-  const found: SlugAliasMatch | null = await storeCall({ member, slug }, () => brain.resolveSlugWithAliasDetailed(slug, sources));
+  // `excludePrivate`: the alias row counts only when its live canonical page passes the caller's page policy.
+  const excludePrivate = storePagePolicy(member, o.excludePrivate, { callerReaders: true }) ?? null;
+  const found: SlugAliasMatch | null = await storeCall({ member, slug }, () => brain.resolveSlugWithAliasDetailed(slug, sources, excludePrivate));
   if (found === null) return null;
   if (found.matches > 1) {
     warnOncePerProcess(
@@ -67,7 +69,7 @@ export const resolveSlugWithAlias: StoreMember<[slug: string, sourceOrSources: s
   async (brain, slug, sourceOrSources, opts) => (await detailed(brain, 'resolveSlugWithAlias', slug, sourceOrSources, opts))?.canonical_slug ?? slug;
 
 /** The keys of the alias hop's option bag (alias-hop.ts `IdentityTierOpts` and its hop switches) that are not page policy. */
-const ALIAS_HOP_KEYS = ['excludeSlugs', 'excludeSlugPrefixes', 'tokenHop', 'qualified'] as const;
+const ALIAS_HOP_KEYS = ['excludeSlugs', 'excludeSlugPrefixes', 'type', 'types', 'tokenHop', 'qualified'] as const;
 
 /**
  * `readAliases` (search/read-enrichment.ts): `pageReadFilter` reads no `requireSafeChunks`, so the store ignores it too.
@@ -86,6 +88,12 @@ export const resolveAliases: StoreMember<[aliasNorms: string[], opts?: PageReadS
   const rows: Array<[string, AliasRef[]]> = await storeCall({ member: 'resolveAliases', sourceId: o.sourceId as string | undefined }, () =>
     brain.resolveAliases(aliasNorms, scope));
   return new Map(rows);
+};
+
+/** `recordRenameAlias` (engine-sql/rename-alias-rows.ts): `old -> new` in the rename history and the slug aliases, in the engine's transaction. */
+export const recordRenameAlias: StoreMember<[sourceId: string, oldSlug: string, newSlug: string], void> = async (brain, sourceId, oldSlug, newSlug) => {
+  if (oldSlug === newSlug) return;
+  await storeCall({ member: 'recordRenameAlias', sourceId }, () => brain.recordRenameAlias(sourceId, oldSlug, newSlug));
 };
 
 export const setPageAliases: StoreMember<[slug: string, sourceId: string, aliasNorms: string[], opts?: { inline?: boolean }], void> =

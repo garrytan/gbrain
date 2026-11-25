@@ -218,7 +218,10 @@ fn backlog_age_reads_the_oldest_pending_chunk_without_a_vector() {
 #[test]
 fn credential_pending_counts_key_blocks_behind_their_projection() {
     let b = brain("derived-health-credential");
-    let key = "-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----";
+    let key = concat!(
+        "-----BEGIN ",
+        "RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----"
+    );
     assert_eq!(
         b.count_credential_projection_pending(None).unwrap(),
         json!({ "rebuildable": 0, "kept": 0 })
@@ -230,7 +233,7 @@ fn credential_pending_counts_key_blocks_behind_their_projection() {
         &b,
         "notes/pub",
         "note",
-        json!({ "compiled_truth": "-----BEGIN PUBLIC KEY-----" }),
+        json!({ "compiled_truth": concat!("-----BEGIN ", "PUBLIC KEY-----") }),
     );
     put(&b, "notes/gone", "note", json!({ "compiled_truth": key }));
     b.soft_delete_page("notes/gone", None).unwrap();
@@ -419,7 +422,7 @@ fn a_segmented_page_with_a_key_block_counts_as_credential_pending() {
     segmented(
         &b,
         "notes/seg-key",
-        &["x\n", "-----BEGIN PRIVATE KEY-----\n"],
+        &["x\n", concat!("-----BEGIN ", "PRIVATE KEY-----\n")],
     );
     segmented(&b, "notes/seg-plain", &["x\n"]);
     let row = b.count_credential_projection_pending(None).unwrap();

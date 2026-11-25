@@ -1661,6 +1661,37 @@
           }
         ]
       },
+      "clearCodeEdgesLeavingChunks": {
+        "default": [
+          {
+            "paramCount": 1,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          },
+          {
+            "paramCount": 1,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          },
+          {
+            "paramCount": 1,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
       "clearCodeTraversalCache": {
         "allSources": [
           {
@@ -5035,6 +5066,28 @@
             "via": "unsafe"
           }
         ],
+        "owner-contact": [
+          {
+            "paramCount": 11,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ],
+        "owner-contact-no-owner": [
+          {
+            "paramCount": 10,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ],
         "sourceId": [
           {
             "paramCount": 4,
@@ -5348,6 +5401,19 @@
           }
         ]
       },
+      "listSourcePathRows": {
+        "default": [
+          {
+            "paramCount": 0,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": true
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
       "listSourceRoutingRows": {
         "default": [
           {
@@ -5393,6 +5459,19 @@
               "cancelFence": false,
               "prepare": true,
               "simple": true
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "lockSourceForUpdate": {
+        "default": [
+          {
+            "paramCount": 1,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
             },
             "via": "unsafe"
           }
@@ -5580,6 +5659,43 @@
         "default": [
           {
             "paramCount": 1,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "readSourcesNotReadable": {
+        "default": [
+          {
+            "paramCount": 2,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ],
+        "factsFloor": [
+          {
+            "paramCount": 3,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "renameSource": {
+        "default": [
+          {
+            "paramCount": 2,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,

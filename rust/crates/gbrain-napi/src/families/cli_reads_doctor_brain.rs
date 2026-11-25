@@ -45,4 +45,40 @@ impl Brain {
             s.list_visibility_candidate_pages(source_ids.as_deref())
         })
     }
+
+    /// `listContentBlockedReceipts()`: the failed request each unfinished managed-sync cursor waits on.
+    #[napi]
+    pub fn list_content_blocked_receipts<'env>(
+        &self,
+        env: &'env Env,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_content_blocked_receipts())
+    }
+
+    /// `countVisibilityNoncanonicalHolds` / `countReadersNoncanonicalHolds`: the holds of `holdOp`
+    /// recording `code` for an unarchived source at its incarnation.
+    #[napi]
+    pub fn count_noncanonical_holds<'env>(
+        &self,
+        env: &'env Env,
+        hold_op: String,
+        code: String,
+        source_ids: Option<Vec<String>>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.count_noncanonical_holds(&hold_op, &code, source_ids.as_deref())
+        })
+    }
+
+    /// `listReaderCandidatePages(sourceIds)`: live pages with a misspelled `readable_by` key.
+    #[napi]
+    pub fn list_reader_candidate_pages<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Option<Vec<String>>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_reader_candidate_pages(source_ids.as_deref())
+        })
+    }
 }
