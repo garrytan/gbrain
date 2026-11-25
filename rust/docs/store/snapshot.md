@@ -1,6 +1,6 @@
 # Store snapshot and copy verification
 
-The primitive the shadow restore drill and `gbrain backup` of a Rust brain share
+The primitive the shadow restore drill and `gbrain backup` of a Rust brain are to share; neither calls it yet
 (`docs/designs/RUST_ENGINE.md`, row 21b: "a Rust snapshot taken under the owner lock at one committed
 generation"). Code: `snapshot.rs`, `verify.rs`, `redb_kv.rs` (`RedbSink`), `seed/follow.rs`
 (`relation_digest_stream`); addon: `gbrain-napi/src/families/snapshot.rs`; owner side:
@@ -24,8 +24,11 @@ inside one read). The copy therefore holds exactly the commits up to N, on a sin
 the concurrent-writer layer alike; a commit made while it runs is in the source and not in the copy.
 Keys go in key order into a new `records.redb` in 64 MiB batches without a sync; one commit at the end
 writes N and syncs. While it runs, the read keeps redb's old pages, so a long copy of a busy brain grows
-the source file: the owner bounds that (see the TypeScript side). The read is dropped as soon as the
-source pass ends.
+the source file: the owner bounds that (`src/core/rust-engine/store-snapshot.ts`). It stops a copy when the free
+space of the target's or the brain's filesystem falls below its reserve or the copy runs past its age budget,
+and it refuses a copy asked for while the engine disconnects (and stops one already running). Each ends
+`rust_snapshot_stopped` (`disk_pressure`, `age_budget`, `cancelled`; `docs/guides/error-codes.md`). The read is
+dropped as soon as the source pass ends.
 
 **Threat model: the snapshot trusts only directories the caller's own user (or root) controls.** Before
 anything is created, every directory from `/` down to the target's parent must be owned by the current
@@ -46,7 +49,7 @@ reports `pinned`, false from that moment on. A cancel is checked for every entry
 including the relation digests of a seeded store, so the read is not held for the relations that remain.
 
 The directory is claimed once it is created: it is opened without following links, and it is refused
-(and left untouched) if it is not the empty directory just made. `FORMAT` and `SNAPSHOT.json` are
+if it is not the empty directory just made; a directory with anything in it is left untouched. `FORMAT` and `SNAPSHOT.json` are
 published through that handle, and the path is checked against it before the copy file is reopened and
 after the last publish, so a path swapped mid-copy makes the call fail and nothing is written elsewhere.
 
@@ -80,7 +83,7 @@ commits, so a correct copy would change before anyone compared it. Verification 
 no recovery and commits nothing, and refuses a file that was not closed cleanly (`store_io`).
 
 It reads the commit sequence, the format record, `FORMAT`, the schema version and every key in one
-snapshot, and recomputes the digests. With `expected`, every field must be equal and a tag that is missing
+snapshot, and recomputes the digests. With `expected`, every field but `created_at_us` must be equal and a tag that is missing
 or extra is a mismatch (`tag_missing:<hex>`, `tag_extra:<hex>`, `tag_digest:<hex>`). Without it (the copy
 of a stopped store, which has no manifest) the report states what the directory holds.
 
