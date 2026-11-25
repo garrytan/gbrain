@@ -132,7 +132,7 @@ listCatalogRelations	lifecycle	yes	1	no	yes	yes	serves
 readCatalogSchemaVersion	lifecycle	yes	1	no	yes	yes	serves
 listCatalogForeignKeys	lifecycle	yes	1	no	yes	yes	serves
 getPage	pages	yes	280	yes	yes	yes	serves
-readPageSnapshot	pages	yes	100	no	yes	yes	serves
+readPageSnapshot	pages	yes	101	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
 putPage	pages	yes	1324	yes	yes	yes	serves
@@ -401,11 +401,11 @@ listSweepDeferredPages	extraction	no	0	no	-	-	-
 listPageRefsForSlugs	extraction	yes	1	no	yes	yes	serves
 addLink	links	yes	165	yes	yes	yes	serves
 addLinksBatch	links	yes	41	yes	yes	yes	serves
-replaceDerivedLinks	links	yes	18	no	yes	yes	serves
+replaceDerivedLinks	links	yes	19	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
 removeLink	links	yes	3	no	yes	yes	serves
 removeLinksByPagesAndSource	links	yes	1	yes	yes	yes	serves
-getLinks	links	yes	40	yes	yes	yes	serves
+getLinks	links	yes	41	yes	yes	yes	serves
 getBacklinks	links	yes	15	yes	yes	yes	serves
 listLinkSources	links	yes	2	yes	yes	yes	serves
 findByTitleFuzzy	links	yes	5	no	yes	yes	serves
@@ -446,7 +446,7 @@ listDateBulletPages	timeline	yes	2	no	yes	yes	serves
 listConnectorFencePages	timeline	yes	2	no	yes	yes	serves
 addTimelineEntry	timeline	yes	85	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	4	no	yes	yes	serves
-getTimeline	timeline	yes	40	yes	yes	yes	serves
+getTimeline	timeline	yes	41	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	9	no	yes	yes	serves
 getSince	timeline	yes	11	no	yes	yes	serves
 getOnThisDay	timeline	yes	7	no	yes	yes	serves
