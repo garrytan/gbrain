@@ -9,6 +9,7 @@
 //! addon method and each `StoreError::code` into a JavaScript `Error.code`.
 
 pub mod access_derive;
+pub mod scope;
 mod access_flag;
 mod access_key_split;
 pub mod access_member_links;
@@ -49,7 +50,6 @@ pub mod pages;
 pub mod read_shared;
 pub mod redb_kv;
 pub mod retrieval_feedback;
-pub mod scope;
 pub mod search;
 pub mod seed;
 pub mod shared_skill_catalog;
