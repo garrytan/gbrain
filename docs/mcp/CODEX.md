@@ -81,7 +81,7 @@ sanctioned install location is preferred over PATH so a stray `gbrain` earlier
 on PATH can't shadow it).
 `full` is every operation (the seven memory verbs, page and bulk writes
 such as `put_pages`, graph and skill tools); the plugin keeps it because a plugin
-update rewrites existing installs (new `gbrain setup` registrations pin starter). The curated skills drive host-side work through the
+update rewrites existing installs (`gbrain setup codex` registers `full` too; new registrations for other harnesses pin starter). The curated skills drive host-side work through the
 `gbrain` CLI. A harness that caps its tool count can narrow every new session
 on this machine with `GBRAIN_SURFACE=starter` (or `verbs`) in the env that
 launches Codex, or use the bootstrap lane below. Unlike the OpenClaw bundle, the plugin ships the host-side skills
