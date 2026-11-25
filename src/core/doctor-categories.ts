@@ -318,6 +318,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'slug_path_mismatch',
   // #6729: inexact renames whose identity sync did not keep, until the pair gets a disposition (doctor/checks/rename-identity-downgrades.ts).
   'rename_identity_downgrades',
+  // Pages stored under an older spelling of their name, until `gbrain repair slug-spelling` moves them (doctor/checks/legacy-slug-spellings.ts).
+  'legacy_slug_spellings',
   // #6609: live pages of a classic checkout whose recorded file a full sync would not find (doctor/checks/missing-recorded-files.ts).
   'missing_recorded_files',
   // #7130: soft-deleted pages a managed sync removed although Git never held their file (doctor/checks/uncommitted-sync-deletions.ts).
