@@ -3,7 +3,12 @@ name: Release
 # Publishes a GitHub release for every VERSION bump that lands on master:
 # tag + title `v<VERSION>`, notes from that version's CHANGELOG.md entry,
 # compiled binaries attached (#3521), plus the skill resolver library bundle
-# for Node adapters (gbrain-skill-resolver.mjs, GBRA-377).
+# for Node adapters (gbrain-skill-resolver.mjs, GBRA-377), plus the optional
+# Rust engine addon for linux-x64-glibc and darwin-arm64 with its SHA-256
+# manifest (gbrain-engine-rust.sha256.json). The addon is not inside the
+# executables: `gbrain engine install rust` downloads the one this release
+# names and checks it against the manifest and the attestations made here
+# (src/core/rust-engine/addon-install.ts).
 #
 # Every release is published as a pre-release that never becomes GitHub's
 # "Latest": scripts/promote-stable.ts marks the stable release Latest, with
@@ -43,13 +48,23 @@ on:
   push:
     branches: [master]
     paths: [VERSION]
-  workflow_dispatch: {}  # backfill of the current VERSION while master HEAD is its release commit
+  # A dispatch with no input is the backfill of the current VERSION while master HEAD is its release commit.
+  # addon_dry_run=true builds, packages and checks the Rust engine addon, and builds, smoke-tests and runs the gbrain
+  # binaries as a fresh install, from the dispatched branch, and publishes nothing: ci-gate is skipped, so every publishing job (each needs ci-gate's publish == 'true', and each also
+  # checks !inputs.addon_dry_run) is skipped, no attestation is made, and the run has its own concurrency group.
+  workflow_dispatch:
+    inputs:
+      addon_dry_run:
+        description: Build and check the Rust engine addon and the gbrain binaries only; publish nothing (no release, tag, asset or attestation).
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: release
+  # A dry run never shares the release group, so it cannot queue behind or hold up a real release.
+  group: ${{ inputs.addon_dry_run && 'release-addon-dry-run' || 'release' }}
   cancel-in-progress: false
 
 jobs:
@@ -73,7 +88,7 @@ jobs:
           # can repair it.
           assets="$(gh release view "v$version" --repo "$GITHUB_REPOSITORY" \
             --json assets --jq '[.assets[].name] | sort | join(",")' 2>/dev/null || true)"
-          if [ "$assets" = "gbrain-darwin-arm64,gbrain-linux-x64,gbrain-skill-resolver.mjs,gbrain-skill-resolver.mjs.sha256" ]; then
+          if [ "$assets" = "gbrain-darwin-arm64,gbrain-engine-rust-darwin-arm64.node,gbrain-engine-rust-linux-x64-glibc.node,gbrain-engine-rust.sha256.json,gbrain-linux-x64,gbrain-skill-resolver.mjs,gbrain-skill-resolver.mjs.sha256" ]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "Release v$version already published with all assets — nothing to do."
           else
@@ -82,7 +97,8 @@ jobs:
 
   ci-gate:
     needs: version
-    if: needs.version.outputs.exists == 'false'
+    # Skipped on a dry run: its publish output is then empty, never 'true', and every publishing job needs 'true'.
+    if: needs.version.outputs.exists == 'false' && !inputs.addon_dry_run
     runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:
@@ -120,7 +136,9 @@ jobs:
 
   build:
     needs: [version, ci-gate]
-    if: needs.version.outputs.exists == 'false' && needs.ci-gate.outputs.publish == 'true'
+    # always(): on a dry run ci-gate is skipped, and the binaries are still built and smoke-tested from the
+    # dispatched branch (no attestation; the release job that publishes them stays skipped).
+    if: always() && needs.version.result == 'success' && (inputs.addon_dry_run || (needs.version.outputs.exists == 'false' && needs.ci-gate.outputs.publish == 'true'))
     strategy:
       matrix:
         include:
@@ -139,7 +157,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
-          ref: ${{ needs.ci-gate.outputs.sha }}
+          ref: ${{ inputs.addon_dry_run && github.sha || needs.ci-gate.outputs.sha }}
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
           bun-version: 1.4.4
@@ -167,7 +185,7 @@ jobs:
       # release runner is a flakier duplicate gate — it blocked the first
       # release on ambient-env tests (run 30698650484). The build job's gate
       # is the artifact itself: compile, then smoke-test the binary.
-      - run: bun build --compile --no-compile-autoload-bunfig --define GBRAIN_BUILD_COMMIT='"${{ github.sha }}"' --target=${{ matrix.target }} --outfile bin/${{ matrix.artifact }} src/cli.ts src/core/skills/resolver/hook-worker.ts
+      - run: bun build --compile --bytecode --format=esm --no-compile-autoload-bunfig --define GBRAIN_BUILD_COMMIT='"${{ github.sha }}"' --target=${{ matrix.target }} --outfile bin/${{ matrix.artifact }} src/cli.ts src/core/skills/resolver/hook-worker.ts
       - name: Verify Darwin executable signature before execution
         if: runner.os == 'macOS'
         run: codesign --verify --strict --verbose=2 "bin/${{ matrix.artifact }}"
@@ -188,20 +206,208 @@ jobs:
           v="$(tr -d '[:space:]' < VERSION)"
           case "$out" in *"$v"*) echo "version matches VERSION file" ;; *) echo "binary version '$out' does not contain '$v'" >&2; exit 1 ;; esac
       - name: Attest build provenance
+        if: ${{ !inputs.addon_dry_run }}
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373  # v4.1.1
         with:
           subject-path: bin/${{ matrix.artifact }}
+      # Dry run only: the binary runs from an empty directory with a fresh home, as a downloaded install does.
+      - name: Run the binary as an install from an empty directory (dry run)
+        if: ${{ inputs.addon_dry_run }}
+        run: |
+          # Real path: on macOS mktemp gives /var/folders/..., and /var is a symlink gbrain refuses.
+          d="$(cd "$(mktemp -d)" && pwd -P)"
+          cp "bin/${{ matrix.artifact }}" "$d/gbrain"
+          cd "$d"
+          env -i PATH=/usr/bin:/bin HOME="$d" GBRAIN_HOME="$d" ./gbrain --version
+          env -i PATH=/usr/bin:/bin HOME="$d" GBRAIN_HOME="$d" ./gbrain init --pglite --no-embedding --non-interactive --json > init.json
+          env -i PATH=/usr/bin:/bin HOME="$d" GBRAIN_HOME="$d" ./gbrain doctor --json > doctor.json
+          grep -q '"checks"' doctor.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: ${{ matrix.artifact }}
           path: bin/${{ matrix.artifact }}
+
+  # The optional Rust engine addon (docs/designs/RUST_ENGINE.md, decision D4), built from the gated
+  # SHA on a native runner for each target a release publishes (RELEASE_ADDON_TARGETS in
+  # src/core/rust-engine/addon-manifest.ts). No build cache: the published bytes come from a clean
+  # build. A failed build blocks the release (decision D22). The Linux addon is built on Ubuntu 22.04,
+  # so it loads on glibc 2.35 and newer.
+  rust-addon:
+    needs: [version, ci-gate]
+    # always(): on a dry run ci-gate is skipped, and the build still runs; on a release it needs publish == 'true'.
+    if: always() && needs.version.result == 'success' && (inputs.addon_dry_run || (needs.version.outputs.exists == 'false' && needs.ci-gate.outputs.publish == 'true'))
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            addon_target: linux-x64-glibc
+          - os: macos-26
+            addon_target: darwin-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          ref: ${{ needs.ci-gate.outputs.sha || github.sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.4
+      # rustup reads the pinned version from rust/rust-toolchain.toml, as in rust-engine.yml.
+      - name: Install the pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v rustup >/dev/null 2>&1; then
+            echo "::error::rustup is not installed on this runner. Use a runner image that ships rustup."
+            exit 1
+          fi
+          channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$GITHUB_WORKSPACE/rust/rust-toolchain.toml")"
+          test -n "$channel"
+          rustup toolchain install "$channel" --profile minimal
+          rustup default "$channel"
+          rustc --version
+      - name: Build the addon
+        run: bun run rust:build
+      - name: Stage the addon under its release name
+        run: bun rust/scripts/release-addon.ts stage --target "${{ matrix.addon_target }}" --out rust-addon
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: gbrain-engine-rust-${{ matrix.addon_target }}
+          path: rust-addon/
+          if-no-files-found: error
+
+  # Writes gbrain-engine-rust.sha256.json and attests it with both addons. The attestation is made
+  # here because gbrain accepts only provenance whose builder is this workflow on master
+  # (EXPECTED_BUILDER_IDS in src/core/binary-self-update.ts). When the previous release published
+  # addons with the same engine_build (rust/ unchanged) and they pass their attestation check, their
+  # bytes are published again, so installed addons and the shadow evidence that names them stay valid.
+  rust-addon-package:
+    needs: [version, ci-gate, rust-addon]
+    if: always() && needs.rust-addon.result == 'success' && (inputs.addon_dry_run || (needs.version.outputs.exists == 'false' && needs.ci-gate.outputs.publish == 'true'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write      # for attest-build-provenance (Sigstore OIDC)
+      attestations: write  # for attest-build-provenance
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          ref: ${{ needs.ci-gate.outputs.sha || github.sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+        with:
+          pattern: gbrain-engine-rust-*
+          path: built
+      - name: Fetch the previous release's addons, when they exist and are attested
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p previous
+          prev="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=30" \
+            --jq '.[] | select(.draft | not) | select(any(.assets[]; .name == "gbrain-engine-rust.sha256.json")) | .tag_name' \
+            | grep -vxF "v$RELEASE_VERSION" | head -n 1 || true)"
+          if [ -z "$prev" ]; then
+            echo "No earlier release publishes the Rust engine addon; publishing the new build."
+            exit 0
+          fi
+          if ! gh release download "$prev" --repo "$GITHUB_REPOSITORY" --dir previous --pattern 'gbrain-engine-rust*'; then
+            echo "::warning::could not download the addons of $prev; publishing the new build"
+            rm -rf previous && mkdir previous
+            exit 0
+          fi
+          for f in previous/*; do
+            # Only this workflow on master is trusted, as in EXPECTED_BUILDER_IDS: a run of release.yml from any other
+            # branch also attests, so the identity and the source ref are both pinned.
+            if ! gh attestation verify "$f" --repo "$GITHUB_REPOSITORY" --source-ref refs/heads/master \
+              --cert-identity "https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@refs/heads/master" >/dev/null; then
+              echo "::warning::$f of $prev has no attestation from this workflow; publishing the new build"
+              rm -rf previous && mkdir previous
+              exit 0
+            fi
+          done
+          echo "Previous addons: $prev"
+      - name: Write the manifest
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: bun rust/scripts/release-addon.ts package --meta-dir built --version "$RELEASE_VERSION" --out rust-addon --previous previous
+      - name: Attest build provenance
+        if: ${{ !inputs.addon_dry_run }}
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373  # v4.1.1
+        with:
+          subject-path: |
+            rust-addon/gbrain-engine-rust-linux-x64-glibc.node
+            rust-addon/gbrain-engine-rust-darwin-arm64.node
+            rust-addon/gbrain-engine-rust.sha256.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: gbrain-engine-rust
+          path: |
+            rust-addon/gbrain-engine-rust-linux-x64-glibc.node
+            rust-addon/gbrain-engine-rust-darwin-arm64.node
+            rust-addon/gbrain-engine-rust.sha256.json
+          if-no-files-found: error
+
+  # Dry run only: installs the packaged addon through the real installer (served as the release asset) and opens it
+  # with the real loader and no GBRAIN_RUST_ENGINE_ADDON, on each target's own runner. Read-only token.
+  rust-addon-dry-run-check:
+    needs: [rust-addon-package]
+    if: always() && inputs.addon_dry_run && needs.rust-addon-package.result == 'success'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            addon_target: linux-x64-glibc
+          - os: macos-26
+            addon_target: darwin-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.4
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+        with:
+          name: gbrain-engine-rust
+          path: rust-addon
+      - name: Install the packaged addon and load it with no override
+        shell: bash
+        env:
+          GBRAIN_TEST_RUST_ADDON_REQUIRED: '1'
+          ADDON_TARGET: ${{ matrix.addon_target }}
+        run: |
+          set -euo pipefail
+          unset GBRAIN_RUST_ENGINE_ADDON
+          want="$(jq -r --arg t "$ADDON_TARGET" '.targets[$t].sha256' rust-addon/gbrain-engine-rust.sha256.json)"
+          got="$(shasum -a 256 "rust-addon/gbrain-engine-rust-$ADDON_TARGET.node" | cut -d' ' -f1)"
+          test "$want" = "$got"
+          mkdir -p rust/target/addon
+          cp "rust-addon/gbrain-engine-rust-$ADDON_TARGET.node" "rust/target/addon/gbrain_engine.$ADDON_TARGET.node"
+          bun test --timeout=60000 test/rust-engine-addon-install.test.ts
 
   skill-resolver-bundle:
     # GBRA-377: the skill resolver library as one dependency-free ES module for
     # Node adapters (docs/guides/skill-resolver.md#library). Built from the gated
     # SHA and smoke-tested under Node before it is attached with its sha256.
     needs: [version, ci-gate]
-    if: needs.version.outputs.exists == 'false' && needs.ci-gate.outputs.publish == 'true'
+    if: needs.version.outputs.exists == 'false' && needs.ci-gate.outputs.publish == 'true' && !inputs.addon_dry_run
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -226,8 +432,8 @@ jobs:
             bundle/gbrain-skill-resolver.mjs.sha256
 
   release:
-    needs: [version, ci-gate, build, skill-resolver-bundle]
-    if: needs.version.outputs.exists == 'false' && needs.ci-gate.outputs.publish == 'true'
+    needs: [version, ci-gate, build, skill-resolver-bundle, rust-addon-package]
+    if: needs.version.outputs.exists == 'false' && needs.ci-gate.outputs.publish == 'true' && !inputs.addon_dry_run
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -282,6 +488,9 @@ jobs:
           files: |
             artifacts/gbrain-darwin-arm64/gbrain-darwin-arm64
             artifacts/gbrain-linux-x64/gbrain-linux-x64
+            artifacts/gbrain-engine-rust/gbrain-engine-rust-linux-x64-glibc.node
+            artifacts/gbrain-engine-rust/gbrain-engine-rust-darwin-arm64.node
+            artifacts/gbrain-engine-rust/gbrain-engine-rust.sha256.json
             artifacts/gbrain-skill-resolver.mjs/gbrain-skill-resolver.mjs
             artifacts/gbrain-skill-resolver.mjs/gbrain-skill-resolver.mjs.sha256
       # [C1 = D6-A] `latest-stable` is the alpha channel's ref: the alpha
@@ -306,12 +515,66 @@ jobs:
           RELEASE_SHA: ${{ needs.ci-gate.outputs.sha }}
         run: git push origin "+${RELEASE_SHA}:refs/tags/latest-stable"
 
+  # After publication: the executable users download installs the published Rust engine addon the
+  # way a user does (`gbrain engine install rust`: download, SHA-256 and attestation checks), then
+  # opens a new Rust brain with it and no GBRAIN_RUST_ENGINE_ADDON. It runs after the release is up,
+  # so a broken addon turns this run red but does not unpublish the release; stable promotion is
+  # gated separately (promote-stable.yml). The install reads attestations from the unauthenticated
+  # GitHub API, so it retries a rate-limited read.
+  rust-addon-smoke:
+    needs: [version, ci-gate, release]
+    if: needs.version.outputs.exists == 'false' && needs.ci-gate.outputs.publish == 'true' && !inputs.addon_dry_run
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            executable: gbrain-linux-x64
+          - os: macos-26
+            executable: gbrain-darwin-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Install the published addon with the published executable and open a Rust brain
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          EXECUTABLE: ${{ matrix.executable }}
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/rust-addon-smoke"
+          mkdir -p "$work"
+          gh release download "v$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" --dir "$work" --pattern "$EXECUTABLE"
+          gbrain="$work/$EXECUTABLE"
+          chmod +x "$gbrain"
+          unset GBRAIN_RUST_ENGINE_ADDON
+          export GBRAIN_HOME="$work/home"
+          mkdir -p "$GBRAIN_HOME/.gbrain"
+          ok=0
+          for _ in 1 2 3; do
+            if "$gbrain" engine install rust --json > "$work/install.json"; then ok=1; break; fi
+            cat "$work/install.json"
+            sleep 60
+          done
+          cat "$work/install.json"
+          test "$ok" = 1
+          printf '{"engine":"rust","database_path":"%s"}\n' "$GBRAIN_HOME/.gbrain/brain.rust" > "$GBRAIN_HOME/.gbrain/config.json"
+          # The first command opens, and so creates, the Rust brain with the installed addon.
+          "$gbrain" stats --json
+          "$gbrain" engine status --json --probe > "$work/status.json"
+          cat "$work/status.json"
+          jq -e '.rust_addon.installed == true and .rust_addon.override == false and .probe.ok == true' "$work/status.json"
+          echo "the published addon installed and opened a Rust brain"
+
   # The production soak on the new tag's exact tree. Its search speed gate decides
   # whether this release may reach stable (docs/RELEASING.md#search-speed-gate).
   # A workflow_dispatch from GITHUB_TOKEN starts a run, unlike its tag push.
   soak:
     needs: [version, ci-gate, release]
-    if: needs.version.outputs.exists == 'false' && needs.ci-gate.outputs.publish == 'true'
+    if: needs.version.outputs.exists == 'false' && needs.ci-gate.outputs.publish == 'true' && !inputs.addon_dry_run
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -340,7 +603,7 @@ jobs:
   # Documented in docs/RELEASING.md.
   publish-template:
     needs: [version, ci-gate, release]
-    if: needs.version.outputs.exists == 'false' && needs.ci-gate.outputs.publish == 'true'
+    if: needs.version.outputs.exists == 'false' && needs.ci-gate.outputs.publish == 'true' && !inputs.addon_dry_run
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -447,7 +710,7 @@ jobs:
   # installs. Same trust model as the force-advanced latest-stable tag.
   publish-codex-plugin:
     needs: [version, ci-gate, release]
-    if: needs.version.outputs.exists == 'false' && needs.ci-gate.outputs.publish == 'true'
+    if: needs.version.outputs.exists == 'false' && needs.ci-gate.outputs.publish == 'true' && !inputs.addon_dry_run
     runs-on: ubuntu-latest
     permissions:
       contents: write  # force-push the codex-plugin branch of THIS repo

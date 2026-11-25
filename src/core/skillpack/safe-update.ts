@@ -235,7 +235,7 @@ export function defaultValidator(skillsRoot: string): (root: string, slug: strin
     const content = readFileSync(confinedSkillChildWrite(root, `${slug}/SKILL.md`, { dryRun: true }), 'utf-8');
     const fm = content.startsWith('---') ? parseSkillFrontmatter(content) : null;
     if (!fm?.name) problems.push(`conformance: ${slug}/SKILL.md has no frontmatter with a name`);
-    if (fm?.triggers?.length && !loadSkillTriggerIndex(root).some(e => e.skillPath === `${slug}/SKILL.md` || e.skillPath.endsWith(`/${slug}/SKILL.md`))) {
+    if (fm?.triggers?.length && !fm.deprecated && !loadSkillTriggerIndex(root).some(e => e.skillPath === `${slug}/SKILL.md` || e.skillPath.endsWith(`/${slug}/SKILL.md`))) {
       problems.push(`trigger check: ${slug} declares triggers but the trigger index does not route to it`);
     }
     if (baseline !== null) {

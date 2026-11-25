@@ -139,7 +139,7 @@ test('listPurgeProbeItems names the rows of a named probe, 20 at most, in byte o
  * sha256 of the 101 statements (text, params, lane) the plan and dry run below send: the 99 recorded before the move, plus
  * the learning_items.subject_slug probe (its statement_timeout and its bounded count, on the transaction, after ingest_log)
  * that master #10193 added to src/core/deletion-inventory.ts. The withdrawal-discovery key read also matches
- * gbrain_fact_fingerprint_v2 (migration v339, segment-pending-stamp), which changes the digest.
+ * gbrain_fact_fingerprint_v2 (migration v341, segment-pending-stamp), which changes the digest.
  */
 const SEQUENCE_SHA256 = "cfd632242d68cb5af88173307fdf3d06ff5ff6f8c50e141f3ca62682012d95cc";
 

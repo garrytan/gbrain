@@ -31,6 +31,7 @@ import type {
 import { requiresSafeChunks } from '../../search/safe-chunks.ts';
 import { storePagePolicy } from './private-provenance.ts';
 import { toChunk } from '../store-codec.ts';
+import { TrustFloorError } from '../../engine-errors.ts';
 import { namedSourceIds, refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 
 // The SQL engines never read these read-policy keys in these statements, so the store ignores them too. An MCP
@@ -121,6 +122,9 @@ function int32Ids(member: string, ids: readonly number[]): number[] {
  * (`requiresSafeChunks`) the chunker-version fence.
  */
 function wireScope(member: string, o: Record<string, unknown>, code: boolean) {
+  // A floor that is not text names no trust tier (the store's own refusal covers a text one): refuse it here the same way,
+  // before the napi call turns a number into a decoding error (#10276).
+  if (o.minTrust && typeof o.minTrust !== 'string') throw new TrustFloorError(o.minTrust);
   const dropSource = code && !!o.allSources && o.sourceIds === undefined;
   return {
     sourceId: dropSource ? undefined : o.sourceId,

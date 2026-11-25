@@ -235,7 +235,7 @@ export const BEHAVIOR_CHANGES: ReadonlyArray<{ since: string; text: ChangeText; 
     if (remote) return 'A chat fallback chain is configured on this brain host: when a chat call\'s own model fails it is retried on other models. Its entries and providers are visible to the brain host operator in gbrain doctor --only chat_fallback_chain.';
     return `chat_fallback_chain is live (set in ${CHAT_FALLBACK_PLANE_LABEL[chain.plane]}): when a chat call's own model fails${chain.onRefusal ? ' or refuses' : ''}, gbrain retries it on ${chain.entries.join(', ')}, so ${chain.providers.length ? chain.providers.join(', ') : 'those providers'} receive that traffic. ` +
       (chain.onRefusal
-        ? 'It falls back on refusals as well as errors, so content one provider refused is sent to the next; `gbrain config set chat_fallback_on_refusal false` keeps outage fallback only.'
+        ? 'It falls back on refusals as well as errors, so content one provider refused is sent to the next; removing the true value of chat_fallback_on_refusal, or setting it to false, where it is set keeps outage fallback only (gbrain doctor --only chat_fallback_chain names where).'
         : 'chat_fallback_on_refusal is false, so it falls back on errors only.') +
       ' Removing the chain is optional; ask the user (gbrain doctor --only chat_fallback_chain has the per-plane steps).';
   } },

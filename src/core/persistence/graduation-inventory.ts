@@ -231,6 +231,7 @@ export const GRADUATION_INVENTORY: Inventory = {
     carry('wake_subscriptions', 'operational', 'Report-back watches (Wakeshift): open ones point at jobs minion_jobs carries and at Wakeshift subscriptions that outlive the move, so a wake still arrives after graduation.'),
     carry('wake_terms_acceptances', 'operational', 'Members\' acceptances of the operator\'s Wakeshift terms; dropping them would ask every member to agree again.'),
     carry('wanted_links', 'user_data', 'Unresolved authored links (wanted pages); the edge appears when the target page is written, so they are not re-derived without a full re-extraction.'),
+    carry('write_gate_hold_rechecks', 'operational', 'Held writes a purge kept for another page, waiting for the maintenance sweep to check them again; dropping them would leave a held write two side-by-side purges left behind in the database.'),
     carry('write_gate_holds', 'user_data', 'Facts and takes the write gate held for the owner\'s review (#5575); dropping them would lose content awaiting release or drop.'),
     carry('write_gate_receipts', 'user_data', 'Write-gate verdicts (flag/quarantine) per persisted row (#5575); dropping them would forget which agent-written instructions are unconfirmed.'),
 
