@@ -42,7 +42,7 @@ export async function runShadowCaptureCommand(rest: string[], io: ShadowCaptureI
   const [action, ...flags] = rest;
   if (action === 'on') {
     if (!flags.includes('--yes')) {
-      io.out(`Capture records every call this brain makes to its storage engine (reads and writes, with their arguments) into\n${cap}/ (owner-only files). Nothing leaves this machine. This release only records: there is no replay yet.\nRestart long-running gbrain processes (serve, MCP) afterwards: only engines opened after capture is on record.\nRun again with --yes to turn it on.`);
+      io.out(`Capture records every call this brain makes to its storage engine (reads and writes, with their arguments) into\n${cap}/ (owner-only files). Nothing leaves this machine. This release only records: there is no replay yet.\nRestart any long-running serve or MCP process afterwards: only engines opened after capture is on record.\nRun again with --yes to turn it on.`);
       return 1;
     }
     const { purgeIfLogChanged, purgePending, readEpoch, startEpoch } = await import('../shadow/capture.ts');

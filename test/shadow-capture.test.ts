@@ -24,6 +24,7 @@ import {
 import { captureDir, captureOffMarker, writePrivateJson } from '../src/shadow/capture-state.ts';
 import { acquireReplayLock } from '../src/shadow/capture-lock.ts';
 import { decodeValue, encodeArgs } from '../src/shadow/codec.ts';
+import { configDir } from '../src/core/config.ts';
 
 const dirs: string[] = [];
 const tmp = () => { const d = mkdtempSync(join(tmpdir(), 'gbrain-capture-')); dirs.push(d); return d; };
@@ -86,11 +87,14 @@ function fakeEngine(opts: { wrongRename?: boolean; dropAliases?: boolean; dropWr
 }
 
 /** A capture dir with a recording epoch and an empty purge-log home. */
-function recordingCapture(): { cap: string; home: string; shadowDir: string } {
+/**
+ * A capture that is on with a recording epoch. `defaultHome`: its purge baseline comes from the default config home,
+ * the one `capture on` reads, for tests that run the command (otherwise a private temporary home).
+ */
+function recordingCapture(opts: { defaultHome?: boolean } = {}): { cap: string; home: string; shadowDir: string } {
   const root = tmp();
-  const home = join(root, 'home');
-  mkdirSync(home, { recursive: true });
-  writeFileSync(join(home, 'config.json'), '{}');
+  const home = opts.defaultHome ? configDir() : join(root, 'home');
+  if (!opts.defaultHome) { mkdirSync(home, { recursive: true }); writeFileSync(join(home, 'config.json'), '{}'); }
   const shadowDir = join(root, 'shadow', 'pglite-abc');
   const cap = captureDir(shadowDir);
   writePrivateJson(join(cap, 'state.json'), { version: 1, enabled: true, turned_on_at: '2026-11-22T00:00:00.000Z' });
@@ -450,7 +454,7 @@ describe('review round 1: consent, purge retry, seal accounting', () => {
 
   test('a purge whose deletion stopped part way (crash, undeletable file) is finished by the next check and before capture on', async () => {
     for (const via of ['check', 'capture on'] as const) {
-      const { cap, shadowDir } = recordingCapture();
+      const { cap, shadowDir } = recordingCapture({ defaultHome: true });
       const p = readEpoch(cap)!;
       writeFileSync(join(epochDir(cap, p.id), 'p.jsonl'), `${JSON.stringify({ args: [PRIVATE.slug] })}\n`);
       writePrivateJson(join(cap, 'epoch.json'), { ...p, state: 'invalidated', reason: 'purge' }); // the crash came right after this write
@@ -470,7 +474,7 @@ describe('review round 1: consent, purge retry, seal accounting', () => {
   });
 
   test('a call that started while capture was off is never recorded, even if it finishes after capture is on again', async () => {
-    const { cap, shadowDir, home } = recordingCapture();
+    const { cap, shadowDir, home } = recordingCapture({ defaultHome: true });
     writeFileSync(captureOffMarker(cap), 'off\n');
     const writer = new CaptureWriter(cap, home, {});
     const { e, release } = slowEngine();
@@ -484,7 +488,7 @@ describe('review round 1: consent, purge retry, seal accounting', () => {
   });
 
   test('capture off then on starts a fresh recording; on while already on keeps it', async () => {
-    const { cap, shadowDir } = recordingCapture();
+    const { cap, shadowDir } = recordingCapture({ defaultHome: true });
     const first = readEpoch(cap)!.id;
     const { runShadowCaptureCommand } = await import('../src/commands/engine-shadow-capture.ts');
     await runShadowCaptureCommand(['on', '--yes'], captureIo(shadowDir) as never);
@@ -632,6 +636,7 @@ describe('purge and delete paths (guard)', () => {
     const files = ['shadow/capture.ts', 'shadow/capture-state.ts', 'shadow/capture-lock.ts', 'commands/engine-shadow-capture.ts', 'commands/engine-shadow.ts'];
     const fns: Array<{ file: string; name: string; body: string }> = [];
     for (const f of files) {
+      // test-reads-source-ok[structural]: the guarantee covers every purge and delete path in the source, including ones a future change adds, so the guard lists them from the source text.
       const text = readFileSync(join(root, f), 'utf8');
       // Each top-level function runs from its declaration to the next top-level declaration (one-liners included).
       const starts = [...text.matchAll(/^(?:export )?(?:async )?function (\w+)/gm)];
