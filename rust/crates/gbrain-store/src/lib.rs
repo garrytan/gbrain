@@ -9,6 +9,7 @@
 //! addon method and each `StoreError::code` into a JavaScript `Error.code`.
 
 pub mod access_derive;
+pub mod lock_skips;
 mod access_flag;
 mod access_key_split;
 pub mod access_member_links;
@@ -463,7 +464,7 @@ impl Store {
         } else {
             kv
         };
-        let serialized_transactions = kv.serializes_explicit_transactions();
+        let kv_serializes = kv.serializes_explicit_transactions();
         let snapshot = kv.snapshot()?;
         let stored: Option<StoredFormat> = get_json(&*snapshot, &keys::meta("format"))?;
         drop(snapshot);
@@ -532,7 +533,9 @@ impl Store {
                 schema_version,
                 created,
                 multiuser,
-                serialized_transactions,
+                // Multi-user mode runs explicit transactions optimistically (I-1, I-8): they no
+                // longer hold the writer.
+                serialized_transactions: kv_serializes && !multiuser,
             },
             bound: None,
             flights: Arc::default(),
@@ -677,26 +680,38 @@ impl Store {
     }
 
     /// The `serialized_transactions` capability: true while explicit transactions hold the store's
-    /// writer ([`kv::Kv::serializes_explicit_transactions`]). True in both store modes today.
+    /// writer ([`kv::Kv::serializes_explicit_transactions`]) and the brain is not in multi-user mode,
+    /// whose explicit transactions run optimistically (interface I-8). True in both store modes with
+    /// multi-user mode off.
     pub fn serialized_transactions(&self) -> bool {
-        self.kv.serializes_explicit_transactions()
+        self.kv.serializes_explicit_transactions() && !self.multiuser
     }
 
     /// The one assertion a lock skip calls. On this path a SQL engine takes a lock (a row lock, an
     /// advisory lock, `SKIP LOCKED`, a page-key lock) and the store takes none: while explicit
     /// transactions hold the writer (`serialized_transactions`), no other commit lands inside the
-    /// caller's transaction. On a store without that capability it refuses
-    /// `engine_capability_missing` naming `site`, before anything is read or written, so a skip
-    /// never races. Every call site is counted by `test/serialized-transactions-guard.test.ts`.
+    /// caller's transaction. In multi-user mode (optimistic explicit transactions) the skip passes
+    /// only when the site has a guarantee proven under that mode ([`lock_skips::MULTIUSER_PROVEN`]:
+    /// a read validated at commit, a compare-and-set, a single-flight key, a commutative counter).
+    /// Otherwise it refuses `engine_capability_missing` naming `site`, before anything is read or
+    /// written, so a skip never races. Every call site is counted by
+    /// `test/serialized-transactions-guard.test.ts`.
     pub fn assert_serialized_transactions(&self, site: &str) -> Result<()> {
         if self.serialized_transactions() {
             return Ok(());
         }
+        let optimistic = self.multiuser && self.kv.serializes_explicit_transactions();
+        if optimistic && lock_skips::proven(site).is_some() {
+            return Ok(());
+        }
+        let why = if optimistic {
+            "has no guarantee proven under multi-user mode, whose explicit transactions run optimistically"
+        } else {
+            "skips a lock that only explicit transactions holding the store's writer make safe, and this store does not serialize explicit transactions"
+        };
         Err(StoreError::new(
             error::ENGINE_CAPABILITY_MISSING,
-            format!(
-                "serialized_transactions: {site} skips a lock that only explicit transactions holding the store's writer make safe, and this store does not serialize explicit transactions"
-            ),
+            format!("serialized_transactions: {site} {why}"),
         ))
     }
 

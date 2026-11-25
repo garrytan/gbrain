@@ -8,6 +8,7 @@
  */
 import { opError, type OperationError } from '../ops/contract.ts';
 import type { Capability } from '../engine-capabilities.ts';
+import { provenUnderMultiuser } from './lock-skip-guarantees.ts';
 
 /** What a refusal left behind: `none` when the check ran before any work. */
 export type CapabilityOutcome = 'none' | 'partial' | 'unknown';
@@ -64,7 +65,10 @@ export function requireTransactions(engine: object, step: string, why: string): 
  */
 export function assertSerializedTransactions(engine: object, site: string): void {
   const caps = (engine as { capabilities?: ReadonlySet<Capability> }).capabilities;
-  if (!caps || !caps.has('serialized_transactions')) throw capabilityMissing('serialized_transactions', site);
+  if (caps?.has('serialized_transactions')) return;
+  // Multi-user mode: optimistic explicit transactions; only a skip with a proven guarantee runs (lock-skip-guarantees.ts).
+  if (caps?.has('multi_writer') && provenUnderMultiuser(site)) return;
+  throw capabilityMissing('serialized_transactions', site);
 }
 
 /**

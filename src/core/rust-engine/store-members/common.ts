@@ -8,6 +8,7 @@ import { capabilityMissing } from '../errors.ts';
 import { RUST_ENGINE_MEMBERS } from '../members.ts';
 import { mapStoreError, type StoreErrorContext } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
+import { provenUnderMultiuser } from '../lock-skip-guarantees.ts';
 
 /** A member implemented on the store: `brain` first, then the arguments of the BrainEngine member it serves. */
 export type StoreMember<Args extends unknown[], R> = (brain: StoreBrain, ...args: Args) => Promise<R>;
@@ -49,10 +50,13 @@ export function refuseMember(member: string, what: string): never {
  * later store call would otherwise acknowledge a lock on a transaction that already ended.
  * Every call site is counted by test/serialized-transactions-guard.test.ts.
  */
-export function assertStoreSerializedTransactions(brain: Pick<StoreBrain, 'serializedTransactions'>, member: string): void {
+export function assertStoreSerializedTransactions(brain: Pick<StoreBrain, 'serializedTransactions'> & { readonly multiuser?: boolean }, member: string): void {
   const serialized = brain.serializedTransactions;
   if (serialized === null) throw mapStoreError({ code: 'store_closed' }, { member });
-  if (serialized !== true) throw capabilityMissing('serialized_transactions', member);
+  if (serialized === true) return;
+  // Multi-user mode: optimistic explicit transactions; only a skip with a proven guarantee runs (lock-skip-guarantees.ts).
+  if (brain.multiuser === true && provenUnderMultiuser(member)) return;
+  throw capabilityMissing('serialized_transactions', member);
 }
 
 /** Runs one store call and maps a rejection. `ctx` names the page and source for the errors that need them. */

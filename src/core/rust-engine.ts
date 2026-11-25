@@ -36,6 +36,7 @@ import { callEndCheck, installOwnerClient, untilCallEnds } from './rust-engine/o
 import { ownerWholeOperations } from './rust-engine/owner-ipc/owner-ops.ts';
 import type { OwnerServerStats } from './rust-engine/owner-ipc/server.ts';
 import { withAccessStore } from './rust-engine/access-self-check.ts';
+import { provenUnderMultiuser } from './rust-engine/lock-skip-guarantees.ts';
 
 /**
  * The empty async context: no request, job, deadline, signal or caller mark. The engine runs its election, and the
@@ -209,8 +210,10 @@ export class RustEngine implements BrainEngine {
     } else {
       caps.delete('serialized_transactions');
       // An open store that promises none cannot run the write journal: its transactions assert the capability
-      // (declarePersistence), so an owner must not advertise the journal it would refuse.
-      if (this._store) for (const c of NEEDS_SERIALIZED_TRANSACTIONS) caps.delete(c);
+      // (declarePersistence), so an owner must not advertise the journal it would refuse. In multi-user mode the
+      // journal's transaction skip passes once it is proven there (lock-skip-guarantees.ts), and the journal stays.
+      const journalProven = this._store?.multiuser === true && provenUnderMultiuser('declarePersistence');
+      if (this._store && !journalProven) for (const c of NEEDS_SERIALIZED_TRANSACTIONS) caps.delete(c);
     }
   }
 
