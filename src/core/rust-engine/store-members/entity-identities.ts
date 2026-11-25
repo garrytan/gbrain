@@ -79,8 +79,8 @@ export const readCanonicalTwin: StoreMember<[sourceId: string, slug: string], Ca
 
 /**
  * Duplicate finder read: live, unretired pages of the types in unarchived sources, the named keys only, keyset-paged,
- * narrowed to `members` and to pages with a `tokens` value. A row's `generation` is an equality token the store derives
- * from the page's knowledge revision (rust/docs/store/entity_identities.md): it changes when the page does, but does not grow.
+ * narrowed to `members` and to pages with a `tokens` value. A row's `generation` is the page's `pages.generation`, the counter
+ * the store keeps like the SQL engines' trigger (rust/docs/store/entity_identities.md).
  */
 export const listEntityKeyRows: StoreMember<[opts: EntityKeyRowsOpts], EntityKeyRow[]> = (brain, opts) =>
   storeCall({ member: 'listEntityKeyRows' }, () => brain.listEntityKeyRows({

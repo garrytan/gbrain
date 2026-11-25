@@ -410,6 +410,7 @@ mod tests {
             ("lib.rs", 4),
             ("occ_kv.rs", 4),
             ("page_body/purge_record.rs", 1),
+            ("page_generation_tests.rs", 2),
             ("redb_kv.rs", 4),
             ("seed/v0_60_766_tests.rs", 1),
             ("test_support.rs", 4),

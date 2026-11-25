@@ -54,7 +54,7 @@ pub mod cycle;
 pub mod doctor;
 mod embedding;
 /// Postgres `md5(text)`, for the timeline retraction check's version digests.
-pub(crate) use embedding::md5_hex;
+pub(crate) use embedding::{float4_out, md5_hex};
 pub mod extractor_classify;
 mod fence;
 mod fence_overlay;
@@ -816,6 +816,25 @@ pub(crate) fn count_unexpired(read: &dyn KvRead) -> Result<u64> {
         failure.is_none()
     })?;
     failure.map_or(Ok(count), Err)
+}
+
+/// `COALESCE(MAX(id), 0)` of the source's facts, expired and superseded ones included: the last key of the source's
+/// index, one reverse seek.
+pub(crate) fn highest_source_fact_id(read: &dyn KvRead, source_id: &str) -> Result<u64> {
+    let mut highest = 0;
+    scan_prefix(
+        read,
+        &text_key(BY_SOURCE, &[source_id]),
+        true,
+        &mut |k, _| {
+            highest = k
+                .get(k.len().saturating_sub(8)..)
+                .and_then(keys::be8)
+                .unwrap_or(0);
+            false
+        },
+    )?;
+    Ok(highest)
 }
 
 pub(crate) fn source_rows(read: &dyn KvRead, source_id: &str) -> Result<Vec<FactRecord>> {

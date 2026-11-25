@@ -4,10 +4,9 @@
 //! removes (`engine-sql/entity-keys.ts`, `engine-sql/identity-decisions.ts`, caller
 //! `entities/company-auto-link.ts`).
 //!
-//! Generation: the store keeps no per-page `pages.generation` counter. A page's generation here is
-//! the first 13 hex digits of its `knowledge_revision` (a UUID the store renews when the fields
-//! the generation trigger watches change), so it stays equal while the page is unchanged and
-//! differs after a change. It is an equality token only: unlike Postgres, it does not grow.
+//! Generation: a page's generation here is its real `pages.generation` (`page_generation.rs`), the counter the SQL
+//! engines' trigger keeps, so the fence an automatic group pins (`p.generation = pl.generation`) compares what Postgres
+//! compares.
 
 use crate::entity_identities::{
     IdentityRecord, all_records, group_key, group_pages, record, row_key,
@@ -73,15 +72,9 @@ pub struct AutoPlan {
     pub unlink: Vec<String>,
 }
 
-/// The page's generation token (module doc, "Generation").
+/// The page's generation as the group's pin and `listEntityKeyRows` carry it (a `bigint` of the SQL engines).
 pub(crate) fn generation(page: &PageRecord) -> i64 {
-    let hex: String = page
-        .knowledge_revision
-        .chars()
-        .filter(char::is_ascii_hexdigit)
-        .take(13)
-        .collect();
-    i64::from_str_radix(&hex, 16).unwrap_or(0)
+    i64::try_from(page.generation).unwrap_or(i64::MAX)
 }
 
 /// The texts one frontmatter value reads as (`jsonb_array_elements_text` over an array, the

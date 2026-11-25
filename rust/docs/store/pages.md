@@ -82,6 +82,24 @@ secondary indexes yet.
   the old or new body holds a facts or takes fence marker, else `LEAST(stored, 3)`, so old chunks are never certified.
   A seal (`sealChunks`, and the store's own indexing) writes 4.
 
+## Generation
+
+`pages.generation` is a per-page counter kept as the SQL engines' `bump_page_generation_fn` trigger keeps it
+(`page_generation.rs`): an insert takes the highest generation of every page (soft-deleted included) plus one; an update
+adds one when a watched column changes (`compiled_truth`, `timeline`, `frontmatter`, `deleted_at`, `title`, `type`,
+`page_kind`, `content_hash`, the contextual retrieval stamp, or `body_generation` while the body is NULL), and one
+statement adds at most one. Every page write goes through `pages::write_page`, which is one statement; `putPage` and
+`updatePageContextualRetrievalState` write the stamp and the page columns together, and a body flip writes the new
+`body_generation` with them, so each adds one in all. The page record holds the number (a record stored before it reads
+as 1) and the store keeps an index of it under `META`, one row per page record, live or soft-deleted:
+
+`M page_generation/<generation BE8><page id BE8>` -> empty
+
+written in the same write as the page change, rewritten when the generation moves and deleted with the page on a purge. The
+highest generation is the last key of the range. Store format 11 added it; the upgrade numbers the existing pages 1, 2,
+3, ... in id order ([format.md](format.md)). The reads it serves are in [question-reads.md](question-reads.md). An insert
+reads the range's last key, so concurrent writers (`OccKv`) that insert pages conflict and one retries.
+
 ## Nullable page fields
 
 PGLite lets four `pages` columns hold NULL, and the page record holds NULL in the same four (`PageText` and

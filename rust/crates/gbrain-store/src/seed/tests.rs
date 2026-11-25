@@ -69,19 +69,50 @@ fn page_row(id: &str, slug: &str) -> SeedRow {
     ])
 }
 
-/// A store with the default source and two pages (ids 7 and 9).
+/// A store with the default source and two pages (ids 7 and 9, generations 1 and 2: the numbers a format upgrade
+/// gives pages 7 and 9 in id order, so the old-seed test compares like with like).
 fn seeded_pages() -> Store {
     let s = store();
+    let mut second = page_row("9", "companies/acme-example");
+    second.insert("generation".into(), Some("2".into()));
     let r = import(
         &s,
         "pages",
-        vec![
-            page_row("7", "people/alice-example"),
-            page_row("9", "companies/acme-example"),
-        ],
+        vec![page_row("7", "people/alice-example"), second],
     );
     assert_eq!(r.imported, 2);
     s
+}
+
+#[test]
+fn a_seeded_page_keeps_the_primarys_generation_and_the_next_insert_takes_the_highest_plus_one() {
+    let s = seeded_pages();
+    {
+        let read = s.read().unwrap();
+        let generation = |id| read_page_by_id(&*read, id).unwrap().unwrap().generation;
+        assert_eq!((generation(7), generation(9)), (1, 2));
+        assert_eq!(crate::page_generation::highest(&*read).unwrap(), 2);
+        let mut rows = Vec::new();
+        crate::page_generation::for_each_from(&*read, 0, &mut |g, id| {
+            rows.push((g, id));
+            Ok(true)
+        })
+        .unwrap();
+        assert_eq!(rows, vec![(1, 7), (2, 9)]);
+    }
+    let input: crate::pages::PageInput =
+        serde_json::from_value(json!({"type": "note", "title": "n", "compiled_truth": "b"}))
+            .unwrap();
+    let page = s
+        .put_page(
+            "notes/after",
+            &input,
+            &crate::pages::PutPageOptions::default(),
+        )
+        .unwrap();
+    let read = s.read().unwrap();
+    let id = page["id"].as_u64().unwrap();
+    assert_eq!(read_page_by_id(&*read, id).unwrap().unwrap().generation, 3);
 }
 
 #[test]
@@ -334,7 +365,8 @@ fn pages_report_losses_and_unmapped_columns() {
     p.insert("compiled_truth".into(), None);
     let r = import(&s, "pages", vec![p]);
     assert_eq!(r.imported, 1);
-    assert_eq!(r.unmapped_columns, vec!["generation", "page_readers"]);
+    // `generation` is kept: the page record holds the primary's number.
+    assert_eq!(r.unmapped_columns, vec!["page_readers"]);
     assert_eq!(r.losses.get("emotional_weight_without_touch"), Some(&1));
     assert_eq!(r.losses.get("corpus_generation_without_mode"), Some(&1));
     assert_eq!(r.losses.get("segmented_body"), Some(&1));

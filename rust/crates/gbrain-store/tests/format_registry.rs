@@ -103,10 +103,12 @@ fn format_version_is_the_last_shipped_row() {
         shipped, FORMAT_VERSIONS,
         "the shipped rows must be exactly FORMAT_VERSIONS"
     );
+    // A reserved number is one this build does not open: above `FORMAT_VERSION`, or in a gap another branch claimed
+    // (a trunk that merges that branch ships its row).
     for row in rows.iter().filter(|row| row.status == "reserved") {
         assert!(
-            row.format > FORMAT_VERSION,
-            "format {} is reserved but this build already ships format {FORMAT_VERSION}",
+            !FORMAT_VERSIONS.contains(&row.format),
+            "format {} is reserved but this build opens it; mark its row shipped",
             row.format
         );
     }

@@ -34,11 +34,9 @@ async function gens(engine: BrainEngine, ids: Record<string, number>) {
   return { pages: Object.fromEntries(slugs.map(s => [s, byId.get(ids[s]!) ?? null])), clock: (await engine.readQuestionEvidenceClock('default')).generation };
 }
 
-const METHODS = ['putPage', 'lockQuestionEvidenceRows', 'readQuestionEvidenceClock'] as const;
-
 describe('the per-page generation counter on every engine', () => {
   parityTest('an insert takes the highest generation of the brain plus one', {
-    methods: [...METHODS, 'readQuestionPageRow'],
+    methods: ['putPage', 'lockQuestionEvidenceRows', 'readQuestionEvidenceClock', 'readQuestionPageRow'],
   }, async (engine) => {
     const ids: Record<string, number> = {};
     for (const slug of ['notes/a', 'notes/b', 'notes/c']) ids[slug] = (await engine.putPage(slug, page(slug))).id;
@@ -50,7 +48,7 @@ describe('the per-page generation counter on every engine', () => {
   });
 
   parityTest('a change to any watched column adds one, and a rewrite that changes none adds nothing', {
-    methods: METHODS,
+    methods: ['putPage', 'lockQuestionEvidenceRows', 'readQuestionEvidenceClock'],
   }, async (engine) => {
     const { id } = await engine.putPage('notes/a', page('a'));
     const ids = { 'notes/a': id };
@@ -78,7 +76,7 @@ describe('the per-page generation counter on every engine', () => {
   });
 
   parityTest('writes that change no watched column leave the generation alone', {
-    methods: [...METHODS, 'addTag', 'removeTag', 'updateSlug'],
+    methods: ['putPage', 'lockQuestionEvidenceRows', 'readQuestionEvidenceClock', 'addTag', 'removeTag', 'updateSlug'],
   }, async (engine) => {
     const { id } = await engine.putPage('notes/a', page('a'));
     const ids = { 'notes/b': id };
@@ -98,7 +96,7 @@ describe('the per-page generation counter on every engine', () => {
   });
 
   parityTest('one statement adds one generation however many watched columns it changes', {
-    methods: METHODS,
+    methods: ['putPage', 'lockQuestionEvidenceRows', 'readQuestionEvidenceClock'],
   }, async (engine) => {
     const { id } = await engine.putPage('notes/a', page('a'));
     await engine.putPage('notes/a', { ...page('another title', { compiled_truth: 'another body', timeline: '- 2026-01-01: x', frontmatter: { k: 'v' } }), type: 'person' } as never);
@@ -108,7 +106,7 @@ describe('the per-page generation counter on every engine', () => {
   });
 
   parityTest('a soft delete and a restore each add one; deleting a deleted page adds nothing', {
-    methods: [...METHODS, 'softDeletePage', 'restorePage'],
+    methods: ['putPage', 'lockQuestionEvidenceRows', 'readQuestionEvidenceClock', 'softDeletePage', 'restorePage'],
   }, async (engine) => {
     const { id } = await engine.putPage('notes/a', page('a'));
     await engine.putPage('notes/other', page('other'));
@@ -134,7 +132,7 @@ describe('the per-page generation counter on every engine', () => {
   });
 
   parityTest('purging the page that holds the highest generation frees its number for the next insert', {
-    methods: [...METHODS, 'deletePage'],
+    methods: ['putPage', 'lockQuestionEvidenceRows', 'readQuestionEvidenceClock', 'deletePage'],
   }, async (engine) => {
     const ids: Record<string, number> = {};
     for (const slug of ['notes/a', 'notes/b', 'notes/c']) ids[slug] = (await engine.putPage(slug, page(slug))).id;
@@ -154,7 +152,7 @@ describe('the per-page generation counter on every engine', () => {
   });
 
   parityTest('a purged soft-deleted page that held the highest generation frees its number too', {
-    methods: [...METHODS, 'softDeletePage', 'deletePage'],
+    methods: ['putPage', 'lockQuestionEvidenceRows', 'readQuestionEvidenceClock', 'softDeletePage', 'deletePage'],
   }, async (engine) => {
     const a = (await engine.putPage('notes/a', page('a'))).id;
     await engine.putPage('notes/b', page('b'));
@@ -170,7 +168,7 @@ describe('the per-page generation counter on every engine', () => {
   });
 
   parityTest('a contextual retrieval stamp is one watched change, alone or with a body change', {
-    methods: [...METHODS],
+    methods: ['putPage', 'lockQuestionEvidenceRows', 'readQuestionEvidenceClock'],
   }, async (engine) => {
     const { id } = await engine.putPage('notes/a', page('a'));
     const ids = { 'notes/a': id };
@@ -194,7 +192,7 @@ describe('the per-page generation counter on every engine', () => {
   });
 
   parityTest('stamping the contextual retrieval state alone adds one when it changes and nothing when it does not', {
-    methods: [...METHODS, 'updatePageContextualRetrievalState'],
+    methods: ['putPage', 'lockQuestionEvidenceRows', 'readQuestionEvidenceClock', 'updatePageContextualRetrievalState'],
   }, async (engine) => {
     const { id } = await engine.putPage('notes/a', page('a'));
     const ids = { 'notes/a': id };
@@ -213,7 +211,7 @@ describe('the per-page generation counter on every engine', () => {
   });
 
   parityTest('a segmented page: the shell insert, a publish, a republish that moves only the body generation, and a seal', {
-    methods: [...METHODS, 'createSegmentedPageShell', 'flipBodyGeneration', 'sealSegmentedPage'],
+    methods: ['putPage', 'lockQuestionEvidenceRows', 'readQuestionEvidenceClock', 'createSegmentedPageShell', 'flipBodyGeneration', 'sealSegmentedPage'],
   }, async (engine) => {
     await engine.putPage('notes/first', page('first'));
     const texts = [segmentText('# One\nfirst segment about quillwort\n'), segmentText('## Two\nsecond segment about heron\n')];

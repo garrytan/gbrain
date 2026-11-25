@@ -69,10 +69,10 @@ foreign key. An apply runs in one `Store::write`: the decision rows and the `ded
 or not at all, and applies run one at a time (the advisory lock of the SQL).
 
 The company sweep's automatic groups (`established_by` `dedupe:auto`, `src/core/entities/company-auto-link.ts`) are
-written by the same apply; the store module is `rust/crates/gbrain-store/src/identity_auto.rs`. The store keeps no
-per-page `pages.generation` counter: a row's `generation` is the first 13 hex digits of the page's `knowledge_revision`,
-which the store renews when the fields the generation trigger watches change. It is equal while the page is unchanged
-and differs after a change, which is all an automatic group's pin compares; unlike Postgres it does not grow.
+written by the same apply; the store module is `rust/crates/gbrain-store/src/identity_auto.rs`. A row's `generation` is
+the page's real `pages.generation` (`page_generation.rs`), the counter the SQL engines' trigger keeps, so an automatic
+group's pin (`p.generation = pl.generation`) compares what Postgres compares: it is equal while no watched column of the
+page changes, and unlike the `knowledge_revision` token it replaced, a tag change does not move it.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |

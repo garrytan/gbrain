@@ -38,12 +38,13 @@ pub mod occ_kv;
 mod owner_only;
 mod owner_only_marks;
 mod page_columns;
+mod page_generation;
+#[cfg(test)]
+mod page_generation_tests;
 mod page_index;
 mod page_projection;
 mod page_withdrawals;
 pub mod pages;
-#[cfg(test)]
-mod page_generation_tests;
 pub mod read_shared;
 pub mod redb_kv;
 pub mod search;
@@ -711,8 +712,9 @@ pub const DEFAULT_WRITE_GATE_DETECTOR_VERSION: u32 = 2;
 /// (`keyword/index_build.rs`), 4 to 5 rewrites nothing (a take stored before its trust tier
 /// reads `unknown`), so a format-4 brain keeps its postings, and 5 to 6 carries over the records
 /// the v0.60.766.0 addon's shadow seed kept in other shapes (`seed/format_5.rs`), 6 to 7 moves the
-/// loop mutes off the take purge prefix (`facts/key_split.rs`) and 7 to 8 moves the shared-skill
-/// token secret off the member links' prefix (`access_key_split.rs`). The format record is re-read inside the transaction:
+/// loop mutes off the take purge prefix (`facts/key_split.rs`), 7 to 8 moves the shared-skill
+/// token secret off the member links' prefix (`access_key_split.rs`), and an upgrade from any format before the current
+/// one gives every page a generation and an index row (`page_generation.rs`). The format record is re-read inside the transaction:
 /// another handle on the same records may have upgraded the brain first.
 fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
     let mut tx = kv.begin_write_exclusive()?;
@@ -774,6 +776,21 @@ fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
                 format!("store format {from} was not upgraded: sorting its token secret from its member links failed"),
                 format!(
                     "this brain (store format {from}) holds a record this build cannot sort into the access member links or the shared-skill token secret"
+                ),
+            )
+        })?;
+    }
+    // Format 11: every page record carries `generation` and has its index row. The upgrade runs from every earlier
+    // format, so this is the last step and runs for any brain below `FORMAT_VERSION`. A record it cannot read refuses
+    // the brain, naming the record.
+    if stored.format_version < FORMAT_VERSION {
+        let from = stored.format_version;
+        page_generation::backfill(&mut *tx).map_err(|e| {
+            carry_over_failure(
+                e,
+                format!("store format {from} was not upgraded: numbering its pages failed"),
+                format!(
+                    "this brain (store format {from}) holds a page record this build cannot number with a generation"
                 ),
             )
         })?;
@@ -1157,19 +1174,21 @@ mod older_build_tests {
 
     #[test]
     fn every_build_refuses_the_next_format_and_changes_no_byte() {
-        for n in 1..=FORMAT_VERSION {
-            let known: Vec<u32> = (1..=n).collect();
+        // Each build that ever shipped opened the formats up to its own; the next format after it is refused (for a
+        // build below a gap in the list, the format just above its own).
+        for (at, &n) in FORMAT_VERSIONS.iter().enumerate() {
+            let known = &FORMAT_VERSIONS[..=at];
             let dir = brain_at(&format!("older-{n}-vs-next"), n + 1);
-            assert_refused(&dir, &known, n + 1);
+            assert_refused(&dir, known, n + 1);
             fs::remove_file(dir.join(format::FORMAT_FILE)).unwrap();
-            assert_refused(&dir, &known, n + 1);
+            assert_refused(&dir, known, n + 1);
             let _ = fs::remove_dir_all(dir.parent().unwrap());
         }
-        // This build's own list is the case above with n = FORMAT_VERSION.
-        assert_eq!(
-            FORMAT_VERSIONS,
-            (1..=FORMAT_VERSION).collect::<Vec<_>>().as_slice()
-        );
+        // The build before this one (it knows the formats below this build's own) refuses this build's brain.
+        let known = &FORMAT_VERSIONS[..FORMAT_VERSIONS.len() - 1];
+        let dir = brain_at("older-than-this-build", FORMAT_VERSION);
+        assert_refused(&dir, known, FORMAT_VERSION);
+        let _ = fs::remove_dir_all(dir.parent().unwrap());
     }
 }
 

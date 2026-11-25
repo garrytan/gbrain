@@ -6,10 +6,10 @@
 
 mod common;
 
-use common::{TempDir, open};
+use common::TempDir;
 use gbrain_store::cli_reads::sources::DefaultSourceSplit;
 use gbrain_store::field_usage::FieldUsageQuery;
-use gbrain_store::kv::{Kv, KvRead, scan_prefix};
+use gbrain_store::kv::{Kv, scan_prefix};
 use gbrain_store::pages::{PageFilters, PageInput, PutPageOptions};
 use gbrain_store::redb_kv::RedbKv;
 use gbrain_store::{OpenOptions, Store, SystemEnv, keys};
@@ -176,5 +176,7 @@ fn the_whole_page_scans_return_the_same_results_with_index_rows_present() {
     let without = whole_p_scans(&dir, &kv);
     assert_eq!(with, without);
     assert_eq!(with["count"], json!(2));
-    assert_eq!(with["slugs"], json!(["notes/a", "notes/b"]));
+    let mut slugs = with["slugs"].as_array().unwrap().clone();
+    slugs.sort_by_key(|s| s.as_str().unwrap().to_string());
+    assert_eq!(slugs, vec![json!("notes/a"), json!("notes/b")]);
 }

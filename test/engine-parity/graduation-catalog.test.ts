@@ -46,10 +46,12 @@ describe('engine parity: graduation catalog', () => {
       expect(catalog.store).toBe('keyspaces');
       if (catalog.store !== 'keyspaces') throw checked;
       const takes = catalog.keyspaces.find(k => k.tag === 'A');
+      // The store's current format: whatever number this build ships (never pinned as a literal).
+      expect(catalog.formatVersion).toBeGreaterThanOrEqual(8);
       expect({
-        formatVersion: catalog.formatVersion, tags: catalog.keyspaces.length > 40,
+        formatVersion: 'current', tags: catalog.keyspaces.length > 40,
         takeKinds: takes?.kinds.map(k => k.kind), message: String((checked as Error).message).includes('listRelations'),
-      }).toEqual({ formatVersion: 8, tags: true, takeKinds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], message: true });
+      }).toEqual({ formatVersion: 'current', tags: true, takeKinds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], message: true });
       throw checked;
     }
     if (checked !== null) throw checked;

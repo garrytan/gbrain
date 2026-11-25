@@ -53,7 +53,7 @@ use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::page_columns::PageColumns;
 use crate::pages::{
     PageRecord, all_pages, read_page, read_page_by_id, rename_page, scope_sources, snapshot_in,
-    validate_slug, write_page,
+    validate_slug,
 };
 use crate::sources::{read_source, require_source};
 use crate::trust::{TrustPolicy, TrustTable, TrustTier};
@@ -797,6 +797,39 @@ pub(crate) fn stamp_contextual_retrieval(
     put_json(tx, &cr_key(page_id), &state)
 }
 
+/// Whether stamping `mode` and `corpus_generation` changes the page's contextual retrieval columns: the trigger's
+/// `IS DISTINCT FROM` on `contextual_retrieval_mode` or `corpus_generation`. A page with no state holds both as NULL.
+pub(crate) fn cr_state_changes(
+    read: &dyn KvRead,
+    page_id: u64,
+    mode: &str,
+    corpus_generation: Option<&str>,
+) -> Result<bool> {
+    Ok(match read_cr(read, page_id)? {
+        None => true,
+        Some(state) => {
+            state.mode != mode || state.corpus_generation.as_deref() != corpus_generation
+        }
+    })
+}
+
+/// Whether [`stamp_contextual_retrieval`] of `stamp` changes the page's columns (a `none` mode writes nothing).
+pub(crate) fn stamp_changes(
+    read: &dyn KvRead,
+    page_id: u64,
+    stamp: &ContextualRetrievalStamp,
+) -> Result<bool> {
+    if stamp.mode == "none" {
+        return Ok(false);
+    }
+    cr_state_changes(
+        read,
+        page_id,
+        &stamp.mode,
+        stamp.corpus_generation.as_deref(),
+    )
+}
+
 /// The page's `corpus_generation` column: `None` when it has no state or the state has none (NULL).
 pub(crate) fn corpus_generation(read: &dyn KvRead, page_id: u64) -> Result<Option<String>> {
     Ok(read_cr(read, page_id)?.and_then(|state| state.corpus_generation))
@@ -1360,13 +1393,24 @@ impl Store {
             {
                 crate::embeddings::reset_page_vectors(tx, page.id, now)?;
             }
+            let changed = cr_state_changes(&*tx, page.id, mode, corpus_generation)?;
             let state = CrState {
                 mode: mode.to_string(),
                 corpus_generation: corpus_generation.map(str::to_string),
             };
             put_json(tx, &cr_key(page.id), &state)?;
             page.updated_at_us = now;
-            write_page(tx, &page)
+            // One UPDATE: the page's generation adds one when either column changes, and nothing when neither does.
+            crate::pages::write_page_counting(
+                tx,
+                &page,
+                false,
+                if changed {
+                    crate::page_generation::Counter::StatementStamping
+                } else {
+                    crate::page_generation::Counter::Statement
+                },
+            )
         })
     }
 
