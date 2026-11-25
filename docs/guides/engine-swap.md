@@ -78,7 +78,7 @@ never a pass. With no shadow running, every criterion is `missing`.
     the shadow keeps following, checks the copy, opens it once, runs a keyword search on it and deletes it (a store
     over 8 GiB needs the separate physical-copy proof); `--evals` downloads the final eval file pinned to the release
     the shadow's evidence started on. `gbrain engine shadow status` and the swap read only what those commands kept
-    (they never fetch), so a drill from an earlier evidence epoch, a drill whose scratch copy was not seen deleted, a
+    (they never fetch), so a drill from an earlier evidence epoch, a drill whose scratch copy was not seen deleted or whose pending marker is still there, a
     file for another platform or another build, and a provisional or unfinished eval file all stay NOT READY; the swap
     prints the reason and `status --json` carries it under `drills`. The drill refuses (`addon_mismatch`) when the
     addon it loads is not the one the evidence started on. A copy that has pages passes only after a keyword search ran on it; while the copy's keyword index is complete
