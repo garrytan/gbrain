@@ -242,9 +242,10 @@ describe('engine parity: entity and mention reads', () => {
       return result;
     });
 
-  // The read floor never reads the caller's readers, so the store serves it as the page policy of a record with no
-  // readers (retirementHopPolicy); a labelled-only caller's floor still refuses typed.
-  parityTest('readRetirementHop under the read floor for a remote caller hides a private page on every engine',
+  // The read floor never reads the caller's readers and drops the folder pending-coverage clause for a remote caller, so the
+  // store serves it as the page policy of a record with no readers, grants or coverage (retirementHopPolicy, storePageTextPolicy):
+  // every arm hides the private page and keeps the live one; a labelled-only caller's floor still refuses typed.
+  parityTest('readRetirementHop under the read floor for a remote caller hides a private page and keeps a live one on every engine',
     { methods: ['readRetirementHop'] }, async (engine, backend) => {
       await seed(engine, backend);
       await engine.putPage('people/hop-private', ({ type: 'person', title: 'Hop', compiled_truth: 'Hop body.',

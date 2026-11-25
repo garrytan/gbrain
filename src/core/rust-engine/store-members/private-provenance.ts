@@ -45,6 +45,7 @@ import {
   currentCallerAccess,
   privacyAliasSql,
   privatePagesFilterForCaller,
+  privatePagesFilterFragment,
   privateSnapshotFilterFragment,
   withCallerAccess,
   withoutCallerAccess,
@@ -372,6 +373,11 @@ export function storePageTextPolicy(
     const text = normalizeConceptInputs(rendered());
     const baseline = renderForStoreCaller(open ? { restricted: false } : {}, () => privatePagesFilterForCaller('p'));
     if (text === normalizeConceptInputs(baseline)) return pagePolicyFlags(baseline);
+    // The remote read floor (remoteReadFloorSql for a caller with no labelled-only record) is the no-caller page policy
+    // without its pending-coverage and unreadable-state clauses. The store judges it as a caller record with no readers,
+    // grants or coverage: a page that names readers fails, and a pending prefix hides nothing (privacy.rs caller_record).
+    const floor = renderForStoreCaller({ hidePrivate: true, ...(open ? { restricted: false } : {}) }, () => privatePagesFilterFragment('p'));
+    if (text === normalizeConceptInputs(floor)) return { ...pagePolicyFlags(floor), identity: [], privateReadableSources: [], callerRecord: true };
     if (!opts.callerReaders && !opts.noReaders) return undefined;
     if (opts.noReaders) {
       const none = { identity: [], privateReadableSources: [] };

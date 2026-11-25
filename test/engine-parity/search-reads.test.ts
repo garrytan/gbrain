@@ -97,7 +97,7 @@ describe('engine parity: search reads', () => {
   parityTest(
     'supersedingPageSlugs: a read that cannot run rejects instead of answering an empty map; an edge written after an empty answer is seen at once',
     { methods: ['putPage', 'addLink', 'hasSupersedeEdges', 'supersedingPageSlugs'] },
-    async (engine, backend) => {
+    async (engine) => {
       const canon = await put(engine, 'notes/canon');
       const stale = await put(engine, 'notes/stale');
       const probeBefore = await engine.hasSupersedeEdges();
@@ -110,11 +110,11 @@ describe('engine parity: search reads', () => {
       expect(probeAfter).toBe(true);
       expect(seen).toEqual(['notes/stale<notes/canon']);
       const failure = await engine.supersedingPageSlugs([canon.id, 1.5]).then(() => null, (e: unknown) => e);
+      // Every arm rejects the id as the bigint cast does (22P02), never with an empty map and never with a capability
+      // refusal: a non-integer page id is bad input, not a read the engine lacks.
       expect(failure).toBeInstanceOf(Error);
-      // The Rust arm stops here on its typed refusal of a non-integer page id (rust-engine/store-members/link-queries.ts bigintIds,
-      // the links member area): a rejection, not an empty map. A real statement timeout cannot be injected from TypeScript on
-      // that arm, so the arm-level proof is that it rejects rather than answers.
-      if (backend === 'rust') throw failure;
+      expect((failure as { code?: unknown }).code).not.toBe('engine_capability_missing');
+      expect(String((failure as Error).message)).toContain('invalid input syntax for type bigint');
       return { probeBefore, emptyBefore, probeAfter, seen, rejected: true };
     },
   );
