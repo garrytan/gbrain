@@ -4,19 +4,19 @@
  * promise that the pilot never changes what a primary write does. Everything here talks to a real primary.
  */
 import { describe, expect, spyOn, test } from 'bun:test';
-import { readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { evaluateReadiness, WRITE_COVERAGE_LIMIT, type ShadowStatus } from '../../src/core/engine-swap/readiness.ts';
+import { evaluateReadiness, WRITE_COVERAGE_LIMIT, WRITE_NOT_RECORDED, type ShadowStatus } from '../../src/core/engine-swap/readiness.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { RustAddon } from '../../src/core/rust-engine/addon-loader.ts';
 import { attachShadowParts } from '../../src/shadow/attach.ts';
-import { buildFollowStatus, renderFollowStatus } from '../../src/shadow/follow-status.ts';
+import { buildFollowStatus, readFollowerFile, renderFollowStatus } from '../../src/shadow/follow-status.ts';
 import { newMirrorCounters } from '../../src/shadow/mirror.ts';
 import { writeSeedRecord } from '../../src/shadow/seed.ts';
 import { wrapShadowEngine } from '../../src/shadow/wrapper.ts';
 import { createWriteSampler, readPreimage } from '../../src/shadow/write-capture.ts';
 import { createWriteComparer } from '../../src/shadow/write-compare-child.ts';
-import { readWriteTally, WriteTally, type WriteEvent } from '../../src/shadow/write-compare.ts';
+import { type WriteEvent, type WriteOutcome } from '../../src/shadow/write-compare.ts';
 import { withEnv } from './with-env.ts';
 import { fillSeedFixture, seedInto } from './shadow-seed-fixture.ts';
 
@@ -39,16 +39,35 @@ export async function until(check: () => boolean, ms = 30_000): Promise<void> {
 }
 export const row5 = (doc: Partial<ShadowStatus>) => evaluateReadiness(doc as ShadowStatus, NOW).criteria.find((c) => c.n === 5)!;
 
-/** A comparer over fake scratch engines: `imported` shapes the import result, `put` stands for the Rust write and `connect` for the store open (it gets the store path). */
-export function fakeComparer(dir: string, over: { imported?: (rows: number) => Record<string, unknown>; put?: () => Promise<void>; page?: unknown; connect?: (path: string) => Promise<void>; scratchRoot?: string; alive?: () => boolean } = {}) {
-  return createWriteComparer({
-    dir, tally: new WriteTally(dir, () => 'e1', over.alive), alive: over.alive ?? (() => true), load: { ok: true, addon: {} } as never, scratchRoot: over.scratchRoot,
+/** Collects what a comparer reports, counted the way the (separate-PR) tally will: nothing in the product records outcomes yet. */
+export function recorder() {
+  const rows: Array<[WriteOutcome, string | undefined, number]> = [];
+  return {
+    sink: (outcome: WriteOutcome, key?: string, count = 1): void => { rows.push([outcome, key, count]); },
+    counts: () => {
+      const c = { comparable: 0, unexplained_difference: 0, uncomparable: 0, capability_missing: 0, capability_missing_by_family: {} as Record<string, number>, uncomparable_by_reason: {} as Record<string, number> };
+      for (const [outcome, key, count] of rows) {
+        c[outcome] += count;
+        if (outcome === 'capability_missing') c.capability_missing_by_family[key ?? 'other'] = (c.capability_missing_by_family[key ?? 'other'] ?? 0) + count;
+        if (outcome === 'uncomparable') c.uncomparable_by_reason[key ?? 'other'] = (c.uncomparable_by_reason[key ?? 'other'] ?? 0) + count;
+      }
+      return c;
+    },
+  };
+}
+
+/** A comparer over fake scratch engines: `imported` shapes the import result, `put` stands for the Rust write and `connect` for the store open (it gets the store path). `counts()` is what it reported; `record: false` builds one with no sink, as in the product today. */
+export function fakeComparer(dir: string, over: { imported?: (rows: number) => Record<string, unknown>; put?: () => Promise<void>; page?: unknown; connect?: (path: string) => Promise<void>; scratchRoot?: string; alive?: () => boolean; record?: boolean } = {}) {
+  const rec = recorder();
+  const comparer = createWriteComparer({
+    dir, record: over.record === false ? undefined : rec.sink, alive: over.alive ?? (() => true), load: { ok: true, addon: {} } as never, scratchRoot: over.scratchRoot,
     openEngine: (_addon, path) => ({
       connect: async () => { await over.connect?.(path); }, disconnect: async () => {},
       storeFor: async () => ({ importRelation: async (_s: string, _r: string, rows: unknown[]) => ({ imported: rows.length, skipped: 0, dropped: 0, unmapped_columns: [], losses: {}, ...over.imported?.(rows.length) }) }),
       putPage: over.put ?? (async () => {}), getPage: async () => over.page ?? null, getLinks: async () => [],
     }),
   });
+  return Object.assign(comparer, { counts: rec.counts });
 }
 export const settle = async (c: { handle(e: WriteEvent): void; idle(): Promise<void> }, events: WriteEvent[]) => { for (const e of events) c.handle(e); await c.idle(); };
 
@@ -80,9 +99,9 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
     return { inbox, wrapped: wrapShadowEngine(primary(), sink, { sampleRate: 0, writes: sampler }) };
   }
   const tallyOf = async (events: WriteEvent[], over?: Parameters<typeof fakeComparer>[1]) => {
-    const dir = ctx.tempDir();
-    await settle(fakeComparer(dir, over), events);
-    return readWriteTally(dir, 'e1')!;
+    const comparer = fakeComparer(ctx.tempDir(), over);
+    await settle(comparer, events);
+    return comparer.counts();
   };
 
   describe('the preimage read', () => {
@@ -122,12 +141,12 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       const { inbox, wrapped } = rig();
       await act(wrapped, (n) => until(() => inbox.length >= n)); // a write that lands while an earlier sample is still being read back moves it
       await until(() => inbox.length >= expectEvents);
-      const tally = new WriteTally(dir, () => 'e1');
+      const rec = recorder();
       const scratch = ctx.tempDir();
-      const comparer = createWriteComparer({ dir, tally, alive: () => true, load: { ok: true, addon: addonOf() } as never, scratchRoot: scratch });
+      const comparer = createWriteComparer({ dir, record: rec.sink, alive: () => true, load: { ok: true, addon: addonOf() } as never, scratchRoot: scratch });
       if (tamper) inbox.forEach(tamper);
       await settle(comparer, inbox);
-      return { tally: readWriteTally(dir, 'e1')!, inbox, dir, scratch };
+      return { tally: rec.counts(), inbox, dir, scratch };
     }
 
     test('a write whose changed rows match is counted comparable (putPage, addLink, addLinksBatch, removeLink, deletePage)', async () => {
@@ -157,28 +176,32 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       expect(out.tally).toMatchObject({ comparable: 0, unexplained_difference: 0, uncomparable: 1, uncomparable_by_reason: { moved: 1 } });
     }, 60_000);
 
-    test('a follow run with compared writes moves criterion 5 off missing (real child, seeded brain)', async () => {
+    test('a sampled comparison through a real child changes no criterion 5 state: nothing is recorded, and status and the swap row say so', async () => {
       const home = ctx.tempDir();
       await ctx.reset();
       await fillSeedFixture(primary());
       const { record } = await seedInto(primary(), addonOf(), home, ctx.kind);
       writeSeedRecord(home, record);
       const state = { version: 1, enabled: true, started_at: 'x', sample_rate: 1, write_sample_rate: 1, queue_bound: 64, plan_hash: 'h', brain: 'b', primary_engine: ctx.kind };
-      await withEnv({ GBRAIN_RUST_ENGINE_ADDON: ctx.addonPath! }, async () => {
+      let pid = 0;
+      await withEnv({ GBRAIN_HOME: ctx.tempDir(), GBRAIN_RUST_ENGINE_ADDON: ctx.addonPath! }, async () => {
         const attached = attachShadowParts(primary(), home, state as never, { gbrainArgv: [process.execPath, join(import.meta.dir, '..', '..', 'src', 'cli.ts')] });
         try {
-          await attached.engine.putPage('people/erin-example', page('Erin Example'));
-          await attached.engine.addTag('people/erin-example', 'team'); // another family
-          await until(() => (readWriteTally(home, buildFollowStatus(home, state as never, NOW).epoch_id)?.comparable ?? 0) >= 1 && (buildFollowStatus(home, state as never, NOW).write_comparisons.capability_missing ?? 0) >= 1, 90_000);
+          await attached.engine.addLink('people/alice-example', 'companies/acme-example', 'again', 'invests_in'); // a direct pilot write, sampled at 1
+          await attached.engine.addTag('people/alice-example', 'team'); // another family, sampled too
+          await until(() => (readFollowerFile(home)?.applied_rows ?? 0) > 0 && attached.supervisor.childPid !== null, 90_000);
+          pid = attached.supervisor.childPid ?? 0;
         } finally { attached.supervisor.stop(); attached.reconciler?.stop(); }
       });
-      const status = buildFollowStatus(home, { sample_rate: 1 } as never, NOW);
-      expect(status.write_comparisons).toMatchObject({ state: 'measured', comparable: 1, unexplained_difference: 0, capability_missing: 1, capability_missing_by_family: { tags: 1 } });
-      const row = row5({ write_comparisons: status.write_comparisons as ShadowStatus["write_comparisons"] });
-      expect(row.state).toBe('fail'); // below 1,000 comparable writes: said plainly, and no longer missing
-      expect(row.detail).toContain('1 of 1000 comparable write comparisons');
+      if (pid) await until(() => { try { process.kill(pid, 0); return false; } catch { return true; } }, 60_000); // the child drained what it was sent and exited
+      const status = buildFollowStatus(home, state as never, NOW);
+      expect(status.write_comparisons).toEqual({ state: 'capability_missing', sample_rate: 1, comparable: 0, unexplained_difference: 0, uncomparable: 0, capability_missing: 0 });
+      expect(readdirSync(home).filter((f) => f.startsWith('write-comparisons'))).toEqual([]); // nothing was persisted
+      const row = row5({ write_comparisons: status.write_comparisons as ShadowStatus['write_comparisons'] });
+      expect(row.state).toBe('missing');
+      expect(row.detail).toContain(WRITE_NOT_RECORDED);
       expect(row.detail).toContain(WRITE_COVERAGE_LIMIT);
-      expect(renderFollowStatus(status).join('\n')).toContain('capability_missing 1 (by family: tags 1)');
+      expect(renderFollowStatus(status).join('\n')).toContain(WRITE_NOT_RECORDED);
     }, 180_000);
   });
 
@@ -192,8 +215,9 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
     await until(() => inbox.some((e) => e.op === 'softDeletePage'));
     const others = inbox.filter((e) => e.op === 'addTag' || e.op === 'softDeletePage');
     expect(others.map((e) => [e.op, e.outcome, e.family, e.pre])).toEqual([['addTag', 'capability_missing', 'tags', undefined], ['softDeletePage', 'capability_missing', 'pages:softDeletePage', undefined]]);
-    await settle(fakeComparer(dir), others);
-    expect(readWriteTally(dir, 'e1')).toMatchObject({ comparable: 0, capability_missing: 2, capability_missing_by_family: { tags: 1, 'pages:softDeletePage': 1 } });
+    const comparer = fakeComparer(dir);
+    await settle(comparer, others);
+    expect(comparer.counts()).toMatchObject({ comparable: 0, capability_missing: 2, capability_missing_by_family: { tags: 1, 'pages:softDeletePage': 1 } });
   });
 
 
@@ -207,9 +231,9 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       return inbox;
     };
     const tallyOf = async (events: WriteEvent[], over?: Parameters<typeof fakeComparer>[1]) => {
-      const dir = ctx.tempDir();
-      await settle(fakeComparer(dir, over), events);
-      return readWriteTally(dir, 'e1')!;
+      const comparer = fakeComparer(ctx.tempDir(), over);
+      await settle(comparer, events);
+      return comparer.counts();
     };
     // The preimage could not be loaded into the scratch store (one row skipped).
     expect(await tallyOf(await sample((e) => e.putPage('people/alice-example', page('Alice Example'))), { imported: (rows) => ({ imported: rows - 1, skipped: 1 }) }))
@@ -269,9 +293,9 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       const { inbox, wrapped } = rig();
       await wrapped.putPage('people/zed-example', page('Zed Example'), { sourceId: SOURCE } as never);
       await until(() => inbox.length >= 1);
-      const dir = ctx.tempDir();
-      await settle(createWriteComparer({ dir, tally: new WriteTally(dir, () => 'e1'), alive: () => true, load: { ok: true, addon: addonOf() } as never }), inbox);
-      expect(readWriteTally(dir, 'e1')).toMatchObject({ comparable: 1, unexplained_difference: 0, uncomparable: 0 });
+      const rec = recorder();
+      await settle(createWriteComparer({ dir: ctx.tempDir(), record: rec.sink, alive: () => true, load: { ok: true, addon: addonOf() } as never, scratchRoot: ctx.tempDir() }), inbox);
+      expect(rec.counts()).toMatchObject({ comparable: 1, unexplained_difference: 0, uncomparable: 0 });
     }, 60_000);
 
     test('a link whose origin page is named without a source takes the origin from the default source, not the from-source', async () => {

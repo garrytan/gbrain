@@ -312,7 +312,7 @@ async function start(
     out(`Shadow mode plan for brain ${plan.brain} (${plan.primary_engine}):`);
     out(`  mirrors: ${plan.mirrors}`);
     out(`  sample rate ${plan.sample_rate}, serving-process queue bound ${plan.queue_bound}`);
-    out(`  write sample rate ${plan.write_sample_rate}: that share of page and link writes is checked on a throwaway Rust store; one of them outside a transaction first waits (at most 2 s) for one read of the rows it touches`);
+    out(`  write sample rate ${plan.write_sample_rate}: that share of direct page and link writes is sampled for write comparison (not recorded yet: the locked tally follows in a separate PR); one of them outside a transaction first waits (at most 2 s) for one read of the rows it touches`);
     for (const w of plan.writes) out(`  writes: ${w}`);
     out(`  never writes: ${plan.never_writes.join(', ')}`);
     const line = storageLine(await readStorage(brain, deps, now));

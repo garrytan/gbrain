@@ -4,13 +4,12 @@
  * A pilot covers ONLY putPage, deletePage, addLink, addLinksBatch and removeLink. For a sampled one the serving process copies the
  * rows the write touches from the primary (the preimage) and sends them with the write; the shadow child seeds a SCRATCH Rust store
  * with them, applies the same write there (never to the live shadow store, never to the primary) and compares typed read-backs
- * of the changed rows. Every sampled write of another family is counted `capability_missing`, by family. Fail closed: a write
+ * of the changed rows. Every sampled write of another family is `capability_missing`, by family. Fail closed: a write
  * whose preimage could not be read or loaded, or that failed on one side, is `uncomparable` and never `comparable`.
  *
- * Counts live in `write-comparisons.json`, written by the child under the current evidence epoch; `status` reads them.
+ * Nothing is recorded yet: outcomes go to a `WriteVerdictSink`, and none is wired, so status and criterion 5 stay `capability_missing`.
+ * The locked tally that records them follows in a separate PR.
  */
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { memberKind, WRITE_MAP } from './write-map.ts';
 
 export const PILOT_WRITES: ReadonlySet<string> = new Set(['putPage', 'deletePage', 'addLink', 'addLinksBatch', 'removeLink']);
@@ -115,81 +114,5 @@ export function writeFamily(op: string): string {
   return table === 'pages' || table === 'links' ? `${table}:${op}` : table;
 }
 
-export interface WriteTallyFile {
-  version: 1; epoch_id: string; updated_at: string;
-  comparable: number; unexplained_difference: number; uncomparable: number; capability_missing: number;
-  capability_missing_by_family: Record<string, number>; uncomparable_by_reason: Record<string, number>;
-  /** The pid of a child that has a replay in flight whose verdict is not written yet: status reads the evidence as unresolved while it stands. */
-  in_flight?: number | null;
-}
-export const writeTallyPath = (dir: string): string => join(dir, 'write-comparisons.json');
-
-/** The counts under `epochId`, or null when there are none (no file, an unreadable one, or another epoch's). */
-export function readWriteTally(dir: string, epochId: string | null): WriteTallyFile | null {
-  try {
-    const parsed = JSON.parse(readFileSync(writeTallyPath(dir), 'utf8')) as WriteTallyFile;
-    return epochId !== null && parsed?.version === 1 && parsed.epoch_id === epochId ? parsed : null;
-  } catch { return null; } // silent-read-ok: no readable tally is no count; the status shows zero and criterion 5 stays missing
-}
-
-const MAX_KEYS = 64;
-const bump = (map: Record<string, number>, key: string, count: number): void => { const k = key in map || Object.keys(map).length < MAX_KEYS ? key : 'other'; map[k] = (map[k] ?? 0) + count; };
-
-type Verdict = [outcome: WriteOutcome, key: string | undefined, count: number];
-function applyVerdict(file: WriteTallyFile, [outcome, key, count]: Verdict): void {
-  file[outcome] += count;
-  const name = typeof key === 'string' && /^[A-Za-z][A-Za-z0-9_:]{0,59}$/.test(key) ? key : 'other'; // a name, never text that could hold content
-  if (outcome === 'capability_missing') bump(file.capability_missing_by_family, name, count);
-  if (outcome === 'uncomparable') bump(file.uncomparable_by_reason, name, count);
-}
-
-/**
- * Counts outcomes under the current epoch and writes the whole epoch's totals after each one (sampled writes are rare). With no epoch, or no directory,
- * nothing is counted. A replay marks itself in flight on disk before it starts and its verdict ends the mark, so a verdict that never reached the disk
- * (the write failed, the child was killed) leaves the evidence unresolved, and status reads unresolved evidence as no evidence. When a write fails the
- * complete totals are held in memory and written whole with the next one: a saved mismatch is never dropped, and the epoch never restarts from zero.
- */
-export class WriteTally {
-  private held: WriteTallyFile | null = null;
-  constructor(private readonly dir: string, private readonly epoch: () => string | null, private readonly alive: () => boolean = () => existsSync(dir)) {}
-  private load(epoch: string): WriteTallyFile {
-    return this.held?.epoch_id === epoch ? this.held : readWriteTally(this.dir, epoch)
-      ?? { version: 1, epoch_id: epoch, updated_at: '', comparable: 0, unexplained_difference: 0, uncomparable: 0, capability_missing: 0, capability_missing_by_family: {}, uncomparable_by_reason: {} };
-  }
-  private save(file: WriteTallyFile): void {
-    file.updated_at = new Date().toISOString();
-    try {
-      const tmp = `${writeTallyPath(this.dir)}.${process.pid}.tmp`;
-      writeFileSync(tmp, JSON.stringify(file) + '\n', { mode: 0o600 });
-      renameSync(tmp, writeTallyPath(this.dir));
-      this.held = null;
-    } catch { this.held = file; }
-  }
-  /** Marks a replay in flight, on disk, before it starts. */
-  begin(): void {
-    const epoch = this.epoch();
-    if (epoch === null || !this.alive()) return;
-    const file = this.load(epoch);
-    file.in_flight = process.pid;
-    this.save(file);
-  }
-  /** A mark left by a process that no longer exists is one replay with no verdict: counted uncomparable, and the mark is cleared. */
-  recover(): void {
-    const epoch = this.epoch();
-    const file = epoch === null || !this.alive() ? null : readWriteTally(this.dir, epoch);
-    if (!file?.in_flight || file.in_flight === process.pid) return;
-    try { process.kill(file.in_flight, 0); return; } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') return; }
-    file.in_flight = null;
-    applyVerdict(file, ['uncomparable', 'crashed_mid_replay', 1]);
-    this.save(file);
-  }
-  /** Counts one outcome; `ends` is a replay's own verdict, which ends its in-flight mark. */
-  note(outcome: WriteOutcome, key?: string, count = 1, ends = false): void {
-    const epoch = this.epoch();
-    if (epoch === null || !this.alive()) return;
-    const file = this.load(epoch);
-    applyVerdict(file, [outcome, key, count]);
-    if (ends && file.in_flight === process.pid) file.in_flight = null;
-    this.save(file);
-  }
-}
+/** Where a finished comparison's outcome goes (`key` is a family or reason name). Nothing records them yet: the locked tally that does follows in a separate PR, so a comparison changes no criterion 5 state. */
+export type WriteVerdictSink = (outcome: WriteOutcome, key?: string, count?: number) => void;

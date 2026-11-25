@@ -63,28 +63,30 @@ never a pass. With no shadow running, every criterion is `missing`.
    least equal to PGLite and Postgres under the default ranker); vector recall@10 at least 0.98 and at least the
    primary's.
 5. Zero unexplained differences on at least 1,000 comparable write comparisons. A shadow that cannot compare writes
-   (`capability_missing`) has no evidence. **A criterion 5 pass covers page and link writes only.** Shadow mode copies the
-   rows a sampled `putPage`, `deletePage`, `addLink`, `addLinksBatch` or `removeLink` touches from your brain, applies the
-   same write to a throwaway Rust store built from that copy (never the live shadow store, never your brain), and compares
-   the changed pages and links. The throwaway store holds copies of page content, which may be private, so it lives in a
-   `scratch/` directory in your gbrain data home beside `shadow/` (mode 0700, on the same disk and owner as your brain, never in a
-   shared temp directory), for one comparison only: it is deleted when the comparison ends, however it ends, and a killed
-   shadow's leftovers are swept the next time shadow mode starts. The shadow's own evidence files hold no page content. The row counts as `comparable` when they match and `unexplained_difference` when they do not.
-   A write that cannot be checked (the copy could not be read or loaded, the write failed on either side, it ran inside a
-   transaction, another write landed in between, it touched too many rows, a copied page is soft-deleted, the source holds a withdrawn or purged fact (the primary then serves a redacted body the copy does not have), or the Rust store cannot keep a copied column) is `uncomparable` and never counts. A comparison whose verdict could not be written leaves the evidence unresolved, and status reads unresolved evidence as no evidence until it is written. On a
-   Postgres brain, which other processes can write, a data fence catches another writer: every copied row outside the
-   write's own footprint must be unchanged afterwards, no link may have appeared that the write did not add, and a `putPage`
-   must read back the revision it returned; otherwise the sample is `uncomparable` (`moved`). PGLite skips the fence, because
-   its single-writer file lock means no other process can write. Open gaps: another process editing the very rows the write
-   changes is not seen, and shows as an unexplained difference (it can fail criterion 5, never pass it); and a link write that
-   names no type, or no source, treats a link another process adds between the same two pages with any type or source as its own. Every
-   sampled write of any other kind (tags, chunks, timeline, facts, raw SQL and so on) is counted `capability_missing` under
-   its family, so `gbrain engine shadow status` and the swap plan name every family still unchecked. With no verdict yet the
-   row stays `missing`; below 1,000 comparable writes it fails and says how many it has. The sample share is the write sample
-   rate, 0.05 unless `gbrain engine shadow start --write-sample-rate <0..1>` sets another; it is separate from the read
-   sample rate. A sampled write outside a transaction waits (at most 2 seconds) for one small read of the rows it touches
-   before it runs; if that read is slow, the write goes ahead and the sample is `uncomparable`. `put_page` and import run
-   their page write inside a transaction, so those are `uncomparable` today: only link operations outside a transaction
+   (`capability_missing`) has no evidence. **A criterion 5 pass covers page and link writes only.** **Write comparisons are
+   not recorded yet; the locked tally follows in a separate PR.** Until then this criterion reads `capability_missing` (no
+   evidence) with zero counts, and `gbrain engine shadow status` and the swap plan say so; nothing about a comparison is
+   written anywhere. What is built so far is the comparison itself. For a sampled `putPage`, `deletePage`, `addLink`,
+   `addLinksBatch` or `removeLink`, shadow mode copies the rows the write touches from your brain, applies the same write to a
+   throwaway Rust store built from that copy (never the live shadow store, never your brain), and compares the changed pages
+   and links. The throwaway store holds copies of page content, which may be private, so it lives in a `scratch/` directory in
+   your gbrain data home beside `shadow/` (mode 0700, on the same disk and owner as your brain, never in a shared temp
+   directory), for one comparison only: it is deleted when the comparison ends, however it ends, and a killed shadow's
+   leftovers are swept the next time shadow mode starts. The shadow's own evidence files hold no page content. A write that
+   cannot be checked (the copy could not be read or loaded, the write failed on either side, it ran inside a transaction,
+   another write landed in between, it touched too many rows, a copied page is soft-deleted, the source holds a withdrawn or
+   purged fact (the primary then serves a redacted body the copy does not have), or the Rust store cannot keep a copied
+   column) is `uncomparable` and never `comparable`. On a Postgres brain, which other processes can write, a data fence
+   catches another writer: every copied row outside the write's own footprint must be unchanged afterwards, no link may have
+   appeared that the write did not add, and a `putPage` must read back the revision it returned; otherwise the sample is
+   `uncomparable` (`moved`). PGLite skips the fence, because its single-writer file lock means no other process can write.
+   Open gaps: another process editing the very rows the write changes is not seen, and would show as an unexplained
+   difference (it can fail criterion 5, never pass it); and a link write that names no type, or no source, treats a link
+   another process adds between the same two pages with any type or source as its own. The sample share is the write
+   sample rate, 0.05 unless `gbrain engine shadow start --write-sample-rate <0..1>` sets another; it is separate from the
+   read sample rate. A sampled write outside a transaction waits (at most 2 seconds) for one small read of the rows it
+   touches before it runs; if that read is slow, the write goes ahead untouched. `put_page` and import run their page write
+   inside a transaction, so those are `uncomparable` once comparisons are recorded: only link operations outside a transaction
    (`add_link`, `remove_link`, a by-mention extract batch) can make a write `comparable`. Comparing a page write that ran
    inside a transaction is a planned follow-up, not part of this check.
 6. Zero `privacy_diverged` events (the field is absent, not zero, while any privacy check of the last 7 days is unsettled, so criterion 6 has no evidence until it settles).
