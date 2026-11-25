@@ -23,6 +23,8 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
+import { acquireMigrationOrchestrationLock } from '../src/core/migration-orchestration-lock.ts';
+import type { GBrainConfig } from '../src/core/config.ts';
 
 const ROOT = resolve(import.meta.dir, '..');
 const CLI = join(ROOT, 'src', 'cli.ts');
@@ -155,6 +157,17 @@ describeRust('apply-migrations on a Rust brain', () => {
       expect({ flags, exitCode: rust.exitCode, out: rust.out }).toEqual({ flags, exitCode: 0, out: pglite.out.replace('Engine: pglite', 'Engine: rust') });
       expect(rust.out).not.toContain('Engine: postgres');
     }
+  }, 300_000);
+
+  // Value: protects=a Rust brain's migration lock excludes a second runner, as PGLite's does: while one process holds it, apply-migrations exits 75 and names the holder, and runs nothing; fails_when=a Rust brain gets a no-op lock (two upgrades run at once); why_new=the Rust lock is new; seam=the lock is taken in this process through the real acquire; no_claim=recovery after a holder dies (the native lock's own tests)
+  test('the migration lock on a Rust brain refuses a second runner (exit 75) while another process holds it', async () => {
+    const held = await acquireMigrationOrchestrationLock({ engine: 'rust', database_path: brains.rust.db } as GBrainConfig);
+    expect(held).not.toBeNull();
+    try {
+      const second = await migrate(brains.rust, '0.12.2');
+      expect({ exitCode: second.exitCode, running: second.out.includes('another apply-migrations is running'), pid: second.out.includes(`pid ${process.pid}`) })
+        .toEqual({ exitCode: 75, running: true, pid: true });
+    } finally { await held!.release(); }
   }, 300_000);
 
   // Value: protects=each upgrade migration that still refuses on a Rust brain refuses with the typed raw_sql refusal of the phase named here, and a new pass or a different refusal is seen at once; fails_when=a stop starts passing (drop its row) or refuses for another reason; why_new=the stops are new; seam=none; no_claim=what the owners of these stops build
