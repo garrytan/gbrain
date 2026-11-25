@@ -744,8 +744,16 @@ pub(crate) fn seed_evidence(
     Ok(true)
 }
 
-/// Deletes a take with its evidence rows and its horizon.
+/// Deletes a take with its evidence rows and its horizon. Before it goes, an owner-only take (by its own lineage or its
+/// page's) marks what was derived from it (v322's trigger on `takes`).
 fn delete_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
+    crate::owner_only_marks::mark_row_before_delete(
+        tx,
+        "takes",
+        take.id,
+        None,
+        Some(take.page_id),
+    )?;
     delete_take_evidence(tx, take)?;
     delete_take_record(tx, take)
 }

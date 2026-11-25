@@ -6,13 +6,14 @@ A remote page write first learns whether its caller may see the page it names, w
 caller reads, what its visibility check opens with, and whether a stored writer carries a slug fence. PGLite and
 Postgres ran these reads through `executeRaw` in `src/core/persistence/page-visibility.ts` (`remoteTargetHidden`,
 `remotePageAccess`, `authorizePageVisibility` and `storedOwnerSpeaksForItself`). The SQL now lives in `src/core/engine-sql/page-visibility.ts`. The store answers
-the two page reads from its page records (`crates/gbrain-store/src/page_visibility.rs`) and the fence from the
+the page reads from its page records (`crates/gbrain-store/src/page_visibility.rs`) and the fence from the
 local writer registration it already keeps; it adds no keys.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
 | `brain.readPageHiddenFromCaller(sourceId, slug, policy)` | `true` when the page row of the source (live or soft-deleted) fails `policy`; `false` for a missing page | `readPageHiddenFromCaller` |
 | `brain.readWriteVisibilityProbe(sourceId, slug, policy)` | `{ any_labelled, identity_may_open, owner_only_source, owner_only_any }`. `any_labelled` is currently hardcoded `false`, although `setAccessMemberLabelledOnly` can mark a member labelled-only. `identity_may_open` is `null` when the page row (live or soft-deleted) is missing or passes `policy`, else whether it names readers (`readable_by`) or a folder rule of its source is stamped on it. `owner_only_source` is whether this source has `config ->> 'kind'` `imessage` or `config ->> 'owner_only'` `true`. `owner_only_any` is whether any source is owner-only or any owner-only mark was ever set (once one is, it stays on) | `readWriteVisibilityProbe` |
+| `brain.readPagePrivacyHidden(sourceId, slug, honorAliases)` | `true` when the live page fails the privacy part alone (`privacyPartSql`: its own fields, derived origin and declared lineage, judged by `privacy_allows`), `false` when it passes, `null` when it has no live row (missing or soft-deleted). `honorAliases` is whether the privacy aliases count, as the rendered fragment says | `readPagePrivacyHidden` |
 | `brain.readCallerPageAccess(pages, policy)` | `[{ source_id, slug, readable }]`, one row per distinct `{ sourceId, slug }` of `pages` that names a page row, `readable` when the row is live and passes `policy`. Rows come in pair order; PGLite sets no order | `readCallerPageAccess` |
 
 `policy` is the store `PrivacyPolicy` of `facts/privacy.rs` (`page_hidden`). With `entityPrivacy` false it is the
@@ -20,7 +21,7 @@ member-access part alone (the page's readers, and the origin of a derived page):
 
 ## TypeScript members
 
-`src/core/rust-engine/store-members/page-visibility.ts` answers the three BrainEngine members on a Rust brain.
+`src/core/rust-engine/store-members/page-visibility.ts` answers the BrainEngine members on a Rust brain.
 
 - `readPageHiddenFromCaller` and `readCallerPageAccess` take `{ policy: 'read' | 'access' }`. The `read` part
   renders `privatePagesFilterForCaller('p')` and maps it through `storePageTextPolicy`, as the other page reads do.
@@ -29,6 +30,9 @@ member-access part alone (the page's readers, and the origin of a derived page):
   private-readable grant. The capability is `pages`.
 - `readWriteVisibilityProbe(sourceId, slug)` renders `readPolicyFragment('p', [], true)` (the empty identity with
   privacy, which equals the no-caller rendering) and maps it through `storePageTextPolicy`.
+- `readPagePrivacyHidden(sourceId, slug)` passes `honorAliases` as `pagePolicyFlags(privacyPartSql('p')).honorAliases`, so it
+  equals what the SQL renders. The owner's own page write (`ownerRewriteOf`) reads it to keep a private page private. The
+  capability is `pages`.
 - A caller on a brain whose config holds no member-access restriction renders the short member-access form, anonymous
   or with a reader identity. The page members judge it under the restricted rendering instead (`judgeWidenedCaller`),
   and so does the probe for any unrestricted caller, since its identity is always empty. The restricted rendering only
@@ -45,6 +49,9 @@ member-access part alone (the page's readers, and the origin of a derived page):
 
 ## Differences from PGLite
 
+- **A page with no live row.** When the earlier checks in `authorizePageVisibility` have not already decided a remote
+  write, the check judges a page that has only a soft-deleted row (or no row) with a raw statement, and a Rust brain
+  refuses that statement with `engine_capability_missing`. A page with a live row is judged through the typed reads.
 - **Owner-only sources.** A page policy for a caller that is not the owner ends with the owner-only test
   (`ownerOnlyAllowedSql`). The member reads which form the policy text carries and sends it as `ownerOnly`
   (`ownerOnlyFormIn`): `fn` when the text holds `ownerOnlyPageSql(alias, 'fn')`, `closed` when it holds

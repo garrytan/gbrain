@@ -14,7 +14,7 @@ start here.
 >
 > **Creating a new personal agent, explicitly requested by the user:** follow [BOOTSTRAP_FOR_AGENTS.md](BOOTSTRAP_FOR_AGENTS.md), then return here for the operating protocol.
 
-## Install (5 min)
+## Install (a few minutes)
 
 <!-- npm-trap + #218 recovery: canonical copy lives in README.md ("Install" warning) — sync edits. -->
 1. Install gbrain via Bun (the canonical path):

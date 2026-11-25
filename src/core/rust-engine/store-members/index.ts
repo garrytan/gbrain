@@ -97,6 +97,7 @@ import * as factsWritePath from './facts-write-path.ts';
 import * as factsRemember from './facts-remember.ts';
 import * as derivationTrust from './derivation-trust.ts';
 import * as chronicleEvents from './chronicle-events.ts';
+import * as chronicleReads from './chronicle-reads.ts';
 import * as factsTrustReads from './facts-trust-reads.ts';
 import * as factsProvenance from './facts-provenance.ts';
 import * as factsTrustOwner from './facts-trust-owner.ts';
@@ -230,7 +231,7 @@ export const STORE_MEMBERS = {
   // The edge-contradictions dream phase and its proposal ledger (rust/docs/store/edge_proposals.md).
   ...edgeProposals,
   // The Life Chronicle event statements (rust/crates/gbrain-store/src/generations/chronicle_events.rs).
-  ...chronicleEvents,
+  ...chronicleEvents, ...chronicleReads,
   // Typed reads of stamped trust tiers (rust/docs/store/trust.md, "Tier reads").
   ...trustTierReads,
   // Belief ledger writes and the append's reads (rust/docs/store/trust.md, "The belief ledger").

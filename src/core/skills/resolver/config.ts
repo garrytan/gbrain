@@ -93,9 +93,12 @@ export const ROUTER_MAX_USD_PER_DAY_MAX = 100;
 const ROUTER_MODEL_RE = /^(?:(?:anthropic|openai|google):[A-Za-z0-9][\w.\-]{0,127}|compat:[A-Za-z0-9][\w.\-/:]{0,127})$/;
 const ROUTER_KEY_ENV_RE = /^[A-Z_][A-Z0-9_]{0,63}$/;
 export const ROUTER_USD_PER_MTOK_MAX = 1000;
+export const ROUTER_EXTRA_BODY_MAX_BYTES = 4096;
+/** The only fields router_extra_body may set: sampling and reasoning controls, none of which adds billable input or lifts the output cap the daily-cap reservation counts on. */
+const ROUTER_EXTRA_BODY_FIELDS = ['temperature', 'top_p', 'top_k', 'min_p', 'seed', 'presence_penalty', 'frequency_penalty', 'repetition_penalty', 'reasoning_effort', 'thinking', 'chat_template_kwargs'];
 
 /** The picker's settings; `invalid` names the first bad key (the picker then stays off and reports config_invalid). */
-export interface RouterSettings { on: boolean; model: string | null; timeoutMs: number | null; maxUsdPerDay: number; baseUrl: string | null; keyEnv: string | null; usdPerMtok: RouterUsdPerMtok | null; invalid: string | null }
+export interface RouterSettings { on: boolean; model: string | null; timeoutMs: number | null; maxUsdPerDay: number; baseUrl: string | null; keyEnv: string | null; usdPerMtok: RouterUsdPerMtok | null; extraBody: Record<string, unknown> | null; promptVersion: number | null; invalid: string | null }
 /** [input, output] or [input, output, cached input] in USD per million tokens. */
 export type RouterUsdPerMtok = [number, number] | [number, number, number];
 
@@ -123,6 +126,17 @@ export function validateRouterUsdPerMtok(v: unknown, key: string): RouterUsdPerM
   throw configInvalid(key, `must be [input, output] or [input, output, cached input] in US dollars per million tokens, each 0 to ${ROUTER_USD_PER_MTOK_MAX}, like [0.1, 0.5]`);
 }
 
+export function validateRouterExtraBody(v: unknown, key: string): Record<string, unknown> {
+  const other = v && typeof v === 'object' && !Array.isArray(v) ? Object.keys(v).filter(k => !ROUTER_EXTRA_BODY_FIELDS.includes(k)) : [];
+  if (v && typeof v === 'object' && !Array.isArray(v) && !other.length && Buffer.byteLength(JSON.stringify(v)) <= ROUTER_EXTRA_BODY_MAX_BYTES) return v as Record<string, unknown>;
+  throw configInvalid(key, `must be a JSON object of at most ${ROUTER_EXTRA_BODY_MAX_BYTES} bytes, like {"reasoning_effort": "none"}, with only ${ROUTER_EXTRA_BODY_FIELDS.join(', ')}${other.length ? `; remove ${other.join(', ')}` : ''}`);
+}
+
+export function validateRouterPromptVersion(v: unknown, key: string): number {
+  if (Number.isInteger(v) && (v as number) >= 1 && (v as number) <= 10_000) return v as number;
+  throw configInvalid(key, 'must be the whole-number picker prompt version the model was trained on, like 1');
+}
+
 export function validateRouterTimeout(v: unknown, key: string): number {
   if (Number.isInteger(v) && (v as number) >= ROUTER_TIMEOUT_MS_MIN && (v as number) <= ROUTER_TIMEOUT_MS_MAX) return v as number;
   throw configInvalid(key, `must be a whole number of milliseconds from ${ROUTER_TIMEOUT_MS_MIN} to ${ROUTER_TIMEOUT_MS_MAX} (unset: 1500 in Claude Code, 2000 elsewhere)`);
@@ -136,7 +150,7 @@ export function validateRouterMaxUsd(v: unknown, key: string): number {
 /** The picker settings in a skills.resolver section. Never throws. */
 export function routerSettings(section: Record<string, unknown>): RouterSettings {
   const p = 'skills.resolver.';
-  const out: RouterSettings = { on: section.router === true, model: null, timeoutMs: null, maxUsdPerDay: ROUTER_MAX_USD_PER_DAY_DEFAULT, baseUrl: null, keyEnv: null, usdPerMtok: null, invalid: null };
+  const out: RouterSettings = { on: section.router === true, model: null, timeoutMs: null, maxUsdPerDay: ROUTER_MAX_USD_PER_DAY_DEFAULT, baseUrl: null, keyEnv: null, usdPerMtok: null, extraBody: null, promptVersion: null, invalid: null };
   try {
     if (section.router !== undefined && typeof section.router !== 'boolean') throw configInvalid(`${p}router`, 'must be true or false');
     if (section.router_model !== undefined) out.model = validateRouterModel(section.router_model, `${p}router_model`);
@@ -145,6 +159,9 @@ export function routerSettings(section: Record<string, unknown>): RouterSettings
     if (section.router_base_url !== undefined) out.baseUrl = validateRouterBaseUrl(section.router_base_url, `${p}router_base_url`);
     if (section.router_api_key_env !== undefined) out.keyEnv = validateRouterKeyEnv(section.router_api_key_env, `${p}router_api_key_env`);
     if (section.router_usd_per_mtok !== undefined) out.usdPerMtok = validateRouterUsdPerMtok(section.router_usd_per_mtok, `${p}router_usd_per_mtok`);
+    if (section.router_extra_body !== undefined) out.extraBody = validateRouterExtraBody(section.router_extra_body, `${p}router_extra_body`);
+    if (section.router_prompt_version !== undefined) out.promptVersion = validateRouterPromptVersion(section.router_prompt_version, `${p}router_prompt_version`);
+    if (out.extraBody && !out.model?.startsWith('compat:')) throw configInvalid(`${p}router_extra_body`, 'applies only to a compat: router_model; unset it for this model');
     if (out.model?.startsWith('compat:') && !out.baseUrl) throw configInvalid(`${p}router_base_url`, 'must be set when router_model is a compat: model');
   } catch (e) { out.invalid = (e as Error).message; }
   return out;
