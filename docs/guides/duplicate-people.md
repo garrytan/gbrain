@@ -3,8 +3,8 @@
 The same person often has two or three pages: a contact from Google or Apple Contacts, a page in each source, a stray
 spelling. `gbrain dedupe classes` looks at every pair of person pages that might be one person and counts them by the
 evidence for and against. `gbrain dedupe sample` picks a random set of pairs from one class so someone can check them
-by hand. Both only read: nothing is linked, edited or removed. `gbrain dedupe auto` links the pairs of the classes
-that passed such a check ([Automatic links](#automatic-links)).
+by hand. Both only read: nothing is linked, edited or removed. `gbrain dedupe auto` links or collapses the pairs of
+the classes that passed such a check ([Automatic links](#automatic-links)).
 
 ## Which pairs are looked at
 
@@ -29,14 +29,14 @@ pages it pairs with are not copies of each other (different emails, say), every 
 | C4 | same full name and company, two or more pages that link both, no other page of that name | wait (counted first) |
 | C5 | the names agree and nothing else is shared | wait, likeliest first |
 | C6 | a contradiction: different account ids, a role mailbox like team@, a value a third page also holds, or an id that a page with another name also holds (ids copied between cofounders' pages) | wait |
-| C7 | two pages in one source with the same name and a shared id | collapse into one |
+| C7 | two pages in one source with the same name and a shared id | collapse into one with `gbrain dedupe auto` |
 | M1 | a chat handle (phone or email) only one person page holds belongs, in your chats, to someone with the other page's name | link |
 | X1 | a web search for each page, with a different clue, finds the same profile | link |
 | X2 | the web searches find two different profiles | marked probably different |
 | C5+email+messaging, C5+email+C4, C5+messaging+C4 | a name-only pair with two independent kinds of evidence | link |
 
 A pair can be in more than one class. "What would happen" is what the evidence says; only the classes listed under
-[Automatic links](#automatic-links) are linked without you.
+[Automatic links](#automatic-links) are linked or collapsed without you.
 
 ## How the evidence combines
 
