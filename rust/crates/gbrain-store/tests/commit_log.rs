@@ -17,9 +17,7 @@ use gbrain_store::kv::{Kv, KvRead};
 use gbrain_store::occ_kv::OccKv;
 use gbrain_store::persistence::WriteRequestInsert;
 use gbrain_store::redb_kv::RedbKv;
-use gbrain_store::{
-    LOG_FORMAT_VERSION, MultiUserWrites, OpenOptions, Store, SystemEnv, keys,
-};
+use gbrain_store::{LOG_FORMAT_VERSION, MultiUserWrites, OpenOptions, Store, SystemEnv, keys};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -63,8 +61,12 @@ fn options(concurrent: bool, writes: MultiUserWrites) -> OpenOptions {
 /// A brain over a record file the test keeps its own handle on, so it can read raw keys.
 fn leader(path: &Path, concurrent: bool, multiuser: MultiUserWrites) -> (Arc<dyn Kv>, Store) {
     let kv = records_kv(path, concurrent);
-    let store =
-        Store::open_kv(kv.clone(), Arc::new(SystemEnv), options(concurrent, multiuser)).unwrap();
+    let store = Store::open_kv(
+        kv.clone(),
+        Arc::new(SystemEnv),
+        options(concurrent, multiuser),
+    )
+    .unwrap();
     (kv, store)
 }
 
@@ -96,7 +98,9 @@ struct Follower {
 impl Follower {
     fn copy_of(leader: &dyn Kv, path: &Path) -> Self {
         let snapshot = leader.snapshot().unwrap();
-        let meta = commit_log::read_meta(&*snapshot).unwrap().expect("a log brain");
+        let meta = commit_log::read_meta(&*snapshot)
+            .unwrap()
+            .expect("a log brain");
         let kv = RedbKv::open_path(path).unwrap();
         let mut tx = kv.begin_write().unwrap();
         for (k, v) in data_of(&*snapshot) {
@@ -192,7 +196,8 @@ fn step(store: &Store, rng: &mut Rng, n: u64) {
     match rng.below(5) {
         0 | 1 => {
             let size = if rng.below(4) == 0 { 300_000 } else { 40 };
-            let value: String = std::iter::repeat_n(char::from(b'a' + (n % 26) as u8), size).collect();
+            let value: String =
+                std::iter::repeat_n(char::from(b'a' + (n % 26) as u8), size).collect();
             store.set_config(&key, &value).unwrap();
         }
         2 => {
@@ -200,7 +205,14 @@ fn step(store: &Store, rng: &mut Rng, n: u64) {
         }
         3 => {
             store
-                .submit_page_mutation(&mutation(&uuid(n), &format!("notes/p{}", rng.below(6)), &format!("body {n}")), None)
+                .submit_page_mutation(
+                    &mutation(
+                        &uuid(n),
+                        &format!("notes/p{}", rng.below(6)),
+                        &format!("body {n}"),
+                    ),
+                    None,
+                )
                 .unwrap();
         }
         _ => {
@@ -223,7 +235,11 @@ fn a_follower_that_reads_only_the_log_matches_the_leader_after_every_commit() {
         for n in 0..120 {
             step(&store, &mut rng, n);
             follower.catch_up(&store);
-            assert_eq!(follower.data(), data(&*kv), "step {n} (concurrent {concurrent})");
+            assert_eq!(
+                follower.data(),
+                data(&*kv),
+                "step {n} (concurrent {concurrent})"
+            );
         }
         // A step that changes nothing (an unset of an absent key) commits nothing on the optimistic
         // store, so it has no record there.
@@ -236,7 +252,11 @@ fn a_follower_that_reads_only_the_log_matches_the_leader_after_every_commit() {
             step(&store, &mut rng, n);
         }
         follower.catch_up(&store);
-        assert_eq!(follower.data(), data(&*kv), "after the restart (concurrent {concurrent})");
+        assert_eq!(
+            follower.data(),
+            data(&*kv),
+            "after the restart (concurrent {concurrent})"
+        );
     }
 }
 
@@ -340,7 +360,9 @@ fn journal_rows_carry_the_write_origin_only_with_the_switch_on() {
         let (kv, store) = leader(&dir.path().join("on.redb"), concurrent, mu());
         // Native admission, page mutation, an override and the compatibility path (one row and
         // a group), each stamped.
-        store.admit_write(&admission(&uuid(1), "notes/a", None), None).unwrap();
+        store
+            .admit_write(&admission(&uuid(1), "notes/a", None), None)
+            .unwrap();
         store
             .submit_page_mutation(&mutation(&uuid(2), "notes/b", "b"), None)
             .unwrap();
@@ -354,7 +376,9 @@ fn journal_rows_carry_the_write_origin_only_with_the_switch_on() {
                 None,
             )
             .unwrap();
-        store.insert_write_request(&insert_input(&store, &uuid(4), None)).unwrap();
+        store
+            .insert_write_request(&insert_input(&store, &uuid(4), None))
+            .unwrap();
         store
             .insert_write_request_group(&[
                 insert_input(&store, &uuid(5), Some(OTHER_HOST)),
@@ -380,7 +404,10 @@ fn journal_rows_carry_the_write_origin_only_with_the_switch_on() {
             }
         }
         // The row the members return shows the host id in its existing column.
-        let row = store.get_write_request(&principal(), &uuid(1)).unwrap().unwrap();
+        let row = store
+            .get_write_request(&principal(), &uuid(1))
+            .unwrap()
+            .unwrap();
         assert_eq!(row["admitter_host_id"], HOST);
 
         // Off: nothing is stamped; the native row's extra stays empty and an origin field sent
@@ -396,7 +423,8 @@ fn journal_rows_carry_the_write_origin_only_with_the_switch_on() {
             None,
         )
         .unwrap();
-        off.insert_write_request(&insert_input(&off, &uuid(4), None)).unwrap();
+        off.insert_write_request(&insert_input(&off, &uuid(4), None))
+            .unwrap();
         let native = raw_request(&*kv_off, &uuid(1));
         for field in ["admitter_host_id", "admitter_incarnation", "writer_id"] {
             assert!(native.get(field).is_none(), "{field}: {native}");
@@ -405,7 +433,10 @@ fn journal_rows_carry_the_write_origin_only_with_the_switch_on() {
         assert_eq!(compat["admitter_host_id"], Value::Null);
         assert!(compat.get("admitter_incarnation").is_none());
         assert!(compat.get("writer_id").is_none());
-        let row = off.get_write_request(&principal(), &uuid(1)).unwrap().unwrap();
+        let row = off
+            .get_write_request(&principal(), &uuid(1))
+            .unwrap()
+            .unwrap();
         assert_eq!(row["admitter_host_id"], Value::Null);
         assert!(off.read_commit_log(None, 1).is_err());
         assert!(data(&*kv_off).keys().all(|k| !is_log_key(k)));
@@ -418,16 +449,30 @@ fn journal_rows_carry_the_write_origin_only_with_the_switch_on() {
                 true
             })
             .unwrap();
-        assert_eq!(log_keys, 0, "a brain opened with the switch off holds no log key");
+        assert_eq!(
+            log_keys, 0,
+            "a brain opened with the switch off holds no log key"
+        );
     }
 }
 
 #[test]
 fn multi_user_writes_without_a_host_id_are_refused_before_any_write() {
     for writes in [
-        MultiUserWrites { host_id: None, ..mu() },
-        MultiUserWrites { host_id: None, write_origin: false, ..mu() },
-        MultiUserWrites { host_id: None, commit_log: false, ..mu() },
+        MultiUserWrites {
+            host_id: None,
+            ..mu()
+        },
+        MultiUserWrites {
+            host_id: None,
+            write_origin: false,
+            ..mu()
+        },
+        MultiUserWrites {
+            host_id: None,
+            commit_log: false,
+            ..mu()
+        },
     ] {
         let dir = TempDir::new("origin-host");
         let kv = records_kv(&dir.path().join("r.redb"), false);
@@ -446,12 +491,17 @@ fn multi_user_writes_without_a_host_id_are_refused_before_any_write() {
         Arc::new(SystemEnv),
         OpenOptions {
             keyword_index_builder: false,
-            multiuser_writes: MultiUserWrites { host_id: None, ..mu() },
+            multiuser_writes: MultiUserWrites {
+                host_id: None,
+                ..mu()
+            },
             ..OpenOptions::default()
         },
     )
     .unwrap();
-    store.admit_write(&admission(&uuid(1), "notes/a", None), None).unwrap();
+    store
+        .admit_write(&admission(&uuid(1), "notes/a", None), None)
+        .unwrap();
     assert!(raw_request(&*kv, &uuid(1)).get("writer_id").is_none());
 }
 
@@ -475,10 +525,19 @@ fn a_reused_adapter_opened_again_with_the_mode_off_writes_no_commit_time() {
         let time = on.last_commit_time().unwrap();
         assert!(time.is_some());
         drop(on);
-        let off = Store::open_kv(kv.clone(), Arc::new(SystemEnv), options(concurrent, MultiUserWrites::default())).unwrap();
+        let off = Store::open_kv(
+            kv.clone(),
+            Arc::new(SystemEnv),
+            options(concurrent, MultiUserWrites::default()),
+        )
+        .unwrap();
         assert!(!off.multiuser());
         off.set_config("test.a", "2").unwrap();
-        assert_eq!(off.last_commit_time().unwrap(), time, "concurrent {concurrent}: the off open moved the time");
+        assert_eq!(
+            off.last_commit_time().unwrap(),
+            time,
+            "concurrent {concurrent}: the off open moved the time"
+        );
     }
 }
 
@@ -495,7 +554,9 @@ fn a_config_only_log_brain_that_needs_recovery_reopens_with_the_log() {
     };
     {
         let store = Store::open_dir(&brain, mu_only(false)).unwrap();
-        store.set_config(gbrain_store::MULTIUSER_CONFIG_KEY, "true").unwrap();
+        store
+            .set_config(gbrain_store::MULTIUSER_CONFIG_KEY, "true")
+            .unwrap();
     }
     {
         let store = Store::open_dir(&brain, opts()).unwrap();
@@ -516,7 +577,10 @@ fn a_config_only_log_brain_that_needs_recovery_reopens_with_the_log() {
         "the copy must need recovery for this case"
     );
     let store = Store::open_dir(&crashed, opts()).unwrap();
-    assert!(store.multiuser() && store.info().commit_log, "the recovered brain resolves its row and keeps its log");
+    assert!(
+        store.multiuser() && store.info().commit_log,
+        "the recovered brain resolves its row and keeps its log"
+    );
     assert_eq!(store.get_config("test.a").unwrap().as_deref(), Some("1"));
     store.set_config("test.b", "2").unwrap();
     let page = store.read_commit_log(None, usize::MAX).unwrap();
@@ -609,7 +673,10 @@ fn a_forced_group_commit_gives_each_transaction_its_own_position_and_record() {
     std::thread::sleep(std::time::Duration::from_millis(100));
     drop(exclusive);
     let outcomes = [t1.join().unwrap(), t2.join().unwrap(), t3.join().unwrap()];
-    let accepted: Vec<CommitPosition> = outcomes.iter().filter_map(|o| o.as_ref().ok().copied()).collect();
+    let accepted: Vec<CommitPosition> = outcomes
+        .iter()
+        .filter_map(|o| o.as_ref().ok().copied())
+        .collect();
     let refused: Vec<_> = outcomes.iter().filter_map(|o| o.as_ref().err()).collect();
     assert_eq!(refused.len(), 1, "{outcomes:?}");
     assert_eq!(refused[0].code, WRITE_CONFLICT);
@@ -617,10 +684,16 @@ fn a_forced_group_commit_gives_each_transaction_its_own_position_and_record() {
     let batch = seeded.sequence + 1;
     let mut sorted = accepted.clone();
     sorted.sort();
-    assert_eq!(sorted, vec![CommitPosition::new(batch, 0), CommitPosition::new(batch, 1)]);
+    assert_eq!(
+        sorted,
+        vec![CommitPosition::new(batch, 0), CommitPosition::new(batch, 1)]
+    );
     // A completion that commits nothing reports the end of the batch it saw.
     let empty = kv.begin_write().unwrap();
-    assert_eq!(empty.commit_position().unwrap(), CommitPosition::end_of(batch));
+    assert_eq!(
+        empty.commit_position().unwrap(),
+        CommitPosition::end_of(batch)
+    );
     let empty = kv.begin_write().unwrap();
     assert_eq!(empty.commit().unwrap(), batch);
     // The log holds exactly the two accepted transactions, at their positions, with their ops.
@@ -641,7 +714,11 @@ fn a_forced_group_commit_gives_each_transaction_its_own_position_and_record() {
         ]
     );
     assert_eq!(t3_record.origin.incarnation, "run");
-    let other = page.records.iter().find(|r| r.position != t3_record.position).unwrap();
+    let other = page
+        .records
+        .iter()
+        .find(|r| r.position != t3_record.position)
+        .unwrap();
     assert_eq!(other.ops.len(), 1);
     assert!(other.write_ids == ["w1"] || other.write_ids == ["w2"]);
     assert_eq!(replay_from_empty(&*kv), data(&*kv));
@@ -687,7 +764,10 @@ fn positions_are_unique_increasing_and_gap_free_on_both_stores() {
                 })
             })
             .collect();
-        let mut all: Vec<CommitPosition> = threads.into_iter().flat_map(|t| t.join().unwrap()).collect();
+        let mut all: Vec<CommitPosition> = threads
+            .into_iter()
+            .flat_map(|t| t.join().unwrap())
+            .collect();
         all.sort();
         let before = all.len();
         all.dedup();
@@ -695,7 +775,10 @@ fn positions_are_unique_increasing_and_gap_free_on_both_stores() {
         assert_eq!(all.len(), 320);
         let page = commit_log::read_commit_log(&*kv.snapshot().unwrap(), None, usize::MAX).unwrap();
         let logged: Vec<CommitPosition> = page.records.iter().map(|r| r.position).collect();
-        assert_eq!(logged, all, "the log holds exactly the acknowledged commits, in order");
+        assert_eq!(
+            logged, all,
+            "the log holds exactly the acknowledged commits, in order"
+        );
         let mut prev = since;
         for p in &logged {
             assert!(p.follows(prev), "{} after {}", p.token(), prev.token());
@@ -704,7 +787,11 @@ fn positions_are_unique_increasing_and_gap_free_on_both_stores() {
         if !concurrent {
             assert!(logged.iter().all(|p| p.index == 0));
         }
-        assert_eq!(replay_from_empty(&*kv), data(&*kv), "concurrent {concurrent}");
+        assert_eq!(
+            replay_from_empty(&*kv),
+            data(&*kv),
+            "concurrent {concurrent}"
+        );
         let n = gbrain_store::kv::read_i64(&*kv.snapshot().unwrap(), b"n").unwrap();
         assert_eq!(n, 320);
     }
@@ -731,12 +818,23 @@ fn retention_trims_to_the_cap_and_keeps_where_the_log_stands() {
             assert!(page.snapshot_required, "the start of the log was trimmed");
             let oldest = page.oldest_retained.unwrap();
             assert!(oldest > positions[0]);
-            assert_eq!(Some(oldest), positions.iter().copied().find(|p| p.follows(meta.trimmed_through.unwrap())));
+            assert_eq!(
+                Some(oldest),
+                positions
+                    .iter()
+                    .copied()
+                    .find(|p| p.follows(meta.trimmed_through.unwrap()))
+            );
             let mut bytes = 0;
-            read.scan(&commit_log::record_key(CommitPosition::default()), &[b'3'], false, &mut |k, v| {
-                bytes += k.len() + v.len();
-                true
-            })
+            read.scan(
+                &commit_log::record_key(CommitPosition::default()),
+                &[b'3'],
+                false,
+                &mut |k, v| {
+                    bytes += k.len() + v.len();
+                    true
+                },
+            )
             .unwrap();
             assert!(bytes <= cap as usize, "{bytes}");
             // One transaction over the cap: every record goes, the meta record still says where
@@ -760,9 +858,8 @@ fn retention_trims_to_the_cap_and_keeps_where_the_log_stands() {
         assert_eq!(meta.since, since);
         assert_eq!(meta.newest, last);
         assert_eq!(meta.trimmed_through, Some(last));
-        let at = |after: Option<CommitPosition>| {
-            commit_log::read_commit_log(&*read, after, 10).unwrap()
-        };
+        let at =
+            |after: Option<CommitPosition>| commit_log::read_commit_log(&*read, after, 10).unwrap();
         assert!(at(None).snapshot_required);
         assert!(at(Some(positions[positions.len() - 2])).snapshot_required);
         let current = at(Some(last));
@@ -778,7 +875,10 @@ fn retention_trims_to_the_cap_and_keeps_where_the_log_stands() {
         tx.put(b"after", b"1").unwrap();
         let next = tx.commit_position().unwrap();
         let page = commit_log::read_commit_log(&*kv.snapshot().unwrap(), Some(last), 10).unwrap();
-        assert_eq!(page.records.iter().map(|r| r.position).collect::<Vec<_>>(), vec![next]);
+        assert_eq!(
+            page.records.iter().map(|r| r.position).collect::<Vec<_>>(),
+            vec![next]
+        );
     }
 }
 
@@ -790,9 +890,11 @@ fn explicit_transactions_log_their_statements_and_rollbacks_log_only_counters() 
         let mut follower = Follower::copy_of(&*kv, &dir.path().join("f.redb"));
         // Commit: two statements, one savepoint rolled back with its request.
         let tx = store.begin_transaction(false).unwrap();
-        tx.admit_write(&admission(&uuid(1), "notes/kept", None), None).unwrap();
+        tx.admit_write(&admission(&uuid(1), "notes/kept", None), None)
+            .unwrap();
         let sp = tx.savepoint().unwrap();
-        tx.admit_write(&admission(&uuid(2), "notes/dropped", None), None).unwrap();
+        tx.admit_write(&admission(&uuid(2), "notes/dropped", None), None)
+            .unwrap();
         tx.rollback_savepoint(sp).unwrap();
         tx.set_config("test.t", "v").unwrap();
         let at = tx.commit_transaction_at().unwrap();
@@ -820,7 +922,10 @@ fn explicit_transactions_log_their_statements_and_rollbacks_log_only_counters() 
         // A transaction opened read-only commits nothing: it reports the end of what it saw.
         let version = store.commit_version().unwrap();
         let tx = store.begin_transaction(true).unwrap();
-        assert_eq!(tx.commit_transaction_at().unwrap(), CommitPosition::end_of(version));
+        assert_eq!(
+            tx.commit_transaction_at().unwrap(),
+            CommitPosition::end_of(version)
+        );
         drop(tx);
         // A dropped handle rolls back like a rollback.
         {
@@ -845,7 +950,10 @@ fn files(dir: &Path) -> BTreeMap<String, Vec<u8>> {
         .unwrap()
         .map(|e| {
             let e = e.unwrap();
-            (e.file_name().to_string_lossy().into_owned(), std::fs::read(e.path()).unwrap())
+            (
+                e.file_name().to_string_lossy().into_owned(),
+                std::fs::read(e.path()).unwrap(),
+            )
         })
         .collect()
 }
@@ -859,15 +967,23 @@ fn a_log_brain_is_refused_for_writing_without_the_log_and_read_without_it() {
         store.set_config("test.a", "1").unwrap();
         let since = store.commit_log_since().unwrap();
         drop(store);
-        let format: Value = serde_json::from_slice(&std::fs::read(brain.join("FORMAT")).unwrap()).unwrap();
+        let format: Value =
+            serde_json::from_slice(&std::fs::read(brain.join("FORMAT")).unwrap()).unwrap();
         assert_eq!(format["format_version"], LOG_FORMAT_VERSION);
-        assert_eq!(format["log"]["since"], json!({"sequence": since.sequence, "index": since.index}));
+        assert_eq!(
+            format["log"]["since"],
+            json!({"sequence": since.sequence, "index": since.index})
+        );
         let before = files(&brain);
         let err = Store::open_dir(&brain, options(concurrent, MultiUserWrites::default()))
             .err()
             .unwrap();
         assert_eq!(err.code, FORMAT_UNKNOWN);
-        assert!(err.message.contains("GBRAIN_RUST_MULTIUSER=1"), "{}", err.message);
+        assert!(
+            err.message.contains("GBRAIN_RUST_MULTIUSER=1"),
+            "{}",
+            err.message
+        );
         assert_eq!(files(&brain), before, "the refused open changed a file");
         // Without FORMAT the format record refuses it, still before any record is written.
         std::fs::remove_file(brain.join("FORMAT")).unwrap();
@@ -876,7 +992,11 @@ fn a_log_brain_is_refused_for_writing_without_the_log_and_read_without_it() {
             .err()
             .unwrap();
         assert_eq!(err.code, FORMAT_UNKNOWN);
-        assert_eq!(files(&brain), before, "the refused open changed a file without FORMAT");
+        assert_eq!(
+            files(&brain),
+            before,
+            "the refused open changed a file without FORMAT"
+        );
         // A read-only open reads it.
         let store = Store::open_dir(&brain, options(concurrent, mu())).unwrap();
         drop(store);
@@ -899,11 +1019,16 @@ fn an_interrupted_switch_to_the_log_is_finished_with_the_log_and_refused_without
     store.set_config("test.a", "1").unwrap();
     drop(store);
     // The crash point: FORMAT stamped for the log, the records not yet.
-    let mut format: Value = serde_json::from_slice(&std::fs::read(brain.join("FORMAT")).unwrap()).unwrap();
+    let mut format: Value =
+        serde_json::from_slice(&std::fs::read(brain.join("FORMAT")).unwrap()).unwrap();
     let plain = format.clone();
     format["format_version"] = json!(LOG_FORMAT_VERSION);
     format["log"] = json!({"since": {"sequence": 99, "index": 0}});
-    std::fs::write(brain.join("FORMAT"), serde_json::to_vec_pretty(&format).unwrap()).unwrap();
+    std::fs::write(
+        brain.join("FORMAT"),
+        serde_json::to_vec_pretty(&format).unwrap(),
+    )
+    .unwrap();
     let before = files(&brain);
     let err = Store::open_dir(&brain, options(false, MultiUserWrites::default()))
         .err()
@@ -914,7 +1039,8 @@ fn an_interrupted_switch_to_the_log_is_finished_with_the_log_and_refused_without
     let since = store.commit_log_since().unwrap();
     assert_eq!(store.info().format_version, LOG_FORMAT_VERSION);
     drop(store);
-    let after: Value = serde_json::from_slice(&std::fs::read(brain.join("FORMAT")).unwrap()).unwrap();
+    let after: Value =
+        serde_json::from_slice(&std::fs::read(brain.join("FORMAT")).unwrap()).unwrap();
     assert_eq!(after["log"]["since"]["sequence"], since.sequence);
     assert_eq!(after["brain_id"], plain["brain_id"]);
 }
@@ -933,12 +1059,17 @@ fn the_switch_off_leaves_format_and_records_without_any_log_field() {
     );
     assert_eq!(store.commit_log_since(), None);
     drop(store);
-    let format: Value = serde_json::from_slice(&std::fs::read(brain.join("FORMAT")).unwrap()).unwrap();
+    let format: Value =
+        serde_json::from_slice(&std::fs::read(brain.join("FORMAT")).unwrap()).unwrap();
     assert_eq!(format["format_version"], gbrain_store::FORMAT_VERSION);
     assert!(format.get("log").is_none());
     let kv = RedbKv::open_path(&brain.join("records.redb")).unwrap();
     let stored: Value = serde_json::from_slice(
-        &kv.snapshot().unwrap().get(&keys::meta("format")).unwrap().unwrap(),
+        &kv.snapshot()
+            .unwrap()
+            .get(&keys::meta("format"))
+            .unwrap()
+            .unwrap(),
     )
     .unwrap();
     assert_eq!(
@@ -968,18 +1099,26 @@ fn base_7_log_brain(path: &Path, concurrent: bool) -> Data {
     tx.delete(&secret_new).unwrap();
     tx.put(&secret_old, &secret).unwrap();
     tx.delete(&keys::meta("access_flag_scan")).unwrap();
-    tx.delete(&keys::meta("derivation_purge_source_index")).unwrap();
+    tx.delete(&keys::meta("derivation_purge_source_index"))
+        .unwrap();
     tx.delete(&keys::keyword_index_state()).unwrap();
-    let mut format: Value = serde_json::from_slice(&tx.get(&keys::meta("format")).unwrap().unwrap()).unwrap();
+    let mut format: Value =
+        serde_json::from_slice(&tx.get(&keys::meta("format")).unwrap().unwrap()).unwrap();
     format["log"]["base_format"] = json!(7);
-    tx.put(&keys::meta("format"), &serde_json::to_vec(&format).unwrap()).unwrap();
+    tx.put(&keys::meta("format"), &serde_json::to_vec(&format).unwrap())
+        .unwrap();
     let since = CommitPosition::new(kv.version().unwrap() + 1, 0);
     // Re-pin the log after the hand edits (they are the starting copy, not logged changes).
     let mut stale = Vec::new();
-    tx.scan(&commit_log::record_key(CommitPosition::default()), &[b'3'], false, &mut |k, _| {
-        stale.push(k.to_vec());
-        true
-    })
+    tx.scan(
+        &commit_log::record_key(CommitPosition::default()),
+        &[b'3'],
+        false,
+        &mut |k, _| {
+            stale.push(k.to_vec());
+            true
+        },
+    )
     .unwrap();
     for k in stale {
         tx.delete(&k).unwrap();
@@ -1000,7 +1139,11 @@ fn a_log_brain_at_an_older_base_upgrades_inside_the_log() {
         let (kv, store) = leader(&path, concurrent, mu());
         assert_eq!(store.info().format_version, LOG_FORMAT_VERSION);
         let stored: Value = serde_json::from_slice(
-            &kv.snapshot().unwrap().get(&keys::meta("format")).unwrap().unwrap(),
+            &kv.snapshot()
+                .unwrap()
+                .get(&keys::meta("format"))
+                .unwrap()
+                .unwrap(),
         )
         .unwrap();
         assert_eq!(stored["format_version"], LOG_FORMAT_VERSION);
@@ -1043,7 +1186,8 @@ fn a_log_brain_at_an_older_base_upgrades_inside_the_log() {
         let mut format: Value =
             serde_json::from_slice(&tx.get(&keys::meta("format")).unwrap().unwrap()).unwrap();
         format["log"]["base_format"] = json!(gbrain_store::FORMAT_VERSION + 1);
-        tx.put(&keys::meta("format"), &serde_json::to_vec(&format).unwrap()).unwrap();
+        tx.put(&keys::meta("format"), &serde_json::to_vec(&format).unwrap())
+            .unwrap();
         tx.commit().unwrap();
         drop(kv);
         let kv = records_kv(&path, concurrent);
@@ -1093,7 +1237,9 @@ fn the_accept_hook_sees_every_commit_once_in_commit_order_with_its_time() {
                 let store = store.clone();
                 std::thread::spawn(move || {
                     for i in 0..25 {
-                        store.set_config(&format!("test.k{}", (t + i) % 3), &format!("{t}-{i}")).unwrap();
+                        store
+                            .set_config(&format!("test.k{}", (t + i) % 3), &format!("{t}-{i}"))
+                            .unwrap();
                     }
                 })
             })
@@ -1105,17 +1251,28 @@ fn the_accept_hook_sees_every_commit_once_in_commit_order_with_its_time() {
         // Accepted transactions that lost nothing; a conflict is refused before the accept step.
         assert_eq!(seen.len(), 200, "concurrent {concurrent}");
         for pair in seen.windows(2) {
-            assert!(pair[0].position < pair[1].position, "accept order is commit order: {pair:?}");
-            assert!(pair[0].commit_time < pair[1].commit_time, "times follow accept order: {pair:?}");
+            assert!(
+                pair[0].position < pair[1].position,
+                "accept order is commit order: {pair:?}"
+            );
+            assert!(
+                pair[0].commit_time < pair[1].commit_time,
+                "times follow accept order: {pair:?}"
+            );
         }
-        assert_eq!(seen.last().unwrap().position.sequence, kv.version().unwrap());
+        assert_eq!(
+            seen.last().unwrap().position.sequence,
+            kv.version().unwrap()
+        );
         if concurrent {
             // At least one group commit held several transactions, and their times still follow their places.
-            assert!(seen.iter().any(|a| a.position.index > 0), "no group commit formed");
+            assert!(
+                seen.iter().any(|a| a.position.index > 0),
+                "no group commit formed"
+            );
         }
     }
 }
-
 
 /// A clock the test moves by hand (it may go backwards), with random ids.
 struct HandClock(std::sync::atomic::AtomicI64);
@@ -1160,7 +1317,10 @@ fn commit_time_never_goes_back_when_the_store_clock_does() {
         store.set_config("test.a", "1").unwrap();
         let before = store.last_commit_time().unwrap().unwrap();
         // The clock jumps an hour back, then stands still.
-        clock.0.store(5_000_000 - 3_600_000_000, std::sync::atomic::Ordering::SeqCst);
+        clock.0.store(
+            5_000_000 - 3_600_000_000,
+            std::sync::atomic::Ordering::SeqCst,
+        );
         for i in 0..5 {
             store.set_config("test.a", &i.to_string()).unwrap();
         }
@@ -1169,8 +1329,16 @@ fn commit_time_never_goes_back_when_the_store_clock_does() {
             assert!(pair[0].1 < pair[1].1, "concurrent {concurrent}: {pair:?}");
         }
         let last = store.last_commit_time().unwrap().unwrap();
-        assert_eq!(last, before + 5, "each commit takes the previous time plus 1 us");
-        assert_eq!(times.last().unwrap().1, last, "the newest record's time is the durable time");
+        assert_eq!(
+            last,
+            before + 5,
+            "each commit takes the previous time plus 1 us"
+        );
+        assert_eq!(
+            times.last().unwrap().1,
+            last,
+            "the newest record's time is the durable time"
+        );
     }
 }
 
@@ -1193,9 +1361,17 @@ fn commit_time_strictly_increases_inside_one_optimistic_batch() {
         .collect();
     std::thread::sleep(std::time::Duration::from_millis(60));
     drop(exclusive);
-    let mut positions: Vec<CommitPosition> = threads.into_iter().map(|t| t.join().unwrap().unwrap()).collect();
+    let mut positions: Vec<CommitPosition> = threads
+        .into_iter()
+        .map(|t| t.join().unwrap().unwrap())
+        .collect();
     positions.sort();
-    assert!(positions.iter().all(|p| p.sequence == positions[0].sequence), "one batch: {positions:?}");
+    assert!(
+        positions
+            .iter()
+            .all(|p| p.sequence == positions[0].sequence),
+        "one batch: {positions:?}"
+    );
     let page = commit_log::read_commit_log(&*kv.snapshot().unwrap(), None, 100).unwrap();
     let batch: Vec<i64> = page
         .records
@@ -1227,10 +1403,18 @@ fn commit_time_continues_above_the_durable_floor_after_a_restart_and_a_primary_m
         // Reopen (a restart, or a new primary on another machine with a slower clock): the floor is
         // the newest durable time, and the next commit is above it.
         let store = Store::open_dir(&brain, mu_only(concurrent)).unwrap();
-        assert_eq!(store.last_commit_time().unwrap(), Some(last), "the floor at open");
+        assert_eq!(
+            store.last_commit_time().unwrap(),
+            Some(last),
+            "the floor at open"
+        );
         store.set_config("test.a", "3").unwrap();
         let next = store.last_commit_time().unwrap().unwrap();
-        assert_eq!(next, last + 1, "concurrent {concurrent}: the next time is above the floor");
+        assert_eq!(
+            next,
+            last + 1,
+            "concurrent {concurrent}: the next time is above the floor"
+        );
         let times = record_times(&store);
         for pair in times.windows(2) {
             assert!(pair[0].1 < pair[1].1, "{pair:?}");
@@ -1250,7 +1434,11 @@ fn commit_time_continues_above_the_durable_floor_after_a_restart_and_a_primary_m
             })
             .unwrap();
         tx.commit().unwrap();
-        assert_eq!(model.last_commit_time().unwrap(), None, "the copy has no adapter key");
+        assert_eq!(
+            model.last_commit_time().unwrap(),
+            None,
+            "the copy has no adapter key"
+        );
         // A promoted follower's clock starts at its newest applied record's time.
         model.set_commit_clock(Arc::new(SystemEnv), None).unwrap();
         let mut tx = model.begin_write().unwrap();
@@ -1266,11 +1454,21 @@ fn a_crash_after_commit_keeps_the_commit_time_and_the_next_one_is_above_it() {
     #[derive(Debug)]
     struct Backend(SimFile);
     impl gbrain_store::FileBackend for Backend {
-        fn size(&self) -> std::io::Result<u64> { self.0.len() }
-        fn read_at(&self, o: u64, b: &mut [u8]) -> std::io::Result<()> { self.0.read_at(o, b) }
-        fn write_at(&self, o: u64, d: &[u8]) -> std::io::Result<()> { self.0.write_at(o, d) }
-        fn set_len(&self, l: u64) -> std::io::Result<()> { self.0.set_len(l) }
-        fn sync(&self) -> std::io::Result<()> { self.0.sync() }
+        fn size(&self) -> std::io::Result<u64> {
+            self.0.len()
+        }
+        fn read_at(&self, o: u64, b: &mut [u8]) -> std::io::Result<()> {
+            self.0.read_at(o, b)
+        }
+        fn write_at(&self, o: u64, d: &[u8]) -> std::io::Result<()> {
+            self.0.write_at(o, d)
+        }
+        fn set_len(&self, l: u64) -> std::io::Result<()> {
+            self.0.set_len(l)
+        }
+        fn sync(&self) -> std::io::Result<()> {
+            self.0.sync()
+        }
     }
     let disk = SimDisk::new(7, FaultPlan::none());
     let open = |disk: &SimDisk| -> Arc<dyn Kv> {
@@ -1278,11 +1476,21 @@ fn a_crash_after_commit_keeps_the_commit_time_and_the_next_one_is_above_it() {
     };
     let far = 4_000_000_000_000_000;
     let last = {
-        let store = Store::open_kv(open(&disk), Arc::new(HandClock(std::sync::atomic::AtomicI64::new(far))), mu_only(false)).unwrap();
+        let store = Store::open_kv(
+            open(&disk),
+            Arc::new(HandClock(std::sync::atomic::AtomicI64::new(far))),
+            mu_only(false),
+        )
+        .unwrap();
         store.set_config("test.a", "1").unwrap();
         let last = store.last_commit_time().unwrap().unwrap();
         // The crash: everything synced stays, nothing after it.
-        disk.set_plan(FaultPlan { fsync_error_pm: 0, fsync_lie_pm: 0, crash_at_op: Some(disk.stats().io_ops + 1), crash_mode: CrashMode::DropUnsynced });
+        disk.set_plan(FaultPlan {
+            fsync_error_pm: 0,
+            fsync_lie_pm: 0,
+            crash_at_op: Some(disk.stats().io_ops + 1),
+            crash_mode: CrashMode::DropUnsynced,
+        });
         let _ = store.set_config("test.b", "lost");
         disk.crash_now();
         last
@@ -1290,10 +1498,22 @@ fn a_crash_after_commit_keeps_the_commit_time_and_the_next_one_is_above_it() {
     disk.reboot();
     disk.set_plan(FaultPlan::none());
     let store = Store::open_kv(open(&disk), Arc::new(SystemEnv), mu_only(false)).unwrap();
-    assert_eq!(store.last_commit_time().unwrap(), Some(last), "the acknowledged commit's time survived");
-    assert_eq!(store.get_config("test.b").unwrap(), None, "the crashed commit left no data");
+    assert_eq!(
+        store.last_commit_time().unwrap(),
+        Some(last),
+        "the acknowledged commit's time survived"
+    );
+    assert_eq!(
+        store.get_config("test.b").unwrap(),
+        None,
+        "the crashed commit left no data"
+    );
     store.set_config("test.c", "1").unwrap();
-    assert_eq!(store.last_commit_time().unwrap(), Some(last + 1), "and no time: the next is right above");
+    assert_eq!(
+        store.last_commit_time().unwrap(),
+        Some(last + 1),
+        "and no time: the next is right above"
+    );
     let times = record_times(&store);
     assert_eq!(times.last().unwrap().1, last + 1);
 }
@@ -1314,14 +1534,22 @@ fn a_brain_with_the_switch_off_never_holds_a_commit_time_or_log_key() {
         let store = Store::open_kv(kv.clone(), Arc::new(SystemEnv), off).unwrap();
         assert!(!store.info().multiuser && !store.info().commit_log);
         store.set_config("test.a", "1").unwrap();
-        store.submit_page_mutation(&mutation(&uuid(1), "notes/a", "a"), None).unwrap();
+        store
+            .submit_page_mutation(&mutation(&uuid(1), "notes/a", "a"), None)
+            .unwrap();
         assert_eq!(store.last_commit_time().unwrap(), None);
-        assert!(store.set_accept_hook(Arc::new(|_| {})).is_err(), "the hook needs the mode");
+        assert!(
+            store.set_accept_hook(Arc::new(|_| {})).is_err(),
+            "the hook needs the mode"
+        );
         assert!(data(&*kv).keys().all(|k| !is_log_key(k)));
         drop(store);
         drop(kv);
         let kv = RedbKv::open_path(&dir.path().join("r.redb")).unwrap();
-        assert_eq!(gbrain_store::redb_kv::read_commit_time(&*kv.snapshot().unwrap()).unwrap(), None);
+        assert_eq!(
+            gbrain_store::redb_kv::read_commit_time(&*kv.snapshot().unwrap()).unwrap(),
+            None
+        );
         let row = raw_request(&kv, &uuid(1));
         assert!(row.get("writer_id").is_none() && row.get("admitter_incarnation").is_none());
     }

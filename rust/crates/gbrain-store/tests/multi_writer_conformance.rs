@@ -1921,10 +1921,11 @@ fn c19_child_writer() {
     let explicit = std::env::var(C19_EXPLICIT_TXN).is_ok_and(|v| v == "1");
     let store = Store::open_dir(
         &Path::new(&dir).join("brain"),
-        OpenOptions {
-            concurrent_writes: optimistic,
-            ..OpenOptions::default()
-        },
+        common::mode::open_options(if optimistic {
+            StoreMode::Optimistic
+        } else {
+            StoreMode::Single
+        }),
     )
     .unwrap();
     let out = Mutex::new(std::io::stdout());

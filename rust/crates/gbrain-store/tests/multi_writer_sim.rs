@@ -68,7 +68,7 @@ use gbrain_sim::{CrashMode, Cx, FaultPlan, Scheduler, SimDisk, SimFile, SimRng, 
 use gbrain_store::error::WRITE_CONFLICT;
 use gbrain_store::occ_kv::OccKv;
 use gbrain_store::redb_kv::RedbKv;
-use gbrain_store::{Env, FileBackend, Kv, KvWrite, OpenOptions, Store, StoreError};
+use gbrain_store::{Env, FileBackend, Kv, KvWrite, Store, StoreError};
 use std::collections::{BTreeMap, BTreeSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Mutex};
@@ -1021,10 +1021,7 @@ fn open_store(disk: &SimDisk) -> Result<Store, StoreError> {
     Store::open_kv(
         Arc::new(open_optimistic(disk)?),
         Arc::new(env),
-        OpenOptions {
-            concurrent_writes: true,
-            ..OpenOptions::default()
-        },
+        common::mode::open_options(common::StoreMode::Optimistic),
     )
 }
 

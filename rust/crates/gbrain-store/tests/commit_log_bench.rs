@@ -75,7 +75,11 @@ fn commit_log_write_cost() {
                     drop(store);
                     println!(
                         "| {} | {writers} | {size} | {} | {n} | {:.0} | {} | {} |",
-                        if concurrent { "optimistic" } else { "single-writer" },
+                        if concurrent {
+                            "optimistic"
+                        } else {
+                            "single-writer"
+                        },
                         if logged { "on" } else { "off" },
                         elapsed.as_micros() as f64 / n as f64,
                         elapsed.as_millis(),

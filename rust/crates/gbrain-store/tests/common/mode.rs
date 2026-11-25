@@ -50,3 +50,25 @@ macro_rules! both_modes {
 }
 #[allow(unused_imports)]
 pub(crate) use both_modes;
+
+/// The options a test store opens with in `mode`. With `GBRAIN_RUST_MULTIUSER=1` the store runs in multi-user mode, with the commit
+/// log (`GBRAIN_RUST_COMMIT_LOG=1`) and write origin (`GBRAIN_RUST_WRITE_ORIGIN=1`) sub-switches as the variables say; unset, these
+/// are the options every test had.
+#[allow(dead_code)]
+pub fn open_options(mode: StoreMode) -> gbrain_store::OpenOptions {
+    let on = |name: &str| std::env::var(name).is_ok_and(|v| v == "1");
+    let mut options = gbrain_store::OpenOptions {
+        concurrent_writes: mode.optimistic(),
+        ..gbrain_store::OpenOptions::default()
+    };
+    if on("GBRAIN_RUST_MULTIUSER") {
+        options.multiuser = true;
+        options.multiuser_writes = gbrain_store::MultiUserWrites {
+            commit_log: on("GBRAIN_RUST_COMMIT_LOG"),
+            write_origin: on("GBRAIN_RUST_WRITE_ORIGIN"),
+            host_id: Some("d0000000-0000-4000-8000-0000000000d1".into()),
+            log_retention_bytes: None,
+        };
+    }
+    options
+}

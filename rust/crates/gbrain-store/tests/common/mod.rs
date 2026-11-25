@@ -65,9 +65,5 @@ pub fn open_concurrent(dir: &TempDir) -> Store {
 
 /// Opens the test brain in an explicit mode, whatever `GBRAIN_RUST_CONCURRENT_WRITES` says.
 pub fn open_in(dir: &TempDir, mode: StoreMode) -> Store {
-    let options = OpenOptions {
-        concurrent_writes: mode.optimistic(),
-        ..OpenOptions::default()
-    };
-    Store::open_dir(&dir.path().join("brain"), options).unwrap()
+    Store::open_dir(&dir.path().join("brain"), mode::open_options(mode)).unwrap()
 }

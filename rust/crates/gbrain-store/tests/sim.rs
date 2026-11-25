@@ -33,6 +33,7 @@ use gbrain_sim::{
     CrashMode, Cx, FaultPlan, Scheduler, SimDisk, SimFile, SimRng, Step, Task, seed::seeds,
 };
 use gbrain_store::chunks::{ChunkInput, tokenize};
+use gbrain_store::commit_log::{self, CommitPosition};
 use gbrain_store::env::uuid_from_bytes;
 use gbrain_store::journal::{FinishWrite, PageMutation, Principal, WriteAdmission};
 use gbrain_store::kv::{read_i64, scan_prefix};
@@ -44,7 +45,6 @@ use gbrain_store::redb_kv::RedbKv;
 use gbrain_store::timeline::{
     AddTimelineOptions, TimelineBatchInput, TimelineInput, TimelineOptions,
 };
-use gbrain_store::commit_log::{self, CommitPosition};
 use gbrain_store::{
     Env, FileBackend, Kv, KvRead, KvWrite, MultiUserWrites, OpenOptions, Store, StoreError, keys,
 };
@@ -742,11 +742,18 @@ fn check_log_replay(kv: &dyn Kv, baseline: &(Model, CommitPosition)) -> Result<(
     let mut prev_time: Option<i64> = None;
     for record in &page.records {
         if prev_time.is_some_and(|t| record.commit_time <= t) {
-            return Err(format!("commit time goes back at {}", record.position.token()));
+            return Err(format!(
+                "commit time goes back at {}",
+                record.position.token()
+            ));
         }
         prev_time = Some(record.commit_time);
         if !record.position.follows(prev) {
-            return Err(format!("the log jumps from {} to {}", prev.token(), record.position.token()));
+            return Err(format!(
+                "the log jumps from {} to {}",
+                prev.token(),
+                record.position.token()
+            ));
         }
         prev = record.position;
         for (key, op) in &record.ops {
@@ -764,12 +771,17 @@ fn check_log_replay(kv: &dyn Kv, baseline: &(Model, CommitPosition)) -> Result<(
     if let Some(t) = prev_time {
         let durable = kv.last_commit_time().map_err(|e| e.to_string())?;
         if durable != Some(t) {
-            return Err(format!("the newest record's time is {t}, the durable time {durable:?}"));
+            return Err(format!(
+                "the newest record's time is {t}, the durable time {durable:?}"
+            ));
         }
     }
     let version = kv.version().map_err(|e| e.to_string())?;
     if prev.sequence != version {
-        return Err(format!("the log ends at {}, the store at sequence {version}", prev.token()));
+        return Err(format!(
+            "the log ends at {}, the store at sequence {version}",
+            prev.token()
+        ));
     }
     let stored = data_of(&*read).map_err(|e| e.to_string())?;
     if stored != model {
@@ -780,7 +792,9 @@ fn check_log_replay(kv: &dyn Kv, baseline: &(Model, CommitPosition)) -> Result<(
             .take(3)
             .map(|k| k.escape_ascii().to_string())
             .collect();
-        return Err(format!("the log replays to other records than the store holds: {differ:?}"));
+        return Err(format!(
+            "the log replays to other records than the store holds: {differ:?}"
+        ));
     }
     Ok(())
 }
@@ -1184,7 +1198,9 @@ fn reopen(
         if let Some(baseline) = baseline
             && let Err(problem) = check_log_replay(&*kv, baseline)
         {
-            extra.push(corrupt(format!("after recovery, the commit log: {problem}")));
+            extra.push(corrupt(format!(
+                "after recovery, the commit log: {problem}"
+            )));
         }
         let store = Store::open_kv(
             kv.clone(),
@@ -1284,7 +1300,9 @@ fn run_seed_as(seed: u64, kind: Kind, logged: bool) -> SeedResult {
         crash_at_op: Some(crash_at),
         crash_mode: mode,
     };
-    let ran = catch_unwind(AssertUnwindSafe(|| workload_as(&disk, seed, Some(plan), logged)));
+    let ran = catch_unwind(AssertUnwindSafe(|| {
+        workload_as(&disk, seed, Some(plan), logged)
+    }));
     let run = match ran {
         Ok(Ok(run)) => run,
         Ok(Err(e)) => {
@@ -1645,7 +1663,11 @@ fn logged_an_honest_run_has_a_log_that_replays_to_its_records() {
         let disk = SimDisk::new(seed, FaultPlan::none());
         let run = workload_as(&disk, seed, None, true).unwrap();
         assert_eq!(run.stopped, None, "seed {seed}");
-        assert!(run.violations.is_empty(), "seed {seed}: {:?}", run.violations);
+        assert!(
+            run.violations.is_empty(),
+            "seed {seed}: {:?}",
+            run.violations
+        );
         let baseline = run.baseline.clone().unwrap();
         check_log_replay(&*run.kv, &baseline).unwrap_or_else(|e| panic!("seed {seed}: {e}"));
         // The check is not blind: a key the log never wrote shows up.

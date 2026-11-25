@@ -79,7 +79,12 @@ impl CommitPosition {
 
     /// Parses a read token; `invalid_argument` for anything but `cp1:<u64>.<u32>`.
     pub fn parse_token(text: &str) -> Result<Self> {
-        let bad = || StoreError::new(INVALID_ARGUMENT, format!("not a commit position token: {text:?}"));
+        let bad = || {
+            StoreError::new(
+                INVALID_ARGUMENT,
+                format!("not a commit position token: {text:?}"),
+            )
+        };
         let rest = text.strip_prefix("cp1:").ok_or_else(bad)?;
         let (s, i) = rest.split_once('.').ok_or_else(bad)?;
         let digits = |t: &str| !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit());
@@ -202,7 +207,9 @@ pub fn record_key(position: CommitPosition) -> Vec<u8> {
 /// The position a record key names; `store_corrupt` for any other key under the tag.
 pub fn position_of(key: &[u8]) -> Result<CommitPosition> {
     if key.len() != 13 || key[0] != COMMIT_LOG {
-        return Err(corrupt("a key under the commit log tag is not a commit record key"));
+        return Err(corrupt(
+            "a key under the commit log tag is not a commit record key",
+        ));
     }
     Ok(CommitPosition {
         sequence: u64::from_be_bytes(key[1..9].try_into().expect("8 bytes")),
@@ -285,7 +292,9 @@ impl<'a> Cursor<'a> {
         Ok(out)
     }
     fn u32(&mut self) -> Result<u32> {
-        Ok(u32::from_be_bytes(self.take(4)?.try_into().expect("4 bytes")))
+        Ok(u32::from_be_bytes(
+            self.take(4)?.try_into().expect("4 bytes"),
+        ))
     }
     fn bytes(&mut self) -> Result<&'a [u8]> {
         let n = self.u32()? as usize;
@@ -307,7 +316,10 @@ impl<'a> Cursor<'a> {
 /// or trailing bytes refuse with `store_corrupt`.
 pub fn decode_record(key: &[u8], value: &[u8]) -> Result<CommitRecord> {
     let position = position_of(key)?;
-    let mut c = Cursor { bytes: value, at: 0 };
+    let mut c = Cursor {
+        bytes: value,
+        at: 0,
+    };
     let version = c.take(1)?[0];
     if version != RECORD_VERSION {
         return Err(StoreError::new(
@@ -356,7 +368,9 @@ pub fn decode_record(key: &[u8], value: &[u8]) -> Result<CommitRecord> {
             other => return Err(corrupt(&format!("op {other} is not known"))),
         };
         if ops.last().is_some_and(|(last, _)| *last >= key) {
-            return Err(corrupt("a record's keys are not in strictly increasing order"));
+            return Err(corrupt(
+                "a record's keys are not in strictly increasing order",
+            ));
         }
         ops.push((key, op));
     }
@@ -408,14 +422,18 @@ pub fn read_commit_log(
     after: Option<CommitPosition>,
     max: usize,
 ) -> Result<LogPage> {
-    let meta = read_meta(read)?.ok_or_else(|| {
-        StoreError::new(INVALID_STATE, "this brain keeps no commit log")
-    })?;
+    let meta = read_meta(read)?
+        .ok_or_else(|| StoreError::new(INVALID_STATE, "this brain keeps no commit log"))?;
     let mut oldest_retained = None;
-    read.scan(&record_key(CommitPosition::default()), &records_end(), false, &mut |k, _| {
-        oldest_retained = Some(k.to_vec());
-        false
-    })?;
+    read.scan(
+        &record_key(CommitPosition::default()),
+        &records_end(),
+        false,
+        &mut |k, _| {
+            oldest_retained = Some(k.to_vec());
+            false
+        },
+    )?;
     let oldest_retained = oldest_retained.map(|k| position_of(&k)).transpose()?;
     let after = after.unwrap_or(meta.since);
     let stale = after < meta.since
@@ -551,10 +569,15 @@ impl CommitClock {
 pub fn floor_time(read: &dyn KvRead) -> Result<i64> {
     let mut floor = crate::redb_kv::read_commit_time(read)?.unwrap_or(0);
     let mut newest = None;
-    read.scan(&record_key(CommitPosition::default()), &records_end(), true, &mut |k, v| {
-        newest = Some((k.to_vec(), v.to_vec()));
-        false
-    })?;
+    read.scan(
+        &record_key(CommitPosition::default()),
+        &records_end(),
+        true,
+        &mut |k, v| {
+            newest = Some((k.to_vec(), v.to_vec()));
+            false
+        },
+    )?;
     if let Some((k, v)) = newest {
         floor = floor.max(decode_record(&k, &v)?.commit_time);
     }
@@ -609,8 +632,11 @@ impl LogState {
         let mut sizes = VecDeque::new();
         let mut total = 0u64;
         let mut failure = None;
-        read.scan(&record_key(CommitPosition::default()), &records_end(), false, &mut |k, v| {
-            match position_of(k) {
+        read.scan(
+            &record_key(CommitPosition::default()),
+            &records_end(),
+            false,
+            &mut |k, v| match position_of(k) {
                 Ok(p) => {
                     let size = (k.len() + v.len()) as u64;
                     total += size;
@@ -621,8 +647,8 @@ impl LogState {
                     failure = Some(e);
                     false
                 }
-            }
-        })?;
+            },
+        )?;
         if let Some(e) = failure {
             return Err(e);
         }
@@ -862,7 +888,12 @@ mod tests {
         ];
         (
             record_key(CommitPosition::new(7, 2)),
-            encode_record(&origin(), 1_700_000_000_000_042, &["r1".into(), "r2".into()], ops),
+            encode_record(
+                &origin(),
+                1_700_000_000_000_042,
+                &["r1".into(), "r2".into()],
+                ops,
+            ),
         )
     }
 
@@ -945,7 +976,12 @@ mod tests {
         let v = encode_record(&origin(), 0, &[], twice);
         assert_eq!(decode_record(&k, &v).unwrap_err().code, STORE_CORRUPT);
         // A key under the tag that is no record key.
-        assert_eq!(decode_record(&[COMMIT_LOG, 1], &sample().1).unwrap_err().code, STORE_CORRUPT);
+        assert_eq!(
+            decode_record(&[COMMIT_LOG, 1], &sample().1)
+                .unwrap_err()
+                .code,
+            STORE_CORRUPT
+        );
     }
 
     #[test]
@@ -956,8 +992,21 @@ mod tests {
         assert!(CommitPosition::end_of(3) < CommitPosition::new(4, 0));
         assert_eq!(CommitPosition::parse_token(&a.token()).unwrap(), a);
         assert_eq!(a.token(), "cp1:3.1");
-        for bad in ["", "cp1:", "cp1:3", "cp1:3.", "cp2:3.1", "cp1:-3.1", "cp1:3.1.2", "cp1:3.4294967296"] {
-            assert_eq!(CommitPosition::parse_token(bad).unwrap_err().code, INVALID_ARGUMENT, "{bad}");
+        for bad in [
+            "",
+            "cp1:",
+            "cp1:3",
+            "cp1:3.",
+            "cp2:3.1",
+            "cp1:-3.1",
+            "cp1:3.1.2",
+            "cp1:3.4294967296",
+        ] {
+            assert_eq!(
+                CommitPosition::parse_token(bad).unwrap_err().code,
+                INVALID_ARGUMENT,
+                "{bad}"
+            );
         }
         assert!(CommitPosition::new(3, 2).follows(a));
         assert!(CommitPosition::new(4, 0).follows(a));
@@ -982,10 +1031,16 @@ mod tests {
             let inner = scope::open(None);
             assert_eq!(scope::row_origin(), None);
             scope::note("inner-req", "local_cli", "b");
-            assert_eq!(inner.take(), (vec!["inner-req".to_string()], Some("local_cli:b".into())));
+            assert_eq!(
+                inner.take(),
+                (vec!["inner-req".to_string()], Some("local_cli:b".into()))
+            );
         }
         assert_eq!(scope::row_origin(), Some(on));
-        assert_eq!(outer.take(), (vec!["outer-req".to_string()], Some("local_cli:a".into())));
+        assert_eq!(
+            outer.take(),
+            (vec!["outer-req".to_string()], Some("local_cli:a".into()))
+        );
     }
 
     #[test]

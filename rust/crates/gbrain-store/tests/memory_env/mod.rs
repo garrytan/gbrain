@@ -134,5 +134,5 @@ pub fn open_at(dir: &std::path::Path, clock: Arc<Clock>, mode: StoreMode) -> Sto
     } else {
         Arc::new(base)
     };
-    Store::open_kv(kv, clock, OpenOptions::default()).unwrap()
+    Store::open_kv(kv, clock, mode::open_options(mode)).unwrap()
 }

@@ -10,8 +10,11 @@
 //!
 //! Nothing here touches product code, and nothing in the product reads these types.
 
+use gbrain_store::commit_log;
+use gbrain_store::occ_kv::OccKv;
 use gbrain_store::persistence::{EffectSettle, Settle};
-use gbrain_store::{Env, Kv, Store, StoreError};
+use gbrain_store::redb_kv::RedbKv;
+use gbrain_store::{Env, Kv, MultiUserWrites, OpenOptions, Store, StoreError, keys};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -60,32 +63,8 @@ pub enum TxnMode {
     Optimistic,
 }
 
-/// I-3, as `write_origin.rs` has it on the hosts branch (`gbrain_store::write_origin::WriteOrigin`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WriteOrigin {
-    pub host_id: String,
-    pub incarnation: String,
-    pub writer_id: String,
-}
-
-impl WriteOrigin {
-    /// Refuses an empty field, a field with NUL or a field longer than 512 bytes.
-    pub fn check(&self) -> gbrain_store::Result<()> {
-        for (name, value) in [
-            ("host_id", &self.host_id),
-            ("incarnation", &self.incarnation),
-            ("writer_id", &self.writer_id),
-        ] {
-            if value.is_empty() || value.len() > 512 || value.contains('\0') {
-                return Err(StoreError::invalid(format!(
-                    "write origin {name} must be 1 to 512 bytes of text without NUL"
-                )));
-            }
-        }
-        Ok(())
-    }
-}
+/// I-3, served by the commit-log lane: re-exported.
+pub use gbrain_store::write_origin::WriteOrigin;
 
 /// `pub struct TxnOptions { mode, deadline, origin }`; the default is Serialized with no deadline
 /// and no origin.
@@ -115,70 +94,13 @@ pub struct SingleFlightKey {
 
 // ---- I-2 ---------------------------------------------------------------------------------------
 
-/// `#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd)] pub struct CommitPosition`, ordered by
-/// (sequence, index); the single-writer index is always 0. The field order is what makes the derived
-/// `Ord` the right one.
-#[derive(
-    Copy, Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize,
-)]
-pub struct CommitPosition {
-    pub sequence: u64,
-    pub index: u32,
-}
-
-impl CommitPosition {
-    pub const fn new(sequence: u64, index: u32) -> Self {
-        Self { sequence, index }
-    }
-
-    /// The position a completion that commits nothing reports when it saw batch `sequence`: after every commit of that batch and
-    /// before the first of the next.
-    pub const fn end_of(sequence: u64) -> Self {
-        Self {
-            sequence,
-            index: u32::MAX,
-        }
-    }
-
-    /// The read token string, `cp1:<sequence>.<index>`.
-    pub fn token(&self) -> String {
-        format!("cp1:{}.{}", self.sequence, self.index)
-    }
-}
+/// I-2, served by the commit-log lane: re-exported.
+pub use gbrain_store::commit_log::CommitPosition;
 
 // ---- I-4 ---------------------------------------------------------------------------------------
 
-/// One logical change of a commit, as `gbrain_store::commit_log::LogOp` has it on the commit-log branch (record op codes 1 put, 2
-/// delete, 3 add_i64 as the delta, 4 raise_counter as the value).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LogOp {
-    Put(Vec<u8>),
-    Delete,
-    AddI64(i64),
-    RaiseCounter(u64),
-}
-
-/// One commit record, as `gbrain_store::commit_log::CommitRecord` has it on the commit-log branch.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommitRecord {
-    pub position: CommitPosition,
-    pub origin: WriteOrigin,
-    /// The commit's time: strictly increasing in position order across the log. (JSON form, where a record is decoded to JSON,
-    /// says `commit_time_us`.)
-    pub commit_time: i64,
-    pub write_ids: Vec<String>,
-    /// In key order; at most one op per key.
-    pub ops: Vec<(Vec<u8>, LogOp)>,
-}
-
-/// One page of the log, read from one snapshot (`gbrain_store::commit_log::LogPage`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LogPage {
-    pub records: Vec<CommitRecord>,
-    pub oldest_retained: Option<CommitPosition>,
-    pub newest: Option<CommitPosition>,
-    pub snapshot_required: bool,
-}
+/// I-4, served by the commit-log lane: re-exported.
+pub use gbrain_store::commit_log::{CommitRecord, LogOp, LogPage};
 
 /// The clock floor of a server that takes over as primary from the log (I-4.v2): the larger of its own `M\0ctime` and the last
 /// applied record's commit time. `None` when there is neither.
@@ -374,14 +296,17 @@ pub trait MuStore {
 }
 
 impl MuStore for Store {
+    /// SHIM, not served: `begin_with` has not landed. This is today's explicit transaction (`begin_transaction`), which holds
+    /// the writer, so `TxnOptions` (mode, deadline, origin) is ignored and two of these never overlap.
     fn begin_with(&self, _opts: TxnOptions) -> MuResult<MuTxn> {
-        pending(L1_TXN, "Store::begin_with")
+        Ok(MuTxn::from_store(self.begin_transaction(false)?))
     }
     fn single_flight(&self, _txn: &MuTxn, _keys: &[SingleFlightKey]) -> MuResult<()> {
         pending(L1_TXN, "Store::single_flight")
     }
-    fn commit_position(&self, _txn: MuTxn) -> MuResult<CommitPosition> {
-        pending(L2_LOG, "Transaction::commit -> CommitPosition")
+    /// Served: `Store::commit_transaction_at` returns the commit's own position.
+    fn commit_position(&self, txn: MuTxn) -> MuResult<CommitPosition> {
+        txn.commit_transaction_at()
     }
     fn assert_lease(&self, _token: &LeaseToken) -> MuResult<()> {
         pending(L5_HOSTS, "Store::assert_lease")
@@ -433,7 +358,7 @@ impl MuStore for Store {
         pending(L5_HOSTS, "leases::check_claim_epoch (claim under a fence)")
     }
     fn last_commit_time(&self) -> MuResult<Option<i64>> {
-        pending(L2_LOG, "Store::last_commit_time")
+        Store::last_commit_time(self)
     }
     fn promote_from_log(&self, _applied: Option<CommitPosition>) -> MuResult<Option<i64>> {
         pending(
@@ -441,8 +366,8 @@ impl MuStore for Store {
             "promote a follower from the log (clock floor = max(M\\0ctime, last applied commit_time)); election: L5 hosts",
         )
     }
-    fn read_commit_log(&self, _after: Option<CommitPosition>, _max: usize) -> MuResult<LogPage> {
-        pending(L2_LOG, "Store::read_commit_log")
+    fn read_commit_log(&self, after: Option<CommitPosition>, max: usize) -> MuResult<LogPage> {
+        Store::read_commit_log(self, after, max)
     }
 }
 
@@ -482,29 +407,98 @@ pub struct LoggedBrain {
 }
 
 /// Opens (or reopens) the record file at `path` with the multi-user switch and the commit log on, on `env`, as host `host_id`, on
-/// the single-writer or the optimistic store. Pending until the commit-log lane's open options exist in this tree.
+/// the single-writer or the optimistic store. Served by the commit-log lane (`OpenOptions::multiuser_writes`).
 pub fn open_logged(
-    _path: &Path,
-    _optimistic: bool,
-    _env: Arc<dyn Env>,
-    _host_id: &str,
+    path: &Path,
+    optimistic: bool,
+    env: Arc<dyn Env>,
+    host_id: &str,
 ) -> MuResult<LoggedBrain> {
-    pending(L2_LOG, "OpenOptions::multiuser_writes (the commit log on)")
+    let base = RedbKv::open_path(path)?;
+    let kv: Arc<dyn Kv> = if optimistic {
+        Arc::new(OccKv::new(base)?)
+    } else {
+        Arc::new(base)
+    };
+    let options = OpenOptions {
+        concurrent_writes: optimistic,
+        keyword_index_builder: false,
+        multiuser: true,
+        multiuser_writes: MultiUserWrites {
+            commit_log: true,
+            write_origin: false,
+            host_id: Some(host_id.into()),
+            log_retention_bytes: None,
+        },
+        ..OpenOptions::default()
+    };
+    let store = Store::open_kv(kv.clone(), env, options)?;
+    Ok(LoggedBrain { kv, store })
 }
 
 /// A closed logged brain that the next open must write to without any caller: `OlderBase` is one whose records are at an older
 /// base format (its upgrade runs at open), `UpkeepOnly` one at the current format whose open-time markers are gone (the
 /// access-flag scan, the keyword index reset and the source-index backfill run at open). Returns the image of the closed brain,
-/// the starting copy a replay of the open's log records must turn into the opened brain. Pending with the open options.
+/// the starting copy a replay of the open's log records must turn into the opened brain. Built as the commit-log lane's own test
+/// builds its base-7 brain (the log is re-pinned after the hand edits, which are the starting copy, not logged changes).
 pub fn logged_brain_needing_upkeep(
-    _path: &Path,
-    _optimistic: bool,
-    _kind: UpkeepKind,
+    path: &Path,
+    optimistic: bool,
+    kind: UpkeepKind,
 ) -> MuResult<Image> {
-    pending(
-        L2_LOG,
-        "a logged brain whose open writes (upgrade, open-time upkeep)",
-    )
+    {
+        let brain = open_logged(
+            path,
+            optimistic,
+            Arc::new(gbrain_store::SystemEnv),
+            "d0000000-0000-4000-8000-0000000000d1",
+        )?;
+        brain.store.set_config("test.a", "1")?;
+        let page: gbrain_store::pages::PageInput = serde_json::from_value(
+            json!({"type": "note", "title": "one", "compiled_truth": "one"}),
+        )
+        .unwrap();
+        brain.store.put_page(
+            "notes/one",
+            &page,
+            &gbrain_store::pages::PutPageOptions::default(),
+        )?;
+    }
+    let kv = RedbKv::open_path(path)?;
+    let mut tx = kv.begin_write()?;
+    if kind == UpkeepKind::OlderBase {
+        let secret_new = vec![keys::ACCESS_MEMBERS, 0x0d];
+        let secret_old = vec![keys::ACCESS_MEMBERS, 0x04];
+        let secret = tx.get(&secret_new)?.expect("a seeded token secret");
+        tx.delete(&secret_new)?;
+        tx.put(&secret_old, &secret)?;
+    }
+    tx.delete(&keys::meta("access_flag_scan"))?;
+    tx.delete(&keys::meta("derivation_purge_source_index"))?;
+    tx.delete(&keys::keyword_index_state())?;
+    if kind == UpkeepKind::OlderBase {
+        let mut format: Value =
+            serde_json::from_slice(&tx.get(&keys::meta("format"))?.unwrap()).unwrap();
+        format["log"]["base_format"] = json!(7);
+        tx.put(&keys::meta("format"), &serde_json::to_vec(&format).unwrap())?;
+    }
+    let since = CommitPosition::new(kv.version()? + 1, 0);
+    let mut stale = Vec::new();
+    tx.scan(
+        &commit_log::record_key(CommitPosition::default()),
+        &[b'3'],
+        false,
+        &mut |k, _| {
+            stale.push(k.to_vec());
+            true
+        },
+    )?;
+    for k in stale {
+        tx.delete(&k)?;
+    }
+    commit_log::write_activation(&mut *tx, since)?;
+    tx.commit()?;
+    Ok(image_of(&kv))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

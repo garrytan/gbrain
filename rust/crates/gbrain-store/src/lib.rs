@@ -18,8 +18,8 @@ pub mod access_rules;
 mod cascade;
 pub mod chronicle_reads;
 pub mod chunks;
-pub mod commit_log;
 pub mod cli_reads;
+pub mod commit_log;
 pub mod config;
 pub mod env;
 pub mod error;
@@ -155,14 +155,14 @@ use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+pub use crate::commit_log::{CommitPosition, LogPage};
 pub use crate::env::{Env, SystemEnv};
 pub use crate::error::{Result, StoreError};
-pub use crate::commit_log::{CommitPosition, LogPage};
-pub use crate::write_origin::WriteOrigin;
 pub use crate::format::{
     FORMAT_VERSION, FORMAT_VERSIONS, FormatRecord, LOG_FORMAT_VERSION, OPENED_FORMATS,
 };
 pub use crate::kv::{FileBackend, Kv, KvRead, KvWrite};
+pub use crate::write_origin::WriteOrigin;
 
 /// The TypeScript schema version a fresh brain reports as `getConfig('version')`
 /// (`LATEST_SCHEMA_VERSION`, `src/core/schema-migrations/latest.generated.ts`). The binding passes
@@ -405,11 +405,12 @@ impl Store {
         );
         // The record file read without opening it for writing: when it cannot be (redb must recover it
         // first), the brain's config row is unknown here, not off.
-        let readable = !records.exists() || redb_kv::peek(&records, &keys::meta("format")).is_some();
+        let readable =
+            !records.exists() || redb_kv::peek(&records, &keys::meta("format")).is_some();
         // The commit log counts only in multi-user mode (I-0.v2). Refused up front only when the mode
         // is known off; when it cannot be known yet, the open below decides before any write.
-        let log_on = options.multiuser_writes.commit_log
-            && (options.multiuser || config_on || !readable);
+        let log_on =
+            options.multiuser_writes.commit_log && (options.multiuser || config_on || !readable);
         // A commit log brain (or one whose switch to the log was under way) is never opened for
         // writing without the log: nothing may commit that the log would miss.
         if existing.as_ref().is_some_and(|f| f.log.is_some()) && !log_on {
@@ -526,10 +527,16 @@ impl Store {
         // write origin sub-switches count only while it is on (I-0.v2).
         let multiuser_on = options.multiuser
             || multiuser_config_on(
-                config::read_config(&*kv.snapshot()?, MULTIUSER_CONFIG_KEY)?.as_deref().map(str::as_bytes),
+                config::read_config(&*kv.snapshot()?, MULTIUSER_CONFIG_KEY)?
+                    .as_deref()
+                    .map(str::as_bytes),
             );
         let off = MultiUserWrites::default();
-        let multiuser = if multiuser_on { &options.multiuser_writes } else { &off };
+        let multiuser = if multiuser_on {
+            &options.multiuser_writes
+        } else {
+            &off
+        };
         if !read_only && multiuser.any() && multiuser.host_id.as_deref().is_none_or(str::is_empty) {
             // Before any write: an origin without its machine is refused, never stamped empty.
             return Err(StoreError::invalid(HOST_ID_REQUIRED));
@@ -551,7 +558,10 @@ impl Store {
                 .log_retention_bytes
                 .unwrap_or(commit_log::DEFAULT_RETENTION_BYTES),
             default_origin: WriteOrigin {
-                host_id: origin.as_ref().map(|o| o.host_id.clone()).unwrap_or_default(),
+                host_id: origin
+                    .as_ref()
+                    .map(|o| o.host_id.clone())
+                    .unwrap_or_default(),
                 incarnation: origin
                     .as_ref()
                     .map(|o| o.incarnation.clone())
@@ -938,10 +948,12 @@ impl Store {
             ),
             origin: self.origin.clone(),
             request_id: attribution.request_id.clone(),
-            writer: attribution
-                .principal_kind
-                .as_ref()
-                .map(|kind| format!("{kind}:{}", attribution.principal_id.as_deref().unwrap_or(""))),
+            writer: attribution.principal_kind.as_ref().map(|kind| {
+                format!(
+                    "{kind}:{}",
+                    attribution.principal_id.as_deref().unwrap_or("")
+                )
+            }),
         }
     }
 
@@ -1141,7 +1153,9 @@ fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
         .ok_or_else(|| StoreError::new(error::STORE_CORRUPT, "the format record went missing"))?;
     // A commit log brain keeps its records' format as `log.base_format`: the steps run from it,
     // inside the log (the caller enabled it), and only the base moves.
-    let base = stored.log.map_or(stored.format_version, |log| log.base_format);
+    let base = stored
+        .log
+        .map_or(stored.format_version, |log| log.base_format);
     format::check_version(base)?;
     if base >= FORMAT_VERSION {
         return Ok(stored);

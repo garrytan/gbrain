@@ -818,7 +818,13 @@ impl Kv for OccKv {
     }
 
     fn enable_commit_log(&self, settings: LogSettings) -> Result<()> {
-        if self.shared.clock.lock().unwrap_or_else(|p| p.into_inner()).is_none() {
+        if self
+            .shared
+            .clock
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .is_none()
+        {
             return Err(StoreError::new(
                 crate::error::INVALID_STATE,
                 "the commit log needs the commit clock (`Kv::set_commit_clock`) first",
