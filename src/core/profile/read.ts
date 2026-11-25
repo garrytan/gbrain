@@ -63,7 +63,8 @@ const order = (a: ProfileFact, b: ProfileFact): number =>
 export async function readProfile(ctx: OperationContext, readable: string[], eligibility: ReadEligibility): Promise<ProfileRead> {
   const self = await profileSelf(ctx);
   if (!self) return { entity: null, facets: [], constraints: [], relationships: [], preferences: [] };
-  const sources = self.source_id ? readable.filter(s => s === self.source_id) : readable;
+  // The owner page's own source, where remember saves profile facts; the trusted CLI reads it whatever its home source.
+  const sources = self.source_id ? (ctx.remote === false || readable.includes(self.source_id) ? [self.source_id] : []) : readable;
   const [{ worldOnlyFacts, resolveExcludePrivatePages }, { factEntitySlugs }, { stampRowTrust }] = await Promise.all([
     import('../search/private-visibility.ts'), import('../mentions/siblings.ts'), import('../eligibility/stamp.ts')]);
   const visibility = worldOnlyFacts(ctx.remote) ? ['world' as const] : undefined;
@@ -72,7 +73,7 @@ export async function readProfile(ctx: OperationContext, readable: string[], eli
   const rows: FactRow[] = [];
   const hidden: FactRow[] = [];
   let scanned = 0;
-  let partial = false;
+  let partial = sources.length === 0;
   for (const src of sources) {
     const slugs = await factEntitySlugs(ctx.engine, src, self.slug, { excludePrivate: ctx.remote !== false }).catch(() => { partial = true; return [self.slug]; });
     for (const slug of slugs) {

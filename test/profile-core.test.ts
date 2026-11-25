@@ -273,6 +273,48 @@ describe('profile core on a member-less brain (unbound remote credential, repo-l
   }, 60_000);
 });
 
+describe('profile core with the owner found by a person page in another source (repo-less)', () => {
+  let engine: BrainEngine;
+  let token = '';
+  const provider = () => new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
+  const sourceOf = async (needle: string) => (await engine.executeRaw<R>('SELECT source_id, entity_slug FROM facts WHERE fact LIKE $1 AND expired_at IS NULL', ['%' + needle + '%']))[0];
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({ engine: 'pglite' } as never);
+    await engine.initSchema();
+    __resetPrivateVisibilityCacheForTests();
+    await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('people-src', 'people-src') ON CONFLICT (id) DO NOTHING");
+    await engine.executeRaw("INSERT INTO sources (id, name, config) VALUES ('mail-a', 'mail-a', jsonb_build_object('kind', 'google', 'g_account', 'alice@example.com'))");
+    await engine.putPage('people/alice-example', { type: 'person', title: 'Alice Example', compiled_truth: 'Alice Example is a person.', frontmatter: { email: 'alice@example.com' } }, { sourceId: 'people-src' });
+    const c = await provider().registerClientManual('p1-src-' + randomUUID().slice(0, 8), ['client_credentials'], 'read write', [], 'default');
+    await readsUnscopedOnPurpose(engine, c.clientId, 'client');
+    token = (await provider().exchangeClientCredentials(c.clientId, c.clientSecret ?? '')).access_token;
+  }, 120_000);
+  afterAll(async () => { await engine.disconnect(); });
+
+  test('a local facet write from another source lands on the owner page\'s source and reads back', async () => {
+    await run(engine, 'remember', { fact: 'Allergic to kiwi canarysrcallergy', facet: 'allergy', provenance: 'told me 2026-11-25' });
+    expect(await sourceOf('canarysrcallergy')).toEqual({ source_id: 'people-src', entity_slug: 'people/alice-example' });
+    const out = await run(engine, 'context_pack', { profile: true });
+    expect(out.profile.entity).toEqual({ slug: 'people/alice-example', basis: 'identifier_page' });
+    expect(out.profile.constraints.map((f: R) => f.claim)).toEqual(['Allergic to kiwi canarysrcallergy']);
+    const misplaced = await refusal(() => run(engine, 'remember', { fact: 'Shoe 9 canarysrcmisplaced', facet: 'size.shoe', source_id: 'default', provenance: 'p' }));
+    expect([misplaced.code, misplaced.canonical]).toEqual(['invalid_params', 'profile_entity_not_self']);
+    expect(misplaced.fix.mcp.arguments.source_id).toBeUndefined();
+    expect(await sourceOf('canarysrcmisplaced')).toBeUndefined();
+  }, 60_000);
+
+  test('a remote credential that cannot write the owner page\'s source is refused, and nothing is saved elsewhere', async () => {
+    const out = await dispatchToolCall(engine, 'remember', { fact: 'Allergic to soy canarysrcremote', facet: 'allergy', provenance: 'p' },
+      { remote: true, transport: 'http', sourceId: 'default', auth: await provider().verifyAccessToken(token) as unknown as AuthInfo });
+    const all = out.content.map(c => c.text).join('\n') + JSON.stringify(out.structuredContent ?? {});
+    expect(out.isError).toBe(true);
+    expect(all).toContain('permission_denied');
+    expect(all).toContain('people-src');
+    expect(await sourceOf('canarysrcremote')).toBeUndefined();
+  }, 60_000);
+});
+
 describe('profile core with members (remote callers, repo-less)', () => {
   let engine: BrainEngine;
   const tokens: Record<string, string> = {};

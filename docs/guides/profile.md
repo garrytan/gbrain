@@ -42,7 +42,10 @@ them.
 ## Who a profile belongs to
 
 - On a single-user brain, your profile lives on `memory/owner` (or on your own person page when one carries your
-  email).
+  email). When it is your person page, profile facts are saved in that page's source and read from it, whatever source
+  the call starts in. A credential that cannot write that source is refused (`permission_denied`, naming the source)
+  instead of saving the fact where the profile never reads it, and passing another `source_id` with `facet` is refused
+  (`profile_entity_not_self`).
 - The brain owner's profile is the owner's entity, the one `gbrain identity` names. The trusted local CLI and a
   credential bound to the owner (`gbrain access owner set`) read and write it.
 - A member credential's profile is its own member page, `memory/members/<member>`. A member never writes a profile

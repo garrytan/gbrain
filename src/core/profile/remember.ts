@@ -99,16 +99,32 @@ export async function profileRemember(ctx: OperationContext, p: Record<string, u
           why: 'The same call without claim_metric; facet sets it.' } });
   }
   const entity = typeof p.entity === 'string' && p.entity.trim() ? p.entity.trim() : null;
-  const self = entity === null || ctx.remote !== false ? await profileSelf(ctx) : null;
+  const self = await profileSelf(ctx);
   if (entity === null && !self) throw entityNotSelf(p, null);
   if (entity !== null && self?.kind === 'member' && entity !== self.slug) throw entityNotSelf(p, self.slug);
   if (entity !== null && ctx.remote !== false && !self) throw entityNotSelf(p, null);
+  const own = self !== null && (entity === null || entity === self.slug);
+  // The profile is read from the owner page's own source (read.ts), so a fact on it is saved there or not at all.
+  const pinned = own && self.source_id ? self.source_id : null;
+  if (pinned && typeof p.source_id === 'string' && p.source_id !== pinned) {
+    throw opError('profile_entity_not_self', `remember: your profile is ${self!.slug} in source ${pinned}, so a profile fact is saved only there, not in source ${JSON.stringify(p.source_id)}; nothing was saved.`,
+      'Omit source_id to save it on your own profile.',
+      { legacy_error: 'invalid_params', reason: 'profile_entity_not_self', docs: 'docs/guides/profile.md#who-a-profile-belongs-to',
+        fix: { mcp: { tool: 'remember', arguments: callArgs(p, { source_id: undefined }) }, consent: [], actor: 'agent', requires_exclusive: false,
+          why: 'The same call without source_id, which saves it on your own profile.' } });
+  }
+  if (pinned && ctx.remote !== false) {
+    const [{ grantedWriteSource, writeGrantRefusal }, { perCallWriteSource }] = await Promise.all([import('../persistence/write-grant.ts'), import('../access/attest-sources.ts')]);
+    if (pinned !== grantedWriteSource(ctx) && !perCallWriteSource(ctx, pinned)) {
+      throw writeGrantRefusal(ctx, `Your profile is ${self!.slug} in source ${pinned}, and this connection cannot write there, so the profile fact was not saved (saving it elsewhere would hide it from your profile). Ask the brain host's operator to grant this connection source ${pinned}, or save it from the brain host's CLI.`);
+    }
+  }
   const privateDefault = PRIVATE_BY_DEFAULT_FACETS.includes(facetKind(facet)) && p.visibility === undefined && p.share !== true;
-  if ((privateDefault || p.visibility === 'private') && self?.kind === 'owner' && (entity === null || entity === self.slug)) {
+  if ((privateDefault || p.visibility === 'private') && self?.kind === 'owner' && own) {
     const [{ worldOnlyFacts }, { profilePrivateHiddenNotice }] = await Promise.all([import('../search/private-visibility.ts'), import('../interop-notices.ts')]);
     if (worldOnlyFacts(ctx.remote)) ctx.emitNotice?.(profilePrivateHiddenNotice());
   }
   const { facet: _facet, ...rest } = p;
   return { ...rest, claim_metric: PROFILE_METRIC_PREFIX + facet, entity: entity ?? self!.slug, infer_entity: false,
-    ...(privateDefault ? { visibility: 'private' } : {}) };
+    ...(pinned ? { source_id: pinned } : {}), ...(privateDefault ? { visibility: 'private' } : {}) };
 }
