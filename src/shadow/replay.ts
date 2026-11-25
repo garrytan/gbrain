@@ -416,6 +416,7 @@ function writtenSlugs(units: Unit[], into: Set<string>): number {
     const first = args[0];
     const pairs: Array<[string | null, string]> = [];
     if (typeof first === 'string' && /^[^\s]{1,300}$/.test(first)) pairs.push([source, first]);
+    if (m === 'updateSlug' && typeof args[1] === 'string') pairs.push([source, args[1]]); // a rename is read back at its new slug too
     for (const a of args) {
       if (Array.isArray(a)) { for (const row of a) if (row && typeof row === 'object') pairs.push(...rowSlugs(row as Record<string, unknown>, source)); }
       else if (a && typeof a === 'object') pairs.push(...rowSlugs(a as Record<string, unknown>, source));

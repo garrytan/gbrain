@@ -33,7 +33,7 @@ const tmp = () => { const d = mkdtempSync(join(tmpdir(), 'gbrain-replay-')); dir
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 
 /** A small in-memory brain. `dropWrites` returns the right receipt but stores nothing (the negative control). */
-function fakeEngine(opts: { dropAliases?: boolean; dropWrites?: boolean; dropSource?: string; alterFrontmatter?: boolean; idPrefix?: string; due?: string; strictRevision?: boolean; wrongTimeline?: boolean; wrongChunks?: boolean } = {}) {
+function fakeEngine(opts: { wrongRename?: boolean; dropAliases?: boolean; dropWrites?: boolean; dropSource?: string; alterFrontmatter?: boolean; idPrefix?: string; due?: string; strictRevision?: boolean; wrongTimeline?: boolean; wrongChunks?: boolean } = {}) {
   const chunks = new Map<string, Array<{ chunk_text: string }>>();
   const aliases = new Map<string, string[]>();
   const timeline = new Map<string, Array<{ summary: string }>>();
@@ -71,6 +71,10 @@ function fakeEngine(opts: { dropAliases?: boolean; dropWrites?: boolean; dropSou
     async addTimelineEntriesBatch(rows: Array<{ slug: string; summary: string }>) {
       for (const r of rows) timeline.set(r.slug, [...(timeline.get(r.slug) ?? []), { summary: opts.wrongTimeline ? 'something else' : r.summary }]);
       return rows.length;
+    },
+    async updateSlug(oldSlug: string, newSlug: string) {
+      const p = pages.get(oldSlug); if (!p) return 0;
+      pages.delete(oldSlug); pages.set(opts.wrongRename ? 'notes/wrong' : newSlug, { ...p, slug: newSlug }); return 1;
     },
     async getStats() { return { page_count: pages.size, ...(opts.due ? { due: opts.due } : {}) }; },
     async searchKeyword(q: string) { return [...pages.values()].filter(p => p.compiled_truth.includes(q)).map(p => ({ slug: p.slug })); },
@@ -705,6 +709,65 @@ describe('review fixes (ship final review of the queued head)', () => {
     const { report } = await run();
     expect(report.counts.writes_not_swept).toBe(1);
     expect(report.coverage).toBe('incomplete');
+  });
+});
+
+describe('review fixes (last read-only review, 8e7a0f5630)', () => {
+  test('a purge deletes a recording kept for retry even when the current epoch is already invalidated', async () => {
+    const { cap, home } = recordingCapture();
+    const kept = readEpoch(cap)!.id;
+    mkdirSync(join(basesDir(cap, kept), 'pglite'), { recursive: true });
+    writePrivateJson(join(cap, 'retry.json'), { pointer: readEpoch(cap), attempts: 1 });
+    startEpoch(cap, home); // the next epoch, whose seed then failed
+    invalidateIfPurged(cap, { home, force: 'seed_failed' });
+    expect(existsSync(epochDir(cap, kept))).toBe(true);
+    const e = fakeEngine() as unknown as BrainEngine;
+    watchPurges(e, cap);
+    appendPurgeIntent({ request: 'r11', request_id: 'q', source_id: 'default', source_incarnation: 'i', scope: 'page', purge_epoch: 1, facts: [], takes: [], lifetimes: [] }, home);
+    expect(existsSync(epochDir(cap, kept))).toBe(false);
+    expect(existsSync(basesDir(cap, kept))).toBe(false);
+  });
+
+  test('the purge listener survives a reconnect (disconnect then connect on the same engine)', async () => {
+    const { cap, home } = recordingCapture();
+    const id = readEpoch(cap)!.id;
+    const hooks = new Set<() => Promise<void>>();
+    const engine = { registerBeforeDisconnect(fn: () => Promise<void>) { hooks.add(fn); return () => hooks.delete(fn); } } as unknown as BrainEngine;
+    watchPurges(engine, cap);
+    for (const fn of hooks) await fn(); // a reconnect runs the disconnect hooks and keeps the same engine
+    appendPurgeIntent({ request: 'r12', request_id: 'q', source_id: 'default', source_incarnation: 'i', scope: 'page', purge_epoch: 1, facts: [], takes: [], lifetimes: [] }, home);
+    expect(existsSync(epochDir(cap, id))).toBe(false);
+  });
+
+  test('capture delete refuses while a replay holds the lock, and deletes nothing', async () => {
+    const { cap, shadowDir } = recordingCapture();
+    const unlock = acquireReplayLock(join(shadowDir, 'replay'), 60_000);
+    try {
+      const { runShadowReplayCommand } = await import('../src/commands/engine-shadow-replay.ts');
+      const lines: string[] = [];
+      const io = { out: (l: string) => lines.push(l), err: (l: string) => lines.push(l), now: () => new Date(), brain: { key: 'pglite-abc', dir: shadowDir, engine: 'pglite' }, config: () => null, openPrimary: async () => { throw new Error('unused'); } };
+      await expect(runShadowReplayCommand('capture', ['delete', '--yes'], io as never)).rejects.toThrow(/shadow_replay_busy/);
+      expect(existsSync(epochDir(cap, readEpoch(cap)!.id))).toBe(true);
+      expect(existsSync(join(shadowDir, 'replay', 'lock'))).toBe(true);
+    } finally { unlock(); }
+  });
+
+  test('a recording process is visible to the seal from its first recorded call, before any flush', async () => {
+    const { cap, home } = recordingCapture();
+    const dir = epochDir(cap, readEpoch(cap)!.id);
+    const writer = new CaptureWriter(cap, home, {});
+    await wrapCaptureEngine(fakeEngine() as unknown as BrainEngine, writer).getPage('notes/x');
+    expect(readdirSync(dir).some(f => f.startsWith('proc-'))).toBe(true);
+    expect(liveRecorders(dir)).toBe(1);
+  });
+
+  test('a rename is read back at its new slug', async () => {
+    const { run } = await replayOnFakes({ wrongRename: true }, async e => {
+      await e.putPage('notes/old', { title: 't', compiled_truth: 'b' } as never);
+      await (e as unknown as { updateSlug(a: string, b: string): Promise<number> }).updateSlug('notes/old', 'notes/new');
+    });
+    const { report } = await run();
+    expect(report.diffs.some(d => d.member === 'sweep:getPage')).toBe(true);
   });
 });
 

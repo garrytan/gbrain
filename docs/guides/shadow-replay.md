@@ -82,7 +82,7 @@ difference only shows that PGLite and Rust disagree.
   name, and chunk writes are read back with their chunks and embeddings,
   sealed or not. The sweep reads up to 5,000 pages; past that the report says `incomplete` and counts `sweep_skipped`. A page
   write whose page the replay cannot tell is counted as `writes_not_swept` and also makes the report `incomplete`.
-  Alias writes are not read back yet and count there too.
+  Alias writes are not read back yet and count there too. A rename is read back at both its old and new slug.
 - When a gbrain process that records was still running at the moment the nightly run closed the recording, its last
   calls may still have been in memory; the report counts it as `recorders_alive_at_seal` and says `incomplete`.
 - A replay that fails for any reason other than a purge keeps its recording and copies for one retry the next night;
@@ -95,7 +95,7 @@ difference only shows that PGLite and Rust disagree.
 ## Purge
 
 When you purge a page or fact, gbrain writes a line to its purge log. Any new purge-log line, or a purge log that
-cannot be read, deletes the whole current recording and its copies, and drops the local Postgres scratch copy's
+cannot be read, deletes the whole current recording and its copies (and any recording kept for a retry), and drops the local Postgres scratch copy's
 schema. It also deletes recordings and copies a crashed nightly run left behind. The process doing the purge does this at once, whether capture is on, off or turned off with
 `GBRAIN_SHADOW_CAPTURE=off`, as long as the brain has a capture directory. Other processes and the nightly run check
 before they write. A running replay is stopped within seconds. If the scratch database cannot be reached at that
@@ -108,7 +108,7 @@ the purged brain. Reports and summaries hold no content, so a purge has nothing 
 ```bash
 gbrain engine shadow capture off                 # stops every recording process at its next write; deletes nothing
 GBRAIN_SHADOW_CAPTURE=off gbrain serve           # off for any process started with this variable
-gbrain engine shadow capture delete --yes        # drops the scratch copy, deletes recordings, copies and reports
+gbrain engine shadow capture delete --yes        # drops the scratch copy, deletes recordings, copies and reports (refused while a replay runs)
 gbrain engine shadow stop --delete               # also drops the replay's Postgres copy before it deletes shadow state
 ```
 

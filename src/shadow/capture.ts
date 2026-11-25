@@ -161,6 +161,8 @@ export function deleteAllCaptureData(cap: string): string[] {
  */
 export function invalidateIfPurged(cap: string, opts: { home?: string; force?: string } = {}): boolean {
   const pointer = readEpoch(cap);
+  // A purge cleans up whatever the pointer says: a recording kept for retry may outlive an invalidated next epoch.
+  if (opts.force === 'purge' && pointer?.state === 'invalidated') { deleteAllCaptureData(cap); return true; }
   if (!pointer || pointer.state === 'invalidated') return false;
   if (!opts.force && !purgeLogChanged(pointer.purge_log, opts.home)) return false;
   const reason = opts.force ?? 'purge';
@@ -262,9 +264,15 @@ export async function scratchCleared(cap: string): Promise<boolean> {
  * killed by the environment: a purge always deletes the epoch and drops the scratch copy. The engine's disconnect
  * waits for a drop it started.
  */
+const purgeWatched = new Set<string>();
 export function watchPurges(engine: BrainEngine, cap: string): void {
-  const stop = onPurgeIntent(() => { try { if (!invalidateIfPurged(cap, { force: 'purge' })) scheduleScratchDrop(cap); } catch { /* fail open */ } });
-  engine.registerBeforeDisconnect(async () => { stop(); await scratchDrops.get(cap); });
+  // One listener per capture directory for the life of the process: a reconnect (disconnect then connect on the same
+  // engine) must not leave the engine deaf to purges. Disconnect only waits for a drop it started.
+  if (!purgeWatched.has(cap)) {
+    purgeWatched.add(cap);
+    onPurgeIntent(() => { try { if (!invalidateIfPurged(cap, { force: 'purge' })) scheduleScratchDrop(cap); } catch { /* fail open */ } });
+  }
+  engine.registerBeforeDisconnect(async () => { await scratchDrops.get(cap); });
 }
 
 /**
@@ -311,6 +319,7 @@ export class CaptureWriter {
   nextSeq(): number { return ++this.seq; }
 
   push(rec: Omit<CaptureRecord, 'v' | 'proc' | 'seq'>): void {
+    this.heartbeat(); // visible to a nightly seal from the first call, not only after a flush
     let line: string;
     try { line = JSON.stringify({ v: 1, proc: this.proc, seq: this.nextSeq(), ...rec }); } catch { return this.drop('encode'); }
     if (line.length > CAPTURE_LIMITS.recordBytes) {
@@ -323,6 +332,14 @@ export class CaptureWriter {
       this.timer = setTimeout(() => { this.timer = null; void this.flush(); }, CAPTURE_LIMITS.flushMs);
       (this.timer as { unref?: () => void }).unref?.();
     }
+  }
+
+  /** Writes this process's heartbeat into the current recording epoch, once per epoch. */
+  private heartbeat(): void {
+    const epoch = readEpoch(this.cap);
+    if (!epoch || epoch.state !== 'recording' || this.heartbeatFor === epoch.id || !existsSync(epochDir(this.cap, epoch.id))) return;
+    this.heartbeatFor = epoch.id;
+    try { writePrivateJson(join(epochDir(this.cap, epoch.id), `proc-${this.proc}.json`), { pid: process.pid, epoch: epoch.id, since: new Date().toISOString() }); } catch { /* best effort */ }
   }
 
   private drop(reason: string): void { this.dropped++; this.dropReason = reason; }
@@ -360,10 +377,7 @@ export class CaptureWriter {
       } catch { this.lowDisk = true; }
     }
     if (this.lowDisk) return { stop: 'budget' };
-    if (this.heartbeatFor !== epoch.id) {
-      this.heartbeatFor = epoch.id;
-      try { writePrivateJson(join(dir, `proc-${this.proc}.json`), { pid: process.pid, epoch: epoch.id, since: new Date().toISOString() }); } catch { /* best effort */ }
-    }
+    this.heartbeat();
     return { path: join(dir, `${this.proc}.jsonl`), epoch };
   }
 

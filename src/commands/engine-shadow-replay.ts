@@ -72,14 +72,19 @@ export async function runShadowReplayCommand(sub: string, rest: string[], io: Sh
     }
     if (action === 'delete') {
       if (!flags.includes('--yes')) { io.out(`This deletes every recording, seeded copy and replay report under ${cap} and ${join(io.brain.dir, 'replay')}. Run again with --yes.`); return 1; }
+      // Never while a replay runs: take its lock first (refuses with shadow_replay_busy), release it after.
+      const { acquireReplayLock } = await import('../shadow/replay-run.ts');
+      const unlock = acquireReplayLock(join(io.brain.dir, 'replay'), 0);
+      try {
       const { scheduleScratchDrop } = await import('../shadow/capture.ts');
       if (!await scheduleScratchDrop(cap)) { io.err('engine shadow: the scratch Postgres copy could not be dropped; nothing was deleted. Make the scratch database reachable and run this again.'); return 1; }
       const gone: string[] = [];
       if (existsSync(cap)) for (const f of readdirSync(cap)) if (f !== 'state.json' && f !== 'off') { rmSync(join(cap, f), { recursive: true, force: true }); gone.push(join(cap, f)); }
       const runs = join(io.brain.dir, 'replay');
-      if (existsSync(runs)) { rmSync(runs, { recursive: true, force: true }); gone.push(runs); }
+      if (existsSync(runs)) for (const f of readdirSync(runs)) if (f !== 'lock') { rmSync(join(runs, f), { recursive: true, force: true }); gone.push(join(runs, f)); }
       io.out(gone.length ? `Deleted:\n${gone.join('\n')}` : 'Nothing to delete.');
       return 0;
+      } finally { unlock(); }
     }
     throw new ReplayError('shadow_capture_off', `unknown capture action ${action ?? '(none)'}; use on, off, status or delete`);
   }
