@@ -102,7 +102,8 @@ function childReceipts(items: ImportItem[], out: Record<string, unknown>): Impor
  * Brings the receipt forward: polls pending items, then sends each batch never sent, saving the receipt after every
  * step. Stops at the first batch the brain refuses as a whole (its error is on the batch; later batches stay
  * not_started for a resume). A batch refused for one of its items (invalid_params or a write-gate hold naming items[N]) records that line
- * as failed and sends the rest of the batch again under its own request id, so one bad line costs only itself.
+ * as failed and sends the rest of the batch again under its own request id, so one bad line costs only itself; after a
+ * hold the rest go one line at a time.
  * Returns the receipt.
  */
 export async function runImport(plan: ImportPlan, receipt: ImportReceipt, call: ImportCall, save: (r: ImportReceipt) => void): Promise<ImportReceipt> {
@@ -117,26 +118,29 @@ export async function runImport(plan: ImportPlan, receipt: ImportReceipt, call: 
     if (batch.state !== 'not_started' && batch.state !== 'failed') continue;
     let rest = groups[batch.index]!;
     const refused: ImportItemReceipt[] = [];
-    let sent: ImportItemReceipt[] = [];
+    const sent: ImportItemReceipt[] = [];
+    let one = false;
     for (let attempt = 0; rest.length; attempt++) {
-      const params = { ...batchParams(plan, receipt.preview, batch.index, rest, receipt.provenance), ...(attempt ? { request_id: `${batch.request_id}-r${attempt}` } : {}) };
+      const group = one ? rest.slice(0, 1) : rest;
+      const params = { ...batchParams(plan, receipt.preview, batch.index, group, receipt.provenance), ...(attempt ? { request_id: `${batch.request_id}-r${attempt}` } : {}) };
       try {
-        sent = childReceipts(rest, await call('remember', params));
-        break;
+        sent.push(...childReceipts(group, await call('remember', params)));
+        rest = rest.slice(group.length);
       } catch (e) {
         const error = errorOf(e);
         const hold = held(error.message);
         const named = error.code === 'invalid_params' || hold ? /\bitems\[(\d+)\]/.exec(error.message) : null;
         const bad = named ? Number(named[1]) : -1;
-        if (bad < 0 || bad >= rest.length) {
-          if (refused.length) batch.items = refused;
+        if (bad < 0 || bad >= group.length) {
+          if (refused.length || sent.length) batch.items = [...refused, ...sent].sort((a, b) => a.line - b.line);
           batch.state = 'failed';
           batch.error = error;
           save(receipt);
           return receipt;
         }
-        refused.push({ line: rest[bad]!.line, request_id: '', status: 'failed', error: hold ?? error });
-        rest = rest.filter((_, k) => k !== bad);
+        refused.push({ line: group[bad]!.line, request_id: '', status: 'failed', error: hold ?? error });
+        rest = rest.filter(item => item !== group[bad]);
+        if (hold) one = true;
       }
     }
     delete batch.error;

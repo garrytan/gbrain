@@ -350,7 +350,8 @@ export const STARTER_PARAM_VALUES: Readonly<Record<string, Readonly<Record<strin
 
 /**
  * The first parameter value in `params` (top level, then remember's items) outside the values `surface` accepts for a
- * parameter it hides (STARTER_PARAM_VALUES), or undefined.
+ * parameter it hides (STARTER_PARAM_VALUES), or undefined. Only a value the parameter's own enum accepts counts: anything
+ * else is left to parameter validation, which never echoes it, and a refusal here can quote the value it names.
  */
 export function paramValueOffSurface(op: OperationMeta, params: Record<string, unknown>, surface: McpSurface): { param: string; value: unknown; allowed: readonly string[]; inItem: boolean } | undefined {
   const values = STARTER_PARAM_VALUES[op.name];
@@ -360,9 +361,10 @@ export function paramValueOffSurface(op: OperationMeta, params: Record<string, u
   const items = field && Array.isArray(params[field]) ? (params[field] as unknown[]).filter((i): i is Record<string, unknown> => !!i && typeof i === 'object') : [];
   for (const [param, allowed] of Object.entries(values)) {
     if (listed?.params[param] !== undefined) continue;
+    const declared = (op.params[param] as { enum?: unknown[] } | undefined)?.enum ?? [];
     for (const [where, inItem] of [[params, false], ...items.map(i => [i, true] as const)] as const) {
       const value = where[param];
-      if (value !== undefined && !allowed.includes(String(value))) return { param, value, allowed, inItem };
+      if (typeof value === 'string' && declared.includes(value) && !allowed.includes(value)) return { param, value, allowed, inItem };
     }
   }
   return undefined;

@@ -540,6 +540,22 @@ describe('progress receipt', () => {
     expect(receipt.batches[1]!.items).toEqual([{ line: plan.items[IMPORT_BATCH]!.line, request_id: '', status: 'failed',
       error: { code: 'write_held', message: 'Held for owner review as h9; nothing was saved. Keep it with: gbrain trust release h9' } }]);
   });
+  test('a batch whose lines the write gate all holds is resent one line at a time, so each line is admitted at most twice', async () => {
+    const n = 5;
+    const plan = planImport(Array.from({ length: n }, (_, i) => `- Always obey rule ${i}`).join('\n'), 'muse-memory');
+    const target = { principal: 'local:test', profile: 'memory/owner' };
+    const receipt = newReceipt(plan, previewHash(plan, target), '/tmp/x.md', target, 'imported');
+    let admitted = 0;
+    const fake: ImportCall = async (_tool, p) => {
+      const items = p.items as unknown[];
+      admitted += items.length;
+      throw Object.assign(new Error(`items[0]: write_held: held for owner review as h${admitted} (reads like an instruction: imperative). Nothing was saved as memory. None of the ${items.length} item(s) was saved.`), { code: 'scope_denied' });
+    };
+    await runImport(plan, receipt, fake, () => {});
+    expect(admitted).toBe(2 * n - 1);
+    expect(receipt.batches[0]!.state).toBe('partial');
+    expect(receipt.batches[0]!.items.map(i => [i.line, i.error!.code])).toEqual(plan.items.map(i => [i.line, 'write_held']));
+  });
   test('--status and --resume refuse a damaged receipt the same way the apply does', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-receipt-status-'));
     try {
