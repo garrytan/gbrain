@@ -692,8 +692,8 @@ describe('the managed sync store sends the statements the sync built, fragments 
   // The fragments persistence/sync-pass-run.ts, sync-discovery.ts, sync-tail-record.ts and sync-tail.ts composed their statements from
   // before they moved (engine-sql/managed-sync-store.ts).
   test('the page statements carry the unbound-source predicate of their alias', () => {
-    expect(SYNC_STATEMENTS.pages_by_slug.sql).toBe(`SELECT id, slug, source_path, knowledge_revision::text AS revision, deleted_at IS NOT NULL AS deleted, ${databaseOnlyPageSql('pages')} AS unbound, frontmatter->>'id' AS fm_id FROM pages WHERE source_id=$1 AND slug=ANY($2::text[])`);
-    expect(SYNC_STATEMENTS.database_only_pages.sql).toBe(`SELECT p.id FROM pages p WHERE p.id=ANY($1::bigint[]) AND (${databaseOnlyPageSql('p')} OR p.database_only_reason IS NOT DISTINCT FROM 'origin_twin')`);
+    expect(SYNC_STATEMENTS.pages_by_slug.sql as string).toBe(`SELECT id, slug, source_path, knowledge_revision::text AS revision, deleted_at IS NOT NULL AS deleted, ${databaseOnlyPageSql('pages')} AS unbound, frontmatter->>'id' AS fm_id FROM pages WHERE source_id=$1 AND slug=ANY($2::text[])`);
+    expect(SYNC_STATEMENTS.database_only_pages.sql as string).toBe(`SELECT p.id FROM pages p WHERE p.id=ANY($1::bigint[]) AND (${databaseOnlyPageSql('p')} OR p.database_only_reason IS NOT DISTINCT FROM 'origin_twin')`);
   });
   test('the tail statements carry the obligation cap and the page cap', () => {
     expect(SYNC_STATEMENTS.tail_record_run.sql).toContain('jsonb_array_length(op_checkpoints.completed_keys)>=16');
@@ -702,7 +702,7 @@ describe('the managed sync store sends the statements the sync built, fragments 
   });
   test('the in-flight statements carry the request-naming predicate', () => {
     const names = `r.page_id=ANY($2::int[]) OR r.intent->>'sourcePath'=ANY($3::text[]) OR r.intent->>'path'=ANY($3::text[])`;
-    expect(SYNC_STATEMENTS.inflight_open_ids.sql).toBe(`SELECT r.id FROM persistence_requests r WHERE r.source_id=$1 AND r.state IN ('queued','running','recovering') AND (${names})`);
+    expect(SYNC_STATEMENTS.inflight_open_ids.sql as string).toBe(`SELECT r.id FROM persistence_requests r WHERE r.source_id=$1 AND r.state IN ('queued','running','recovering') AND (${names})`);
     expect(SYNC_STATEMENTS.inflight_open_work.sql.split(names).length).toBe(3);
   });
 });
