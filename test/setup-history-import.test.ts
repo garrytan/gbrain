@@ -368,7 +368,7 @@ if (pgliteOnly) describe('setup history import: bounds, holds and the lock (pgli
     }
   }, 180_000);
 
-  test('a newest session the old archive already covers counts as imported, not nothing_found, so setup does not offer it again', async () => {
+  test('a newest session covered only by an old-archive date marker is not counted as imported, because no transcript of it reached the brain', async () => {
     const { engine, close } = await brain('pglite');
     try {
       await inHome(() => recordInstallReceipt(engine, { harness: 'claude-code', createdBySetup: true, now: NOW }));
@@ -379,9 +379,10 @@ if (pgliteOnly) describe('setup history import: bounds, holds and the lock (pgli
       await setArchiveEnabled(engine, true);
       await adoptLegacyArchive(engine, { dir: legacy, apply: true });
       const result = await inHome(() => runSetupHistory(engine, { harness: 'claude-code', stage: 'latest', dir, deadlineAtMs: soon(), now: NOW }));
-      expect({ status: result.status, imported: result.sessions_imported, days: result.days_written }).toEqual({ status: 'imported', imported: 1, days: 0 });
-      expect((await readInstallReceipt(engine))!.stages.latest?.status).toBe('imported');
-      expect((await inHome(() => previewHistory(engine, { stage: 'latest', dir, now: NOW }))).answered).toContain('latest');
+      expect({ status: result.status, imported: result.sessions_imported, days: result.days_written }).toEqual({ status: 'nothing_found', imported: 0, days: 0 });
+      expect((await readInstallReceipt(engine))!.stages.latest?.status).toBe('nothing_found');
+      expect(await archivedPages(engine)).toEqual([]);
+      expect((await inHome(() => previewHistory(engine, { stage: 'latest', dir, now: NOW }))).answered).not.toContain('latest');
     } finally { await close(); }
   }, 120_000);
 

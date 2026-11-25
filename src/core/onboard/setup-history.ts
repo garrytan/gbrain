@@ -425,7 +425,7 @@ async function importStage(engine: BrainEngine, opts: RunHistoryOpts, s: {
   const imported = new Set<string>();
   for (const d of run.days) {
     if (d.harness === 'index') continue;
-    if (SETTLED.has(d.status)) imported.add(d.harness + SEP + d.conversation_key_hash);
+    if (d.status === 'written' || d.status === 'unchanged' || d.status === 'accepted' || d.status === 'kept') imported.add(d.harness + SEP + d.conversation_key_hash);
     if (d.status === 'held') base.held.push({ harness: d.harness, day: d.day, code: d.code ?? 'held' });
   }
   base.write_mode = run.write_mode;
