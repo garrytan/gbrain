@@ -106,8 +106,12 @@ their audience (the reads above, unless the client is `--attest-read person`) re
 no personal source, not even the speaker's own, so a room never reads a DM. A hidden
 source named in `source_id` or `source_ids` is refused exactly like a source outside
 the grant (`permission_denied`). Binding only hides inside the grant: a source the
-credential is not granted stays unreadable. Unattested calls and member-bound
-credentials are unchanged. `gbrain access member source remove <member> <source>`
+credential is not granted stays unreadable. A key bound to a member other than the
+owner that has no source list (it reads `default` and the federated sources) reads
+that set minus every personal source bound to someone else, and so does a stdio
+server bound to such a member; `gbrain <read> --as <member>` previews the same view.
+The owner's keys lose nothing, and a source list that names a personal source keeps
+it (`gbrain access check --token <name>` shows what a key reads). `gbrain access member source remove <member> <source>`
 previews first and says whether the source stays personal; `--yes` applies. Bindings
 are database state, so a repo-less brain works the same.
 

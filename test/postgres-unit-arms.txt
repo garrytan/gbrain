@@ -25,6 +25,7 @@ test/access-labelled-only-fail-closed.test.ts
 test/access-labelled-only.test.ts
 test/access-member-facts.test.ts
 test/access-member-handover.test.ts
+test/access-member-personal-sources.test.ts
 test/access-member-sweep.test.ts
 test/access-members-read-lineage.test.ts
 test/access-members.test.ts
@@ -429,6 +430,7 @@ test/large-pages/upload-over-ceiling.test.ts
 test/large-pages/upload-provenance-7873.test.ts
 test/large-pages/upload-review.test.ts
 test/large-pages/v252-master-reader-compat.test.ts
+test/learning-decide.test.ts
 test/learning-duplicates.test.ts
 test/learning-ledger.test.ts
 test/link-context-world-rows-2957.test.ts
