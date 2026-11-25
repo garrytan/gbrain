@@ -65,7 +65,8 @@ import {
 } from '../core/bootstrap/hooks.ts';
 import { removeCodexHooks, writeCodexHooks } from '../core/bootstrap/codex-hooks.ts';
 import { ensureHookLauncher, hookLauncherPath } from '../core/setup/hook-launcher.ts';
-import { isRegistrationSurface, registeredAdvertise, registeredSurface, registrationAdvertise, registrationProfile, stdioServeArgv } from '../core/mcp-registration.ts';
+import { isRegistrationSurface, registeredAdvertise, registeredSurface, registrationAdvertise, stdioServeArgv } from '../core/mcp-registration.ts';
+import { harnessDefaultProfile } from './setup-codex-default.ts';
 import type { McpSurface } from '../mcp/surface.ts';
 import {
   guardReceiptOverwrite,
@@ -1110,7 +1111,7 @@ async function runHooks(
   const mcpEvenIfPlugin = rest.includes('--mcp-even-if-plugin');
   const surfaceArg = rest.includes('--surface') ? flagValue(rest, '--surface') ?? '' : undefined;
   if (surfaceArg !== undefined && !isRegistrationSurface(surfaceArg)) { console.error(`unknown --surface '${surfaceArg}' — pass --surface verbs, starter, or full`); return 2; }
-  const surfaceFlag = surfaceArg ?? null, profile = registrationProfile(harness, loadConfigFileOnly());
+  const surfaceFlag = surfaceArg ?? null, { profile } = await harnessDefaultProfile(harness, loadConfigFileOnly(), { note: (n) => console.error(`note: ${n}`), probe: surfaceArg === undefined });
 
   const state = readManifest(ws);
   if (state.state !== 'initialized') {

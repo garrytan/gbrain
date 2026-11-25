@@ -32,7 +32,8 @@ import { STDIO_MEMBER_FLAG } from '../core/stdio-member-flag.ts';
 
 export type HermesRun = (argv: string[], input: string) => { ok: boolean; output: string };
 
-export interface HermesMcpOutcome { action: 'write' | 'keep' | 'print' | 'remove' | 'skip' | 'error'; path: string; detail: string; command?: string }
+/** `surface`: the surface the entry serves after a write or keep (the brain-first block and turn rule name its tools). */
+export interface HermesMcpOutcome { action: 'write' | 'keep' | 'print' | 'remove' | 'skip' | 'error'; path: string; detail: string; command?: string; surface?: McpSurface }
 
 export interface HermesMcpOptions {
   hermesHome: string;
@@ -163,8 +164,9 @@ export function hermesMcpStep(o: { hermesHome: string; name: string; surface?: M
       if (surface) profile = { surface, advertise: registeredAdvertise(text) };
     } catch { /* silent-read-ok: syncHermesMcp reads the same file inside its own handler and reports the error */ }
   }
-  return syncHermesMcp({ hermesHome: o.hermesHome, name: o.name, command, gbrainBin: o.gbrainBin, surface: profile.surface,
+  const outcome = syncHermesMcp({ hermesHome: o.hermesHome, name: o.name, command, gbrainBin: o.gbrainBin, surface: profile.surface,
     advertise: profile.advertise, gbrainHome: process.env.GBRAIN_HOME?.trim() || null, dryRun: o.dryRun });
+  return outcome.action === 'write' || outcome.action === 'keep' ? { ...outcome, surface: profile.surface } : outcome;
 }
 
 /** Remove gbrain's entry with `hermes mcp remove`. Never throws. */

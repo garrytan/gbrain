@@ -48,6 +48,7 @@ import { resolveGbrainBin } from '../core/gbrain-bin.ts';
 import { exitCodeForCode } from '../core/error-catalogue.ts';
 import { parseStdioMemberFlag } from '../core/stdio-member-flag.ts';
 import { isRegistrationSurface, isValidName, profileFlags, registeredAdvertise, registeredSurface, registrationAdvertise, registrationProfile, sameProfile, shellQuote, STARTER_PROFILE, stdioServeArgv, type RegistrationProfile } from '../core/mcp-registration.ts';
+import { harnessDefaultProfile } from './setup-codex-default.ts';
 import { HOOK_LAUNCHER_NAME, hookLauncherPath } from '../core/setup/hook-launcher.ts';
 import { setupRerunArgv } from '../core/setup/launcher-lanes.ts';
 import { readResolverConfig, resolverHarnesses } from '../core/setup/skill-resolver-config.ts';
@@ -303,7 +304,6 @@ improves an existing brain's content.
 type SetupHarnessId = 'claude-code' | 'codex';
 
 /** Why Codex registers full by default (decision I1), named wherever setup moves or keeps a Codex entry. */
-const CODEX_DEFAULT_WHY = 'Codex does not reload its tool list, so a tool request_tools unlocks stays uncallable there';
 const HARNESS_LABEL: Record<SetupHarnessId, string> = { 'claude-code': 'Claude Code', codex: 'Codex' };
 
 interface SetupFlags {
@@ -842,9 +842,9 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     const chosenSurface = flags.surface ?? (isRegistrationSurface(envSurface) ? envSurface : undefined);
     // I1: an explicit --surface (or GBRAIN_SURFACE) pins the registration (origin explicit); otherwise a new entry, or one
     // a receipt records as default-origin, follows the Codex default; an explicit or pre-origin receipt keeps its entry.
-    const defaults = registrationProfile('codex', cfg);
     const priorProfile: RegistrationProfile | null = prior ? { surface: prior.surface, advertise: prior.advertise ?? null } : null;
     const priorOrigin = prior?.surface_origin === 'explicit' || prior?.surface_origin === 'default' ? prior.surface_origin : undefined;
+    const { profile: defaults, why: defaultWhy } = await harnessDefaultProfile('codex', cfg, { note: (n) => notes.push(n), keep: priorProfile, probe: chosenSurface === undefined && (!priorProfile || priorOrigin === 'default') });
     const picked: { profile: RegistrationProfile; origin?: 'explicit' | 'default' } = chosenSurface !== undefined
       ? { profile: { surface: chosenSurface, advertise: flags.advertise ?? null }, origin: 'explicit' }
       : !priorProfile || priorOrigin === 'default' ? { profile: defaults, origin: 'default' } : { profile: priorProfile, origin: priorOrigin };
@@ -875,8 +875,8 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     if (pluginOwner && flags.stdioMember !== undefined) return refuse(pluginBindingRefusal(pluginOwner, 'codex', flags.stdioMember), out);
     if (prior && priorProfile && !pluginOwner && chosenSurface === undefined && (found.mcp.state === 'owned' || found.mcp.state === 'current') && !sameProfile(priorProfile, defaults)) {
       const rerun = setupRerunArgv('codex', prior);
-      if (priorOrigin === 'default') notes.push(`the Codex registration moves from serve ${profileFlags(priorProfile).join(' ')} to serve ${profileFlags(defaults).join(' ')}, the Codex default (${CODEX_DEFAULT_WHY}). To keep the old registration: ${shellQuoteArgv([...rerun, ...profileFlags(priorProfile)])}`);
-      else if (priorOrigin === undefined) notes.push(`this Codex registration was written before setup recorded whether its surface was chosen, so it keeps serve ${profileFlags(priorProfile).join(' ')}. To move it to the Codex default (${CODEX_DEFAULT_WHY}): ${shellQuoteArgv([...rerun, ...profileFlags(defaults)])}`);
+      if (priorOrigin === 'default') notes.push(`the Codex registration moves from serve ${profileFlags(priorProfile).join(' ')} to serve ${profileFlags(defaults).join(' ')}, the Codex default (${defaultWhy}). To keep the old registration: ${shellQuoteArgv([...rerun, ...profileFlags(priorProfile)])}`);
+      else if (priorOrigin === undefined) notes.push(`this Codex registration was written before setup recorded whether its surface was chosen, so it keeps serve ${profileFlags(priorProfile).join(' ')}. To move it to the Codex default (${defaultWhy}): ${shellQuoteArgv([...rerun, ...profileFlags(defaults)])}`);
     }
     const { dataDir, liveOwner } = liveOwnerOf(cfg, prior?.status === 'installed' && (found.mcp.state === 'current' || found.mcp.state === 'owned'));
     const target: Target = {
@@ -1210,10 +1210,10 @@ async function runInstructionsOnly(flags: SetupFlags, out: Out): Promise<number>
   const adapter = HARNESS_ADAPTERS.find((a) => a.id === harness)!;
   const envSurface = process.env.GBRAIN_SURFACE;
   const surface = flags.surface ?? (isRegistrationSurface(envSurface) ? envSurface : undefined);
-  const access: BrainFirstAccess = { kind: 'mcp', server: flags.name, ...(surface ? { surface } : {}), ...(flags.serves === 'several' && servesBound(flags) ? { serves: 'several' as const } : {}) };
   const hermesMcp = harness === 'hermes' && !flags.instructionsOnly
     ? hermesMcpStep({ hermesHome: dirname((brainFirstTarget('hermes', {}) as { path: string }).path), name: flags.name, surface, defaults: registrationProfile('hermes', loadConfigFileOnly()), gbrainBin: flags.gbrainBin ?? resolveGbrainBin(), remove: flags.remove, dryRun: flags.dryRun })
     : null;
+  const served = surface ?? hermesMcp?.surface, access: BrainFirstAccess = { kind: 'mcp', server: flags.name, ...(served ? { surface: served } : {}), ...(flags.serves === 'several' && servesBound(flags) ? { serves: 'several' as const } : {}) };
   const mcp = hermesMcp ? { setup: hermesMcp.action, docs: adapter.guide, detail: hermesMcp.detail, ...(hermesMcp.command ? { command: hermesMcp.command } : {}) }
     : { setup: flags.instructionsOnly ? 'unchanged' as const : 'manual' as const, docs: adapter.guide };
   const exposure = flags.remove || !BOT_HARNESSES.includes(harness) ? null

@@ -79,9 +79,13 @@ export function registrationProfile(harness: RegistrationHarness, config?: { mcp
   const knob = (DEFAULT_SURFACE_HARNESSES as readonly string[]).includes(harness)
     ? (config?.mcp as Record<string, unknown> | undefined)?.[defaultSurfaceKey(harness as DefaultSurfaceHarness).slice('mcp.'.length)]
     : undefined;
-  const widen = (config?.mcp as Record<string, unknown> | undefined)?.allow_session_widen;
-  const choice = knob === 'full' || knob === 'starter' ? knob : widen === false || widen === 'false' ? 'starter' : SHIPPED_DEFAULT[harness] ?? 'starter';
+  const choice = knob === 'full' || knob === 'starter' ? knob : sessionWidenOff((config?.mcp as Record<string, unknown> | undefined)?.allow_session_widen) ? 'starter' : SHIPPED_DEFAULT[harness] ?? 'starter';
   return { ...(choice === 'full' ? FULL_PROFILE : STARTER_PROFILE) };
+}
+
+/** Whether an `mcp.allow_session_widen` value turns session widening off: the one check `gbrain serve` and setup share. */
+export function sessionWidenOff(v: unknown): boolean {
+  return v === false || (typeof v === 'string' && /^(false|0|off|no)$/i.test(v.trim()));
 }
 
 /** Whether two profiles render the same serve argv (an advertise no narrower than the surface lists it whole). */

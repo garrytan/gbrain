@@ -156,6 +156,27 @@ describe('gbrain setup codex: the full surface by default (I1)', () => {
     expect(args(b)).toEqual([b.bin, 'serve', '--surface', 'full']);
   }, 300_000);
 
+  test('mcp.allow_session_widen set off in the brain database moves a default-origin entry to starter, and a held brain is never widened', async () => {
+    const b = box();
+    expect((await setup(b, [])).exitCode).toBe(0);
+    const set = await runCli(['config', 'set', 'mcp.allow_session_widen', 'false'], { env: env(b) });
+    expect(set.exitCode, set.stderr).toBe(0);
+    const moved = await setup(b, []);
+    expect(moved.exitCode, moved.stderr).toBe(0);
+    expect(args(b)).toEqual([b.bin, 'serve', '--surface', 'starter', '--advertise', 'verbs']);
+    expect(note(moved, 'session widening is off on this brain')).toBeDefined();
+    expect(note(moved, 'Codex does not reload')).toBeUndefined();
+    const reset = await runCli(['config', 'set', 'mcp.allow_session_widen', 'true'], { env: env(b) });
+    expect(reset.exitCode, reset.stderr).toBe(0);
+    const { acquireLock, releaseLock } = await import('../src/core/pglite-lock.ts');
+    const lock = await acquireLock(join(b.home, '.gbrain', 'brain.pglite'));
+    try {
+      const held = await setup(b, []);
+      expect(held.stderr).toContain('note: setup could not read mcp.allow_session_widen from the brain database');
+      expect(args(b)).toEqual([b.bin, 'serve', '--surface', 'starter', '--advertise', 'verbs']);
+    } finally { await releaseLock(lock); }
+  }, 120_000);
+
   test('a receipt from before surface_origin keeps its entry and prints the exact line that would move it', async () => {
     const b = box();
     expect((await setup(b, [])).exitCode).toBe(0);

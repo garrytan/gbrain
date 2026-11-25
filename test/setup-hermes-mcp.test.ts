@@ -138,6 +138,19 @@ describe('gbrain setup hermes registers MCP through hermes mcp add', () => {
     expect(calls(b).filter((c) => c.argv[1] === 'add')).toHaveLength(1);
   });
 
+  test('a bare re-run writes the brain-first block and turn rule for the surface the entry keeps', async () => {
+    const b = box({ hermes: true });
+    await setup(b, ['--surface', 'full']);
+    await setup(b, []);
+    expect(config(b)).toContain('mcp__gbrain__get_page');
+    const v = box({ hermes: true });
+    await setup(v, ['--surface', 'verbs']);
+    const again = await setup(v, []);
+    expect(again.doc.mcp.setup).toBe('keep');
+    expect(readFileSync(join(v.home, '.hermes', 'SOUL.md'), 'utf8')).toContain('`recall` for what was said or decided');
+    expect(config(v)).toContain('mcp__gbrain__remember');
+  }, 30_000);
+
   test('a malformed config.yaml is an MCP error on a bare run, and the rest of setup still runs', async () => {
     const b = box({ hermes: true });
     writeFileSync(join(b.home, '.hermes', 'config.yaml'), 'mcp_servers: {gbrain: [a b\n');
