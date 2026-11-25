@@ -6302,7 +6302,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   (U+0085, U+1680, circled letters and more); a C-ctype host differs on every cased non-ASCII letter, so it fails once a fact
   holds one.
 - **Provisional report.** The verdict is always `NOT READY`: this phase compares reads only, write comparisons
-  are compared but not recorded yet, and the readiness decision come in later phases of the plan
+  are built but record nothing yet, and the readiness decision come in later phases of the plan
   (`docs/designs/RUST_ENGINE.md`, Phase S). Until the Rust engine serves reads, comparisons record
   `capability_missing`.
 
