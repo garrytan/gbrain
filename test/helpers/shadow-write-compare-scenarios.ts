@@ -115,12 +115,12 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
   (ctx.addon ? describe : describe.skip)('a sampled page or link write replayed on a scratch Rust store', () => {
     const addonOf = (): RustAddon => ctx.addon!();
 
-    async function replay(act: (engine: BrainEngine) => Promise<void>, expectEvents: number, tamper?: (e: WriteEvent) => void) {
+    async function replay(act: (engine: BrainEngine, sampled: (n: number) => Promise<void>) => Promise<void>, expectEvents: number, tamper?: (e: WriteEvent) => void) {
       await ctx.reset();
       await fillSeedFixture(primary());
       const dir = ctx.tempDir();
       const { inbox, wrapped } = rig();
-      await act(wrapped);
+      await act(wrapped, (n) => until(() => inbox.length >= n)); // a write that lands while an earlier sample is still being read back moves it
       await until(() => inbox.length >= expectEvents);
       const tally = new WriteTally(dir, () => 'e1');
       const scratch = ctx.tempDir();
@@ -131,11 +131,11 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
     }
 
     test('a write whose changed rows match is counted comparable (putPage, addLink, addLinksBatch, removeLink, deletePage)', async () => {
-      const out = await replay(async (e) => {
-        await e.putPage('people/dora-example', page('Dora Example'));
-        await e.addLink('people/dora-example', 'companies/acme-example', 'works at', 'works_at');
-        await e.addLinksBatch([{ from_slug: 'people/alice-example', to_slug: 'people/dora-example', link_type: 'knows', context: 'met' }]);
-        await e.removeLink('people/alice-example', 'companies/acme-example', 'works_at');
+      const out = await replay(async (e, sampled) => {
+        await e.putPage('people/dora-example', page('Dora Example')); await sampled(1);
+        await e.addLink('people/dora-example', 'companies/acme-example', 'works at', 'works_at'); await sampled(2);
+        await e.addLinksBatch([{ from_slug: 'people/alice-example', to_slug: 'people/dora-example', link_type: 'knows', context: 'met' }]); await sampled(3);
+        await e.removeLink('people/alice-example', 'companies/acme-example', 'works_at'); await sampled(4);
         await e.deletePage('people/alice-example');
       }, 5);
       expect(out.tally).toMatchObject({ comparable: 5, unexplained_difference: 0, uncomparable: 0, capability_missing: 0 });
@@ -317,6 +317,32 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
         expect(inbox.map((e) => [e.outcome, e.reason])).toEqual([['uncomparable', 'readback_failed']]);
         expect(unhandled).toEqual([]);
       } finally { process.off('unhandledRejection', listen); getPage.mockRestore(); }
+    }, 60_000);
+
+    test('a write that another process lands between the copy and the read-back makes the sample uncomparable (moved) on a brain others can write, and PGLite skips the fence', async () => {
+      await ctx.reset();
+      await fillSeedFixture(primary());
+      await primary().putPage('people/bob-example', page('Bob Example'));
+      const real = primary().addLink.bind(primary());
+      const link = spyOn(primary(), 'addLink').mockImplementation((async (...a: Parameters<typeof real>) => { await real(...a); await primary().putPage('people/bob-example', page('Bob Edited Elsewhere')); }) as never);
+      try {
+        const { inbox, wrapped } = rig();
+        await wrapped.addLink('people/alice-example', 'people/bob-example', 'knows', 'knows');
+        await until(() => inbox.length >= 1);
+        expect(Boolean(inbox[0]!.moved)).toBe(ctx.kind === 'postgres'); // PGLite has one writer process (its file lock), so it skips the fence
+      } finally { link.mockRestore(); }
+    }, 60_000);
+
+    test('a putPage whose read-back revision is not the revision the write returned is uncomparable (moved) on a brain others can write', async () => {
+      await ctx.reset();
+      const real = primary().putPage.bind(primary());
+      const put = spyOn(primary(), 'putPage').mockImplementation((async (...a: Parameters<typeof real>) => ({ ...(await real(...a)), knowledge_revision: 'a-revision-from-somewhere-else' })) as never);
+      try {
+        const { inbox, wrapped } = rig();
+        await wrapped.putPage('people/rev-example', page('Rev Example'));
+        await until(() => inbox.length >= 1);
+        expect(Boolean(inbox[0]!.moved)).toBe(ctx.kind === 'postgres');
+      } finally { put.mockRestore(); }
     }, 60_000);
 
     (ctx.kind === 'pglite' ? test : test.skip)('on a single-connection engine a read that ran out of time ends at its next statement, so the write behind it is not held for the read', async () => {

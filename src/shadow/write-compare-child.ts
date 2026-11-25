@@ -1,15 +1,15 @@
 /**
  * Write comparisons, the shadow child's part (write-compare.ts has the design). Each full sample is replayed on a SCRATCH Rust
- * store: opened in a new directory under the shadow directory, seeded with the sample's preimage rows through `importRelation`,
+ * store: opened in a private directory of its own (see `scratchRootDefault`), seeded with the sample's preimage rows through `importRelation`,
  * given the same write, read back and deleted. The live shadow store and the primary are never touched, and no Rust code beyond
  * what the shadow already uses is involved. One sample runs at a time; a sample that finds the queue full, or a scratch run that
  * hangs, is counted `uncomparable`, never `comparable`.
  */
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { RustEngineAddonLoad } from '../core/rust-engine/addon-loader.ts';
 import { openRustEngine, type RustEngineAddonHandle } from '../core/rust-engine.ts';
+import { configDir } from '../core/config.ts';
 import { safeCode } from './child-checks.ts';
 import { decodeValue, encodeValue } from './codec.ts';
 import { pageRefs, pageSet, readBack, readBackText, type WriteEvent, type WriteOutcome, type WriteTally } from './write-compare.ts';
@@ -26,23 +26,32 @@ export interface WriteComparerDeps {
   openEngine?: (addon: RustEngineAddonHandle, path: string) => Record<string, any>;
   onError?: (where: string, error: unknown) => void;
   timeoutMs?: number;
-  /** Where scratch stores are made; default the system temp directory (a seam for tests). */
+  /** Where scratch stores are made; default `scratchRootDefault()` (a seam for tests). */
   scratchRoot?: string;
 }
+
+/**
+ * Scratch stores hold copies of primary page content, which may be private: they live in the gbrain data home (the same disk and owner as the brain),
+ * in a `scratch/` directory beside `shadow/`, never in a shared system temp directory and never under the shadow directory (so `stop --delete` and a
+ * store that is still opening cannot undo each other, and a replay needs no drill lock). Shadow evidence itself holds no page content.
+ */
+export const scratchRootDefault = (): string => join(configDir(), 'scratch');
 type Verdict = [WriteOutcome, string?];
 
 export function createWriteComparer(d: WriteComparerDeps): { handle(event: WriteEvent): void; idle(): Promise<void> } {
-  // Scratch stores live outside the shadow directory, each in a private directory named for this process: `stop --delete` cannot be undone by a store
-  // that is still opening, and another child never deletes this one's. Directories of processes that no longer exist are removed here.
-  const scratchRoot = d.scratchRoot ?? tmpdir();
-  const prefix = `gbrain-write-compare-${process.pid}-`;
+  // Each replay gets a private (0700) directory named for this process, removed when the replay ends, whatever its outcome. Directories of processes
+  // that no longer exist (a killed child) are swept here, at shadow start; another child never deletes a live one.
+  const scratchRoot = d.scratchRoot ?? scratchRootDefault();
+  const prefix = `write-compare-${process.pid}-`;
   try {
+    mkdirSync(scratchRoot, { recursive: true, mode: 0o700 });
+    chmodSync(scratchRoot, 0o700);
     for (const name of readdirSync(scratchRoot)) {
-      const pid = /^gbrain-write-compare-(\d+)-/.exec(name)?.[1];
+      const pid = /^write-compare-(\d+)-/.exec(name)?.[1];
       if (!pid || Number(pid) === process.pid) continue;
       try { process.kill(Number(pid), 0); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') rmSync(join(scratchRoot, name), { recursive: true, force: true }); }
     }
-  } catch { /* silent-read-ok: an unreadable temp directory only leaves old scratch stores for the system to clean; nothing is counted from it */ }
+  } catch { /* silent-read-ok: an unreadable scratch directory only leaves old scratch stores behind; nothing is counted from it, and a replay then fails as uncomparable */ }
   let chain: Promise<void> = Promise.resolve();
   let queued = 0;
   let runs = 0;
@@ -58,10 +67,12 @@ export function createWriteComparer(d: WriteComparerDeps): { handle(event: Write
     // A delete or a link removal compares nothing when the preimage lacks the page: the copy could not be validated.
     if (event.op === 'deletePage' && !pre.pages.some((p) => p.source_id === targets[0]!.source && p.slug === targets[0]!.slug)) return ['uncomparable', 'target_absent'];
     runs++;
-    const run = mkdtempSync(join(scratchRoot, prefix)); // the store, its lock and its socket all live in here (mode 0700) and go together
-    const dir = join(run, 'store');
-    const engine = (d.openEngine ?? ((addon, path) => openRustEngine({ addon, databasePath: path }) as unknown as Record<string, any>))(d.load.addon as RustEngineAddonHandle, dir);
+    let run = ''; let engine: Record<string, any> | null = null;
     try {
+      mkdirSync(scratchRoot, { recursive: true, mode: 0o700 });
+      run = mkdtempSync(join(scratchRoot, prefix)); // mode 0700: the store, its lock and its socket all live in here and go together
+      const dir = join(run, 'store');
+      engine = (d.openEngine ?? ((addon, path) => openRustEngine({ addon, databasePath: path }) as unknown as Record<string, any>))(d.load.addon as RustEngineAddonHandle, dir);
       await engine.connect({ database_path: dir });
       const store = await engine.storeFor('seed');
       for (const [relation, rows] of [['sources', pre.sources], ['pages', pre.pages], ['links', pre.links]] as const) {
@@ -75,8 +86,8 @@ export function createWriteComparer(d: WriteComparerDeps): { handle(event: Write
       if (theirs === readBackText(event.post)) return ['comparable'];
       return ['unexplained_difference'];
     } finally {
-      await engine.disconnect().catch(() => undefined);
-      try { rmSync(run, { recursive: true, force: true }); } catch { /* removed with the shadow directory */ }
+      await engine?.disconnect().catch(() => undefined);
+      if (run) try { rmSync(run, { recursive: true, force: true }); } catch { /* swept at the next shadow start */ }
     }
   }
 

@@ -66,9 +66,17 @@ never a pass. With no shadow running, every criterion is `missing`.
    (`capability_missing`) has no evidence. **A criterion 5 pass covers page and link writes only.** Shadow mode copies the
    rows a sampled `putPage`, `deletePage`, `addLink`, `addLinksBatch` or `removeLink` touches from your brain, applies the
    same write to a throwaway Rust store built from that copy (never the live shadow store, never your brain), and compares
-   the changed pages and links. The row counts as `comparable` when they match and `unexplained_difference` when they do not.
+   the changed pages and links. The throwaway store holds copies of page content, which may be private, so it lives in a
+   `scratch/` directory in your gbrain data home beside `shadow/` (mode 0700, on the same disk and owner as your brain, never in a
+   shared temp directory), for one comparison only: it is deleted when the comparison ends, however it ends, and a killed
+   shadow's leftovers are swept the next time shadow mode starts. The shadow's own evidence files hold no page content. The row counts as `comparable` when they match and `unexplained_difference` when they do not.
    A write that cannot be checked (the copy could not be read or loaded, the write failed on either side, it ran inside a
-   transaction, another write landed in between, or it touched too many rows) is `uncomparable` and never counts. Every
+   transaction, another write landed in between, or it touched too many rows) is `uncomparable` and never counts. On a
+   Postgres brain, which other processes can write, a data fence catches another writer: every copied row outside the
+   write's own footprint must be unchanged afterwards, no link may have appeared that the write did not add, and a `putPage`
+   must read back the revision it returned; otherwise the sample is `uncomparable` (`moved`). PGLite skips the fence, because
+   its single-writer file lock means no other process can write. Open gap: another process editing the very rows the write
+   changes is not seen, and shows as an unexplained difference (it can fail criterion 5, never pass it). Every
    sampled write of any other kind (tags, chunks, timeline, facts, raw SQL and so on) is counted `capability_missing` under
    its family, so `gbrain engine shadow status` and the swap plan name every family still unchecked. With no verdict yet the
    row stays `missing`; below 1,000 comparable writes it fails and says how many it has. The sample share is the write sample

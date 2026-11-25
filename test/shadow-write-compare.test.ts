@@ -10,7 +10,7 @@
  * (GBRAIN_TEST_REQUIRE_RUST_ADDON=1 or GBRAIN_TEST_RUST_ADDON_REQUIRED=1 makes that an error; the Rust engine workflow runs it that way through its rust-store receipt lane); everything else uses fake engines or no engine.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { WRITE_COVERAGE_LIMIT, type ShadowStatus } from '../src/core/engine-swap/readiness.ts';
@@ -21,7 +21,10 @@ import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
 import { ensureEpoch } from '../src/shadow/evidence-epoch.ts';
 import { buildFollowStatus } from '../src/shadow/follow-status.ts';
 import { encodeArgs } from '../src/shadow/codec.ts';
-import { pageRefs, readWriteTally, writeTallyPath, WriteTally, type WriteEvent } from '../src/shadow/write-compare.ts';
+import { configDir } from '../src/core/config.ts';
+import { shadowRoot } from '../src/shadow/state.ts';
+import { scratchRootDefault } from '../src/shadow/write-compare-child.ts';
+import { movedOutsideFootprint, pageRefs, readWriteTally, writeTallyPath, WriteTally, type WriteEvent } from '../src/shadow/write-compare.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { defineWriteCompareScenarios, fakeComparer, page, row5, settle, watchPreimage } from './helpers/shadow-write-compare-scenarios.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -122,10 +125,10 @@ describe('write comparison rules (review findings)', () => {
     const first = fakeComparer(dir, { scratchRoot: scratch, connect: async (path) => { opened = path; entered(); await new Promise<void>((r) => { release = r; }); } });
     first.handle(sample());
     await inside;
-    mkdirSync(join(scratch, 'gbrain-write-compare-2147483646-leftover')); // a pid that is not running
+    mkdirSync(join(scratch, 'write-compare-2147483646-leftover')); // a pid that is not running
     fakeComparer(dir, { scratchRoot: scratch }); // another child starts in the same temp directory
     expect(existsSync(dirname(opened))).toBe(true);
-    expect(existsSync(join(scratch, 'gbrain-write-compare-2147483646-leftover'))).toBe(false);
+    expect(existsSync(join(scratch, 'write-compare-2147483646-leftover'))).toBe(false);
     release(); await first.idle();
     expect(readdirSync(scratch)).toEqual([]);
   });
@@ -143,6 +146,59 @@ describe('write comparison rules (review findings)', () => {
     rmSync(dir, { recursive: true, force: true }); // stop --delete
     release(); await comparer.idle();
     expect(existsSync(dir)).toBe(false);
+  });
+});
+
+describe('the data fence and the scratch location (lane owner ruling)', () => {
+  const R = (o: Record<string, string>) => ({ ...o });
+  const A = R({ id: '1', source_id: 'default', slug: 'a/x', title: 'X' }); const B = R({ id: '2', source_id: 'default', slug: 'a/y', title: 'Y' });
+  const L = R({ id: '10', from_page_id: '1', to_page_id: '2', link_type: 'knows' });
+  const pre = { sources: [], pages: [A, B], links: [L] };
+  const sample = (): WriteEvent => ({ t: 'write', op: 'putPage', args: encodeArgs(['people/pat-example', { type: 'person', title: 'Pat', compiled_truth: 'Pat.', timeline: '' }]) as unknown[], pre: { sources: [], pages: [], links: [] }, post: { pages: [null], links: [] } });
+
+  test('rows outside the write\'s footprint must be unchanged, and no link may appear that the write did not add', () => {
+    const link = ['a/x', 'a/y', 'c', 'knows'];
+    expect(movedOutsideFootprint('addLink', link, pre, { sources: [], pages: [A, B], links: [L] })).toBe(false);
+    const added = R({ id: '11', from_page_id: '2', to_page_id: '1', link_type: 'knows' });
+    const forward = ['a/y', 'a/x', 'c', 'knows'];
+    expect(movedOutsideFootprint('addLink', forward, pre, { sources: [], pages: [A, B], links: [L, added] })).toBe(false); // the write's own link
+    expect(movedOutsideFootprint('addLink', link, pre, { sources: [], pages: [A, B], links: [L, added] })).toBe(true); // a link nobody here wrote
+    expect(movedOutsideFootprint('addLink', link, pre, { sources: [], pages: [A, { ...B, title: 'Edited elsewhere' }], links: [L] })).toBe(true); // a copied page changed
+    expect(movedOutsideFootprint('addLink', link, pre, { sources: [], pages: [A], links: [L] })).toBe(true); // a copied page is gone
+    expect(movedOutsideFootprint('removeLink', link, pre, { sources: [], pages: [A, B], links: [] })).toBe(false); // the write's own link, removed
+    expect(movedOutsideFootprint('putPage', ['a/x', {}], pre, { sources: [], pages: [{ ...A, title: 'New' }, B], links: [L] })).toBe(false); // the page it writes
+    expect(movedOutsideFootprint('putPage', ['a/x', {}], pre, { sources: [], pages: [A, { ...B, title: 'Edited elsewhere' }], links: [L] })).toBe(true);
+    expect(movedOutsideFootprint('putPage', ['a/x', {}], pre, { sources: [], pages: [A, B], links: [] })).toBe(true); // a link it does not write is gone
+    expect(movedOutsideFootprint('deletePage', ['a/x'], pre, { sources: [], pages: [B], links: [] })).toBe(false); // the page and its links go
+    expect(movedOutsideFootprint('deletePage', ['a/x'], pre, { sources: [], pages: [{ ...B, title: 'Edited elsewhere' }], links: [] })).toBe(true);
+    const farther = R({ id: '12', from_page_id: '2', to_page_id: '99', link_type: 'knows' });
+    expect(movedOutsideFootprint('deletePage', ['a/x'], pre, { sources: [], pages: [B], links: [farther] })).toBe(false); // a link to a page that was never copied is not a change to the copy
+    const jobs = { ...B, projection_job_revision: 'r1' };
+    expect(movedOutsideFootprint('addLink', link, { ...pre, pages: [A, jobs] }, { sources: [], pages: [A, { ...jobs, projection_job_revision: 'r2' }], links: [L] })).toBe(false); // job-queue state is not an edit
+  });
+
+  test('scratch stores are in the gbrain data home beside shadow/, not in a shared temp directory, and not under the shadow directory', async () => {
+    const home = tmp();
+    await withEnv({ GBRAIN_HOME: home }, async () => {
+      const root = scratchRootDefault();
+      expect(root).toBe(join(configDir(), 'scratch'));
+      expect(root.startsWith(shadowRoot())).toBe(false);
+      expect(root.startsWith(tmpdir() + '/') && !root.startsWith(home)).toBe(false);
+      expect(dirname(root)).toBe(dirname(shadowRoot()));
+    });
+  });
+
+  test('every replay runs in a 0700 directory that is gone afterwards, however the replay ends', async () => {
+    const dir = tmp(); const scratch = join(tmp(), 'scratch');
+    const modes: number[] = [];
+    const seen = (path: string): void => { modes.push(statSync(dirname(path)).mode & 0o777); };
+    await settle(fakeComparer(dir, { scratchRoot: scratch, connect: async (path) => seen(path) }), [sample()]);
+    await settle(fakeComparer(dir, { scratchRoot: scratch, connect: async (path) => seen(path), put: async () => { throw new Error('refused'); } }), [sample()]);
+    await settle(fakeComparer(dir, { scratchRoot: scratch, connect: async (path) => { seen(path); throw new Error('cannot open'); } }), [sample()]);
+    expect(modes).toEqual([0o700, 0o700, 0o700]);
+    expect(statSync(scratch).mode & 0o777).toBe(0o700);
+    expect(readdirSync(scratch)).toEqual([]);
+    expect(readWriteTally(dir, 'e1')).toMatchObject({ comparable: 1, uncomparable: 2 });
   });
 });
 

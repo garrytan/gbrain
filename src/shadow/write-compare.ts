@@ -42,6 +42,42 @@ export function pageRefs(op: string, args: any[]): PageRef[] {
   return [...new Map(all.filter((r): r is PageRef => r !== null).map((r) => [`${r.source}\0${r.slug}`, r])).values()];
 }
 
+/** What a pilot write itself changes: the pages it writes or deletes, and the (from, to) page pairs of the links it adds or removes. */
+export function footprint(op: string, args: any[]): { pages: PageRef[]; pairs: Array<[PageRef, PageRef]> } {
+  const o = (args[OPTS_AT[op] ?? 1] ?? {}) as Record<string, unknown>;
+  const pair = (a: PageRef | null, b: PageRef | null): Array<[PageRef, PageRef]> => (a && b ? [[a, b]] : []);
+  if (op === 'addLinksBatch') return { pages: [], pairs: (args[0] as any[]).flatMap((l) => pair(ref(l.from_slug, l.from_source_id), ref(l.to_slug, l.to_source_id))) };
+  if (op === 'addLink' || op === 'removeLink') return { pages: [], pairs: pair(ref(args[0], o.fromSourceId), ref(args[1], o.toSourceId)) };
+  return { pages: pageRefs(op, args), pairs: [] };
+}
+
+type Row = Record<string, string | null>;
+/** Job-queue state the seed read joins in beside a page (not page content): background workers move it, and that is not another writer's edit. */
+const JOB_COLUMNS = new Set(['projection_job_revision', 'projection_job_reason', 'projection_job_updated_at']);
+const sameRow = (a: Row, b: Row): boolean => Object.keys(a).length === Object.keys(b).length && Object.keys(a).every((k) => JOB_COLUMNS.has(k) || a[k] === b[k]);
+
+/**
+ * The data fence for a brain other processes can write (Postgres): true when the copied rows changed in a way the write does not explain, so the sample
+ * is uncomparable (`moved`). Every row copied before the write that lies outside its footprint must be the same afterwards, and no link may have appeared
+ * that the write did not add. PGLite skips this: its single-writer file lock means no other process can write between the copy and the read-back.
+ * Open gap: another process editing the very rows the write changes is not seen here.
+ */
+export function movedOutsideFootprint(op: string, args: any[], pre: PreImage, now: PreImage): boolean {
+  const fp = footprint(op, args);
+  const key = (r: PageRef): string => `${r.source}\0${r.slug}`;
+  const ids = new Map<string, string | null>([...pre.pages, ...now.pages].map((p) => [`${p.source_id}\0${p.slug}`, p.id ?? null]));
+  const ownPages = new Set(fp.pages.map((r) => ids.get(key(r))));
+  const ownPairs = new Set(fp.pairs.map(([a, b]) => `${ids.get(key(a))}\0${ids.get(key(b))}`));
+  const ownLink = (l: Row): boolean => ownPairs.has(`${l.from_page_id}\0${l.to_page_id}`) || (op === 'deletePage' && (ownPages.has(l.from_page_id) || ownPages.has(l.to_page_id)));
+  const after = (rows: Row[]): Map<string | null, Row> => new Map(rows.map((r) => [r.id ?? null, r]));
+  const pagesNow = after(now.pages); const linksNow = after(now.links);
+  const preLinks = new Set(pre.links.map((l) => l.id));
+  const known = new Set([...pre.pages.map((p) => p.id), ...ownPages]); // only links between pages that were copied (or written) count: the re-read reaches further than the copy did
+  return pre.pages.some((p) => !ownPages.has(p.id ?? null) && !(pagesNow.has(p.id ?? null) && sameRow(p, pagesNow.get(p.id ?? null)!)))
+    || pre.links.some((l) => !ownLink(l) && !(linksNow.has(l.id ?? null) && sameRow(l, linksNow.get(l.id ?? null)!)))
+    || now.links.some((l) => !preLinks.has(l.id) && !ownLink(l) && known.has(l.from_page_id) && known.has(l.to_page_id));
+}
+
 /** Every page a read-back looks at: the write's own pages and every page in the preimage. */
 export const pageSet = (targets: PageRef[], pre: PreImage): PageRef[] =>
   [...new Map([...targets, ...pre.pages.map((p) => ({ source: p.source_id ?? 'default', slug: p.slug ?? '' }))].map((r) => [`${r.source}\0${r.slug}`, r])).values()];

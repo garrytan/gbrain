@@ -10,7 +10,7 @@ import { hasCapability } from '../core/engine-capabilities.ts';
 import { DIGEST_SESSION_SETTINGS, digestQuery } from '../core/persistence/graduation-digest.ts';
 import { CAPTURE_BUDGET_BYTES, encodeArgs, encodeValue } from './codec.ts';
 import { relationRead } from './seed.ts';
-import { MAX_PRE_LINKS, MAX_PRE_PAGES, PILOT_WRITES, pageRefs, pageSet, readBack, writeFamily, type PageRef, type PreImage, type WriteEvent } from './write-compare.ts';
+import { MAX_PRE_LINKS, MAX_PRE_PAGES, movedOutsideFootprint, PILOT_WRITES, pageRefs, pageSet, readBack, writeFamily, type PageRef, type PreImage, type WriteEvent } from './write-compare.ts';
 import { memberKind } from './write-map.ts';
 
 /** How long the preimage read may hold a sampled write. */
@@ -67,6 +67,18 @@ export async function readPreimage(engine: BrainEngine, op: string, targets: Pag
   }, { readOnly: true });
 }
 
+/** True when the data fence finds the rows moved, or cannot be read (never a quiet pass): the copied pages and links are read again and compared, and putPage's returned revision must be the one read back. */
+async function fenced(engine: BrainEngine, op: string, args: unknown[], targets: PageRef[], pre: PreImage, result: unknown, back: { pages: unknown[] }): Promise<boolean> {
+  try {
+    if (op === 'putPage') {
+      const wrote = (result as { knowledge_revision?: unknown } | null)?.knowledge_revision;
+      if (typeof wrote !== 'string' || (back.pages[0] as { knowledge_revision?: unknown } | null)?.knowledge_revision !== wrote) return true;
+    }
+    const again = await readPreimage(engine, op, [...targets, ...pre.pages.map((p) => ({ source: p.source_id ?? 'default', slug: p.slug ?? '' }))]);
+    return movedOutsideFootprint(op, args, pre, again);
+  } catch { return true; }
+}
+
 const timeout = <T>(promise: Promise<T>, ms: number, onTimeout: () => void): Promise<T> => new Promise((resolve, reject) => {
   const timer = setTimeout(() => { onTimeout(); reject(new Error('preimage_timeout')); }, ms);
   promise.then((v) => { clearTimeout(timer); resolve(v); }, (e) => { clearTimeout(timer); reject(e); });
@@ -115,9 +127,12 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
           // Off the request path, and nothing in it may escape: an encode that throws (a segmented page's body getters) is one more uncomparable sample.
           void (async () => {
             try {
-              const post = encodeValue(await readBack(ctx.engine, targets, pageSet(targets, pre)));
+              const back = await readBack(ctx.engine, targets, pageSet(targets, pre));
               const after = o.generation?.();
-              send({ t: 'write', op: name, args: encoded, pre, post, moved: before !== undefined && after !== undefined && after - before > 1 });
+              let moved = before !== undefined && after !== undefined && after - before > 1;
+              // A brain other processes can write (not PGLite, whose single-writer file lock rules them out) needs the data fence (write-compare.ts).
+              if (!moved && hasCapability(ctx.engine, 'postgres_admin')) moved = await fenced(ctx.engine, name, args, targets, pre, result, back);
+              send({ t: 'write', op: name, args: encoded, pre, post: encodeValue(back), moved });
             } catch { uncomparable(name, 'readback_failed'); }
           })();
           return result;
