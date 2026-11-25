@@ -363,6 +363,20 @@ impl Store {
             .count() as u64)
     }
 
+    /// `countWaitingJobsForNames(queue, names)`: the `waiting` jobs of `queue` whose name is in `names` (the minion
+    /// worker's stall count). The `waiting` status index lists the ids; each row is read, counted if it matches and
+    /// dropped, so no row of another queue or name is kept and no full-queue load happens.
+    pub fn count_waiting_jobs_for_names(&self, queue: &str, names: &[String]) -> Result<u64> {
+        let read = self.read()?;
+        let mut count = 0u64;
+        for_each_row_with_status(&*read, "waiting", &mut |r| {
+            if r.queue == queue && names.contains(&r.name) {
+                count += 1;
+            }
+        })?;
+        Ok(count)
+    }
+
     /// `listStuckActiveJobsByName()`: `{ name, n }` of the active jobs whose lock lapsed or whose
     /// stalled counter reached two, the most first and bytewise by name on a tie.
     pub fn list_stuck_active_jobs_by_name(&self) -> Result<Value> {

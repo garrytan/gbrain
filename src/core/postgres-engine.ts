@@ -5450,6 +5450,7 @@ export class PostgresEngine implements BrainEngine {
   async readWedgeSignals(queue: string, handlerNames: readonly string[], opts?: { signal?: AbortSignal }) { return this.engineRead(exec => jobsHealth.readWedgeSignals(exec, queue, handlerNames, opts)); }
   async readOldestWaitingAge(queue: string, opts?: { signal?: AbortSignal }) { return this.engineRead(exec => jobsHealth.readOldestWaitingAge(exec, queue, opts)); }
   async countWaitingJobs(excludeFactsAbsorb: boolean) { return jobsHealth.countWaitingJobs(this, excludeFactsAbsorb); }
+  async countWaitingJobsForNames(queue: string, names: readonly string[]) { return jobsHealth.countWaitingJobsForNames(this, queue, names); }
   async listStuckActiveJobsByName() { return this.engineRead(exec => jobsHealth.listStuckActiveJobsByName(exec)); }
   // Engine migration source reads (engine-sql/engine-migration.ts).
   async readEngineMigrationHistory() { return engineMigration.readEngineMigrationHistory(this); }

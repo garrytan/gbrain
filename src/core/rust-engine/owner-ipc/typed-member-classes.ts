@@ -259,7 +259,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   // show (test/rust-owner-ipc-read-classes.test.ts scans both). A cursor declare or fetch and a lock take no entry here.
   'countBrainLivePages', 'countChunksBySource', 'countCompanyPages', 'countGitHolds',
   'countHeldBehindImport', 'countLivePagesBySource', 'countPeopleFolderPages', 'countRepoBoundSources',
-  'countWaitingJobs', 'hasAccessPolicyState', 'hasCompletedFactsExtraction', 'hasDeferralRoom',
+  'countWaitingJobs', 'countWaitingJobsForNames', 'hasAccessPolicyState', 'hasCompletedFactsExtraction', 'hasDeferralRoom',
   'hasNotifierCoverage', 'hasPendingFactsExtraction', 'holdsNotifierLease', 'listAccessCoverage',
   'listAccessPolicySources', 'listAccessPrefixSlugs', 'listAccessRules', 'listAttendedOriginSlugs',
   'listKeysReadingSource', 'listLinkPageMetadataForSlugs', 'listNotifierHostSourceRows', 'listPageTrustTiersByKey',

@@ -1213,7 +1213,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listPrivateQueueHealth': OOS.minionJobs,
   'readWedgeSignals': OOS.minionJobs,
   'readOldestWaitingAge': OOS.minionJobs,
-  'countWaitingJobs': OOS.minionJobs,
+  'countWaitingJobs': OOS.minionJobs, 'countWaitingJobsForNames': OOS.minionJobs,
   'listStuckActiveJobsByName': OOS.minionJobs,
   // job counts and last-run reads for the status surfaces (lane L5 group B, engine-sql/jobs-status.ts)
   'readLastAutopilotCycles': OOS.minionJobs, 'listRecentSourceCycleFailures': OOS.minionJobs,

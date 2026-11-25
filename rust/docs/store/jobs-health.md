@@ -2,7 +2,7 @@
 
 Part of the store contract in [rust/README.md](../../README.md) ("The brain store"): the rules there apply to every method here. The rows are the ones in [jobs.md](jobs.md).
 
-The reads `gbrain doctor`'s queue checks (`queue_health`, `wedged_queue`, `orphaned_private_queue`), the advisor's stalled-jobs collector and the submit-time queue probe make of `minion_jobs`. The TypeScript statements are in `src/core/engine-sql/jobs-health.ts`; the store module is `rust/crates/gbrain-store/src/jobs/health.rs`, the binding `rust/crates/gbrain-napi/src/families/jobs/health.rs` and the members `src/core/rust-engine/store-members/jobs-health.ts`. All eight are reported under the capability `minion_queue`.
+The reads `gbrain doctor`'s queue checks (`queue_health`, `wedged_queue`, `orphaned_private_queue`), the advisor's stalled-jobs collector and the submit-time queue probe make of `minion_jobs`. The TypeScript statements are in `src/core/engine-sql/jobs-health.ts`; the store module is `rust/crates/gbrain-store/src/jobs/health.rs`, the binding `rust/crates/gbrain-napi/src/families/jobs/health.rs` and the members `src/core/rust-engine/store-members/jobs-health.ts`. All of them are reported under the capability `minion_queue`.
 
 Every window and cut-off is an argument. The clock is the store's, read once per call. Counts cross the binding as numbers.
 
@@ -16,6 +16,7 @@ Every window and cut-off is an argument. The clock is the store's, read once per
 | `brain.readWedgeSignals(queue, handlerNames)` | one queue's `{ stalled, activeHealthy, waiting, waitingClaimable, lastCompleted, lastCompletedClaimable }`; the two dates are `Date`s (ISO text across the binding) |
 | `brain.readOldestWaitingAge(queue)` | whole seconds since the oldest waiting row of the queue was created, or null |
 | `brain.countWaitingJobs(excludeFactsAbsorb)` | the number of `waiting` rows, without the `facts-absorb` rows when `excludeFactsAbsorb`. The readiness worker probe passes `true` only on PGLite, so a Rust brain counts its `facts-absorb` jobs as a SQL Postgres brain does |
+| `brain.countWaitingJobsForNames(queue, names)` | the number of `waiting` rows of the queue whose name is one of `names` (none for an empty list or an unknown queue). The minion worker's stall check. The store walks the `waiting` status index and reads one row at a time, so it keeps no row of another queue or name |
 | `brain.listStuckActiveJobsByName()` | `{ name, n }` for the active rows whose lock lapsed or whose stalled counter reached 2, the most first |
 
 Ordering and other engine differences:

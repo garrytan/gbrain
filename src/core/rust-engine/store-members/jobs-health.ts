@@ -37,5 +37,8 @@ export const readOldestWaitingAge: StoreMember<[queue: string, opts?: { signal?:
 export const countWaitingJobs: StoreMember<[excludeFactsAbsorb: boolean], number> =
   (brain, excludeFactsAbsorb) => call('countWaitingJobs', () => brain.countWaitingJobs(excludeFactsAbsorb));
 
+export const countWaitingJobsForNames: StoreMember<[queue: string, names: readonly string[]], number> =
+  (brain, queue, names) => call('countWaitingJobsForNames', () => brain.countWaitingJobsForNames(queue, [...names]));
+
 export const listStuckActiveJobsByName: StoreMember<[], Array<{ name: string; n: number }>> =
   (brain) => call('listStuckActiveJobsByName', () => brain.listStuckActiveJobsByName());

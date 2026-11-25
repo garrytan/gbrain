@@ -303,6 +303,21 @@ export async function countWaitingJobs(tx: Raw, excludeFactsAbsorb: boolean): Pr
   return num(row?.n);
 }
 
+/**
+ * How many jobs of `queue` wait under one of `names`: the minion worker's stall check, which counts only the work its
+ * own handlers would claim. An empty `names` counts none (the worker skips the call then).
+ */
+export async function countWaitingJobsForNames(tx: Raw, queue: string, names: readonly string[]): Promise<number> {
+  const rows = await tx.executeRaw<{ cnt: string }>(
+    `SELECT count(*)::text AS cnt FROM minion_jobs
+                     WHERE status = 'waiting'
+                       AND queue = $1
+                       AND name = ANY($2::text[])`,
+    [queue, names],
+  );
+  return parseInt(rows[0]?.cnt ?? '0', 10);
+}
+
 /** Active jobs whose lock lapsed or whose stalled counter reached two, per name, most first and by name on a tie. */
 export async function listStuckActiveJobsByName(tx: Raw): Promise<Array<{ name: string; n: number }>> {
   const rows = await tx.executeRaw<{ name: string; n: number | string }>(

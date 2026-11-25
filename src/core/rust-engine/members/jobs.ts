@@ -84,6 +84,7 @@ export const JOBS_MEMBERS = {
   readWedgeSignals: 'minion_queue',
   readOldestWaitingAge: 'minion_queue',
   countWaitingJobs: 'minion_queue',
+  countWaitingJobsForNames: 'minion_queue',
   listStuckActiveJobsByName: 'minion_queue',
   // Job counts and last-run reads for the status surfaces (engine-sql/jobs-status.ts).
   readLastAutopilotCycles: 'minion_queue',
