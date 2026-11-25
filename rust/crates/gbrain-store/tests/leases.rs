@@ -114,3 +114,36 @@ fn multi_user_mode_comes_from_the_caller_or_from_the_brain_s_own_config_row() {
     store.close();
     assert!(!open_with(&configured, false).multiuser());
 }
+
+/// The clock floor is brain state: a snapshot copy of a multi-user brain carries the high-water mark with the data, and
+/// a refused open (a writable open while another handle holds the brain) changes nothing, the floor included.
+#[test]
+fn a_snapshot_carries_the_clock_floor_and_a_refused_open_leaves_it_alone() {
+    let dir = TempDir::new("leases-floor");
+    let store = open_with(&dir, true);
+    store
+        .acquire_lease("n", &origin("a"), 60_000)
+        .unwrap()
+        .unwrap();
+    let floor = store.clock_high_water().unwrap();
+    assert!(floor >= store.read_lease("n").unwrap().unwrap().acquired_at_us);
+    let refused = Store::open_dir(
+        &dir.path().join("brain"),
+        OpenOptions {
+            multiuser: true,
+            ..OpenOptions::default()
+        },
+    );
+    assert!(refused.is_err(), "a second writable open is refused");
+    assert_eq!(store.clock_high_water().unwrap(), floor);
+    let target = dir.path().join("copy");
+    store
+        .snapshot_to(&target, &gbrain_store::snapshot::SnapshotOp::new())
+        .unwrap();
+    store.close();
+    let copy = Store::open_dir_read_only(&target).unwrap();
+    assert_eq!(copy.clock_high_water().unwrap(), floor);
+    drop(copy);
+    let reopened = open_with(&dir, true);
+    assert_eq!(reopened.clock_high_water().unwrap(), floor);
+}

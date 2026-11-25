@@ -41,6 +41,14 @@ pub fn raise_high_water(tx: &mut dyn KvWrite, at: i64) -> Result<()> {
     tx.raise_counter(&high_water_key(), at.max(0) as u64)
 }
 
+impl crate::Store {
+    /// The stored clock high-water mark (microseconds; 0 when none): the floor a multi-user open starts its clock at.
+    /// It is brain state: a snapshot, a copy or a takeover of the store carries it with the data.
+    pub fn clock_high_water(&self) -> Result<i64> {
+        read_high_water(&*self.read()?)
+    }
+}
+
 /// A clock that never goes below its floor and never hands out a time below one it handed out before.
 pub struct ClockFloor {
     inner: Arc<dyn Env>,
