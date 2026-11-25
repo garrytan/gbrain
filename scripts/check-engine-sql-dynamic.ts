@@ -247,6 +247,7 @@ const VETTED_BUILDERS: Record<string, string> = {
   retiredPageSql: 'src/core/entities/resolve.ts: constant retired-page frontmatter predicate over a caller alias; no values',
   holdAppliesToPageSql: 'src/core/write-gate-binding.ts: constant hold-reaches-page predicate over caller-given constant aliases and column expressions; no values',
   holdOwnedByDeletedPageSql: 'src/core/write-gate-binding.ts: constant hold-owned-by-purged-page predicate over caller-given constant aliases and column expressions; no values',
+  noteKeptHoldsCte: 'src/core/write-gate-binding.ts: constant data-modifying CTE that notes the holds a purge keeps for another page, over caller-given constant aliases and column expressions (a sub-select of the purge CTE, never a value); no values',
   holdResidueOfDeletedPageSql: 'src/core/write-gate-binding.ts: constant hold-left-behind-by-purged-page predicate over caller-given constant aliases and column expressions; no values',
   privacyLabelKeySql: 'src/core/search/ignored-privacy-labels.ts: constant has-a-privacy-label-key predicate (code-constant PRIVACY_LABEL_KEYS) over a caller alias; no values',
   ignoredPrivacyLabelSql: 'src/core/search/ignored-privacy-labels.ts: constant ignored-privacy-label predicate (code-constant keys and type names) over a caller alias; no values',
