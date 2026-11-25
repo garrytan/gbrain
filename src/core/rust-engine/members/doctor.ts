@@ -133,6 +133,15 @@ export const DOCTOR_MEMBERS = {
   // The legacy_slug_spellings check: row security (the store has none) and the candidate page scan
   readRowSecurityTables: 'health',
   listSlugSpellingCandidates: 'health',
+  // gbrain repair slug-spelling's preview: the server encoding (always UTF8), row security (none), the source row, the source
+  // candidate scan, the same-printed-name read and the page slug re-check
+  readServerEncoding: 'health',
+  readRowSecurityBrainTables: 'health',
+  readSlugRepairSource: 'health',
+  listSourceSlugSpellingCandidates: 'health',
+  readSpellingKeyPages: 'health',
+  readPageSlugInSource: 'health',
+  readSlugRepairPage: 'health',
   // Doctor sync reads: the managed-sync cursor, failure and orphan statements doctor ran through executeRaw
   listManagedSyncCursorFailureRows: 'persistence_journal',
   listManagedSyncOrphanRowsets: 'persistence_journal',

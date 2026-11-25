@@ -3134,6 +3134,48 @@ const PINS: Pin[] = [
       WHERE id > $1 AND (slug <> lower(slug) OR slug ~ '[^ -~]') ORDER BY id LIMIT 5000`],
   },
   {
+    from: 'src/core/slug-spelling-key.ts:36 serverEncoding (at f9592f7a7e)',
+    case: { method: 'readServerEncoding', variant: 'default', run: e => e.readServerEncoding() },
+    texts: ['SHOW server_encoding'],
+  },
+  {
+    from: 'src/core/repair/slug-spelling-guards.ts:34 rowSecurityBrainTables (at f9592f7a7e)',
+    case: { method: 'readRowSecurityBrainTables', variant: 'default', run: e => e.readRowSecurityBrainTables() },
+    texts: [`SELECT c.relname::text AS t FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = ANY(pg_catalog.current_schemas(false)) AND c.relkind IN ('r', 'p') AND pg_catalog.row_security_active(c.oid) ORDER BY 1`],
+  },
+  {
+    from: 'src/core/repair/slug-spelling.ts:239 and :459 SOURCE_SQL (at f9592f7a7e)',
+    case: { method: 'readSlugRepairSource', variant: 'default', run: e => e.readSlugRepairSource('default') },
+    texts: ["SELECT local_path, incarnation::text AS incarnation, CASE WHEN config->>'slug_root_mode' IN ('git-root', 'source-root') THEN config->>'slug_root_mode' END AS slug_root_mode FROM sources WHERE id=$1"],
+  },
+  {
+    from: 'src/core/repair/slug-spelling.ts:245 scanSlugSpellings (at f9592f7a7e; LIMIT ${BATCH} rendered, BATCH 5_000)',
+    case: { method: 'listSourceSlugSpellingCandidates', variant: 'default', run: e => e.listSourceSlugSpellingCandidates('default', 0) },
+    texts: [`SELECT id, slug, knowledge_revision::text AS revision, source_path, deleted_at IS NOT NULL AS deleted FROM pages
+      WHERE source_id=$1 AND id > $2 AND (slug <> lower(slug) OR slug ~ '[^ -~]') ORDER BY id LIMIT 5000`],
+  },
+  {
+    from: 'src/core/repair/slug-spelling.ts:290 samePrintedName, index keys (at f9592f7a7e)',
+    case: { method: 'readSpellingKeyPages', variant: 'keys', run: e => e.readSpellingKeyPages('default', ['notes/caf\u00e9'], 'notescaf', 0) },
+    texts: [`SELECT id, slug FROM pages WHERE normalize(translate(replace(replace(slug, chr(304), 'i' || chr(775)), chr(8490), 'k'), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), NFC) = ANY($1::text[]) AND source_id = $2 AND id <> $3 ORDER BY id`],
+  },
+  {
+    from: 'src/core/repair/slug-spelling.ts:290 samePrintedName, scan key (at f9592f7a7e)',
+    case: { method: 'readSpellingKeyPages', variant: 'scan', run: e => e.readSpellingKeyPages('default', null, 'notescaf', 0) },
+    texts: [`SELECT id, slug FROM pages WHERE regexp_replace(normalize(translate(replace(replace(slug, chr(304), 'i' || chr(775)), chr(8490), 'k'), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), NFC), '[^a-z0-9]', '', 'g') = $1 AND source_id = $2 AND id <> $3 ORDER BY id`],
+  },
+  {
+    from: 'src/core/repair/slug-spelling.ts:402 plan re-check (at f9592f7a7e)',
+    case: { method: 'readPageSlugInSource', variant: 'default', run: e => e.readPageSlugInSource(1, 'default') },
+    texts: ['SELECT slug FROM pages WHERE id=$1 AND source_id=$2'],
+  },
+  {
+    from: 'src/core/repair/slug-spelling.ts:461 movePageUnderStoredSlug page re-read (at f9592f7a7e)',
+    case: { method: 'readSlugRepairPage', variant: 'default', run: e => e.readSlugRepairPage(1, 'default') },
+    texts: ['SELECT id, slug, knowledge_revision::text AS revision, source_path, deleted_at IS NOT NULL AS deleted FROM pages WHERE id=$1 AND source_id=$2'],
+  },
+  {
     from: 'src/core/access/federation-exposure.ts:32 remotePagesFederationExposes, privacy part on (at 0af1a6ecf0)',
     case: { method: 'readFederationExposedPages', variant: 'hidden', run: e => e.readFederationExposedPages('default', true) },
     texts: () => { const hidden = ` AND ${privacyPartSql('p')}`; return [`WITH open AS (SELECT p.id, p.slug, p.revision_principal_kind, p.revision_principal_id FROM pages p

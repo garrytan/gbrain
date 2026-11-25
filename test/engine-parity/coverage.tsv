@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2281/2295
+# covered: 2288/2302
 # lifecycle: 12/12
 # pages: 124/125
 # search: 8/8
@@ -81,7 +81,7 @@
 # write_attribution: 5/5
 # telemetry: 14/14
 # field_usage: 1/1
-# alias_fanout_reads: 10/10
+# alias_fanout_reads: 17/17
 # write_guards: 16/16
 # page_visibility: 5/5
 # remote_links: 5/5
@@ -135,7 +135,7 @@ getPage	pages	yes	246	yes	yes	yes	serves
 readPageSnapshot	pages	yes	94	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	3	no	yes	yes	serves
 lockPageKeys	pages	yes	15	no	yes	yes	serves
-putPage	pages	yes	1256	yes	yes	yes	serves
+putPage	pages	yes	1258	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	42	yes	yes	yes	serves
@@ -2047,6 +2047,13 @@ readLiveSlugAliases	alias_fanout_reads	yes	2	no	yes	yes	serves
 readSourceSlugProbe	alias_fanout_reads	yes	1	no	yes	yes	serves
 readRowSecurityTables	alias_fanout_reads	yes	2	no	yes	yes	serves
 listSlugSpellingCandidates	alias_fanout_reads	yes	2	no	yes	yes	serves
+readServerEncoding	alias_fanout_reads	yes	1	no	yes	yes	serves
+readRowSecurityBrainTables	alias_fanout_reads	yes	1	no	yes	yes	serves
+readSlugRepairSource	alias_fanout_reads	yes	1	no	yes	yes	serves
+listSourceSlugSpellingCandidates	alias_fanout_reads	yes	1	no	yes	yes	serves
+readSpellingKeyPages	alias_fanout_reads	yes	1	no	yes	yes	serves
+readSlugRepairPage	alias_fanout_reads	yes	1	no	yes	yes	serves
+readPageSlugInSource	alias_fanout_reads	yes	1	no	yes	yes	serves
 hasSegmentStorage	write_guards	yes	1	no	yes	yes	serves
 readPageOrigin	write_guards	yes	3	no	yes	yes	serves
 listRevivalPages	write_guards	yes	2	no	yes	yes	serves
