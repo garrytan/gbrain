@@ -53,25 +53,28 @@ for (const backend of testBackends()) {
     const fileSlugs = async (sourceId: string) => (await engine.executeRaw<{ filename: string; page_slug: string }>(
       'SELECT filename, page_slug FROM files WHERE source_id=$1 ORDER BY filename', [sourceId])).map(r => [r.filename, r.page_slug]);
 
-    async function gitSource(files: Record<string, string>) {
-      const id = `c${randomUUID().replace(/-/g, '').slice(0, 14)}`, root = join(home, id);
+    async function gitSource(files: Record<string, string>, sourceId?: string) {
+      const id = sourceId ?? `c${randomUUID().replace(/-/g, '').slice(0, 14)}`, root = join(home, id);
       mkdirSync(root, { recursive: true }); git(root, 'init', '-q', '-b', 'main');
       for (const [path, body] of Object.entries(files)) write(root, path, body);
       commit(root, 'initial');
       await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
-      await engine.executeRaw("INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,'{}')", [id, root]);
+      if (sourceId) await engine.executeRaw('UPDATE sources SET local_path = $2 WHERE id = $1', [id, root]);
+      else await engine.executeRaw("INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,'{}')", [id, root]);
       const sync = () => performSync(engine, { repoPath: root, sourceId: id, noPull: true, noEmbed: true, noExtract: true, concurrency: 1 });
       await sync();
       return { id, root, sync };
     }
 
-    test('a sync Git rename moves the page\'s attachments to the new slug; an attachment that names no page stays', () => withEnv(env, async () => {
+    test('a sync Git rename moves the page\'s attachments to the new slug, also one that names it only by slug; another page\'s attachment stays', () => withEnv(env, async () => {
       const s = await gitSource({ 'notes/plan.md': note('Plan'), 'notes/peer.md': note('Peer') });
       await attach(s.id, 'notes/plan', await pageId(s.id, 'notes/plan'), 'card.png');
       await attach(s.id, 'notes/plan', null, 'loose.png');
+      // Bound to another page, it never moves by slug, whatever slug it names.
+      await attach(s.id, 'notes/plan', await pageId(s.id, 'notes/peer'), 'peer.png');
       git(s.root, 'mv', 'notes/plan.md', 'notes/roadmap.md'); commit(s.root, 'rename the note');
       expect(await s.sync()).toMatchObject({ status: 'synced', renamed: 1 });
-      expect(await fileSlugs(s.id)).toEqual([['card.png', 'notes/roadmap'], ['loose.png', 'notes/plan']]);
+      expect(await fileSlugs(s.id)).toEqual([['card.png', 'notes/roadmap'], ['loose.png', 'notes/roadmap'], ['peer.png', 'notes/plan']]);
     }), 240_000);
 
     test('gbrain repair rename-identity moves the carried page\'s attachments to the new slug', () => withEnv(env, async () => {
@@ -114,6 +117,41 @@ for (const backend of testBackends()) {
       await carryRenameIdentity(engine, id, 'notes/stale', 'notes/fresh');
       const rows = await engine.executeRaw<{ page_slug: string; page_id: number }>('SELECT page_slug, page_id FROM files WHERE source_id=$1', [id]);
       expect(rows.map(r => [r.page_slug, Number(r.page_id)])).toEqual([['notes/fresh', fresh]]);
+    }), 60_000);
+
+    test('an attachment uploaded with gbrain files upload --page follows a Git rename of its page', () => withEnv(env, async () => {
+      // The CLI upload writes to the default source, so the Git checkout is the default source's.
+      const s = await gitSource({ 'notes/cli-plan.md': note('Cli plan'), 'notes/cli-peer.md': note('Cli peer') }, 'default');
+      const storageDir = mkdtempSync(join(tmpdir(), 'gbrain-rename-files-storage-'));
+      mkdirSync(join(home, '.gbrain'), { recursive: true });
+      writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ engine: backend, storage: { backend: 'local', bucket: 'b', localPath: storageDir } }));
+      const upload = join(home, 'cli-card.txt');
+      writeFileSync(upload, 'card bytes\n');
+      const { runFiles } = await import('../src/commands/files.ts');
+      const log = console.log; console.log = () => {};
+      try { await runFiles(engine, ['upload', upload, '--page', 'notes/cli-plan']); } finally { console.log = log; }
+      const [row] = await engine.executeRaw<{ page_id: number | null }>("SELECT page_id FROM files WHERE filename = 'cli-card.txt'");
+      expect(row?.page_id === null || row?.page_id === undefined ? null : Number(row.page_id)).toBe(await pageId('default', 'notes/cli-plan'));
+      git(s.root, 'mv', 'notes/cli-plan.md', 'notes/cli-roadmap.md'); commit(s.root, 'rename the note');
+      expect(await s.sync()).toMatchObject({ status: 'synced', renamed: 1 });
+      const { operationsByName } = await import('../src/core/operations.ts');
+      const listed = await operationsByName.file_list!.handler({ engine, config: { engine: backend }, remote: false, sourceId: 'default' } as never, { slug: 'notes/cli-roadmap' }) as Array<{ filename: string }>;
+      expect(listed.map(f => f.filename)).toEqual(['cli-card.txt']);
+      rmSync(join(home, '.gbrain', 'config.json'), { force: true });
+      rmSync(storageDir, { recursive: true, force: true });
+    }), 240_000);
+
+    test('an attachment that names the old slug and no page follows a rename only when that slug named just this live page', () => withEnv(env, async () => {
+      const id = `n${randomUUID().replace(/-/g, '').slice(0, 14)}`;
+      await engine.executeRaw("INSERT INTO sources(id,name,config) VALUES($1,$1,'{}')", [id]);
+      for (const slug of ['notes/solo', 'notes/stale', 'notes/fresh']) await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: 'x', timeline: '' }, { sourceId: id });
+      await attach(id, 'notes/solo', null, 'solo.png');
+      await attach(id, 'notes/stale', null, 'shared.png');
+      expect(await engine.updateSlug('notes/solo', 'notes/solo-renamed', { sourceId: id })).toBe(1);
+      // A fallback rename: the stale row still holds its slug while its bindings move, so the slug names two pages.
+      const { carryRenameIdentity } = await import('../src/commands/sync/renames.ts');
+      await carryRenameIdentity(engine, id, 'notes/stale', 'notes/fresh');
+      expect(await fileSlugs(id)).toEqual([['shared.png', 'notes/stale'], ['solo.png', 'notes/solo-renamed']]);
     }), 60_000);
 
     test('the backfill moves an attachment a past rename left behind, by its page id, and leaves one that names no page', () => withEnv(env, async () => {
