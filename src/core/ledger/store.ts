@@ -25,7 +25,7 @@ import { callerAccessRecord, callerIdentities, currentCallerAccess, isPrivatePag
 import { currentReadMode } from '../access/scope-read.ts';
 import { callerScopes, checkPolicy, type PolicyCheckAnswer } from '../policy/check.ts';
 import type { PolicyLimit, PolicyRule } from '../policy/fence.ts';
-import { ACTION_SOURCE, AGENT_ACTION_TYPE, MAX_SUMMARY, actionSlug, canTransition, isActionSlug, validateActionFrontmatter,
+import { ACTION_SOURCE, AGENT_ACTION_TYPE, MAX_SUMMARY, SERVER_STAMPED_KEYS, actionSlug, canTransition, isActionSlug, validateActionFrontmatter,
   type ActionEvidence, type ActionRecord, type ActionStatus, type Approver, type ClaimBasis, type SavedPeriod } from './action.ts';
 import type { WindowUsage } from '../policy/evaluate.ts';
 import { ledgerTotals, windowStart, windowUsage, type BudgetWindow, type LedgerTotals, type StoredAction } from './totals.ts';
@@ -319,8 +319,8 @@ export async function confirmAction(ctx: OperationContext, slug: string): Promis
   if (!stored) throw opError('action_not_found', `No action ${slug} was found, so nothing was confirmed.`, 'List actions with gbrain ledger --json and pass one action_id.');
   if (stored.record.action.status !== 'done') throw opError('action_transition_invalid', `${slug} is ${stored.record.action.status}; only a done action is confirmed.`, 'Confirm the action after it is logged done.');
   if (stored.record.claim_basis === 'user_confirmed') return { action_id: slug, claim_basis: 'user_confirmed', unchanged: true };
-  const fm = { ...stored.frontmatter, claim_basis: 'user_confirmed' };
-  delete (fm as Record<string, unknown>).trust_tier;
+  const fm: Record<string, unknown> = { ...stored.frontmatter, type: AGENT_ACTION_TYPE, claim_basis: 'user_confirmed' };
+  for (const key of SERVER_STAMPED_KEYS) delete fm[key];
   await writeAction(ctx, slug, fm, stored.record.action.summary, randomUUID(), stored.revision);
   return { action_id: slug, claim_basis: 'user_confirmed', unchanged: false };
 }

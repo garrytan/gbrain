@@ -46,7 +46,9 @@ export interface ActionRecord {
   request_id?: string;
 }
 
-const TOP_KEYS = ['type', 'title', 'visibility', 'readable_by', 'action', 'money', 'minutes_saved', 'evidence', 'approval', 'cost', 'supersedes', 'claim_basis', 'hold', 'request_id', 'trust_tier'];
+/** Keys the write path stamps on every page (trust tier and provenance); never part of the action. */
+export const SERVER_STAMPED_KEYS = ['trust_tier', 'source_kind', 'ingested_via', 'ingested_at'];
+const TOP_KEYS = ['type', 'title', 'visibility', 'readable_by', 'action', 'money', 'minutes_saved', 'evidence', 'approval', 'cost', 'supersedes', 'claim_basis', 'hold', 'request_id', ...SERVER_STAMPED_KEYS];
 const NESTED: Record<string, readonly string[]> = {
   action: ['verb', 'purpose', 'status', 'at', 'summary', 'counterparty', 'harness', 'actor'],
   money: ['currency', 'spent', 'saved', 'saved_period', 'estimated'],

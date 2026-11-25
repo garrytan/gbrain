@@ -162,6 +162,16 @@ for (const kind of testBackends()) describe(`action ledger (L2, ${kind}, repo-le
     expect(after.budgets?.[0]).toMatchObject({ spent: 28, held: 30 });
   });
 
+  test('policy_reserve over MCP returns the decision, requires_approval and a reservation that log_action settles', async () => {
+    const out = body(await dispatchToolCall(engine, 'policy_reserve', { verb: 'spend', amount: 4, currency: 'USD', merchant: 'grocer-example', summary: 'Milk', request_id: randomUUID() }, REMOTE));
+    expect(out.requires_approval).toBe(true);
+    expect(out.reservation.action_id).toMatch(/^actions\/\d{4}\/\d{2}\//);
+    const settled = body(await dispatchToolCall(engine, 'log_action', { verb: 'spend', action_id: out.reservation.action_id, status: 'done', spent: 4, currency: 'USD', estimated: true }, REMOTE));
+    expect(settled.settled_hold).toBe(true);
+    const bad = await dispatchToolCall(engine, 'policy_reserve', { verb: 'spend', amount: 4, summary: 'No currency' }, REMOTE);
+    expect(bad.isError).toBe(true);
+  });
+
   test('an expired hold counts toward nothing and is listed in the digest as unconfirmed; a deny holds nothing', async () => {
     const past = new Date(Date.now() - HOLD_TTL_MS - 60_000);
     const ctx = ctxFor(engine, false);
