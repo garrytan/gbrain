@@ -17,6 +17,7 @@ import { releaseTopologyReservation, type TopologyChange } from './topology-rece
 import type { TopologyCloneRecovery } from './topology-clone-model.ts';
 import type { CloneLifecycleHooks } from './topology-clone.ts';
 import { flushTopologyDirectory, topologyDirectoryIdentity } from './topology-filesystem.ts';
+import { servesTopologySteps, requireTopologyRawSql } from './topology-stop.ts';
 import { assertPhysicalRoot } from './physical-root.ts';
 import { assertPhysicalRootStamp, readPhysicalRootReservation } from './physical-root-record.ts';
 import { resumeWorktreeRefreshes } from './worktree-refresh.ts';
@@ -81,13 +82,13 @@ function removeOwnedStage(record:TopologyCloneRecovery):void{
 async function guard(tx:BrainEngine,row:TopologyChange,record:TopologyCloneRecovery):Promise<string[]>{
   const store=await tx.topologyStore();
   await store.synchronousCommit();
-  const [owner]=await store.lockWorktrees([record.worktreeId]);
-  const host=await store.hostBinding(record.worktreeId,hostIdFor(tx));
+  const owner=await store.lockCloneWorktree(record.worktreeId);
+  const host=await store.cloneHostBindingPath(record.worktreeId,hostIdFor(tx));
   if(!owner||owner.owner_host_id!==record.ownerHostId||String(owner.owner_epoch)!==record.ownerEpoch||owner.state!=='recovering'||host?.local_path!==record.target)
     throw retainedClone('Ownership changed while the clone needed recovery.',record,
       `Worktree ${record.worktreeId} no longer has owner epoch ${record.ownerEpoch} on this host in the recovering state.`);
   // The member order never reaches output: the members are re-sorted in JS on the next line and only name the source rows to lock.
-  const members=await store.memberSources([record.worktreeId]);
+  const members=await store.boundSourceIds(record.worktreeId);
   const sources=[...new Set([record.sourceId,...members])].sort();
   await store.lockSources(sources);
   return sources;
@@ -147,7 +148,7 @@ export async function finishTopologyClone(engine:BrainEngine,id:string,hooks:Clo
         await topologyTransaction(engine,async tx=>{
           const sources=await guard(tx,row,record);
           const store=await tx.topologyStore();
-          const source=await store.readSource(record.sourceId);
+          const source=await store.readSourceHead(record.sourceId);
           if(record.operation==='add'?!!source:!source||source.incarnation!==record.incarnation||source.last_commit!==record.checkpoint
             ||record.operation==='reclone'&&(parseSourceConfig(source?.config).remote_url??null)!==record.sourceRemoteUrl)
             throw opError('source_changed','The source identity/checkpoint changed while cloning.',
@@ -222,6 +223,10 @@ const recoveryCursors=new WeakMap<BrainEngine,string>();
  */
 export async function recoverSourceTopologies(engine:BrainEngine,opts:{hostId?:string;limit?:number;onAttempt?:(id:string,recovered:boolean)=>void}={}):Promise<number>{
   const host=opts.hostId??hostIdFor(engine),limit=Math.max(1,Math.min(16,opts.limit??2));
+  // The named Rust stop (topology-stop.ts): finishing a change locks through the typed topology store, which a user's Rust brain
+  // (no raw SQL, no managed worktrees) does not serve, so it refuses by name while a change is recovering here, before any lock or
+  // refresh step; the change stays exactly as recorded.
+  if(!servesTopologySteps(engine)&&(await engine.listTopologyRecoveries(host,null,1)).length)requireTopologyRawSql(engine,'source_topology_recovery');
   await resumeWorktreeRefreshes(engine,{hostId:host});
   const scan=(after:string|null)=>engine.listTopologyRecoveries(host,after,limit);
   let rows=await scan(recoveryCursors.get(engine)??null);

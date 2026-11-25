@@ -1,15 +1,15 @@
 /**
- * topology_recovery_stopped: a source lifecycle change (clone, reclone, retire) that is recovering on this host. Every
- * engine that holds a managed worktree, the Rust engine included, converges such a change in the owner's recovery scan
- * (persistence/topology-recovery.ts) through the typed topology store, so the check reports the count and passes; it
- * keeps its name and `stop: null` detail so reports that read it keep their shape. Read-only, through the typed
- * listTopologyRecoveries: it never locks or changes a row.
+ * topology_recovery_stopped: a source lifecycle change (clone, reclone, retire) that is recovering on this host while
+ * the brain's engine refuses the recovery by name (persistence/topology-stop.ts: the Rust engine, which serves no raw
+ * SQL for the topology locks). Such a change never converges on that engine; the owner parks its scan and reports the
+ * stop once. Read-only, through the typed listTopologyRecoveries: it never locks or changes a row. With raw SQL
+ * (PGLite, Postgres) the owner converges each change itself and the check passes.
  */
 import type { Check } from '../../doctor.ts';
 import { checkError } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { existingHostIdFor } from '../../../core/persistence/identity.ts';
-import { readTopologyRecoveryStops } from '../../../core/persistence/topology-stop.ts';
+import { readTopologyRecoveryStops, TOPOLOGY_STOPS } from '../../../core/persistence/topology-stop.ts';
 import { managesWorktrees } from '../../../core/rust-engine/errors.ts';
 import { isMissingSchemaObject } from '../../../core/utils.ts';
 
@@ -18,7 +18,7 @@ const DOCS = 'docs/ENGINES.md#topology-recovery-on-the-rust-engine';
 
 async function runTopologyRecoveryStopped(ctx: DoctorContext): Promise<Check[]> {
   const checks: Check[] = [];
-  const status: Check['status'] = 'ok';
+  let status: Check['status'] = 'ok';
   let message: string;
   let details: Record<string, unknown> = { count: 0, docs: DOCS };
   try {
@@ -29,7 +29,15 @@ async function runTopologyRecoveryStopped(ctx: DoctorContext): Promise<Check[]> 
       const { recovering, more, stop } = await readTopologyRecoveryStops(engine, existingHostIdFor(engine));
       const count = `${recovering.length}${more ? '+' : ''}`;
       details = { count: recovering.length, more, stop, recovering, docs: DOCS };
-      message = recovering.length ? `${count} topology change(s) are recovering on this host; the owner converges them (supported on every engine, the Rust engine included).` : 'No topology change is recovering on this host.';
+      if (!stop) {
+        message = recovering.length ? `${count} topology change(s) are recovering on this host; the owner converges them.` : 'No topology change is recovering on this host.';
+      } else {
+        const listed = recovering.slice(0, 5).map(row => `${row.operation} of source ${row.source_id} (change ${row.change_id})`).join('; ');
+        status = 'warn';
+        message = `${count} topology change(s) are recovering on this host and cannot converge on this engine: ${listed}${recovering.length > 5 ? '; and more' : ''}. `
+          + `The Rust engine stops ${stop} by name (${TOPOLOGY_STOPS[stop]}); the change is kept exactly as recorded and nothing was moved or deleted. `
+          + `Finish it from a pglite or postgres engine on this brain, or wait for a gbrain release whose Rust engine serves it (${DOCS}).`;
+      }
     }
   } catch (error) {
     if (!isMissingSchemaObject(error, 'table', ['persistence_topology_changes', 'persistence_worktrees'])) {

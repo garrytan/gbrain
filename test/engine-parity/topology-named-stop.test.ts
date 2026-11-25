@@ -1,27 +1,28 @@
 /**
- * BrainEngine parity: the owner's topology recovery (topology-recovery.ts `recoverSourceTopologies`) and the managed
- * clone (topology-clone.ts `runManagedSourceClone`, reached by `sources add --url` and `sources reclone`) on the Rust
- * engine. Both used to stop by name on an engine without `raw_sql` (`source_topology_recovery`, `managed_source_clone`);
- * they now run on the typed topology store, so no step refuses by name and the file keeps its name for the history.
+ * BrainEngine parity: the named Rust stop for source topology changes (persistence/topology-stop.ts). The owner's
+ * topology recovery (topology-recovery.ts `recoverSourceTopologies`) and the managed clone (topology-clone.ts
+ * `runManagedSourceClone`, reached by `sources add --url` and `sources reclone`) still lock and read through raw SQL.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: with the managed hold lifted on the Rust test engine, a recovering change on this host is reached by the
- *    recovery scan under its topology locks: a change whose record is not a clone's is retained, exactly as recorded
- *    (the scan finishes nothing and moves nothing), and the status read lists it with no stop. A clone and a reclone run
- *    their own checks, register nothing and leave no staging directory when they refuse. Equal on every arm.
- *  - Regression: on the Rust engine the scan and the clone refused `engine_capability_missing` with `member=
- *    source_topology_recovery` / `managed_source_clone`; that refusal must be gone, not reworded.
- *  - Why existing coverage misses it: managed-recovery-on-rust.test.ts finishes real clones; this file pins the refusals
- *    and the retained change the scan leaves, which no clone run reaches.
- *  - Seam: none. The real scan, lifecycle and typed members; the clone remote is a closed local port, so the clone fails
- *    its URL check on every arm without the network.
+ *  - Contract: on PGLite and Postgres the recovery scan reaches a recovering change under its topology locks and the
+ *    clone runs its own checks; both arms agree. On the Rust engine each step refuses by its own name
+ *    (`member=source_topology_recovery` / `member=managed_source_clone`, capability raw_sql, written=nothing) before any
+ *    lock (while the managed hold is on; with it lifted, GBRAIN_TEST_RUST_MANAGED=1, both steps run on the typed topology
+ *    store and equal the SQL arms): the recovering change is exactly as recorded, no clone directory or staging directory exists, no source is
+ *    registered, and the typed status read (`readTopologyRecoveryStops`) names the stop for the change.
+ *  - Regression: on the Rust engine the recovery scan reached topology-locks.ts `withTopologyLocks` and the clone its
+ *    first raw read (topology-clone.ts), so each refused as the generic `member=executeRaw`, which names neither the
+ *    step nor what was left; doctor and status could not say why a recovering change never converged.
+ *  - Why existing coverage misses it: owner-recovery-scans.test.ts runs the scan with no recovering change, and
+ *    journal-typed-sites.test.ts lists a recovering change without running the scan.
+ *  - Seam: none. The real scan, lifecycle and typed members; the clone remote is a closed local port, so the SQL arms'
+ *    clone fails without the network.
  */
 import { existsSync, mkdtempSync, readdirSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect } from 'bun:test';
 import { createSource, parityArms, type ParityBackend } from './harness.ts';
-import { liftManagedHold } from './rust-managed.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -43,7 +44,6 @@ const CLOSED_REMOTE = 'https://127.0.0.1:9/none.git';
 
 /** Runs `run` under a scratch GBRAIN_HOME with a plain checkout registered as source `work`. */
 async function withCheckout<T>(engine: BrainEngine, backend: ParityBackend, run: (home: string, root: string) => Promise<T>): Promise<T> {
-  if (backend === 'rust') liftManagedHold(engine);
   const home = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-topology-stop-parity-')));
   try {
     return await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
@@ -62,9 +62,17 @@ async function caught(run: () => Promise<unknown>): Promise<unknown> {
   return run().then(() => null, (error: unknown) => error);
 }
 
-describe('engine parity: topology recovery and the managed clone on the Rust engine', () => {
-  parityTest('the owner topology recovery retains a change whose record is no clone, exactly as recorded', {
+/** The code and the named member of a capability refusal, as the Rust arm must report it. */
+function named(error: unknown): { code: unknown; member: string | null; written: string | null } {
+  const e = error as { code?: unknown; detail?: unknown } | null;
+  const detail = typeof e?.detail === 'string' ? e.detail : '';
+  return { code: e?.code, member: /member=(\w+)/.exec(detail)?.[1] ?? null, written: /written=(\w+)/.exec(detail)?.[1] ?? null };
+}
+
+describe('engine parity: the named Rust stop for source topology changes', () => {
+  parityTest('the owner topology recovery stops by name on Rust before any lock, and leaves the recovering change as recorded', {
     methods: ['worktreeClaimStore', 'getWorktreeBinding', 'readLedgerSource', 'insertTopologyChange', 'listTopologyRecoveries'],
+    requires: 'raw_sql',
     timeout: 60_000,
   }, async (engine, backend) => withCheckout(engine, backend, async (_home, root) => {
     await runPersistenceAdministration(engine, 'writer_claim', { source_id: 'work', path: root, admin_intent: 'writer_claim', expected_state: await writerAdminState(engine) });
@@ -76,17 +84,25 @@ describe('engine parity: topology recovery and the managed clone on the Rust eng
       recoveryBytes: 12, intentBytes: 34, terminalBytes: 4096, outcome: null });
     const text = (rows: unknown) => JSON.stringify(rows, bigintToStringReplacer);
     const before = text(await engine.listTopologyRecoveries(host, null, 16));
-    const recovered = await recoverSourceTopologies(engine, { hostId: host });
+    let recovered: number | null = null;
+    const refusal = await caught(async () => { recovered = await recoverSourceTopologies(engine, { hostId: host }); });
     const after = await engine.listTopologyRecoveries(host, null, 16);
     const stops = await readTopologyRecoveryStops(engine, host);
     const listed = stops.recovering.map(row => ({ source: row.source_id, operation: row.operation, stop: row.stop }));
-    const out = { recovered, unchanged: text(after) === before, recovering: after.map(row => ({ source: row.source_id, state: row.state })), listed, stop: stops.stop };
-    expect(out).toEqual({ recovered: 0, unchanged: true, recovering: [{ source: 'work', state: 'recovering' }], listed: [{ source: 'work', operation: 'writer_claim', stop: null }], stop: null });
-    return out;
+    if (backend === 'rust' && !engine.capabilities.has('managed_persistence')) {
+      expect({ refusal: named(refusal), unchanged: text(after) === before, listed, stop: stops.stop }).toEqual({
+        refusal: { code: 'engine_capability_missing', member: 'source_topology_recovery', written: 'nothing' }, unchanged: true,
+        listed: [{ source: 'work', operation: 'writer_claim', stop: 'source_topology_recovery' }], stop: 'source_topology_recovery' });
+      throw refusal;
+    }
+    if (refusal) throw refusal;
+    expect({ listed, stop: stops.stop }).toEqual({ listed: after.map(() => ({ source: 'work', operation: 'writer_claim', stop: null })), stop: null });
+    return { recovered, recovering: after.map(row => ({ source: row.source_id, state: row.state })), listed };
   }));
 
-  parityTest('a managed clone and reclone run their own checks, and a refusal registers nothing and leaves no directory', {
+  parityTest('a managed clone and reclone stop by name on Rust before any lock or directory, and register nothing', {
     methods: ['readSourceMembership', 'listTopologyRecoveries'],
+    requires: 'raw_sql',
     timeout: 60_000,
   }, async (engine, backend) => withCheckout(engine, backend, async (home) => {
     await registerLocalWriter(engine, 'cli');
@@ -96,11 +112,13 @@ describe('engine parity: topology recovery and the managed clone on the Rust eng
     const left = { target: existsSync(target), staging: readdirSync(home).filter(name => name.startsWith('.gbrain-clone-') || name.includes('.gbrain-old-')),
       registered: (await engine.readSourceMembership('cloned')) !== null, recovering: (await engine.listTopologyRecoveries(localHostId(), null, 16)).length };
     expect(left).toEqual({ target: false, staging: [], registered: false, recovering: 0 });
+    if (backend === 'rust' && !engine.capabilities.has('managed_persistence')) {
+      expect({ add: named(add), reclone: named(reclone) }).toEqual({
+        add: { code: 'engine_capability_missing', member: 'managed_source_clone', written: 'nothing' },
+        reclone: { code: 'engine_capability_missing', member: 'managed_source_clone', written: 'nothing' } });
+      throw add;
+    }
     const code = (error: unknown) => (error as { code?: unknown } | null)?.code ?? null;
-    const out = { add: code(add), reclone: code(reclone), left };
-    // The refusal is the clone's own (the URL check, the unmanaged checkout), never a capability stop.
-    expect(out.add).not.toBe('engine_capability_missing');
-    expect(out.reclone).not.toBe('engine_capability_missing');
-    return out;
+    return { add: code(add), reclone: code(reclone), left };
   }));
 });

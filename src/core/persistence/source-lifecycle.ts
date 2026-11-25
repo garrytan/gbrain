@@ -30,6 +30,7 @@ import { assertWriterAdminState, WRITER_INSPECTION_HINT } from './admin-intent.t
 import { assertWriterAdminUnlocked } from './admin-lock.ts';
 import { rebindContentReceipts } from '../shared-skills/receipt-root.ts';
 import { assertLinkedWorktreeIntact } from './worktree-link.ts';
+import { requireTopologyRawSql } from './topology-stop.ts';
 
 export interface SourceLifecycleInput {
   operation:'add'|'claim'|'archive'|'restore'|'remove'|'purge'|'rebind'|'reclone';
@@ -141,6 +142,8 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
       {fix:ownerStatusFix(input.sourceId)});
   if(['remove','purge','archive'].includes(input.operation)&&input.sourceId==='default') throw opError('invalid_params','The default source cannot be removed or archived.',
     `The default source holds the brain's primary pages and always stays registered. ${input.operation} a named source instead; the command in fix lists them.`,{fix:sourcesListFix()});
+  // The named Rust stop (topology-stop.ts): a managed clone or reclone refuses before its principal, replay or path checks run.
+  if(input.operation==='reclone'||input.operation==='add'&&input.remoteUrl) requireTopologyRawSql(engine,'managed_source_clone');
   const principal=await topologyPrincipal(engine);
   const intent=topologyIntent(input);
   const prior=await priorTopologyChange(engine,principal,requestId,intent);

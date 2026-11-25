@@ -26,8 +26,10 @@
  *    brain was never attempted and never reported.
  *  - Why existing coverage misses it: a managed worktree's rows cannot be built through the raw-SQL fixtures those files
  *    avoid (D18); here the real `writer_claim` administration builds them on every arm.
- *  - The topology attempt (topology-recovery.ts) runs on the typed topology store, so with the managed hold lifted on the
- *    Rust test engine (rust-managed.ts) the pass reaches the change there as on the SQL arms; it no longer stops on raw_sql.
+ *  - Known stop on a user's Rust brain: while the managed hold is on (no managed_persistence, no raw_sql) the topology
+ *    attempt refuses `source_topology_recovery` by name (topology-stop.ts) before it attempts any change, and the harness
+ *    counts the case stopped. With the hold lifted (GBRAIN_TEST_RUST_MANAGED=1) the attempt runs on the typed topology
+ *    store and the case is equal to the SQL arms.
  *  - Seam: none. Real engines, the real administration path and typed members only. Ids that differ per arm (worktree,
  *    journal and effect ids) are compared by role, never printed.
  */
@@ -36,7 +38,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect } from 'bun:test';
 import { createSource, parityArms, type ParityBackend } from './harness.ts';
-import { liftManagedHold } from './rust-managed.ts';
+import { isCapabilityRefusal } from './arm-capabilities.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -190,14 +192,23 @@ describe('engine parity: the journal on a claimed worktree', () => {
 
   parityTest('the topology recovery pass attempts a recovering change on the owner host\'s worktree', {
     methods: ['insertTopologyChange', 'listTopologyRecoveries'],
+    requires: 'raw_sql',
     timeout: 60_000,
   }, async (engine, backend) => withClaimedWorktree(engine, backend, async ({ host, binding, incarnation }) => {
-    if (backend === 'rust') liftManagedHold(engine);
     const change = await engine.insertTopologyChange({ principalId: 'f0000000-0000-4000-8000-0000000000f6', requestId: RECOVERY, digest: 'e'.repeat(64), operation: 'writer_claim',
       sourceId: 'work', sourceIncarnation: incarnation, worktreeIds: [binding.worktree_id], state: 'recovering', recovery: { worktreeId: binding.worktree_id, step: 1 },
       recoveryBytes: 12, intentBytes: 34, terminalBytes: 4096, outcome: null });
     const attempts: Array<{ self: boolean; recovered: boolean }> = [];
     const pass = () => recoverSourceTopologies(engine, { hostId: host, limit: 2, onAttempt: (rowId, recovered) => attempts.push({ self: rowId === change.id, recovered }) });
+    if (backend === 'rust' && !engine.capabilities.has('managed_persistence')) {
+      // Known stop on a user's Rust brain (the managed hold is on): the pass names the raw-SQL need before it attempts any change (topology-stop.ts
+      // requireTopologyRawSql: the attempt takes its topology locks through executeRaw, which a Rust brain does not run), so
+      // it refuses `source_topology_recovery` with no change attempted.
+      const refusal = await pass().then(() => null, (error: unknown) => error);
+      expect({ attempts, refused: isCapabilityRefusal(refusal, 'raw_sql'), at: /requireTopologyRawSql/.test(String((refusal as Error | null)?.stack)) })
+        .toEqual({ attempts: [], refused: true, at: true });
+      throw refusal;
+    }
     const answers = { result: await pass(), attempts, otherHost: await recoverSourceTopologies(engine, { hostId: OTHER_HOST, limit: 2 }) };
     // The fixture's change names no clone to finish, so the attempt ends without recovering it; what matters is that the
     // owner host's pass reached it and another host's did not.

@@ -1,35 +1,35 @@
 /**
- * The owner's topology recovery scan in the persistence consumer (persistence/consumer.ts `scanTopologies`) against a
- * capability stop.
+ * The owner's topology recovery scan in the persistence consumer (persistence/consumer.ts `scanTopologies`) against the
+ * named Rust stop (persistence/topology-stop.ts).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: when the scan meets a capability refusal (an engine that does not hold managed worktrees refuses a
- *    topology member by name), the first scan reports it once and parks the scan for TOPOLOGY_STOP_BACKOFF_MS: the next
- *    tick neither scans nor reports again, and it does not throw. Any other scan error is reported and the next tick
- *    scans again, as before. A scan that finds nothing runs every tick.
- *  - Regression: a refusing scan was asked again each tick and reported on every one.
- *  - Why existing coverage misses it: the parity cases (test/engine-parity/topology-named-stop.test.ts,
- *    managed-recovery-on-rust.test.ts) run the scan function itself; the consumer's tick wiring and its backoff are only
- *    reachable through the consumer. The topology recovery no longer stops by name on the Rust engine (it runs on the
- *    typed topology store), so the refusal here is the one a user's Rust brain gives while managed mode is held back.
- *  - Seam: a proxy over a real PGLite engine; its recovery list answers one recovering change, or throws the refusal.
+ *  - Contract: on an engine without `raw_sql` (the Rust engine) with a recovering change on this host, the first scan
+ *    reports the named stop once (`member=source_topology_recovery`) and parks the scan for TOPOLOGY_STOP_BACKOFF_MS:
+ *    the next tick neither scans nor reports again, and it does not throw. Any other scan error is reported and the
+ *    next tick scans again, as before. With raw SQL the scan runs every tick.
+ *  - Regression: the scan refused on every scanning tick of a Rust owner (topology-locks.ts raw SQL), so the owner
+ *    asked again each tick and reported a generic `member=executeRaw` refusal that named no step.
+ *  - Why existing coverage misses it: the parity case (test/engine-parity/topology-named-stop.test.ts) runs the scan
+ *    function itself; the consumer's tick wiring and its backoff are only reachable through the consumer.
+ *  - Seam: a proxy over a real PGLite engine; the Rust shape drops raw_sql from its capability set and answers one
+ *    recovering change from listTopologyRecoveries, so the stop is the real requireTopologyRawSql refusal.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { GBrainConfig } from '../src/core/config.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
 import { PersistenceConsumer, TOPOLOGY_STOP_BACKOFF_MS } from '../src/core/persistence/consumer.ts';
 
 const RECOVERING = { id: randomUUID(), principal_id: randomUUID(), request_id: randomUUID(), digest: 'e'.repeat(64), operation: 'reclone',
   source_id: 'work', source_incarnation: randomUUID(), worktree_ids: [], state: 'recovering', recovery: { worktreeId: randomUUID() },
   recovery_bytes: 0, intent_bytes: 0, terminal_bytes: 0, outcome: null };
 
-/** The real engine; `rustShape` answers one recovering change from the list; `scanError` makes the list throw it. */
+/** The real engine; `rustShape` drops raw_sql and managed_persistence and answers one recovering change; `scanError` makes the list throw it. */
 function shaped(engine: BrainEngine, opts: { rustShape: boolean; scanError?: Error }) {
   const scans: unknown[][] = [];
-  const capabilities = new Set([...engine.capabilities]);
+  // The held Rust shape serves neither raw SQL nor managed worktrees.
+  const capabilities = new Set([...engine.capabilities].filter(c => !opts.rustShape || (c !== 'raw_sql' && c !== 'managed_persistence')));
   const proxy = new Proxy(engine, {
     get(target, key) {
       if (key === 'capabilities') return capabilities;
@@ -55,7 +55,7 @@ function owner(engine: BrainEngine) {
   return { errors, tick };
 }
 
-describe('the consumer topology scan and a capability stop', () => {
+describe('the consumer topology scan and the named Rust stop', () => {
   let engine: BrainEngine;
   beforeAll(async () => {
     engine = new PGLiteEngine();
@@ -64,8 +64,8 @@ describe('the consumer topology scan and a capability stop', () => {
   }, 120_000);
   afterAll(async () => { await engine.disconnect(); });
 
-  test('a capability refusal is reported once and parks the scan', async () => {
-    const { engine: seen, scans } = shaped(engine, { rustShape: true, scanError: capabilityMissing('managed_persistence', 'topologyStore (a step of the topology recovery)') });
+  test('without raw SQL a recovering change reports the named stop once and parks the scan', async () => {
+    const { engine: seen, scans } = shaped(engine, { rustShape: true });
     const { errors, tick } = owner(seen);
     await tick();
     await tick();
@@ -73,7 +73,7 @@ describe('the consumer topology scan and a capability stop', () => {
     const detail = (errors[0] as { detail?: string } | undefined)?.detail ?? '';
     expect({ scans: scans.length, reports: errors.length, code: (errors[0] as { code?: string } | undefined)?.code,
       member: /member=(\w+)/.exec(detail)?.[1], written: /written=(\w+)/.exec(detail)?.[1] })
-      .toEqual({ scans: 1, reports: 1, code: 'engine_capability_missing', member: 'topologyStore', written: 'nothing' });
+      .toEqual({ scans: 1, reports: 1, code: 'engine_capability_missing', member: 'source_topology_recovery', written: 'nothing' });
     expect(TOPOLOGY_STOP_BACKOFF_MS).toBe(600_000);
   });
 
@@ -85,7 +85,7 @@ describe('the consumer topology scan and a capability stop', () => {
     expect({ scans: scans.length, reports: errors.length }).toEqual({ scans: 2, reports: 2 });
   });
 
-  test('a scan that finds nothing runs on every tick and reports nothing', async () => {
+  test('with raw SQL the scan runs on every tick and reports nothing when no change is recovering', async () => {
     const { engine: seen, scans } = shaped(engine, { rustShape: false });
     const { errors, tick } = owner(seen);
     await tick();

@@ -153,6 +153,20 @@ export interface TopologyStore extends ContentReceiptStore {
   /** Clears the source's last commit and sync time (a reclone starts its sync again). */
   resetSourceSync(id: string, incarnation: string): Promise<void>;
 
+  // The clone and its recovery read these with the column lists they always sent (topology-clone.ts, topology-recovery.ts).
+  /** The source's incarnation, config, last commit and local path, or null. */
+  readCloneSource(id: string): Promise<{ incarnation: string; config: Record<string, unknown>; last_commit: string | null; local_path: string | null } | null>;
+  /** The source's incarnation, last commit and config, or null. */
+  readSourceHead(id: string): Promise<{ incarnation: string; last_commit: string | null; config: unknown } | null>;
+  /** The host's local path of a worktree, or null. */
+  cloneHostBindingPath(worktreeId: string, hostId: string): Promise<{ local_path: string } | null>;
+  /** Locks the worktree and reads its owner host, owner epoch and state; null when missing. */
+  lockCloneWorktree(id: string): Promise<{ owner_host_id: string; owner_epoch: string; state: string } | null>;
+  /** The sources bound to the worktree, in source id order (the locale's, which never reaches output). */
+  boundSourceIds(worktreeId: string): Promise<string[]>;
+  /** The clone's host binding insert, unless one exists. */
+  insertCloneHostBinding(worktreeId: string, hostId: string, localPath: string, coordinationPath: string): Promise<void>;
+
   // Owner activity (persistence/owner-activity.ts).
   /**
    * When the owner of each worktree was last active: its liveness (a consumer heartbeat within `lapsedMs`; this engine
@@ -280,6 +294,13 @@ const OWNER_ACTIVITY_SQL = `
       (SELECT min(r.created_at) FROM persistence_requests r WHERE r.worktree_id=w.id AND r.state IN ('queued','deferred','running','recovering')) AS oldest_open
     FROM persistence_worktrees w
     WHERE w.id::text = ANY($1::text[]) AND w.owner_host_id IS NOT NULL`;
+const READ_CLONE_SOURCE_SQL = 'SELECT incarnation,config,last_commit,local_path FROM sources WHERE id=$1';
+const READ_SOURCE_HEAD_SQL = 'SELECT incarnation,last_commit,config FROM sources WHERE id=$1';
+const CLONE_HOST_BINDING_PATH_SQL = 'SELECT local_path FROM persistence_host_bindings WHERE worktree_id=$1::uuid AND host_id=$2::uuid';
+const LOCK_CLONE_WORKTREE_SQL = 'SELECT owner_host_id,owner_epoch,state FROM persistence_worktrees WHERE id=$1::uuid FOR UPDATE';
+// The member order never reaches output: the members are re-sorted in JS and only name the source rows to lock.
+const BOUND_SOURCE_IDS_SQL = 'SELECT source_id FROM persistence_source_bindings WHERE worktree_id=$1::uuid ORDER BY source_id';
+const INSERT_CLONE_HOST_BINDING_SQL = 'INSERT INTO persistence_host_bindings(worktree_id,host_id,local_path,coordination_path) VALUES($1::uuid,$2::uuid,$3,$4) ON CONFLICT(worktree_id,host_id) DO NOTHING';
 const RESET_SOURCE_SYNC_SQL = 'UPDATE sources SET last_commit=NULL,last_sync_at=NULL WHERE id=$1 AND incarnation=$2::uuid';
 
 /** `topologyStore()` on PGLite and Postgres: the store over `exec` (a transaction engine runs every call in it). */
@@ -376,6 +397,12 @@ export function sqlTopologyStore(exec: RawSql): TopologyStore {
     closeChange: (id, state, outcome) => run(CLOSE_CHANGE_SQL, [id, state, JSON.stringify(outcome)]),
     commitChange: (id, outcome) => run(COMMIT_CHANGE_SQL, [id, JSON.stringify(outcome)]),
     resetSourceSync: (id, incarnation) => run(RESET_SOURCE_SYNC_SQL, [id, incarnation]),
+    readCloneSource: id => first(READ_CLONE_SOURCE_SQL, [id]),
+    readSourceHead: id => first(READ_SOURCE_HEAD_SQL, [id]),
+    cloneHostBindingPath: (worktreeId, hostId) => first(CLONE_HOST_BINDING_PATH_SQL, [worktreeId, hostId]),
+    lockCloneWorktree: id => first(LOCK_CLONE_WORKTREE_SQL, [id]),
+    boundSourceIds: async worktreeId => (await exec.executeRaw<{ source_id: string }>(BOUND_SOURCE_IDS_SQL, [worktreeId])).map(row => row.source_id),
+    insertCloneHostBinding: (worktreeId, hostId, localPath, coordinationPath) => run(INSERT_CLONE_HOST_BINDING_SQL, [worktreeId, hostId, localPath, coordinationPath]),
     ownerActivity: (ids, lapsedMs, opts) => exec.executeRaw<OwnerActivityRow>(OWNER_ACTIVITY_SQL, [[...ids], lapsedMs], opts),
   };
 }
@@ -384,4 +411,5 @@ export function sqlTopologyStore(exec: RawSql): TopologyStore {
 export const TOPOLOGY_STORE_STATEMENTS = {
   ACTIVE_REFRESH_SQL, RETIRE_STATE_EXPIRED_SQL, EXPIRED_ARCHIVE_ROW_SQL,
   LOCK_WORKTREE_MANIFEST_SQL, LOCK_RECOVERING_CHANGES_SQL, CLOSE_CHANGE_SQL, COMMIT_CHANGE_SQL, OWNER_ACTIVITY_SQL,
+  READ_CLONE_SOURCE_SQL, READ_SOURCE_HEAD_SQL, CLONE_HOST_BINDING_PATH_SQL, LOCK_CLONE_WORKTREE_SQL, BOUND_SOURCE_IDS_SQL, INSERT_CLONE_HOST_BINDING_SQL,
 } as const;

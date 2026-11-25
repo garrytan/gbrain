@@ -1895,12 +1895,12 @@ runs on PGLite alone without the flag.
 ### Topology recovery on the Rust engine
 
 A managed clone (`sources add --url`, `sources reclone`) and the recovery of an interrupted source lifecycle change run
-on the typed topology store (`engine-sql/topology-store.ts`), so the Rust engine serves them like PGLite and Postgres
-once it holds managed worktrees (`managed_persistence`, which a user's Rust brain still withholds). No step refuses by
-name any more: the owner's recovery scan finishes or rolls back each recovering change, doctor
-`topology_recovery_stopped` counts the changes and reports them as converging, and `sources writer status --json`
-lists `topology_recoveries` with `stop: null`. The parked-push retry of `writer git-durability --pat-file` and the
-owner facts a pending write reads (`owner-activity.ts`) are typed the same way.
+on the typed topology store (`engine-sql/topology-store.ts`) once the engine holds managed worktrees
+(`managed_persistence`). A user's Rust brain still withholds that capability, and has no raw SQL, so it refuses these
+steps by name (`member=managed_source_clone` or `member=source_topology_recovery`, `written=nothing`) before any
+principal, lock, row, directory or git clone is touched. Doctor `topology_recovery_stopped` and `sources writer status
+--json` (`topology_recoveries`) name the stop; finish the change from a pglite or postgres engine. A test Rust engine with
+the hold lifted serves the steps (test/engine-parity/managed-recovery-on-rust.test.ts).
 
 ## Rust engine shadow mode
 
