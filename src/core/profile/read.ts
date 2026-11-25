@@ -55,7 +55,9 @@ const originOf = (row: FactRow): string | null => {
   const o = row.write_origin as { content_origin?: unknown } | null | undefined;
   return typeof o?.content_origin === 'string' ? o.content_origin : null;
 };
-const isProfileRow = (r: FactRow): boolean => facetOfMetric(r.claim_metric) !== null || (!r.claim_metric && r.kind === 'preference');
+/** A faceted row from any slug the profile reads, or an unfaceted preference on one of the profile's own pages (`homes`). */
+const isProfileRow = (r: FactRow, homes: ReadonlySet<string>): boolean =>
+  facetOfMetric(r.claim_metric) !== null || (!r.claim_metric && r.kind === 'preference' && homes.has(r.entity_slug ?? ''));
 /** readProfile's result: the block before packing, plus the owner's private profile rows this caller cannot read. */
 export type ProfileRead = Omit<ProfileBlock, 'withheld'> & { private_hidden?: number };
 /** user_said before inferred, then newest first. */
@@ -73,6 +75,7 @@ export async function readProfile(ctx: OperationContext, readable: string[], eli
   const visibility = worldOnlyFacts(ctx.remote) ? ['world' as const] : undefined;
   const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
   const hideOwnerPrivate = visibility !== undefined && self.kind === 'owner';
+  const homes = new Set([self.slug, ...(self.homes ?? [])]);
   const rows: FactRow[] = [];
   const hidden: FactRow[] = [];
   let scanned = 0;
@@ -88,14 +91,14 @@ export async function readProfile(ctx: OperationContext, readable: string[], eli
         if (scanned >= PROFILE_SCAN_CAP) { partial = true; break; }
         const page = await ctx.engine.listFactsByEntity(src, slug, { activeOnly: true, limit: PAGE, offset, visibility, excludePrivate, excludeAuditRows: true, eligibility });
         scanned += page.length;
-        rows.push(...page.filter(isProfileRow));
+        rows.push(...page.filter(r => isProfileRow(r, homes)));
         if (page.length < PAGE) break;
       }
       for (let offset = 0; hideOwnerPrivate; offset += PAGE) {
         if (scanned >= PROFILE_SCAN_CAP) { partial = true; break; }
         const page = await ctx.engine.listFactsByEntity(src, slug, { activeOnly: true, limit: PAGE, offset, visibility: ['private'], excludePrivate, excludeAuditRows: true, eligibility });
         scanned += page.length;
-        hidden.push(...page.filter(isProfileRow));
+        hidden.push(...page.filter(r => isProfileRow(r, homes)));
         if (page.length < PAGE) break;
       }
     }

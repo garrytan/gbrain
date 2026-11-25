@@ -349,6 +349,15 @@ describe('profile core with the owner found by a person page in another source (
     expect(await sourceOf('canarysrcremote')).toBeUndefined();
   }, 60_000);
 
+  test('an unfaceted preference joins the profile only from the profile page itself, not from a sibling slug', async () => {
+    await run(engine, 'remember', { fact: 'Prefers aisle seats canaryselfpref', kind: 'preference', entity: 'people/alice-example', source_id: 'people-src', provenance: 'p', infer_entity: false });
+    expect(await sourceOf('canaryselfpref')).toEqual({ source_id: 'people-src', entity_slug: 'people/alice-example' });
+    await engine.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source)
+      VALUES ('people-src', 'alice-example', 'Prefers window seats canarysiblingpref', 'preference', 'world', 'legacy')`);
+    const prefs = (await run(engine, 'context_pack', { profile: true })).profile.preferences.map((f: R) => f.claim);
+    expect(prefs).toEqual(['Prefers aisle seats canaryselfpref']);
+  }, 60_000);
+
   test('a remote owner credential whose grant excludes the owner page\'s source is not told that page\'s slug', async () => {
     const out = await dispatchToolCall(engine, 'context_pack', { profile: true },
       { remote: true, transport: 'http', sourceId: 'default', auth: await provider().verifyAccessToken(token) as unknown as AuthInfo });
