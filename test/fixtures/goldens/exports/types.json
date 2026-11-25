@@ -7840,7 +7840,7 @@
           "hasSupersedeEdges: () => Promise<boolean>",
           "hasWithdrawnFenceClaim: (sourceId: string, claims: readonly withdrawalFence.FenceClaimRow[], subject: string | null) => Promise<boolean>",
           "holdsDatastoreLock: () => boolean",
-          "initSchema: () => Promise<void>",
+          "initSchema: (opts?: { embedding?: { dimensions: number; model: string; }; }) => Promise<void>",
           "insertDecideCalibration: (row: decideStoreImpl.DecideCalibrationInsert) => Promise<number>",
           "insertDecideProposal: (p: decideProposals.NewProposal) => Promise<number | null>",
           "insertDecideReceipts: (rows: readonly decideStoreImpl.DecideReceiptInsert[]) => Promise<void>",

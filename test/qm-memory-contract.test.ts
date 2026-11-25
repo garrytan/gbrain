@@ -12,7 +12,7 @@ import { describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ACTOR_REASON_FIXES, QM_CONTRACT_PATH, QM_CONTRACT_PATHS, V5_TOOL_TEXT, renderQmMemoryContract } from '../scripts/build-qm-memory-contract.ts';
+import { ACTOR_REASON_FIXES, PARAMS_AFTER_V5, QM_CONTRACT_PATH, QM_CONTRACT_PATHS, V5_TOOL_TEXT, renderQmMemoryContract } from '../scripts/build-qm-memory-contract.ts';
 import { CODES } from '../src/core/error-registry.ts';
 import { operations } from '../src/core/operations.ts';
 import { buildToolDefs } from '../src/mcp/tool-defs.ts';
@@ -207,6 +207,7 @@ describe('QM memory-provider contract v3 (GST-1158 F1: personal tools, frozen re
       const def = served.find(d => d.name === tool.name)!;
       const frozen = V5_TOOL_TEXT[tool.name];
       const properties = Object.fromEntries(Object.entries(def.inputSchema.properties as Record<string, Record<string, unknown>>)
+        .filter(([k]) => !(PARAMS_AFTER_V5[tool.name] ?? []).includes(k))
         .map(([k, v]) => [k, frozen?.params[k] ? { ...v, description: frozen.params[k] } : v]));
       expect({ description: tool.description, ...tool.input_schema }).toEqual({ description: frozen?.description ?? def.description, ...def.inputSchema, properties });
       expect(tool.personal_only).toBe(true);
