@@ -135,7 +135,7 @@ getPage	pages	yes	278	yes	yes	yes	serves
 readPageSnapshot	pages	yes	100	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1320	yes	yes	yes	serves
+putPage	pages	yes	1322	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	43	yes	yes	yes	serves
@@ -189,7 +189,7 @@ markSourceSynced	pages	yes	8	no	yes	yes	serves
 advanceSyncCheckpoint	pages	yes	2	no	yes	yes	serves
 countSourcePages	pages	yes	6	no	yes	yes	serves
 readSourcesNotReadable	pages	yes	3	no	yes	yes	serves
-insertSource	pages	yes	18	no	yes	yes	serves
+insertSource	pages	yes	19	no	yes	yes	serves
 deleteSourceRecord	pages	yes	9	no	yes	yes	serves
 readSourceDeleteImpact	pages	yes	2	no	yes	yes	serves
 readPageSizeRows	pages	yes	4	no	yes	yes	serves
@@ -1650,7 +1650,7 @@ listFactsHomeCandidates	facts_repair	yes	3	no	yes	yes	serves
 listHeldHomeRows	facts_repair	yes	2	no	yes	yes	serves
 listOrphanedFenceRows	facts_repair	yes	2	no	yes	yes	serves
 readFactSnapshots	facts_repair	yes	2	no	yes	yes	serves
-listConceptLineageRows	facts_repair	yes	1	no	yes	yes	serves
+listConceptLineageRows	facts_repair	yes	4	no	yes	yes	serves
 listConceptInputRows	facts_repair	yes	1	no	yes	yes	serves
 listNamedVisibilityRows	facts_repair	yes	1	no	yes	yes	serves
 listAtomLineageRows	facts_repair	yes	1	no	yes	yes	serves
@@ -1658,7 +1658,7 @@ listChronicleEventVisibilityRows	facts_repair	yes	1	no	yes	yes	serves
 listAliasOnlyPrivatePages	facts_repair	yes	1	no	yes	yes	serves
 countPurgedPageFacts	facts_repair	yes	5	no	yes	yes	serves
 listUnwithdrawnFacts	facts_repair	yes	4	no	yes	yes	serves
-listWorldFactsFromPrivateSources	facts_repair	yes	5	no	yes	yes	serves
+listWorldFactsFromPrivateSources	facts_repair	yes	8	no	yes	yes	serves
 listActiveSourceIds	facts_repair	yes	2	no	yes	yes	serves
 readRepairBrainId	facts_repair	yes	1	no	yes	yes	serves
 listAgentSessionTakeCandidates	facts_repair	yes	2	no	yes	yes	serves

@@ -1,17 +1,16 @@
-# Rust repair swap report (rust-engine/main d195da9b31, 2026-11-24)
+# Rust repair swap report (rust-engine/main 78a31fe57e, 2026-11-25)
 
-- **We learned that every `gbrain repair` kind on a Rust brain either runs, or stops with a typed `engine_capability_missing` refusal that writes nothing.** No kind returns an empty answer in place of a refusal.
-- **We learned that more kinds stop than the three rows below.** 18 kinds can preview but stop before their first page or fact write. You should read the table in section 1 as the swap's list of known stops.
-- **We learned that two stops are on paths a normal brain can reach without naming a kind.** `visibility` is an automatic kind, and on a Rust brain its default preview stops at `repair visibility privacy scan`. `fences` is an automatic kind too, and its apply of a database-only page stops at publication. Both are named swap-report rows for the Dec 1 opt-in swap (RUST_ENGINE.md rows 51 and 50, section 3).
-- The three rows in section 2 stay as named swap-report rows. Their owner is the post-freeze lane.
+- **We learned that batch 14 made almost every `gbrain repair` kind run on a Rust brain.** 60 of 68 kinds are served: every Rust parity case for them is equal to PGLite. Every other path stops with a typed `engine_capability_missing` refusal that writes nothing. No kind returns an empty answer in place of a refusal.
+- **We learned that the stop every opted-in user would have seen is gone.** The `visibility` default preview, which `gbrain repair --all` and `doctor --remediate` run, is equal on all 3 engines, also on an empty brain (lane 16). You should read the remaining stops in section 2 as stops of the apply step, which an operator reaches only with `--apply`, plus one explicit kind.
+- The first version of this report (d195da9b31) listed 18 kinds as preview-only and named three swap-report rows. Batch 14 closed rows 38 and 39 (lane 16), the publication stop (lane 19) and the visibility preview stop (lane 16). Row 53, the page-visibility fallback, stays.
 
 ## Evidence
 
-- Code: `rust-engine/main` at d195da9b31. The Rust addon was built from that commit (`bun run rust:build`).
-- Rust arm run: 69 engine-parity files: every file that runs a repair kind, plus every `test/engine-parity/*repair*` file. Each ran as `GBRAIN_TEST_RUST_ARM=1 bun test --timeout 120000 <file>`. All 69 exited 0. The Rust arm compared 662 cases equal to PGLite, and 73 cases stopped on a typed refusal.
-- Refusal sites: one more run of the 10 files that hold the repair stops. A temporary log line in the harness (not committed) printed each refusal's message, detail and stack, so each stop below names the exact line that refused.
-- Empty brain: a temporary test (not committed) previewed all 67 kinds on an empty Rust brain. 61 previewed. `visibility` and `private-labels` refused with `engine_capability_missing`. `ghost-pages` and `legacy-twins` refused with `not_owner_host`, and `generations` and `open-facts` refused with `invalid_params`; those refusals come from the kinds' own input checks and are the same on PGLite.
-- Nothing written: a temporary edit (not committed) of the three parity cases in section 2 read the pages back on Rust after each refusal. Section 2 gives the results.
+- Code: `rust-engine/main` at 78a31fe57e (batch 14 and two test-only fixes), merged into this branch. The Rust addon was built from the merged head (`bun run rust:build`).
+- Rust arm run: the 31 engine-parity files that run a repair kind or are named `*repair*`. Each ran as `GBRAIN_TEST_RUST_ARM=1 bun test --timeout 120000 <file>`, and all 31 exited 0. The Rust arm compared 203 cases equal to PGLite, and 7 cases stopped on a typed refusal.
+- Refusal sites: a temporary log line in the harness (not committed) printed the detail and stack of each of the 7 stops. Section 2 lists them.
+- Empty brain: a temporary test (not committed) previewed all 68 kinds on an empty brain on PGLite and Rust. 63 previewed on Rust. `ghost-pages` and `legacy-twins` refused with `not_owner_host`, and `generations` and `open-facts` refused with `invalid_params`; those 4 come from the kinds' own input checks and are the same on PGLite. `slug-spelling` previews on PGLite and refuses on Rust with `engine_capability_missing` (RUST_ENGINE.md row 50).
+- The `visibility` default preview has its own parity file, `test/engine-parity/repair-visibility-default.test.ts` (section 3).
 - Limits: a kind marked served has a Rust case for the paths named. A path that no Rust case reaches is marked unproven. This report reads the parity suite and the code; it is not a full coverage proof.
 
 ## 1. Every repair kind on Rust
@@ -21,178 +20,128 @@ Status words:
 - **served**: every Rust case for the kind is equal to PGLite.
 - **preview-only**: the preview is equal; the apply stops by name before its first write.
 - **partly served**: some items apply on Rust; other items stop by name.
-- **stops at preview**: the plan stops by name before it reads anything.
+- **stops**: the kind refuses on Rust before it reads anything.
 - **unproven**: no Rust case reaches the path named; the empty-brain preview is the only evidence.
 
 "Auto" means the kind runs in `gbrain repair --all` and in `doctor --remediate`. Every other kind is `explicit_only`: it runs only when the operator names it.
 
-| Kind | Auto | Rust status | Evidence (Rust arm, d195da9b31) |
+| Kind | Auto | Rust status | Evidence (Rust arm, 78a31fe57e) |
 |---|---|---|---|
-| timeline | yes | preview-only | Preview equal. The apply stops at `repair timeline page write` (`src/core/repair/timeline.ts:137`) when a row must be written into the page. |
-| visibility | yes | stops at preview | The default preview (all classes) and the events, aliases and lineage classes stop at `repair visibility privacy scan` (`visibility.ts:397`), also on an empty brain. The facts class previews; its apply stops at `repair visibility page write` (`visibility.ts:529`). |
-| safe-chunks | yes | served | Plan equal (`repair-page-scans`). No apply case. |
-| contextual-mode | yes | served | Preview and apply equal (`repair-runner`). |
-| connector-checkpoints | yes | served | Preview and apply equal (`repair-bookkeeping`, `repair-runner`). |
-| access | yes | served | Equal on a brain with nothing to repair (`repair-page-reads`). No case with a page to fix. |
-| request-indexes | yes | served | Equal (`repair-runner`). |
-| connector-fences | yes | preview-only | Apply stops at `repair connector-fences page write` (`connector-fences.ts:95`). |
-| take-supersession | yes | partly served | Pointer reprojection equal. A relink that changes the fence stops at `repair take-supersession page write` (`take-supersession.ts:303`). |
+| timeline | yes | served | Preview and the page write equal (`repair-takes-timeline`). |
+| visibility | yes | partly served | Default preview (all classes), the class previews and a named page equal; database-only fact rows (phase 4) apply on Rust through `tightenDatabaseFactVisibility`. Page items stop at `repair visibility page write` (`visibility.ts:508`), and a fenced fact row stops there too (`visibility.ts:244`). |
+| safe-chunks | yes | served | Plan equal. |
+| contextual-mode | yes | served | Preview and apply equal. |
+| connector-checkpoints | yes | served | Preview and apply equal. |
+| access | yes | served | Equal on a brain with nothing to repair. No case with a page to fix. |
+| request-indexes | yes | served | Equal. |
+| connector-fences | yes | served | Preview and the fence move equal. |
+| take-supersession | yes | served | Relink and reprojection equal. |
 | orphan-bindings | yes | served | Equal on a brain with no bindings. The delete case cannot seed bindings on Rust (the seed is raw SQL), so the delete path is unproven. |
-| embedding-effects | yes | served | Preview and apply equal (`repair-runner`). |
-| attribution-backfill | yes | unproven | Previews on an empty brain. Its plan runs raw SQL (`attribution-backfill.ts:42-62`); no Rust case gives it rows. |
-| planner-stats | yes | served | Preview and apply equal (`repair-runner`). |
-| fences | yes | partly served | Previews equal. The apply of a checkout file on a legacy source is equal. The apply of a database-only page stops at publication (section 2, row 3). |
-| slug-conflicts | yes | served | Previews equal (`repair-fence-kinds`). No apply case. |
-| accepted-takes | no | preview-only | Preview equal. The restore stops at `repair accepted-takes page write` (`accepted-takes.ts:155`). |
+| embedding-effects | yes | served | Preview and apply equal. |
+| attribution-backfill | yes | unproven | Previews on an empty brain. Its plan runs raw SQL (`attribution-backfill.ts`); no Rust case gives it rows. |
+| planner-stats | yes | served | Preview and apply equal. |
+| fences | yes | served | Previews equal; both applies (checkout file on a legacy source, database-only page) equal. |
+| slug-conflicts | yes | served | Previews equal. No apply case. |
+| accepted-takes | no | served | Preview and restore equal. |
 | google-file-modes | no | served | Preview and apply equal. |
-| stale-atoms | no | preview-only | Apply stops at `repair stale-atoms retirement` (`stale-atoms.ts:149`). |
+| stale-atoms | no | served | Preview and retirement equal. |
 | atoms-restore | no | served | Preview and restore equal. |
-| atom-fence-rows | no | served | Equal (`repair-fence-scans`). |
-| extractor-facts | no | preview-only | Apply stops at `repair extractor-facts fact write` (`extractor-facts.ts:222`). |
-| unwithdrawn-facts | no | unproven | The parity seed stops on Rust (a raw statement in `withHeldPageKeys`). By the code, the preview stops at `repair unwithdrawn-facts fence evidence` (`unwithdrawn-facts.ts:107`) once a candidate has a page, and the apply stops at `repair unwithdrawn-facts fact write` (`:248`). |
-| purged-page-facts | no | preview-only | Apply stops at `repair purged-page-facts expire` (`purged-page-facts.ts:152`). The seed that purges a real page stops at the retention purge (lane 13). |
+| atom-fence-rows | no | served | Equal. |
+| extractor-facts | no | served | Preview and apply equal. |
+| unwithdrawn-facts | no | preview-only | Preview equal. The apply stops at `repair unwithdrawn-facts fact write` (`unwithdrawn-facts.ts:243`). |
+| purged-page-facts | no | served | Preview and apply equal. A case that first purges a real page stops in its seed at the retention purge (lane 13), not in the kind. |
 | purged-change-reasons | no | served | Preview and apply equal. |
-| conversation-labels | no | served | Preview and apply ran on Rust. The case then stops at its own read `listActiveFactIdsOfPage` (facts), which is in the test, not in the kind. |
-| captured-facts | no | preview-only | Apply stops at `repair captured-facts page write` (`captured-facts.ts:302`). |
-| agent-session-facts | no | served | Preview equal (the case title still says Rust refuses; the run shows equal). |
-| redacted-facts | no | partly served | A database-only row restores equal. A fenced row stops at `repair redacted-facts page write` (`redacted-facts.ts:280`). |
+| conversation-labels | no | served | Preview and retirement equal. |
+| captured-facts | no | served | Preview and apply equal. |
+| agent-session-facts | no | served | Preview equal. |
+| redacted-facts | no | served | A database-only row and a fenced row restore equal. |
 | loop-facts | no | served | Equal. |
-| ontology-facts | no | preview-only | Apply stops at `repair ontology-facts fact write` (capability `facts`, `ontology-facts.ts:140`). |
-| facts-rehome | no | preview-only | Apply stops at `repair facts-rehome fact write` (`facts-rehome.ts:125`). |
-| consolidate-ties | no | preview-only | Apply stops at `repair consolidate-ties fact write` (`consolidate-ties.ts:98`). |
-| duplicate-facts | no | preview-only | Apply stops at `repair duplicate-facts page write` (`duplicate-facts.ts:173`). |
+| ontology-facts | no | served | Preview and apply equal. |
+| facts-rehome | no | served | Preview and apply equal. |
+| consolidate-ties | no | served | Preview and apply equal. |
+| duplicate-facts | no | served | Preview and the apply of a database-only group equal. |
 | orphan-children | no | served | Equal on a brain with nothing to repair. |
 | failed-writes | no | served | Equal. |
-| split-facts | no | preview-only | The apply stops at publication, the same stop as section 2 row 3 (`mergeOne`, `split-facts.ts:144`). |
-| frontmatter | no | served | Plan equal (`repair-plan-scans`). No apply case. |
-| timeline-comments | no | partly served | Database rows clean equal. A materialized bullet stops at `repair timeline-comments page write` (`timeline-comments.ts:105`). |
-| timeline-order | no | preview-only | Apply stops at `repair timeline-order page write` (`timeline-order.ts:191`). |
+| split-facts | no | served | Merge equal. |
+| frontmatter | no | served | Plan equal. No apply case. |
+| timeline-comments | no | served | Database rows and a materialized bullet clean equal. |
+| timeline-order | no | served | Preview and reorder equal. |
 | contact-rows | no | served | Equal. |
 | managed-sync-orphans | no | served | Equal. |
 | content-receipt-root | no | served | Equal on a brain with nothing to rebind. |
 | frontmatter-keys | no | served | Preview equal; the apply refuses with the same code on every arm. |
-| file-drift | no | served | Equal on a brain with no drift. The held-files case stops in its seed (`performManagedSync`, managed_persistence), so that path is unproven. |
+| file-drift | no | served | Equal on a brain with no drift. Two held-file cases stop in their seeds (`performManagedSync`, a raw statement), so those paths are unproven. |
 | stuck-recovery | no | served | Preview equal; the apply refuses with the same code on every arm. |
 | ghost-pages | no | served | Preview and apply equal on an owned brain. |
 | origin-twins | no | served | Plan and merge mode equal. |
-| moved-pages | no | stops at preview | A held pair is equal. A moved pair stops at `repair moved-pages access check` (section 2, row 2). |
+| moved-pages | no | served | A held pair and a moved pair equal. |
 | receipt-compaction | no | served | Equal. |
 | aliases | no | served | Equal. |
-| rename-identity | no | partly served | No pair: equal. An open pair stops at a raw statement with no step name (`member=executeRaw`, `src/core/sync-identity-downgrades.ts:148`). |
-| overwritten-edits | no | preview-only | Apply stops at `repair overwritten-edits page write` (`overwritten-edits.ts:154`). |
+| rename-identity | no | served | No pair and an open pair equal. |
+| slug-spelling | no | stops | Refuses on Rust with `member=executeRaw` (RUST_ENGINE.md row 50, legacy slug spellings). |
+| overwritten-edits | no | served | Preview and restore equal. |
 | legacy-twins | no | served | Preview and merge equal on an owned brain. |
 | missing-tables | no | served | Equal. |
-| url-clone-fences | no | preview-only | Apply stops at `repair url-clone-fences page write` (`url-clone-fences.ts:240`). |
+| url-clone-fences | no | served | Preview and apply equal. |
 | segmented-mirror | no | served | Equal (no withdrawal case). |
 | segmented-tiling | no | served | Plan equal. |
 | uncommitted-deletions | no | served | Equal. |
 | generations | no | served | Preview equal. |
-| lost-fence-rows | no | preview-only | Apply stops at `repair lost-fence-rows page write` (`lost-fence-rows.ts:256`). |
-| fact-claim-dates | no | preview-only | Apply stops at `repair fact-claim-dates fact write` or `... page write` (`fact-claim-dates.ts:222`). |
-| provenance | no | unproven | Previews on an empty brain. No Rust case gives it rows; it reads `body_storage` through raw SQL (`provenance.ts:81`). |
+| lost-fence-rows | no | served | Preview and restore equal. |
+| fact-claim-dates | no | partly served | A database-only fact move applies equal. A page move stops at `repair fact-claim-dates page write` (`fact-claim-dates.ts:222`). |
+| provenance | no | unproven | Previews on an empty brain. No Rust case gives it rows; it reads `body_storage` through raw SQL (`provenance.ts`). |
 | secret-spans | no | served | 18 cases equal (`repair-secret-spans`). |
 | rows-behind | no | served | Equal on a brain with no owner binding. |
-| facts-home | no | preview-only | Apply stops at `repair facts-home page write` (`facts-home.ts:110`). |
-| private-labels | no | stops at preview | Section 2, row 1. |
-| open-facts | no | stops at preview | The window preview stops at `repair open-facts privacy scan` (`open-facts.ts:267`). The named-row path is equal. |
+| facts-home | no | served | Preview and the holding-page write equal. |
+| private-labels | no | preview-only | Preview equal, including the pages a clear would expose (row 38). The apply stops at `repair private-labels page write` (`private-labels.ts:386`). |
+| open-facts | no | preview-only | Preview equal. The apply and the undo stop at `repair open-facts privacy scan` (`open-facts.ts:211`, `:256`). |
 
-Totals (67 kinds): 37 served, 18 preview-only, 5 partly served, 4 stop at preview, 3 unproven. Two of them are automatic kinds with a stop on a common path: `visibility` (stops at preview) and `fences` (partly served).
+Totals (68 kinds): 60 served, 3 preview-only, 2 partly served, 1 stops, 2 unproven. The only automatic kinds that are not fully served are `visibility` (its apply of page items) and `attribution-backfill` (unproven).
 
-## 2. The three named swap-report rows
+## 2. The stops that remain
 
-| | Row 1 | Row 2 | Row 3 |
-|---|---|---|---|
-| Kind | `private-labels` | `moved-pages` | `fences` (also `split-facts`) |
-| Stop text on Rust | `repair private-labels privacy scan` | `repair moved-pages access check` | Observed in the parity case: `member=executeRaw capability=raw_sql outcome=none written=nothing`, message "...refused at publication on 3 claims, the limit (3); it is not claimed again." The settle step names `repair write publication (request <id> stays queued)` only when the request is still queued. |
-| File:line | `src/core/repair/private-labels.ts:386` (plan, before any read) | `src/core/persistence/moved-pages.ts:286` (verdict, `pairRefusal`) | Refusal recorded at `src/core/persistence/coordinator.ts:404`; the raw statements are in `guardFenceRows`, `src/core/trust/fence-guard.ts:70-155`; the queued text is `src/core/repair/settle.ts:42` |
-| RUST_ENGINE.md row | 38 | 39 | 50 |
-| Test that proves it fails closed | `test/engine-parity/repair-history-kinds.test.ts:463` checks the refusal text on Rust | `test/engine-parity/repair-history-kinds.test.ts:442` checks the refusal text on Rust | `test/engine-parity/repair-fence-kinds.test.ts:133` accepts either refusal text on Rust |
-| Nothing written | The refusal detail says `written=nothing`. The test does not read the page back. A probe read it back: frontmatter `access: private` and the body were unchanged. | The refusal detail says `written=nothing`; the stop is in the preview. A probe read both pages back: both live and unchanged. | The refusal detail says `written=nothing`. The test does not read the page back. A probe read it back: the body was byte-identical and the broken fence was still broken (1 warning). |
-| explicit_only | yes | yes | no: `fences` is an automatic kind. Only its apply reaches the stop, and `gbrain repair --all` previews unless `--apply` is passed. `split-facts` is explicit_only. |
-| Owner | post-freeze lane | post-freeze lane | post-freeze lane |
+| Stop on Rust | File:line | Kind | Auto | Test that pins it | RUST_ENGINE.md row |
+|---|---|---|---|---|---|
+| `repair visibility page write` | `src/core/repair/visibility.ts:508` (page items), `:244` (fenced fact row) | visibility | yes, but only `--apply` reaches it | `test/engine-parity/repair-visibility-default.test.ts` (refusal text, and the page's frontmatter read back unchanged) | 52 (closed for the preview) |
+| `repair private-labels page write` | `src/core/repair/private-labels.ts:386` | private-labels | no | `test/engine-parity/repair-history-kinds.test.ts` | 38 (closed for the preview) |
+| `repair open-facts privacy scan` | `src/core/repair/open-facts.ts:211`, `:256` | open-facts | no | `test/engine-parity/repair-facts-previews-3.test.ts` | none |
+| `repair unwithdrawn-facts fact write` | `src/core/repair/unwithdrawn-facts.ts:243` | unwithdrawn-facts | no | none on the apply | none |
+| `repair fact-claim-dates page write` | `src/core/repair/fact-claim-dates.ts:222` | fact-claim-dates | no | none on the page move | none |
+| `member=executeRaw` | `src/core/repair/slug-spelling.ts` | slug-spelling | no | `test/engine-parity/repair-slug-spelling.test.ts` | 50 |
+| `engine_capability_missing` (raw_sql) on a remote write over a slug with only a soft-deleted row | `src/core/persistence/page-visibility.ts:97-101` (`hiddenUnder`) | not a repair kind | n/a | `test/engine-parity/owner-write-privacy.test.ts` ("loss (32e-d-1 raw fallback)"), passes on the Rust arm at 78a31fe57e | 53 |
 
-The probes were temporary edits, not committed. The post-freeze lane should add the read-back to each of the three tests, so each test proves "nothing written" by itself.
+Each stop refuses before its first write (`outcome=none written=nothing`). Owner of the remaining repair stops: the post-freeze lane.
 
-## 3. Findings for the swap decision
+Rows closed since the first version of this report:
 
-On a Rust brain every `gbrain repair --all` and `doctor --remediate` reports an error for visibility; nothing is read or written.
+- Row 38, `private-labels` preview: lane 16, 9dc5dfb50d ("Rust brains can preview gbrain repair private-labels, including the pages a clear would expose"), on main through 1e1e2320e3.
+- Row 39, `moved-pages` access check: lane 16, b5e12f74dd (`listPageAccessKeys`), on main through 1e1e2320e3.
+- Row 51, the publication stop of the fences and split-facts applies: lane 19, 1e667f30ce ("Saving a page with a facts or takes table works on a Rust brain"), on main through 47cc5adf8b. The facts-fence guard (`src/core/trust/fence-guard.ts`) now runs through typed members, and both applies are equal on the Rust arm. The step-name gap goes with it: no refusal is left there to name.
+- Row 52, the `visibility` default preview: lane 16, f238821209 ("Rust brains can preview gbrain repair visibility: events, aliases, atom lineage and named pages"), on main through 1e1e2320e3.
 
-1. **`visibility` is automatic, and it stops on a Rust brain by default (RUST_ENGINE.md row 51).** `gbrain repair --all` and `doctor --remediate` run it. Its default preview covers all classes, so it stops at `repair visibility privacy scan` before it reads anything, also on an empty brain. `runRepairKinds` (`src/commands/repair.ts:741`) records the kind as an error and runs the next kind, so the whole run does not stop. The run's exit code shows the error. The stop is safe (nothing read, nothing written), but every automatic run on a Rust brain reports it.
-2. **The publication stop has no step name (row 50).** On Rust, the fences apply and the split-facts apply end with `member=executeRaw`, not `repair write publication`. The refusal is typed and writes nothing, but an operator does not see which step refused. The text `repair write publication` appears only when the request is still queued at settle.
-3. **Loss rows.** RUST_ENGINE.md rows 50 (the publication stop), 51 (the visibility default preview) and 52 (the page-visibility fallback, section 4.3) now list the three stops that had no row. The missing step name of row 50 is on the post-freeze lane's list.
-4. **Two more stops refuse a raw statement with no step name:** `rename-identity` with an open pair (`sync-identity-downgrades.ts:148`), and the `unwithdrawn-facts` parity seed. Both are explicit_only.
+## 3. The visibility default preview
 
-## 4. Inventory for the post-freeze privacy lane
+On a Rust brain every `gbrain repair --all` and `doctor --remediate` used to report an error for visibility, with nothing read or written. At 78a31fe57e it previews the same as PGLite and Postgres.
 
-### 4.1 What rows 38 and 39 need
+`test/engine-parity/repair-visibility-default.test.ts` runs on all 3 engines:
 
-Row 39, `moved-pages` access check. For two page ids, the comparison reads:
+1. An empty brain: the default preview (all classes) lists nothing, equal on every arm.
+2. An atom and a Life Chronicle event of a private origin, a page private by a privacy alias alone, and that page's open twin in another source: the default preview lists exactly the three pages, with `open_twins` 1, equal on every arm.
+3. The apply of those page items: PGLite and Postgres apply them; Rust refuses at `repair visibility page write`, and the page's frontmatter reads back unchanged.
 
-- `page_readers` (the normalized readers),
-- `folder_rule_ids` (the folder rules stamped on the page),
-- `frontmatter->'readable_by'`,
-- `world`: `privateSnapshotFilterFragment` over the page's own type and frontmatter.
+Fail-first: on rust-engine/main d195da9b31 (before batch 14), cases 1 and 2 fail on the Rust arm with `repair visibility privacy scan`; PGLite and Postgres run them.
 
-It compares the four values of the old page and the new page. It needs no caller policy.
+Database-only fact rows (phase 4) now apply on Rust through `tightenDatabaseFactVisibility`. The rest of the apply still stops at `repair visibility page write` (`visibility.ts:508`; a fenced fact row at `:244`).
 
-Row 38, `private-labels`. The plan makes four kinds of reads through raw SQL:
+## 4. What is left for the post-freeze lane
 
-- The label scan (`scanLabelled`, `private-labels.ts:122`): live pages of the selected sources whose `visibility` is `private`, or that have no `visibility` and match `privacyAliasSql`, paged by id, with the source's `canonical = git` flag.
-- The restore read (`private-labels.ts:214`): live pages by id.
-- The dependents read (`dependentsSql('clear')`, `src/core/repair/dependents-sql.ts`): the pages that the label window would expose. It evaluates `privacyPartSql` twice: on each candidate page as it is now, and on the candidate as it would be once the window's keys are removed from the listed pages (a "postimage" of `pages`).
-- The re-embed reads (`reembedding`, `private-labels.ts:285-287`): `contextual_retrieval_mode` by id, and the pages with a chunk that has no vector.
-
-The apply writes each page through `writeLabelPage` (the maintenance door, or the legacy import under the page lock).
-
-### 4.2 What the Rust store already gives
-
-The Rust store has more of the privacy predicate than the B6 notes said. In `rust/crates/gbrain-store/src/`:
-
-- `facts/privacy.rs`:
-  - `alias_private` is `privacyAliasSql`.
-  - `snapshot_fields_allow` is `privateSnapshotFilterFragment` over a type and frontmatter.
-  - `privacy_allows` is `privacyPartSql`: the page's own fields, `derived_origin_private` and `declared_lineage_private`.
-  - `page_hidden` / `page_hidden_with` is the full page policy (member access, folder rules, owner-only, privacy part), driven by a `PrivacyPolicy`.
-  - `stamped_rules` reads a page's folder rules, and `access_readers` normalizes its readers.
-- `page_visibility.rs` (added 2026-11-24): `read_page_hidden_from_caller` (judges a live or soft-deleted row), `read_caller_page_access`, `read_write_visibility_probe` and `read_page_privacy_hidden`.
-- `label_door.rs`: `list_origin_dependents` is `dependentsSql('remove')`, the postimage with the cleared rows removed.
-- `access_rules.rs`: folder rules, pending coverage and policy revisions.
-
-What is still missing:
-
-- Row 39: a typed read that returns the four values for a list of page ids. Every piece exists (`access_readers`, `stamped_rules`, the frontmatter, `snapshot_fields_allow`).
-- Row 38:
-  - a typed label-scan list (with `alias_private`),
-  - a live-pages-by-id read for the restore, if no served member fits,
-  - the two re-embed reads,
-  - the clear-mode dependents read. This is the hard part. `list_origin_dependents` removes the cleared rows. Clear mode keeps them, with the window's keys removed from their frontmatter. The helpers that `privacy_allows` calls (`derived_origin_private`, `declared_lineage_private`) read other pages from the store, so they need an overlay that returns the postimage frontmatter for the cleared pages.
-- Both rows: the label write must publish on Rust. A page with a facts fence meets the same `guardFenceRows` raw statements as row 3. Until that guard is typed, the lane can serve only pages without a facts fence, or must type the guard too.
-
-### 4.3 The page-visibility fallback
-
-`authorizePageVisibility` (`src/core/persistence/page-visibility.ts:97-101`, `hiddenUnder`) asks `readLinkTargetPages` first. When the slug has no live row, only a soft-deleted one, it falls back to a raw statement with `writerReadPolicySql`. On Rust that statement refuses with `engine_capability_missing`, and nothing is written: `test/engine-parity/owner-write-privacy.test.ts:136` checks it on every arm.
-
-`read_page_hidden_from_caller` already judges a soft-deleted row, so it can serve the fallback. It needs these things first:
-
-- the stored writer's policy turned into a `PrivacyPolicy`: the identity (`writerIdentities`), the folder access (`folderAccessForAll`), the owner record (`storedOwnerSpeaksForItself`) and the hide flag (`entity_privacy`);
-- multiple identities: `writerIdentities` returns one identity set per audience entry (GBRA-231) and `PrivacyPolicy` holds one. The lane can serve single-identity writers and keep the refusal for an audience write;
-- a labelled-only writer: the store never creates a labelled-only member, so the member can refuse that case.
-
-### 4.4 Revised estimate (estimate, not measured)
-
-| Work | Days |
-|---|---|
-| Row 39: typed access-values read, napi, TypeScript member, 3-arm parity, read classes | 1 |
-| Row 38: label scan, restore and re-embed reads | 1 |
-| Row 38: clear-mode dependents with a postimage overlay through `privacy_allows`, plus 3-arm parity on derived, atom, concept and life-chronicle dependents | 2 to 3 |
-| Row 38: apply on Rust for pages without a facts fence; a named stop for pages with one | 0.5 |
-| Page-visibility fallback through `read_page_hidden_from_caller`, single identity | 1 to 1.5 |
-| Read-back checks in the three tests, RUST_ENGINE.md rows, report update | 0.5 |
-| **Total** | **6 to 7.5** |
-
-Row 39 alone is about 1 day, because it reuses existing Rust code. Row 38 stays the large item, because of the clear-mode overlay. Typing `guardFenceRows` (row 3) is not in this estimate; it is a facts-lane item and would also serve the fences and split-facts applies.
+- **Page writes of three explicit kinds.** `private-labels`, `fact-claim-dates` (page move) and `visibility` (page items, fenced fact rows) stop at their page write. Each needs its label or page write to publish on Rust.
+- **Fact writes of two explicit kinds.** `unwithdrawn-facts` (apply) and `open-facts` (apply and undo) still lock and write facts through raw SQL.
+- **The page-visibility fallback (row 53).** `read_page_hidden_from_caller` (`rust/crates/gbrain-store/src/page_visibility.rs`) already judges a soft-deleted row. It needs the stored writer's policy as a `PrivacyPolicy`: the identity (`writerIdentities`), the folder access, the owner record and the hide flag. `writerIdentities` returns one identity set per audience entry, and `PrivacyPolicy` holds one, so the lane can serve single-identity writers and keep the refusal for an audience write.
+- **Unproven paths.** `attribution-backfill` and `provenance` need a Rust case with rows. `orphan-bindings` and `file-drift` need seeds that do not use raw SQL.
+- **Estimate (estimate, not measured):** the page-visibility fallback is about 1 to 1.5 days. The page and fact writes depend on the page-write lane and are not estimated here.
 
 ## Out of scope
 
-- `visibility` (events, aliases, lineage classes) and `open-facts` stop at the same kind of privacy scan. They need folder rules and fact privacy, so this inventory does not cover them.
-- The preview-only kinds in section 1 stop at page or fact writes owned by other lanes (lane 7's page write, the facts lane). This report lists them and does not plan them.
+- `slug-spelling` is row 50's (legacy slug spellings), not a repair-lane item.
+- The retention purge stop in a `purged-page-facts` seed belongs to lane 13.

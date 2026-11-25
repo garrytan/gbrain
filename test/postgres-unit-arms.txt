@@ -478,6 +478,7 @@ test/engine-parity/repair-slug-spelling.test.ts
 test/engine-parity/repair-source-reads.test.ts
 test/engine-parity/repair-takes-timeline.test.ts
 test/engine-parity/repair-twin-merge.test.ts
+test/engine-parity/repair-visibility-default.test.ts
 test/engine-parity/request-tools-persist.test.ts
 test/engine-parity/resident-projection.test.ts
 test/engine-parity/resolve-reads.test.ts
