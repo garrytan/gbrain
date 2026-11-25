@@ -555,6 +555,77 @@ describe('review round 1: consent, purge retry, seal accounting', () => {
   });
 });
 
+describe('final fix round: disconnect faults, consecutive seals, exit with unfinished work, reconnect', () => {
+  function slowEngine() {
+    let release!: () => void;
+    const e = { ...fakeEngine(), getPage: () => new Promise(r => { release = () => r(null); }) } as unknown as BrainEngine;
+    return { e, release: () => release() };
+  }
+  const regs = (cap: string) => existsSync(recordersDir(cap)) ? readdirSync(recordersDir(cap)).filter(f => f.endsWith('.json')).length : 0;
+
+  test('a registration that cannot be removed never fails the disconnect', async () => {
+    const { cap, home } = recordingCapture();
+    const writer = new CaptureWriter(cap, home, {});
+    await wrapCaptureEngine(fakeEngine() as unknown as BrainEngine, writer).getStats();
+    const reg = join(recordersDir(cap), `${writer.proc}.json`);
+    rmSync(reg);
+    mkdirSync(join(reg, 'x'), { recursive: true }); // unlink now fails (a directory), like an unwritable folder
+    await expect(writer.close()).resolves.toBeUndefined();
+    expect(existsSync(reg)).toBe(true); // kept: a seal counts it, never as complete
+  });
+
+  test('the second of two seals in a row waits for a call that started during the first, and keeps its record', async () => {
+    const { cap, home } = recordingCapture();
+    const writer = new CaptureWriter(cap, home, {});
+    const a = slowEngine();
+    const callA = wrapCaptureEngine(a.e, writer).getPage('notes/a');
+    const seal1 = sealEpoch(cap, { home, timeoutMs: 5_000 });
+    const b = slowEngine();
+    const callB = wrapCaptureEngine(b.e, writer).getPage('notes/b'); // starts during the first seal: the next epoch's
+    a.release();
+    await callA;
+    const r1 = (await seal1)!;
+    const seal2 = sealEpoch(cap, { home, timeoutMs: 5_000 });
+    await Bun.sleep(300);
+    expect(readEpoch(cap)!.state).toBe('sealing'); // still waiting for call B
+    b.release();
+    await callB;
+    expect((await seal2)!.unacked).toBe(0);
+    const inR1 = readdirSync(epochDir(cap, r1.next.id)).filter(f => f.endsWith('.jsonl')).flatMap(f => readSegment(join(epochDir(cap, r1.next.id), f)).records);
+    expect(inR1.map(x => x.args)).toContainEqual(['notes/b']);
+  });
+
+  test('an exit with a call still running keeps the registration, so the next seal does not claim it complete', async () => {
+    const { cap, home } = recordingCapture();
+    const writer = new CaptureWriter(cap, home, {});
+    void wrapCaptureEngine(slowEngine().e, writer).getPage('notes/running');
+    writer.flushSync();
+    expect(regs(cap)).toBe(1);
+  });
+
+  test('an engine that clears its disconnect hooks (Rust) still retires the recorder after a reconnect', async () => {
+    const root = tmp();
+    const cap = captureDir(join(root, 'shadow', 'pglite-abc'));
+    writePrivateJson(join(cap, 'state.json'), { version: 1, enabled: true, turned_on_at: '2026-11-22T00:00:00.000Z' });
+    startEpoch(cap); // the same purge-log home attachCapture's writer reads
+    const hooks = new Set<() => Promise<void>>();
+    const base = {
+      ...fakeEngine(),
+      registerBeforeDisconnect(fn: () => Promise<void>) { hooks.add(fn); return () => { hooks.delete(fn); }; },
+      async disconnect() { const stops = [...hooks]; hooks.clear(); for (const f of stops) await f(); },
+    };
+    const e = attachCapture(base as unknown as BrainEngine, cap);
+    await e.getStats();
+    expect(regs(cap)).toBe(1);
+    await e.disconnect();
+    expect(regs(cap)).toBe(0);
+    await e.getStats(); // reconnected and used again
+    expect(regs(cap)).toBe(1);
+    await e.disconnect();
+    expect(regs(cap)).toBe(0);
+  });
+});
+
 describe('purge and delete paths (guard)', () => {
   test('every function that sees a purge calls purgeCapture, only purgeCapture deletes everything, and destructive deletes take the lock', () => {
     const root = join(import.meta.dir, '..', 'src');

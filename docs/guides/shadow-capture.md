@@ -72,7 +72,8 @@ to the next recording. Each live recording process waits for its calls of the se
 progress, writes them out under the same checks as any write (capture on, no new purge, disk budget) and
 acknowledges. The seal waits for every live process. These are reported, so the replay will say its coverage is
 incomplete instead of claiming it complete: a process that does not acknowledge in time, one that acknowledges with
-capture off or over budget, and one that died without its exit flush (a clean exit removes its `recorders/` file).
+capture off or over budget, and one that died without its exit flush (an exit with nothing left running or unwritten
+removes its `recorders/` file; any other exit keeps it, so the seal counts that process).
 A process that died after acknowledging marks the next recording `unverified` instead.
 
 ## Errors

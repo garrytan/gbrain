@@ -374,8 +374,7 @@ export class CaptureWriter {
   /** The engine disconnected: write what is left, then stop the watcher and unregister once nothing is owed. */
   async close(): Promise<void> {
     this.closingSince = Date.now();
-    try { await this.flush(); this.drainForSeal(); } catch { /* never fails a disconnect */ }
-    this.retireIfIdle();
+    try { await this.flush(); this.drainForSeal(); this.retireIfIdle(); } catch { /* a capture fault never fails a disconnect */ }
   }
 
   private retireIfIdle(): void {
@@ -385,7 +384,10 @@ export class CaptureWriter {
     if (owed && Date.now() - this.closingSince < 60_000) return;
     clearInterval(this.ticker);
     this.ticker = null;
-    if (!owed) { rmSync(join(recordersDir(this.cap), `${this.proc}.json`), { force: true }); this.registered = false; }
+    if (!owed) {
+      try { rmSync(join(recordersDir(this.cap), `${this.proc}.json`), { force: true }); this.registered = false; }
+      catch { /* stays registered: a seal then counts this recorder as unverified, never as complete */ }
+    }
     this.hooks.retire?.();
   }
 
@@ -405,9 +407,12 @@ export class CaptureWriter {
     const dir = epochDir(this.cap, epoch.id);
     const ack = join(dir, `ack-${this.proc}`);
     if (existsSync(ack)) return;
-    const running = (this.inFlight.get(epoch.id) ?? 0) > 0;
+    // This epoch's calls: those that started while it was recording, and those that started while the epoch before
+    // it was sealing (tagged `>previous`).
+    const prev = epoch.after ? `>${epoch.after}` : null;
+    const mine = (tag: string) => tag === epoch.id || tag === prev;
+    const running = [...this.inFlight.keys()].some(mine);
     if (!exiting && (running || this.flushing)) return;
-    const mine = (tag: string) => tag === epoch.id;
     const later = (tag: string) => tag === `>${epoch.id}`;
     let note = running || this.flushing ? 'exited' : '';
     if (!captureIsOn(this.cap, this.env)) { this.take(() => false, later); note = 'off'; }
@@ -525,7 +530,8 @@ export class CaptureWriter {
         if ('stop' in t) this.apply(t.stop);
         else appendFileSync(t.path, this.take(t.match, () => false), { mode: 0o600 });
       }
-      if (!this.buffer.length && !this.lost.size && this.registered) rmSync(join(recordersDir(this.cap), `${this.proc}.json`), { force: true });
+      // Unfinished work (a call still running, an append still pending) keeps the registration: a seal counts it.
+      if (!this.buffer.length && !this.lost.size && !this.inFlight.size && !this.flushing && this.registered) rmSync(join(recordersDir(this.cap), `${this.proc}.json`), { force: true });
     } catch { /* exit hook: a capture fault never fails shutdown */ }
   }
 }
@@ -626,12 +632,14 @@ export function wrapCaptureEngine<E extends BrainEngine>(engine: E, writer: Capt
 /** The engine factory's entry point: the recording engine, with its exit flush (the factory installs `watchPurges`). */
 export function attachCapture<E extends BrainEngine>(engine: E, cap: string): E {
   const onExit = () => writer.flushSync();
-  // The exit hook lives while the writer is active (from its first call until it retires with everything written),
-  // so a seal pending at disconnect still drains, and a reconnect gets it back.
+  const onDisconnect = () => writer.close();
+  // The exit hook and the disconnect hook live while the writer is active (from a call until it retires with
+  // everything written), so a seal pending at disconnect still drains. A reconnect gets both back: an engine that
+  // clears its disconnect hooks when it disconnects (Rust) gets the same callback again (the engines keep a Set).
   const writer = new CaptureWriter(cap, undefined, undefined, {
-    active: () => { process.removeListener('exit', onExit); process.once('exit', onExit); },
+    active: () => { process.removeListener('exit', onExit); process.once('exit', onExit); engine.registerBeforeDisconnect(onDisconnect); },
     retire: () => process.removeListener('exit', onExit),
   });
-  engine.registerBeforeDisconnect(() => writer.close());
+  engine.registerBeforeDisconnect(onDisconnect);
   return wrapCaptureEngine(engine, writer);
 }
