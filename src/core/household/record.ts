@@ -108,7 +108,7 @@ export function cadenceDays(value: unknown): number | null {
 }
 
 /** Frontmatter keys named like an account or card number. */
-const ACCOUNT_KEY_RE = /^(?:(?:account|acct|card|bank)[_ -]?(?:number|no|num|id)|iban|routing(?:[_ -]?(?:number|no|num))?)$/i;
+const ACCOUNT_KEY_RE = /^(?:(?:account|acct|iban|routing)(?:[_ -]?(?:number|no|num|id))?|(?:card|bank)[_ -]?(?:number|no|num|id))$/i;
 
 function luhn(digits: string): boolean {
   let sum = 0;
@@ -120,9 +120,9 @@ function luhn(digits: string): boolean {
   return sum % 10 === 0;
 }
 
-/** True when a string holds a run shaped like a full card number (13 to 19 digits passing Luhn) or a long account number (10+ digits); calendar dates are not runs. */
+/** True when a string holds a run shaped like a full card number (13 to 19 digits passing Luhn) or a long account number (10+ digits); a calendar date standing alone is not a run. */
 export function looksLikeAccountNumber(value: string): boolean {
-  for (const [run] of value.replace(/\b\d{4}-\d{2}-\d{2}\b/g, ' ').matchAll(/\d[\d -]{8,24}\d/g)) {
+  for (const [run] of value.replace(/(?<![\d-])\d{4}-\d{2}-\d{2}(?![\d-])/g, ' ').matchAll(/\d[\d -]{8,24}\d/g)) {
     const digits = run.replace(/[ -]/g, '');
     if (digits.length >= 13 && digits.length <= 19 && luhn(digits)) return true;
     if (digits.length >= 10 && /^\d+$/.test(run)) return true;

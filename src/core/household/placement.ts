@@ -102,9 +102,10 @@ export function subjectClass(page: { type?: string | null; frontmatter?: Record<
  */
 export async function sharedRecordsAbout(engine: Pick<BrainEngine, 'listPages' | 'executeRaw' | 'getConfig'>, sourceId: string, slug: string): Promise<string[]> {
   const adults = tableReaders('adults', await ownerMemberId(engine));
+  const missing = (await brainServes(engine as BrainEngine)).serves === 'several' ? null : [];
   const shared: string[] = [];
   for (const row of await recordsAbout(engine, sourceId, slug)) {
-    if (await readersWiden(engine, readerList(row.frontmatter?.readable_by) ?? [], adults)) shared.push(row.slug);
+    if (await readersWiden(engine, readerList(row.frontmatter?.readable_by) ?? missing, adults)) shared.push(row.slug);
   }
   return shared;
 }

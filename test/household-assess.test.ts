@@ -63,6 +63,11 @@ describe('record validation', () => {
     expect(accountNumberFields({ card_number: '1234', iban: 'x' })).toEqual(['card_number', 'iban']);
   });
 
+  test('keys that name the number still count, and a date inside a longer number does not hide it (follow-up final review)', () => {
+    for (const key of ['account', 'acct', 'iban_number', 'iban_no', 'routing_id', 'routing']) expect(accountNumberFields({ [key]: '021000021' })).toEqual([key]);
+    expect(looksLikeAccountNumber('Card 4111-1111-2026-12-04 on file')).toBe(true);
+  });
+
   test('a record with a bad field reports an issue at read time instead of throwing', () => {
     const read = readHouseholdRecord({ slug: 'household/x', source_id: 'default', frontmatter: { type: 'household', household_schema: 1, kind: 'bill', due: 'soon' } });
     expect(read.record).toBeNull();

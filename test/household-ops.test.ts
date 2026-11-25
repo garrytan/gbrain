@@ -288,6 +288,41 @@ describe('household_due at scale', () => {
     }
   }, 240_000);
 
+  test('household replace sees every record when an earlier one is deleted during the walk (follow-up final review)', async () => {
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+    try {
+      await engine.executeRaw("INSERT INTO pages (source_id, slug, type, title, compiled_truth, timeline, frontmatter) SELECT 'default', 'household/walk/w-' || lpad(g::text, 4, '0'), 'household', 'walk ' || g, '', '', '{\"kind\":\"bill\",\"status\":\"archived\",\"due\":\"2026-12-01\",\"household_schema\":1,\"household_audience\":\"shared\"}'::jsonb FROM generate_series(1, 501) g");
+    } finally {
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    }
+    const original = engine.listPages.bind(engine);
+    let calls = 0;
+    engine.listPages = (async (filters?: any) => {
+      if (filters?.type === 'household' && filters?.limit === 500 && calls++ === 1) {
+        await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+        await engine.executeRaw("UPDATE pages SET deleted_at = now() WHERE slug = 'household/walk/w-0001'");
+        await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+      }
+      return original(filters);
+    }) as typeof engine.listPages;
+    try {
+      const out = await call('household_replace', {});
+      expect(out.replaced.filter((s: string) => s.startsWith('household/walk/')).length).toBe(501);
+    } finally {
+      engine.listPages = original;
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+      await engine.executeRaw("DELETE FROM pages WHERE slug LIKE 'household/walk/%'");
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    }
+  }, 240_000);
+
+  test('a reused request_id is refused before household_add changes any subject (follow-up final review)', async () => {
+    await call('household_add', { kind: 'supply', title: 'Napkins', cadence: '30d', request_id: 'shared-request-2' });
+    const err = await call('household_add', { kind: 'supply', title: 'Terry glue', cadence: '30d', about: ['people/terry-example'], about_role: 'adult', request_id: 'shared-request-2' }).catch((e: any) => e);
+    expect(err.code).toBeDefined();
+    expect(await engine.getPage('people/terry-example')).toBeNull();
+  });
+
   test('household_due reads frontmatter only, never page bodies (outside#8)', async () => {
     const seen: any[] = [];
     const original = engine.listPages.bind(engine);

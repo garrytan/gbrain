@@ -378,6 +378,41 @@ describe('household privacy over remote MCP', () => {
     expect(await engine.executeRaw("SELECT slug FROM pages WHERE slug LIKE '%probe-%'")).toEqual([]);
   });
 
+  test('a hidden subject that already has the requested role is answered page_not_found too (follow-up final review)', async () => {
+    await local('put_page', { slug: 'people/hidden-pet-example', content: md({ type: 'person', title: 'hidden-pet-example', household_role: 'pet', readable_by: [OWNER] }, 'x') });
+    __resetPrivateVisibilityCacheForTests();
+    const out = await remote(ADULT, 'household_add', { kind: 'supply', title: 'Probe three', cadence: '30d', about: ['people/hidden-pet-example'], about_role: 'pet' });
+    expect(out.text).toContain('page_not_found');
+    expect(await engine.executeRaw("SELECT slug FROM pages WHERE slug LIKE '%probe-three%'")).toEqual([]);
+  });
+
+  test('household_add --child refused because a record about the subject is hidden writes nothing (follow-up final review)', async () => {
+    await local('put_page', { slug: 'people/sam-example', content: md({ type: 'person', title: 'sam-example', household_role: 'adult' }, 'Sam.') });
+    const helperOnly = await local('household_add', { kind: 'supply', title: 'Sam snacks', cadence: '30d', about: ['people/sam-example'] });
+    const page = await engine.getPage(helperOnly.slug);
+    const { revision } = await local('get_page', { slug: helperOnly.slug });
+    await local('put_page', { slug: helperOnly.slug, expected_revision: revision, content: md({ title: page!.title, ...page!.frontmatter, readable_by: [HELPER] }, page!.compiled_truth) });
+    __resetPrivateVisibilityCacheForTests();
+    const out = await remote(ADULT, 'household_add', { kind: 'supply', title: 'Sam crayons', cadence: '30d', about: ['people/sam-example'], child: true });
+    expect(out.isError).toBe(true);
+    expect(await engine.executeRaw("SELECT slug FROM pages WHERE slug LIKE '%sam-crayons%'")).toEqual([]);
+    expect((await engine.getPage('people/sam-example'))!.frontmatter.household_role).toBe('adult');
+  });
+
+  test('a record with no reader list counts as shared when its subject is made a child (follow-up final review)', async () => {
+    await local('put_page', { slug: 'people/uma-example', content: md({ type: 'person', title: 'uma-example', household_role: 'adult' }, 'Uma.') });
+    const added = await local('household_add', { kind: 'supply', title: 'Uma sunscreen', cadence: '30d', about: ['people/uma-example'] });
+    const stored = (await engine.getPage(added.slug))!.frontmatter.readable_by;
+    await engine.executeRaw("UPDATE pages SET frontmatter = frontmatter - 'readable_by' WHERE slug = $1", [added.slug]);
+    try {
+      const uma = await local('get_page', { slug: 'people/uma-example' });
+      const err = await local('put_page', { slug: 'people/uma-example', expected_revision: uma.revision, content: md({ type: 'person', title: 'uma-example', household_role: 'child' }, 'Uma.') }).catch(e => e);
+      expect(err.code).toBe('household_reclassify');
+    } finally {
+      await engine.executeRaw("UPDATE pages SET frontmatter = jsonb_set(frontmatter, '{readable_by}', $2::jsonb) WHERE slug = $1", [added.slug, JSON.stringify(stored)]);
+    }
+  });
+
   test('a remote household_add with a role for a new subject writes both the subject and the record (follow-up review)', async () => {
     const out = await remote(ADULT, 'household_add', { kind: 'supply', title: 'Newbie glue', cadence: '30d', about: ['people/newbie-example'], about_role: 'adult' });
     expect(out.isError).toBe(false);
