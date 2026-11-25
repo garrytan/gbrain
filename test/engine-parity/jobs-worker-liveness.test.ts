@@ -156,6 +156,70 @@ describe('engine parity: a minion worker stays alive and releases a claim as eve
       return value;
     });
 
+  parityTest('an idle worker keeps running well past stallWarnAfterMs, checks the waiting count each tick, and still finishes a job',
+    { methods: ['pingStore', 'admitJob', 'claimNextJob', 'completeJob', 'getJob'], timeout: 90_000 }, async (engine) => {
+      // A waiting job of a name this worker does not handle: the stall check runs its count, which answers 0 for this worker.
+      const unhandled = await add(engine, 'not-handled-here');
+      let completedProbes = 0;
+      const counted = new Proxy(engine, {
+        get(target, prop) {
+          const value = Reflect.get(target, prop, target);
+          if (prop === 'pingStore') {
+            return async (opts?: { signal?: AbortSignal; direct?: boolean }) => {
+              await (value as BrainEngine['pingStore']).call(target, opts);
+              completedProbes++;
+            };
+          }
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+      const stallWarnAfterMs = 60;
+      const worker = new MinionWorker(counted, {
+        queue: 'default', concurrency: 1, pollInterval: 25, maxRssMb: 0, healthCheckInterval: 20, dbFailExitAfter: 3,
+        dbProbeTimeoutMs: 1_000, stallWarnAfterMs, stallExitAfterMs: 600_000,
+      });
+      worker.register('noop', async () => {});
+      const unhealthy: UnhealthyReason[] = [];
+      worker.on('unhealthy', info => unhealthy.push(info));
+      const until = async (done: () => boolean | Promise<boolean>, ms: number): Promise<boolean> => {
+        const deadline = Date.now() + ms;
+        while (Date.now() < deadline) {
+          if (await done()) return true;
+          await Bun.sleep(10);
+        }
+        return await done();
+      };
+      let readyAt = 0;
+      worker.on('ready', () => { readyAt = Date.now(); });
+      const { value } = await quietly(async () => {
+        const run = worker.start();
+        try {
+          const isReady = await until(() => readyAt > 0 || unhealthy.length > 0, 10_000);
+          // Idle time counts from the start of the run, so past this point every health tick runs the stall check.
+          const pastThreshold = await until(() => (readyAt > 0 && Date.now() > readyAt + stallWarnAfterMs + 40) || unhealthy.length > 0, 10_000);
+          const probesAtThreshold = completedProbes;
+          // The stall check runs after each tick's probe; a refused check would have ended the worker on its first tick.
+          const ticked = await until(() => completedProbes - probesAtThreshold >= 4 || unhealthy.length > 0, 10_000);
+          const ticksPastThreshold = completedProbes - probesAtThreshold;
+          const id = await add(engine, 'noop');
+          const finished = await until(async () => String((await engine.getJob(id))?.status) === 'completed' || unhealthy.length > 0, 10_000);
+          return {
+            isReady, pastThreshold, ticked, atLeastFourTicks: ticksPastThreshold >= 4, finished,
+            status: String((await engine.getJob(id))?.status), unhandledStatus: String((await engine.getJob(unhandled))?.status),
+            unhealthy: unhealthy.map(u => u.reason),
+          };
+        } finally {
+          worker.stop();
+          await run;
+        }
+      });
+      expect(value).toEqual({
+        isReady: true, pastThreshold: true, ticked: true, atLeastFourTicks: true, finished: true, status: 'completed',
+        unhandledStatus: 'waiting', unhealthy: [],
+      });
+      return value;
+    });
+
   parityTest('a claim released because the pause marker appeared goes back to delayed for a minute, and a claim another worker holds is left alone',
     { methods: ['releaseClaimForPause', 'admitJob', 'claimNextJob', 'getJob'] }, async (engine) => {
       const { id, job } = await active(engine, 'paused', 'w1:a');
