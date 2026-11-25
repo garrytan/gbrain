@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs';
 import type { BrainEngine } from '../core/engine.ts';
 import { handleToolCall } from '../mcp/server.ts';
 import type { ClaimCheck } from '../core/claims/check.ts';
+import type { SkipReason } from '../core/ops/claims.ts';
 
 export const CLAIMS_USAGE = [
   'Usage: gbrain claims check "<draft text>" [--file <path>] [--source <id>] [--json]',
@@ -22,7 +23,20 @@ export const CLAIMS_USAGE = [
 export { CLAIMS_SUBCOMMANDS as SUBCOMMANDS } from '../cli/subcommands.ts';
 export function printUsage(): void { console.log(CLAIMS_USAGE); }
 
-interface CheckResult { claims: ClaimCheck[]; summary: { supported: number; conflicts: number; not_found: number }; allowed_pages: number }
+interface CheckResult {
+  claims: ClaimCheck[];
+  summary: { supported: number; conflicts: number; not_found: number };
+  allowed_pages: number;
+  skipped?: Array<{ slug: string; reason: SkipReason }>;
+}
+
+const SKIP_REASONS: Record<SkipReason, string> = {
+  segmented: 'stored in segments',
+  quarantined: 'quarantined',
+  external: 'outside source',
+  written_by_agent: 'written by an agent',
+  not_approved: 'source is not approved or record',
+};
 
 const where = (l: { slug: string; line: number; date: string }) => `${l.slug}:${l.line} (${l.date})`;
 
@@ -56,6 +70,7 @@ export async function runClaims(engine: BrainEngine, args: string[]): Promise<vo
       for (const l of c.conflicting ?? []) console.log(`           ${where(l)}: ${l.text}`);
     } else console.log(`not found  "${c.claim}"  (no allowed claim covers this; not proof it is false)`);
   }
+  if (result.skipped?.length) console.log(`Skipped ${result.skipped.map(s => `${s.slug} (${SKIP_REASONS[s.reason]})`).join(', ')}.`);
   const { supported, conflicts, not_found } = result.summary;
   console.log(`${result.claims.length} claim(s): ${supported} supported, ${conflicts} conflicts, ${not_found} not found (${result.allowed_pages} allowed-claims page(s) read).`);
   if (result.allowed_pages === 0) console.log('No allowed-claims page is readable. Add "claims: allowed" to the frontmatter of a type: facts page, such as me/facts or company/facts, from this machine (gbrain put or an edit in the brain repo); a page an agent wrote over MCP, or an outside sender\'s page, never counts.');
