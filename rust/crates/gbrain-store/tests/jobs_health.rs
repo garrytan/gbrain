@@ -464,3 +464,28 @@ fn the_stall_count_keeps_to_waiting_rows_of_the_queue_with_a_listed_name() {
         "names match exactly"
     );
 }
+
+#[test]
+fn the_stall_count_is_exact_across_the_pages_of_the_waiting_index() {
+    let b = brain("jobs_health");
+    let work = vec!["work".to_string()];
+    // More waiting rows than one page of the status walk (256), interleaved so every page holds all three kinds.
+    for i in 0..600 {
+        match i % 3 {
+            0 => add(&b, "work", json!({})),
+            1 => add(&b, "other", json!({})),
+            _ => add(&b, "work", json!({"queue": "side"})),
+        };
+    }
+    assert_eq!(
+        b.count_waiting_jobs_for_names("default", &work).unwrap(),
+        200
+    );
+    assert_eq!(b.count_waiting_jobs_for_names("side", &work).unwrap(), 200);
+    assert_eq!(
+        b.count_waiting_jobs_for_names("default", &["other".to_string()])
+            .unwrap(),
+        200
+    );
+    assert_eq!(b.count_waiting_jobs_for_names("none", &work).unwrap(), 0);
+}

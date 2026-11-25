@@ -130,7 +130,7 @@ use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
 use crate::jsonb::ordered;
 use crate::keys;
-use crate::kv::{KvRead, KvWrite, scan_prefix};
+use crate::kv::{KvRead, KvWrite, for_each_prefix_paged, scan_prefix};
 use crate::timeline_queries::jsonb_field_text;
 use crate::{Store, get_json, put_json};
 use serde::{Deserialize, Serialize};
@@ -741,19 +741,20 @@ fn ids_under(read: &dyn KvRead, prefix: &[u8]) -> Result<Vec<i64>> {
 /// Index entries one scan of a status walk reads (the rows load between scans, so the ids never all sit in memory).
 const ROW_PAGE: usize = 256;
 
-/// Calls `f` on each row with `status` as it loads, in id order. The row is dropped when `f` returns, so a caller that
-/// filters keeps only what it projects: one row's payload is held at a time, not the whole status.
+/// Calls `f` on each row with `status` as it loads, in id order. The status index is read `ROW_PAGE` entries at a time and each
+/// row loads between scans, so neither the whole index nor a whole status of rows is held: one page of ids and one row's
+/// payload at a time. The row is dropped when `f` returns, so a caller that filters keeps only what it projects.
 fn for_each_row_with_status(
     read: &dyn KvRead,
     status: &str,
     f: &mut dyn FnMut(&JobRecord),
 ) -> Result<()> {
-    for id in ids_under(read, &status_prefix(status))? {
-        if let Some(row) = load(read, id)? {
+    for_each_prefix_paged(read, &status_prefix(status), ROW_PAGE, &mut |key, _| {
+        if let Some(row) = last_id(key).map(|id| load(read, id)).transpose()?.flatten() {
             f(&row);
         }
-    }
-    Ok(())
+        Ok(true)
+    })
 }
 
 /// The `minion_jobs` rows with `status='active'`.
@@ -2255,7 +2256,8 @@ mod row_walk_tests {
     impl KvRead for Probing {
         fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
             if self.scanning.get() {
-                self.gets_inside_a_scan.set(self.gets_inside_a_scan.get() + 1);
+                self.gets_inside_a_scan
+                    .set(self.gets_inside_a_scan.get() + 1);
             }
             self.inner.get(key)
         }
