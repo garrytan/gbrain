@@ -23,6 +23,18 @@ export async function run(args: string[], ctx: CliDispatchContext): Promise<void
   // outbound-HTTP probe set in `src/core/doctor-remote.ts` and return
   // before any local-engine work.
   const cfgForDoctor = loadConfig();
+  if (args.includes('--fact-date-evidence')) {
+    const { parseOnlyChecks } = await import('../../commands/doctor/registry.ts');
+    const only = parseOnlyChecks(args);
+    const path = args[args.indexOf('--fact-date-evidence') + 1];
+    if (isThinClient(cfgForDoctor) || process.env.GBRAIN_ENFORCED_MEMBER !== undefined ||
+        !only?.has('fact_bulk_dates') || !path || path.startsWith('--')
+      || args.some(arg => ['--alert', '--fast', '--fix', '--remediate', '--remediation-plan', '--locks'].includes(arg))) {
+      const { opError } = await import('../../core/ops/contract.ts');
+      throw opError('invalid_params', 'Date evidence needs a local Doctor fact_bulk_dates check and a readable file.',
+        'On the brain host, run gbrain doctor --only fact_bulk_dates --fact-date-evidence <file> --json.');
+    }
+  }
   if (isThinClient(cfgForDoctor)) {
     // #6696 B2: --tier, or --only naming brain checks, asks the serve (run_doctor / get_brain_health) or hands off; never the full report.
     const { parseOnlyChecks, doctorCheckNames } = await import('../../commands/doctor/registry.ts');

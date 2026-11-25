@@ -320,7 +320,12 @@ async function runTimelineHistory(ctx: DoctorContext): Promise<Check[]> {
     }
     // Wave checks registered in doctor/wave-checks.ts rather than inline here.
     const { runWaveChecks } = await import('../wave-checks.ts');
-    for (const finding of await runWaveChecks(engine, { only: 'wave', ids: only ?? undefined, sourceIds: doctorSourceIds(ctx) })) checks.push(finding.check);
+    const evidenceFlag = ctx.args.indexOf('--fact-date-evidence');
+    const factDateEvidencePath = evidenceFlag >= 0 && only?.has('fact_bulk_dates') &&
+      !ctx.remote && process.env.GBRAIN_ENFORCED_MEMBER === undefined ? ctx.args[evidenceFlag + 1] : undefined;
+    const findings = await runWaveChecks(engine, { only: 'wave', ids: only ?? undefined,
+      sourceIds: doctorSourceIds(ctx), factDateEvidencePath });
+    for (const finding of findings) checks.push(finding.check);
   }
   return checks;
 }

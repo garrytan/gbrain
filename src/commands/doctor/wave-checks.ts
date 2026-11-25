@@ -22,6 +22,7 @@ export type WaveResolution = 'repair' | 'operator' | 'unsupported';
 export interface WaveScope {
   /** Remote source scope; undefined means brain-wide (local trusted callers). */
   sourceIds?: string[];
+  factDateEvidencePath?: string;
 }
 
 export interface WaveCheckSpec {
@@ -447,8 +448,8 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
   {
     id: 'fact_bulk_dates', resolution: 'repair', registration: 'wave',
     count: d => Array.isArray(d.days) ? d.days.reduce((sum: number, day: { facts?: number }) => sum + Number(day.facts ?? 0), 0) : 0,
-    impact: 'Some sources hold a large share of facts dated with the day a bulk load ran, which records when they were loaded, not when they happened',
-    run: async (engine, scope) => (await import('./checks/fact-bulk-dates.ts')).factBulkDatesCheck(engine, scope.sourceIds),
+    impact: 'Some sources hold a large share of facts dated on a single day, which can indicate a bulk import',
+    run: async (engine, scope) => (await import('./checks/fact-bulk-dates.ts')).factBulkDatesCheck(engine, scope.sourceIds, scope.factDateEvidencePath),
   },
   {
     id: 'loop_facts_drift', resolution: 'repair', registration: 'wave',
@@ -493,7 +494,7 @@ export async function runWaveChecks(engine: BrainEngine, opts: WaveScope & { onl
   const findings: WaveFinding[] = [];
   for (const spec of specs) {
     let check: Check;
-    try { check = await spec.run(engine, { sourceIds: opts.sourceIds }); }
+    try { check = await spec.run(engine, { sourceIds: opts.sourceIds, factDateEvidencePath: opts.remote ? undefined : opts.factDateEvidencePath }); }
     catch (error) {
       check = { name: spec.id, status: 'warn', message: `${spec.id} could not run: ${error instanceof Error ? error.message : String(error)}. Health is unknown.`,
         details: { health: 'unknown' } };

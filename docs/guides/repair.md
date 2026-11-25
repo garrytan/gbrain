@@ -3267,7 +3267,8 @@ at least a quarter of them, across 20 or more entities. It reports each such
 day with its fact and entity counts, the most frequent source tags, and how
 many of those claims state exactly one earlier ISO date of their own ("Acme
 Example closed a seed round on 2025-03-14"). A remote caller sees only its
-permitted sources. `gbrain repair fact-claim-dates` moves those facts to the
+permitted sources. Concentration alone does not establish whether the dates
+are genuine. `gbrain repair fact-claim-dates` moves those facts to the
 date their claim states. It is explicit-only, preview-bound and destructive,
 and it never runs on upgrade.
 
@@ -3281,6 +3282,25 @@ gbrain repair fact-claim-dates --source <id>                           # preview
 gbrain repair fact-claim-dates --source <id> --day 2026-01-15          # preview a loaded day the rule does not detect
 gbrain repair fact-claim-dates --source <id> --apply --expect <hash> --yes
 ```
+
+To distinguish operator-reviewed original dates from unknown ones without
+changing the concentration warning, run:
+
+```bash
+gbrain doctor --only fact_bulk_dates --fact-date-evidence reviewed-dates.json --json
+```
+
+The local, read-only file has `version: 1` and a `facts` array. Each entry
+contains `source_id`, `fact_id`, `entity_slug` (or null), the exact stored ISO timestamp `valid_from`,
+and `claim_sha256` (UTF-8 SHA-256 of the stored claim). It also contains the
+reviewed `event_day` (UTC date), `original_page_id`, `original_revision`, and
+the original `line` (1-based in the revision's compiled body) and
+`line_sha256` (UTF-8 SHA-256 with no trailing newline). Only use a line
+whose date you independently verified as the date of that fact. Doctor
+checks the live assertion and retained source line, then reports
+`verified_same_day`, `verified_different_day`, and `unknown`. Missing, stale,
+and contradictory evidence remains unknown. The file is not stored, no
+dates are written, and the repair preview still uses the claim-date rule.
 
 A candidate is an active fact whose `valid_from` falls on a loaded day and
 whose claim holds exactly one `YYYY-MM-DD` date, a real calendar date from
