@@ -187,6 +187,7 @@ const PARAM_FACTORY: Record<string, Record<string, unknown>> = {
   get_chunks: { slug: WORLD_FENCE_SLUG },
   resolve_slugs: { partial: 'world-page' },
   whois: { query: WORLD.pageTitle },
+  policy_check: { verb: 'send' },
   volunteer_context: { window: 'Recent discussion about WORLDSWEEP topics and pages.' },
   chronicle_day: { date: '2026-01-02' },
   chronicle_since: { date: '2020-01-01' },
@@ -300,6 +301,9 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   search_modes: 'ok',
   get_brain_identity: 'ok',
   whoami: 'ok', // base unused — per-shape override in EXPECTED_BY_SHAPE (above)
+  policy_check: 'ok',
+  agent_policy: 'ok',
+  capabilities: 'ok',
   sources_list: 'ok',
   sources_status: 'ok',
   sources_resolve_path: 'error',

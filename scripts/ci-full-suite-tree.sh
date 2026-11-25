@@ -5,8 +5,9 @@
 # aggregate succeeded. scripts/ci-reuse.ts reads the artifact on a push to master;
 # `gstack-pregate clear --run` reads it as run evidence for the remote gate.
 # Input (environment): ARTIFACT_DIR, RUN_ID, RUN_ATTEMPT, WORKFLOW, EVENT, and
-# optionally MANIFEST, the run's ci-manifest.json (scripts/ci-manifest.ts), and
-# RUNNER_OS, which GitHub Actions sets on every runner.
+# optionally MANIFEST, the run's ci-manifest.json (scripts/ci-manifest.ts),
+# EXECUTED_RECEIPTS, the result of the job that writes it, and RUNNER_OS, which
+# GitHub Actions sets on every runner.
 # Output: $ARTIFACT_DIR/tree.json and step-summary lines.
 # `os` is the runner's OS (Linux, macOS or Windows) when RUNNER_OS is set.
 # gstack refuses a run under a .gstack/pregate.json run profile that sets `os`
@@ -14,11 +15,15 @@
 # `files` (every test file the run loaded, repo-relative, across lanes and
 # arms; a file whose tests all skipped counts, because the remote gate's
 # inventory lists the same env- and platform-gated files) and `tests` (its
-# executed test count) come only from a complete manifest of this run, attempt
-# and commit. Otherwise both are left out with a warning: the record still says
-# the full suite passed, but gstack cannot take it as run evidence. After a
-# re-run of only the failed jobs, each job's newest attempt counts (the manifest
-# covers every file across attempts), and the files whose newest receipt came
+# executed test count) come only from a complete manifest of this run and
+# commit, written in this attempt or an earlier one. Otherwise both are left out
+# with a warning: the record still says the full suite passed, but gstack cannot
+# take it as run evidence. A re-run of one job re-runs its dependents and the
+# manifest uploads with overwrite, so an earlier attempt's manifest is still the
+# newest when only full-suite re-ran; it counts only while executed-receipts
+# succeeded, since a failed re-run of that job can leave the old manifest behind. After a re-run of only the failed jobs,
+# each job's newest attempt counts (the manifest covers every file across
+# attempts), and the files whose newest receipt came
 # from the re-run are named in `rerun_files`, with the run's `attempts`. A
 # manifest that still lists a failing test is never evidence.
 set -euo pipefail
@@ -32,9 +37,12 @@ problem=""
 if [ -z "${MANIFEST:-}" ] || [ ! -s "$MANIFEST" ]; then
   problem="no ci-manifest.json from this run"
 else
-  problem=$(jq -r --argjson id "$RUN_ID" --argjson attempt "$RUN_ATTEMPT" --arg sha "$sha" '
+  problem=$(jq -r --argjson id "$RUN_ID" --argjson attempt "$RUN_ATTEMPT" --arg sha "$sha" --arg receipts "${EXECUTED_RECEIPTS:-}" '
     if .schema != "gbrain-ci-manifest/v1" then "ci-manifest.json has schema \(.schema)"
-    elif .run_id != $id or .run_attempt != $attempt then "ci-manifest.json belongs to run \(.run_id) attempt \(.run_attempt), not run \($id) attempt \($attempt) (re-run the whole workflow, not only its failed jobs)"
+    elif .run_id != $id then "ci-manifest.json belongs to run \(.run_id) attempt \(.run_attempt), not run \($id)"
+    elif (.run_attempt | type) != "number" or .run_attempt < 1 then "ci-manifest.json has run_attempt \(.run_attempt | tojson), not an attempt number"
+    elif .run_attempt > $attempt then "ci-manifest.json belongs to run \(.run_id) attempt \(.run_attempt), newer than this attempt \($attempt)"
+    elif .run_attempt < $attempt and $receipts != "success" then "ci-manifest.json is from attempt \(.run_attempt) and executed-receipts did not succeed (result \(if $receipts == "" then "unknown" else $receipts end)), so it may have run again by attempt \($attempt) without replacing it"
     elif .sha != $sha then "ci-manifest.json belongs to commit \(.sha), not \($sha)"
     elif .complete != true then "ci-manifest.json is incomplete: \(.problems | join("; "))"
     elif ((.failures // []) | length) > 0 then "ci-manifest.json lists \(.failures | length) failing test(s) in the newest attempt of each job"

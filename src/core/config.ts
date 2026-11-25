@@ -74,6 +74,8 @@ export interface GBrainConfig {
    * memorableGateAllowed in core/context/hook-heartbeat.ts.
    */
   integrations?: { memorable?: { enabled?: boolean } };
+  /** L1: whether the brain-first block carries the agent-policy line (on|off); written only owner-confirmed (commands/config/reserved-keys.ts). */
+  brain_first?: { policy_line?: string };
   /** Monthly backup-coverage check. File-plane for engine-free hook children. */
   backup?: { check_enabled?: boolean | string; check_interval_days?: number | string };
   /** #5232: CLI write wait in ms (file plane; persistence/write-wait.ts). */
@@ -1661,9 +1663,9 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // #4702: per-pattern opt-out (JSON array or comma-separated names) —
   // finer than junk_patterns_enabled (all patterns) / disabled (kill-switch).
   'content_sanity.disabled_patterns',
-  // #5575 write gate (local-only): quarantine|flag|reject|off and flag|off; read by import-screen.ts.
+  // #5575 write gate (local-only): quarantine|flag|reject|off and flag|off; read by import-screen.ts. orphan_sweep (default on) is read by write-gate-recheck.ts.
   'write_gate.external_mode',
-  'write_gate.agent_mode',
+  'write_gate.agent_mode', 'write_gate.orphan_sweep',
   // #5575 read side (local-only): label|filter and suppress|allow; read by eligibility/policy.ts.
   'trust.read_policy',
   'trust.agent_activation',

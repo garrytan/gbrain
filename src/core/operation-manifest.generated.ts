@@ -124,6 +124,11 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "type": "string",
         "description": "Typed claim period, e.g. monthly.",
         "fullSurfaceOnly": true
+      },
+      "facet": {
+        "type": "string",
+        "description": "Profile facet (diet, allergy, size.shoe, brand, style, constraint, schedule, household, other); no entity: your own profile.",
+        "fullSurfaceOnly": true
       }
     },
     "mutating": true,
@@ -4124,6 +4129,115 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     }
   },
   {
+    "name": "policy_check",
+    "description": "Before you send, spend, delete, sign up, call or publish on the user's behalf outside this brain, ask whether the user's agent policy allows it. Advisory: allow, ask, deny or none (no policy).",
+    "params": {
+      "verb": {
+        "type": "string",
+        "required": true,
+        "enum": [
+          "send",
+          "publish",
+          "spend",
+          "delete",
+          "sign_up",
+          "call",
+          "book",
+          "cancel",
+          "dispute",
+          "submit",
+          "return",
+          "use",
+          "renew",
+          "remind",
+          "other"
+        ],
+        "description": "The outside action."
+      },
+      "amount": {
+        "type": "number",
+        "description": "Money involved, with currency."
+      },
+      "currency": {
+        "type": "string",
+        "description": "Three-letter currency code for amount, like USD."
+      },
+      "merchant": {
+        "type": "string",
+        "description": "Merchant or service, when a rule may name it."
+      },
+      "to": {
+        "type": "string",
+        "enum": [
+          "self",
+          "household",
+          "known",
+          "new"
+        ],
+        "description": "Who it reaches: self, household, known or new."
+      }
+    },
+    "callShape": "{\"verb\":\"spend\",\"amount\":60,\"currency\":\"USD\",\"merchant\":\"acme-example\"}",
+    "scope": "read",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": {
+      "exempt": "derived decision fields (rule id, revision, state) from the owner-approved policy; no page text"
+    },
+    "cliHints": {
+      "name": "policy-check",
+      "hidden": true
+    },
+    "annotations": {
+      "title": "policy_check (advisory)",
+      "readOnlyHint": true
+    },
+    "area": "agent-policy"
+  },
+  {
+    "name": "agent_policy",
+    "description": "The user's agent policy rules that apply to you, as rows, with its state and revision. Advisory; call policy_check for one action.",
+    "params": {},
+    "scope": "read",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": {
+      "exempt": "the owner-approved rules written for agents to read, as rows; never the page"
+    },
+    "cliHints": {
+      "name": "agent-policy",
+      "hidden": true
+    },
+    "annotations": {
+      "title": "agent_policy (advisory)",
+      "readOnlyHint": true
+    },
+    "area": "agent-policy"
+  },
+  {
+    "name": "capabilities",
+    "description": "Which gbrain ops this installation serves and this connection can call now, listed or not, with the fix for each one that is not callable.",
+    "params": {
+      "ops": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Op names to check (default: policy_check, agent_policy, capabilities)."
+      }
+    },
+    "scope": "read",
+    "mutating": false,
+    "idempotent": true,
+    "agentCallable": true,
+    "outputRedaction": "no_stored_text",
+    "annotations": {
+      "title": "capabilities (what this connection can call)",
+      "readOnlyHint": true
+    },
+    "area": "discovery"
+  },
+  {
     "name": "submit_job",
     "idempotent": false,
     "outputRedaction": {
@@ -6572,6 +6686,11 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "prefer_source_id": {
         "type": "string",
         "description": "Source to try first (thin clients send .gbrain-source here); never narrows.",
+        "fullSurfaceOnly": true
+      },
+      "profile": {
+        "type": "boolean",
+        "description": "true: add your own profile (facets, constraints, relationships, preferences).",
         "fullSurfaceOnly": true
       }
     },

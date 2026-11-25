@@ -17,7 +17,9 @@ import { setCliExitVerdict } from '../src/core/cli-force-exit.ts';
 import { dedupeAutoLinksEntry } from '../src/commands/doctor/checks/entity-duplicates.ts';
 import type { DoctorContext } from '../src/commands/doctor/context.ts';
 import { classifyPairs, type ClassifiedPair } from '../src/core/entities/evidence/classes.ts';
-import { readsAsNonPerson, sensitivityOf } from '../src/core/entities/evidence/people.ts';
+import { phoneHandle, readsAsNonPerson, sensitivityOf } from '../src/core/entities/evidence/people.ts';
+import { applyAutoLinks, planAutoLinks } from '../src/core/entities/evidence/auto.ts';
+import { recordDecisions } from '../src/core/entities/identity-decisions.ts';
 
 let home: string;
 let engine: BrainEngine;
@@ -159,7 +161,7 @@ describe('gbrain dedupe auto', () => {
   test('the doctor line and the weekly sample read the recorded links', async () => {
     const line = await doctorLine();
     expect(line).toMatchObject({ name: 'dedupe_auto_links', status: 'ok', details: { links: 1 } });
-    expect(line.message).toContain(`C2 1 (undo: gbrain dedupe undo ${linked}; a wrong one for good: gbrain dedupe reject <identity id>; all of them: gbrain dedupe auto --off C2)`);
+    expect(line.message).toContain(`C2 1 (a wrong one for good: gbrain dedupe reject <identity id>; undo: gbrain dedupe undo ${linked}; all of them: gbrain dedupe auto --off C2)`);
     expect(await dedupe(['sample', '--class', 'C2', '--since', '7d'])).toContain(`keep it apart for good: gbrain dedupe reject person-${linked}`);
     const sample = JSON.parse(await dedupe(['sample', '--class', 'C2', '--since', '7d', '--json']));
     expect(sample).toMatchObject({ class: 'C2', total: 1, n: 20 });
@@ -231,3 +233,86 @@ describe('gbrain dedupe auto', () => {
     expect(plan.set_aside.filter((s: any) => s.members.some((m: any) => m.slug === 'contacts/pat-card')).map((s: any) => s.reason)).toEqual(['shared_member', 'shared_member']);
   });
 });
+
+describe('the notes ruled on #10300', () => {
+  test('a plan gone stale does not write over a reject or --off that landed after it', async () => {
+    await person('people/uma-example', 'Uma Example', { email: 'uma@example.invalid' });
+    await person('contacts/uma-card', 'umacard', { email: 'uma@example.invalid' }, 'people-c');
+    await person('people/vic-example', 'Vic Example', { email: 'vic@example.invalid' });
+    await person('contacts/vic-card', 'viccard', { email: 'vic@example.invalid' }, 'people-c');
+    const plan = await planAutoLinks(engine);
+    const uma = plan.links.find(l => l.members.some(m => m.slug === 'people/uma-example'))!;
+    const vic = plan.links.find(l => l.members.some(m => m.slug === 'people/vic-example'))!;
+    await recordDecisions(engine, [{ verdict: 'different', members: uma.members, group_id: null, entity_id: null, canonical: null, decided_by: 'owner' }], 'test: reject');
+    const r = await applyAutoLinks(engine, plan);
+    expect(r.changed).toContain(uma.decision);
+    expect(r.linked).toContain(vic.decision);
+    expect((await engine.listIdentityDecisions()).decisions.find(d => d.decision_id === uma.decision)).toMatchObject({ verdict: 'different', decided_by: 'owner' });
+    await dedupe(['undo', vic.decision]);
+    const again = await planAutoLinks(engine);
+    await engine.setConfig('dedupe.auto.c2', 'off');
+    const off = await applyAutoLinks(engine, again);
+    expect(off.linked).toEqual([]);
+    expect((await engine.listIdentityDecisions()).decisions.some(d => d.decision_id === vic.decision)).toBe(false);
+    await engine.setConfig('dedupe.auto.c2', 'on');
+  });
+
+  test('a cross-source distinct_from and the rejection of a page that later changed slug keep a shared-email pair apart', async () => {
+    await person('people/wes-example', 'Wes Example', { email: 'wes@example.invalid', distinct_from: ['contacts/wes-card'] });
+    await person('contacts/wes-card', 'wescard', { email: 'wes@example.invalid' }, 'people-c');
+    await person('people/xan-example', 'Xan Example', { email: 'xan@example.invalid', github: 'xan-example' });
+    await person('contacts/xan-card', 'xancard', { email: 'xan@example.invalid', linkedin: 'https://www.linkedin.com/in/xan-example-card' }, 'people-c');
+    const before = await classifyPairs(engine);
+    expect(withTitle(before.pairs, 'Wes Example')).toEqual([]);
+    expect(one(before.pairs, 'Xan Example').base).toBe('C2');
+    const applied = JSON.parse(await dedupe(['auto', '--apply', '--json']));
+    const xan = applied.links.find((l: any) => l.members.some((m: any) => m.slug === 'people/xan-example'));
+    await dedupe(['reject', xan.entity_id]);
+    expect((await engine.listIdentityDecisions()).decisions.find(d => d.decision_id === xan.decision)).toMatchObject({ verdict: 'different', decided_by: 'owner:corrects:dedupe:auto:C2' });
+    expect(withTitle((await classifyPairs(engine)).pairs, 'Xan Example')).toEqual([]);
+    await engine.executeRaw("UPDATE pages SET slug = 'contacts/xan-card-renamed' WHERE slug = 'contacts/xan-card' AND source_id = 'people-c'");
+    expect(withTitle((await classifyPairs(engine)).pairs, 'Xan Example')).toEqual([]);
+  });
+
+  test('a phone extension is part of the number: two extensions of one switchboard are no pair, the same extension still is', async () => {
+    expect(phoneHandle('+1 555-555-0400 x12', '1')).toBe('p:+15555550400;ext=12');
+    expect(phoneHandle('(555) 555-0400 ext. 12', '1')).toBe('p:+15555550400;ext=12');
+    expect(phoneHandle('+1 555-555-0400', '1')).toBe('p:+15555550400');
+    expect(phoneHandle('+1 555-555-0400;ext=12', '1')).toBe('p:+15555550400;ext=12');
+    await person('people/yara-example', 'Yara Example', { phone: '+1 555-555-0400 x12' });
+    await person('contacts/zed-card', 'zedcard', { phone: '+1 555-555-0400 x34' }, 'people-c');
+    await person('contacts/yara-card', 'yaracard', { phone: '(555) 555-0400 ext 12' }, 'people-b');
+    const { pairs } = await classifyPairs(engine);
+    expect(withTitle(pairs, 'zedcard')).toEqual([]);
+    expect(one(pairs, 'yaracard')).toMatchObject({ base: 'C2' });
+  });
+
+  test('names that disagree link only when one is a handle: a title with a digit and a one-word given name are held', async () => {
+    await person('people/abe-example', 'Abe Example', { email: 'abe@example.invalid' });
+    await person('contacts/abe-card', 'Sarah', { email: 'abe@example.invalid' }, 'people-c');
+    await person('people/bo-example', 'Bo Example', { email: 'bo@example.invalid' });
+    await person('contacts/bo-card', 'bo2work', { email: 'bo@example.invalid' }, 'people-c');
+    await person('people/cy-example', 'Cy Example', { email: 'cy@example.invalid' });
+    await person('contacts/cy-card', 'cyworks', { email: 'cy@example.invalid' }, 'people-c');
+    const { pairs } = await classifyPairs(engine);
+    expect(one(pairs, 'Sarah')).toMatchObject({ base: 'C2', hold: 'names_disagree' });
+    expect(one(pairs, 'bo2work')).toMatchObject({ hold: 'names_disagree' });
+    expect(one(pairs, 'cyworks').hold).toBeUndefined();
+  });
+
+  test('a copy with no email does not stand in for two pages that are not copies of each other', async () => {
+    await person('people/dot-example', 'Dot Example', { phone: '+1 555-555-0500' });
+    await person('people/dot-example', 'Dot Example', { email: 'dot.one@example.invalid', phone: '+1 555-555-0500' }, 'people-b');
+    await person('people/dot-example', 'Dot Example', { email: 'dot.two@example.invalid', phone: '+1 555-555-0500' }, 'people-c');
+    await person('contacts/dot-card', 'dotcard', { emails: ['dot.one@example.invalid', 'dot.two@example.invalid'], phone: '+1 555-555-0500' }, 'people-c');
+    const { pairs } = await classifyPairs(engine);
+    expect(withTitle(pairs, 'dotcard').map(p => p.members.map(m => m.source_id).sort().join('+')).sort()).toEqual(['default+people-c', 'people-b+people-c', 'people-c+people-c']);
+  });
+
+  test('a founder, an investor, a client or a boss can be the owner, so their relatives are the owner\'s family', () => {
+    const link = (relationship: string) => sensitivityOf({ relationship }, new Date('2026-11-25'), 'link');
+    for (const r of ['wife of the founder', 'son of an investor', "the client's daughter", 'husband of the boss']) expect([r, link(r)]).toEqual([r, 'family']);
+    expect(link('wife of a colleague')).toBeNull();
+  });
+});
+

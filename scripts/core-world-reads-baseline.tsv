@@ -231,7 +231,7 @@ src/core/company-brain/revision.ts	fs_import	1	W7: filesystem boundary moves to 
 src/core/company-brain/revision.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/company-brain/runtime.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/config-db-merge.ts	module_collection	1	W6: per-engine state, or mark as a constant table
-src/core/config-snapshot.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context
+src/core/config-snapshot.ts	als_store	2	W2: engine scope (decision E) replaces ad hoc async context; +1 GST-3824 L1: the reserved agent-policy config write scope (withReservedConfigWrite)
 src/core/config-snapshot.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/config.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/config.ts	load_config	1	W6: settings plane out of the core
@@ -366,6 +366,7 @@ src/core/engine-connect.ts	module_collection	1	W6: per-engine state, or mark as 
 src/core/engine-connect.ts	process_env	2	W6: settings plane out of the core
 src/core/engine-open.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context
 src/core/engine-scope-store.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context
+src/core/entities/evidence/collapse.ts	fs_import	1	W7: filesystem boundary moves to the local app (the two person files a C7 collapse edits in a git source, read under the commit lock; same door as identity-decisions.ts)
 src/core/env-number.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/env-number.ts	process_env	1	W6: settings plane out of the core
 src/core/env-trust.ts	fs_import	1	W7: filesystem boundary moves to the local app
@@ -519,7 +520,7 @@ src/core/ingestion/sources/inbox-folder.ts	fs_import	2	W7: filesystem boundary m
 src/core/ingestion/sources/markdown-greenfield.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/init-embed-check.ts	process_env	1	W6: settings plane out of the core
 src/core/interaction.ts	fs_import	1	W7: filesystem boundary moves to the local app
-src/core/interaction.ts	process_env	3	W6: settings plane out of the core
+src/core/interaction.ts	process_env	4	W6: settings plane out of the core; +1 GST-3824 L1: ownerWriteAgentMarker default env
 src/core/last-retrieved.ts	module_collection	2	W6: per-engine state, or mark as a constant table
 src/core/link-extraction.ts	process_env	2	W6: settings plane out of the core
 src/core/link-validity.ts	module_collection	1	W6: per-engine state, or mark as a constant table
@@ -1280,3 +1281,7 @@ src/core/owned-folder/paths.ts	fs_import	1	W7: filesystem boundary moves to the 
 src/core/owned-folder/remove.ts	fs_import	1	W7: filesystem boundary moves to the local app; GST-3022 owned folders: checks OWNER.json and prunes the directories a source removal leaves empty, never following a symlink
 src/core/owned-folder/writer.ts	fs_import	1	W7: filesystem boundary moves to the local app; GST-3022 owned folders: the one writer of the folder: OWNER.json, the README and the day files, with lstat symlink checks
 src/core/remote-caller.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context; marks an MCP handler's caller remote so the Rust owner client keeps its writes off the owner socket
+src/core/policy/authority.ts	process_env	1	W6: settings plane out of the core (GST-3824 L1: terminalAuthorityProblem reads the agent markers of this process)
+src/core/policy/authority.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context (GST-3824 L1: the owner proof of the running policy command)
+src/core/policy/store.ts	load_config	1	W6: settings plane out of the core (GST-3824 L1: the trusted local write context of a policy command)
+src/core/setup/brain-first-upgrade-notice.ts	fs_import	1	W7: filesystem boundary moves to the local app (GST-3824 L1: rewrites installed brain-first blocks when the policy line setting changes)

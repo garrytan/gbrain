@@ -41,6 +41,7 @@ MEMORY (facts agents recall; MEMORY_VERBS v1)
                                      facts are pushed into new agent sessions (private: recall only)
   recall [<entity>] [--query <q>]    Find saved facts
   forget <fact-id>                   Withdraw a fact
+  profile [--json]                   Your own profile: facts saved with remember --facet
   identity [--member <id>] [--json]  Who gbrain takes the owner to be, and the signals behind it
 
 PAGES
@@ -129,6 +130,7 @@ TOOLS
   decide <status|probe|enable|...>   System One decision support (Jev); every slot off by default
   apple-contacts <write|status>      Change Apple Contacts through GBrain Helper; writes off by default
   memory-proposals list|show|approve|deny  QM's proposed timeline entries and links awaiting your decision
+  policy init|show|allow|ask|deny|edit|accept|check  When agents may send, spend, delete or sign up for you (advisory)
   facts relink [--dry-run]           Link facts saved without an entity to the entity they name
   check-resolvable [--json] [--fix]  Validate skill tree (reachability/MECE/DRY)
   report --type <name> --content ... Save timestamped report to brain/reports/
