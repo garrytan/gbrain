@@ -5,7 +5,8 @@
  * hook (wired, untrusted in Codex or unapproved in Hermes, outdated when it predates the SessionStart
  * compaction reset, or missing), each catalog's freshness
  * (the content tier: source re-read, index re-hashed) and the recent
- * outcomes and error codes from the lane log, and, with the model picker on
+ * outcomes and error codes from the lane log (warning when one harness
+ * misses the deadline on more than 5% of at least 20 ranked turns), and, with the model picker on
  * (skills.resolver.router), its last 24 hours: picker turns, fallbacks by
  * code and today's spend against the daily cap. It emits nothing when the
  * resolver is not configured: no keys, no hook, no catalog and no lane log.
@@ -26,7 +27,7 @@ import { readResolverConfig, resolverHarnesses } from '../../../core/setup/skill
 import { ROUTER_MAX_USD_PER_DAY_MAX, routerSettings } from '../../../core/skills/resolver/config.ts';
 import { readRouterSpend } from '../../../core/skills/resolver/router.ts';
 import { inspectSkillResolverHook, type ResolverHarness, type ResolverHookState } from '../../../core/setup/skill-resolver-hook.ts';
-import { describeOpenclawSkill, openclawSkillView, type OpenclawSkillView } from './skill-resolver-openclaw.ts';
+import { describeOpenclawSkill, OPENCLAW_MISS_RATE_WARN, openclawSkillView, type OpenclawSkillView } from './skill-resolver-openclaw.ts';
 import { describePiSkillView, piSkillView, type PiSkillView } from './skill-resolver-pi.ts';
 import { cursorSkillView, describeCursorSkillView, type CursorSkillView } from './skill-resolver-cursor.ts';
 
@@ -35,13 +36,17 @@ const HARNESSES: ResolverHarness[] = ['claude-code', 'codex', 'hermes'];
 /** Lane-log lines doctor reads (the newest), and the tail it reads them from. */
 const RECENT_LINES = 200;
 const LOG_TAIL_BYTES = 64 * 1024;
+/** Outcomes of turns the lane never ranked; they cannot miss the deadline, so the miss rate leaves them out. */
+const UNRANKED = new Set(['off', 'yield', 'reset', 'empty', 'no_catalog']);
+/** Below this many ranked turns of one harness, its miss rate is not judged. */
+const MISS_MIN_TURNS = 20;
 
 export interface SkillResolverCatalogView { name: string; fresh: boolean | null; stale_reason: string | null; skills: number }
 export interface SkillResolverHarnessView { harness: ResolverHarness; on: boolean; hook: ResolverHookState; catalogs: SkillResolverCatalogView[] }
 export interface SkillResolverView {
   config: 'ok' | 'absent' | 'unreadable';
   harnesses: SkillResolverHarnessView[];
-  recent: { turns: number; outcomes: Record<string, number>; errors: Record<string, number> };
+  recent: { turns: number; outcomes: Record<string, number>; errors: Record<string, number>; misses?: Record<string, LaneMisses> };
   /** With skills.resolver.router on: the last 24 hours of picker turns in the lane log and today's spend. */
   router?: SkillResolverRouterView;
   /** The OpenClaw plugin (gbrain setup openclaw --skill-loading resolve|shadow), when any of it exists. */
@@ -52,6 +57,8 @@ export interface SkillResolverView {
   cursor?: CursorSkillView;
 }
 
+/** One harness's share of the recent lane turns: those it ranked, and those that ran out of time (skill_resolve_timeout, from the lane or the resolver). */
+export interface LaneMisses { ranked: number; missed: number }
 export interface SkillResolverRouterView { turns: number; picker: number; fallbacks: Record<string, number>; last: string | null; last_at: string | null; spent_usd: number; cap_usd: number; day: string; today: string }
 /** Below this many picker turns in 24 hours, the fallback rate is not judged. */
 const ROUTER_MIN_TURNS = 10;
@@ -87,17 +94,22 @@ function recentLane(home: string): SkillResolverView['recent'] | null {
   if (text === null) return null;
   const outcomes: Record<string, number> = {};
   const errors: Record<string, number> = {};
+  const misses: Record<string, LaneMisses> = {};
   const lines = text.split('\n').filter(Boolean).slice(-RECENT_LINES);
   let turns = 0;
   for (const line of lines) {
-    let j: { outcome?: unknown; code?: unknown };
+    let j: { outcome?: unknown; code?: unknown; harness?: unknown };
     try { j = JSON.parse(line); } catch { continue; }
     if (typeof j.outcome !== 'string') continue;
     turns++;
     outcomes[j.outcome] = (outcomes[j.outcome] ?? 0) + 1;
     if (typeof j.code === 'string') errors[j.code] = (errors[j.code] ?? 0) + 1;
+    if (typeof j.harness !== 'string' || UNRANKED.has(j.outcome) || j.outcome.startsWith('skipped_')) continue;
+    const m = (misses[j.harness] ??= { ranked: 0, missed: 0 });
+    m.ranked++;
+    if (j.code === 'skill_resolve_timeout') m.missed++;
   }
-  return { turns, outcomes, errors };
+  return { turns, outcomes, errors, misses };
 }
 
 /** A catalog a turn can rank with no project: the user catalog, and for Claude Code the plugins catalog. */
@@ -167,6 +179,14 @@ export function skillResolverCheck(v: SkillResolverView | null): Check | null {
     return { name, status: 'warn', message: `${describeSkillResolver(v)} ${broken.harness}: the resolver is on but ${what}.`, details,
       fix: { argv: setupArgv(broken.harness), consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify: doctorVerify(name),
         why: `Rebuilds the ${broken.harness} user catalog and rewrites only the skill-resolver hook entry; --skill-loading off removes it instead.` } };
+  }
+  const slow = Object.entries(v.recent.misses ?? {}).find(([, m]) => m.ranked >= MISS_MIN_TURNS && m.missed / m.ranked > OPENCLAW_MISS_RATE_WARN);
+  if (slow) {
+    const [harness, m] = slow;
+    return { name, status: 'warn', message: `${describeSkillResolver(v)} ${harness}: ${(m.missed / m.ranked * 100).toFixed(1)}% of the last ${m.ranked} ranked turns missed the deadline and got no suggestions.`, details: { ...details, code: 'skill_resolve_timeout' },
+      fix: { consent: [], actor: 'user', requires_exclusive: false, verify: doctorVerify(name), docs: 'docs/guides/skill-resolver.md#skill_resolve_timeout',
+        why: 'The lane prints nothing when a turn runs past its deadline, so the harness gets no skills block; doctor cannot speed the host up.',
+        user_message: `${harness} turns keep missing the skill resolver's deadline. Check the catalog size with gbrain skills index status and whether the machine is busy during turns; gbrain setup ${harness} --skill-loading off turns the resolver off.` } };
   }
   const oc = v.openclaw ? describeOpenclawSkill(v.openclaw).problem : null;
   if (oc) {

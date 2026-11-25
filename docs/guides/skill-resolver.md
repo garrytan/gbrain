@@ -226,7 +226,10 @@ answered, the fallback code and the picker's wait, and with skill vectors,
 for the message's vector; never turn text) to `skill-index/logs/lane-<UTC date>.jsonl`, one file per day,
 kept 14 days and capped at 2 MB a day. `gbrain doctor` (`skill_resolver`, and
 `harness_wiring`'s details) reports the hook, each catalog's freshness and
-the recent error codes; it says nothing while the resolver is off. A hook from
+the recent error codes; it says nothing while the resolver is off. When one
+harness's recent turns miss the deadline on more than 5% of at least 20 turns
+it ranked, it warns with
+[`skill_resolve_timeout`](#skill_resolve_timeout). A hook from
 before the compaction reset (UserPromptSubmit without SessionStart) shows as
 `outdated` and warns with its fix, `gbrain setup codex --skill-loading
 resolve` (or `claude-code`).
@@ -1007,7 +1010,9 @@ holder is reclaimed when its lease expires.
 ### skill_resolve_timeout
 
 The turn ran past the caller's deadline. Nothing was committed. Check the
-catalog size with `gbrain skills index status`.
+catalog size with `gbrain skills index status`. From the hook lane, doctor
+warns once a harness misses on more than 5% of at least 20 recent turns; a
+host that is busy during turns misses more often.
 
 ### skill_index_removed
 
