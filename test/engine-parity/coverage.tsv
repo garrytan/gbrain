@@ -1812,11 +1812,11 @@ listWriteGateHoldRows	trust	yes	6	no	yes	yes	serves
 listTrustAllowRuleRows	trust	yes	2	no	yes	yes	serves
 getWriteGateHoldRow	trust	yes	1	no	yes	yes	serves
 decideWriteGateHold	trust	yes	5	no	yes	yes	serves
-upsertOpenLoop	open_loops	yes	28	no	yes	yes	serves
-closeOpenLoop	open_loops	yes	10	no	yes	yes	serves
+upsertOpenLoop	open_loops	yes	29	no	yes	yes	serves
+closeOpenLoop	open_loops	yes	11	no	yes	yes	serves
 listOpenLoops	open_loops	yes	12	no	yes	yes	serves
 readEntityOpenLoops	open_loops	yes	2	no	yes	yes	serves
-countOpenLoopsByCounterpartyEmail	open_loops	yes	1	no	yes	yes	serves
+countOpenLoopsByCounterpartyEmail	open_loops	yes	2	no	yes	yes	serves
 addLoopSuppression	loop_mutes	yes	7	no	yes	yes	serves
 removeLoopSuppression	loop_mutes	yes	4	no	yes	yes	serves
 listLoopSuppressions	loop_mutes	yes	4	no	yes	yes	serves
