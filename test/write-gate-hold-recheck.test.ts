@@ -440,34 +440,30 @@ pgOnly('held writes a purge kept are checked again by maintenance: concurrent co
     expect(await h.notes(sourceId)).toEqual([]);
   });
 
-  // Review finding (outside voice, pass 1): a rename onto the held write's slug during the sweep's check either waits for the
-  // sweep (which takes the page-key locks of every slug it checks) or, once committed first, keeps the held write.
-  test('a rename onto the held write\'s name during the check never loses the held write after the page arrived', async () => {
+  // Known limit (owner's delegate's ruling, option A): the sweep takes no page-key lock (`gbrain trust release` locks the held
+  // row first, so page keys here could deadlock with it). A rename onto the held write's name that commits between the page
+  // check and the delete does not stop the delete: the orphaned held write goes as the page arrives. That removes stale
+  // over-hiding from the arriving page and shows no held text. Pinned so a change here is deliberate.
+  test('known limit: a rename onto the held write\'s name during the check commits, and the orphaned held write is still deleted', async () => {
     const sourceId = await h.source();
     const late = await h.leftover(sourceId);
     await h.putPage(sourceId, 'notes/elsewhere');
-    let renamedDuringCheck = false;
-    let rename: Promise<void> | undefined;
+    let renamed = false;
     const { sweepHoldRechecks } = await import('../src/core/write-gate-recheck.ts');
-    await bounded('the sweep', sweepHoldRechecks(engine(), {
+    const run = await bounded('the sweep', sweepHoldRechecks(engine(), {
       sourceIds: [sourceId],
       afterCheck: async () => {
-        // Every rename path (sync renames, repair rename-identity, repair slug-spelling) locks both page keys first.
-        rename = engine().transaction(async (t: BrainEngine) => {
+        await bounded('the rename', engine().transaction(async (t: BrainEngine) => {
           await t.lockPageKeys([{ sourceId, slug: 'notes/elsewhere' }, { sourceId, slug: 'notes/first' }]);
           expect(await t.updateSlug('notes/elsewhere', 'notes/first', { sourceId })).toBe(1);
-        })
-          .then(() => { renamedDuringCheck = true; });
-        await bounded('the rename to finish or wait for a lock', (async () => {
-          for (;;) { if (renamedDuringCheck || await lockWaiters() > 0) return; await new Promise(r => setTimeout(r, 25)); }
-        })());
+        }));
+        renamed = true;
       },
     }));
-    const renamedBeforeSweepCommitted = renamedDuringCheck;
-    await bounded('the rename', rename!);
-    // The rename waited for the sweep's page-key lock, so the held write was deleted before the page arrived.
-    expect(renamedBeforeSweepCommitted).toBe(false);
+    expect(renamed).toBe(true);
+    expect(run).toMatchObject({ checked: 1, deleted: 1 });
     expect(await h.holds(sourceId)).toEqual([]);
+    expect(await h.receipts(late)).toBe(0);
     expect((await engine().executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id=$1 ORDER BY slug', [sourceId])).map(r => r.slug)).toEqual(['notes/first']);
   });
 

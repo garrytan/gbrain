@@ -9,14 +9,16 @@
  *    removed here.
  *  - The notes are read once, bounded and oldest first, and only those exact note ids are consumed, so a note another
  *    purge appends during the run stays for the next run.
- *  - Each held write is checked in its own short transaction. It first takes the page-key locks of every slug the held
- *    write reaches (page keys before the held row, the order purges and renames use), so a rename or a page write onto
- *    one of them waits for the check or is seen by it; then it locks the held row (`FOR UPDATE`) and re-reads the slugs
- *    (a change leaves the held write and its notes for the next run). It is deleted only while it is still unbound, has
- *    no candidate list, still has the version a selected note recorded (a held write re-opened after the purge is a
- *    later write and stays), no page row at all, live or soft-deleted, is at a slug it reaches, and no page a note
- *    recorded as kept for still exists (a purge's scrub of the rename record can cut the route to it). A soft-deleted
- *    page keeps it, so tombstone expiry still owns it.
+ *  - Each held write is checked in its own short transaction that locks only that held row (`FOR UPDATE`) and no page
+ *    key (`gbrain trust release` locks the held row before page keys, so taking page keys first here could deadlock with
+ *    it). It is deleted only while it is still unbound, has no candidate list, still has the version a selected note
+ *    recorded (a held write re-opened after the purge is a later write and stays), no page row at all, live or
+ *    soft-deleted, is at a slug it reaches, and no page a note recorded as kept for still exists (a purge's scrub of the
+ *    rename record can cut the route to it). A soft-deleted page keeps it, so tombstone expiry still owns it.
+ *  - Known limits: a rename onto a name the held write reaches that commits between the page check and the delete (no
+ *    page-key lock is held) does not stop the delete; that removes stale over-hiding from the arriving page and shows no
+ *    held text. A note's surviving page ids go with the note once the sweep keeps the held write, so on rename history
+ *    that is not flat a later purge of that page can leave the held write, as before this sweep existed.
  *  - Nothing is deleted when row security is active for the running role on any evidence table (it would read hidden
  *    rows as absent): the run reports a named unknown instead, and each transaction sets `row_security = off`, so a
  *    read row security would filter fails instead. A failed read aborts the run with no change.
@@ -118,12 +120,10 @@ export async function sweepHoldRechecks(engine: BrainEngine, opts: HoldRecheckOp
     await engine.transaction(async (tx: BrainEngine) => {
       await opts.beforeHold?.(g.holdId);
       await tx.executeRaw('SET LOCAL row_security = off');
-      const slugs = await reachedSlugs(tx, g);
-      if (slugs.length) await tx.lockPageKeys(slugs.map(slug => ({ sourceId: g.sourceId, slug })));
       const [row] = await tx.executeRaw<{ page_id: string | null; marked: boolean; version: string }>(
         `SELECT h.page_id::text AS page_id, h.page_candidates IS NOT NULL AS marked, ${holdVersionSql('h')} AS version
            FROM write_gate_holds h WHERE h.id = $1::bigint AND h.source_id = $2 FOR UPDATE`, [g.holdId, g.sourceId]);
-      if (row && (await reachedSlugs(tx, g)).join('\u0000') !== slugs.join('\u0000')) { out.kept++; return; } // moved under the check: next run
+      const slugs = row ? await reachedSlugs(tx, g) : [];
       let orphan = false;
       if (row && row.page_id === null && !row.marked && g.versions.has(row.version)) {
         const [seen] = await tx.executeRaw<{ any: boolean }>(
