@@ -6,9 +6,9 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 327/374
+# covered: 327/375
 # lifecycle: 9/9
-# pages: 32/37
+# pages: 32/38
 # search: 7/7
 # search_reads: 9/9
 # chunks: 22/22

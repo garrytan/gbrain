@@ -163,7 +163,7 @@ export const WRITE_MAP: Record<string, WriteSpec> = {
   setPageAliases: { tables: ['page_aliases'], plan: (a) => [{ relation: 'page_aliases', sel: { source_id: a[1], slug: a[0] }, del: true }] },
   replaceDerivedAliases: { tables: ['page_aliases'], plan: (a) => [{ relation: 'page_aliases', sel: { source_id: a[1], slug: a[0] }, del: true }] },
   updateSourceConfig: { tables: ['sources', 'owner_only_marks'], plan: (a) => [{ relation: 'sources', sel: { id: a[0] } }, ...OWNER_MARKS] },
-  // The folder import's last-sync stamp (UPDATE sources SET last_sync_at): the row changes, and the sources trigger may rewrite the owner-only marks.
+  // The folder import's last-sync stamp on the source row: the row changes, and the sources trigger may rewrite the owner-only marks.
   markSourceSynced: { tables: ['sources', 'owner_only_marks'], plan: (a) => [{ relation: 'sources', sel: { id: a[0] } }, ...OWNER_MARKS] },
   createVersion: { tables: ['page_versions'], plan: (a) => [child('page_versions', a[0], a[1]?.sourceId, true)] },
   // Relation-level: no stable selector on the member's arguments

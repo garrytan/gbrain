@@ -27,6 +27,7 @@ import { noteResolvedSource } from './fix-routing.ts';
 import { hookSessionCwd } from './session-cwd.ts';
 import { sortSourcesById, sourceConfigText } from './source-rows.ts';
 import { countDefaultSourceSplit } from './engine-sql/sources.ts';
+import { isUndefinedColumnError } from './utils.ts';
 import { unscopedExecutor } from './engine-sql/brands.ts';
 import type { SqlExecutor } from './engine-sql/executor.ts';
 
@@ -1062,6 +1063,8 @@ async function liveSourceRows(engine: BrainEngine): Promise<Array<{ id: string; 
     return sortSourcesById(await engine.listActiveSourceConfigs()).map(({ id, config }) => ({ id, config, archived: false }));
   } catch (err) {
     rethrowCapabilityRefusal(err);
+    // Only a brain older than the `archived` column falls back; any other failure (a timeout, an unreadable table) is the caller's to see.
+    if (!isUndefinedColumnError(err, 'archived')) throw err;
     return sortSourcesById((await legacySourceRows(engine)).filter(row => row.archived !== true)).map(({ id, config }) => ({ id, config }));
   }
 }
