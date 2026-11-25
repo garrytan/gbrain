@@ -24,6 +24,7 @@ import {
   ResolverError, HARNESSES, errorTurnOutput, GBRAIN_VERSION, type BuildInput, type TurnInput,
 } from '../core/skills/resolver/index.ts';
 import { validCatalogName } from '../core/skills/resolver/paths.ts';
+import type { Explain } from '../core/skills/resolver/resolve.ts';
 import { readResolverConfig, resolverHarnesses, resolverSection } from '../core/setup/skill-resolver-config.ts';
 import { configuredTopGate } from '../core/skills/resolver/config.ts';
 import { catalogSkillIds, pinProblem, PINS_MAX, readPins, renderPinnedBlock, sessionStartPinnedBlock, writePins } from '../core/setup/skill-pins.ts';
@@ -72,13 +73,15 @@ const HELP_RESOLVE = `Usage: gbrain skills resolve [--catalog <name>]... (--text
         [--explain-target <id>] [--fail-open] [--json]
 
 Pick the few skills that fit one user turn (or none) and print the <relevant_skills>
-block for the harness to show the model. Word matching only: nothing leaves this machine,
+block for the harness to show the model. Word matching, plus skill vectors when the catalog
+has them: then the message goes to the brain's embedding provider (config.json embedding_model),
+as it does with the model picker on (skills.resolver.router). Otherwise nothing leaves this machine,
 and no brain connection is needed.
 
   --catalog <name>     the catalog to rank (repeatable to merge; default: the only one)
   --text <t>           the user message (or send turn JSON with --input-json -)
   --session <id>       the harness session: suggestions are not repeated within it, and its
-                       block tokens are capped by skills.resolver.session_token_budget (2000)
+                       block tokens are capped by skills.resolver.session_token_budget (8000)
   --harness <h>        picks the load line: openclaw, claude-code, codex, hermes, qm, pi or cursor
   --top-k <n>          at most n suggestions (1-8, default 5)
   --exclude <ids>      comma-separated skill ids to leave out
@@ -295,6 +298,7 @@ async function runResolve(args: string[]): Promise<void> {
       ...(p.flags.get('--catalog') ? { catalogs: p.flags.get('--catalog') } : {}), failOpen,
       ...(one(p, '--load-hint') ? { loadHint: one(p, '--load-hint') } : {}), namesOnly: p.bools.has('--names-only'),
       ...(one(p, '--explain-target') !== undefined ? { explainTarget: one(p, '--explain-target') } : {}),
+      router: true,
     });
   } catch (e) {
     if (!(e instanceof ResolverError)) throw e;
@@ -311,18 +315,22 @@ async function runResolve(args: string[]): Promise<void> {
   }
   let delivered: boolean;
   if (json) delivered = await write(`${JSON.stringify(result.explain ? { ...out, explain: result.explain } : out)}\n`);
-  else if (result.explain) {
-    const x = result.explain;
-    delivered = await write([
-      `${x.target}: ${x.indexed ? `indexed in ${x.catalog}` : x.skip_reason ? `not indexed (${x.skip_reason})` : 'not in the catalog'}`,
-      x.indexed ? `rank: ${x.rank ?? 'no match'}${x.score !== null ? `, score ${x.score}` : ''}` : '',
-      Object.keys(x.fields).length ? `matched: ${Object.entries(x.fields).map(([f, t]) => `${f} (${t.join(', ')})`).join('; ')}` : '',
-      x.excluded ? 'excluded by --exclude' : '', x.deduped ? 'already suggested in this session (deduped)' : '', `in block: ${x.in_block ? 'yes' : 'no'}`,
-      x.session ? `session: turn ${x.session.turn}, ${x.session.spent}/${x.session.budget} block tokens spent, ${x.session.remaining} left` : '',
-    ].filter(Boolean).join('\n') + '\n');
-  } else delivered = await write(out.block ? `${out.block}\n` : '');
+  else if (result.explain) delivered = await write(explainText(result.explain));
+  else delivered = await write(out.block ? `${out.block}\n` : '');
   if (delivered) await result.commit();
   if (out.error && !failOpen) process.exit(1);
+}
+
+/** The plain-text `--explain-target` answer (`--json` prints the same fields). */
+export function explainText(x: Explain): string {
+  return [
+    `${x.target}: ${x.indexed ? `indexed in ${x.catalog}` : x.skip_reason ? `not indexed (${x.skip_reason})` : 'not in the catalog'}`,
+    x.indexed ? `rank: ${x.rank ?? 'no match'}${x.score !== null ? `, score ${x.score}` : ''}` : '',
+    Object.keys(x.fields).length ? `matched: ${Object.entries(x.fields).map(([f, t]) => `${f} (${t.join(', ')})`).join('; ')}` : '',
+    x.vector ? `meaning: cosine ${x.vector.cosine.toFixed(3)}, floor ${x.vector.floor}` : '',
+    x.excluded ? 'excluded by --exclude' : '', x.deduped ? 'already suggested in this session (deduped)' : '', `in block: ${x.in_block ? 'yes' : 'no'}`,
+    x.session ? `session: turn ${x.session.turn}, ${x.session.spent}/${x.session.budget} block tokens spent, ${x.session.remaining} left` : '',
+  ].filter(Boolean).join('\n') + '\n';
 }
 
 async function runLibrary(args: string[]): Promise<void> {

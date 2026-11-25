@@ -39,6 +39,7 @@
  *   gbrain founder scorecard companies/acme-example --json
  */
 
+import { normalizeSlug } from '../core/utils.ts';
 import type { BrainEngine, Take, TrajectoryPoint } from '../core/engine.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
@@ -227,7 +228,7 @@ function parseArgs(args: string[]): RunOpts | { help: true } | { error: string }
   if (positional.length !== 1) {
     return { error: 'Exactly one entity-slug positional argument is required.' };
   }
-  return { ...(opts as RunOpts), entitySlug: positional[0] };
+  return { ...(opts as RunOpts), entitySlug: positional[0] === undefined ? positional[0] : normalizeSlug(positional[0]) };
 }
 
 export async function runFounder(engine: BrainEngine, args: string[]): Promise<void> {

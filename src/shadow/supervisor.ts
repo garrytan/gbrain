@@ -13,9 +13,13 @@
  * accepted (no child yet, backoff, pipe over its byte budget); the queue counts it as shed.
  */
 import type { ChildProcess } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { closeSync, openSync } from 'node:fs';
 import { join } from 'node:path';
+import { withoutReadDeadline } from '../core/read-deadline.ts';
+import { withRequestSignal } from '../core/request-signal.ts';
 import { spawn as defaultSpawn } from '../core/spawn.ts';
+import { readEpoch } from './evidence-epoch.ts';
 import { appendFault, type ShadowFault } from './ledger.ts';
 import type { MirrorTransport } from './mirror.ts';
 import { readShadowState } from './state.ts';
@@ -40,7 +44,22 @@ export interface ShadowSupervisorOptions {
   stillEnabled?: () => boolean;
   /** The child's store displaced rows while applying a relation: it is dirty and wants a reconcile pass. */
   onDirty?: (relation: string) => void;
+  /** The child asks the serving process a question (privacy check, stable rerun, vector reference; checks.ts); the value goes back as an `answer` line. */
+  onAsk?: (ask: { id: number; kind: string; [key: string]: unknown }) => Promise<unknown>;
 }
+
+/** The longest one question of the child may hold the serving process (past the 30 s a stable rerun is allowed): its own signal cancels its reads then. */
+export const ASK_DEADLINE_MS = 45_000;
+
+/** The only codes an `ask` failure carries back to the child: never an exception message (it can hold content). */
+export const ASK_CODES: ReadonlySet<string> = new Set([
+  'epoch_changed', 'no_follower', 'not_a_read', 'busy', 'timeout', 'write_after_barrier', 'watermark_invalid', 'child_unavailable',
+  'rate_limited', 'unsupported', 'sample_unknown', 'invalidation_pending', 'moved', 'failed', 'too_large',
+]);
+export const askCode = (error: unknown): string => {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === 'string' && ASK_CODES.has(code) ? code : 'failed';
+};
 
 export class ShadowSupervisor implements MirrorTransport {
   private child: ChildProcess | null = null;
@@ -52,9 +71,11 @@ export class ShadowSupervisor implements MirrorTransport {
   private lastStateCheck = 0;
   private watchdog: ReturnType<typeof setInterval> | null = null;
   private controlBuffer = '';
+  /** Names the running child; asks and answers carry it, so an old child's answer can never reach a restarted one. */
+  private session = '';
   private nextRequestId = 0;
   private readonly pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
-  private readonly o: Required<Omit<ShadowSupervisorOptions, 'spawn' | 'recordFault' | 'stillEnabled' | 'onDirty'>> & Pick<ShadowSupervisorOptions, 'spawn' | 'recordFault' | 'stillEnabled' | 'onDirty'>;
+  private readonly o: Required<Omit<ShadowSupervisorOptions, 'spawn' | 'recordFault' | 'stillEnabled' | 'onDirty' | 'onAsk'>> & Pick<ShadowSupervisorOptions, 'spawn' | 'recordFault' | 'stillEnabled' | 'onDirty' | 'onAsk'>;
 
   constructor(opts: ShadowSupervisorOptions) {
     this.o = {
@@ -136,7 +157,9 @@ export class ShadowSupervisor implements MirrorTransport {
   }
 
   private fault(kind: ShadowFault['kind'], detail: string): void {
-    const fault = { ts: new Date(this.o.now()).toISOString(), kind, detail };
+    // The epoch current when the fault happened (evidence-epoch.ts), so the status counts child exits per epoch.
+    const epoch_id = readEpoch(this.o.dir)?.epoch_id;
+    const fault: ShadowFault = { ts: new Date(this.o.now()).toISOString(), kind, detail, ...(epoch_id ? { epoch_id } : {}) };
     try { (this.o.recordFault ?? ((f: ShadowFault) => appendFault(this.o.dir, f)))(fault); } catch { /* disk */ }
   }
 
@@ -152,19 +175,22 @@ export class ShadowSupervisor implements MirrorTransport {
     let errFd: number | null = null;
     try {
       errFd = openSync(join(this.o.dir, 'child.log'), 'a', 0o600);
+      const session = randomBytes(8).toString('hex');
       const child = (this.o.spawn ?? (defaultSpawn as unknown as NonNullable<ShadowSupervisorOptions['spawn']>))(command, args, {
         stdio: ['pipe', 'pipe', errFd],
         detached: false,
-        env: { ...process.env, GBRAIN_SHADOW_CHILD: '1' },
+        env: { ...process.env, GBRAIN_SHADOW_CHILD: '1', GBRAIN_SHADOW_SESSION: session },
       });
       this.child = child;
+      this.session = session;
+      this.controlBuffer = '';
       this.lastHeartbeat = this.o.now();
       child.unref();
       const stdin = child.stdin as (NodeJS.WritableStream & { unref?: () => void }) | null;
       stdin?.on('error', () => { /* EPIPE: the exit handler restarts */ });
       (stdin as { unref?: () => void } | null)?.unref?.();
       child.stdout?.setEncoding('utf8');
-      child.stdout?.on('data', (chunk: string) => this.onControl(chunk));
+      child.stdout?.on('data', (chunk: string) => this.onControl(chunk, child));
       (child.stdout as { unref?: () => void } | null)?.unref?.();
       child.on('error', (error) => { this.fault('spawn_failed', error instanceof Error ? error.name : 'unknown'); this.onExit(child, null, 'error'); });
       child.on('exit', (code, signal) => this.onExit(child, code, signal));
@@ -178,23 +204,41 @@ export class ShadowSupervisor implements MirrorTransport {
     }
   }
 
-  private onControl(chunk: string): void {
+  private onControl(chunk: string, from: ChildProcess): void {
+    if (from !== this.child) return; // a child that was replaced or stopped speaks to nobody
     this.controlBuffer += chunk;
     let nl: number;
     while ((nl = this.controlBuffer.indexOf('\n')) >= 0) {
       const line = this.controlBuffer.slice(0, nl);
       this.controlBuffer = this.controlBuffer.slice(nl + 1);
-      let msg: { t?: string; reason?: string; relation?: string; id?: number; ok?: boolean; value?: unknown; error?: { code?: string; message?: string } };
+      let msg: { t?: string; reason?: string; relation?: string; id?: number; kind?: string; session?: string; ok?: boolean; value?: unknown; error?: { code?: string; message?: string } };
       try { msg = JSON.parse(line); } catch { continue; }
       if (msg.t === 'hb') this.lastHeartbeat = this.o.now();
       else if (msg.t === 'resp' && typeof msg.id === 'number') {
-        this.settleRequest(msg.id, msg.value, msg.ok ? undefined : Object.assign(new Error(msg.error?.message ?? 'rpc failed'), { code: msg.error?.code ?? 'rpc_failed' }));
+        const err = msg.ok ? undefined : new Error(msg.error?.message ?? 'rpc failed') as Error & { code?: string }; if (err) err.code = msg.error?.code ?? 'rpc_failed'; this.settleRequest(msg.id, msg.value, err);
       }
+      else if (msg.t === 'ask' && typeof msg.id === 'number' && msg.session === this.session) void this.answerAsk(msg as { id: number; kind: string }, from, this.session);
       else if (msg.t === 'dirty' && msg.relation) { try { this.o.onDirty?.(msg.relation); } catch { /* best effort */ } }
       else if (msg.t === 'pause') this.disable('privacy_diverged', msg.reason ?? 'child requested a pause');
     }
     // A `resp` line can carry thousands of digest entries; only a runaway partial line is dropped.
     if (this.controlBuffer.length > 16 * 1024 * 1024) this.controlBuffer = '';
+  }
+
+  /** Answers one `ask` line: the handler's value, or its error code. A refused write is the child's timeout. */
+  private async answerAsk(ask: { id: number; kind: string }, from: ChildProcess, session: string): Promise<void> {
+    let line: Record<string, unknown>;
+    try {
+      if (!this.o.onAsk) throw Object.assign(new Error('no handler'), { code: 'unsupported' });
+      // This callback runs in the context of whichever request spawned the child (its stdout listener was made there): a cancelled request's
+      // signal and a preparation's read deadline must not reach a later ask. Each ask gets a signal and a deadline of its own.
+      const onAsk = this.o.onAsk;
+      line = { t: 'answer', id: ask.id, session, ok: true, value: await withoutReadDeadline(() => withRequestSignal(AbortSignal.timeout(ASK_DEADLINE_MS), () => onAsk(ask))) };
+    } catch (error) {
+      line = { t: 'answer', id: ask.id, session, ok: false, error: { code: askCode(error) } }; // a code from the allowlist, never an exception message
+    }
+    if (this.child !== from || this.session !== session) return; // the asking child is gone or replaced: its answer is dropped, never sent to a successor
+    try { this.send(JSON.stringify(line) + '\n'); } catch { /* the child times out */ }
   }
 
   private onExit(child: ChildProcess | null, code: number | null, signal: string | null): void {

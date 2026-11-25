@@ -1,68 +1,58 @@
 /**
- * The managed-storage gate shared by `gbrain engine shadow start` and `seed`.
+ * What `gbrain engine shadow start` and `gbrain engine shadow seed` record about managed storage (`start` keeps it in `state.json`, `seed` in `seed.json`).
  *
- * The Rust engine never holds managed storage (src/core/rust-engine/store-members/persistence.ts), so a brain with managed
- * storage can never swap to Rust and a shadow on it measures nothing it could use. Both commands refuse it before
- * they write anything. A brain whose mode cannot be read is refused too: an impossible read is not a mode.
+ * Shadow mode gathers evidence on managed brains too; only the swap refuses them (`engine_swap_refused` / `managed_storage`,
+ * src/core/engine-swap/refusals.ts). Nothing here refuses: it reads the brain's mode once, best-effort, and returns a record
+ * that the state file, `status` and the report carry, so a reader of the evidence knows the brain cannot swap.
+ * The read is one SELECT on the `persistence_brain` row; it writes nothing.
  */
 import type { SqlEngine } from '../core/persistence/model.ts';
 import { readManagedMode } from '../core/persistence/managed-mode.ts';
-import { opError, type OperationError } from '../core/ops/contract.ts';
 
-// After the master merge: if core's engine_swap_refused `managed_storage` row is on master, switch to it and delete the
-// engine_shadow_refused registry row; one row only. This constant is the only place in src that names the code besides its registry row.
-const SHADOW_REFUSAL_CODE = 'engine_shadow_refused';
-const VERIFY = { argv: ['gbrain', 'sources', 'writer', 'status', '--probe', '--json'] };
-const MANAGED_WHY = 'This brain uses managed storage. The Rust engine never holds managed storage, so this brain can never swap to Rust and a shadow on it measures nothing it could use. '
-  + 'Brains made by a default `gbrain init` use managed storage and cannot be shadowed or swapped yet.';
-const WAYS_OUT = 'For a new brain, `gbrain init --db-only` creates one without managed storage. For this brain, `gbrain sources writer deactivate --dry-run` previews converting it back to classic mode; the real deactivate needs the user\'s consent.';
-const NEXT = 'Ask the user how they want to proceed; nothing was written.';
-const MANAGED_NEXT = `Ask the user. ${WAYS_OUT} Nothing was written.`;
-const BUSY_NEXT = 'Ask the user to stop `gbrain serve` and any other process holding this brain, run the same command again, then restart serve (shadow mode attaches only to processes that open the brain after start); nothing was written.';
+/**
+ * The mode as read at `checked_at`. `managed` is `true` or `false` when the read worked and `null` when it did not;
+ * then `reason` is the failing error's code (`pglite_busy`, `no_brain`, `storage_error`, ...) or `open_failed` / `read_failed`.
+ */
+export interface ManagedStorageRecord { managed: boolean | null; checked_at: string; reason?: string }
 
-/** The brain's mode was read as managed (a literal `true`): the only case that says "this brain uses managed storage". Inlined: core will export a `managed_storage` builder from src/core/engine-swap/refusals.ts; it is not on master yet. */
-function managedStorageRefused(): OperationError {
-  return build('Shadow mode is refused: this brain uses managed storage.', MANAGED_NEXT, MANAGED_WHY,
-    `This brain uses managed storage, and the Rust engine never holds it, so a shadow on it would measure nothing it could use. Brains made by a default \`gbrain init\` use managed storage and cannot be shadowed or swapped yet. ${WAYS_OUT} Nothing was written.`);
-}
+/** What `status --json` and the report carry: the record plus `note`, null unless the swap is blocked or the mode is unknown. */
+export interface StorageReport extends ManagedStorageRecord { note: string | null }
 
-/** The mode was NOT read as true: a failed read refuses (an impossible read is not a mode), but it does not claim the brain is managed. */
-function modeUnconfirmed(failure: string, busy: boolean): OperationError {
-  const why = `gbrain could not read whether this brain uses managed storage (${failure}), so it refuses rather than guess. The brain may well be unmanaged. A shadow on a managed brain measures nothing, because the Rust engine never holds managed storage.`;
-  return build('Shadow mode is refused: gbrain could not confirm that this brain does not use managed storage.', busy ? BUSY_NEXT : NEXT, why,
-    busy ? 'Another gbrain process holds this brain, so its storage mode could not be read. Can you stop `gbrain serve` and anything else using it, run the command again, then restart serve? Nothing was written.'
-      : 'gbrain could not read this brain\'s storage mode, so shadow mode stays off. Can you check the brain with `gbrain doctor --json` and run the command again? Nothing was written.',
-    failure);
-}
+export const SWAP_BLOCKED_NOTE = 'this brain cannot swap while it uses managed storage';
+export const MODE_UNREAD_NOTE = 'could not read whether this brain uses managed storage; the swap will check it';
 
-function build(message: string, next: string, why: string, userMessage: string, detail?: string): OperationError {
-  return opError(SHADOW_REFUSAL_CODE, message, next, {
-    reason: 'managed_storage', why, ...(detail ? { detail } : {}),
-    fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false, why, verify: VERIFY, user_message: userMessage },
-  });
-}
-
-/** The managed-storage refusal, or null when the brain is unmanaged. Any failure to read the mode is also a refusal, carrying the read error. */
-export async function managedStorageRefusal(engine: SqlEngine): Promise<OperationError | null> {
+/** Reads the mode of an open brain. Never throws: a failed read is `managed: null` with the error's code. */
+export async function readManagedStorage(engine: SqlEngine, now: Date = new Date()): Promise<ManagedStorageRecord> {
   try {
-    return await readManagedMode(engine) ? managedStorageRefused() : null;
+    return { managed: await readManagedMode(engine), checked_at: now.toISOString() };
   } catch (e) {
-    return modeUnconfirmed(describeReadError(e), isBusy(e));
+    return unreadManagedStorage(e, 'read_failed', now);
   }
 }
 
-const isBusy = (e: unknown): boolean => (e as { code?: unknown } | null)?.code === 'pglite_busy';
-
-/** What went wrong reading the mode, for the refusal's `detail`: the error's code, message and own detail. */
-export function describeReadError(e: unknown): string {
-  const err = e as { code?: unknown; message?: unknown; detail?: unknown };
-  const message = typeof err?.message === 'string' ? err.message : String(e);
-  const code = typeof err?.code === 'string' ? `${err.code}: ` : '';
-  const detail = typeof err?.detail === 'string' && err.detail ? ` (${err.detail})` : '';
-  return `could not read the persistence mode: ${code}${message}${detail}`;
+/** The record for a brain that could not be opened to read its mode. */
+export function unopenableManagedStorage(e: unknown, now: Date = new Date()): ManagedStorageRecord {
+  return unreadManagedStorage(e, 'open_failed', now);
 }
 
-/** The refusal for a brain that could not be opened to read its mode; a `pglite_busy` open names the process holding it. */
-export function unopenableBrainRefusal(e: unknown): OperationError {
-  return modeUnconfirmed(`could not open the brain: ${describeReadError(e).replace(/^could not read the persistence mode: /, '')}`, isBusy(e));
+function unreadManagedStorage(e: unknown, fallback: string, now: Date): ManagedStorageRecord {
+  const code = (e as { code?: unknown } | null)?.code;
+  return { managed: null, checked_at: now.toISOString(), reason: typeof code === 'string' && /^[a-z0-9_]{1,64}$/i.test(code) ? code : fallback };
+}
+
+/** A state file's record, or null when it is absent (a state written before this field existed) or malformed. */
+export function storageReport(record: unknown): StorageReport | null {
+  const r = record as Partial<ManagedStorageRecord> | null | undefined;
+  if (!r || typeof r !== 'object' || (r.managed !== true && r.managed !== false && r.managed !== null) || typeof r.checked_at !== 'string') return null;
+  return {
+    managed: r.managed, checked_at: r.checked_at, ...(typeof r.reason === 'string' ? { reason: r.reason } : {}),
+    note: r.managed === true ? SWAP_BLOCKED_NOTE : r.managed === null ? MODE_UNREAD_NOTE : null,
+  };
+}
+
+/** The one line `start`, `status` and the report print, or null for an unmanaged brain. */
+export function storageLine(record: unknown): string | null {
+  const s = storageReport(record);
+  if (!s?.note) return null;
+  return s.managed === null && s.reason ? `${s.note} (${s.reason})` : s.note;
 }

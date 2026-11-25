@@ -6,6 +6,8 @@ test/unmanaged-push-every-site-gst2456.serial.test.ts	R1	R1: mutates HOME, GBRAI
 test/unmanaged-push-history-scan-8902.serial.test.ts	R1	R1: mutates HOME, GBRAIN_HOME and GBRAIN_GIT_ALLOW_FILE_TRANSPORT for real policy, scaffolding, sources push and bootstrap pushes to local bare remotes
 test/http-db-config.serial.test.ts	global-state	global-state: binds HTTP listeners; drains process-wide pending eval capture registry; withEnv scopes GBRAIN_HOME and GBRAIN_CONTRIBUTOR_MODE
 test/access-as.serial.test.ts	global-state	global-state: spawns real gbrain CLI children (src/cli.ts --as) that each open one on-disk PGLite brain and take its file lock in a temp GBRAIN_HOME; the cases seed and read that one brain in order
+test/access-member-personal-sources.serial.test.ts	global-state	global-state: spawns real gbrain CLI children (src/cli.ts --as, access check, auth create) and a real serve --http child that each open one on-disk PGLite brain and take its file lock in a temp GBRAIN_HOME; the cases seed and read that one brain in order
+test/rust-cli-parity.serial.test.ts	global-state	global-state: spawns real gbrain CLI children (src/cli.ts) that each open one on-disk PGLite or Rust-engine brain in a temp GBRAIN_HOME; the setup imports the fixture into both brains and every case reads those brains
 test/access-room-cli.serial.test.ts	global-state	global-state: spawns real gbrain CLI children (src/cli.ts --room) that each open one on-disk PGLite brain in a temp GBRAIN_HOME, and runs a live PGLite persistence owner on a socket in its own temp home that later cases delegate reads to
 test/enforced-member.serial.test.ts	global-state	global-state: spawns real gbrain CLI children (src/cli.ts under GBRAIN_ENFORCED_MEMBER) that each open one on-disk PGLite brain and take its file lock in a temp GBRAIN_HOME, or one isolated Postgres database; the cases seed and read that one brain in order
 test/enforced-member-writes-setting.serial.test.ts	global-state	global-state: spawns real gbrain CLI children (src/cli.ts under GBRAIN_ENFORCED_MEMBER) that each open one on-disk PGLite brain and take its file lock in a temp GBRAIN_HOME, or one isolated Postgres database; the cases seed and read that one brain in order
@@ -218,6 +220,7 @@ test/git-remote-durable.serial.test.ts	R1	R1: mutates process.env (GBRAIN_GIT_AL
 test/git-remote-pull-file-transport.serial.test.ts	R1	R1: mutates process.env (GBRAIN_GIT_ALLOW_FILE_TRANSPORT)
 test/google-connect-cmd.serial.test.ts	global-state	global-state: spyOn console.error; patches process stdout/stderr/console
 test/google-api-access-cmd-7073.serial.test.ts	global-state	global-state: replaces globalThis.fetch and patches process stdout/stderr for google status and setup
+test/google-personal-connect.serial.test.ts	global-state	global-state: patches process.stdout/stderr.write, process.exit, process.stdin.isTTY and globalThis.fetch, and runs CLI commands that set the process exit verdict
 test/google-loops-recovery.serial.test.ts	global-state	global-state: process-wide test seams __setChatTransportForTests; configureGateway changes the process-wide AI gateway; patches process stdout/stderr/console
 test/graduation-serve-guard.serial.test.ts	global-state	global-state: spawns real gbrain serve children and holds GBRAIN_HOME (withEnv) across awaited CLI runs
 test/graph-query-thin-client-source-flag.serial.test.ts	R2	R2: mock.module(../src/core/config.ts, ../src/core/mcp-client.ts) replaces modules for every file in the process
@@ -226,6 +229,7 @@ test/harness-delivery-recovery.serial.test.ts	global-state	global-state: R3: con
 test/held-embedding-printed-commands.serial.test.ts	global-state	global-state: installs the process-wide CLI fix routing (installCliRouting) that every renderAction in the process reads
 test/hook-backup-notice.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_BACKUP_CHECK)
 test/hook-command.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_HOOKS, GBRAIN_HOOK_LANE, GBRAIN_SOURCE (+3 more))
+test/hook-first-session.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, DATABASE_URL, GBRAIN_DATABASE_URL, GBRAIN_SOURCE (+4 more)) for a real stdio serve and hook round trip
 test/hook-push-banner-superseded.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_BACKUP_CHECK)
 test/hook-session-start-serve-wait.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, CLAUDE_CONFIG_DIR, CODEX_HOME)
 test/hook-writeback-stop.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_SOURCE)
@@ -483,4 +487,8 @@ test/wakeshift-emit-spool.serial.test.ts	global-state	global-state: resets the m
 test/push-secret-scan-gaps.serial.test.ts	global-state	global-state: sets GBRAIN_HOME, PATH (a git wrapper for the index race) and GBRAIN_GIT_ALLOW_FILE_TRANSPORT through withEnv for real commits and pushes to local bare remotes
 test/git-commit-push-credential-refused-gst2961.serial.test.ts	global-state	global-state: sets GBRAIN_HOME through the withEnv helper to read the push log a commit-push child wrote, spawns real gbrain CLI children, and runs a local git smart-HTTP stub server on a random port
 test/rust-engine-shadow.serial.test.ts	global-state	global-state: the supervisor spawns a real gbrain engine shadow __child process against an on-disk shadow directory; withEnv scopes GBRAIN_HOME, GBRAIN_SHADOW_CHILD and GBRAIN_RUST_ENGINE_ADDON around the CLI, engine factory and doctor check
+test/rust-engine-shadow-managed-gate.serial.test.ts	R1	R1: sets GBRAIN_HOME and clears GBRAIN_SHADOW_CHILD and GBRAIN_RUST_ENGINE_ADDON in beforeAll so a real on-disk PGLite brain and its shadow directory live under a temp home; restored in afterAll
 test/cli-reads-under-live-serve.serial.test.ts	global-state	global-state: starts a real gbrain serve that holds a PGLite brain's single-writer lock for the whole file and runs real CLI children against it
+test/shadow-capture.serial.test.ts	global-state	global-state: sets GBRAIN_HOME and GBRAIN_SHADOW_CAPTURE with withEnv and writes the capture directory under that home
+test/shadow-replay.serial.test.ts	global-state	global-state: sets GBRAIN_HOME and GBRAIN_RUST_ENGINE_ADDON with withEnv and spawns the real engine shadow __replay-child process against an on-disk capture directory
+test/google-socket.serial.test.ts	global-state	global-state: binds a real Unix socket under a temp GBRAIN_HOME and spawns real gbrain CLI children (google exec, config set) with GBRAIN_HOME and PATH set

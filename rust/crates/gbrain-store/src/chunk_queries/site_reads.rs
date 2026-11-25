@@ -9,8 +9,9 @@
 //!
 //! Each member answers what the SQL engines' statement answers over the same rows. The read policy
 //! is `pageReadFilter`'s source clause, its page privacy policy and its live test (not deleted,
-//! not quarantined, in a source that exists and is not archived); the TypeScript members refuse a
-//! trust, flag or safe-chunk policy before they call the store. A served page is one whose
+//! not quarantined, in a source that exists and is not archived), and under a safe-chunk read the
+//! chunker-version fence of `codeReadFilter` and `resolveFrozenHits` (`safeChunksFilter`); the
+//! TypeScript members refuse a trust or flag policy the store does not read before they call it. A served page is one whose
 //! `text_projection_revision` is its `knowledge_revision` or the v153 activation marker
 //! (`servedTextProjectionFilter`). Strings compare by bytes, as PGLite's C collation does, and a
 //! NULL sorts after every value in ascending order. Rows the SQL leaves in plan order tie-break
@@ -22,7 +23,9 @@
 //! page_body family's private state, which this family does not read (follow-up
 //! `frozen-hit-manifest-liveness`).
 
-use super::{EMBED_SKIP_KEY, QUARANTINE_KEY, SAFE_FENCE_CHUNKER_VERSION, sealed, segmented};
+use super::{
+    EMBED_SKIP_KEY, QUARANTINE_KEY, SAFE_FENCE_CHUNKER_VERSION, safe_chunks, sealed, segmented,
+};
 use crate::Store;
 use crate::chunks::{
     ChunkRecord, clear_chunks, delete_chunks_matching, in_live_body, read_chunks, read_segment_view,
@@ -44,8 +47,10 @@ use std::collections::{BTreeSet, HashMap};
 const ACTIVATION_SERVED_REVISION: &str = "00000000-0000-0000-0000-000000000153";
 
 /// The read policy the TypeScript members send: `pageReadFilter`'s source clause, under
-/// `excludePrivate` the page privacy policy, and its `pageEligibleSql` trust floor and flag
-/// suppression (`minTrust`, `suppressFlagged`). `allSources` has already dropped `sourceId`.
+/// `excludePrivate` the page privacy policy, its `pageEligibleSql` trust floor and flag
+/// suppression (`minTrust`, `suppressFlagged`), and `requireSafeChunks`
+/// (`requiresSafeChunks(scope)`), the chunker-version fence. `allSources` has already dropped
+/// `sourceId`.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ChunkReadScope {
@@ -54,6 +59,8 @@ pub struct ChunkReadScope {
     pub exclude_private: Option<PrivacyPolicy>,
     pub min_trust: Option<String>,
     pub suppress_flagged: bool,
+    /// Only pages at or above the safe-chunk fence (`chunker_version >= 4`) are read.
+    pub require_safe_chunks: bool,
 }
 
 impl ChunkReadScope {
@@ -194,13 +201,13 @@ fn nulls_last<T: Ord>(a: &Option<T>, b: &Option<T>) -> Ordering {
 }
 
 /// `pageReadFilter(.., live = true)` over pages, with the source cache it needs.
-struct Policy<'a> {
+pub(crate) struct Policy<'a> {
     read: &'a dyn KvRead,
     sources: HashMap<String, bool>,
 }
 
 impl<'a> Policy<'a> {
-    fn new(read: &'a dyn KvRead) -> Self {
+    pub(crate) fn new(read: &'a dyn KvRead) -> Self {
         Self {
             read,
             sources: HashMap::new(),
@@ -216,8 +223,8 @@ impl<'a> Policy<'a> {
         Ok(live)
     }
 
-    fn passes(&mut self, page: &PageRecord, scope: &ChunkReadScope) -> Result<bool> {
-        if !scope.source_ok(&page.source_id) {
+    pub(crate) fn passes(&mut self, page: &PageRecord, scope: &ChunkReadScope) -> Result<bool> {
+        if !scope.source_ok(&page.source_id) || (scope.require_safe_chunks && !safe_chunks(page)) {
             return Ok(false);
         }
         if let Some(policy) = &scope.exclude_private

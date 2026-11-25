@@ -97,6 +97,19 @@ test('a person pair that shares an id is confirmed on its own, with a hint line,
   expect((await identities()).filter(r => r.slug.startsWith('people/')).map(r => r.established_by)).toEqual(['dedupe:confirm', 'dedupe:confirm']);
 });
 
+test('a cross-source group holding two pages of one source is never confirmed or listed; its same-source pair is collapsed or rejected first', async () => {
+  await put('person', 'people/alice-example', 'Alice Example', {}, 'default');
+  await put('person', 'people/alice-example-2', 'Alice Example', {}, 'default');
+  await put('person', 'people/alice-example', 'Alice Example', {}, 'source-b');
+  const groups = (await cliJson(['--preview'])).groups as Array<{ id: string; kind: string }>;
+  const cross = groups.find(g => g.kind === 'cross_source')!;
+  expect((await cliJson(['confirm'])).entries.map((e: { id: string }) => e.id)).not.toContain(cross.id);
+  const refusal = await cli(['confirm', cross.id]).then(() => null, (e: unknown) => e as { code: string; reason: string; message: string });
+  expect(refusal).toMatchObject({ code: 'dedupe_group_not_confirmable', reason: 'same_source_members' });
+  expect(refusal!.message).toContain('gbrain dedupe reject');
+  expect(await identities()).toEqual([]);
+});
+
 test('a sync writes no identity row for a person, however many person pairs share an id', async () => {
   for (const s of ['default', 'source-b']) for (const n of ['alice', 'bob', 'carol']) {
     await put('person', `people/${n}-example`, `${n[0]!.toUpperCase()}${n.slice(1)} Example`, { github: `${n}-example`, linkedin: `linkedin.com/in/${n}-example` }, s);

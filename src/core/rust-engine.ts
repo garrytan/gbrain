@@ -90,7 +90,7 @@ export function openRustEngine(opts: OpenRustEngineOptions): RustEngine {
 // The class implements the lifecycle members; the members it does not implement yet are installed on its prototype
 // below from RUST_ENGINE_MEMBERS, so the interface half of this merge is honest about the full BrainEngine surface.
 export interface RustEngine extends Omit<BrainEngine, 'kind'> {}
-export class RustEngine {
+export class RustEngine implements BrainEngine {
   readonly kind = 'rust' as const;
   /** The capabilities whose every member the store serves (rust-engine/store-capabilities.ts). */
   readonly capabilities: EngineCapabilities = servedCapabilities();
@@ -112,6 +112,8 @@ export class RustEngine {
   /** Above zero while a `disconnect` runs: no election may start then, so none can outlive the disconnect. */
   private _disconnecting = 0;
   private readonly _beforeDisconnect = new Set<() => Promise<void>>();
+  /** True from the first synchronous step of `disconnect()`, which also captures the stop hooks: no work that needs a hook may start after it. */
+  get disconnecting(): boolean { return this._disconnecting > 0; }
   private readonly _ownerWaitMs: number | undefined;
   private _owner: OwnerRole | null = null;
   private _leaveOwner: (() => void) | null = null;

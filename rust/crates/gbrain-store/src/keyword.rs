@@ -100,7 +100,7 @@ pub(crate) use tsearch::{
 #[cfg(test)]
 pub(crate) use tsearch::{deep_spawns, reset_deep_spawns};
 
-pub(crate) use title_fuzzy::sql_ilike;
+pub(crate) use title_fuzzy::{real_to_js, sql_ilike, sql_like};
 
 #[allow(unused_imports)]
 pub(crate) use trgm::{

@@ -19,7 +19,6 @@ tools:
   - put_page
   - search
 mutating: true
-upstream: report-quality-gate@fc834ee
 when_to_use: "Use when the user asks: \"save report\", \"load latest report\", \"what's the latest briefing\", \"show me the pulse\", \"report quality\"."
 ---
 

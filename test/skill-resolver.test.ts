@@ -32,12 +32,14 @@ import { appendDailyLog, appendDailyLogSync, DAILY_LOG_DAY_CAP_BYTES, dailyLogFi
 import { EXCLUDE_MAX, STAT_CHECK_SLICE } from '../src/core/skills/resolver/resolve.ts';
 import { RACY_MTIME_MS } from '../src/core/skills/resolver/build.ts';
 import { TOP_GATE_DEFAULT } from '../src/core/skills/resolver/limits.ts';
+import { DEFAULT_SESSION_TOKEN_BUDGET } from '../src/core/skills/resolver/config.ts';
+import { CODES } from '../src/core/error-registry.ts';
 
 const scratch: string[] = [];
 afterAll(() => { for (const d of scratch) rmSync(d, { recursive: true, force: true }); });
 function tmp(prefix = 'skres-'): string { const d = mkdtempSync(join(tmpdir(), prefix)); scratch.push(d); return d; }
 
-interface J { id: string; name: string; description?: string; triggers?: string[]; routing?: string[]; body?: string; path?: string; eligible?: boolean }
+interface J { id: string; name: string; description?: string; triggers?: string[]; routing?: string[]; body?: string; path?: string; eligible?: boolean; deprecated?: boolean; replaced_by?: string }
 async function jsonCatalog(home: string, catalog: string, skills: J[], extra: Record<string, unknown> = {}) {
   const f = join(tmp('skres-src-'), 'catalog.json');
   writeFileSync(f, JSON.stringify(skills));
@@ -346,16 +348,18 @@ describe('sessions', () => {
     await jsonCatalog(home, 'c', [...targets, ...weak]);
     const strong = [1, 10, 18, 25, 37, 50];
     const perTurn: { turn: number; n: number; tokens: number }[] = [];
+    // pregate-literal: DEFAULT_SESSION_TOKEN_BUDGET=2000 this test pins the old budget on purpose to check pacing under a tight budget
+    const budget = 2000;
     for (let t = 1; t <= 50; t++) {
       const s = strong.indexOf(t);
       const message = s >= 0 ? `can you ${targets[s]!.name} this` : `${pool[t % 12]} ${pool[(t + 5) % 12]}`;
-      const r = await resolveSkills({ message, session_id: 'fifty', top_gate: 0 }, { home });
+      const r = await resolveSkills({ message, session_id: 'fifty', top_gate: 0 }, { home, sessionTokenBudget: budget });
       perTurn.push({ turn: t, n: r.output.suggestions.length, tokens: r.output.block_tokens });
       expect(await r.commit()).toBe(true);
     }
     for (const t of [10, 25, 50]) expect({ turn: t, n: perTurn[t - 1]!.n > 0 }).toEqual({ turn: t, n: true });
     const total = perTurn.reduce((a, x) => a + x.tokens, 0);
-    expect(total).toBeLessThanOrEqual(2000);
+    expect(total).toBeLessThanOrEqual(budget);
     expect(sessionStatus('fifty', { home }).spent).toBe(total);
     const late = perTurn.filter(x => x.turn > 12 && !strong.includes(x.turn));
     expect(late.every(x => x.n === 0)).toBe(true);
@@ -366,9 +370,23 @@ describe('sessions', () => {
     await jsonCatalog(home, 'c', BASIC);
     const key = sessionKey('on', undefined, 'k');
     await commitSession(home, key, { tokens: 1000, suggested: [], resuggested: [], reset: false });
-    expect((await resolveSkills({ message: 'reports', session_id: 'k' }, { home })).output.ranker.k).toBe(3);
+    expect((await resolveSkills({ message: 'reports', session_id: 'k' }, { home, sessionTokenBudget: 2000 })).output.ranker.k).toBe(3);
     await commitSession(home, key, { tokens: 600, suggested: [], resuggested: [], reset: false });
-    expect((await resolveSkills({ message: 'reports', session_id: 'k' }, { home })).output.ranker.k).toBe(1);
+    expect((await resolveSkills({ message: 'reports', session_id: 'k' }, { home, sessionTokenBudget: 2000 })).output.ranker.k).toBe(1);
+  });
+
+  test('with no budget set, a session gets 8,000 tokens: 2,000 spent leaves k at 5 and the block shown', async () => {
+    const home = tmp();
+    await jsonCatalog(home, 'c', BASIC);
+    await commitSession(home, sessionKey('on', undefined, 'default-budget'), { tokens: 2000, suggested: [], resuggested: [], reset: false });
+    const r = await resolveSkills({ message: 'deploy', session_id: 'default-budget' }, { home });
+    expect([r.output.budget_exhausted, r.output.ranker.k]).toEqual([false, 5]);
+    expect(r.output.block).not.toBe('');
+    expect(sessionStatus('default-budget', { home }).budget).toBe(8000);
+  });
+
+  test('the config error names the current default budget', () => {
+    expect(CODES.skill_resolver_config_invalid.suggestion).toContain(`default budget ${DEFAULT_SESSION_TOKEN_BUDGET}`);
   });
 
   test('budget exhaustion empties the block until a compaction resets the session', async () => {
@@ -376,9 +394,9 @@ describe('sessions', () => {
     await jsonCatalog(home, 'c', BASIC);
     const key = sessionKey('on', 'claude-code', 'b');
     await commitSession(home, key, { tokens: 2000, suggested: [], resuggested: [], reset: false });
-    const spent = await resolveSkills({ message: 'deploy', session_id: 'b', harness: 'claude-code' }, { home });
+    const spent = await resolveSkills({ message: 'deploy', session_id: 'b', harness: 'claude-code' }, { home, sessionTokenBudget: 2000 });
     expect([spent.output.budget_exhausted, spent.output.block]).toEqual([true, '']);
-    const reset = await resolveSkills({ message: 'deploy', session_id: 'b', harness: 'claude-code', reset_session: true }, { home });
+    const reset = await resolveSkills({ message: 'deploy', session_id: 'b', harness: 'claude-code', reset_session: true }, { home, sessionTokenBudget: 2000 });
     expect(reset.output.budget_exhausted).toBe(false);
     expect(reset.output.block).not.toBe('');
     await reset.commit();
@@ -390,10 +408,10 @@ describe('sessions', () => {
     await jsonCatalog(home, 'c', BASIC);
     await commitSession(home, sessionKey('on', 'claude-code', 'a'), { tokens: 2000, suggested: [], resuggested: [], reset: false });
     for (const message of ['ok thanks', 'zzqxv']) {
-      const r = await resolveSkills({ message, session_id: 'a', harness: 'claude-code' }, { home });
+      const r = await resolveSkills({ message, session_id: 'a', harness: 'claude-code' }, { home, sessionTokenBudget: 2000 });
       expect([r.output.no_skill, r.output.budget_exhausted, r.output.block_reason]).toEqual([true, true, message === 'zzqxv' ? 'no_match' : 'ack']);
     }
-    expect((await resolveSkills({ message: 'ok thanks', session_id: 'fresh', harness: 'claude-code' }, { home })).output.budget_exhausted).toBe(false);
+    expect((await resolveSkills({ message: 'ok thanks', session_id: 'fresh', harness: 'claude-code' }, { home, sessionTokenBudget: 2000 })).output.budget_exhausted).toBe(false);
   });
 
   test('block_reason says why a block is empty: deduped, paced, budget_exhausted, filtered, shadow', async () => {
@@ -405,12 +423,12 @@ describe('sessions', () => {
     const again = await resolveSkills({ message: 'deploy', session_id: 'd' }, { home, sessionTokenBudget: 50_000 });
     expect([again.output.block, again.output.block_reason]).toEqual(['', 'deduped']);
     await commitSession(home, sessionKey('on', undefined, 'p'), { tokens: 1000, suggested: [], resuggested: [], reset: false });
-    const paced = await resolveSkills({ message: 'team status', session_id: 'p' }, { home });
+    const paced = await resolveSkills({ message: 'team status', session_id: 'p' }, { home, sessionTokenBudget: 2000 });
     expect([paced.output.block, paced.output.block_reason]).toEqual(['', 'paced']);
     await commitSession(home, sessionKey('on', undefined, 'p'), { tokens: 1000, suggested: [], resuggested: [], reset: false });
-    expect((await resolveSkills({ message: 'team status', session_id: 'p' }, { home })).output.block_reason).toBe('budget_exhausted');
-    expect((await resolveSkills({ message: 'deploy', exclude: ['gbrain:deploy'], min_match_strength: 'name' }, { home })).output.block_reason).toBe('filtered');
-    const shadow = await resolveSkills({ message: 'deploy', shadow: true }, { home });
+    expect((await resolveSkills({ message: 'team status', session_id: 'p' }, { home, sessionTokenBudget: 2000 })).output.block_reason).toBe('budget_exhausted');
+    expect((await resolveSkills({ message: 'deploy', exclude: ['gbrain:deploy'], min_match_strength: 'name' }, { home, sessionTokenBudget: 2000 })).output.block_reason).toBe('filtered');
+    const shadow = await resolveSkills({ message: 'deploy', shadow: true }, { home, sessionTokenBudget: 2000 });
     expect([shadow.output.block_reason, shadow.shadowOutput?.block_reason]).toEqual(['shadow', null]);
   });
 
@@ -419,7 +437,7 @@ describe('sessions', () => {
     await jsonCatalog(home, 'c', BASIC);
     const key = sessionKey('on', 'claude-code', 'n');
     await commitSession(home, key, { tokens: 2000, suggested: [], resuggested: [], reset: false });
-    const r = await resolveSkills({ message: 'run the deploy skill and write the reports', session_id: 'n', harness: 'claude-code' }, { home });
+    const r = await resolveSkills({ message: 'run the deploy skill and write the reports', session_id: 'n', harness: 'claude-code' }, { home, sessionTokenBudget: 2000 });
     expect(r.output.budget_exhausted).toBe(true);
     expect(r.output.suggestions.map(s => [s.id, s.match_strength])).toEqual([['gbrain:deploy', 'named']]);
     expect(r.output.block).toContain('id: "gbrain:deploy"');
@@ -577,6 +595,24 @@ describe('block', () => {
     const custom = await resolveSkills({ message: 'deploy', top_gate: 0 }, { home, loadHint: 'Load it with my_loader <now>' });
     expect(custom.output.block).toContain('Load it with my_loader  now');
     expect(custom.output.suggestions[0]!.path).toBe(p);
+  });
+
+  test('openclaw: the path comes first unless a suggested skill sits outside the root the agent may read', async () => {
+    const home = tmp();
+    const root = tmp('skres-dir-');
+    skillDir(root, 'deploy', { name: 'deploy', description: 'Ship a service to production' });
+    await buildSkillIndex({ catalog: 'c', dirs: [root] }, { home });
+    const block = async (readRoot?: string) => (await resolveSkills({ message: 'deploy', harness: 'openclaw', top_gate: 0 }, { home, ...(readRoot === undefined ? {} : { readRoot }) })).output.block;
+    const pathFirst = 'To use one, read the SKILL.md at its path with read before acting; if that read fails, load it with skills_read({name})';
+    const nameFirst = 'To use one, load it with skills_read({name}) using its name (through dispatch_action when skills_read is not listed) before acting';
+    for (const b of [await block(), await block(root)]) {
+      expect(b).toContain(pathFirst);
+      expect(b.indexOf('read the SKILL.md')).toBeLessThan(b.indexOf('skills_read'));
+    }
+    for (const b of [await block(tmp('skres-other-')), await block('')]) {
+      expect(b).toContain(nameFirst);
+      expect(b).not.toContain('read the SKILL.md');
+    }
   });
 
   test('codex can load by path from the block alone', async () => {
@@ -1047,5 +1083,33 @@ describe('daily logs', () => {
     writeFileSync(full, 'y'.repeat(DAILY_LOG_DAY_CAP_BYTES));
     await appendDailyLog(dir, LANE_LOG, 'z\n', now + day);
     expect(readFileSync(full, 'utf8').endsWith('z\n')).toBe(false);
+  });
+});
+
+describe('deprecated skills', () => {
+  test('a SKILL.md with deprecated: true drops out of matched suggestions but still loads when the turn names it, with its replacement in the reason', async () => {
+    const home = tmp();
+    const root = tmp('skres-dir-');
+    const old = skillDir(root, 'reports', { name: 'reports', description: 'Write weekly status reports for a team', deprecated: true, replaced_by: 'status-digest' });
+    skillDir(root, 'status-digest', { name: 'status-digest', description: 'Write a weekly status digest for a team' });
+    await buildSkillIndex({ catalog: 'c', dirs: [root] }, { home });
+    const matched = await resolveSkills({ message: 'write the weekly status reports for the team', top_k: 8, top_gate: 0 }, { home });
+    expect(matched.output.suggestions.map(s => s.id)).toEqual(['status-digest']);
+    const named = await resolveSkills({ message: 'use the reports skill', top_gate: 0 }, { home });
+    expect(named.output.suggestions[0]).toMatchObject({ id: 'reports', match_strength: 'named', path: old });
+    expect(named.output.suggestions[0]!.reason).toStartWith('named in the turn; deprecated, use status-digest instead; ');
+  });
+
+  test('a JSON entry takes deprecated and replaced_by the same way, and a deprecated that is not a boolean is refused', async () => {
+    const home = tmp();
+    await jsonCatalog(home, 'c', [...BASIC, { id: 'gbrain:old-deploy', name: 'old-deploy', description: 'Ship a service to production after the tests pass', deprecated: true }]);
+    const matched = await resolveSkills({ message: 'ship the service to production', top_k: 8, top_gate: 0 }, { home });
+    expect(matched.output.suggestions.map(s => s.id)).not.toContain('gbrain:old-deploy');
+    expect(matched.output.suggestions[0]!.id).toBe('gbrain:deploy');
+    const named = await resolveSkills({ message: 'run /old-deploy now', top_gate: 0 }, { home });
+    expect(named.output.suggestions[0]).toMatchObject({ id: 'gbrain:old-deploy', match_strength: 'named' });
+    expect(named.output.suggestions[0]!.reason).toStartWith('named in the turn; deprecated; ');
+    expect(await codeOf(jsonCatalog(tmp(), 'c', [{ id: 'a', name: 'a', deprecated: 'yes' } as unknown as J]))).toBe('skill_source_invalid');
+    expect(await codeOf(jsonCatalog(tmp(), 'c', [{ id: 'a', name: 'a', replaced_by: 3 } as unknown as J]))).toBe('skill_source_invalid');
   });
 });

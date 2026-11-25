@@ -66,6 +66,14 @@ fn import_source(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Result<Outc
         archived: row.bool("archived")?.unwrap_or(false),
         created_at_us: row.req_ts("created_at")?,
         chunker_version: row.text("chunker_version"),
+        archived_at_us: None,
+        archive_expires_at_us: None,
+        upstream_checked_at_us: None,
+        upstream_commit: None,
+        upstream_behind: None,
+        last_commit: None,
+        newest_content_at_us: None,
+        purge_epoch: 0,
     };
     let stored = read_source(&*tx, &record.id)?;
     if stored.is_some_and(|s| serde_json::to_value(&s).ok() == serde_json::to_value(&record).ok()) {
@@ -154,6 +162,7 @@ static PAGES: Relation = Relation {
         ("truth_lead", Kept),
         ("timeline_lead", Kept),
         ("version_history_gap_at", Kept),
+        ("database_only_reason", Kept),
         // `page_projection_jobs` joined on the page's source incarnation and slug.
         ("projection_job_revision", Kept),
         ("projection_job_reason", Kept),
@@ -216,6 +225,7 @@ fn import_page(tx: &mut dyn KvWrite, row: &Row, losses: &mut Losses) -> Result<O
             "revision_principal_id",
         ),
         version_history_gap_at_us: row.ts("version_history_gap_at")?,
+        database_only_reason: row.text("database_only_reason"),
     };
     // Before the page: its vector check reads the timeline lead.
     seed_body(tx, row, id, losses)?;
@@ -365,7 +375,8 @@ fn import_chunk(tx: &mut dyn KvWrite, row: &Row, losses: &mut Losses) -> Result<
     let id = row.req_id("id")?;
     let page_id = row.req_id("page_id")?;
     require_page(&*tx, page_id)?;
-    // A chunk the store does not hold still used its id on the primary: the counter passes it.
+    // A dropped chunk still existed on the primary, and a code edge may name it: the id counter is how an edge's chunk is
+    // checked (`history::require_chunk`), so it moves past a dropped chunk too.
     if row.value("retired_generation").is_some() {
         raise_counter(tx, crate::chunks::NEXT_CHUNK_ID, id)?;
         return Ok(Outcome::Dropped("retired_chunk"));

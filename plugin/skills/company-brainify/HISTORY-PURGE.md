@@ -207,6 +207,10 @@ while read -r old ref; do
   elif grep -qxF "$ref" "$WORK/delete-refs.txt"; then REFSPECS="$REFSPECS :$ref"
   else echo "$ref is missing locally but was not marked delete — ABORT, nothing pushed"; exit 1; fi
 done < "$WORK/remote-refs.txt"
+# A branch or tag created between the ls-remote compare above and this push
+# carries no lease, so the push can't refuse it; the verify below still lists
+# it as not landed. If it fires, stop: that ref keeps the old history until the
+# purge is re-run from Step 1.
 git push --atomic $LEASES origin $REFSPECS || { echo "push refused: the remote moved, nothing changed — re-run from Step 1"; exit 1; }  # gbrain-allow-shared-tree-git: confirmed history purge of a private clone, every ref leased to its Step 1 sha
 
 # Verify: every branch and tag on the remote is the local rewritten ref, and

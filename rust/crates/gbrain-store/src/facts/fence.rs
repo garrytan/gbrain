@@ -16,11 +16,14 @@
 //! the held arm reads the widening proposals of `trust_proposals` (`trust::proposals`). See
 //! rust/docs/store/facts.md, "The fence guard's reads".
 
-use super::{FactRecord, page_rows};
+use super::withdrawal_guard::preserve_withdrawal;
+use super::{FactRecord, bigint, fence_row, foreign_key, page_rows, read_fact, write_fact};
 use crate::Store;
+use crate::dream::int4;
 use crate::error::{INVALID_ARGUMENT, Result, StoreError};
 use crate::kv::KvRead;
 use crate::links::no_nul;
+use crate::persistence::parse_timestamptz;
 use crate::timeline_queries::timestamptz_text;
 use crate::trust::TrustTier;
 use crate::trust::proposals::held_narrower;
@@ -35,6 +38,16 @@ pub struct FenceTarget {
     pub source_id: String,
     pub slug: String,
     pub incoming: String,
+}
+
+/// `listFactIdsBySourcePrefix` input: a page coordinate and the literal prefix of `source` (the TS
+/// member refuses a LIKE wildcard, so `LIKE prefix || '%'` is `starts_with`).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FactSourcePrefix {
+    pub source_id: String,
+    pub slug: String,
+    pub source_prefix: String,
 }
 
 /// What the SQL reads from the transaction: the writer's declared tier by name (`None` or empty:
@@ -151,6 +164,22 @@ fn opt_time(micros: Option<i64>) -> Value {
     micros.map_or(Value::Null, |us| json!(jsonb_time(us)))
 }
 
+/// The before-state `restoreFactPreimage` puts back (`FACT_PREIMAGE_SQL` as the generation ledger
+/// recorded it; other keys are ignored). Times are `timestamptz` text.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct FactRestore {
+    pub id: Option<f64>,
+    pub fact: Option<String>,
+    pub visibility: Option<String>,
+    pub expired_at: Option<String>,
+    pub valid_until: Option<String>,
+    pub superseded_by: Option<f64>,
+    pub consolidated_at: Option<String>,
+    pub consolidated_into: Option<f64>,
+    pub row_num: Option<f64>,
+}
+
 /// `FACT_PREIMAGE_SQL`: a fact's before-state.
 fn preimage(row: &FactRecord) -> Value {
     json!({
@@ -192,6 +221,145 @@ impl Store {
             })
             .map(|(_, row)| preimage(row))
             .collect())
+    }
+
+    /// `readFactPreimages(sourceId, ids)`: the before-state (`FACT_PREIMAGE_SQL`) of each fact of `ids`
+    /// that exists in `source_id`, in id order, once per id. The generation adapters record it before
+    /// rows change. A negative id is no fact, as `f.id = ANY($2::bigint[])` matches none.
+    pub fn read_fact_preimages(&self, source_id: &str, ids: &[i64]) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let ids: std::collections::BTreeSet<u64> = ids
+            .iter()
+            .filter_map(|id| u64::try_from(*id).ok())
+            .collect();
+        let mut out = Vec::new();
+        for id in ids {
+            if let Some(row) = read_fact(&*read, id)?
+                && row.source_id == source_id
+            {
+                out.push(preimage(&row));
+            }
+        }
+        Ok(out)
+    }
+
+    /// `listFactIdsBySourcePrefix({ sourceId, slug, sourcePrefix })`: the ids of the page
+    /// coordinate's facts (`source_markdown_slug`) whose `source` starts with the prefix, by id. The
+    /// extracted facts generation reads its own rows with it.
+    pub fn list_fact_ids_by_source_prefix(&self, q: &FactSourcePrefix) -> Result<Vec<u64>> {
+        no_nul(
+            "listFactIdsBySourcePrefix",
+            &[
+                ("sourceId", &q.source_id),
+                ("slug", &q.slug),
+                ("sourcePrefix", &q.source_prefix),
+            ],
+        )?;
+        let read = self.read()?;
+        Ok(page_rows(&*read, &q.source_id, &q.slug)?
+            .iter()
+            .filter(|row| row.source.starts_with(&q.source_prefix))
+            .map(|row| row.id)
+            .collect())
+    }
+
+    /// `expireFactRows(sourceId, ids)`: sets `expired_at` to now on each still-live fact of `ids` in
+    /// the source; nothing else changes. Returns how many it ended. A negative id is no fact.
+    pub fn expire_fact_rows(&self, source_id: &str, ids: &[i64]) -> Result<usize> {
+        no_nul("expireFactRows", &[("sourceId", source_id)])?;
+        let ids: std::collections::BTreeSet<u64> = ids
+            .iter()
+            .filter_map(|id| u64::try_from(*id).ok())
+            .collect();
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let now = self.env.now_micros();
+        let trust = &self.write_trust()?;
+        self.write(|tx| {
+            let mut ended = 0;
+            for id in &ids {
+                let Some(old) = read_fact(&*tx, *id)? else {
+                    continue;
+                };
+                if old.source_id != source_id || old.expired_at_us.is_some() {
+                    continue;
+                }
+                let mut new = old.clone();
+                new.expired_at_us = Some(now);
+                write_fact(tx, trust, Some(&old), &new)?;
+                ended += 1;
+            }
+            Ok(ended)
+        })
+    }
+
+    /// `restoreFactPreimage(sourceId, preimage)`: puts a fact's recorded before-state back. Sets
+    /// `expired_at`, `valid_until`, `superseded_by`, `consolidated_at` and `consolidated_into`, and
+    /// the fence position `row_num` when no other row of the page holds it. Only the row of the
+    /// source whose claim and visibility still match is changed; returns whether it was. Every
+    /// argument is checked first, as Postgres casts the parameters before it reads a row. The
+    /// withdrawal guard runs (`expired_at` is in the `SET` list): a row restored active that a
+    /// withdrawal of its claim reaches comes back expired at that withdrawal.
+    pub fn restore_fact_preimage(&self, source_id: &str, p: &FactRestore) -> Result<bool> {
+        const OP: &str = "restoreFactPreimage";
+        let time = |what: &str, t: &Option<String>| {
+            t.as_deref()
+                .map(|t| parse_timestamptz(t, &format!("{OP}: {what}")))
+                .transpose()
+        };
+        let num = |what: &str, v: Option<f64>| v.map(|v| bigint(OP, what, v)).transpose();
+        let id = num("id", p.id)?;
+        let expired_at = time("expired_at", &p.expired_at)?;
+        let valid_until = time("valid_until", &p.valid_until)?;
+        let superseded_by = num("superseded_by", p.superseded_by)?;
+        let consolidated_at = time("consolidated_at", &p.consolidated_at)?;
+        let consolidated_into = num("consolidated_into", p.consolidated_into)?;
+        let row_num = p.row_num.map(|v| int4(OP, "row_num", v)).transpose()?;
+        let (Some(id), Some(fact), Some(visibility)) = (id, &p.fact, &p.visibility) else {
+            return Ok(false);
+        };
+        let Ok(id) = u64::try_from(id) else {
+            return Ok(false);
+        };
+        let trust = &self.write_trust()?;
+        self.write(|tx| {
+            let Some(old) = read_fact(&*tx, id)? else {
+                return Ok(false);
+            };
+            if old.source_id != source_id || &old.fact != fact || &old.visibility != visibility {
+                return Ok(false);
+            }
+            let mut new = old.clone();
+            new.expired_at_us = expired_at;
+            new.valid_until_us = valid_until;
+            new.consolidated_at_us = consolidated_at;
+            new.consolidated_into = consolidated_into;
+            new.superseded_by = match superseded_by {
+                None => None,
+                Some(by) if old.superseded_by == u64::try_from(by).ok() => old.superseded_by,
+                Some(by) => match u64::try_from(by) {
+                    Ok(by) if read_fact(&*tx, by)?.is_some() => Some(by),
+                    _ => return Err(foreign_key("facts_superseded_by_fkey")),
+                },
+            };
+            if let Some(n) = row_num
+                && old.row_num != Some(n)
+            {
+                let taken = match &old.source_markdown_slug {
+                    Some(slug) => {
+                        fence_row(&*tx, &old.source_id, slug, n)?.is_some_and(|o| o.id != old.id)
+                    }
+                    None => false,
+                };
+                if !taken {
+                    new.row_num = Some(n);
+                }
+            }
+            preserve_withdrawal(&*tx, &mut new)?;
+            write_fact(tx, trust, Some(&old), &new)?;
+            Ok(true)
+        })
     }
 
     /// `listFenceFactRows({ sourceId, slug, incoming })`: the page's live fence rows, by row number,

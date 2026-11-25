@@ -141,7 +141,7 @@ Standard directory structure:
 
 | Directory | Type | Example |
 |-----------|------|---------|
-| `people/` | person | `people/paul-graham.md` |
+| `people/` | person | `people/alice-example.md` |
 | `companies/` | company | `companies/stripe.md` |
 | `deals/` | deal | `deals/stripe-series-c.md` |
 | `meetings/` | meeting | `meetings/2026-04-23-weekly-sync.md` |

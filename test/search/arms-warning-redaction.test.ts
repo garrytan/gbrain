@@ -13,7 +13,8 @@
  *  4. Seam: engine.searchKeyword / searchTitles / searchVector patched to throw an error whose message holds a
  *     URL query value (VALUECANARY) and whose code is SQLSTATE 57P01; queryEmbedFn throws the same; a stubbed
  *     fetch for the multimodal embed. The canary has no `user:password@` part so the secrets scan stays clean.
- *     Real PGLite brain; console.warn and console.error captured and restored in finally.
+ *     Real PGLite brain; console.warn and console.error captured and restored in finally. The zero-row fallback
+ *     line must not carry the search text either: the query is a canary (QUERYCANARY) that never reaches stderr.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
@@ -78,8 +79,8 @@ describe('search arm warnings print the failure class only (PGLite)', () => {
     expect(line).not.toContain(CODE);
     expect(line).not.toContain('57014');
   };
-  const search = (opts: Record<string, unknown> = {}) =>
-    hybridSearch(engine, 'tapirword', { limit: 5, useCache: false, queryEmbedFn: embedOk, ...opts } as never);
+  const search = (opts: Record<string, unknown> = {}, query = 'tapirword') =>
+    hybridSearch(engine, query, { limit: 5, useCache: false, queryEmbedFn: embedOk, ...opts } as never);
 
   test('keyword arm failure names provider_error, not the driver message or code', async () => {
     engine.searchKeyword = async () => { throw driverError(); };
@@ -148,6 +149,19 @@ describe('search arm warnings print the failure class only (PGLite)', () => {
       engine.searchVector = async () => { throw driverError(); };
       await search();
       expectClassOnly(lineFor('unified_multimodal embed failed'), 'provider_error');
+    });
+
+    test('unified-multimodal zero-row fallback prints no query text, so a search never reaches the server log', async () => {
+      const QUERY_CANARY = 'QUERYCANARY';
+      await engine.setConfig('search.unified_multimodal', 'true');
+      engine.searchVector = async () => [];
+      await search({}, `tapirword ${QUERY_CANARY}`);
+      const line = lineFor('unified_multimodal returned zero rows');
+      expect(line).toBeDefined();
+      expect(line).toContain('Falling back to dual-column text path');
+      expect(printed.join('\n')).not.toContain(QUERY_CANARY);
+      expect(printed.join('\n')).not.toContain('tapirword');
+      expect(line).not.toContain('query=');
     });
   });
 });

@@ -10,6 +10,7 @@
  * `put_pages` with only `request_id` reads the batch status without resending
  * any content.
  */
+import { normalizeSlug } from '../utils.ts';
 import { randomUUID } from 'node:crypto';
 import { pageQuarantinedNotice } from '../quarantine.ts';
 import type { OperationContext } from '../ops/contract.ts';
@@ -90,7 +91,7 @@ interface Repeats { repeatOf: (number | undefined)[]; refusals: Map<number, Oper
  */
 function findRepeats(pages: BatchPage[]): Repeats {
   const bySlug = new Map<string, number[]>();
-  pages.forEach((page, index) => bySlug.set(page.slug.toLowerCase(), [...(bySlug.get(page.slug.toLowerCase()) ?? []), index]));
+  pages.forEach((page, index) => bySlug.set(normalizeSlug(page.slug), [...(bySlug.get(normalizeSlug(page.slug)) ?? []), index]));
   const repeatOf: (number | undefined)[] = new Array(pages.length);
   const refusals = new Map<number, OperationError>();
   const same = (a: BatchPage, b: BatchPage) => a.slug === b.slug && a.content === b.content && a.expected_revision === b.expected_revision && a.allow_empty === b.allow_empty && a.allow_shrink === b.allow_shrink && a.reason === b.reason;
@@ -338,7 +339,7 @@ export async function submitPageBatch(ctx: OperationContext, params: Record<stri
  */
 export async function submitPageMutations(ctx: OperationContext, inputs: Array<{ operation: 'put_page' | 'add_timeline_entry'; params: Record<string, unknown> }>):
   Promise<Array<{ response: Record<string, unknown> } | { error: unknown }>> {
-  const slugs = inputs.map(input => String(input.params.slug).toLowerCase());
+  const slugs = inputs.map(input => normalizeSlug(String(input.params.slug)));
   if (new Set(slugs).size !== slugs.length) throw new TypeError('A page mutation batch writes each page once.');
   const batchId = randomUUID();
   const prepared = await withBatchAdmission(ctx, async (own, shared) => {

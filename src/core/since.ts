@@ -8,13 +8,20 @@ const RELATIVE = /^(\d+)\s*(s|m|h|d)$/i;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/;
 const UNIT_MS: Record<string, number> = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 };
 
+/** Whether the leading `YYYY-MM-DD` is a real day: `new Date('2026-02-30')` rolls over to March 2 instead of failing. */
+export function isCalendarDay(text: string): boolean {
+  const [y, m, d] = text.slice(0, 10).split('-').map(Number) as [number, number, number];
+  const day = new Date(Date.UTC(y, m - 1, d));
+  return day.getUTCMonth() === m - 1 && day.getUTCDate() === d;
+}
+
 /** The instant `input` names (ISO string), `undefined` for an empty value; throws on anything else. */
 export function parseSince(input: string | undefined, flag = '--since', now = Date.now()): string | undefined {
   const trimmed = input?.trim();
   if (!trimmed) return undefined;
   const relative = RELATIVE.exec(trimmed);
   if (relative) return new Date(now - Number(relative[1]) * UNIT_MS[relative[2]!.toLowerCase()]!).toISOString();
-  const at = ISO_DATE.test(trimmed) ? new Date(trimmed) : null;
+  const at = ISO_DATE.test(trimmed) && isCalendarDay(trimmed) ? new Date(trimmed) : null;
   if (!at || Number.isNaN(at.getTime())) {
     throw new Error(`${flag}: could not parse "${input}" as ISO-8601 (2026-10-01 or 2026-10-01T12:00:00Z) or relative (e.g. "5m", "1h", "7d")`);
   }

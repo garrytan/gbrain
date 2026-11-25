@@ -365,4 +365,100 @@ describe('the guard follows what the connector really opens', () => {
       renameSync(`${store}.moved`, store);
     }
   }, 240_000);
+
+  test('an empty mount point that still holds a stale, unreadable .gbrain-lock beside the kernel-v1 owner marker: refused, nothing created', async () => {
+    // The unmounted drive leaves its mount point; the sibling `<brain>.gbrain-owner.json` init wrote stays on the parent.
+    // The leftover lock folder's metadata is unreadable, so the status probe calls the lock held, but no process holds it.
+    expect(JSON.parse(readFileSync(`${store}.gbrain-owner.json`, 'utf8')).protocol).toBe('kernel-v1');
+    renameSync(store, `${store}.moved`);
+    mkdirSync(join(store, '.gbrain-lock'), { recursive: true });
+    writeFileSync(join(store, '.gbrain-lock', 'lock'), '{not json');
+    try {
+      const before = tree();
+      const { r, out } = await doctorJson();
+      expect(r.exitCode).toBe(1);
+      expect(out.code).toBe('brain_missing');
+      expect(out.reason).toBe('missing_brain');
+      expect(out.health_score).toBeUndefined();
+      expect(existsSync(join(store, 'PG_VERSION'))).toBe(false);
+      expect(readdirSync(store)).toEqual(['.gbrain-lock']);
+      expect(readFileSync(join(store, '.gbrain-lock', 'lock'), 'utf8')).toBe('{not json');
+      expect(tree()).toEqual(before);
+    } finally {
+      rmSync(store, { recursive: true, force: true });
+      renameSync(`${store}.moved`, store);
+    }
+  }, 240_000);
+});
+
+describe('doctor --alert on a brain whose folder is missing answers with the alert contract', () => {
+  let h: string;
+  let store: string;
+  const tree = () => {
+    const out: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = join(dir, e.name);
+        out.push(p);
+        if (e.isDirectory() && !p.endsWith('.moved')) walk(p);
+      }
+    };
+    walk(join(h, '.gbrain'));
+    return out.sort();
+  };
+  /** The alert streak file is gbrain's own state, not a datastore; every other doctor --alert run writes it too. */
+  const withoutAlertState = (paths: string[]) => paths.filter((p) => !p.endsWith('doctor-alert-state.json'));
+
+  beforeAll(async () => {
+    h = mkdtempSync(join(tmpdir(), 'gbrain-doctor-missing-alert-'));
+    expect((await runCli(['init', '--pglite', '--no-embedding'], { home: h, timeoutMs: 120_000 })).exitCode).toBe(0);
+    store = join(h, '.gbrain', 'brain.pglite');
+    renameSync(store, `${store}.moved`);
+  }, 180_000);
+
+  afterAll(() => {
+    try { rmSync(h, { recursive: true, force: true }); } catch { /* best effort */ }
+  });
+
+  for (const extra of [[], ['--tier', 'standard'], ['--only', 'connection']]) {
+    test(`doctor --alert --json${extra.length ? ` ${extra.join(' ')}` : ''}: exit 17, alert.level act, alert.items names brain_missing, nothing created`, async () => {
+      const before = withoutAlertState(tree());
+      const r = await runCli(['doctor', '--alert', '--json', ...extra], { home: h, timeoutMs: 120_000 });
+      expect(r.exitCode).toBe(17);
+      const out = JSON.parse(r.stdout) as Record<string, any>;
+      expect(out.alert.level).toBe('act');
+      expect(out.alert.unknown).toEqual([]);
+      expect(out.alert.consecutive_unknown).toBe(0);
+      expect(out.alert.items).toHaveLength(1);
+      expect(out.alert.items[0]).toMatchObject({ code: 'brain_missing', check: 'connection', status: 'fail' });
+      expect(out.alert.items[0].message).toContain('Nothing was created there.');
+      expect(out.alert.items[0].fix).toMatchObject({ actor: 'user', next: 'ask_user' });
+      // The brain_missing envelope a caller already reads stays, and it is never a health report.
+      expect(out.code).toBe('brain_missing');
+      expect(out.reason).toBe('missing_brain');
+      expect(out.health_score).toBeUndefined();
+      expect(existsSync(store)).toBe(false);
+      expect(withoutAlertState(tree())).toEqual(before);
+    }, 180_000);
+  }
+
+  test('doctor --alert (text): exit 17, an [ACT] line naming brain_missing and the fix, nothing created', async () => {
+    const before = withoutAlertState(tree());
+    const r = await runCli(['doctor', '--alert'], { home: h, timeoutMs: 120_000 });
+    expect(r.exitCode).toBe(17);
+    expect(r.stdout).toContain('Alert: act');
+    expect(r.stdout).toMatch(/\[ACT\] .*brain_missing/);
+    expect(r.stdout).toContain('Nothing was created there.');
+    expect(existsSync(store)).toBe(false);
+    expect(withoutAlertState(tree())).toEqual(before);
+  }, 180_000);
+
+  test('without --alert the refusal is unchanged: exit 1, the brain_missing error envelope with no alert', async () => {
+    const r = await runCli(['doctor', '--json'], { home: h, timeoutMs: 120_000 });
+    expect(r.exitCode).toBe(1);
+    const out = JSON.parse(r.stdout) as Record<string, any>;
+    expect(out.code).toBe('brain_missing');
+    expect(out.alert).toBeUndefined();
+    expect(existsSync(store)).toBe(false);
+  }, 180_000);
 });

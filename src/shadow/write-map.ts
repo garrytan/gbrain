@@ -128,6 +128,10 @@ export const WRITE_MAP: Record<string, WriteSpec> = {
   addTimelineEntriesBatch: { tables: ['timeline_entries'], plan: (a) => each<any>(a[0], (e) => [child('timeline_entries', e.slug, e.source_id)]) },
   upsertEventProjection: { tables: ['timeline_entries'], plan: (a) => [child('timeline_entries', a[0]?.depthSlug, a[0]?.sourceId)] },
   removeTimelineRows: { tables: ['timeline_entries', 'owner_only_marks'], plan: (a) => [childById('timeline_entries', a[0], true), ...OWNER_MARKS] },
+  deleteTimelineRows: { tables: ['timeline_entries', 'owner_only_marks'], plan: (a) => [childById('timeline_entries', a[0], true), ...OWNER_MARKS] },
+  upsertOpenLoop: { tables: ['open_loops'] },
+  closeOpenLoop: { tables: ['open_loops'], plan: (a) => [{ relation: 'open_loops', sel: { id: id(a[1]) } }] },
+  attachSourcePath: { tables: ['sources', 'owner_only_marks'], plan: (a) => [{ relation: 'sources', sel: { id: a[0] } }, ...OWNER_MARKS] },
   updateTimelineDetails: { tables: ['timeline_entries'], plan: (a) => [childById('timeline_entries', a[0])] },
   // Facts
   insertFact: {
@@ -201,6 +205,25 @@ export const IGNORED_MEMBERS: ReadonlySet<string> = new Set([
   // Segmented-body staging and derivation tables (not copied).
   'allocateBodyOccurrenceIds', 'stageSegmentTexts', 'stageManifestRows', 'openBodyStaging', 'setBodyStagingState',
   'upsertSegmentDerivations', 'retireSegmentDerivations',
+  // The memory proposal queue: the Rust store does not serve memory_proposals yet (rust/docs/store/seed.md lists it under "Gaps: not served by the Rust store"),
+  // so the seed does not copy it, nothing follows it, and a row in it blocks a swap.
+  'expireMemoryProposals', 'purgeMemoryProposals',
+  // The applied-capture records (ingest_applied_captures): bookkeeping the seed does not copy (rust/docs/store/seed.md), so
+  // the stale purge changes nothing the shadow follows.
+  'purgeStaleAppliedCaptures',
+]);
+
+/**
+ * The ignored members that do write the brain database (locks, logs, caches, staging). The follower does not copy them,
+ * but a process that only calls them is still a writer, so the writer observer notes it (wrapper.ts mayWrite).
+ */
+export const IGNORED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
+  'acquireCycleLock', 'refreshCycleLock', 'releaseCycleLock', 'deleteCycleLock', 'deleteCycleLockIfStale',
+  'logIngest', 'logEvalCandidate', 'logEvalCaptureFailure', 'deleteEvalCandidatesBefore', 'writeContradictionsRun',
+  'putContradictionCacheEntry', 'sweepContradictionCache', 'putDreamVerdict', 'sweepDreamVerdicts', 'putCodeTraversalCache',
+  'clearCodeTraversalCache', 'insertLocalWriterRow',
+  'allocateBodyOccurrenceIds', 'stageSegmentTexts', 'stageManifestRows', 'openBodyStaging', 'setBodyStagingState',
+  'upsertSegmentDerivations', 'retireSegmentDerivations',
 ]);
 
 /** Members that run caller SQL; the wrapper parses it (sql-writes.ts). */
@@ -212,6 +235,8 @@ export const READ_ONLY_MEMBERS: ReadonlySet<string> = new Set([
   'activeEmbeddingColId', 'aliasCanonicalRefs', 'generatedPagesIn', 'livePageIdsAt', 'pageCollapseFacts', 'pagesLinkingTo',
   'slugsEndingIn', 'supersedingPageSlugs',
   'dailyDecideSpend', 'decideConflictNoEntityCounts', 'decideSlotUsage',
+  'normalizeFenceLines', 'notifierCoverageRecorded', 'sampleEffectiveDates', 'sampleEffectiveDateSources', 'sharedSkillPackTablePresent',
+  'storedTimelineRowsByPageIds',
 ]);
 export type MemberKind = 'read_name' | 'raw' | 'reserved' | 'ignored' | 'schema' | 'mapped' | 'unmapped';
 

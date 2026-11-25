@@ -201,13 +201,17 @@ export class Reconciler {
     }
   }
 
-  /** Repairs `[lo, hi)` when its digest differs; returns the rows changed, missing or extra, and the rows displaced. */
+  /** Repairs `[lo, hi)` when its digest differs; returns the rows changed, missing or extra, and the rows displaced. A clean interval is rewritten too, so its fence stops a follower read that started before this pass from overwriting what it verified. */
   private async interval(relation: string, lo: string | null, hi: string | null, read: DigestPlan, rows: KeysetRow[], generation: number): Promise<{ repaired: number; displaced: number }> {
     const sorts = rows.map((r) => sortKey(read.key, r.key));
     const digests = rows.map((r) => rowDigest(r.values));
     const local = intervalDigest(sorts.map((sort, i) => ({ sort, digest: digests[i]! }))).toString('hex');
     const remote = await this.o.rpc<SeedIntervalDigest>('relationDigest', { relation, lo, hi }, 60_000);
-    if (remote.rows === rows.length && remote.digest === local) return { repaired: 0, displaced: 0 };
+    const replace = () => this.o.rpc<SeedFollowResult>('replaceInterval', {
+      relation, generation, lo, hi, rows: rows.map((r) => r.values),
+      digests: sorts.map((sort, i) => ({ sort: sort.toString('hex'), digest: digests[i]!.toString('hex') })),
+    }, 120_000);
+    if (remote.rows === rows.length && remote.digest === local) return { repaired: 0, displaced: (await replace()).displaced };
     const entries = new Map<string, SeedEntry>();
     for (let from = lo; ;) {
       const page = await this.o.rpc<SeedEntry[]>('relationEntries', { relation, lo: from, hi, limit: ENTRY_PAGE }, 60_000);
@@ -224,11 +228,6 @@ export class Reconciler {
       if (!e || (e.digest !== digests[i]!.toString('hex') && e.generation <= generation)) differing++;
     });
     for (const e of entries.values()) if (!seen.has(e.sort) && e.generation <= generation) differing++;
-    if (differing === 0) return { repaired: 0, displaced: 0 };
-    const result = await this.o.rpc<SeedFollowResult>('replaceInterval', {
-      relation, generation, lo, hi, rows: rows.map((r) => r.values),
-      digests: sorts.map((sort, i) => ({ sort: sort.toString('hex'), digest: digests[i]!.toString('hex') })),
-    }, 120_000);
-    return { repaired: differing, displaced: result.displaced };
+    return { repaired: differing, displaced: (await replace()).displaced };
   }
 }

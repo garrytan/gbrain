@@ -10,10 +10,10 @@ use super::{
 use crate::code_edges::{EdgeRecord, Table, seed_edge};
 use crate::dream::jsonb;
 use crate::error::{Result, StoreError};
-use crate::facts::generations::{GenerationRecord, ItemRecord, seed_generation, seed_item};
 use crate::facts::loops::{COUNTER as NEXT_OPEN_LOOP_ID, LoopRecord, seed_open_loop};
 use crate::facts::reconcile::{ReconcileRecord, put_reconcile, read_reconcile};
 use crate::facts::relink::{AttemptRecord, seed_attempt};
+use crate::generations::{SeedGeneration, seed_generation, seed_item};
 use crate::keys;
 use crate::kv::KvWrite;
 use crate::pages::{NEXT_VERSION_ID, PageText, VersionRecord, seed_version};
@@ -216,6 +216,7 @@ fn import_raw_data(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Result<Ou
     let page_id = row.req_id("page_id")?;
     require_page(&*tx, page_id)?;
     let record = RawRecord {
+        id: None,
         page_id,
         source: row.req("source")?,
         data: crate::jsonb::order(need(row.json("data")?, "raw_data.data")?),
@@ -645,17 +646,16 @@ fn import_generation(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Result<
 pub(super) fn generation_record(
     read: &dyn crate::kv::KvRead,
     row: &Row,
-) -> Result<(u64, GenerationRecord)> {
+) -> Result<(u64, SeedGeneration)> {
     let source_id = row.req("source_id")?;
     require_source(read, &source_id)?;
-    let record = GenerationRecord {
+    let record = SeedGeneration {
         source_id,
         kind: row.req("kind")?,
         owner_key: row.req("owner_key")?,
         generation: row.i32("generation")?.unwrap_or(0),
         state: row.req("state")?,
         created_at_us: row.req_ts("created_at")?,
-        items: Vec::new(),
     };
     Ok((row.req_id("id")?, record))
 }
@@ -676,16 +676,19 @@ static DERIVED_GENERATION_ITEMS: Relation = Relation {
 };
 
 fn import_generation_item(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Result<Outcome> {
-    let item = ItemRecord {
-        item_key: row.req("item_key")?,
-        action: row.req("action")?,
-        preimage: row.json("preimage")?,
-    };
-    Ok(if seed_item(tx, row.req_id("generation_id")?, item)? {
-        Outcome::Imported
-    } else {
-        Outcome::Skipped
-    })
+    Ok(
+        if seed_item(
+            tx,
+            row.req_id("generation_id")?,
+            &row.req("item_key")?,
+            &row.req("action")?,
+            row.json("preimage")?,
+        )? {
+            Outcome::Imported
+        } else {
+            Outcome::Skipped
+        },
+    )
 }
 
 #[cfg(test)]

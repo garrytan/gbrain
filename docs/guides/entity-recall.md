@@ -111,8 +111,8 @@ brain recognizes in your source:
 | State | Meaning | What to do |
 |---|---|---|
 | `complete` | Every page is scanned at its current content. | Nothing. |
-| `pending` | Pages were written since the last pass, or no pass ran yet. | `gbrain extract --stale --catch-up` (free). |
-| `failed` | The last pass could not build the name index. | Read `gbrain doctor --only links_extraction_lag --json`, fix, rerun. |
+| `pending` | Pages were written since the last pass, no pass ran yet, or the entity name list changed and pages have not been checked against it yet. | `gbrain extract --stale --catch-up` (free). |
+| `failed` | The last pass could not build the name index, or stopped on an error (the status error names the step). | Read `gbrain doctor --only links_extraction_lag --json`, fix, rerun. |
 | `disabled` | `auto_link` or `mentions.auto_link` is `false`. | The user's choice; `gbrain config set mentions.auto_link true` reverses it. |
 | `type_not_linkable` | Nothing links to this page type by name. | `gbrain config set mentions.entity_types +<type>`. |
 

@@ -18,6 +18,7 @@
 import { describe, test, expect } from 'bun:test';
 import { runAdvisor } from '../src/core/advisor/run.ts';
 import type { AdvisorContext } from '../src/core/advisor/types.ts';
+import { withQueueMembers } from './helpers/queue-engine-members.ts';
 
 interface Fixture {
   name: string;
@@ -84,7 +85,7 @@ const FIXTURES: Fixture[] = [
 
 function ctxFor(fx: Fixture): AdvisorContext {
   return {
-    engine: fx.engine as AdvisorContext['engine'],
+    engine: withQueueMembers(fx.engine) as AdvisorContext['engine'],
     config: (fx.config ?? {}) as AdvisorContext['config'],
     version: '0.43.0.0',
     workspace: null,

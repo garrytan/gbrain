@@ -286,8 +286,6 @@ fn fact_slug_id(slug: &str) -> Option<u64> {
 /// candidate covers. Purged slugs leave the array; the rest keep their order. Returns the number
 /// of candidates updated. A candidate with no `source_ids` is never touched (as in PGLite, where
 /// `$1 = ANY('{}')` is false), even though its capture matched pages in every source.
-// page_ops (`deletePages`, `purgeDeletedPages`) is its caller; until that lands only tests call it.
-#[allow(dead_code)]
 pub(crate) fn remove_retrieved_slugs(
     tx: &mut dyn KvWrite,
     source_id: &str,
@@ -296,6 +294,23 @@ pub(crate) fn remove_retrieved_slugs(
     if slugs.is_empty() {
         return Ok(0);
     }
+    scrub_retrieved_slugs(tx, source_id, |slug| slugs.iter().any(|s| s == slug))
+}
+
+/// The `scrub_eval_candidates` step of a source delete (`removedSourceScrubCtes`,
+/// `src/core/engine-sql/source-archive.ts`), after the pages of `source_id` are gone: every
+/// retrieved slug of a candidate that covers `source_id` leaves the array unless a page by that
+/// name lives in another source the candidate covers, whatever source the slug came from.
+pub(crate) fn remove_source_retrieved_slugs(tx: &mut dyn KvWrite, source_id: &str) -> Result<u64> {
+    scrub_retrieved_slugs(tx, source_id, |_| true)
+}
+
+/// The shared scrub: `doomed` picks the slugs that leave unless another covered source has them.
+fn scrub_retrieved_slugs(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    doomed: impl Fn(&str) -> bool,
+) -> Result<u64> {
     let candidates: Vec<CandidateRecord> = read_all(&*tx, CANDIDATE)?;
     let mut updated = 0u64;
     for mut candidate in candidates {
@@ -315,7 +330,7 @@ pub(crate) fn remove_retrieved_slugs(
         let mut kept = Vec::with_capacity(candidate.retrieved_slugs.len());
         let mut changed = false;
         for slug in &candidate.retrieved_slugs {
-            let purged = slugs.iter().any(|s| s == slug) && {
+            let purged = doomed(slug) && {
                 let mut elsewhere = false;
                 for other in &others {
                     if read_page(&*tx, other, slug)?.is_some() {
@@ -563,6 +578,20 @@ impl Store {
     }
 }
 
+/// The rows a fact purge's inventory probe searches (crate::facts::purge_probe).
+pub(crate) fn purge_probe_rows(
+    read: &dyn KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow};
+    Ok(read_all::<CandidateRecord>(read, CANDIDATE)?
+        .into_iter()
+        .map(|r| ProbeRow {
+            source_id: None,
+            cells: vec![("query", ProbeCell::text(&r.query))],
+        })
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     //! `remove_retrieved_slugs` is crate-private; its contract is tested here. The members are
@@ -675,6 +704,31 @@ mod tests {
         .unwrap();
         let nulls = store.log_eval_candidate(&input).unwrap();
         assert!(slugs_of(&store, nulls).is_empty());
+    }
+
+    #[test]
+    fn a_source_delete_strips_every_slug_no_other_covered_source_holds() {
+        let (_dir, store) = open();
+        source(&store, "gone");
+        source(&store, "other");
+        for slug in ["a", "b"] {
+            put(&store, "gone", slug);
+        }
+        put(&store, "other", "b");
+        put(&store, "default", "c");
+        let both = log(&store, &["a", "b"], &["gone", "other"]);
+        let not_gone = log(&store, &["b", "c"], &["other", "default"]);
+        store
+            .write(|tx| {
+                for slug in ["a", "b"] {
+                    let page = crate::pages::read_page(&*tx, "gone", slug)?.unwrap();
+                    crate::pages::remove_page(tx, &page)?;
+                }
+                remove_source_retrieved_slugs(tx, "gone")
+            })
+            .unwrap();
+        assert_eq!(slugs_of(&store, both), vec!["b"]);
+        assert_eq!(slugs_of(&store, not_gone), vec!["b", "c"]);
     }
 
     #[test]

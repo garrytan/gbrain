@@ -59,17 +59,28 @@ timings: 74ms total — setup 1, lexical 12, relational 0, embed 0, vector 16, f
 | `total_ms` | Wall time of the whole operation, measured on its own clock after the response is assembled. |
 | `stages_ms` | Time the request spent blocked in each stage that ran: `setup` (scope, config, mode), `lexical`, `relational`, `expansion`, `embed`, `vector`, `fuse`, `post_fusion` (boosts, dedup, identity tiers, return sizing), `rerank`, `alias_fanout`, `anchoring`, `facts_arm` (query), `response` (evidence delivery, response metadata, redaction). A second search the operation runs (a retry, a CRAG re-run) adds to the same stages; the alias fan-out's keyword searches count under `alias_fanout`. |
 | `other_ms` | Time no stage claimed. `sum(stages_ms) + other_ms = total_ms`. |
-| `overlapped_ms` | Work that ran alongside a stage, so it is not added to the total: the keyword and title arms run in parallel inside `lexical` (`keyword_arm`, `title_arm`), `search`'s total-match count runs alongside the whole request (`keyword_count`), and the vector side (query expansion, the query embed and the vector search) starts with the lexical arms, so the part of `expansion`, `embed` and `vector` that finished while they ran is listed here under the stage's name. The rest of those stages, the part the request had to wait for, stays in `stages_ms`. The response metadata's concurrent reads are listed as `meta_saved_facts`, `meta_entity_facts`, `meta_held`, `meta_readiness`, `meta_freshness`, `meta_embedding_held`, `meta_safe_index` and `meta_filter_hint`; `response.meta` waits for the slowest of them. |
-| `parts_ms` | Present when a stage records its steps: `response` splits into `evidence` (evidence delivery), `trust` (the page-trust stamp), `meta` (the response metadata), `keyword_count` (the wait for `search`'s total-match count) and `feedback` (the answer-feedback record). Parts run one after another and never overlap, so they sum to at most the stage; the rest of `response` is redaction, snippet caps and row projection. `stages_ms.response` keeps its whole time. |
+| `overlapped_ms` | Work that ran alongside a stage, so it is not added to the total: the keyword and title arms run in parallel inside `lexical` (`keyword_arm`, `title_arm`), the total-match count of `search` and `query` runs alongside the whole request (`keyword_count`), and the vector side (query expansion, the query embed and the vector search) starts with the lexical arms, so the part of `expansion`, `embed` and `vector` that finished while they ran is listed here under the stage's name. The rest of those stages, the part the request had to wait for, stays in `stages_ms`. The response metadata's concurrent reads are listed as `meta_saved_facts`, `meta_entity_facts`, `meta_held`, `meta_readiness`, `meta_freshness`, `meta_embedding_held`, `meta_safe_index` and `meta_filter_hint`; `response.meta` waits for the slowest of them. |
+| `parts_ms` | Present when a stage records its steps: `response` splits into `evidence` (evidence delivery), `trust` (the page-trust stamp), `meta` (the response metadata), `keyword_count` (the wait for the total-match count) and `feedback` (the answer-feedback record). Parts run one after another and never overlap, so they sum to at most the stage; the rest of `response` is redaction, snippet caps and row projection. `stages_ms.response` keeps its whole time. |
 
 All values are integer milliseconds.
 
 ### The whole CLI call and what it spent
 
 `gbrain search --json --timings` and `gbrain query --json --timings` print
-`{ "results": [...], "timings_ms": {...}, "cost": {...} }` instead of the bare
+`{ "results": [...], "timings_ms": {...}, "cost": {...}, "keyword_matches": {...} }` instead of the bare
 result array (plain `--json` is unchanged); without `--json`, `--timings`
 adds one `timings:` line on stderr.
+
+`keyword_matches` is how many pages contain the query's words (a literal
+match, the set `gbrain search --match keyword` lists), in one of three forms:
+`{ "status": "counted", "total": 3 }`, `{ "status": "capped", "total": 10000, "cap": 10000 }`
+(at least that many) or `{ "status": "unavailable", "stage": "keyword_count_unavailable", "reason": "timeout" }`
+(`reason` is `timeout` or `error`; never a count of zero). It is absent when
+the call counted nothing, such as an image query. Every `search` and `query`
+also prints the count on stderr, `--json` or not. When no page contains the
+words, the query names no entity and rows still came back, the line reads
+`No page contains these words (literal match). The rows below matched only by meaning.`
+ When the rows came from the any-word retry instead, it says they contain only some of the words.
 
 `timings_ms` adds the CLI's own phases to the operation's stages: `total`
 (process start to output), `startup` (module load, config, argument parsing),

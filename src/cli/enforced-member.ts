@@ -10,6 +10,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import type { CallerAccess } from '../core/search/private-visibility.ts';
 import { ACCESS_ID_RE } from '../core/access/principals.ts';
+import { normalizeSlug } from '../core/utils.ts';
 import { opError } from '../core/ops/contract.ts';
 import { writeCliError } from './cli-error.ts';
 import { CLI_COMMAND_CLASSES, OPERATION_CLASSES, OPERATION_SUBCOMMANDS, enforcedClassOf, type EnforcedClass } from './enforced-member-classes.ts';
@@ -370,7 +371,7 @@ export async function memberPageView(engine: BrainEngine, ea: EnforcedAccess, so
   const { access } = ea;
   const labelled = access.labelledOnly ? ' AND ' + labelledOnlyForSql('p', [access.identity], access.satisfiedRuleIds) : '';
   let view: PageView = 'missing';
-  for (const candidate of [...new Set([slug, slug.toLowerCase()])]) {
+  for (const candidate of [...new Set([slug, slug.toLowerCase(), normalizeSlug(slug)])]) { // the op writes normalizeSlug(slug)
     const policy = withCallerAccess(access, () => readPolicyFragment('p', access.identity, true, access.satisfiedRuleIds)) + labelled;
     const [row] = await engine.executeRaw<{ ok: boolean }>('SELECT (' + policy + ') AS ok FROM pages p WHERE p.source_id = $1 AND p.slug = $2 LIMIT 1', [sourceId, candidate]);
     if (row) { if (!row.ok) return 'hidden'; view = 'readable'; continue; }
@@ -423,7 +424,7 @@ export async function markdownLabels(content: string | null, slug: string): Prom
 /** The stored page a label check compares against; a segmented page (no body string) refuses, so the check never reads an empty body as no labels. */
 async function storedPage(engine: BrainEngine, sourceId: string, slug: string) {
   const [row] = await engine.executeRaw<{ type: string | null; frontmatter: unknown; compiled_truth: string | null; timeline: string | null; body_storage: 'inline' | 'segmented' | null; body_bytes: number | null }>(
-    'SELECT type, frontmatter, compiled_truth, timeline, body_storage, body_bytes FROM pages WHERE source_id = $1 AND slug = $2 LIMIT 1', [sourceId, slug.toLowerCase()]);
+    'SELECT type, frontmatter, compiled_truth, timeline, body_storage, body_bytes FROM pages WHERE source_id = $1 AND slug = $2 LIMIT 1', [sourceId, normalizeSlug(slug)]);
   if (row) (await import('../core/page-body/page-shape.ts')).assertInlineBody({ ...row, slug, source_id: sourceId }, 'enforced_member_label_check');
   return row ? { ...row, frontmatter: typeof row.frontmatter === 'string' ? JSON.parse(row.frontmatter) : row.frontmatter } : null;
 }
@@ -475,11 +476,11 @@ export const REMEMBER_RETRY = 'gbrain remember "<one fact>" --entity <exact slug
 
 /**
  * Where a remember may save under the mode, decided here and nowhere else: one fact on --entity, the exact slug of a
- * page the member reads, nothing inferred (params.infer_entity is set to false) and no visibility or share label.
+ * page the member reads, nothing inferred (params.infer_entity is set to false), no visibility or share label and no profile facet.
  * Anything else refuses with the retry shape. A later no-entity form would be one branch here.
  */
 async function checkEnforcedRemember(engine: BrainEngine, command: string, ea: EnforcedAccess, source: string, params: Record<string, unknown>): Promise<void> {
-  if (params.items !== undefined || params.visibility !== undefined || params.share !== undefined || params.replaces !== undefined) return refuseEnforced(command, 'arguments_not_allowed', { engine });
+  if (params.items !== undefined || params.visibility !== undefined || params.share !== undefined || params.replaces !== undefined || params.facet !== undefined) return refuseEnforced(command, 'arguments_not_allowed', { engine });
   const entity = typeof params.entity === 'string' ? params.entity.trim() : '';
   if (!entity || entity !== entity.toLowerCase() || /\s/.test(entity) || await memberPageView(engine, ea, source, entity) !== 'readable') {
     return refuseEnforced(command, 'remember_needs_entity', { engine, retry: REMEMBER_RETRY });

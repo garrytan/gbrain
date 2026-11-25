@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
+import * as searchVector from '../src/core/engine-sql/search-vector.ts';
 import { runReindexSearchVector } from '../src/commands/reindex-search-vector.ts';
 import { resetFtsLanguageCache } from '../src/core/fts-language.ts';
 import { KNOWN_CONFIG_KEYS } from '../src/core/config.ts';
@@ -34,6 +35,8 @@ function makeMockEngine(state: MockState): BrainEngine {
       }
       return [];
     },
+    // The inventory member as both engines build it, over this mock's executeRaw (engine-sql/search-vector.ts).
+    countSearchVectorRows: () => searchVector.countSearchVectorRows(engine),
     runMigration: async (_version: number, sql: string) => {
       state.calls.push(sql);
       order.push(sql);

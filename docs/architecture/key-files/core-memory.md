@@ -56,6 +56,19 @@ notice). User guide: [core memory](../../guides/core-memory.md).
   item still publishing is `pending` with its `target`, not `failed`; #7432:
   every item field but `fact` and `replaces`, `entity`, `content_origin` and
   `valid_from` included, is also a top-level default an item's own value overrides).
+- Portable profile (user guide: [profile](../../guides/profile.md)):
+  `src/core/profile/facets.ts` (the facet list and the one validator of the
+  reserved `profile.` claim-metric prefix, used by `remember`, the facts-fence
+  codec and the extractor), `src/core/profile/remember.ts` (`remember` facet
+  routing to the caller's own entity, allergy private by default, the
+  `profile_*` refusals), `src/core/profile/read.ts` (the
+  `context_pack {profile: true}` block, read at the caller's scope, zero model
+  calls), `src/commands/profile.ts` + `src/cli/commands/profile.ts`
+  (`gbrain profile [--json]`, local or thin client), `src/core/profile/import.ts`
+  + `src/core/profile/import-run.ts` + `src/commands/profile-import.ts`
+  (`gbrain profile import`: parse, preview hash, batched `remember` apply and
+  the resume receipt). Tests: `test/profile-core.test.ts`,
+  `test/profile-import.test.ts`.
 - `src/commands/core.ts` (`gbrain core`), `src/commands/doctor/checks/core-memory.ts`
   (`core_memory`), schema `src/core/core-memory-schema.ts` + migration v213.
 - Tests: `test/core-memory.test.ts`, `test/core-guard.test.ts`,

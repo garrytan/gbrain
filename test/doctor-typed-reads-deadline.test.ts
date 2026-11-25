@@ -1,9 +1,10 @@
 /**
  * Typed engine reads that replaced a doctor-bounded `executeRaw` statement keep the doctor's statement deadline.
  *
- * Before S2 the decide-health check read its tables through `executeRaw` on the deadline-bound engine
- * (src/core/statement-deadline.ts), so a lock-blocked statement ended at the doctor budget. S2a moved them to typed
- * decide members. On Postgres each of those members, run inside `withStatementDeadline` through
+ * Before S2 the decide-health check read its tables, the slug-path-mismatch check its writer binding, the
+ * timeline-history check its timeline counts and the commit-notifier check its coverage flag through `executeRaw` on
+ * the deadline-bound engine (src/core/statement-deadline.ts), so a lock-blocked statement ended at the doctor budget.
+ * S2 moved them to typed members. On Postgres each of those members, run inside `withStatementDeadline` through
  * `deadlineBoundEngine`, must end at the deadline too: it rejects near the deadline, the scope reports `expired`,
  * and no backend is left waiting on the lock. PGLite has one connection and no cancellation: it only refuses a
  * member called after the deadline.
@@ -28,7 +29,7 @@ const LOCK_MS = 2_000;
 
 interface Case { member: string; table: string; call: (engine: BrainEngine) => Promise<unknown> }
 
-/** The decide members a doctor check calls, each with the table whose lock blocks its statement. */
+/** The members a doctor check calls, each with the table whose lock blocks its statement. */
 const CASES: Case[] = [
   { member: 'readDecideState', table: 'decide_state', call: (e) => e.readDecideState('doctor_deadline_probe') },
   { member: 'decideSlotUsage', table: 'decision_receipts', call: (e) => e.decideSlotUsage(24) },
@@ -37,11 +38,29 @@ const CASES: Case[] = [
   { member: 'listDecideMixedModelDecisions', table: 'decision_receipts', call: (e) => e.listDecideMixedModelDecisions(24) },
   { member: 'listDecideReceiptStats', table: 'decision_receipts', call: (e) => e.listDecideReceiptStats({ sinceHours: 24 }) },
   { member: 'listDecideCalibrations', table: 'decide_calibrations', call: (e) => e.listDecideCalibrations({ includeRetired: true }) },
+  // N3: the queue-health reads (engine-sql/jobs-health.ts) and the belief-coverage source read (engine-sql/belief.ts).
+  { member: 'readQueueHealthSignals', table: 'minion_jobs', call: (e) => e.readQueueHealthSignals({ waitingThreshold: 1, oldWaitingHours: 1, windowHours: 24, stalledAfterHours: 1 }) },
+  { member: 'listWaitingByQueue', table: 'minion_jobs', call: (e) => e.listWaitingByQueue() },
+  { member: 'readQueueDivergence', table: 'minion_jobs', call: (e) => e.readQueueDivergence({ windowHours: 24, ttlReasonPrefix: 'ttl:' }) },
+  { member: 'listQueueWedgeCounts', table: 'minion_jobs', call: (e) => e.listQueueWedgeCounts() },
+  { member: 'listPrivateQueueHealth', table: 'minion_jobs', call: (e) => e.listPrivateQueueHealth() },
+  { member: 'readWedgeSignals', table: 'minion_jobs', call: (e) => e.readWedgeSignals('default', ['sync']) },
+  { member: 'readOldestWaitingAge', table: 'minion_jobs', call: (e) => e.readOldestWaitingAge('default') },
+  { member: 'listStuckActiveJobsByName', table: 'minion_jobs', call: (e) => e.listStuckActiveJobsByName() },
+  { member: 'listCoveredSources', table: 'belief_events', call: (e) => e.listCoveredSources('doctor_deadline_probe') },
+  // The export withdrawal-ledger reads the sync_rows_behind_checkpoint check reaches.
+  { member: 'listExportWithdrawals', table: 'fact_withdrawals', call: (e) => e.listExportWithdrawals('default') },
+  { member: 'readExportWithdrawalLedgerBytes', table: 'fact_withdrawals', call: (e) => e.readExportWithdrawalLedgerBytes('default') },
+  { member: 'getWorktreeBinding', table: 'persistence_source_bindings', call: (e) => e.getWorktreeBinding('default', null) },
+  { member: 'notifierCoverageRecorded', table: 'sync_notifier_sources', call: (e) => e.notifierCoverageRecorded() },
+  { member: 'readMaxTimelineEntryId', table: 'timeline_entries', call: (e) => e.readMaxTimelineEntryId() },
+  { member: 'storedTimelineRowsByPageIds', table: 'timeline_entries', call: (e) => e.storedTimelineRowsByPageIds([1]) },
+  { member: 'countSegmentedTimelinePages', table: 'timeline_entries', call: (e) => e.countSegmentedTimelinePages(['default'], 10) },
 ];
 
-test('the bounded typed reads are exactly the decide members a doctor check reaches', () => {
+test('the bounded typed reads are exactly the members a doctor check reaches', () => {
   expect([...BOUNDED_TYPED_READS].filter((name) => CASES.some((c) => c.member === name)).sort()).toEqual(CASES.map((c) => c.member).sort());
-  // The set lists the decide members only: the trunk adds its journal reads next to these (src/core/statement-deadline.ts).
+  // The set lists the members a doctor check reaches and no other: the trunk adds its journal reads next to these (src/core/statement-deadline.ts).
   expect([...BOUNDED_TYPED_READS].filter((name) => !CASES.some((c) => c.member === name))).toEqual([]);
   for (const { member } of CASES) expect(typeof (PostgresEngine.prototype as unknown as Record<string, unknown>)[member], member).toBe('function');
 });
@@ -86,10 +105,10 @@ for (const kind of testBackends()) {
       test('PGLite refuses a member called after the deadline and otherwise runs it unchanged', async () => {
         const bound = deadlineBoundEngine(engine);
         const live = scopeFor(5_000);
-        expect(await withStatementDeadline(live, () => bound.readDecideState('doctor_deadline_probe'))).toBeNull();
+        expect(await withStatementDeadline(live, () => bound.readMaxTimelineEntryId())).toBe(0);
         expect(live.expired).toBe(false);
         const past = scopeFor(-1);
-        await expect(withStatementDeadline(past, async () => bound.readDecideState('doctor_deadline_probe'))).rejects.toBeInstanceOf(StatementDeadlineError);
+        await expect(withStatementDeadline(past, async () => bound.readMaxTimelineEntryId())).rejects.toBeInstanceOf(StatementDeadlineError);
         expect(past.expired).toBe(true);
       });
     } else {

@@ -23,6 +23,9 @@ Under contract v1 an `error` value never changes. Where a surface sends a legacy
 | `invalid_params` | `not_found` | The requested resource does not exist or is not visible to this caller. |
 | `page_identity_changed` | `page_not_found` | No page with that slug exists in the selected source. |
 | `invalid_params` | `page_too_large_for_inline` | The whole page does not fit one result on this connection, so get_page did not return its body. |
+| `invalid_params` | `profile_entity_not_self` | remember with facet named an entity other than the caller's own profile, or came from a credential that has no profile; nothing was saved. |
+| `invalid_params` | `profile_facet_unknown` | remember's facet is not one of the profile facets (size.<item>, brand, diet, allergy, style, constraint, schedule, household, other); nothing was saved. |
+| `invalid_params` | `profile_metric_reserved` | remember's claim_metric used the reserved profile. prefix, or was passed together with facet; nothing was saved. |
 | `invalid_params` | `result_too_large` | The tool's result is larger than this connection can carry in one response, so it was replaced by this error; nothing was cut. |
 | `invalid_params` | `revision_changed` | The page changed since the cursor or chunk id was issued, so that position no longer names the same text. |
 | `permission_denied` | `trusted_local_only` | The operation runs only from the trusted local CLI on the brain host; no MCP connection can call it. |
@@ -202,6 +205,16 @@ More: [docs/guides/write-refusals.md#access_rule_invalid](../../docs/guides/writ
 |---|---|---|---|---|---|---|
 | gbrain setup --serves several or gbrain access serves several was given no people (no --members, an empty --members-file), so nothing was written. | Each person gets a member, a folder only they read and a key bound to them; the installer never guesses who they are. | Name every person: --members alice-example,bob-example, or --members-file <file> with one id per line. | agent | `repeat the read that failed` | 1 | no |
 
+### account_number_key
+
+<a id="account_number_key"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A household write was refused because a field looks like a full account or card number; the value is never echoed, and nothing was written. | Household records are read by every connected agent at the caller's scope and some are shared with helpers; a full account or card number has no reason to be there and would spread with them. | Leave the number out (the last four digits in the title are fine) and submit again. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/household.md#account_number_key](../../docs/guides/household.md#account_number_key)
+
 ### acknowledgment_unavailable
 
 <a id="acknowledgment_unavailable"></a>
@@ -209,6 +222,46 @@ More: [docs/guides/write-refusals.md#access_rule_invalid](../../docs/guides/writ
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | This batch is unknown or outside the retained replay window. | A capability this request needs is not configured or not reachable on this brain. | A required capability is not available on this brain. Run `gbrain doctor --json` to see what is missing. | agent | `gbrain doctor --json` | 1 | no |
+
+### act_not_mintable
+
+<a id="act_not_mintable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A Google token socket mint asked for the write-capable act profile; only the read-only ingest profile is minted, and write actions go through the broker's call op. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
+
+### action_invalid
+
+<a id="action_invalid"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An action ledger entry did not have the agent_action shape (an unknown field, a bad status, verb, amount or currency, or a page outside actions/YYYY/MM/<id>), so nothing was logged. | Ledger totals are computed by gbrain from a fixed shape; a field it does not know would be silently left out of every total, so it is refused instead. | Fix the field the error names and call log_action again with the same request_id. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/action-ledger.md#action_invalid](../../docs/guides/action-ledger.md#action_invalid)
+
+### action_not_found
+
+<a id="action_not_found"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The action_id names no action page this caller logged or can read, so nothing was changed. | A caller moves on (or settles the hold of) only an action it logged; another member's actions stay out of reach, and no caller learns whether they exist. | Pass the action_id log_action or policy_reserve returned, or log a new action without action_id. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/action-ledger.md#action_not_found](../../docs/guides/action-ledger.md#action_not_found)
+
+### action_transition_invalid
+
+<a id="action_transition_invalid"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The action cannot move to the status asked for (a done action is never edited, and a failed, cancelled or reversed one is final), so nothing was changed. | The ledger keeps what happened: a correction is a new action whose supersedes names the old one, so the old entry and its evidence stay as they were. | Log a new action with supersedes set to the old action_id. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/action-ledger.md#action_transition_invalid](../../docs/guides/action-ledger.md#action_transition_invalid)
 
 ### actor_not_attested
 
@@ -285,6 +338,16 @@ More: [docs/guides/retrieval-feedback.md#ambiguous_ref](../../docs/guides/retrie
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | This name belongs to multiple authorized sources. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### ambiguous_slug
+
+<a id="ambiguous_slug"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Sent as the `detail` of an invalid_params refusal: the slug asked for names no stored page exactly, and two pages stored under older spellings both normalize to it. | A read answers the page the exact input names; with two stored spellings (for example one decomposed, one composed, both with capitals) there is no single page to answer, so the refusal lists both. | Ask for one of the stored spellings the refusal names exactly. gbrain repair slug-spelling --source <id> lists the pair as needs_human so a person can merge them. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/repair.md#slug-spelling](../../docs/guides/repair.md#slug-spelling)
 
 ### answer_not_yours
 
@@ -521,6 +584,16 @@ More: [docs/guides/apple-setup.md#apple_schema_mismatch](../../docs/guides/apple
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The change needs the owner's explicit approval before it can proceed. | The step needs the user's decision before it runs. | Stop and ask the user; re-run only with the authorization the message names. | user | `repeat the read that failed` | 1 | no |
+
+### archive_audience_changed
+
+<a id="archive_audience_changed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The brain's audience changed while the conversation archive was starting, so it now archives into another source; this run read and wrote nothing. | A run writes every page under the audience it reads while it holds its source lock; a brain that turned shared moves a checkout source's archive into its owner-only <source>-owner twin, so writing with the earlier read could publish pages other members read. | Rerun gbrain transcripts archive run. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/conversation-archive.md#privacy](../../docs/guides/conversation-archive.md#privacy)
 
 ### archive_audience_unproven
 
@@ -850,7 +923,7 @@ More: [docs/guides/bootstrap.md#cleanup-pending](../../docs/guides/bootstrap.md#
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The configured PGLite brain is not at its datastore path (an unmounted drive or a moved folder?), so doctor did not connect and created nothing there. | A health check never creates the thing it checks: connecting to a missing PGLite path would build a new empty brain there, migrate it and report it healthy while the real notes sit elsewhere. Creating a new empty brain is `gbrain init`, a decision for the user. | Mount or reconnect the drive that holds the brain, move the folder back, or point `database_path` in the gbrain config at where the brain lives now; then run `gbrain doctor --only connection --json` again. | user | `gbrain doctor --json` | 1 | no |
+| The configured PGLite datastore (the host brain's, or the selected mount's) is not at its path, or its folder is empty (an unmounted drive or a moved folder?), so doctor refused before connecting and created nothing in the folder. | A health check never creates the thing it checks: connecting to a missing PGLite path would build a new empty brain there, migrate it and report it healthy while the real notes sit elsewhere. Creating a new empty datastore is the user's decision, since the old notes would not be in it: for the host brain it is `gbrain init --pglite --no-embedding --path <where>`; for a mount, `gbrain init` is not the way, because it rewrites the host brain's config. | Mount or reconnect the drive that holds the brain, move the folder back, or point `database_path` in the gbrain config at where the brain lives now; then run `gbrain doctor --only connection --json` again. | user | `gbrain doctor --json` | 1 | no |
 
 Reasons: `missing_brain`.
 
@@ -861,6 +934,26 @@ Reasons: `missing_brain`.
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The private local CLI registration is invalid. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### broker_args_refused
+
+<a id="broker_args_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Google write broker refused a call whose arguments fall outside its policy: a calendar notification other than NONE, too many draft recipients, or an owner_verdict other than ALLOW_ONCE. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
+
+### broker_precondition_unmet
+
+<a id="broker_precondition_unmet"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Google write broker's call op is off because its activation gate is not met; the reply lists each unmet item with the config line that fixes it. | Only the operator of the brain host can change what blocks this. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
 
 ### bucket_not_found
 
@@ -1082,6 +1175,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 
 More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
 
+### client_not_agent
+
+<a id="client_not_agent"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Google token socket cannot mint for an account connected through the hosted relay, whose client secret never leaves gbrain.io; the account needs its own client. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
+
 ### client_not_found
 
 <a id="client_not_found"></a>
@@ -1090,6 +1193,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 |---|---|---|---|---|---|---|
 | No OAuth client with this id is registered on this brain, so nothing was read or changed. | A client id is matched exactly; a revoked, deleted or mistyped id has no grant to read or edit. | List the clients with `gbrain auth clients --json` and retry with an existing client id. Do not register a replacement client or rotate credentials for a lookup miss. Run: gbrain auth clients --json | agent | `gbrain auth clients --json` | 1 | no |
 
+### client_record_mismatch
+
+<a id="client_record_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The OAuth client that minted a Google account's tokens is no longer on file, so gbrain refused to refresh with a different client. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
+
 ### client_shape_invalid
 
 <a id="client_shape_invalid"></a>
@@ -1097,6 +1210,26 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | Google connect credential error: client shape invalid. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
+
+### client_swap_refused
+
+<a id="client_swap_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A new Google OAuth client was not saved because its consent did not finish with a verified grant; the previous client stays. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
+
+### client_user_mismatch
+
+<a id="client_user_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A Google Personal-mode client was used by an account other than the one that created it; each mailbox needs its own client. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
 
@@ -1658,13 +1791,41 @@ More: [docs/guides/repair.md#managed-sync-orphans](../../docs/guides/repair.md#m
 |---|---|---|---|---|---|---|
 | The brain database could not be reached or refused the operation. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
 
+### day_cap
+
+<a id="day_cap"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Google write broker already made its daily cap of calls for this product (UTC day); retry after the day turns over. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
+
 ### dedupe_decision_store_mismatch
 
 <a id="dedupe_decision_store_mismatch"></a>
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| gbrain dedupe confirm, reject or reconcile refused because this brain's duplicate decisions are kept in git in its home source and this host sees no git work tree for that source, so nothing was written. | On a brain with a repository git is the record of every duplicate decision and the database only its projection; a decision written to the database alone would be dropped by the next sync of the checkout and lost with the database. | Run the command on the host that holds the checkout, or restore the checkout and run gbrain dedupe reconcile there. Run: gbrain sources list --json | user | `gbrain doctor --json` | 1 | no |
+| gbrain dedupe confirm, reject, decide, undo or reconcile refused because this brain's duplicate decisions are kept in git in its home source and this host sees no git work tree for that source, so nothing was written. | On a brain with a repository git is the record of every duplicate decision and the database only its projection; a decision written to the database alone would be dropped by the next sync of the checkout and lost with the database. | Run the command on the host that holds the checkout, or restore the checkout and run gbrain dedupe reconcile there. Run: gbrain sources list --json | user | `gbrain doctor --json` | 1 | no |
+
+### dedupe_decision_unknown
+
+<a id="dedupe_decision_unknown"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain dedupe undo was given a decision id that no recorded duplicate decision has, so nothing was removed. | A decision id is a hash of the decision's member pages, printed by gbrain dedupe decide and stored as .gbrain/identity/<id>.md or a database row; removing only some of the ids given would leave a half-undone choice. | Pass the ids gbrain dedupe decide printed for the line to undo (each line prints its undo command). Run: gbrain entity-identity-list --json | agent | `repeat the read that failed` | 1 | no |
+
+### dedupe_exa_off
+
+<a id="dedupe_exa_off"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain dedupe classes or sample was asked to search the web (--exa) on a brain where Exa is off: EXA_API_KEY is not set or dedupe.exa is not on, so nothing was sent. | Web search sends a name plus one company or job title to Exa, a paid outside service, so it stays off until the user supplies their own key and turns it on. | Count the queries and their cost with gbrain dedupe classes --exa --dry-run, then set EXA_API_KEY and run gbrain config set dedupe.exa on. Run: gbrain dedupe classes --exa --dry-run --json | user | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/duplicate-people.md#web-search-exa](../../docs/guides/duplicate-people.md#web-search-exa)
 
 ### dedupe_group_not_confirmable
 
@@ -1672,9 +1833,9 @@ More: [docs/guides/repair.md#managed-sync-orphans](../../docs/guides/repair.md#m
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| gbrain dedupe confirm refused a group it does not confirm: a conflict (an account or registry id disagrees), a thin page or a same-source group, a group whose only shared keys are contact or handle keys or a person group that shares an account or registry id, given together with other groups, or a --join that would put two pages recorded as different people or companies in one identity; confirm and reject also refuse a group with a page in an owner-only, archived owner-only or removed source, or a page outside the default source that not every reader of it may read, on a brain whose default source has a repository. Nothing was written. | A conflict is never proposed, same-source duplicates are collapsed rather than linked, and a shared email, phone, X handle or domain alone is also carried by households, teams and family addresses, and a person's pages are never linked without the owner reading the pair, so those groups are read and confirmed one at a time. A decision file names every member's source and slug, so an owner-only page in one would be readable by anyone who reads the repository. | Confirm a contact-only group or a person group on its own (gbrain dedupe confirm <group-id>), read its hint line in gbrain dedupe confirm first, and leave conflicts, thin pages and same-source groups for review. Run: gbrain dedupe confirm | agent | `repeat the read that failed` | 1 | no |
+| gbrain dedupe confirm refused a group it does not confirm: a conflict (an account or registry id disagrees), a thin page or a same-source group, a cross-source group holding two pages of one source, a group whose only shared keys are contact or handle keys or a person group that shares an account or registry id, given together with other groups, or a --join that would put two pages recorded as different people or companies in one identity; confirm and reject also refuse a group with a page in an owner-only, archived owner-only or removed source, or a page outside the default source that not every reader of it may read, on a brain whose default source has a repository. Nothing was written. | A conflict is never proposed, same-source duplicates are collapsed rather than linked, and a shared email, phone, X handle or domain alone is also carried by households, teams and family addresses, and a person's pages are never linked without the owner reading the pair, so those groups are read and confirmed one at a time. A decision file names every member's source and slug, so an owner-only page in one would be readable by anyone who reads the repository. | Confirm a contact-only group or a person group on its own (gbrain dedupe confirm <group-id>), read its hint line in gbrain dedupe confirm first, and leave conflicts, thin pages and same-source groups for review. For a group holding two pages of one source, collapse them if they are one page or record them as different with gbrain dedupe reject <their in_source group id> if they are not, then confirm the group the next preview shows. Run: gbrain dedupe confirm | agent | `repeat the read that failed` | 1 | no |
 
-Reasons: `conflict`, `thin`, `in_source`, `contact_key_only_batch`, `owner_only_source`, `restricted_page`, `rejected_pair`, `person_id_batch`.
+Reasons: `conflict`, `thin`, `in_source`, `contact_key_only_batch`, `owner_only_source`, `restricted_page`, `rejected_pair`, `person_id_batch`, `same_source_members`.
 
 ### dedupe_group_unknown
 
@@ -2014,7 +2175,7 @@ More: [docs/guides/enforced-member.md#refused](../../docs/guides/enforced-member
 |---|---|---|---|---|---|---|
 | The brain's engine does not implement the capability this call needs (reason names it), so the call was refused before any work and nothing was written. | The Rust engine preview grows one capability at a time. A call that needs a capability it does not report is refused up front instead of running part of the way; detail names the member, the capability and whether anything was written (written=nothing unless the outcome is partial or unknown). | Run the call on a pglite or postgres brain, or wait for a gbrain release whose Rust engine reports the capability. | agent | `repeat the read that failed` | 1 | no |
 
-Reasons: `raw_sql`, `persistence_journal`, `minion_queue`, `access_control`, `belief_ledger`, `single_owner`, `postgres_admin`, `schema`, `transactions`, `sources`, `config`, `pages`, `page_versions`, `page_body`, `tags`, `chunks`, `embeddings`, `keyword_search`, `vector_search`, `links`, `timeline`, `graph`, `facts`, `takes`, `files`, `code_edges`, `salience`, `health`, `raw_data`, `eval_capture`, `ingest_log`, `dream_verdicts`, `contradictions`, `ontology`.
+Reasons: `raw_sql`, `persistence_journal`, `managed_persistence`, `minion_queue`, `access_control`, `belief_ledger`, `single_owner`, `postgres_admin`, `schema`, `transactions`, `sources`, `config`, `pages`, `page_versions`, `page_body`, `tags`, `chunks`, `embeddings`, `keyword_search`, `vector_search`, `links`, `timeline`, `graph`, `facts`, `takes`, `files`, `code_edges`, `salience`, `health`, `raw_data`, `eval_capture`, `telemetry`, `entity_identities`, `ingest_log`, `dream_verdicts`, `contradictions`, `ontology`, `session_state`.
 
 More: [docs/ENGINES.md#the-rust-engine-shell](../../docs/ENGINES.md#the-rust-engine-shell)
 
@@ -2096,16 +2257,6 @@ More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/
 
 More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/ENGINES.md#opening-an-engine-from-settings-experimental)
 
-### engine_shadow_refused
-
-<a id="engine_shadow_refused"></a>
-
-| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
-|---|---|---|---|---|---|---|
-| `gbrain engine shadow start` or `seed` was refused before it wrote anything: this brain uses managed storage, which the Rust engine never holds. | A brain with managed storage can never swap to Rust, so a shadow on it measures nothing it could use. A brain whose mode cannot be read or opened is refused the same way rather than passed. | Ask the user; nothing was written. Run: gbrain sources writer status --probe --json | agent | `repeat the read that failed` | 3 | no |
-
-Reasons: `managed_storage`.
-
 ### engine_swap_refused
 
 <a id="engine_swap_refused"></a>
@@ -2114,11 +2265,13 @@ Reasons: `managed_storage`.
 |---|---|---|---|---|---|---|
 | The move to another engine (`gbrain engine swap`) was refused before anything changed; the current engine keeps authority. | A swap needs a settled, unmanaged brain and readiness evidence that cannot be waived: managed storage, unfinished worktree refreshes, failing readiness criteria, more than one writer host, a team brain, a lagging follower, differing digests or fingerprints, an engine-selecting override, or host access that would change. Each reason has one recovery row in docs/guides/engine-swap.md. | Correct the request using the message above, then retry. Run: gbrain engine swap --to rust --plan --json | agent | `repeat the read that failed` | 1 | no |
 
-Reasons: `refresh_unsettled`, `managed_storage`, `not_ready`, `multiple_writer_hosts`, `writer_coverage_unknown`, `team_brain`, `follower_behind`, `digest_mismatch`, `route_override`, `host_access_unbound`, `host_access_changed`, `fingerprint_semantics_differ`.
+Reasons: `refresh_unsettled`, `managed_storage`, `no_shadow`, `not_ready`, `multiple_writer_hosts`, `writer_coverage_unknown`, `team_brain`, `follower_behind`, `digest_mismatch`, `route_override`, `host_access_unbound`, `host_access_changed`, `fingerprint_semantics_differ`.
 
 Override: reason `refresh_unsettled`: retryable, exit 1, retryable.
 
 Override: reason `managed_storage`: consent, exit 3, not retryable.
+
+Override: reason `no_shadow`: consent, exit 3, not retryable.
 
 Override: reason `follower_behind`: retryable, exit 1, retryable.
 
@@ -2483,6 +2636,66 @@ More: [docs/guides/troubleshooting.md#foreign-table](../../docs/guides/troublesh
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The eval gate found retrieval regressions or correctness below its thresholds. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### gbrainio_account_mismatch
+
+<a id="gbrainio_account_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A gbrain.io answer named a different mailbox than the Google source reads, so nothing from it was written. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
+
+### gbrainio_command_failed
+
+<a id="gbrainio_command_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A gbrainio command line read failed or printed an answer gbrain could not read; the range it was reading stays open for the next sync. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
+
+### gbrainio_command_missing
+
+<a id="gbrainio_command_missing"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The gbrainio command line a gbrain.io Google source runs is not installed or not on PATH. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
+
+### gbrainio_limit_reached
+
+<a id="gbrainio_limit_reached"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain.io refused a mail read because a usage limit was reached; the unread range stays open and the next sync resumes it. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
+
+### gbrainio_not_connected
+
+<a id="gbrainio_not_connected"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The gbrain.io terminal ended, was never approved, or cannot read this mailbox. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
+
+### gbrainio_unsupported
+
+<a id="gbrainio_unsupported"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A step that needs a Google token (attachment repair, the change feed) was asked of a source that reads mail through gbrain.io. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
 
 ### generation_fenced
 
@@ -3184,6 +3397,46 @@ Reasons: `source_bound`, `source_has_pages`, `source_has_path`, `source_archived
 
 More: [docs/designs/GIT_CANONICAL_MEMORY.md#remote-and-hosted-writes](../../docs/designs/GIT_CANONICAL_MEMORY.md#remote-and-hosted-writes)
 
+### household_exists
+
+<a id="household_exists"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| household_add refused because a page already exists at the slug the placement table picked, so nothing was written. | A household record is added once and then changed by events; a second add at the same slug would replace the first record and its history. | Record what happened on the existing record with household_mark, or pass slug to add this one under another name. Run: gbrain household list --json | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/household.md#household_exists](../../docs/guides/household.md#household_exists)
+
+### household_reclassify
+
+<a id="household_reclassify"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A write or delete was refused because it would let more people read household records than the placement table allows: a remote caller retyping a household record, moving one from adults to shared (dropping a child from about, removing audience: adults, a shared kind) or widening its readable_by; a remote caller taking a subject out of child, retyping it, or deleting it while records are about it; or anyone narrowing or deleting a subject while records about it are still shared with helpers. Nothing was written. | A household record's readers are written from its subject's role and its own fields when the record is written; a change that skipped that step would leave readers wider than the table, so these changes run on the brain host, where gbrain household replace --about changes a subject and its records together. | Keep the record or subject as stored, or run the command in fix on the brain host (gbrain household replace --about <slug>, with --role <role> to reclassify); a remote agent asks the brain's owner. Run: gbrain household list --json | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/household.md#household_reclassify](../../docs/guides/household.md#household_reclassify)
+
+### household_scale
+
+<a id="household_scale"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| household_due found more household records in scope than it ranks in one call (2,000), so it returned state partial with no items and no counts. | A partial ranking presented as whole would hide the records it skipped; the answer names the filters that narrow the read instead. | Call household_due again with kinds, about, handled_by or source_id so fewer records are in scope. Run: gbrain household due --kinds bill --json | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/household.md#household_scale](../../docs/guides/household.md#household_scale)
+
+### household_transition
+
+<a id="household_transition"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A write to a household record was refused because it moves the record's status in a way the household transition table does not allow (archived is final; a paused record goes back to active before done); nothing was written. | household_mark records each status change with its event in the record's timeline; a generic page write that moved the status around it would leave a state with no event, so every write path checks the same table. | Record what happened with household_mark (gbrain household mark <slug> <event>), or add a new record with household_add when the old one is archived. Run: gbrain household list --json | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/household.md#household_transition](../../docs/guides/household.md#household_transition)
+
 ### idempotency_conflict
 
 <a id="idempotency_conflict"></a>
@@ -3208,6 +3461,26 @@ More: [docs/designs/GIT_CANONICAL_MEMORY.md#remote-and-hosted-writes](../../docs
 |---|---|---|---|---|---|---|
 | A page of the group already belongs to another identity group, so gbrain dedupe confirm wrote nothing. | A page belongs to at most one identity group; confirming would move it out of the group someone already made. | Add the other pages to that group with gbrain dedupe confirm <group-id> --join <entity_id>, or remove the page from it first. Run: gbrain entity-identity-list --json | agent | `repeat the read that failed` | 1 | no |
 
+### identity_unproven
+
+<a id="identity_unproven"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain could not prove which Google account a grant belongs to, so nothing was written to the vault. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
+
+### import_invalid
+
+<a id="import_invalid"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A Google credential import on stdin failed validation before anything was written. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
+
 ### independent_principal_required
 
 <a id="independent_principal_required"></a>
@@ -3215,6 +3488,16 @@ More: [docs/designs/GIT_CANONICAL_MEMORY.md#remote-and-hosted-writes](../../docs
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | This local CLI principal already owns another source/destination for this harness. | The step needs the user's decision before it runs. | Stop and ask the user; re-run only with the authorization the message names. | user | `repeat the read that failed` | 1 | no |
+
+### input_required
+
+<a id="input_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Google asked the account owner to approve this broker call; the caller repeats it with owner_verdict ALLOW_ONCE on an owner turn, or the owner answers in gbrain google approvals. | The step needs the user's decision before it runs. | Stop and ask the user; re-run only with the authorization the message names. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
 
 ### insufficient_scope
 
@@ -3233,6 +3516,16 @@ More: [docs/designs/GIT_CANONICAL_MEMORY.md#remote-and-hosted-writes](../../docs
 | Local and remote commits changed the same file; nothing was merged and the checkout is unchanged. | The step needs the user's decision before it runs. | Stop and ask the user; re-run only with the authorization the message names. | user | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/shared-checkout-git.md#conflicts](../../docs/guides/shared-checkout-git.md#conflicts)
+
+### intent_unknown
+
+<a id="intent_unknown"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| No broker intent with this idempotency key was recorded in the last 24 hours. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
 
 ### internal
 
@@ -3494,6 +3787,48 @@ Reasons: `file_differs`, `label_line`.
 
 More: [docs/guides/write-refusals.md#label_edit_refused](../../docs/guides/write-refusals.md#label_edit_refused)
 
+### ledger_busy
+
+<a id="ledger_busy"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Another budget reservation was being checked and held, so this one waited and then gave up without holding anything. | Reservations are checked and written one at a time, so two agents cannot both be allowed the last of a budget. | Retry policy_reserve in a few seconds with the same request_id. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/action-ledger.md#ledger_busy](../../docs/guides/action-ledger.md#ledger_busy)
+
+### ledger_confirm_required
+
+<a id="ledger_confirm_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain ledger confirm ran in a process that looks like an agent session or has no terminal, so the action was not marked as confirmed by the user. | user_confirmed means the user said the amount is right; an agent must not say it for them. | Ask the user to run the command in fix in their own terminal, outside the agent session. | user | `repeat the read that failed` | 1 | no |
+
+Reasons: `agent_marker`, `no_terminal`.
+
+More: [docs/guides/action-ledger.md#ledger_confirm_required](../../docs/guides/action-ledger.md#ledger_confirm_required)
+
+### ledger_log_action_only
+
+<a id="ledger_log_action_only"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A remote caller tried to write, move or retype an action ledger page directly, so nothing was written. | log_action stamps who logged an action and works out on the server whether its evidence holds; a direct page write would let a caller set both itself. | Record the action with log_action, or hold budget with policy_reserve. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/action-ledger.md#ledger_log_action_only](../../docs/guides/action-ledger.md#ledger_log_action_only)
+
+### ledger_scan_too_large
+
+<a id="ledger_scan_too_large"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The ledger read would scan more actions than one read allows, so it returned no totals rather than a partial total presented as whole. | A total over part of the window would read as the whole; the read stops and names the filters that make it fit. | Narrow the read with since, verb or counterparty. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/action-ledger.md#ledger_scan_too_large](../../docs/guides/action-ledger.md#ledger_scan_too_large)
+
 ### legacy_job_selection_invalid
 
 <a id="legacy_job_selection_invalid"></a>
@@ -3525,6 +3860,16 @@ More: [docs/guides/repair.md#legacy-jobs-active](../../docs/guides/repair.md#leg
 Reasons: `live_holder`, `network_filesystem`, `filesystem_unverified`.
 
 More: [docs/ENGINES.md#legacy-pglite-lock](../../docs/ENGINES.md#legacy-pglite-lock)
+
+### legacy_slug_spelling
+
+<a id="legacy_slug_spelling"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Sent as the `detail` of an invalid_params refusal: a put by the exact older spelling (capitals, or decomposed Unicode) of a stored page is refused, and nothing was changed. | Writes store slugs in the normal form (lowercase, Unicode NFC), so a put by the older spelling would create a second page that prints the same name or move the stored one. An import of the page's file is held for the same reason. The page stays readable by either spelling and takes small edits by its stored spelling. | Preview the move with gbrain repair slug-spelling --source <id> and apply the command it prints after the owner agrees. On a managed brain the repair is unavailable and a person has to decide how to rename the page. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/repair.md#slug-spelling](../../docs/guides/repair.md#slug-spelling)
 
 ### legacy_twin_mass_merge_refused
 
@@ -3638,6 +3983,16 @@ More: [docs/guides/cron-schedule.md#dream-beside-autopilot](../../docs/guides/cr
 |---|---|---|---|---|---|---|
 | A live gbrain serve owns this brain and runs free upkeep while idle, so the scheduled upkeep run did nothing (serve owns upkeep). | One runner at a time: the serve holds the brain (the PGLite lock, or the warm CLI socket on Postgres) and runs the same free upkeep on its idle tick. | Nothing to do; gbrain maintain --status shows the last run and its runner. | agent | `repeat the read that failed` | 0 | no |
 
+### malformed_request
+
+<a id="malformed_request"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A Google token socket request was not one JSON object per line with the fields its op needs. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
+
 ### managed_failure_unsettled
 
 <a id="managed_failure_unsettled"></a>
@@ -3662,7 +4017,7 @@ More: [docs/guides/write-refusals.md#managed_pull_skipped](../../docs/guides/wri
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| gbrain repair rename-identity cannot carry a page identity on a managed source; nothing was written. | On a managed brain page tables change only through coordinated publications, and the carry is a classic-source maintenance transaction, so on a managed source the remedy can only close the pair. | Release the purge hold without carrying identity: preview gbrain repair rename-identity --source <id> --slug <new-slug> --close, then run the apply command it prints after the user agrees; or keep the old page as its own page with gbrain restore <old-slug> --source-id <id> --force. | agent | `repeat the read that failed` | 1 | no |
+| A gbrain repair that rewrites page rows (rename-identity carry, slug-spelling) cannot run on a managed brain; nothing was written. | On a managed brain page tables change only through coordinated publications, and these repairs are classic-brain maintenance transactions. For rename-identity the remedy is to close the pair; for slug-spelling a person has to decide how to rename the page (it stays readable and editable by its stored spelling), and the refusal names no repair command that would refuse again. | rename-identity: release the purge hold without carrying identity: preview gbrain repair rename-identity --source <id> --slug <new-slug> --close, then run the apply command it prints after the user agrees; or keep the old page as its own page with gbrain restore <old-slug> --source-id <id> --force. slug-spelling: tell the owner a person is needed; nothing to run. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/repair.md#rename-identity](../../docs/guides/repair.md#rename-identity)
 
@@ -3808,6 +4163,16 @@ Reasons: `not_applied`, `still_behind`, `schema_unreadable`, `wedged`, `schema_b
 |---|---|---|---|---|---|---|
 | Another apply-migrations run holds the migration orchestration lock. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 75 | yes |
 
+### mint_socket_down
+
+<a id="mint_socket_down"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Nothing serves the Google token socket; start it with gbrain google mint serve, or gbrain serve --http with google.mint_socket true. | A capability this request needs is not configured or not reachable on this brain. | A required capability is not available on this brain. Run `gbrain doctor --json` to see what is missing. | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
+
 ### missing_source_scope
 
 <a id="missing_source_scope"></a>
@@ -3831,6 +4196,16 @@ Reasons: `not_applied`, `still_behind`, `schema_unreadable`, `wedged`, `schema_b
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | A configured model is not allowed under models strict mode. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### money_unevidenced
+
+<a id="money_unevidenced"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An amount was logged as done with no evidence gbrain could read and without estimated: true, so nothing was logged. | Every amount in the ledger is either backed by a page the writer can read or marked as an estimate, so totals never mix the two. | Add evidence (the slug of a saved page that shows the amount) or pass estimated: true, then call again with the same request_id. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/action-ledger.md#money_unevidenced](../../docs/guides/action-ledger.md#money_unevidenced)
 
 ### moved_pages_mass_fold_refused
 
@@ -4022,6 +4397,16 @@ More: [docs/guides/write-refusals.md#on_behalf_of_not_permitted](../../docs/guid
 
 More: [docs/guides/write-refusals.md#on_behalf_of_unknown_member](../../docs/guides/write-refusals.md#on_behalf_of_unknown_member)
 
+### onboarding_owner_only
+
+<a id="onboarding_owner_only"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Only the owner of this install can turn the first-session suggestion off, and this connection is not bound to the owner, so nothing changed. | The suggestion belongs to the install's owner; a member-bound connection can read its status but never change it. | Ask the brain owner to run gbrain onboarding off on the brain host. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/first-session-suggestion.md#turning-it-off](../../docs/guides/first-session-suggestion.md#turning-it-off)
+
 ### openclaw_not_found
 
 <a id="openclaw_not_found"></a>
@@ -4041,6 +4426,16 @@ More: [docs/mcp/OPENCLAW.md#have-gbrain-report-back-to-this-chat](../../docs/mcp
 | gbrain repair origin-twins refused to merge duplicate-origin twins amounting to more than half of a source's file-backed pages; nothing was changed. | The sync mass-delete valve (#2828) applied to origin twins (#6948): that many twins at once almost always means a re-import under other slugs or the wrong checkout, not a backlog. | Check the source and its checkout first. If merging these pages is genuinely intended, ask the user, then rerun the same apply command with GBRAIN_ALLOW_MASS_RECONCILE=1. | user | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/repair.md#origin-twins](../../docs/guides/repair.md#origin-twins)
+
+### outcome_unknown
+
+<a id="outcome_unknown"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A Google write may have taken effect but its reply was lost; the broker never resends it, so reconcile with a read before acting again. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
 
 ### overlapping_path
 
@@ -4079,6 +4474,16 @@ More: [docs/guides/apple-setup.md#owned_folder_conflict](../../docs/guides/apple
 | A Rust brain's owner refused a call or a connection because a bound on its memory was reached; `reason` says which bound, and nothing ran. | Every process on a Rust brain sends its calls to the one process that owns it, over `<database_path>/.gbrain-owner.sock`. The owner bounds what it holds for all of them so one busy or misbehaving process cannot grow its memory without limit. `queue_full`: the calls waiting for a free permit reached the queue cap. `inflight_bytes`: the call frames the owner holds (waiting and running) reached the byte cap. `connections`: the owner already has the most client connections it keeps. A refused call never started, so a retry is safe. | Retry after the calls in flight finish. If it repeats, run fewer processes on the brain at once or send smaller calls (a smaller batch or limit). Run: gbrain doctor --json | agent | `repeat the read that failed` | 1 | yes |
 
 Reasons: `queue_full`, `inflight_bytes`, `connections`.
+
+### owner_confirm_required
+
+<a id="owner_confirm_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A Google broker call hit a per-turn safety pause (a second outside invite, or an eleventh trash) and waits for the owner to confirm it in gbrain google approvals. | The step needs the user's decision before it runs. | Stop and ask the user; re-run only with the authorization the message names. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
 
 ### owner_ipc_peer_refused
 
@@ -4292,6 +4697,16 @@ More: [docs/guides/dream-patterns.md#cadence](../../docs/guides/dream-patterns.m
 |---|---|---|---|---|---|---|
 | The payload exceeds the configured size cap. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### peer_refused
+
+<a id="peer_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Google token socket refused this peer: held prompts are listed and answered only by the owner's own uid. | Only the operator of the brain host can change what blocks this. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
+
 ### pending_import_expired
 
 <a id="pending_import_expired"></a>
@@ -4347,6 +4762,16 @@ More: [docs/ENGINES.md#serve-deep-health](../../docs/ENGINES.md#serve-deep-healt
 | A managed write request has held its claim longer than persistence.max_claim_ms, so later writes on its root wait behind it. | The owner renews a claim for as long as its work is unsettled, so a preparation or publication that hangs never lets the lease lapse; doctor names the stuck phase, the root, the claim's age and whether the same request resumes on its own. | Inspect the request with the command in fix, then restart the gbrain serve that owns the root; attach that status output when reporting the hang. Run: gbrain sources writer status --source '{source_id}' --json | agent | `gbrain doctor --json` | 1 | no |
 
 More: [docs/guides/troubleshooting.md#persistence-write-stall](../../docs/guides/troubleshooting.md#persistence-write-stall)
+
+### personal_account_required
+
+<a id="personal_account_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Google Personal mode needs --account: each Personal-mode client works only for the account that created it. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
 
 ### pg_connection_recovery_failed
 
@@ -4428,6 +4853,58 @@ More: [docs/ENGINES.md#pglite-vector-index-ceiling](../../docs/ENGINES.md#pglite
 |---|---|---|---|---|---|---|
 | The saved plan has no valid repository identity. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### policy_approval_reserved
+
+<a id="policy_approval_reserved"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A write to a reserved agent-policy setting (policy.approved.<scope>, or brain_first.policy_line from an agent session) was refused, so nothing was changed. | The approved agent policy is what policy_check serves, so only an owner-confirmed gbrain policy command may write it; a plain config set, an agent session or a remote caller cannot approve a policy for itself. | Change the policy with gbrain policy allow\|ask\|deny\|edit, or approve a pending revision with gbrain policy accept <revision>, in your own terminal. | user | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/agent-policy.md#policy_approval_reserved](../../docs/guides/agent-policy.md#policy_approval_reserved)
+
+### policy_confirm_required
+
+<a id="policy_confirm_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An agent policy change was not applied because the owner did not confirm it here: this process looks like an agent session, has no terminal to ask on, or the confirmation code was not typed. | An agent must not approve its own policy. The change waits as a pending revision that changes nothing policy_check serves, until the owner confirms that exact revision in their own terminal or in the owner session. | Ask the owner to run the command in fix in their own terminal, outside the agent session; do not retry it from the agent. | user | `repeat the read that failed` | 1 | no |
+
+Reasons: `agent_marker`, `no_terminal`, `declined`.
+
+More: [docs/guides/agent-policy.md#policy_confirm_required](../../docs/guides/agent-policy.md#policy_confirm_required)
+
+### policy_malformed
+
+<a id="policy_malformed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The agent policy fence could not be parsed (the error names the line and column), so nothing was changed or approved. | policy_check serves only an owner-approved, well-formed policy; a malformed page is never approved, and while it is malformed agents get the last approved revision, or ask for every verb when nothing was ever approved. | Run gbrain policy show --check to see the problem, then fix it with gbrain policy edit. Run: gbrain policy show --check | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/agent-policy.md#policy_malformed](../../docs/guides/agent-policy.md#policy_malformed)
+
+### policy_owner_only
+
+<a id="policy_owner_only"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A remote caller tried to write, move or retype the agent policy page, so nothing was written. | The agent policy is owner-only: remote callers (MCP and HTTP) read it through policy_check and agent_policy but never write it, so an agent cannot widen its own permissions. | Ask the owner to change it with gbrain policy on the brain host. | user | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/agent-policy.md#policy_owner_only](../../docs/guides/agent-policy.md#policy_owner_only)
+
+### policy_revision_stale
+
+<a id="policy_revision_stale"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The revision named for approval is not the policy page's current revision, so nothing was approved. | Approval binds one exact revision; approving an older one would serve rules the owner did not see. | Run gbrain policy status to see the pending revision, then approve that one. Run: gbrain policy status | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/agent-policy.md#policy_revision_stale](../../docs/guides/agent-policy.md#policy_revision_stale)
+
 ### pool_inflight_over_budget
 
 <a id="pool_inflight_over_budget"></a>
@@ -4476,6 +4953,36 @@ More: [docs/guides/write-refusals.md#preparation_stalled](../../docs/guides/writ
 
 More: [docs/guides/repair.md#preview-changed](../../docs/guides/repair.md#preview-changed)
 
+### private_senders_unreadable
+
+<a id="private_senders_unreadable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Google source's private-senders file is missing, unreadable or empty, so the sync stopped before writing anything. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
+
+### profile_entity_not_self
+
+<a id="profile_entity_not_self"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| remember with facet named an entity other than the caller's own profile, or came from a credential that has no profile; nothing was saved. | A profile fact is about the person the credential speaks for. A member's profile is its own member page, so a member credential never writes a profile fact onto another page (the owner's included); a credential that is neither the owner nor a member, such as one asserting an audience, has no profile at all. | Omit entity to save the fact on your own profile, or drop facet to save an ordinary fact about that entity. | agent | `repeat the read that failed` | 2 | no |
+
+More: [docs/guides/profile.md#who-a-profile-belongs-to](../../docs/guides/profile.md#who-a-profile-belongs-to)
+
+### profile_facet_unknown
+
+<a id="profile_facet_unknown"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| remember's facet is not one of the profile facets (size.<item>, brand, diet, allergy, style, constraint, schedule, household, other); nothing was saved. | Profile facts are typed by a fixed facet list so every connected agent reads the same profile shape; an unlisted facet would be a facet no reader knows. | Pass one of the listed facets (size takes an item, e.g. size.shoe), or "other", or omit facet to save an ordinary fact. | agent | `repeat the read that failed` | 2 | no |
+
+More: [docs/guides/profile.md#facets](../../docs/guides/profile.md#facets)
+
 ### profile_incompatible
 
 <a id="profile_incompatible"></a>
@@ -4483,6 +4990,16 @@ More: [docs/guides/repair.md#preview-changed](../../docs/guides/repair.md#previe
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The stored profile is incompatible with this operation. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### profile_metric_reserved
+
+<a id="profile_metric_reserved"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| remember's claim_metric used the reserved profile. prefix, or was passed together with facet; nothing was saved. | The profile.<facet> metric is validated in one place and set only by facet, so no hand-written metric, import or extractor can create a profile fact outside the facet list. | Pass facet (e.g. facet: "diet") instead of a profile. claim_metric; claim_value, claim_unit and claim_period may still ride with it. | agent | `repeat the read that failed` | 2 | no |
+
+More: [docs/guides/profile.md#facets](../../docs/guides/profile.md#facets)
 
 ### projection_owner_resident
 
@@ -4882,7 +5399,7 @@ More: [docs/guides/repair.md#recovery-prior-stage-unavailable](../../docs/guides
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| An earlier write left state that must be inspected and recovered before new writes. | Details name the exit when there is one: physical_root_device_changed (the checkout's filesystem device number changed; re-stamped by itself when ownership verifies) and physical_root_directory_changed (the directory at the recorded path was recreated, or its birth time drifted beyond 1 µs; the relocated-root self-transfer, `transfer prepare/accept <source> --self-transfer --confirm-relocated-root`, re-stamps it) and physical_root_moved (the checkout was moved to a new path or its parent folder renamed; `sources add`, `set-path` and `writer claim`, dry runs included, name the recorded path and the symlink-then-set-path or move-back exit, and a remote caller sees no path). All three are explained in docs/guides/write-refusals.md. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
+| An earlier write left state that must be inspected and recovered before new writes. | Details name the exit when there is one: physical_root_device_changed (the checkout's filesystem device number changed; re-stamped by itself when ownership verifies) and physical_root_directory_changed (the directory at the recorded path was recreated, or its birth time drifted beyond 1 µs; the relocated-root self-transfer, `transfer prepare/accept <source> --self-transfer --confirm-relocated-root`, re-stamps it) and physical_root_moved (the checkout was moved to a new path or its parent folder renamed; `sources add`, `set-path` and `writer claim`, dry runs included, name the recorded path and the symlink-then-set-path or move-back exit, and a remote caller sees no path) and ownership_reservation_missing (the reservation beside the checkout is gone while its stamp still identifies this exact directory; the plain self-transfer, `transfer prepare/accept <source> --self-transfer` without --confirm-relocated-root, re-creates it, and refuses with checkout_git_missing while a Git-synced checkout has also lost its .git). All four are explained in docs/guides/write-refusals.md. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
 
 ### recovery_version_unsupported
 
@@ -4953,6 +5470,16 @@ More: [docs/guides/write-refusals.md#refresh_diverged](../../docs/guides/write-r
 | In-flight work did not drain before the refresh deadline. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
 
 More: [docs/guides/write-refusals.md#refresh_drain_timeout](../../docs/guides/write-refusals.md#refresh_drain_timeout)
+
+### refresh_lease_busy
+
+<a id="refresh_lease_busy"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Another gbrain process is refreshing the same Google grant; retry in a few seconds. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
 
 ### refresh_lock_timeout
 
@@ -5053,6 +5580,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 | Google connect credential error: relay unreachable. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
 
 More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
+
+### rename_file_first
+
+<a id="rename_file_first"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain repair slug-spelling did not move a page because its file in the source's checkout is not at the path of the normal slug (or is missing); nothing was written. | Moving only the database row would split the page from its file, and the next sync would create a second page from the file. Renaming the file in Git first lets sync carry the page identity to the new path. | git mv the file to the path of the normal slug, commit, and sync; then preview again with gbrain repair slug-spelling --source <id>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/repair.md#slug-spelling](../../docs/guides/repair.md#slug-spelling)
 
 ### rename_held
 
@@ -5280,6 +5817,16 @@ More: [docs/guides/windowed-reads.md#revision_changed](../../docs/guides/windowe
 |---|---|---|---|---|---|---|
 | The exact authorized revision is unavailable. | A capability this request needs is not configured or not reachable on this brain. | A required capability is not available on this brain. Run `gbrain doctor --json` to see what is missing. | agent | `gbrain doctor --json` | 1 | no |
 
+### revoked
+
+<a id="revoked"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Google grant behind a socket mint or broker call was revoked or expired; reconnect the account. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
+
 ### runtime_build_skew
 
 <a id="runtime_build_skew"></a>
@@ -5296,9 +5843,9 @@ More: [docs/guides/troubleshooting.md#runtime-build-skew](../../docs/guides/trou
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The Rust engine addon on this machine does not match what this gbrain release expects (checksum, engine_abi, engine_build or target), so it was not used and gbrain wrote nothing. | A different addon build could read or write the brain with a different on-disk format, so only the addon the running release names, with the checksum in its manifest, is loaded. A file that fails the check is left as it was. | Rebuild the addon with bun run rust:build and point GBRAIN_RUST_ENGINE_ADDON at the path it prints, or install the gbrain release that matches the addon, or switch engine in the gbrain config back to pglite or postgres. | user | `gbrain doctor --json` | 1 | no |
+| The Rust engine addon on this machine does not match what this gbrain release expects (checksum, engine_abi, engine_build or target), so it was not used and gbrain wrote nothing. | A different addon build could read or write the brain with a different on-disk format, so only the addon the running release names, with the checksum in its manifest, is loaded. A file that fails the check is left as it was. | Run gbrain engine install rust to replace it with the addon this release names. verification_failed means a downloaded addon or manifest did not match its checksum or build attestation: it was deleted, the installed addon was left as it was, and there is no bypass, so report it. For a build you made, rebuild it with bun run rust:build and point GBRAIN_RUST_ENGINE_ADDON at the path it prints. Or switch engine in the gbrain config back to pglite or postgres. | user | `gbrain doctor --json` | 1 | no |
 
-Reasons: `digest`, `engine_abi`, `engine_build`, `target`, `load_failed`.
+Reasons: `digest`, `engine_abi`, `engine_build`, `target`, `load_failed`, `verification_failed`.
 
 ### rust_engine_addon_missing
 
@@ -5306,9 +5853,19 @@ Reasons: `digest`, `engine_abi`, `engine_build`, `target`, `load_failed`.
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The Rust engine is selected (engine: rust), but no addon for this gbrain release is installed on this machine, or no addon is published for this platform, so gbrain opened nothing and wrote nothing. | The Rust engine ships as a separate addon file kept in the gbrain home, checked against the checksum in this release's manifest before it loads. Without a checked addon the engine cannot open, and gbrain refuses before touching the brain. | Point GBRAIN_RUST_ENGINE_ADDON at an addon you built with bun run rust:build, or switch engine in the gbrain config back to pglite or postgres. | user | `gbrain doctor --json` | 1 | yes |
+| The Rust engine is selected (engine: rust), but no addon for this gbrain release is installed on this machine, or no addon is published for this platform, so gbrain opened nothing and wrote nothing. | The Rust engine ships as a separate addon file kept in the gbrain home, checked against the checksum in this release's manifest before it loads. Without a checked addon the engine cannot open, and gbrain refuses before touching the brain. | Run gbrain engine install rust to download and check the addon this release names (not_published means this release has none: use a release that does, or keep pglite or postgres; unsupported_target means no release has one for this platform). For a build you made, point GBRAIN_RUST_ENGINE_ADDON at it (bun run rust:build). Or switch engine in the gbrain config back to pglite or postgres. | user | `gbrain doctor --json` | 1 | yes |
 
-Reasons: `unsupported_target`, `not_installed`, `override_not_found`.
+Reasons: `unsupported_target`, `not_installed`, `override_not_found`, `not_published`, `fetch_failed`.
+
+### rust_snapshot_stopped
+
+<a id="rust_snapshot_stopped"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A Rust brain's snapshot did not run or did not finish, and nothing of it remains; `reason` says why. | A snapshot copies the whole brain at one committed generation while writers keep going. The owner runs one at a time (`busy`), stops it when its caller has gone or cancelled it (`cancelled`), when the disk of the target or of the brain falls below max(2 GiB, 5 % of the filesystem) (`disk_pressure`: the copy holds old pages of the brain until it ends, so it can grow the brain's file on a busy brain), or when it has run past its age budget (`age_budget`, 2 hours). The call ends only after the owner has released its read of the brain and removed what the copy wrote, so a caller may delete its scratch space once it sees this error. | Wait for a running snapshot to end, free disk space, or start the snapshot again when the brain is quieter. Run: gbrain doctor --json | agent | `repeat the read that failed` | 1 | yes |
+
+Reasons: `busy`, `cancelled`, `disk_pressure`, `age_budget`.
 
 ### rust_store_locked
 
@@ -5562,6 +6119,48 @@ More: [docs/guides/repair.md#setup-harness-unsupported](../../docs/guides/repair
 |---|---|---|---|---|---|---|
 | gbrain setup --serves several would turn a brain that serves one person shared while it holds pages no rule restricts, and nobody chose what happens to them, so setup wrote nothing. | Each member key setup mints reads every page no rule or readable_by restricts, so the owner's journal, DMs, chat, mail and conversation archive would reach every member; only the admin can decide that. | Run setup again with --labelled-only to keep that history private (each member reads only pages labelled for them) or with --open-history to let the members read it. Run: gbrain doctor --only open_shared_pages --json | agent | `repeat the read that failed` | 1 | no |
 
+### setup_history_decision_expired
+
+<a id="setup_history_decision_expired"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The history import decision gbrain setup offered expired before it was answered, so nothing was imported. | A decision imports exactly the sessions its preview showed; an old preview no longer describes what is on disk, so it is never applied late. | Run gbrain setup again to preview the import and get a new decision. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/conversation-archive.md#setup-history-import](../../docs/guides/conversation-archive.md#setup-history-import)
+
+### setup_history_decision_unavailable
+
+<a id="setup_history_decision_unavailable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| No pending history import decision with that id can be used on this brain, so nothing was imported. | A decision belongs to one install, one preview and one archive source; a newer preview replaces it, a no removes it, and a changed archive source refuses it. | Run gbrain setup again to preview the import and get a new decision. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/conversation-archive.md#setup-history-import](../../docs/guides/conversation-archive.md#setup-history-import)
+
+### setup_history_failed
+
+<a id="setup_history_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The history import gbrain setup ran wrote nothing: every reader or day it tried failed. | The import reads the previewed session files and writes through the conversation archive; a reader or write error is reported per harness and day. | Run gbrain transcripts archive status for each reader's error, then run gbrain setup again. Run: gbrain transcripts archive status --json | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/conversation-archive.md#setup-history-import](../../docs/guides/conversation-archive.md#setup-history-import)
+
+### setup_history_ineligible
+
+<a id="setup_history_ineligible"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The setup history import runs only on a new personal install, and this brain is not one, so nothing was read or written. | An upgrade, a restored or imported brain, a pinned project and a team, shared or member-bound brain never get the import: it is offered once, to the owner of a brain setup just created, and never changes what other people can read. | Import history yourself with gbrain transcripts archive backfill --from YYYY-MM-DD, or gbrain transcripts ingest <export>. | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `existing_brain`, `pages_present`, `shared_brain`, `audience_unproven`, `archive_off`, `pinned_source`, `team_brain`, `member_bound`.
+
+More: [docs/guides/conversation-archive.md#setup-history-import](../../docs/guides/conversation-archive.md#setup-history-import)
+
 ### setup_hosted_connection
 
 <a id="setup_hosted_connection"></a>
@@ -5599,6 +6198,16 @@ More: [docs/guides/repair.md#setup-owner-conflict](../../docs/guides/repair.md#s
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | gbrain setup could not read whether the existing brain serves several people, so it wrote nothing. | Setup writes an unbound connection only on a brain it knows serves one person; a brain it cannot read might serve several. | Run gbrain access serves --json to see why the brain cannot be read, fix that, then run setup again. Run: gbrain access serves --json | agent | `repeat the read that failed` | 1 | no |
+
+### shadow_drill_failed
+
+<a id="shadow_drill_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| `gbrain engine shadow drill` did not run, or its restore drill of the shadow store did not pass; `reason` says why, and a drill that copied leaves its record, with the counts, under `<shadow dir>/drills/`. | The drill copies the shadow's Rust store through its owner, checks the copy without opening it normally and opens it once; swap criterion 10 needs a passed drill in the current evidence epoch. It refuses before copying when the shadow has no seed (`no_seed`), no evidence epoch (`no_epoch`), no store (`no_store`) or no installed addon (`addon_unavailable`), when the disk has less than twice the store file plus 2 GiB free (`disk_space`), when another drill runs, or a lock it cannot read or a takeover file a crash left is in the way (`drill_running`), when an earlier copy has not ended (`cleanup_pending`), or when the addon this process loads is not the one the evidence epoch started on (`addon_mismatch`). Every refusal before the copy (`no_seed`, `no_epoch`, `no_store`, `addon_unavailable`, `disk_space`, `addon_mismatch`, `drill_running`, `cleanup_pending`, `cleanup_failed` (an earlier copy's scratch space or the old `backup.json` could not be removed; the pending marker stays)) is printed but writes no record under `drills/`, so status and the swap keep reading the earlier record (`backup_drill_missing` when there is none); only the record `--json` prints for a refused drill carries the digest that was checked. A copy the owner stopped is `snapshot_busy`, `snapshot_cancelled`, `snapshot_disk_pressure` or `snapshot_age_budget`; a copy that differs from the owner's manifest is `copy_mismatch`, a damaged one `copy_integrity`, an unreadable one `copy_unreadable`, one that will not open `open_failed`; a copy with pages is never a pass unless a keyword search ran on it, and once the copy's keyword index is complete that search must get a hit: when no stored word got one (stop words and words the tokenizer drops are skipped, search-excluded pages are not used) the reason is `no_probe_term`, and on a copy whose index is not complete a miss is allowed but a query must still have run; scratch space that could not be removed is `cleanup_failed`; a shadow directory that was deleted or replaced while the drill ran is `shadow_gone` and nothing is written for it. | Read the reason, fix it (free disk space, wait for the earlier copy, seed the shadow) and run `gbrain engine shadow drill` again; the shadow keeps following while a drill runs. Run: gbrain engine shadow status --json | agent | `repeat the read that failed` | 1 | yes |
+
+Reasons: `no_seed`, `no_epoch`, `no_store`, `addon_unavailable`, `disk_space`, `drill_running`, `cleanup_pending`, `snapshot_busy`, `snapshot_cancelled`, `snapshot_disk_pressure`, `snapshot_age_budget`, `snapshot_failed`, `copy_mismatch`, `copy_integrity`, `copy_unreadable`, `open_failed`, `cleanup_failed`, `drill_error`, `addon_mismatch`, `no_probe_term`, `shadow_gone`.
 
 ### shared_skills_unavailable
 
@@ -5764,7 +6373,7 @@ More: [docs/guides/skill-resolver.md#skill_resolve_timeout](../../docs/guides/sk
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A skill resolver setting is out of range (skills.resolver.session_token_budget must be 0 or 100-50000; top_k, min_match, pinned and per_harness must be valid) or GBRAIN_HOME is not an absolute path. | The request itself was wrong or no longer matches the brain; nothing was changed. | Fix the value in config.json under skills.resolver (default budget 2000), or GBRAIN_HOME. | agent | `repeat the read that failed` | 1 | no |
+| A skill resolver setting is out of range (skills.resolver.session_token_budget must be 0 or 100-50000; top_k, min_match, pinned and per_harness must be valid) or GBRAIN_HOME is not an absolute path. | The request itself was wrong or no longer matches the brain; nothing was changed. | Fix the value in config.json under skills.resolver (default budget 8000), or GBRAIN_HOME. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/skill-resolver.md#skill_resolver_config_invalid](../../docs/guides/skill-resolver.md#skill_resolver_config_invalid)
 
@@ -6043,6 +6652,26 @@ More: [docs/guides/write-refusals.md#slug_page_mismatch](../../docs/guides/write
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | A managed sync of a subdirectory source ran under one slug-root mode while the source pins the other (sources.config.slug_root_mode), so its checkpoint did not advance. | At a subdirectory the two modes give different slugs (git-root keeps the subdirectory prefix, source-root does not), and the pin exists so a later sync never re-namespaces the source; the pages this run wrote already carry its mode. The pin changed after the run was discovered. A source rooted at its repository root never gets this code: both modes give it identical slugs, and its checkpoint keeps the pin it has. Older releases reported this refusal as revision_conflict. | Ask the user which mode the source keeps. To keep the mode the run used, set sources.config.slug_root_mode back to it and run gbrain sync --no-pull --source <id>; the refused checkpoint is retried by itself. To keep the new pin, preview gbrain repair managed-sync-orphans --source <id> (it lists the refused cursor as slug_mode_refused), apply it with the hash it prints, and run gbrain sync --no-pull --source <id>, which discovers the source again under the pin; the pages the refused run wrote keep their old slugs beside the new ones. Run: gbrain sync status --source '{source_id}' --json | user | `repeat the read that failed` | 1 | no |
+
+### slug_spelling_collision
+
+<a id="slug_spelling_collision"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain repair slug-spelling did not move a page because another page in the source already prints its normal name, or two stored spellings share it; nothing was written. | Moving the page would merge two pages, which is destructive and never done automatically. The preview lists each such page with the pages it collides with and the commands to compare them. | Compare the pages (gbrain get --source <id> -- <slug>), keep the content you want in one, soft-delete the other with gbrain delete <slug> --source-id <id>, then preview again with gbrain repair slug-spelling --source <id>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/repair.md#slug-spelling](../../docs/guides/repair.md#slug-spelling)
+
+### slug_spelling_encoding
+
+<a id="slug_spelling_encoding"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain repair slug-spelling did not move any page because the database's encoding is not UTF8; nothing was written. | Finding every stored spelling of a name compares composed Unicode text, which only a UTF8 database can evaluate; without it the repair could miss another page that prints the same name and merge two pages. | Move the brain to a database created with UTF8 encoding (gbrain doctor reports database_encoding), then preview again with gbrain repair slug-spelling --source <id>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/repair.md#slug-spelling](../../docs/guides/repair.md#slug-spelling)
 
 ### source_binding_required
 
@@ -6406,7 +7035,7 @@ More: [docs/guides/write-refusals.md#sync_drain_lease_held](../../docs/guides/wr
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A source's first sync is running (it holds a live sync lock inside the staleness ceiling) and no successful sync is recorded yet, so doctor sync_freshness warns instead of reading it as fresh. | A sync stamps last_sync_at only when it succeeds; a running sync is not a fresh source, and starting a second one beside it only contends for the lock. Over the staleness ceiling the lock reads as wedged (fail) instead. | Wait for the running sync, then run gbrain doctor --only sync_freshness --json again. | agent | `repeat the read that failed` | 1 | yes |
+| A source's first sync is running (it holds a live sync lock inside the staleness ceiling, or its sync job, started inside that ceiling, is running with a live job lock) and no successful sync is recorded yet, so doctor sync_freshness warns instead of reading it as fresh. | A sync stamps last_sync_at only when it succeeds; a running sync is not a fresh source, and starting a second one beside it only contends for the lock. Over the staleness ceiling the lock reads as wedged (fail) instead. | Wait for the running sync, then run gbrain doctor --only sync_freshness --json again. | agent | `repeat the read that failed` | 1 | yes |
 
 More: [docs/guides/troubleshooting.md#sync-freshness-no-successful-sync](../../docs/guides/troubleshooting.md#sync-freshness-no-successful-sync)
 
@@ -6428,7 +7057,7 @@ More: [docs/guides/write-refusals.md#sync_in_progress](../../docs/guides/write-r
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| No successful sync is recorded for a source (last_sync_at is NULL) and no sync of it is running; doctor sync_freshness fails with the last attempt's time, result and held files. | The attempt comes from the newest sync job and, on a managed brain, the source's sync status (read-only). `reason` names the state: no_attempt (nothing recorded: run a sync), attempt_queued (a job is queued: wait), holds_pending (held files: inspect them first), last_attempt_unsuccessful (inspect the job or failure, then retry). | Follow the check fix: it waits, inspects holds (gbrain sync status --source <id> --json) or retries (gbrain sync --source <id>) depending on the state. | agent | `gbrain doctor --json` | 1 | no |
+| No successful sync is recorded for a source (last_sync_at is NULL) and no sync of it is running, or its sync job has run past the staleness ceiling; doctor sync_freshness fails with the last attempt's time, result and held files. | The attempt comes from the newest sync job and, on a managed brain, the source's sync status (read-only). `reason` names the state: no_attempt (nothing recorded: run a sync), attempt_queued (a job is queued: wait), holds_pending (held files: inspect them first), last_attempt_unsuccessful (inspect the job or failure, then retry; also a sync job that keeps its job lock past the staleness ceiling, which is not finishing). | Follow the check fix: it waits, inspects holds (gbrain sync status --source <id> --json) or retries (gbrain sync --source <id>) depending on the state. | agent | `gbrain doctor --json` | 1 | no |
 
 Reasons: `no_attempt`, `attempt_queued`, `holds_pending`, `last_attempt_unsuccessful`.
 
@@ -6459,6 +7088,16 @@ Reasons: `checkout_missing`, `content_directory`, `plain_directory`.
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | A sync pass's checkpoint did not publish because the pass that admitted it no longer holds the source (it ended, or another pass started); the next pass stamps its own checkpoint. | A pass's checkpoint is bound to its drain lease and pass row, so it can never publish after that pass ends. Its receipt is a conflict that records no managed-sync failure and reads superseded in gbrain sources writer failures; a pass that stops with the checkpoint still pending reports disposition superseded instead of a request to resume. | Nothing to repair or resubmit: the pages the pass committed stand. Let the next sync pass run (gbrain sync --source <id> --no-pull), and read gbrain sync status --source <id> --json to confirm the source converges. | agent | `repeat the read that failed` | 1 | no |
+
+### sync_usage_limited
+
+<a id="sync_usage_limited"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A source has no successful sync yet and its last sync stopped only at a provider usage or rate limit, with nothing else failed or held, and such a run landed pages inside sync_freshness's fail age, so doctor sync_freshness warns instead of failing. | A connector whose provider caps reads per day (gbrain.io's allowance, Google's quota) can take several runs to finish a first sync. Each run ends partial and resumes where the last stopped; that is progress, not a broken source. Runs that hit the spent limit before landing anything keep the warning; once no limited run has landed pages inside the fail age, or a run fails items or holds files, the source reads sync_no_successful_sync again. | Wait for the next scheduled sync to resume, then run gbrain doctor --only sync_freshness --json again. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/troubleshooting.md#sync-freshness-no-successful-sync](../../docs/guides/troubleshooting.md#sync-freshness-no-successful-sync)
 
 ### tag_too_long
 
@@ -6532,6 +7171,26 @@ More: [docs/guides/write-refusals.md#timeline_rows_would_be_removed](../../docs/
 |---|---|---|---|---|---|---|
 | The operation did not finish within its time bound. | On a Rust brain client, a call through the owner socket carries its deadline and `reason` says how far it got: `not_sent` (never reached the owner) and `not_started` (waited in the owner queue and never ran) are safe to retry. A call whose deadline passed after the owner started it ends `owner_unavailable` with reason `outcome_unknown` instead. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 124 | yes |
 
+### tool_error
+
+<a id="tool_error"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Google's tool returned an error inside its result (user denial, admin policy, a pending challenge, or a failed call); the broker reports it as a failure, never as success. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
+
+### tool_not_allowed
+
+<a id="tool_not_allowed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Google write broker accepts only allowlisted Workspace MCP tools on its served products; Chat and REST are not served. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
+
 ### topology_change_required
 
 <a id="topology_change_required"></a>
@@ -6583,6 +7242,16 @@ Reasons: `corpus_source_other`, `corpus_source_unresolved`, `corpus_legacy_unsta
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The operation runs only from the trusted local CLI on the brain host; no MCP connection can call it. | Only the operator of the brain host can change what blocks this. | Ask the user to run the named gbrain command on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
+
+### turn_cap
+
+<a id="turn_cap"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Google write broker already made its per-turn cap of calls on this turn_id. | The step needs the user's decision before it runs. | Stop and ask the user; re-run only with the authorization the message names. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
 
 ### turn_hook_not_loaded
 
@@ -6672,6 +7341,16 @@ More: [docs/guides/write-refusals.md#unclosed_ambiguous_tail](../../docs/guides/
 |---|---|---|---|---|---|---|
 | The JSON-RPC method is not supported. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### unknown_op
+
+<a id="unknown_op"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A Google token socket request named an op other than mint, call, status or tools. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
+
 ### unknown_source
 
 <a id="unknown_source"></a>
@@ -6751,6 +7430,16 @@ More: [docs/guides/system-one.md#unpriced_model](../../docs/guides/system-one.md
 Reasons: `not_utf8`, `control_character`.
 
 More: [docs/guides/write-refusals.md#unsupported_path](../../docs/guides/write-refusals.md#unsupported_path)
+
+### unsupported_version
+
+<a id="unsupported_version"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A Google token socket request used a protocol version other than 4; versions 1 to 3 are refused so a verdict is never silently ignored. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
 
 ### untrack_not_db_only
 
@@ -6848,6 +7537,26 @@ More: [docs/guides/troubleshooting.md#upstream-rewritten](../../docs/guides/trou
 
 More: [docs/guides/page-history.md#valid_time_undeclared](../../docs/guides/page-history.md#valid_time_undeclared)
 
+### vault_generation_changed
+
+<a id="vault_generation_changed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A Google account was reconnected or disconnected while a token write was in flight; the stale write was dropped. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
+
+### vault_lock_busy
+
+<a id="vault_lock_busy"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Another gbrain process holds the credential vault lock; the write was refused rather than made unlocked. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
+
 ### vector_prewarm_extension_missing
 
 <a id="vector_prewarm_extension_missing"></a>
@@ -6877,6 +7586,36 @@ More: [docs/ENGINES.md#vector-index-prewarm](../../docs/ENGINES.md#vector-index-
 | `gbrain embeddings prewarm` was refused before reading anything because the brain's HNSW indexes are larger than half of shared_buffers. | Prewarm loads the indexes into shared_buffers, the cache Postgres sizes and keeps; past half of it the prewarm would evict heap and keyword-index pages other reads need, so the next searches would pay first-touch reads on those instead. effective_cache_size does not decide: it is a planner hint, not memory the server holds. | Raise shared_buffers on the database host to at least twice the index size the message names and restart Postgres, or leave the indexes cold; read the fit with gbrain embeddings prewarm --dry-run --json. Run: gbrain embeddings prewarm --dry-run --json | host_admin | `gbrain doctor --json` | 1 | no |
 
 More: [docs/ENGINES.md#vector-index-prewarm](../../docs/ENGINES.md#vector-index-prewarm)
+
+### verdict_already_answered
+
+<a id="verdict_already_answered"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The held Google prompt this verdict names was already answered. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
+
+### verdict_expired
+
+<a id="verdict_expired"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The held Google prompt is gone: it expired after 10 minutes, the broker restarted, or the account was reconnected; re-call for a fresh prompt. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
+
+### verdict_mismatch
+
+<a id="verdict_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An owner_verdict named a different held prompt, or came from another turn or caller than the call it answers. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
 
 ### verification_failed
 
@@ -7131,6 +7870,16 @@ More: [docs/guides/write-refusals.md#write_quota_exhausted](../../docs/guides/wr
 Reasons: `lifetime_ids`, `terminal_bytes`.
 
 More: [docs/guides/write-refusals.md#write_quota_insufficient](../../docs/guides/write-refusals.md#write_quota_insufficient)
+
+### write_scope_refused
+
+<a id="write_scope_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Google returned a write-capable token where gbrain only stores read-only tokens; nothing was stored. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
 
 ### writer_admin_intent_required
 

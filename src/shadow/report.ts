@@ -6,8 +6,11 @@
  */
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { buildBenchStatus, renderBenchStatus, type BenchStatus } from './bench.ts';
 import { SHADOW_OUTCOMES, type ShadowOutcome } from './classify.ts';
+import { buildEvidenceStatus, renderEvidenceStatus, type EvidenceStatus } from './evidence.ts';
 import { readFaults, readShadowSummary, type ShadowFault, type ShadowSummary } from './ledger.ts';
+import { storageLine, storageReport, type StorageReport } from './managed-gate.ts';
 import type { ShadowState } from './state.ts';
 import { readSeedRecord, type SeedRecord } from './seed.ts';
 
@@ -22,6 +25,8 @@ export interface ProvisionalReport {
   brain: string;
   enabled: boolean;
   sample_rate: number | null;
+  /** The storage mode `start` recorded, null for a state written before it was recorded. */
+  storage: StorageReport | null;
   window: { first_event_at: string | null; last_event_at: string | null };
   totals: Record<ShadowOutcome, number> & { compared: number };
   by_op: Array<{ op: string; total: number } & Record<ShadowOutcome, number>>;
@@ -31,6 +36,10 @@ export interface ProvisionalReport {
   recent_faults: ShadowFault[];
   /** The seed the Rust store holds (`seed.json`), or null before `gbrain engine shadow seed`. */
   seed: ReportSeed | null;
+  /** The swap-readiness evidence of the current epoch: reads, search arms, child health and the rules behind them (evidence.ts). */
+  evidence: EvidenceStatus;
+  /** Criterion 8 from the engine-bench receipt (bench.ts): reported, never gating; this brain's own speed is not measured. */
+  bench: BenchStatus;
 }
 
 export interface ReportSeed {
@@ -39,6 +48,8 @@ export interface ReportSeed {
   age_hours: number;
   segmented_pages: number;
   non_terminal_jobs: number;
+  /** The storage mode the seed recorded, null for a seed written before it was recorded. */
+  storage: StorageReport | null;
   unseeded_gap_rows_total: number;
   /** Only the gap tables and columns that hold rows. */
   unseeded_gap_rows: Record<string, number>;
@@ -53,6 +64,7 @@ function reportSeed(record: SeedRecord | null, now: Date): ReportSeed | null {
     age_hours: Number.isFinite(age) ? Math.max(0, Math.round(age * 10) / 10) : 0,
     segmented_pages: record.segmented_pages,
     non_terminal_jobs: record.non_terminal_jobs,
+    storage: storageReport(record.storage),
     unseeded_gap_rows_total: record.unseeded_gap_rows_total,
     unseeded_gap_rows: Object.fromEntries(Object.entries(record.unseeded_gap_rows).filter(([, n]) => n > 0)),
   };
@@ -100,6 +112,7 @@ export function buildProvisionalReport(dir: string, brain: string, state: Shadow
     brain,
     enabled: state?.enabled === true,
     sample_rate: state?.sample_rate ?? null,
+    storage: storageReport(state?.storage),
     window: { first_event_at: summary.first_event_at, last_event_at: summary.last_event_at },
     totals,
     by_op: byOp,
@@ -108,6 +121,8 @@ export function buildProvisionalReport(dir: string, brain: string, state: Shadow
     children: summary.children,
     recent_faults: readFaults(dir, 10),
     seed,
+    evidence: buildEvidenceStatus({ dir, now }),
+    bench: buildBenchStatus({ dir, primaryEngine: state?.primary_engine ?? null }).bench,
   };
 }
 
@@ -117,8 +132,16 @@ export function renderProvisionalMarkdown(r: ProvisionalReport): string {
   lines.push(`Verdict: **${r.verdict}**`, '');
   for (const why of r.why_not_ready) lines.push(`- ${why}`);
   lines.push('', `Brain: ${r.brain}. Shadow mode: ${r.enabled ? 'on' : 'off'}. Generated ${r.generated_at}.`);
+  const storage = storageLine(r.storage);
+  if (storage) lines.push(`Storage: ${storage}.`);
   lines.push(`Window: ${r.window.first_event_at ?? 'no comparisons yet'} to ${r.window.last_event_at ?? '-'}.`);
+  // Lines are appended one at a time: a spread into push() throws RangeError past a few hundred thousand arguments.
   lines.push(renderSeedLine(r.seed), '');
+  for (const l of renderEvidenceStatus(r.evidence)) lines.push(l);
+  lines.push('');
+  lines.push('## Speed', '');
+  for (const l of renderBenchStatus(r.bench)) lines.push(l.replace(/^( *)/, (m) => `${' '.repeat(Math.max(0, m.length - 2))}- `));
+  lines.push('');
   const cols: ShadowOutcome[] = [...SHADOW_OUTCOMES];
   lines.push(`| operation | total | ${cols.join(' | ')} |`);
   lines.push(`|---|---:|${cols.map(() => '---:').join('|')}|`);
@@ -140,7 +163,8 @@ function renderSeedLine(seed: ReportSeed | null): string {
   const gaps = Object.entries(seed.unseeded_gap_rows).sort(([a], [b]) => a.localeCompare(b)).map(([k, n]) => `${k} ${n}`);
   return `Seed: ${seed.seed_id}, finished ${seed.finished_at} (${seed.age_hours} hours ago). `
     + `Segmented pages read as shells: ${seed.segmented_pages}. Unfinished jobs not copied: ${seed.non_terminal_jobs}. `
-    + `Unseeded gap rows: ${seed.unseeded_gap_rows_total}${gaps.length ? ` (${gaps.join(', ')})` : ''}.`;
+    + `Unseeded gap rows: ${seed.unseeded_gap_rows_total}${gaps.length ? ` (${gaps.join(', ')})` : ''}.`
+    + (storageLine(seed.storage) ? ` Storage: ${storageLine(seed.storage)}.` : '');
 }
 
 /** Writes `reports/provisional.json` and `.md` (0600) and returns their paths. */

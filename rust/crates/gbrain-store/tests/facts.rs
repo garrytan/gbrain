@@ -5,8 +5,8 @@ mod memory_env;
 use gbrain_store::env::iso;
 use gbrain_store::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT};
 use gbrain_store::facts::{
-    DuplicateQuery, ExpireFactArgs, FactQuery, InsertFactArgs, InsertFactsArgs, PageDeleteArgs,
-    SupersessionQuery, TrajectoryQuery,
+    DuplicateQuery, ExpireFactArgs, ExpireFactUntilArgs, FactQuery, InsertFactArgs,
+    InsertFactsArgs, PageDeleteArgs, SupersessionQuery, TrajectoryQuery,
 };
 use memory_env::{T0, brain};
 use serde_json::{Value, json};
@@ -172,6 +172,54 @@ fn supersede_and_expire_close_the_old_fact() {
             .unwrap()
     );
     assert!(by_entity(&b, "people/bob", json!({})).is_empty());
+}
+
+#[test]
+fn expire_until_ends_at_the_given_time_else_at_the_rows_own_end_or_now() {
+    let b = brain("facts-expire-until");
+    let open = insert(
+        &b,
+        json!({ "fact": "open", "entity_slug": "people/x", "source": "s", "valid_from": iso(T0 - 10 * DAY) }),
+    );
+    let given = insert(
+        &b,
+        json!({ "fact": "given", "entity_slug": "people/x", "source": "s", "valid_from": iso(T0 - 10 * DAY) }),
+    );
+    let ended = insert(
+        &b,
+        json!({ "fact": "ended", "entity_slug": "people/x", "source": "s", "valid_from": iso(T0 - 10 * DAY), "valid_until": iso(T0 - 2 * DAY) }),
+    );
+    let future = insert(
+        &b,
+        json!({ "fact": "future", "entity_slug": "people/x", "source": "s", "valid_from": iso(T0 + 5 * DAY) }),
+    );
+    b.clock.advance(1_000);
+    let now = iso(T0 + 1_000);
+    let expire = |id: u64, until: Value| {
+        b.expire_fact_until(&args::<ExpireFactUntilArgs>(
+            json!({ "id": id, "until": until }),
+        ))
+    };
+    assert!(expire(open, Value::Null).unwrap());
+    assert!(expire(given, json!("2026-06-01T00:00:00.000Z")).unwrap());
+    assert!(expire(ended, Value::Null).unwrap());
+    assert!(expire(future, Value::Null).unwrap());
+    // Idempotent-as-false: an expired row and a missing id change nothing.
+    assert!(!expire(given, json!("2027-01-01T00:00:00.000Z")).unwrap());
+    assert!(!expire(99, Value::Null).unwrap());
+    assert_eq!(
+        expire(open, json!("June 1")).unwrap_err().code,
+        INVALID_ARGUMENT
+    );
+    let rows = by_entity(&b, "people/x", json!({ "activeOnly": false }));
+    let row = |fact: &str| rows.iter().find(|r| r["fact"] == fact).unwrap().clone();
+    for fact in ["open", "given", "ended", "future"] {
+        assert_eq!(row(fact)["expired_at"], now, "{fact}");
+    }
+    assert_eq!(row("open")["valid_until"], now);
+    assert_eq!(row("given")["valid_until"], "2026-06-01T00:00:00.000000Z");
+    assert_eq!(row("ended")["valid_until"], iso(T0 - 2 * DAY));
+    assert_eq!(row("future")["valid_until"], iso(T0 + 5 * DAY));
 }
 
 #[test]
@@ -741,6 +789,33 @@ fn pages_rows(rows: &[(&str, &str)]) -> Vec<Value> {
                     "entity_slug": entity, "source": "fence", "visibility": "world" })
         })
         .collect()
+}
+
+#[test]
+fn brain_maturity_counts_unexpired_facts_in_every_source() {
+    let b = brain("facts-maturity");
+    let empty = b.read_brain_maturity().unwrap();
+    assert_eq!(
+        (empty["pages"].clone(), empty["facts"].clone()),
+        (json!(0), json!(0))
+    );
+    insert(
+        &b,
+        json!({ "fact": "Kept", "source": "chat", "valid_from": "2026-01-01T00:00:00.000Z" }),
+    );
+    let gone = insert(
+        &b,
+        json!({ "fact": "Gone", "source": "chat", "valid_from": "2026-01-01T00:00:00.000Z" }),
+    );
+    assert!(
+        b.expire_fact(&args::<ExpireFactArgs>(json!({ "id": gone })))
+            .unwrap()
+    );
+    let after = b.read_brain_maturity().unwrap();
+    assert_eq!(after["facts"], json!(1));
+    // The default source dates the brain before any page exists.
+    assert_eq!(after["since"], empty["since"]);
+    assert!(after["since"].is_string());
 }
 
 #[test]

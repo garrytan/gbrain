@@ -8,6 +8,7 @@
  * the contract). Never import from '../operations.ts' here (cycle).
  */
 
+import { alsoPrefixes } from './slug-params.ts';
 import type { Operation } from './contract.ts';
 import { readPolicyOpts } from './context.ts';
 import { capRowList } from '../bounded-listing.ts';
@@ -55,6 +56,7 @@ const get_recent_salience: Operation = {
       days: typeof p.days === 'number' ? p.days : undefined,
       limit: typeof p.limit === 'number' ? p.limit : undefined,
       slugPrefix: typeof p.slugPrefix === 'string' ? p.slugPrefix : undefined,
+      ...(typeof p.slugPrefix === 'string' ? alsoPrefixes('slugPrefixAlso', p.slugPrefix) : {}),
       recency_bias: recencyBias,
       ...await readPolicyOpts(ctx),
     });

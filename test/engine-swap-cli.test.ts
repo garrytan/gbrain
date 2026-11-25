@@ -89,7 +89,7 @@ describe('engine swap --plan', () => {
   test('the human plan names the verdict, every criterion and the deferred items, and no value', async () => {
     const r = await run(['--to', 'rust', '--dry-run']);
     expect(r.code).toBe(0);
-    expect(r.stdout).toContain('verdict: NOT READY (writer_coverage_unknown)');
+    expect(r.stdout).toContain('verdict: NOT READY (no_shadow)');
     expect(r.stdout).toContain('8. [reported] speed (reported, not gating: D23)');
     expect(r.stdout).toContain('Capability report: ');
     expect(r.stdout).toContain('Expected write pause: ');

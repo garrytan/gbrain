@@ -4,7 +4,8 @@ Part of the store contract in [rust/README.md](../../README.md) ("The brain stor
 
 Links and timeline entries are typed key-value records with their own index keys. Every write
 changes a record and all of its index keys in one transaction, so a crash keeps all of them or
-none (the simulation below checks this). The new key tags are additive; `FORMAT_VERSION` stays 1.
+none (the simulation below checks this). The new key tags are additive and took no format number; the store is at format 7 now
+([format.md](format.md)).
 
 | Key | Value | Mirrors |
 | --- | --- | --- |
@@ -35,7 +36,8 @@ the origin.
 | `brain.traversePathsDetailed(slug, opts?)` | `{ paths, truncated }`; at most 5,000 edges, `truncated` when more exist | `traversePathsDetailed` |
 | `brain.addTimelineEntry(slug, { date, summary, source?, detail? }, { sourceId?, skipExistenceCheck? }?)` | `true` when a row was written, `false` for a duplicate (same page, date, summary and source) | `addTimelineEntry` |
 | `brain.addTimelineEntriesBatch(entries)` | inserted count; entries of missing pages are skipped | `addTimelineEntriesBatch` |
-| `brain.getTimeline(slug, { limit?, after?, before?, sourceId?, sourceIds? }?)` | `{ id, page_id, date, source, summary, detail, event_page_id, created_at }[]`, `date DESC, id DESC`, default `limit` 100, `0` for all | `getTimeline` |
+| `brain.readNewestTimelineEntryId(sourceId, slug, date, summary)` | the id of the newest entry of the page (soft-deleted or not) on `date` whose summary is `summary`, event rows included; `null` when the page or such an entry is missing. A bad date is refused `invalid_argument` | `readNewestTimelineEntryId` |
+| `brain.getTimeline(slug, { limit?, after?, before?, sourceId?, sourceIds?, excludePrivate?, eligibleOnly? }?)` | `{ id, page_id, date, source, summary, detail, event_page_id, created_at, write_request_id, write_principal_kind, write_principal_id, last_write_request_id, last_write_principal_kind, last_write_principal_id, last_written_at }[]`, `date DESC, id DESC`, default `limit` 100, `0` for all | `getTimeline` |
 
 Where this engine differs from PGLite:
 
@@ -45,10 +47,42 @@ Where this engine differs from PGLite:
 - Dates: `YYYY-MM-DD` or `YYYY/MM/DD`, optionally followed by `T` or a space and a time that is
   ignored (`2026-01-05T23:30:00-05:00` is `2026-01-05`, as in PGLite). Other spellings Postgres
   casts are refused `invalid_argument`, as is a date that does not exist.
-- `getTimeline` rows carry the `TimelineEntry` fields only, not the write-provenance and
-  `trust_tier` columns of the table (PGLite returns them `null` and `"unknown"` for these writes).
-- `excludePrivate: true`, `temporal`, `page` (keyset paging of paths) and `eligibility` reject
-  `invalid_argument` instead of being ignored. The TypeScript shell must not send them here.
+- Write receipts: every timeline write stamps the entry's seven attribution columns as PGLite's
+  `gbrain_stamp_write_attribution` trigger does (`timeline/receipt.rs`). An insert under a principal
+  (`gbrain.write_principal_kind` set in the write context, [write_trust.md](write_trust.md)) takes the
+  request and the principal in `write_*` and `last_*` and the transaction time in `last_written_at`; an
+  insert with no principal stamps nothing. An update keeps `write_*`, and moves `last_*` and
+  `last_written_at` only when the content (id, page, date, source, summary, detail, event page,
+  `created_at`) changed; a changed row with no principal clears `last_*`. A record stored before the
+  receipt reads every receipt column null. `getTimeline` returns the seven columns (`last_written_at` ISO).
+- Timeline trust: each write stamps `trust_tier` and `write_origin` through `trust::stamp`
+  (`timeline/tier.rs`), as PGLite's `trust_tier_stamp` trigger does. An insert takes the write's declared
+  tier (`unknown` when none) and the context's origin. An update starts from the stored tier and origin
+  and lowers them to the write's only when `summary`, `detail` or `date` changed. The tier is a
+  `serde(default)` field of the `E` record, omitted while it is `unknown` with no origin, so a record
+  stored before it reads `"unknown"` and `null`. `getTimeline` returns both columns.
+- On the link and graph reads, `excludePrivate: true`, `temporal` and `page` (keyset paging of
+  paths) reject `invalid_argument` instead of being ignored, and so does a raw `eligibility` value
+  on `getTimeline`. The TypeScript shell must not send them here.
+- `getTimeline` serves `excludePrivate`. The TypeScript member reads the page policy from the
+  rendered SQL (`storePagePolicy`) and passes it as `excludePrivate`. A caller whose record holds
+  only a reader identity and a private-readable grant is served with both (the `callerReaders`
+  opt-in); it refuses any other caller whose policy differs (folder grants, lineage, an owner read). Under the policy a page that
+  `privatePagesFilterForCaller('p')` hides reads no rows. An entry drops when
+  `privateTimelineEventFilterForCaller('te')` hides its event page (`page_hidden` in
+  facts/privacy.rs). That filter is an `EXISTS` on the event page id alone, so an event page in
+  another source or soft-deleted is still judged, and an entry whose event page is gone drops.
+  The filter runs before `limit`.
+- `getTimeline` serves an `eligibility` policy without `floor` or `suppressFlagged`. The
+  TypeScript member sends `eligibleOnly: true` for any policy object, and the store applies the
+  base clauses of `projectionEligibleSql('timeline_entries', 'te', ..)`: every row hangs on its
+  depth page (`te.page_id`), so a soft-deleted page, or a page whose frontmatter has a
+  `quarantine` key (any value), reads no rows. The `needs_rederive` clause has no rows here. The
+  filter runs before `limit`. Without a policy a soft-deleted page still reads its rows, as the SQL
+  has no `deleted_at` test. A policy `floor` drops a row whose stored tier ranks below it, and
+  `suppressFlagged` drops a row at or below `agent_written` with a `flag` write-gate receipt
+  (`target_table` `timeline_entries`) in an activation family (`TrustPolicy::admits`,
+  trust/eligibility.rs). Both run before `limit`.
 
 `crates/gbrain-store/tests/graph_parity.rs` replays PGLite's own results for links, the graph
 walks at depth 0 to 3 and past (cycles, direction, scope, soft delete, caps), timeline writes and

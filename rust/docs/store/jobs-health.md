@@ -15,12 +15,13 @@ Every window and cut-off is an argument. The clock is the store's, read once per
 | `brain.listPrivateQueueHealth()` | per `dream-inline-` queue: the smallest `data.source_id`, live-lock active, waiting-class (`waiting` and `delayed`) and paused rows, the minutes since the oldest waiting-class row and the oldest row's `created_at` in epoch milliseconds |
 | `brain.readWedgeSignals(queue, handlerNames)` | one queue's `{ stalled, activeHealthy, waiting, waitingClaimable, lastCompleted, lastCompletedClaimable }`; the two dates are `Date`s (ISO text across the binding) |
 | `brain.readOldestWaitingAge(queue)` | whole seconds since the oldest waiting row of the queue was created, or null |
+| `brain.countWaitingJobs(excludeFactsAbsorb)` | the number of `waiting` rows, without the `facts-absorb` rows when `excludeFactsAbsorb`. The readiness worker probe passes `true` only on PGLite, so a Rust brain counts its `facts-absorb` jobs as a SQL Postgres brain does |
 | `brain.listStuckActiveJobsByName()` | `{ name, n }` for the active rows whose lock lapsed or whose stalled counter reached 2, the most first |
 
-Differences from the SQL engines, decided so every engine answers alike:
+Ordering and other engine differences:
 
-- Ties the old statements left to the planner now break bytewise: the SQL carries `COLLATE "C"` and `id`, `name` or `queue` tie-breaks, and the store sorts by byte order. The queue-health check's output does not change for a brain with no ties.
-- `min(data->>'source_id')` of a private queue is the bytewise smallest, on every engine.
+- The SQL engines retain the original statements without added COLLATE clauses or SQL tie-breaks. The shared TypeScript helpers apply bytewise ordering to returned rows where implemented; they do not stabilize which tied rows SQL selects before LIMIT 5, and stalled rows retain their SQL order. The Rust store breaks ties deterministically, so tied results can differ between engines.
+- A private queue's source_id is min(data->>'source_id') under the database collation on the SQL engines and the bytewise smallest value on the Rust store; these can differ.
 - `readQueueHealthSignals.stalled` no longer returns `started_at`; the check uses the id, name and total only.
 - Seconds are rounded half away from zero, as `EXTRACT(EPOCH FROM interval)::int` does.
 - `opts.signal` of `readWedgeSignals` and `readOldestWaitingAge` cancels the statement on PGLite and PostgreSQL. A store call cannot be cancelled, so the Rust engine ignores it; the probe's own timeout still bounds the wait.

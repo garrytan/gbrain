@@ -132,11 +132,14 @@ Rules for every method:
 | `brain.info()` | the same record as `open` | `readBrainIdentity` (`persistence/identity.ts`) |
 | `brain.isOpen` | `boolean` (a getter, not a promise) | none |
 
-`options` is `{ schemaVersion?: number, createdBy?: string, embeddingModel?: string,
-embeddingDimensions?: number, chunkStrategy?: string }`. `schemaVersion` is what a fresh brain
-stores as config `version`; pass `LATEST_SCHEMA_VERSION`. The other three are config entries a fresh
-brain records ([docs/store/config.md](docs/store/config.md)). `close` waits for calls already running,
-then gives up the lock.
+`options` is `{ schemaVersion?: number, createdBy?: string, concurrentWrites?: boolean,
+embeddingModel?: string, embeddingDimensions?: number, chunkStrategy?: string,
+writeGateDetectorVersion?: number }`. `schemaVersion` is what a fresh brain stores as config
+`version`; pass `LATEST_SCHEMA_VERSION`. `embeddingModel`, `embeddingDimensions` and `chunkStrategy`
+are config entries a fresh brain records ([docs/store/config.md](docs/store/config.md));
+`writeGateDetectorVersion` is the detector version of the write gate's scan baseline;
+`concurrentWrites` lets many write transactions run at once (off unless true or
+`GBRAIN_RUST_CONCURRENT_WRITES=1`). `close` waits for calls already running, then gives up the lock.
 
 ### Methods by family
 
@@ -180,13 +183,14 @@ Errors from the addon are real `Error` objects with a `code`:
 | `store_io` | The file system or the storage engine failed; the write did not commit. |
 | `store_corrupt` | The records fail their integrity check, or `FORMAT` names another brain. A restore rotates the brain id in the format record first and `FORMAT` after; a `FORMAT` that still names the id the record says it rotated from is stale, not another brain, and the next open rebuilds it. |
 | `invalid_state` | The call does not fit the handle's state (`open` on an open handle; `restoreQuarantine` inside a transaction, or with a restore id already applied), or `finishWrite` met a request that already ended. |
+| `snapshot_cancelled` | `snapshotTo` was cancelled with `snapshotCancel`. It removed what it wrote and released its read before it rejected. |
 | `read_only_transaction` | A write inside a read-only transaction (Postgres SQLSTATE `25006`). Nothing was written. |
 | `restore_refused` | `restoreQuarantine` changed nothing: the store holds unfinished write work, a recovery record or a record of a kind this build has not classified. The message is `<reason>: <count>`, with the kinds named in parentheses for `unclassified_state` (for example `access tokens (jobs 0x2b)`); the reasons are `pending_requests`, `recovery_required` and `unclassified_state`. (`purge_replay` comes only from `restoreCensus`, for the purge ids the caller passes it; `restoreQuarantine` passes none.) `gbrain backup restore` is to map the census blockers and this error to `restore_step_unsupported`; that command does not call the restore step yet. |
 | `invalid_argument` | A malformed argument. `restoreQuarantine` also refuses, changing nothing, a plan whose sources or settings do not match the store, whose settings list leaves one out or names one twice. |
 | `invalid_slug` | The slug failed `validateSlug`. |
 | `source_not_found` | A page write named a source that does not exist. |
 | `page_not_found` | `addTag`, `addPageTagsById`, `createVersion`, `addLink` or `addTimelineEntry` named a page that does not exist. |
-| `page_ambiguous` | `readPageSnapshot` under `requireUnambiguous` found more than one readable page for the identifier; the binding maps it to `PageSnapshotAmbiguousError`. |
+| `page_ambiguous` | `readPageSnapshot` under `requireUnambiguous` found more than one readable page for the identifier. The addon rejects with this code. The TypeScript wrapper converts it to `PageSnapshotAmbiguousError` in `src/core/rust-engine/store-errors.ts` where that mapping exists; master's wrapper does not have it yet, so there the code stays on the error. |
 | `constraint_violation` | A write breaks a table constraint PGLite enforces: a `linkSource` outside its CHECK, or a `deletePage` whose origin clear collides with another link. |
 | `revision_conflict` | `expectedRevision` does not match the page. |
 | `revision_required` | The page exists and the caller sent `force: false` without `expectedRevision`. |
@@ -218,8 +222,9 @@ can reach.
 - gbrain's addon loader (`src/core/rust-engine/addon-loader.ts`) uses `GBRAIN_RUST_ENGINE_ADDON`
   first, then an addon cached under `<gbrain home>/engines/rust/` whose SHA-256 matches this
   release's cached manifest. It does not download anything: with no cached addon it refuses with
-  `rust_engine_addon_missing`, reason `not_installed`. Nothing starts the loader yet (ENGINES.md,
-  "The Rust engine shell").
+  `rust_engine_addon_missing`, reason `not_installed`. `gbrain engine install rust` downloads, checks
+  and installs the addon a release publishes (ENGINES.md, "Installing the addon"); releases build it
+  with `rust/scripts/release-addon.ts` in `.github/workflows/release.yml`.
 - To go back to the normal gbrain path, `unset GBRAIN_RUST_ENGINE_ADDON`.
 - `GBRAIN_TEST_BACKEND=rust bun test <file>` arrives with the Rust test arm in a later change. It
   does not exist yet.

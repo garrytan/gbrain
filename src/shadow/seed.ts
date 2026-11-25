@@ -7,7 +7,8 @@
  * Each relation of `seedPlan()` is read in keyset batches by its key columns and sent to `importRelation`; the
  * pages read carries its `page_projection_jobs` row. In the same snapshot the seed counts the gaps (rows the store
  * does not copy and does not name as a loss), the rows of each not-copied table, the unfinished jobs and the
- * segmented pages, and writes them to `seed.json`. The seed never writes to the primary.
+ * segmented pages, and writes them to `seed.json`. The seed writes no row to the primary (opening a PGLite primary still takes its process lock
+ * and lets PGLite rewrite its own control and log files).
  */
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
@@ -19,6 +20,7 @@ import {
 } from '../core/persistence/graduation-digest.ts';
 import type { SeedDigest, SeedImportResult, SeedPlan, SeedRow } from '../core/rust-engine/store.ts';
 import { rowDigest, sortKey, sortKeyUnsupported } from './follow-digest.ts';
+import type { ManagedStorageRecord } from './managed-gate.ts';
 import { countSeedGaps, primaryTables, type SeedQuery } from './seed-gaps.ts';
 
 export const SEED_RECORD_VERSION = 1;
@@ -49,6 +51,8 @@ export interface SeedRecord {
   started_at: string;
   finished_at: string;
   primary_engine: string;
+  /** Whether the brain used managed storage when the seed read it (right before the snapshot). Absent in a record written before this field existed. */
+  storage?: ManagedStorageRecord;
   relations: Record<string, SeedRelationRecord>;
   losses: {
     /** Values in copied rows the store could not keep, by kind (rust/docs/store/seed.md "Losses"). */
@@ -65,10 +69,16 @@ export interface SeedRecord {
   non_terminal_jobs: number;
   /** Pages whose body is stored in segments: the seeded store reads them as shells, without their text. */
   segmented_pages: number;
+  /** The store holds a digest entry for every row it copied: the follower and reconcile need them. Absent in a seed written before follow. */
+  digests?: true;
 }
+
+export const RESEED_STEPS = 'gbrain engine shadow stop --delete (deletes the store, ledger and reports), then gbrain engine shadow seed, then gbrain engine shadow start --plan, then gbrain engine shadow start --yes --expect <plan_hash> to turn shadow mode on again';
 
 export interface SeedOptions {
   primaryEngine: string;
+  /** The storage mode the caller read before the snapshot; recorded in `seed.json` as is. */
+  storage?: ManagedStorageRecord;
   batchRows?: number;
   budgetMs?: number;
   now?: () => Date;
@@ -195,12 +205,14 @@ export async function runSeed(primary: BrainEngine, target: SeedTarget, opts: Se
       started_at: started.toISOString(),
       finished_at: now().toISOString(),
       primary_engine: opts.primaryEngine,
+      ...(opts.storage ? { storage: opts.storage } : {}),
       relations,
       losses: { values, not_copied: notCopied, gaps },
       unseeded_gap_rows: gaps,
       unseeded_gap_rows_total: Object.values(gaps).reduce((a, b) => a + b, 0),
       non_terminal_jobs: nonTerminalJobs,
       segmented_pages: segmentedPages,
+      digests: true,
     };
   }, { readOnly: true });
 }

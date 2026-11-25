@@ -49,7 +49,6 @@ tools:
   - send_job_message
   - get_job_progress
 mutating: true
-upstream: long-ops@fc834ee, subagent-deadman@fc834ee, pipeline-stage-cache@fc834ee
 ---
 
 # Minion Orchestrator

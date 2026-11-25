@@ -10,8 +10,10 @@
 //! rename does not move them; the rename callers move them with `moveFactWithdrawalSubject`.
 
 use super::fingerprint::{fact_fingerprint, fact_fingerprint_v1};
+use crate::access_rules::{AccessRuleRecord, COVERAGE, PendingCoverageRecord, RULE, each};
 use crate::env::{iso, parse_iso};
 use crate::error::{Result, StoreError};
+use crate::facts::md5_hex;
 use crate::facts::purge_ledger::purged_claim;
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
@@ -21,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// The byte after `keys::TRUST` that marks a withdrawal.
-const WITHDRAWAL: u8 = 0x01;
+pub(crate) const WITHDRAWAL: u8 = 0x01;
 
 /// The two values of the table's `visibility` CHECK.
 const VISIBILITIES: [&str; 2] = ["private", "world"];
@@ -55,9 +57,6 @@ pub struct WithdrawalKey {
     pub fact_hash: String,
     pub subject: String,
 }
-
-/// `md5('')`: the digest of an empty folder access table.
-const EMPTY_TABLE_DIGEST: &str = "d41d8cd98f00b204e9800998ecf8427e";
 
 /// `readFactCacheWatermark`: the hot-memory cache watermark of a source.
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -108,6 +107,18 @@ pub(super) fn check_visibility(op: &str, visibility: &str) -> Result<()> {
 /// The time (micros) of the withdrawal `[source, visibility, subject, fact_hash]`, if any.
 pub(super) fn at(read: &dyn KvRead, parts: &[&str]) -> Result<Option<i64>> {
     Ok(get_json::<WithdrawalRecord>(read, &key(parts))?.map(|r| r.withdrawn_at_us))
+}
+
+/// The time of the ledger row `(source, visibility, subject, fact_hash)`, or `None`: the one-row read
+/// `readMemberPageWithdrawal` (`facts/remember_reads.rs`) makes for each candidate subject and fingerprint.
+pub(crate) fn withdrawal_time(
+    read: &dyn KvRead,
+    source_id: &str,
+    visibility: &str,
+    subject: &str,
+    fact_hash: &str,
+) -> Result<Option<i64>> {
+    at(read, &[source_id, visibility, subject, fact_hash])
 }
 
 /// One stored withdrawal of a source (`fact_withdrawals` row).
@@ -266,44 +277,36 @@ pub(crate) fn withdrawal_hash_under(
     Ok(found)
 }
 
-/// The withdrawals a page snapshot carries (`snapshot.withdrawals` of `readPageSnapshot`,
-/// src/core/page-state/snapshot.ts): the source's withdrawals whose subject is `*` or the page's
-/// slug, one per (visibility, fact_hash) at the earliest time, ordered by visibility then
-/// fact_hash, as `{ visibility, fact_hash, withdrawn_at }`. The overlay of a segmented page's lead
-/// reads these to strike a claim a person withdrew. (`fact_purges` rows, which the SQL snapshot
-/// also lists, have no ledger here.)
-pub(crate) fn page_withdrawals(
+/// The withdrawals of `[source, visibility, subject]`: each fact_hash with its withdrawal time
+/// (micros), in fact_hash order (the snapshot ledger, `page_withdrawals.rs`).
+pub(crate) fn under_subject(
     read: &dyn KvRead,
     source_id: &str,
-    slug: &str,
-) -> Result<Vec<serde_json::Value>> {
-    let prefix = source_prefix(source_id);
-    let mut rows: Vec<(String, String, String)> = Vec::new();
-    scan_prefix(read, &prefix, false, &mut |k, _| {
-        if let Some((visibility, subject, hash)) = split(k, prefix.len())
-            && (subject == "*" || subject == slug)
-        {
-            rows.push((visibility, hash, subject));
+    visibility: &str,
+    subject: &str,
+) -> Result<Vec<(String, i64)>> {
+    let mut prefix = key(&[source_id, visibility, subject]);
+    prefix.push(0);
+    let len = prefix.len();
+    let mut rows = Vec::new();
+    let mut failed = None;
+    scan_prefix(read, &prefix, false, &mut |k, v| {
+        let hash = String::from_utf8_lossy(&k[len..]).into_owned();
+        match serde_json::from_slice::<WithdrawalRecord>(v) {
+            Ok(r) => rows.push((hash, r.withdrawn_at_us)),
+            Err(e) => {
+                failed = Some(e);
+                return false;
+            }
         }
         true
     })?;
-    let mut earliest: BTreeMap<(String, String), i64> = BTreeMap::new();
-    for (visibility, hash, subject) in rows {
-        if let Some(when) = at(read, &[source_id, &visibility, &subject, &hash])? {
-            let slot = earliest.entry((visibility, hash)).or_insert(when);
-            *slot = (*slot).min(when);
-        }
+    if let Some(e) = failed {
+        return Err(StoreError::invalid(format!(
+            "fact_withdrawals: corrupt record: {e}"
+        )));
     }
-    Ok(earliest
-        .into_iter()
-        .map(|((visibility, fact_hash), when)| {
-            serde_json::json!({
-                "visibility": visibility,
-                "fact_hash": fact_hash,
-                "withdrawn_at": iso(when),
-            })
-        })
-        .collect())
+    Ok(rows)
 }
 
 /// Removes every withdrawal of a source, for the source delete.
@@ -560,13 +563,15 @@ impl Store {
         Ok(found)
     }
 
-    /// `readSourcePurgeFlags`: whether the source has a fact purge tombstone (the store's fact
-    /// purge ledger, `facts/purge_ledger.rs`) and a take purge tombstone. The store keeps no take
-    /// purge ledger (`take_purges` has no Rust writer), so the second is false.
+    /// `readSourcePurgeFlags`: whether the source has a fact purge tombstone (the fact purge
+    /// ledger, `facts/purge_ledger.rs`) and a take purge tombstone (the take purge ledger,
+    /// `facts/take_purges.rs`), read in one snapshot.
     pub fn read_source_purge_flags(&self, source_id: &str) -> Result<(bool, bool)> {
         no_nul("readSourcePurgeFlags", &[("sourceId", source_id)])?;
-        let facts = crate::facts::purge_ledger::has_fact_purges(&*self.read()?, source_id)?;
-        Ok((facts, false))
+        let read = self.read()?;
+        let facts = crate::facts::purge_ledger::has_fact_purges(&*read, source_id)?;
+        let takes = crate::facts::take_purges::has_take_purges(&*read, source_id)?;
+        Ok((facts, takes))
     }
 
     /// `readTrustGeneration`: the trust policy generation as decimal text. The store keeps no
@@ -579,8 +584,8 @@ impl Store {
     }
 
     /// `readFactCacheWatermark`: the source's withdrawal count and newest withdrawal time, and the
-    /// folder access digest. The store keeps no folder access rules or pending coverage (only raw
-    /// SQL writes them, and `executeRaw` refuses), so the digest is that of two empty tables.
+    /// folder access digest of every source: `md5` of the rules and `md5` of the pending prefixes,
+    /// joined by `:` ([`folder_access_digest`]).
     pub fn read_fact_cache_watermark(&self, source_id: &str) -> Result<FactCacheWatermark> {
         no_nul("readFactCacheWatermark", &[("sourceId", source_id)])?;
         let read = self.read()?;
@@ -610,7 +615,7 @@ impl Store {
         Ok(FactCacheWatermark {
             withdrawals,
             latest_withdrawn_at: latest.map(iso),
-            access_rules: format!("{EMPTY_TABLE_DIGEST}:{EMPTY_TABLE_DIGEST}"),
+            access_rules: folder_access_digest(&*read)?,
         })
     }
 
@@ -656,6 +661,53 @@ impl Store {
         rows.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
         Ok(rows)
     }
+}
+
+/// The watermark's folder access digest, as the SQL renders it: `md5` of every folder rule as
+/// `source_id/rule_id/prefix/readers/revision` (readers joined by `,`) in byte order of source and
+/// rule id, joined by `|`, then `:`, then `md5` of every pending or invalid prefix as
+/// `source_id/prefix/reason/revision` (an empty revision when none) in byte order of source, prefix
+/// and reason. No rows digest as `md5('')`.
+fn folder_access_digest(read: &dyn KvRead) -> Result<String> {
+    let mut rules: Vec<(String, String, String)> = Vec::new();
+    each(read, &[keys::ACCESS_RULES, RULE], |r: AccessRuleRecord| {
+        let row = format!(
+            "{}/{}/{}/{}/{}",
+            r.source_id,
+            r.rule_id,
+            r.prefix,
+            r.readable_by.join(","),
+            r.revision
+        );
+        rules.push((r.source_id, r.rule_id, row));
+        true
+    })?;
+    rules.sort_by(|a, b| (a.0.as_bytes(), a.1.as_bytes()).cmp(&(b.0.as_bytes(), b.1.as_bytes())));
+    let mut pending: Vec<(String, String, String, String)> = Vec::new();
+    each(
+        read,
+        &[keys::ACCESS_RULES, COVERAGE],
+        |c: PendingCoverageRecord| {
+            let revision = c.revision.map(|r| r.to_string()).unwrap_or_default();
+            let row = format!("{}/{}/{}/{}", c.source_id, c.prefix, c.reason, revision);
+            pending.push((c.source_id, c.prefix, c.reason, row));
+            true
+        },
+    )?;
+    pending.sort_by(|a, b| {
+        (a.0.as_bytes(), a.1.as_bytes(), a.2.as_bytes()).cmp(&(
+            b.0.as_bytes(),
+            b.1.as_bytes(),
+            b.2.as_bytes(),
+        ))
+    });
+    let rules: Vec<&str> = rules.iter().map(|r| r.2.as_str()).collect();
+    let pending: Vec<&str> = pending.iter().map(|c| c.3.as_str()).collect();
+    Ok(format!(
+        "{}:{}",
+        md5_hex(&rules.join("|")),
+        md5_hex(&pending.join("|"))
+    ))
 }
 
 /// Moves `source_id`'s withdrawals of subject `old_slug` to `new_slug` inside `tx`: a withdrawal `new_slug` already has
@@ -721,7 +773,7 @@ mod tests {
     }
 
     #[test]
-    fn source_purge_flags_read_the_fact_purge_ledger() {
+    fn source_purge_flags_read_both_purge_ledgers() {
         let s = store();
         source(&s, "default");
         source(&s, "work");
@@ -741,6 +793,16 @@ mod tests {
         .unwrap();
         assert_eq!(s.read_source_purge_flags("default").unwrap(), (true, false));
         assert_eq!(s.read_source_purge_flags("work").unwrap(), (false, false));
+        let take = crate::facts::take_purges::TakePurgeInsert {
+            source_id: "work".into(),
+            subject: "*".into(),
+            claim_hash: fact_fingerprint("Acme will win."),
+            request_id: None,
+        };
+        assert!(s.insert_take_purge(&take).unwrap());
+        assert!(!s.insert_take_purge(&take).unwrap());
+        assert_eq!(s.read_source_purge_flags("work").unwrap(), (false, true));
+        assert_eq!(s.read_source_purge_flags("default").unwrap(), (true, false));
         assert_eq!(
             s.read_source_purge_flags("missing").unwrap(),
             (false, false)

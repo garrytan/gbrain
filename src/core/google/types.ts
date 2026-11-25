@@ -79,10 +79,22 @@ export interface GoogleSourceConfig {
    *                gcloud, a credential gateway's mint command).
    *  - 'env'     — read a live token from the env var named `tokenEnv`
    *                (refreshed by something outside gbrain).
+   *  - 'gbrainio' — read mail through a gbrain.io terminal by running
+   *                `gbrainioCommand` (gbrainio-gmail.ts); Gmail only, by date
+   *                window, with no Google token held by gbrain.
    */
-  access: 'vault' | 'command' | 'env';
+  access: 'vault' | 'command' | 'env' | 'gbrainio';
   tokenCommand?: string;
   tokenEnv?: string;
+  /** The gbrainio command line for `access: 'gbrainio'` (`g_gbrainio_command`, default `gbrainio`). */
+  gbrainioCommand?: string;
+  /**
+   * One address or @domain per line (`g_private_senders_file`): threads with
+   * one of them become owner-only pages no model reads (ingest-tiers.ts).
+   */
+  privateSendersFile?: string;
+  /** Sort threads into full / record / none tiers (`g_ingest_tiers`; on by default for gbrainio sources). */
+  ingestTiers?: boolean;
 }
 
 /** Cursor state persisted at <dir>/.google-source.json. */
@@ -119,6 +131,14 @@ export interface GoogleSourceState {
   gmail_pending_thread_ids?: string[];
   /** Bookmark for the history-expired fallback: newest internalDate imported. */
   gmail_newest_ms: number | null;
+  /**
+   * Window mode (a reader with no change feed, such as gbrain.io): each thread
+   * landed in the last three days and the newest message id it had, so a
+   * re-listed window skips threads that did not change.
+   */
+  gmail_window_seen?: Record<string, { v: string; ms: number }>;
+  /** Short hashes of the private-senders entries the pages were last tiered against. */
+  private_senders_hashes?: string[];
   /**
    * Pre-wave-4 poison-thread ledger (consecutive failures per thread id). Read
    * once and carried into `item_holds`; never written again.

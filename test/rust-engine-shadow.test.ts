@@ -658,7 +658,8 @@ describe('provisional report', () => {
     await done;
     const report = buildProvisionalReport(dir, 'pglite-abc', null);
     expect(report.verdict).toBe('NOT READY');
-    expect(report.by_op).toEqual([expect.objectContaining({ op: 'getPage', total: 2, match: 1, diff: 1, capability_missing: 0 })]);
+    // A mismatch on an exactness comparison is inconclusive (it keeps `diff` in the ledger row's mismatch) until a rerun can settle it.
+    expect(report.by_op).toEqual([expect.objectContaining({ op: 'getPage', total: 2, match: 1, diff: 0, inconclusive: 1, capability_missing: 0 })]);
     expect(renderProvisionalMarkdown(report)).toContain('Verdict: **NOT READY**');
     rmSync(dir, { recursive: true, force: true });
   });

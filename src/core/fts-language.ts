@@ -111,6 +111,17 @@ export function applyFtsLanguagePolicy(sql: string): string {
 }
 
 /**
+ * The statement `matchHeadStems` sends (`$1` the name heads, `$2` the query terms): for each head, the 1-based indexes of
+ * the terms it matches after stemming under the configuration `lang`, which passed VALID_CONFIG_NAME. The text is the one
+ * search/saved-facts-match.ts headStems sent, word for word.
+ */
+export function headStemsSql(lang: string = getFtsLanguage()): string {
+  return `SELECT h, ARRAY(SELECT t.i FROM unnest($2::text[]) WITH ORDINALITY AS t(term, i)
+       WHERE to_tsvector('${lang}'::regconfig, h) @@ plainto_tsquery('${lang}'::regconfig, t.term)) AS i
+     FROM unnest($1::text[]) AS h`;
+}
+
+/**
  * The facts keyword document: fact text plus the entity slug's words, under
  * a literal text search configuration so `idx_facts_fts` can serve it (an
  * expression index matches only the same literal configuration, never a

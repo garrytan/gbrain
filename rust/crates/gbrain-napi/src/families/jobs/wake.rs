@@ -180,6 +180,27 @@ impl Brain {
         })
     }
 
+    /// `forgetWakeMember(memberId)`.
+    #[napi]
+    pub fn forget_wake_member<'env>(
+        &self,
+        env: &'env Env,
+        member_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.forget_wake_member(&member_id))
+    }
+
+    /// `forgetWakeCredential(kind, id)`.
+    #[napi]
+    pub fn forget_wake_credential<'env>(
+        &self,
+        env: &'env Env,
+        kind: String,
+        id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.forget_wake_credential(&kind, &id))
+    }
+
     /// `claimWakeForgets`.
     #[napi]
     pub fn claim_wake_forgets<'env>(

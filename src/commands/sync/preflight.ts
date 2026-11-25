@@ -403,14 +403,11 @@ async function validateSourceRepoState(engine: BrainEngine, opts: SyncOpts, repo
     const { recloneIfMissing, isOwnedClone, unownedHint } = await import(
       '../../core/sources-ops.ts'
     );
-    const cfgRows = await engine.executeRaw<{ local_path: string | null; config: unknown }>(
-      `SELECT local_path, config FROM sources WHERE id = $1`,
-      [opts.sourceId],
-    );
+    const sourceRow = await engine.getSource(opts.sourceId);
     const cfg =
-      typeof cfgRows[0]?.config === 'string'
-        ? (JSON.parse(cfgRows[0].config as string) as Record<string, unknown>)
-        : ((cfgRows[0]?.config ?? {}) as Record<string, unknown>);
+      typeof sourceRow?.config === 'string'
+        ? (JSON.parse(sourceRow.config as string) as Record<string, unknown>)
+        : ((sourceRow?.config ?? {}) as Record<string, unknown>);
     // #4899: EVERY caller that is not the `--all` fan-out passes no strategy —
     // the autopilot freshness lane (commands/autopilot.ts -> jobs.ts), the dream
     // cycle (core/cycle.ts), the MCP `sync` op (core/operations.ts) and the
@@ -437,7 +434,7 @@ async function validateSourceRepoState(engine: BrainEngine, opts: SyncOpts, repo
     if (remoteUrl) {
       const ownSrc = {
         id: opts.sourceId,
-        local_path: cfgRows[0]?.local_path ?? repoPath,
+        local_path: sourceRow?.local_path ?? repoPath,
         config: cfg,
       };
       const state = validateRepoState(repoPath, remoteUrl);

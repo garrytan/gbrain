@@ -56,7 +56,8 @@ describe('the PGLite lock is unchanged', () => {
       registerPgliteReopen: digest(functionText(lifecycle, 'export function registerPgliteReopen(')),
       notifyPgliteOpened: digest(functionText(lifecycle, 'export function notifyPgliteOpened(')),
     }).toEqual({
-      acquireLock: '7d9a604e37da356e',
+      // acquireLock changed on purpose: it runs doctor's create guard once it holds the kernel lock, before it creates the folder (the doctor missing-brain follow-up). The other digests stay master's.
+      acquireLock: '2fbeaa680d9bc10a',
       acquireKernelLockOnly: '032f1bcef451a37c',
       releaseLock: 'ba777d1371424ba4',
       inspectHolderMetadata: 'e90a1e489ce338f7',

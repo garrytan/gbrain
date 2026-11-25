@@ -3,8 +3,9 @@ name: cold-start
 version: 1.0.0
 description: |
   Day-one data bootstrapping for a new brain. Sequences the highest-leverage
-  data sources to go from empty brain to useful brain in one session. Uses
-  ClawVisor for safe credential handling — the agent never holds raw API keys.
+  data sources to go from empty brain to useful brain in one session. The
+  agent never holds raw OAuth tokens or API keys: Google data comes through
+  gbrain's own connector, an offline export, or a host's credential gateway.
   Covers Gmail import, calendar sync, contacts seeding, X/Twitter archive,
   conversation imports, and file archives.
   Use when a user has just finished gbrain setup and asks "now what?"
@@ -57,14 +58,13 @@ sources to get you from zero to useful in one session.
   the native connector (`gbrain google setup` — tokens live in gbrain's
   credential vault, mode 0600, never in the agent's context; see
   `docs/guides/google-connect.md` and `skills/google-loops/SKILL.md`),
-  ClawVisor (a hosted credential gateway that vaults credentials,
-  enforces task-scoped authorization, logs every API call, and requires
-  human approval for destructive operations — needs a harness with the
-  integration), or offline file exports (Google Takeout, Twitter archive
+  a credential gateway the host already integrates, such as ClawVisor (it
+  vaults credentials, scopes each task, logs every API call, and asks a
+  human before destructive operations), or offline file exports (Google Takeout, Twitter archive
   download).
 - Each phase is independently valuable — the user can stop after any phase and still
   have a useful brain.
-- Progress is tracked in `~/.gbrain/cold-start-state.json` so interrupted sessions
+- Progress is tracked in `cold-start-state.json` in the brain's config directory so interrupted sessions
   can resume.
 - Entity detection and cross-linking run on every import, not as a separate pass.
 
@@ -84,94 +84,43 @@ Data sources ranked by **information density × ease of import**:
 | 2 | Google Contacts | Seeds the people/ directory — names, emails, companies | 10 min | 50-500 |
 | 3 | Google Calendar (90 days) | Meeting history with attendee context | 15 min | 30-90 |
 | 4 | Gmail (recent threads) | Relationship context, active threads, org chart signals | 20 min | 50-200 |
-| 5 | Conversations (ChatGPT/Claude exports) | Your thinking, questions, mental models | 15 min | 10-100 |
+| 5 | Conversations (ChatGPT/Claude exports; coding sessions on this machine come from setup's `setup_history` decision) | Your thinking, questions, mental models | 15 min | 10-100 |
 | 6 | X/Twitter archive | Your public positions, takes, engagement patterns | 20 min | 30-365 |
 | 7 | File archives (Dropbox/Drive/local) | Historical documents, old writing, photos | 30+ min | varies |
 | 8 | Meeting transcripts (Circleback/etc.) | Deep relationship context from recorded calls | 20 min | 10-50 |
 
-## Phase 0: ClawVisor Setup (only if your agent harness integrates ClawVisor)
+## Phase 0: Choose how Google data comes in
 
-**Harness check first.** ClawVisor requires an agent host with a ClawVisor
-integration (for example, an OpenClaw deployment). On harnesses without one,
-such as Codex or Claude Code, skip this phase: the default for Contacts,
-Calendar, and Gmail is the native connector — `gbrain google setup` (live
-sync; tokens in gbrain's local credential vault, never with the agent; see
-`skills/google-loops/SKILL.md`) — with a
-[Google Takeout](https://takeout.google.com) export as the offline
-alternative covering all three (contacts CSV, calendar ICS, Gmail mbox).
-Phases 2-4 below document the Takeout path first.
+Ask the user which path to use for Contacts, Calendar and Gmail (phases 2-4).
+None of them puts a Google token in the agent's hands:
 
-> **Safety boundary:** An AI agent with raw OAuth tokens to your Gmail, Calendar,
-> and Contacts is an uncontrolled attack surface. One prompt injection, one
-> malicious tool call, and your entire Google account is exposed. ClawVisor
-> eliminates this risk class entirely.
+1. **gbrain's Google connector (default).** `gbrain google setup` connects the
+   user's own Google OAuth client for live sync of mail threads, calendar
+   events and contacts. Setup imports right away and keeps syncing, so before
+   running it ask which account and which services (`--services`) to connect,
+   and say that it starts syncing at once. In the same breath, say that synced
+   mail and calendar text is sent to the configured model provider for
+   open-loop and atom extraction (both on by default), and how to turn that off:
+   `gbrain config set loops.extraction_enabled false` and
+   `gbrain config set cycle.extract_atoms.connector_pages false`. Tokens live in gbrain's local credential vault (a 0600
+   file, redacted in listings); the agent only runs CLI commands. See
+   `docs/guides/google-connect.md` and `skills/google-loops/SKILL.md`.
+2. **Google Takeout (offline).** A [Google Takeout](https://takeout.google.com)
+   export covers all three as a point-in-time snapshot (contacts CSV, calendar
+   ICS, Gmail mbox). Phases 2-4 below document this path first.
+3. **A credential gateway the host already has.** Some agent hosts integrate
+   a gateway such as [ClawVisor](https://clawvisor.com) that holds the
+   credentials, scopes each task and logs every call. gbrain has no gateway
+   settings of its own, and Codex and Claude Code have no such integration,
+   so offer this only on a host that has one. Ask for the narrowest read-only
+   scope that does the job and state it plainly: what the agent reads, from
+   which accounts, and why. When the gateway blocks a request the user
+   needs, tell them what was blocked and widen the task only with their
+   agreement.
 
-[ClawVisor](https://clawvisor.com) is a credential gateway that sits between the
-agent and your APIs. The agent never sees your credentials — ClawVisor injects
-them at request time, enforces policies, and logs everything.
-
-**What ClawVisor gives you:**
-- **Credential vaulting** — agent sees shadow tokens, never real secrets
-- **Task-scoped authorization** — each workflow declares exactly what it needs
-- **Audit trail** — every API call logged with metadata (who, what, when)
-- **Human approval gates** — destructive operations (send email, modify calendar)
-  require your explicit approval
-- **Multi-service** — Gmail, Calendar, Contacts, Drive, GitHub, iMessage from one gateway
-- **Revocation** — disable the agent's access in one click, no token rotation needed
-
-**Setup (15 min):**
-1. Sign up at [app.clawvisor.com](https://app.clawvisor.com)
-2. Create an agent in the dashboard, copy the agent token
-3. Set environment variables (in the host agent's environment — shell profile
-   or harness config; gbrain itself has no ClawVisor config keys, these are
-   consumed by the host's ClawVisor integration. This requires an agent host
-   with a ClawVisor integration, such as an OpenClaw deployment. Codex and
-   Claude Code do not consume these variables; use the offline import path
-   instead):
-   ```bash
-   export CLAWVISOR_URL="https://app.clawvisor.com"
-   export CLAWVISOR_AGENT_TOKEN="<token>"
-   ```
-4. Activate Google services (Gmail, Calendar, Contacts) in the dashboard
-5. Create a standing task with the narrowest scope that does the job:
-   > "Brain bootstrapping, read-only: list, read, and search emails, calendar
-   > events, and contacts in the accounts the user named, to populate the
-   > knowledge base."
-6. Save the standing task ID the same way:
-   ```bash
-   export CLAWVISOR_TASK_ID="<task_id>"
-   ```
-
-**Scoping rule:** Ask for the narrowest scope and purpose that does the job,
-and state it plainly: what the agent reads, from which accounts, and why.
-Don't pad the purpose to get more requests approved. The intent model uses
-the purpose to judge each request; when it blocks one the user actually
-needs, tell the user what was blocked and widen the task then, with their
-agreement.
-
-### If the user declines ClawVisor
-
-Do NOT fall back to direct OAuth. Instead, proceed with offline-only imports:
-
-- **Phases 2-4** (Contacts, Calendar, Gmail) — work from a Google Takeout export
-- **Phase 1** (markdown/Obsidian) — works without any API access
-- **Phase 5** (conversation exports) — works from downloaded JSON files
-- **Phase 6** (X/Twitter) — works from downloaded archive
-- **Phase 7** (file archives) — works from local files
-- **Phase 8** (meeting transcripts) — works from exported transcripts
-
-Tell the user:
-> "No problem. Two options: the native connector (`gbrain google setup`) does
-> live Gmail/Calendar/Contacts sync with your own OAuth app — tokens stay in
-> gbrain's local credential vault, never with me — or a Google Takeout export
-> covers all three as a point-in-time snapshot."
-
-**Do NOT hold raw Google tokens yourself.** An agent holding tokens in its
-context is a security liability. The native connector is the sanctioned
-OAuth path precisely because gbrain vaults the tokens (0600 file, redacted
-listings) and the agent only ever runs CLI commands; secrets travel by file
-or env intake, never argv or chat. See `skills/google-loops/SKILL.md` for
-the exact protocol.
+Whichever path the user picks, never ask them to paste a token into the chat
+and never hold OAuth tokens in the agent's own context or files. Secrets
+travel by file or environment intake, never on the command line or in chat.
 
 ## Phase 1: Existing Markdown / Obsidian Import
 
@@ -226,21 +175,34 @@ gbrain search "<topic from the imported data>"
 
 - Run link extraction: `gbrain extract links --source db`
 - Run timeline extraction: `gbrain extract timeline --source db`
-- Start embeddings: `gbrain embed --stale` (runs in background)
+- Embeddings: with a paid embedding provider this costs money. Tell the user
+  how many pages need embedding and ask before running `gbrain embed --stale`.
 
-> **Track progress:**
-> ```bash
-> echo '{"phase_1_complete": true, "pages_imported": N}' > ~/.gbrain/cold-start-state.json
-> ```
+**Track progress:** after each phase, merge it into the state file the
+Resume Protocol reads (set `PHASE` to the phase just finished and `NEXT`
+to the next one; add `SKIPPED=1` for a phase the user skipped):
+```bash
+PHASE=1 NEXT=2 python3 - <<'PY'
+import datetime, json, os, pathlib
+p = pathlib.Path(os.environ.get('GBRAIN_HOME') or pathlib.Path.home()) / '.gbrain' / 'cold-start-state.json'
+s = json.loads(p.read_text()) if p.exists() else {
+    'started': datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')}
+key = 'phases_skipped' if os.environ.get('SKIPPED') == '1' else 'phases_completed'
+s[key] = sorted(set(s.get(key, [])) | {int(os.environ['PHASE'])})
+s['next_phase'] = int(os.environ['NEXT'])
+p.parent.mkdir(parents=True, exist_ok=True)
+p.write_text(json.dumps(s, indent=2) + '\n')
+PY
+```
 
 ## Phase 2: Google Contacts → People Pages
 
 **Seeds the people/ directory.** Every person in your contacts becomes a brain page
 with name, email, phone, company, and notes. This is the foundation that all other
-imports build on — when Gmail references "john@acme.com", the brain already knows
-who John is.
+imports build on — when Gmail references "bob@example.com", the brain already knows
+who Bob is.
 
-### Via Google Takeout (default on harnesses without ClawVisor)
+### Via Google Takeout (offline)
 
 1. Export contacts from [takeout.google.com](https://takeout.google.com)
    (select Contacts, CSV format), or directly from
@@ -249,7 +211,7 @@ who John is.
    and notes.
 3. Run each row through the processing rules below to create people/ pages.
 
-### Via ClawVisor (ClawVisor-integrated hosts only; pseudo-code)
+### Via a host credential gateway (pseudo-code)
 
 ```javascript
 // Fetch all contacts
@@ -286,16 +248,16 @@ relationship map.
 
 ### Fetch events
 
-**Via Google Takeout (default on harnesses without ClawVisor):** export
+**Via Google Takeout (offline):** export
 Calendar from [takeout.google.com](https://takeout.google.com) (ICS format,
 one file per calendar). Parse each event (title, start/end, attendees), keep
 the last 90 days, and file them into the brain structure below.
 
-**Via ClawVisor (ClawVisor-integrated hosts only; pseudo-code):**
+**Via a host credential gateway (pseudo-code):**
 
 ```javascript
-// Via ClawVisor — query ALL calendar accounts
-const accounts = ['primary@gmail.com', 'work@company.com'];
+// Query ALL calendar accounts the user named
+const accounts = ['alice@example.com', 'alice@work.example.com'];
 for (const account of accounts) {
   const events = await clawvisor(`google.calendar:${account}`, 'list_events', {
     timeMin: new Date(Date.now() - 90 * 86400000).toISOString(),
@@ -332,8 +294,8 @@ For each event with attendees:
 **Relationship context and active threads.** Email reveals organizational
 relationships, ongoing conversations, and communication patterns.
 
-On harnesses without a ClawVisor integration, the source is the Gmail mbox
-file from a [Google Takeout](https://takeout.google.com) export. The sampling
+Offline, the source is the Gmail mbox file from a
+[Google Takeout](https://takeout.google.com) export. The sampling
 and filtering rules below apply the same way.
 
 ### Strategy: Smart sampling, not bulk import
@@ -478,8 +440,10 @@ After completing available phases:
    gbrain search "<person from contacts>"
    ```
 
-3. **Set up live sync** (if not already):
-   - Calendar: daily cron
+3. **Offer live sync** (if not already set up) as its own yes/no. For each
+   source, say how often it runs and what each run can spend (embedding and
+   model extraction), and schedule only the ones the user agrees to:
+   - Calendar: daily
    - Email: periodic sweep (4-8 hours)
    - X: daily ingest
    - Brain repo: `gbrain sync --repo <path>` every 5-30 minutes. A managed brain
@@ -489,23 +453,20 @@ After completing available phases:
      `gbrain sources refresh <id>; gbrain sync --source <id> --no-pull --hard-deadline 13m`
      every 15 minutes on the owner host.
 
-4. **Track state:**
+4. **Check the state file** (`cold-start-state.json` in the brain's config
+   directory, written by the snippet in Phase 1); it should look like:
    ```json
-   // ~/.gbrain/cold-start-state.json
    {
-     "started": "2026-01-15T10:00:00Z",
-     "credential_gateway": "clawvisor",
+     "started": "2026-01-15T10:00:00+00:00",
      "phases_completed": [1, 2, 3, 4],
      "phases_skipped": [6, 7],
-     "total_pages_created": 847,
-     "total_entities_linked": 1203,
      "next_phase": 5
    }
    ```
 
 5. **Tell the user what to do next:**
    > "Your brain has N pages across people, calendar, email, and conversations.
-   > Live sync is configured for [sources]. From here:
+   > Live sync runs for [the sources you agreed to]. From here:
    > - The **signal-detector** captures entities from every conversation
    > - The **briefing** skill can compile daily context
    > - The **daily-task-prep** skill handles day planning
@@ -523,8 +484,9 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 
 - **Giving the agent raw OAuth tokens.** This is the #1 anti-pattern. An agent with
   raw Gmail/Calendar tokens is an uncontrolled attack surface — one prompt injection
-  and your entire Google account is exposed. Use ClawVisor. If the user declines
-  ClawVisor, skip to offline imports. Never offer direct OAuth as a fallback.
+  and your entire Google account is exposed. Use one of the Phase 0 paths:
+  gbrain's Google connector, an offline export, or the host's credential
+  gateway. Never ask the user to paste a token.
 - **Bulk importing everything without filtering.** The brain is for signal, not noise.
   Filter out automated senders, marketing emails, utility conversations.
 - **Importing without entity cross-linking.** Every import should detect entities and
@@ -540,7 +502,7 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 
 If the session is interrupted:
 
-1. Read `~/.gbrain/cold-start-state.json`
+1. Read `cold-start-state.json` in the brain's config directory (`$GBRAIN_HOME/.gbrain/`, or `~/.gbrain/` when `GBRAIN_HOME` is unset)
 2. Skip completed phases
 3. Resume from `next_phase`
 4. The user doesn't have to repeat credential setup or re-import completed sources

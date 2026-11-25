@@ -20,7 +20,7 @@
 //! holds Infinity, -Infinity and NaN, and a settle can book them. A JSON number cannot, so the record
 //! writes each amount as its IEEE 754 bits and still reads a record that holds plain numbers.
 
-use crate::error::{CONSTRAINT_VIOLATION, StoreError};
+use crate::error::{CONSTRAINT_VIOLATION, PAGE_NOT_FOUND, StoreError};
 use crate::kv::{KvRead, KvWrite};
 use crate::pages::read_page_by_id;
 use crate::{Result, Store, get_json, keys, put_json};
@@ -199,6 +199,37 @@ impl Store {
         })
     }
 
+    /// `holdPageEmbedding(pageId, reason)`: sets the page's ledger row to `held` with `reason`, adding
+    /// the row when the page has none (`INSERT ... ON CONFLICT (page_id) DO UPDATE SET state =
+    /// 'held', reason = EXCLUDED.reason, updated_at = now()`). A row that exists keeps its spend
+    /// columns (signature, spent, reserved, reservation window, unpriced calls, cap); a new row
+    /// has the defaults of [`BudgetRecord::new`]. Unlike `recordPageEmbeddingHold` it replaces the
+    /// state and reason of a row that exists. An unknown page id refuses `page_not_found` and a
+    /// reason with a NUL byte refuses `invalid_argument`; neither stores anything.
+    pub fn hold_page_embedding(&self, page_id: u64, reason: &str) -> Result<()> {
+        if reason.contains('\0') {
+            return Err(StoreError::invalid(
+                "holdPageEmbedding: a reason may not hold a NUL byte",
+            ));
+        }
+        let now = self.env.now_micros();
+        self.write(|tx| {
+            if read_page_by_id(&*tx, page_id)?.is_none() {
+                return Err(StoreError::new(
+                    PAGE_NOT_FOUND,
+                    format!("holdPageEmbedding: no page with id {page_id}"),
+                ));
+            }
+            let key = budget_key(page_id);
+            let mut record =
+                get_json::<BudgetRecord>(&*tx, &key)?.unwrap_or_else(|| BudgetRecord::new(now));
+            record.state = "held".into();
+            record.reason = Some(reason.to_string());
+            record.updated_at = now;
+            put_json(tx, &key, &record)
+        })
+    }
+
     /// `openPageEmbeddingHold(pageId)`: opens the page's row; a page with no row is a no-op.
     pub fn open_page_embedding_hold(&self, page_id: u64) -> Result<()> {
         let now = self.env.now_micros();
@@ -368,6 +399,15 @@ impl Store {
     }
 }
 
+/// The page's ledger `(state, reason)`, if it has a row: what `readPageSizeRows` reports
+/// (`cli_reads/sources.rs`; the SQL engines left-join the same row).
+pub(crate) fn read_state_reason(
+    read: &dyn KvRead,
+    page_id: u64,
+) -> Result<Option<(String, Option<String>)>> {
+    Ok(get_json::<BudgetRecord>(read, &budget_key(page_id))?.map(|r| (r.state, r.reason)))
+}
+
 /// Deletes the page's ledger record (`embeddings::remove_page_rows`).
 pub(crate) fn remove_page_budget(tx: &mut dyn KvWrite, page_id: u64) -> Result<()> {
     tx.delete(&budget_key(page_id))
@@ -433,7 +473,130 @@ pub(crate) mod exact_f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{BudgetRecord, exact_f64};
+    use super::*;
+    use crate::error::INVALID_ARGUMENT;
+    use crate::pages::{PageInput, PutPageOptions, read_page};
+
+    fn page_id(store: &Store, slug: &str) -> u64 {
+        let input = PageInput {
+            page_type: "note".into(),
+            title: slug.into(),
+            compiled_truth: "body".into(),
+            ..PageInput::default()
+        };
+        store
+            .put_page(slug, &input, &PutPageOptions::default())
+            .unwrap();
+        read_page(&*store.read().unwrap(), "default", slug)
+            .unwrap()
+            .unwrap()
+            .id
+    }
+
+    fn row(store: &Store, id: u64) -> Option<BudgetRecord> {
+        get_json(&*store.read().unwrap(), &budget_key(id)).unwrap()
+    }
+
+    fn reserve_input() -> ReserveInput {
+        ReserveInput {
+            approved: false,
+            approved_cap_usd: None,
+            approved_cap_infinite: false,
+            configured_cap_usd: Some(2.0),
+            signature: Some("model-a:1536".into()),
+            chunks: vec![ReserveChunk {
+                chunk_index: 0,
+                cost_usd: 0.5,
+            }],
+            junk: Some(JunkVerdict { reason: None }),
+        }
+    }
+
+    #[test]
+    fn a_hold_adds_a_row_for_a_page_with_none() {
+        let store = crate::test_support::store();
+        let id = page_id(&store, "a");
+        assert!(row(&store, id).is_none());
+        store.hold_page_embedding(id, "awaiting_approval").unwrap();
+        let held = row(&store, id).unwrap();
+        assert_eq!(held.state, "held");
+        assert_eq!(held.reason.as_deref(), Some("awaiting_approval"));
+        assert_eq!(held.spent_usd, 0.0);
+        assert_eq!(held.reserved_usd, 0.0);
+        assert_eq!(held.embedding_signature, None);
+        assert_eq!(
+            read_state_reason(&*store.read().unwrap(), id).unwrap(),
+            Some(("held".into(), Some("awaiting_approval".into())))
+        );
+    }
+
+    #[test]
+    fn a_hold_replaces_the_reason_of_a_held_row_and_re_holds_an_open_one() {
+        let store = crate::test_support::store();
+        let id = page_id(&store, "a");
+        store.record_page_embedding_hold(id, "call_import").unwrap();
+        // The record writer keeps the row it has (ON CONFLICT DO NOTHING); the hold replaces it.
+        store.hold_page_embedding(id, "archive_backfill").unwrap();
+        let held = row(&store, id).unwrap();
+        assert_eq!(held.state, "held");
+        assert_eq!(held.reason.as_deref(), Some("archive_backfill"));
+        store.open_page_embedding_hold(id).unwrap();
+        assert_eq!(row(&store, id).unwrap().state, "open");
+        store.hold_page_embedding(id, "archive_open_day").unwrap();
+        let again = row(&store, id).unwrap();
+        assert_eq!(again.state, "held");
+        assert_eq!(again.reason.as_deref(), Some("archive_open_day"));
+    }
+
+    #[test]
+    fn a_hold_keeps_the_spend_columns() {
+        let store = crate::test_support::store();
+        let id = page_id(&store, "a");
+        store.reserve_page_embedding(id, &reserve_input()).unwrap();
+        let before = row(&store, id).unwrap();
+        assert_eq!(before.reserved_usd, 0.5);
+        assert!(before.reserved_at.is_some());
+        store.hold_page_embedding(id, "awaiting_approval").unwrap();
+        let after = row(&store, id).unwrap();
+        assert_eq!(after.state, "held");
+        assert_eq!(after.reason.as_deref(), Some("awaiting_approval"));
+        assert_eq!(after.embedding_signature.as_deref(), Some("model-a:1536"));
+        assert_eq!(after.reserved_usd, 0.5);
+        assert_eq!(after.spent_usd, before.spent_usd);
+        assert_eq!(after.reserved_at, before.reserved_at);
+        assert_eq!(after.unpriced_calls, before.unpriced_calls);
+        assert_eq!(after.cap_usd, before.cap_usd);
+    }
+
+    #[test]
+    fn an_unknown_page_refuses_page_not_found_and_stores_nothing() {
+        let store = crate::test_support::store();
+        let err = store.hold_page_embedding(999, "x").unwrap_err();
+        assert_eq!(err.code, PAGE_NOT_FOUND);
+        assert!(row(&store, 999).is_none());
+    }
+
+    #[test]
+    fn a_reason_with_a_nul_byte_refuses_and_stores_nothing() {
+        let store = crate::test_support::store();
+        let id = page_id(&store, "a");
+        let err = store.hold_page_embedding(id, "bad\0reason").unwrap_err();
+        assert_eq!(err.code, INVALID_ARGUMENT);
+        assert!(row(&store, id).is_none());
+        store.hold_page_embedding(id, "fine").unwrap();
+        let err = store.hold_page_embedding(id, "bad\0reason").unwrap_err();
+        assert_eq!(err.code, INVALID_ARGUMENT);
+        assert_eq!(row(&store, id).unwrap().reason.as_deref(), Some("fine"));
+    }
+
+    #[test]
+    fn a_hard_delete_drops_the_row() {
+        let store = crate::test_support::store();
+        let id = page_id(&store, "a");
+        store.hold_page_embedding(id, "awaiting_approval").unwrap();
+        store.delete_page("a", None).unwrap();
+        assert!(row(&store, id).is_none());
+    }
 
     #[test]
     fn every_f64_round_trips_bit_exact() {

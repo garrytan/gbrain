@@ -359,6 +359,31 @@ export function privateFactNotice(factId?: string | number): Notice {
 }
 
 /**
+ * Lane 3 P1: on a brain with no person members an unbound remote credential speaks for the owner, so its profile
+ * writes land on the owner's profile, but it reads world facts only. A private profile fact (allergies by default) is
+ * then saved and never read back: remember says so once per session (no count), and context_pack {profile: true}
+ * names how many of the owner's private profile rows it left out. Private facts stay private; the fix binds the
+ * credential to the owner.
+ */
+export function profilePrivateHiddenNotice(hidden?: number): Notice {
+  const what = hidden === undefined
+    ? 'This private profile fact is saved on the owner\'s profile, but this credential cannot read it back'
+    : `${hidden} private profile fact${hidden === 1 ? ' is' : 's are'} on the owner's profile and left out of this read`;
+  return {
+    code: 'profile_private_hidden',
+    kind: 'info',
+    ...(hidden === undefined ? { dedupe_key: 'remember' } : {}),
+    why: `${what}: the credential is not bound to the brain owner, so it reads world-visible facts only (allergy facts are private by default). A missing allergy or constraint in its profile does not mean there is none. Tell the user; the owner lets this credential read them by naming an owner member and binding the credential to it.`,
+    fix: {
+      argv: ['gbrain', 'access', 'owner', 'set', '<member>'],
+      inputs: [{ name: 'member', how: 'The brain owner\'s enabled member id; on a brain with no members, add one first with gbrain access member add <id>. Then bind this credential: gbrain auth rescope --token <name> --member <member>.' }],
+      consent: [], actor: 'host_admin', requires_exclusive: false, docs: 'docs/guides/profile.md#who-a-profile-belongs-to',
+      why: 'Names the brain owner; a credential bound to that member then reads the owner\'s private profile facts.',
+    },
+  };
+}
+
+/**
  * GST-2446: remember saved a fact for an entity that has no page, on a source whose pages are in Git. Once per entity
  * per session. GST-2492: a fact held in Git (on memory/unattributed) needs nothing, so the notice only says where it is
  * and when it moves; a fact in the database alone needs the user's word, so the step asks before creating the page.
@@ -400,7 +425,7 @@ function factsDegradedReason(r: Record<string, unknown>): string | undefined {
 /** Did this call run keyword-only because the brain opted out of embedding (not a missing or failing provider)? */
 export function embeddingOptedOutFor(op: string, result: unknown, meta: Record<string, unknown>): boolean {
   const r = (result && typeof result === 'object' ? result : {}) as Record<string, unknown>;
-  if (op === 'search' || op === 'query') {
+  if (op === 'search' || op === 'query' || op === 'find_experts') {
     const retrieval = meta.retrieval as { degraded?: Array<{ stage?: string; reason?: string }> } | undefined;
     return (retrieval?.degraded ?? []).some(d => d.reason === 'embedding_disabled');
   }
@@ -434,6 +459,15 @@ export function recallStagesFor(op: string, result: unknown, meta: Record<string
 }
 
 /**
+ * Ops whose keyword-only run on a brain that turned embeddings off on purpose is not degraded (degraded-stamp.ts
+ * stamps nothing for it either): their notice leaves out the keyword-only stage and the keyword arm finding nothing
+ * (`keyword_zero`, a true negative there), so a call with no other stage gets no `degraded_recall`. `_meta.retrieval`
+ * and recall's `search_degraded` still record that the search was keyword-only.
+ */
+const KEYWORD_ONLY_BY_CHOICE_OPS: ReadonlySet<string> = new Set(['search', 'query', 'find_experts', 'recall']);
+const KEYWORD_ONLY_STAGES: ReadonlySet<string> = new Set(['embed_unavailable', 'keyword_only_no_embedding_provider', 'keyword_zero']);
+
+/**
  * The MCP dispatch producer (one call per successful tool call): the
  * `degraded_recall` notice on search/query/recall/think/context_pack and
  * `source_binding_narrowed` on an empty bound stdio read. Never throws.
@@ -445,10 +479,14 @@ export function recallInteropNotices(
   try {
     const out: Notice[] = [];
     const entries = (meta.retrieval as { degraded?: Array<{ stage?: string; reason?: string }> } | undefined)?.degraded ?? [];
-    const stages = recallStagesFor(op, result, meta, opts.config).map(stage => entries.find(d => d.stage === stage) ?? stage);
+    const optedOut = embeddingOptedOutFor(op, result, meta);
+    const keywordOnlyByChoice = optedOut && KEYWORD_ONLY_BY_CHOICE_OPS.has(op);
+    const stages = recallStagesFor(op, result, meta, opts.config)
+      .filter(stage => !(keywordOnlyByChoice && KEYWORD_ONLY_STAGES.has(stage)))
+      .map(stage => entries.find(d => d.stage === stage) ?? stage);
     const { _meta: _ignored, ...args } = params;
     const coverage = (meta.retrieval as { coverage?: RetrievalCoverage } | undefined)?.coverage;
-    const degraded = degradedRecallNotice(stages, { ...opts, optedOut: embeddingOptedOutFor(op, result, meta), retry: { op, args }, coverage });
+    const degraded = degradedRecallNotice(stages, { ...opts, optedOut, retry: { op, args }, coverage });
     if (degraded) out.push(degraded);
     const narrowed = opts.transport === 'stdio' ? sourceBindingNarrowedNotice(op, params, result, opts.binding) : null;
     if (narrowed) out.push(narrowed);

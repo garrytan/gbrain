@@ -53,6 +53,7 @@ import { readCardIdentity, type CardIdentity } from './entity-card-identity.ts';
 import { factEntitySlugs } from '../mentions/siblings.ts';
 import { applySlotEnds } from '../search/slot-ends.ts';
 import { boundedBodyPrefixSql, overlaidBoundedRows } from '../page-window/bounded-lead.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 const EDGE_CAP = 10;
 const OPEN_THREADS_CAP = 3;
@@ -347,6 +348,8 @@ export async function selectEntityCandidates(
       const aliasMap = await engine.resolveAliases([norm], { sourceId });
       for (const hit of aliasMap.get(norm) ?? []) consider(hit.slug, ARM_ALIAS);
     } catch (err) {
+      // An engine that cannot serve the read refuses the lookup; degrading would print "not found".
+      rethrowCapabilityRefusal(err);
       // Only the pre-migration brain (no page_aliases table yet) has an empty alias arm by design [E3]; any other
       // failure leaves the alias arm unread and says so.
       if (!isMissingSchemaObject(err, 'table', 'page_aliases')) lookupReadFailed(err, opts.degraded);
@@ -368,6 +371,7 @@ export async function selectEntityCandidates(
       [sourceId, titleLc, exactSlugs, `%/${slug || trimmed}`],
     );
   } catch (err) {
+    rethrowCapabilityRefusal(err);
     lookupReadFailed(err, opts.degraded);
     rows = [];
   }
@@ -390,6 +394,7 @@ export async function selectEntityCandidates(
       );
       for (const r of extra) rowBySlug.set(r.slug, r);
     } catch (err) {
+      rethrowCapabilityRefusal(err);
       // A stale alias row hydrates to no page (zero rows, no error, dropped above); a read that throws is a failure.
       lookupReadFailed(err, opts.degraded);
     }
@@ -863,7 +868,8 @@ async function nearMissSuggestions(
       create_safety: r.create_safety ?? 'unknown',
       source_id: r.source_id ?? sourceId,
     }));
-  } catch {
+  } catch (e) {
+    rethrowCapabilityRefusal(e);
     return [];
   }
 }

@@ -160,7 +160,7 @@ fn kept_private(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
     {
         match read_page(read, &row.source_id, slug)? {
             // The privacy aliases count whether or not they are honoured (`derivationPrivateSql`).
-            Some(page) if derivation_private(&page, false) => return Ok(true),
+            Some(page) if derivation_private(read, &page, false)? => return Ok(true),
             Some(page) if page.deleted_at_us.is_some() => return Ok(true),
             Some(page) if page.frontmatter.contains_key(super::QUARANTINE_KEY) => return Ok(true),
             Some(_) => {}
@@ -168,7 +168,8 @@ fn kept_private(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
         }
     }
     if let Some(entity) = &row.entity_slug
-        && read_page(read, &row.source_id, entity)?.is_some_and(|p| derivation_private(&p, false))
+        && let Some(page) = read_page(read, &row.source_id, entity)?
+        && derivation_private(read, &page, false)?
     {
         return Ok(true);
     }

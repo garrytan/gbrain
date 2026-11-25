@@ -22,6 +22,15 @@ export function requestSignal(): AbortSignal | undefined {
   return store.getStore();
 }
 
+/** `exec` whose every statement first refuses an aborted request, as `executeRaw` does for each statement of a multi-statement read. */
+export function abortGuarded<T extends object>(exec: T): T {
+  return new Proxy(exec, { get(target, key) {
+    const value = Reflect.get(target, key, target);
+    if (typeof value !== 'function' || !['executeRaw', 'query', 'run', 'unsafe'].includes(String(key))) return value;
+    return (...args: unknown[]) => { throwIfRequestAborted(); return (value as (...a: unknown[]) => unknown).apply(target, args); };
+  } });
+}
+
 /** Throws the request's AbortError when its signal has fired. */
 export function throwIfRequestAborted(): void {
   const signal = store.getStore();

@@ -4,12 +4,35 @@
  * environment. Nothing here opens a brain.
  *
  *   skills.resolver.session_token_budget  block tokens one session may receive
- *     (default 2000). 0 turns the resolver silent: every block is empty and
+ *     (default 8000). 0 turns the resolver silent: every block is empty and
  *     budget_exhausted is true. Otherwise 100..50000; anything else refuses
  *     with skill_resolver_config_invalid. Only a compaction (or
  *     reset_session) resets a session's spend.
  *   skills.resolver.auto_rebuild  false (or GBRAIN_SKILLS_NO_AUTOREBUILD=1)
  *     stops a stale resolve from scheduling a rebuild (no stale.stamp).
+ *
+ * The model picker (router.ts; off by default, and only the command line and
+ * the Claude Code and Codex hook lanes may start it):
+ *
+ *   skills.resolver.router  true turns the picker on
+ *   skills.resolver.router_model  "provider:model" (default: Claude Haiku 5.5
+ *     with an Anthropic key, else the cheapest configured ROUTER_DEFAULT_MODELS)
+ *   skills.resolver.router_timeout_ms  the longest a turn waits for it
+ *     (ROUTER_TIMEOUT_MS_MIN..MAX; default 1500 in Claude Code, 2000 elsewhere)
+ *   skills.resolver.router_max_usd_per_day  the daily spend cap in USD
+ *     (0..ROUTER_MAX_USD_PER_DAY_MAX, default 0.50; 0 stops every call)
+ *   A model on any OpenAI-compatible endpoint (a self-hosted or fine-tuned
+ *   one) is router_model compat:<model id> with:
+ *   skills.resolver.router_base_url  the endpoint's base URL, up to /v1
+ *     (https, or http to localhost only); required for compat:
+ *   skills.resolver.router_api_key_env  the environment variable holding its
+ *     key, read by name (unset: no key is sent)
+ *   skills.resolver.router_usd_per_mtok  [input, output] or [input, output,
+ *     cached input] USD per million tokens, so the daily cap holds; required
+ *     for compat: ([0, 0] when free); without the third, cached input is
+ *     charged at the input rate
+ *   A bad router value does not refuse the turn: the picker stays off for it
+ *     and the turn reports router.fallback.code config_invalid.
  *
  * The hook lane's turn settings (read by hook-lane.ts; a library caller
  * passes its own per turn):
@@ -45,7 +68,7 @@ import { estimateTokens, HARNESSES } from './block.ts';
 import { ResolverError } from './errors.ts';
 import { EXCLUDE_MAX, MATCH_STRENGTHS, type MatchStrength, TOP_GATE_DEFAULT, TOP_GATE_MAX, TOP_K_MAX } from './limits.ts';
 
-export const DEFAULT_SESSION_TOKEN_BUDGET = 2000;
+export const DEFAULT_SESSION_TOKEN_BUDGET = 8000;
 export const MIN_SESSION_TOKEN_BUDGET = 100;
 export const MAX_SESSION_TOKEN_BUDGET = 50_000;
 const CONFIG_CAP = 1024 * 1024;
@@ -58,6 +81,90 @@ const DIRS_HARNESSES = ['claude-code', 'codex'];
 export interface ResolverSettings {
   sessionTokenBudget: number;
   autoRebuild: boolean;
+  router: RouterSettings;
+}
+
+export const ROUTER_TIMEOUT_MS_MIN = 200;
+export const ROUTER_TIMEOUT_MS_MAX = 2500;
+/** The most a Claude Code turn waits for the picker, whatever router_timeout_ms says: worker start, deadline, margin and process boot must fit Claude Code's 3 s hook limit. */
+export const ROUTER_TIMEOUT_MS_CLAUDE_CODE_MAX = 2000;
+export const ROUTER_MAX_USD_PER_DAY_DEFAULT = 0.5;
+export const ROUTER_MAX_USD_PER_DAY_MAX = 100;
+const ROUTER_MODEL_RE = /^(?:(?:anthropic|openai|google):[A-Za-z0-9][\w.\-]{0,127}|compat:[A-Za-z0-9][\w.\-/:]{0,127})$/;
+const ROUTER_KEY_ENV_RE = /^[A-Z_][A-Z0-9_]{0,63}$/;
+export const ROUTER_USD_PER_MTOK_MAX = 1000;
+export const ROUTER_EXTRA_BODY_MAX_BYTES = 4096;
+/** The only fields router_extra_body may set: sampling and reasoning controls, none of which adds billable input or lifts the output cap the daily-cap reservation counts on. */
+const ROUTER_EXTRA_BODY_FIELDS = ['temperature', 'top_p', 'top_k', 'min_p', 'seed', 'presence_penalty', 'frequency_penalty', 'repetition_penalty', 'reasoning_effort', 'thinking', 'chat_template_kwargs'];
+
+/** The picker's settings; `invalid` names the first bad key (the picker then stays off and reports config_invalid). */
+export interface RouterSettings { on: boolean; model: string | null; timeoutMs: number | null; maxUsdPerDay: number; baseUrl: string | null; keyEnv: string | null; usdPerMtok: RouterUsdPerMtok | null; extraBody: Record<string, unknown> | null; promptVersion: number | null; invalid: string | null }
+/** [input, output] or [input, output, cached input] in USD per million tokens. */
+export type RouterUsdPerMtok = [number, number] | [number, number, number];
+
+export function validateRouterModel(v: unknown, key: string): string {
+  if (typeof v === 'string' && ROUTER_MODEL_RE.test(v)) return v;
+  throw configInvalid(key, 'must be an anthropic:, openai:, google: or compat: model id, like anthropic:claude-haiku-5-5');
+}
+
+export function validateRouterBaseUrl(v: unknown, key: string): string {
+  let u: URL | null = null;
+  try { if (typeof v === 'string' && v.length <= 512) u = new URL(v); } catch { u = null; }
+  const local = u && ['localhost', '127.0.0.1', '[::1]'].includes(u.hostname);
+  if (u && !u.username && !u.password && !u.search && !u.hash && (u.protocol === 'https:' || (u.protocol === 'http:' && local))) return (v as string).replace(/\/+$/, '');
+  throw configInvalid(key, 'must be the https base URL of the endpoint up to /v1, like https://models.example.com/v1 (http only for localhost; no credentials in the URL)');
+}
+
+export function validateRouterKeyEnv(v: unknown, key: string): string {
+  if (typeof v === 'string' && ROUTER_KEY_ENV_RE.test(v)) return v;
+  throw configInvalid(key, 'must be the name of an environment variable, like MY_MODEL_API_KEY');
+}
+
+export function validateRouterUsdPerMtok(v: unknown, key: string): RouterUsdPerMtok {
+  const ok = (x: unknown) => typeof x === 'number' && Number.isFinite(x) && x >= 0 && x <= ROUTER_USD_PER_MTOK_MAX;
+  if (Array.isArray(v) && (v.length === 2 || v.length === 3) && v.every(ok)) return v.length === 3 ? [v[0], v[1], v[2]] : [v[0], v[1]];
+  throw configInvalid(key, `must be [input, output] or [input, output, cached input] in US dollars per million tokens, each 0 to ${ROUTER_USD_PER_MTOK_MAX}, like [0.1, 0.5]`);
+}
+
+export function validateRouterExtraBody(v: unknown, key: string): Record<string, unknown> {
+  const other = v && typeof v === 'object' && !Array.isArray(v) ? Object.keys(v).filter(k => !ROUTER_EXTRA_BODY_FIELDS.includes(k)) : [];
+  if (v && typeof v === 'object' && !Array.isArray(v) && !other.length && Buffer.byteLength(JSON.stringify(v)) <= ROUTER_EXTRA_BODY_MAX_BYTES) return v as Record<string, unknown>;
+  throw configInvalid(key, `must be a JSON object of at most ${ROUTER_EXTRA_BODY_MAX_BYTES} bytes, like {"reasoning_effort": "none"}, with only ${ROUTER_EXTRA_BODY_FIELDS.join(', ')}${other.length ? `; remove ${other.join(', ')}` : ''}`);
+}
+
+export function validateRouterPromptVersion(v: unknown, key: string): number {
+  if (Number.isInteger(v) && (v as number) >= 1 && (v as number) <= 10_000) return v as number;
+  throw configInvalid(key, 'must be the whole-number picker prompt version the model was trained on, like 1');
+}
+
+export function validateRouterTimeout(v: unknown, key: string): number {
+  if (Number.isInteger(v) && (v as number) >= ROUTER_TIMEOUT_MS_MIN && (v as number) <= ROUTER_TIMEOUT_MS_MAX) return v as number;
+  throw configInvalid(key, `must be a whole number of milliseconds from ${ROUTER_TIMEOUT_MS_MIN} to ${ROUTER_TIMEOUT_MS_MAX} (unset: 1500 in Claude Code, 2000 elsewhere)`);
+}
+
+export function validateRouterMaxUsd(v: unknown, key: string): number {
+  if (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= ROUTER_MAX_USD_PER_DAY_MAX) return v;
+  throw configInvalid(key, `must be a number of US dollars from 0 to ${ROUTER_MAX_USD_PER_DAY_MAX} (default ${ROUTER_MAX_USD_PER_DAY_DEFAULT})`);
+}
+
+/** The picker settings in a skills.resolver section. Never throws. */
+export function routerSettings(section: Record<string, unknown>): RouterSettings {
+  const p = 'skills.resolver.';
+  const out: RouterSettings = { on: section.router === true, model: null, timeoutMs: null, maxUsdPerDay: ROUTER_MAX_USD_PER_DAY_DEFAULT, baseUrl: null, keyEnv: null, usdPerMtok: null, extraBody: null, promptVersion: null, invalid: null };
+  try {
+    if (section.router !== undefined && typeof section.router !== 'boolean') throw configInvalid(`${p}router`, 'must be true or false');
+    if (section.router_model !== undefined) out.model = validateRouterModel(section.router_model, `${p}router_model`);
+    if (section.router_timeout_ms !== undefined) out.timeoutMs = validateRouterTimeout(section.router_timeout_ms, `${p}router_timeout_ms`);
+    if (section.router_max_usd_per_day !== undefined) out.maxUsdPerDay = validateRouterMaxUsd(section.router_max_usd_per_day, `${p}router_max_usd_per_day`);
+    if (section.router_base_url !== undefined) out.baseUrl = validateRouterBaseUrl(section.router_base_url, `${p}router_base_url`);
+    if (section.router_api_key_env !== undefined) out.keyEnv = validateRouterKeyEnv(section.router_api_key_env, `${p}router_api_key_env`);
+    if (section.router_usd_per_mtok !== undefined) out.usdPerMtok = validateRouterUsdPerMtok(section.router_usd_per_mtok, `${p}router_usd_per_mtok`);
+    if (section.router_extra_body !== undefined) out.extraBody = validateRouterExtraBody(section.router_extra_body, `${p}router_extra_body`);
+    if (section.router_prompt_version !== undefined) out.promptVersion = validateRouterPromptVersion(section.router_prompt_version, `${p}router_prompt_version`);
+    if (out.extraBody && !out.model?.startsWith('compat:')) throw configInvalid(`${p}router_extra_body`, 'applies only to a compat: router_model; unset it for this model');
+    if (out.model?.startsWith('compat:') && !out.baseUrl) throw configInvalid(`${p}router_base_url`, 'must be set when router_model is a compat: model');
+  } catch (e) { out.invalid = (e as Error).message; }
+  return out;
 }
 
 export function validateSessionTokenBudget(v: unknown, where: string): number {
@@ -86,7 +193,7 @@ export function readResolverSettings(home: string, env: NodeJS.ProcessEnv = proc
   const budget = section.session_token_budget === undefined ? DEFAULT_SESSION_TOKEN_BUDGET
     : validateSessionTokenBudget(section.session_token_budget, 'skills.resolver.session_token_budget');
   const autoRebuild = env.GBRAIN_SKILLS_NO_AUTOREBUILD === '1' ? false : section.auto_rebuild !== false;
-  return { sessionTokenBudget: budget, autoRebuild };
+  return { sessionTokenBudget: budget, autoRebuild, router: routerSettings(section) };
 }
 
 /** What the hook lane adds to each turn's input. */

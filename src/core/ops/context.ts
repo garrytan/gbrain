@@ -19,7 +19,7 @@ import type { Action } from '../agent-output.ts';
 import { hostFix, invalidParam, paramUse, readFix } from './op-fix.ts';
 import { CJK_SLUG_CHARS } from '../cjk.ts';
 import { isOpPageSlug, OP_PAGE_SLUG_RE } from '../page-slug-grammar.ts';
-import { validateSlug } from '../utils.ts';
+import { normalizeSlug, validateSlug } from '../utils.ts';
 import { ALL_SOURCES, NO_SOURCES, isValidSourceId } from '../source-id.ts';
 import { encodeDeepResearchId } from '../deep-research-id.ts';
 import { isSearchMode } from '../search/mode.ts';
@@ -414,8 +414,8 @@ export function slugUnderBoundPrefixes(prefixes: readonly string[], slug: string
   // trip the resolved-slug re-check — an error returned after the write had
   // already landed. Registration rejects non-lowercase prefixes going
   // forward; lowercasing both sides keeps pre-existing rows meaning what
-  // their operator intended.
-  const canonical = slug.toLowerCase();
+  // their operator intended. NFC too (normalizeSlug), the form validateSlug stores.
+  const canonical = normalizeSlug(slug);
   return prefixes.some((bp) => {
     const base = normalizeSlugPrefix(bp);
     if (base === '') return false;
@@ -437,7 +437,7 @@ export function slugUnderBoundPrefixes(prefixes: readonly string[], slug: string
  * what an existing client may write.
  */
 export function normalizeSlugPrefix(prefix: string): string {
-  return (prefix.endsWith('/*') ? prefix.slice(0, -1) : prefix).toLowerCase();
+  return normalizeSlug(prefix.endsWith('/*') ? prefix.slice(0, -1) : prefix);
 }
 
 /**

@@ -37,10 +37,6 @@ writes_to:
   - meetings/
   - people/
   - companies/
-upstream:
-  - meeting-ingestion@fc834ee
-  - meeting-gold-standard@fc834ee
-  - chronology-guard@fc834ee
 when_to_use: "Use when the user asks: \"meeting transcript\", \"process this meeting\", \"meeting notes\", \"meeting recorder\", \"ingest this recording\"."
 ---
 
@@ -289,6 +285,15 @@ next cycle extracts it (`gbrain dream --phase chronicle` runs it now, paid), and
 `life/events/` pages; edit the meeting page and extraction updates its events.
 See `docs/guides/life-chronicle.md`.
 
+Both extractions (events above, facts below) are paid model calls that
+send the page to the model provider. Before the first meeting page you save
+in a session, tell the user what saving will start and ask. If they decline,
+keep `facts_backstop: false` on every save of that page, the final one
+included. Event extraction has no per-page switch: tell the user it is a
+brain-wide setting (`gbrain config set auto_chronicle false`) and don't
+save the page until they have turned it off or agreed to it; don't change
+that setting yourself.
+
 Facts (what `recall` returns) are also extracted from saved pages in the
 background, on by default, one paid chat call each time a page's body changes.
 Extraction files each fact on the entity page it names, so it reaches people
@@ -297,8 +302,9 @@ filed from an earlier version of the page. That is why the template drafts
 the meeting page with `facts_backstop: false` (the receipt reads
 `facts_backstop: { skipped: "opted_out" }`): nothing is extracted while the
 page is still being corrected. When the verification checklist passes, save
-the page once more without that line; the receipt then reads
-`facts_backstop: { queued: true }`. Everything on the verified page is
+the page once more without that line, unless the user declined extraction
+(then keep it on this save too); the receipt then reads
+`facts_backstop: { queued: true }`, or `{ skipped: "opted_out" }` when they declined. Everything on the verified page is
 extraction input, so an uncertain note kept under the downgrade protocol
 becomes a lower-confidence fact. The transcript sidecar keeps its
 `facts_backstop: false`. Don't call `extract_facts` for the meeting or its
@@ -526,7 +532,8 @@ failure axes, and V1–V5 never look at order. Verify the narrated sequence:
 
 **The loop:** fix → re-check → fix, until every item passes (or V6 is
 explicitly waived). Then save the meeting page without the draft
-`facts_backstop: false` line (Phase 5), and report.
+`facts_backstop: false` line (Phase 5), unless the user declined extraction,
+and report.
 
 ## Sensitive meetings
 

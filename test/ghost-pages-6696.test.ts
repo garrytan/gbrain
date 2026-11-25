@@ -36,6 +36,7 @@ import { runPagesGhosts } from '../src/commands/pages-ghosts.ts';
 import { ghostPagesEntry } from '../src/commands/doctor/checks/ghost-pages.ts';
 import { categorizeCheck } from '../src/core/doctor-categories.ts';
 import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
+import { settleManagedGitEffects } from './helpers/managed-brain.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -67,6 +68,17 @@ async function fixture(run: (f: Fixture) => Promise<void>, opts: { managed?: boo
     await engine.executeRaw('UPDATE sources SET archived=true WHERE id=$1', [sourceId]);
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+/** GST-3637: removes `paths` in a commit (committing each first when HEAD does not hold it), so each page is a ghost whose file a commit deleted: the only kind the repair removes. */
+async function removeInCommit(f: Fixture, ...paths: string[]): Promise<void> {
+  await settleManagedGitEffects(engine, f.sourceId);
+  const git = (...args: string[]) => execFileSync('git', ['-c', 'user.name=test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd: f.root });
+  git('add', '--', ...paths);
+  try { git('diff', '--cached', '--quiet'); } catch { git('commit', '-q', '-m', 'add'); }
+  git('rm', '-q', '--', ...paths);
+  // Git dates have whole seconds; the deletion lands after the page's last write, as it does outside a test.
+  git('commit', '-q', '-m', 'remove', `--date=${new Date(Date.now() + 2000).toISOString()}`);
 }
 
 const page = (title: string) => `---\ntype: note\ntitle: ${title}\n---\n\n${title} body.\n`;
@@ -115,7 +127,7 @@ async function seed(f: Fixture): Promise<string> {
   for (const slug of ['notes/agrees', 'notes/drift', 'notes/ghost', 'scratch/kept', 'notes/gone']) await put(f.ctx, slug);
   writeFileSync(join(f.root, 'notes/drift.md'), readFileSync(join(f.root, 'notes/drift.md'), 'utf8').replace('body.', 'body, edited in the file only.'));
   const ghostBytes = readFileSync(join(f.root, 'notes/ghost.md'), 'utf8');
-  unlinkSync(join(f.root, 'notes/ghost.md'));
+  await removeInCommit(f, 'notes/ghost.md');
   if (existsSync(join(f.root, 'scratch/kept.md'))) unlinkSync(join(f.root, 'scratch/kept.md'));
   const gone = (await engine.readPageSnapshot('notes/gone', { sourceId: f.sourceId }))!;
   await submitPageMutation(f.ctx, { operation: 'delete_page', params: { slug: 'notes/gone', expected_revision: gone.revision, request_id: randomUUID() } });
@@ -247,7 +259,7 @@ for (const backend of testBackends()) describe(`#6696 B5 ghost pages (${backend}
   test('the mass-delete valve refuses when ghosts are over half of the file-backed pages', () => fixture(async f => {
     const slugs = Array.from({ length: 22 }, (_, i) => `notes/page-${String(i).padStart(2, '0')}`);
     for (const slug of slugs) await put(f.ctx, slug);
-    for (const slug of slugs.slice(0, 12)) unlinkSync(join(f.root, `${slug}.md`));
+    await removeInCommit(f, ...slugs.slice(0, 12).map(slug => `${slug}.md`));
     const preview = await repair(f.sourceId);
     expect(preview.affected).toBe(12);
     expect(preview.residuals).toMatchObject({ ghosts: 12, file_backed: 22 });
@@ -307,7 +319,7 @@ for (const backend of testBackends()) describe(`#6696 B5 ghost pages (${backend}
   for (const managed of [true, false]) {
     test(`#7736: a code page whose recorded JSON file is gone is a ghost at that path and the apply retires it (${managed ? 'managed' : 'unmanaged'})`, () => fixture(async f => {
       await seedCodePage(f, managed);
-      unlinkSync(join(f.root, CODE_PATH));
+      await removeInCommit(f, CODE_PATH);
       const preview = await repair(f.sourceId);
       expect(preview.sample).toEqual([`${f.sourceId}:${CODE_SLUG}`]);
       expect((await ghostPageNow(engine, f.sourceId, CODE_SLUG)).ghost).toMatchObject({ path: CODE_PATH });
@@ -320,11 +332,11 @@ for (const backend of testBackends()) describe(`#6696 B5 ghost pages (${backend}
   test('#7967: a code page whose recorded JSON file is restored at consumer:prepared is refused at publication and kept', () => fixture(async f => {
     await seedCodePage(f);
     const bytes = readFileSync(join(f.root, CODE_PATH), 'utf8');
-    unlinkSync(join(f.root, CODE_PATH));
+    await removeInCommit(f, CODE_PATH);
     const preview = await repair(f.sourceId);
     expect(preview.sample).toEqual([`${f.sourceId}:${CODE_SLUG}`]);
     installFaultHook((at, detail) => {
-      if (at === 'consumer:prepared' && detail.operation === 'submit_job') writeFileSync(join(f.root, CODE_PATH), bytes);
+      if (at === 'consumer:prepared' && detail.operation === 'submit_job') { mkdirSync(join(f.root, 'projects/example'), { recursive: true }); writeFileSync(join(f.root, CODE_PATH), bytes); }
     });
     const applied = await repair(f.sourceId, { apply: true, expect: preview.preview_hash });
     expect(applied).toMatchObject({ applied: 0, outcomes: { file_restored: 1 } });
@@ -364,7 +376,7 @@ for (const backend of testBackends()) describe(`#6696 B5 ghost pages (${backend}
       const { serializePageToMarkdown } = await import('../src/core/markdown.ts');
       writeFileSync(join(f.root, `${slug}.md`), serializePageToMarkdown(snapshot.page, snapshot.tags));
     }
-    unlinkSync(join(f.root, 'notes/two.md'));
+    await removeInCommit(f, 'notes/two.md');
     const preview = await repair(f.sourceId);
     expect(preview.sample).toEqual([`${f.sourceId}:notes/two`]);
     const applied = await repair(f.sourceId, { apply: true, expect: preview.preview_hash });

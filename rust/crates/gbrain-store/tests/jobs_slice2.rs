@@ -1401,13 +1401,26 @@ fn job_source_state_reads_archived_and_the_creation_stamp() {
     let created = b.get_source("default").unwrap().unwrap().created_at;
     assert_eq!(
         b.read_job_source_state("default").unwrap(),
-        Some(json!({ "archived": false, "created_at": created.clone() }))
+        Some(
+            json!({ "archived": false, "created_at": created.clone(), "local_path": null, "config": { "federated": true } })
+        )
     );
     assert_eq!(b.read_job_source_state("nope").unwrap(), None);
     assert_eq!(b.read_job_source_state("de\0fault").unwrap(), None);
+    // A generic remote job reads the registered root and config from the same row.
+    b.attach_source_path("default", "/srv/brain", None, None)
+        .unwrap();
+    let mut patch = serde_json::Map::new();
+    patch.insert("kind".into(), json!("example-connector"));
+    assert!(b.update_source_config("default", &patch).unwrap());
     assert!(b.set_source_archived("default", true).unwrap());
     assert_eq!(
         b.read_job_source_state("default").unwrap(),
-        Some(json!({ "archived": true, "created_at": created }))
+        Some(json!({
+            "archived": true,
+            "created_at": created,
+            "local_path": "/srv/brain",
+            "config": { "federated": true, "kind": "example-connector" },
+        }))
     );
 }

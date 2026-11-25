@@ -29,7 +29,7 @@ const dirs: string[] = [];
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 const tmp = (): string => { const d = mkdtempSync(join(tmpdir(), 'gbrain-follow-units-')); dirs.push(d); return d; };
 
-const SEED = { version: 1, seed_id: 'seed-1', started_at: '2026-01-01T00:00:00.000Z', finished_at: '2026-01-01T00:01:00.000Z', unseeded_gap_rows_total: 0, unseeded_gap_rows: {}, relations: {} } as unknown as SeedRecord;
+const SEED = { version: 1, seed_id: 'seed-1', started_at: '2026-01-01T00:00:00.000Z', finished_at: '2026-01-01T00:01:00.000Z', unseeded_gap_rows_total: 0, unseeded_gap_rows: {}, relations: {}, digests: true } as unknown as SeedRecord;
 const STATE = { version: SHADOW_STATE_VERSION, enabled: true, started_at: 'x', sample_rate: 0.1, queue_bound: 1, plan_hash: 'h', brain: 'b', primary_engine: 'pglite' } as ShadowState;
 const RESULT = { upserted: 1, deleted: 0, skipped_older: 0, displaced: 0, dropped: 0, unmapped_columns: [], losses: {} };
 
@@ -72,9 +72,46 @@ describe('follow child', () => {
     child.handle(apply(9_000));
     await child.close();
     const file = readFollowerFile(dir)!;
-    expect(file).toMatchObject({ epoch_id: 'seed-1', applied_rows: 1, last_seq: 1, watermark: { valid: true, through: new Date(9_000).toISOString() } });
+    expect(file).toMatchObject({ epoch_id: 'seed-1', seed_id: 'seed-1', applied_rows: 1, last_seq: 1, watermark: { valid: true, through: new Date(9_000).toISOString() } });
     expect(file.lag.epoch[lagBucket(1000)]).toBe(1);
     expect(lines[1]).toMatchObject({ t: 'resp', id: 2, ok: true });
+  });
+
+  test('an evidence epoch that differs from the seed id still follows, digests and replaces intervals under the real seed id', async () => {
+    const dir = tmp();
+    writeSeedRecord(dir, SEED);
+    writeFileSync(join(dir, 'follower.json'), JSON.stringify({
+      version: 1, epoch_id: 'manifest-epoch', seed_id: 'seed-1', epoch_started_at: 't', updated_at: new Date().toISOString(), applied_rows: 3, queue_depth: 0, lag_ms: 0,
+      last_seq: 1, watermark: { valid: true, through: null, invalidated_reason: null }, lag: { epoch: [], hours: {} }, fingerprints: { checked_rows: 0, mismatches: 0 },
+      probe: { state: 'not_run', checked_at: null, server_version: null, collation: null, mismatches: 0 }, allocators: { verified: false, checked_at: null },
+    }));
+    const seen: string[] = [];
+    const named = (name: string) => async (id: string) => { seen.push(`${name}:${id}`); return name === 'relationDigest' ? { rows: 0, digest: '' } : RESULT; };
+    const { child, lines } = childOn(dir, {
+      replaceRelationRows: named('replace') as never, relationDigest: named('relationDigest') as never, replaceInterval: named('interval') as never,
+    });
+    child.handle(apply(1));
+    child.handle(rpc(1, 'relationDigest', { relation: 'pages' }));
+    child.handle(rpc(2, 'replaceInterval', { relation: 'pages', generation: 1, rows: [], digests: [] }));
+    await child.close();
+    expect(seen).toEqual(['replace:seed-1', 'relationDigest:seed-1', 'interval:seed-1']);
+    expect(lines.map((l) => l.ok)).toEqual([true, true]);
+    expect(readFollowerFile(dir)).toMatchObject({ applied_rows: 5, seed_id: 'seed-1' }); // the 3 rows it kept, plus the apply and the interval
+    expect(buildFollowStatus(dir, STATE).follower).toMatchObject({ applied_rows: 5 });
+    expect(buildFollowStatus(dir, STATE).follower.state).not.toBe('stopped'); // a new owner session is `invalid` until a pass settles it; `stopped` would mean the file was ignored
+  });
+
+  test('a follower.json from before the seed id was written still counts as the same seed', async () => {
+    const dir = tmp();
+    writeSeedRecord(dir, SEED);
+    writeFileSync(join(dir, 'follower.json'), JSON.stringify({
+      version: 1, epoch_id: 'seed-1', epoch_started_at: 't', updated_at: new Date().toISOString(), applied_rows: 7, queue_depth: 0, lag_ms: 0, last_seq: 1,
+      watermark: { valid: true, through: null, invalidated_reason: null }, lag: { epoch: [], hours: {} }, fingerprints: { checked_rows: 0, mismatches: 0 },
+      probe: { state: 'not_run', checked_at: null, server_version: null, collation: null, mismatches: 0 }, allocators: { verified: false, checked_at: null },
+    }));
+    const { child } = childOn(dir);
+    await child.close();
+    expect(readFollowerFile(dir)).toMatchObject({ applied_rows: 7, seed_id: 'seed-1' });
   });
 
   test('a fingerprint the store computes differently is counted, per row, in the epoch totals', async () => {
@@ -328,7 +365,7 @@ describe('follow status', () => {
     expect(buildFollowStatus(dir, STATE, NOW).follower.state).toBe('behind');
     withFile(dir, { watermark: { valid: false, through: null, invalidated_reason: 'seq_gap' }, queue_depth: 2 });
     expect(buildFollowStatus(dir, STATE, NOW).follower.state).toBe('invalid');
-    withFile(dir, { epoch_id: 'another-seed' });
+    withFile(dir, { epoch_id: 'another-seed', seed_id: 'another-seed' });
     expect(buildFollowStatus(dir, STATE, NOW).follower.applied_rows).toBe(0);
   });
 
@@ -368,18 +405,20 @@ describe('status --json', () => {
       'schema_version', 'brain', 'enabled', 'state', 'directory', 'totals', 'by_op', 'serving', 'child_shed', 'children', 'recent_faults',
       'epoch_id', 'epoch_started_at', 'follower', 'reconcile', 'write_comparisons', 'fingerprints', 'seed', 'allocators', 'primary_refreshes',
     ]));
-    expect(json.epoch_id).toBe('seed-1');
+    expect(json.epoch_id).toBeNull(); // the epoch is the evidence epoch a child opens, not the seed
+    expect(json.epoch_started_at).toBeNull();
+    expect(json.seed).toMatchObject({ seed_id: 'seed-1' });
     expect(json.follower).toEqual({
-      state: 'stopped', lag_ms: null, lag_ms_p99_24h: null, lag_ms_p99_epoch: null, queue_depth: 0, applied_rows: 0,
+      state: 'stopped', action: null, lag_ms: null, lag_ms_p99_24h: null, lag_ms_p99_epoch: null, queue_depth: 0, applied_rows: 0,
       coverage_watermark: { valid: false, through: null, invalidated_reason: 'not_started' },
     });
     expect(json.reconcile.state).toBe('never_run');
-    expect(json.write_comparisons).toEqual({ state: 'capability_missing', sample_rate: 0.1, comparable: 0, unexplained_difference: 0, uncomparable: 0, capability_missing: 0 });
+    expect(json.write_comparisons).toEqual({ state: 'capability_missing', sample_rate: 0.05, comparable: 0, unexplained_difference: 0, uncomparable: 0, capability_missing: 0 });
     expect(json.fingerprints).toEqual({ checked_rows: 0, mismatches: 0, probe: {
       state: 'not_run', checked_at: null, server_version: null, collation: null, mismatches: 0, ctype: null, locale_provider: null, locale: null,
       differing_code_points: [], differing_code_points_total: 0, corpus_mismatches: 0, corpus_mismatch_rows: [], facts_with_differing_code_points: 0,
     } });
-    expect(json.seed).toEqual({ seed_id: 'seed-1', finished_at: SEED.finished_at, unseeded_gap_rows_total: 0 });
+    expect((json as { seed: unknown }).seed).toEqual({ seed_id: 'seed-1', finished_at: SEED.finished_at, unseeded_gap_rows_total: 0, storage: null });
     expect(json.allocators).toEqual({ verified: false, checked_at: null });
     expect(json.primary_refreshes).toEqual({ nonterminal_rows: null, checked_at: null });
   });
@@ -405,7 +444,7 @@ function shadowReadiness(s: Partial<FollowStatus>): 'ready' | 'not_ready' | 'fol
 describe('shadowReadiness (the S5a reading rules)', () => {
   const good = (): FollowStatus => ({
     epoch_id: 'e', epoch_started_at: 't',
-    follower: { state: 'following', lag_ms: 0, lag_ms_p99_24h: 4, lag_ms_p99_epoch: 4, queue_depth: 0, applied_rows: 1, coverage_watermark: { valid: true, through: 't', invalidated_reason: null } },
+    follower: { state: 'following', action: null, lag_ms: 0, lag_ms_p99_24h: 4, lag_ms_p99_epoch: 4, queue_depth: 0, applied_rows: 1, coverage_watermark: { valid: true, through: 't', invalidated_reason: null } },
     reconcile: { state: 'ok', last_pass: null, consecutive_clean_full_passes: 1, next_full_pass_due: null },
     write_comparisons: { state: 'capability_missing', sample_rate: 1, comparable: 0, unexplained_difference: 0, uncomparable: 0, capability_missing: 0 },
     fingerprints: { checked_rows: 1, mismatches: 0, probe: { ...NOT_RUN_PROBE, state: 'pass', checked_at: 't', server_version: '17', collation: 'C' } },

@@ -148,6 +148,33 @@ fn a_failed_batch_stores_nothing() {
 }
 
 #[test]
+fn a_batch_that_fails_after_good_rows_stores_none_of_them() {
+    // Value: protects=a failed batch leaves no accepted prefix; fails_when=rows commit one by one before a later row fails;
+    // why_new=a_failed_batch_stores_nothing fails on its first row, before any data was written; seam=none;
+    // no_claim=power-loss durability.
+    let s = seeded_pages();
+    let good = row(&[("page_id", "7"), ("tag", "founder")]);
+    let bad = row(&[("page_id", "99"), ("tag", "x")]);
+    let err = s
+        .import_relation(SEED, "tags", vec![good, bad])
+        .unwrap_err();
+    assert_eq!(err.code, PAGE_NOT_FOUND);
+    assert!(err.message.starts_with("tags row 1:"), "{}", err.message);
+    assert!(
+        s.get_tags("people/alice-example", &ReadScope::default())
+            .unwrap()
+            .is_empty()
+    );
+    // The same seed may send the batch again: the refused batch recorded nothing.
+    let r = import(
+        &s,
+        "tags",
+        vec![row(&[("page_id", "7"), ("tag", "founder")])],
+    );
+    assert_eq!((r.imported, r.skipped), (1, 0));
+}
+
+#[test]
 fn sources_are_copied_verbatim_and_retries_skip() {
     let s = store();
     let wiki = row(&[
@@ -256,6 +283,30 @@ fn pages_keep_ids_times_revisions_and_family_columns() {
             .unwrap(),
         10
     );
+}
+
+#[test]
+fn an_imported_page_signature_decides_which_embedded_chunks_are_stale() {
+    // Value: protects=the page's embedding signature survives the import; fails_when=the signature is dropped or changed (every embedded chunk
+    // would then read stale or fresh by the wrong rule); why_new=the signature check in pages_keep_ids_times_revisions_and_family_columns runs on a
+    // page with no chunk, so it passes without the signature; seam=none; no_claim=embedding provider compatibility.
+    let s = seeded_pages();
+    let text = "Alice builds widgets at acme.";
+    let mut embedded = chunk_row("41", "0", text);
+    embedded.insert("embedding".into(), Some("[0.5,-0.25,1]".into()));
+    embedded.insert("embedded_at".into(), Some("2026-01-03 00:00:00+00".into()));
+    embedded.insert("embedded_text_hash".into(), Some(md5_hex(text)));
+    assert_eq!(import(&s, "content_chunks", vec![embedded]).imported, 1);
+    let stale = |signature: &str| {
+        s.count_stale_chunks(&StaleChunkOptions {
+            signature: Some(signature.into()),
+            include_null_signature: true,
+            ..Default::default()
+        })
+        .unwrap()
+    };
+    assert_eq!(stale("openai:text-embedding-3-large:1536"), 0);
+    assert_eq!(stale("another:model:1"), 1);
 }
 
 #[test]
@@ -386,7 +437,7 @@ fn chunks_keep_ids_vectors_and_hashes() {
     assert_eq!(chunk.meta["parent_symbol_path"], json!(["a", "b c"]));
     assert!(chunk.length > 0);
     drop(read);
-    // The dropped chunks (43, 44) used their ids on the primary: the counter passes them too.
+    // The dropped segment chunk (43) and retired chunk (44) still moved the counter: a code edge may name them.
     assert_eq!(counter(&s, crate::chunks::NEXT_CHUNK_ID), 45);
 
     let vectors = s.get_embeddings_by_chunk_ids(&[41, 42]).unwrap();
@@ -907,6 +958,9 @@ fn the_not_copied_list_is_pinned_sorted_and_disjoint_from_the_relations() {
             "code_traversal_cache",
             "conversation_parser_llm_cache",
             "dream_verdicts",
+            "engine_writer_coverage_gaps",
+            "engine_writer_observations",
+            "engine_writer_sessions",
             "eval_candidates",
             "eval_capture_failures",
             "eval_contradictions_cache",

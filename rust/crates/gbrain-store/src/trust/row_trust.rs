@@ -8,6 +8,10 @@
 //!   content column changed, the stamp lowers the tier to the write's and sets the context's
 //!   origin; otherwise both stay.
 //!
+//! - A proposed `addTakesBatch` row: the `BEFORE INSERT` trigger runs before `ON CONFLICT`
+//!   decides, so [`check_insert`] refuses a writer the insert stamp refuses even when the row
+//!   already holds the values and nothing is written.
+//!
 //! Keys: none; the columns are part of the row's record and omitted while the tier is `unknown`
 //! with no origin.
 
@@ -57,6 +61,9 @@ pub(crate) fn stamp_row(
     content_changed: bool,
 ) -> Result<RowTrust> {
     let context = stamp_context::current()?;
+    // `gbrain_stamp_write_attribution` casts the request on every row written to `takes` and
+    // `timeline_entries` (the facts writer checks its own context in `facts::stamp_fact`).
+    context.attribution.refuse_request_not_uuid()?;
     let (row, stored_origin) = match old {
         None => (
             StampRow::Insert {
@@ -82,4 +89,65 @@ pub(crate) fn stamp_row(
             OriginStamp::Set(origin) => origin,
         },
     })
+}
+
+/// The `BEFORE INSERT` trigger on a proposed row of `table` under the open write's trust context:
+/// a writer the insert stamp refuses (a tier above `operator_curated` without owner confirmation)
+/// fails the statement, whether or not `ON CONFLICT` then writes anything.
+pub(crate) fn check_insert(table: TrustTable) -> Result<()> {
+    let context = stamp_context::current()?;
+    stamp(
+        &context,
+        table,
+        StampRow::Insert {
+            supplied: TrustTier::Unknown,
+        },
+    )
+    .map(|_| ())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::trust::WriteTrust;
+
+    fn under<T>(writer: Option<TrustTier>, origin: Option<Value>, f: impl FnOnce() -> T) -> T {
+        let _trust = stamp_context::open(WriteTrust {
+            writer,
+            origin,
+            ..WriteTrust::default()
+        });
+        f()
+    }
+
+    #[test]
+    fn a_writer_above_the_floor_without_confirmation_is_refused_on_insert_and_update() {
+        let refused = under(Some(TrustTier::UserConfirmed), None, || {
+            check_insert(TrustTable::Takes)
+        })
+        .unwrap_err();
+        assert!(
+            refused.message.contains("owner confirmation"),
+            "{refused:?}"
+        );
+        let agent = RowTrust {
+            trust_tier: Some("agent_written".into()),
+            write_origin: Some(json!({ "channel": "agent" })),
+        };
+        assert!(
+            under(Some(TrustTier::UserConfirmed), None, || stamp_row(
+                TrustTable::Takes,
+                Some(&agent),
+                &agent,
+                false
+            ))
+            .is_err()
+        );
+        assert!(
+            under(Some(TrustTier::AgentWritten), None, || check_insert(
+                TrustTable::Takes
+            ))
+            .is_ok()
+        );
+    }
 }

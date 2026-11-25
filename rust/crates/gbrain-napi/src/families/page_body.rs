@@ -71,6 +71,19 @@ impl Brain {
         })
     }
 
+    /// `readSegmentedEmbedPage({ id } | { sourceId, slug })`: the sealed live segmented page's embed
+    /// fields, or `null`.
+    #[napi]
+    pub fn read_segmented_embed_page<'env>(
+        &self,
+        env: &'env Env,
+        reference: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_segmented_embed_page(&required(reference, "readSegmentedEmbedPage ref")?)
+        })
+    }
+
     /// `readManifest(pageId, { generation?, stagingId?, region?, lastN? }?)`: rows by seq.
     #[napi]
     pub fn read_manifest<'env>(
@@ -137,8 +150,9 @@ impl Brain {
         })
     }
 
-    /// Not a member: `{ lead, revision }` of page `pageId` for `sealSegmentedPage` (the stored
-    /// timeline lead, `""` when none, and the page's knowledge revision), or `null` for a missing page.
+    /// Not a member: `{ lead, revision, slug, sourceId }` of page `pageId` for `sealSegmentedPage`
+    /// (the stored timeline lead, `""` when none, the page's knowledge revision and its identity),
+    /// or `null` for a missing page.
     #[napi]
     pub fn read_segmented_seal_lead<'env>(
         &self,
@@ -146,10 +160,7 @@ impl Brain {
         page_id: Value,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            let lead =
-                s.read_segmented_seal_lead(required(page_id, "readSegmentedSealLead pageId")?)?;
-            Ok(lead
-                .map(|(lead, revision)| serde_json::json!({ "lead": lead, "revision": revision })))
+            s.read_segmented_seal_lead(required(page_id, "readSegmentedSealLead pageId")?)
         })
     }
 
@@ -195,6 +206,20 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.set_body_staging_state(&id, &state, &arg(options, "setBodyStagingState options")?)
+        })
+    }
+
+    /// `sweepSegments({ sourceId?, pageId?, graceMs?, expireStagings?, now? }?)`: the segment
+    /// garbage collection, `now` as an ISO string; `{ retiredChunksDeleted, manifestRowsDeleted,
+    /// textsDeleted, stagingsExpired }`.
+    #[napi]
+    pub fn sweep_segments<'env>(
+        &self,
+        env: &'env Env,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.sweep_segments(&arg(options, "sweepSegments options")?)
         })
     }
 
@@ -263,6 +288,53 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.refresh_page_body(&slug, &source_id, &compiled_truth, &timeline, &content_hash)
+        })
+    }
+
+    /// `lockBodyStagingState(stagingId)`: the staging's state, or `null`.
+    #[napi]
+    pub fn lock_body_staging_state<'env>(
+        &self,
+        env: &'env Env,
+        staging_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.lock_body_staging_state(&staging_id))
+    }
+
+    /// `deleteUnstagedSegmentChunks(pageId, generation, keepChunkIndexes)`: resolves `null`.
+    #[napi]
+    pub fn delete_unstaged_segment_chunks<'env>(
+        &self,
+        env: &'env Env,
+        page_id: Value,
+        generation: Value,
+        keep_chunk_indexes: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let keep: Vec<i64> = required(
+                keep_chunk_indexes,
+                "deleteUnstagedSegmentChunks keepChunkIndexes",
+            )?;
+            s.delete_unstaged_segment_chunks(
+                required(page_id, "deleteUnstagedSegmentChunks pageId")?,
+                required(generation, "deleteUnstagedSegmentChunks generation")?,
+                &keep,
+            )
+        })
+    }
+
+    /// `deleteRewrittenSegmentDerivations({ pageId, touchedOccurrenceIds, linkReachOccurrenceIds,
+    /// pipelines, liveOccurrenceIds })`: rows deleted.
+    #[napi]
+    pub fn delete_rewritten_segment_derivations<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let spec: gbrain_store::page_body::RewrittenDerivationsDelete =
+                required(spec, "deleteRewrittenSegmentDerivations spec")?;
+            s.delete_rewritten_segment_derivations(&spec)
         })
     }
 }

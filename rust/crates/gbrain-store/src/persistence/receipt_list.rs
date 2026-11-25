@@ -121,6 +121,74 @@ pub(crate) fn list_write_request_rows_in(
     Ok(rows.iter().map(RequestRecord::to_row).collect())
 }
 
+/// The filters of `listIncarnationRequests`: the request rows of one source incarnation that the
+/// dream cycle's journal reads name (`listLaterPersistenceRequests`, `listCommittedOutputRequests`,
+/// engine-sql/dream-cycle.ts). A `None` filter skips its fence.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct IncarnationRequestFilter {
+    pub source_id: String,
+    pub incarnation: String,
+    /// The exact slug (`slug=$3`).
+    pub slug: Option<String>,
+    /// Only sequences above this one, as decimal text (`sequence > $4`).
+    pub after_sequence: Option<String>,
+    /// The states to keep (`state IN (...)`).
+    pub states: Option<Vec<String>>,
+    /// The operation to keep (`operation='put_page'`).
+    pub operation: Option<String>,
+    /// Request ids, each a UUID compared as Postgres compares a `uuid` (`request_id=ANY($1::uuid[])`).
+    pub request_ids: Option<Vec<String>>,
+    /// Newest sequence first (`ORDER BY sequence DESC`); oldest first otherwise.
+    pub newest_first: bool,
+}
+
+pub(crate) fn list_incarnation_requests_in(
+    read: &dyn KvRead,
+    filter: &IncarnationRequestFilter,
+) -> Result<Vec<Value>> {
+    let after = match &filter.after_sequence {
+        None => None,
+        Some(text) => Some(text.parse::<u64>().map_err(|_| {
+            StoreError::invalid("listIncarnationRequests afterSequence is not a sequence")
+        })?),
+    };
+    let ids = match &filter.request_ids {
+        None => None,
+        Some(ids) => Some(
+            ids.iter()
+                .map(|id| super::uuid_param(id, "listIncarnationRequests requestId"))
+                .collect::<Result<Vec<_>>>()?,
+        ),
+    };
+    let mut rows: Vec<RequestRecord> = all_requests(read)?
+        .into_iter()
+        .filter(|r| {
+            r.source_id == filter.source_id
+                && r.source_incarnation == filter.incarnation
+                && filter.slug.as_ref().is_none_or(|slug| &r.slug == slug)
+                && after.is_none_or(|a| r.sequence > a)
+                && filter
+                    .states
+                    .as_ref()
+                    .is_none_or(|states| states.contains(&r.state))
+                && filter
+                    .operation
+                    .as_ref()
+                    .is_none_or(|op| &r.operation == op)
+                && ids
+                    .as_ref()
+                    .is_none_or(|ids| ids.contains(&r.request_id.to_lowercase()))
+        })
+        .collect();
+    if filter.newest_first {
+        rows.sort_by_key(|r| std::cmp::Reverse(r.sequence));
+    } else {
+        rows.sort_by_key(|r| r.sequence);
+    }
+    Ok(rows.iter().map(RequestRecord::to_row).collect())
+}
+
 impl Store {
     /// `listWriteRequestRows(principalKind, principalId, sourceId, filter)`: full request rows,
     /// newest sequence first, at most `filter.limit`.
@@ -131,6 +199,15 @@ impl Store {
         filter: &WriteRequestListFilter,
     ) -> Result<Vec<Value>> {
         list_write_request_rows_in(&*self.read()?, principal, source_id, filter)
+    }
+
+    /// `listIncarnationRequests(filter)`: the request rows of one source incarnation through the
+    /// filter's fences, by sequence (the dream cycle's two journal reads).
+    pub fn list_incarnation_requests(
+        &self,
+        filter: &IncarnationRequestFilter,
+    ) -> Result<Vec<Value>> {
+        list_incarnation_requests_in(&*self.read()?, filter)
     }
 }
 

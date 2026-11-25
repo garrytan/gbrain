@@ -15,7 +15,8 @@
  *   - with --transcripts, a one-shot import of exported call transcripts (.txt, .md) as company/calls/<date>-<title>
  *     pages in the company source (gbrain import --calls: credentials redacted, keyword-only, each file once), and a
  *     line naming who can read them, read from gbrain access who-can-read; the pages carry no readers of their own;
- *   - me/facts and company/facts carry type: facts, and the block tells the agent to quote only their dated lines;
+ *   - me/facts and company/facts carry type: facts and claims: allowed (check_claims reads them), and the block tells
+ *     the agent to quote only their dated lines and to check a draft's numbers with check_claims;
  *   - one line saying what the conversation archive is doing on this brain (on, off or offered), read from doctor;
  *   - a managed layout block beside the brain-first block, telling the agent which pages to read and to quote
  *     facts and numbers only from the facts pages. `--shape none` removes the block and keeps the pages;
@@ -53,7 +54,7 @@ export interface LayoutFlags {
 }
 
 export const IMPORT_INLINE_MAX = 500;
-export const LAYOUT_VERSION = 3;
+export const LAYOUT_VERSION = 4;
 export const LAYOUT_BEGIN = '<!-- gbrain:brain-layout:begin -->';
 export const LAYOUT_END = '<!-- gbrain:brain-layout:end -->';
 export const COMPANY_SOURCE = 'company';
@@ -71,7 +72,7 @@ export const setupArgv = (harness: string, scope: LayoutScope = 'user', source: 
 
 const markers = (harness: string, scope: LayoutScope, source: string | null, shape: BrainShape): BlockMarkers => ({ begin: LAYOUT_BEGIN, end: LAYOUT_END, label: 'brain-layout', rerun: [...setupArgv(harness, scope, source), '--shape', shape === 'none' ? 'personal' : shape].join(' ') });
 
-export interface StarterPage { slug: string; title: string; body: string; type?: string }
+export interface StarterPage { slug: string; title: string; body: string; type?: string; claims?: 'allowed' }
 
 /** The personal starter pages: empty forms with one marked example line each. */
 export const PERSONAL_PAGES: readonly StarterPage[] = [
@@ -79,6 +80,7 @@ export const PERSONAL_PAGES: readonly StarterPage[] = [
     slug: 'me/facts',
     title: 'Facts about me',
     type: 'facts',
+    claims: 'allowed',
     body: 'True things about me that agents may say. One dated line per fact, with where it came from. '
       + 'Never overwrite a line: when something changes, add a new dated line.\n\n'
       + '- Example (delete me): 2026-01-01: I live in example-city. Source: I said so.',
@@ -105,6 +107,7 @@ export const COMPANY_PAGES: readonly StarterPage[] = [
     slug: 'company/facts',
     title: 'Company facts',
     type: 'facts',
+    claims: 'allowed',
     body: 'Numbers and facts agents may quote. One line each, with a date and where it came from. '
       + 'Never overwrite a line: when a number changes, add a new dated line.\n\n'
       + '- Example (delete me): 2026-01-01: 12 paying customers. Source: billing export.',
@@ -143,7 +146,7 @@ export const COMPANY_PAGES: readonly StarterPage[] = [
 ];
 
 export function renderStarterPage(p: StarterPage): string {
-  return `---\ntitle: ${p.title}\n${p.type ? `type: ${p.type}\n` : ''}status: stub\n---\n# ${p.title}\n\n${p.body}\n\n`
+  return `---\ntitle: ${p.title}\n${p.type ? `type: ${p.type}\n` : ''}${p.claims ? `claims: ${p.claims}\n` : ''}status: stub\n---\n# ${p.title}\n\n${p.body}\n\n`
     + '_This page is an empty form (status: stub). It holds no facts until you add your own lines; then remove the stub line from the frontmatter._\n';
 }
 
@@ -164,9 +167,10 @@ export function renderLayoutBlock(harness: string, scope: LayoutScope = 'user', 
     lines.push(`- Before a task that needs the company's context, read company/facts, company/decisions and company/pricing (source ${COMPANY_SOURCE}).`,
       '- Quote company numbers only from company/facts, and name it.',
       '- Add a new decision to company/decisions as a dated entry with why, who and what would make us revisit it.',
-      `- Save company facts and decisions with --source ${COMPANY_SOURCE}; personal ones go to the default source.`);
+      `- Save company facts and decisions with --source ${COMPANY_SOURCE}; personal ones go to the default source.`,
+      '- Save a decision the whole team should know into company/ with its readers named (readable_by: [<member>, ...] in its frontmatter); a company/ page without readable_by is readable by everyone who can read the company source.');
   }
-  lines.push('- A page with type: facts holds one dated line per fact: quote only its dated lines, and add a new fact as a new dated line.',
+  lines.push('- A page with type: facts holds one dated line per fact: quote only its dated lines, check a draft\'s numbers against them with check_claims (gbrain claims check) before stating them, and add a new fact as a new dated line.',
     '- Never overwrite a page: add a new dated line. Save facts I tell you with remember, naming where they came from.',
     '- A page whose frontmatter says status: stub is an empty form: it holds no facts yet.');
   return lines.join('\n');
@@ -315,10 +319,17 @@ function writePages(exec: Run, launcher: string, pages: readonly StarterPage[], 
   });
 }
 
+/** Why a requested import folder cannot be read (the import would find nothing in it), or null. */
+function unreadableFolder(dir: string): string | null {
+  try { readdirSync(dir); return null; } catch (e) { return `cannot read ${dir}: ${(e as NodeJS.ErrnoException).code ?? (e as Error).message}`; }
+}
+
 /** One read-only import of `dir` into `source`, deferred to the agent above IMPORT_INLINE_MAX; returns the first file's title to search for. */
 function importFolder(exec: Run, launcher: string, dir: string, source: string | null, dryRun: boolean): { outcome: ImportOutcome; title: string | null } {
-  const { count, first } = countNotes(dir);
   const argv = ['gbrain', 'import', dir, '--no-embed', ...(source ? ['--source', source] : [])];
+  const unreadable = unreadableFolder(dir);
+  if (unreadable) return { outcome: { dir, files: 0, action: 'failed', argv, detail: unreadable }, title: null };
+  const { count, first } = countNotes(dir);
   if (count > IMPORT_INLINE_MAX) return { outcome: { dir, files: count, action: 'deferred', argv, detail: `more than ${IMPORT_INLINE_MAX} markdown files; run the import as its own step` }, title: null };
   if (dryRun) return { outcome: { dir, files: count, action: 'imported', argv, detail: 'would import (read only)' }, title: null };
   const imp = exec([launcher, 'import', dir, '--no-embed', '--json'], undefined, source);
@@ -355,9 +366,11 @@ function readersOf(exec: Run, launcher: string, slug: string): NonNullable<Trans
 
 /** One read-only import of a call-transcript folder into the company source, deferred to the agent above IMPORT_INLINE_MAX files. */
 function importCalls(exec: Run, launcher: string, dir: string, dryRun: boolean): TranscriptsOutcome {
-  const { count } = countNotes(dir, IMPORT_INLINE_MAX, CALL_FILES);
   const args = ['import', dir, '--calls', '--prefix', CALLS_PREFIX, '--no-embed'];
   const argv = ['gbrain', ...args, '--source', COMPANY_SOURCE];
+  const unreadable = unreadableFolder(dir);
+  if (unreadable) return { dir, files: 0, action: 'failed', argv, detail: unreadable };
+  const { count } = countNotes(dir, IMPORT_INLINE_MAX, CALL_FILES);
   if (count > IMPORT_INLINE_MAX) return { dir, files: count, action: 'deferred', argv, detail: `more than ${IMPORT_INLINE_MAX} call files; run the import as its own step` };
   if (dryRun) return { dir, files: count, action: 'imported', argv, detail: 'would import (read only)' };
   const imp = exec([launcher, ...args, '--json'], undefined, COMPANY_SOURCE);
@@ -479,6 +492,11 @@ export function applyBrainLayout(opts: { harness: string; scope?: LayoutScope; s
     } else {
       const company = outcome.company = ensureCompanySource(exec, launcher, flags.dryRun);
       if (company.action === 'failed' && !opts.instructionsDeclined) outcome.block = syncLayoutBlock(opts.instructionsPath, harness, scope, source, blockShape(flags.brain, true), flags.dryRun);
+      if (company.action === 'failed') {
+        const detail = `not run: the ${COMPANY_SOURCE} source could not be set up (${company.detail ?? 'unknown error'})`;
+        if (flags.docs) outcome.docs = { dir: flags.docs, files: 0, action: 'failed', argv: ['gbrain', 'import', flags.docs, '--no-embed', '--source', COMPANY_SOURCE], detail };
+        if (flags.transcripts) outcome.transcripts = { dir: flags.transcripts, files: 0, action: 'failed', argv: ['gbrain', 'import', flags.transcripts, '--calls', '--prefix', CALLS_PREFIX, '--no-embed', '--source', COMPANY_SOURCE], detail };
+      }
       if (company.action !== 'failed') {
         outcome.pages.push(...writePages(exec, launcher, COMPANY_PAGES, COMPANY_SOURCE, flags.dryRun));
         if (flags.docs) {

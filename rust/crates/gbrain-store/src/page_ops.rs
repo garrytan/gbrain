@@ -8,9 +8,10 @@
 //! listAllPageRefs, listPrefixSampledPages, listCorpusSample, getContentFlagsByPageIds,
 //! getUnverifiedExtractionPageIds, getPageTimestamps, getEffectiveDates, revertToVersion.
 //!
-//! Keys: none. Every read scans the page records (`pages::all_pages`), as `list_pages` does; the
-//! family tag `keys::PAGE_OPS` (`p`) stays unused until an index is needed, and such an index needs
-//! the core `write_page` hook to stay in step.
+//! Keys: this file keeps none. The only records under `keys::PAGE_OPS` (`p`) are the retrieval
+//! records of `page_ops/retrievals.rs`. Every read scans the page records (`pages::all_pages`), as
+//! `list_pages` does; an index of page fields under `p` needs the core `write_page` hook to stay in
+//! step.
 //!
 //! Text compares and sorts in byte order (Postgres `COLLATE "C"`). Dates cross the binding as ISO
 //! strings with microseconds.
@@ -40,7 +41,10 @@ use serde_json::{Map, Value, json};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+mod atom_restore;
+mod relational;
 pub(crate) mod retrievals;
+mod stale_atoms;
 pub(crate) use retrievals::remove_page_rows;
 
 /// The code `revertToVersion` refuses with when the page or the version is segmented. The
@@ -404,20 +408,29 @@ fn shuffle_seed(seed: Option<f64>, env: &dyn Env) -> u64 {
     }
 }
 
-/// `{ page, tags, revision, sourceIncarnation, withdrawals }`, as `Store::read_page_snapshot`.
+/// `{ page, tags, revision, sourceIncarnation, withdrawals }` (and the global purge fields), as
+/// `Store::read_page_snapshot`.
 fn snapshot_json(read: &dyn KvRead, page: &PageRecord) -> Result<Value> {
     let incarnation = read_source(read, &page.source_id)?
         .map(|s| s.incarnation)
         .unwrap_or_default();
     let mut tags = page.tags.clone();
     tags.sort();
-    Ok(json!({
+    let mut snapshot = json!({
         "page": page.to_page_with_columns(read)?,
         "tags": tags,
         "revision": page.knowledge_revision,
         "sourceIncarnation": incarnation,
-        "withdrawals": crate::trust::withdrawals::page_withdrawals(read, &page.source_id, &page.slug)?,
-    }))
+    });
+    if let Value::Object(fields) = &mut snapshot {
+        fields.extend(crate::page_withdrawals::snapshot_withdrawals(
+            read,
+            &page.source_id,
+            &page.slug,
+            false,
+        )?);
+    }
+    Ok(snapshot)
 }
 
 /// A canonical field changed: a new knowledge revision, and the chunks no longer match the text
@@ -515,7 +528,7 @@ fn atom_not_imported(page: &PageRecord) -> bool {
 /// is a live page of the same source, that no live non-imported atom of the same source and origin
 /// replaced with a different hash, and whose hash is the hash of the origin's latest retirement
 /// (`retired_at` text descending, NULL last, then id descending).
-fn restorable_atoms(pages: &[PageRecord]) -> HashSet<u64> {
+pub(crate) fn restorable_atoms(pages: &[PageRecord]) -> HashSet<u64> {
     let live_slugs: HashSet<(&str, &str)> = pages
         .iter()
         .filter(|p| p.deleted_at_us.is_none())

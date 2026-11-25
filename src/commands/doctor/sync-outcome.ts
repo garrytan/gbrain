@@ -15,8 +15,8 @@ import { agentFix, doctorVerify } from './check-fix.ts';
 
 export interface SyncOutcomeEntry {
   source_id: string;
-  code: 'sync_first_run_in_progress' | 'sync_no_successful_sync' | 'content_receipt_stale';
-  reason: 'first_sync_running' | 'receipt_root_moved' | 'content_directory' | SyncAttemptState;
+  code: 'sync_first_run_in_progress' | 'sync_usage_limited' | 'sync_no_successful_sync' | 'content_receipt_stale';
+  reason: 'first_sync_running' | 'usage_limit' | 'receipt_root_moved' | 'content_directory' | SyncAttemptState;
   last_attempt_at: string | null;
   result: string | null;
   held: number;
@@ -39,10 +39,41 @@ export function firstSyncRunning(sourceId: string, display: string, snap: { hold
   };
 }
 
-export async function noSuccessfulSync(engine: BrainEngine, sourceId: string, display: string, managed: boolean): Promise<{ issue: string; entry: SyncOutcomeEntry }> {
+/**
+ * GST-3452: `freshSinceMs` is sync_freshness's fail age (without it no run reads as usage-limited) and `liveCeilingMs` its
+ * staleness ceiling. A sync job that is running now, and started inside the ceiling, reads as a first sync in progress
+ * (between two runs of a long first sync no sync lock is held); one running longer fails as not finishing. A source whose
+ * newest limited run that landed pages is inside the fail age, with every later finished run also stopped only at a provider
+ * usage or rate limit, is `sync_usage_limited` (warn): the unread range stays open and the next sync resumes it. Older
+ * records, failed items, held files and limited runs that land nothing past the age keep `sync_no_successful_sync` (fail).
+ */
+export async function noSuccessfulSync(engine: BrainEngine, sourceId: string, display: string, managed: boolean, freshSinceMs?: number,
+  liveCeilingMs?: number): Promise<{ issue: string; entry: SyncOutcomeEntry }> {
   const stale = managed ? (await staleOwnedContent(engine, [sourceId]).catch(error => { if (isOwnedContentSchemaMissing(error)) return []; throw error; }))[0] : undefined;
   if (stale) return contentReceiptStale(sourceId, display);
-  const attempt = await readLastSyncAttempt(engine, sourceId, managed);
+  const attempt = await readLastSyncAttempt(engine, sourceId, managed, freshSinceMs);
+  const base = { source_id: sourceId, last_attempt_at: attempt.last_attempt_at, result: attempt.result, held: attempt.held, job_id: attempt.job_id };
+  const runningMs = attempt.live_job_started_at ? Date.now() - Date.parse(attempt.live_job_started_at) : 0;
+  if (attempt.live_job && attempt.state !== 'holds_pending' && liveCeilingMs !== undefined && runningMs > liveCeilingMs) {
+    const ranFor = runningMs >= 3600_000 ? `${Math.floor(runningMs / 3600_000)}h` : `${Math.max(1, Math.floor(runningMs / 60_000))}m`;
+    return {
+      issue: `Source ${display}: no successful sync recorded; sync job #${attempt.job_id} has run for ${ranFor} without finishing; inspect it with \`gbrain jobs get ${attempt.job_id}\``,
+      entry: { ...base, code: 'sync_no_successful_sync', reason: 'last_attempt_unsuccessful',
+        fix: { argv: ['gbrain', 'jobs', 'get', String(attempt.job_id), '--json'], consent: [], actor: 'agent', requires_exclusive: false, verify: VERIFY, docs: DOCS,
+          why: `Read-only: sync job #${attempt.job_id} of ${sourceId} keeps its job lock but has run past the staleness ceiling; read its progress before cancelling it.` } },
+    };
+  }
+  if (attempt.live_job && attempt.state !== 'holds_pending') return {
+    issue: `Source ${display}: first sync running (job #${attempt.job_id}), no successful sync yet; wait for it to finish`,
+    entry: { ...base, code: 'sync_first_run_in_progress', reason: 'first_sync_running',
+      fix: waitFix(`Sync job #${attempt.job_id} of ${sourceId} is running; it stamps last_sync_at only when it succeeds, so wait and re-run this check rather than starting a second sync.`) },
+  };
+  if (attempt.usage_limited_since && (attempt.state === 'last_attempt_unsuccessful' || attempt.state === 'attempt_queued') && freshSinceMs !== undefined
+    && Date.parse(attempt.usage_limited_since) >= freshSinceMs) return {
+    issue: `Source ${display}: first sync stopped at a usage limit (last attempt ${attempt.last_attempt_at}, pages last landed ${attempt.usage_limited_since}), no successful sync yet; the next sync resumes where it stopped`,
+    entry: { ...base, held: 0, code: 'sync_usage_limited', reason: 'usage_limit',
+      fix: waitFix(`The last sync of ${sourceId} stopped at the provider's usage limit with nothing else failed; the unread range stays open and the next scheduled sync resumes it. Starting one now would hit the same limit.`) },
+  };
   const retry: Action = { argv: ['gbrain', 'sync', '--source', sourceId, ...(managed ? ['--no-pull'] : [])], consent: [], actor: 'agent', requires_exclusive: false,
     verify: VERIFY, docs: DOCS, why: `No successful sync of ${sourceId} is recorded; this runs one and stamps last_sync_at when it succeeds.` };
   const inspect: Action = attempt.job_id !== null && !managed

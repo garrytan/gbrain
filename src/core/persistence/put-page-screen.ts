@@ -22,6 +22,7 @@
  *   - a segmented (large) page: its publication decides the no-op;
  *   - a missing, deleted or changed page, or any failure of the screen.
  */
+import { normalizeSlug } from '../utils.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
@@ -36,7 +37,7 @@ export async function unchangedPutPage(ctx: OperationContext, params: Record<str
   if (!snapshot || snapshot.page.deleted_at || isSegmentedPage(snapshot.page)) return false;
   try {
     const [pending] = await ctx.engine.executeRaw(`SELECT 1 FROM persistence_requests WHERE source_id=$1 AND slug=$2 AND intent IS NOT NULL AND NOT compacted
-      AND state NOT IN ('committed','conflict','failed','cancelled') LIMIT 1`, [params.source_id, params.slug.toLowerCase()]);
+      AND state NOT IN ('committed','conflict','failed','cancelled') LIMIT 1`, [params.source_id, normalizeSlug(params.slug)]);
     if (pending) return false;
     const prepared = await preparePageAdmission(ctx, { operation: 'put_page', params });
     if (prepared.prior) return false;

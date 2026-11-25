@@ -55,10 +55,12 @@ for (const backend of testBackends()) describe(`coherent export: ${backend}`, ()
     const reads: string[] = [];
     let normalizations = 0;
     engine.executeRaw = async function (query, params, options) {
-      if (query.includes('SELECT visibility,fact_hash,withdrawn_at')) reads.push(String(params?.[0]));
       if (query.includes('AS lines(line,ord)')) normalizations++;
       return real.call(this, query, params, options) as never;
     };
+    // The ledger read is an engine member (a Postgres member runs on its own bounded executor, not through executeRaw).
+    const realLedger = engine.listExportWithdrawals;
+    engine.listExportWithdrawals = function (sourceId) { reads.push(sourceId); return realLedger.call(this, sourceId); };
     try {
       await runExport(engine, ['--dir', dir]);
       expect(reads.filter(source => source === 'default')).toHaveLength(3);
@@ -68,7 +70,7 @@ for (const backend of testBackends()) describe(`coherent export: ${backend}`, ()
       expect(parseFactsFence(readFileSync(join(dir, 'ledger/p2.md'), 'utf8')).facts[0].active).toBe(true);
       expect(parseFactsFence(readFileSync(join(dir, 'ledger/p3.md'), 'utf8')).facts[0].active).toBe(false);
       expect(parseFactsFence(readFileSync(join(dir, 'ledger/p4.md'), 'utf8')).facts[0].active).toBe(true);
-    } finally { engine.executeRaw = real; rmSync(dir, { recursive: true, force: true }); }
+    } finally { engine.executeRaw = real; engine.listExportWithdrawals = realLedger; rmSync(dir, { recursive: true, force: true }); }
   }, 60000);
   test('export-local marker shortcut preserves canonical malformed and orphan fence handling', async () => {
     await engine.executeRaw('DELETE FROM pages');

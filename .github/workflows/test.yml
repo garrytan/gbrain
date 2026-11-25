@@ -89,17 +89,16 @@ jobs:
     outputs:
       security-regressions: ${{ steps.dynamic-ci.outputs.security-regressions }}
       native-locks: ${{ steps.dynamic-ci.outputs.native-locks }}
-      persistence-validation: ${{ steps.dynamic-ci.outputs.persistence-validation }}
       stress-changed-tests: ${{ steps.dynamic-ci.outputs.stress-changed-tests }}
       enumeration-census-tests: ${{ steps.dynamic-ci.outputs.enumeration-census-tests }}
     steps:
       - id: dynamic-ci
-        uses: trunk-io/dynamic-ci@5bcddbf3615c2b032c21eed1b514c91164bda4a8  # v1 (v0.1.7)
+        uses: trunk-io/dynamic-ci@09739668b8d766d05e3dbf6f3eb0159da6597aaf  # v1 (v0.1.12)
         continue-on-error: true
         timeout-minutes: 3
         with:
           token: ${{ secrets.TRUNK_API_TOKEN }}
-          job-keys: security-regressions,native-locks,persistence-validation,stress-changed-tests,enumeration-census-tests
+          job-keys: security-regressions,native-locks,stress-changed-tests,enumeration-census-tests
           enable-annotation: 'true'
 
   # Planning gate for the native platform matrix. Pull requests that touch
@@ -123,6 +122,7 @@ jobs:
       census: ${{ steps.census.outputs.census }}
       reuse: ${{ steps.reuse.outputs.reuse }}
       reuse-source-run-id: ${{ steps.reuse.outputs.source_run_id }}
+      unit: ${{ steps.unit.outputs.unit }}
     steps:
       - id: checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -136,6 +136,8 @@ jobs:
             scripts/select-e2e.ts
             scripts/ci-reuse.ts
             scripts/lib/gh-issue.ts
+            scripts/ci-unit-suite-gate.ts
+            .gstack/ship-policy.json
           sparse-checkout-cone-mode: false
       - name: Check out again after a stalled first attempt
         if: steps.checkout.outcome == 'failure'
@@ -149,6 +151,8 @@ jobs:
             scripts/select-e2e.ts
             scripts/ci-reuse.ts
             scripts/lib/gh-issue.ts
+            scripts/ci-unit-suite-gate.ts
+            .gstack/ship-policy.json
           sparse-checkout-cone-mode: false
       - if: github.event_name == 'push' || github.event_name == 'pull_request'
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
@@ -253,6 +257,24 @@ jobs:
           fi
           echo "enumeration and census tests: $census"
           echo "census=$census" >> "$GITHUB_OUTPUT"
+      # The unit-suite-gate scope (docs/ci-event-parity.md#unit-suite-gate): skip when the pull request changes only
+      # changelog entries or only release stamps, so its unit-suite-gate passes without a full run; anything else, or a
+      # file list that cannot be read in full, is run.
+      - id: unit
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          CHANGED_FILES: ${{ github.event.pull_request.changed_files }}
+        run: |
+          set -euo pipefail
+          unit=run
+          if [[ "$CHANGED_FILES" =~ ^[0-9]{1,4}$ ]] && [ "$CHANGED_FILES" -lt 3000 ] \
+            && gh api --paginate "repos/$REPO/pulls/$PR/files?per_page=100" --jq '.[] | {filename, status, patch, previous_filename}' > "$RUNNER_TEMP/pr-files.ndjson"; then
+            unit=$(bun scripts/ci-unit-suite-gate.ts scope --files "$RUNNER_TEMP/pr-files.ndjson" --changed "$CHANGED_FILES" --policy .gstack/ship-policy.json) || unit=run
+          fi
+          echo "unit=$unit" >> "$GITHUB_OUTPUT"
 
   # Re-run checks for every event, except a master push reusing a passed full-suite run of its exact tree (scripts/ci-reuse.ts). Only dependencies and PGLite snapshots are cached.
   gitleaks:
@@ -540,6 +562,13 @@ jobs:
       # default regardless of per-test third-arg timeouts. Runs directly
       # (not via verify's CHECKS array) to avoid a package.json edit.
       - run: bash scripts/check-bun-test-timeout.sh
+      # The release binary is compiled with --bytecode --format=esm (release.yml). This builds that
+      # compile line with and without the two flags and requires the same stdout, stderr and exit
+      # codes from a fixed command set on a temp PGLite brain; only clock, ids and timings are
+      # masked (about 40 s).
+      - name: Bytecode release build prints the same output as a plain build
+        timeout-minutes: 5
+        run: bun scripts/check-bytecode-parity.ts
       # #5810: every tracked *.sh must parse under bash 3.2 (macOS /bin/bash).
       # The real parser runs in the digest-pinned bash:3.2 image; REQUIRE
       # turns a missing Docker into a failure instead of a skip, and makes the
@@ -1288,13 +1317,21 @@ jobs:
   # tier) calls it only when its diff can change persistence or managed sync, and
   # then runs only the crash robot and convergence; the full-ci dispatch, every
   # push and the nightly run every lane.
-  # Gated by dynamic-ci (docs/ci-event-parity.md#trunk-dynamic-ci): runs unless Trunk's verdict is 'false'.
+  # Not gated here: persistence-validation.yml asks Trunk Dynamic CI about the crash
+  # robot and convergence one by one (docs/ci-event-parity.md#trunk-dynamic-ci), so one
+  # lane's history never decides for the other. It needs the token passed in and
+  # pull-requests: read for its filter job.
   persistence-validation:
-    needs: [changes, dynamic-ci]
-    if: ${{ !cancelled() && needs.dynamic-ci.outputs.persistence-validation != 'false' && needs.changes.result == 'success' && needs.changes.outputs.reuse != 'true' && ((github.event_name != 'pull_request' || needs.changes.outputs.convergence != 'skip') && (github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base))) }}
+    needs: [changes]
+    if: ${{ needs.changes.result == 'success' && needs.changes.outputs.reuse != 'true' && ((github.event_name != 'pull_request' || needs.changes.outputs.convergence != 'skip') && (github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base))) }}
+    permissions:
+      contents: read
+      pull-requests: read
     uses: ./.github/workflows/persistence-validation.yml
     with:
       convergence: ${{ needs.changes.outputs.convergence || 'run' }}
+    secrets:
+      TRUNK_API_TOKEN: ${{ secrets.TRUNK_API_TOKEN }}
 
   # PR stress gate (docs/TESTING.md#stress-gate): every added or modified test
   # file, plus direct importers of changed test/helpers/ files by the fan-in
@@ -1596,6 +1633,7 @@ jobs:
         env:
           ARTIFACT_DIR: ${{ runner.temp }}/full-suite
           MANIFEST: ${{ runner.temp }}/ci-manifest/ci-manifest.json
+          EXECUTED_RECEIPTS: ${{ needs.executed-receipts.result }}
           RUN_ID: ${{ github.run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
           WORKFLOW: ${{ github.workflow }}
@@ -1607,6 +1645,47 @@ jobs:
           path: ${{ runner.temp }}/full-suite/tree.json
           retention-days: 30
           overwrite: true
+
+  # One always-run check with a fixed name (docs/ci-event-parity.md#unit-suite-gate): it fails when the unit suite
+  # failed, was cancelled or was skipped without a reason, and passes when the suite passed or was rightly skipped (a
+  # master push reusing a passed full run, or a pull request changing only changelog entries or release stamps). On
+  # any other pull request it is named unit-suite-not-run, and a scoped dispatch (native-only, race hunt, stress) skips
+  # it under that name, so only a run that judged the suite ever reports unit-suite-gate. Its name carries no Bun
+  # version or shard count.
+  # Event parity (docs/ci-event-parity.md#unit-suite-gate): every event.
+  unit-suite-gate:
+    name: ${{ ((github.event_name == 'pull_request' && needs.changes.outputs.unit != 'skip') || (github.event_name == 'workflow_dispatch' && (inputs.native_only == true || inputs.race_hunt == true || inputs.stress_files != '' || inputs.stress_base != ''))) && 'unit-suite-not-run' || 'unit-suite-gate' }}
+    needs: [changes, test]
+    if: ${{ always() && (github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base)) }}
+    runs-on: ubicloud-standard-2-ubuntu-2404
+    timeout-minutes: 5
+    steps:
+      - id: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        timeout-minutes: 3
+        continue-on-error: true
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/ci-unit-suite-gate.ts
+          sparse-checkout-cone-mode: false
+      - name: Check out again after a stalled first attempt
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        timeout-minutes: 3
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/ci-unit-suite-gate.ts
+          sparse-checkout-cone-mode: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.4
+      - name: Judge the unit suite
+        env:
+          EVENT: ${{ github.event_name }}
+          TEST_RESULT: ${{ needs.test.result }}
+          REUSE: ${{ needs.changes.outputs.reuse }}
+          UNIT: ${{ needs.changes.outputs.unit }}
+        run: bun scripts/ci-unit-suite-gate.ts judge
 
   # The cheap tier's result (docs/ci-event-parity.md#full-ci-on-pull-requests). It never
   # reports test-status or full-suite; its name and step summary say the full
@@ -1653,7 +1732,6 @@ jobs:
           DCI_SECURITY: ${{ needs.dynamic-ci.outputs.security-regressions }}
           DCI_STRESS: ${{ needs.dynamic-ci.outputs.stress-changed-tests }}
           DCI_NATIVE: ${{ needs.dynamic-ci.outputs.native-locks }}
-          DCI_PERSISTENCE: ${{ needs.dynamic-ci.outputs.persistence-validation }}
         run: bash scripts/ci-cheap-tier.sh
 
   # Master-push reuse marker (scripts/ci-reuse.ts, scripts/release-gate.ts): exists

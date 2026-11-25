@@ -22,7 +22,6 @@ mutating: true
 writes_pages: true
 writes_to:
   - daily/
-upstream: data-loss-gate@fc834ee
 # Brain-first applies in its inspection form: before deleting brain pages,
 # check backlinks / graph dependencies (get_backlinks, graph) so the card's
 # "what we'd lose" section is grounded in the actual target, not guesses.
@@ -245,11 +244,9 @@ This skill guarantees:
   `## Data Deletions` with timestamp, scope, and recovery path.
 - Routing matches the canonical triggers in the frontmatter.
 - Output written under the directories listed in `writes_to:`.
-- Privacy contract preserved: no real names, no fork-specific filesystem path
-  literals, no upstream-fork references.
+- Examples use placeholder names and paths.
 
-The full behavior contract is documented in the body sections above; this
-section exists for the conformance test.
+The full behavior contract is documented in the body sections above.
 
 ## Output Format
 

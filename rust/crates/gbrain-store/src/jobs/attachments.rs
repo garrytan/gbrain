@@ -158,3 +158,29 @@ impl Store {
         })
     }
 }
+
+/// The `minion_attachments` rows a fact purge's inventory probe searches (crate::facts::purge_probe): the content bytes.
+pub(crate) fn purge_probe_attachment_rows(
+    read: &dyn KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow, decode_base64, json_rows};
+    json_rows::<AttachmentRecord>(read, &prefix(ATTACH))?
+        .into_iter()
+        .map(|r| {
+            let content = if r.storage_uri.is_some() && r.content_b64.is_empty() {
+                ProbeCell::Null
+            } else {
+                ProbeCell::Bytes(decode_base64(&r.content_b64).ok_or_else(|| {
+                    StoreError::invalid(format!(
+                        "minion_attachments {}: the stored content is not base64",
+                        r.id
+                    ))
+                })?)
+            };
+            Ok(ProbeRow {
+                source_id: None,
+                cells: vec![("content", content)],
+            })
+        })
+        .collect()
+}

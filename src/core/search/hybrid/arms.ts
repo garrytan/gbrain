@@ -359,7 +359,7 @@ export async function runVectorArms(
       // D8 fail-open: zero rows + not strict-mode → fall through to dual-column.
       if (unifiedList.length === 0 && !resolvedMode.unified_multimodal_only) {
         console.error(
-          `[cross-modal] unified_multimodal returned zero rows for query="${query.slice(0, 60)}". ` +
+          `[cross-modal] unified_multimodal returned zero rows (the search text is not logged). ` +
           `Falling back to dual-column text path (partial coverage during reindex). ` +
           `Set search.unified_multimodal_only=true to bypass this fallback when reindex completes.`,
         );

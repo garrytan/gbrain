@@ -49,9 +49,20 @@ export interface FollowChildOptions {
   owner: () => boolean;
   writeControl: (line: string) => void;
   now?: () => number;
+  /** Called with the boundary (`apply`, `fingerprint`, `reconcile`) and the error whenever a Rust call in the follower throws. */
+  onRustError?: (boundary: string, error: unknown) => void;
+  /**
+   * The evidence epoch the readiness inputs below are counted under (evidence-epoch.ts), or null when this child has none.
+   * Left out, nothing is tagged (the follower knows no epochs). The store calls keep using the seed id.
+   */
+  epochId?: () => string | null;
 }
 
-const errorCode = (error: unknown): string => (error as { code?: string })?.code ?? (error instanceof Error ? error.name : 'rpc_failed');
+/** A short code for a failure: the error's `code`, else its class name, and only when it is a plain token (never text that could hold content). */
+const errorCode = (error: unknown): string => {
+  const raw = (error as { code?: unknown } | null)?.code ?? (error instanceof Error ? error.name : 'rpc_failed');
+  return typeof raw === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test(raw) ? raw : 'rpc_failed';
+};
 
 export class FollowChild {
   private readonly file: FollowerFile | null;
@@ -62,6 +73,8 @@ export class FollowChild {
   private lastWrite = 0;
   private fullAt: number | null = null;
   private readonly dirty = new Map<string, number>();
+  /** Counts everything that can change what the store holds or whether it is covered; a stable read needs it unmoved (`barrier`, `exclusive`). */
+  private changes = 0;
   private foreignOffset = 0;
   private lastForeign = 0;
   private foreignTimer: ReturnType<typeof setTimeout> | null = null;
@@ -70,19 +83,37 @@ export class FollowChild {
   constructor(private readonly o: FollowChildOptions) {
     this.now = o.now ?? Date.now;
     const seed = readSeedRecord(o.dir);
-    if (!seed) { this.file = null; return; }
+    if (seed?.digests !== true) { this.file = null; return; } // no seed, or one written before follow: nothing to follow
     const old = readFollowerFile(o.dir);
-    const keep = old && old.epoch_id === seed.seed_id ? old : null;
+    const keep = old && old.seed_id === seed.seed_id ? old : null;
     this.file = keep ?? {
-      version: 1, epoch_id: seed.seed_id, epoch_started_at: seed.finished_at, updated_at: new Date(this.now()).toISOString(), applied_rows: 0,
+      version: 1, epoch_id: seed.seed_id, seed_id: seed.seed_id, epoch_started_at: seed.finished_at, updated_at: new Date(this.now()).toISOString(), applied_rows: 0,
       queue_depth: 0, lag_ms: 0, last_seq: null, watermark: { valid: false, through: null, invalidated_reason: 'not_reconciled' },
       lag: { epoch: [], hours: {} }, fingerprints: { checked_rows: 0, mismatches: 0 }, probe: NOT_RUN_PROBE,
       allocators: { verified: false, checked_at: null },
     };
     if (!o.owner()) return;
+    this.syncEpoch();
     // A new owner session proves nothing about the writes before it: only a full pass that starts after this settles it.
     this.invalidate(keep ? 'follower_session_start' : 'not_reconciled');
     try { writeFileSync(join(o.dir, FOREIGN_FILE), ''); } catch { /* no lines to miss yet */ }
+  }
+
+  /**
+   * The probe, fingerprint totals, allocator verification and lag histograms are readiness evidence of ONE evidence epoch.
+   * They are tagged with it (`evidence_epoch`); when the epoch is not the one they were counted under (a rotation, or a
+   * file from before the tag) they start over, so the status never reports another build's evidence as this one's.
+   */
+  private syncEpoch(): void {
+    const file = this.file;
+    if (!file || !this.o.epochId || !this.o.owner()) return;
+    const id = this.o.epochId();
+    if ((file.evidence_epoch ?? null) === id && file.evidence_epoch !== undefined) return;
+    file.evidence_epoch = id;
+    file.lag = { epoch: [], hours: {} };
+    file.fingerprints = { checked_rows: 0, mismatches: 0 };
+    file.probe = NOT_RUN_PROBE;
+    file.allocators = { verified: false, checked_at: null };
   }
 
   /** Queues one event; ordering is the order of calls. */
@@ -94,8 +125,46 @@ export class FollowChild {
     this.chain = this.chain.then(() => this.run(event)).catch(() => { /* run never throws */ }).finally(() => { if (apply) this.depth--; });
   }
 
+  /** True while the follower holds committed work, older than `ms`, that it has not applied (evidence for a `stale` comparison). */
+  pendingBefore(ms: number): boolean { return this.waiting.some((committed) => committed < ms); }
+
+  /**
+   * The barrier's answer, handed out by the `barrier` call: the child has applied every apply line before it and the
+   * coverage watermark is valid. Returns the change count to hold the read to, or throws (`watermark_invalid`).
+   */
+  private barrier(): number {
+    this.readForeign();
+    if (!this.file?.watermark.valid) throw Object.assign(new Error('the coverage watermark is not valid'), { code: 'watermark_invalid' });
+    return this.changes;
+  }
+
+  /**
+   * Runs `read` after everything queued before it and before anything queued after it: no apply, reconcile call or
+   * invalidation runs in between. Resolves with its value when nothing changed since the barrier's `stamp` and the
+   * watermark is still valid before and after the read, else null (the sample stays inconclusive).
+   */
+  exclusive<T, W = never>(stamp: number, read: () => Promise<T>, wait?: { ms: number; onTimeout: W }): Promise<T | W | null> {
+    let abandoned = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const run = this.chain.then(async () => {
+      if (abandoned) return null; // the caller gave up waiting for the lock: the read never runs
+      if (timer) clearTimeout(timer);
+      const stable = (): boolean => { this.readForeign(); return this.changes === stamp && this.file?.watermark.valid === true; };
+      if (!stable()) return null;
+      const value = await read();
+      return stable() ? value : null;
+    });
+    this.chain = run.then(() => undefined, () => undefined);
+    if (!wait) return run;
+    // The wait for the lock has a deadline of its own: an apply that never ends holds the chain, and a caller behind it must not wait for ever.
+    return Promise.race([run, new Promise<W>((resolve) => { timer = setTimeout(() => { abandoned = true; resolve(wait.onTimeout); }, Math.max(1, wait.ms)); (timer as { unref?: () => void }).unref?.(); })]);
+  }
+
+  /** Settles when everything queued so far has ended: a caller that gave up on the lock tracks it as a stall (child.ts), so a chain that never ends is seen. */
+  pending(): Promise<void> { return this.chain; }
+
   /** Flushes follower.json (called on the heartbeat). */
-  tick(): void { this.readForeign(); this.write(true); }
+  tick(): void { this.readForeign(); this.syncEpoch(); this.write(true); }
 
   async close(): Promise<void> {
     await this.chain;
@@ -104,6 +173,7 @@ export class FollowChild {
   }
 
   private async run(event: FollowEvent): Promise<void> {
+    this.syncEpoch();
     if (event.t === 'apply') await this.apply(event);
     else if (event.t === 'watermark') this.invalidate(event.reason, event.relation);
     else if (event.t === 'rpc') await this.rpc(event);
@@ -114,6 +184,7 @@ export class FollowChild {
   private invalidate(reason: string, relation?: string, until = this.now()): void {
     const w = this.file?.watermark;
     if (!w) return;
+    this.changes++;
     if (!this.o.owner()) { this.noteForeign(reason); return; }
     if (relation) this.dirty.set(relation, Math.max(this.dirty.get(relation) ?? 0, until));
     else this.fullAt = Math.max(this.fullAt ?? 0, until);
@@ -121,10 +192,12 @@ export class FollowChild {
     w.valid = false; w.through = null; w.invalidated_reason = reason;
   }
 
-  /** The store removed rows to make room for a write: the relation differs from the primary until a pass for it repairs it. */
+  /** The store removed rows to make room for a write: the relation differs from the primary until a pass for it repairs it (a displaced page takes its tags with it, so `tags` too). */
   private relationDisplaced(relation: string): void {
-    this.invalidate('relation_dirty', relation);
-    try { this.o.writeControl(`${JSON.stringify({ t: 'dirty', relation })}\n`); } catch { /* parent gone */ }
+    for (const dirty of relation === 'pages' ? [relation, 'tags'] : [relation]) {
+      this.invalidate('relation_dirty', dirty);
+      try { this.o.writeControl(`${JSON.stringify({ t: 'dirty', relation: dirty })}\n`); } catch { /* parent gone */ }
+    }
   }
 
   /** Not the owner: leaves a line for the owner (at most one a second; the last one waits for its turn). */
@@ -169,6 +242,7 @@ export class FollowChild {
   /** A pass that started at `since` settled these `relations` (or everything, for a full pass). */
   private restore(since: number, relations: string[] | undefined): void {
     const file = this.file!;
+    this.changes++;
     if (!relations && this.fullAt !== null && this.fullAt < since) this.fullAt = null;
     for (const [relation, at] of this.dirty) if (at < since && (!relations || relations.includes(relation))) this.dirty.delete(relation);
     if (this.fullAt === null && this.dirty.size === 0 && !file.watermark.valid) {
@@ -178,12 +252,14 @@ export class FollowChild {
 
   private async apply(e: ApplyEvent): Promise<void> {
     const file = this.file;
+    this.changes++;
     this.readForeign();
     const store = this.o.owner() ? await this.o.store() : null;
     const done = (): void => { const i = this.waiting.indexOf(e.committed_at); if (i >= 0) this.waiting.splice(i, 1); };
     if (!file || !store) { done(); this.invalidate(`apply_failed:${this.o.owner() ? 'addon_unavailable' : 'not_owner'}`); return; }
+    let boundary = 'apply';
     try {
-      const result = await store.replaceRelationRows(file.epoch_id, e.relation, e.generation, e.keys, e.rows, e.digests);
+      const result = await store.replaceRelationRows(file.seed_id, e.relation, e.generation, e.keys, e.rows, e.digests);
       file.applied_rows += result.upserted + result.deleted;
       file.last_seq = e.seq;
       if (result.displaced > 0) this.relationDisplaced(e.relation);
@@ -196,12 +272,14 @@ export class FollowChild {
       for (const h of Object.keys(file.lag.hours)) if (Number(h) < Number(hour) - 24) delete file.lag.hours[h];
       if (file.watermark.valid) file.watermark.through = new Date(e.committed_at).toISOString();
       if (e.fp) {
+        boundary = 'fingerprint';
         const rust = await store.factFingerprints(e.rows.map((r) => r.fact ?? ''));
         const pairs = e.fp.filter((p): p is FingerprintPair => p !== null);
         file.fingerprints.checked_rows += pairs.length;
         file.fingerprints.mismatches += countFingerprintMismatches(pairs, rust);
       }
     } catch (error) {
+      this.o.onRustError?.(boundary, error);
       this.invalidate(`apply_failed:${errorCode(error)}`);
     } finally { done(); }
   }
@@ -209,7 +287,8 @@ export class FollowChild {
   private async rpc(e: Extract<FollowEvent, { t: 'rpc' }>): Promise<void> {
     let line: Record<string, unknown>;
     try { line = { t: 'resp', id: e.id, ok: true, value: await this.call(e.method, e.args) }; } catch (error) {
-      line = { t: 'resp', id: e.id, ok: false, error: { code: errorCode(error), message: error instanceof Error ? error.message.slice(0, 300) : 'failed' } };
+      this.o.onRustError?.(e.method === 'probe' ? 'fingerprint' : 'reconcile', error);
+      line = { t: 'resp', id: e.id, ok: false, error: { code: errorCode(error), message: errorCode(error) } }; // a code, never the exception's text: the control channel carries no content
     }
     try { this.o.writeControl(JSON.stringify(line) + '\n'); } catch { /* parent gone */ }
   }
@@ -220,15 +299,17 @@ export class FollowChild {
     if (!this.o.owner()) throw Object.assign(new Error('another process owns the Rust store'), { code: 'not_owner' });
     const store = await this.o.store();
     if (!store) throw Object.assign(new Error('the Rust addon is unavailable'), { code: 'addon_unavailable' });
-    const id = file.epoch_id;
+    const id = file.seed_id;
     const lo = (a.lo ?? null) as string | null;
     const hi = (a.hi ?? null) as string | null;
     switch (method) {
       case 'state': this.readForeign(); return { ...file.watermark };
+      case 'barrier': return { stamp: this.barrier() };
       case 'seedPlan': return store.seedPlan();
       case 'relationDigest': return store.relationDigest(id, a.relation as string, lo, hi);
       case 'relationEntries': return store.relationEntries(id, a.relation as string, lo, hi, a.limit as number);
       case 'replaceInterval': {
+        this.changes++;
         const result = await store.replaceInterval(id, a.relation as string, a.generation as number, lo, hi, a.rows as ApplyEvent['rows'], a.digests as ApplyEvent['digests']);
         file.applied_rows += result.upserted + result.deleted;
         if (result.displaced > 0) this.relationDisplaced(a.relation as string);

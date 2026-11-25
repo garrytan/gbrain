@@ -54,6 +54,12 @@ function safeParse(text: string): unknown {
   try { return JSON.parse(text); } catch { return null; }
 }
 
+/** Does the engine's schema carry the lineage function (v320)? Unknown counts as yes; below it only the source test answers. */
+export function ownerOnlyLineageReadable(engine: object): boolean {
+  const version = schemaVersionSeen(engine);
+  return !(version !== undefined && version < OWNER_ONLY_LINEAGE_SINCE);
+}
+
 /** The SQL test behind ownerOnlySourcesPresent, for a statement that folds it into other work. */
 export function ownerOnlyPresentSql(engine: object): string {
   const version = schemaVersionSeen(engine);
@@ -86,6 +92,9 @@ export async function sourceIsOwnerOnly(engine: Pick<BrainEngine, 'executeRaw'>,
 
 /** The read-time function (schema migration v320) that answers whether a page or fact row is owner-only. */
 export const OWNER_ONLY_LINEAGE_FN = 'gbrain_owner_only_lineage';
+
+/** The lineage test of an owner-only row: the v320 function, called with no arguments (no input). */
+export const OWNER_ONLY_LINEAGE_PRESENT_SQL = `${OWNER_ONLY_LINEAGE_FN}()`;
 /** The schema version (migration v320) that creates it; a literal so a read never loads a migration module. */
 export const OWNER_ONLY_LINEAGE_SINCE = 320;
 /** The read-time function (schema migration v328) that answers once per statement how this login reads owner-only lineage. */

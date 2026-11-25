@@ -178,12 +178,9 @@ export function renderTokenScopes(scopes: unknown): string {
 }
 
 async function list(json: boolean) {
-  await withConfiguredSql(async (sql) => {
-    // SELECT * reads every schema generation (private_pages and private_facts arrive with their migrations; absent reads as none).
-    const rows = await sql`
-      SELECT * FROM access_tokens
-      ORDER BY created_at DESC
-    `;
+  await withConfiguredSql(async (sql, engine) => {
+    // The engine read is SELECT *, so every schema generation reads (private_pages and private_facts arrive with their migrations; absent reads as none).
+    const rows = await engine.listAccessTokens();
     const memberStatus = await (await import('../core/access/token-member-status.ts')).tokenMemberStatuses(sql, rows);
     if (json) {
       console.log(JSON.stringify(rows.map(r => ({

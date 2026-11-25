@@ -100,13 +100,14 @@ export async function submissionAuthority(ctx: OperationContext, operation: stri
  * #5984: one local-writer read per transaction; a FOR SHARE read also answers a plain one. #6712 PR 4b: the read the
  * registration check just made answers the authorization that follows it (`withRegisteredLocalWriter`, once).
  */
+export const LOCAL_WRITER_SQL = 'SELECT lane,revoked_at,grant_ceiling FROM persistence_local_writers WHERE id=$1::uuid';
 function localWriterRow(engine: SqlEngine, id: string, lock: boolean): Promise<Array<{ lane: string; revoked_at: unknown; grant_ceiling: LocalGrant }>> {
   const registered = lock ? undefined : takeRegisteredWriterRow(id);
   if (registered) return Promise.resolve([registered]);
   const key = `local-writer:${id}`;
   return transactionMemo(engine, lock ? [`${key}:share`] : [key, `${key}:share`],
     () => engine.executeRaw<{ lane: string; revoked_at: unknown; grant_ceiling: LocalGrant }>(
-      `SELECT lane,revoked_at,grant_ceiling FROM persistence_local_writers WHERE id=$1::uuid${lock ? ' FOR SHARE' : ''}`, [id]));
+      `${LOCAL_WRITER_SQL}${lock ? ' FOR SHARE' : ''}`, [id]));
 }
 /** #5984: one membership read per source per transaction; a FOR SHARE read also answers a plain one. */
 function sourceMembership(engine: SqlEngine, sourceId: string, lock: boolean) {

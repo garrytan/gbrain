@@ -29,7 +29,7 @@ Renders a brain page (markdown with frontmatter) into a
 publication-quality PDF using the gstack `make-pdf` binary. Output is
 suitable for:
 
-- Sharing a personalized book mirror via email or Telegram
+- Sharing a personalized book mirror as a file
 - Delivering a strategic-reading playbook as a clean read
 - Producing a briefing or report with running headers and page numbers
 - Archiving a long-form essay in a portable format
@@ -147,17 +147,14 @@ Debian/Ubuntu containers).
 
 ## Delivery
 
-After rendering, deliver via the agent's preferred channel:
+After rendering, give the user the PDF in this conversation (attach it if
+your host can, else the path the Rendered: line printed) and the brain page
+link. The PDF is a rendering; the source is the
+artifact.
 
-- **Telegram:** use the `message` tool with `filePath="$OUT"` (the path the Rendered: line printed)
-  attachment. NEVER use raw `MEDIA:` tags — they fail silently.
-- **Email:** attach via the host's email tool.
-- **Direct file response:** print the PDF path; the user can pull it
-  manually.
-
-Always include the brain page link in the delivery message so the user
-can also see it on GitHub / locally. The PDF is a rendering; the source
-is the artifact.
+Send the file anywhere else only when the user asks. Before sending, confirm
+the recipient and the channel with the user, then attach the file with the
+host's file-attachment tool rather than an inline media tag.
 
 ## When it fails
 
@@ -175,8 +172,8 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 - ❌ Skipping emoji sanitization. Emoji that don't map to the rendering
   font show up as `□` boxes.
 - ❌ Adding `--cover` or `--toc` by default. Off unless asked.
-- ❌ Using raw `MEDIA:` tags for Telegram delivery. Use the `message`
-  tool with `filePath`.
+- ❌ Sending the PDF to anyone without the user's go-ahead on the
+  recipient and the channel.
 
 ## Related skills
 
@@ -194,10 +191,10 @@ This skill guarantees:
 - Routing matches the canonical triggers in the frontmatter.
 - Output written under the directories listed in `writes_to:` (when applicable).
 - Conventions referenced (`quality.md`, `brain-first.md`, `_brain-filing-rules.md`) are followed.
-- Privacy contract preserved: no real names, no fork-specific filesystem path literals, no upstream-fork references.
+- Examples use placeholder names and paths.
 
-The full behavior contract is documented in the body sections above; this section exists for the conformance test.
+The full behavior contract is documented in the body sections above.
 
 ## Output Format
 
-The skill's output shape is documented inline in the body sections above (see "Output", "Brain page format", or equivalent). The literal section header here exists for the conformance test (`test/skills-conformance.test.ts`).
+The skill's output shape is documented inline in the body sections above (see "Output", "Brain page format", or equivalent).

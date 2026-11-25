@@ -1,5 +1,5 @@
 /**
- * #8155 for the typed decide reads the doctor bounds (src/core/statement-deadline.ts `BOUNDED_TYPED_READS`).
+ * #8155 for the typed decide reads the doctor bounds (src/core/statement-deadline.ts `BOUNDED_TYPED_READS`).  This case also covers the timeline, notifier and writer-binding reads.
  * On master the doctor read these tables through `executeRaw` on the deadline-bound engine, which passed an
  * `AbortSignal.timeout(left)`: a socket or pooler that stopped answering after the connection was reserved had the
  * connection discarded at the deadline, so the call ended and no pool slot leaked. The moved members run through
@@ -22,7 +22,7 @@ const DEADLINE_MS = 150;
 /** Well under any wait the stalled read could end on its own, well over the timer's slack. */
 const SETTLE_MS = 1_000;
 
-/** The decide members a doctor check calls, as test/doctor-typed-reads-deadline.test.ts lists them. */
+/** The decide, queue-health and belief-coverage members a doctor check calls, as test/doctor-typed-reads-deadline.test.ts lists them. */
 const CALLS: Record<string, (engine: BrainEngine) => Promise<unknown>> = {
   readDecideState: (e) => e.readDecideState('doctor_deadline_probe'),
   decideSlotUsage: (e) => e.decideSlotUsage(24),
@@ -31,6 +31,23 @@ const CALLS: Record<string, (engine: BrainEngine) => Promise<unknown>> = {
   listDecideMixedModelDecisions: (e) => e.listDecideMixedModelDecisions(24),
   listDecideReceiptStats: (e) => e.listDecideReceiptStats({ sinceHours: 24 }),
   listDecideCalibrations: (e) => e.listDecideCalibrations({ includeRetired: true }),
+  readQueueHealthSignals: (e) => e.readQueueHealthSignals({ waitingThreshold: 1, oldWaitingHours: 1, windowHours: 24, stalledAfterHours: 1 }),
+  listWaitingByQueue: (e) => e.listWaitingByQueue(),
+  readQueueDivergence: (e) => e.readQueueDivergence({ windowHours: 24, ttlReasonPrefix: 'ttl:' }),
+  listQueueWedgeCounts: (e) => e.listQueueWedgeCounts(),
+  listPrivateQueueHealth: (e) => e.listPrivateQueueHealth(),
+  readWedgeSignals: (e) => e.readWedgeSignals('default', ['sync']),
+  readOldestWaitingAge: (e) => e.readOldestWaitingAge('default'),
+  listStuckActiveJobsByName: (e) => e.listStuckActiveJobsByName(),
+  listCoveredSources: (e) => e.listCoveredSources('doctor_deadline_probe'),
+  listExportWithdrawals: (e) => e.listExportWithdrawals('default'),
+  readExportWithdrawalLedgerBytes: (e) => e.readExportWithdrawalLedgerBytes('default'),
+  // The timeline-history, notifier-coverage and writer-binding reads (S2b-ns).
+  readMaxTimelineEntryId: (e) => e.readMaxTimelineEntryId(),
+  storedTimelineRowsByPageIds: (e) => e.storedTimelineRowsByPageIds([1, 2]),
+  countSegmentedTimelinePages: (e) => e.countSegmentedTimelinePages(['default'], 10),
+  notifierCoverageRecorded: (e) => e.notifierCoverageRecorded(),
+  getWorktreeBinding: (e) => e.getWorktreeBinding('default', null),
 };
 
 test('every bounded typed read has a stall case', () => {
@@ -40,7 +57,7 @@ test('every bounded typed read has a stall case', () => {
 for (const [member, call] of Object.entries(CALLS)) {
   test(`${member} stalled on its connection under the doctor deadline ends by the deadline and gives back its connection and gauge slot`, async () => {
     const counts = { discards: 0, releases: 0 };
-    const fake = makeFakeSql(stmt => (/decide_|decision_receipts/.test(stmt.text) ? never() : undefined));
+    const fake = makeFakeSql(stmt => (/decide_|decision_receipts|minion_jobs|belief_events|fact_withdrawals|timeline_entries|worktree|notifier/i.test(stmt.text) ? never() : undefined));
     const reserve = fake.sql.reserve;
     fake.sql.reserve = async () => {
       const r = await reserve();

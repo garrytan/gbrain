@@ -135,6 +135,11 @@ fn read_all<T: serde::de::DeserializeOwned>(read: &dyn KvRead, prefix: &[u8]) ->
         .collect()
 }
 
+/// Every supersede proposal, in id order (the claim-pair and contested-pair reads filter them).
+pub(crate) fn all_proposals(read: &dyn KvRead) -> Result<Vec<ProposalRecord>> {
+    read_all(read, &tagged(PROPOSAL))
+}
+
 fn id_at(bytes: &[u8]) -> Result<u64> {
     keys::be8(bytes).ok_or_else(|| StoreError::new(crate::error::STORE_CORRUPT, "bad proposal id"))
 }
@@ -317,6 +322,15 @@ pub struct ListDecideProposalsOptions {
     pub limit: Option<i64>,
 }
 
+/// The filter of `listPendingContradictions`: a source, and a lower bound on the proposal's
+/// creation time (an ISO timestamp).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct PendingContradictionsFilter {
+    pub source_id: Option<String>,
+    pub since: Option<String>,
+}
+
 /// `transitionDecideProposal`: a status change and the state it records.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -490,6 +504,72 @@ impl Store {
             row["old_fact"] = json!(old.map(|(t, _)| t));
             row["entity_slug"] = json!(entity);
             out.push(row);
+        }
+        Ok(out)
+    }
+
+    /// `listPendingContradictions({ sourceId?, since? })`: the pending proposals whose two facts
+    /// are both active and in the proposal's source (a decided proposal, or a pair with a
+    /// superseded, expired or missing fact, is not listed), with the new fact's tier, entity and
+    /// claim and the claim values of both, `created_at, id` order, at most 1000.
+    pub fn list_pending_contradictions(
+        &self,
+        filter: &PendingContradictionsFilter,
+    ) -> Result<Vec<Value>> {
+        let since = match &filter.since {
+            Some(text) => Some(crate::env::parse_iso(text).ok_or_else(|| {
+                StoreError::invalid("listPendingContradictions since must be an ISO timestamp")
+            })?),
+            None => None,
+        };
+        let now = self.env.now_micros();
+        let read = self.read()?;
+        let mut rows: Vec<ProposalRecord> = read_all(&*read, &tagged(PROPOSAL))?;
+        rows.retain(|r| {
+            r.status == "pending"
+                && filter.source_id.as_ref().is_none_or(|s| *s == r.source_id)
+                && since.is_none_or(|t| r.created_at_us >= t)
+        });
+        rows.sort_by_key(|r| (r.created_at_us, r.id));
+        let mut out = Vec::new();
+        for record in rows {
+            if out.len() == 1000 {
+                break;
+            }
+            let (Some(new_id), Some(old_id)) =
+                (row_id(record.new_fact_id), row_id(record.old_fact_id))
+            else {
+                continue;
+            };
+            let (Some(new), Some(old)) = (read_fact(&*read, new_id)?, read_fact(&*read, old_id)?)
+            else {
+                continue;
+            };
+            if new.source_id != record.source_id
+                || old.source_id != record.source_id
+                || !new.active(now)
+                || !old.active(now)
+            {
+                continue;
+            }
+            out.push(json!({
+                "id": record.id,
+                "source_id": record.source_id,
+                "sweep_id": record.sweep_id,
+                "created_at": iso(record.created_at_us),
+                "new_fact_id": record.new_fact_id,
+                "old_fact_id": record.old_fact_id,
+                "new_fact": new.fact,
+                "old_fact": old.fact,
+                "trust_tier": new.tier().as_str(),
+                "entity_slug": new.entity_slug,
+                "slug": new.source_markdown_slug.or(old.source_markdown_slug),
+                "claim_metric": new.claim_metric,
+                "claim_unit": new.claim_unit,
+                "claim_period": new.claim_period,
+                "new_value": new.claim_value,
+                "old_value": old.claim_value,
+            }));
         }
         Ok(out)
     }
@@ -1195,6 +1275,107 @@ impl Store {
             }
         }
     }
+}
+
+/// `PURGE_REVIEW_COUNTS_SQL` (a fact purge's plan): the review-queue rows, review proposals and
+/// supersede proposals of `source_id` that name a purged take (`a_ref`/`b_ref` in `refs`) or a
+/// purged fact (`new_fact_id`/`old_fact_id` in `fact_ids`), as `(q, rp, dp)`.
+pub(crate) fn purge_review_counts(
+    read: &dyn KvRead,
+    source_id: &str,
+    refs: &std::collections::HashSet<String>,
+    fact_ids: &std::collections::HashSet<i64>,
+) -> Result<(i64, i64, i64)> {
+    let names = |a: &str, b: &str| refs.contains(a) || refs.contains(b);
+    let queue: Vec<QueueRecord> = read_all(read, &tagged(REVIEW_QUEUE))?;
+    let q = queue
+        .iter()
+        .filter(|r| r.source_id == source_id && names(&r.a_ref, &r.b_ref))
+        .count();
+    let review: Vec<ReviewProposalRecord> = read_all(read, &tagged(REVIEW_PROPOSAL))?;
+    let rp = review
+        .iter()
+        .filter(|r| r.source_id == source_id && names(&r.a_ref, &r.b_ref))
+        .count();
+    let supersede: Vec<ProposalRecord> = read_all(read, &tagged(PROPOSAL))?;
+    let dp = supersede
+        .iter()
+        .filter(|r| {
+            r.source_id == source_id
+                && (fact_ids.contains(&r.new_fact_id) || fact_ids.contains(&r.old_fact_id))
+        })
+        .count();
+    Ok((q as i64, rp as i64, dp as i64))
+}
+
+/// `deletePurgeReviewQueue` (a fact purge): deletes the review-queue rows of `source_id` naming a
+/// purged fact or take (`a_ref` or `b_ref` in `refs`); how many.
+pub(crate) fn purge_review_queue(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    refs: &std::collections::HashSet<String>,
+) -> Result<u64> {
+    let rows: Vec<QueueRecord> = read_all(&*tx, &tagged(REVIEW_QUEUE))?;
+    let mut deleted = 0;
+    for r in rows {
+        if r.source_id == source_id && (refs.contains(&r.a_ref) || refs.contains(&r.b_ref)) {
+            tx.delete(&queue_key(&r.kind, &r.source_id, &r.a_ref, &r.b_ref))?;
+            deleted += 1;
+        }
+    }
+    Ok(deleted)
+}
+
+/// `deletePurgeReviewProposals` (a fact purge): deletes the review proposals of `source_id` naming
+/// a purged fact or take, with their unique-key entries; how many.
+pub(crate) fn purge_review_proposals(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    refs: &std::collections::HashSet<String>,
+) -> Result<u64> {
+    let rows: Vec<ReviewProposalRecord> = read_all(&*tx, &tagged(REVIEW_PROPOSAL))?;
+    let mut deleted = 0;
+    for r in rows {
+        if r.source_id == source_id && (refs.contains(&r.a_ref) || refs.contains(&r.b_ref)) {
+            let unique = review_key(&r.kind, &r.source_id, &r.a_ref, &r.b_ref, &r.subject);
+            if tx.get(&unique)?.as_deref() == Some(&r.id.to_be_bytes()[..]) {
+                tx.delete(&unique)?;
+            }
+            tx.delete(&id_key(REVIEW_PROPOSAL, r.id))?;
+            deleted += 1;
+        }
+    }
+    Ok(deleted)
+}
+
+/// `deletePurgeDecideProposals` (a fact purge): deletes the supersede proposals of `source_id`
+/// whose new or old fact is purged, with their sweep-slot and claim-pair entries; how many.
+pub(crate) fn purge_decide_proposals(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    fact_ids: &std::collections::HashSet<i64>,
+) -> Result<u64> {
+    let rows: Vec<ProposalRecord> = read_all(&*tx, &tagged(PROPOSAL))?;
+    let mut deleted = 0;
+    for r in rows {
+        if r.source_id != source_id
+            || !(fact_ids.contains(&r.new_fact_id) || fact_ids.contains(&r.old_fact_id))
+        {
+            continue;
+        }
+        let own = |bytes: Option<Vec<u8>>| bytes.as_deref() == Some(&r.id.to_be_bytes()[..]);
+        let slot = sweep_slot_key(&r.sweep_id, r.pair_index);
+        if own(tx.get(&slot)?) {
+            tx.delete(&slot)?;
+        }
+        let pair = claim_pair_key(&r.source_id, r.new_fact_id, r.old_fact_id);
+        if own(tx.get(&pair)?) {
+            tx.delete(&pair)?;
+        }
+        tx.delete(&id_key(PROPOSAL, r.id))?;
+        deleted += 1;
+    }
+    Ok(deleted)
 }
 
 // ------------------------------------------------------------------ the shadow follow

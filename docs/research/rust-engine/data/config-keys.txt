@@ -9,6 +9,13 @@ agent.search_snippet_chars
 agent.use_gateway_loop
 ai.chat.per_turn_timeout_ms
 anthropic_api_key
+apple.helper.port
+apple_contacts.destructive_writes
+apple_contacts.enrich
+apple_contacts.enrich.create_cards
+apple_contacts.owner_key_file
+apple_contacts.write
+apple_contacts.write_token_file
 artifacts_sync_mode
 auto_chronicle
 auto_link
@@ -46,6 +53,7 @@ context.hot_memory.session_only
 context.proactive_brief
 conversation_parser.llm_fallback_enabled
 cross_project_learnings
+cycle.calibration_profile.budget_usd
 cycle.consolidate.cluster_threshold
 cycle.consolidate.enabled
 cycle.extract_atoms.budget_usd
@@ -55,8 +63,10 @@ cycle.extract_atoms.max_source_chars
 cycle.extract_atoms.pacing_ms
 cycle.extract_atoms.page_discovery_budget
 cycle.grade_takes.auto_resolve.enabled
+cycle.grade_takes.budget_usd
 cycle.grade_takes.write_gstack_learnings
 cycle.lint.enabled
+cycle.propose_takes.budget_usd
 cycle.propose_takes.enabled
 cycle.propose_takes.types
 cycle.purge.mcp_request_log_retention_days
@@ -65,6 +75,9 @@ cycle.timezone
 dashscope_api_key
 database_path
 database_url
+dedupe.exa
+dedupe.exa_run_cap
+dedupe.exa_total_cap_usd
 deepseek_api_key
 derive.max_usd_per_page
 doctor.background_refresh
@@ -157,6 +170,7 @@ facts.extraction_model
 facts.extraction_prompt_appendix
 facts.page_write_notability_filter
 facts.supersession_thresholds
+facts.unbacked_entity_keys
 feedback.alpha
 feedback.enabled
 feedback.event_retention_days
@@ -179,8 +193,10 @@ generations.synthesis.retire_previous
 generations.valve.max_per_run
 generations.valve.max_ratio
 google_api_key
+google_contacts.identity_links
 health.cache_ttl_ms
 hooks.stop_push_debounce_min
+identity.phone_country_code
 import.analyze_every_pages
 import.require_configured_root
 integrations.memorable.enabled
@@ -416,6 +432,7 @@ search.unified_multimodal
 search.unified_multimodal_only
 search.vector_legacy_guard
 search_embedding_column
+secrets.on_push
 self_upgrade.attempting_version
 self_upgrade.autopilot_launcher
 self_upgrade.channel
@@ -425,6 +442,7 @@ self_upgrade.last_check_ts
 self_upgrade.mode
 self_upgrade.mode_prompted
 self_upgrade.quiet_hours
+self_upgrade.serve_launcher
 serve.cli_socket
 serve.vector_prewarm
 shared_skills.inventory.max_entries
@@ -437,6 +455,12 @@ skillopt.capture_enabled
 skillopt.models_strict
 skillopt.reflect_max_tokens
 skillpack.nag_disabled
+skills.resolver.per_harness.<harness>.dirs
+skills.resolver.pinned
+skills.resolver.pins.<catalog>
+skills.resolver.session_token_budget
+skills.resolver.top_gate
+skills.resolver.top_k
 sources.default
 sources.refresh_drain_wait_ms
 sources.refresh_fetch_timeout_ms

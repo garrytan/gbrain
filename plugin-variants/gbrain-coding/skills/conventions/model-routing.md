@@ -122,12 +122,12 @@ work, not what gbrain calls internally.
 | Fast lightweight sub-agents | Groq | 500 tok/s, good for simple tasks |
 | Judge tests / quality grading | Haiku | Cheap, good enough for pass/fail |
 
-### Refusal routing
+### Refusals
 
 When a model refuses a request:
 1. Tell the user, naming the model: it is a provider refusal, not a model failure
-2. Re-spawn on another model only when the user chooses one; the output then names both models. A stored `refusal_routing.behavior: next_in_chain` in [cross-modal.yaml](cross-modal.yaml) is read as `report`, with a one-line notice that the option was removed
-3. Never reword the request to get around a refusal, and never hide the refusal or the switch
+2. Stop that step. Don't re-spawn it on another model. A stored `refusal_routing.behavior: next_in_chain` in [cross-modal.yaml](cross-modal.yaml) is read as `report`, with a one-line notice that the option was removed
+3. Never reword the request to get around a refusal, and never hide the refusal
 
 ### Spawn rules
 

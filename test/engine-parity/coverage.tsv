@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 290/294
+# covered: 327/361
 # lifecycle: 9/9
 # pages: 32/32
 # search: 7/7
@@ -15,7 +15,7 @@
 # extraction: 7/7
 # links: 23/23
 # tags: 5/5
-# timeline: 10/10
+# timeline: 19/19
 # ontology: 4/4
 # raw_files: 5/6
 # takes: 17/17
@@ -38,6 +38,15 @@
 # field_usage: 1/1
 # decide_proposals: 16/16
 # decide_store: 20/20
+# alias_fanout_reads: 4/4
+# cli_reads_export: 9/12
+# jobs_health: 8/8
+# trust_tier_reads: 1/3
+# withdrawal_discovery: 1/1
+# belief_reads: 0/1
+# search_vector: 0/1
+# open_loops: 5/7
+# write_misc: 0/21
 # owner_only: 1/1
 # wanted_links: 2/2
 # salience_enrich: 5/5
@@ -47,21 +56,21 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	13	no	yes	yes	refuses:transactions
+transaction	lifecycle	yes	19	no	yes	yes	refuses:transactions
 transactionDirect	lifecycle	yes	1	no	yes	yes	refuses:transactions
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	41	yes	yes	yes	serves
-readPageSnapshot	pages	yes	12	no	yes	yes	serves
+getPage	pages	yes	51	yes	yes	yes	serves
+readPageSnapshot	pages	yes	21	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	165	yes	yes	yes	serves
+putPage	pages	yes	199	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	17	yes	yes	yes	serves
-deletePages	pages	yes	2	yes	yes	yes	serves
+deletePages	pages	yes	3	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	43	yes	yes	yes	serves
+softDeletePage	pages	yes	50	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	8	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	5	no	yes	yes	serves
@@ -83,11 +92,11 @@ listPrefixSampledPages	pages	yes	1	no	yes	yes	serves
 listCorpusSample	pages	yes	1	no	yes	yes	serves
 getPageSealState	pages	yes	1	no	yes	yes	refuses:pages
 refreshPageOrigin	pages	yes	1	no	yes	yes	refuses:pages
-searchKeyword	search	yes	28	yes	yes	yes	serves
+searchKeyword	search	yes	29	yes	yes	yes	serves
 countKeywordPages	search	yes	5	no	yes	yes	serves
 searchKeywordPages	search	yes	8	no	yes	yes	serves
 searchTitles	search	yes	13	yes	yes	yes	serves
-searchVector	search	yes	9	yes	yes	yes	serves
+searchVector	search	yes	10	yes	yes	yes	serves
 getEmbeddingsByChunkIds	search	yes	1	no	yes	yes	serves
 searchKeywordChunks	search	yes	6	yes	yes	yes	serves
 cosinesByChunkIds	search_reads	yes	1	no	yes	yes	serves
@@ -100,7 +109,7 @@ generatedPagesIn	search_reads	yes	2	no	yes	yes	serves
 livePageIdsAt	search_reads	yes	2	no	yes	yes	serves
 pagesLinkingTo	search_reads	yes	2	no	yes	yes	serves
 upsertChunks	chunks	yes	21	yes	yes	yes	serves
-sealChunks	chunks	yes	16	no	yes	yes	serves
+sealChunks	chunks	yes	17	no	yes	yes	serves
 getChunks	chunks	yes	25	yes	yes	yes	serves
 getChunkPage	chunks	yes	9	no	yes	yes	serves
 getChunkWindows	chunks	yes	9	no	yes	yes	serves
@@ -145,38 +154,47 @@ relationalFanout	links	yes	3	yes	yes	yes	serves
 relationalChainHop	links	yes	2	no	yes	yes	serves
 getBacklinkCounts	links	yes	6	no	yes	yes	serves
 getAdjacencyBoosts	links	yes	6	no	yes	yes	serves
-getContentFlagsByPageIds	links	yes	6	no	yes	yes	serves
-getUnverifiedExtractionPageIds	links	yes	6	no	yes	yes	serves
+getContentFlagsByPageIds	links	yes	7	no	yes	yes	serves
+getUnverifiedExtractionPageIds	links	yes	7	no	yes	yes	serves
 getPageTimestamps	links	yes	1	no	yes	yes	serves
 getEffectiveDates	links	yes	6	no	yes	yes	serves
 getSalienceScores	links	yes	8	yes	yes	yes	serves
 findOrphanPages	links	yes	1	yes	yes	yes	serves
-addTag	tags	yes	8	yes	yes	yes	serves
+addTag	tags	yes	10	yes	yes	yes	serves
 removeTag	tags	yes	1	no	yes	yes	serves
 pruneFrontmatterTags	tags	yes	1	no	yes	yes	serves
 addPageTagsById	tags	yes	1	no	yes	yes	serves
 getTags	tags	yes	2	yes	yes	yes	serves
-addTimelineEntry	timeline	yes	12	yes	yes	yes	serves
+sampleEffectiveDates	timeline	yes	1	no	yes	yes	refuses:raw_sql
+sampleEffectiveDateSources	timeline	yes	1	no	yes	yes	refuses:raw_sql
+readMaxTimelineEntryId	timeline	yes	1	no	yes	yes	refuses:raw_sql
+listStoredTimelineRowsOrdered	timeline	yes	2	no	yes	yes	refuses:raw_sql
+deleteTimelineRows	timeline	yes	2	no	yes	yes	refuses:raw_sql
+storedTimelineRowsByPageIds	timeline	yes	1	no	yes	yes	refuses:raw_sql
+countSegmentedTimelinePages	timeline	yes	1	no	yes	yes	refuses:raw_sql
+countTimelineCommentMarkupRows	timeline	yes	1	no	yes	yes	refuses:raw_sql
+listTimelineOrphanPages	timeline	yes	1	no	yes	yes	refuses:raw_sql
+addTimelineEntry	timeline	yes	15	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	1	no	yes	yes	serves
 getTimeline	timeline	yes	6	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	2	no	yes	yes	serves
 getSince	timeline	yes	1	no	yes	yes	serves
 getOnThisDay	timeline	yes	1	no	yes	yes	serves
 getLastSeen	timeline	yes	1	no	yes	yes	serves
-upsertEventProjection	timeline	yes	6	no	yes	yes	serves
+upsertEventProjection	timeline	yes	8	no	yes	yes	serves
 removeTimelineRows	timeline	yes	2	no	yes	yes	refuses:timeline
 updateTimelineDetails	timeline	yes	1	no	yes	yes	refuses:timeline
 mergeOntologyFact	ontology	yes	5	no	yes	yes	serves
 getOntology	ontology	yes	3	no	yes	yes	serves
 discoverOntologyDimensions	ontology	yes	1	no	yes	yes	serves
 findOntologyConflicts	ontology	yes	2	no	yes	yes	serves
-putRawData	raw_files	yes	2	yes	yes	yes	serves
+putRawData	raw_files	yes	3	yes	yes	yes	serves
 getRawData	raw_files	yes	2	yes	yes	yes	serves
-upsertFile	raw_files	yes	2	no	yes	yes	serves
-getFile	raw_files	yes	2	no	yes	yes	serves
+upsertFile	raw_files	yes	5	no	yes	yes	serves
+getFile	raw_files	yes	5	no	yes	yes	serves
 listFilesForPage	raw_files	yes	1	no	yes	yes	serves
 listFiles	raw_files	no	0	no	-	-	-
-addTakesBatch	takes	yes	23	yes	yes	yes	serves
+addTakesBatch	takes	yes	24	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	2	no	yes	yes	serves
 listTakes	takes	yes	13	no	yes	yes	serves
 searchTakes	takes	yes	1	no	yes	yes	serves
@@ -202,7 +220,7 @@ getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
 insertFact	facts	yes	28	yes	yes	yes	serves
-insertFacts	facts	yes	13	no	yes	yes	serves
+insertFacts	facts	yes	14	no	yes	yes	serves
 deleteFactsForPage	facts	yes	2	no	yes	yes	serves
 expireFact	facts	yes	9	no	yes	yes	serves
 listFactsByEntity	facts	yes	13	yes	yes	yes	serves
@@ -215,22 +233,22 @@ findCandidateDuplicates	facts	yes	6	yes	yes	yes	serves
 consolidateFact	facts	yes	3	no	yes	yes	serves
 findTrajectory	facts	yes	4	yes	yes	yes	serves
 getFactsHealth	facts	yes	2	yes	yes	yes	serves
-allocateBodyOccurrenceIds	segmented_body	yes	6	no	yes	yes	serves
-stageSegmentTexts	segmented_body	yes	5	no	yes	yes	serves
+allocateBodyOccurrenceIds	segmented_body	yes	11	no	yes	yes	serves
+stageSegmentTexts	segmented_body	yes	10	no	yes	yes	serves
 readSegmentTexts	segmented_body	yes	3	no	yes	yes	serves
-stageManifestRows	segmented_body	yes	7	no	yes	yes	serves
+stageManifestRows	segmented_body	yes	12	no	yes	yes	serves
 readManifest	segmented_body	yes	7	no	yes	yes	serves
 stageSegmentChunks	segmented_body	yes	8	no	yes	yes	serves
-createSegmentedPageShell	segmented_body	yes	11	no	yes	yes	serves
-flipBodyGeneration	segmented_body	yes	17	no	yes	yes	serves
+createSegmentedPageShell	segmented_body	yes	17	no	yes	yes	serves
+flipBodyGeneration	segmented_body	yes	22	no	yes	yes	serves
 sealSegmentedPage	segmented_body	yes	5	no	yes	yes	serves
-openBodyStaging	segmented_body	yes	8	no	yes	yes	serves
-setBodyStagingState	segmented_body	yes	7	no	yes	yes	serves
+openBodyStaging	segmented_body	yes	13	no	yes	yes	serves
+setBodyStagingState	segmented_body	yes	12	no	yes	yes	serves
 sweepSegments	segmented_body	yes	1	no	yes	yes	refuses:page_body
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
-createVersion	versions	yes	5	no	yes	yes	serves
+createVersion	versions	yes	6	no	yes	yes	serves
 getVersions	versions	yes	5	no	yes	yes	serves
 revertToVersion	versions	yes	2	no	yes	yes	serves
 countOnboardSignal	stats_ingest	yes	1	no	yes	yes	refuses:health
@@ -238,13 +256,13 @@ getStats	stats_ingest	yes	4	yes	yes	yes	serves
 getHealth	stats_ingest	yes	5	yes	yes	yes	serves
 logIngest	stats_ingest	yes	2	no	yes	yes	serves
 getIngestLog	stats_ingest	yes	2	no	yes	yes	serves
-updateSlug	sync_aliases	yes	11	no	yes	yes	serves
+updateSlug	sync_aliases	yes	14	no	yes	yes	serves
 rewriteLinks	sync_aliases	yes	1	no	yes	yes	serves
 resolveSlugWithAlias	sync_aliases	yes	1	yes	yes	yes	serves
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves
 resolveAliases	sync_aliases	yes	12	no	yes	yes	serves
-setPageAliases	sync_aliases	yes	5	no	yes	yes	serves
-replaceDerivedAliases	sync_aliases	yes	2	no	yes	yes	refuses:pages
+setPageAliases	sync_aliases	yes	11	no	yes	yes	serves
+replaceDerivedAliases	sync_aliases	yes	6	no	yes	yes	refuses:pages
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
@@ -263,7 +281,7 @@ readPersistenceBrainId	import_guards	yes	1	no	yes	yes	refuses:persistence_journa
 readLocalWriterRow	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
 insertLocalWriterRow	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
 readTransactionSettings	import_guards	yes	1	no	yes	yes	refuses:transactions
-applyTransactionSettings	import_guards	yes	1	no	yes	yes	refuses:transactions
+applyTransactionSettings	import_guards	yes	2	no	yes	yes	refuses:transactions
 readLedgerSource	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
 isFolderRestricted	import_guards	yes	1	no	yes	yes	refuses:access_control
 acquireCycleLock	cycle_locks	yes	8	no	yes	yes	refuses:minion_queue
@@ -328,6 +346,64 @@ storeDecideQualification	decide_store	yes	3	no	yes	yes	serves
 listDecideCalibrations	decide_store	yes	7	no	yes	yes	serves
 getDecideCalibration	decide_store	yes	6	no	yes	yes	serves
 setDecideCalibrationRetired	decide_store	yes	4	no	yes	yes	serves
+resolveCaseSensitiveAliases	alias_fanout_reads	yes	3	no	yes	yes	refuses:raw_sql
+readPageTitle	alias_fanout_reads	yes	1	no	yes	yes	refuses:raw_sql
+readPageAliasRows	alias_fanout_reads	yes	3	no	yes	yes	refuses:raw_sql
+readEntityAliasRows	alias_fanout_reads	yes	1	no	yes	yes	refuses:raw_sql
+listExportPageKeys	cli_reads_export	yes	1	no	yes	yes	refuses:raw_sql
+readExportWithdrawalLedgerBytes	cli_reads_export	no	0	no	-	-	-
+listExportWithdrawals	cli_reads_export	no	0	no	-	-	-
+readExportPageRows	cli_reads_export	yes	1	no	yes	yes	refuses:raw_sql
+normalizeFenceLines	cli_reads_export	yes	1	no	yes	yes	refuses:raw_sql
+readSegmentedPageHead	cli_reads_export	yes	1	no	yes	yes	refuses:raw_sql
+readBodyManifestRows	cli_reads_export	yes	1	no	yes	yes	refuses:raw_sql
+readBodyManifestMeta	cli_reads_export	yes	1	no	yes	yes	refuses:raw_sql
+readBodyManifestOutline	cli_reads_export	no	0	no	-	-	-
+listForcedCutSeqs	cli_reads_export	yes	1	no	yes	yes	refuses:raw_sql
+readSegmentedVersionBodyBytes	cli_reads_export	yes	1	no	yes	yes	refuses:raw_sql
+listAccessPolicySourceIds	cli_reads_export	yes	2	no	yes	yes	refuses:raw_sql
+readQueueHealthSignals	jobs_health	yes	2	no	yes	yes	serves
+listWaitingByQueue	jobs_health	yes	2	no	yes	yes	serves
+readQueueDivergence	jobs_health	yes	2	no	yes	yes	serves
+listQueueWedgeCounts	jobs_health	yes	2	no	yes	yes	serves
+listPrivateQueueHealth	jobs_health	yes	2	no	yes	yes	serves
+readWedgeSignals	jobs_health	yes	2	no	yes	yes	serves
+readOldestWaitingAge	jobs_health	yes	2	no	yes	yes	serves
+listStuckActiveJobsByName	jobs_health	yes	2	no	yes	yes	serves
+listVersionTrustTiers	trust_tier_reads	no	0	no	-	-	-
+listVersionReasonWriters	trust_tier_reads	no	0	no	-	-	-
+listPageTypesByIds	trust_tier_reads	yes	1	no	yes	yes	refuses:raw_sql
+readWithdrawalDiscovery	withdrawal_discovery	yes	4	no	yes	yes	refuses:raw_sql
+listCoveredSources	belief_reads	no	0	no	-	-	-
+countSearchVectorRows	search_vector	no	0	no	-	-	-
+upsertOpenLoop	open_loops	yes	10	no	yes	yes	serves
+closeOpenLoop	open_loops	yes	7	no	yes	yes	serves
+listOpenLoops	open_loops	yes	4	no	yes	yes	serves
+countOpenLoopsByCounterpartyEmail	open_loops	yes	1	no	yes	yes	serves
+purgeStaleAppliedCaptures	open_loops	no	0	no	-	-	-
+listPendingCoreEditNotices	open_loops	no	0	no	-	-	-
+readEntityOpenLoops	open_loops	yes	4	no	yes	yes	serves
+readSourceState	write_misc	no	0	no	-	-	-
+readAdmissionSource	write_misc	no	0	no	-	-	-
+sharedSkillPackTablePresent	write_misc	no	0	no	-	-	-
+listSharedSkillPackRoots	write_misc	no	0	no	-	-	-
+getWorktreeBinding	write_misc	no	0	no	-	-	-
+hasExtractedEvents	write_misc	no	0	no	-	-	-
+listActiveAccessMembers	write_misc	no	0	no	-	-	-
+hasLabelledOnlyMember	write_misc	no	0	no	-	-	-
+listAccessTokens	write_misc	no	0	no	-	-	-
+notifierCoverageRecorded	write_misc	no	0	no	-	-	-
+readOpCheckpointKeys	write_misc	no	0	no	-	-	-
+readHealthMemoClock	write_misc	no	0	no	-	-	-
+listSynopsisSourceIds	write_misc	no	0	no	-	-	-
+expireMemoryProposals	write_misc	no	0	no	-	-	-
+listAwaitingMemoryProposals	write_misc	no	0	no	-	-	-
+readMemoryProposal	write_misc	no	0	no	-	-	-
+purgeMemoryProposals	write_misc	no	0	no	-	-	-
+readPendingProposalSummary	write_misc	no	0	no	-	-	-
+listMemoryProposalRows	write_misc	no	0	no	-	-	-
+listOwnerProposalRows	write_misc	no	0	no	-	-	-
+attachSourcePath	write_misc	no	0	no	-	-	-
 ownerOnlyMarkTriggers	owner_only	yes	2	no	yes	yes	refuses:raw_sql
 lockRegisteredSourceIds	wanted_links	yes	1	no	yes	yes	refuses:links
 replaceWantedLinkRows	wanted_links	yes	4	no	yes	yes	refuses:links

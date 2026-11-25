@@ -58,6 +58,18 @@ pub struct BrainOpenOptions {
     pub schema_version: Option<u32>,
     /// Recorded in `FORMAT` when the brain is created.
     pub created_by: Option<String>,
+    /// Opt-in: let many write transactions run at once. Off unless this is true or
+    /// `GBRAIN_RUST_CONCURRENT_WRITES=1` is set.
+    pub concurrent_writes: Option<bool>,
+    /// The embedding identity a fresh brain records as config `embedding_model` and
+    /// `embedding_dimensions`, resolved by the caller the way the SQL engines resolve it.
+    pub embedding_model: Option<String>,
+    pub embedding_dimensions: Option<u32>,
+    /// What a fresh brain records as config `chunk_strategy`.
+    pub chunk_strategy: Option<String>,
+    /// A fresh brain records the write gate's scan baseline under this detector version (the
+    /// TypeScript `WRITE_GATE_DETECTOR_VERSION`).
+    pub write_gate_detector_version: Option<u32>,
 }
 
 #[napi]
@@ -89,6 +101,33 @@ impl Brain {
                     format!("a result could not be encoded: {e}"),
                 )
             })
+        })
+    }
+
+    /// The open store, taken now on the calling thread; `None` when the handle is closed.
+    pub(crate) fn current(&self) -> Option<Arc<Store>> {
+        self.slot.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// Runs `open` on this handle's pool and makes the store it returns this handle's store: how a
+    /// handle comes to run on a store bound to a transaction (`families/transactions.rs`). Rejects
+    /// `invalid_state` when this handle is already open. `run` then works unchanged.
+    pub(crate) fn bind<'env>(
+        &self,
+        env: &'env Env,
+        open: impl FnOnce() -> Result<Store, StoreError> + Send + 'static,
+    ) -> napi::Result<Object<'env>> {
+        let slot = self.slot.clone();
+        spawn(env, &self.pool, move || {
+            let mut guard = slot.lock().unwrap_or_else(|e| e.into_inner());
+            if guard.is_some() {
+                return Err(TaskError::new(
+                    gbrain_store::error::INVALID_STATE,
+                    "this handle already has a brain open; close it first",
+                ));
+            }
+            *guard = Some(Arc::new(open().map_err(task_error)?));
+            Ok(Value::Null)
         })
     }
 }
@@ -134,15 +173,32 @@ impl Brain {
             let mut opts = OpenOptions {
                 engine_abi: crate::ENGINE_ABI,
                 catalog_version: crate::CATALOG_VERSION,
+                concurrent_writes: std::env::var("GBRAIN_RUST_CONCURRENT_WRITES")
+                    .is_ok_and(|v| v == "1"),
                 ..OpenOptions::default()
             };
             if let Some(options) = options {
+                if let Some(on) = options.concurrent_writes {
+                    opts.concurrent_writes = on;
+                }
                 if let Some(v) = options.schema_version {
                     opts.schema_version = v;
                 }
                 if let Some(by) = options.created_by {
                     opts.created_by = by;
                 }
+                if let Some(model) = options.embedding_model {
+                    opts.initial_config.push(("embedding_model".into(), model));
+                }
+                if let Some(dims) = options.embedding_dimensions {
+                    opts.initial_config
+                        .push(("embedding_dimensions".into(), dims.to_string()));
+                }
+                if let Some(strategy) = options.chunk_strategy {
+                    opts.initial_config
+                        .push(("chunk_strategy".into(), strategy));
+                }
+                opts.write_gate_detector_version = options.write_gate_detector_version;
             }
             // Holding the slot while opening makes a second `open` on this handle wait, then see
             // the brain open.

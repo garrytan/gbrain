@@ -1,5 +1,6 @@
-//! The page-write reads that belong to no other family: a source's state as a write reads it, and
-//! the path attach of `sources add` (`attachSourcePath`).
+//! The page-write reads that belong to no other family: a source's state as a write reads it, the
+//! path attach of `sources add` (`attachSourcePath`), and the pages whose readers name a member or
+//! a group (`listPagesNamingReader`, the `access member remove` and `access group remove` previews).
 //! PGLite and Postgres run the SQL in `src/core/engine-sql/write-misc.ts`; this answers the same
 //! question from the store's records. The link endpoint read is `link_queries`.
 //!
@@ -7,9 +8,11 @@
 //! rust/docs/store/write_misc.md (shared skillpacks, chronicle state, access members and memory
 //! proposals have no records here).
 //!
-//! Keys: none of its own. It reads the source records, and the path attach rewrites one.
+//! Keys: none of its own. It reads the source and page records, and the path attach rewrites one.
 
 use crate::error::Result;
+use crate::facts::privacy::access_readers;
+use crate::pages::all_pages;
 use crate::sources::{read_source, source_key};
 use crate::{Store, put_json};
 use serde::Serialize;
@@ -24,7 +27,64 @@ pub struct SourceStateRow {
     pub config: Map<String, Value>,
 }
 
+/// A page by slug and source (`PageNamingReaderRow` of `src/core/engine-sql/access-control.ts`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PageNamingReaderRow {
+    pub slug: String,
+    pub source_id: String,
+}
+
 impl Store {
+    /// The pages in every source whose normalized readers (`gbrain_access_readers`, the
+    /// `page_readers` column) name exactly `principal`, by (source, slug), at most `limit`. A
+    /// soft-deleted page counts, as in the SQL (`FROM pages` with no deleted filter); a page with
+    /// no `readable_by` key or an invalid one (`!nobody`) names no member or group. `live_only` leaves
+    /// the soft-deleted pages out (`deleted_at IS NULL`, the `member disable` check).
+    pub fn list_pages_naming_reader(
+        &self,
+        principal: &str,
+        limit: u32,
+        live_only: bool,
+    ) -> Result<Vec<PageNamingReaderRow>> {
+        let read = self.read()?;
+        let mut rows: Vec<PageNamingReaderRow> = all_pages(&*read)?
+            .into_iter()
+            .filter(|p| {
+                (!live_only || p.deleted_at_us.is_none())
+                    && access_readers(&p.frontmatter)
+                        .is_some_and(|r| r.iter().any(|x| x == principal))
+            })
+            .map(|p| PageNamingReaderRow {
+                slug: p.slug,
+                source_id: p.source_id,
+            })
+            .collect();
+        rows.sort_by(|a, b| (&a.source_id, &a.slug).cmp(&(&b.source_id, &b.slug)));
+        rows.truncate(limit as usize);
+        Ok(rows)
+    }
+
+    /// `hasSynopsisFrontmatterOverride()`: whether a live markdown page of the `default` source, which is not archived,
+    /// carries `contextual_retrieval: per_chunk_synopsis` in its frontmatter. The store keeps no
+    /// `trust_frontmatter_overrides` (it reads as false, as `sources.rs` says), so the SQL's other arm, a source that
+    /// trusts its pages' overrides, never holds here. `frontmatter @> '{"contextual_retrieval":"per_chunk_synopsis"}'`
+    /// is string equality on that key.
+    pub fn has_synopsis_frontmatter_override(&self) -> Result<bool> {
+        let read = self.read()?;
+        if read_source(&*read, "default")?.is_some_and(|source| source.archived) {
+            return Ok(false);
+        }
+        Ok(all_pages(&*read)?.iter().any(|p| {
+            p.source_id == "default"
+                && p.deleted_at_us.is_none()
+                && p.page_kind == "markdown"
+                && p.frontmatter
+                    .get("contextual_retrieval")
+                    .and_then(Value::as_str)
+                    == Some("per_chunk_synopsis")
+        }))
+    }
+
     /// The source's incarnation, archived flag, local path and config, or `None` for an unknown id.
     /// The SQL engines can hold the row FOR SHARE; the store runs one write transaction at a time,
     /// so no lock is needed and the TypeScript member drops the option.

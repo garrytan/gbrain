@@ -16,6 +16,7 @@
 import { describe, expect, test } from 'bun:test';
 import { probeQueueState, queryWedgeSignals } from '../src/core/minions/supervisor.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { withQueueMembers } from './helpers/queue-engine-members.ts';
 
 const WEDGE_ROW = {
   stalled: '0',
@@ -29,13 +30,13 @@ const WEDGE_ROW = {
 describe('queryWedgeSignals signal threading (issue #6)', () => {
   test('forwards opts.signal to executeRaw', async () => {
     let seenOpts: { signal?: AbortSignal } | undefined;
-    const engine = {
+    const engine = withQueueMembers({
       kind: 'postgres',
       executeRaw: async (_sql: string, _params?: unknown[], opts?: { signal?: AbortSignal }) => {
         seenOpts = opts;
         return [WEDGE_ROW];
       },
-    } as unknown as BrainEngine;
+    }) as unknown as BrainEngine;
     const ac = new AbortController();
 
     const sig = await queryWedgeSignals(engine, 'default', ['sync'], { signal: ac.signal });
@@ -48,14 +49,14 @@ describe('queryWedgeSignals signal threading (issue #6)', () => {
 describe('probeQueueState cancellation (issue #6)', () => {
   test('timeout aborts the per-probe signal so the losing query is cancelled', async () => {
     let seenSignal: AbortSignal | undefined;
-    const engine = {
+    const engine = withQueueMembers({
       kind: 'postgres',
       executeRaw: (_sql: string, _params?: unknown[], opts?: { signal?: AbortSignal }) => {
         seenSignal = opts?.signal;
         // Hang forever — the abandoned-racer scenario.
         return new Promise<never>(() => {});
       },
-    } as unknown as BrainEngine;
+    }) as unknown as BrainEngine;
 
     const state = await probeQueueState(engine, 'default', ['sync'], { timeoutMs: 50 });
 
@@ -66,14 +67,14 @@ describe('probeQueueState cancellation (issue #6)', () => {
 
   test('fast probe: signal delivered but never aborted; result returned', async () => {
     const seenSignals: Array<AbortSignal | undefined> = [];
-    const engine = {
+    const engine = withQueueMembers({
       kind: 'postgres',
       executeRaw: async (sql: string, _params?: unknown[], opts?: { signal?: AbortSignal }) => {
         seenSignals.push(opts?.signal);
         if (sql.includes('EXTRACT(EPOCH')) return [{ age: 12 }];
         return [WEDGE_ROW];
       },
-    } as unknown as BrainEngine;
+    }) as unknown as BrainEngine;
 
     const state = await probeQueueState(engine, 'default', ['sync'], { timeoutMs: 5_000 });
 
@@ -90,12 +91,12 @@ describe('probeQueueState cancellation (issue #6)', () => {
   });
 
   test('probe throw still collapses to {probe_failed: true} (fail-open contract)', async () => {
-    const engine = {
+    const engine = withQueueMembers({
       kind: 'postgres',
       executeRaw: async () => {
         throw new Error('query was cancelled');
       },
-    } as unknown as BrainEngine;
+    }) as unknown as BrainEngine;
 
     const state = await probeQueueState(engine, 'default', ['sync'], { timeoutMs: 5_000 });
     expect(state.probe_failed).toBe(true);

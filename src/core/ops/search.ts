@@ -60,7 +60,7 @@ import { entitySavedFacts, stripCollapseColumns } from '../search/entity-facts.t
 import { FACT_MATCH_STOPWORDS, matchingSavedFacts } from '../search/saved-facts-match.ts';
 import { collapseFactReads } from '../facts/capture-dedup.ts';
 import { mentionCoverageNotice, readMentionCoverage } from '../mentions/coverage.ts';
-import { keepEnumeratedRows, keywordCountMeta, keywordOnlyBounds, parseSearchPaging, readKeywordPage, startKeywordCount, withCountMeta } from '../search/keyword-paging.ts';
+import { keepEnumeratedRows, keywordCountMeta, keywordOnlyBounds, parseSearchPaging, queryKeywordCountFilters, queryUnlistedCountFilters, readKeywordPage, startKeywordCount, withCountMeta } from '../search/keyword-paging.ts';
 import { searchLimitCap } from '../search/eval-pool-depth.ts';
 import { heldFilesNotice, stampHeldHits } from '../persistence/held-reads.ts';
 import { opError } from './contract.ts';
@@ -859,7 +859,7 @@ const search: Operation = {
     // #3800: cap AFTER capture/meta so eval + cache see the real payload.
     return evidenceOutput(ctx, p, results, plan, { ...scope, excludePrivate }, capturedMeta, snippetCap, timings,
       async rows => withCountMeta(withExplainTarget({ ...(await buildRetrievalResponseMeta(ctx, scope, queryText, rows, capturedMeta, { conceptHint: true, types, typeFilterNotice: typeFilter.notice, declarations, feedbackOp: 'search', entity: fanned.entity, filterHintFor: { op: 'search', p }, timings })), ...(fanned.fanout ? { fanout: fanned.fanout } : {}), ...(capped.meta ? { page_cap: capped.meta } : {}) }, finishExplainTarget(ctx, p, explainPrep, results, 'search', capturedMeta?.degraded)),
-        keywordCountMeta(await timings.part('response', 'keyword_count', () => keywordCount), offset + limit)), false, page.delivered);
+        keywordCountMeta(await timings.part('response', 'keyword_count', () => keywordCount), offset + limit, !!(fanned.entity || fanned.fanout))), false, page.delivered);
   },
   scope: 'read', mutating: false,
   cliHints: { name: 'search', positional: ['query'] },
@@ -1055,7 +1055,7 @@ const query: Operation = {
     // cross-source mode (matches SearchOpts.sourceId contract).
     const typeFilter = await setup(() => reconcileTypeFilter(ctx, querySourceScope, excludePrivate, types));
     types = typeFilter.types;
-    let capturedMeta: HybridSearchMeta | null = null; let queryEmbedding: Float32Array | null = null; const resolving = startEntityResolution(ctx, queryText, { ...querySourceScope, excludePrivate });
+    let capturedMeta: HybridSearchMeta | null = null; let queryEmbedding: Float32Array | null = null; const resolving = startEntityResolution(ctx, queryText, { ...querySourceScope, excludePrivate }), searchDone = Promise.withResolvers<void>(), keywordCount = timings.overlap('keyword_count', startKeywordCount(ctx.engine, queryText, types, { excludePrivate, requireSafeChunks: ctx.remote !== false, ...querySourceScope, ...queryKeywordCountFilters(p, where) }, searchDone.promise)); // #9412: search's strict count, under the query's filters
     const [explainPrep, pageCap] = await setup(() => Promise.all([prepareExplainTarget(ctx, p, querySourceScope, excludePrivate, 'query'), remotePageCap(ctx, p)]));
     // v0.32.x search-lite: route the query op through hybridSearchCached so
     // token budget and intent weighting apply at the operation boundary.
@@ -1116,7 +1116,7 @@ const query: Operation = {
       // v0.43 — relational recall override. Omitted = smart default (mode bundle).
       relationalRetrieval: typeof p.relational === 'boolean' ? (p.relational as boolean) : undefined,
       explain: p.explain === true, explainTarget: explainPrep?.trace, _timings: timings,
-    });
+    }).finally(searchDone.resolve);
     const opStages = queryOpStages(ctx, p, queryText, { pageCap, timings, querySourceScope, excludePrivate, types, where, plan, queryEmbedding, resolving });
     const reference = await opStages(withoutFill(found), true);
     let { results, pageCapMeta } = reference;
@@ -1283,7 +1283,7 @@ const query: Operation = {
     // #3800: cap AFTER capture/meta/CRAG so every internal consumer graded
     // and recorded the real payload; only the returned envelope is snipped.
     return evidenceOutput(ctx, p, results, plan, queryScope, capturedMeta, snippetCap, timings,
-      async rows => withExplainTarget({ ...(await buildRetrievalResponseMeta(ctx, querySourceScope, queryText, rows, capturedMeta, { types, typeFilterNotice: typeFilter.notice, declarations, feedbackOp: 'query', entity: fanned.entity, filterHintFor: { op: 'query', p }, timings })), crag, ...(fanned.fanout ? { fanout: fanned.fanout } : {}), ...(pageCapMeta ? { page_cap: pageCapMeta } : {}) }, finishExplainTarget(ctx, p, explainPrep, results, 'query', capturedMeta?.degraded)), false, 'delivered' in page ? page.delivered : undefined);
+      async rows => withCountMeta(withExplainTarget({ ...(await buildRetrievalResponseMeta(ctx, querySourceScope, queryText, rows, capturedMeta, { types, typeFilterNotice: typeFilter.notice, declarations, feedbackOp: 'query', entity: fanned.entity, filterHintFor: { op: 'query', p }, timings })), crag, ...(fanned.fanout ? { fanout: fanned.fanout } : {}), ...(pageCapMeta ? { page_cap: pageCapMeta } : {}) }, finishExplainTarget(ctx, p, explainPrep, results, 'query', capturedMeta?.degraded)), keywordCountMeta(await timings.part('response', 'keyword_count', () => keywordCount), ((p.offset as number) || 0) + results.length, !!(fanned.entity || fanned.fanout), queryUnlistedCountFilters(p))), false, 'delivered' in page ? page.delivered : undefined);
   },
   scope: 'read', mutating: false,
   cliHints: { name: 'query', positional: ['query'] },

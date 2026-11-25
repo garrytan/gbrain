@@ -8,7 +8,7 @@
  * no addon.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadRustAddon, type RustAddon } from '../src/core/rust-engine/addon-loader.ts';
@@ -99,6 +99,17 @@ describe('Rust engine on the store', () => {
     await made.engine.connect({ engine: 'pglite', database_path: made.dir } as never);
     await made.engine.disconnect();
     expect(await code(() => made.engine.getPage('notes/a'))).toBe('engine_closed');
+  });
+
+  withAddon('the store directory is private (0700) even when the owner socket path is too long to live in it', async () => {
+    if (process.platform === 'win32') return;
+    const base = mkdtempSync(join(tmpdir(), 'gbrain-rust-store-long-'));
+    dirs.push(base);
+    // Over the unix socket byte budget, so the owner socket moves to a private fallback outside the store.
+    const dir = join(base, 'x'.repeat(120), 'brain');
+    const { engine } = await open(dir);
+    await engine.putPage('notes/a', page);
+    expect(statSync(dir).mode & 0o777).toBe(0o700);
   });
 
   withAddon('pages stay in their source: the same slug in two sources is two pages', async () => {

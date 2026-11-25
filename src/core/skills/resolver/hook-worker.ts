@@ -30,7 +30,7 @@ import { parsePins, sessionStartPinnedBlock } from './pinned-block.ts';
 import { resolveSkills } from './resolve.ts';
 
 export interface LaneWorkerData { stall?: string }
-export interface LaneWorkerTurn { input: unknown; home: string; catalogs: string[]; deadlineMs: number }
+export interface LaneWorkerTurn { input: unknown; home: string; catalogs: string[]; deadlineMs: number; router: boolean }
 export interface LaneWorkerPins { pins: unknown; harness: 'claude-code' | 'codex'; home: string }
 
 const { stall } = (workerData ?? {}) as LaneWorkerData;
@@ -49,7 +49,7 @@ try {
   if ('pins' in message) {
     parentPort!.postMessage({ pinned: sessionStartPinnedBlock(message.home, message.harness, parsePins(message.pins)).block });
   } else {
-    const r = await resolveSkills(message.input, { home: message.home, catalogs: message.catalogs, deadlineMs: message.deadlineMs, failOpen: true });
+    const r = await resolveSkills(message.input, { home: message.home, catalogs: message.catalogs, deadlineMs: message.deadlineMs, failOpen: true, router: message.router });
     parentPort!.postMessage({ output: r.output, pending: r.pending ?? null });
   }
 } catch (e) {

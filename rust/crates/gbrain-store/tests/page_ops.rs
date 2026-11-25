@@ -977,3 +977,91 @@ fn delete_pages_scrubs_the_deleted_slugs_from_captured_eval_candidates() {
         json!(["notes/b", "notes/a", "notes/shared", "notes/a"])
     );
 }
+
+/// A clock the test moves by hand.
+struct HandClock(std::sync::atomic::AtomicI64);
+
+impl gbrain_store::env::Env for HandClock {
+    fn now_micros(&self) -> i64 {
+        self.0.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    fn new_uuid(&self) -> String {
+        "00000000-0000-4000-8000-000000000000".into()
+    }
+}
+
+#[test]
+fn bump_page_retrievals_stamps_pages_and_steers_the_stale_bias() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicI64, Ordering};
+    const DAY: i64 = 86_400_000_000;
+    let dir = TempDir::new("ops-bump");
+    let clock = Arc::new(HandClock(AtomicI64::new(1_800_000_000_000_000)));
+    let kv = gbrain_store::redb_kv::RedbKv::open_path(&dir.path().join("records.redb")).unwrap();
+    let store = Store::open_kv(
+        Arc::new(kv),
+        clock.clone(),
+        gbrain_store::OpenOptions::default(),
+    )
+    .unwrap();
+    let id = |v: Value| v["id"].as_i64().unwrap();
+    let old = id(put(&store, "wiki/vc/old", note("o", "o")));
+    let fresh = id(put(&store, "wiki/vc/fresh", note("f", "f")));
+    put(&store, "wiki/vc/never", note("n", "n"));
+    let gone = id(put(&store, "notes/gone", note("g", "g")));
+    let link: AddLinkOptions = de(json!({ "linkType": "mentions" }));
+    store
+        .add_link("notes/gone", "wiki/vc/fresh", &link)
+        .unwrap();
+    store.add_link("notes/gone", "wiki/vc/old", &link).unwrap();
+    store
+        .add_link("wiki/vc/never", "wiki/vc/fresh", &link)
+        .unwrap();
+
+    // An unknown id is skipped; a known one is stamped once.
+    assert_eq!(store.bump_page_retrievals(&[old, 999_999]).unwrap(), 1);
+    clock.0.fetch_add(100 * DAY, Ordering::SeqCst);
+    assert_eq!(store.bump_page_retrievals(&[fresh]).unwrap(), 1);
+    // A second bump inside 5 minutes leaves the stamp alone.
+    let stamped = clock.0.load(Ordering::SeqCst);
+    clock.0.fetch_add(60_000_000, Ordering::SeqCst);
+    assert_eq!(store.bump_page_retrievals(&[fresh]).unwrap(), 0);
+
+    let sample = |stale: bool| {
+        let rows = store
+            .list_prefix_sampled_pages(&de(json!({ "prefixes": ["wiki/vc"], "staleBias": stale })))
+            .unwrap();
+        (
+            rows[0]["slug"].as_str().unwrap().to_string(),
+            rows[0]["last_retrieved_at"].clone(),
+        )
+    };
+    // Most links wins without the bias; with it, the never-retrieved page wins.
+    assert_eq!(
+        sample(false),
+        (
+            "wiki/vc/fresh".to_string(),
+            json!(gbrain_store::env::iso(stamped))
+        )
+    );
+    assert_eq!(sample(true), ("wiki/vc/never".to_string(), Value::Null));
+    // A page retrieved more than 90 days ago beats a fresh one.
+    store
+        .delete_pages(
+            &["wiki/vc/never".to_string()],
+            &de(json!({ "sourceId": "default" })),
+        )
+        .unwrap();
+    assert_eq!(sample(true).0, "wiki/vc/old");
+
+    // A hard delete drops the stamp; the id names no page after it.
+    clock.0.fetch_add(DAY, Ordering::SeqCst);
+    store
+        .delete_pages(
+            &["notes/gone".to_string()],
+            &de(json!({ "sourceId": "default" })),
+        )
+        .unwrap();
+    assert_eq!(store.bump_page_retrievals(&[gone]).unwrap(), 0);
+    assert_eq!(store.bump_page_retrievals(&[]).unwrap(), 0);
+}

@@ -78,14 +78,14 @@ pub struct WantedLinkRowsReplacement {
     pub read_at: Option<String>,
 }
 
-/// The options of `listWantedPages` the store answers. `excludePrivate` takes caller SQL, so the
-/// store refuses it.
+/// The options of `listWantedPages`. `excludePrivate` carries the page policy
+/// (`privatePagesFilterForCaller`) the origins and the name matches are judged by.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct WantedPagesQuery {
     pub source_id: Option<String>,
     pub source_ids: Option<Vec<String>>,
-    pub exclude_private: Option<bool>,
+    pub exclude_private: Option<crate::facts::PrivacyPolicy>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
 }
@@ -248,7 +248,6 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
 /// The origin page ids whose wanted target now exists and changed after the origin last resolved
 /// it: the store's answer to `wantedOriginIsStale` in `src/core/engine-sql/pages.ts`, for the
 /// family that serves stale extraction. `producers` limits the rows to those producers.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn stale_origin_page_ids(
     read: &dyn KvRead,
     producers: Option<&[String]>,
@@ -491,16 +490,16 @@ impl Store {
 
     /// The store read of `listWantedPages`: missing targets, most-referenced first. Only live
     /// origins count, a target that is a live page is left out, and scope applies to the origin.
-    ///
-    /// Errors: `invalid_argument` for `excludePrivate` (it takes the caller's SQL filter).
+    /// Under `excludePrivate`, an origin the page policy hides does not count and a hidden page is
+    /// no name match; a hidden live page still keeps its slug out of the targets, as in the SQL.
     pub fn list_wanted_pages(&self, query: &WantedPagesQuery) -> Result<WantedPages> {
-        if query.exclude_private == Some(true) {
-            return Err(StoreError::new(
-                INVALID_ARGUMENT,
-                "listWantedPages: excludePrivate is not supported by the Rust store",
-            ));
-        }
         let read = self.read()?;
+        let hidden = |page: &PageRecord| -> Result<bool> {
+            match &query.exclude_private {
+                Some(policy) => crate::facts::page_hidden(&*read, page, policy),
+                None => Ok(false),
+            }
+        };
         let scope: Option<BTreeSet<&str>> = match (&query.source_ids, &query.source_id) {
             (Some(ids), _) if !ids.is_empty() => Some(ids.iter().map(String::as_str).collect()),
             (_, Some(id)) if !id.is_empty() => Some(BTreeSet::from([id.as_str()])),
@@ -519,8 +518,12 @@ impl Store {
             let origin = match origins.get(&record.origin_page_id) {
                 Some(found) => found.clone(),
                 None => {
-                    let found = read_page_by_id(&*read, record.origin_page_id)?
-                        .filter(|p| p.deleted_at_us.is_none());
+                    let found = match read_page_by_id(&*read, record.origin_page_id)?
+                        .filter(|p| p.deleted_at_us.is_none())
+                    {
+                        Some(page) if hidden(&page)? => None,
+                        found => found,
+                    };
                     origins.insert(record.origin_page_id, found.clone());
                     found
                 }
@@ -577,48 +580,48 @@ impl Store {
         } else {
             Vec::new()
         };
-        let rows = page
-            .into_iter()
-            .map(|((target_source_id, target), group)| {
-                let existing_matches = if group.ref_kind == "name" {
-                    let mut found: Vec<&PageRecord> = live
-                        .iter()
-                        .filter(|p| p.source_id == target_source_id && basename(&p.slug) == target)
-                        .collect();
-                    found.sort_by(|a, b| a.slug.cmp(&b.slug));
-                    found
-                        .into_iter()
-                        .take(3)
-                        .map(|p| WantedPageRef {
+        let mut rows = Vec::with_capacity(page.len());
+        for ((target_source_id, target), group) in page {
+            let mut existing_matches = Vec::new();
+            if group.ref_kind == "name" {
+                let mut found: Vec<&PageRecord> = live
+                    .iter()
+                    .filter(|p| p.source_id == target_source_id && basename(&p.slug) == target)
+                    .collect();
+                found.sort_by(|a, b| a.slug.cmp(&b.slug));
+                for p in found {
+                    if existing_matches.len() == 3 {
+                        break;
+                    }
+                    if !hidden(p)? {
+                        existing_matches.push(WantedPageRef {
                             slug: p.slug.clone(),
                             source_id: p.source_id.clone(),
-                        })
-                        .collect()
-                } else {
-                    Vec::new()
-                };
-                let mut sample: Vec<WantedPageRef> = group.origins.iter().cloned().collect();
-                sample.sort_by(|a, b| {
-                    a.slug
-                        .cmp(&b.slug)
-                        .then_with(|| a.source_id.cmp(&b.source_id))
-                });
-                sample.truncate(3);
-                WantedPageRow {
-                    referenced_by: group.origins.len() as u64,
-                    target,
-                    target_source_id,
-                    ref_kind: group.ref_kind,
-                    sample_origins: sample,
-                    link_types: group.link_types.into_iter().collect(),
-                    existing_matches,
-                    first_seen: iso_ms(group.first_seen),
-                    last_checked: group
-                        .last_checked
-                        .map_or_else(|| "pending".to_string(), iso_ms),
+                        });
+                    }
                 }
-            })
-            .collect();
+            }
+            let mut sample: Vec<WantedPageRef> = group.origins.iter().cloned().collect();
+            sample.sort_by(|a, b| {
+                a.slug
+                    .cmp(&b.slug)
+                    .then_with(|| a.source_id.cmp(&b.source_id))
+            });
+            sample.truncate(3);
+            rows.push(WantedPageRow {
+                referenced_by: group.origins.len() as u64,
+                target,
+                target_source_id,
+                ref_kind: group.ref_kind,
+                sample_origins: sample,
+                link_types: group.link_types.into_iter().collect(),
+                existing_matches,
+                first_seen: iso_ms(group.first_seen),
+                last_checked: group
+                    .last_checked
+                    .map_or_else(|| "pending".to_string(), iso_ms),
+            });
+        }
         Ok(WantedPages { total, rows })
     }
 }
@@ -812,10 +815,8 @@ mod tests {
         assert_eq!(raw_rows(&store, "default", kept), 1);
     }
 
-    // Red until the link_queries family's remove_source_rows deletes every key under
-    // `q <source> \0`; the core-hooks stub deletes nothing.
+    // The cascade's link_queries step deletes every key under `q <source> \0`.
     #[test]
-    #[ignore = "needs link_queries::remove_source_rows from rust-lane-graph-search; core removes this ignore when it combines lane 6"]
     fn source_delete_through_the_cascade_removes_wanted_rows_of_that_source_only() {
         let (_d, store) = open("wl-source-cascade");
         source(&store, "team");

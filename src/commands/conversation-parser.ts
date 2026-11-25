@@ -14,6 +14,7 @@
  * surfaces at cli.ts:739 (handled by the dispatch table).
  */
 
+import { normalizeSlug } from '../core/utils.ts';
 import { readFileSync, existsSync } from 'node:fs';
 import { BUILTIN_PATTERNS } from '../core/conversation-parser/builtins.ts';
 import { readConversationBodyForParsing } from '../core/conversation-parser/body.ts';
@@ -156,7 +157,8 @@ async function runScan(
   args: string[],
   json: boolean,
 ): Promise<void> {
-  const slug = args.find((a) => !a.startsWith('--'));
+  const rawSlug = args.find((a) => !a.startsWith('--'));
+  const slug = rawSlug === undefined ? rawSlug : normalizeSlug(rawSlug);
   if (!slug) {
     process.stderr.write(
       '[conversation-parser scan] USAGE: missing page slug.\n',

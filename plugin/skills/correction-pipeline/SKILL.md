@@ -22,7 +22,6 @@ writes_to:
   - people/
   - companies/
   - concepts/
-upstream: correction-pipeline@fc834ee
 when_to_use: "Use when the user asks: \"that's wrong\", \"that's not true\", \"I never said that\", \"where did you get that\", \"you got that wrong\"."
 ---
 
@@ -232,8 +231,7 @@ This skill guarantees:
 - Propagation is checked (whole-brain grep + `gbrain search`)
 - The user gets a clear report of what was wrong, why, and what was fixed
 - Routing matches the canonical triggers in the frontmatter
-- Privacy contract preserved: no real names, no fork-specific filesystem path
-  literals, no upstream-fork references
+- Examples use placeholder names and paths.
 
 ## Output Format
 

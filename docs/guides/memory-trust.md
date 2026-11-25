@@ -90,6 +90,39 @@ typed-claim and attribution cells as they stand. The confirmation covers exactly
 if the hold or that row changes before the release lands, it refuses with
 `preview_changed` and the fact stays held, on every brain, with or without a
 repository.
+A held write remembers the page it was held for by the page's permanent
+id, so it stays held whatever the page is called: renaming the page (a Git
+rename caught by sync, `gbrain repair rename-identity`) never lifts it, and a
+different page that later takes the old name does not inherit it. A held
+write recorded before any page had that name matches by name until a page is
+first created there, which then claims it; one that lands at the very moment
+the page is created is still matched through the page's rename record. Releasing a held fact publishes it
+on that page under its current name; if the page no longer exists, the release
+is refused with the fact still held, never aimed at whichever page has the old
+name. Purging a page removes the holds that belong to it and no other page's.
+Holds written before a brain upgraded to this behavior are matched to their
+page from the page that held the name and its rename history. When that cannot
+be settled (a page created after the hold now has the name, the name moved, or
+two pages fit), the hold stays held for every page it could belong to,
+`gbrain doctor` lists it as `write_gate_hold_ambiguous`, and you decide it in
+`gbrain trust review`: drop it, or remember the fact on the right page
+yourself (a release is refused for such a hold).
+If two purges run at the same time on pages that share a reused name, each can
+keep a held write for the other page. Each purge notes such a held write, and the
+next maintenance run (the `bookkeeping_gc` phase of `gbrain dream` and autopilot)
+checks it again: when no page is left for it (a soft-deleted page still counts),
+the held write and its receipts are deleted. Until then it stays hidden and is
+never shown, and `gbrain doctor` lists it under `write_gate_holds_stranded`. A held write that was saved before its page
+exists is never noted, so this sweep never removes it. To turn the sweep off, run
+`gbrain config set write_gate.orphan_sweep false`.
+Known limits: a held write left behind this way before the upgrade is not noted
+and stays until it is purged some other way. `gbrain trust drop` marks it dropped
+but keeps its text. The sweep takes no page lock, so a rename (for example
+`gbrain repair frontmatter`) onto the same name while it checks can still let it
+delete the left-behind held write as the new page arrives; that only removes
+stale hiding and shows no held text. If the pages' rename history is not a flat
+list of renames, a held write the sweep kept for a page can stay after that page
+is purged later.
 With suppress, flagged items are still returned by explicit search, recall
 and `get_page`, labeled, but hook context, the context engine,
 `context_pack` and volunteer leave them out until you confirm them in
@@ -153,10 +186,11 @@ different buckets are history, so a monthly MRR series, a run of funding rounds
 or a forecast next to an actual (different metrics) are never flagged. A typed
 write never supersedes a typed fact in another bucket either.
 
-Finding conflicts is off by default. Turn it on, or run it once:
+The nightly dream cycle finds conflicts by default. It needs no key and only
+files proposals, so nothing changes until you decide. Turn it off, or run it now:
 
 ```bash
-gbrain config set dream.claim_conflicts.mode propose   # the nightly dream cycle files them
+gbrain config set dream.claim_conflicts.mode off       # the nightly dream cycle stops filing them
 gbrain decide sweep --claims --dry-run                 # preview; no key, nothing written
 gbrain decide sweep --claims [--source <id>]           # file them now
 ```
@@ -178,6 +212,38 @@ fact. Decide each one from `gbrain trust review --kind contradiction`:
 one as skipped. All of this reads and writes database rows, so it works the
 same on a brain with no git repository. On a brain with one, page changes go
 through the usual page-write path.
+
+## Where a page's authority comes from
+
+Every page, search row and recall fact also carries `precedence`: `record`,
+`approved`, `curated`, `doc`, `chat` or `external`. It says what kind of
+source the text came from, so an agent can tell a decision you approved from
+something said in a chat. Lean search rows show it only when it is not
+`curated`.
+
+- A page of `type: rule`, or a `type: facts` page with `claims: allowed` in its
+  front matter, is `approved`, unless an outside sender wrote it or an agent wrote it
+  over MCP: a page cannot approve itself from outside. A page you write on
+  this machine (`gbrain put`, an edit in the brain repo) stays approved.
+- The conversation archive, meeting and Google sources are `chat`; a guest
+  source is `external`; everything else is `curated`.
+- `gbrain sources set-precedence <id> <class>` sets a source's class, and
+  `--clear` removes it.
+
+`precedence` is a label. It never raises a trust tier and never changes
+ranking.
+
+Before an agent states a number, `gbrain claims check "<draft>"` (MCP tool
+`check_claims`) checks each number in the draft against the dated lines
+(`2026-03-01: ARR is $2.1M`) on your allowed-claims facts pages. Each claim
+comes back `supported` with the line it matched, `conflicts` when a line says
+another number, or `not_found`. A sentence with several numbers is supported
+only when every number is. A page that cannot count (quarantined, from an
+outside source, or written by an agent over MCP) is listed under `skipped`
+with the reason. New brains mark `me/facts` and
+`company/facts` as allowed-claims pages; on an older brain, add
+`claims: allowed` to a facts page's front matter. Both work the same on a
+brain with no git repository.
 
 ## Older memory
 
@@ -395,3 +461,25 @@ Claim your own sources first, so your notes are not treated as unverified.
   without showing them. Review each listed fact (`gbrain trust explain f<id>`)
   and edit the row or forget the fact if a field is wrong. The check is
   read-only and never lowers a tier.
+- `write_gate_hold_ambiguous` warns while a held write from before the
+  upgrade that made holds follow their page could not be tied to one page. It
+  lists up to 50 of them, each with its candidate pages; every one stays held
+  for all of its candidates, and a release is refused for it. Its fix is
+  `gbrain trust review`, where you drop each one with `gbrain trust drop`. The
+  check is read-only.
+- `write_gate_holds_stranded` finds held writes (quarantined facts and takes)
+  that no live page holds. A hold remembers its page by id, so renaming the
+  page (a sync Git rename, `gbrain repair rename-identity`) leaves it held, and
+  the check ignores every hold that a live page matches by the rule the readers
+  use: a bound hold whose page exists (whatever either is called), and an
+  unbound hold whose name, or whose rename record in the same source, leads to
+  a live page. It lists the rest as informational only: holds for a soft-deleted
+  page, and holds that name no page that exists (for example a write held
+  before its page was created). None of these leaks held text, and the check
+  changes nothing; the next step is the read-only `gbrain trust review`. A scan
+  that stops at its 5000-row limit or its time limit warns that the count is
+  unknown instead of reporting ok. So does a database role with row-level
+  security active on the holds, the aliases, the rename history or the pages (a
+  hidden table reads as empty, not as an error, and gbrain does not judge
+  policies; run it as the table owner or a role that bypasses row security),
+  and so does an engine that refuses the read.

@@ -125,12 +125,16 @@ export async function memberIdentityFor(engine: Pick<BrainEngine, 'executeRaw'>,
     : 'SELECT member_id FROM oauth_clients WHERE client_id = $1 AND deleted_at IS NULL', principal.id);
 }
 
-/** The member a local stdio server is bound to (config mcp.stdio_member), or null when unset or ill-formed. */
-export async function stdioMemberId(engine: BrainEngine): Promise<string | null> {
+/**
+ * The member a local stdio server is bound to (config mcp.stdio_member), or null when unset or ill-formed. A failed
+ * read is null too, unless `strict`: then it throws, for a caller that must not read an unreadable binding as unbound.
+ */
+export async function stdioMemberId(engine: BrainEngine, opts: { strict?: boolean } = {}): Promise<string | null> {
   try {
     const raw = (await engine.getConfig(STDIO_MEMBER_KEY))?.trim();
     return raw && ACCESS_ID_RE.test(raw) ? raw : null;
-  } catch {
+  } catch (e) {
+    if (opts.strict) throw e;
     return null;
   }
 }
@@ -342,7 +346,7 @@ export async function audienceCallerAccess(engine: BrainEngine, auth: AuthInfo |
 }
 
 /** The member identity a remote caller's credential (or, unauthenticated over stdio, serve --stdio-member, else config mcp.stdio_member) is bound to. */
-async function boundIdentity(engine: BrainEngine, auth: AuthInfo | undefined, transport?: string, stdioMember?: string): Promise<string[]> {
+export async function boundIdentity(engine: BrainEngine, auth: AuthInfo | undefined, transport?: string, stdioMember?: string): Promise<string[]> {
   return !auth && transport === 'stdio' ? stdioMemberIdentity(engine, stdioMember) : memberIdentityFor(engine, auth);
 }
 

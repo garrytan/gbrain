@@ -565,6 +565,7 @@ fn finish_in(
             ),
         ));
     }
+    crate::persistence::guard_deferred_transition(&record.state, &finish.state)?;
     let now = env.now_micros();
     record.state = finish.state.clone();
     record.outcome = finish.outcome.clone();

@@ -1,15 +1,17 @@
 //! Entity and mention reads the CLI made through `executeRaw` (`src/core/engine-sql/entity-reads.ts`).
 //!
-//! The store keeps no mention-pass state (`mention_index_status`, `page_mention_state`): no source
-//! has a pass time, and every live page is due, as on a PGLite brain where the pass never ran.
+//! The mention-pass reads use the pass's state (`mention_state.rs`): the status rows' pass times and
+//! each page's mention and alias state.
 //! Frontmatter values are read as PostgreSQL's `->>` reads them (see [`arrow_text`]).
 
 use crate::Store;
-use crate::cli_reads::pg_text::pg_lower;
+use crate::cli_reads::pg_text::{pg_lower, regex_char_matches};
 use crate::env::{iso, parse_iso};
 use crate::error::{Result, StoreError};
 use crate::facts::{PrivacyPolicy, like, page_hidden};
-use crate::pages::{PageRecord, all_pages};
+use crate::link_queries::ranks;
+use crate::links::out_links;
+use crate::pages::{PageRecord, all_pages, read_page_by_id};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
@@ -19,12 +21,65 @@ const PRIVACY_LABEL_KEYS: &[&str] = &["access", "confidentiality"];
 /// The frontmatter key that marks a quarantined page (`QUARANTINE_KEY`).
 const QUARANTINE_KEY: &str = "quarantine";
 
-/// `countPagesDueForMentions(q)`: only the scope matters, since every page is due.
+/// `readMentionIndexStatus(sourceIds)`.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MentionIndexStatusQuery {
+    pub source_ids: Vec<String>,
+}
+
+/// One `mention_index_status` row as `readMentionIndexStatus` returns it. The store writes none.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct MentionIndexStatusRow {
+    pub source_id: String,
+    pub state: String,
+    pub pending: i64,
+    pub counted_at: Option<String>,
+    pub last_pass_at: Option<String>,
+    pub policy_fingerprint: Option<String>,
+}
+
+/// `countMentionDueSince(sourceId, since, mentionVersion)`.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MentionDueSinceQuery {
+    pub source_id: String,
+    /// A `timestamptz` text, or `-infinity` for no lower bound.
+    pub since: String,
+    /// The extractor version a page's state must hold to count as scanned.
+    #[serde(default)]
+    pub mention_version: i64,
+}
+
+/// `recountMentionIndexStatus(sourceId, recount)`.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MentionIndexRecount {
+    pub source_id: String,
+    pub pending: i64,
+    pub fingerprint: String,
+    pub expected_fingerprint: Option<String>,
+}
+
+/// `countPagesDueForMentions(q)`.
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MentionDueQuery {
     #[serde(default)]
     pub source_id: Option<String>,
+    /// The extractor version a page's mention state must carry to be current.
+    #[serde(default)]
+    pub mention_version: i64,
+    /// Also count pages of these types whose derived aliases are behind their content or `version`.
+    #[serde(default)]
+    pub aliases: Option<MentionDueAliases>,
+}
+
+/// `MentionDueQuery.aliases`.
+#[derive(Debug, Default, Deserialize)]
+pub struct MentionDueAliases {
+    pub types: Vec<String>,
+    pub version: i64,
 }
 
 /// `readIdentitySiblingCandidates(sourceId, q)`.
@@ -99,12 +154,74 @@ pub struct EntityCardRow {
 /// `left(coalesce(compiled_truth, truth_lead), BOUNDED_PREFIX_BYTES)`; `left()` counts code points.
 const CARD_PREFIX_CHARS: usize = 64 * 1024;
 
+/// `boundedBodyPrefixSql`: `left(coalesce(compiled_truth, truth_lead), 65536)`, the first 64K
+/// characters of the page body (the stored body, else its truth lead).
+pub(crate) fn bounded_body_prefix(
+    read: &dyn crate::kv::KvRead,
+    p: &PageRecord,
+) -> Result<Option<String>> {
+    let body = match p.compiled_truth.as_deref() {
+        Some(text) => Some(text.to_string()),
+        None => crate::page_body::truth_lead(read, p.id)?,
+    };
+    Ok(body.map(|b| {
+        b.char_indices()
+            .nth(CARD_PREFIX_CHARS)
+            .map_or(b.clone(), |(at, _)| b[..at].to_string())
+    }))
+}
+
 /// `readIgnoredPrivacyLabelPages` scope: the run's own slugs, or pages updated since an ISO time.
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 pub enum LabelScope {
     Slugs { slugs: Vec<String> },
     Since { since: String },
+}
+
+/// The pages `readEntityAnchoredPages` answers besides the entity page (`ENTITY_ANCHORED_LIMIT`).
+const ENTITY_ANCHORED_LIMIT: usize = 10;
+/// The frontmatter key of a pinned question page (`PINNED_QUESTION_MARKER`).
+const PINNED_QUESTION_KEY: &str = "pinned_question";
+
+/// The live entity page `readEntityAnchoredPages` found: its id and title.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AnchorEntity {
+    pub id: u64,
+    pub title: String,
+}
+
+/// One anchored page: its id and slug.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AnchoredPageRow {
+    pub id: u64,
+    pub slug: String,
+}
+
+/// `readEntityAnchoredPages(sourceId, entitySlug)`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct EntityAnchoredPages {
+    pub entity: Option<AnchorEntity>,
+    pub pages: Vec<AnchoredPageRow>,
+}
+
+/// One `readPageTitlesById` row.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PageTitleRow {
+    pub id: u64,
+    pub title: String,
+}
+
+/// One page a text-mention probe lists; `date` is `COALESCE(effective_date, updated_at)` as ISO text.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TextMentionPageRow {
+    pub slug: String,
+    pub source_id: String,
+    pub title: String,
+    #[serde(rename = "type")]
+    pub page_type: String,
+    pub frontmatter: Map<String, Value>,
+    pub date: String,
 }
 
 /// One labelled page: its type and frontmatter.
@@ -115,23 +232,157 @@ pub struct LabelPageRow {
     pub frontmatter: Map<String, Value>,
 }
 
+/// One unretired page a slug pattern matched (`listUnretiredPagesBySlugPattern`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SlugPatternPageRow {
+    pub slug: String,
+    pub title: String,
+}
+
+/// `listNameVariantCandidates(sourceId, q)`.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NameVariantCandidateQuery {
+    pub types: Vec<String>,
+    pub slug_patterns: Vec<String>,
+    pub probes: Vec<String>,
+    pub limit: u64,
+}
+
+/// One name-variant candidate: `probe_hits` is the number of probes its title or slug matches.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct NameVariantCandidateRow {
+    pub slug: String,
+    pub title: String,
+    #[serde(rename = "type")]
+    pub page_type: String,
+    pub frontmatter: Map<String, Value>,
+    pub probe_hits: u64,
+}
+
+/// The distinct pages linking to one page (`countDistinctInboundLinkers`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct InboundLinkerCountRow {
+    pub source_id: String,
+    pub slug: String,
+    pub n: u64,
+}
+
 impl Store {
-    /// `readMentionLastPass(sourceId?)`: the last mention pass time. The store records no pass, so
-    /// it is always `None`.
-    pub fn read_mention_last_pass(&self, _source_id: Option<&str>) -> Result<Option<String>> {
-        Ok(None)
+    /// `readMentionLastPass(sourceId?)`: the newest pass time over every source or one source, ISO
+    /// UTC in whole seconds (`to_char(..., 'YYYY-MM-DD"T"HH24:MI:SS"Z"')` truncates); `None` when no
+    /// pass ran.
+    pub fn read_mention_last_pass(&self, source_id: Option<&str>) -> Result<Option<String>> {
+        let read = self.read()?;
+        let last = crate::mention_state::all_statuses(&*read)?
+            .into_iter()
+            .filter(|(s, _)| source_id.is_none_or(|want| s == want))
+            .filter_map(|(_, r)| r.last_pass_at_us)
+            .max();
+        Ok(last.map(|us| {
+            let text = iso(us);
+            format!("{}Z", text.split('.').next().unwrap_or(&text))
+        }))
+    }
+
+    /// `readMentionIndexStatus(sourceIds)`: the status rows of those sources (the pass's state,
+    /// `mention_state.rs`), in source byte order; a source the pass never ran on has no row.
+    pub fn read_mention_index_status(
+        &self,
+        q: &MentionIndexStatusQuery,
+    ) -> Result<Vec<MentionIndexStatusRow>> {
+        let read = self.read()?;
+        let mut out = Vec::new();
+        for (source_id, r) in crate::mention_state::all_statuses(&*read)? {
+            if !q.source_ids.contains(&source_id) {
+                continue;
+            }
+            out.push(MentionIndexStatusRow {
+                source_id,
+                state: r.state,
+                pending: r.pending,
+                counted_at: r.counted_at_us.map(iso),
+                last_pass_at: r.last_pass_at_us.map(iso),
+                policy_fingerprint: r.policy_fingerprint,
+            });
+        }
+        Ok(out)
+    }
+
+    /// `countMentionDueSince(sourceId, since, mentionVersion)`: the source's live pages with
+    /// `updated_at >= since` and no mention state at the page's content and `mention_version`.
+    /// `-infinity` has no bound; `infinity` matches nothing; other text must be the ISO time
+    /// coverage passes (`toIso`), or the read is refused.
+    pub fn count_mention_due_since(&self, q: &MentionDueSinceQuery) -> Result<u64> {
+        let since = match q.since.trim() {
+            "-infinity" => i64::MIN,
+            "infinity" => return Ok(0),
+            text => parse_iso(text).ok_or_else(|| {
+                StoreError::invalid(format!(
+                    "countMentionDueSince: since is not an ISO time: {text:?}"
+                ))
+            })?,
+        };
+        let read = self.read()?;
+        let mut n = 0u64;
+        for p in all_pages(&*read)? {
+            if p.deleted_at_us.is_some() || p.source_id != q.source_id || p.updated_at_us < since {
+                continue;
+            }
+            let state = crate::mention_state::read_page_state(&*read, p.id)?;
+            if crate::mention_state::mention_due(state.as_ref(), &p, q.mention_version) {
+                n += 1;
+            }
+        }
+        Ok(n)
+    }
+
+    /// `recountMentionIndexStatus(sourceId, recount)`: saves the recount on the source's status
+    /// row (pending, counted_at, the fingerprint; `complete` becomes `pending` above 0) while its
+    /// fingerprint is still `expected_fingerprint`; a source with no row is untouched.
+    pub fn recount_mention_index_status(&self, q: &MentionIndexRecount) -> Result<()> {
+        let now = crate::env::transaction_clock::transaction_now()
+            .unwrap_or_else(|| self.env.now_micros());
+        self.write(|tx| {
+            let Some(mut row) = crate::mention_state::read_status(&*tx, &q.source_id)? else {
+                return Ok(());
+            };
+            if row.policy_fingerprint != q.expected_fingerprint {
+                return Ok(());
+            }
+            row.pending = q.pending;
+            row.counted_at_us = Some(now);
+            row.policy_fingerprint = Some(q.fingerprint.clone());
+            row.updated_at_us = now;
+            if row.state == "complete" && q.pending > 0 {
+                row.state = "pending".to_string();
+            }
+            crate::mention_state::put_status(tx, &q.source_id, &row)
+        })
     }
 
     /// `countPagesDueForMentions(q)`: the live pages in the scope (every page when `source_id` is
-    /// `None`), all of them due because no page has mention state.
+    /// `None`) with no mention state or state behind the page's content or `mention_version`; with
+    /// `aliases`, also the pages of its types whose derived aliases are behind.
     pub fn count_pages_due_for_mentions(&self, q: &MentionDueQuery) -> Result<u64> {
         let read = self.read()?;
-        let n = all_pages(&*read)?
-            .iter()
-            .filter(|p| p.deleted_at_us.is_none())
-            .filter(|p| q.source_id.as_deref().is_none_or(|s| p.source_id == s))
-            .count();
-        Ok(n as u64)
+        let mut n = 0u64;
+        for p in all_pages(&*read)? {
+            if p.deleted_at_us.is_some() || q.source_id.as_deref().is_some_and(|s| p.source_id != s)
+            {
+                continue;
+            }
+            let state = crate::mention_state::read_page_state(&*read, p.id)?;
+            let due = crate::mention_state::mention_due(state.as_ref(), &p, q.mention_version)
+                || q.aliases.as_ref().is_some_and(|a| {
+                    a.types.contains(&p.page_type)
+                        && crate::mention_state::alias_due(state.as_ref(), &p, a.version)
+                });
+            if due {
+                n += 1;
+            }
+        }
+        Ok(n)
     }
 
     /// `readIdentitySiblingCandidates(sourceId, q)`: live pages of the source whose type is one of
@@ -287,16 +538,8 @@ impl Store {
             {
                 continue;
             }
-            let body = match p.compiled_truth.as_deref() {
-                Some(text) => Some(text.to_string()),
-                None => crate::page_body::truth_lead(&*read, p.id)?,
-            };
             out.push(EntityCardRow {
-                compiled_truth: body.map(|b| {
-                    b.char_indices()
-                        .nth(CARD_PREFIX_CHARS)
-                        .map_or(b.clone(), |(at, _)| b[..at].to_string())
-                }),
+                compiled_truth: bounded_body_prefix(&*read, &p)?,
                 updated_at: iso(p.updated_at_us),
                 last_retrieved_at: crate::page_ops::retrievals::last_retrieved_us(&*read, p.id)?
                     .map(iso),
@@ -348,6 +591,258 @@ impl Store {
             })
             .collect())
     }
+
+    /// `listUnretiredPagesBySlugPattern(sourceId, patterns, limit)`: the live, unretired pages of the
+    /// source whose slug matches one of `patterns` (LIKE), by slug, at most `limit`.
+    pub fn list_unretired_pages_by_slug_pattern(
+        &self,
+        source_id: &str,
+        patterns: &[String],
+        limit: u64,
+    ) -> Result<Vec<SlugPatternPageRow>> {
+        let read = self.read()?;
+        let mut rows = Vec::new();
+        for p in all_pages(&*read)? {
+            if p.source_id != source_id || p.deleted_at_us.is_some() || is_retired(&p) {
+                continue;
+            }
+            if any_like(&p.slug, patterns, false)? {
+                rows.push(SlugPatternPageRow {
+                    slug: p.slug,
+                    title: p.title,
+                });
+            }
+        }
+        rows.sort_by(|a, b| a.slug.cmp(&b.slug));
+        rows.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+        Ok(rows)
+    }
+
+    /// `listNameVariantCandidates(sourceId, q)`: the live pages of the source whose type is one of
+    /// `types` or whose slug matches one of `slug_patterns` (LIKE), and whose title or slug matches a
+    /// probe (ILIKE). Most probe hits first, then the shortest title, then slug; at most `limit`.
+    pub fn list_name_variant_candidates(
+        &self,
+        source_id: &str,
+        q: &NameVariantCandidateQuery,
+    ) -> Result<Vec<NameVariantCandidateRow>> {
+        let read = self.read()?;
+        let mut rows = Vec::new();
+        for p in all_pages(&*read)? {
+            if p.source_id != source_id || p.deleted_at_us.is_some() {
+                continue;
+            }
+            if !(q.types.contains(&p.page_type) || any_like(&p.slug, &q.slug_patterns, false)?) {
+                continue;
+            }
+            let mut hits = 0u64;
+            for probe in &q.probes {
+                if like(&p.title, probe, true)? || like(&p.slug, probe, true)? {
+                    hits += 1;
+                }
+            }
+            if hits == 0 {
+                continue;
+            }
+            rows.push(NameVariantCandidateRow {
+                slug: p.slug,
+                title: p.title,
+                page_type: p.page_type,
+                frontmatter: p.frontmatter,
+                probe_hits: hits,
+            });
+        }
+        rows.sort_by(|a, b| {
+            b.probe_hits
+                .cmp(&a.probe_hits)
+                .then_with(|| a.title.chars().count().cmp(&b.title.chars().count()))
+                .then_with(|| a.slug.cmp(&b.slug))
+        });
+        rows.truncate(usize::try_from(q.limit).unwrap_or(usize::MAX));
+        Ok(rows)
+    }
+
+    /// `countDistinctInboundLinkers(sourceIds, slugs)`: for each page at (`source_ids[i]`,
+    /// `slugs[i]`), deleted or not, the number of distinct pages linking to it by any link kind.
+    /// Pages with no inbound link, and pairs with no page, are absent.
+    pub fn count_distinct_inbound_linkers(
+        &self,
+        source_ids: &[String],
+        slugs: &[String],
+    ) -> Result<Vec<InboundLinkerCountRow>> {
+        let read = self.read()?;
+        let pairs: BTreeSet<(&str, &str)> = source_ids
+            .iter()
+            .zip(slugs)
+            .map(|(s, slug)| (s.as_str(), slug.as_str()))
+            .collect();
+        let mut rows = Vec::new();
+        for (source_id, slug) in pairs {
+            let Some(p) = crate::pages::read_page(&*read, source_id, slug)? else {
+                continue;
+            };
+            let linkers: BTreeSet<u64> = crate::links::in_links(&*read, p.id)?
+                .iter()
+                .map(|l| l.from_page_id)
+                .collect();
+            if !linkers.is_empty() {
+                rows.push(InboundLinkerCountRow {
+                    source_id: p.source_id,
+                    slug: p.slug,
+                    n: linkers.len() as u64,
+                });
+            }
+        }
+        Ok(rows)
+    }
+
+    /// `readLivePageFrontmatter(sourceId, slug)`: the type and frontmatter of the live page at the
+    /// slug in the source, or `None` when no live page sits there.
+    pub fn read_live_page_frontmatter(
+        &self,
+        source_id: &str,
+        slug: &str,
+    ) -> Result<Option<LabelPageRow>> {
+        let read = self.read()?;
+        Ok(all_pages(&*read)?
+            .into_iter()
+            .find(|p| p.source_id == source_id && p.slug == slug && p.deleted_at_us.is_none())
+            .map(|p| LabelPageRow {
+                page_type: p.page_type,
+                frontmatter: p.frontmatter,
+            }))
+    }
+
+    /// `readEntityAnchoredPages(sourceId, entitySlug)`: the live entity page at the slug, then up to
+    /// ten other live pages of the source (no question, synthesis or pinned-question page) whose
+    /// compiled truth names the entity as a word (`~* '\m(name|...)\M'`, see [`names_as_word`]) or
+    /// that link to the entity page by a ranking link, by `COALESCE(effective_date, updated_at)`
+    /// newest first, then by id descending.
+    pub fn read_entity_anchored_pages(
+        &self,
+        source_id: &str,
+        entity_slug: &str,
+    ) -> Result<EntityAnchoredPages> {
+        let read = self.read()?;
+        let pages = all_pages(&*read)?;
+        let entity = pages.iter().find(|p| {
+            p.source_id == source_id && p.slug == entity_slug && p.deleted_at_us.is_none()
+        });
+        let mut names: Vec<Vec<char>> = Vec::new();
+        let tail = entity_slug.rsplit('/').next().unwrap_or(entity_slug);
+        let title = entity.map(|e| e.title.as_str()).filter(|t| !t.is_empty());
+        for name in std::iter::once(tail).chain(title) {
+            let chars: Vec<char> = name.chars().collect();
+            if name.encode_utf16().count() >= 3 && !names.contains(&chars) {
+                names.push(chars);
+            }
+        }
+        let mut hits: Vec<&PageRecord> = Vec::new();
+        for p in &pages {
+            if p.source_id != source_id
+                || p.deleted_at_us.is_some()
+                || p.slug == entity_slug
+                || p.page_type == "question"
+                || p.page_type == "synthesis"
+                || p.frontmatter.contains_key(PINNED_QUESTION_KEY)
+            {
+                continue;
+            }
+            let named = p
+                .compiled_truth
+                .as_deref()
+                .is_some_and(|text| names_as_word(text, &names));
+            let linked = match entity {
+                Some(e) if !named => out_links(&*read, p.id)?
+                    .iter()
+                    .any(|l| l.to_page_id == e.id && ranks(l)),
+                _ => false,
+            };
+            if named || linked {
+                hits.push(p);
+            }
+        }
+        hits.sort_by(|a, b| {
+            let date = |p: &PageRecord| p.effective_date_us.unwrap_or(p.updated_at_us);
+            date(b).cmp(&date(a)).then(b.id.cmp(&a.id))
+        });
+        Ok(EntityAnchoredPages {
+            entity: entity.map(|e| AnchorEntity {
+                id: e.id,
+                title: e.title.clone(),
+            }),
+            pages: hits
+                .into_iter()
+                .take(ENTITY_ANCHORED_LIMIT)
+                .map(|p| AnchoredPageRow {
+                    id: p.id,
+                    slug: p.slug.clone(),
+                })
+                .collect(),
+        })
+    }
+
+    /// `readPageTitlesById(ids)`: the title of each page id, deleted or not, each once. An id
+    /// outside `integer` is refused, as the `$1::int[]` cast refuses it.
+    pub fn read_page_titles_by_id(&self, ids: &[i64]) -> Result<Vec<PageTitleRow>> {
+        let mut wanted = BTreeSet::new();
+        for &id in ids {
+            if i32::try_from(id).is_err() {
+                return Err(StoreError::invalid(format!(
+                    "readPageTitlesById id {id} is out of range for type integer"
+                )));
+            }
+            // Page ids start at 1, so a zero or negative id names no page.
+            if id > 0 {
+                wanted.insert(id as u64);
+            }
+        }
+        let read = self.read()?;
+        let mut rows = Vec::new();
+        for id in wanted {
+            if let Some(p) = read_page_by_id(&*read, id)? {
+                rows.push(PageTitleRow { id, title: p.title });
+            }
+        }
+        Ok(rows)
+    }
+
+    /// `readTextMentionPages(sourceIds, slugs)`: each live page whose source is among `source_ids`
+    /// and whose slug is among `slugs`, with `COALESCE(effective_date, updated_at)` as `date`, in
+    /// store scan order (the SQL sets no order).
+    pub fn read_text_mention_pages(
+        &self,
+        source_ids: &[String],
+        slugs: &[String],
+    ) -> Result<Vec<TextMentionPageRow>> {
+        let read = self.read()?;
+        Ok(all_pages(&*read)?
+            .into_iter()
+            .filter(|p| {
+                p.deleted_at_us.is_none()
+                    && source_ids.contains(&p.source_id)
+                    && slugs.contains(&p.slug)
+            })
+            .map(|p| TextMentionPageRow {
+                date: iso(p.effective_date_us.unwrap_or(p.updated_at_us)),
+                slug: p.slug,
+                source_id: p.source_id,
+                title: p.title,
+                page_type: p.page_type,
+                frontmatter: p.frontmatter,
+            })
+            .collect())
+    }
+}
+
+/// `text LIKE ANY(patterns)` (`ILIKE ANY` when `fold`).
+fn any_like(text: &str, patterns: &[String], fold: bool) -> Result<bool> {
+    for pattern in patterns {
+        if like(text, pattern, fold)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// `retiredPageSql`: `canonical` is false or no, `superseded_by` or `merged_into` names a page, or
@@ -412,6 +907,36 @@ fn jsonb_text(value: &Value) -> String {
         }
         other => other.to_string(),
     }
+}
+
+/// A word character of a Postgres regular expression (`\w`): a letter, a digit or `_`.
+fn word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// `text ~* '\m(name|...)\M'` with each name escaped to a literal: some name matches
+/// case-insensitively (each pattern character by its lower and upper forms) where a word starts
+/// and a word ends. `\m` needs a word character after it and none before, `\M` the reverse, so a
+/// name that starts or ends with a non-word character never matches, and no names never match.
+fn names_as_word(text: &str, names: &[Vec<char>]) -> bool {
+    let chars: Vec<char> = text.chars().collect();
+    names.iter().any(|name| {
+        let (Some(first), Some(last)) = (name.first(), name.last()) else {
+            return false;
+        };
+        if !word_char(*first) || !word_char(*last) || name.len() > chars.len() {
+            return false;
+        }
+        (0..=chars.len() - name.len()).any(|start| {
+            let end = start + name.len();
+            (start == 0 || !word_char(chars[start - 1]))
+                && chars.get(end).is_none_or(|c| !word_char(*c))
+                && name
+                    .iter()
+                    .zip(&chars[start..end])
+                    .all(|(p, t)| regex_char_matches(*p, *t, false))
+        })
+    })
 }
 
 #[cfg(test)]

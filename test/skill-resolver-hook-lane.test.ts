@@ -24,6 +24,9 @@
  * nothing when neither is set, the lane is off or the value is bad, under the
  * harness's own output cap rather than lane_payload_chars; a pin added
  * mid-session stays suggestible, and an outdated install is told to rerun setup.
+ * With skill vectors, the deadline waits for the message's embedding (a
+ * no-word-match message is delivered by meaning) and a hung provider costs at
+ * most the vector wait before the words block is delivered.
  */
 import { afterAll, describe, expect, setDefaultTimeout, test } from 'bun:test';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
@@ -303,6 +306,42 @@ describe('skill-resolver lane: turn settings from config', () => {
     const invalid = await ask(claude, 'd5');
     expect([invalid.exitCode, invalid.stdout]).toEqual([0, '']);
     expect(laneLog(b).at(-1)).toMatchObject({ outcome: 'error', code: 'skill_resolver_config_invalid' });
+  });
+});
+
+describe('skill-resolver lane: the model picker', () => {
+  const NO_KEYS = { ANTHROPIC_API_KEY: undefined, OPENAI_API_KEY: undefined, GOOGLE_GENERATIVE_AI_API_KEY: undefined, GEMINI_API_KEY: undefined };
+  test('claude-code and codex with skills.resolver.router on: a turn the picker cannot answer delivers the words block and logs why', async () => {
+    const b = box();
+    seedSkills(claudeSkills(b));
+    seedSkills(codexSkills(b));
+    await setup(b, 'claude-code');
+    await setup(b, 'codex');
+    const cfgPath = join(b.home, '.gbrain', 'config.json');
+    const cfg = readJson(cfgPath);
+    cfg.skills.resolver.router = true;
+    writeFileSync(cfgPath, JSON.stringify(cfg));
+    const ask = (cmd: string, s: string) => hook(b, cmd, { prompt: 'deploy the widget service', session_id: s, hook_event_name: 'UserPromptSubmit' }, { ...WIDE, ...NO_KEYS });
+    expect(contextOf(await ask(wired(b, 'claude-code'), 'r1'))).toContain('id: "deploy-widget"');
+    expect(contextOf(await ask(wired(b, 'codex'), 'r2'))).toContain('deploy-widget');
+    expect(laneLog(b).map((l) => [l.harness, l.outcome, l.router?.by, l.router?.code])).toEqual([['claude-code', 'delivered', 'words', 'missing_key'], ['codex', 'delivered', 'words', 'missing_key']]);
+    cfg.skills.resolver.router_timeout_ms = 5;
+    writeFileSync(cfgPath, JSON.stringify(cfg));
+    expect(contextOf(await ask(wired(b, 'claude-code'), 'r3'))).toContain('id: "deploy-widget"');
+    expect(laneLog(b).at(-1)).toMatchObject({ outcome: 'delivered', router: { by: 'words', code: 'config_invalid' } });
+  });
+
+  test('hermes never calls the picker, even with the setting on', async () => {
+    const b = box();
+    const dir = join(b.home, '.hermes', 'skills');
+    seedSkills(dir);
+    await buildCatalog(b, 'hermes-user', dir, 'hermes');
+    writeFileSync(join(b.home, '.gbrain', 'config.json'), JSON.stringify({ skills: { resolver: { enabled: true, harnesses: ['hermes'], router: true } } }));
+    const cmd = `env GBRAIN_HOOK_LANE=skill-resolver GBRAIN_HOME='${b.home}' '${b.bin}' hook user-prompt --harness hermes`;
+    const r = await hook(b, cmd, { session_id: 'h1', extra: { user_message: 'please deploy the widget to staging', conversation_history: [] } }, { ...WIDE, ...NO_KEYS });
+    expect(JSON.parse(r.stdout).context).toContain('id: "deploy-widget"');
+    expect(laneLog(b).at(-1)).toMatchObject({ harness: 'hermes', outcome: 'delivered' });
+    expect(laneLog(b).at(-1).router).toBeUndefined();
   });
 });
 
@@ -974,6 +1013,65 @@ describe('skill-resolver lane: pins and session_start at SessionStart', () => {
     const context = startContext(r);
     expect(context).toContain('id: "deploy-widget"');
     expect(context.endsWith(note)).toBe(true);
+  });
+});
+
+
+describe('skill-resolver lane: skill vectors', () => {
+  const AXES: [RegExp, number][] = [[/deploy|ship|release|production|go live/i, 0], [/changelog|release notes/i, 1], [/bug|crash|broken/i, 2]];
+  const vec = (text: string) => { const v = [0, 0, 0, 0.05]; for (const [re, i] of AXES) if (re.test(text)) v[i] = 1; return v; };
+  /** An OpenAI-shaped embeddings endpoint on localhost: skill texts answer at once, a message's vector after queryDelayMs. */
+  function fakeEmbedder(queryDelayMs: number) {
+    const queries: string[] = [];
+    const server = Bun.serve({ port: 0, async fetch(req) {
+      const body = await req.json() as { input: string[] };
+      if (!body.input.some(t => t.includes('Steps for'))) { queries.push(...body.input); await Bun.sleep(queryDelayMs); }
+      return Response.json({ data: body.input.map((t, index) => ({ index, embedding: vec(t) })) });
+    } });
+    return { server, queries };
+  }
+  async function withVectors(b: Box, harness: 'claude-code' | 'codex', port: number) {
+    b.env.OPENAI_BASE_URL = `http://127.0.0.1:${port}/v1`;
+    b.env.OPENAI_API_KEY = 'test-key';
+    const cfgPath = join(b.home, '.gbrain', 'config.json');
+    writeFileSync(cfgPath, JSON.stringify({ ...readJson(cfgPath), embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: 4 }));
+    await buildCatalog(b, `${harness}-user`, harness === 'codex' ? codexSkills(b) : claudeSkills(b), harness);
+    expect(readJson(join(b.home, '.gbrain', 'skill-index', `${harness}-user`, 'receipt.json')).vectors).toEqual({ model: 'openai:text-embedding-3-small', dims: 4, count: 3 });
+  }
+
+  test('claude-code: a message that shares no word with any skill is delivered by meaning, inside the real deadline, which waits for the embedding', async () => {
+    const fake = fakeEmbedder(300);
+    try {
+      const b = box();
+      seedSkills(claudeSkills(b));
+      await setup(b, 'claude-code');
+      const cmd = wired(b, 'claude-code');
+      const prompt = { prompt: 'can we go live with it today?', hook_event_name: 'UserPromptSubmit' };
+      expect((await hook(b, cmd, { ...prompt, session_id: 'v0' }, WIDE)).stdout).toBe('');
+      await withVectors(b, 'claude-code', fake.server.port!);
+      const r = await hook(b, cmd, { ...prompt, session_id: 'v1' });
+      expect(r.exitCode).toBe(0);
+      expect(contextOf(r)).toContain('id: "deploy-widget"');
+      expect(r.wallMs).toBeGreaterThan(300);
+      expect(fake.queries).toEqual(['can we go live with it today?']);
+      expect(laneLog(b).at(-1)).toMatchObject({ outcome: 'delivered', vectors: { used: true } });
+      expect(laneLog(b).at(-1).vectors.ms).toBeGreaterThanOrEqual(250);
+    } finally { fake.server.stop(true); }
+  });
+
+  test('codex: a provider that never answers costs at most the vector wait; the words block is delivered and the log says timeout', async () => {
+    const fake = fakeEmbedder(30_000);
+    try {
+      const b = box();
+      seedSkills(codexSkills(b));
+      await setup(b, 'codex');
+      await withVectors(b, 'codex', fake.server.port!);
+      const r = await hook(b, wired(b, 'codex'), { prompt: 'write the changelog for this release', session_id: 'v2', hook_event_name: 'UserPromptSubmit' });
+      expect(r.exitCode).toBe(0);
+      expect(contextOf(r)).toContain('write-changelog');
+      expect(r.wallMs).toBeLessThan(3000);
+      expect(laneLog(b).at(-1)).toMatchObject({ outcome: 'delivered', vectors: { used: false, code: 'timeout' } });
+    } finally { fake.server.stop(true); }
   });
 });
 

@@ -364,6 +364,17 @@ describe('members that write more than their arguments name', () => {
     expect(await engine.getPage('people/rena-new')).not.toBeNull();
   });
 
+  test('the writers N3 added report the rows they touch: open loops, a page timeline, a source path', async () => {
+    await engine.putPage('people/tess', PAGE('Tess'));
+    const h = followHarness(engine);
+    await h.engine.upsertOpenLoop({ sourceId: 'default', dedupKey: 'follow-key', loopType: 'unanswered_inbound', summary: 'Reply to Tess', evidence: [], detector: 'manual' });
+    await h.engine.closeOpenLoop('default', 987654, 'done', 'test');
+    await h.engine.deleteTimelineRows(Number(await pageId('people/tess')), []);
+    await h.engine.attachSourcePath('default', '/tmp/follow-source');
+    const items = h.batches.flatMap((b) => b.items) as Array<{ relation?: string }>;
+    expect(relations(items)).toEqual(expect.arrayContaining(['open_loops', 'timeline_entries', 'sources', 'owner_only_marks']));
+  });
+
   test('the decide store members report the relation each one writes', async () => {
     const h = followHarness(engine);
     await h.engine.upsertDecideState('follow_key', 'v');
@@ -400,6 +411,14 @@ describe('write map coverage', () => {
     const tx = new Set<string>(SHADOW_TRANSACTION_MEMBERS);
     const unclassified = protoMembers().filter((name) => !isShadowReadMember(name) && !tx.has(name) && memberKind(name) === 'unmapped');
     expect(unclassified).toEqual([]);
+  });
+
+  test('the 12 members the N3 step added are classified: six writers mapped or ignored, six reads read-only', () => {
+    for (const name of ['attachSourcePath', 'closeOpenLoop', 'upsertOpenLoop', 'deleteTimelineRows']) expect(memberKind(name)).toBe('mapped');
+    for (const name of ['expireMemoryProposals', 'purgeMemoryProposals']) expect(memberKind(name)).toBe('ignored');
+    for (const name of ['normalizeFenceLines', 'notifierCoverageRecorded', 'sampleEffectiveDates', 'sampleEffectiveDateSources', 'sharedSkillPackTablePresent', 'storedTimelineRowsByPageIds']) {
+      expect(memberKind(name)).toBe('read_name');
+    }
   });
 
   test('every mapped, ignored, raw, schema and read-named-write entry names a real engine member', () => {

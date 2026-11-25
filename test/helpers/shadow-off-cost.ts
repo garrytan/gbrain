@@ -51,7 +51,7 @@ export function turnShadowOn(home: string, config: EngineConfig, opts: { seeded?
     writeSeedRecord(dir, {
       version: SEED_RECORD_VERSION, seed_id: 'shadow-off-cost-control', started_at: now, finished_at: now,
       primary_engine: config.engine ?? 'pglite', relations: {}, losses: { values: {}, not_copied: [], gaps: {} },
-      unseeded_gap_rows: {}, unseeded_gap_rows_total: 0, non_terminal_jobs: 0, segmented_pages: 0,
+      unseeded_gap_rows: {}, unseeded_gap_rows_total: 0, non_terminal_jobs: 0, segmented_pages: 0, digests: true,
     });
   }
 }

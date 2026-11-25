@@ -1,4 +1,4 @@
-/** Engine-free CLI routing to the process that already owns a PGLite brain. */
+/** Engine-free CLI routing to the process that already owns a PGLite brain (and, for administration, a Rust brain). */
 import { randomUUID } from 'node:crypto';
 import { hookSessionCwd } from '../session-cwd.ts';
 import { readFileSync } from 'node:fs';
@@ -21,6 +21,7 @@ import {
 } from './ipc.ts';
 import type { PersistenceAdminOperation } from './admin-contract.ts';
 import { currentCliWriteWait, replayWhilePending, writeExchangeBudget } from './write-wait.ts';
+import { persistenceResidentOwner } from './resident-owner.ts';
 
 function noDiscoveryPath(message: string, holder: LockHolderInfo, brainId?: string): OperationError {
   const who = holder.pid ? `process ${holder.pid}${holder.subcommand ? ` (gbrain ${holder.subcommand})` : ''}` : 'another process';
@@ -107,7 +108,7 @@ export const OWNER_STARTUP_WAIT_MS = 3_000;
  * serve still holds the lock; a holder that is not a serve, a released lock or any answer other than "no socket"
  * ends the wait at once. Never falls through to the engine path.
  */
-async function residentOwnerCapabilities(socketPath: string, databasePath: string, holder: ReturnType<typeof inspectLockHolder>,
+async function residentOwnerCapabilities(socketPath: string, reinspect: () => LockHolderInfo | Promise<LockHolderInfo>, holder: LockHolderInfo,
   startupWaitMs = OWNER_STARTUP_WAIT_MS): Promise<PersistenceIpcCapabilities> {
   const deadline = Date.now() + startupWaitMs;
   for (;;) {
@@ -116,7 +117,7 @@ async function residentOwnerCapabilities(socketPath: string, databasePath: strin
       const starting = error instanceof PersistenceIpcTransportError && !error.sent && holder.serve === true && Date.now() < deadline;
       if (!starting) throw error;
       await new Promise(resolve => setTimeout(resolve, 100));
-      const again = inspectLockHolder(databasePath);
+      const again = await reinspect();
       if (!again.held || again.serve !== true || again.pid !== holder.pid) throw error;
     }
   }
@@ -127,12 +128,13 @@ export async function maybeDelegateLocalAdministration(
   operation: PersistenceAdminOperation, params: Record<string, unknown>, config: GBrainConfig,
   options: { timeoutMs?: number; startupWaitMs?: number } = {},
 ): Promise<LocalDelegationResult> {
-  if (config.engine !== 'pglite' || !config.database_path || config.database_url) return { handled: false };
-  const holder = inspectLockHolder(config.database_path);
-  if (!holder.held) return { handled: false };
-  const socketPath = persistenceSocketPathForConfig(config);
+  // A PGLite lock holder, or a Rust serve owner whose engine reports `persistence_journal` and answers its
+  // persistence socket (resident-owner.ts); any other owner leaves the command to the engine path.
+  const owner = await persistenceResidentOwner(config);
+  if (!owner) return { handled: false };
+  const { holder, socketPath } = owner;
   if (!socketPath) throw noDiscoveryPath('The PGLite owner has no persistence discovery path.', holder);
-  const capability = await residentOwnerCapabilities(socketPath, config.database_path, holder, options.startupWaitMs);
+  const capability = await residentOwnerCapabilities(socketPath, owner.inspect, holder, options.startupWaitMs);
   if (!ownerAdministers(capability, operation)) throw new OperationError('owner_unavailable',
     'The running owner does not support this local administration command.', 'Upgrade and restart the owner before administering this brain.');
   const registration = readPersistenceCliRegistration(capability.brain_id);
@@ -190,7 +192,7 @@ export async function maybeDelegateLocalOperation(
   if (sourceInParams) delete wireParams.source;
   delete wireParams.json;
   let capability: PersistenceIpcCapabilities;
-  try { capability = await residentOwnerCapabilities(socketPath, config.database_path, holder, options.startupWaitMs); }
+  try { capability = await residentOwnerCapabilities(socketPath, () => inspectLockHolder(config.database_path), holder, options.startupWaitMs); }
   catch (error) {
     // A holder that is not a serve and answers no owner socket is another
     // command, such as a concurrent CLI call: the engine path waits for its lock.

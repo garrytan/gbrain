@@ -18,7 +18,7 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { serr } from '../core/console-prefix.ts';
-import { probeLivePgliteHolder } from '../core/bootstrap/uninstall.ts';
+import { engineLabel, hookServeOwner, hookServeStillHolds, type LocalBrainEngine } from '../core/persistence/resident-owner.ts';
 import {
   IPC_UNAVAILABLE,
   readIpcSecret,
@@ -86,7 +86,7 @@ export function parseDelegatedSweepArgs(args: string[]): ParsedDelegatedSweepArg
  * Delegate `gbrain sweep --once` to a live serve when one holds this PGLite
  * brain's lock. Mirrors maybeDelegateSyncToServe's ladder.
  */
-export async function maybeDelegateSweepToServe(dataDir: string, args: string[]): Promise<boolean> {
+export async function maybeDelegateSweepToServe(dataDir: string, args: string[], engine: LocalBrainEngine = 'pglite'): Promise<boolean> {
   // 0. Explicit opt-outs + non-delegatable spellings (help prints locally;
   //    a missing --once is a local usage error).
   if (args.includes('--no-delegate') || process.env.GBRAIN_SWEEP_NO_DELEGATE === '1') return false;
@@ -98,15 +98,15 @@ export async function maybeDelegateSweepToServe(dataDir: string, args: string[])
     const { getCliOptions } = await import('../core/cli-options.ts');
     if (resolveBrainId(getCliOptions().brain) !== 'host') return false;
   } catch { /* resolver trouble → normal path */ }
-  // 2. Holder probe (read-only; never reaps).
-  const holder = probeLivePgliteHolder(dataDir);
+  // 2. Holder probe (read-only; never reaps). A Rust serve counts once its hook socket exists (resident-owner.ts).
+  const holder = await hookServeOwner(engine, dataDir);
   if (!holder || !holder.serve) return false;
 
   // 3. Argv gate (default-deny).
   const parsed = parseDelegatedSweepArgs(args);
   if (!parsed.ok) {
     serr(
-      `[sweep] a live \`gbrain serve\` (PID ${holder.pid}) holds this PGLite brain, and ` +
+      `[sweep] a live \`gbrain serve\` (PID ${holder.pid}) holds this ${engineLabel(engine)} brain, and ` +
       `\`${parsed.refused}\` isn't supported through serve-delegated sweep. ` +
       remediation(holder.pid),
     );
@@ -129,7 +129,7 @@ export async function maybeDelegateSweepToServe(dataDir: string, args: string[])
   const secret = readIpcSecret(dataDir);
   if (!existsSync(sock) || !secret) {
     serr(
-      `[sweep] a live \`gbrain serve\` (PID ${holder.pid}) holds this PGLite brain's ` +
+      `[sweep] a live \`gbrain serve\` (PID ${holder.pid}) holds this ${engineLabel(engine)} brain's ` +
       `single-writer lock but exposes no sweep IPC (older gbrain, or ` +
       `GBRAIN_SERVE_SYNC_IPC=0). ` + remediation(holder.pid, 'Restart that serve on this gbrain version.'),
     );
@@ -142,8 +142,7 @@ export async function maybeDelegateSweepToServe(dataDir: string, args: string[])
 
   let start = await requestSweepStart(sock, { secret, clientToken, options });
   if (start === IPC_UNAVAILABLE) {
-    const still = probeLivePgliteHolder(dataDir);
-    if (!still || !still.serve) return false;
+    if (!(await hookServeStillHolds(engine, dataDir))) return false;
     start = await requestSweepStart(sock, { secret, clientToken, options });
     if (start === IPC_UNAVAILABLE) {
       serr(
@@ -179,7 +178,7 @@ export async function maybeDelegateSweepToServe(dataDir: string, args: string[])
 
   const jobId = startResp.jobId!;
   serr(
-    `[sweep] live \`gbrain serve\` (PID ${holder.pid}) holds the PGLite lock — running ` +
+    `[sweep] live \`gbrain serve\` (PID ${holder.pid}) holds the ${engineLabel(engine)} lock — running ` +
     `the sweep inside it (job ${jobId}).`,
   );
 
@@ -191,8 +190,7 @@ export async function maybeDelegateSweepToServe(dataDir: string, args: string[])
     if (s === IPC_UNAVAILABLE || 'degraded' in (s as object)) {
       failures++;
       if (failures % PID_PROBE_EVERY === 0) {
-        const still = probeLivePgliteHolder(dataDir);
-        if (!still || !still.serve) {
+        if (!(await hookServeStillHolds(engine, dataDir))) {
           serr(`[sweep] the serve (PID ${holder.pid}) died mid-sweep — re-run \`gbrain sweep --once\`.`);
           await setVerdict(1);
           return true;

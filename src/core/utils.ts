@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomBytes } from 'crypto';
 import type { Page, PageInput, PageType, Chunk, SearchResult, StalePageRow } from './types.ts';
 import type { Take, TakeKind, TakeHit } from './engine.ts';
@@ -56,7 +57,29 @@ export function validateSlug(slug: string): string {
   if (/%2e|%2f|%5c/i.test(slug)) {
     throw new Error(`Invalid slug: "${slug}". URL-encoded path separators are not allowed in slugs.`);
   }
-  return slug.toLowerCase();
+  if (storedSlugScope.getStore() === slug) return slug;
+  return normalizeSlug(slug);
+}
+
+/**
+ * Runs `run` with `slug` (a page's exact stored spelling, not in normal form) kept as it is by validateSlug, so a write that
+ * addresses an existing page stored before slugs were lowercased and composed changes that row and never creates a twin.
+ * Only that one spelling is kept; every other slug is still normalized.
+ */
+export function withStoredSlug<T>(slug: string, run: () => T): T {
+  return storedSlugScope.run(slug, run);
+}
+const storedSlugScope = new AsyncLocalStorage<string>();
+
+/**
+ * The one slug normal form: lowercase, then Unicode NFC. Writes store slugs in
+ * this form (validateSlug) and every read that takes a slug from a caller
+ * normalizes it the same way, so `People/Alice-Example` and a decomposed
+ * `café` find the page `people/alice-example` / `café` was stored as.
+ * NFC runs last because lowercasing can leave a sequence that is not composed.
+ */
+export function normalizeSlug(slug: string): string {
+  return slug.toLowerCase().normalize('NFC');
 }
 
 /**

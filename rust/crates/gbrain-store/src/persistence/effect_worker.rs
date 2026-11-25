@@ -3,13 +3,15 @@
 //! "Effect worker").
 //!
 //! Every statement here names its effect by id and, once claimed, by the claim's execution token,
-//! as the Postgres statements do (`WHERE id=$1 AND execution_token=$2::uuid`). Every worktree on
-//! this engine is null (no worktree binding exists here), so the claim's worktree terms are
-//! answered as Postgres answers them for a null worktree: an effect on a worktree is never
-//! claimable, and no recovery on a worktree blocks an effect without one.
+//! as the Postgres statements do (`WHERE id=$1 AND execution_token=$2::uuid`). An effect on a
+//! worktree is claimed only by the worktree's owner host, while no refresh fences the worktree and
+//! no effect or request there carries a recovery (`write_claim_terms.rs`); a recovery on a
+//! worktree never blocks an effect without one.
 
 use super::effects::{EffectRecord, all_effects, effect_by_id, write_effect};
-use super::{is_uuid, json_text};
+use super::worktree_admission::all_refreshes;
+use super::write_claim_terms::effect_claimable_on_worktree;
+use super::{all_requests, is_uuid, json_text};
 use crate::Store;
 use crate::env::Env;
 use crate::error::{Result, StoreError};
@@ -137,7 +139,7 @@ pub(crate) fn select_claimable_effect_in(
     host_id: &str,
     dead_owners: &[String],
 ) -> Result<Option<EffectRecord>> {
-    pg_uuid(host_id)?;
+    let host = pg_uuid(host_id)?;
     let effects = all_effects(read)?;
     let mirror_pending = |e: &EffectRecord| {
         effects.iter().any(|m| {
@@ -146,7 +148,7 @@ pub(crate) fn select_claimable_effect_in(
                 && (m.state == "queued" || m.state == "running")
         })
     };
-    Ok(effects
+    let due: Vec<&EffectRecord> = effects
         .iter()
         .filter(|e| {
             let due_state = e.state == "queued"
@@ -154,10 +156,28 @@ pub(crate) fn select_claimable_effect_in(
                 || dead_owner_claim(e, dead_owners);
             due_state
                 && e.next_attempt_at_us <= now
-                && e.worktree_id.is_none()
                 && e.recovery.is_none()
                 && (e.kind == "withdrawal-mirror" || !mirror_pending(e))
         })
+        .collect();
+    // A due effect on a worktree is claimable only by its owner host, while no refresh fences the
+    // worktree and nothing there is in recovery (`write_claim_terms.rs`).
+    let requests = all_requests(read)?;
+    let refreshes = all_refreshes(read)?;
+    let mut claimable = Vec::new();
+    for e in due {
+        let ok = match &e.worktree_id {
+            None => true,
+            Some(w) => {
+                effect_claimable_on_worktree(read, w, &host, &effects, &requests, &refreshes)?
+            }
+        };
+        if ok {
+            claimable.push(e);
+        }
+    }
+    Ok(claimable
+        .into_iter()
         .min_by_key(|e| (e.next_attempt_at_us, e.id))
         .cloned())
 }
@@ -475,5 +495,64 @@ impl Store {
     /// `true` when it matched the claim.
     pub fn settle_effect(&self, action: Settle, spec: &EffectSettle) -> Result<bool> {
         self.write(|tx| settle_effect_in(tx, &*self.env, action, spec))
+    }
+}
+
+/// `rearmLinksEffects`'s spec: the source, the requests whose `links` effects re-arm, and optionally their slugs.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LinksRearm {
+    pub source_id: String,
+    pub request_ids: Vec<String>,
+    #[serde(default)]
+    pub slugs: Option<Vec<String>>,
+}
+
+impl Store {
+    /// `rearmLinksEffects(opts)`: queues again, unclaimed and due now, each `links` effect of the
+    /// requests in the source (of the slugs when given) that carries no `batch_reconciled` and no
+    /// recovery, and marks it re-armed. Returns how many re-armed. The store keeps no persistence
+    /// protocol setting, so the protocol predicate always holds.
+    pub fn rearm_links_effects(&self, spec: &LinksRearm) -> Result<u64> {
+        if spec.request_ids.is_empty() {
+            return Ok(0);
+        }
+        let ids: Vec<String> = spec
+            .request_ids
+            .iter()
+            .map(|id| pg_uuid(id))
+            .collect::<Result<_>>()?;
+        let now = self.env.now_micros();
+        self.write(|tx| {
+            let mut rearmed = 0u64;
+            for mut e in all_effects(&*tx)? {
+                let slug_ok = match &spec.slugs {
+                    None => true,
+                    Some(slugs) => e
+                        .data
+                        .get("slug")
+                        .and_then(Value::as_str)
+                        .is_some_and(|s| slugs.iter().any(|w| w == s)),
+                };
+                if e.kind != "links"
+                    || e.source_id.as_deref() != Some(spec.source_id.as_str())
+                    || !ids.iter().any(|id| *id == e.request_id.to_lowercase())
+                    || !slug_ok
+                    || e.data.get("batch_reconciled").is_some()
+                    || e.recovery.is_some()
+                {
+                    continue;
+                }
+                e.state = "queued".into();
+                release(&mut e, now);
+                e.next_attempt_at_us = now;
+                e.error_code = None;
+                e.outcome = None;
+                e.data = with_key(e.data, "batch_reconciled", Value::Bool(true));
+                write_effect(tx, &e)?;
+                rearmed += 1;
+            }
+            Ok(rearmed)
+        })
     }
 }

@@ -8,6 +8,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runRecall } from '../src/commands/recall.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 let engine: PGLiteEngine;
 const origWrite = process.stdout.write.bind(process.stdout);
@@ -82,6 +83,36 @@ describe('gbrain recall --today', () => {
     expect(captured).toContain('💭');  // belief
     expect(captured).toContain('📌');  // fact
     expect(captured).toContain('💡');  // idea
+  });
+
+  // The --today window starts at local midnight, so its heading must name the local day, not the UTC day.
+  test('the heading names the local day the --today window covers', async () => {
+    const timeZone = new Date().getUTCHours() < 12 ? 'Etc/GMT+12' : 'Pacific/Kiritimati';
+    const localDay = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    expect(localDay).not.toBe(new Date().toISOString().slice(0, 10));
+    await engine.insertFact(
+      { fact: 'local-day-fact', kind: 'event', entity_slug: 'render-test-day', source: 'test' },
+      { source_id: 'default' },
+    );
+
+    await withEnv({ TZ: timeZone }, () => runRecall(engine, ['--today']));
+    process.stdout.write = origWrite;
+
+    expect(captured).toContain('local-day-fact');
+    expect(captured).toContain(`# Hot memory — ${localDay}`);
+  });
+
+  // The heading follows the window, not the render-time clock: a --watch run past midnight keeps its window's day.
+  test('the heading names the day the window starts on, read in local time', async () => {
+    await engine.insertFact(
+      { fact: 'window-day-fact', kind: 'event', entity_slug: 'render-test-window', source: 'test' },
+      { source_id: 'default' },
+    );
+    await withEnv({ TZ: 'Pacific/Kiritimati' }, () => runRecall(engine, ['--today', '--since', '2026-01-05T00:30:00']));
+    process.stdout.write = origWrite;
+
+    expect(captured).toContain('window-day-fact');
+    expect(captured).toContain('# Hot memory — 2026-01-05\n');
   });
 });
 
