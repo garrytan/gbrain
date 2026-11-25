@@ -440,6 +440,26 @@ describe('household privacy over remote MCP', () => {
     expect((await engine.getPage('people/vic-example'))!.frontmatter.household_role).toBe('child');
   });
 
+  test('a subject the owner changes back to adult after the pre-check is not made a child by a non-owner (merged-head review #2)', async () => {
+    await local('put_page', { slug: 'people/abe-example', content: md({ type: 'person', title: 'abe-example', household_role: 'adult' }, 'Abe.') });
+    const read = PGLiteEngine.prototype.readPageSnapshot;
+    (engine as any).readPageSnapshot = async function (this: PGLiteEngine, slug: string, opts?: any) {
+      const snap = await read.call(this, slug, opts);
+      const stack = new Error().stack ?? '';
+      if (slug !== 'people/abe-example' || !snap || !stack.includes('ops/household.ts') || stack.includes('classifySubjectPages')) return snap;
+      return { ...snap, page: { ...snap.page, frontmatter: { ...snap.page.frontmatter, household_role: 'child' } } };
+    };
+    try {
+      const res = await remote(ADULT, 'household_add', { kind: 'supply', title: 'Abe crayons', cadence: '30d', about: ['people/abe-example'], child: true });
+      expect(res.isError).toBe(true);
+      expect(res.text).toContain('household_reclassify');
+    } finally {
+      delete (engine as any).readPageSnapshot;
+    }
+    expect((await engine.getPage('people/abe-example'))!.frontmatter.household_role).toBe('adult');
+    expect(await engine.executeRaw("SELECT slug FROM pages WHERE slug LIKE '%abe-crayons%'")).toEqual([]);
+  });
+
   test('a household_add whose record the caller could not read is refused before its subject changes (final-head review #2)', async () => {
     const res = await remote(HELPER, 'household_add', { kind: 'bill', title: 'Xan bill', due: '2026-12-09', about: ['people/xan-example'], about_role: 'adult' });
     expect(res.isError).toBe(true);
