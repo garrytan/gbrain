@@ -474,3 +474,33 @@ describe('shadow mode off', () => {
     });
   }, 60_000);
 });
+
+describe('every sample the child was sent ends in the tally (sample accounting)', () => {
+  const ADDON = async () => ({ ok: true as const, addon: { target: 'linux-x64-glibc', engineAbi: 1, engineBuild: 'b1', catalogVersion: 3 } as never });
+  const BASE = { loadAddon: ADDON, capabilities: () => ['search', 'pages'], readinessPolicyHash: () => 'p1', heartbeatMs: 60_000, childId: 'c1' };
+  const replayLine = (n: number) => JSON.stringify({ t: 'write', op: 'putPage', args: encodeArgs([`people/queued-${n}-example`, { type: 'person', title: `Queued ${n}`, compiled_truth: 'Q.', timeline: '' }]) as unknown[], pre: { sources: [], pages: [], links: [] }, post: { pages: [null], links: [] } }) + '\n';
+
+  test('a child that reaches its exit deadline with replays still queued counts them (uncomparable, named), never drops them uncounted', async () => {
+    await withEnv({ GBRAIN_HOME: tmp() }, async () => {
+      const dir = tmp();
+      writeSeedRecord(dir, { version: 1, seed_id: 'seed-1', started_at: '2026-01-01T00:00:00.000Z', finished_at: '2026-01-01T00:01:00.000Z', unseeded_gap_rows_total: 0, unseeded_gap_rows: {}, relations: {}, digests: true } as never);
+      const input = new PassThrough();
+      let exitCode = null as number | null;
+      // The scratch store of the first replay never opens (a slow or stuck replay); the next two wait behind it in the child's queue.
+      void runShadowChild(dir, {
+        input, writeControl: () => {}, ...BASE, addonSha256: () => 'a'.repeat(64),
+        openEngine: () => ({ ownerRole: 'owner', async connect() {}, async disconnect() {}, storeFor: () => new Promise(() => {}) }) as never,
+        exitDeadlineMs: 300, exit: (code) => { exitCode = code; },
+      });
+      for (let n = 0; n < 3; n++) input.write(replayLine(n));
+      input.end(); // the serving process disconnects
+      const until = Date.now() + 10_000;
+      while (exitCode === null && Date.now() < until) await new Promise((r) => setTimeout(r, 25));
+      expect(exitCode).toBe(0);
+      const t = readWriteTally(dir, readEpoch(dir)!.epoch_id)!;
+      // The stuck replay keeps its in-flight mark (the next child counts it unexplained); the two queued behind it must be counted too.
+      expect(t.comparable + t.unexplained_difference + t.uncomparable + t.capability_missing + t.in_flight.length).toBe(3);
+      expect(t.comparable).toBe(0);
+    });
+  }, 30_000);
+});

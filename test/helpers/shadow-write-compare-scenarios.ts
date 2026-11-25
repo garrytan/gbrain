@@ -202,6 +202,39 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       expect(row.detail).toContain(WRITE_PGLITE_LIMIT);
       expect(renderFollowStatus(status).join('\n')).toContain(`comparable 1, unexplained 0`);
     }, 180_000);
+
+    test('every write the sampler selects ends in the tally, also the one in flight when mirroring stops (it is never lost uncounted)', async () => {
+      if (ctx.kind !== 'postgres') return; // PGLite samples no write
+      const home = ctx.tempDir();
+      await ctx.reset();
+      await fillSeedFixture(primary());
+      const { record } = await seedInto(primary(), addonOf(), home, ctx.kind);
+      writeSeedRecord(home, record);
+      const state = { version: 1, enabled: true, started_at: 'x', sample_rate: 1, write_sample_rate: 1, queue_bound: 64, plan_hash: 'h', brain: 'b', primary_engine: ctx.kind };
+      let enabled = true; let selected = 0; let pid = 0;
+      // Counts the sampler's own decisions (rate 1: every pilot write it is asked about), independently of what reaches the tally.
+      const random = (): number => { if (new Error().stack?.includes('sampledWrite')) selected++; return 0; };
+      await withEnv({ GBRAIN_HOME: ctx.tempDir(), GBRAIN_RUST_ENGINE_ADDON: ctx.addonPath! }, async () => {
+        // The state file is re-read on every send here (stateCheckMs 0); `enabled` stands for state.json, as `gbrain engine shadow stop` flips it.
+        const attached = attachShadowParts(primary(), home, state as never, { gbrainArgv: [process.execPath, join(import.meta.dir, '..', '..', 'src', 'cli.ts')], recordsWriteComparisons: true, random, supervisor: { stateCheckMs: 0, stillEnabled: () => enabled } });
+        try {
+          await attached.engine.addLink('people/alice-example', 'companies/acme-example', 'first', 'invests_in');
+          await until(() => { const w = buildFollowStatus(home, state as never, NOW).write_comparisons; return w.comparable + w.uncomparable + w.unexplained_difference > 0; }, 90_000);
+          pid = attached.supervisor.childPid ?? 0;
+          enabled = false; // shadow mode is turned off while the next sampled write is being read back
+          await attached.engine.removeLink('people/alice-example', 'companies/acme-example', 'invests_in');
+          await until(() => attached.supervisor.disabled !== null, 30_000);
+          await new Promise((r) => setTimeout(r, 1_000)); // its read-back and send attempt are done
+        } finally { attached.supervisor.stop(); attached.reconciler?.stop(); }
+      });
+      if (pid) await until(() => { try { process.kill(pid, 0); return false; } catch { return true; } }, 60_000); // the child drained what it was sent and exited
+      const w = buildFollowStatus(home, state as never, NOW).write_comparisons;
+      expect(selected).toBe(2);
+      expect(w.comparable).toBe(1);
+      // The second sample was selected while mirroring was on: it must be counted (uncomparable with a named reason), never vanish.
+      expect({ total: w.comparable + w.unexplained_difference + w.uncomparable + w.capability_missing, uncomparable: w.uncomparable }).toEqual({ total: selected, uncomparable: 1 });
+      expect(Object.keys(w.uncomparable_by_reason ?? {})).toHaveLength(1);
+    }, 180_000);
   });
 
   describe('write comparison counts', () => {
