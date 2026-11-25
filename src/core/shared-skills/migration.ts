@@ -95,25 +95,13 @@ type SourceRoot = { id: string; incarnation: string; local_path: string | null }
 type SealedSkill = { name: string; files: Array<{ path: string; sha256: string }> };
 
 /**
- * The live (not archived) sources in byte order of id, with incarnation and registered root, through typed engine
- * reads (no SQL here), so the same code serves every engine, a Rust brain's owner and its clients included. None of
- * these reads parses a source's config, so a malformed config still reaches that source's own policy handling.
- * The roots are read between two reads of the incarnations: when both agree, each root belongs to that incarnation
- * (a recreated source gets a new one), so an old root is never paired with a recreated source.
+ * The live (not archived) sources in byte order of id, with incarnation and registered root, from one typed read (no
+ * SQL here), so the same code serves every engine, a Rust brain's owner and its clients included. One read keeps each
+ * root paired with its own incarnation, and it parses no source config, so a malformed config stays that source's own
+ * policy matter.
  */
 async function liveSourceRoots(engine: OperationContext['engine']): Promise<SourceRoot[]> {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const ids = await engine.listSourceIds();
-    const before = await engine.listSourceIncarnations(ids);
-    const roots = new Map((await engine.listLocalPathSources()).map(source => [source.id, source.local_path]));
-    const archived = new Set(await engine.listArchivedSourceIds());
-    const after = await engine.listSourceIncarnations(ids);
-    if (JSON.stringify(after) !== JSON.stringify(before)) continue;
-    return before.filter(row => !archived.has(row.id))
-      .map(row => ({ id: row.id, incarnation: row.incarnation, local_path: roots.get(row.id) ?? null }));
-  }
-  throw opError('local_conflict', 'Sources kept changing while the migration read them.',
-    'A source was created, removed or recreated during each of three reads of the source list. Run the migration again when source changes stop.');
+  return (await engine.listOnboardingSources(null)).map(row => ({ id: row.id, incarnation: row.incarnation, local_path: row.local_path }));
 }
 
 /** The sealed pack's manifest hash for a source incarnation, or undefined without a pack. */
@@ -227,7 +215,10 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
       if (prior?.inventory && (!row.inventory || !sameInventory(prior.inventory.hashes, row.inventory.hashes))) {
         const original = { ...prior.inventory.hashes }, current = { ...row.inventory?.hashes };
         delete original['skillpack.json']; delete current['skillpack.json'];
-        const sealed = { manifest_hash: await sealedManifestHash(ctx.engine, source.id, source.incarnation) };
+        const reviewed = prior.inventory;
+        // A sealed read that fails keeps the inventory taken before the edit, so a retry still compares against it.
+        const sealed = { manifest_hash: await sealedManifestHash(ctx.engine, source.id, source.incarnation)
+          .catch((error: unknown) => { row.inventory = reviewed; throw error; }) };
         const digest = row.inventory ? inventoryDigest(row.inventory.hashes) : null;
         if ((!row.inventory || !sameInventory(original, current) || sealed?.manifest_hash !== row.inventory.hashes['skillpack.json'])
           && (digest === null || options.acceptReviewedInventory?.[source.id] !== digest)) {

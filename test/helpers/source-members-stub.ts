@@ -1,11 +1,12 @@
 /**
  * Typed `sources` members for hermetic stub engines. Production code reads `sources` through these BrainEngine members
  * (listAllSources, getSource, listLocalPathSources, listSourceRoutingRows, listSourceRecords, countDefaultSourceSplit,
- * listStaleSyncSourceIds, listSourceIds, listArchivedSourceIds, readSourceIncarnation, listSourceIncarnations, readSourceState, and the guest and company-brain lookups) instead of `executeRaw`, so a stub engine that used to answer SQL text spreads these instead.
+ * listStaleSyncSourceIds, readSourceIncarnation, listOnboardingSources, readSourceState, and the guest and company-brain lookups) instead of `executeRaw`, so a stub engine that used to answer SQL text spreads these instead.
  * Each member answers as the engine-sql statement does: the same filters, the same order, the same row shape.
  */
 import type { GuestSourceLookupRow, SourceDetailRow, SourceIncarnationRow, SourceRecordRow, SourceRow } from '../../src/core/engine.ts';
-import type { DefaultSourceSplit, LocalPathSourceRow, SourceIncarnationListRow, SourceRoutingRow } from '../../src/core/engine-sql/sources.ts';
+import type { DefaultSourceSplit, LocalPathSourceRow, SourceRoutingRow } from '../../src/core/engine-sql/sources.ts';
+import type { OnboardingSourceRow } from '../../src/core/engine-sql/writer-status.ts';
 import type { SourceStateRow } from '../../src/core/engine-sql/write-misc.ts';
 
 export interface StubSourceRow {
@@ -96,20 +97,11 @@ export function stubSourceMembers(sources: readonly StubSourceRow[] | (() => rea
       const r = rows().find(row => row.id === id);
       return r ? { config: r.config, incarnation: r.incarnation } : null;
     },
-    /** Every source id, archived included, in byte order (listSourceIds). */
-    async listSourceIds(): Promise<string[]> {
-      enter('listSourceIds');
-      return byId(rows()).map(r => r.id);
-    },
-    /** The archived source ids, in no stated order (listArchivedSourceIds). */
-    async listArchivedSourceIds(): Promise<string[]> {
-      enter('listArchivedSourceIds');
-      return rows().filter(r => r.archived).map(r => r.id);
-    },
-    /** The incarnation of each known source of `ids`, archived included, in byte order of id (listSourceIncarnations). */
-    async listSourceIncarnations(ids: readonly string[]): Promise<SourceIncarnationListRow[]> {
-      enter('listSourceIncarnations');
-      return byId(rows()).filter(r => ids.includes(r.id)).map(({ id, incarnation }) => ({ id, incarnation }));
+    /** The live sources' id, root, incarnation and kind, in byte order of id (listOnboardingSources). */
+    async listOnboardingSources(sourceId: string | null): Promise<OnboardingSourceRow[]> {
+      enter('listOnboardingSources');
+      return byId(rows()).filter(r => !r.archived && (sourceId === null || r.id === sourceId))
+        .map(({ id, local_path, incarnation, config }) => ({ id, local_path, incarnation, kind: typeof config.kind === 'string' ? config.kind : null }));
     },
     /** The source row's incarnation, archived flag, local path and config (readSourceState), or null for an unknown id. */
     async readSourceState(id: string): Promise<SourceStateRow | null> {

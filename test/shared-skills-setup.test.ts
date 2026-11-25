@@ -49,6 +49,24 @@ function writePack(root: string) {
   }
 }
 
+/**
+ * Makes the fixture a Rust brain: raw SQL on shared-skill tables refuses by name, the brain singleton comes from the
+ * writer admin state (managed-mode.ts) and the sealed pack from the store (rust-publication.ts) through `readPack`.
+ */
+function asRustBrain(f: ReturnType<typeof fixture>, readPack: (key: { sourceId: string; incarnation: string }) => Promise<unknown>) {
+  Object.assign(f.ctx.engine, {
+    kind: 'rust',
+    readWriterAdminState: async () => JSON.stringify({ brain: { id: f.brainId, enabled: false, mode_epoch: 0, skill_bundles_enabled: false, writer_protocol_floor: 1 } }),
+    _admit: async () => {},
+    storeFor: async () => ({ brain: { readSharedSkillPack: readPack } }),
+  });
+  const sqlRead = f.ctx.engine.executeRaw.bind(f.ctx.engine);
+  f.ctx.engine.executeRaw = (async (sql: string, params?: unknown[]) => {
+    if (sql.includes('shared_skill_')) throw Object.assign(new Error('raw SQL is refused on the Rust engine'), { code: 'engine_capability_missing' });
+    return sqlRead(sql, params);
+  }) as BrainEngine['executeRaw'];
+}
+
 describe('combined content root setup', () => {
   test('dry-run uses the persistent brain ID and makes no directory or checkpoint', async () => {
     const home = temp(), f = fixture();
@@ -149,19 +167,23 @@ describe('staged skill migration', () => {
     expect(readFileSync(join(root, 'skills/memory-care/SKILL.md'), 'utf8')).toBe('private: true\nLocal instructions');
     expect((await runSharedSkillsMigration(f.ctx)).status).toBe('conflict');
   });
-  test('a source recreated during the source read is read again, never paired with its old root', async () => {
-    const oldRoot = temp(), newRoot = temp(), f = fixture(oldRoot); writePack(oldRoot); writePack(newRoot);
-    const recreated = randomUUID();
-    let recreations = 1;
-    Object.assign(f.ctx.engine, stubSourceMembers(() => [f.source], { onCall: member => {
-      // The source is dropped and recreated at a new root after the first incarnation read saw the old one.
-      if (member === 'listLocalPathSources' && recreations-- > 0) Object.assign(f.source, { incarnation: recreations ? randomUUID() : recreated, local_path: newRoot });
-    } }));
-    const report = await runSharedSkillsMigration(f.ctx, { dryRun: true });
-    expect(report.sources.map(row => [row.source_incarnation, row.root])).toEqual([[recreated, newRoot]]);
-    // A source recreated during every one of the three reads stops the migration rather than guessing.
-    recreations = 3;
-    await expect(runSharedSkillsMigration(f.ctx, { dryRun: true })).rejects.toMatchObject({ code: 'local_conflict' });
+  test('a sealed read that fails keeps the inventory taken before the edit, so a retry still sees the edit', async () => {
+    // A Rust brain owned by another process: this process's store is closed, so the sealed pack read refuses.
+    const root = temp(), f = fixture(root); writePack(root);
+    let closed = false;
+    asRustBrain(f, async () => {
+      if (closed) throw Object.assign(new Error("The Rust engine's store is closed"), { code: 'engine_closed' });
+      return null;
+    });
+    expect((await runSharedSkillsMigration(f.ctx)).status).toBe('action_required');
+    writeFileSync(join(root, 'skills/memory-care/SKILL.md'), 'private: true\nLocal instructions');
+    closed = true;
+    expect((await runSharedSkillsMigration(f.ctx)).status).not.toBe('complete');
+    closed = false;
+    const reopened = await runSharedSkillsMigration(f.ctx);
+    expect(reopened.status).toBe('conflict');
+    expect(reopened.sources[0].stages.at(-1)?.reason).toContain('skills/memory-care/SKILL.md');
+    expect(readFileSync(join(root, 'skills/memory-care/SKILL.md'), 'utf8')).toBe('private: true\nLocal instructions');
   });
   test('the source list never parses a source config, so a malformed one stays a per-source matter', async () => {
     const root = temp(), f = fixture(root); writePack(root);
@@ -173,25 +195,10 @@ describe('staged skill migration', () => {
     expect(report.sources.map(row => [row.source_id, row.root])).toEqual([['default', root]]);
   });
   test('on a Rust brain the sealed manifest is read from the store, never raw SQL', async () => {
-    // A Rust engine refuses raw SQL by name; the sealed pack row lives in its store (rust-publication.ts).
     const root = temp(), f = fixture(root); writePack(root);
     let sealedHash: string | undefined;
     const packReads: Array<{ sourceId: string; incarnation: string }> = [];
-    Object.assign(f.ctx.engine, {
-      kind: 'rust',
-      // The brain singleton a Rust brain reads through its writer admin state (managed-mode.ts), not SQL.
-      readWriterAdminState: async () => JSON.stringify({ brain: { id: f.brainId, enabled: false, mode_epoch: 0, skill_bundles_enabled: false, writer_protocol_floor: 1 } }),
-      _admit: async () => {},
-      storeFor: async () => ({ brain: { readSharedSkillPack: async (key: { sourceId: string; incarnation: string }) => {
-        packReads.push(key);
-        return sealedHash ? { pack_id: 'pack', revision: '1', manifest: {}, manifest_hash: sealedHash } : null;
-      } } }),
-    });
-    const sqlRead = f.ctx.engine.executeRaw.bind(f.ctx.engine);
-    f.ctx.engine.executeRaw = (async (sql: string, params?: unknown[]) => {
-      if (sql.includes('shared_skill_')) throw Object.assign(new Error('raw SQL is refused on the Rust engine'), { code: 'engine_capability_missing' });
-      return sqlRead(sql, params);
-    }) as BrainEngine['executeRaw'];
+    asRustBrain(f, async key => { packReads.push(key); return sealedHash ? { pack_id: 'pack', revision: '1', manifest: {}, manifest_hash: sealedHash } : null; });
     expect((await runSharedSkillsMigration(f.ctx)).status).toBe('action_required');
     // Only skillpack.json's bytes change. The store has no sealed pack, so the edit is a conflict.
     const manifest = readFileSync(join(root, 'skillpack.json'), 'utf8');

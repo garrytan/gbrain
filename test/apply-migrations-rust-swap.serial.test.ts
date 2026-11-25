@@ -42,12 +42,17 @@ function childEnv(): Record<string, string> {
   for (const key of Object.keys(out)) {
     if (/^(DATABASE_URL|GBRAIN_DATABASE_URL|GBRAIN_BRAIN_ID|GBRAIN_SOURCE|GBRAIN_RUST_ENGINE_ADDON)$/.test(key)) delete out[key];
     if (/(_API_KEY|_API_TOKEN)(__|$)/.test(key)) delete out[key];
+    if (/^(OPENCLAW_|HERMES_)/.test(key)) delete out[key];
   }
   return {
     ...out,
     PATH: `${join(root, 'bin')}:${out.PATH ?? ''}`,
     HOME: home,
     GBRAIN_HOME: home,
+    // Harness config dirs win over HOME; point them into the fixture so post-upgrade never touches the caller's.
+    CLAUDE_CONFIG_DIR: join(home, '.claude'),
+    CODEX_HOME: join(home, '.codex'),
+    XDG_CONFIG_HOME: join(home, '.config'),
     GBRAIN_SELF_UPGRADE_MODE: 'off',
     GBRAIN_SKIP_STARTUP_HOOKS: '1',
     GBRAIN_SWEEP: '0',
