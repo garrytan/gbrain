@@ -3,7 +3,7 @@
  * preview, and show or resume its progress receipt. Parsing runs here, on the client; the facts are saved through the
  * caller's own remember batches, so they land on the caller's own profile and nowhere else.
  */
-import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { IMPORT_FORMATS, planImport, previewHash, type ImportFormat, type ImportTarget } from '../core/profile/import.ts';
 import { newReceipt, runImport, summarize, type ImportCall, type ImportReceipt } from '../core/profile/import-run.ts';
@@ -126,7 +126,13 @@ export async function runProfileImport(args: string[], call: ImportCall, target:
   }
   const path = f.resume ?? receiptPath(homeDir, hash);
   let receipt: ImportReceipt;
-  try { receipt = loadReceipt(path); } catch { receipt = newReceipt(plan, hash, file, who, `imported from ${basename(file)} (${plan.format}), preview ${hash}`); }
+  if (!existsSync(path)) receipt = newReceipt(plan, hash, file, who, `imported from ${basename(file)} (${plan.format}), preview ${hash}`);
+  else {
+    try { receipt = loadReceipt(path); } catch (e) {
+      throw opError('invalid_params', `profile import: the receipt ${path} cannot be read (${(e as NodeJS.ErrnoException).code ?? "not a profile import receipt"}); nothing was sent, and the receipt was left as it is.`,
+        'Move the damaged receipt aside and apply again: the brain replays lines it already saved, so nothing is saved twice.');
+    }
+  }
   saveReceipt(path, receipt);
   await runImport(plan, receipt, call, r => saveReceipt(path, r));
   await report(receipt, path, f.json, global, scope);
