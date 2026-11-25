@@ -20,7 +20,7 @@
  * orchestrators still open the datastore. The kernel releases it when the
  * holder dies, so a dead holder is taken over by the next runner.
  */
-import { readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import type { GBrainConfig } from './config.ts';
 import { toEngineConfig } from './config.ts';
@@ -137,7 +137,13 @@ async function acquirePglite(dataDir: string): Promise<MigrationOrchestrationLoc
   const lockPath = getPgliteMigrationLockPath(dataDir);
   const native = await tryAcquireNativeLock(lockPath);
   if (!native) throw new MigrationsRunningError(readPgliteHolder(lockPath) ?? { host: null, pid: null });
-  writeFileSync(metadataPath(lockPath), JSON.stringify({ pid: process.pid, host: hostname(), acquired_at: new Date().toISOString() }), { mode: 0o600 });
+  // Published by rename, never written through the final name: a symlink or file someone else left there is replaced,
+  // not followed and truncated.
+  const metadata = metadataPath(lockPath);
+  const staged = `${metadata}.${process.pid}.tmp`;
+  rmSync(staged, { force: true });
+  writeFileSync(staged, JSON.stringify({ pid: process.pid, host: hostname(), acquired_at: new Date().toISOString() }), { mode: 0o600, flag: 'wx' });
+  renameSync(staged, metadata);
   return {
     assertHeld: async () => {},
     release: async () => {

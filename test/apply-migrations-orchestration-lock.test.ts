@@ -83,3 +83,28 @@ describe('apply-migrations orchestration lock (PGLite)', () => {
     }
   }, 120_000);
 });
+
+describe('apply-migrations orchestration lock metadata', () => {
+  // Value: protects=taking the file lock never writes through a symlink left at its metadata name (a store whose parent another account can write); fails_when=the holder metadata is written through the final name, truncating the symlink's target; why_new=the review of the Rust file lock found it; seam=none; no_claim=the kernel lock itself
+  test('a symlink at the holder metadata name is replaced, and the file it points to is left as it was', async () => {
+    const { mkdtempSync, symlinkSync, writeFileSync: write, lstatSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { acquireMigrationOrchestrationLock } = await import('../src/core/migration-orchestration-lock.ts');
+    const { getPgliteMigrationLockPath } = await import('../src/core/pglite-lock.ts');
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-lock-meta-'));
+    const db = join(dir, 'brain');
+    const victim = join(dir, 'victim.txt');
+    write(victim, 'keep me');
+    const metadata = getPgliteMigrationLockPath(db).replace(/\.lock$/, '.json');
+    symlinkSync(victim, metadata);
+    const lock = await acquireMigrationOrchestrationLock({ engine: 'pglite', database_path: db } as never);
+    try {
+      expect(readFileSync(victim, 'utf8')).toBe('keep me');
+      expect(lstatSync(metadata).isSymbolicLink()).toBe(false);
+      expect(JSON.parse(readFileSync(metadata, 'utf8')).pid).toBe(process.pid);
+    } finally {
+      await lock?.release();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
