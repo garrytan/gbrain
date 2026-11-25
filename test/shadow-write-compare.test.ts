@@ -27,7 +27,7 @@ import { encodeArgs } from '../src/shadow/codec.ts';
 import { configDir } from '../src/core/config.ts';
 import { shadowRoot } from '../src/shadow/state.ts';
 import { scratchRootDefault } from '../src/shadow/write-compare-child.ts';
-import { lostPath, movedOutsideFootprint, pageRefs, readWriteTally, recordLost, writeTallyPath, WriteTally, type WriteEvent } from '../src/shadow/write-compare.ts';
+import { lostPath, movedOutsideFootprint, pageRefs, readWriteTally, recordLost, unfoldedLost, writeTallyPath, WriteTally, type WriteEvent } from '../src/shadow/write-compare.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { defineWriteCompareScenarios, fakeComparer, page, row5, settle, tallyOn, watchPreimage } from './helpers/shadow-write-compare-scenarios.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -98,6 +98,32 @@ describe('the locked write tally', () => {
     tally.save();
     expect(counts()).toMatchObject({ uncomparable: 4, uncomparable_by_reason: { readback_abandoned: 1 } });
     expect(recordLost(join(dir, 'gone'), epoch, 'send_shed')).toBe(false); // not recorded: the sampler then carries the count on its next line
+  });
+
+  test('an unreadable loss journal or a listing that fails is unresolved, never zero: status reads no evidence, and criterion 5 stays missing', () => {
+    const dir = tmp();
+    const { tally, epoch, counts } = tallyOn(dir); saved(dir, epoch);
+    expect(recordLost(dir, epoch, 'send_shed')).toBe(true);
+    rmSync(lostPath(dir, process.pid)); mkdirSync(lostPath(dir, process.pid)); // the journal can no longer be read (EISDIR stands for EIO)
+    expect(status(dir)).toMatchObject({ state: 'capability_missing', comparable: 1000, unresolved_replays: 1 });
+    expect(row5({ write_comparisons: status(dir) as ShadowStatus['write_comparisons'] }).state).toBe('missing');
+    tally.save();
+    expect(counts()).toMatchObject({ comparable: 1000, uncomparable: 0 }); // nothing is invented from what cannot be read
+    const aFile = join(dir, 'not-a-directory'); writeFileSync(aFile, '');
+    expect(unfoldedLost(aFile, epoch)).toBe(1); // a listing that fails (ENOTDIR) is unresolved
+    expect(unfoldedLost(join(dir, 'gone'), epoch)).toBe(0); // a directory that is gone has nothing to fold
+  });
+
+  test('a loss is acknowledged only after its journal file and directory entry are flushed: a failed flush returns false so the count is kept', async () => {
+    const durable = await import('../src/core/fs-durable.ts');
+    const dir = tmp();
+    const file = spyOn(durable, 'flushFile').mockImplementationOnce(() => { throw new Error('EIO'); });
+    expect(recordLost(dir, 'an-epoch', 'send_shed')).toBe(false);
+    file.mockRestore();
+    const directory = spyOn(durable, 'flushDirectory').mockImplementationOnce(() => { throw new Error('EIO'); });
+    expect(recordLost(dir, 'an-epoch', 'send_shed')).toBe(false);
+    directory.mockRestore();
+    expect(recordLost(dir, 'an-epoch', 'send_shed')).toBe(true);
   });
 
   test('a lost sample of one epoch is never added to the next epoch (the owner child takes lines for its own fixed epoch only)', () => {

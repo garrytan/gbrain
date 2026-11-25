@@ -149,26 +149,27 @@ export function readWriteTally(dir: string, epochId: string | null): WriteTallyF
   try { const f = loadTally(dir); return f && epochId !== null && f.epoch_id === epochId ? f : null; } catch { return null; } // silent-read-ok: no readable tally is no count; the status shows zero and criterion 5 stays missing
 }
 
-/** Samples the serving process lost (a refused send, a read-back abandoned at disconnect) are never written into the tally by that process (a locked write could stall it): each is one `{epoch_id, reason}` line appended, with no lock, to its own file; the owner child folds them in. False when the line was not written. */
+/** Samples the serving process lost (a refused send, a read-back abandoned at disconnect) are never written into the tally by that process (a locked write could stall it): each is one `{epoch_id, reason}` line appended, with no lock, to its own file; the owner child folds them in. True only when the line and its directory entry are flushed to disk; false otherwise. */
 export const lostPath = (dir: string, pid: number): string => join(dir, `write-lost.${pid}.jsonl`);
 export function recordLost(dir: string, epoch: string, reason: string): boolean {
-  try { appendFileSync(lostPath(dir, process.pid), JSON.stringify({ epoch_id: epoch, reason }) + '\n', { flag: 'a', mode: 0o600 }); return true; } catch { return false; } // silent-read-ok: false is the answer, never a pass: the sampler then carries the count on its next line
+  const path = lostPath(dir, process.pid);
+  try { appendFileSync(path, JSON.stringify({ epoch_id: epoch, reason }) + '\n', { flag: 'a', mode: 0o600 }); flushFile(path); flushDirectory(dir); return true; } catch { return false; } // silent-read-ok: false is the answer, never a pass: the sampler then carries the count on its next line
 }
 /** The lost lines past what `applied` took, per file: the complete lines' end offset and the reasons of this epoch's (another epoch's are retired and skipped; a line that is not readable counts as `lost_unreadable`). */
-function readLost(dir: string, epoch: string, applied: Record<string, number> = {}): Array<{ name: string; end: number; reasons: string[] }> {
+function readLost(dir: string, epoch: string, applied: Record<string, number> = {}): Array<{ name: string; end: number; reasons: string[]; unreadable?: true }> {
   let names: string[] = [];
-  try { names = readdirSync(dir).filter((n) => /^write-lost\.\d+\.jsonl$/.test(n)); } catch { return []; } // silent-read-ok: no readable directory has no lost file to fold
+  try { names = readdirSync(dir).filter((n) => /^write-lost\.\d+\.jsonl$/.test(n)); } catch (e) { return (e as NodeJS.ErrnoException).code === 'ENOENT' ? [] : [{ name: '', end: 0, reasons: [], unreadable: true }]; } // a directory that is gone has nothing to fold; one that cannot be listed is unresolved, never empty
   return names.flatMap((name) => {
     try {
       const buf = readFileSync(join(dir, name)); const from = applied[name] ?? 0; const end = buf.lastIndexOf(10) + 1; // a line still being appended waits for its newline
       if (end <= from) return [];
       const reasons = buf.subarray(from, end).toString('utf8').split('\n').filter(Boolean).flatMap((l) => { try { const e = JSON.parse(l); return e?.epoch_id === epoch ? [String(e.reason)] : []; } catch { return ['lost_unreadable']; } });
       return [{ name, end, reasons }];
-    } catch { return []; } // silent-read-ok: a file that cannot be read stays unfolded, which status reads as no evidence
+    } catch { return [{ name, end: 0, reasons: [], unreadable: true }]; } // a file that cannot be read stays unfolded and unresolved: status reads it as no evidence
   });
 }
 /** Lost samples of `epoch` that no tally has taken yet: status reads any as no evidence, like a standing in-flight mark. */
-export function unfoldedLost(dir: string, epoch: string | null, taken?: Record<string, number>): number { return epoch === null ? 0 : readLost(dir, epoch, taken).reduce((n, l) => n + l.reasons.length, 0); }
+export function unfoldedLost(dir: string, epoch: string | null, taken?: Record<string, number>): number { return epoch === null ? 0 : readLost(dir, epoch, taken).reduce((n, l) => n + l.reasons.length + (l.unreadable ? 1 : 0), 0); }
 
 const MAX_KEYS = 64;
 const bump = (map: Record<string, number>, key: string, n: number): void => { const k = key in map || Object.keys(map).length < MAX_KEYS ? key : 'other'; map[k] = (map[k] ?? 0) + n; };
@@ -211,7 +212,7 @@ export class WriteTally {
         file.in_flight = file.in_flight.filter((p) => !dead.includes(p));
         for (const id of Object.keys(file.applied)) if (id !== this.id && !running(Number.parseInt(id, 10))) delete file.applied[id];
         const todo = batches.filter((b) => b.seq > (file.applied![this.id] ?? 0));
-        const lost = readLost(this.dir, epoch, file.lost_applied); // the serving processes' lost samples, taken once under the same lock
+        const lost = readLost(this.dir, epoch, file.lost_applied).filter((l) => !l.unreadable); // the serving processes' lost samples, taken once under the same lock
         if (!change && !dead.length && !todo.length && !lost.length) return;
         file.lost_applied ??= {};
         for (const l of lost) { for (const r of l.reasons) applyVerdict(file, 'uncomparable', r, 1); file.lost_applied[l.name] = l.end; }

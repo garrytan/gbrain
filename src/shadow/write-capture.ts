@@ -103,12 +103,12 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
   const random = o.random ?? Math.random;
   const rate = Math.min(1, Math.max(0, o.rate));
   /** Samples the pipe refused since the last one it took: the next line carries the count, so a shed sample is counted `uncomparable`, never lost as if it were not sampled. */
-  let dropped = 0;
+  const unsaid: string[] = []; // reasons of losses the journal could not take: the next accepted line carries their count, and settle() retries them
   const send = (event: WriteEvent): void => {
     try {
-      let line = JSON.stringify({ ...event, ...(dropped ? { dropped } : {}) }) + '\n';
-      if (Buffer.byteLength(line) > MAX_SAMPLE_BYTES) line = JSON.stringify({ t: 'write', op: event.op, outcome: 'uncomparable', reason: 'sample_too_large', ...(dropped ? { dropped } : {}) }) + '\n';
-      if (o.send(line)) dropped = 0; else if (!o.lost?.('send_shed')) dropped++;
+      let line = JSON.stringify({ ...event, ...(unsaid.length ? { dropped: unsaid.length } : {}) }) + '\n';
+      if (Buffer.byteLength(line) > MAX_SAMPLE_BYTES) line = JSON.stringify({ t: 'write', op: event.op, outcome: 'uncomparable', reason: 'sample_too_large', ...(unsaid.length ? { dropped: unsaid.length } : {}) }) + '\n';
+      if (o.send(line)) unsaid.length = 0; else if (!o.lost?.('send_shed')) unsaid.push('send_shed');
     } catch { /* the shadow never fails a write */ }
   };
   const uncomparable = (op: string, reason: string): void => send({ t: 'write', op, outcome: 'uncomparable', reason });
@@ -120,8 +120,9 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
       let timer: ReturnType<typeof setTimeout> | undefined;
       await Promise.race([idle, new Promise((resolve) => { timer = setTimeout(resolve, ms); })]);
       clearTimeout(timer);
-      for (const r of reading) { r.abandoned = true; if (!(o.lost?.('readback_abandoned'))) dropped++; } // not sent later, so a count that cannot be recorded rides on the next line
+      for (const r of reading) { r.abandoned = true; if (!(o.lost?.('readback_abandoned'))) unsaid.push('readback_abandoned'); } // not sent later
       reading.clear();
+      for (const reason of unsaid.splice(0)) if (!o.lost?.(reason)) unsaid.push(reason); // the final handoff, whether or not another sample comes
     },
     wrap(name, fn, ctx) {
       const kind = memberKind(name);

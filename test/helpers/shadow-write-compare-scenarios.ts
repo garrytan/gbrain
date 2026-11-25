@@ -328,7 +328,38 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       expect(JSON.parse(lines[0]!).dropped).toBe(1);
     }, 60_000);
 
-    test('a refused sample never stalls a primary write: with an empty (crash-left) tally lock the write still returns at once, and the loss is recorded without the lock', async () => {
+    test('a loss the journal could not take is retried at disconnect, with or without another sample, and keeps its own reason', async () => {
+      const calls: Array<[string, boolean]> = [];
+      let failFirst = 1; // the refused send's journal append fails
+      const lost = (reason: string): boolean => { const ok = failFirst-- <= 0; calls.push([reason, ok]); return ok; };
+      const { wrapped, sampler } = rig({ send: () => false, lost });
+      await ctx.reset();
+      await wrapped.putPage('people/one-example', page('One Example')); // refused; its journal append fails: the count is held in memory
+      await until(() => calls.length >= 1);
+      await sampler.settle(500); // no further sample comes: settle itself must hand the held count to the journal
+      expect(calls).toEqual([['send_shed', false], ['send_shed', true]]);
+    }, 60_000);
+
+    test('a read-back abandoned at disconnect whose journal append fails is retried once more by settle, never left only in memory', async () => {
+      if (ctx.kind !== 'postgres') return; // PGLite samples no write
+      const calls: Array<[string, boolean]> = []; let tries = 0;
+      const lost = (reason: string): boolean => { const ok = ++tries > 1; calls.push([reason, ok]); return ok; };
+      const { wrapped, sampler } = rig({ send: () => true, lost });
+      await ctx.reset();
+      const real = primary().transaction.bind(primary()) as (fn: unknown, opts?: unknown) => Promise<unknown>;
+      let armed = false; let release = (): void => {};
+      const stuck = new Promise<void>((resolve) => { release = resolve; });
+      const spy = spyOn(primary(), 'transaction').mockImplementation(((fn: unknown, opts?: unknown) => (armed ? stuck.then(() => real(fn, opts)) : real(fn, opts))) as never);
+      try {
+        await wrapped.putPage('people/abandon-retry-example', page('Abandon Retry Example'));
+        armed = true;
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        await sampler.settle(100);
+        expect(calls).toEqual([['readback_abandoned', false], ['readback_abandoned', true]]);
+      } finally { release(); spy.mockRestore(); }
+    }, 60_000);
+
+    (ctx.addon ? test : test.skip)('a refused sample never stalls a primary write: with an empty (crash-left) tally lock the write still returns at once, and the loss is recorded without the lock', async () => {
       if (ctx.kind !== 'postgres') return; // PGLite samples no write
       const home = ctx.tempDir();
       await ctx.reset();
