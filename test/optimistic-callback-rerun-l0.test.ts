@@ -60,10 +60,10 @@ describe('row 60 restampSource (src/core/access/policy.ts): the restamp count is
 });
 
 describe('row 144 insertFacts (src/core/engine-sql/facts.ts): a warning is reported once', () => {
+  let engine: PGLiteEngine;
+  beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); }, 120_000);
+  afterAll(async () => { await engine?.disconnect(); });
   test('row 144: a rerun of the insert transaction does not repeat the dangling-reference warning', async () => {
-    const engine = new PGLiteEngine();
-    await engine.connect({});
-    await engine.initSchema();
     try {
       const exec = (engine as unknown as { engineSql: { transaction: (fn: (tx: unknown) => Promise<unknown>) => Promise<unknown> } }).engineSql;
       let runs = 0;
@@ -86,7 +86,7 @@ describe('row 144 insertFacts (src/core/engine-sql/facts.ts): a warning is repor
       expect(runs).toBe(2);
       expect(result.inserted).toBe(1);
       expect(result.warnings).toHaveLength(1);
-    } finally { await engine.disconnect(); }
+    } finally { /* the engine is closed in afterAll */ }
   }, 60_000);
 });
 
@@ -124,10 +124,10 @@ describe('row 269 runDerivationSweep (src/core/page-body/segment-derive.ts): a p
 });
 
 describe('row 325 backfillEffectiveDate (src/core/backfill-effective-date.ts): a batch counts its rows once', () => {
+  let engine: PGLiteEngine;
+  beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); }, 120_000);
+  afterAll(async () => { await engine?.disconnect(); });
   test('row 325: a rerun of the batch transaction reports each updated page, fallback and change once', async () => {
-    const engine = new PGLiteEngine();
-    await engine.connect({});
-    await engine.initSchema();
     const lost = l0LoseFirstCommit(engine, 'UPDATE pages SET effective_date');
     try {
       for (const slug of ['wiki/one', 'wiki/two']) {
@@ -140,7 +140,7 @@ describe('row 325 backfillEffectiveDate (src/core/backfill-effective-date.ts): a
       expect(lost.runs()).toBe(2); // the lost run, then the run that kept its writes
       expect({ updated: result.updated, fallback: result.fallback, changed: changed.sort() })
         .toEqual({ updated: 2, fallback: 2, changed: ['wiki/one', 'wiki/two'] });
-    } finally { lost.restore(); await engine.disconnect(); }
+    } finally { lost.restore(); }
   }, 60_000);
 });
 
