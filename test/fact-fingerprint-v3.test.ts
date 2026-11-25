@@ -81,7 +81,7 @@ for (const backend of testBackends()) describe(`fact fingerprint v3 (${backend})
     const before = await stored();
 
     const migration = MIGRATIONS.find(m => m.name === 'fact_fingerprint_v3');
-    expect(migration?.version).toBe(339);
+    expect(migration?.version).toBe(341);
     await engine.runMigration(migration!.version, migration!.sql);
 
     // No stored hash is rewritten; new rows only add the current fingerprint.

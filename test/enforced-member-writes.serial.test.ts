@@ -45,6 +45,7 @@ for (const kind of testBackends()) {
         [['link', PAGES.open.slug, PAGES.other.slug], 'link', undefined],
         [['tag', PAGES.priv.slug, 'x'], 'tag', undefined],
         [['remember', 'A fact', '--entity', PAGES.open.slug, '--provenance', 'test', '--visibility', 'private'], 'remember', undefined],
+        [['remember', 'A fact', '--entity', PAGES.open.slug, '--provenance', 'test', '--facet', 'diet'], 'remember', undefined],
       ];
       for (const [args, command, stdin] of refused) {
         const r = await cli(args, { stdin });

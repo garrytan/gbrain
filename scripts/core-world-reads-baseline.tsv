@@ -116,6 +116,7 @@ src/core/belief/keys.ts	module_collection	1	W6: per-engine state, or mark as a c
 src/core/belief/ledger.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context
 src/core/belief/preimages.ts	process_env	2	W6: settings plane out of the core
 src/core/belief/purge-mirror.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/belief/purge-mirror.ts	module_collection	1	shadow capture: the purge listener set lets a recording process delete its recordings at the moment of a purge
 src/core/belief/state.ts	module_collection	2	W6: per-engine state, or mark as a constant table
 src/core/binary-self-update.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/binary-self-update.ts	spawn_import	1	W7: process-wide effects move to src/cli
@@ -935,6 +936,7 @@ src/core/routing-eval.ts	fs_import	1	W7: filesystem boundary moves to the local 
 src/core/runtime-build.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/runtime-version.ts	process_global	2	W7: process-wide effects move to src/cli
 src/core/rust-engine.ts	als_store	2	Rust engine, two stores. (1) transactions: the async context tells a call made from inside the engine's own transaction(fn) (refused as transaction_reentry, it would wait forever for the writer) from an outside call (waits at the writer gate); stays until engine scope (decision E) carries the open transaction (2) owner election: a private probe store proves the MessagePort listener runs in the empty async context before the election and owner server take that context, so no caller authority, remote mark or signal leaks into the owner (W2: engine scope replaces ad hoc async context)
+src/core/rust-engine/addon-install.ts	fs_import	1	Rust engine addon install: stages, checks and renames the release addon and its manifest under GBRAIN_HOME/engines/rust (gbrain engine install rust and post-upgrade only); stays with the addon loader until the Rust engine storage settles (plan PR 22)
 src/core/rust-engine/addon-loader.ts	fs_import	1	Rust engine addon: reads the cached manifest and checks the cached addon file under GBRAIN_HOME/engines/rust (writes nothing); stays until the Rust engine's own storage settles (plan PR 8)
 src/core/rust-engine/addon-loader.ts	process_env	1	Rust engine addon: the default deps read GBRAIN_RUST_ENGINE_ADDON once; every other path takes env from the deps; stays until the Rust engine's own storage settles (plan PR 8)
 src/core/rust-engine/owned-brains.ts	fs_import	1	Rust owned brains: realpath of the store path, so readiness matches the open store through a symlink, like pglite-lock.ts; W7: filesystem boundary moves to the local app
@@ -944,6 +946,8 @@ src/core/rust-engine/owner-ipc/client.ts	module_collection	3	Rust owner IPC: Wea
 src/core/rust-engine/owner-ipc/election.ts	fs_import	1	Rust owner IPC: creates the parent directory of the owner lock (beside the store directory); filesystem boundary moves to the local app (W7)
 src/core/rust-engine/owner-ipc/protocol.ts	fs_import	1	Rust owner IPC: resolves symlinks in the store path (realpath) so every alias of one brain names one owner lock and socket, as pglite-lock.ts does; filesystem boundary moves to the local app (W7)
 src/core/rust-engine/owner-ipc/server.ts	fs_import	1	Rust owner IPC: removes only a stale socket file and sets 0600 on the owner socket, like persistence/ipc.ts; filesystem boundary moves to the local app (W7)
+src/core/rust-engine/store-snapshot.ts	fs_import	1	Rust brain snapshot: reads the free space of the target's and the brain's filesystems (statfs) to stop a copy before it fills the disk; the disk is a local-app object (W7)
+src/core/rust-engine/store-snapshot.ts	module_collection	2	Rust brain snapshot: the owner's table of operation ids and what became of them (bounded to 32 finished entries) and a WeakMap of the store a snapshot is running on; entries die with the store; stays until engine state moves per engine (W6)
 src/core/schema-events.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/schema-migration-lock.ts	als_store	1	stays: GBRA-467 reentrancy scope of the schema migration lock held by this process (coordination state, not a setting)
 src/core/schema-migration-lock.ts	module_collection	1	stays: GBRA-467 per-engine in-process queue for engines without a cross-process schema lock (PGLite); coordination state, not a setting
@@ -1126,6 +1130,7 @@ src/core/skillpack/update-journal.ts	fs_import	1	W7: filesystem boundary moves t
 src/core/skillpack/writer-guard.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/skills-integrity.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/skills/resolver/build.ts	fs_import	1	GBRA-377 skill resolver: a filesystem tool by contract (reads SKILL.md dirs, writes its index and session files under GBRAIN_HOME/skill-index); it never opens a brain or an engine, so there are no engine settings to take it from; stays
+src/core/skills/resolver/build.ts	process_env	1	GST-3568 skill vectors: process.env as the default of the injectable opts.env (callers and tests pass their own), read only for the embedding provider key at build; no brain or engine; stays
 src/core/skills/resolver/config.ts	fs_import	1	GBRA-377 skill resolver: a filesystem tool by contract (reads SKILL.md dirs, writes its index and session files under GBRAIN_HOME/skill-index); it never opens a brain or an engine, so there are no engine settings to take it from; stays
 src/core/skills/resolver/config.ts	process_env	1	GBRA-377 skill resolver: GBRAIN_SKILLS_NO_AUTOREBUILD as the default of an injectable env parameter (callers and tests pass their own); runs with no brain or engine; stays
 src/core/skills/resolver/catalog-files.ts	fs_import	1	GBRA-377 skill resolver: a filesystem tool by contract (reads SKILL.md dirs, writes its index and session files under GBRAIN_HOME/skill-index); it never opens a brain or an engine, so there are no engine settings to take it from; stays
@@ -1139,8 +1144,9 @@ src/core/skills/resolver/lane-worker.ts	process_env	1	GBRA-399 skill resolver la
 src/core/skills/resolver/paths.ts	process_env	1	GBRA-377 skill resolver: GBRAIN_HOME as the default of an injectable env parameter (same convention as configDir); runs with no brain or engine; stays
 src/core/skills/resolver/pinned-block.ts	fs_import	1	GBRA-377 skill resolver: resolves the Claude Code skills folder through symlinks so it compares with the catalog's resolved SKILL.md paths; it never opens a brain or an engine, so there are no engine settings to take it from; stays
 src/core/skills/resolver/resolve.ts	fs_import	1	GBRA-377 skill resolver: a filesystem tool by contract (reads SKILL.md dirs, writes its index and session files under GBRAIN_HOME/skill-index); it never opens a brain or an engine, so there are no engine settings to take it from; stays
-src/core/skills/resolver/resolve.ts	process_env	1	GSKI G1 model picker: process.env as the default of the injectable opts.env (callers and tests pass their own), read only for provider keys when the caller passed router; no brain or engine; stays
+src/core/skills/resolver/resolve.ts	process_env	1	GSKI G1 model picker and skill vectors: process.env as the default of the injectable opts.env (callers and tests pass their own), read only for provider keys when the caller passed router or a catalog has vectors; no brain or engine; stays
 src/core/skills/resolver/router-http.ts	fs_import	1	GSKI G1 model picker: reads a provider key from GBRAIN_HOME/config.json when the environment has none (the same file-plane keys the gateway reads); no brain or engine; stays
+src/core/skills/resolver/embed-http.ts	fs_import	1	GST-3568 skill vectors: reads embedding_model and a provider key from GBRAIN_HOME/config.json (the same file-plane keys the brain embedder reads); no brain or engine; stays
 src/core/skills/resolver/router.ts	fs_import	1	GSKI G1 model picker: the per-UTC-day spend ledger skill-index/router-spend.json, read and written under its lease so the daily cap holds across processes; no brain or engine; stays
 src/core/skills/resolver/session.ts	fs_import	1	GBRA-377 skill resolver: a filesystem tool by contract (reads SKILL.md dirs, writes its index and session files under GBRAIN_HOME/skill-index); it never opens a brain or an engine, so there are no engine settings to take it from; stays
 src/core/skills/resolver/sources.ts	fs_import	1	GBRA-377 skill resolver: a filesystem tool by contract (reads SKILL.md dirs, writes its index and session files under GBRAIN_HOME/skill-index); it never opens a brain or an engine, so there are no engine settings to take it from; stays

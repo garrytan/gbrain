@@ -54,11 +54,11 @@ const settings = (over: Partial<ExaSettings> = {}): ExaSettings => ({ enabled: t
 describe('gbrain dedupe classes: local evidence', () => {
   test('person pages only: every base class, no email or chat signal, nothing written', async () => {
     await person('people/alice-example', 'Alice Example', { email: 'alice@example.invalid' });
-    await person('people/alice-example', 'Alice Example', { emails: ['Alice@Example.invalid'] }, 'people-b');
+    await person('contacts/alice-example', 'Alice Example', { emails: ['Alice@Example.invalid'] }, 'people-b');
     await person('people/bob-example', 'Bob Example', { phone: '+1 555-555-0101' });
     await person('people/c-bob', 'Robert Sample', { google_contact_id: 'people/c-bob', emails: [], phones: ['(555) 555-0101'] }, 'gc');
     await person('people/carol-example', 'Carol Example', { linkedin: 'in/carol-example' });
-    await person('people/carol-example', 'Carol Example', { linkedin: 'https://www.linkedin.com/in/carol-example/' }, 'people-b');
+    await person('contacts/carol-example', 'Carol Example', { linkedin: 'https://www.linkedin.com/in/carol-example/' }, 'people-b');
     await person('people/dana-example', 'Dana Example', { linkedin: 'in/dana-one' });
     await person('people/dana-example', 'Dana Example', { linkedin: 'in/dana-two' }, 'people-b');
     await person('people/erin-example', 'Erin Example', { email: 'team@acme.invalid' });
@@ -66,7 +66,7 @@ describe('gbrain dedupe classes: local evidence', () => {
     await person('people/frank-example', 'Frank Example', { github: 'frank-ex' });
     await person('people/frank-example-2', 'Frank Example', { github: 'https://github.com/frank-ex' });
     await person('people/gina-example', 'Gina Example');
-    await person('people/gina-example', 'Gina Example', {}, 'people-b');
+    await person('contacts/gina-example', 'Gina Example', {}, 'people-b');
     await person('people/hank-example', 'Hank Example', { company: 'Acme Example', email: 'hank@a.invalid' });
     await person('people/hank-example', 'Hank Example', { company: 'Acme Example', email: 'hank@b.invalid' }, 'people-b');
     for (const m of ['meetings/m1', 'meetings/m2']) {
@@ -77,11 +77,11 @@ describe('gbrain dedupe classes: local evidence', () => {
     await person('people/ivy-example', 'Ivy Example', { email: 'ivy@work.invalid' });
     await person('people/ivy-example', 'Ivy Example', { email: 'ivy@home.invalid', phones: ['+1 555-555-0102'] }, 'people-b');
     await person('people/jack-example', 'Jack Example', { phone: '+1 555-555-0103' });
-    await person('people/jack-example', 'Jack Example', {}, 'people-b');
+    await person('contacts/jack-example', 'Jack Example', {}, 'people-b');
     await person('people/kim-example', 'Kim Example', { phone: '+1 555-555-0104' });
-    await person('people/kim-example', 'Kim Example', { phone: '555.555.0104' }, 'people-b');
+    await person('contacts/kim-example', 'Kim Example', { phone: '555.555.0104' }, 'people-b');
     await person('people/lena-example', 'Lena Example', { email: 'lena@example.invalid', relationship: 'sister' });
-    await person('people/lena-example', 'Lena Example', { email: 'lena@example.invalid' }, 'people-b');
+    await person('contacts/lena-example', 'Lena Example', { email: 'lena@example.invalid' }, 'people-b');
     await person('people/zara-one', 'Zara One');
     await person('people/zara-one', 'Yusuf Two', {}, 'people-b');
 
@@ -147,7 +147,7 @@ describe('gbrain dedupe classes: local evidence', () => {
     const { pairs } = await classifyPairs(engine);
     const gina = one(pairs, 'Gina Example');
     const groups = JSON.parse(await dedupe(['--preview', '--json'])).groups as Array<{ id: string; members: Array<{ slug: string }> }>;
-    const ginaGroup = groups.find(g => g.members.every(m => m.slug === 'people/gina-example'))!;
+    const ginaGroup = groups.find(g => g.members.every(m => m.slug.endsWith('/gina-example')))!;
     await dedupe(['reject', ginaGroup.id, '--json']);
     const after = await classifyPairs(engine);
     expect(after.pairs.some(p => p.id === gina.id)).toBe(false);
@@ -176,13 +176,13 @@ describe('gbrain dedupe classes --exa', () => {
       expect(err).toBeInstanceOf(OperationError);
       expect((err as OperationError).code).toBe('dedupe_exa_off');
       await person('people/omar-example', 'Omar Example', { company: 'Acme Example' });
-      await person('people/omar-example', 'Omar Example', { role: 'Engineer' }, 'people-b');
+      await person('contacts/omar-example', 'Omar Example', { role: 'Engineer' }, 'people-b');
       await person('people/pia-example', 'Pia Example', { company: 'Acme Example' });
       await person('people/pia-example', 'Pia Example', { company: 'Beta Example' }, 'people-b');
       await person('people/quinn-example', 'Quinn Example', { company: 'Acme Example' });
-      await person('people/quinn-example', 'Quinn Example', { company: 'Acme Example' }, 'people-b');
+      await person('contacts/quinn-example', 'Quinn Example', { company: 'Acme Example' }, 'people-b');
       await person('people/mia-example', 'Mia Example', { company: 'Acme Example', birth_year: 2015 });
-      await person('people/mia-example', 'Mia Example', { role: 'Student' }, 'people-b');
+      await person('contacts/mia-example', 'Mia Example', { role: 'Student' }, 'people-b');
       await person('people/nora-example', 'Nora Example', { company: 'Acme Example', visibility: 'private' });
       await person('people/nora-example', 'Nora Example', { company: 'Beta Example' }, 'people-b');
       await person('people/uma-example', 'Uma Example', { company: 'Acme Example', tags: ['Family'] });
@@ -318,7 +318,7 @@ describe('gbrain dedupe classes --exa', () => {
 
 describe('evidence rules', () => {
   const page = (over: Partial<PersonPage>): PersonPage => ({ source_id: 'default', slug: 'people/x', page_id: 1, title: 'Alice Example', strict: 'alice example',
-    handles: new Set(), company: 'Acme Example', role: null, sensitive: null, restricted: false, entity_id: null, ...over });
+    handles: new Set(), company: 'Acme Example', role: null, sensitive: null, hold: null, nonPerson: false, restricted: false, entity_id: null, ...over });
   const ev = (base: 'C1' | 'C2' | 'C5' | 'C6', signals: Signal[], sensitive = false) => ({ base, names: base === 'C2' ? false : true, signals: new Set(signals), sensitive });
 
   test('combine', () => {

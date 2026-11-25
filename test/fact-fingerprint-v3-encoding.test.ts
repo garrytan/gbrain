@@ -3,9 +3,9 @@
  * check: such a brain keeps running with a warning).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: initSchema() on a SQL_ASCII database applies every migration, v339 included, and the fingerprint
+ *  - Contract: initSchema() on a SQL_ASCII database applies every migration, v341 included, and the fingerprint
  *    function answers there; the migration never blocks that upgrade.
- *  - Regression: v339 swept chr(1..65535) for characters the locale's [[:space:]] and the explicit list disagree on, and
+ *  - Regression: v341 swept chr(1..65535) for characters the locale's [[:space:]] and the explicit list disagree on, and
  *    chr(256) raises "requested character too large for encoding" on a non-UTF8 database, so the upgrade stopped there.
  *  - Why existing coverage misses it: every other arm runs on the UTF8 test database.
  *    The sweep now stays inside the range chr() takes on the database's encoding. A single-byte encoding such as LATIN1
@@ -43,7 +43,7 @@ describe.skipIf(!databaseUrl)('fact fingerprint v3 on a SQL_ASCII database (post
     const [{ server_encoding }] = await engine.executeRaw<{ server_encoding: string }>('SHOW server_encoding');
     expect(server_encoding).toBe('SQL_ASCII');
     const version = await engine.getConfig('version');
-    expect(Number(version)).toBeGreaterThanOrEqual(339);
+    expect(Number(version)).toBeGreaterThanOrEqual(341);
     const [{ fp }] = await engine.executeRaw<{ fp: string }>(`SELECT gbrain_fact_fingerprint('A  Claim') AS fp`);
     expect(fp).toMatch(/^[0-9a-f]{64}$/);
   }, 60_000);

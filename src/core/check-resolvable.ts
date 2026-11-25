@@ -447,7 +447,8 @@ export function checkResolvable(
   // Frontmatter is the source of truth (closes the #1451 drift class);
   // RESOLVER.md rows still contribute additively so the human-readable
   // dispatcher map stays load-bearing. See src/core/skill-trigger-index.ts.
-  const triggerEntries = loadSkillTriggerIndex(skillsDir);
+  const deprecatedSkills = new Set<string>();
+  const triggerEntries = loadSkillTriggerIndex(skillsDir, deprecatedSkills);
 
   // Primary RESOLVER.md path is still needed for error messages and
   // --fix targets that have to point at a concrete file. When neither
@@ -505,6 +506,8 @@ export function checkResolvable(
   const resolved = manifest.filter(skill => !manifestMissingPaths.has(`skills/${skill.path}`)).map(skill => {
     const expectedPath = `skills/${skill.path}`;
     if (resolverSkillPaths.has(expectedPath)) return { skill, reachable: true };
+    // A deprecated skill has no triggers by design: it loads only when named.
+    if (deprecatedSkills.has(expectedPath)) return { skill, reachable: true };
     // Also check if the skill name appears in any resolver entry
     const nameInResolver = entries.some(
       e => e.skillPath.includes(skill.name) || e.trigger.includes(skill.name)

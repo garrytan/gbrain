@@ -29,6 +29,14 @@ export interface RustAddonManifest {
 /** The target names a release publishes an addon for; the keys of `targets` in a release manifest. */
 export const RELEASE_ADDON_TARGETS: readonly string[] = ['linux-x64-glibc', 'darwin-arm64'];
 
+/** The release asset that holds the manifest. Also the subject name of its build-provenance attestation. */
+export const RUST_ADDON_MANIFEST_ASSET = 'gbrain-engine-rust.sha256.json';
+
+/** The release asset name of one target's addon, e.g. `gbrain-engine-rust-darwin-arm64.node`. */
+export function rustAddonAssetName(target: string): string {
+  return `gbrain-engine-rust-${target}.node`;
+}
+
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 
 /** Parse and validate manifest text. Returns null for anything that is not a complete manifest. */
