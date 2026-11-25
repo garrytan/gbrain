@@ -10,8 +10,8 @@
  * byte-identical, and every command must succeed in both builds. Only text that changes between two
  * runs of one binary is masked (see NORMALIZE).
  *
- * The query step uses a loopback OpenAI-compatible embeddings stub (deterministic vectors, no
- * network, no key), so the vector path runs too.
+ * The query step and the skill-resolver hook use a loopback OpenAI-compatible embeddings stub
+ * (deterministic bag-of-words vectors, no network, no key), so the vector paths run too.
  *
  * Usage: bun scripts/check-bytecode-parity.ts [--keep]   (BYTECODE_PARITY_RAW=1 compares unmasked text)
  * Exit:  0 when every command matches; 1 on a difference or a failed build.
@@ -66,8 +66,14 @@ function startEmbeddingStub(): Promise<{ port: number; close: () => void }> {
       const inputs = Array.isArray(parsed.input) ? parsed.input : [parsed.input ?? ''];
       const dims = parsed.dimensions ?? DIMS;
       const data = inputs.map((text, index) => {
+        // Bag of words: texts that share words get a high cosine, as real embeddings give texts that share
+        // meaning, so a ranking or a no-skill gate on the cosine (the skill resolver's vectors) behaves as it would.
         const v = new Array<number>(dims).fill(0);
-        for (let i = 0; i < String(text).length; i++) v[(String(text).charCodeAt(i) * 31 + i) % dims] += 1;
+        for (const word of String(text).toLowerCase().match(/[a-z0-9]+/g) ?? []) {
+          let h = 0;
+          for (let i = 0; i < word.length; i++) h = (h * 31 + word.charCodeAt(i)) >>> 0;
+          v[h % dims] += 1;
+        }
         const norm = Math.sqrt(v.reduce((a, b) => a + b * b, 0)) || 1;
         return { object: 'embedding', index, embedding: v.map(x => x / norm) };
       });

@@ -232,7 +232,7 @@ describe('release.yml addon_dry_run publishes nothing', () => {
     const build = jobs.build;
     expect(build.if).toContain('inputs.addon_dry_run ||');
     expect(build.if).toContain("needs.version.result == 'success'");
-    expect(build.steps[0].with.ref).toBe('${{ needs.ci-gate.outputs.sha || github.sha }}');
+    expect(build.steps[0].with.ref).toBe('${{ inputs.addon_dry_run && github.sha || needs.ci-gate.outputs.sha }}');
     const names = (build.steps as any[]).map(s => String(s.name ?? s.uses));
     for (const smoke of ['Verify embedded native writer locks and compiled process exclusion', 'Verify the admin UI with the actual release executable', 'Smoke-test the compiled binary']) {
       expect({ smoke, gated: build.steps.find((s: any) => s.name === smoke)?.if }).toEqual({ smoke, gated: undefined });
