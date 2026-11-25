@@ -196,18 +196,47 @@ describe('worker refusal-swallow sites', () => {
     const { engine, dir } = await openRustBrain();
     try {
       const statements: string[] = [];
+      let stallCounts = 0;
       const e = new Proxy(engine as unknown as BrainEngine, {
         get(target, property) {
           if (property === 'executeRaw') return async (sql: string) => { statements.push(sql); return (target.executeRaw as (s: string) => Promise<unknown>)(sql); };
+          // The real member, counted once it has answered: the proof the health check reached the stall count.
+          if (property === 'countWaitingJobsForNames') {
+            return async (queue: string, names: readonly string[]) => {
+              const n = await target.countWaitingJobsForNames(queue, names);
+              stallCounts++;
+              return n;
+            };
+          }
           const value = Reflect.get(target, property);
           return typeof value === 'function' ? value.bind(target) : value;
         },
       });
       // A waiting job of a name the worker does not handle makes the stall count run (and answer 0).
       await new MinionQueue(engine as unknown as BrainEngine).add('not-handled-here', { n: 1 });
-      const events = await unhealthyAfter(e, 800);
-      expect(events).toEqual([]);
-      expect(statements).toEqual([]);
+      const worker = new MinionWorker(e, { pollInterval: 25, healthCheckInterval: 50, dbFailExitAfter: 1, dbProbeTimeoutMs: 1000, stallWarnAfterMs: 20, stallExitAfterMs: 600_000 });
+      const events: Array<{ reason: string; message?: string }> = [];
+      let ready = false;
+      worker.on('unhealthy', (info) => { events.push(info as { reason: string; message?: string }); });
+      worker.on('ready', () => { ready = true; });
+      worker.register('noop', async () => ({}));
+      const until = async (done: () => boolean, ms: number): Promise<boolean> => {
+        const deadline = Date.now() + ms;
+        while (Date.now() < deadline && !done()) await new Promise((r) => setTimeout(r, 10));
+        return done();
+      };
+      const running = worker.start();
+      try {
+        const isReady = await until(() => ready || events.length > 0, 10_000);
+        // Bounded wait for the stall count to complete twice (a tick later than the first, so the worker survived one).
+        const counted = await until(() => stallCounts >= 2 || events.length > 0, 10_000);
+        expect({ isReady, counted, stallCountsAtLeastTwo: stallCounts >= 2, unhealthy: events, statements }).toEqual({
+          isReady: true, counted: true, stallCountsAtLeastTwo: true, unhealthy: [], statements: [],
+        });
+      } finally {
+        worker.stop();
+        await running;
+      }
     } finally {
       await engine.disconnect();
       removeBrainDir(dir);

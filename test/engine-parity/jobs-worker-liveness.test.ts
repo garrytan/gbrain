@@ -157,17 +157,20 @@ describe('engine parity: a minion worker stays alive and releases a claim as eve
     });
 
   parityTest('an idle worker keeps running well past stallWarnAfterMs, checks the waiting count each tick, and still finishes a job',
-    { methods: ['pingStore', 'admitJob', 'claimNextJob', 'completeJob', 'getJob'], timeout: 90_000 }, async (engine) => {
+    { methods: ['pingStore', 'countWaitingJobsForNames', 'admitJob', 'claimNextJob', 'completeJob', 'getJob'], timeout: 90_000 }, async (engine) => {
       // A waiting job of a name this worker does not handle: the stall check runs its count, which answers 0 for this worker.
       const unhandled = await add(engine, 'not-handled-here');
-      let completedProbes = 0;
+      // Count the stall counts that completed, through a wrapper that still calls the engine's own member: a worker that
+      // never reaches the stall check (or stops at it) never moves this number.
+      let completedStallCounts = 0;
       const counted = new Proxy(engine, {
         get(target, prop) {
           const value = Reflect.get(target, prop, target);
-          if (prop === 'pingStore') {
-            return async (opts?: { signal?: AbortSignal; direct?: boolean }) => {
-              await (value as BrainEngine['pingStore']).call(target, opts);
-              completedProbes++;
+          if (prop === 'countWaitingJobsForNames') {
+            return async (queue: string, names: readonly string[]) => {
+              const n = await (value as BrainEngine['countWaitingJobsForNames']).call(target, queue, names);
+              completedStallCounts++;
+              return n;
             };
           }
           return typeof value === 'function' ? value.bind(target) : value;
@@ -190,17 +193,17 @@ describe('engine parity: a minion worker stays alive and releases a claim as eve
         return await done();
       };
       let readyAt = 0;
-      worker.on('ready', () => { readyAt = Date.now(); });
+      let countsAtReady = 0;
+      worker.on('ready', () => { readyAt = Date.now(); countsAtReady = completedStallCounts; });
       const { value } = await quietly(async () => {
         const run = worker.start();
         try {
           const isReady = await until(() => readyAt > 0 || unhealthy.length > 0, 10_000);
           // Idle time counts from the start of the run, so past this point every health tick runs the stall check.
           const pastThreshold = await until(() => (readyAt > 0 && Date.now() > readyAt + stallWarnAfterMs + 40) || unhealthy.length > 0, 10_000);
-          const probesAtThreshold = completedProbes;
-          // The stall check runs after each tick's probe; a refused check would have ended the worker on its first tick.
-          const ticked = await until(() => completedProbes - probesAtThreshold >= 4 || unhealthy.length > 0, 10_000);
-          const ticksPastThreshold = completedProbes - probesAtThreshold;
+          // Each tick past the threshold completes one stall count (at least four after 'ready'); a refused count would have ended the worker on its first.
+          const ticked = await until(() => completedStallCounts - countsAtReady >= 4 || unhealthy.length > 0, 10_000);
+          const ticksPastThreshold = completedStallCounts - countsAtReady;
           const id = await add(engine, 'noop');
           const finished = await until(async () => String((await engine.getJob(id))?.status) === 'completed' || unhealthy.length > 0, 10_000);
           return {
