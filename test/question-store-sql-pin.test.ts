@@ -1,13 +1,13 @@
 /**
  * The pinned-question record members (src/core/engine-sql/question-store.ts) send the statements questions/store.ts and
  * questions/refresh.ts sent through executeRaw at f9592f7a7e, rebuilt here the way those callers built them (the same
- * column list, the same `where` assembly), so a drift in the written-out text or in a parameter fails.
+ * column list), so a drift in the written-out text or in a parameter fails. The insert, the read and the listing are
+ * engine-sql/pinned-questions.ts (main's members, pinned by their own tests).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: each member sends exactly the caller's old text and parameters: all six listing variants, both single-row
- *    reads, and every write.
- *  - Regression: a listing that drops the archived filter or the byte-order collation, or a lease that loses its expiry
- *    test, would show or double-run pins on a brain the parity cases do not hold.
+ *  - Contract: each member sends exactly the caller's old text and parameters: the locked single-row read and every write.
+ *  - Regression: a lease that loses its expiry test, or a state change that keeps the lease of an archived pin, would
+ *    double-run or revive pins on a brain the parity cases do not hold.
  *  - Why existing coverage misses it: the sql-text goldens pin the text, not where it came from.
  *  - Seam: a recording executeRaw stand-in; no database runs.
  */
@@ -20,22 +20,7 @@ const COLUMNS = `id, source_id, slug, question, scope_slug_prefix, scope_entity,
   last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
   refresh_attempts, spend_usd, created_at, archived_at`;
 
-const oldRead = (forUpdate: boolean) =>
-  `SELECT ${COLUMNS} FROM pinned_questions WHERE source_id = $1 AND slug = $2${forUpdate ? ' FOR UPDATE' : ''}`;
-
-/** The listing builder of listPins at f9592f7a7e. */
-function oldList(opts: { sourceIds?: string[]; includeArchived?: boolean; states?: string[] }): [string, unknown[]] {
-  const params: unknown[] = [];
-  const where: string[] = [];
-  if (opts.sourceIds) { params.push(opts.sourceIds); where.push(`source_id = ANY($${params.length}::text[])`); }
-  if (opts.states) { params.push(opts.states); where.push(`state = ANY($${params.length}::text[])`); }
-  else if (!opts.includeArchived) where.push(`state <> 'archived'`);
-  return [`SELECT ${COLUMNS} FROM pinned_questions ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY source_id COLLATE "C", created_at, id`, params];
-}
-
-const OLD_INSERT = `INSERT INTO pinned_questions (source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-     ON CONFLICT (source_id, slug) DO NOTHING RETURNING ${COLUMNS}`;
+const OLD_READ_FOR_UPDATE = `SELECT ${COLUMNS} FROM pinned_questions WHERE source_id = $1 AND slug = $2 FOR UPDATE`;
 const OLD_UPDATE_STATE = `UPDATE pinned_questions SET
        state = COALESCE($2, state),
        inactive_reason = CASE WHEN $3::boolean THEN $4 ELSE inactive_reason END,
@@ -73,35 +58,14 @@ function recorder(answer: unknown[] = []) {
 }
 
 describe('pinned-question record members send their callers\' statements', () => {
-  test('both single-row reads', async () => {
+  test('the locked single-row read', async () => {
     const r = recorder();
-    expect(await Q.readPinRow(r.raw, 'default', 'questions/a', false)).toBeNull();
-    expect(await Q.readPinRow(r.raw, 'work', 'questions/b', true)).toBeNull();
-    expect(r.log).toEqual([[oldRead(false), ['default', 'questions/a']], [oldRead(true), ['work', 'questions/b']]]);
+    expect(await Q.readPinnedQuestionForUpdate(r.raw, 'work', 'questions/b')).toBeNull();
+    expect(r.log).toEqual([[OLD_READ_FOR_UPDATE, ['work', 'questions/b']]]);
   });
 
-  test('all six listing variants, and the states filter beating the archived flag', async () => {
-    const r = recorder();
-    const filters = [
-      { sourceIds: null, states: null, includeArchived: false },
-      { sourceIds: null, states: null, includeArchived: true },
-      { sourceIds: ['a', 'b'], states: null, includeArchived: false },
-      { sourceIds: ['a'], states: null, includeArchived: true },
-      { sourceIds: null, states: ['active', 'inactive'], includeArchived: false },
-      { sourceIds: ['a'], states: ['archived'], includeArchived: true },
-      { sourceIds: null, states: ['archived'], includeArchived: true },
-      { sourceIds: ['a'], states: ['active'], includeArchived: false },
-    ];
-    for (const f of filters) await Q.listPinRows(r.raw, f);
-    const old = filters.map(f => oldList({ ...(f.sourceIds ? { sourceIds: f.sourceIds } : {}), ...(f.states ? { states: f.states } : {}), includeArchived: f.includeArchived }));
-    expect(r.log).toEqual(old);
-    expect(new Set(r.log.map(([sql]) => sql)).size).toBe(6);
-  });
-
-  test('the idempotent insert, a state change, the lease, spend and the blocked record', async () => {
+  test('a state change, the lease, spend and the blocked record', async () => {
     const r = recorder([{ id: 1 }]);
-    await Q.insertPinRow(r.raw, { sourceId: 'default', slug: 'questions/a', question: 'Who?', scopeSlugPrefix: 'projects/', scopeEntity: null,
-      state: 'inactive', inactiveReason: 'awaiting_consent', publishMode: 'publish', createdBy: 'cli' });
     await Q.updatePinRowState(r.raw, 7, { state: 'archived', setInactiveReason: true, inactiveReason: null, publishMode: null });
     await Q.updatePinRowState(r.raw, 7, { state: null, setInactiveReason: false, inactiveReason: null, publishMode: 'draft' });
     await Q.acquirePinLease(r.raw, 7, 'tok', 'owner', 600000);
@@ -110,7 +74,6 @@ describe('pinned-question record members send their callers\' statements', () =>
     await Q.addPinSpend(r.raw, 7, 0.5);
     await Q.recordPinBlocked(r.raw, 7, 'budget_exhausted');
     expect(r.log).toEqual([
-      [OLD_INSERT, ['default', 'questions/a', 'Who?', 'projects/', null, 'inactive', 'awaiting_consent', 'publish', 'cli']],
       [OLD_UPDATE_STATE, [7, 'archived', true, null, null]],
       [OLD_UPDATE_STATE, [7, null, false, null, 'draft']],
       [OLD_ACQUIRE, [7, 'tok', 'owner', 600000]],

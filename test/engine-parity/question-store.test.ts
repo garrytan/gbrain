@@ -1,6 +1,6 @@
 /**
- * BrainEngine parity: the pinned-question records (src/core/engine-sql/question-store.ts; the Rust `~q` family,
- * rust/docs/store/questions.md) at the call sites in src/core/questions/store.ts and questions/refresh.ts.
+ * BrainEngine parity: the pinned-question records (engine-sql/pinned-questions.ts and question-store.ts; the Rust
+ * pin records of jobs/pinned_questions.rs and the `~q` evidence family, rust/docs/store/questions.md) at the call sites in src/core/questions/store.ts and questions/refresh.ts.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: a pin is inserted once per (source, slug); reads and listings, state changes, the refresh lease (a live
@@ -8,7 +8,7 @@
  *    engine.transaction (lock, answer, evidence rewrite; rolled back as a whole) and the two reads of the records
  *    (the evidence join and the published answers) read the same on PGLite, Postgres and Rust.
  *  - Regression: the pin store ran through executeRaw, so a Rust brain refused every `gbrain questions` command with a
- *    named stop (rust-engine/question-stops.ts, PIN_STORE_STOP).
+ *    named stop (the pin writes had no store).
  *  - Why existing coverage misses it: test/pinned-questions-*.test.ts run on PGLite only.
  *  - Seam: real engines; pages, facts, timeline entries and takes through typed writes; the pin records through the
  *    typed members. Timestamps and ids are normalized (each arm stamps and numbers its own); everything else is compared.
@@ -50,7 +50,7 @@ const page = (title: string, over: Record<string, unknown> = {}) =>
 
 describe('the pinned-question records on every engine', () => {
   parityTest('a pin is inserted once per (source, slug); the duplicate returns the first row; both reads of one pin agree', {
-    methods: ['insertPinRow', 'readPinRow'],
+    methods: ['insertPinnedQuestion', 'readPinnedQuestion', 'readPinnedQuestionForUpdate'],
   }, async (engine) => {
     const first = await insertPin(engine, pin('questions/a', { scope: { source: 'default', slug_prefix: 'projects/', entity: 'people/alice-example' } }));
     const again = await insertPin(engine, pin('questions/a', { question: 'A different question?', state: 'inactive', inactiveReason: 'awaiting_consent' }));
@@ -72,7 +72,7 @@ describe('the pinned-question records on every engine', () => {
   });
 
   parityTest('every listing filter: all, archived, sources, states, both; byte order of the source id, then creation, then id', {
-    methods: ['insertPinRow', 'listPinRows', 'updatePinRowState'],
+    methods: ['insertPinnedQuestion', 'listPinnedQuestions', 'updatePinRowState'],
   }, async (engine) => {
     // 'Zed' sorts before 'alpha' in byte order and after it in most locales: the listing is byte order.
     const a = await insertPin(engine, pin('questions/b', { sourceId: 'alpha' }));
@@ -98,7 +98,7 @@ describe('the pinned-question records on every engine', () => {
   });
 
   parityTest('a state change bumps the revision; archiving drops the lease and stamps archived_at once; unarchiving clears it', {
-    methods: ['insertPinRow', 'updatePinRowState', 'acquirePinLease', 'readPinRow'],
+    methods: ['insertPinnedQuestion', 'updatePinRowState', 'acquirePinLease', 'readPinnedQuestion'],
   }, async (engine) => {
     const { row } = await insertPin(engine, pin('questions/s', { state: 'inactive', inactiveReason: 'awaiting_consent', publishMode: 'draft' }));
     const trail: unknown[] = [view(row)];
@@ -119,7 +119,7 @@ describe('the pinned-question records on every engine', () => {
   });
 
   parityTest('the refresh lease: a live lease refuses a second taker, the wrong token releases nothing, an expired lease is taken over', {
-    methods: ['insertPinRow', 'acquirePinLease', 'releasePinLease', 'readPinRow', 'updatePinRowState'],
+    methods: ['insertPinnedQuestion', 'acquirePinLease', 'releasePinLease', 'readPinnedQuestion', 'updatePinRowState'],
   }, async (engine) => {
     const { row } = await insertPin(engine, pin('questions/l'));
     const read = async () => view(await getPin(engine, 'default', 'questions/l'));
@@ -145,7 +145,7 @@ describe('the pinned-question records on every engine', () => {
   });
 
   parityTest('spend adds as doubles, from a lease release and on its own; a zero spend is not sent', {
-    methods: ['insertPinRow', 'addPinSpend', 'acquirePinLease', 'releasePinLease', 'readPinRow'],
+    methods: ['insertPinnedQuestion', 'addPinSpend', 'acquirePinLease', 'releasePinLease', 'readPinnedQuestion'],
   }, async (engine) => {
     const { row } = await insertPin(engine, pin('questions/m'));
     await addSpend(engine, row.id, 0.1);
@@ -162,7 +162,7 @@ describe('the pinned-question records on every engine', () => {
   });
 
   parityTest('the blocked record stamps the attempt and the cause unless a live lease holds the pin; an expired lease does not hold it', {
-    methods: ['insertPinRow', 'recordPinBlocked', 'acquirePinLease', 'readPinRow'],
+    methods: ['insertPinnedQuestion', 'recordPinBlocked', 'acquirePinLease', 'readPinnedQuestion'],
   }, async (engine) => {
     const { row } = await insertPin(engine, pin('questions/k'));
     const read = async () => view(await getPin(engine, 'default', 'questions/k'));
@@ -189,8 +189,8 @@ describe('the pinned-question records on every engine', () => {
   }) as never;
 
   parityTest('a publication inside engine.transaction: lock, answer, then the evidence rewrite; the second one replaces the first', {
-    methods: ['insertPinRow', 'acquirePinLease', 'lockPinRowForPublish', 'publishPinAnswer', 'deleteQuestionEvidence', 'insertQuestionEvidence',
-      'listQuestionEvidenceJoin', 'readPinRow'],
+    methods: ['insertPinnedQuestion', 'acquirePinLease', 'lockPinRowForPublish', 'publishPinAnswer', 'deleteQuestionEvidence', 'insertQuestionEvidence',
+      'listQuestionEvidenceJoin', 'readPinnedQuestion'],
   }, async (engine) => {
     const { row } = await insertPin(engine, pin('questions/p'));
     const leased = await acquireLease(engine, row.id, 'tok-1', 'worker', 600_000);
@@ -218,8 +218,8 @@ describe('the pinned-question records on every engine', () => {
   });
 
   parityTest('a publication that fails after its answer write rolls back the answer and the evidence together', {
-    methods: ['insertPinRow', 'acquirePinLease', 'lockPinRowForPublish', 'publishPinAnswer', 'deleteQuestionEvidence', 'insertQuestionEvidence',
-      'listQuestionEvidenceJoin', 'readPinRow'],
+    methods: ['insertPinnedQuestion', 'acquirePinLease', 'lockPinRowForPublish', 'publishPinAnswer', 'deleteQuestionEvidence', 'insertQuestionEvidence',
+      'listQuestionEvidenceJoin', 'readPinnedQuestion'],
   }, async (engine) => {
     const { row } = await insertPin(engine, pin('questions/r'));
     await acquireLease(engine, row.id, 'tok-1', 'worker', 600_000);
@@ -245,7 +245,7 @@ describe('the pinned-question records on every engine', () => {
   });
 
   parityTest('the evidence join resolves each pointer to its page, fact, timeline entry or take; the published answers cite the current revision', {
-    methods: ['insertPinRow', 'acquirePinLease', 'lockPinRowForPublish', 'publishPinAnswer', 'deleteQuestionEvidence', 'insertQuestionEvidence',
+    methods: ['insertPinnedQuestion', 'acquirePinLease', 'lockPinRowForPublish', 'publishPinAnswer', 'deleteQuestionEvidence', 'insertQuestionEvidence',
       'listQuestionEvidenceJoin', 'listPublishedQuestionAnswers'],
   }, async (engine, backend) => {
     const live = await engine.putPage('projects/live', page('live'));

@@ -325,3 +325,6 @@ pub(crate) fn purge_probe_rows(
         })
         .collect())
 }
+
+#[cfg(test)]
+mod tests;

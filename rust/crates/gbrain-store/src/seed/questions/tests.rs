@@ -1,6 +1,6 @@
-//! Read-back tests of the pinned-question relations: each reads the rows back through the family's own public reads,
-//! and checks a retry, the unique `(source_id, slug)` index, the defaults of a NULL and the next id the family's own
-//! writer takes.
+//! Read-back tests of the pinned-question relations: each reads the rows back through the public reads (the pins are
+//! main's records, `m 0x2F` and `m 0x30`; the evidence is `~q 0x03`), and checks a retry, the unique `(source_id, slug)`
+//! index, the defaults of a NULL and the next id the family's own writer takes.
 
 use crate::seed::{ImportResult, SeedRow};
 use crate::test_support::store;
@@ -116,18 +116,20 @@ fn pins_keep_their_ids_columns_and_the_defaults_of_a_null() {
         vec![pin("31", "default", "questions/a")],
     );
     assert_eq!((again.imported, again.skipped), (0, 1));
-    assert_eq!(counter(&s, crate::questions::NEXT_PIN_ID), 33);
+    assert_eq!(crate::jobs::read_seq(&*s.read().unwrap(), "pinned_questions").unwrap(), 32);
+    let pins = crate::kv::collect_prefix(&*s.read().unwrap(), &[keys::JOBS, 0x2F], false, 10).unwrap();
+    assert_eq!(pins.len(), 2, "the pins are main's records");
     let next = s
-        .insert_pin_row(&crate::questions::PinInsert {
-            source_id: "default".into(),
-            slug: "questions/b".into(),
-            question: "Q?".into(),
+        .insert_pinned_question(&crate::jobs::PinInsert {
+            source_id: Some("default".into()),
+            slug: Some("questions/b".into()),
+            question: Some("Q?".into()),
             scope_slug_prefix: None,
             scope_entity: None,
-            state: "active".into(),
+            state: Some("active".into()),
             inactive_reason: None,
-            publish_mode: "publish".into(),
-            created_by: "cli".into(),
+            publish_mode: Some("publish".into()),
+            created_by: Some("cli".into()),
         })
         .unwrap()
         .unwrap();
