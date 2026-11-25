@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::kv::Kv;
+use crate::kv::scan_prefix;
 use crate::pages::{PageInput, PutPageOptions};
 use crate::search::SearchOptions;
 use crate::{OpenOptions, Store, SystemEnv};
@@ -261,4 +262,70 @@ fn search_keyword_answers_as_the_keyword_arm() {
             );
         }
     }
+}
+
+/// A brain directory opened with concurrent writes (the addon's mode) upgrades on the record file
+/// before the concurrent layer wraps it, and answers as before.
+#[test]
+fn a_concurrent_open_of_a_format_8_directory_upgrades_it() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/test-tmp")
+        .join(format!("legacy-postings-occ-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let options = OpenOptions {
+        concurrent_writes: true,
+        keyword_index_builder: false,
+        ..OpenOptions::default()
+    };
+    let (postings, said) = {
+        let store = Store::open_dir(&dir, options.clone()).unwrap();
+        let input: PageInput = serde_json::from_value(
+            json!({"type": "note", "title": "a", "compiled_truth": "Acme widget launch plan."}),
+        )
+        .unwrap();
+        store
+            .put_page(
+                "notes/a",
+                &input,
+                &serde_json::from_value(json!({})).unwrap(),
+            )
+            .unwrap();
+        let said = answers(&store);
+        let mut postings = 0;
+        store
+            .write(|tx| {
+                postings = 0;
+                for (i, term) in ["acme", "widget", "launch", "plan"].iter().enumerate() {
+                    tx.put(&keys::posting(term, 1, i as u32), &1u32.to_be_bytes())?;
+                    postings += 1;
+                }
+                let mut stored: crate::StoredFormat =
+                    crate::get_json(&*tx, &keys::meta("format"))?.unwrap();
+                stored.format_version = 8;
+                crate::put_json(tx, &keys::meta("format"), &stored)
+            })
+            .unwrap();
+        (postings, said)
+    };
+    let mut on_disk = crate::format::read(&dir).unwrap().unwrap();
+    on_disk.format_version = 8;
+    crate::format::write(&dir, &on_disk).unwrap();
+    assert!(postings > 0);
+    let store = Store::open_dir(&dir, options).unwrap();
+    assert_eq!(store.info().format_version, crate::FORMAT_VERSION);
+    let mut left = 0;
+    scan_prefix(
+        &*store.read().unwrap(),
+        &[keys::POSTING],
+        false,
+        &mut |_, _| {
+            left += 1;
+            true
+        },
+    )
+    .unwrap();
+    assert_eq!(left, 0);
+    assert_eq!(answers(&store), said);
+    drop(store);
+    let _ = std::fs::remove_dir_all(&dir);
 }

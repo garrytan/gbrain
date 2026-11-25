@@ -250,7 +250,7 @@ pub struct Store {
 /// The record file of a brain directory, with one writer or many. Only for the storage bake-off:
 /// a build with the `fjall` feature (never the addon's) keeps the records in a fjall database
 /// instead when `GBRAIN_RUST_BAKEOFF_STORE=fjall`.
-fn open_records(dir: &Path, concurrent: bool) -> Result<Arc<dyn Kv>> {
+fn open_records(dir: &Path, concurrent: bool, known: &[u32]) -> Result<Arc<dyn Kv>> {
     #[cfg(feature = "fjall")]
     if std::env::var("GBRAIN_RUST_BAKEOFF_STORE").is_ok_and(|v| v == "fjall") {
         let kv = fjall_kv::FjallKv::open_dir(&dir.join("records.fjall"))?;
@@ -262,10 +262,27 @@ fn open_records(dir: &Path, concurrent: bool) -> Result<Arc<dyn Kv>> {
     }
     let kv = redb_kv::RedbKv::open_path(&dir.join(format::RECORDS_FILE))?;
     Ok(if concurrent {
+        upgrade_before_occ(&kv, known)?;
         Arc::new(occ_kv::OccKv::new(kv)?)
     } else {
         Arc::new(kv)
     })
+}
+
+/// Runs a pending format upgrade on the record file itself, before the concurrent-writes layer
+/// wraps it. The upgrade is still one write transaction, but its writes go to the record file's
+/// own transaction instead of the concurrent layer's in-memory write set, which would hold every
+/// key the upgrade deletes until it commits (a format-13 upgrade over 2 million legacy postings
+/// peaked at about 1 GB that way, against about 150 MB here). A format this build does not open is
+/// left to `open_kv_in`, which refuses it.
+fn upgrade_before_occ(kv: &dyn Kv, known: &[u32]) -> Result<()> {
+    let stored: Option<StoredFormat> = get_json(&*kv.snapshot()?, &keys::meta("format"))?;
+    match stored {
+        Some(s) if known.contains(&s.format_version) && s.format_version < FORMAT_VERSION => {
+            upgrade_format(kv).map(|_| ())
+        }
+        _ => Ok(()),
+    }
 }
 
 /// How many times `Store::write` runs a transaction that keeps losing conflicts.
@@ -348,7 +365,7 @@ impl Store {
                 format::check_version_in(stored.format_version, known)?;
             }
         }
-        let kv = open_records(dir, options.concurrent_writes)?;
+        let kv = open_records(dir, options.concurrent_writes, known)?;
         let mut store = Store::open_kv_in(kv, Arc::new(SystemEnv), options.clone(), known)?;
         store.dir = Some(dir.to_path_buf());
         // FORMAT follows the records: written when missing (a crash before it, or a deleted

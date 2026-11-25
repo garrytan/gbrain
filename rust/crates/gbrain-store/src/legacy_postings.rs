@@ -8,19 +8,37 @@
 
 use crate::error::Result;
 use crate::keys;
-use crate::kv::{KvWrite, scan_prefix};
+use crate::kv::KvWrite;
 
-/// Deletes every legacy word posting.
+/// Keys read per step of [`delete_all`].
+const BATCH: usize = if cfg!(test) { 7 } else { 10_000 };
+
+/// Deletes every legacy word posting, reading the keys a batch at a time so this step holds at
+/// most one batch of keys; the transaction's own write set still holds every delete until it
+/// commits (the upgrade is one transaction, so a failure leaves every posting).
 pub(crate) fn delete_all(tx: &mut dyn KvWrite) -> Result<()> {
-    let mut doomed = Vec::new();
-    scan_prefix(&*tx, &[keys::POSTING], false, &mut |key, _| {
-        doomed.push(key.to_vec());
-        true
-    })?;
-    for key in doomed {
-        tx.delete(&key)?;
+    let Some(end) = crate::kv::prefix_end(&[keys::POSTING]) else {
+        return Ok(());
+    };
+    let mut from = vec![keys::POSTING];
+    loop {
+        let mut batch: Vec<Vec<u8>> = Vec::with_capacity(BATCH);
+        tx.scan(&from, &end, false, &mut |key, _| {
+            batch.push(key.to_vec());
+            batch.len() < BATCH
+        })?;
+        for key in &batch {
+            tx.delete(key)?;
+        }
+        let full = batch.len() == BATCH;
+        match batch.pop() {
+            Some(mut last) if full => {
+                last.push(0);
+                from = last;
+            }
+            _ => return Ok(()),
+        }
     }
-    Ok(())
 }
 
 #[cfg(test)]
