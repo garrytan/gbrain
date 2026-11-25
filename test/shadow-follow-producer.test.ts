@@ -305,6 +305,21 @@ describe('raw SQL write targets', () => {
   }
 });
 
+describe('the pinned-question writes name their rows', () => {
+  const plan = (member: string, args: unknown[]) => WRITE_MAP[member]!.plan!(args);
+  test('pins by id or (source_id, slug), evidence by question_id, the delete marked', () => {
+    expect(plan('insertPinnedQuestion', [{ sourceId: 'default', slug: 'questions/a' }])).toEqual([{ relation: 'pinned_questions', sel: { source_id: 'default', slug: 'questions/a' } }]);
+    for (const member of ['updatePinRowState', 'acquirePinLease', 'releasePinLease', 'addPinSpend', 'recordPinBlocked', 'publishPinAnswer']) {
+      expect(plan(member, [7])).toEqual([{ relation: 'pinned_questions', sel: { id: '7' } }]);
+    }
+    expect(plan('deleteQuestionEvidence', [7])).toEqual([{ relation: 'question_evidence', sel: { question_id: '7' }, del: true }]);
+    expect(plan('insertQuestionEvidence', [[{ questionId: 7 }, { questionId: 7 }]]))
+      .toEqual(Array(2).fill({ relation: 'question_evidence', sel: { question_id: '7' } }));
+    expect(memberKind('lockPinRowForPublish')).toBe('read_name');
+    expect(['readPinnedQuestion', 'readPinnedQuestionForUpdate', 'listPinnedQuestions'].map(memberKind)).toEqual(['read_name', 'read_name', 'read_name']);
+  });
+});
+
 describe('selectors match the real schema', () => {
   test('every selector column and key column the write map uses exists on its relation', async () => {
     const used: Record<string, string[]> = {
@@ -313,6 +328,7 @@ describe('selectors match the real schema', () => {
       timeline_entries: ['id', 'page_id'], facts: ['id', 'source_id', 'source_markdown_slug', 'entity_slug'], takes: ['id', 'page_id', 'row_num'],
       synthesis_evidence: ['synthesis_page_id', 'take_page_id', 'take_row_num'], raw_data: ['id', 'page_id', 'source'], files: ['id', 'source_id', 'storage_path'],
       config: ['key'], page_aliases: ['id', 'source_id', 'slug'], page_versions: ['id', 'page_id'], sources: ['id'],
+      pinned_questions: ['id', 'source_id', 'slug'], question_evidence: ['id', 'question_id'],
     };
     for (const [relation, columns] of Object.entries(used)) {
       await engine.executeRaw(`SELECT ${columns.map((c) => `"${c}"::text`).join(', ')} FROM "${relation}" LIMIT 0`);

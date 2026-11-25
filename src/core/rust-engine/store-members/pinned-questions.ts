@@ -1,8 +1,7 @@
 /**
  * The pinned-question members (BrainEngine insertPinnedQuestion, readPinnedQuestion, listPinnedQuestions; SQL in
  * engine-sql/pinned-questions.ts), served from the store's pin records (rust/crates/gbrain-store/src/jobs/pinned_questions.rs,
- * rust/docs/store/pinned-questions.md). The pin's state changes, refresh lease and answer publish stay raw SQL, so they
- * refuse on a Rust brain.
+ * rust/docs/store/pinned-questions.md). The pin's state changes, refresh lease and answer publish are store-members/question-store.ts.
  */
 import type { PinnedQuestionFilter, PinnedQuestionInsert, PinnedQuestionRow } from '../../engine-sql/pinned-questions.ts';
 import { storeCall, type StoreMember } from './common.ts';

@@ -1,14 +1,12 @@
 /**
  * Pinned-question rows: reads, idempotent pin, state changes and the durable
- * refresh lease. SQL runs through `engine.executeRaw` on the pinned_questions
- * table (not a canonical-writer table, so no coordinator capability is needed);
- * the question page itself is written by ./pages.ts through the coordinator. The insert and the two reads are typed
- * members every engine serves (engine-sql/pinned-questions.ts); the state change, the lease, the spend and the locked
- * read still send raw SQL, and an engine without it (the Rust engine) refuses each by name before any call
- * (refusePinStore).
+ * refresh lease. The rows are the typed pin members of the engine: the insert and the two reads are
+ * engine-sql/pinned-questions.ts, the locked read, the state change, the lease and the spend are engine-sql/question-store.ts
+ * (PGLite and Postgres), and a Rust brain keeps them all in jobs/pinned_questions.rs. `toPinRow` normalizes the rows. The
+ * pinned_questions table is not a canonical-writer table, so no coordinator capability is needed; the question page
+ * itself is written by ./pages.ts through the coordinator.
  */
 import type { BrainEngine } from '../engine.ts';
-import { refusePinStore } from '../rust-engine/question-stops.ts';
 import { formatQuestionId, type QuestionScope } from './identity.ts';
 
 export type PinState = 'active' | 'inactive' | 'archived';
@@ -55,11 +53,6 @@ export interface PinRow {
   archived_at: Date | null;
 }
 
-const COLUMNS = `id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
-  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
-  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
-  refresh_attempts, spend_usd, created_at, archived_at`;
-
 const date = (v: unknown): Date | null => v === null || v === undefined ? null : v instanceof Date ? v : new Date(String(v));
 const num = (v: unknown): number | null => v === null || v === undefined ? null : Number(v);
 
@@ -105,14 +98,8 @@ export function pinScope(row: Pick<PinRow, 'source_id' | 'scope_slug_prefix' | '
 }
 
 export async function getPin(engine: BrainEngine, sourceId: string, slug: string, opts: { forUpdate?: boolean } = {}): Promise<PinRow | null> {
-  if (!opts.forUpdate) {
-    const row = await engine.readPinnedQuestion(sourceId, slug);
-    return row ? toPinRow(row) : null;
-  }
-  refusePinStore(engine, 'getPin --for-update');
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT ${COLUMNS} FROM pinned_questions WHERE source_id = $1 AND slug = $2 FOR UPDATE`, [sourceId, slug]);
-  return rows[0] ? toPinRow(rows[0]) : null;
+  const row = opts.forUpdate ? await engine.readPinnedQuestionForUpdate(sourceId, slug) : await engine.readPinnedQuestion(sourceId, slug);
+  return row ? toPinRow(row) : null;
 }
 
 export async function listPins(engine: BrainEngine, opts: { sourceIds?: string[]; includeArchived?: boolean; states?: PinState[] } = {}): Promise<PinRow[]> {
@@ -148,19 +135,11 @@ export async function insertPin(engine: BrainEngine, p: PinInsert): Promise<{ ro
 export async function updatePinState(engine: BrainEngine, id: number, patch: {
   state?: PinState; inactiveReason?: InactiveReason | null; publishMode?: PublishMode;
 }): Promise<PinRow> {
-  refusePinStore(engine, 'updatePinState');
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    `UPDATE pinned_questions SET
-       state = COALESCE($2, state),
-       inactive_reason = CASE WHEN $3::boolean THEN $4 ELSE inactive_reason END,
-       publish_mode = COALESCE($5, publish_mode),
-       archived_at = CASE WHEN COALESCE($2, state) = 'archived' THEN COALESCE(archived_at, now()) ELSE NULL END,
-       lease_token = CASE WHEN COALESCE($2, state) = 'archived' THEN NULL ELSE lease_token END,
-       lease_expires_at = CASE WHEN COALESCE($2, state) = 'archived' THEN NULL ELSE lease_expires_at END,
-       revision = revision + 1, updated_at = now()
-     WHERE id = $1 RETURNING ${COLUMNS}`,
-    [id, patch.state ?? null, patch.inactiveReason !== undefined, patch.inactiveReason ?? null, patch.publishMode ?? null]);
-  return toPinRow(rows[0]!);
+  const row = await engine.updatePinRowState(id, {
+    state: patch.state ?? null, setInactiveReason: patch.inactiveReason !== undefined, inactiveReason: patch.inactiveReason ?? null,
+    publishMode: patch.publishMode ?? null,
+  });
+  return toPinRow((row ?? undefined)!);
 }
 
 /**
@@ -168,27 +147,16 @@ export async function updatePinState(engine: BrainEngine, id: number, patch: {
  * while a live lease exists; an expired lease (a crashed worker) is taken over.
  */
 export async function acquireLease(engine: BrainEngine, id: number, token: string, owner: string, ttlMs: number): Promise<PinRow | null> {
-  refusePinStore(engine, 'acquireLease');
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    `UPDATE pinned_questions SET lease_token = $2, lease_owner = $3,
-       lease_expires_at = now() + ($4::double precision * interval '1 millisecond'),
-       last_attempt_at = now(), refresh_attempts = refresh_attempts + 1
-     WHERE id = $1 AND state <> 'archived' AND (lease_token IS NULL OR lease_expires_at IS NULL OR lease_expires_at < now())
-     RETURNING ${COLUMNS}`, [id, token, owner, ttlMs]);
-  return rows[0] ? toPinRow(rows[0]) : null;
+  const row = await engine.acquirePinLease(id, token, owner, ttlMs);
+  return row ? toPinRow(row) : null;
 }
 
 /** Ends a refresh attempt without publishing: keeps the previous answer, records the cause and spend. */
 export async function releaseLease(engine: BrainEngine, id: number, token: string, outcome: { error: string | null; spendUsd: number }): Promise<void> {
-  refusePinStore(engine, 'releaseLease');
-  await engine.executeRaw(
-    `UPDATE pinned_questions SET lease_token = NULL, lease_owner = NULL, lease_expires_at = NULL,
-       last_error = $3, spend_usd = spend_usd + $4, updated_at = now()
-     WHERE id = $1 AND lease_token = $2`, [id, token, outcome.error, outcome.spendUsd]);
+  await engine.releasePinLease(id, token, outcome.error, outcome.spendUsd);
 }
 
 export async function addSpend(engine: BrainEngine, id: number, usd: number): Promise<void> {
   if (usd <= 0) return;
-  refusePinStore(engine, 'addSpend');
-  await engine.executeRaw('UPDATE pinned_questions SET spend_usd = spend_usd + $2 WHERE id = $1', [id, usd]);
+  await engine.addPinSpend(id, usd);
 }

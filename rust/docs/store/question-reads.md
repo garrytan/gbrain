@@ -28,9 +28,6 @@ one reverse seek.
 
 The store keeps no `needs_rederive` rows, so the eligibility filter that excludes them never excludes a row here.
 
-Not served yet, and refused by name before any work (`src/core/rust-engine/question-stops.ts`, owner lane 15 head 2,
-due 5 PM PST Nov 29):
-
-- `listQuestionEvidenceJoin` and `listPublishedQuestionAnswers` read the `pinned_questions` and `question_evidence`
-  records, which the store does not keep. The pin store functions of src/core/questions/store.ts and the refresh's
-  ledger writes refuse the same way (`refusePinStore`), so no pin can exist on this engine.
+The pin records (`pinned_questions`, `question_evidence`), the pin store functions of src/core/questions/store.ts, the
+refresh's ledger writes and the two reads that join the records (`listQuestionEvidenceJoin`,
+`listPublishedQuestionAnswers`) are served too: `questions.md`. No pinned-question member refuses on this engine.

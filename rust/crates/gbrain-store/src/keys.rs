@@ -147,6 +147,11 @@ pub const fn family_tag(family: u8) -> [u8; 2] {
     [FAMILY_ESCAPE, family]
 }
 
+/// Family `questions` (`questions.rs`): the `question_evidence` rows (`~q 0x03`); `0x04` is kept for an evidence index.
+/// `~q 0x01` and `~q 0x02` are reserved and unused, never to be reused: the pin rows and their `(source_id, slug)` index
+/// live at `m 0x2F` and `m 0x30` (`jobs/pinned_questions.rs`). The module header lists every key.
+pub const QUESTIONS: [u8; 2] = family_tag(b'q');
+
 /// `family_tag`, then `parts` joined by `0x00`, as `text` does after a one-byte tag. With no parts it is the
 /// family's scan prefix.
 pub fn family_text(tag: [u8; 2], parts: &[&str]) -> Vec<u8> {

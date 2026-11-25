@@ -1,4 +1,4 @@
-//! The follow spec of the spend, decide and wake relations.
+//! The follow spec of the spend, decide, wake and pinned-question relations.
 
 use super::remove_core::need;
 use super::{Follow, Identity, Mode, Replace, number, text};
@@ -90,6 +90,18 @@ pub(super) static SPECS: &[(&str, Follow)] = &[
         "mcp_request_log_rollup",
         follow(&["token_name"], remove_rollup),
     ),
+    (
+        "pinned_questions",
+        keyed(
+            &["id", "source_id", "slug"],
+            &[&["source_id", "slug"]],
+            remove_pin,
+        ),
+    ),
+    (
+        "question_evidence",
+        follow(&["id", "question_id"], remove_evidence),
+    ),
 ];
 
 fn remove_spend_log(tx: &mut dyn KvWrite, id: &Identity, _: Mode) -> Result<bool> {
@@ -173,4 +185,12 @@ fn remove_terms(tx: &mut dyn KvWrite, id: &Identity, _: Mode) -> Result<bool> {
 
 fn remove_rollup(tx: &mut dyn KvWrite, id: &Identity, _: Mode) -> Result<bool> {
     crate::telemetry::remove_rollup(tx, need!(id, "token_name"))
+}
+
+fn remove_pin(tx: &mut dyn KvWrite, id: &Identity, _: Mode) -> Result<bool> {
+    crate::jobs::remove_pinned_question(tx, need!(id, "id", i64))
+}
+
+fn remove_evidence(tx: &mut dyn KvWrite, id: &Identity, _: Mode) -> Result<bool> {
+    crate::questions::remove_evidence(tx, need!(id, "question_id", u64), need!(id, "id", u64))
 }

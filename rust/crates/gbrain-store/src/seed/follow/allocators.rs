@@ -72,6 +72,11 @@ const ALLOCATORS: &[(&str, Counter)] = &[
     ),
     ("wake_cron_runs", Counter::Seq("wake_cron_run")),
     ("wake_forgets", Counter::Seq("wake_forget")),
+    ("pinned_questions", Counter::Seq("pinned_questions")),
+    (
+        "question_evidence",
+        Counter::Meta(crate::questions::NEXT_EVIDENCE_ID),
+    ),
 ];
 
 /// One relation's counter against the primary's highest id.

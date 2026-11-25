@@ -1,8 +1,7 @@
 //! The pinned-question reads the store serves (`src/core/engine-sql/question-reads.ts`): the candidate pages, the
 //! timeline entries, takes and facts of a refresh, the question page's row, the refresh clock, the new-pages and
 //! new-facts checks of an answer's watermark, and the rows a publication rereads.
-//! The two reads of the pin records (`pinned_questions`, `question_evidence`), which the store does not keep yet, are
-//! refused by name (`src/core/rust-engine/question-stops.ts`).
+//! The two reads of the pin records (`pinned_questions`, `question_evidence`) are in `questions/join.rs`.
 //!
 //! Keys: none of its own. It reads the page, fact, timeline and take records, and the page generation index
 //! (`page_generation.rs`): `pages.generation` is the per-page counter the store keeps like the SQL engines' trigger.

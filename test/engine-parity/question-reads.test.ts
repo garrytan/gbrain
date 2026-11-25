@@ -150,12 +150,12 @@ describe('pinned-question reads on every engine', () => {
     return { timeline, takes, fresh };
   });
 
-  // The pin records are not in the Rust store yet: the pin's first write refuses there by name before anything is
-  // written (rust-engine/question-stops.ts). The SQL engines pin, refresh and publish end to end.
+  // `gbrain questions pin --prefix` then `gbrain questions refresh <id>`, end to end: the receipt JSON (without its two
+  // clock fields; the watermark time compared by type) is the same on every engine.
   parityTest('a pin with a slug prefix refreshes end to end and publishes a cited answer', {
     methods: ['readPrefixAnchoredPages', 'listQuestionCandidatePages', 'listPublishedQuestionAnswers', 'readQuestionEvidenceClock',
-      'readQuestionPageRow', 'listQuestionEvidenceJoin', 'lockQuestionEvidenceRows'],
-    requires: 'raw_sql',
+      'readQuestionPageRow', 'listQuestionEvidenceJoin', 'lockQuestionEvidenceRows', 'insertPinnedQuestion', 'acquirePinLease', 'publishPinAnswer',
+      'insertQuestionEvidence'],
   }, async (engine) => {
     await engine.putPage('projects/acme-example', page('acme-example leadership'));
     await engine.putPage('projects/widget-co', page('widget-co roadmap'));

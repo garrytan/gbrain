@@ -105,6 +105,7 @@ import * as factsRecall from './facts-recall.ts';
 import * as factsQuoted from './facts-quoted.ts';
 import * as schemaDetect from './schema-detect.ts';
 import * as questionReads from './question-reads.ts';
+import * as questionStore from './question-store.ts';
 import * as accessReadLog from './access-read-log.ts';
 import * as handoverReads from './handover-reads.ts';
 import * as edgeProposals from './edge-proposals.ts';
@@ -251,6 +252,8 @@ export const STORE_MEMBERS = {
   ...schemaDetect,
   // The pinned-question reads that read no page generation and no pin record (rust/docs/store/question-reads.md).
   ...questionReads,
+  // The pinned-question records and the two reads that join them (rust/docs/store/questions.md).
+  ...questionStore,
   // The access read log (rust/docs/store/telemetry.md, "Access read log").
   ...accessReadLog,
   // The member handover preview and --status reads (rust/docs/store/handover-reads.md).

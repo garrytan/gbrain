@@ -9,7 +9,6 @@
  * paid preapproval (consent.preapprove.paid.max_usd_per_run) covers it. A pin
  * never installs a scheduler.
  */
-import { refusePinStore } from '../rust-engine/question-stops.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { opError } from '../ops/contract.ts';
 import { hostOnlyError, invalidParam, readFix } from '../ops/op-fix.ts';
@@ -173,9 +172,6 @@ export async function pinQuestion(ctx: OperationContext, p: Record<string, unkno
     if (!local) assertSourceInCallerWriteScope(ctx, scope.source);
     const slug = questionSlug(question, scope);
     if (!local) enforceClientSlugFence(ctx, slug, 'questions_pin');
-    // A pin writes its row, then reads and writes its question page and may refresh: refuse before the insert where a
-    // later step would refuse, so no engine holds a pin without its page.
-    refusePinStore(ctx.engine, 'pin (the question page read and the refresh need the page generation and the answer writes)');
     ({ row: pin, created } = await insertPin(ctx.engine, {
       sourceId: scope.source, slug, question, scope, state: desired.state, inactiveReason: desired.inactiveReason,
       publishMode: 'publish', createdBy: local ? 'cli' : `mcp:${ctx.auth?.clientId ?? ctx.transport ?? 'stdio'}`,

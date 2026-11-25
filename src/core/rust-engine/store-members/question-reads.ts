@@ -3,7 +3,7 @@
  * entries, takes and facts of a refresh, the question page row, the refresh clock, the new-pages and new-facts checks
  * of an answer's watermark and the rows a publication rereads
  * (rust/crates/gbrain-store/src/question_reads.rs, rust/docs/store/question-reads.md). The two reads of the pin
- * records, which the store does not keep yet, are refused by name (rust-engine/question-stops.ts).
+ * records are in store-members/question-store.ts.
  *
  * `pages.generation` is the store's per-page counter (rust/crates/gbrain-store/src/page_generation.rs), the same
  * number the SQL engines' trigger keeps.

@@ -193,6 +193,7 @@ const OOS = {
   withdrawalDiscovery: 'out-of-scope:withdrawal-discovery (born in engine-sql/withdrawal-discovery.ts; pinned by test/engine-parity/withdrawal-discovery-reads.test.ts and test/withdrawal-discovery-reads-sql-pin.test.ts)',
   withdrawalPages: 'out-of-scope:withdrawal-pages (born in engine-sql/withdrawal-pages.ts; pinned by test/engine-parity/withdrawal-forget.test.ts and test/withdrawal-pages-sql-pin.test.ts)',
   withdrawalFence: 'out-of-scope:withdrawal-fence (born in engine-sql/withdrawal-fence.ts; pinned by test/engine-parity/withdrawal-fence.test.ts and test/withdrawal-fence-sql-pin.test.ts)',
+  questionStore: 'out-of-scope:question-store (the pinned-question records, born in engine-sql/question-store.ts; pinned by test/question-store-sql-pin.test.ts and test/engine-parity/question-store.test.ts)',
   questionReads: 'out-of-scope:question-reads (the pinned-question reads, born in engine-sql/question-reads.ts; pinned by test/question-reads-sql-pin.test.ts and test/engine-parity/question-reads.test.ts)',
 } as const;
 
@@ -2022,6 +2023,16 @@ export const DOMAIN_OF: Record<string, string> = {
   'hasNewQuestionPages': OOS.questionReads,
   'hasNewQuestionFacts': OOS.questionReads,
   'lockQuestionEvidenceRows': OOS.questionReads,
+  'readPinnedQuestionForUpdate': OOS.questionStore,
+  'updatePinRowState': OOS.questionStore,
+  'acquirePinLease': OOS.questionStore,
+  'releasePinLease': OOS.questionStore,
+  'addPinSpend': OOS.questionStore,
+  'recordPinBlocked': OOS.questionStore,
+  'lockPinRowForPublish': OOS.questionStore,
+  'publishPinAnswer': OOS.questionStore,
+  'deleteQuestionEvidence': OOS.questionStore,
+  'insertQuestionEvidence': OOS.questionStore,
 };
 
 /** Every own member of PostgresEngine.prototype (methods + accessors), sorted. */

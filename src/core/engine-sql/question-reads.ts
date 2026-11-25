@@ -1,9 +1,8 @@
 /**
  * The reads of pinned questions (src/core/questions/): evidence retrieval (refresh.ts; its slug-prefix anchor is
  * readPrefixAnchoredPages, engine-sql/entity-reads.ts), the question page row (pages.ts), the freshness reads (freshness.ts), the refresh clock and
- * the publication's revalidation reads. One implementation for both SQL engines; the Rust store serves the members that
- * read no `pages.generation` and no pin record (src/core/rust-engine/store-members/question-reads.ts), and refuses the
- * others by name until it keeps a page generation counter and the pin records (rust-engine/question-stops.ts).
+ * the publication's revalidation reads. One implementation for both SQL engines; the Rust store serves every one
+ * (src/core/rust-engine/store-members/question-reads.ts and question-store.ts).
  *
  * Each statement is the text the caller sent through `executeRaw`, byte for byte (test/question-reads-sql-pin.test.ts),
  * with its fragments (quarantine, projection eligibility, evidence hashes) written out. Ids, generations and the fact id

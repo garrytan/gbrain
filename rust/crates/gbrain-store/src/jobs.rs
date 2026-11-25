@@ -116,6 +116,10 @@ pub use oauth_codes::OauthCodeInsert;
 pub use oauth_tokens::OauthTokenInsert;
 pub(crate) use pinned_questions::purge_probe_rows as purge_probe_pin_rows;
 pub use pinned_questions::{PinFilter, PinInsert};
+pub(crate) use pinned_questions::{
+    PinRecord, answered_pins, remove_pin as remove_pinned_question,
+    seed_pin as seed_pinned_question,
+};
 pub use private_queues::PrivateQueueState;
 pub use reads::{JobPageCursor, JobPageSpec, OverdueSpec};
 pub use spend::{ExpireScope, LeaseFilter, LeaseInsert, SpendInsert, SpendTreeSpec};

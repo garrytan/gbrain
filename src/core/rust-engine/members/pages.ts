@@ -483,7 +483,7 @@ export const PAGES_MEMBERS = {
   readPageNameText: 'pages',
   listFrontmatterAliasNorms: 'pages',
   listRejectedDeclarationPages: 'pages',
-  // The pinned-question reads (engine-sql/question-reads.ts); the unserved ones name their stop (rust-engine/question-stops.ts).
+  // The pinned-question reads (engine-sql/question-reads.ts), served by the store (rust/docs/store/question-reads.md).
   listQuestionCandidatePages: 'pages',
   listPublishedQuestionAnswers: 'pages',
   listQuestionEvidenceFacts: 'facts',
