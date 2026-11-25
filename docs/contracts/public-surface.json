@@ -3230,6 +3230,8 @@
     "setup_history_ineligible": 1,
     "setup_hosted_connection": 1,
     "setup_owner_conflict": 1,
+    "setup_receipt_not_found": 1,
+    "setup_receipt_target_mismatch": 1,
     "setup_serves_several": 1,
     "setup_serves_unreadable": 1,
     "shadow_drill_failed": 1,

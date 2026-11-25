@@ -640,6 +640,8 @@
     "setup_history_ineligible",
     "setup_hosted_connection",
     "setup_owner_conflict",
+    "setup_receipt_not_found",
+    "setup_receipt_target_mismatch",
     "setup_serves_several",
     "setup_serves_unreadable",
     "shadow_drill_failed",

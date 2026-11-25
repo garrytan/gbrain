@@ -6171,6 +6171,26 @@ Reasons: `live_serve`, `unowned_entry`, `other_install`, `harness_lane`.
 
 More: [docs/guides/repair.md#setup-owner-conflict](../../docs/guides/repair.md#setup-owner-conflict)
 
+### setup_receipt_not_found
+
+<a id="setup_receipt_not_found"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A setup template status or resume named a receipt that is not on this machine (or none exists for this brain and source), so nothing was read or written. | A template run records each step and each key in a receipt under the brain's config directory; a status or resume reads only that record, so a missing one is never guessed. | Run the template again with --yes (every step is idempotent), or name a receipt this machine holds. Run: gbrain household template --json | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/tutorials/household-brain.md#if-a-run-stops](../../docs/tutorials/household-brain.md#if-a-run-stops)
+
+### setup_receipt_target_mismatch
+
+<a id="setup_receipt_target_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A setup template status or resume named a receipt written for another brain, source or harness than the command names, so nothing was read or written. | A receipt names its target so a resume never changes a brain or source the person did not name, and a status never proves another target's keys. | Run the command with the receipt's own harness and source, or name a receipt of this target. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/tutorials/household-brain.md#if-a-run-stops](../../docs/tutorials/household-brain.md#if-a-run-stops)
+
 ### setup_serves_several
 
 <a id="setup_serves_several"></a>
