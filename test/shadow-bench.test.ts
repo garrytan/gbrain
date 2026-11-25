@@ -16,7 +16,7 @@ import { join } from 'node:path';
 import { runEngineShadow } from '../src/commands/engine-shadow.ts';
 import { evaluateReadiness, type ShadowStatus } from '../src/core/engine-swap/readiness.ts';
 import { readBoundedFile } from '../src/shadow/bench-file.ts';
-import { benchSummaryPath, EXPECTED_METRICS, EXPECTED_OPS, importBenchReceipt, MAX_RECEIPT_BYTES } from '../src/shadow/bench-receipt.ts';
+import { BENCH_DOCS, benchSummaryPath, EXPECTED_METRICS, EXPECTED_OPS, importBenchReceipt, MAX_RECEIPT_BYTES } from '../src/shadow/bench-receipt.ts';
 import { MAX_METRICS_PER_PAIR, MAX_OPERATIONS_PER_PAIR } from '../src/shadow/bench-receipt.ts';
 import { classifyBench, readBenchSummary } from '../src/shadow/bench.ts';
 import { buildProvisionalReport, renderProvisionalMarkdown } from '../src/shadow/report.ts';
@@ -274,7 +274,9 @@ describe('refusals keep the earlier evidence and say how to fix it', () => {
   test('schema 2 gives the exact text and never tells the agent to edit the receipt', async () => {
     await withShadow(async (c) => {
       const x = await c.run(['bench', '--import', c.file(receipt((r) => { r.schema_version = 2; })), '--json']);
-      expect(x.err).toContain('schema_version 2 is unsupported (expected 1); previous bench evidence unchanged [invalid_params; docs/ENGINES.md#rust-engine-shadow-mode]');
+      expect(x.err).toContain('schema_version 2 is unsupported (expected 1); previous bench evidence unchanged [invalid_params; docs/guides/engine-shadow-bench.md]');
+      // The pointer must name a page that exists and explains the command (it moved out of ENGINES.md).
+      expect(readFileSync(join(import.meta.dir, '..', BENCH_DOCS), 'utf8')).toContain('gbrain engine shadow bench --import');
       expect(x.err).toContain('Do not edit the receipt to make it pass');
     });
   });
