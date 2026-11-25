@@ -121,15 +121,20 @@ async function runTransaction<T>(engine: object, connection: ServedConnection, f
   opts: TransactionOptions | undefined, parent?: string, parentHeld: HeldPageKeys | null = null): Promise<T> {
   // A savepoint's lost commit is its top-level transaction's: only the top level runs the callback again.
   if (parent !== undefined) return runTransactionOnce(engine, connection, fn, opts, parent, parentHeld);
+  // One transaction, not a list of items: only a lost commit runs it again; every other failure is the answer.
   for (let attempt = 1; ; attempt++) {
-    try { return await runTransactionOnce(engine, connection, fn, opts, parent, parentHeld); }
-    catch (error) {
-      const lost = (error as { code?: unknown; reason?: unknown } | null)?.code === 'revision_conflict'
-        && (error as { reason?: unknown }).reason === SERVED_TXN_CONFLICT_REASON;
-      if (!lost) throw error;
-      if (attempt > SERVED_TRANSACTION_RETRIES) throw servedTransactionContention(attempt);
-    }
+    const outcome = await runTransactionOnce(engine, connection, fn, opts, parent, parentHeld)
+      .then(value => ({ value }), (error: unknown) => ({ error }));
+    if (!('error' in outcome)) return outcome.value;
+    if (!lostCommit(outcome.error)) throw outcome.error;
+    if (attempt > SERVED_TRANSACTION_RETRIES) throw servedTransactionContention(attempt);
   }
+}
+
+/** The server ended a transaction because its commit lost to another writer (served/session-calls.ts). */
+function lostCommit(error: unknown): boolean {
+  const e = error as { code?: unknown; reason?: unknown } | null;
+  return e?.code === 'revision_conflict' && e.reason === SERVED_TXN_CONFLICT_REASON;
 }
 
 async function runTransactionOnce<T>(engine: object, connection: ServedConnection, fn: (tx: BrainEngine) => Promise<T>,

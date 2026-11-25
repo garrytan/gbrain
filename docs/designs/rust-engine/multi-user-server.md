@@ -274,6 +274,25 @@ normalised relative path. Segmented storage of a Markdown file over 24 MiB is no
 `served` is in `MULTIUSER_CAPABILITIES` (I-8.v2), not `ENGINE_CAPABILITIES`, so with the switch off every
 capability set and the error catalogue's list of capabilities stay as they were.
 
+### Follower frames (codecs only; the served apply path waits for L2's napi methods)
+
+`src/core/rust-engine/served/follower-frames.ts` defines the frames that carry `gbrain_store::follower` over protocol
+v3. They are offered under a capability `follower` that the server does not list yet, so every hello and every existing
+frame is unchanged. Records ship as the store's raw record bytes (I-4.v2); TypeScript never parses one.
+
+| Frame | Direction | Layout |
+|---|---|---|
+| `repl_records` | primary to follower | `{ id, seq, brain_id, lineage: [{ id, from: { sequence, index } }], records: [{ sequence, index, off, len }], tail_len }` + tail: the records' bytes in order. Positions strictly increase; the slices tile the tail exactly. These are `Follower::apply_raw(brain_id, lineage, records)`. |
+| `repl_ack` | follower to primary | `{ id, seq, ok: true, applied, skipped, cursor }` or `{ id, seq, ok: false, error }` (`snapshot_required`, `invalid_state`). |
+| `repl_snap_begin` | primary to follower | `{ id, xfer, manifest, chunk_bytes, files: [{ name, bytes, sha256 }] }`. `manifest` is the snapshot's `SnapshotManifest`, checked before any byte is accepted (its validation and its brain id); `files` is exactly `records.redb`, `FORMAT`, `SNAPSHOT.json`, in that order; `chunk_bytes` is at most 32 MiB (default 8 MiB). |
+| `repl_snap_chunk` | primary to follower | `{ id, xfer, file, off, tail_len }` + tail: bytes `[off, off + tail_len)` of `file`. Files in order, each from 0 with no gap. |
+| `repl_snap_window` | follower to primary | `{ id, xfer, file, through }`: bytes durably written; the primary keeps at most 64 MiB unacknowledged. |
+| `repl_snap_end` | primary to follower | `{ id, xfer }`. Each file's size and sha256 must match and `SNAPSHOT.json` must equal the begin manifest; only then is `SNAPSHOT.json` written, and the follower calls `install_snapshot(dir, Some(&manifest))`, whose answer is sent as `repl_ack` with `seq: 0`. |
+
+Positions are JSON integers: a sequence must be a safe integer (below 2^53), an index at most `u32::MAX` (the
+`end_of` position included). A refusal is `owner_ipc_protocol` reason `frame_malformed`; nothing of the frame is
+applied and no snapshot is installed.
+
 ### Network bounds
 
 Before its hello is authenticated a connection may send one frame of at most 64 KiB within 5 s (TLS handshake
