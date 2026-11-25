@@ -531,6 +531,8 @@ export interface GBrainConfig {
      * the initialize response byte-identical to the canonical contract.
      */
     instructions?: string;
+    /** I1: the profile `gbrain setup` registers per harness (full, or starter listing verbs); unset = shipped default (core/mcp-registration.ts). */
+    default_surface_claude_code?: 'full' | 'starter'; default_surface_codex?: 'full' | 'starter'; default_surface_hermes?: 'full' | 'starter';
     /**
      * Gate for `list_skills` / `get_skill` over a REMOTE transport. Runtime
      * default is OFF (absent key → OFF) so an upgrade never silently grants
@@ -1285,6 +1287,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'integrations.memorable.enabled',
   // MEMORY_VERBS v1 (Cathedral 1)
   'mcp_surface',
+  'mcp.default_surface_claude_code', 'mcp.default_surface_codex', 'mcp.default_surface_hermes', // I1: setup's per-harness default (file plane)
   'protocol_installed_at',
   'provider_chat_options',
   'storage',
@@ -1658,9 +1661,9 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // #4702: per-pattern opt-out (JSON array or comma-separated names) —
   // finer than junk_patterns_enabled (all patterns) / disabled (kill-switch).
   'content_sanity.disabled_patterns',
-  // #5575 write gate (local-only): quarantine|flag|reject|off and flag|off; read by import-screen.ts.
+  // #5575 write gate (local-only): quarantine|flag|reject|off and flag|off; read by import-screen.ts. orphan_sweep (default on) is read by write-gate-recheck.ts.
   'write_gate.external_mode',
-  'write_gate.agent_mode',
+  'write_gate.agent_mode', 'write_gate.orphan_sweep',
   // #5575 read side (local-only): label|filter and suppress|allow; read by eligibility/policy.ts.
   'trust.read_policy',
   'trust.agent_activation',

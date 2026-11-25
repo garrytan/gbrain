@@ -1,8 +1,9 @@
 /**
- * mcp-registration.ts — shared MCP-registration helpers: the one stdio
- * registration surface and serve argv every stdio registration gbrain writes
- * builds from (readiness, init's quickstart, `bootstrap hooks` for Claude
- * Code / Codex / opencode, the plugin generator), plus the HTTP+bearer
+ * mcp-registration.ts — shared MCP-registration helpers: the per-harness
+ * registration profile (`registrationProfile`) and serve argv every stdio
+ * registration gbrain writes or prints builds from (setup, readiness, init's
+ * quickstart, `bootstrap hooks` for Claude Code / Codex / opencode, the
+ * Hermes writer, the plugin generator), plus the HTTP+bearer
  * wiring helpers (extracted from src/commands/connect.ts for #4043 [F5]: the
  * harness lane in src/core/bootstrap/ needs these, and core must not import
  * from commands). connect.ts re-exports everything here, so its public
@@ -16,16 +17,86 @@ import { STDIO_MEMBER_FLAG } from './stdio-member-flag.ts';
 export { shellQuote };
 
 /**
- * The surface a new stdio registration pins: `starter`, the daily-driver tool
- * list (Garry, 2026-10-24: new installs register starter instead of full;
- * gbrain-evals#191 measured unchanged reach and accuracy with 17-23% fewer
- * input tokens). Every install path reads this one value: README, docs/mcp,
- * the plugin manifests and every registration gbrain writes. An existing
- * registration keeps its surface; `--surface full` is the opt-in for every
- * operation, and any hidden parameter or tool stays reachable through
- * `request_tools`.
+ * Where a stdio registration gbrain writes or prints is going: the harness
+ * decides the default profile (`registrationProfile`). `other` covers every
+ * host gbrain only prints a line for (Grok Build, opencode, Pi, a generic
+ * stdio host) and `gbrain mcp expose`.
  */
-export const REGISTRATION_SURFACE: McpSurface = 'starter';
+export type RegistrationHarness = 'claude-code' | 'codex' | 'hermes' | 'opencode' | 'openclaw' | 'other';
+
+/** A registration's callable surface (`serve --surface`) and its listing (`serve --advertise`, null = the whole surface). */
+export interface RegistrationProfile { surface: McpSurface; advertise: McpSurface | null }
+
+/**
+ * starter, listing only the seven memory verbs and request_tools
+ * (`serve --surface starter --advertise verbs`): every new registration's
+ * profile from 2026-10-24 (gbrain-evals#191; harness-evals#70 approved the
+ * verbs listing on 2026-10-25), and still the default everywhere but Codex.
+ * Everything starter allows stays callable, and request_tools returns any
+ * tool's full schema.
+ */
+export const STARTER_PROFILE: Readonly<RegistrationProfile> = Object.freeze({ surface: 'starter', advertise: 'verbs' });
+
+/** Every operation, listed in full (`serve --surface full`). */
+export const FULL_PROFILE: Readonly<RegistrationProfile> = Object.freeze({ surface: 'full', advertise: null });
+
+/**
+ * The default each harness ships with. Codex registers full (decision I1,
+ * 2026-11-24): on harness-evals#609 Codex called request_tools and then
+ * never called the tool it unlocked, because it does not reload its tool list,
+ * so the starter registration got 12/64 right calls against 62/64 on full, at
+ * about the same cost per request. Every other harness keeps starter.
+ */
+const SHIPPED_DEFAULT: Readonly<Partial<Record<RegistrationHarness, 'full' | 'starter'>>> = { codex: 'full' };
+
+/** The harnesses whose default a config key can turn (`defaultSurfaceKey`): the ones gbrain setup writes an entry for. */
+export const DEFAULT_SURFACE_HARNESSES = ['claude-code', 'codex', 'hermes'] as const;
+export type DefaultSurfaceHarness = typeof DEFAULT_SURFACE_HARNESSES[number];
+
+/**
+ * The file-plane activation and rollback knob for one harness's default:
+ * `gbrain config set mcp.default_surface_codex starter` turns Codex back to
+ * the starter profile, `... full` turns a harness to full, `config unset`
+ * returns to the shipped default. Setup reads it on every run, so a re-run
+ * moves default-origin entries to it without a release.
+ */
+export function defaultSurfaceKey(harness: DefaultSurfaceHarness): string {
+  return `mcp.default_surface_${harness.replace('-', '_')}`;
+}
+
+export function isDefaultSurfaceKey(key: string): boolean {
+  return DEFAULT_SURFACE_HARNESSES.some((h) => defaultSurfaceKey(h) === key);
+}
+
+/**
+ * The profile a new registration for `harness` gets when the user chose no
+ * surface: the harness's knob (file plane `mcp.default_surface_<harness>`,
+ * `full` or `starter`), else its shipped default. Every writer and printed
+ * registration line reads this one function: setup, the bootstrap harness
+ * lane, init's readiness line and the Hermes writer.
+ */
+export function registrationProfile(harness: RegistrationHarness, config?: { mcp?: object } | null): RegistrationProfile {
+  const knob = (DEFAULT_SURFACE_HARNESSES as readonly string[]).includes(harness)
+    ? (config?.mcp as Record<string, unknown> | undefined)?.[defaultSurfaceKey(harness as DefaultSurfaceHarness).slice('mcp.'.length)]
+    : undefined;
+  const choice = knob === 'full' || knob === 'starter' ? knob : sessionWidenOff((config?.mcp as Record<string, unknown> | undefined)?.allow_session_widen) ? 'starter' : SHIPPED_DEFAULT[harness] ?? 'starter';
+  return { ...(choice === 'full' ? FULL_PROFILE : STARTER_PROFILE) };
+}
+
+/** Whether an `mcp.allow_session_widen` value turns session widening off: the one check `gbrain serve` and setup share. */
+export function sessionWidenOff(v: unknown): boolean {
+  return v === false || (typeof v === 'string' && /^(false|0|off|no)$/i.test(v.trim()));
+}
+
+/** Whether two profiles render the same serve argv (an advertise no narrower than the surface lists it whole). */
+export function sameProfile(a: RegistrationProfile, b: RegistrationProfile): boolean {
+  return stdioServeArgv('', a.surface, a.advertise).join(' ') === stdioServeArgv('', b.surface, b.advertise).join(' ');
+}
+
+/** The setup flags that pin a profile exactly: `--surface S`, plus `--advertise A` when it lists less than S. */
+export function profileFlags(p: RegistrationProfile): string[] {
+  return stdioServeArgv('', p.surface, p.advertise).slice(2);
+}
 
 /**
  * The surface the Codex and Claude Code plugin manifests pin: `full`. A plugin
@@ -34,17 +105,6 @@ export const REGISTRATION_SURFACE: McpSurface = 'starter';
  * full (as does a bare `serve`, whose default is unchanged).
  */
 export const PLUGIN_SURFACE: McpSurface = 'full';
-
-/**
- * What a new registration's tools/list shows: the seven memory verbs plus
- * request_tools (`serve --advertise verbs`). Everything REGISTRATION_SURFACE
- * allows stays callable, and request_tools returns any tool's full schema.
- * Approved 2026-10-25 on harness-evals#70: no pass-rate cost, no
- * cross-scope reads, recall about 3x faster than search. Applies only when
- * the user chose no surface: an explicit `--surface` or GBRAIN_SURFACE lists
- * that surface in full, and an existing registration keeps its own form.
- */
-export const REGISTRATION_ADVERTISE: McpSurface = 'verbs';
 
 /** A registration command's surface value (`verbs`, `starter` or `full`). */
 export function isRegistrationSurface(v: unknown): v is McpSurface {
@@ -59,7 +119,7 @@ const SURFACE_ORDER: readonly McpSurface[] = ['verbs', 'starter', 'full'];
  * existing bare registration bare when it replaces it. `--advertise` is
  * written only when it is narrower than the surface.
  */
-export function stdioServeArgv(bin: string, surface: McpSurface | null = REGISTRATION_SURFACE, advertise: McpSurface | null = null, stdioMember?: string): string[] {
+export function stdioServeArgv(bin: string, surface: McpSurface | null, advertise: McpSurface | null = null, stdioMember?: string): string[] {
   const member = stdioMember !== undefined ? [STDIO_MEMBER_FLAG, stdioMember] : [];
   if (!surface) return [bin, 'serve', ...member];
   return [bin, 'serve', '--surface', surface, ...(advertise && SURFACE_ORDER.indexOf(advertise) < SURFACE_ORDER.indexOf(surface) ? ['--advertise', advertise] : []), ...member];
@@ -68,13 +128,13 @@ export function stdioServeArgv(bin: string, surface: McpSurface | null = REGISTR
 /**
  * The listing a registration writes. A surface the user chose (flag or
  * GBRAIN_SURFACE) is listed in full; an existing registration keeps its own
- * `--advertise` (none on registrations written before this default); a new
- * registration lists REGISTRATION_ADVERTISE.
+ * `--advertise` (none on registrations written before the verbs listing); a
+ * new registration lists what its harness's default profile lists.
  */
-export function registrationAdvertise(opts: { userChoseSurface: boolean; prior?: { advertise?: McpSurface | null } | null }): McpSurface | null {
+export function registrationAdvertise(opts: { userChoseSurface: boolean; prior?: { advertise?: McpSurface | null } | null; profile: RegistrationProfile }): McpSurface | null {
   if (opts.userChoseSurface) return null;
   if (opts.prior) return opts.prior.advertise ?? null;
-  return REGISTRATION_ADVERTISE;
+  return opts.profile.advertise;
 }
 
 /** An existing registration's `--advertise` value, `null` when it lists everything it serves. */
@@ -280,7 +340,7 @@ export function openclawThinClientBlock(opts: {
     '--oauth-client-id', opts.clientId,
     '--oauth-client-secret', opts.clientSecret,
   ]);
-  const add = 'openclaw mcp add gbrain --command "$(command -v gbrain)" --arg serve --arg --surface --arg starter --arg --advertise --arg verbs'
+  const add = 'openclaw mcp add gbrain --command "$(command -v gbrain)" --arg serve --arg --surface --arg full'
     + (home ? ` --env ${home}` : '');
   return [
     '# On the OpenClaw machine, install the gbrain CLI, then run:',

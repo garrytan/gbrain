@@ -66,6 +66,7 @@ Usage:
   gbrain engine shadow seed [--json] [--reseed]
   gbrain engine shadow reconcile [--full] [--json]
   gbrain engine shadow capture on --yes | off | status [--json] | delete --yes
+  gbrain engine shadow replay [--json] [--budget-minutes <n>]
   gbrain engine shadow bench --import <receipt.json> [--json]
 
 Shadow mode is off by default. When on, a sample of reads this brain answers is sent, after the answer, to a
@@ -95,7 +96,8 @@ shows the follower's lag and coverage, the last pass, fingerprint checks and the
 comparison counts are totals for the current seed.
 
 capture records every engine call (reads and writes) into owner-only files on this machine; it is off by default
-(docs/guides/shadow-capture.md).
+(docs/guides/shadow-capture.md). replay plays each night's recording on private PGLite and Rust copies and compares
+them (docs/guides/shadow-replay.md).
 
 The report is provisional and always says NOT READY.`;
 
@@ -210,6 +212,11 @@ export async function runEngineShadow(args: string[], deps: EngineShadowDeps = {
     if (sub === 'capture') {
       const { runShadowCaptureCommand } = await import('./engine-shadow-capture.ts');
       return await runShadowCaptureCommand(rest, { out, err, now, brain: await resolveBrain(deps) });
+    }
+    if (sub === 'replay' || sub === '__replay-child') {
+      const { runShadowReplayCommand } = await import('./engine-shadow-replay.ts');
+      const brain = sub === '__replay-child' ? { key: '', dir: '', engine: '' } : await resolveBrain(deps);
+      return await runShadowReplayCommand(sub, rest, { out, err, now, brain, config: deps.config ?? (() => loadConfig()), openPrimary: deps.openPrimary ?? openConfiguredPrimary });
     }
     if (sub === 'bench') return await bench(rest, deps, out, err, now);
     const brain = await resolveBrain(deps);
