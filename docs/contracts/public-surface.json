@@ -350,6 +350,7 @@
     "gbrain doctor --content-audit",
     "gbrain doctor --dry-run",
     "gbrain doctor --expect",
+    "gbrain doctor --fact-date-evidence",
     "gbrain doctor --fast",
     "gbrain doctor --fix",
     "gbrain doctor --include-repairs",

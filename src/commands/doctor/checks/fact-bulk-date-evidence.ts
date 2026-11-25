@@ -3,11 +3,10 @@ import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
 import { z } from 'zod';
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { BulkFactDay } from '../../../core/facts/bulk-days.ts';
+import type { FactDateOriginalRef } from '../../../core/engine-sql/fact-date-evidence.ts';
 import { stripCodeBlocks } from '../../../core/markdown-code.ts';
 
 const MAX_MANIFEST_BYTES = 1024 * 1024;
-const MAX_ORIGINAL_BYTES = 256 * 1024;
-const MAX_ARCHIVE_BYTES = 8 * 1024 * 1024;
 const positiveInt = z.number().int().positive().max(2_147_483_647);
 const shaHex = z.string().regex(/^[a-f0-9]{64}$/);
 const manifest = z.strictObject({
@@ -48,8 +47,7 @@ function loadManifest(path: string) {
   } finally { closeSync(fd); }
 }
 
-type Original = { source_id: string; original_page_id: string | number; original_revision: string };
-const originalKey = (row: Original) => JSON.stringify([row.source_id, String(row.original_page_id), row.original_revision]);
+const originalKey = (row: FactDateOriginalRef) => JSON.stringify([row.source_id, String(row.original_page_id), row.original_revision]);
 const mask = (text: string) => text.replace(/[^\r\n]/g, ' ');
 
 function prepareOriginal(body: string) {
@@ -77,58 +75,19 @@ function validatesExcerpt(original: ReturnType<typeof prepareOriginal>, entry: z
   return dates.size === 1 && dates.has(entry.event_day);
 }
 
-async function readOriginals(engine: BrainEngine, originals: Original[]) {
-  const rows = await engine.executeRaw<Original & { body: string }>(`
-    WITH requested AS (
-      SELECT DISTINCT * FROM jsonb_to_recordset($1::text::jsonb)
-        AS r(source_id text, original_page_id bigint, original_revision uuid)
-    ), matched AS (
-      SELECT a.*, orig.body
-       FROM requested a JOIN pages p ON p.source_id=a.source_id AND p.id=a.original_page_id AND p.deleted_at IS NULL
-       CROSS JOIN LATERAL (
-         SELECT CASE WHEN count(*)=1 THEN min(b.body) END AS body FROM (
-           SELECT p.compiled_truth AS body WHERE p.knowledge_revision=a.original_revision AND p.body_storage='inline'
-           UNION ALL
-           SELECT v.compiled_truth FROM page_versions v WHERE v.page_id=p.id AND v.knowledge_revision=a.original_revision
-             AND v.is_deleted IS NOT TRUE AND v.body_storage='inline' AND p.knowledge_revision IS DISTINCT FROM a.original_revision
-         ) b
-       ) orig
-       WHERE octet_length(orig.body)<=$2::integer
-    ), bounded AS (
-      SELECT *,sum(octet_length(body)) OVER (ORDER BY source_id,original_page_id,original_revision) AS covered_bytes FROM matched
-    )
-    SELECT source_id,original_page_id,original_revision::text,body FROM bounded WHERE covered_bytes<=$3::integer
-  `, [JSON.stringify(originals), MAX_ORIGINAL_BYTES, MAX_ARCHIVE_BYTES]);
-  return new Map(rows.map(row => [originalKey(row), prepareOriginal(row.body)]));
-}
-
 /** Verify operator-reviewed evidence against the live fact and its exact original revision. */
 export async function factDateEvidence(engine: BrainEngine, days: BulkFactDay[], path: string) {
   const input = loadManifest(path);
   const totals = new Map<string, Counts>(days.map(day => [dateEvidenceKey(day.source_id, day.day),
     { verified_same_day: 0, verified_different_day: 0, unknown: day.facts }]));
   if (!days.length || !input.facts.length) return totals;
-  const rows = await engine.executeRaw<{ ord: number; day: string; claim: string }>(`
-    WITH cohort AS (
-      SELECT * FROM jsonb_to_recordset($1::text::jsonb) AS d(source_id text, day date)
-    )
-    SELECT j.ord::int, to_char(d.day,'YYYY-MM-DD') AS day, f.fact AS claim
-    FROM jsonb_array_elements($2::text::jsonb) WITH ORDINALITY j(input,ord)
-    CROSS JOIN LATERAL jsonb_to_record(j.input) AS a(source_id text, fact_id bigint, entity_slug text, valid_from timestamptz)
-    JOIN facts f ON f.source_id=a.source_id AND f.id=a.fact_id AND f.valid_from=a.valid_from AND f.expired_at IS NULL
-      AND f.entity_slug IS NOT DISTINCT FROM a.entity_slug
-    JOIN cohort d ON d.source_id=f.source_id AND d.day=(f.valid_from AT TIME ZONE 'UTC')::date
-  `, [JSON.stringify(days.map(({ source_id, day }) => ({ source_id, day }))), JSON.stringify(input.facts)]);
-  const bound = rows.flatMap(row => {
-    const entry = input.facts[row.ord - 1];
-    return entry && digest(row.claim) === entry.claim_sha256 ? [{ entry, storedDay: row.day }] : [];
-  });
-  if (!bound.length) return totals;
-  const originals = await readOriginals(engine, bound.map(({ entry }) => ({
-    source_id: entry.source_id, original_page_id: entry.original_page_id, original_revision: entry.original_revision,
-  })));
+  const { matches, originals: revisions } = await engine.readFactDateEvidence(
+    days.map(({ source_id, day }) => ({ source_id, day })), input.facts,
+  );
+  const originals = new Map(revisions.map(row => [originalKey(row), prepareOriginal(row.body)]));
   const facts = new Map<string, { cohort: string; storedDay: string; evidenceDays: Set<string> }>();
-  for (const { entry, storedDay } of bound) {
+  for (const { index, storedDay } of matches) {
+    const entry = input.facts[index]!;
     const original = originals.get(originalKey(entry));
     if (!original || !validatesExcerpt(original, entry)) continue;
     const id = JSON.stringify([entry.source_id, entry.fact_id]);

@@ -142,6 +142,7 @@ import { isPipelinableSearchRead, SEARCH_JIT_OFF, withSearchJitOff, withSearchSe
 import { loadKeywordStatementTimeout } from './postgres-engine/keyword-statement-timeout.ts';
 import { applyPostgresForwardReferenceBootstrap } from './engine-sql/bootstrap.ts';
 import * as factsImpl from './engine-sql/facts.ts';
+import * as factDateEvidence from './engine-sql/fact-date-evidence.ts';
 import * as openLoopsImpl from './engine-sql/open-loops.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
 import * as takesImpl from './engine-sql/takes.ts';
@@ -2635,6 +2636,10 @@ export class PostgresEngine implements BrainEngine {
 
   async getFactsHealth(source_id: string): Promise<FactsHealth> {
     return factsImpl.getFactsHealth(unscopedExecutor(this.engineSql, 'facts: unscoped on master (EO4 inventory)'), source_id);
+  }
+
+  async readFactDateEvidence(cohorts: readonly factDateEvidence.FactDateCohort[], candidates: readonly factDateEvidence.FactDateCandidate[]): Promise<factDateEvidence.FactDateEvidenceRows> {
+    return factDateEvidence.readFactDateEvidence(unscopedExecutor(this.engineSql, 'host-only Doctor evidence input'), cohorts, candidates);
   }
 
   // Segmented page storage (Wave B): SQL in ./engine-sql/page-body.ts.

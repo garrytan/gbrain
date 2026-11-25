@@ -1,4 +1,6 @@
 import type { BrainEngine } from '../../../core/engine.ts';
+import { rethrowCapabilityRefusal } from '../../../core/engine-capability-refusal.ts';
+import { withFactDateEvidenceSnapshot } from '../../../core/engine-sql/fact-date-evidence.ts';
 import type { Check } from '../../doctor.ts';
 import { BULK_DAY_RULE, findBulkFactDays } from '../../../core/facts/bulk-days.ts';
 import { agentFix, checkError } from '../check-fix.ts';
@@ -17,17 +19,17 @@ export async function factBulkDatesCheck(engine: BrainEngine, sourceIds?: string
         try {
           evidence = await factDateEvidence(reader, bulk, evidencePath);
           evidenceInput = 'read';
-        } catch { evidenceInput = 'unavailable'; }
+        } catch (error) {
+          rethrowCapabilityRefusal(error);
+          evidenceInput = 'unavailable';
+        }
       }
       const days = bulk.map(day => ({ ...day, event_date_evidence: evidence?.get(dateEvidenceKey(day.source_id, day.day)) ??
         { verified_same_day: 0, verified_different_day: 0, unknown: day.facts } }));
       return { days, evidenceInput };
     };
     const { days, evidenceInput } = evidencePath
-      ? await engine.transaction(async tx => {
-          await tx.executeRaw('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
-          return readDays(tx);
-        }, { readOnly: true })
+      ? await withFactDateEvidenceSnapshot(engine, readDays)
       : await readDays(engine);
     const source_ids = [...new Set(days.map(d => d.source_id))];
     const details = { days, source_ids, evidence_input: evidenceInput, rule: BULK_DAY_RULE, repair: 'fact-claim-dates', docs };

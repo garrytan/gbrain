@@ -17,6 +17,7 @@
  *  - Seam: none. Real engines, typed methods only (no executeRaw: D18).
  */
 import { describe, expect } from 'bun:test';
+import { createHash } from 'node:crypto';
 import type { BrainEngine, FactRow } from '../../src/core/engine.ts';
 import { basisEmbedding, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
@@ -865,6 +866,34 @@ describe('engine parity: facts', () => {
         'burn rose 33.3% (2026-01-01 → 2026-02-01)',
       ]);
       return { regs, red_flags: redFlags };
+    },
+  );
+
+  parityTest(
+    'readFactDateEvidence binds claim identities and original revisions',
+    { methods: ['readFactDateEvidence'] },
+    async (engine) => {
+      const original = 'The public catalog recorded an event on 2025-04-10.';
+      const page = await engine.putPage('notes/original-event', { type: 'note', title: 'Event', compiled_truth: original });
+      const fact = 'Catalog recorded a test event 📅';
+      const validFrom = '2025-04-10T12:00:00.000Z';
+      const ids = await remember(engine, 'test-event', [{ fact, valid_from: at(validFrom) }]);
+      const candidate = {
+        source_id: SRC, fact_id: ids.get(fact)!, entity_slug: 'test-event', valid_from: validFrom,
+        claim_sha256: createHash('sha256').update(fact).digest('hex'),
+        original_page_id: page.id, original_revision: page.knowledge_revision!,
+      };
+      const cohorts = [{ source_id: SRC, day: '2025-04-10' }];
+      const wrongRevision = '10000000-0000-4000-8000-000000000001';
+      const evidence = await engine.readFactDateEvidence(cohorts, [
+        candidate, { ...candidate, claim_sha256: '0'.repeat(64) }, { ...candidate, original_revision: wrongRevision },
+      ]);
+      const result = { matches: evidence.matches, originalBodies: evidence.originals.map(row => row.body) };
+      expect(result).toEqual({
+        matches: [{ index: 0, storedDay: '2025-04-10' }, { index: 2, storedDay: '2025-04-10' }],
+        originalBodies: [original],
+      });
+      return result;
     },
   );
 

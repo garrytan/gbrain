@@ -221,6 +221,7 @@ export const RUST_ENGINE_MEMBERS = {
   consolidateFact: 'facts',
   findTrajectory: 'facts',
   getFactsHealth: 'facts',
+  readFactDateEvidence: 'facts',
   migrateFactsToCanonical: 'facts',
   // takes
   addTakesBatch: 'takes',

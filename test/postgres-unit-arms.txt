@@ -119,6 +119,7 @@ test/doctor-access-pages-read-by-nobody.test.ts
 test/doctor-access-reach.test.ts
 test/doctor-attest-read-shared-scope.test.ts
 test/doctor-database-encoding.test.ts
+test/doctor-fact-bulk-date-evidence.test.ts
 test/doctor-frontmatter-holds.test.ts
 test/doctor-guard-ledger-checks.test.ts
 test/doctor-image-embedding-coverage.test.ts

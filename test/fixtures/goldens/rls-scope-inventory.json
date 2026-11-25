@@ -4202,6 +4202,7 @@
         "readEntityOpenLoops": "none",
         "readExportPageRows": "none",
         "readExportWithdrawalLedgerBytes": "none",
+        "readFactDateEvidence": "none",
         "readFieldUsageSamples": "none",
         "readHealthMemoClock": "none",
         "readLedgerSource": "none",

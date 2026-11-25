@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 327/361
+# covered: 328/362
 # lifecycle: 9/9
 # pages: 32/32
 # search: 7/7
@@ -21,7 +21,7 @@
 # takes: 17/17
 # dream: 3/3
 # contradictions: 5/5
-# facts: 14/14
+# facts: 15/15
 # segmented_body: 15/15
 # versions: 3/3
 # stats_ingest: 5/5
@@ -233,6 +233,7 @@ findCandidateDuplicates	facts	yes	6	yes	yes	yes	serves
 consolidateFact	facts	yes	3	no	yes	yes	serves
 findTrajectory	facts	yes	4	yes	yes	yes	serves
 getFactsHealth	facts	yes	2	yes	yes	yes	serves
+readFactDateEvidence	facts	yes	1	no	yes	yes	refuses:facts
 allocateBodyOccurrenceIds	segmented_body	yes	11	no	yes	yes	serves
 stageSegmentTexts	segmented_body	yes	10	no	yes	yes	serves
 readSegmentTexts	segmented_body	yes	3	no	yes	yes	serves

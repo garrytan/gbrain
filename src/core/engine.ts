@@ -2692,6 +2692,8 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
 
   /** Per-source operational metrics for `gbrain doctor` facts_health check. */
   getFactsHealth(source_id: string): Promise<FactsHealth>;
+  /** Host Doctor only. Match active fact input and read its exact bounded inline original revision. */
+  readFactDateEvidence(cohorts: readonly import('./engine-sql/fact-date-evidence.ts').FactDateCohort[], candidates: readonly import('./engine-sql/fact-date-evidence.ts').FactDateCandidate[]): Promise<import('./engine-sql/fact-date-evidence.ts').FactDateEvidenceRows>;
 
   // Segmented page storage (Wave B; SQL in engine-sql/page-body.ts). Called only when pages.segmented_storage is on.
   /** `count` fresh manifest occurrence ids from one sequence; never reused. */

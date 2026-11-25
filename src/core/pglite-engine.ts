@@ -142,6 +142,7 @@ import {
 } from './search/embedding-column.ts';
 import { hasCJK } from './cjk.ts';
 import * as factsImpl from './engine-sql/facts.ts';
+import * as factDateEvidence from './engine-sql/fact-date-evidence.ts';
 import * as openLoopsImpl from './engine-sql/open-loops.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
 import * as takesImpl from './engine-sql/takes.ts';
@@ -2753,6 +2754,10 @@ export class PGLiteEngine implements BrainEngine {
 
   async getFactsHealth(source_id: string): Promise<FactsHealth> {
     return factsImpl.getFactsHealth(unscopedExecutor(this.engineSql, 'facts: unscoped on master (EO4 inventory)'), source_id);
+  }
+
+  async readFactDateEvidence(cohorts: readonly factDateEvidence.FactDateCohort[], candidates: readonly factDateEvidence.FactDateCandidate[]): Promise<factDateEvidence.FactDateEvidenceRows> {
+    return factDateEvidence.readFactDateEvidence(unscopedExecutor(this.engineSql, 'host-only Doctor evidence input'), cohorts, candidates);
   }
 
   // Segmented page storage (Wave B): SQL in ./engine-sql/page-body.ts.
