@@ -208,3 +208,46 @@ for (const backend of testBackends()) {
     }), 60_000);
   });
 }
+
+const pgOnly = testBackends().includes('postgres') ? describe : describe.skip;
+pgOnly('attachments follow a renamed page: a role row security limits (postgres)', () => {
+  const ROLE = `rename_files_role_${randomUUID().replaceAll('-', '').slice(0, 10)}`;
+  let owner: BrainEngine, scoped: BrainEngine, close: () => Promise<void> = async () => {};
+  beforeAll(async () => {
+    const db = await isolatedPersistencePostgres(process.env.DATABASE_URL!);
+    owner = db.engine; close = db.close;
+    await owner.executeRaw(`CREATE ROLE ${ROLE} NOLOGIN NOSUPERUSER NOBYPASSRLS`);
+    await owner.executeRaw(`GRANT USAGE ON SCHEMA public TO ${ROLE}`);
+    await owner.executeRaw(`GRANT ALL ON ALL TABLES IN SCHEMA public TO ${ROLE}`);
+    await owner.executeRaw(`GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO ${ROLE}`);
+    await owner.executeRaw('ALTER TABLE slug_rename_history ENABLE ROW LEVEL SECURITY');
+    // Every row-security table is open to the role, except that the rename history hides the move to notes/b.
+    const tables = await owner.executeRaw<{ tablename: string }>("SELECT tablename FROM pg_tables WHERE schemaname='public' AND rowsecurity ORDER BY 1");
+    for (const { tablename } of tables) {
+      const using = tablename === 'slug_rename_history' ? "new_slug <> 'notes/b'" : 'true';
+      await owner.executeRaw(`CREATE POLICY ${ROLE}_open ON ${tablename} FOR ALL TO ${ROLE} USING (${using}) WITH CHECK (true)`);
+    }
+    await owner.executeRaw(`DO $$ BEGIN EXECUTE format('ALTER ROLE %I IN DATABASE %I SET role TO %L', session_user, current_database(), '${ROLE}'); END $$`);
+    const { PostgresEngine } = await import('../src/core/postgres-engine.ts');
+    scoped = new PostgresEngine();
+    await (scoped as InstanceType<typeof PostgresEngine>).connect({ database_url: db.databaseUrl, poolSize: 2 });
+  }, 180_000);
+  afterAll(async () => {
+    await scoped?.disconnect();
+    await owner.executeRaw(`DO $$ BEGIN EXECUTE format('ALTER ROLE %I IN DATABASE %I RESET role', session_user, current_database()); END $$`).catch(() => undefined);
+    await owner.executeRaw(`DROP OWNED BY ${ROLE}`).catch(() => undefined);
+    await owner.executeRaw(`DROP ROLE IF EXISTS ${ROLE}`).catch(() => undefined);
+    await disposePersistenceConsumer(owner);
+    await close();
+  });
+
+  test('a rename by a role that cannot see the whole rename history leaves slug-only attachments where they are', async () => {
+    await owner.putPage('notes/old', { type: 'note', title: 'A', compiled_truth: 'x', timeline: '' });
+    expect(await owner.updateSlug('notes/old', 'notes/b', { sourceId: 'default' })).toBe(1);
+    await owner.executeRaw(`INSERT INTO files (source_id, page_slug, page_id, filename, storage_path, content_hash) VALUES ('default', 'notes/old', NULL, 'left.png', 'rls/left.png', 'h')`);
+    await owner.putPage('notes/old', { type: 'note', title: 'C', compiled_truth: 'y', timeline: '' });
+    expect(await scoped.updateSlug('notes/old', 'notes/d', { sourceId: 'default' })).toBe(1);
+    const rows = await owner.executeRaw<{ page_slug: string }>("SELECT page_slug FROM files WHERE storage_path = 'rls/left.png'");
+    expect(rows.map(r => r.page_slug)).toEqual(['notes/old']);
+  }, 60_000);
+});
