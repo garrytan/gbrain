@@ -30,6 +30,7 @@ export const CORE_SUBCOMMANDS = ['list', 'show', 'status', 'add', 'remove', 'dif
 export const LOOPS_SUBCOMMANDS = ['list', 'show', 'done', 'drop', 'mute', 'unmute'] as const;
 export const HOUSEHOLD_SUBCOMMANDS = ['due', 'add', 'mark', 'list', 'replace'] as const;
 export const GUESTS_SUBCOMMANDS = ['init', 'promote', 'grant-owner-clients'] as const;
+export const CLAIMS_SUBCOMMANDS = ['check'] as const;
 export const SCHEMA_SUBCOMMANDS = [
   'active', 'list', 'show', 'validate', 'use', 'detect', 'suggest', 'review-candidates', 'init', 'fork', 'edit',
   'diff', 'graph', 'lint', 'explain', 'review-orphans', 'downgrade', 'usage', 'stats', 'cardinality-preview',
@@ -64,6 +65,7 @@ export const ROUTERS: Readonly<Record<string, RouterInventory>> = {
   loops: { subcommands: LOOPS_SUBCOMMANDS, bareHelpFirst: true },
   household: { subcommands: HOUSEHOLD_SUBCOMMANDS, bareHelpFirst: true },
   guests: { subcommands: GUESTS_SUBCOMMANDS, bareHelpFirst: true },
+  claims: { subcommands: CLAIMS_SUBCOMMANDS, bareHelpFirst: true },
 };
 
 /** `--help` / `-h` before any `--` terminator. */

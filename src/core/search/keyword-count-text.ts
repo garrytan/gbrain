@@ -39,5 +39,7 @@ export function cliKeywordCountLine(rows: unknown[], retrieval: Record<string, u
     return relaxed ? 'No page contains all these words (literal match). The rows below contain only some of them, or matched by meaning.'
       : 'No page contains these words (literal match). The rows below matched only by meaning.';
   }
-  return `Keyword matches: ${countWords(r.keyword_total, r.keyword_total_capped === true)} (pages containing these words, not a count of these rows). List them all with: gbrain search <words> --match keyword`;
+  const unlisted = Array.isArray(r.keyword_unlisted_filters) && r.keyword_unlisted_filters.length
+    ? ` (search ignores ${(r.keyword_unlisted_filters as string[]).map(f => `--${f.replace('_', '-')}`).join(', ')}, so it also lists pages this count left out)` : '';
+  return `Keyword matches: ${countWords(r.keyword_total, r.keyword_total_capped === true)} (pages containing these words, not a count of these rows). List them all with: gbrain search <words> --match keyword${unlisted}`;
 }
