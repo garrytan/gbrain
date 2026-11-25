@@ -1,0 +1,117 @@
+/**
+ * A page's attachments follow it when it is renamed.
+ *
+ * Authoring gate
+ *  1. Protects: `gbrain files list` / `file_list` find attachments by `files.page_slug`. Every rename (a sync Git
+ *     rename and `gbrain repair rename-identity` both move the page through `updateSlug`) must move the page's
+ *     attachments to its new slug, and a one-time backfill must move attachments a past rename left behind.
+ *  2. Fails when: a rename leaves `files.page_slug` on the old slug for a row bound to the page (`page_id`), or the
+ *     backfill skips such a row, or touches a row that names no page.
+ *  3. Why new: no test renames a page that has an attachment.
+ *  4. Seams: real renames (sync of a Git move, the rename-identity repair, `updateSlug`) on PGLite and Postgres; the
+ *     backfill migration's handler run directly against rows written stale on purpose.
+ */
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { BrainEngine } from '../src/core/engine.ts';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { performSync } from '../src/commands/sync.ts';
+import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
+import { _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
+import { MIGRATIONS } from '../src/core/migrate.ts';
+import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { testBackends } from './helpers/test-backends.ts';
+import { withEnv } from './helpers/with-env.ts';
+import { noteDoc, ROWS } from './helpers/hold-page-id-fixture.ts';
+
+const git = (root: string, ...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+const commit = (root: string, message: string) => { git(root, 'add', '-A'); git(root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', message); };
+const write = (root: string, path: string, body: string) => { mkdirSync(join(root, path, '..'), { recursive: true }); writeFileSync(join(root, path), body); };
+const note = (title: string, extra = '') => `---\ntype: note\ntitle: ${title}\n---\n\n${title} body.\n${extra}`;
+
+for (const backend of testBackends()) {
+  describe(`attachments follow a renamed page (${backend})`, () => {
+    let engine: BrainEngine;
+    let close: () => Promise<void> = async () => {};
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-rename-files-'));
+    const env = { GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home, GBRAIN_INTERACTIVE: '0', CI: '1' };
+    beforeAll(async () => {
+      if (backend === 'postgres') { const db = await isolatedPersistencePostgres(process.env.DATABASE_URL!); engine = db.engine; close = db.close; }
+      else { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); close = () => engine.disconnect(); }
+    }, 180_000);
+    afterAll(async () => { await disposePersistenceConsumer(engine); await close(); rmSync(home, { recursive: true, force: true }); });
+    beforeEach(() => _resetCliExitVerdictForTests());
+
+    const pageId = async (sourceId: string, slug: string) => Number((await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, slug]))[0]?.id);
+    const attach = (sourceId: string, slug: string, id: number | null, name: string) => engine.executeRaw(
+      `INSERT INTO files (source_id, page_slug, page_id, filename, storage_path, content_hash) VALUES ($1, $2, $3, $4, $5, 'h')`,
+      [sourceId, slug, id, name, `${sourceId}/${name}-${randomUUID()}`]);
+    const fileSlugs = async (sourceId: string) => (await engine.executeRaw<{ filename: string; page_slug: string }>(
+      'SELECT filename, page_slug FROM files WHERE source_id=$1 ORDER BY filename', [sourceId])).map(r => [r.filename, r.page_slug]);
+
+    async function gitSource(files: Record<string, string>) {
+      const id = `c${randomUUID().replace(/-/g, '').slice(0, 14)}`, root = join(home, id);
+      mkdirSync(root, { recursive: true }); git(root, 'init', '-q', '-b', 'main');
+      for (const [path, body] of Object.entries(files)) write(root, path, body);
+      commit(root, 'initial');
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+      await engine.executeRaw("INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,'{}')", [id, root]);
+      const sync = () => performSync(engine, { repoPath: root, sourceId: id, noPull: true, noEmbed: true, noExtract: true, concurrency: 1 });
+      await sync();
+      return { id, root, sync };
+    }
+
+    test('a sync Git rename moves the page\'s attachments to the new slug; an attachment that names no page stays', () => withEnv(env, async () => {
+      const s = await gitSource({ 'notes/plan.md': note('Plan'), 'notes/peer.md': note('Peer') });
+      await attach(s.id, 'notes/plan', await pageId(s.id, 'notes/plan'), 'card.png');
+      await attach(s.id, 'notes/plan', null, 'loose.png');
+      git(s.root, 'mv', 'notes/plan.md', 'notes/roadmap.md'); commit(s.root, 'rename the note');
+      expect(await s.sync()).toMatchObject({ status: 'synced', renamed: 1 });
+      expect(await fileSlugs(s.id)).toEqual([['card.png', 'notes/roadmap'], ['loose.png', 'notes/plan']]);
+    }), 240_000);
+
+    test('gbrain repair rename-identity moves the carried page\'s attachments to the new slug', () => withEnv(env, async () => {
+      const s = await gitSource({ 'notes/plan.md': noteDoc(ROWS), 'notes/peer.md': note('Peer') });
+      const old = await pageId(s.id, 'notes/plan');
+      await attach(s.id, 'notes/plan', old, 'diagram.png');
+      // A move with an edit and no identity signal: sync splits it into a delete plus an add.
+      git(s.root, 'mv', 'notes/plan.md', 'notes/roadmap.md'); write(s.root, 'notes/roadmap.md', noteDoc(ROWS, 'An added paragraph.\n'));
+      commit(s.root, 'move and edit');
+      const split = await s.sync();
+      expect(split.identityDowngrades?.map(e => [e.from, e.to])).toEqual([['notes/plan.md', 'notes/roadmap.md']]);
+      const { runRepairCommand } = await import('../src/commands/repair.ts');
+      const run = async (args: string[]) => {
+        let printed = '';
+        const log = console.log, out = process.stdout.write;
+        console.log = (...parts: unknown[]) => { printed += `${parts.map(String).join(' ')}\n`; };
+        process.stdout.write = ((chunk: string | Uint8Array) => { printed += String(chunk); return true; }) as typeof process.stdout.write;
+        try { await runRepairCommand(engine, [...args, '--json']); } finally { console.log = log; process.stdout.write = out; }
+        return JSON.parse(printed).results[0] as { preview_hash: string; applied?: number };
+      };
+      const preview = await run(['rename-identity', '--source', s.id, '--slug', 'notes/roadmap']);
+      expect(await run(['rename-identity', '--source', s.id, '--slug', 'notes/roadmap', '--apply', '--expect', preview.preview_hash, '--yes'])).toMatchObject({ applied: 1 });
+      expect(await pageId(s.id, 'notes/roadmap')).toBe(old);
+      expect(await fileSlugs(s.id)).toEqual([['diagram.png', 'notes/roadmap']]);
+    }), 240_000);
+
+    test('the backfill moves an attachment a past rename left behind, by its page id, and leaves one that names no page', () => withEnv(env, async () => {
+      const id = `b${randomUUID().replace(/-/g, '').slice(0, 14)}`;
+      await engine.executeRaw("INSERT INTO sources(id,name,config) VALUES($1,$1,'{}')", [id]);
+      await engine.putPage('notes/now', { type: 'note', title: 'Now', compiled_truth: 'x', timeline: '' }, { sourceId: id });
+      await attach(id, 'notes/then', await pageId(id, 'notes/now'), 'stale.png');
+      await attach(id, 'notes/then', null, 'orphan.png');
+      const backfill = MIGRATIONS.find(m => m.name === 'files_follow_page_slug');
+      expect(backfill).toBeDefined();
+      await engine.transaction(async tx => {
+        const sql = backfill!.sqlFor?.[backend] ?? backfill!.sql;
+        if (sql) await tx.executeRaw(sql);
+        if (backfill!.handler) await backfill!.handler(tx);
+      });
+      expect(await fileSlugs(id)).toEqual([['orphan.png', 'notes/then'], ['stale.png', 'notes/now']]);
+    }), 60_000);
+  });
+}
