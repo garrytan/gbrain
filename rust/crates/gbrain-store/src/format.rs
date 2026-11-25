@@ -45,9 +45,13 @@ use std::path::Path;
 ///   duplicate-page and transition-origin reads look rows up instead of reading every record. The upgrade builds every
 ///   entry in the one transaction. A build without the lookups refuses a format-9 brain, as its
 ///   writes would leave them stale.
-pub const FORMAT_VERSION: u32 = 9;
+/// - 10: the keyed lookups also keep each page's rank key (its slug and unverified-stub flag,
+///   `keyed_index::RANK_KEY`), so the vector scan bounds each page by its own source factor. The
+///   upgrade rebuilds every entry in the one transaction. A format-9 build refuses a format-10
+///   brain, as its writes would leave the rank keys stale.
+pub const FORMAT_VERSION: u32 = 10;
 /// Every format version this build can open. Addon exports list these as `formatVersions`.
-pub const FORMAT_VERSIONS: &[u32] = &[1, 2, 3, 4, 5, 6, 7, 8, FORMAT_VERSION];
+pub const FORMAT_VERSIONS: &[u32] = &[1, 2, 3, 4, 5, 6, 7, 8, 9, FORMAT_VERSION];
 
 pub const FORMAT_FILE: &str = "FORMAT";
 pub const RECORDS_FILE: &str = "records.redb";

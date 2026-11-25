@@ -15,6 +15,7 @@ change: each member reads the records an index names and applies its own test to
 | `0x05` | h(source, content hash), page id | each page record with a content hash | `findDuplicatePage`, `findDuplicatePages` |
 | `0x06` | h(source, frontmatter `id`), page id | each page record whose frontmatter `id` is not null | `findDuplicatePage`, `findDuplicatePages` |
 | `0x07` | h(lower-cased title), page id | the `0x02` titles longer than 512 bytes | `findPagesByTitles`, `listPagesTitledIn` |
+| `0x09` | page id, unverified-stub flag (one byte), slug (store format 10) | each page record: its slug and whether it is an unverified extraction stub, the two things `vectors::source_factor` reads | `searchVector`'s bounded scan, to bound each page by its own source factor |
 | `0x08` | origin page id, the transition's record key | each link transition record (`q source NUL T ...`, as `link_temporal.rs` `scan_tag` picks them) with an origin page | `applyLinkTemporalRows` (the page's own transitions it replaces), `linkRelationshipKeysForOrigin` |
 
 `h` is the first 16 bytes of the SHA-256 of the parts joined by NUL. Every value is empty. Soft-deleted pages keep
@@ -30,7 +31,12 @@ their entries; the members filter them as before.
   it deletes and puts only the difference, in the same statement, so the entries commit or roll back with the records.
   A savepoint rollback drops both; an OCC rerun starts a fresh writer.
 - Store format 9's upgrade (`upgrade_format`) builds every entry from the records in the upgrade's one write
-  transaction. A build without the lookups refuses a format-9 brain, as its writes would leave them stale.
+  transaction. A build without the lookups refuses a format-9 brain, as its writes would leave them stale. Store
+  format 10 adds the rank keys (`0x09`): a format-9 brain gets the same rebuild when it opens, and a format-9 build
+  refuses a format-10 brain. A failure during the rebuild drops the transaction, so the brain stays at its old
+  format with its old entries (`keyed_index/tests.rs`).
+- A rank key is a hint, not a candidate: a page with no rank key is bounded by every factor the call can apply,
+  as before format 10, and the answer is the same (`vectors.rs` tests pin both).
 - An entry is only a candidate: `hasSupersedeEdges` reads the link record back, the page reads read the page record
   through its id, and each member applies its full test. A stale entry could add no row; a missing one would drop a
   row, which `keyed_index/tests.rs` guards against by checking the entries against what the records derive after every

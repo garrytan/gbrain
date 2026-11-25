@@ -41,9 +41,12 @@ chunks costs far more than scoring a vector, so the store scores first and reads
 1. Every chunk vector of the cached index is scored (`1 - (embedding <=> q)`, the same arithmetic as
    above), split across the machine's cores when there are at least 4,096 vectors. Helper threads come
    from one process-wide budget (cores minus one), so concurrent searches share the cores.
-2. Each page gets a bound: the largest of `raw * f` over its best and worst raw score and every factor `f`
-   the call can apply (1 and each source factor). A product is monotone in the raw for a fixed factor, so
-   no chunk of the page can score above it. A NaN raw gives a NaN bound, which ranks first.
+2. Each page gets a bound: the largest of `raw * f` over its best and worst raw score and its own factor
+   `f`, read from the page's rank key in the keyed index (`keyed_index::RANK_KEY`: the slug and stub flag
+   `source_factor` reads, kept in step by every page write; [keyed-index.md](keyed-index.md)). A page with
+   no rank key takes every factor the call can apply (1 and each source factor). A product is monotone in
+   the raw for a fixed factor, so no chunk of the page can score above it. A NaN raw gives a NaN bound,
+   which ranks first.
 3. Pages are read in bound order. Each read applies every filter, the model guard and the source factor
    above, with the same code the full scan runs. The best `offset + limit` hits are kept; the scan stops
    when the next page's bound ranks strictly below the last kept hit (a tie is still read, since a lower

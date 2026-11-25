@@ -318,7 +318,8 @@ fn the_index_stays_in_step_and_the_members_answer_as_the_scans() {
                 CONTENT_HASH,
                 FRONTMATTER_ID,
                 LONG_TITLE,
-                TRANSITION_ORIGIN
+                TRANSITION_ORIGIN,
+                RANK_KEY
             ]
             .into_iter()
             .collect(),
@@ -498,4 +499,107 @@ fn new_transitions_with_no_link_are_in_keys_after() {
     // Applying the same evidence again replaces the row: still one key, still reported.
     let again = store.apply_link_temporal_rows(&input).unwrap();
     assert_eq!(again.keys_after, want);
+}
+
+/// Every record of the store, in key order.
+fn dump(kv: &std::sync::Arc<dyn crate::kv::Kv>) -> Vec<(Vec<u8>, Vec<u8>)> {
+    let snapshot = kv.snapshot().unwrap();
+    let mut out = Vec::new();
+    scan_prefix(&*snapshot, &[], false, &mut |k, v| {
+        out.push((k.to_vec(), v.to_vec()));
+        true
+    })
+    .unwrap();
+    out
+}
+
+/// A brain as a format-9 build leaves it: every keyed entry but the rank keys, format record at 9.
+/// Returns the entries a format-10 open must hold.
+fn format_9_brain(kv: &std::sync::Arc<dyn crate::kv::Kv>) -> BTreeSet<Vec<u8>> {
+    let env: std::sync::Arc<dyn crate::env::Env> = std::sync::Arc::new(crate::SystemEnv);
+    let store = Store::open_kv(kv.clone(), env, crate::OpenOptions::default()).unwrap();
+    source(&store, "work");
+    let mut rng = Lcg(23);
+    for _ in 0..120 {
+        step(&store, &mut rng);
+    }
+    let want = stored_entries(&*store.read().unwrap()).unwrap();
+    drop(store);
+    let rank_keys: Vec<Vec<u8>> = want
+        .iter()
+        .filter(|k| k[keys::KEYED_INDEX.len()] == RANK_KEY)
+        .cloned()
+        .collect();
+    assert!(!rank_keys.is_empty());
+    let mut tx = kv.begin_write().unwrap();
+    for key in &rank_keys {
+        tx.delete(key).unwrap();
+    }
+    let mut stored: crate::StoredFormat = crate::get_json(&*tx, &keys::meta("format"))
+        .unwrap()
+        .unwrap();
+    stored.format_version = 9;
+    crate::put_json(&mut *tx, &keys::meta("format"), &stored).unwrap();
+    tx.commit().unwrap();
+    want
+}
+
+#[test]
+fn a_format_9_brain_gets_its_rank_keys_when_it_opens() {
+    let kv = crate::test_support::mem_kv();
+    let want = format_9_brain(&kv);
+    let env: std::sync::Arc<dyn crate::env::Env> = std::sync::Arc::new(crate::SystemEnv);
+    let store = Store::open_kv(kv, env, crate::OpenOptions::default()).unwrap();
+    assert_eq!(store.info().format_version, crate::FORMAT_VERSION);
+    assert_eq!(stored_entries(&*store.read().unwrap()).unwrap(), want);
+    assert_in_step(&store, "the format 10 upgrade");
+    check_readers(&store);
+}
+
+/// An upgrade that fails part-way (the disk refuses one rank-key write, or the read of the page
+/// records under it) drops its one transaction: every record, the format number and the format-9
+/// keyed entries stay exactly as they were, with no rank key written, and a later open on a
+/// working disk upgrades the brain.
+#[test]
+fn an_upgrade_that_fails_part_way_leaves_the_format_9_brain_as_it_was() {
+    for (code, ops) in [
+        (
+            crate::error::STORE_IO,
+            &[crate::test_support::FaultOp::Put][..],
+        ),
+        (
+            crate::error::STORE_CORRUPT,
+            &[crate::test_support::FaultOp::Put][..],
+        ),
+    ] {
+        let inner = crate::test_support::mem_kv();
+        let want = format_9_brain(&inner);
+        let before = dump(&inner);
+        let kv: std::sync::Arc<dyn crate::kv::Kv> =
+            std::sync::Arc::new(crate::test_support::FaultyKv {
+                inner: inner.clone(),
+                code,
+                ops,
+                fail_on: |key| {
+                    key.len() > keys::KEYED_INDEX.len()
+                        && key.starts_with(&keys::KEYED_INDEX)
+                        && key[keys::KEYED_INDEX.len()] == RANK_KEY
+                },
+            });
+        let env: std::sync::Arc<dyn crate::env::Env> = std::sync::Arc::new(crate::SystemEnv);
+        let err = Store::open_kv(kv, env.clone(), crate::OpenOptions::default())
+            .err()
+            .expect("the open must fail");
+        assert_eq!(err.code, code, "{}", err.message);
+        assert_eq!(dump(&inner), before, "a failed upgrade changed the records");
+        let format: crate::StoredFormat =
+            crate::get_json(&*inner.snapshot().unwrap(), &keys::meta("format"))
+                .unwrap()
+                .unwrap();
+        assert_eq!(format.format_version, 9);
+        // The brain still opens: on a working disk the upgrade runs whole.
+        let store = Store::open_kv(inner, env, crate::OpenOptions::default()).unwrap();
+        assert_eq!(store.info().format_version, crate::FORMAT_VERSION);
+        assert_eq!(stored_entries(&*store.read().unwrap()).unwrap(), want);
+    }
 }

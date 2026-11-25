@@ -722,8 +722,8 @@ pub const DEFAULT_WRITE_GATE_DETECTOR_VERSION: u32 = 2;
 /// reads `unknown`), so a format-4 brain keeps its postings, and 5 to 6 carries over the records
 /// the v0.60.766.0 addon's shadow seed kept in other shapes (`seed/format_5.rs`), 6 to 7 moves the
 /// loop mutes off the take purge prefix (`facts/key_split.rs`), 7 to 8 moves the shared-skill
-/// token secret off the member links' prefix (`access_key_split.rs`) and 8 to 9 builds the keyed
-/// lookups (`keyed_index.rs`). The format record is re-read inside the transaction:
+/// token secret off the member links' prefix (`access_key_split.rs`), 8 to 9 builds the keyed
+/// lookups (`keyed_index.rs`) and 9 to 10 rebuilds them with the rank keys. The format record is re-read inside the transaction:
 /// another handle on the same records may have upgraded the brain first.
 fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
     let mut tx = kv.begin_write_exclusive()?;
@@ -790,8 +790,9 @@ fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
         })?;
     }
     // Format 9: the keyed lookups (`keyed_index.rs`) are built from the records, after every step
-    // above has left them in this build's shapes.
-    if stored.format_version <= 8 {
+    // above has left them in this build's shapes. Format 10 adds the rank keys: a format-9 brain
+    // gets the same rebuild, so every entry is derived once, in this transaction.
+    if stored.format_version <= 9 {
         keyed_index::rebuild(&mut *tx)?;
     }
     stored.format_version = FORMAT_VERSION;

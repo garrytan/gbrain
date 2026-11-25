@@ -397,7 +397,8 @@ mod tests {
         // - the keyword test modules (`index_build/tests.rs`, `index_writer/tests.rs`), which are
         //   whole files under `#[cfg(test)]`;
         // - `keyed_index/tests.rs`, a whole file under `#[cfg(test)]` that writes what a format-8
-        //   build leaves (no keyed entries) before the brain opens again;
+        //   build leaves (no keyed entries) and what a format-9 build leaves (no rank keys) before
+        //   the brain opens again;
         // - `seed/v0_60_766_tests.rs`, a whole file under `#[cfg(test)]` that writes an older
         //   addon's records into an empty record file before any store opens it;
         // - `test_support.rs`'s `FaultyKv`, which wraps a record store in tests to make a write
@@ -405,7 +406,7 @@ mod tests {
         let allowed: &[(&str, usize)] = &[
             ("access_flag.rs", 1),
             ("fjall_kv.rs", 1),
-            ("keyed_index/tests.rs", 1),
+            ("keyed_index/tests.rs", 2),
             ("keyword/index_build.rs", 1),
             ("keyword/index_build/tests.rs", 1),
             ("keyword/index_writer/tests.rs", 2),

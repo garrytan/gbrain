@@ -11,6 +11,7 @@
 //! | `0x04` | from page id, link id | each link record `L from link` with `link_type = 'supersedes'` | `hasSupersedeEdges` |
 //! | `0x05` | h(source, content hash), page id | each page record with a content hash | `findDuplicatePage(s)` |
 //! | `0x06` | h(source, frontmatter `id`), page id | each page record whose frontmatter `id` is not null | `findDuplicatePage(s)` |
+//! | `0x09` | page id, unverified-stub flag (1 byte), slug | each page record (store format 10) | the vector scan's per-page bound (`vectors::bounded_scan`) |
 //!
 //! `h` is the first 16 bytes of the SHA-256 of the parts joined by NUL. Every value is empty. A raw
 //! title entry ends in a fixed 9 bytes (NUL, page id), so its title is the bytes between the kind
@@ -47,6 +48,7 @@ pub(crate) const CONTENT_HASH: u8 = 0x05;
 pub(crate) const FRONTMATTER_ID: u8 = 0x06;
 pub(crate) const LONG_TITLE: u8 = 0x07;
 pub(crate) const TRANSITION_ORIGIN: u8 = 0x08;
+pub(crate) const RANK_KEY: u8 = 0x09;
 
 /// The record tag of a link transition after its source in the `q` family (`link_temporal.rs`).
 const TRANSITION_TAG: u8 = b'T';
@@ -187,6 +189,16 @@ fn page_entries(page: &PageRecord, out: &mut BTreeSet<Vec<u8>>) {
     if let Some(fm_id) = crate::page_ops::fm_text(&page.frontmatter, "id") {
         out.insert(hashed_entry(FRONTMATTER_ID, &[&page.source_id, &fm_id], id));
     }
+    out.insert(rank_entry(page));
+}
+
+/// `~k 0x09 page_id stub slug`: what the vector scan's source factor reads of a page
+/// (`vectors::source_factor`), so it can bound each page by its own factor without reading it.
+fn rank_entry(page: &PageRecord) -> Vec<u8> {
+    let mut key = id_entry(RANK_KEY, &[page.id]);
+    key.push(u8::from(crate::vectors::unverified_stub(page)));
+    key.extend_from_slice(page.slug.as_bytes());
+    key
 }
 
 /// What a chunk record's entry needs of it.
@@ -379,7 +391,8 @@ pub(crate) fn stored_entries(read: &dyn KvRead) -> Result<BTreeSet<Vec<u8>>> {
     Ok(out)
 }
 
-/// Drops every entry and writes the ones the stored records derive (the store format 9 upgrade).
+/// Drops every entry and writes the ones the stored records derive (the store format 9 and 10
+/// upgrades).
 pub(crate) fn rebuild(tx: &mut dyn KvWrite) -> Result<()> {
     for key in stored_entries(&*tx)? {
         tx.delete(&key)?;
@@ -586,6 +599,43 @@ pub(crate) fn transitions_by_origin(read: &dyn KvRead, page_id: u64) -> Result<V
         true
     })?;
     Ok(out)
+}
+
+/// The rank key of page `page_id`: whether it is an unverified stub, and its slug. `None` when the
+/// page has no entry (the vector scan then bounds it with every factor).
+#[cfg(test)]
+pub(crate) fn rank_key_of(read: &dyn KvRead, page_id: u64) -> Result<Option<(bool, Vec<u8>)>> {
+    let mut found = None;
+    scan_prefix(read, &id_entry(RANK_KEY, &[page_id]), false, &mut |k, _| {
+        found = rank_key_parts(k).map(|(_, stub, slug)| (stub, slug.to_vec()));
+        false
+    })?;
+    Ok(found)
+}
+
+/// Calls `f` with the page id, stub flag and slug of every rank-key entry, in page id order, until
+/// it returns false.
+pub(crate) fn scan_rank_keys(
+    read: &dyn KvRead,
+    f: &mut dyn FnMut(u64, bool, &[u8]) -> bool,
+) -> Result<()> {
+    scan_prefix(
+        read,
+        &kind_prefix(RANK_KEY),
+        false,
+        &mut |k, _| match rank_key_parts(k) {
+            Some((id, stub, slug)) => f(id, stub, slug),
+            None => true,
+        },
+    )
+}
+
+/// The page id, stub flag and slug of a rank-key entry.
+fn rank_key_parts(key: &[u8]) -> Option<(u64, bool, &[u8])> {
+    let start = keys::KEYED_INDEX.len() + 1;
+    let id = keys::be8(key.get(start..start + 8)?)?;
+    let stub = *key.get(start + 8)? == 1;
+    Some((id, stub, &key[start + 9..]))
 }
 
 /// Whether any stored link has `link_type = 'supersedes'`. Each entry's link record is read back

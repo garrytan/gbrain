@@ -12,7 +12,8 @@
 #                        directory inside it, writes the stores there and deletes only that
 #                        directory at the end; nothing else under the root is touched.
 #      VECTOR_BENCH_VERIFY=0  skip the byte-for-byte comparison of the two paths.
-# Prints one line per (size, filter, path) and a summary table: machine, pages, chunks, N, p50/p99.
+# Prints one line per (size, filter, boosts, path) and a summary table: machine, pages, chunks, N,
+# latency percentiles and the pages each bounded search read, with source boosts on and off.
 set -euo pipefail
 
 sizes="${1:-10000,50000}"
@@ -34,8 +35,10 @@ for size in ${sizes//,/ }; do
   echo "loading $size pages into $store" >&2
   "$tool" load "$store" "$size" 2 1536 >"$root/load-$size.json"
   for filter in none small-source type; do
-    GBRAIN_RUST_VECTOR_SCAN=full "$tool" run "$store" "$queries" "$limit" "$filter" >>"$results"
-    "$tool" run "$store" "$queries" "$limit" "$filter" >>"$results"
+    for boosts in default none; do
+      VECTOR_BOOSTS=$boosts GBRAIN_RUST_VECTOR_SCAN=full "$tool" run "$store" "$queries" "$limit" "$filter" >>"$results"
+      VECTOR_BOOSTS=$boosts "$tool" run "$store" "$queries" "$limit" "$filter" >>"$results"
+    done
   done
   if [ "${VECTOR_BENCH_VERIFY:-1}" != 0 ]; then
     echo "verify $size (bounded scan against the full scan, full result bytes)" >&2
@@ -50,16 +53,18 @@ import json, sys
 rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
 m = rows[0]["machine"]
 print(f"machine: {m['cpu']}, {m['cores']} cores, {m['mem_gib']} GiB; dims {rows[0]['dims']}; limit {rows[0]['limit']}")
-print("| pages | chunks | filter | N | searchVector before p50/p99 ms | after p50/p99 ms | cosinesByChunkIds p50 ms |")
-print("|---|---|---|---|---|---|---|")
+print("| pages | chunks | filter | boosts | N | full scan p50/p99 ms | bounded p50/p95/p99 ms | pages read p50/p95 | cosinesByChunkIds p50 ms |")
+print("|---|---|---|---|---|---|---|---|---|")
 by = {}
 for r in rows:
-    by[(r["pages"], r["filter"], r["scan"])] = r
-for (pages, flt, scan), r in sorted(by.items()):
+    by[(r["pages"], r["filter"], r.get("boosts", "default"), r["scan"])] = r
+for (pages, flt, boosts, scan), r in sorted(by.items()):
     if scan != "full":
         continue
-    a = by.get((pages, flt, "default"))
-    b, s = r["search_vector_ms"], (a or {}).get("search_vector_ms", {})
-    print(f"| {pages} | {r['chunks']} | {flt} | {r['n']} | {b['p50']:.1f} / {b['p99']:.1f} | "
-          f"{s.get('p50', float('nan')):.1f} / {s.get('p99', float('nan')):.1f} | {(a or r)['cosines_ms']['p50']:.1f} |")
+    a = by.get((pages, flt, boosts, "default")) or {}
+    b, s, pr = r["search_vector_ms"], a.get("search_vector_ms", {}), a.get("pages_read", {})
+    nan = float("nan")
+    print(f"| {pages} | {r['chunks']} | {flt} | {boosts} | {r['n']} | {b['p50']:.1f} / {b['p99']:.1f} | "
+          f"{s.get('p50', nan):.1f} / {s.get('p95', nan):.1f} / {s.get('p99', nan):.1f} | "
+          f"{pr.get('p50', nan):.0f} / {pr.get('p95', nan):.0f} | {(a or r)['cosines_ms']['p50']:.1f} |")
 PY

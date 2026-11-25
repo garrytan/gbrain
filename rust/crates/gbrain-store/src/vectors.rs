@@ -400,7 +400,7 @@ fn pg_space(c: char) -> bool {
 }
 
 /// An unverified auto-extracted stub never takes a source factor (issue #160).
-fn unverified_stub(page: &PageRecord) -> bool {
+pub(crate) fn unverified_stub(page: &PageRecord) -> bool {
     frontmatter_text(page, "provenance").as_deref() == Some("auto-extracted")
         && frontmatter_text(page, "status").as_deref() == Some("unverified")
 }
@@ -587,8 +587,7 @@ impl ChunkScan<'_> {
         raw: impl Fn(usize, &IndexedVector) -> f64,
     ) -> Result<Option<Hit>> {
         let (read, options) = (self.read, self.options);
-        #[cfg(test)]
-        tests::PAGES_READ.with(|n| n.set(n.get() + 1));
+        PAGES_READ.with(|n| n.set(n.get() + 1));
         let page_id = group[0].id;
         let Some(page) = read_page_by_id(read, page_id)? else {
             return Ok(None);
@@ -834,14 +833,25 @@ fn bounded_scan(
         }
     }
     let raws = raw_scores(query, query_norm_sq, &index.chunks);
+    // Every factor a page can get (1 and each source factor): the bound of a page whose own
+    // factor is not known.
     let factors: Vec<f64> = std::iter::once(1.0)
         .chain(options.source_factors.iter().map(|(_, f)| *f))
         .collect();
+    let own = own_factors(scan.read, index, options)?;
     let mut order: Vec<(f64, usize)> = index
         .page_runs
         .iter()
         .enumerate()
-        .map(|(run, &(start, end))| (page_bound(&raws[start..end], &factors), run))
+        .map(|(run, &(start, end))| {
+            let page_factors = match &own {
+                Some(own) => own[run]
+                    .as_ref()
+                    .map_or(factors.as_slice(), std::slice::from_ref),
+                None => factors.as_slice(),
+            };
+            (page_bound(&raws[start..end], page_factors), run)
+        })
         .collect();
     order.sort_unstable_by(|a, b| score_desc(a.0, b.0).then(a.1.cmp(&b.1)));
     let mut best: BinaryHeap<Ranked> = BinaryHeap::new();
@@ -865,6 +875,56 @@ fn bounded_scan(
         }
     }
     Ok(Some(best.into_iter().map(|ranked| ranked.0).collect()))
+}
+
+/// Each page run's own source factor, read from the keyed index's rank keys (`keyed_index::RANK_KEY`):
+/// the factor `source_factor` gives the page, without reading the page. `None` for a run whose page
+/// has no rank key (its bound then takes every factor), and `None` overall when the call has no
+/// source factors (every page's factor is 1).
+fn own_factors(
+    read: &dyn KvRead,
+    index: &VectorIndex,
+    options: &VectorSearchOptions,
+) -> Result<Option<Vec<Option<f64>>>> {
+    if options.source_factors.is_empty() {
+        return Ok(None);
+    }
+    let mut own = vec![None; index.page_runs.len()];
+    // Both the runs and the rank keys are in page id order: walk them together.
+    let mut run = 0;
+    crate::keyed_index::scan_rank_keys(read, &mut |page_id, stub, slug| {
+        while run < own.len() && index.chunks[index.page_runs[run].0].id < page_id {
+            run += 1;
+        }
+        if run == own.len() {
+            return false;
+        }
+        if index.chunks[index.page_runs[run].0].id == page_id {
+            own[run] = Some(if stub {
+                1.0
+            } else {
+                options
+                    .source_factors
+                    .iter()
+                    .find(|(prefix, _)| slug.starts_with(prefix.as_bytes()))
+                    .map_or(1.0, |(_, factor)| *factor)
+            });
+        }
+        true
+    })?;
+    Ok(Some(own))
+}
+
+thread_local! {
+    /// Pages `ChunkScan::best_chunk` read on this thread since the last `searchVector` began.
+    static PAGES_READ: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many pages the last `searchVector` on this thread read: a measurement for the vector bench
+/// (`examples/vector_scale.rs`) and the tests, not part of the member's answer.
+#[doc(hidden)]
+pub fn pages_read_by_last_search() -> usize {
+    PAGES_READ.with(std::cell::Cell::get)
 }
 
 /// The full scan: every page with a vector, in page id order.
@@ -902,6 +962,7 @@ fn search_chunks_by(
     options: &VectorSearchOptions,
     full: bool,
 ) -> Result<Vec<Value>> {
+    PAGES_READ.with(|n| n.set(0));
     let query = check_query(query)?;
     let limit = options.limit.unwrap_or(DEFAULT_VECTOR_LIMIT);
     let offset = resolve_offset(&options.offset, limit)?;
@@ -1127,12 +1188,6 @@ mod tests {
     use crate::sources::SourceInput;
     use crate::takes::TakeInput;
     use crate::test_support::store;
-
-    thread_local! {
-        /// Pages `ChunkScan::best_chunk` read on this thread, so a test can show the bounded scan
-        /// reads fewer pages than the full scan.
-        pub(super) static PAGES_READ: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    }
 
     #[test]
     fn a_query_value_beyond_float4_range_is_refused_not_turned_into_infinity() {
@@ -2166,6 +2221,155 @@ mod tests {
         assert_eq!(reads, [1, 31]);
     }
 
+    /// The rank key the keyed index holds for the page at `slug` (default source).
+    fn rank_key(s: &Store, slug: &str) -> Option<(bool, String)> {
+        let read = s.read().unwrap();
+        let id = crate::pages::read_page(&*read, "default", slug)
+            .unwrap()
+            .unwrap()
+            .id;
+        crate::keyed_index::rank_key_of(&*read, id)
+            .unwrap()
+            .map(|(stub, slug)| (stub, String::from_utf8(slug).unwrap()))
+    }
+
+    #[test]
+    fn a_rename_and_a_stub_flip_update_the_rank_key_in_the_same_write() {
+        let s = store();
+        page(&s, "default", "notes/a", &[axis(0, 4)], json!({}));
+        page(
+            &s,
+            "default",
+            "notes/b",
+            &[vec![0.9, 0.1, 0.0, 0.0]],
+            json!({}),
+        );
+        assert_eq!(rank_key(&s, "notes/a"), Some((false, "notes/a".into())));
+        let boosted = opts(json!({"limit": 1, "source_factors": [["concepts/", 2.0]]}));
+        let query = q(&[1.0, 0.0, 0.0, 0.0]);
+        let both = |s: &Store| both_paths(s, &query, &boosted);
+        // A rename moves the page under the boosted prefix: the very next read sees the new key.
+        assert_eq!(s.update_slug("notes/a", "concepts/a", None).unwrap(), 1);
+        assert_eq!(
+            rank_key(&s, "concepts/a"),
+            Some((false, "concepts/a".into()))
+        );
+        // A rename leaves the page's text projection unserved until it is sealed again (the
+        // page is hidden from search until then, on both scans); sealing keeps the slug.
+        let chunk: Vec<ChunkInput> = serde_json::from_value(json!([{
+            "chunk_index": 0, "chunk_text": "body concepts/a 0", "chunk_source": "compiled_truth",
+            "embedding": axis(0, 4), "model": MODEL,
+        }]))
+        .unwrap();
+        let seal: UpsertChunksOptions = serde_json::from_value(json!({"seal": true})).unwrap();
+        s.upsert_chunks("concepts/a", &chunk, &seal).unwrap();
+        assert_eq!(
+            rank_key(&s, "concepts/a"),
+            Some((false, "concepts/a".into()))
+        );
+        let (bounded, full) = both(&s);
+        assert_eq!(bounded, full);
+        assert!(bounded.contains("\"slug\":\"concepts/a\""), "{bounded}");
+        assert_eq!(
+            names(&s.search_vector(&query, &boosted).unwrap()),
+            ["concepts/a#0 2.0000"]
+        );
+        // A stub flip drops the boost: the next read bounds the page by 1, not 2.
+        page(
+            &s,
+            "default",
+            "concepts/a",
+            &[axis(0, 4)],
+            json!({"frontmatter": {"provenance": "auto-extracted", "status": "unverified"}}),
+        );
+        assert_eq!(
+            rank_key(&s, "concepts/a"),
+            Some((true, "concepts/a".into()))
+        );
+        let (bounded, full) = both(&s);
+        assert_eq!(bounded, full);
+        assert_eq!(
+            names(&s.search_vector(&query, &boosted).unwrap()),
+            ["concepts/a#0 1.0000"]
+        );
+    }
+
+    /// Deletes the rank keys whose slug `pick` accepts, below the keyed writer (as a brain whose
+    /// entries were lost would hold them).
+    fn drop_rank_keys(s: &Store, pick: impl Fn(&str) -> bool) {
+        let mut doomed = Vec::new();
+        {
+            let read = s.read().unwrap();
+            let mut prefix = crate::keys::KEYED_INDEX.to_vec();
+            prefix.push(crate::keyed_index::RANK_KEY);
+            crate::kv::scan_prefix(&*read, &prefix, false, &mut |k, _| {
+                if pick(std::str::from_utf8(&k[prefix.len() + 9..]).unwrap()) {
+                    doomed.push(k.to_vec());
+                }
+                true
+            })
+            .unwrap();
+        }
+        let mut tx = s.kv.begin_write().unwrap();
+        for key in doomed {
+            tx.delete(&key).unwrap();
+        }
+        tx.commit().unwrap();
+    }
+
+    #[test]
+    fn a_page_with_no_rank_key_is_bounded_by_every_factor_and_answers_alike() {
+        // `boost/win` has a raw score of 0.3 and a factor of 3, so it wins at 0.9 over `high/top`
+        // at 0.6; each `low/` page has a raw score of 0.9 but a factor of 0.5. With rank keys the
+        // low pages are bounded by 0.45 and never read. Without them each page is bounded by its
+        // raw score times every factor the call can apply (0.9 * 3), so all are read, and the
+        // answer is the same: `boost/win` is still found, though its own bound is gone too.
+        let s = store();
+        page(
+            &s,
+            "default",
+            "high/top",
+            &[vec![0.6, 0.8, 0.0, 0.0]],
+            json!({}),
+        );
+        page(
+            &s,
+            "default",
+            "boost/win",
+            &[vec![0.3, 0.0, 0.0, 0.953_939_2]],
+            json!({}),
+        );
+        for i in 0..12 {
+            page(
+                &s,
+                "default",
+                &format!("low/p{i:02}"),
+                &[vec![0.9, 0.0, 0.43589, 0.0]],
+                json!({}),
+            );
+        }
+        let query = q(&[1.0, 0.0, 0.0, 0.0]);
+        let o = opts(json!({"limit": 1, "source_factors": [["low/", 0.5], ["boost/", 3.0]]}));
+        let reads = |s: &Store| {
+            let read = s.read().unwrap();
+            let index = load_index(&*read, Some(&s.vectors)).unwrap();
+            PAGES_READ.with(|n| n.set(0));
+            let rows = search_chunks_by(&*read, &index, &query, &o, false).unwrap();
+            (rows, PAGES_READ.with(|n| n.get()))
+        };
+        let (keyed_rows, keyed_reads) = reads(&s);
+        let with_keys = both_paths(&s, &query, &o);
+        drop_rank_keys(&s, |slug| !slug.starts_with("high/"));
+        let (bare_rows, bare_reads) = reads(&s);
+        let without_keys = both_paths(&s, &query, &o);
+        assert_eq!(names(&keyed_rows), ["boost/win#0 0.9000"]);
+        assert_eq!(keyed_rows, bare_rows);
+        assert_eq!(with_keys.0, with_keys.1);
+        assert_eq!(without_keys.0, without_keys.1);
+        assert_eq!(with_keys, without_keys);
+        assert_eq!((keyed_reads, bare_reads), (1, 13));
+    }
+
     #[test]
     fn a_page_that_only_ties_the_last_kept_hit_is_still_read() {
         // `y-low` scores 0.25 * 2 = 0.5 and `x-high` scores 0.5 * 1 = 0.5, a tie the lower page id
@@ -2340,6 +2544,8 @@ mod tests {
                 pages in prop::collection::vec(page_spec(), 1..12),
                 query in prop::collection::vec(prop::sample::select(vec![-1.0f64, 0.0, 0.5, 1.0]), 3),
                 runs in prop::collection::vec(options(), 1..6),
+                moves in prop::collection::vec((0..12usize, 0..PREFIXES.len(), prop::bool::weighted(0.5)), 0..4),
+                drop_all in prop::bool::weighted(0.25),
             ) {
                 let s = store();
                 s.upsert_source(&SourceInput { id: "side".to_string(), ..SourceInput::default() }).unwrap();
@@ -2357,6 +2563,32 @@ mod tests {
                     });
                     let source = if spec.side { "side" } else { "default" };
                     page(&s, source, &format!("{}p{i}", PREFIXES[spec.prefix]), &spec.chunks, extra);
+                }
+                // Renames move pages between boosted prefixes (the rank key moves in the same
+                // write); a dropped rank key makes that page take every factor's bound.
+                for (i, to, drop) in moves {
+                    let Some(spec) = pages.get(i) else { continue };
+                    let source = if spec.side { "side" } else { "default" };
+                    let from = format!("{}p{i}", PREFIXES[spec.prefix]);
+                    let moved = format!("{}m{i}", PREFIXES[to]);
+                    if s.update_slug(&from, &moved, Some(source)).unwrap_or(0) == 1 {
+                        let chunks: Vec<ChunkInput> = spec.chunks.iter().enumerate().map(|(c, v)| {
+                            serde_json::from_value(json!({
+                                "chunk_index": c, "chunk_text": format!("body {moved} {c}"),
+                                "chunk_source": if c == 1 { "timeline" } else { "compiled_truth" },
+                                "embedding": v, "model": MODEL,
+                            })).unwrap()
+                        }).collect();
+                        let up: UpsertChunksOptions =
+                            serde_json::from_value(json!({"sourceId": source, "seal": true})).unwrap();
+                        s.upsert_chunks(&moved, &chunks, &up).unwrap();
+                    }
+                    if drop {
+                        drop_rank_keys(&s, |slug| slug.ends_with(&format!("{i}")));
+                    }
+                }
+                if drop_all {
+                    drop_rank_keys(&s, |_| true);
                 }
                 for run in runs {
                     let o = opts(run.clone());

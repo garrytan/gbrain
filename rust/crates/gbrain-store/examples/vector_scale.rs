@@ -16,6 +16,7 @@
 //! verify  <store-dir> [queries=40]                                bounded scan against the full scan
 //! queries <out.json> [queries=60] [dims=1536]                     the `run` queries as JSON, for a
 //!                                                                 timing through the TypeScript engine
+//! upgrade <store-dir>                                             open writable once (format upgrade)
 //! ```
 //!
 //! `filter` is `none`, `small-source` (the `side` source, about 4% of pages), `large-source`
@@ -23,8 +24,12 @@
 //!
 //! `run` opens the store in a fresh process, makes two warm-up calls (the first builds the decoded
 //! vector cache), then times every query and prints one JSON object: the machine, the data size,
-//! N, and p50/p99/max in milliseconds for `searchVector`, for `cosinesByChunkIds` over the hit ids,
-//! and for the two together. `GBRAIN_RUST_VECTOR_SCAN=full` makes the store take the full scan, the
+//! N, and p50/p95/p99/max in milliseconds for `searchVector`, for `cosinesByChunkIds` over the hit
+//! ids, and for the two together, and the pages each `searchVector` read
+//! (`vectors::pages_read_by_last_search`). `VECTOR_BOOSTS=none` sends no source factors,
+//! `VECTOR_MODEL=none` no model, and `VECTOR_QUERIES=<file>` takes the query vectors from a JSON
+//! array (for a store another loader wrote). `VECTOR_DUMP=<file>` writes every timed result, so two
+//! builds' answers on one store can be compared byte for byte. `GBRAIN_RUST_VECTOR_SCAN=full` makes the store take the full scan, the
 //! path every call took before the bounded scan; the store reads it on every call.
 //!
 //! `verify` runs every query through both paths on the same store (the tool sets and removes
@@ -384,11 +389,19 @@ fn load(dir: &Path, pages: u64, per_page: u32, dims: usize) {
 
 // ---------------------------------------------------------------- queries
 
+/// `VECTOR_BOOSTS=none` sends no source factors (default: the TypeScript member's defaults), and
+/// `VECTOR_MODEL=none` sends no model (default: the model `load` writes), for a store another
+/// loader wrote.
 fn options(filter: &str, limit: u64, offset: u64) -> VectorSearchOptions {
-    let factors: Vec<Value> = FACTORS.iter().map(|(p, f)| json!([p, f])).collect();
-    let mut o = json!({
-        "limit": limit, "offset": offset, "model": MODEL, "source_factors": factors,
-    });
+    let factors: Vec<Value> = if std::env::var("VECTOR_BOOSTS").is_ok_and(|v| v == "none") {
+        Vec::new()
+    } else {
+        FACTORS.iter().map(|(p, f)| json!([p, f])).collect()
+    };
+    let mut o = json!({"limit": limit, "offset": offset, "source_factors": factors});
+    if !std::env::var("VECTOR_MODEL").is_ok_and(|v| v == "none") {
+        o["model"] = json!(MODEL);
+    }
     match filter {
         "none" => {}
         "small-source" => o["source_ids"] = json!(["side"]),
@@ -432,7 +445,8 @@ fn pct(sorted: &[f64], p: f64) -> f64 {
 
 fn summary(mut ms: Vec<f64>) -> Value {
     ms.sort_by(f64::total_cmp);
-    json!({"p50": pct(&ms, 50.0), "p99": pct(&ms, 99.0), "max": ms.last().copied().unwrap_or(0.0)})
+    json!({"p50": pct(&ms, 50.0), "p95": pct(&ms, 95.0), "p99": pct(&ms, 99.0),
+           "max": ms.last().copied().unwrap_or(0.0)})
 }
 
 fn run(dir: &Path, n: u64, limit: u64, filter: &str) {
@@ -447,22 +461,40 @@ fn run(dir: &Path, n: u64, limit: u64, filter: &str) {
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(1536);
     let d = dirs(dims);
+    // `VECTOR_QUERIES=<file>`: a JSON array of query vectors to use instead of the invented ones
+    // (for a store another loader wrote, with its own embedder), cycled when shorter than `n`.
+    let given: Option<Vec<Vec<f64>>> = std::env::var("VECTOR_QUERIES").ok().map(|path| {
+        serde_json::from_slice(
+            &std::fs::read(&path).unwrap_or_else(|e| die(format!("{path}: {e}"))),
+        )
+        .unwrap_or_else(|e| die(format!("{path}: {e}")))
+    });
+    let pick = |i: u64| match &given {
+        Some(all) => all[(i as usize) % all.len()].clone(),
+        None => query(&d, i),
+    };
     let opts = options(filter, limit, 0);
     let first = Instant::now();
     store
-        .search_vector(&query(&d, 9_999), &opts)
+        .search_vector(&pick(9_999), &opts)
         .unwrap_or_else(|e| die(e));
     let first_ms = first.elapsed().as_secs_f64() * 1e3;
     store
-        .search_vector(&query(&d, 9_998), &opts)
+        .search_vector(&pick(9_998), &opts)
         .unwrap_or_else(|e| die(e));
     let (mut search, mut rescore, mut both) = (Vec::new(), Vec::new(), Vec::new());
+    let mut pages_read = Vec::new();
+    let mut dumped: Vec<Value> = Vec::new();
     let mut rows_seen = 0usize;
     for i in 0..n {
-        let q = query(&d, i);
+        let q = pick(i);
         let t = Instant::now();
         let rows = store.search_vector(&q, &opts).unwrap_or_else(|e| die(e));
         let s = t.elapsed().as_secs_f64() * 1e3;
+        pages_read.push(gbrain_store::vectors::pages_read_by_last_search() as f64);
+        if std::env::var_os("VECTOR_DUMP").is_some() {
+            dumped.push(Value::Array(rows.clone()));
+        }
         let ids: Vec<u64> = rows.iter().filter_map(|r| r["chunk_id"].as_u64()).collect();
         let t = Instant::now();
         store
@@ -474,15 +506,20 @@ fn run(dir: &Path, n: u64, limit: u64, filter: &str) {
         rescore.push(r);
         both.push(s + r);
     }
+    if let Some(path) = std::env::var_os("VECTOR_DUMP") {
+        std::fs::write(&path, serde_json::to_vec(&dumped).unwrap()).unwrap_or_else(|e| die(e));
+    }
     let scan = std::env::var("GBRAIN_RUST_VECTOR_SCAN").unwrap_or_else(|_| "default".into());
     println!(
         "{}",
         json!({
             "machine": machine(), "pages": pages, "chunks": chunks, "dims": dims,
             "filter": filter, "limit": limit, "n": n, "scan": scan,
+            "boosts": std::env::var("VECTOR_BOOSTS").unwrap_or_else(|_| "default".into()),
             "open_ms": open_ms, "first_call_ms": first_ms,
             "avg_rows": rows_seen as f64 / n.max(1) as f64,
-            "search_vector_ms": summary(search), "cosines_ms": summary(rescore),
+            "search_vector_ms": summary(search), "pages_read": summary(pages_read),
+            "cosines_ms": summary(rescore),
             "together_ms": summary(both), "peak_rss_kib": status_kib("VmHWM"),
         })
     );
@@ -626,11 +663,17 @@ fn main() {
             arg(4).unwrap_or("none"),
         ),
         (Some("verify"), Some(dir)) => verify(Path::new(dir), num(2, 40)),
+        (Some("upgrade"), Some(dir)) => {
+            // A writable open moves an older store format to this build's (`run` opens read-only).
+            let store =
+                Store::open_dir(Path::new(dir), OpenOptions::default()).unwrap_or_else(|e| die(e));
+            println!("{}", json!({"format_version": store.info().format_version}));
+        }
         (Some("queries"), Some(out)) => {
             write_queries(Path::new(out), num(2, 60), num(3, 1536) as usize)
         }
         _ => die(
-            "usage: load <dir> <pages> [chunks-per-page] [dims] | run <dir> [queries] [limit] [filter] | verify <dir> [queries] | queries <out.json> [queries] [dims]",
+            "usage: load <dir> <pages> [chunks-per-page] [dims] | run <dir> [queries] [limit] [filter] | verify <dir> [queries] | queries <out.json> [queries] [dims] | upgrade <dir>",
         ),
     }
 }
