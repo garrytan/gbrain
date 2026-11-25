@@ -26,6 +26,8 @@ import { registerBuiltinHandlers } from '../../src/commands/jobs.ts';
 import type { MinionJobContext } from '../../src/core/minions/types.ts';
 import { withEnv } from './with-env.ts';
 import { renderFactsTable, type ParsedFact } from '../../src/core/facts-fence.ts';
+import { fenceRowHoldTexts } from '../../src/core/eligibility/fence-overlay.ts';
+import { holdFingerprint } from '../../src/core/write-gate-store.ts';
 
 export const atomContractCases = ['publication', 'zero_yield', 'revision', 'removal', 'deferred', 'unavailable', 'source_replaced', 'malformed', 'malformed_retry', 'malformed_retry_failure', 'malformed_retry_revision', 'publication_retry', 'pagination', 'withdrawn_fence', 'transcript', 'transcript_changed', 'connector', 'connector_claimed'] as const;
 type Case = typeof atomContractCases[number];
@@ -46,6 +48,7 @@ export async function exerciseManagedAtoms(engine: BrainEngine, scenario: Case):
         { rowNum: 2, claim: 'Synthetic withdrawn private claim', visibility: 'private', kind: 'fact', confidence: 1, notability: 'medium', active: true },
         { rowNum: 3, claim: 'Synthetic retained world claim', visibility: 'world', kind: 'fact', confidence: 1, notability: 'medium', active: true },
         { rowNum: 4, claim: 'Synthetic held world cell', visibility: 'world', kind: 'fact', confidence: 1, notability: 'medium', active: true },
+        { rowNum: 5, claim: 'Synthetic optical calibration worksheet', visibility: 'world', kind: 'fact', confidence: 1, notability: 'medium', active: true },
       ];
       const story = 'A private project record. '.repeat(40);
       const body = scenario === 'withdrawn_fence' ? `${story}\n\n${renderFactsTable(facts)}` : story;
@@ -59,6 +62,9 @@ export async function exerciseManagedAtoms(engine: BrainEngine, scenario: Case):
           [sourceId, fact.visibility, page.slug, fact.claim]);
         await engine.insertFacts([{ fact: facts[3].claim, source: 'test', visibility: 'private', row_num: 4,
           source_markdown_slug: page.slug }], { source_id: sourceId });
+        await engine.executeRaw(`INSERT INTO write_gate_holds (kind, source_id, slug, fingerprint, detector_version, tier, payload)
+          VALUES ('fact', $1, $2, $3, 1, 'external_untrusted', '{}'::jsonb)`,
+          [sourceId, page.slug, holdFingerprint('fact', fenceRowHoldTexts(facts[4]!))]);
         expect((await engine.readPageSnapshot(page.slug, { sourceId }))?.page.compiled_truth).not.toBe(body);
       }
       const transcript = scenario.startsWith('transcript') ? join(home, 'meeting.txt') : null;
@@ -100,17 +106,13 @@ export async function exerciseManagedAtoms(engine: BrainEngine, scenario: Case):
       await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
       if (scenario === 'unavailable') await engine.executeRaw("UPDATE persistence_worktrees SET state='draining' WHERE id=$1::uuid", [binding!.worktree_id]);
       let calls = 0;
+      let withdrawalPrompt = '';
       let blockedPath: string | undefined;
       let retryRecovery = false;
       const ctx = { engine, config: { engine: engine.kind }, remote: false, sourceId, dryRun: false, logger: console };
       const chat = async (request: ChatOpts): Promise<ChatResult> => {
         calls++;
-        if (scenario === 'withdrawn_fence') {
-          const prompt = JSON.stringify(request.messages);
-          expect(prompt).toContain(facts[2].claim);
-          for (const fact of facts.slice(0, 2)) expect(prompt).not.toContain(fact.claim);
-          expect(prompt).not.toContain(facts[3].claim);
-        }
+        if (scenario === 'withdrawn_fence') withdrawalPrompt = JSON.stringify(request.messages);
         if (scenario === 'revision' || scenario === 'removal') {
           const snapshot = (await engine.readPageSnapshot(page.slug, { sourceId }))!;
           await submitPageMutation(ctx, { operation: scenario === 'removal' ? 'delete_page' : 'put_page',
@@ -150,6 +152,8 @@ export async function exerciseManagedAtoms(engine: BrainEngine, scenario: Case):
       const first = await runPhaseExtractAtoms(engine, opts);
       if (scenario === 'withdrawn_fence') {
         expect(calls).toBe(1);
+        expect(withdrawalPrompt).toContain(facts[2].claim);
+        for (const fact of [facts[0], facts[1], facts[3], facts[4]]) expect(withdrawalPrompt).not.toContain(fact.claim);
         const [stored] = await engine.executeRaw<{ compiled_truth: string }>(
           'SELECT compiled_truth FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, page.slug]);
         expect(stored.compiled_truth).toBe(body);

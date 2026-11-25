@@ -79,7 +79,7 @@ import { resolveExtractAtomsCostGate, resolveEmbedModelForCostGate, settleExtrac
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { classifyRunStop, providerHaltReason, upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { abortableSleep } from '../retry.ts';
-import { throwIfAborted } from '../abort-check.ts';
+import { anySignal, throwIfAborted } from '../abort-check.ts';
 import { createHash } from 'crypto';
 import { slugifySegment } from '../sync.ts';
 import { resolveAlias, resolveTierDefault } from '../model-config.ts';
@@ -413,7 +413,9 @@ export async function discoverExtractablePages(
   sourceId: string,
   affectedSlugs?: string[],
   limit: number = PAGE_DISCOVERY_BUDGET,
+  signal?: AbortSignal,
 ): Promise<AtomPageInput[]> {
+  if (signal?.aborted) return [];
   const hasFilter = Array.isArray(affectedSlugs) && affectedSlugs.length > 0;
   const connectorExclusion = await connectorAtomExclusionSql(engine);
   const sql = `
@@ -458,7 +460,7 @@ export async function discoverExtractablePages(
   try {
     const rows = await engine.executeRaw<AtomDiscoveryRow>(sql, params);
     const withFences = new Map(rows.filter(row => row.compiled_truth.includes(FACTS_FENCE_BEGIN)).map(row => [row.slug, row]));
-    const snapshots = await readAtomDiscoverySnapshots(engine, sourceId, withFences);
+    const snapshots = await readAtomDiscoverySnapshots(engine, sourceId, withFences, signal);
     return rows.flatMap(row => {
       const content = withFences.has(row.slug) ? snapshots.get(row.slug)?.page.compiled_truth : row.compiled_truth;
       return content === undefined ? [] : [{ slug: row.slug, content, contentHash: row.content_hash,
@@ -779,6 +781,7 @@ export async function runPhaseExtractAtoms(
       sourceId,
       opts.affectedSlugs,
       await resolvePageDiscoveryLimit(engine),
+      opts.stopSignal ? anySignal(opts.stopSignal, opts.signal) : opts.signal,
     );
   }
 

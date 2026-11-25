@@ -12,7 +12,7 @@
 // Plus PageDiscovery shape, transcript-side idempotency, dual-source
 // merge, dedup, dry-run, fail-soft on executeRaw errors.
 
-import { describe, test, expect, beforeAll, afterAll, beforeEach, spyOn } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, beforeEach, mock, spyOn } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -264,6 +264,30 @@ describe('v0.41.2.1: discoverExtractablePages SQL contract', () => {
       const candidates = await discoverExtractablePages(engine, 'default');
       expect(candidates.map(candidate => candidate.slug).sort()).toEqual(['meeting/plain', 'meeting/valid-fence']);
       expect(single).toHaveBeenCalledWith('meeting/unreadable-fence', { sourceId: 'default' });
+    } finally {
+      single.mockRestore();
+      batch.mockRestore();
+    }
+  });
+
+  test.each(['signal', 'stopSignal'] as const)('canonical fallback stops issuing reads after %s aborts', async (signalName) => {
+    const fence = renderFactsTable([{ rowNum: 1, claim: 'Synthetic fence claim', visibility: 'world',
+      kind: 'fact', confidence: 1, notability: 'medium', active: true }]);
+    await seedPage({ slug: 'meeting/first-fence', type: 'meeting', compiled_truth: `${LONG_CONTENT}\n\n${fence}` });
+    await seedPage({ slug: 'meeting/second-fence', type: 'meeting', compiled_truth: `${LONG_CONTENT} New scheduling details.\n\n${fence}` });
+    const controller = new AbortController();
+    const read = engine.readPageSnapshot.bind(engine);
+    const batch = spyOn(engine, 'readPageSnapshotsBatch').mockRejectedValue(new Error('synthetic batch read failure'));
+    const single = spyOn(engine, 'readPageSnapshot').mockImplementation(async (slug, opts) => {
+      controller.abort();
+      return read(slug, opts);
+    });
+    const chat = mock(stubChat('{"atoms":[]}'));
+    try {
+      await runPhaseExtractAtoms(engine, { _transcripts: [], _chat: chat, [signalName]: controller.signal });
+      expect(batch).toHaveBeenCalledTimes(1);
+      expect(single).toHaveBeenCalledTimes(1);
+      expect(chat).not.toHaveBeenCalled();
     } finally {
       single.mockRestore();
       batch.mockRestore();

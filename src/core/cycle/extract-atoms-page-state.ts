@@ -38,7 +38,7 @@ export interface AtomDiscoveryRow {
 
 /** Discovery and the managed origin check must read the same revision and withdrawal view. */
 export async function readAtomDiscoverySnapshots(engine: BrainEngine, sourceId: string,
-  withFences: ReadonlyMap<string, AtomDiscoveryRow>): Promise<Map<string, PageSnapshot>> {
+  withFences: ReadonlyMap<string, AtomDiscoveryRow>, signal?: AbortSignal): Promise<Map<string, PageSnapshot>> {
   const refs = [...withFences.keys()].map(slug => ({ slug, sourceId }));
   const projected = new Map<string, PageSnapshot>();
   const retain = (slug: string, snapshot: PageSnapshot | null | undefined) => {
@@ -49,7 +49,7 @@ export async function readAtomDiscoverySnapshots(engine: BrainEngine, sourceId: 
       projected.set(slug, snapshot);
     }
   };
-  for (let rest = refs; rest.length > 0;) {
+  for (let rest = refs; rest.length > 0 && !signal?.aborted;) {
     try {
       const batch = await engine.readPageSnapshotsBatch(rest, { absentIsNull: true });
       for (const { slug } of rest.slice(0, batch.covered)) {
@@ -60,6 +60,7 @@ export async function readAtomDiscoverySnapshots(engine: BrainEngine, sourceId: 
       rethrowCapabilityRefusal(error);
       // A single unreadable fence leaves that page pending; other candidates can proceed.
       for (const { slug } of rest) {
+        if (signal?.aborted) break;
         try {
           retain(slug, await engine.readPageSnapshot(slug, { sourceId }));
         } catch (pageError) {

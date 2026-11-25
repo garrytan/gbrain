@@ -24,7 +24,7 @@ import { AtomPageStateError, type AtomPageInput } from './extract-atoms-page-sta
 import { planExtraction, readPageWatermark, type ExtractionPlan, type StoredWatermark } from '../extraction-watermark.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { withoutCallerAccess } from '../search/private-visibility.ts';
-import { heldRowsForCaller } from '../eligibility/fence-overlay.ts';
+import { loadFenceChunkOverlay } from '../eligibility/fence-overlay.ts';
 
 export const DEFAULT_EXTRACT_MAX_INPUT_CHARS = 50_000;
 export const EXTRACT_MAX_INPUT_CHARS_KEY = 'cycle.extract_atoms.max_input_chars';
@@ -87,10 +87,10 @@ export function extractAtomsInput(item: ExtractAtomsItem, maxInputChars: number,
 export async function readExtractAtomsInput(engine: BrainEngine, sourceId: string, item: ExtractAtomsItem,
   maxInputChars: number): Promise<ExtractAtomsInput> {
   if (item.kind === 'transcript') return extractAtomsInput(item, maxInputChars);
-  const omitRows = await withoutCallerAccess(() => heldRowsForCaller(engine, true,
-    { sourceId, slug: item.slug, compiled_truth: item.content }));
+  const overlay = await withoutCallerAccess(() => loadFenceChunkOverlay(engine,
+    { sourceId, slug: item.slug, compiled_truth: item.content }, { hideHeld: true }));
   const { stored } = await readPageWatermark(engine, sourceId, item.slug, 'extract_atoms');
-  return extractAtomsInput(item, maxInputChars, stored, omitRows);
+  return extractAtomsInput(item, maxInputChars, stored, overlay?.omit);
 }
 
 /** The one stderr line per cut item; names the knob that raises the cap. Null for a complete appended-tail read. */
