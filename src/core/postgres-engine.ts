@@ -1524,6 +1524,7 @@ export class PostgresEngine implements BrainEngine {
   readStaleEmbeddingCounts(sourceIds: string[] | null) { return doctorPersistenceImpl.readStaleEmbeddingCounts(this.executeRaw.bind(this), sourceIds); }
   listStaleEmbeddingEffects(sourceIds: string[] | null) { return doctorPersistenceImpl.listStaleEmbeddingEffects(this.executeRaw.bind(this), sourceIds); }
   listOrphanBindingRows(limit: number | null) { return doctorPersistenceImpl.listOrphanBindingRows(this.executeRaw.bind(this), limit); }
+  readRequestIndexStates(names: readonly string[]) { return this.ownRawRead(exec => doctorPersistenceImpl.readRequestIndexStates(exec.executeRaw.bind(exec), names)); }
   readPersistenceBrainIdText() { return doctorPersistenceImpl.readPersistenceBrainIdText(this.executeRaw.bind(this)); }
   listWorktreeIds() { return doctorPersistenceImpl.listWorktreeIds(this.executeRaw.bind(this)); }
   listManagedRoots(hostId: string | null) { return doctorPersistenceImpl.listManagedRoots(this.executeRaw.bind(this), hostId); }

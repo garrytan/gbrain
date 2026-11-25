@@ -118,6 +118,8 @@ export interface DoctorMembers {
   listStaleEmbeddingEffects(sourceIds: string[] | null): Promise<DoctorPersistenceSql.StaleEmbeddingEffectRow[]>;
   /** Source bindings whose source is gone or was re-created, by source id, up to `limit` when given. */
   listOrphanBindingRows(limit: number | null): Promise<DoctorPersistenceSql.OrphanBindingRow[]>;
+  /** The online-built request indexes by name, in order: valid, missing (valid null) or building (phase set); a purge's preparation read too. */
+  readRequestIndexStates(names: readonly string[]): Promise<DoctorPersistenceSql.RequestIndexRow[]>;
   /** The persistence identity as text, or null when the schema has no `persistence_brain` row. */
   readPersistenceBrainIdText(): Promise<string | null>;
   /** Every managed worktree id. */

@@ -1791,6 +1791,7 @@ export class PGLiteEngine implements BrainEngine {
   readStaleEmbeddingCounts(sourceIds: string[] | null) { return doctorPersistenceImpl.readStaleEmbeddingCounts(this.rawRead, sourceIds); }
   listStaleEmbeddingEffects(sourceIds: string[] | null) { return doctorPersistenceImpl.listStaleEmbeddingEffects(this.rawRead, sourceIds); }
   listOrphanBindingRows(limit: number | null) { return doctorPersistenceImpl.listOrphanBindingRows(this.rawRead, limit); }
+  readRequestIndexStates(names: readonly string[]) { return doctorPersistenceImpl.readRequestIndexStates(this.rawRead, names); }
   readPersistenceBrainIdText() { return doctorPersistenceImpl.readPersistenceBrainIdText(this.rawRead); }
   listWorktreeIds() { return doctorPersistenceImpl.listWorktreeIds(this.rawRead); }
   listManagedRoots(hostId: string | null) { return doctorPersistenceImpl.listManagedRoots(this.rawRead, hostId); }

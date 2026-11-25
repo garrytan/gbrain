@@ -311,6 +311,7 @@ export const CONTENT_MEMBERS = {
   readStaleEmbeddingCounts: 'persistence_journal',
   listStaleEmbeddingEffects: 'persistence_journal',
   listOrphanBindingRows: 'persistence_journal',
+  readRequestIndexStates: 'persistence_journal',
   readPersistenceBrainIdText: 'persistence_journal',
   listWorktreeIds: 'persistence_journal',
   listManagedRoots: 'persistence_journal',

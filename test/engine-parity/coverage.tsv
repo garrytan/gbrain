@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2401/2425
+# covered: 2402/2426
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -105,7 +105,7 @@
 # brief_reads: 6/6
 # reflex_reads: 3/3
 # doctor_derived: 25/25
-# doctor_persistence: 36/36
+# doctor_persistence: 37/37
 # doctor_pages: 18/18
 # doctor_search: 11/11
 # doctor_reads_acc: 25/25
@@ -2405,6 +2405,7 @@ listParkedGroupRows	doctor_persistence	yes	3	no	yes	yes	serves
 readStaleEmbeddingCounts	doctor_persistence	yes	2	no	yes	yes	serves
 listStaleEmbeddingEffects	doctor_persistence	yes	2	no	yes	yes	serves
 listOrphanBindingRows	doctor_persistence	yes	2	no	yes	yes	serves
+readRequestIndexStates	doctor_persistence	yes	1	no	yes	yes	serves
 readPersistenceBrainIdText	doctor_persistence	yes	2	no	yes	yes	serves
 listWorktreeIds	doctor_persistence	yes	2	no	yes	yes	serves
 listManagedRoots	doctor_persistence	yes	1	no	yes	yes	serves
