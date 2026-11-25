@@ -71,9 +71,16 @@ export async function listenServed(owner: OwnerEngineServer, opts: ServedListenO
       `Set ${RUST_SERVER_TLS_CERT_ENV} and ${RUST_SERVER_TLS_KEY_ENV}, or listen on 127.0.0.1.`);
   }
   const handshakeTimeout = opts.handshakeTimeoutMs ?? 5_000;
+  // Every accepted connection, so close() ends idle clients instead of waiting for them (review G10).
+  const accepted = new Set<net.Socket>();
+  const track = (socket: net.Socket) => {
+    accepted.add(socket);
+    socket.once('close', () => accepted.delete(socket));
+    attach(socket);
+  };
   const server: Server = opts.tls
-    ? tls.createServer({ cert: opts.tls.cert, key: opts.tls.key, minVersion: 'TLSv1.2', handshakeTimeout }, socket => attach(socket))
-    : net.createServer(socket => attach(socket));
+    ? tls.createServer({ cert: opts.tls.cert, key: opts.tls.key, minVersion: 'TLSv1.2', handshakeTimeout }, socket => track(socket))
+    : net.createServer(socket => track(socket));
   server.on('tlsClientError', (_error: unknown, socket: { destroy(): void }) => socket.destroy());
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
@@ -84,6 +91,10 @@ export async function listenServed(owner: OwnerEngineServer, opts: ServedListenO
   let closed: Promise<void> | undefined;
   return {
     host: opts.host, port, tls: !!opts.tls,
-    close: () => (closed ??= new Promise<void>(resolve => server.close(() => resolve()))),
+    close: () => (closed ??= new Promise<void>(resolve => {
+      server.close(() => resolve());
+      // The owner's dispatcher aborts the calls of each connection when it closes; work already started settles there.
+      for (const socket of accepted) socket.destroy();
+    })),
   };
 }

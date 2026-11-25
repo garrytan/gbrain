@@ -21,7 +21,7 @@ import { rustMultiuserFromEnv } from '../multiuser-switch.ts';
 import { connectServed, type ServedConnection } from './client.ts';
 import { recordHeldPageKeys, type HeldPageKeys } from '../../page-state/guards.ts';
 import type { PageKey } from '../../page-state/types.ts';
-import { SERVED_STORE_CALL, STORE_RETURNING_MEMBERS } from './store-returning.ts';
+import { SERVED_BRAIN_CALL, SERVED_STORE_CALL, STORE_RETURNING_MEMBERS, registerServedBrain, unregisterServedBrain } from './store-returning.ts';
 
 export const RUST_SERVER_URL_ENV = 'GBRAIN_RUST_SERVER_URL';
 export const RUST_SERVER_TOKEN_ENV = 'GBRAIN_RUST_SERVER_TOKEN';
@@ -53,6 +53,18 @@ export function servedTargetFor(config: EngineConfig & { rust_server?: RustServe
 
 type EngineRecord = Record<string, unknown>;
 
+
+/** The stand-in for the store of a served engine (ref undefined) or transaction (served/store-returning.ts). */
+function brainProxy(connection: ServedConnection, ref: string | undefined): object {
+  return new Proxy({}, {
+    get: (_target, prop) => {
+      if (typeof prop !== 'string' || prop === 'then') return undefined;
+      return (...args: unknown[]) => ref
+        ? connection.request('call', `brain.${prop}`, args, { txn: ref })
+        : connection.request('fn', SERVED_BRAIN_CALL, [prop, args]);
+    },
+  });
+}
 
 function storeProxy(connection: ServedConnection, member: string, ref: string | undefined): object {
   return new Proxy({}, {
@@ -96,6 +108,7 @@ function transactionHandle(engine: object, connection: ServedConnection, ref: st
     Object.defineProperty(handle, member, { value, writable: true, configurable: true, enumerable: false });
   }
   Object.defineProperty(handle, '__servedTxRef', { value: ref, enumerable: false });
+  registerServedBrain(handle, brainProxy(connection, ref));
   Object.defineProperty(handle, '_heldPageKeys', { value: held, enumerable: false });
   return handle as unknown as BrainEngine;
 }
@@ -128,6 +141,7 @@ export async function connectServedEngine(engine: object, target: ServedTarget):
   capabilities?.add('served');
   connection.txProxy = ref => transactionHandle(engine, connection, ref);
   const refusals: string[] = [];
+  registerServedBrain(engine, brainProxy(connection, undefined));
   // A member the server's engine lacks refuses as the Rust engine in process does, its known stop included.
   for (const member of Object.keys(RECEIPT_STOP_OWNERS)) {
     const missing = missingOnRustOwner(connection.hello, member);
@@ -147,5 +161,9 @@ export async function connectServedEngine(engine: object, target: ServedTarget):
       });
     }
   }
-  return () => { for (const member of ['transaction', 'transactionDirect', ...STORE_RETURNING_MEMBERS, ...refusals]) delete record[member]; undo(); };
+  return () => {
+    for (const member of ['transaction', 'transactionDirect', ...STORE_RETURNING_MEMBERS, ...refusals]) delete record[member];
+    unregisterServedBrain(engine);
+    undo();
+  };
 }

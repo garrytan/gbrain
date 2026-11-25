@@ -117,7 +117,7 @@ export function forwardWholeOperation<T>(engine: object, name: WholeOperationNam
   // the file's bytes (served/client-files.ts) and an operation that names a server path refuses on the server.
   if ((connection as { network?: boolean }).network === true && (name === 'importFromFile' || name === 'importImageFile') && !rejoin) {
     let payload: ClientFilePayload;
-    try { payload = readClientFile(String(args[0])); } catch (error) { return Promise.reject(error); }
+    try { payload = readClientFile(String(args[0]), String(args[1]), name); } catch (error) { return Promise.reject(error); }
     return connection.request('fn', IMPORT_CLIENT_FILE, [name, String(args[0]), args[1], payload, args[2]]) as Promise<T>;
   }
   const sent = args.slice();

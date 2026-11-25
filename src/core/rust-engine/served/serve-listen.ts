@@ -13,7 +13,9 @@ import type { ServedServerOptions } from './session.ts';
 
 /** True when this serve was asked to listen for brain clients. */
 export function rustListenRequested(args: readonly string[], env: Record<string, string | undefined> = process.env): boolean {
-  return args.includes('--rust-listen') || !!env[RUST_SERVER_LISTEN_ENV];
+  // The flag always asks (and refuses with the switch off); the environment variable acts only while the environment
+  // half of the switch is on, so with it off a serve starts exactly as before (review G13).
+  return args.includes('--rust-listen') || (!!env[RUST_SERVER_LISTEN_ENV] && rustMultiuserFromEnv(env));
 }
 
 /**

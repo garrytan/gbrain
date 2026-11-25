@@ -36,9 +36,13 @@ export type Admission =
   | { kind: 'attach'; outcome: Promise<StoredOutcome | null> }
   | { kind: 'stored'; outcome: StoredOutcome }
   | { kind: 'conflict' }
+  | { kind: 'busy' }
   | { kind: 'unknown' };
 
 export interface RequestTableOptions { maxEntries?: number; maxBytes?: number; ttlMs?: number; now?: () => number }
+
+/** Retries that may wait on one running request at once; one more is refused `owner_busy` (review G6). */
+export const MAX_REQUEST_WAITERS = 8;
 
 export const REQUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -70,6 +74,7 @@ export class RequestTable {
     if (found) {
       if (found.ph !== ph || found.member !== member) return { kind: 'conflict' };
       if (found.done) return { kind: 'stored', outcome: found.outcome! };
+      if (found.waiters.length >= MAX_REQUEST_WAITERS) return { kind: 'busy' };
       return { kind: 'attach', outcome: new Promise(resolve => found.waiters.push(resolve)) };
     }
     if (retry && !rerunnable) return { kind: 'unknown' };

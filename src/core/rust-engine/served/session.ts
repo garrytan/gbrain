@@ -45,8 +45,8 @@ import {
 } from './framing.ts';
 import { storePositionReader, waitForPosition, type PositionReader } from './positions.ts';
 import { sessionCalls } from './session-calls.ts';
-import { REQUEST_ID, RequestTable, type StoredOutcome } from './requests.ts';
-import { ownerResponseTooLarge } from '../owner-ipc/routes.ts';
+import { MAX_REQUEST_WAITERS, REQUEST_ID, RequestTable, type StoredOutcome } from './requests.ts';
+import { ownerBusy, ownerResponseTooLarge } from '../owner-ipc/routes.ts';
 
 /** Whole operations a network client may not send: they name paths on the server host (decision 9). */
 const SERVER_PATH_OPERATIONS: ReadonlySet<string> = new Set(['importFromFile', 'importImageFile', 'importManagedFiles', 'snapshotStore']);
@@ -149,7 +149,6 @@ export function servedSession(side: ServedServerSide, opts: ServedServerOptions,
   let authenticating = false;
   let preauthCounted = false;
   let closed = false;
-  const backlog: Array<[Record<string, unknown>, Buffer | null, number]> = [];
   // Frames are handled in arrival order: a call whose preparation waits (a position, nothing else) holds back later
   // frames of the same connection, as one FIFO lane does on the owner.
   let chain: Promise<void> = Promise.resolve();
@@ -232,24 +231,27 @@ export function servedSession(side: ServedServerSide, opts: ServedServerOptions,
       const answer = { ...ctx.hello, t: 'hello', v: OWNER_IPC_VERSION_V3, version: OWNER_IPC_VERSION_V3, caps: [...caps], server_id: state.serverId };
       writeFrame(answer);
       if (who.kind === 'owner_token' && token !== null) {
+        lastCheckedAt = Date.now();
         recheckTimer = setInterval(() => {
           if (closed || invalid) return;
-          void recheckToken(side.engine, token!, principal!, opts.verify).then(p => { principal = p; }, (error: unknown) => { invalid = error as Error; });
+          void recheckToken(side.engine, token!, principal!, opts.verify).then(p => { principal = p; lastCheckedAt = Date.now(); }, (error: unknown) => { invalid = error as Error; });
         }, RECHECK_MS);
         recheckTimer.unref?.();
       }
-      for (const [f, t, b] of backlog.splice(0)) onFrame(f, t, b);
     };
     if (!network && presented === undefined) { done(LOCAL_OWNER); return; }
     authenticating = true;
     token = typeof presented === 'string' ? presented : null;
     void authenticateToken(side.engine, presented, opts.verify).then(
       who => { authenticating = false; if (!closed) done(who); },
-      (error: unknown) => { authenticating = false; backlog.length = 0; refuseConnection(error); });
+      (error: unknown) => { authenticating = false; refuseConnection(error); });
   };
 
+  // When the owner token was last verified; a recheck that stops answering stops new work too (review G2).
+  let lastCheckedAt: number | null = null;
   const staleCredential = (): Error | null => {
     if (invalid) return invalid;
+    if (lastCheckedAt !== null && Date.now() - lastCheckedAt > 3 * RECHECK_MS) return servedAuthRefused('token_expired', null);
     if (principal?.expiresAt !== undefined && principal.expiresAt <= Date.now()) return (invalid = servedAuthRefused('token_expired', null));
     return null;
   };
@@ -299,7 +301,8 @@ export function servedSession(side: ServedServerSide, opts: ServedServerOptions,
     // Not awaited: such a call may call back into the client, whose own calls on the transaction arrive behind it.
     if (frame.txn !== undefined) {
       const scoped = frame.scope && typeof frame.scope === 'object' ? (frame.scope as { sv?: unknown }).sv : undefined;
-      void runInTransaction(id, member, String(frame.txn), args, remote, scoped === undefined ? undefined : <T>(fn: () => T) => withEngineScope(scopeFor(scoped), fn));
+      void runInTransaction(id, member, String(frame.txn), args, remote, scoped === undefined ? undefined : <T>(fn: () => T) => withEngineScope(scopeFor(scoped), fn),
+        { access, deadlineAt: typeof frame.deadline_at === 'number' ? frame.deadline_at : undefined });
       return;
     }
     // Request ids (decision 6).
@@ -312,9 +315,13 @@ export function servedSession(side: ServedServerSide, opts: ServedServerOptions,
         // The journal's request id is the wire's: a retry after a restart is answered by the journal's own receipt.
         args = [args[0]!, { ...(args[1] as Record<string, Wire>), request_id: req }, ...(args as Wire[]).slice(2)];
       }
-      const ph = createHash('sha256').update(`${kind}\u0000${member}\u0000`).update(JSON.stringify(args)).digest('hex');
+      // Replay is bound to everything that shapes the answer: the call, its arguments, the caller access record, the
+      // remote mark and the engine scope (review G4).
+      const ph = createHash('sha256').update(`${kind}\u0000${member}\u0000`).update(JSON.stringify(args))
+        .update(`\u0000${JSON.stringify(access ?? null)}\u0000${remote}\u0000${JSON.stringify(frame.scope ?? null)}`).digest('hex');
       entry = state.requests.begin(principal!.key, req, ph, member, frame.retry === true, ownerMemberOnlyReads(member) || journaled);
       if (entry.kind === 'conflict') { replyDirect(id, member, servedReqConflict(member, req)); return; }
+      if (entry.kind === 'busy') { replyDirect(id, member, ownerBusy('queue_full', member, MAX_REQUEST_WAITERS)); return; }
       if (entry.kind === 'unknown') { replyDirect(id, member, servedOutcomeUnknown(member, req)); return; }
       if (entry.kind === 'stored') { writeFrame({ t: 'result', id, ...entry.outcome }, member); return; }
       if (entry.kind === 'attach') {
@@ -325,57 +332,65 @@ export function servedSession(side: ServedServerSide, opts: ServedServerOptions,
       }
     }
     const tracked = entry && (entry.kind === 'fresh' || entry.kind === 'replay') ? entry.entry : null;
-    // Read-your-writes (I-2): wait for the published position before the call is queued.
-    if (frame.min_position !== undefined && caps.has('positions')) {
-      const wanted = parsePositionToken(frame.min_position);
-      if (!wanted) { if (tracked) state.requests.abandon(tracked); replyDirect(id, member, servedPositionRefused(member, 'malformed')); return; }
-      const reader = state.positions;
-      const now = reader ? await reader() : null;
-      if (!now || !now.exact) { if (tracked) state.requests.abandon(tracked); replyDirect(id, member, servedPositionRefused(member, 'unsupported')); return; }
-      const deadlineAt = typeof frame.deadline_at === 'number' ? frame.deadline_at : Date.now() + (opts.positionWaitMs ?? 30_000);
-      const abort = new AbortController();
-      preparing.set(id, abort);
-      const waited = await waitForPosition(reader!, wanted, deadlineAt, abort.signal);
-      preparing.delete(id);
-      if (abort.signal.aborted) { if (tracked) state.requests.abandon(tracked); return; }
-      if (!waited.reached) {
-        if (tracked) state.requests.abandon(tracked);
-        replyDirect(id, member, servedPositionNotReached(member, positionToken(wanted), waited.published ? positionToken(waited.published) : null, Math.max(0, deadlineAt - Date.now())));
-        return;
+    // Until the call reaches the dispatcher this preparation owns its request record: every way out before that
+    // forgets it, so a retry never waits on a call that will not run (review G5).
+    let handed = false;
+    const abort = new AbortController();
+    preparing.set(id, abort);
+    try {
+      // Read-your-writes (I-2): wait for the published position before the call is queued.
+      if (frame.min_position !== undefined && caps.has('positions')) {
+        const wanted = parsePositionToken(frame.min_position);
+        if (!wanted) { replyDirect(id, member, servedPositionRefused(member, 'malformed')); return; }
+        const reader = state.positions;
+        const now = reader ? await reader() : null;
+        if (!now || !now.exact) { replyDirect(id, member, servedPositionRefused(member, 'unsupported')); return; }
+        const deadlineAt = typeof frame.deadline_at === 'number' ? frame.deadline_at : Date.now() + (opts.positionWaitMs ?? 30_000);
+        const waited = await waitForPosition(reader!, wanted, deadlineAt, abort.signal);
+        if (abort.signal.aborted) return;
+        if (!waited.reached) {
+          replyDirect(id, member, servedPositionNotReached(member, positionToken(wanted), waited.published ? positionToken(waited.published) : null, Math.max(0, deadlineAt - Date.now())));
+          return;
+        }
       }
+      const hooks: ServedHooks = {
+        encodeError: encodeErr,
+        neverRan: () => { if (tracked) state.requests.abandon(tracked); },
+        settle: async (call, ok, value) => {
+          let outcome: StoredOutcome;
+          if (ok) {
+            try { outcome = { ok: true, value: encodeValue(value) }; } catch (error) { outcome = { ok: false, error: encodeErr(error) }; }
+          } else outcome = { ok: false, error: encodeErr(value) };
+          if (outcome.ok && call.write && caps.has('positions') && state.positions) {
+            try { const p = await state.positions(); if (p?.exact) outcome.position = { sequence: p.sequence, index: p.index }; } catch { /* no position */ }
+          }
+          if (!outcome.ok && !(value instanceof Error && 'code' in value)) {
+            const cid = randomUUID();
+            (opts.log ?? ((line: string) => console.error(line)))(`[gbrain serve] served call failed cid=${cid} member=${call.member}: ${value instanceof Error ? value.stack ?? value.message : String(value)}`);
+            (outcome as StoredOutcome & { cid?: string }).cid = cid;
+          }
+          if (tracked) state.requests.finish(tracked, outcome);
+          if (!call.done) call.reply({ t: 'result', id: call.id, ...outcome });
+        },
+        wrapRun: fn => {
+          const inScope = frame.scope && typeof frame.scope === 'object' ? () => withEngineScope(scopeFor((frame.scope as { sv?: unknown }).sv), fn) : fn;
+          return remote ? withRemoteCaller(true, inScope) : inScope();
+        },
+        staleCredential,
+        rebuildFunction: (wire, call) => rebuildFunction(wire, call),
+      };
+      if (closed || abort.signal.aborted) return;
+      handed = true;
+      side.admit({ ...frame, args, ...(access !== undefined ? { access } : {}) }, bytes, calls, writeFrame, hooks);
+    } finally {
+      preparing.delete(id);
+      if (!handed && tracked) state.requests.abandon(tracked);
     }
-    const hooks: ServedHooks = {
-      encodeError: encodeErr,
-      neverRan: () => { if (tracked) state.requests.abandon(tracked); },
-      settle: async (call, ok, value) => {
-        let outcome: StoredOutcome;
-        if (ok) {
-          try { outcome = { ok: true, value: encodeValue(value) }; } catch (error) { outcome = { ok: false, error: encodeErr(error) }; }
-        } else outcome = { ok: false, error: encodeErr(value) };
-        if (outcome.ok && call.write && caps.has('positions') && state.positions) {
-          try { const p = await state.positions(); if (p?.exact) outcome.position = { sequence: p.sequence, index: p.index }; } catch { /* no position */ }
-        }
-        if (!outcome.ok && !(value instanceof Error && 'code' in value)) {
-          const cid = randomUUID();
-          (opts.log ?? ((line: string) => console.error(line)))(`[gbrain serve] served call failed cid=${cid} member=${call.member}: ${value instanceof Error ? value.stack ?? value.message : String(value)}`);
-          (outcome as StoredOutcome & { cid?: string }).cid = cid;
-        }
-        if (tracked) state.requests.finish(tracked, outcome);
-        if (!call.done) call.reply({ t: 'result', id: call.id, ...outcome });
-      },
-      wrapRun: fn => {
-        const inScope = frame.scope && typeof frame.scope === 'object' ? () => withEngineScope(scopeFor((frame.scope as { sv?: unknown }).sv), fn) : fn;
-        return remote ? withRemoteCaller(true, inScope) : inScope();
-      },
-      staleCredential,
-      rebuildFunction: (wire, call) => rebuildFunction(wire, call),
-    };
-    side.admit({ ...frame, args, ...(access !== undefined ? { access } : {}) }, bytes, calls, writeFrame, hooks);
   };
 
   // Returning callbacks and transactions over the wire (session-calls.ts).
   const { rebuildFunction, onCallbackResult, runInTransaction, onTxnFrame, closeCalls } = sessionCalls({
-    side, opts, caps: () => caps, closed: () => closed, writeFrame, encodeErr, replyDirect,
+    side, opts, caps: () => caps, closed: () => closed, writeFrame, encodeErr, replyDirect, staleCredential,
   });
 
   // ---- frames ----
@@ -383,7 +398,9 @@ export function servedSession(side: ServedServerSide, opts: ServedServerOptions,
     if (closed) return;
     if (!principal) {
       if (frame.t === 'hello' && !authenticating) { onHello(frame); return; }
-      if (authenticating) { backlog.push([frame, tail, bytes]); return; }
+      // Nothing but the hello runs before the hello is answered: the client waits for it, and the server holds no
+      // frame of a connection it has not authenticated (review G1).
+      if (authenticating) { refuseConnection(servedProtocol('frame_malformed', 'reason=frame_before_hello_answer')); return; }
       refuseConnection(servedProtocol('frame_malformed', 'reason=hello_missing'));
       return;
     }

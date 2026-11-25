@@ -16,7 +16,7 @@ import { ownerIpcRefusal } from './routes.ts';
 import { snapshotStatus, snapshotStore, type SnapshotStoreOptions } from '../store-snapshot.ts';
 import type { OwnerWholeOperation } from './server.ts';
 import { IMPORT_CLIENT_FILE, importClientFile } from '../served/client-files.ts';
-import { SERVED_STORE_CALL, STORE_RETURNING_MEMBERS } from '../served/store-returning.ts';
+import { SERVED_BRAIN_CALL, SERVED_STORE_CALL, STORE_RETURNING_MEMBERS, servedBrainMethod } from '../served/store-returning.ts';
 import {
   OWNER_FORWARDED_OPERATIONS, OWNER_RUN_OPERATION, type ForwardedOperationContext, type ForwardedOperationResult,
   type WholeOperationName,
@@ -66,6 +66,15 @@ export function ownerWholeOperations(opts: { config?: GBrainConfig } = {}): Read
     // Protocol v3 only: a network client's file import, sent as bytes (served/client-files.ts). The owner dispatcher
     // refuses it on v2 as any operation it does not run (owner-ipc/server.ts V3_ONLY_OPERATIONS).
     [IMPORT_CLIENT_FILE]: (engine: BrainEngine, ...args: unknown[]) => importClientFile(engine, args[0], args[1], args[2], args[3], args[4]),
+    // Protocol v3 only: one store method of the shared-skill publication path (served/store-returning.ts).
+    [SERVED_BRAIN_CALL]: async (engine: BrainEngine, method: unknown, args: unknown) => {
+      if (!servedBrainMethod(method)) throw ownerIpcRefusal(String(method), 'it is not a store method a client may call');
+      const rust = engine as unknown as { _admit?(m: string): Promise<void>; storeFor?(m: string): Promise<{ brain: Record<string, unknown> }> };
+      if (typeof rust.storeFor !== 'function') throw ownerIpcRefusal(method, 'the brain server has no store');
+      await rust._admit?.(method);
+      const brain = (await rust.storeFor(method)).brain;
+      return (brain[method] as (...a: unknown[]) => Promise<unknown>).apply(brain, Array.isArray(args) ? args : []);
+    },
     // Protocol v3 only: one method of a store a member returns (served/engine.ts STORE_RETURNING_MEMBERS).
     [SERVED_STORE_CALL]: async (engine: BrainEngine, member: unknown, method: unknown, args: unknown) => {
       if (typeof member !== 'string' || !STORE_RETURNING_MEMBERS.has(member)) throw ownerIpcRefusal(String(member), 'it does not return a store');
