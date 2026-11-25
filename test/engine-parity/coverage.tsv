@@ -135,13 +135,13 @@ getPage	pages	yes	278	yes	yes	yes	serves
 readPageSnapshot	pages	yes	100	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1320	yes	yes	yes	serves
+putPage	pages	yes	1321	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	43	yes	yes	yes	serves
 deletePages	pages	yes	8	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	2	yes	yes	yes	serves
-softDeletePage	pages	yes	332	yes	yes	yes	serves
+softDeletePage	pages	yes	333	yes	yes	yes	serves
 softDeletePages	pages	yes	4	yes	yes	yes	serves
 restorePage	pages	yes	15	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	10	no	yes	yes	serves
@@ -159,7 +159,7 @@ listRestrictedIdentityMembers	pages	yes	1	no	yes	yes	serves
 applyIdentityDecisions	pages	yes	12	no	yes	yes	serves
 listAllPageRefs	pages	yes	5	yes	yes	yes	serves
 listAllSources	pages	yes	26	no	yes	yes	serves
-updateSourceConfig	pages	yes	20	no	yes	yes	serves
+updateSourceConfig	pages	yes	21	no	yes	yes	serves
 renameSource	pages	yes	1	no	yes	yes	serves
 readFederationExposedPages	pages	yes	1	no	yes	yes	serves
 getSource	pages	yes	42	no	yes	yes	serves
@@ -189,7 +189,7 @@ markSourceSynced	pages	yes	8	no	yes	yes	serves
 advanceSyncCheckpoint	pages	yes	2	no	yes	yes	serves
 countSourcePages	pages	yes	6	no	yes	yes	serves
 readSourcesNotReadable	pages	yes	3	no	yes	yes	serves
-insertSource	pages	yes	18	no	yes	yes	serves
+insertSource	pages	yes	19	no	yes	yes	serves
 deleteSourceRecord	pages	yes	9	no	yes	yes	serves
 readSourceDeleteImpact	pages	yes	2	no	yes	yes	serves
 readPageSizeRows	pages	yes	4	no	yes	yes	serves

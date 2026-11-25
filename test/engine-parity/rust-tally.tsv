@@ -72,6 +72,7 @@ test/engine-parity/connector-sync-stamp.test.ts	2	0
 test/engine-parity/core-page-member-reads.test.ts	1	1
 test/engine-parity/credential-grant-writes.test.ts	6	0
 test/engine-parity/cycle-locks.test.ts	11	0
+test/engine-parity/cycle-source-window.test.ts	1	0
 test/engine-parity/decide-proposals.test.ts	8	0
 test/engine-parity/decide-store.test.ts	42	0
 test/engine-parity/delegated-grant.test.ts	2	0
