@@ -31,6 +31,7 @@ import { KEYWORD_COUNT_CAP, type KeywordPageAfter } from './keyword-statement.ts
 import { hasCJK } from '../cjk.ts';
 import { loadConfigWithEngine } from '../config.ts';
 import { resolveCjkKeywordDeadlineMs } from './cjk-keyword-deadline.ts';
+import { resolveSearchDateBounds } from './date-bounds.ts';
 
 export type SearchMatch = 'hybrid' | 'keyword';
 
@@ -158,18 +159,28 @@ export function startKeywordCount(engine: BrainEngine, query: string, types: str
   })().catch((): KeywordCount => ({ unavailable: 'error' }));
 }
 
+/** #9412: the `query` op's filters the count shares with its hybrid search (language, symbol kind, dates, frontmatter). */
+export function queryKeywordCountFilters(p: Record<string, unknown>, where: SearchOpts['where']): SearchOpts {
+  return {
+    ...(where ? { where } : {}),
+    language: (p.lang as string) || undefined,
+    symbolKind: (p.symbol_kind as string) || undefined,
+    ...resolveSearchDateBounds({ since: typeof p.since === 'string' ? p.since : undefined, until: typeof p.until === 'string' ? p.until : undefined }),
+  };
+}
+
 /** Adds count fields (and the unavailable stage) to a built retrieval meta. */
 export function withCountMeta(meta: Record<string, unknown>, extra: { meta: Record<string, unknown>; degraded?: DegradedStageEntry }): Record<string, unknown> {
   if (!extra.degraded) return { ...meta, ...extra.meta };
   return { ...meta, ...extra.meta, degraded: [...((meta.degraded as unknown[] | undefined) ?? []), extra.degraded] };
 }
 
-/** Response meta for the hybrid path: `keyword_total` / `keyword_truncated`, or the unavailable stage. */
-export function keywordCountMeta(count: KeywordCount, shownThrough: number): { meta: Record<string, unknown>; degraded?: DegradedStageEntry } {
+/** Response meta for the hybrid path: `keyword_total` / `keyword_truncated`, or the unavailable stage. `entityResolved`: the query names an entity or fanned out to another name. */
+export function keywordCountMeta(count: KeywordCount, shownThrough: number, entityResolved = false): { meta: Record<string, unknown>; degraded?: DegradedStageEntry } {
   if ('unavailable' in count) {
     return { meta: { keyword_total: null }, degraded: { stage: 'keyword_count_unavailable', ...(count.unavailable === 'timeout' ? { reason: 'timeout' as const } : {}) } };
   }
-  return { meta: { keyword_total: count.total, keyword_truncated: count.capped || count.total > shownThrough, ...(count.capped ? { keyword_total_capped: true } : {}) } };
+  return { meta: { keyword_total: count.total, keyword_truncated: count.capped || count.total > shownThrough, ...(count.capped ? { keyword_total_capped: true } : {}), ...(entityResolved ? { query_entity_resolved: true } : {}) } };
 }
 
 export interface KeywordPage {
@@ -251,11 +262,10 @@ const countWords = (n: number, capped: boolean | undefined) => `${capped ? `${n}
  * count): which set the rows are, which set the count covers, and the next
  * call. Reads only `_meta.retrieval` keys this module writes.
  */
-export function searchCountLine(rows: unknown, retrieval: unknown): string | null {
+export function searchCountLine(rows: unknown, retrieval: unknown, tool = 'search'): string | null {
   if (retrieval === null || typeof retrieval !== 'object') return null;
   const r = retrieval as Record<string, unknown>;
-  const stage = Array.isArray(r.degraded) ? r.degraded.find(d => (d as { stage?: unknown })?.stage === 'keyword_count_unavailable') : undefined;
-  const reason = (stage as { reason?: unknown } | undefined)?.reason === 'timeout' ? 'timed out' : 'failed';
+  const reason = countUnavailableReason(r) === 'timeout' ? 'timed out' : 'failed';
   if (r.match === 'keyword') {
     const names = Array.isArray(r.match_names) && r.match_names.length > 1
       ? ` for any of this entity's names (${(r.match_names as string[]).map(n => `"${n}"`).join(', ')})` : '';
@@ -272,5 +282,31 @@ export function searchCountLine(rows: unknown, retrieval: unknown): string | nul
   const count = typeof r.keyword_total === 'number'
     ? `Keyword matches: ${countWords(r.keyword_total, r.keyword_total_capped === true)} (pages matching the query's keywords, not a count of these rows)`
     : `Keyword match count unavailable (${reason}; not a count of zero)`;
-  return `[gbrain search] Rows are a ranked top-K, not proof of coverage. ${count}. List every keyword match with match: "keyword".`;
+  return `[gbrain search] Rows are a ranked top-K, not proof of coverage. ${count}. List every keyword match with ${tool === 'search' ? '' : 'the search tool and '}match: "keyword".`;
+}
+
+/** Why the count is unavailable, read from the `keyword_count_unavailable` degraded stage. */
+export function countUnavailableReason(r: Record<string, unknown>): 'timeout' | 'error' {
+  const stage = Array.isArray(r.degraded) ? r.degraded.find(d => (d as { stage?: unknown })?.stage === 'keyword_count_unavailable') : undefined;
+  return (stage as { reason?: unknown } | undefined)?.reason === 'timeout' ? 'timeout' : 'error';
+}
+
+/**
+ * #9412: the CLI's stderr line for `gbrain search` / `gbrain query` (null when
+ * the call carries no count). With rows, no literal match and no entity the
+ * query names, it says the rows matched only by meaning.
+ */
+export function cliKeywordCountLine(rows: unknown[], retrieval: Record<string, unknown> | null): string | null {
+  if (!retrieval) return null;
+  const r = retrieval;
+  const unavailable = `Keyword match count unavailable (${countUnavailableReason(r) === 'timeout' ? 'timed out' : 'failed'}; not a count of zero).`;
+  if (r.match === 'keyword') {
+    if (typeof r.total !== 'number') return unavailable;
+    const shown = Number(r.shown_to) < Number(r.shown_from) ? 'none on this page' : `showing ${r.shown_from}-${r.shown_to}`;
+    return `Keyword matches: ${countWords(r.total, r.total_capped === true)}; ${shown}.${r.truncated === true ? ` More: rerun with --offset ${r.shown_to}.` : ' No more keyword matches.'}`;
+  }
+  if (!('keyword_total' in r)) return null;
+  if (typeof r.keyword_total !== 'number') return unavailable;
+  if (r.keyword_total === 0 && rows.length > 0 && r.query_entity_resolved !== true) return 'No page contains these words (literal match). The rows below matched only by meaning.';
+  return `Keyword matches: ${countWords(r.keyword_total, r.keyword_total_capped === true)} (pages containing these words, not a count of these rows). List them all with: gbrain search <words> --match keyword`;
 }
