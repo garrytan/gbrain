@@ -911,6 +911,7 @@ export async function runGoogleStatus(args: string[]): Promise<void> {
               ? (JSON.parse(r.config) as Record<string, unknown>)
               : ((r.config ?? {}) as Record<string, unknown>);
           if (c.kind !== 'google') continue;
+          if (onlyAccount && (typeof c.g_account === 'string' ? c.g_account.toLowerCase() : '') !== onlyAccount) continue;
           const { parseGoogleSourceConfig } = await import('../core/google/source-config.ts');
           const sourceCfg = parseGoogleSourceConfig(c, '');
           for (const service of sourceCfg.services) linkedServices.set(sourceCfg.account, (linkedServices.get(sourceCfg.account) ?? new Set()).add(service));

@@ -8,7 +8,7 @@
  *    disconnect never lets a reconnect reuse.
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -140,6 +140,25 @@ describe('vault lock fails closed', () => {
     expect(() => withVaultLock(path, () => { ran = true; }, 200)).toThrow(CredentialError);
     expect(ran).toBe(false);
     expect(readFileSync(`${path}.lock`, 'utf-8')).toContain('held');
+  });
+
+  test('a steal guard left by a stealer that died is cleared, and the dead holder\'s lock is then taken over', () => {
+    const gone = Bun.spawnSync(['true']);
+    writeFileSync(`${path}.lock`, JSON.stringify({ pid: gone.pid, nonce: 'dead', at: Date.now() }));
+    writeFileSync(`${path}.lock.steal`, '');
+    const old = new Date(Date.now() - 60_000);
+    utimesSync(`${path}.lock.steal`, old, old);
+    expect(withVaultLock(path, () => 'ran', 1000)).toBe('ran');
+    expect(existsSync(`${path}.lock`)).toBe(false);
+    expect(existsSync(`${path}.lock.steal`)).toBe(false);
+  });
+
+  test('a fresh steal guard means another process is stealing: the lock is left alone until the wait runs out', () => {
+    const gone = Bun.spawnSync(['true']);
+    writeFileSync(`${path}.lock`, JSON.stringify({ pid: gone.pid, nonce: 'dead', at: Date.now() }));
+    writeFileSync(`${path}.lock.steal`, '');
+    expect(() => withVaultLock(path, () => 'ran', 200)).toThrow(CredentialError);
+    expect(JSON.parse(readFileSync(`${path}.lock`, 'utf-8')).nonce).toBe('dead');
   });
 
   test('a lock whose holder process is gone is taken over', () => {

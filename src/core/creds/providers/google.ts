@@ -501,7 +501,10 @@ export class GoogleTokenProvider {
 
   async getAccessToken(): Promise<string> {
     const e = await this.entry();
-    if (tokenStillFresh(e)) return e.secret.access_token!;
+    // A token stored before GST-3849 under a grant that holds a write scope may
+    // itself be write-capable; it is refreshed (read-only) instead of handed out.
+    const trusted = e.meta.access_token_read_only === true || writeCapableScopes(e.meta.scopes ?? []).length === 0;
+    if (trusted && tokenStillFresh(e)) return e.secret.access_token!;
     return this.forceRefresh();
   }
 
@@ -526,7 +529,7 @@ export class GoogleTokenProvider {
 
   private async refreshOnce(): Promise<string> {
     const start = await this.entry();
-    const generation = grantGeneration(start) ?? 0;
+    let generation = grantGeneration(start) ?? 0;
     const release = isGrantVault(this.vault) && this.vault.leaseRefresh
       ? await this.vault.leaseRefresh(this.credentialIdValue, generation)
       : null;
@@ -536,6 +539,9 @@ export class GoogleTokenProvider {
       if (release && grantGeneration(e) === generation && tokenStillFresh(e) && e.secret.access_token !== start.secret.access_token) {
         return e.secret.access_token!;
       }
+      // A reconnect may have committed a new grant while this call waited: refresh
+      // that grant, and write back against its generation, not the one read before.
+      generation = grantGeneration(e) ?? 0;
       let token: TokenResponse;
       if (e.client_ref === 'hosted-relay') {
         const base = relayUrl();
@@ -557,7 +563,7 @@ export class GoogleTokenProvider {
         // Google may rotate the refresh token; persist the new one.
         ...(token.refresh_token ? { refresh_token: token.refresh_token } : {}),
       };
-      const meta = { last_refresh_ok_at: nowIso, ...(confirm ? { personal_confirmed_at: nowIso } : {}) };
+      const meta = { last_refresh_ok_at: nowIso, access_token_read_only: true, ...(confirm ? { personal_confirmed_at: nowIso } : {}) };
       if (isGrantVault(this.vault)) {
         await this.vault.casUpdateTokens(this.credentialIdValue, generation, { secret, meta });
         return token.access_token;

@@ -21,6 +21,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 
 import { exportBundle, importBundle, type EncryptedBundle } from '../core/creds/export.ts';
 import {
+  grantGeneration,
   isGrantVault,
   openVault,
   type CredentialEntry,
@@ -205,7 +206,12 @@ async function runImport(args: string[]): Promise<void> {
   }
   const vault = openVault();
   for (const c of payload.clients) await vault.putClient(c);
-  for (const e of payload.credentials) await vault.put(e);
+  // Each grant gets a fresh generation on this vault, so a refresh already in
+  // flight against the grant it replaces can never write into it.
+  for (const e of payload.credentials) {
+    if (isGrantVault(vault)) await vault.commitGrant({ entry: e, expectedGeneration: grantGeneration(await vault.get(e.id)) });
+    else await vault.put(e);
+  }
   if (json) {
     process.stdout.write(
       JSON.stringify({

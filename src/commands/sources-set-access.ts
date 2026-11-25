@@ -24,6 +24,7 @@ import { parseSourceConfig } from '../core/sources-load.ts';
 import { parseGoogleSourceConfig } from '../core/google/source-config.ts';
 import { readManagedMode } from '../core/persistence/managed-mode.ts';
 import { credentialId, openVault, type CredentialVault } from '../core/creds/vault.ts';
+import { GOOGLE_SERVICE_SCOPES } from '../core/creds/providers/google.ts';
 import type { GoogleSourceConfig } from '../core/google/types.ts';
 
 export interface SetAccessResult {
@@ -68,6 +69,12 @@ export async function setSourceAccess(engine: BrainEngine, opts: { id: string; t
   if (!entry || entry.client_ref !== 'byo') {
     throw opError('not_connected', `The credential vault holds no personal Google connection for ${before.account || `source "${id}"`}${entry ? ' (its entry is the shared hosted relay)' : ''}.`,
       `Moving "${id}" to vault needs the account's own OAuth client. Run: ${setup.join(' ')}, then run gbrain sources set-access ${id} vault again.`, { fix: connectFix });
+  }
+  const granted = new Set(entry.meta.scopes ?? []);
+  const missing = before.services.filter((s) => s in GOOGLE_SERVICE_SCOPES && !granted.has(GOOGLE_SERVICE_SCOPES[s as keyof typeof GOOGLE_SERVICE_SCOPES]));
+  if (missing.length > 0) {
+    throw opError('scope_missing', `The vault connection for ${before.account} does not grant read access to ${missing.join(', ')}, which source "${id}" syncs.`,
+      `Reconnect the account with those services so the move keeps them working: ${setup.join(' ')}, then run gbrain sources set-access ${id} vault again.`, { fix: connectFix });
   }
   if (!entry.secret.refresh_token) {
     throw opError('no_refresh_token', `The vault entry for ${before.account} has no refresh token.`,

@@ -12,7 +12,7 @@
 import { credentialId, openVault } from '../core/creds/vault.ts';
 import { GOOGLE_PROVIDER, GoogleTokenProvider } from '../core/creds/providers/google.ts';
 import { ALL_GOOGLE_SERVICES } from '../core/google/types.ts';
-import { setCliExitVerdict } from '../core/cli-force-exit.ts';
+import { currentExitCode, setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { parseServicesCsv, runGoogleConnect } from './google.ts';
 
 export async function runGoogleSetup(args: string[]): Promise<void> {
@@ -40,6 +40,9 @@ export async function runGoogleSetup(args: string[]): Promise<void> {
       connectArgs.push(args[i]);
     }
     await runGoogleConnect(connectArgs);
+    // Connect that still waits on the user (a client, a consent) leaves its exit
+    // verdict set; the old entry must not be probed or synced in the meantime.
+    if (currentExitCode() !== 0) return;
     // connect exits non-zero when it needs user input; a completed connect
     // falls through here. Re-resolve the account it landed.
     const metas = await vault.list({ provider: GOOGLE_PROVIDER });

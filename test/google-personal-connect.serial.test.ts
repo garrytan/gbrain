@@ -12,7 +12,7 @@ import { join } from 'node:path';
 
 import { runCreds } from '../src/commands/creds.ts';
 import { runGoogleConnect, runGoogleConnectImport, runGoogleDisconnect } from '../src/commands/google.ts';
-import { importBundle } from '../src/core/creds/export.ts';
+import { exportBundle, importBundle } from '../src/core/creds/export.ts';
 import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 import { CredentialError } from '../src/core/creds/errors.ts';
 import { GoogleTokenProvider, personalModeSetupUrl } from '../src/core/creds/providers/google.ts';
@@ -335,6 +335,46 @@ describe('refresh custody', () => {
     });
     const payload = importBundle(JSON.parse(readFileSync(out, 'utf-8')), 'correct-horse-battery-test');
     expect(payload.clients).toEqual([rec('alice@example.com', CLIENT_B, SECRET_B)]);
+  });
+
+  test('a fresh token stored before the read-only rule under a write-capable grant is refreshed, not handed out', async () => {
+    const h = home();
+    const stale = { ...ent('alice@example.com', { client_id: CLIENT_A, scopes: ['openid', 'email', GMAIL_RO, GMAIL_MODIFY] }) };
+    stale.secret = { ...stale.secret, access_token: 'ya29.legacy-write-capable', expiry: new Date(Date.now() + 3_600_000).toISOString() };
+    const v = seed(h, [stale], [rec('alice@example.com', CLIENT_A, SECRET_A)]);
+    tokenReply = (form) => tokenJson({ refresh_token: undefined, scope: form.get('scope') ?? '' });
+    const p = new GoogleTokenProvider(v, 'google:alice@example.com');
+    expect(await p.getAccessToken()).toBe(ACCESS);
+    expect(calls.filter((c) => c.url.endsWith('/token'))).toHaveLength(1);
+    expect(await p.getAccessToken()).toBe(ACCESS);
+    expect(calls.filter((c) => c.url.endsWith('/token'))).toHaveLength(1);
+  });
+
+  test('a reconnect that commits while a refresh waits for the lease is refreshed and written under its new generation', async () => {
+    const h = home();
+    const v = seed(h, [ent('alice@example.com', { client_id: CLIENT_A })], [rec('alice@example.com', CLIENT_A, SECRET_A)]);
+    const release = await v.leaseRefresh('google:alice@example.com', 1);
+    const refreshing = new GoogleTokenProvider(v, 'google:alice@example.com').forceRefresh();
+    const fresh = { ...ent('alice@example.com', { client_id: CLIENT_A }), secret: { refresh_token: '1//rt-reconnected', access_token: 'ya29.stale', expiry: '2000-01-01T00:00:00.000Z' } };
+    await v.commitGrant({ entry: fresh, expectedGeneration: 1 });
+    release();
+    expect(await refreshing).toBe(ACCESS);
+    const stored = (await v.get('google:alice@example.com'))!;
+    expect(stored.meta.grant_generation).toBe(2);
+    expect(stored.secret.access_token).toBe(ACCESS);
+    expect(calls.find((c) => c.url.endsWith('/token'))!.body.get('refresh_token')).toBe('1//rt-reconnected');
+  });
+
+  test('creds import gives each restored grant a fresh generation on this vault', async () => {
+    const h = home();
+    seed(h, [ent('alice@example.com', { client_id: CLIENT_A, grant_generation: 5 })], [rec('alice@example.com', CLIENT_A, SECRET_A)]);
+    const bundle = exportBundle({ credentials: [ent('alice@example.com', { client_id: CLIENT_A, grant_generation: 1 })], clients: [rec('alice@example.com', CLIENT_A, SECRET_A)] }, 'correct-horse-battery-test');
+    const file = join(h, 'in.json');
+    writeFileSync(file, JSON.stringify(bundle));
+    await withEnv({ ...env(h), GBRAIN_TEST_PASSPHRASE: 'correct-horse-battery-test' }, async () => {
+      await run(() => runCreds(['import', file, '--passphrase-env', 'GBRAIN_TEST_PASSPHRASE', '--json']));
+    });
+    expect(readVault(h).credentials['google:alice@example.com']!.meta.grant_generation).toBe(6);
   });
 
   test('an entry whose client is no longer on file is refused before any network call', async () => {

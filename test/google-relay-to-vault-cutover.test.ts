@@ -125,13 +125,13 @@ class MemoryVault implements CredentialVault {
   async deleteClient(provider: string) { return this.clients.delete(provider); }
 }
 
-function vaultWith(entry: { client_ref: 'byo' | 'hosted-relay'; refresh?: boolean } | null): MemoryVault {
+function vaultWith(entry: { client_ref: 'byo' | 'hosted-relay'; refresh?: boolean; scopes?: string[] } | null): MemoryVault {
   const v = new MemoryVault();
   if (!entry) return v;
   v.entries.set(`google:${OWNER}`, { id: `google:${OWNER}`, provider: 'google', kind: 'oauth2', client_ref: entry.client_ref,
     secret: { access_token: 'synthetic-access', ...(entry.refresh === false ? {} : { refresh_token: 'synthetic-refresh' }), expiry: new Date(Date.now() + HOUR).toISOString() },
     meta: { account: OWNER, client_id: CLIENT_ID, connected_at: new Date().toISOString(),
-      scopes: ['https://www.googleapis.com/auth/gmail.readonly'] } });
+      scopes: entry.scopes ?? ['https://www.googleapis.com/auth/gmail.readonly'] } });
   v.clients.set('google', { provider: 'google', client_id: CLIENT_ID, client_secret: 'synthetic-client-secret', created_at: new Date().toISOString() });
   return v;
 }
@@ -242,6 +242,10 @@ test('set-access refuses before any write: non-Google source, unsupported target
     const noRefresh = await refusal(setSourceAccess(engine, { id: f.id, target: 'vault', yes: true, vault: vaultWith({ client_ref: 'byo', refresh: false }) }));
     expect(noRefresh.code).toBe('no_refresh_token');
     expect(noRefresh.fix?.argv).toContain('--personal');
+    const noGmail = await refusal(setSourceAccess(engine, { id: f.id, target: 'vault', yes: true, vault: vaultWith({ client_ref: 'byo', scopes: ['https://www.googleapis.com/auth/calendar.readonly'] }) }));
+    expect(noGmail.code).toBe('scope_missing');
+    expect(noGmail.message).toContain('gmail');
+    expect(noGmail.fix?.argv).toContain('--personal');
 
     const managed = await refusal(setSourceAccess(engine, { id: f.id, target: 'vault', vault: vaultWith({ client_ref: 'byo' }) }));
     expect(managed.code).toBe('confirmation_required');

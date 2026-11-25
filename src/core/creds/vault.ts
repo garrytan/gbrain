@@ -24,7 +24,7 @@
  */
 
 import { createHash, randomBytes } from 'node:crypto';
-import { closeSync, existsSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, statSync, writeSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 import { atomicWriteFileSync } from '../atomic-write.ts';
@@ -71,6 +71,8 @@ export interface CredentialMetaFields {
   grant_generation?: number;
   /** First refresh that succeeded 7+ days after consent: proof the client is not in Testing mode. */
   personal_confirmed_at?: string;
+  /** Set when a refresh confirmed the stored access token is read-only (GST-3849); a cached token is trusted only then, or when the grant holds no write scope. */
+  access_token_read_only?: boolean;
   connected_at: string;
   last_refresh_ok_at?: string;
   /** Gmail send-as aliases — the "my addresses" identity set. */
@@ -283,24 +285,38 @@ function pidAlive(pid: number): boolean {
   }
 }
 
+/** A steal takes microseconds, so a steal guard this old was left by a stealer that died. */
+const STEAL_GUARD_STALE_MS = 5_000;
+
 /**
- * Takes over a lock whose holder is dead (or older than LOCK_STALE_MS) by
- * renaming it aside and checking the renamed file is the one judged stale; a
- * fresh lock grabbed by mistake is linked back (link never overwrites).
+ * Takes over a lock whose holder is dead (or older than LOCK_STALE_MS). Only
+ * one process steals at a time (an exclusive `.steal` guard), and it removes
+ * the lock only while the file there is still the one it judged stale, so a
+ * successor's live lock is never moved or removed. Returns false while another
+ * process holds the guard, so the caller waits instead of spinning.
  */
-function stealStaleLock(lockPath: string, judged: LockOwner | null, mtimeMs: number): void {
-  const aside = `${lockPath}.stale.${process.pid}.${randomBytes(4).toString('hex')}`;
+function stealStaleLock(lockPath: string, judged: LockOwner | null, mtimeMs: number): boolean {
+  const guard = `${lockPath}.steal`;
   try {
-    renameSync(lockPath, aside);
+    closeSync(openSync(guard, 'wx', 0o600));
   } catch {
-    return;
+    try {
+      if (Date.now() - statSync(guard).mtimeMs > STEAL_GUARD_STALE_MS) rmSync(guard, { force: true });
+    } catch { /* silent-read-ok: the guard was released while we looked; the caller retries */ }
+    return false;
   }
-  const got = readLockOwner(aside);
-  const same = judged ? got?.nonce === judged.nonce : got === null && Math.abs(statSync(aside).mtimeMs - mtimeMs) < 1;
-  if (!same) {
-    try { linkSync(aside, lockPath); } catch { /* a third writer holds the path now */ }
+  try {
+    const got = readLockOwner(lockPath);
+    let same = false;
+    if (judged) same = got?.nonce === judged.nonce;
+    else {
+      try { same = got === null && Math.abs(statSync(lockPath).mtimeMs - mtimeMs) < 1; } catch { /* silent-read-ok: the lock is already gone; nothing to remove */ }
+    }
+    if (same) rmSync(lockPath, { force: true });
+    return true;
+  } finally {
+    rmSync(guard, { force: true });
   }
-  rmSync(aside, { force: true });
 }
 
 /**
@@ -327,8 +343,7 @@ export function withVaultLock<T>(vaultPath: string, fn: () => T, waitMs: number 
       const owner = readLockOwner(lockPath);
       const ownerHere = owner !== null && owner.pid !== process.pid;
       if ((ownerHere && !pidAlive(owner.pid)) || Date.now() - mtimeMs > LOCK_STALE_MS) {
-        stealStaleLock(lockPath, owner, mtimeMs);
-        continue;
+        if (stealStaleLock(lockPath, owner, mtimeMs)) continue;
       }
       if (Date.now() > deadline) throw new CredentialError('vault_lock_busy', ` (${lockPath} held${owner ? ` by pid ${owner.pid}` : ''})`);
       const until = Date.now() + 25;
