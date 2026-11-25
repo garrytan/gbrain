@@ -10,7 +10,7 @@ tutorial are a different workflow, not follow-up steps for that import.
 
 This tutorial picks up where the [personal brain tutorial](personal-brain.md) leaves off. You already have a working agent (OpenClaw on Render, talking to you on Telegram, with GBrain as memory and Supabase storing embeddings). Now you want your whole team to use it as shared institutional memory, with each person seeing only what they're allowed to see.
 
-**Time:** about 90 more minutes on top of the personal-brain install.
+**Time:** about 90 more minutes of hands-on work on top of the personal-brain install. The commands themselves run in seconds; the time goes to the steps you and each teammate take.
 **Cost:** under $100 a month sustained for a 25-person company.
 
 > **Want a team brain without operating one?** [gbrain.io](https://gbrain.io/?ref=company-brain) is hosted GBrain built for exactly this: one brain the whole team prompts together, accounts connected once with a permission level for each AI, and pricing per workspace rather than per person. Keep reading to deploy and run it yourself.

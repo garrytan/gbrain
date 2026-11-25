@@ -111,8 +111,8 @@ const NOT_READ_BEHAVIOR = new Set([
   // Rust engine addon path: only the addon loader reads it, and no read path calls the loader yet.
   // Move it to READ_BEHAVIOR_ENV when a brain can be served by the Rust engine.
   'GBRAIN_RUST_ENGINE_ADDON',
-  // Set by the shadow supervisor for its own child process so the child never shadows; no caller exports it and no read reads it.
-  'GBRAIN_SHADOW_CHILD',
+  // Set by the shadow supervisor for its own child process so the child never shadows (and, as the session nonce, binds the child's asks to it); no caller exports either and no read reads them.
+  'GBRAIN_SHADOW_CHILD', 'GBRAIN_SHADOW_SESSION',
   // Shadow capture's kill switch only stops recording; an answer never changes.
   'GBRAIN_SHADOW_CAPTURE',
   'GBRAIN_SCHEMA_AUDIT_VERBOSE', 'GBRAIN_SCHEMA_LOCK_TIMEOUT_SECONDS', 'GBRAIN_SCHEMA_PACK_MAX_BYTES', 'GBRAIN_SCHEMA_PACK_WARN_BYTES',
