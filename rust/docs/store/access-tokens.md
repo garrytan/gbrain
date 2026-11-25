@@ -11,7 +11,7 @@ same members. Only `readLiveAccessToken` (the member-key setup compares it to th
 store never logs one. The member binding columns (`member_id`, `may_act_for`, the four attest columns and
 `reads_unscoped`) are read and written by the credential binding members below. The grant edits of `gbrain auth rescope
 --token` (`--sources`, `--operations`, `--takes-holders`, `--private-*`), `--attest-sources` and `--migrate-legacy` use the grant write and binding members
-below, so `gbrain auth rescope --token` marks the source on a Rust brain as on PGLite and Postgres, for the bare-name form too (`resolveRescopeTarget` reads through `readLiveAccessToken` and `readLiveOauthClients`).
+below, so `gbrain auth rescope --token` marks the source on a Rust brain as on PGLite and Postgres, for the bare-name form too (`resolveRescopeTarget` reads through `readAccessCredentials` and `readLiveOauthClients`).
 
 | Member | Returns |
 | --- | --- |
@@ -63,7 +63,7 @@ engine by `src/commands/serve-http.ts`) and `validateToken` in `src/mcp/http-tra
 `runRescope` (`src/commands/auth.ts`) awaits `rescopeLegacyToken`, then separately calls `bindCredential` for `--member`
 and `--attest-*`. The active-source check uses `filterUnarchivedSourceIds`; the scope-source check reads the token's own
 `attest_sources` through `readCredentialBindingForUpdate`. `migrateLegacyTokens` (`auth rescope --migrate-legacy`) calls `lockLegacyAccessTokens`.
-The bare-name form's target lookup (`resolveRescopeTarget`) calls `readLiveAccessToken` and `readLiveOauthClients`.
+The bare-name form's target lookup (`resolveRescopeTarget`) calls `readAccessCredentials` (the token's id and name only, so it also answers on a brain older than v282, which has no `access_tokens.member_id`) and `readLiveOauthClients`.
 
 ## Member binding
 

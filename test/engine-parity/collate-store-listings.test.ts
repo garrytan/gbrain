@@ -26,7 +26,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { clientsReferencingSource } from '../../src/core/destructive-guard.ts';
 import { applyRatings, feedbackStatus, getRetrievalEvent, insertRetrievalEvents } from '../../src/core/feedback/store.ts';
@@ -49,11 +49,11 @@ import { ownerCredentials } from '../../src/core/guests/owner-credentials.ts';
 import { runGuests } from '../../src/commands/guests.ts';
 import { GBrainOAuthProvider } from '../../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
-import { createSource, parityArms, type ParityBackend } from './harness.ts';
+import { createSource, parityArms, resetArm, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { BYTE_IDS, BYTE_SLUGS, byteOrder, MIXED_IDS, MIXED_SLUGS } from '../helpers/byte-order.ts';
 
-const { parityTest } = parityArms(testBackends());
+const { parityTest, arms } = parityArms(testBackends());
 
 /** Source ids (lower case, digits and `-` only): en_US sorts them `a0, ab, a-z`; bytes put `a-z` first. */
 const MIXED_SOURCES = ['ab', 'a0', 'a-z'];
@@ -283,23 +283,6 @@ describe('store listings come out by byte', () => {
       return names;
     });
 
-  // The command checks the guest source with one read before it lists any credential; a source that is not one stops there on every engine.
-  parityTest('guests grant-owner-clients names a source that is not a guest source and exits 2 on every engine', { methods: ['readGuestSourceRow'] }, async (engine) => {
-    const printed: string[] = [];
-    const [error, exit] = [console.error, process.exit];
-    console.error = (...parts: unknown[]) => { printed.push(parts.join(' ')); };
-    process.exit = ((code?: number) => { throw Object.assign(new Error('EXIT'), { exitCode: code }); }) as typeof process.exit;
-    try {
-      await runGuests(engine, ['grant-owner-clients', '--source', 'not-guest']);
-      return { exitCode: null, printed };
-    } catch (e) {
-      if ((e as { code?: unknown }).code === 'engine_capability_missing') throw e;
-      const out = { exitCode: (e as { exitCode?: number }).exitCode ?? String(e), printed };
-      expect(out).toEqual({ exitCode: 2, printed: ['Source "not-guest" is not a guest source. Set one up with: gbrain guests init --source not-guest'] });
-      return out;
-    } finally { [console.error, process.exit] = [error, exit]; }
-  });
-
   parityTest('readCandidateRecords lists candidates by byte of fingerprint', { methods: ['readSourceState', 'upsertFenceCandidatePart', 'listFenceCandidateRecords'] }, async (engine, backend) => {
     await createSource(engine, backend, 'census-src');
     const incarnation = String((await engine.readSourceState('census-src'))!.incarnation);
@@ -422,4 +405,49 @@ describe('store listings come out by byte', () => {
     }
     expect((await inspectSharedMemberMigration(engine, 's', '1')).map(m => m.adapter)).toEqual([...BYTE_SLUGS]);
   });
+});
+
+// Row 32k-3: `gbrain guests grant-owner-clients` checks that the source is a guest source with raw SQL (`SELECT 1 FROM guest_sources`,
+// src/commands/guests.ts), before it lists any credential. A parity case counts a typed refusal as a pass, so this reads each arm itself:
+// PGLite and Postgres name a source that is not a guest source and exit 2; Rust refuses loudly with engine_capability_missing, answers
+// nothing (a wrong "not a guest source" would send the operator to `guests init`), and writes nothing.
+describe('guests grant-owner-clients checks the guest source with raw SQL (row 32m-3)', () => {
+  const RAW_SQL = "This brain's engine does not support executeRaw yet (it needs the raw_sql capability), so nothing ran.";
+  const NOT_GUEST = 'Source "not-guest" is not a guest source. Set one up with: gbrain guests init --source not-guest';
+
+  test('PGLite and Postgres exit 2 for a source that is not a guest source; Rust refuses engine_capability_missing and writes nothing', async () => {
+    const outcomes: unknown[] = [];
+    for (const arm of arms()) {
+      await resetArm(arm);
+      const { engine } = arm;
+      // An owner with a client, and --yes: were the existence check to pass, the command would go on to grant, so a changed client row is a write.
+      await addMember(engine, 'owner-example');
+      await setOwner(engine, 'owner-example');
+      await engine.insertOauthClient({ client_id: 'c-owned', client_name: 'owned', client_secret_hash: 'secret-hash-value', member_id: 'owner-example' });
+      const before = JSON.stringify(await engine.listOauthClients());
+      const printed: string[] = [];
+      const exits: Array<number | undefined> = [];
+      const [error, log, exit] = [console.error, console.log, process.exit];
+      console.error = (...parts: unknown[]) => { printed.push(parts.join(' ')); };
+      console.log = (...parts: unknown[]) => { printed.push(parts.join(' ')); };
+      process.exit = ((code?: number) => { exits.push(code); throw Object.assign(new Error('EXIT'), { exitCode: code }); }) as typeof process.exit;
+      let thrown: { code?: unknown; exitCode?: unknown; message: string } | null = null;
+      try {
+        await runGuests(engine, ['grant-owner-clients', '--source', 'not-guest', '--yes']);
+      } catch (e) { thrown = e as { code?: unknown; exitCode?: unknown; message: string }; }
+      finally { [console.error, console.log, process.exit] = [error, log, exit]; }
+      // A call that returns normally is its own outcome, so it fails the comparison below on every arm.
+      outcomes.push({
+        backend: arm.backend,
+        returned: thrown === null,
+        code: thrown?.code ?? null,
+        message: thrown?.message ?? null,
+        exits, printed,
+        unchanged: JSON.stringify(await engine.listOauthClients()) === before,
+      });
+    }
+    expect(outcomes).toEqual(arms().map(arm => arm.backend === 'rust'
+      ? { backend: 'rust', returned: false, code: 'engine_capability_missing', message: RAW_SQL, exits: [], printed: [], unchanged: true }
+      : { backend: arm.backend, returned: false, code: null, message: 'EXIT', exits: [2], printed: [NOT_GUEST], unchanged: true }));
+  }, 60_000);
 });

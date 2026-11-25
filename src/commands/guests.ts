@@ -6,7 +6,7 @@
  */
 import type { BrainEngine } from '../core/engine.ts';
 import { isValidSourceId } from '../core/source-id.ts';
-import { GUEST_TRUST_CEILING, GUEST_WRITER_FORMAT, GuestSourceHoldsPages, initGuestSource, isGuestWriter, planGuestSource, readGuestSource, unregisteredClientWriters } from '../core/guests/sources.ts';
+import { GUEST_TRUST_CEILING, GUEST_WRITER_FORMAT, GuestSourceHoldsPages, initGuestSource, isGuestWriter, planGuestSource, unregisteredClientWriters } from '../core/guests/sources.ts';
 import { grantOwnerCredentials, ownerCredentials } from '../core/guests/owner-credentials.ts';
 import { exitCliError } from '../cli/cli-error.ts';
 import { loadConfig } from '../core/config.ts';
@@ -137,7 +137,7 @@ async function runGrantOwnerClients(engine: BrainEngine, rest: string[]): Promis
   const { flags, on, positional } = parseFlags(rest, ['--source'], ['--yes', '--json']);
   if (positional.length) usageError(`Unknown or incomplete argument: ${positional[0]}`);
   const sourceId = checkedSource(flags['--source']?.at(-1) ?? 'guests');
-  const guest = await readGuestSource(engine, sourceId);
+  const [guest] = await engine.executeRaw('SELECT 1 FROM guest_sources WHERE source_id = $1', [sourceId]);
   if (!guest) {
     console.error(`Source "${sourceId}" is not a guest source. Set one up with: gbrain guests init --source ${sourceId}`);
     process.exit(2);

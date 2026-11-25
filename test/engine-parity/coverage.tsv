@@ -1943,7 +1943,7 @@ readSourceIncarnation	cli_reads_import	yes	18	no	yes	yes	serves
 readSyncDispatchRow	cli_reads_import	yes	1	no	yes	yes	serves
 readRetainedSources	cli_reads_import	yes	1	no	yes	yes	serves
 hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves
-readGuestSourceRow	cli_reads_import	yes	2	no	yes	yes	serves
+readGuestSourceRow	cli_reads_import	yes	1	no	yes	yes	serves
 listGuestSourceIds	cli_reads_import	yes	1	no	yes	yes	serves
 hasGuestSource	cli_reads_import	yes	1	no	yes	yes	serves
 readPageTrustRows	cli_reads_import	yes	20	no	yes	yes	serves
@@ -2046,7 +2046,7 @@ readAccessPolicyMarks	write_misc	yes	1	no	yes	yes	serves
 replaceAccessInvalidCoverage	write_misc	yes	1	no	yes	yes	serves
 listUnboundTokenNames	write_misc	yes	2	no	yes	yes	serves
 listUnboundClientIds	write_misc	yes	2	no	yes	yes	serves
-readLiveAccessToken	write_misc	yes	3	no	yes	yes	serves
+readLiveAccessToken	write_misc	yes	2	no	yes	yes	serves
 filterUnarchivedSourceIds	write_misc	yes	3	no	yes	yes	serves
 recordTokenSetupReads	write_misc	yes	2	no	yes	yes	serves
 listKeysReadingSource	write_misc	yes	2	no	yes	yes	serves
@@ -2060,7 +2060,7 @@ listAccessPolicySources	write_misc	yes	1	no	yes	yes	serves
 countPeopleFolderPages	write_misc	yes	1	no	yes	yes	serves
 countOpenPages	write_misc	yes	4	no	yes	yes	serves
 readAccessMembers	write_misc	yes	17	no	yes	yes	serves
-readAccessCredentials	write_misc	yes	5	no	yes	yes	serves
+readAccessCredentials	write_misc	yes	6	no	yes	yes	serves
 listOwnerCredentialRows	write_misc	yes	3	no	yes	yes	serves
 insertPinnedQuestion	write_misc	yes	1	no	yes	yes	serves
 readPinnedQuestion	write_misc	no	0	no	-	-	-

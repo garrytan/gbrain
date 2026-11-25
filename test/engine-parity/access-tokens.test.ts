@@ -308,7 +308,7 @@ describe('engine parity: access_tokens members', () => {
 
   // gbrain auth rescope <name>: the bare name is a token name, an OAuth client id or a client name; both kinds matching refuses.
   parityTest('resolveRescopeTarget names a token, a client by id or by name, and refuses a name that matches both, two clients, or nothing',
-    { methods: ['insertAccessToken', 'insertOauthClient', 'revokeAccessToken', 'readLiveAccessToken', 'readLiveOauthClients'] }, async (engine) => {
+    { methods: ['insertAccessToken', 'insertOauthClient', 'revokeAccessToken', 'readAccessCredentials', 'readLiveOauthClients'] }, async (engine) => {
       const client = (id: string, name: string, extra: Record<string, unknown> = {}) => engine.insertOauthClient({ client_id: id, client_name: name, ...extra });
       await insert(engine, 'tok-only', 'h-rt-only');
       await client('client-a', 'Client A');

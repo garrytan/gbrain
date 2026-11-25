@@ -466,16 +466,17 @@ export function touchTokenLastUsed(sql: SqlQuery | BrainEngine, row: Record<stri
 /** A bare `auth rescope <name>`: a token name, an OAuth client id, or a client name. Both kinds matching refuses. */
 export async function resolveRescopeTarget(engine: BrainEngine, name: string): Promise<{ kind: 'token' } | { kind: 'client'; clientId: string }> {
   // The typed reads (not executeRaw), so a store with no raw SQL (the Rust engine) answers; the id-or-name filter is exact text equality.
-  const token = await engine.readLiveAccessToken(name);
+  // The token read selects only the token's id and name: readLiveAccessToken also selects member_id (v282), which a brain older than v282 lacks.
+  const tokens = await engine.readAccessCredentials({ tokenName: name });
   const clients = (await engine.readLiveOauthClients()).filter(c => c.client_id === name || c.client_name === name);
-  if (token && clients.length) {
+  if (tokens.length && clients.length) {
     throw new GrantError('invalid_grant', `"${name}" names both a legacy token and an OAuth client; pass --token ${name} or --client ${clients[0].client_id}`, ['rescope_target_ambiguous']);
   }
   if (clients.length > 1) {
     throw new GrantError('invalid_grant', `"${name}" names ${clients.length} OAuth clients (${clients.map(c => c.client_id).join(', ')}); pass --client <client-id> from gbrain auth clients`, ['rescope_target_ambiguous']);
   }
   if (clients.length === 1) return { kind: 'client', clientId: clients[0].client_id };
-  if (token) return { kind: 'token' };
+  if (tokens.length) return { kind: 'token' };
   throw new GrantError('invalid_grant', `No active token or OAuth client named "${name}" (see gbrain auth list and gbrain auth clients)`);
 }
 
