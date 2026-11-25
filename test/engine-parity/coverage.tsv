@@ -132,10 +132,10 @@ listCatalogRelations	lifecycle	yes	1	no	yes	yes	serves
 readCatalogSchemaVersion	lifecycle	yes	1	no	yes	yes	serves
 listCatalogForeignKeys	lifecycle	yes	1	no	yes	yes	serves
 getPage	pages	yes	246	yes	yes	yes	serves
-readPageSnapshot	pages	yes	93	no	yes	yes	serves
+readPageSnapshot	pages	yes	94	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	3	no	yes	yes	serves
 lockPageKeys	pages	yes	15	no	yes	yes	serves
-putPage	pages	yes	1254	yes	yes	yes	serves
+putPage	pages	yes	1255	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	42	yes	yes	yes	serves
