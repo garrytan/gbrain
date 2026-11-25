@@ -166,8 +166,28 @@ pub struct CommitRecord {
     pub ops: Vec<(Vec<u8>, LogOp)>,
 }
 
+/// One timeline of a log's history (`LogMeta::lineage`): a promotion starts a new one at the
+/// position the promoted follower had reached.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Timeline {
+    /// A UUID v7 minted at the promotion.
+    pub id: String,
+    /// The last commit the new timeline shares with the one before it.
+    pub from: CommitPosition,
+}
+
+/// True when a follower whose applied history is `mine`, at `cursor`, may continue from a log
+/// whose history is `theirs`: `mine` is a prefix of `theirs`, and every newer timeline starts at
+/// or after `cursor`, so the history up to the cursor is common. Otherwise the follower holds
+/// commits the log does not, and must install a snapshot.
+pub fn lineage_continues(mine: &[Timeline], cursor: CommitPosition, theirs: &[Timeline]) -> bool {
+    theirs.len() >= mine.len()
+        && theirs[..mine.len()] == *mine
+        && theirs[mine.len()..].iter().all(|t| t.from >= cursor)
+}
+
 /// The log's meta record (key `2`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LogMeta {
     /// The activation commit. Every commit after it has a record (until retention trims it).
     pub since: CommitPosition,
@@ -175,6 +195,10 @@ pub struct LogMeta {
     pub newest: CommitPosition,
     /// The newest commit whose record retention removed, if any.
     pub trimmed_through: Option<CommitPosition>,
+    /// The timelines this log went through after its first one, oldest first (`Timeline`). Empty,
+    /// and then not written, on a log no promotion ever continued.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lineage: Vec<Timeline>,
 }
 
 /// One page of the log, read from one snapshot (I-4).
@@ -188,6 +212,8 @@ pub struct LogPage {
     /// True when the cursor cannot be continued from the log: it is older than `since` or than what
     /// retention trimmed, or past the newest commit. The reader must install a snapshot first.
     pub snapshot_required: bool,
+    /// The log's history (`LogMeta::lineage`): a follower checks it with `lineage_continues`.
+    pub lineage: Vec<Timeline>,
 }
 
 /// The key of the meta record.
@@ -264,6 +290,27 @@ pub fn encode_record<'a>(
     }
     out[count_at..count_at + 4].copy_from_slice(&count.to_be_bytes());
     out
+}
+
+/// Encodes a decoded record back to its value: the encoding is canonical (keys in order, one op
+/// each), so this gives the bytes the primary stored.
+pub fn encode_commit_record(record: &CommitRecord) -> Vec<u8> {
+    encode_record(
+        &record.origin,
+        record.commit_time,
+        &record.write_ids,
+        record.ops.iter().map(|(k, op)| {
+            (
+                k.as_slice(),
+                match op {
+                    LogOp::Put(v) => LogOpRef::Put(v),
+                    LogOp::Delete => LogOpRef::Delete,
+                    LogOp::AddI64(d) => LogOpRef::AddI64(*d),
+                    LogOp::RaiseCounter(m) => LogOpRef::RaiseCounter(*m),
+                },
+            )
+        }),
+    )
 }
 
 /// A borrowed op for the encoder.
@@ -444,6 +491,7 @@ pub fn read_commit_log(
         oldest_retained,
         newest: Some(meta.newest),
         snapshot_required: stale,
+        lineage: meta.lineage.clone(),
     };
     if stale || max == 0 || after >= meta.newest {
         return Ok(page);
@@ -496,6 +544,7 @@ pub fn write_activation(tx: &mut dyn KvWrite, since: CommitPosition) -> Result<(
         since,
         newest: since,
         trimmed_through: None,
+        lineage: Vec::new(),
     };
     tx.put(&meta_key(), &serde_json::to_vec(&meta)?)
 }
@@ -709,6 +758,7 @@ impl LogState {
             since: self.meta.since,
             newest,
             trimmed_through,
+            lineage: self.meta.lineage.clone(),
         };
         tx.put(&meta_key(), &serde_json::to_vec(&meta)?)?;
         Ok(Append {
@@ -733,6 +783,16 @@ impl LogState {
             }
         }
         self.meta = append.meta;
+    }
+
+    /// The meta record as this state holds it.
+    pub(crate) fn meta(&self) -> &LogMeta {
+        &self.meta
+    }
+
+    /// Sets the lineage the next `write` records (a follower adopting its primary's history).
+    pub(crate) fn set_lineage(&mut self, lineage: Vec<Timeline>) {
+        self.meta.lineage = lineage;
     }
 
     /// The origin a record carries for `meta`.
@@ -914,6 +974,28 @@ mod tests {
                 (b"d".to_vec(), LogOp::RaiseCounter(9)),
             ]
         );
+    }
+
+    #[test]
+    fn a_decoded_record_encodes_back_to_its_bytes() {
+        let (k, v) = sample();
+        assert_eq!(encode_commit_record(&decode_record(&k, &v).unwrap()), v);
+    }
+
+    #[test]
+    fn a_follower_continues_only_on_a_common_history() {
+        let t = |id: &str, s: u64| Timeline {
+            id: id.into(),
+            from: CommitPosition::new(s, 0),
+        };
+        let at = |s: u64| CommitPosition::new(s, 0);
+        assert!(lineage_continues(&[], at(5), &[]));
+        assert!(lineage_continues(&[], at(5), &[t("a", 5)]), "forked at the cursor");
+        assert!(lineage_continues(&[], at(5), &[t("a", 7)]), "forked after the cursor");
+        assert!(!lineage_continues(&[], at(9), &[t("a", 7)]), "the follower holds old-timeline commits");
+        assert!(lineage_continues(&[t("a", 7)], at(9), &[t("a", 7), t("b", 9)]));
+        assert!(!lineage_continues(&[t("a", 7)], at(9), &[t("x", 7)]), "another history");
+        assert!(!lineage_continues(&[t("a", 7)], at(9), &[]), "the follower is on a newer timeline");
     }
 
     #[test]

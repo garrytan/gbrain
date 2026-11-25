@@ -22,6 +22,7 @@ pub mod chronicle_reads;
 pub mod chunks;
 pub mod cli_reads;
 pub mod commit_log;
+pub mod follower;
 pub mod config;
 pub mod env;
 pub mod error;
