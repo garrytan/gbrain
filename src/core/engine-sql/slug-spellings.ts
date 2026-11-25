@@ -21,11 +21,15 @@ export interface StoredSpellingScope { sourceId?: string; sourceIds?: readonly s
  * `idx_pages_spelling_key`. When it is null or absent the unindexed ASCII-key scan (`SCAN_KEY_SQL = key`) answers instead; the
  * caller keeps only the rows that `normalizeSlug` maps to its slug, so both reads give it the same set.
  */
-export async function readStoredSlugSpellings(exec: LegacyUnscopedRead, key: string, scope: StoredSpellingScope, after: string, keys?: readonly string[] | null): Promise<string[]> {
+export function storedSpellingsStatement(key: string, scope: StoredSpellingScope, after: string, keys?: readonly string[] | null): { text: string; params: unknown[] } {
   const scoped = scope.sourceIds ? sqlFragment`AND source_id = ANY(${[...scope.sourceIds]}::text[])`
     : scope.sourceId !== undefined ? sqlFragment`AND source_id = ${scope.sourceId}` : sqlFragment``;
   const match = keys ? sqlFragment`${trustedSql(SPELLING_KEY_SQL)} = ANY(${[...keys]}::text[])` : sqlFragment`${trustedSql(SCAN_KEY_SQL)} = ${key}`;
-  const { text, params } = renderFragment(sqlFragment`SELECT DISTINCT slug COLLATE "C" AS s FROM pages WHERE ${match} ${scoped} AND slug COLLATE "C" > ${after} ORDER BY s LIMIT 200`);
+  return renderFragment(sqlFragment`SELECT DISTINCT slug COLLATE "C" AS s FROM pages WHERE ${match} ${scoped} AND slug COLLATE "C" > ${after} ORDER BY s LIMIT 200`);
+}
+
+export async function readStoredSlugSpellings(exec: LegacyUnscopedRead, key: string, scope: StoredSpellingScope, after: string, keys?: readonly string[] | null): Promise<string[]> {
+  const { text, params } = storedSpellingsStatement(key, scope, after, keys);
   const rows = await exec.executeRaw<{ s: string }>(text, params);
   return rows.map(({ s }) => s);
 }
