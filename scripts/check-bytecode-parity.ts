@@ -69,9 +69,9 @@ export function NORMALIZE(text: string, port: number): string {
   return mask(text, port).text;
 }
 
-const close = (v: number, w: number | undefined): boolean => w !== undefined && Math.abs(v - w) <= 1e-5 * Math.max(1, Math.abs(v));
+const close = (v: number, w: number | undefined): boolean => w !== undefined && Math.abs(v - w) <= 1e-5;
 
-/** The same text once masked, and every long decimal within 1e-5 of its twin (relative above 1): the 5 decimals the check always held. */
+/** The same text once masked, and every long decimal within 1e-5 of its twin: the whole part and 5 decimals the check always held. */
 export function sameOutput(a: string, b: string, port: number): boolean {
   const [x, y] = [mask(a, port), mask(b, port)];
   return x.text === y.text && x.decimals.every((v, i) => close(v, y.decimals[i]));

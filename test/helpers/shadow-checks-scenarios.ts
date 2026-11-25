@@ -1098,7 +1098,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
         await admin.executeRaw(`ALTER SYSTEM SET synchronous_standby_names = 'gbrain_test_never_connects'`);
         await admin.executeRaw(`SELECT pg_reload_conf()`);
         const reloaded = async (): Promise<boolean> => (await admin.executeRaw<{ s: string }>(`SELECT current_setting('synchronous_standby_names') AS s`))[0]!.s === 'gbrain_test_never_connects';
-        for (const end = Date.now() + 30_000; !(await reloaded()) && Date.now() < end;) await new Promise((r) => setTimeout(r, 10)); // the server has passed the new settings on
+        for (const end = Date.now() + 15_000; !(await reloaded()) && Date.now() < end;) await new Promise((r) => setTimeout(r, 10)); // the server has passed the new settings on
         await admin.executeRaw(`CHECKPOINT`); // the checkpointer takes the reload before this checkpoint, and it is the one that tells committing sessions a standby is named
         let writerPid = 0;
         let settled = false;
@@ -1109,7 +1109,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
         });
         writer.then(() => { settled = true; }, () => { settled = true; });
         let held = false;
-        for (const end = Date.now() + 30_000; !held && !settled && Date.now() < end;) {
+        for (const end = Date.now() + 15_000; !held && !settled && Date.now() < end;) {
           held = writerPid > 0 && (await admin.executeRaw<{ w: string | null }>(`SELECT wait_event AS w FROM pg_stat_activity WHERE pid = $1`, [writerPid]))[0]?.w === 'SyncRep';
           if (!held) await new Promise((r) => setTimeout(r, 10));
         }

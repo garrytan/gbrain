@@ -50,6 +50,7 @@ describe('bytecode release build', () => {
     expect(stepProblems(query, out('0.9861199999943636', '1.2999997336422118'), out('0.9861200005943636', '1.29999988711424'), 1)).toEqual([]);
     const [plain, bytecode] = [out('0.9861200055943636', '1.2999997336422118'), out('0.9871200055943636', '1.29999988711424')];
     expect(stepProblems(query, plain, bytecode, 1)).toEqual(['stdout differs']);
+    expect(stepProblems(query, out('123456.1234567', '1.2999997336422118'), out('123457.0000000', '1.2999997336422118'), 1)).toEqual(['stdout differs']);
     expect(boundedDiff(plain.stdout, bytecode.stdout, 1).split('\n')).toEqual([
       '--- plain', '+++ bytecode', '@@ -1,4 +1,4 @@', ' [{"slug":"notes/alpha",', '-"score": 0.9861200055943636,', '+"score": 0.9871200055943636,', ' "cosine": 0.19518001959264342,', ' "recency_boost": 1.2999997336422118}]',
     ]);
