@@ -46,6 +46,28 @@ describe('record validation', () => {
     expect(accountNumberFields({ title: 'ok', notes: { a: 'routing 021000021 acct 123456789012' } })).toEqual(['notes.a']);
   });
 
+  test('a number used as a key is caught and never echoed in the field path (follow-up outside#4)', () => {
+    for (const fm of [{ '4111111111111111': 'card' }, { notes: { '4111 1111 1111 1111': { last: 'x' } } }, { notes: { '000123456789': 'acct' } }]) {
+      const fields = accountNumberFields(fm);
+      expect(fields.length).toBe(1);
+      expect(fields.join(' ')).not.toMatch(/\d{4}/);
+    }
+  });
+
+  test('date ranges and plain bank or card names are not account numbers (follow-up adversarial-native#4)', () => {
+    for (const range of ['2026-12-03 - 2027-01-03', '2026-12-04 - 2026-12-18', '2026-12-08 - 2026-12-22', '2026-12-08 - 2027-01-08']) {
+      expect(looksLikeAccountNumber(range)).toBe(false);
+      expect(looksLikeAccountNumber(`Trip ${range}, booked`)).toBe(false);
+    }
+    expect(accountNumberFields({ bank: 'Acme Credit Union', card: 'visa' })).toEqual([]);
+    expect(accountNumberFields({ card_number: '1234', iban: 'x' })).toEqual(['card_number', 'iban']);
+  });
+
+  test('keys that name the number still count, and a date inside a longer number does not hide it (follow-up final review)', () => {
+    for (const key of ['account', 'acct', 'iban_number', 'iban_no', 'routing_id', 'routing']) expect(accountNumberFields({ [key]: '021000021' })).toEqual([key]);
+    expect(looksLikeAccountNumber('Card 4111-1111-2026-12-04 on file')).toBe(true);
+  });
+
   test('a record with a bad field reports an issue at read time instead of throwing', () => {
     const read = readHouseholdRecord({ slug: 'household/x', source_id: 'default', frontmatter: { type: 'household', household_schema: 1, kind: 'bill', due: 'soon' } });
     expect(read.record).toBeNull();

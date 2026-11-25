@@ -44,7 +44,6 @@ const SELF = 'scripts/check-orphan-modules.mjs';
 const ALLOWLIST = new Map([
   ['src/core/facts/claim-match-sql.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
   ['src/core/facts/purge-plan-statements.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
-  ['src/core/peer-cred.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
   ['src/core/search/saved-fact-collapse.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
   ['src/core/engine-sql/access-credentials.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
   ['src/core/engine-sql/access-members.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
