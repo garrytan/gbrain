@@ -135,7 +135,36 @@ export async function receiptKeepsDetail(engine: BrainEngine): Promise<void> {
   }
 }
 
-/** The single-fact writer applies the same predicate (fail-closed when `remote` is unset); a purge never supplies the object. */
+/**
+ * A failed request whose stored detail names a withdrawal (a refusal stored before the no-detail rule, or a managed
+ * extraction's locked check): a remote reader's get_write_request and the remote requester's replay drop the object;
+ * a trusted local reader still sees it.
+ */
+export async function storedDetailStaysLocal(engine: BrainEngine): Promise<void> {
+  await seedPages(engine);
+  const withdrawn = { at: '2026-10-12T00:00:00.000Z', subject: 'crm/hidden-co', visibility: 'world' };
+  const fail = (requestId: string) => engine.executeRaw(`UPDATE persistence_requests SET state='failed', error_code='invalid_params',
+      error_message=$2, error_detail=$3::text::jsonb WHERE request_id=$1`,
+    [requestId, FACT_WITHDRAWN_MESSAGE, JSON.stringify({ origin: 'withdrawal', withdrawn: { version: 1, ...withdrawn } })]);
+  const remoteId = '2c4e6a8b-1d3f-4a5b-8c7d-9e0f1a2b3c4d';
+  expect((await remember(engine, 'remote', { request_id: remoteId })).isError).toBe(false);
+  await fail(remoteId);
+  const remote = await call(engine, 'get_write_request', { request_id: remoteId });
+  expect(remote.body).toMatchObject({ request_id: remoteId, state: 'failed', write_error_message: FACT_WITHDRAWN_MESSAGE });
+  expect(remote.body.withdrawn).toBeUndefined();
+  const replay = await remember(engine, 'remote', { request_id: remoteId });
+  expect(replay.isError).toBe(true);
+  expect(replay.body.message).toBe(FACT_WITHDRAWN_MESSAGE);
+  expect(replay.body.withdrawn).toBeUndefined();
+  // The same stored detail on a trusted local requester's own request: its receipt and replay keep the object.
+  const localId = '3d5f7b9c-2e4a-4b6c-9d8e-0f1a2b3c4d5e';
+  expect((await remember(engine, 'local', { request_id: localId, fact: 'Acme Example hired a new auditor.' })).isError).toBe(false);
+  await fail(localId);
+  expect((await call(engine, 'get_write_request', { request_id: localId }, 'local')).body.withdrawn).toEqual(withdrawn);
+  expect((await remember(engine, 'local', { request_id: localId, fact: 'Acme Example hired a new auditor.' })).body.withdrawn).toEqual(withdrawn);
+}
+
+/** The single-fact writer applies the same rule (a caller with `remote` unset reads as remote); a purge never supplies the object. */
 export async function singleWriterSameRule(engine: BrainEngine): Promise<void> {
   await seedPages(engine);
   const [row] = await engine.executeRaw<{ id: number }>(`INSERT INTO facts(source_id,fact,kind,visibility,entity_slug,source_markdown_slug,source,confidence,valid_from)

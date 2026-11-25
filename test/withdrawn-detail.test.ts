@@ -9,7 +9,7 @@ import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { LEGACY_EMBEDDING_CONFIG } from './helpers/legacy-embedding-config.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
-import { detailOnEverySurface, hiddenBackingOmitsDetail, mostSpecificSubjectFirst, receiptKeepsDetail,
+import { detailOnEverySurface, hiddenBackingOmitsDetail, mostSpecificSubjectFirst, receiptKeepsDetail, storedDetailStaysLocal,
   singleWriterSameRule } from './helpers/withdrawn-detail-scenarios.ts';
 
 let engine: PGLiteEngine;
@@ -31,5 +31,6 @@ describe('fact_withdrawn refusals carry the withdrawal', () => {
   test('the most specific subject first, then the newest', () => mostSpecificSubjectFirst(engine));
   test('a remote refusal is byte-identical whether the withdrawn rows are hidden, visible or absent', () => hiddenBackingOmitsDetail(engine));
   test('a remote failed receipt carries no object in get_write_request or replay', () => receiptKeepsDetail(engine));
+  test('a stored withdrawal detail reaches a trusted local reader only', () => storedDetailStaysLocal(engine));
   test('the single-fact writer applies the same rule; a purge supplies no object', () => singleWriterSameRule(engine));
 });
