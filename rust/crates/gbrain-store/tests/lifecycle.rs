@@ -36,7 +36,7 @@ fn reopening_keeps_the_brain_id_and_says_it_was_not_created() {
 }
 
 #[test]
-fn a_second_open_of_a_live_brain_is_refused_and_the_first_keeps_working() {
+fn embedded_one_owner_a_second_open_of_a_live_brain_is_refused_and_the_first_keeps_working() {
     let dir = TempDir::new("locked");
     let first = open(&dir);
     let error = Store::open_dir(&dir.path().join("brain"), OpenOptions::default())
@@ -47,6 +47,21 @@ fn a_second_open_of_a_live_brain_is_refused_and_the_first_keeps_working() {
     first.close();
     // Once the owner closes, the brain opens again.
     assert!(Store::open_dir(&dir.path().join("brain"), OpenOptions::default()).is_ok());
+}
+
+/// C17: with several writers a second opener of a live brain becomes a client of the first and is never refused, and the
+/// first keeps working. Twin of `embedded_one_owner_a_second_open_of_a_live_brain_is_refused_and_the_first_keeps_working`;
+/// pending on the server lane (the raw second-open refusal stays a permanent invariant of the raw store).
+#[test]
+#[ignore = "multi_writer"]
+fn a_second_open_of_a_live_brain_becomes_a_client_and_the_first_keeps_working_multi_writer() {
+    common::mu::pending_member::<()>(common::mu::L3_SERVER, "a second opener becomes a client")
+        .unwrap_or_else(|e| panic!("{e}"));
+    let dir = TempDir::new("locked-multi");
+    let first = open(&dir);
+    let second = Store::open_dir(&dir.path().join("brain"), OpenOptions::default())
+        .unwrap_or_else(|e| panic!("the second opener was refused: {e}"));
+    assert!(first.commit_version().is_ok() && second.commit_version().is_ok());
 }
 
 #[test]

@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicI64, AtomicU32, AtomicU64, Ordering};
 
 // The store modes and `both_modes!`, shared with `common` (see the note in that file).
 #[path = "../common/mode.rs"]
+#[allow(clippy::duplicate_mod)]
 pub mod mode;
 pub use mode::StoreMode;
 #[allow(unused_imports)]

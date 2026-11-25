@@ -219,7 +219,6 @@ fn lock(pid: i64, token: &str, ttl_minutes: f64) -> LockAcquire {
     }
 }
 
-
 /// A store opened in optimistic mode, whatever the environment says (the multi-writer parts).
 fn open_optimistic(dir: &TempDir) -> Store {
     open_in(dir, StoreMode::Optimistic)
@@ -291,7 +290,9 @@ fn has_chunk(s: &Store, slug: &str, text: &str) -> bool {
 
 /// Every body in `acked` (and the seed) is in the page's history, none twice, and nothing else is.
 fn assert_history_is_exactly(store: &Store, slug: &str, acked: &[String], seed: &str) {
-    let history = store.get_versions(slug, &VersionsOptions::default()).unwrap();
+    let history = store
+        .get_versions(slug, &VersionsOptions::default())
+        .unwrap();
     let mut seen: BTreeSet<String> = history
         .iter()
         .map(|v| v["compiled_truth"].as_str().unwrap().to_string())
@@ -405,7 +406,10 @@ fn c02_stale_revision_gets_a_typed_conflict() {
     store
         .upsert_chunks("doc", &chunks, &with(&revision(&store, "doc")))
         .unwrap();
-    assert!(has_chunk(&store, "doc", "part"), "the re-read write is missing");
+    assert!(
+        has_chunk(&store, "doc", "part"),
+        "the re-read write is missing"
+    );
 }
 
 /// C02, `upsert_chunks` with an expected revision: of two optimistic transactions that read the same
@@ -425,7 +429,9 @@ fn c02_stale_revision_gets_a_typed_conflict_multi_writer() {
         expected_revision: Some(r.into()),
         ..Default::default()
     };
-    first.upsert_chunks("doc", &chunks, &with(&read_at)).unwrap();
+    first
+        .upsert_chunks("doc", &chunks, &with(&read_at))
+        .unwrap();
     commit_host(&store, first);
     let stale = second.upsert_chunks("doc", &chunks, &with(&read_at));
     let refused = match stale {
@@ -445,7 +451,10 @@ fn c02_stale_revision_gets_a_typed_conflict_multi_writer() {
         .upsert_chunks("doc", &chunks, &with(&revision(&retry, "doc")))
         .unwrap();
     commit_host(&store, retry);
-    assert!(has_chunk(&store, "doc", "part"), "the re-read write is missing");
+    assert!(
+        has_chunk(&store, "doc", "part"),
+        "the re-read write is missing"
+    );
 }
 
 /// C03, write claim (select then stamp in one transaction): one claimant per request at a time.
@@ -504,7 +513,9 @@ fn c03_two_claimers_of_one_write_never_both_claim_multi_writer() {
     let s = store.clone();
     let won = together(8, move |i| {
         let tx = begin_host(&s, i);
-        let row = tx.select_claimable_write(&ClaimableSpec::default()).unwrap()?;
+        let row = tx
+            .select_claimable_write(&ClaimableSpec::default())
+            .unwrap()?;
         let stamp = ClaimStamp {
             id: row["id"].as_str().unwrap().into(),
             token: format!("c0000000-0000-4000-8000-{i:012}"),
@@ -537,7 +548,11 @@ fn c03_two_claimers_of_one_write_never_both_claim_multi_writer() {
             store.renew_write_claim(&stamp).unwrap()
         })
         .collect();
-    assert_eq!(holds, vec![winner], "the claim is not held by its one winner");
+    assert_eq!(
+        holds,
+        vec![winner],
+        "the claim is not held by its one winner"
+    );
 }
 
 /// C04 scenario: eight workers claim every job once and none is lost.
@@ -701,7 +716,10 @@ fn c06_stale_holder_data_write_refused_by_its_token_multi_writer() {
         .acquire_lease("cycle", &origin(2), 60_000)
         .unwrap_or_else(|e| panic!("{e}"))
         .expect("the takeover");
-    assert!(second.epoch > first.epoch, "a takeover did not move the epoch");
+    assert!(
+        second.epoch > first.epoch,
+        "a takeover did not move the epoch"
+    );
     let refused = store.commit_position(paused).unwrap_err();
     assert!(
         refused.code() == Some(LEASE_LOST) || is_conflict(&refused),
@@ -932,7 +950,10 @@ fn facts_of_one_entity_form_one_total_order(store: Arc<Store>) {
         "a fact was lost or repeated"
     );
     let texts: BTreeSet<&String> = made.values().collect();
-    assert_eq!(unique, texts, "a fact read back is not one that was written");
+    assert_eq!(
+        unique, texts,
+        "a fact read back is not one that was written"
+    );
 }
 
 /// C10, `append_fact`: the facts of one entity form one stable order and none is lost (the single-entity append order).
@@ -973,7 +994,10 @@ fn c11_per_entity_order_equals_commit_order() {
     let commit_order: Vec<String> = by_commit.into_iter().map(|(_, text)| text).collect();
     let mut read_order = facts_read(&store);
     read_order.reverse();
-    assert_eq!(read_order, commit_order, "the reader's order is not commit order");
+    assert_eq!(
+        read_order, commit_order,
+        "the reader's order is not commit order"
+    );
 }
 
 /// C11, `append_fact` with a sequence assigned at commit: transactions that are open at the same time append to one
@@ -1009,7 +1033,10 @@ fn c11_per_entity_order_equals_commit_order_multi_writer() {
     let commit_order: Vec<String> = by_commit.into_iter().map(|(_, text)| text).collect();
     let mut read_order = facts_read(&store);
     read_order.reverse();
-    assert_eq!(read_order, commit_order, "the reader's order is not commit order");
+    assert_eq!(
+        read_order, commit_order,
+        "the reader's order is not commit order"
+    );
 }
 
 /// C12, `transaction(fn)`: each of two transactions reads its own uncommitted writes and never the other's.
@@ -1060,7 +1087,10 @@ fn c12_two_transactions_read_only_their_own_writes_multi_writer() {
         let tx = begin_host(&s, i);
         put(&tx, &mine, "uncommitted");
         gate.wait();
-        assert!(exists(&tx, &mine), "a transaction cannot read its own write");
+        assert!(
+            exists(&tx, &mine),
+            "a transaction cannot read its own write"
+        );
         assert!(
             !exists(&tx, &theirs),
             "a transaction read the other's uncommitted write"
@@ -1364,11 +1394,7 @@ fn c16_format_upgrade_runs_once_under_concurrent_openers() {
     let owner = live.pop().unwrap();
     assert_upgraded_and_intact(&owner, &old);
     let after_upgrade = owner.commit_version().unwrap();
-    assert_eq!(
-        after_upgrade,
-        old.version + 1,
-        "the upgrade is one commit"
-    );
+    assert_eq!(after_upgrade, old.version + 1, "the upgrade is one commit");
     owner.close();
     assert!(legacy_records_gone(&old), "the upgrade did not run");
     // A second open finds nothing to upgrade: no commit, same records.
@@ -1386,8 +1412,11 @@ fn c16_format_upgrade_runs_once_under_concurrent_openers() {
 #[test]
 #[ignore = "multi_writer"]
 fn c16_format_upgrade_runs_once_under_concurrent_openers_multi_writer() {
-    mu::pending_member::<()>(L3_SERVER, "a second opener becomes a client of the upgrading owner")
-        .unwrap_or_else(|e| panic!("{e}"));
+    mu::pending_member::<()>(
+        L3_SERVER,
+        "a second opener becomes a client of the upgrading owner",
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
     let dir = TempDir::new("c16m");
     let old = seeded_old_brain(&dir);
     let (p, o) = (old.path.clone(), upgrade_options(true));
@@ -1409,7 +1438,11 @@ fn c16_format_upgrade_runs_once_under_concurrent_openers_multi_writer() {
         .flatten()
         .map(|s| s.commit_version().unwrap())
         .collect();
-    assert_eq!(versions, BTreeSet::from([old.version + 1]), "more than one upgrade");
+    assert_eq!(
+        versions,
+        BTreeSet::from([old.version + 1]),
+        "more than one upgrade"
+    );
     assert!(legacy_records_gone(&old));
 }
 
@@ -1565,7 +1598,13 @@ struct Killed {
 
 /// Runs the child of this test binary, kills it with SIGKILL once it has acknowledged `min_acks` writes (or after 60 s),
 /// and collects what it printed.
-fn kill_child_writer(dir: &TempDir, writers: usize, optimistic: bool, explicit: bool, min_acks: usize) -> Killed {
+fn kill_child_writer(
+    dir: &TempDir,
+    writers: usize,
+    optimistic: bool,
+    explicit: bool,
+    min_acks: usize,
+) -> Killed {
     let mut child = Command::new(std::env::current_exe().unwrap())
         .args([C19_CHILD, "--exact", "--ignored", "--nocapture"])
         .args(["--test-threads=1", "-q"])
@@ -1647,10 +1686,16 @@ fn reopened_view(store: &Store, killed: &Killed) -> Reopened {
 
 /// Every acknowledged write is present, no row exists that was never sent, and at most one write per writer that was sent but
 /// not acknowledged is present.
-fn check_acknowledged_survive(view: &Reopened, killed: &Killed, writers: usize) -> std::result::Result<(), String> {
+fn check_acknowledged_survive(
+    view: &Reopened,
+    killed: &Killed,
+    writers: usize,
+) -> std::result::Result<(), String> {
     for n in killed.acked.keys() {
         if !view.present.contains(n) {
-            return Err(format!("acknowledged write {n} is missing after the reopen"));
+            return Err(format!(
+                "acknowledged write {n} is missing after the reopen"
+            ));
         }
     }
     if view.count != view.present.len() as u64 {
@@ -1662,7 +1707,9 @@ fn check_acknowledged_survive(view: &Reopened, killed: &Killed, writers: usize) 
     }
     let in_flight = view.present.len() - killed.acked.len();
     if in_flight > writers {
-        return Err(format!("{in_flight} unacknowledged writes landed for {writers} writers"));
+        return Err(format!(
+            "{in_flight} unacknowledged writes landed for {writers} writers"
+        ));
     }
     Ok(())
 }
@@ -1748,14 +1795,22 @@ fn acknowledged_writes_survive_a_dropped_handle_clean_reopen() {
         }
     }
     let store = open(&dir);
-    assert_eq!(store.count_pages(None).unwrap(), 20, "an acknowledged write is missing");
+    assert_eq!(
+        store.count_pages(None).unwrap(),
+        20,
+        "an acknowledged write is missing"
+    );
     for n in 0..20 {
         let replay = store
             .submit_page_mutation(&mutation(n, &format!("notes/{n}"), "acknowledged"), None)
             .unwrap();
         assert_eq!(replay["state"], "committed");
     }
-    assert_eq!(store.count_pages(None).unwrap(), 20, "a replay duplicated a write");
+    assert_eq!(
+        store.count_pages(None).unwrap(),
+        20,
+        "a replay duplicated a write"
+    );
 }
 
 /// Not C19: the acknowledged writes of concurrent writers survive a dropped handle and a reopen exactly once.
@@ -1815,9 +1870,16 @@ fn c20_no_deadlock_across_two_pages_in_both_orders() {
         .recv_timeout(Duration::from_secs(60))
         .expect("writers in opposite orders deadlocked");
     let distinct: BTreeSet<u64> = commits.iter().flatten().copied().collect();
-    assert_eq!(distinct.len(), 8 * 4, "an update was lost or two share a commit");
+    assert_eq!(
+        distinct.len(),
+        8 * 4,
+        "an update was lost or two share a commit"
+    );
     // Each transaction wrote both pages: the last committer's body is on both, never a mix.
-    assert_eq!(current_body(&store, "pair/a"), current_body(&store, "pair/b"));
+    assert_eq!(
+        current_body(&store, "pair/a"),
+        current_body(&store, "pair/b")
+    );
 }
 
 /// C20, sorted keys and compare-and-set on two pages written in both orders: no deadlock, and every writer's update lands once
@@ -1869,8 +1931,15 @@ fn c20_no_deadlock_across_two_pages_in_both_orders_multi_writer() {
         .recv_timeout(Duration::from_secs(60))
         .expect("writers in opposite orders deadlocked");
     let distinct: BTreeSet<CommitPosition> = positions.iter().flatten().copied().collect();
-    assert_eq!(distinct.len(), 8 * 3, "an update was lost or two share a position");
-    assert_eq!(current_body(&store, "pair/a"), current_body(&store, "pair/b"));
+    assert_eq!(
+        distinct.len(),
+        8 * 3,
+        "an update was lost or two share a position"
+    );
+    assert_eq!(
+        current_body(&store, "pair/a"),
+        current_body(&store, "pair/b")
+    );
 }
 
 /// C21, commit position as a token: a write acknowledged on one connection is seen by another given the token.
@@ -1889,7 +1958,10 @@ fn c21_read_your_writes_token_on_a_second_connection() {
             .join()
             .unwrap();
     assert!(seen.0 >= token, "the second connection is behind the token");
-    assert!(seen.1, "the second connection does not see the acknowledged write");
+    assert!(
+        seen.1,
+        "the second connection does not see the acknowledged write"
+    );
 }
 
 /// C21, commit position as a token: a write acknowledged on one connection is seen by another given the token, which is the
@@ -1906,7 +1978,9 @@ fn c21_read_your_writes_token_on_a_second_connection_multi_writer() {
     assert!(token.starts_with("cp1:"), "{token}");
     let second = store.clone();
     let (behind, saw, newest) = thread::spawn(move || {
-        let page = second.read_commit_log(None, 1000).unwrap_or_else(|e| panic!("{e}"));
+        let page = second
+            .read_commit_log(None, 1000)
+            .unwrap_or_else(|e| panic!("{e}"));
         (
             second.commit_version().unwrap() < position.sequence,
             exists(&second, "notes/a"),
@@ -1916,7 +1990,10 @@ fn c21_read_your_writes_token_on_a_second_connection_multi_writer() {
     .join()
     .unwrap();
     assert!(!behind, "the second connection is behind the token {token}");
-    assert!(saw, "the second connection does not see the acknowledged write");
+    assert!(
+        saw,
+        "the second connection does not see the acknowledged write"
+    );
     assert!(newest >= Some(position), "the log does not reach {token}");
 }
 
@@ -1973,7 +2050,9 @@ fn c22_commit_position_strictly_increases_multi_writer() {
     }
     let all: BTreeSet<CommitPosition> = positions.iter().flatten().copied().collect();
     assert_eq!(all.len(), WRITERS * 4, "two commits share a position");
-    let log = store.read_commit_log(None, 10_000).unwrap_or_else(|e| panic!("{e}"));
+    let log = store
+        .read_commit_log(None, 10_000)
+        .unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(log.newest, all.iter().next_back().copied());
     assert!(!log.snapshot_required);
     assert!(log.records.len() >= WRITERS * 4, "the log lost a commit");
@@ -2002,17 +2081,38 @@ fn mu_adapter_stubs_are_still_pending() {
         source_id: "default".into(),
         slug: "a".into(),
     };
-    assert_eq!(owner("begin_with", store.begin_with(TxnOptions::default())), L1_TXN);
-    assert_eq!(owner("single_flight", store.single_flight(&txn(), &[key])), L1_TXN);
-    assert_eq!(owner("commit_position", store.commit_position(txn())), L2_LOG);
-    assert_eq!(owner("assert_lease", store.assert_lease(&txn(), &token)), L5_HOSTS);
+    assert_eq!(
+        owner("begin_with", store.begin_with(TxnOptions::default())),
+        L1_TXN
+    );
+    assert_eq!(
+        owner("single_flight", store.single_flight(&txn(), &[key])),
+        L1_TXN
+    );
+    assert_eq!(
+        owner("commit_position", store.commit_position(txn())),
+        L2_LOG
+    );
+    assert_eq!(
+        owner("assert_lease", store.assert_lease(&txn(), &token)),
+        L5_HOSTS
+    );
     assert_eq!(
         owner("acquire_lease", store.acquire_lease("n", &origin(1), 1000)),
         L5_HOSTS
     );
-    assert_eq!(owner("renew_lease", store.renew_lease(&token, 1000)), L5_HOSTS);
-    assert_eq!(owner("release_lease", store.release_lease(&token)), L5_HOSTS);
-    assert_eq!(owner("read_commit_log", store.read_commit_log(None, 10)), L2_LOG);
+    assert_eq!(
+        owner("renew_lease", store.renew_lease(&token, 1000)),
+        L5_HOSTS
+    );
+    assert_eq!(
+        owner("release_lease", store.release_lease(&token)),
+        L5_HOSTS
+    );
+    assert_eq!(
+        owner("read_commit_log", store.read_commit_log(None, 10)),
+        L2_LOG
+    );
     assert_eq!(
         owner("pending_member", mu::pending_member::<()>(L3_SERVER, "x")),
         L3_SERVER

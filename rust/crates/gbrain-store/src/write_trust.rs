@@ -337,7 +337,8 @@ mod tests {
     }
 
     #[test]
-    fn a_second_transaction_waits_for_the_writer_and_starts_with_an_empty_context() {
+    fn embedded_one_owner_a_second_transaction_waits_for_the_writer_and_starts_with_an_empty_context()
+     {
         use std::sync::mpsc;
         use std::time::Duration;
 
@@ -382,6 +383,18 @@ mod tests {
             );
         });
         assert_eq!(s.read_write_trust(&tier).unwrap(), vec![None]);
+    }
+
+    /// C12: with several writers a second transaction begins while the first is open and starts with an empty write
+    /// context, never the first's. Twin of
+    /// `embedded_one_owner_a_second_transaction_waits_for_the_writer_and_starts_with_an_empty_context`; pending on the
+    /// optimistic-transaction lane (`Store::begin_with`), whose adapter lives in `tests/common/mu.rs` and is not
+    /// visible to a unit test.
+    #[test]
+    #[ignore = "multi_writer"]
+    fn a_second_transaction_begins_beside_the_first_and_starts_with_an_empty_context_multi_writer()
+    {
+        panic!("pending on L1 optimistic transactions: Store::begin_with");
     }
 
     #[test]

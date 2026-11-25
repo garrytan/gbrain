@@ -67,4 +67,3 @@ pub fn admission(n: u32) -> gbrain_store::journal::WriteAdmission {
     }))
     .unwrap()
 }
-

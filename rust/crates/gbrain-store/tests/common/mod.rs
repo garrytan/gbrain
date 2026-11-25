@@ -5,6 +5,7 @@ use gbrain_store::{OpenOptions, Store};
 use std::path::{Path, PathBuf};
 
 pub mod format;
+#[allow(clippy::duplicate_mod)]
 pub mod mode;
 pub mod mu;
 

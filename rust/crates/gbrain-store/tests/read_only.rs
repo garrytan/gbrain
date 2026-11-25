@@ -130,7 +130,7 @@ fn a_directory_with_no_brain_is_refused_and_left_empty() {
 }
 
 #[test]
-fn a_read_only_open_of_a_brain_open_for_writing_is_refused() {
+fn embedded_one_owner_a_read_only_open_of_a_brain_open_for_writing_is_refused() {
     let dir = TempDir::new("ro-locked");
     let brain = closed_brain(&dir);
     let writer = Store::open_dir(&brain, OpenOptions::default()).unwrap();
@@ -139,4 +139,23 @@ fn a_read_only_open_of_a_brain_open_for_writing_is_refused() {
         .expect("the writer holds the brain");
     assert_eq!(error.code, STORE_LOCKED, "{error}");
     assert!(writer.commit_version().is_ok());
+}
+
+/// C17: with several writers a read-only open beside a writer is served (the reader is a client), not refused with
+/// `store_locked`. Twin of `embedded_one_owner_a_read_only_open_of_a_brain_open_for_writing_is_refused`; pending on the
+/// server lane.
+#[test]
+#[ignore = "multi_writer"]
+fn a_read_only_open_beside_a_writer_is_served_multi_writer() {
+    common::mu::pending_member::<()>(
+        common::mu::L3_SERVER,
+        "a reader beside a writer becomes a client",
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let dir = TempDir::new("ro-multi");
+    let brain = closed_brain(&dir);
+    let writer = Store::open_dir(&brain, OpenOptions::default()).unwrap();
+    let reader =
+        Store::open_dir_read_only(&brain).unwrap_or_else(|e| panic!("the reader was refused: {e}"));
+    assert!(writer.commit_version().is_ok() && reader.commit_version().is_ok());
 }
