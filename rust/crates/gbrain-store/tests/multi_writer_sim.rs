@@ -54,6 +54,10 @@
 //! remove the `#[ignore]` from `p_a_optimistic_store_replays_serially_by_seed` and run
 //! `cargo test -p gbrain-store --features sim --test multi_writer_sim`.
 
+mod common;
+
+use common::clock;
+use common::mu::MuStore;
 use gbrain_sim::check::{
     self, Committed, Model, Own, ReadObs, Reopen, WriteSet, apply_writes, merge_range,
 };
@@ -62,7 +66,7 @@ use gbrain_sim::{CrashMode, Cx, FaultPlan, Scheduler, SimDisk, SimFile, SimRng, 
 use gbrain_store::error::WRITE_CONFLICT;
 use gbrain_store::occ_kv::OccKv;
 use gbrain_store::redb_kv::RedbKv;
-use gbrain_store::{FileBackend, Kv, KvWrite, StoreError};
+use gbrain_store::{Env, FileBackend, Kv, KvWrite, OpenOptions, Store, StoreError};
 use std::collections::{BTreeMap, BTreeSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Mutex};
@@ -982,6 +986,98 @@ fn p_h_the_recovery_checkers_fail_a_lost_commit_and_a_half_applied_batch() {
         )
         .is_err()
     );
+}
+
+// ---- P-H, I-4.v2 clocks: commit times after a crash -------------------------------------------------------------------
+
+/// A clock that moves forward by a fixed step each time it is read, and ids from a counter: the store's `Env` on the
+/// simulated disk.
+struct TickEnv {
+    now: std::sync::atomic::AtomicI64,
+    ids: std::sync::atomic::AtomicU64,
+}
+
+impl Env for TickEnv {
+    fn now_micros(&self) -> i64 {
+        self.now
+            .fetch_add(1_000, std::sync::atomic::Ordering::SeqCst)
+    }
+    fn new_uuid(&self) -> String {
+        let n = self.ids.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let mut bytes = [0u8; 16];
+        bytes[8..].copy_from_slice(&n.to_be_bytes());
+        gbrain_store::env::uuid_from_bytes(bytes)
+    }
+}
+
+/// A whole store (not just its record file) on the simulated disk, on the optimistic record file.
+fn open_store(disk: &SimDisk) -> Result<Store, StoreError> {
+    let env = TickEnv {
+        now: std::sync::atomic::AtomicI64::new(1_800_000_000_000_000),
+        ids: std::sync::atomic::AtomicU64::new(1),
+    };
+    Store::open_kv(
+        Arc::new(open_optimistic(disk)?),
+        Arc::new(env),
+        OpenOptions {
+            concurrent_writes: true,
+            ..OpenOptions::default()
+        },
+    )
+}
+
+/// P-H with commit times: after a crash at a seeded point and a reopen, the commit times in the log strictly rise in position
+/// order and the newest equals `last_commit_time()`. Pending on the commit log (I-4.v2).
+#[test]
+#[ignore = "multi_writer"]
+fn p_h_crash_keeps_commit_times_rising_and_equal_to_last_commit_time_multi_writer() {
+    {
+        let disk = SimDisk::new(0, FaultPlan::none());
+        let fresh = open_store(&disk).unwrap();
+        fresh
+            .read_commit_log(None, 1)
+            .unwrap_or_else(|e| panic!("{e}"));
+    }
+    let mut checked = 0;
+    for seed in seeds(50) {
+        let disk = SimDisk::new(seed, FaultPlan::none());
+        let store = Arc::new(open_store(&disk).unwrap());
+        let setup = disk.stats().io_ops;
+        disk.set_plan(crash_plan(seed, setup));
+        std::thread::scope(|s| {
+            for thread in 0..4usize {
+                let store = &store;
+                s.spawn(move || {
+                    for n in 0..12 {
+                        let page = serde_json::from_value(serde_json::json!({
+                            "type": "note", "title": "t", "compiled_truth": format!("{thread} {n}"),
+                        }))
+                        .unwrap();
+                        let options = gbrain_store::pages::PutPageOptions::default();
+                        if store
+                            .put_page(&format!("p/{thread}-{n}"), &page, &options)
+                            .is_err()
+                        {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+        disk.crash_now();
+        drop(store);
+        disk.reboot();
+        disk.set_plan(FaultPlan::none());
+        let store = open_store(&disk).unwrap();
+        let log = store
+            .read_commit_log(None, usize::MAX)
+            .unwrap_or_else(|e| panic!("{e}"));
+        let last = store.last_commit_time().unwrap_or_else(|e| panic!("{e}"));
+        clock::replay_clock_checks(&log.records, last, None, &[])
+            .unwrap_or_else(|e| panic!("seed {seed}: {e}"));
+        checked += log.records.len();
+    }
+    assert!(checked > 0, "no commit was checked");
 }
 
 // ---- the optimistic store under the seeded scheduler (waits for the `step_pipeline()` seam) -------------------------------
