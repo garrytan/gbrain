@@ -27,6 +27,10 @@ import type { OperationContext } from '../../src/core/ops/contract.ts';
 import { operations } from '../../src/core/operations.ts';
 import { makeContext } from '../../src/cli/main.ts';
 import { registerServeLocalWriters } from '../../src/core/persistence/provider.ts';
+import { addMember } from '../../src/core/access/members.ts';
+import { importFromContent } from '../../src/core/import-file.ts';
+import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
+import { drainProjections } from '../../src/core/page-state/projections.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -136,4 +140,30 @@ describe('engine parity: a world-only read after a put with a wikilink', () => {
     }));
     }
   }
+
+  // A remote caller bound to an access member (the stdio server started with --stdio-member) asks get_page for a page whose
+  // readable_by names another member: no page answers its spelling, so the read runs the stored-spelling scan, then hides
+  // the page as page_not_found. The open page reads in full. On the Rust arm the member's page read (readPageSnapshot for a
+  // caller with member pages) refuses until rust-engine/remote-access-parity serves it: the case stops there under its row in
+  // test/rust-stop-pins/lane-1.tsv, and runs the scan once that read is served.
+  parityTest('remote member: get_page on a page another member reads answers page_not_found, with no refusal on the way', {
+    methods: ['getPage'], timeout: 120_000,
+  }, (engine) => inFreshHome(async () => {
+    for (const id of ['bob-example', 'carol-example']) await addMember(engine, id);
+    const note = (title: string, fm: string[]) => `---\ntype: note\ntitle: ${title}\n${fm.map(l => `${l}\n`).join('')}---\n\n${title} body.\n`;
+    await importFromContent(engine, 'notes/carol-only', note('Carol only', ['readable_by: [carol-example]']), { sourceId: 'default', noEmbed: true } as never);
+    await importFromContent(engine, 'notes/open-example', note('Open example', []), { sourceId: 'default', noEmbed: true } as never);
+    await drainProjections(engine);
+    const asBob = async (slug: string) => {
+      const out = await dispatchToolCall(engine, 'get_page', { slug }, { remote: true, transport: 'stdio', sourceId: 'default', stdioMember: 'bob-example' } as never);
+      const text = out.content.map(part => (part as { text?: string }).text ?? '').join('');
+      // A typed refusal is rethrown as one (rebuilt from its envelope), so the harness classifies it against its stop pin.
+      const body = out.isError ? (() => { try { return JSON.parse(text) as Record<string, unknown>; } catch { return null; } })() : null;
+      if (body?.code === 'engine_capability_missing') throw Object.assign(new Error(String(body.message)), body);
+      return { error: out.isError ? (/page_not_found/.test(text) ? 'page_not_found' : text.slice(0, 200)) : null, shown: !out.isError && text.includes('body.') };
+    };
+    const value = { hidden: await asBob('notes/carol-only'), open: await asBob('notes/open-example') };
+    expect(value).toEqual({ hidden: { error: 'page_not_found', shown: false }, open: { error: null, shown: true } });
+    return value;
+  }));
 });
