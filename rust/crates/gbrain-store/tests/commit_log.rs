@@ -444,7 +444,7 @@ fn journal_rows_carry_the_write_origin_only_with_the_switch_on() {
         kv_off
             .snapshot()
             .unwrap()
-            .scan(&[b'2'], &[b'3'], false, &mut |_, _| {
+            .scan(b"2", b"3", false, &mut |_, _| {
                 log_keys += 1;
                 true
             })
@@ -828,7 +828,7 @@ fn retention_trims_to_the_cap_and_keeps_where_the_log_stands() {
             let mut bytes = 0;
             read.scan(
                 &commit_log::record_key(CommitPosition::default()),
-                &[b'3'],
+                b"3",
                 false,
                 &mut |k, v| {
                     bytes += k.len() + v.len();
@@ -1112,7 +1112,7 @@ fn base_7_log_brain(path: &Path, concurrent: bool) -> Data {
     let mut stale = Vec::new();
     tx.scan(
         &commit_log::record_key(CommitPosition::default()),
-        &[b'3'],
+        b"3",
         false,
         &mut |k, _| {
             stale.push(k.to_vec());
@@ -1595,4 +1595,76 @@ fn a_log_brain_snapshots_and_verifies_like_any_other() {
     assert_eq!(report.engine_format_version, Some(LOG_FORMAT_VERSION));
     let copy = Store::open_dir(&target, mu_only(false)).unwrap();
     assert_eq!(copy.get_config("test.a").unwrap().as_deref(), Some("1"));
+}
+
+/// Second-model review finding 1: a snapshot keeps the durable commit-time floor, so a copy opened
+/// on a slower clock never times a commit below what the source already committed.
+#[test]
+fn a_snapshot_keeps_the_commit_time_floor() {
+    let far = 4_000_000_000_000_000;
+    for logged in [false, true] {
+        let dir = TempDir::new("snapshot-floor");
+        let brain = dir.path().join("brain");
+        let writes = MultiUserWrites {
+            commit_log: logged,
+            ..mu()
+        };
+        std::fs::create_dir_all(&brain).unwrap();
+        let kv = records_kv(&brain.join("records.redb"), false);
+        let opts = OpenOptions {
+            keyword_index_builder: false,
+            multiuser: true,
+            multiuser_writes: writes.clone(),
+            ..OpenOptions::default()
+        };
+        let store = Store::open_kv(
+            kv,
+            Arc::new(HandClock(std::sync::atomic::AtomicI64::new(far))),
+            opts.clone(),
+        )
+        .unwrap();
+        store.set_config("test.a", "1").unwrap();
+        let floor = store.last_commit_time().unwrap().unwrap();
+        drop(store);
+        let store = Store::open_dir(&brain, opts.clone()).unwrap();
+        let target = dir.path().join("copy");
+        store
+            .snapshot_to(&target, &gbrain_store::snapshot::SnapshotOp::new())
+            .unwrap();
+        drop(store);
+        let copy = Store::open_dir(&target, opts).unwrap();
+        assert!(
+            copy.last_commit_time().unwrap().unwrap() >= floor,
+            "logged {logged}: the copy lost the floor"
+        );
+        copy.set_config("test.b", "2").unwrap();
+        assert!(
+            copy.last_commit_time().unwrap().unwrap() > floor,
+            "logged {logged}"
+        );
+    }
+}
+
+/// Second-model review finding 2: an open refused on a shared adapter changes nothing for the store
+/// already open on it.
+#[test]
+fn a_refused_open_on_a_shared_adapter_leaves_the_open_store_timing_its_commits() {
+    for concurrent in MODES {
+        let dir = TempDir::new("shared-refused");
+        let (kv, store) = leader(&dir.path().join("r.redb"), concurrent, mu());
+        store.set_config("test.a", "1").unwrap();
+        let err = Store::open_kv(
+            kv.clone(),
+            Arc::new(SystemEnv),
+            options(concurrent, MultiUserWrites::default()),
+        )
+        .err()
+        .expect("a log brain without the log is refused");
+        assert_eq!(err.code, FORMAT_UNKNOWN);
+        store.set_config("test.a", "2").unwrap();
+        let times = record_times(&store);
+        for pair in times.windows(2) {
+            assert!(pair[0].1 < pair[1].1, "concurrent {concurrent}: {pair:?}");
+        }
+    }
 }

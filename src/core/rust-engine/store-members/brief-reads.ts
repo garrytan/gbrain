@@ -21,9 +21,9 @@ function trust(eligibility: BriefReadEligibility | undefined) {
 
 function timelinePolicy(member: string, privacy: BriefEditReadOpts['privacy']): StorePrivacyPolicy | null {
   if (privacy === 'none') return null;
-  if (privacy === 'caller') return storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true });
+  if (privacy === 'caller') return storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true, fragment: 'caller' });
   // The SQL side gates 'floor' with remoteReadFloorSql (engine-sql/brief-reads.ts); the store judges the same text.
-  if (privacy === 'floor') return storePageTextPolicy(member, () => remoteReadFloorSql('p'), { noReaders: true });
+  if (privacy === 'floor') return storePageTextPolicy(member, () => remoteReadFloorSql('p'), { noReaders: true, fragment: 'floor' });
   refuseMember(member, `privacy ${String(privacy)}`);
 }
 
@@ -45,7 +45,7 @@ export const readBriefEmailAliasPages: StoreMember<[sourceId: string, emails: re
 
 export const readBriefWorldFacts: StoreMember<[factIds: readonly number[], eligibility?: BriefReadEligibility], BriefWorldFactRow[]> =
   async (brain, factIds, eligibility) => {
-    const policy = storePrivacyPolicy('readBriefWorldFacts', true, () => privateFactFilterForCaller('facts'), { callerReaders: true }) ?? null;
+    const policy = storePrivacyPolicy('readBriefWorldFacts', true, () => privateFactFilterForCaller('facts'), { callerReaders: true, fragment: 'for_caller' }) ?? null;
     return storeCall({ member: 'readBriefWorldFacts' }, () =>
       brain.readBriefWorldFacts(factIds.map(Number), policy, trust(eligibility))) as Promise<BriefWorldFactRow[]>;
   };

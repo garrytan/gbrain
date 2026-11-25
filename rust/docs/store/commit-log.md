@@ -48,7 +48,9 @@ record-file commit writes the newest one to the adapter key `M\0ctime` (8 bytes 
 commit sequence) and, with the log on, each transaction's own time into its commit record, so a time is durable
 exactly when its data is and a failed commit leaves none behind. `Store::last_commit_time()` reads `M\0ctime`: the
 floor at open, for a restart or another process opening the store. A store rebuilt from the log takes the floor
-from its newest record (`commit_log::floor_time`). Commit times set row times and the clock floor; every
+from its newest record (`commit_log::floor_time`); a store snapshot (`Store::snapshot_to`) carries `M\0ctime` over
+from the same pinned state. The time of a commit that fails is not kept: the next commit may take it again (the
+accept hook is for observation and may have seen it). Commit times set row times and the clock floor; every
 "what happened first" rule uses the commit position, never the time.
 
 `Store::set_accept_hook(hook)` (multi-user mode only; refused while off) is for observation: the record file's one

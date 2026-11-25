@@ -246,16 +246,23 @@ impl RedbSink {
         Ok(())
     }
 
-    /// Writes the commit sequence `version`, syncs every earlier batch with it and closes the
-    /// file cleanly.
-    pub fn finish(self, version: u64) -> Result<()> {
+    /// Writes the commit sequence `version` (and the source's durable commit time, when it kept
+    /// one), syncs every earlier batch with it and closes the file cleanly.
+    pub fn finish(self, version: u64, commit_time: Option<i64>) -> Result<()> {
         let mut tx = self.db.begin_write().map_err(map)?;
         tx.set_durability(Durability::Immediate)
             .map_err(|e| StoreError::io(format!("record store: {e}")))?;
-        tx.open_table(TABLE)
-            .map_err(map)?
-            .insert(SEQ_KEY, version.to_be_bytes().as_slice())
-            .map_err(map)?;
+        {
+            let mut table = tx.open_table(TABLE).map_err(map)?;
+            table
+                .insert(SEQ_KEY, version.to_be_bytes().as_slice())
+                .map_err(map)?;
+            if let Some(time) = commit_time {
+                table
+                    .insert(COMMIT_TIME_KEY, time.to_be_bytes().as_slice())
+                    .map_err(map)?;
+            }
+        }
         tx.commit().map_err(map)?;
         drop(self.db);
         Ok(())

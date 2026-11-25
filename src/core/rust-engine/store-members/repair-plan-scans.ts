@@ -51,7 +51,7 @@ export const readDriftConflictBounds: StoreMember<[sourceId: string], DriftConfl
 
 export const listDriftConflictGroups: StoreMember<[sourceId: string, query: DriftConflictQuery], DriftConflictGroups> = async (brain, sourceId, query) => {
   const excludePrivate = query.excludePrivate
-    ? storePageTextPolicy('listDriftConflictGroups', () => remoteReadFloorSql('p'), { callerReaders: true }) : null;
+    ? storePageTextPolicy('listDriftConflictGroups', () => remoteReadFloorSql('p'), { callerReaders: true, fragment: 'floor' }) : null;
   const groups = await storeCall({ member: 'listDriftConflictGroups', sourceId }, () => brain.listDriftConflictGroups(sourceId, {
     incarnation: query.incarnation, floor: query.floor, through: query.through, slug_prefixes: query.slugPrefixes ? [...query.slugPrefixes] : null,
     require_live_page: query.requireLivePage, exclude_private: excludePrivate, after: query.after, limit: query.limit, drift_message: query.driftMessage,
