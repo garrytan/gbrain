@@ -378,6 +378,8 @@ export const RUST_ENGINE_MEMBERS = {
   readWriterAdminState: 'persistence_journal',
   readIgnoredPrivacyLabelPages: 'pages',
   readLivePageFrontmatter: 'pages',
+  readImageSealProbe: 'pages',
+  readPageChunkerVersion: 'pages',
   hasExtractedEvents: 'raw_sql',
   hasLabelledOnlyMember: 'raw_sql',
   insertDecideCalibration: 'eval_capture',

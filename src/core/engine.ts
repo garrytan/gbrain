@@ -1366,6 +1366,10 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
     opts?: { limit?: number; timeoutMs?: number }): Promise<IgnoredLabelPageRow[]>;
   /** The type and frontmatter of the live page at `slug` in the source, or null; `timeoutMs` bounds Postgres (default 1 s). */
   readLivePageFrontmatter(sourceId: string, slug: string, opts?: { timeoutMs?: number }): Promise<IgnoredLabelPageRow | null>;
+  /** `{ has_visual }` of the image page row at `slug` when it is sealed past the safe-chunk fence, else null (importImageFile). */
+  readImageSealProbe(sourceId: string, slug: string): Promise<{ has_visual: boolean } | null>;
+  /** The stored chunker version of the page row with the id (live, deleted or segmented), or null when no row has it. */
+  readPageChunkerVersion(pageId: number): Promise<{ chunker_version: number | null } | null>;
   /** Whether this connection's role owns the gbrain tables (so it can apply migrations); false only when it provably does not. */
   ownsSchemaTables(): Promise<boolean>;
   /** Whether the source's current incarnation has a company-brain ingestion receipt. */
