@@ -9,7 +9,6 @@
 //! addon method and each `StoreError::code` into a JavaScript `Error.code`.
 
 pub mod access_derive;
-pub mod scope;
 mod access_flag;
 mod access_key_split;
 pub mod access_member_links;
@@ -22,7 +21,6 @@ pub mod chronicle_reads;
 pub mod chunks;
 pub mod cli_reads;
 pub mod commit_log;
-pub mod follower;
 pub mod config;
 pub mod env;
 pub mod error;
@@ -30,6 +28,7 @@ pub mod error;
 mod fingerprint_fixture;
 #[cfg(feature = "fjall")]
 pub mod fjall_kv;
+pub mod follower;
 pub mod format;
 pub mod git_gap_census;
 pub mod journal;
@@ -50,6 +49,7 @@ pub mod pages;
 pub mod read_shared;
 pub mod redb_kv;
 pub mod retrieval_feedback;
+pub mod scope;
 pub mod search;
 pub mod seed;
 pub mod shared_skill_catalog;
@@ -1004,6 +1004,31 @@ impl Store {
     /// no log.
     pub fn read_commit_log(&self, after: Option<CommitPosition>, max: usize) -> Result<LogPage> {
         commit_log::read_commit_log(&*self.kv.snapshot()?, after, max)
+    }
+
+    /// `read_commit_log` with every record as the bytes the store holds, unchanged (I-4.v2), for a
+    /// wire that ships them to a follower (`follower::Follower::apply_raw`). The page's `records`
+    /// are left empty; both come from one snapshot.
+    pub fn read_commit_log_raw(
+        &self,
+        after: Option<CommitPosition>,
+        max: usize,
+    ) -> Result<(LogPage, Vec<(CommitPosition, Vec<u8>)>)> {
+        let read = self.kv.snapshot()?;
+        let mut page = commit_log::read_commit_log(&*read, after, max)?;
+        let mut raw = Vec::with_capacity(page.records.len());
+        for record in std::mem::take(&mut page.records) {
+            let bytes = read
+                .get(&commit_log::record_key(record.position))?
+                .ok_or_else(|| {
+                    StoreError::new(
+                        error::STORE_CORRUPT,
+                        "a commit record went missing mid-read",
+                    )
+                })?;
+            raw.push((record.position, bytes));
+        }
+        Ok((page, raw))
     }
 }
 

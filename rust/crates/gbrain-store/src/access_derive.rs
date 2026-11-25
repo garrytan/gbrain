@@ -28,7 +28,7 @@
 //! corpus of caller records and settings against the TypeScript helpers.
 
 use serde::Deserialize;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 /// `MEMBER_PAGE_PREFIX` (access/principals.ts).
 const MEMBER_PAGE_PREFIX: &str = "memory/members/";
@@ -49,15 +49,19 @@ pub(crate) fn access_id_ok(id: &str) -> bool {
     !b.is_empty()
         && b.len() <= 64
         && (b[0].is_ascii_lowercase() || b[0].is_ascii_digit())
-        && b[1..]
-            .iter()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, b'.' | b'_' | b'-'))
+        && b[1..].iter().all(|c| {
+            c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, b'.' | b'_' | b'-')
+        })
 }
 
 /// `normalizePrincipal` (access/principals.ts): trim spaces, lowercase ASCII, `group:<id>` or a
 /// member id with or without `member:`.
 pub(crate) fn normalize_principal(raw: &str) -> Option<String> {
-    let v: String = raw.trim_matches(' ').chars().map(|c| c.to_ascii_lowercase()).collect();
+    let v: String = raw
+        .trim_matches(' ')
+        .chars()
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
     if let Some(g) = v.strip_prefix("group:") {
         return access_id_ok(g).then(|| v.clone());
     }
@@ -67,7 +71,9 @@ pub(crate) fn normalize_principal(raw: &str) -> Option<String> {
 
 /// `validIdentity`: every entry is already a normalized principal.
 pub(crate) fn valid_identity(identity: &[String]) -> bool {
-    identity.iter().all(|p| normalize_principal(p).as_deref() == Some(p.as_str()))
+    identity
+        .iter()
+        .all(|p| normalize_principal(p).as_deref() == Some(p.as_str()))
 }
 
 /// `validQualifiedRuleId` (access/folder-rules.ts).
@@ -92,7 +98,11 @@ pub(crate) fn valid_source_id(s: &str) -> bool {
     let edge = |c: u8| c.is_ascii_lowercase() || c.is_ascii_digit();
     match b.len() {
         1 => edge(b[0]),
-        2..=32 => edge(b[0]) && edge(b[b.len() - 1]) && b[1..b.len() - 1].iter().all(|&c| edge(c) || c == b'-'),
+        2..=32 => {
+            edge(b[0])
+                && edge(b[b.len() - 1])
+                && b[1..b.len() - 1].iter().all(|&c| edge(c) || c == b'-')
+        }
         _ => false,
     }
 }
@@ -102,9 +112,9 @@ fn segment_ok(seg: &str) -> bool {
     let b = seg.as_bytes();
     !b.is_empty()
         && (b[0].is_ascii_lowercase() || b[0].is_ascii_digit())
-        && b[1..]
-            .iter()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, b'.' | b'_' | b'-'))
+        && b[1..].iter().all(|c| {
+            c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, b'.' | b'_' | b'-')
+        })
 }
 
 /// `validPrefix` (access/folder-rules.ts): a folder prefix (`a/b/`) or a slug, at most 512 bytes,
@@ -287,7 +297,10 @@ fn eff(cur: &Cur, s: &AccessSettings) -> CallerRecord {
 /// `withCallerAccess(patch, ...)` over `cur`: the record the callback runs under.
 fn with(cur: &Cur, patch: &Patch, s: &AccessSettings) -> Cur {
     let base = eff(cur, s);
-    let identity = patch.identity.clone().unwrap_or_else(|| base.identity.clone());
+    let identity = patch
+        .identity
+        .clone()
+        .unwrap_or_else(|| base.identity.clone());
     let sources = patch
         .private_readable_sources
         .clone()
@@ -304,9 +317,21 @@ fn with(cur: &Cur, patch: &Patch, s: &AccessSettings) -> Cur {
     let audience_identities: Vec<Vec<String>> = patch
         .audience_identities
         .clone()
-        .unwrap_or_else(|| if fresh { vec![] } else { base.audience_identities.clone() })
+        .unwrap_or_else(|| {
+            if fresh {
+                vec![]
+            } else {
+                base.audience_identities.clone()
+            }
+        })
         .iter()
-        .map(|id| if !id.is_empty() && valid_identity(id) { sorted_unique(id) } else { vec![] })
+        .map(|id| {
+            if !id.is_empty() && valid_identity(id) {
+                sorted_unique(id)
+            } else {
+                vec![]
+            }
+        })
         .collect();
     let audience = match &patch.audience {
         Some(a) => a.clone(),
@@ -320,54 +345,90 @@ fn with(cur: &Cur, patch: &Patch, s: &AccessSettings) -> Cur {
     };
     let satisfied_ok = valid_ids || audience_identities.iter().any(|id| !id.is_empty());
     let satisfied = if satisfied_ok {
-        patch
-            .satisfied_rule_ids
-            .clone()
-            .unwrap_or_else(|| if fresh { vec![] } else { base.satisfied_rule_ids.clone() })
+        patch.satisfied_rule_ids.clone().unwrap_or_else(|| {
+            if fresh {
+                vec![]
+            } else {
+                base.satisfied_rule_ids.clone()
+            }
+        })
     } else {
         vec![]
     };
-    let owner = patch.owner.unwrap_or(if fresh { false } else { base.owner });
+    let owner = patch
+        .owner
+        .unwrap_or(if fresh { false } else { base.owner });
     let single = audience_identities.len() <= 1;
-    let lineage_in = patch.lineage.unwrap_or(if fresh { false } else { base.lineage });
-    let orr_in = patch
-        .owner_reads_restricted
-        .unwrap_or(if fresh { false } else { base.owner_reads_restricted });
-    let akm_in = patch
-        .audience_kind_members
-        .clone()
-        .unwrap_or_else(|| if fresh { vec![] } else { base.audience_kind_members.clone() });
+    let lineage_in = patch
+        .lineage
+        .unwrap_or(if fresh { false } else { base.lineage });
+    let orr_in = patch.owner_reads_restricted.unwrap_or(if fresh {
+        false
+    } else {
+        base.owner_reads_restricted
+    });
+    let akm_in = patch.audience_kind_members.clone().unwrap_or_else(|| {
+        if fresh {
+            vec![]
+        } else {
+            base.audience_kind_members.clone()
+        }
+    });
     let read = single && lineage_in;
     let owner_read = owner && read;
-    let audience_valid = audience.as_ref().map(|a| a.iter().all(|e| e == "guest" || normalize_principal(e).as_deref() == Some(e.as_str())));
+    let audience_valid = audience.as_ref().map(|a| {
+        a.iter()
+            .all(|e| e == "guest" || normalize_principal(e).as_deref() == Some(e.as_str()))
+    });
     Some(CallerRecord {
-        identity: if valid_ids && single { sorted_unique(&identity) } else { vec![] },
+        identity: if valid_ids && single {
+            sorted_unique(&identity)
+        } else {
+            vec![]
+        },
         audience: match (audience, audience_valid) {
             (Some(a), Some(true)) => Some(a),
             (Some(_), _) => Some(vec!["guest".to_string()]),
             (None, _) => None,
         },
-        audience_identities: if audience_identities.len() > 1 { audience_identities } else { vec![] },
+        audience_identities: if audience_identities.len() > 1 {
+            audience_identities
+        } else {
+            vec![]
+        },
         actor,
         satisfied_rule_ids: if !satisfied.is_empty() && satisfied.iter().all(|r| valid_rule_id(r)) {
             sorted_unique(&satisfied)
         } else {
             vec![]
         },
-        folder_coverage: patch.folder_coverage.clone().unwrap_or_else(|| base.folder_coverage.clone()),
-        private_readable_sources: if !sources.is_empty() && sources.iter().all(|x| valid_source_id(x)) {
+        folder_coverage: patch
+            .folder_coverage
+            .clone()
+            .unwrap_or_else(|| base.folder_coverage.clone()),
+        private_readable_sources: if !sources.is_empty()
+            && sources.iter().all(|x| valid_source_id(x))
+        {
             unique(&sources)
         } else {
             vec![]
         },
-        private_fact_sources: if !fact_sources.is_empty() && fact_sources.iter().all(|x| valid_source_id(x)) {
+        private_fact_sources: if !fact_sources.is_empty()
+            && fact_sources.iter().all(|x| valid_source_id(x))
+        {
             unique(&fact_sources)
         } else {
             vec![]
         },
-        hide_private: patch.hide_private.unwrap_or(if fresh { true } else { base.hide_private }),
+        hide_private: patch
+            .hide_private
+            .unwrap_or(if fresh { true } else { base.hide_private }),
         owner,
-        owner_reads: Some(patch.owner_reads.unwrap_or(if fresh { false } else { base.owner_reads == Some(true) })),
+        owner_reads: Some(patch.owner_reads.unwrap_or(if fresh {
+            false
+        } else {
+            base.owner_reads == Some(true)
+        })),
         lineage: read,
         owner_reads_restricted: owner_read && orr_in,
         audience_kind_members: if owner_read && akm_in.iter().all(|id| access_id_ok(id)) {
@@ -375,7 +436,11 @@ fn with(cur: &Cur, patch: &Patch, s: &AccessSettings) -> Cur {
         } else {
             vec![]
         },
-        labelled_only: patch.labelled_only.unwrap_or(if fresh { false } else { base.labelled_only }),
+        labelled_only: patch.labelled_only.unwrap_or(if fresh {
+            false
+        } else {
+            base.labelled_only
+        }),
         apply_remote_read_policy: base.apply_remote_read_policy,
         restricted: patch.restricted.unwrap_or(base.restricted),
         remote_policy: match &patch.remote_policy {
@@ -468,8 +533,12 @@ struct PrivacyPart {
 }
 
 fn privacy_part(cur: &Cur, cx: Cx) -> PrivacyPart {
-    let concept_fn = !cx.norm && schema(cur, cx.s).is_some_and(|v| v >= CONCEPT_INPUTS_PRIVATE_SINCE);
-    PrivacyPart { honor: cx.s.honor_aliases, concept_fn }
+    let concept_fn =
+        !cx.norm && schema(cur, cx.s).is_some_and(|v| v >= CONCEPT_INPUTS_PRIVATE_SINCE);
+    PrivacyPart {
+        honor: cx.s.honor_aliases,
+        concept_fn,
+    }
 }
 
 /// One mapped `coverageSql` entry.
@@ -494,7 +563,9 @@ fn coverage(cur: &Cur) -> CoverageKey {
             r.folder_coverage
                 .iter()
                 .map(|c| {
-                    if !valid_source_id(&c.source_id) || (!c.prefix.is_empty() && !valid_prefix(&c.prefix)) {
+                    if !valid_source_id(&c.source_id)
+                        || (!c.prefix.is_empty() && !valid_prefix(&c.prefix))
+                    {
                         CoverageText::False
                     } else if c.prefix.is_empty() {
                         CoverageText::Whole(c.source_id.clone())
@@ -521,7 +592,11 @@ fn folder(satisfied: &[String], derived: bool, cur: &Cur) -> FolderKey {
     } else {
         vec![]
     };
-    FolderKey { ids, derived, coverage: coverage(cur) }
+    FolderKey {
+        ids,
+        derived,
+        coverage: coverage(cur),
+    }
 }
 
 /// `readersAllowedSql(alias, identity)`: the listed principals, in the order given.
@@ -537,11 +612,21 @@ fn readers(identity: &[String]) -> Vec<String> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum AccessKey {
     Short(OwnerOnlyText),
-    Full { readers: Vec<Vec<String>>, folder: FolderKey, owner_only: OwnerOnlyText },
+    Full {
+        readers: Vec<Vec<String>>,
+        folder: FolderKey,
+        owner_only: OwnerOnlyText,
+    },
     Lineage(Box<LineageKey>),
 }
 
-fn access_all(identities: &[Vec<String>], satisfied: &[String], derived: bool, cur: &Cur, s: &AccessSettings) -> AccessKey {
+fn access_all(
+    identities: &[Vec<String>],
+    satisfied: &[String],
+    derived: bool,
+    cur: &Cur,
+    s: &AccessSettings,
+) -> AccessKey {
     let oo = owner_only_text(cur, s);
     if !eff(cur, s).restricted {
         return AccessKey::Short(oo);
@@ -574,7 +659,13 @@ fn satisfied_for(identity: &[String], cur: &Cur, s: &AccessSettings) -> Vec<Stri
 }
 
 /// `accessAllowedSql(alias, identity, satisfied?, derived)`.
-fn access_allowed(identity: &[String], satisfied: Option<&[String]>, derived: bool, cur: &Cur, s: &AccessSettings) -> AccessKey {
+fn access_allowed(
+    identity: &[String],
+    satisfied: Option<&[String]>,
+    derived: bool,
+    cur: &Cur,
+    s: &AccessSettings,
+) -> AccessKey {
     let sat = match satisfied {
         Some(x) => x.to_vec(),
         None => satisfied_for(identity, cur, s),
@@ -607,7 +698,12 @@ fn audience_pages(a: &CallerRecord) -> Vec<String> {
 /// `lineageAccessSql(alias, access, ownPage, derived)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum LineageKey {
-    Short { orr: bool, own_page: Option<String>, audience: Vec<String>, owner_only: OwnerOnlyText },
+    Short {
+        orr: bool,
+        own_page: Option<String>,
+        audience: Vec<String>,
+        owner_only: OwnerOnlyText,
+    },
     Full {
         readers: Vec<String>,
         audience: Vec<String>,
@@ -623,14 +719,28 @@ enum LineageKey {
 
 /// `lineageAccessSql` for the record `a` (which need not be `cur`'s own: `ownerReadPolicyFragment`
 /// builds one), rendered in `cur` (coverage, schema).
-fn lineage_access(a: &CallerRecord, own_page: &str, derived: bool, cur: &Cur, s: &AccessSettings) -> LineageKey {
+fn lineage_access(
+    a: &CallerRecord,
+    own_page: &str,
+    derived: bool,
+    cur: &Cur,
+    s: &AccessSettings,
+) -> LineageKey {
     let audience = audience_pages(a);
-    let oo = if a.owner { OwnerOnlyText::None } else { owner_only_form(cur, s) };
+    let oo = if a.owner {
+        OwnerOnlyText::None
+    } else {
+        owner_only_form(cur, s)
+    };
     if !a.restricted {
         return LineageKey::Short {
             orr: a.owner_reads_restricted,
             own_page: a.owner_reads_restricted.then(|| own_page.to_string()),
-            audience: if a.owner_reads_restricted { audience } else { vec![] },
+            audience: if a.owner_reads_restricted {
+                audience
+            } else {
+                vec![]
+            },
             owner_only: oo,
         };
     }
@@ -638,8 +748,14 @@ fn lineage_access(a: &CallerRecord, own_page: &str, derived: bool, cur: &Cur, s:
         readers: readers(&a.identity),
         audience: audience.clone(),
         folder: folder(&a.satisfied_rule_ids, derived, cur),
-        orr_page: a.owner_reads_restricted.then(|| (own_page.to_string(), coverage(cur))),
-        origin_identity: if valid_identity(&a.identity) { a.identity.clone() } else { vec![] },
+        orr_page: a
+            .owner_reads_restricted
+            .then(|| (own_page.to_string(), coverage(cur))),
+        origin_identity: if valid_identity(&a.identity) {
+            a.identity.clone()
+        } else {
+            vec![]
+        },
         origin_satisfied: if a.satisfied_rule_ids.iter().all(|r| valid_rule_id(r)) {
             a.satisfied_rule_ids.clone()
         } else {
@@ -666,7 +782,11 @@ fn labelled(a: &CallerRecord) -> LabelledKey {
     }
     let ident = sorted_unique(&all);
     LabelledKey {
-        identity: if !ident.is_empty() && valid_identity(&ident) { ident } else { vec![] },
+        identity: if !ident.is_empty() && valid_identity(&ident) {
+            ident
+        } else {
+            vec![]
+        },
         satisfied: if a.satisfied_rule_ids.iter().all(|r| valid_rule_id(r)) {
             a.satisfied_rule_ids.clone()
         } else {
@@ -680,7 +800,10 @@ fn labelled(a: &CallerRecord) -> LabelledKey {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum PrivacyKey {
     True,
-    Part { sources: Vec<String>, part: PrivacyPart },
+    Part {
+        sources: Vec<String>,
+        part: PrivacyPart,
+    },
 }
 
 /// A page policy text over one alias.
@@ -688,9 +811,16 @@ enum PrivacyKey {
 enum PageKey {
     /// `(${access}[ AND ${labelled}] AND ${privacy})` with the labelled conjunct inside the access
     /// part (`callerAccessSql`), or none.
-    Base { access: AccessKey, labelled: Option<LabelledKey>, privacy: PrivacyKey },
+    Base {
+        access: AccessKey,
+        labelled: Option<LabelledKey>,
+        privacy: PrivacyKey,
+    },
     /// `(${plain} AND ${labelled})` (`remoteReadFloorSql` for a labelled-only caller).
-    FloorLabelled { plain: Box<PageKey>, labelled: LabelledKey },
+    FloorLabelled {
+        plain: Box<PageKey>,
+        labelled: LabelledKey,
+    },
     /// `'FALSE'` (`ownerReadPolicyFragment` with no member page).
     False,
 }
@@ -712,7 +842,10 @@ fn caller_access(cur: &Cur, s: &AccessSettings) -> (AccessKey, Option<LabelledKe
 fn caller_privacy(cur: &Cur, cx: Cx) -> PrivacyKey {
     let a = eff(cur, cx.s);
     if a.hide_private {
-        PrivacyKey::Part { sources: a.private_readable_sources.clone(), part: privacy_part(cur, cx) }
+        PrivacyKey::Part {
+            sources: a.private_readable_sources.clone(),
+            part: privacy_part(cur, cx),
+        }
     } else {
         PrivacyKey::True
     }
@@ -721,7 +854,11 @@ fn caller_privacy(cur: &Cur, cx: Cx) -> PrivacyKey {
 /// `privatePagesFilterForCaller(alias)`.
 fn page_caller(cur: &Cur, cx: Cx) -> PageKey {
     let (access, labelled) = caller_access(cur, cx.s);
-    PageKey::Base { access, labelled, privacy: caller_privacy(cur, cx) }
+    PageKey::Base {
+        access,
+        labelled,
+        privacy: caller_privacy(cur, cx),
+    }
 }
 
 /// `privatePagesFilterFragment(alias, derived)` (also `readPolicyFragment(alias, [], true[, []])`).
@@ -729,7 +866,10 @@ fn page_plain(cur: &Cur, derived: bool, cx: Cx) -> PageKey {
     PageKey::Base {
         access: access_allowed(&[], Some(&[]), derived, cur, cx.s),
         labelled: None,
-        privacy: PrivacyKey::Part { sources: vec![], part: privacy_part(cur, cx) },
+        privacy: PrivacyKey::Part {
+            sources: vec![],
+            part: privacy_part(cur, cx),
+        },
     }
 }
 
@@ -738,18 +878,35 @@ fn page_floor(cur: &Cur, cx: Cx) -> PageKey {
     let plain = page_plain(cur, false, cx);
     let a = eff(cur, cx.s);
     if a.labelled_only {
-        PageKey::FloorLabelled { plain: Box::new(plain), labelled: labelled(&a) }
+        PageKey::FloorLabelled {
+            plain: Box::new(plain),
+            labelled: labelled(&a),
+        }
     } else {
         plain
     }
 }
 
 /// `readPolicyFragment(alias, identity, hidePrivate, satisfied?, derived)` for one identity.
-fn read_policy(identity: &[String], hide: bool, satisfied: Option<&[String]>, derived: bool, cur: &Cur, cx: Cx) -> PageKey {
+fn read_policy(
+    identity: &[String],
+    hide: bool,
+    satisfied: Option<&[String]>,
+    derived: bool,
+    cur: &Cur,
+    cx: Cx,
+) -> PageKey {
     PageKey::Base {
         access: access_allowed(identity, satisfied, derived, cur, cx.s),
         labelled: None,
-        privacy: if hide { PrivacyKey::Part { sources: vec![], part: privacy_part(cur, cx) } } else { PrivacyKey::True },
+        privacy: if hide {
+            PrivacyKey::Part {
+                sources: vec![],
+                part: privacy_part(cur, cx),
+            }
+        } else {
+            PrivacyKey::True
+        },
     }
 }
 
@@ -767,7 +924,10 @@ fn owner_read_policy(identity: &[String], satisfied: &[String], cur: &Cur, cx: C
         Some(page) => PageKey::Base {
             access: AccessKey::Lineage(Box::new(lineage_access(&a, &page, false, cur, cx.s))),
             labelled: None,
-            privacy: PrivacyKey::Part { sources: vec![], part: privacy_part(cur, cx) },
+            privacy: PrivacyKey::Part {
+                sources: vec![],
+                part: privacy_part(cur, cx),
+            },
         },
         None => PageKey::False,
     }
@@ -799,7 +959,10 @@ fn page_fragment(f: PageFragment, cur: &Cur, cx: Cx) -> PageKey {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum LabelledFactKey {
     None,
-    Own { member: Option<String>, lineage: Option<LabelledKey> },
+    Own {
+        member: Option<String>,
+        lineage: Option<LabelledKey>,
+    },
 }
 
 fn labelled_fact(cur: &Cur, s: &AccessSettings) -> LabelledFactKey {
@@ -808,7 +971,10 @@ fn labelled_fact(cur: &Cur, s: &AccessSettings) -> LabelledFactKey {
         return LabelledFactKey::None;
     }
     let lone = if a.audience_identities.is_empty() {
-        a.identity.iter().find_map(|p| p.strip_prefix("member:")).map(str::to_string)
+        a.identity
+            .iter()
+            .find_map(|p| p.strip_prefix("member:"))
+            .map(str::to_string)
     } else {
         None
     };
@@ -824,8 +990,16 @@ fn shared_held(cur: &Cur, s: &AccessSettings) -> Option<Vec<String>> {
     if a.owner_reads_restricted {
         return None;
     }
-    let sat = if a.restricted { a.satisfied_rule_ids.clone() } else { vec![] };
-    Some(if !sat.is_empty() && sat.iter().all(|r| valid_rule_id(r)) { sorted_unique(&sat) } else { vec![] })
+    let sat = if a.restricted {
+        a.satisfied_rule_ids.clone()
+    } else {
+        vec![]
+    };
+    Some(if !sat.is_empty() && sat.iter().all(|r| valid_rule_id(r)) {
+        sorted_unique(&sat)
+    } else {
+        vec![]
+    })
 }
 
 /// `privateEntityFilterForCaller(facts)`.
@@ -838,18 +1012,36 @@ struct EntityKey {
 fn entity(cur: &Cur, cx: Cx) -> EntityKey {
     let a = eff(cur, cx.s);
     let policy = if a.labelled_only {
-        page_caller(&with(cur, &Patch { labelled_only: Some(false), ..Patch::default() }, cx.s), cx)
+        page_caller(
+            &with(
+                cur,
+                &Patch {
+                    labelled_only: Some(false),
+                    ..Patch::default()
+                },
+                cx.s,
+            ),
+            cx,
+        )
     } else {
         page_caller(cur, cx)
     };
-    EntityKey { policy, shared_held: shared_held(cur, cx.s) }
+    EntityKey {
+        policy,
+        shared_held: shared_held(cur, cx.s),
+    }
 }
 
 /// The member-page case of `privateProvenanceFilterUnderPolicy`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ProvenancePolicy {
     Plain(PageKey),
-    Lineage { audience: Vec<String>, member_pages: PageKey, other: LineageKey, privacy: PrivacyKey },
+    Lineage {
+        audience: Vec<String>,
+        member_pages: PageKey,
+        other: LineageKey,
+        privacy: PrivacyKey,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -863,9 +1055,16 @@ enum FactKey {
         owner_only: OwnerOnlyText,
     },
     /// `privateFactFilterForCaller(facts)`.
-    ForCaller { provenance: (PageKey, OwnerOnlyText), entity: EntityKey, labelled: LabelledFactKey },
+    ForCaller {
+        provenance: (PageKey, OwnerOnlyText),
+        entity: EntityKey,
+        labelled: LabelledFactKey,
+    },
     /// `remoteProvenanceFloorSql(facts)`: the provenance fragment, wrapped when labelled-only.
-    Floor { provenance: (PageKey, OwnerOnlyText), labelled: LabelledFactKey },
+    Floor {
+        provenance: (PageKey, OwnerOnlyText),
+        labelled: LabelledFactKey,
+    },
 }
 
 fn fact_under_policy(cur: &Cur, cx: Cx) -> FactKey {
@@ -874,7 +1073,11 @@ fn fact_under_policy(cur: &Cur, cx: Cx) -> FactKey {
     let member = match &a.actor {
         Some(actor) => Some(actor.member.clone()),
         None if !a.audience_identities.is_empty() => None,
-        None => a.identity.iter().find_map(|p| p.strip_prefix("member:")).map(str::to_string),
+        None => a
+            .identity
+            .iter()
+            .find_map(|p| p.strip_prefix("member:"))
+            .map(str::to_string),
     };
     let own_page = lineage_read_page(&a);
     let audience = audience_pages(&a);
@@ -883,12 +1086,26 @@ fn fact_under_policy(cur: &Cur, cx: Cx) -> FactKey {
             audience: audience.clone(),
             member_pages: read_policy(&[], hide, Some(&[]), true, cur, cx),
             other: lineage_access(&a, &page, true, cur, cx.s),
-            privacy: if hide { PrivacyKey::Part { sources: vec![], part: privacy_part(cur, cx) } } else { PrivacyKey::True },
+            privacy: if hide {
+                PrivacyKey::Part {
+                    sources: vec![],
+                    part: privacy_part(cur, cx),
+                }
+            } else {
+                PrivacyKey::True
+            },
         },
         None => ProvenancePolicy::Plain(read_policy(&[], hide, Some(&[]), true, cur, cx)),
     };
     let member = member.filter(|m| access_id_ok(m)).map(|m| {
-        let policy = read_policy(&a.identity, hide, Some(&a.satisfied_rule_ids), true, cur, cx);
+        let policy = read_policy(
+            &a.identity,
+            hide,
+            Some(&a.satisfied_rule_ids),
+            true,
+            cur,
+            cx,
+        );
         (m, policy)
     });
     FactKey::UnderPolicy {
@@ -906,11 +1123,18 @@ fn provenance_fragment(cur: &Cur, cx: Cx) -> (PageKey, OwnerOnlyText) {
 }
 
 fn fact_for_caller(cur: &Cur, cx: Cx) -> FactKey {
-    FactKey::ForCaller { provenance: provenance_fragment(cur, cx), entity: entity(cur, cx), labelled: labelled_fact(cur, cx.s) }
+    FactKey::ForCaller {
+        provenance: provenance_fragment(cur, cx),
+        entity: entity(cur, cx),
+        labelled: labelled_fact(cur, cx.s),
+    }
 }
 
 fn fact_floor(cur: &Cur, cx: Cx) -> FactKey {
-    FactKey::Floor { provenance: provenance_fragment(cur, cx), labelled: labelled_fact(cur, cx.s) }
+    FactKey::Floor {
+        provenance: provenance_fragment(cur, cx),
+        labelled: labelled_fact(cur, cx.s),
+    }
 }
 
 /// The fact fragment a fact policy compares (`rendered` in `storePrivacyPolicy`).
@@ -953,7 +1177,9 @@ fn page_owner_only(k: &PageKey) -> OwnerOnlyText {
         AccessKey::Short(o) => *o,
         AccessKey::Full { owner_only, .. } => *owner_only,
         AccessKey::Lineage(l) => match l.as_ref() {
-            LineageKey::Short { owner_only, .. } | LineageKey::Full { owner_only, .. } => *owner_only,
+            LineageKey::Short { owner_only, .. } | LineageKey::Full { owner_only, .. } => {
+                *owner_only
+            }
         },
     };
     match k {
@@ -969,7 +1195,10 @@ fn page_flags(k: &PageKey, s: &AccessSettings) -> Map<String, Value> {
     let mut m = Map::new();
     m.insert("honorAliases".into(), json!(s.honor_aliases && privacy));
     m.insert("entityPrivacy".into(), json!(privacy));
-    m.insert("ownerOnly".into(), json!(owner_only_flag(page_owner_only(k))));
+    m.insert(
+        "ownerOnly".into(),
+        json!(owner_only_flag(page_owner_only(k))),
+    );
     m
 }
 
@@ -977,16 +1206,22 @@ fn page_flags(k: &PageKey, s: &AccessSettings) -> Map<String, Value> {
 /// aliases honoured, `privateSnapshotFilterFragment('pp')` in general).
 fn fact_pp_privacy(k: &FactKey) -> bool {
     match k {
-        FactKey::UnderPolicy { member, otherwise, .. } => {
+        FactKey::UnderPolicy {
+            member, otherwise, ..
+        } => {
             let other = match otherwise {
                 ProvenancePolicy::Plain(p) => page_has_privacy(p),
-                ProvenancePolicy::Lineage { member_pages, privacy, .. } => {
-                    page_has_privacy(member_pages) || matches!(privacy, PrivacyKey::Part { .. })
-                }
+                ProvenancePolicy::Lineage {
+                    member_pages,
+                    privacy,
+                    ..
+                } => page_has_privacy(member_pages) || matches!(privacy, PrivacyKey::Part { .. }),
             };
             other || member.as_ref().is_some_and(|(_, p)| page_has_privacy(p))
         }
-        FactKey::ForCaller { provenance, .. } | FactKey::Floor { provenance, .. } => page_has_privacy(&provenance.0),
+        FactKey::ForCaller { provenance, .. } | FactKey::Floor { provenance, .. } => {
+            page_has_privacy(&provenance.0)
+        }
     }
 }
 
@@ -1000,13 +1235,21 @@ fn fact_owner_only(k: &FactKey) -> OwnerOnlyText {
 /// `factPolicyFlags(text)`.
 fn fact_flags(k: &FactKey, s: &AccessSettings) -> Map<String, Value> {
     let entity_privacy = match k {
-        FactKey::UnderPolicy { entity, .. } | FactKey::ForCaller { entity, .. } => page_has_privacy(&entity.policy),
+        FactKey::UnderPolicy { entity, .. } | FactKey::ForCaller { entity, .. } => {
+            page_has_privacy(&entity.policy)
+        }
         FactKey::Floor { .. } => false,
     };
     let mut m = Map::new();
-    m.insert("honorAliases".into(), json!(s.honor_aliases && fact_pp_privacy(k)));
+    m.insert(
+        "honorAliases".into(),
+        json!(s.honor_aliases && fact_pp_privacy(k)),
+    );
     m.insert("entityPrivacy".into(), json!(entity_privacy));
-    m.insert("ownerOnly".into(), json!(owner_only_flag(fact_owner_only(k))));
+    m.insert(
+        "ownerOnly".into(),
+        json!(owner_only_flag(fact_owner_only(k))),
+    );
     m
 }
 
@@ -1042,7 +1285,11 @@ pub enum DeriveRequest {
     /// `storeFloorPolicy(member)`.
     FloorPolicy {},
     /// `storeMemberReadPolicy(member, q)`.
-    MemberRead { owner: bool, identity: Vec<String>, satisfied: Vec<String> },
+    MemberRead {
+        owner: bool,
+        identity: Vec<String>,
+        satisfied: Vec<String>,
+    },
     /// page-visibility.ts `callerPolicy(member, 'access')`.
     MemberAccess {},
     /// `storeRemoteFloor(member)`.
@@ -1105,16 +1352,30 @@ struct Readers {
 }
 
 /// `judgeWidenedCaller(judge)`.
-fn judge_widened<T>(cur: &Cur, s: &AccessSettings, judge: impl Fn(&Cur, &Readers) -> Option<T>) -> Option<T> {
+fn judge_widened<T>(
+    cur: &Cur,
+    s: &AccessSettings,
+    judge: impl Fn(&Cur, &Readers) -> Option<T>,
+) -> Option<T> {
     let a = eff(cur, s);
-    let readers = Readers { identity: a.identity.clone(), private_readable_sources: a.private_readable_sources.clone() };
+    let readers = Readers {
+        identity: a.identity.clone(),
+        private_readable_sources: a.private_readable_sources.clone(),
+    };
     if let Some(v) = judge(cur, &readers) {
         return Some(v);
     }
     if a.restricted {
         return None;
     }
-    let cur2 = with(cur, &Patch { restricted: Some(true), ..Patch::default() }, s);
+    let cur2 = with(
+        cur,
+        &Patch {
+            restricted: Some(true),
+            ..Patch::default()
+        },
+        s,
+    );
     judge(&cur2, &readers)
 }
 
@@ -1128,7 +1389,10 @@ fn readers_patch(r: &Readers) -> Patch {
 
 fn put_readers(m: &mut Map<String, Value>, r: &Readers) {
     m.insert("identity".into(), json!(r.identity));
-    m.insert("privateReadableSources".into(), json!(r.private_readable_sources));
+    m.insert(
+        "privateReadableSources".into(),
+        json!(r.private_readable_sources),
+    );
 }
 
 fn with_open(mut v: Map<String, Value>, open: bool) -> Value {
@@ -1153,8 +1417,17 @@ fn derive_page_text(
     let policy = judge_widened(cur, s, |cur2, caller_readers_rec| {
         let access = eff(cur2, s);
         let open = !access.restricted;
-        let text = fixed.clone().unwrap_or_else(|| page_fragment(fragment, cur2, cx));
-        let base_patch = if open { Patch { restricted: Some(false), ..Patch::default() } } else { Patch::default() };
+        let text = fixed
+            .clone()
+            .unwrap_or_else(|| page_fragment(fragment, cur2, cx));
+        let base_patch = if open {
+            Patch {
+                restricted: Some(false),
+                ..Patch::default()
+            }
+        } else {
+            Patch::default()
+        };
         let baseline_cur = reference(cur2, base_patch, !open, s);
         let baseline = page_caller(&baseline_cur, cx);
         if text == baseline {
@@ -1193,7 +1466,10 @@ fn derive_page_text(
                 m.insert("satisfiedRuleIds".into(), json!(satisfied));
             }
             if !cov.is_empty() {
-                m.insert("folderCoverage".into(), serde_json::to_value(&cov).unwrap_or(Value::Null));
+                m.insert(
+                    "folderCoverage".into(),
+                    serde_json::to_value(&cov).unwrap_or(Value::Null),
+                );
             }
             m.insert("callerRecord".into(), json!(true));
         };
@@ -1222,23 +1498,41 @@ fn derive_page_text(
     });
     match policy {
         Some(m) => Derived::Value(with_open(m, open_flag)),
-        None => Derived::Refuse("excludePrivate for a caller whose member pages, grants or lineage widen the policy"),
+        None => Derived::Refuse(
+            "excludePrivate for a caller whose member pages, grants or lineage widen the policy",
+        ),
     }
 }
 
 /// `storePrivacyPolicy`.
-fn derive_fact(cur: &Cur, s: &AccessSettings, exclude_private: bool, fragment: FactFragment, caller_readers: bool) -> Derived {
+fn derive_fact(
+    cur: &Cur,
+    s: &AccessSettings,
+    exclude_private: bool,
+    fragment: FactFragment,
+    caller_readers: bool,
+) -> Derived {
     if !exclude_private {
         return Derived::None;
     }
     let open_flag = !eff(cur, s).restricted;
     let cx = Cx { s, norm: true };
-    let forms = [(FactFragment::UnderPolicy, true), (FactFragment::ForCaller, false)];
+    let forms = [
+        (FactFragment::UnderPolicy, true),
+        (FactFragment::ForCaller, false),
+    ];
     let policy = judge_widened(cur, s, |cur2, readers| {
         let open = !eff(cur2, s).restricted;
         let text = fact_fragment(fragment, cur2, cx);
         for (form, _) in forms {
-            let base_patch = if open { Patch { restricted: Some(false), ..Patch::default() } } else { Patch::default() };
+            let base_patch = if open {
+                Patch {
+                    restricted: Some(false),
+                    ..Patch::default()
+                }
+            } else {
+                Patch::default()
+            };
             let baseline_cur = reference(cur2, base_patch, !open, s);
             let baseline = fact_fragment(form, &baseline_cur, cx);
             if text == baseline {
@@ -1248,7 +1542,11 @@ fn derive_fact(cur: &Cur, s: &AccessSettings, exclude_private: bool, fragment: F
         if !caller_readers {
             return None;
         }
-        let own = readers.identity.iter().find_map(|p| p.strip_prefix("member:")).map(str::to_string);
+        let own = readers
+            .identity
+            .iter()
+            .find_map(|p| p.strip_prefix("member:"))
+            .map(str::to_string);
         let access = eff(cur2, s);
         let mut records: Vec<Patch> = Vec::new();
         let mut reader = readers_patch(readers);
@@ -1294,7 +1592,9 @@ fn derive_fact(cur: &Cur, s: &AccessSettings, exclude_private: bool, fragment: F
     });
     match policy {
         Some(m) => Derived::Value(with_open(m, open_flag)),
-        None => Derived::Refuse("excludePrivate for a caller whose member pages, grants or lineage widen the policy"),
+        None => Derived::Refuse(
+            "excludePrivate for a caller whose member pages, grants or lineage widen the policy",
+        ),
     }
 }
 
@@ -1313,16 +1613,28 @@ fn derive_floor_policy(cur: &Cur, s: &AccessSettings) -> Derived {
         return floor(&unscoped, false);
     }
     let a = eff(cur, s);
-    let patch = Patch { restricted: Some(a.restricted), owner: Some(a.owner), ..Patch::default() };
+    let patch = Patch {
+        restricted: Some(a.restricted),
+        owner: Some(a.owner),
+        ..Patch::default()
+    };
     let fresh = fact_floor(&reference(cur, patch, false, s), cx);
     if text == fresh {
         return floor(&fresh, !a.restricted);
     }
-    Derived::Refuse("the remote provenance floor for a caller whose labelled-only grant, folder coverage or relaxed privacy changes it")
+    Derived::Refuse(
+        "the remote provenance floor for a caller whose labelled-only grant, folder coverage or relaxed privacy changes it",
+    )
 }
 
 /// `storeMemberReadPolicy` and `storeOwnerReadPolicy`.
-fn derive_member_read(cur: &Cur, s: &AccessSettings, owner: bool, identity: &[String], satisfied: &[String]) -> Derived {
+fn derive_member_read(
+    cur: &Cur,
+    s: &AccessSettings,
+    owner: bool,
+    identity: &[String],
+    satisfied: &[String],
+) -> Derived {
     let cx = Cx { s, norm: true };
     if !satisfied.is_empty() {
         return Derived::Refuse("a member page whose reader meets a folder rule");
@@ -1332,7 +1644,12 @@ fn derive_member_read(cur: &Cur, s: &AccessSettings, owner: bool, identity: &[St
     let named_in_text = identity.is_empty() || valid_identity(identity);
     if owner {
         let text = owner_read_policy(identity, &[], cur, cx);
-        let refc = owner_read_policy(identity, &[], &reference(cur, Patch::default(), true, s), cx);
+        let refc = owner_read_policy(
+            identity,
+            &[],
+            &reference(cur, Patch::default(), true, s),
+            cx,
+        );
         if text != PageKey::False && text == refc && named_in_text {
             let flags = page_flags(&refc, s);
             if flags.get("ownerOnly") == Some(&json!("off")) {
@@ -1342,12 +1659,28 @@ fn derive_member_read(cur: &Cur, s: &AccessSettings, owner: bool, identity: &[St
                 return Derived::Value(Value::Object(m));
             }
         }
-        return Derived::Refuse("an owner read of a member page whose policy is not the one the store models");
+        return Derived::Refuse(
+            "an owner read of a member page whose policy is not the one the store models",
+        );
     }
     let text = read_policy(identity, true, Some(satisfied), false, cur, cx);
     let open = !eff(cur, s).restricted;
-    let base_patch = if open { Patch { restricted: Some(false), ..Patch::default() } } else { Patch::default() };
-    let refc = read_policy(identity, true, Some(&[]), false, &reference(cur, base_patch, !open, s), cx);
+    let base_patch = if open {
+        Patch {
+            restricted: Some(false),
+            ..Patch::default()
+        }
+    } else {
+        Patch::default()
+    };
+    let refc = read_policy(
+        identity,
+        true,
+        Some(&[]),
+        false,
+        &reference(cur, base_patch, !open, s),
+        cx,
+    );
     let named = open || named_in_text;
     if text == refc && named {
         let mut m = page_flags(&refc, s);
@@ -1361,7 +1694,11 @@ fn derive_member_read(cur: &Cur, s: &AccessSettings, owner: bool, identity: &[St
 fn derive_member_access(cur: &Cur, s: &AccessSettings) -> Derived {
     let policy = judge_widened(cur, s, |cur2, readers| {
         let (text, lab) = caller_access(cur2, s);
-        let text_oo = page_owner_only(&PageKey::Base { access: text.clone(), labelled: None, privacy: PrivacyKey::True });
+        let text_oo = page_owner_only(&PageKey::Base {
+            access: text.clone(),
+            labelled: None,
+            privacy: PrivacyKey::True,
+        });
         let mut off = Map::new();
         off.insert("honorAliases".into(), json!(false));
         off.insert("entityPrivacy".into(), json!(false));
@@ -1381,7 +1718,9 @@ fn derive_member_access(cur: &Cur, s: &AccessSettings) -> Derived {
     });
     match policy {
         Some(m) => Derived::Value(Value::Object(m)),
-        None => Derived::Refuse("a caller whose member pages, grants or lineage widen the member-access policy"),
+        None => Derived::Refuse(
+            "a caller whose member pages, grants or lineage widen the member-access policy",
+        ),
     }
 }
 
@@ -1426,7 +1765,11 @@ fn caller_member(cur: &Cur, s: &AccessSettings) -> Option<String> {
     if !a.audience_identities.is_empty() {
         return None;
     }
-    a.identity.iter().find_map(|p| p.strip_prefix("member:")).filter(|m| access_id_ok(m)).map(str::to_string)
+    a.identity
+        .iter()
+        .find_map(|p| p.strip_prefix("member:"))
+        .filter(|m| access_id_ok(m))
+        .map(str::to_string)
 }
 
 /// `privateFactSources()`.
@@ -1443,21 +1786,36 @@ fn private_fact_sources(cur: &Cur, s: &AccessSettings) -> Vec<String> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct VisibilityKey {
     listed: Vec<&'static str>,
-    widened: Option<(Option<(String, PageKey)>, Option<(Vec<String>, Option<(String, PageKey)>)>)>,
+    widened: Option<(
+        Option<(String, PageKey)>,
+        Option<(Vec<String>, Option<(String, PageKey)>)>,
+    )>,
 }
 
 fn visibility_key(list: &[String], cur: &Cur, cx: Cx) -> VisibilityKey {
-    let known: Vec<&'static str> = ["world", "private"].into_iter().filter(|v| list.iter().any(|x| x == v)).collect();
+    let known: Vec<&'static str> = ["world", "private"]
+        .into_iter()
+        .filter(|v| list.iter().any(|x| x == v))
+        .collect();
     if known.contains(&"private") {
-        return VisibilityKey { listed: known, widened: None };
+        return VisibilityKey {
+            listed: known,
+            widened: None,
+        };
     }
     let member = caller_member(cur, cx.s).map(|m| (m, page_caller(cur, cx)));
     let sources = private_fact_sources(cur, cx.s);
     let granted = (!sources.is_empty()).then(|| (sources, member.clone()));
     if member.is_none() && granted.is_none() {
-        return VisibilityKey { listed: known, widened: None };
+        return VisibilityKey {
+            listed: known,
+            widened: None,
+        };
     }
-    VisibilityKey { listed: known, widened: Some((member, granted)) }
+    VisibilityKey {
+        listed: known,
+        widened: Some((member, granted)),
+    }
 }
 
 /// `storeVisibility`.
@@ -1501,7 +1859,9 @@ fn derive_visibility(cur: &Cur, s: &AccessSettings, list: Option<&[String]>) -> 
     });
     match widen {
         Some(w) => Derived::Value(json!({ "visibility": list, "widen": w })),
-        None => Derived::Refuse("a visibility list widened by member pages or grants for a caller the store does not model"),
+        None => Derived::Refuse(
+            "a visibility list widened by member pages or grants for a caller the store does not model",
+        ),
     }
 }
 
@@ -1510,14 +1870,30 @@ pub fn derive(ctx: &AccessContext) -> Derived {
     let cur = &ctx.record;
     let s = &ctx.settings;
     match &ctx.request {
-        DeriveRequest::PageText { fragment, caller_readers, no_readers, rendered_in } => {
-            derive_page_text(cur, s, *fragment, *caller_readers, *no_readers, rendered_in.as_ref())
-        }
-        DeriveRequest::Fact { exclude_private, fragment, caller_readers } => {
-            derive_fact(cur, s, *exclude_private, *fragment, *caller_readers)
-        }
+        DeriveRequest::PageText {
+            fragment,
+            caller_readers,
+            no_readers,
+            rendered_in,
+        } => derive_page_text(
+            cur,
+            s,
+            *fragment,
+            *caller_readers,
+            *no_readers,
+            rendered_in.as_ref(),
+        ),
+        DeriveRequest::Fact {
+            exclude_private,
+            fragment,
+            caller_readers,
+        } => derive_fact(cur, s, *exclude_private, *fragment, *caller_readers),
         DeriveRequest::FloorPolicy {} => derive_floor_policy(cur, s),
-        DeriveRequest::MemberRead { owner, identity, satisfied } => derive_member_read(cur, s, *owner, identity, satisfied),
+        DeriveRequest::MemberRead {
+            owner,
+            identity,
+            satisfied,
+        } => derive_member_read(cur, s, *owner, identity, satisfied),
         DeriveRequest::MemberAccess {} => derive_member_access(cur, s),
         DeriveRequest::RemoteFloor {} => derive_remote_floor(cur, s),
         DeriveRequest::Visibility { list } => derive_visibility(cur, s, list.as_deref()),
@@ -1537,7 +1913,11 @@ mod tests {
     use super::*;
 
     fn settings() -> AccessSettings {
-        AccessSettings { honor_aliases: true, process_privacy_relaxed: false, scope_schema_version: Some(330) }
+        AccessSettings {
+            honor_aliases: true,
+            process_privacy_relaxed: false,
+            scope_schema_version: Some(330),
+        }
     }
 
     fn ctx(record: Option<Value>, request: Value) -> Value {
@@ -1549,8 +1929,14 @@ mod tests {
         assert!(access_id_ok("alice-example"));
         assert!(!access_id_ok("Alice"));
         assert!(!access_id_ok(""));
-        assert_eq!(normalize_principal(" Member:Bob ").as_deref(), Some("member:bob"));
-        assert_eq!(normalize_principal("group:team-a").as_deref(), Some("group:team-a"));
+        assert_eq!(
+            normalize_principal(" Member:Bob ").as_deref(),
+            Some("member:bob")
+        );
+        assert_eq!(
+            normalize_principal("group:team-a").as_deref(),
+            Some("group:team-a")
+        );
         assert!(normalize_principal("group:").is_none());
         assert!(valid_rule_id("wiki:team.page"));
         assert!(!valid_rule_id(":x"));
@@ -1564,22 +1950,40 @@ mod tests {
 
     #[test]
     fn no_record_reads_the_no_caller_page_policy() {
-        let got = derive_json(&ctx(None, json!({ "mode": "page_text", "fragment": "caller", "callerReaders": true }))).unwrap();
-        assert_eq!(got, json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn" }));
+        let got = derive_json(&ctx(
+            None,
+            json!({ "mode": "page_text", "fragment": "caller", "callerReaders": true }),
+        ))
+        .unwrap();
+        assert_eq!(
+            got,
+            json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn" })
+        );
     }
 
     #[test]
     fn a_member_reads_its_readers_policy() {
         let record = json!({ "identity": ["group:team-a", "member:alice-example"], "restricted": true, "hidePrivate": true });
-        let got = derive_json(&ctx(Some(record), json!({ "mode": "page_text", "fragment": "caller", "callerReaders": true }))).unwrap();
-        assert_eq!(got["identity"], json!(["group:team-a", "member:alice-example"]));
+        let got = derive_json(&ctx(
+            Some(record),
+            json!({ "mode": "page_text", "fragment": "caller", "callerReaders": true }),
+        ))
+        .unwrap();
+        assert_eq!(
+            got["identity"],
+            json!(["group:team-a", "member:alice-example"])
+        );
         assert_eq!(got["callerRecord"], json!(true));
     }
 
     #[test]
     fn an_audience_or_lineage_caller_refuses() {
         let record = json!({ "identity": [], "audienceIdentities": [["member:a"], ["member:b"]], "audience": ["member:a", "member:b"] });
-        let got = derive_json(&ctx(Some(record), json!({ "mode": "page_text", "fragment": "caller", "callerReaders": true }))).unwrap();
+        let got = derive_json(&ctx(
+            Some(record),
+            json!({ "mode": "page_text", "fragment": "caller", "callerReaders": true }),
+        ))
+        .unwrap();
         assert_eq!(got["$refuse"], json!(true));
         let record = json!({ "identity": ["member:a"], "lineage": true });
         let got = derive_json(&ctx(Some(record), json!({ "mode": "fact", "excludePrivate": true, "fragment": "under_policy", "callerReaders": true }))).unwrap();
@@ -1588,7 +1992,11 @@ mod tests {
 
     #[test]
     fn a_fact_policy_not_asked_for_is_none() {
-        let got = derive_json(&ctx(None, json!({ "mode": "fact", "excludePrivate": false, "fragment": "for_caller" }))).unwrap();
+        let got = derive_json(&ctx(
+            None,
+            json!({ "mode": "fact", "excludePrivate": false, "fragment": "for_caller" }),
+        ))
+        .unwrap();
         assert_eq!(got, json!({ "$none": true }));
     }
 
@@ -1597,8 +2005,17 @@ mod tests {
         let mut s = settings();
         s.honor_aliases = false;
         s.scope_schema_version = None;
-        let d = derive(&AccessContext { record: None, settings: s, request: DeriveRequest::FloorPolicy {} });
-        assert_eq!(d, Derived::Value(json!({ "honorAliases": false, "entityPrivacy": false, "ownerOnly": "closed", "provenanceOnly": true })));
+        let d = derive(&AccessContext {
+            record: None,
+            settings: s,
+            request: DeriveRequest::FloorPolicy {},
+        });
+        assert_eq!(
+            d,
+            Derived::Value(
+                json!({ "honorAliases": false, "entityPrivacy": false, "ownerOnly": "closed", "provenanceOnly": true })
+            )
+        );
     }
 
     #[test]
