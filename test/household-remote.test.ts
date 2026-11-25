@@ -506,26 +506,6 @@ describe('household privacy over remote MCP', () => {
     expect(dana.isError, dana.text).toBe(false);
   });
 
-  test('a remote non-owner giving an unclassified subject an adult role gets the same outcome whether or not hidden records name it (W1a follow-up)', async () => {
-    const hidden = await local('household_add', { kind: 'supply', title: 'Gus snacks', cadence: '30d', about: ['people/gus-example'] });
-    const page = await engine.getPage(hidden.slug);
-    expect(page!.frontmatter.household_audience).toBe('adults');
-    const { revision } = await local('get_page', { slug: hidden.slug });
-    await local('put_page', { slug: hidden.slug, expected_revision: revision, content: md({ title: page!.title, ...page!.frontmatter, readable_by: [OWNER] }, page!.compiled_truth) });
-    __resetPrivateVisibilityCacheForTests();
-    for (const who of ['gus', 'hal']) {
-      const out = await remote(ADULT, 'put_page', { slug: 'people/' + who + '-example', content: md({ type: 'person', title: who + '-example', household_role: 'adult' }, who + '.') });
-      expect(out.isError, out.text).toBe(false);
-      expect((await engine.getPage('people/' + who + '-example'))!.frontmatter.household_role).toBe('adult');
-    }
-    expect((await engine.getPage(hidden.slug))!.frontmatter.readable_by).toEqual([OWNER]);
-    await local('household_add', { kind: 'supply', title: 'Ida snacks', cadence: '30d', about: ['people/ida-example'] });
-    __resetPrivateVisibilityCacheForTests();
-    const visible = await remote(ADULT, 'put_page', { slug: 'people/ida-example', content: md({ type: 'person', title: 'ida-example', household_role: 'adult' }, 'Ida.') });
-    expect(visible.isError).toBe(true);
-    expect(visible.text).toContain('household_reclassify');
-  });
-
   test('a subject the owner changes back to adult after the pre-check is not made a child by a non-owner (merged-head review #2)', async () => {
     await local('put_page', { slug: 'people/abe-example', content: md({ type: 'person', title: 'abe-example', household_role: 'adult' }, 'Abe.') });
     const read = PGLiteEngine.prototype.readPageSnapshot;

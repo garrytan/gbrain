@@ -65,10 +65,7 @@ people, each record names the owner and the `household-adults`, `household-helpe
 its row allows. To reclassify a subject, run `gbrain household replace --about <slug> --role <role>` on the brain host
 (or `household add --child` with a new record): it narrows the records about the subject to adults first, then sets
 the role. On a brain that serves several people, only the owner's MCP connection can make a subject a child with
-`household_add`, `put_page` or `edit_page`, remove a subject's role, or delete a subject page; any other connection is refused with `household_reclassify`, the same way whatever records exist, so the refusal says nothing about records it cannot read.
-Giving a subject with no role a role like `adult` is refused only when a record about it is kept to adults by the
-placement table alone (every adult reads those); a record whose `readable_by` was written narrower keeps that list, so
-it never blocks the change. An edit or sync that narrows a subject while records about it are still shared is refused
+`household_add`, `put_page` or `edit_page`, remove a subject's role, or delete a subject page; any other connection is refused with `household_reclassify`, the same way whatever records exist, so the refusal says nothing about records it cannot read. An edit or sync that narrows a subject while records about it are still shared is refused
 ([household_reclassify](#household_reclassify)), and so is making a child of a subject page that sync deleted and
 wrote again; only the owner can turn a child into another role.
 Every write path runs these checks against the stored page and the new one: `put_page`, `edit_page`, the household
@@ -98,7 +95,7 @@ It costs a few dollars of model use, so it runs only when you ask:
 `GBRAIN_TEST_LIVE_HOUSEHOLD=1 GBRAIN_TEST_KEEP_PROVIDER_KEYS=1 bun test test/e2e/household-cross-harness-real.serial.test.ts`,
 with the `claude` (2.1.280 or newer, for Opus 5.5) and `codex` commands, and `ANTHROPIC_API_KEY` plus `CODEX_API_KEY`
 or `OPENAI_API_KEY`. If you ask for it and something is missing, it fails and names what. It uses no judge and publishes
-no number. The seed script refuses a directory that already holds a brain.
+no number. The seed script refuses a directory that already has a `.gbrain` folder, and removes the folder it made if seeding fails.
 
 ## household_exists
 

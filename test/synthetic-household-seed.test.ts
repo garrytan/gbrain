@@ -26,6 +26,6 @@ describe('synthetic household seed script', () => {
       spy.mockRestore();
     }
     expect(existsSync(join(fresh, '.gbrain', 'brain.pglite'))).toBe(false);
-    expect(existsSync(join(fresh, '.gbrain', 'config.json'))).toBe(false);
+    expect(existsSync(join(fresh, '.gbrain'))).toBe(false);
   });
 });

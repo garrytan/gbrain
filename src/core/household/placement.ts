@@ -125,15 +125,9 @@ async function recordsAbout(engine: Pick<BrainEngine, 'listPages'>, sourceId: st
   return rows.filter(row => aboutOf(row.frontmatter?.about).includes(slug));
 }
 
-/**
- * A record kept to adults only by its subjects (not by its kind or its own audience), which a not_child subject would
- * widen: its readers are the table's adults readers, which every adult reads. A record whose readable_by was written
- * narrower keeps that list when it is placed again (placeHouseholdFrontmatter), so it never widens and never blocks.
- */
-function heldBySubject(fm: Record<string, unknown> | null | undefined, adults: string[] | null): boolean {
-  if (fm?.household_audience !== 'adults' || fm.audience === 'adults' || PLACEMENT[fm.kind as HouseholdKind]?.audience !== 'shared') return false;
-  const written = readerList(fm.readable_by);
-  return !adults || !written || sameList(written, adults);
+/** A record kept to adults only by its subjects (not by its kind or its own audience), which a not_child subject would widen. */
+function heldBySubject(fm: Record<string, unknown> | null | undefined): boolean {
+  return fm?.household_audience === 'adults' && fm.audience !== 'adults' && PLACEMENT[fm.kind as HouseholdKind]?.audience === 'shared';
 }
 
 /** A record's about[] as lower-case slugs (a scalar or a list; anything else is none). */
@@ -289,18 +283,13 @@ export async function householdWriteAdmission(engine: Pick<BrainEngine, 'execute
   }
 }
 
-async function heldRecordsAbout(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig' | 'listPages'>, sourceId: string, slug: string): Promise<boolean> {
-  const adults = await placedReaders(engine, 'adults');
-  return (await recordsAbout(engine, sourceId, slug)).some(row => heldBySubject(row.frontmatter, adults));
-}
-
 async function subjectAdmission(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig' | 'getPage' | 'listPages'>, sourceId: string, slug: string,
   parsed: { type: string; frontmatter: Record<string, unknown> }, live: StoredPage | null, remote: boolean, owner: (() => Promise<boolean>) | undefined): Promise<void> {
   const from = subjectClass(live);
   const to = subjectClass(parsed);
   const role = parsed.type === HOUSEHOLD_TYPE ? '' : String(parsed.frontmatter.household_role ?? '').trim().toLowerCase();
   const keep = to === 'unclassified' || !role;
-  if (remote && from !== to && (from === 'child' || (to === 'not_child' && await heldRecordsAbout(engine, sourceId, slug)))) {
+  if (remote && from !== to && (from === 'child' || (to === 'not_child' && (await recordsAbout(engine, sourceId, slug)).some(row => heldBySubject(row.frontmatter))))) {
     throw reclassifyRefusal('Only the brain\'s owner can take ' + slug + ' out of household_role child, or give it a role that would widen household records already kept to adults because of it, so nothing was written.',
       'Keep the page\'s type and household_role as they are, or ask the brain\'s owner to run gbrain household replace --about ' + slug + (keep ? '' : ' --role ' + role) + '.',
       ['gbrain', 'household', 'replace', '--about', slug, ...(keep ? [] : ['--role', role])], 'Changes the role on the brain host and re-places the records about it.');

@@ -4,10 +4,10 @@
  * the cross-harness outcome check (docs/guides/household.md#check-it-across-harnesses). Usage:
  *   bun scripts/synthetic-household.ts <gbrain-home>
  * The brain lives at <gbrain-home>/.gbrain/brain.pglite with a keyless config, so `GBRAIN_HOME=<gbrain-home> gbrain serve`
- * serves it. It refuses a directory that already holds a brain. Every name in it is invented.
+ * serves it. It refuses a directory that already has a .gbrain folder, and removes the one it made if seeding fails. Every name in it is invented.
  */
-import { existsSync, rmSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { mkdirSync, rmSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { handleToolCall } from '../src/mcp/server.ts';
 import { gbrainPath, saveConfig, type GBrainConfig } from '../src/core/config.ts';
@@ -17,23 +17,32 @@ export async function seedSyntheticHouseholdBrain(dir: string): Promise<Map<stri
   const saved = process.env.GBRAIN_HOME;
   process.env.GBRAIN_HOME = resolve(dir);
   try {
+    const brainDir = gbrainPath();
     const dbPath = gbrainPath('brain.pglite');
-    for (const f of [gbrainPath('config.json'), dbPath]) {
-      if (existsSync(f)) throw new Error(`${f} already exists; the synthetic household seeds only a new, empty directory.`);
-    }
-    const engine = new PGLiteEngine();
-    let slugs: Map<string, string> | undefined;
+    mkdirSync(dirname(brainDir), { recursive: true });
     try {
-      await engine.connect({ database_path: dbPath, engine: 'pglite' });
-      await engine.initSchema();
-      await engine.setConfig('brain.timezone', TIMEZONE);
-      slugs = await seedSyntheticHousehold((op, params) => handleToolCall(engine, op, params) as Promise<any>);
-    } finally {
-      await engine.disconnect();
-      if (!slugs) rmSync(dbPath, { recursive: true, force: true });
+      mkdirSync(brainDir);
+    } catch (e: any) {
+      if (e?.code === 'EEXIST') throw new Error(`${brainDir} already exists; the synthetic household seeds only a new, empty directory.`);
+      throw e;
     }
-    saveConfig({ engine: 'pglite', database_path: dbPath, embedding_disabled: true } as unknown as GBrainConfig);
-    return slugs;
+    try {
+      const engine = new PGLiteEngine();
+      let slugs: Map<string, string>;
+      try {
+        await engine.connect({ database_path: dbPath, engine: 'pglite' });
+        await engine.initSchema();
+        await engine.setConfig('brain.timezone', TIMEZONE);
+        slugs = await seedSyntheticHousehold((op, params) => handleToolCall(engine, op, params) as Promise<any>);
+      } finally {
+        await engine.disconnect().catch(() => {});
+      }
+      saveConfig({ engine: 'pglite', database_path: dbPath, embedding_disabled: true } as unknown as GBrainConfig);
+      return slugs;
+    } catch (e) {
+      rmSync(brainDir, { recursive: true, force: true });
+      throw e;
+    }
   } finally {
     if (saved === undefined) delete process.env.GBRAIN_HOME;
     else process.env.GBRAIN_HOME = saved;
