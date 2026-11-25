@@ -96,6 +96,7 @@ export async function runGoogleApprovals(args: string[]): Promise<void> {
   for (const p of pending) {
     console.log(`${p.request_id}  ${p.account}  ${p.server}.${p.tool}  turn ${p.turn_id}  expires ${p.expires_at}`);
     console.log(p.kind === 'owner_confirm' ? '  safety pause: confirm with ALLOW_ONCE' : `  Google asks: ${p.message_md}`);
+    console.log(`  arguments: ${JSON.stringify(p.args ?? {}).slice(0, 600)}`);
     console.log(`  choices: ${(p.choices as string[]).join(', ')}`);
   }
   console.log('Answer one: gbrain google approvals answer <request_id> <choice>');

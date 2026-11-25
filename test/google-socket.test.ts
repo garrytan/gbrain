@@ -11,7 +11,7 @@ import { TokenRedactor } from '../src/commands/google-socket.ts';
 import { FileVaultBackend, type CredentialEntry } from '../src/core/creds/vault.ts';
 import { GoogleBroker, argsHash, VERDICT_TTL_MS, type GateResult } from '../src/core/google-socket/broker.ts';
 import { BrokerLedger } from '../src/core/google-socket/ledger.ts';
-import { McpTransportError, toolErrorReason, type GoogleMcpClient, type ToolCallOutcome } from '../src/core/google-socket/mcp-client.ts';
+import { GoogleMcpClient, McpTransportError, toolErrorReason, type ToolCallOutcome } from '../src/core/google-socket/mcp-client.ts';
 import { DAY_CALL_CAP, applyArgumentRules } from '../src/core/google-socket/policy.ts';
 import { brokerGate, parsePeerList } from '../src/core/google-socket/preconditions.ts';
 import { SocketError, parseRequest } from '../src/core/google-socket/protocol.ts';
@@ -184,6 +184,32 @@ describe('write broker', () => {
     expect(a).toMatchObject({ ok: true });
     expect(b).toMatchObject({ ok: false });
     expect(r.sent.map(s => s.answer?.choice ?? null)).toEqual([null, 'DENY']);
+  });
+
+  test('parallel calls in one turn reserve the pause counters before they send', async () => {
+    const r = rig();
+    const invite = (key: string, email: string) => r.call({ server: 'calendar', tool: 'create_event', idempotency_key: key, args: { summary: 'x', attendees: [{ email }] } });
+    const [a, b] = await Promise.all([invite('p1', 'one@acme-example.com'), invite('p2', 'two@acme-example.com')]);
+    expect([a.ok, b.code]).toEqual([true, 'owner_confirm_required']);
+    expect(r.sent.length).toBe(1);
+  });
+
+  test('a throttled call can be retried under the same key; turning the broker off stops a held prompt', async () => {
+    const r = rig({ outcomes: [new McpTransportError('throttled', 429, 5), DONE] });
+    expect(await r.call()).toMatchObject({ code: 'rate_limited', retry_after_s: 5 });
+    expect(await r.call()).toMatchObject({ ok: true });
+    expect(r.sent.length).toBe(2);
+    const gate = { ok: true, unmet: [] as string[] };
+    const off = rig({ gate, outcomes: [PROMPT] });
+    const held = await off.call();
+    Object.assign(gate, { ok: false, unmet: ['google.broker_act is false'] });
+    expect(await off.broker.verdict({ op: 'verdict', request_id: held.request_id as string, choice: 'ALLOW_ONCE' })).toMatchObject({ code: 'broker_precondition_unmet' });
+    expect(off.sent.length).toBe(1);
+  });
+
+  test('a reply without a matching tool result is outcome_unknown, never success', async () => {
+    const client = new GoogleMcpClient((async () => new Response(JSON.stringify({ jsonrpc: '2.0', id: 999999, result: { content: [] } }), { headers: { 'content-type': 'application/json' } })) as never);
+    await expect(client.callTool('gmail', 'ya29.act', 'create_draft', {})).rejects.toMatchObject({ status: null });
   });
 
   test('two calls with one key at the same time send once', async () => {

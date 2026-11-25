@@ -71,6 +71,7 @@ export class GoogleMcpClient {
   constructor(private readonly fetchImpl: FetchImpl = fetch, private readonly urlFor: (server: GoogleServer) => string = googleMcpUrl) {}
 
   private async rpc(server: GoogleServer, method: string, params: Record<string, unknown>, token?: string): Promise<Record<string, unknown>> {
+    const id = nextId++;
     let res: Response;
     try {
       res = await this.fetchImpl(this.urlFor(server), {
@@ -82,7 +83,7 @@ export class GoogleMcpClient {
           'mcp-method': method,
           ...(token ? { authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ jsonrpc: '2.0', id: nextId++, method, params }),
+        body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
         signal: AbortSignal.timeout(60_000),
       });
     } catch (error) {
@@ -96,7 +97,8 @@ export class GoogleMcpClient {
     const error = body.error as { code?: number; message?: string } | undefined;
     if (error) throw new McpTransportError(`Google refused ${method}: ${error.code ?? '?'} ${error.message ?? ''}`.trim(), res.status);
     if (!res.ok) throw new McpTransportError(`Google answered ${method} with HTTP ${res.status}`, res.status);
-    return (body.result ?? {}) as Record<string, unknown>;
+    if (body.id !== id || !body.result || typeof body.result !== 'object') throw new McpTransportError(`Google answered ${method} without a matching result; the call may have taken effect`, null);
+    return body.result as Record<string, unknown>;
   }
 
   /** Google serves tools/list without a token. */

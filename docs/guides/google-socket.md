@@ -57,7 +57,7 @@ before it is handed out. Cache it and mint again 5 minutes before
 `expires_at`, or on a Google 401. Minted tokens are kept in the socket
 process's memory and are never written to the vault, so sync's own token is
 untouched. `"profile":"act"` is refused with `act_not_mintable`: write
-actions go through `call`. More than 120 mints a minute from one caller get
+actions go through `call`. More than 120 mints a minute from one peer uid get
 `rate_limited`.
 
 ### call: one write through the broker
@@ -134,7 +134,10 @@ accepts, cached for an hour.
 
 The broker allows at most 25 calls per turn (`turn_cap`) and 1,500 per
 product per UTC day (`day_cap`). Google's own throttling (`rate_limited`
-with `retry_after_s`) wins over both.
+with `retry_after_s`) wins over both; a throttled call had no effect, so repeat
+it with the same `idempotency_key` after `retry_after_s`. Calls made at the same
+time in one turn count toward the caps and safety pauses as soon as each is
+accepted, before Google answers.
 
 ## Turning writes on
 
@@ -175,7 +178,9 @@ gbrain google approvals answer <request_id> ALLOW_ONCE
 ```
 
 Only the owner's own uid can list or answer held prompts over the socket, and
-`answer` runs only at a terminal.
+`answer` runs only at a terminal. The list shows each held call's arguments so
+the owner can see what a safety pause would send. Turning `google.broker_act` off
+stops held prompts too: an answer is refused while the broker is off.
 
 ## gwscli
 

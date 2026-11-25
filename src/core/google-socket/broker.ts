@@ -97,6 +97,7 @@ export class GoogleBroker {
   private drop(h: Held): void { this.held.delete(h.request_id); this.heldByKey.delete(h.key); }
 
   private hold(h: Omit<Held, 'request_id' | 'created_ms'>): Held {
+    for (const old of [...this.held.values()]) if (this.expired(old)) this.drop(old);
     const held: Held = { ...h, request_id: randomUUID(), created_ms: this.now() };
     this.held.set(held.request_id, held);
     this.heldByKey.set(held.key, held.request_id);
@@ -189,20 +190,27 @@ export class GoogleBroker {
         ? 'a second invite to an outside address in one turn needs the owner to confirm it through gbrain google approvals'
         : `trash number ${TRASH_PAUSE_AT} in one turn needs the owner to confirm it through gbrain google approvals`, { tool: req.tool, args_hash: hash }, h.request_id);
     }
+    turn.calls++;
+    turn.outside += effects.outside;
+    if (effects.trash) turn.trash++;
+    const release = () => { turn.calls--; turn.outside -= effects.outside; if (effects.trash) turn.trash--; };
     let act: ActToken;
     try { act = await this.opts.tokens.actToken(req.account); }
-    catch (error) { const e = error as SocketError; this.audit(req, hash, e.code); return fail(e.code, e.message); }
+    catch (error) { release(); const e = error as SocketError; this.audit(req, hash, e.code); return fail(e.code, e.message); }
     if (confirmed) {
       this.drop(confirmed);
       if (act.generation !== confirmed.generation) {
+        release();
         this.opts.ledger.put({ ...prior!, status: 'failed', code: 'verdict_expired' });
         return fail('verdict_expired', 'the account was reconnected or disconnected after the owner confirmed this call; re-call with a new idempotency_key', {}, confirmed.request_id);
       }
     }
-    return this.dispatch({ ...base, request_id: requestId }, act);
+    return this.dispatch({ ...base, request_id: requestId }, act, undefined, release);
   }
 
   private async answer(h: Held, choice: string): Promise<Reply> {
+    const gate = this.opts.gate();
+    if (!gate.ok) return { ...failure(h.request_id, 'broker_precondition_unmet', `the write broker is off: ${gate.unmet.join('; ')}`, { unmet: gate.unmet }), quota: this.quota(h.server) };
     let act: ActToken;
     try { act = await this.opts.tokens.actToken(h.account); }
     catch (error) { const e = error as SocketError; return { ...failure(h.request_id, e.code, e.message), quota: this.quota(h.server) }; }
@@ -214,22 +222,22 @@ export class GoogleBroker {
     return this.dispatch(h, act, { prompt: h.prompt!, choice });
   }
 
-  private async dispatch(c: Omit<Held, 'kind' | 'generation' | 'client_id' | 'created_ms'>, act: ActToken, answer?: { prompt: PendingPrompt; choice: string }): Promise<Reply> {
+  private async dispatch(c: Omit<Held, 'kind' | 'generation' | 'client_id' | 'created_ms'>, act: ActToken, answer?: { prompt: PendingPrompt; choice: string }, noEffect: () => void = () => {}): Promise<Reply> {
     const record = (status: 'dispatched' | 'done' | 'failed' | 'unknown', code?: string) =>
       this.opts.ledger.put({ key: c.key, args_hash: c.args_hash, account: c.account, server: c.server, tool: c.tool, turn_id: c.turn_id, caller: c.caller, status, request_id: c.request_id, ...(code ? { code } : {}) });
     const req = { caller: c.caller, turn_id: c.turn_id, account: c.account, server: c.server, tool: c.tool, idempotency_key: c.key };
     const fail = (code: Parameters<typeof failure>[1], message: string, extra: Reply = {}): Reply => ({ ...failure(c.request_id, code, message, extra), quota: this.quota(c.server) });
     record('dispatched');
     this.opts.ledger.count(c.server);
-    this.turn(c.turn_id).calls++;
     let outcome;
     try { outcome = await this.opts.client.callTool(c.server, act.token, c.tool, c.args, answer); }
     catch (error) {
       const e = error as McpTransportError;
-      if (e.status === 429) { record('failed', 'rate_limited'); this.audit(req, c.args_hash, 'rate_limited'); return fail('rate_limited', e.message, { retry_after_s: e.retryAfterS ?? 60 }); }
+      if (e.status === 429) { noEffect(); this.opts.ledger.forget(c.key); this.audit(req, c.args_hash, 'rate_limited'); return fail('rate_limited', e.message, { retry_after_s: e.retryAfterS ?? 60 }); }
       if (e.status !== null && e.status >= 400 && e.status < 500) {
-        if (e.status === 401) this.opts.tokens.dropAct(c.account);
-        record('failed', 'upstream');
+        noEffect();
+        if (e.status === 401) { this.opts.tokens.dropAct(c.account); this.opts.ledger.forget(c.key); }
+        else record('failed', 'upstream');
         this.audit(req, c.args_hash, 'upstream');
         return fail('upstream', e.message);
       }
@@ -245,14 +253,12 @@ export class GoogleBroker {
     }
     if (outcome.isError) {
       const reason = toolErrorReason(outcome.text);
+      noEffect();
       record('failed', 'tool_error');
       this.audit(req, c.args_hash, `tool_error:${reason}`);
       return fail('tool_error', `Google's ${c.server}.${c.tool} returned an error (${reason})`, { reason, message_md: clean(outcome.text) });
     }
     record('done');
-    const turn = this.turn(c.turn_id);
-    turn.outside += c.effects.outside;
-    if (c.effects.trash) turn.trash++;
     this.audit(req, c.args_hash, 'ok');
     return { v: GOOGLE_SOCKET_VERSION, ok: true, request_id: c.request_id, result: outcome.result, quota: this.quota(c.server) };
   }
@@ -279,7 +285,7 @@ export class GoogleBroker {
   pending(): Reply {
     const items = [...this.held.values()].filter(h => !this.expired(h)).map(h => ({
       request_id: h.request_id, kind: h.kind, account: h.account, server: h.server, tool: h.tool, args_hash: h.args_hash, turn_id: h.turn_id,
-      caller: h.caller, confirmed: h.confirmed ?? false, message_md: h.prompt ? clean(h.prompt.message) : null, choices: h.prompt?.choices ?? ['ALLOW_ONCE'],
+      caller: h.caller, args: h.args, confirmed: h.confirmed ?? false, message_md: h.prompt ? clean(h.prompt.message) : null, choices: h.prompt?.choices ?? ['ALLOW_ONCE'],
       expires_at: new Date(h.created_ms + VERDICT_TTL_MS).toISOString(),
     }));
     return { v: GOOGLE_SOCKET_VERSION, ok: true, request_id: randomUUID(), pending: items };

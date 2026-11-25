@@ -8,7 +8,7 @@
  * The audit log (`$GBRAIN_HOME/logs/google-mint.log`, 0600) gets one line per
  * request with no token and no content, and keeps 30 days.
  */
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { atomicWriteFileSync } from '../atomic-write.ts';
 import type { GoogleServer } from './protocol.ts';
@@ -71,6 +71,9 @@ export class BrokerLedger {
     return full;
   }
 
+  /** Drops a record whose call had no effect (throttled, token refused), so the same key can be tried again. */
+  forget(key: string): void { delete this.state.intents[key]; this.save(); }
+
   used(product: GoogleServer): number { return this.state.quota[this.day()]?.[product] ?? 0; }
 
   count(product: GoogleServer): number {
@@ -91,7 +94,9 @@ export function openAuditLog(path: string, now: () => number = Date.now): (field
       const ts = Date.parse(line.split(' ', 1)[0] ?? '');
       return line && Number.isFinite(ts) && ts >= cutoff;
     });
-    writeFileSync(path, kept.length ? kept.join('\n') + '\n' : '', { mode: 0o600 });
+    const tmp = `${path}.${process.pid}.tmp`;
+    writeFileSync(tmp, kept.length ? kept.join('\n') + '\n' : '', { mode: 0o600 });
+    renameSync(tmp, path);
   }
   return (fields: string[]) => appendAuditLine(path, fields, now);
 }

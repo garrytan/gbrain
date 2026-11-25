@@ -59,9 +59,12 @@ export class SocketTokens {
 
   /** One refresh for an explicit scope set, under the refresh lease; persists only a rotated refresh token. */
   private async refresh(e: CredentialEntry, scope: string[]): Promise<{ token: TokenResponse; generation: number; client: ProviderClientRecord }> {
-    const generation = grantGeneration(e) ?? 0;
-    const release = isGrantVault(this.vault) && this.vault.leaseRefresh ? await this.vault.leaseRefresh(e.id, generation) : null;
+    const release = isGrantVault(this.vault) && this.vault.leaseRefresh ? await this.vault.leaseRefresh(e.id, grantGeneration(e) ?? 0) : null;
     try {
+      const current = await this.vault.get(e.id);
+      if (!current) throw new SocketError('not_connected', `the Google connection for ${e.meta.account} was removed`);
+      e = current;
+      const generation = grantGeneration(e) ?? 0;
       const client = await this.clientFor(e);
       const token = await refreshAccessToken(e, client, this.fetchImpl, new Date(this.now()), scope.join(' '));
       if (token.refresh_token && isGrantVault(this.vault)) {
@@ -86,12 +89,12 @@ export class SocketTokens {
       if (hit && hit.generation === generation && hit.expiresAtMs - REMINT_MARGIN_MS > this.now()) {
         return { access_token: hit.token, expires_at: new Date(hit.expiresAtMs).toISOString(), scopes: hit.scopes, account };
       }
-      const { token } = await this.refresh(e, scope);
+      const { token, generation: refreshed } = await this.refresh(e, scope);
       const scopes = await effectiveScopes(token, this.fetchImpl, scope, true);
       if (scopes.length === 0) throw new SocketError('write_scope_refused', 'Google did not confirm the scopes of the minted token, so it was not handed out');
       assertIngestOnly(scopes, 'minted token');
       const expiresAtMs = this.now() + token.expires_in * 1000;
-      this.ingest.set(key, { token: token.access_token, expiresAtMs, scopes, generation });
+      this.ingest.set(key, { token: token.access_token, expiresAtMs, scopes, generation: refreshed });
       return { access_token: token.access_token, expires_at: new Date(expiresAtMs).toISOString(), scopes, account };
     } catch (error) {
       throw socketCodeFor(error);
@@ -111,10 +114,10 @@ export class SocketTokens {
       if (hit && hit.generation === generation && hit.expiresAtMs - REMINT_MARGIN_MS > this.now()) {
         return { token: hit.token, generation, client_id: hit.client_id, account };
       }
-      const { token, client } = await this.refresh(e, granted);
+      const { token, client, generation: refreshed } = await this.refresh(e, granted);
       const expiresAtMs = this.now() + token.expires_in * 1000;
-      this.act.set(account, { token: token.access_token, expiresAtMs, scopes: granted, generation, client_id: client.client_id });
-      return { token: token.access_token, generation, client_id: client.client_id, account };
+      this.act.set(account, { token: token.access_token, expiresAtMs, scopes: granted, generation: refreshed, client_id: client.client_id });
+      return { token: token.access_token, generation: refreshed, client_id: client.client_id, account };
     } catch (error) {
       throw socketCodeFor(error);
     }

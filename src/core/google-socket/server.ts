@@ -25,6 +25,7 @@ import { GOOGLE_SOCKET_VERSION, LineReader, SocketError, failure, parseRequest }
 import { SocketTokens } from './tokens.ts';
 
 const MAX_CONNECTIONS = 32;
+const MAX_QUEUED_PER_CONNECTION = 16;
 const MINTS_PER_MINUTE = 120;
 
 export const googleSocketPath = (home: string = configDir()): string => join(cliSocketDir(home), 'google.sock');
@@ -103,7 +104,7 @@ export async function startGoogleSocket(opts: GoogleSocketOptions): Promise<Goog
       return ledger.unreadable ? { ...gate, ok: false, unmet: [...gate.unmet, ledger.unreadable] } : gate;
     }, now,
   });
-  const mintTimes = new Map<string, number[]>();
+  const mintTimes = new Map<number, number[]>();
   const rejected = new Set<number | null>();
   const sockets = new Set<Socket>();
   let closing = false;
@@ -123,12 +124,12 @@ export async function startGoogleSocket(opts: GoogleSocketOptions): Promise<Goog
           return failure(id, 'act_not_mintable', 'only the read-only "ingest" profile is minted; write actions go through op "call"');
         }
         const t = now();
-        const recent = (mintTimes.get(request.caller) ?? []).filter(x => t - x < 60_000);
+        const recent = (mintTimes.get(peer) ?? []).filter(x => t - x < 60_000);
         if (recent.length >= MINTS_PER_MINUTE) {
           audit([request.caller, request.account, 'ingest', 'rate_limited']);
-          return failure(id, 'rate_limited', `more than ${MINTS_PER_MINUTE} mints a minute from ${request.caller}; cache the token until 5 minutes before expires_at`, { retry_after_s: 60 });
+          return failure(id, 'rate_limited', `more than ${MINTS_PER_MINUTE} mints a minute from uid ${peer}; cache the token until 5 minutes before expires_at`, { retry_after_s: 60 });
         }
-        mintTimes.set(request.caller, [...recent, t]);
+        mintTimes.set(peer, [...recent, t]);
         try {
           const minted = await tokens.mintIngest(request.account);
           audit([request.caller, request.account, 'ingest', 'ok']);
@@ -165,15 +166,20 @@ export async function startGoogleSocket(opts: GoogleSocketOptions): Promise<Goog
     socket.setEncoding('utf8');
     const reader = new LineReader();
     let chain = Promise.resolve();
+    let queued = 0;
     socket.on('data', (chunk: string) => {
       const lines = reader.push(chunk);
       if (lines === 'overflow') { socket.destroy(); return; }
       for (const line of lines) {
+        if (++queued > MAX_QUEUED_PER_CONNECTION) { socket.destroy(); return; }
         chain = chain.then(async () => {
-          let reply: Record<string, unknown>;
-          try { reply = await handle(line, peer); }
-          catch (error) { reply = failure(crypto.randomUUID(), 'internal', (error as Error).message); }
-          if (!socket.destroyed) socket.write(JSON.stringify(reply) + '\n');
+          try {
+            if (socket.destroyed) return;
+            let reply: Record<string, unknown>;
+            try { reply = await handle(line, peer); }
+            catch (error) { reply = failure(crypto.randomUUID(), 'internal', (error as Error).message); }
+            if (!socket.destroyed) socket.write(JSON.stringify(reply) + '\n');
+          } finally { queued--; }
         });
       }
     });
