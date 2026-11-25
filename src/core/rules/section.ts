@@ -6,7 +6,7 @@
  * Renders nothing when no confirmed active rule is readable. Engine reads only; no model calls.
  */
 import type { BrainEngine } from '../engine.ts';
-import { remoteReadPolicySql } from '../persistence/page-visibility.ts';
+import { remoteTargetHidden } from '../persistence/page-visibility.ts';
 import { callerMember } from '../access/member-facts.ts';
 import { callerIsOwner } from '../search/private-visibility.ts';
 import { CHANGE_NOTICE_MS } from '../policy/store.ts';
@@ -47,12 +47,15 @@ function ruleIsCallers(rule: RuleRecord, remote: boolean): boolean {
   return !remote || callerIsOwner();
 }
 
-/** The row that supplied the rule's text is still the live page at that same revision, and a remote caller may read it; a purged, deleted or replaced row fails closed. */
+/**
+ * The row that supplied the rule's text is readable and still the live page at that same revision; a purged, deleted
+ * or replaced row fails closed. Visibility is read first and the revision after it: a revision is never reused, so a
+ * live page still at the listed revision proves the visibility check read that same row.
+ */
 async function liveReadableAt(engine: BrainEngine, remote: boolean, rule: RuleRecord, revision: string): Promise<boolean> {
-  if (!revision) return false;
-  const policy = remote ? await remoteReadPolicySql(engine, 'pages') : 'TRUE';
-  const rows = await engine.executeRaw(`SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL AND knowledge_revision::text=$3 AND ${policy} LIMIT 1`, [rule.source_id, rule.slug, revision]);
-  return rows.length > 0;
+  if (!revision || await remoteTargetHidden(engine, remote, rule.source_id, rule.slug)) return false;
+  const snap = await engine.readPageSnapshot(rule.slug, { sourceId: rule.source_id });
+  return !!snap && !snap.page.deleted_at && String(snap.revision) === revision;
 }
 
 export async function loadStandingRules(engine: BrainEngine, opts: { remote: boolean; sourceId: string }): Promise<StandingRule[]> {
