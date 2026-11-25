@@ -172,7 +172,8 @@ decision lines (lines worded as instructions are skipped), one from another harn
 `nothing_found`, `consumed`, `offered`, `declined`, `skipped`, `not_offered`, `deferred`,
 `failed`), `stages[]` (stage, status, sessions, days, links, held, receipts), `sessions_found`,
 `sessions_imported`, `no_history`, `decision`, `card` and `exit`. The same steps run by hand as
-`gbrain transcripts archive setup-import receipt|preview|run|decline|card`.
+`gbrain transcripts archive setup-import receipt|preview|run|decline|card`. For the first 3 sessions after setup the
+agent also gets a [first-session suggestion](first-session-suggestion.md) that names the next import.
 
 ## Old archive folders
 

@@ -1055,6 +1055,10 @@
       },
       {
         "category": "brain",
+        "name": "first_session_suggestion"
+      },
+      {
+        "category": "brain",
         "name": "memory_proposals_pending"
       },
       {

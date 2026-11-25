@@ -64,8 +64,11 @@ notice). User guide: [core memory](../../guides/core-memory.md).
   `profile_*` refusals), `src/core/profile/read.ts` (the
   `context_pack {profile: true}` block, read at the caller's scope, zero model
   calls), `src/commands/profile.ts` + `src/cli/commands/profile.ts`
-  (`gbrain profile [--json]`, local or thin client). Test:
-  `test/profile-core.test.ts`.
+  (`gbrain profile [--json]`, local or thin client), `src/core/profile/import.ts`
+  + `src/core/profile/import-run.ts` + `src/commands/profile-import.ts`
+  (`gbrain profile import`: parse, preview hash, batched `remember` apply and
+  the resume receipt). Tests: `test/profile-core.test.ts`,
+  `test/profile-import.test.ts`.
 - `src/commands/core.ts` (`gbrain core`), `src/commands/doctor/checks/core-memory.ts`
   (`core_memory`), schema `src/core/core-memory-schema.ts` + migration v213.
 - Tests: `test/core-memory.test.ts`, `test/core-guard.test.ts`,

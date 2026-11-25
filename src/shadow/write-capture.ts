@@ -65,7 +65,7 @@ export async function readPreimage(engine: BrainEngine, op: string, targets: Pag
     if (pages.some((p) => p.deleted_at)) throw new Error('soft_deleted_page');
     live();
     const [overlay] = await tx.executeRaw<{ n: string }>(`/* shadow write preimage */ SELECT (SELECT count(*) FROM fact_withdrawals WHERE source_id = ANY($1::text[]) AND (subject = '*' OR subject = ANY($2::text[])))
-      + (SELECT count(*) FROM fact_purges WHERE source_id = ANY($1::text[]) AND (subject = '*' OR subject = ANY($2::text[]))) AS n`, [strings(pages, 'source_id'), strings(pages, 'slug')]);
+      + (SELECT count(*) FROM fact_purges WHERE source_id = ANY($1::text[]) AND (subject = '*' OR subject = ANY($2::text[]))) AS n`, [[...strings(pages, 'source_id'), ...targets.map((t) => t.source)], [...strings(pages, 'slug'), ...targets.map((t) => t.slug)]]); // a target not there yet counts too
     if (Number(overlay?.n ?? 0) > 0) throw new Error('fact_overlay');
     const named = [...new Set([...strings(pages, 'source_id'), ...targets.map((t) => t.source)])].filter((id) => id !== 'default'); // a page not there yet still needs its source in the scratch store
     const sources = named.length ? await rowsOf('sources', 't.id::text = ANY($1::text[])', [named], MAX_PRE_PAGES) : [];

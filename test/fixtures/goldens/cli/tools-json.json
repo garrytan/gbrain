@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 319976,
-    "stdoutSha256": "9d099af10a67cc63abe97a4456a56007d65d50a73511cc3eda7b60407e15f800",
+    "stdoutBytes": 321154,
+    "stdoutSha256": "7ad8fb126cb3f8152f5eea2de78c4e4d51a8c23a0afb0692e0f62c2a41a2365e",
     "toolNames": [
       "remember",
       "entity",
@@ -220,7 +220,9 @@
       "mute_notice",
       "learned",
       "learned_keep",
-      "learned_undo"
+      "learned_undo",
+      "onboarding_status",
+      "onboarding_off"
     ],
     "tools": [
       {
@@ -9941,6 +9943,36 @@
           "required": [
             "ids"
           ],
+          "type": "object"
+        },
+        "scope": "write"
+      },
+      {
+        "description": "Whether the first-session suggestion is armed on this brain, and why not when it is off: not_new_install, not_personal, window_expired, sessions_exhausted or stopped. On this machine it also names the newest startup session's outcome (delivered, not_due, serve_not_ready, no_ipc, deadline, trimmed and the rest). Reads only; onboarding_off turns it off.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": false,
+        "name": "onboarding_status",
+        "parameters": {},
+        "required_scopes": [],
+        "schema": {
+          "properties": {},
+          "required": [],
+          "type": "object"
+        },
+        "scope": "read"
+      },
+      {
+        "description": "Turn the first-session suggestion off for this install (the owner only). Writes only the suggestion's own record, then reads it back: say it stopped only when verified is true. First-run settings and safety notices are not affected.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": true,
+        "name": "onboarding_off",
+        "parameters": {},
+        "required_scopes": [],
+        "schema": {
+          "properties": {},
+          "required": [],
           "type": "object"
         },
         "scope": "write"

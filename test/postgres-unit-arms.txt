@@ -86,6 +86,7 @@ test/code-edges-parity.test.ts
 test/colon-slug-windows-5032.test.ts
 test/company-brain-policy.test.ts
 test/company-brain-runtime.test.ts
+test/company-two-member-first-use.test.ts
 test/concept-purge-rebuild-9653.test.ts
 test/concept-rebuild-holds-managed-9653.test.ts
 test/concept-rebuild-holds-unmanaged-9653.test.ts
@@ -242,6 +243,7 @@ test/fenced-embed-reuse-6961.test.ts
 test/file-drift-normalisation-gst2568.test.ts
 test/file-drift-soft-delete-hold-release-gbra133.test.ts
 test/file-upload-follows-rename.test.ts
+test/first-session-suggestion.test.ts
 test/folder-holding-coverage-gst2497.test.ts
 test/folder-holding-page-gst2492.test.ts
 test/forecast-journal.test.ts
@@ -501,6 +503,7 @@ test/notifier-retry-unwatched-gst2515.test.ts
 test/notifier-sync-disabled-gst2515.test.ts
 test/ns-read-move-parity.test.ts
 test/on-commit-embedding.serial.test.ts
+test/onboarding-ops.test.ts
 test/oneshot-consumer-direct-route.test.ts
 test/oneshot-housekeeping-cli.test.ts
 test/ontology-raw-files-parity.test.ts

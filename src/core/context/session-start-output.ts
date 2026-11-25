@@ -4,6 +4,23 @@
  * (overflow is diverted to a file by the harness, never injected).
  */
 import { CLAUDE_HOOK_OUTPUT_CAP_CHARS } from '../bootstrap/host-specs.ts';
+import type { SessionStartSection } from './session-start-sections.ts';
+
+/**
+ * Onboarding PR 2: core, then the named sections in priority order, then the other parts. When the first-session
+ * section is present, the coaching parts (`coaching`) are left out only if the final payload then still holds the
+ * section whole (`quiet`); `emitted` says whether the text carries it.
+ */
+export function composeSessionStartWithSections(coreText: string, sections: SessionStartSection[], parts: string[], coaching: ReadonlySet<string>):
+  { text: string; quiet: boolean; emitted: boolean; first?: SessionStartSection } {
+  const first = sections.find((s) => s.name === 'first_session');
+  const head = sections.map((s) => s.text);
+  const text = composeSessionStartOutput(coreText, [...head, ...parts]);
+  if (!first) return { text, quiet: false, emitted: false };
+  const without = composeSessionStartOutput(coreText, [...head, ...parts.filter((p) => !coaching.has(p))]);
+  if (without.includes(first.text)) return { text: without, quiet: true, emitted: true, first };
+  return { text, quiet: false, emitted: text.includes(first.text), first };
+}
 
 /** Marker printed when lower-priority parts were trimmed to keep core whole under the cap. */
 export const SESSION_START_TRIM_MARKER = '[gbrain: digest/pack trimmed to fit core memory]';

@@ -8597,5 +8597,39 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       ]
     },
     "area": "insights"
+  },
+  {
+    "name": "onboarding_status",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Whether the first-session suggestion is armed on this brain, and why not when it is off: not_new_install, not_personal, window_expired, sessions_exhausted or stopped. On this machine it also names the newest startup session's outcome (delivered, not_due, serve_not_ready, no_ipc, deadline, trimmed and the rest). Reads only; onboarding_off turns it off.",
+    "params": {},
+    "scope": "read",
+    "annotations": {
+      "readOnlyHint": true
+    },
+    "cliHints": {
+      "name": "onboarding-status",
+      "hidden": true
+    },
+    "area": "onboarding"
+  },
+  {
+    "name": "onboarding_off",
+    "mutating": true,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Turn the first-session suggestion off for this install (the owner only). Writes only the suggestion's own record, then reads it back: say it stopped only when verified is true. First-run settings and safety notices are not affected.",
+    "params": {},
+    "scope": "write",
+    "annotations": {
+      "idempotentHint": true
+    },
+    "cliHints": {
+      "name": "onboarding-off",
+      "hidden": true
+    },
+    "area": "onboarding"
   }
 ];

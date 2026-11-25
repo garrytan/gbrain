@@ -290,6 +290,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'dedupe_auto_links',
   // Nightly learning: the newest learning_derive run and the kept/undone share of the note (doctor/checks/learning-note.ts).
   'learning_note',
+  // Onboarding PR 2: whether the first-session suggestion is armed and why not (doctor/checks/first-session-suggestion.ts).
+  'first_session_suggestion',
   // Git-canonical G1: the database compared with the commit at HEAD per source, informational (doctor/checks/db-ahead-of-git.ts).
   'db_ahead_of_git',
   // Git-canonical G3: how far each strict source's index trails HEAD (doctor/checks/git-index-lag.ts).

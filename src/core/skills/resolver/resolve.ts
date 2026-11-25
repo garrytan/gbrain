@@ -134,6 +134,8 @@ export interface ResolveOptions {
   deadlineMs?: number;
   sessionTokenBudget?: number;
   loadHint?: string;
+  /** OpenClaw: the only directory the agent may read files from by path; a suggestion outside it leads the load line with skills_read. */
+  readRoot?: string;
   namesOnly?: boolean;
   explainTarget?: string;
   /** Let the turn call the model picker when skills.resolver.router is on. Only the command line and the Claude Code and Codex hook lanes pass it. */
@@ -563,10 +565,10 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
       const m = metaOf(x.c, x.doc);
       return { id: m.id, name: m.name, summary: m.summary, ...(m.path ? { path: m.path } : {}), namesOnly: Boolean(opts.namesOnly) || loaded[x.c]!.receipt.catalog.hints === 'names_only' };
     });
-    let r = renderBlock(lines, { harness: input.harness, loadHint: opts.loadHint, cap: Math.min(BLOCK_TOKEN_CAP, remaining) });
+    let r = renderBlock(lines, { harness: input.harness, loadHint: opts.loadHint, readRoot: opts.readRoot, cap: Math.min(BLOCK_TOKEN_CAP, remaining) });
     const exhausted = budget === 0 || remaining === 0 || (picked.length > 0 && r.kept === 0 && remaining < BLOCK_TOKEN_CAP);
     const named = picked.filter(x => x.explicit).length;
-    if (budget > 0 && r.kept === 0 && named > 0) r = renderBlock(lines.slice(0, named), { harness: input.harness, loadHint: opts.loadHint, cap: BLOCK_TOKEN_CAP });
+    if (budget > 0 && r.kept === 0 && named > 0) r = renderBlock(lines.slice(0, named), { harness: input.harness, loadHint: opts.loadHint, readRoot: opts.readRoot, cap: BLOCK_TOKEN_CAP });
     const kept = picked.slice(0, r.kept);
     const suggestions: Suggestion[] = kept.map(x => {
       const m = metaOf(x.c, x.doc);
