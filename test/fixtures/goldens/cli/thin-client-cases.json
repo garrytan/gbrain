@@ -152,6 +152,16 @@
       "stdout": []
     },
     {
+      "argv": "ledger",
+      "exitCode": 1,
+      "stderr": [
+        "Error [requires_local_engine]: `gbrain ledger` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain ledger",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+      ],
+      "stdout": []
+    },
+    {
       "argv": "migrate",
       "exitCode": 1,
       "stderr": [

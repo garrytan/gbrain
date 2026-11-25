@@ -532,7 +532,7 @@
                 "explicit_retention_days": null,
                 "over_target": false,
                 "target_bytes": 8589934592,
-                "used_bytes": 202636
+                "used_bytes": 203628
               },
               "inspected": 2,
               "outstanding": [],
@@ -542,7 +542,7 @@
               "verify": "gbrain doctor --only persistence_capacity --json"
             },
             "elapsed_ms": "<volatile>",
-            "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 202636 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
+            "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 203628 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
             "name": "persistence_capacity",
             "status": "ok"
           },
@@ -5075,7 +5075,7 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "No retrieval-affecting files changed in working tree.",
+            "message": "2 retrieval-affecting file(s) changed since HEAD: src/core/operations.ts, src/core/search/source-boost.ts. Re-run `gbrain eval run-all` after committing these changes.",
             "name": "eval_drift",
             "status": "ok"
           },
@@ -5352,14 +5352,14 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "Active pack gbrain-base-v2@1.7.0+e6f58425 is current (no successor declared)",
+            "message": "Active pack gbrain-base-v2@1.7.0+f1691ae3 is current (no successor declared)",
             "name": "pack_upgrade_available",
             "status": "ok"
           },
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "5 distinct typed values (pack gbrain-base-v2 declares 27)",
+            "message": "5 distinct typed values (pack gbrain-base-v2 declares 28)",
             "name": "type_proliferation",
             "status": "ok"
           },
@@ -6216,7 +6216,7 @@
                 "explicit_retention_days": null,
                 "over_target": false,
                 "target_bytes": 8589934592,
-                "used_bytes": 202636
+                "used_bytes": 203628
               },
               "inspected": 2,
               "outstanding": [],
@@ -6226,7 +6226,7 @@
               "verify": "gbrain doctor --only persistence_capacity --json"
             },
             "elapsed_ms": "<volatile>",
-            "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 202636 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
+            "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 203628 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
             "name": "persistence_capacity",
             "status": "ok"
           },
@@ -10771,7 +10771,7 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "No retrieval-affecting files changed in working tree.",
+            "message": "2 retrieval-affecting file(s) changed since HEAD: src/core/operations.ts, src/core/search/source-boost.ts. Re-run `gbrain eval run-all` after committing these changes.",
             "name": "eval_drift",
             "status": "ok"
           },
@@ -11048,14 +11048,14 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "Active pack gbrain-base-v2@1.7.0+e6f58425 is current (no successor declared)",
+            "message": "Active pack gbrain-base-v2@1.7.0+f1691ae3 is current (no successor declared)",
             "name": "pack_upgrade_available",
             "status": "ok"
           },
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "5 distinct typed values (pack gbrain-base-v2 declares 27)",
+            "message": "5 distinct typed values (pack gbrain-base-v2 declares 28)",
             "name": "type_proliferation",
             "status": "ok"
           },

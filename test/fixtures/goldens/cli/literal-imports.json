@@ -130,6 +130,9 @@
       "jobs": [
         "./commands/jobs.ts"
       ],
+      "ledger": [
+        "./commands/ledger.ts"
+      ],
       "loops": [
         "./commands/loops.ts"
       ],
