@@ -10808,6 +10808,7 @@
         "readPageLabelRow": "none",
         "readPageNameText": "none",
         "readPageOrigin": "none",
+        "readPagePrivacyHidden": "none",
         "readPageProvenanceComplete": "none",
         "readPageRedactionRow": "none",
         "readPageRedactionRows": "none",
