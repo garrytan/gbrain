@@ -200,7 +200,7 @@ for (const kind of testBackends()) describe(`agent policy (L1, ${kind}, repo-les
   test('the gskills presets ask before send, spend, delete and publish at every level, and level 2 denies send, spend and call', () => {
     for (const level of [0, 1, 2, 3]) {
       const p = findPreset(`gskills-level-${level}`)!;
-      for (const verb of ['send', 'spend', 'delete', 'publish']) expect(['ask', 'deny']).toContain(p.rules.find(r => r.verb === verb)?.decision);
+      for (const verb of ['send', 'spend', 'delete', 'publish']) expect(['ask', 'deny']).toContain(p.rules.find(r => r.verb === verb)?.decision ?? 'missing');
     }
     const l2 = findPreset('gskills-level-2')!;
     for (const verb of ['send', 'spend', 'call']) expect(l2.rules.find(r => r.verb === verb)?.decision).toBe('deny');

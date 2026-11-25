@@ -10,7 +10,10 @@ import { loadConfigFileOnly } from '../config.ts';
 import type { BrainFirstAccess } from './brain-first.ts';
 
 export const BRAIN_FIRST_POLICY_LINE_KEY = 'brain_first.policy_line';
-/** Off until the unprompted policy_check check (uc3) passes on Claude Code and Codex. */
+/**
+ * Off: the uc3 quick look passed (Claude Code with Opus 5.5 and Codex with Sol called policy_check first in every run),
+ * but the line would take the block past its per-turn word cap (test/setup-brain-first.test.ts), so it stays opt-in.
+ */
 export const POLICY_LINE_DEFAULT: 'on' | 'off' = 'off';
 /** The words every rendering of the line starts with, so a block can be tested for it. */
 export const POLICY_LINE_LEAD = '- Outside actions:';
