@@ -110,6 +110,7 @@ pub use insight::InsightSpec;
 use mutations::add_token;
 pub use mutations::{DelayOpts, TokenDelta};
 pub(crate) use oauth_clients::remove_source_rows as remove_oauth_source_rows;
+pub(crate) use oauth_clients::source_client_in as source_oauth_client_in;
 pub use oauth_clients::{ClientInsert, ClientPatch, ClientPatchGuard};
 pub(crate) use oauth_clients::{carry_over_format_5_clients, remove_client, seed_client};
 pub use oauth_codes::OauthCodeInsert;

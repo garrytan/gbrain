@@ -781,6 +781,18 @@ impl Brain {
         })
     }
 
+    /// `claimCoalescedGitEffects({ hostId, worktreeId, limit, deadOwners, ownerJson })`: the claimed rows.
+    #[napi]
+    pub fn claim_coalesced_git_effects<'env>(
+        &self,
+        env: &'env Env,
+        input: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.claim_coalesced_git_effects(&required(input, "claimCoalescedGitEffects input")?)
+        })
+    }
+
     /// `readMirrorGateRows(requestIds)`: the withdrawal mirrors that gate these requests.
     #[napi]
     pub fn read_mirror_gate_rows<'env>(

@@ -56,7 +56,10 @@ mod notifier;
 mod op_checkpoint;
 mod page_purges;
 
+mod git_durability;
+mod git_effects;
 mod git_gap_census;
+mod manual_links;
 mod page_visibility;
 mod pages;
 mod publication_journal;
@@ -72,6 +75,7 @@ mod sources;
 mod sync_run_reads;
 mod tags;
 mod timeline;
+mod topology_store;
 mod trust;
 mod trust_fence;
 mod trust_proposals;

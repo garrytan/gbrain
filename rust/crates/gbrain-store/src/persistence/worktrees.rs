@@ -44,6 +44,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 mod release;
+pub(crate) use release::add_persistence_counters_in;
 pub use release::{CounterDelta, ReleaseRead};
 
 /// `persistence_worktrees.state` CHECK.
@@ -152,13 +153,13 @@ fn prefix(tag: u8) -> Vec<u8> {
     vec![keys::PERSISTENCE, super::WORKTREES, tag]
 }
 
-fn worktree_key(id: &str) -> Vec<u8> {
+pub(super) fn worktree_key(id: &str) -> Vec<u8> {
     let mut key = prefix(WORKTREE);
     key.extend_from_slice(id.as_bytes());
     key
 }
 
-fn host_binding_key(worktree_id: &str, host_id: &str) -> Vec<u8> {
+pub(super) fn host_binding_key(worktree_id: &str, host_id: &str) -> Vec<u8> {
     let mut key = prefix(HOST_BINDING);
     key.extend_from_slice(worktree_id.as_bytes());
     key.push(0);
@@ -166,7 +167,7 @@ fn host_binding_key(worktree_id: &str, host_id: &str) -> Vec<u8> {
     key
 }
 
-fn source_binding_key(source_id: &str) -> Vec<u8> {
+pub(super) fn source_binding_key(source_id: &str) -> Vec<u8> {
     let mut key = prefix(SOURCE_BINDING);
     key.extend_from_slice(source_id.as_bytes());
     key
@@ -193,11 +194,11 @@ pub(super) fn scan_records<T: for<'de> Deserialize<'de>>(
     }
 }
 
-fn read_worktree_record(read: &dyn KvRead, id: &str) -> Result<Option<WorktreeRecord>> {
+pub(super) fn read_worktree_record(read: &dyn KvRead, id: &str) -> Result<Option<WorktreeRecord>> {
     get_json(read, &worktree_key(id))
 }
 
-fn read_host_record(
+pub(super) fn read_host_record(
     read: &dyn KvRead,
     worktree_id: &str,
     host_id: &str,

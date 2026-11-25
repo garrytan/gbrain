@@ -163,10 +163,11 @@ describe('servePersistenceIpcProvider (the serve-path persistence socket)', () =
     expect(rust.capabilities.has('persistence_journal')).toBe(true);
   });
 
-  test('the Rust engine holds managed_persistence back, naming the bound-write sites that are typed but held with managed mode', () => {
+  test('the Rust engine holds managed_persistence back, naming the managed sites slice 2 still owes', () => {
     const rust = openRustEngine({ addon: { target: 'linux-x64-glibc', engine_abi: 1 }, databasePath: '/var/brains/test.rust' });
     expect(rust.capabilities.has('managed_persistence')).toBe(false);
-    expect((HELD_FOR_CALLERS.managed_persistence ?? []).map(site => site.split(' ')[0])).toEqual(['compareFileTarget', 'guardOwnership', 'publication', 'withTopologyLocks']);
+    expect((HELD_FOR_CALLERS.managed_persistence ?? []).map(site => site.split(' (')[0])).toEqual(['managed sync', 'refresh barrier', 'import holds',
+      'managed clone and its recovery', 'owner recovery scans', 'git durability --pat-file']);
   });
 
   test('an engine with the persistence journal goes on to the provider', async () => {

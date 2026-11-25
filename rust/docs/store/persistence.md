@@ -876,9 +876,9 @@ nothing (one write transaction at a time, durable commit); `shareWorktreeOwner` 
 
 A counter release below zero is `constraint_violation`, as the CHECK (>= 0) refuses it; a missing
 counter row changes nothing. recoverPublication and upgradeRecoveryStaging move the counters through
-`addPersistenceCounters` ("Writer release"). A bound write is still admitted only through
-`requireManagedPersistence` (`journal.ts` admission), which this engine refuses until that
-admission is typed. The owner pending-wait read in `owner-activity.ts` stays raw SQL.
+`addPersistenceCounters` ("Writer release"). A bound write is admitted through `requireManagedPersistence` (`journal.ts`
+admission), which a user's Rust brain refuses while `managed_persistence` is held; the managed-mode
+families beside this one are in `managed-mode.md`. The owner pending-wait read in `owner-activity.ts` stays raw SQL.
 
 ## TypeScript members with no stored state
 
