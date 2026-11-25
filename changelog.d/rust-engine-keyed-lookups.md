@@ -1,0 +1,6 @@
+**On a Rust brain, search queries and link extraction no longer read every page for each lookup, so queries are about 40% faster and link extraction about 14 times faster at 10,000 pages.**
+
+### Changed
+- Rust brains move to store format 9. The store keeps small keyed lookups beside the records, written in the same transaction as the page, chunk, link or link transition they come from. Chunk-id rescoring, exact-title and title-in-query lookups, the projection readiness probe, the supersede-link probe, duplicate-page detection and the per-page dated link evidence now find their rows by key. Answers are unchanged. A brain upgrades on its first open (169 ms for 10,000 pages); an older build then refuses it as newer.
+- Link extraction on a Rust brain writes each batch of up to 100 pages in one store transaction. The batch commits and syncs to disk once before the call returns. If any page in the batch fails, the batch rolls back and the pages are replayed one at a time, as on PGLite.
+- On a synthetic 10,000-page brain the query p50 went from 337 ms to 195 ms, and link extraction from 133 s to 9 s. A 300-page import plus link extraction made 325 disk syncs instead of 1,060. Import is about 2 ms per page slower at 10,000 pages, because each page's commit costs more. The bench is in `rust/bench/keyed-lookups/`.
