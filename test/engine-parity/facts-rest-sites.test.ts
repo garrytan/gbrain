@@ -32,6 +32,8 @@ import { getFtsLanguage } from '../../src/core/fts-language.ts';
 import { basisEmbedding, createSource, archiveSource, parityArms, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
+import { factWithdrawnRefusal } from '../../src/core/facts/single-prepare.ts';
+import { FACT_WITHDRAWN_MESSAGE } from '../../src/core/facts/withdrawal.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -541,6 +543,33 @@ describe('engine parity: facts write-path and recall statements that left execut
     expect(out['mixed claim / people/n']).toMatchObject({ local: row('people/n', 'world', '07'), remote: row('*', 'world', '08') });
     expect(out['never forgotten / people/a']).toMatchObject({ local: { hidden: false, row: null }, remote: { hidden: false, row: null } });
     for (const name of Object.keys(out)) expect((out[name] as { otherSource: unknown }).otherSource).toEqual({ hidden: false, row: null });
+    return out;
+  });
+
+  // A remote save of a forgotten claim meets the same fact_withdrawn refusal whether the withdrawn rows sit on a page
+  // the caller sees, on a page it may not see, or on no page at all: the answer never tells a hidden withdrawal from a
+  // visible one (factWithdrawnRefusal, facts/single-prepare.ts).
+  parityTest('a forgotten claim is refused alike whether its withdrawn rows are visible, hidden or absent', {
+    methods: ['readClaimWithdrawal', 'insertFacts', 'putPage', 'insertFactWithdrawal', 'expireFactsByWithdrawal'],
+  }, async (engine) => {
+    await engine.putPage('notes/hidden', note('Hidden', { visibility: 'private' }));
+    await fenced(engine, [
+      { fact: 'open claim', entity_slug: 'people/a', source_markdown_slug: 'notes/open' },
+      { fact: 'hidden claim', entity_slug: 'people/a', source_markdown_slug: 'notes/hidden' },
+    ]);
+    const days: Record<string, string> = { 'open claim': '01', 'hidden claim': '02', 'unbacked claim': '03' };
+    for (const [fact, day] of Object.entries(days)) {
+      expect(await engine.insertFactWithdrawal(SRC, 'world', fact, '*', `2026-06-${day}T00:00:00Z`)).toBe(true);
+      await engine.expireFactsByWithdrawal(SRC, 'world', fact, '*');
+    }
+    const refusal = async (fact: string, excludePrivate: boolean) => {
+      const err = await factWithdrawnRefusal(engine, SRC, { fact, kind: 'fact', visibility: 'world', entity_slug: 'people/a' }, { excludePrivate });
+      return { code: err.code, message: err.message, withdrawn: (err as { withdrawn?: unknown }).withdrawn ?? null };
+    };
+    const out: Record<string, unknown> = {};
+    for (const fact of Object.keys(days)) out[fact] = { remote: await refusal(fact, true), local: await refusal(fact, false) };
+    const expected = (day: string) => ({ code: 'invalid_params', message: FACT_WITHDRAWN_MESSAGE, withdrawn: { at: `2026-06-${day}T00:00:00.000Z`, subject: 'all_entities', visibility: 'world' } });
+    expect(out).toEqual(Object.fromEntries(Object.entries(days).map(([fact, day]) => [fact, { remote: expected(day), local: expected(day) }])));
     return out;
   });
 

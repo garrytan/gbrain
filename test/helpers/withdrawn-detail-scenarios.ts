@@ -68,18 +68,23 @@ export async function mostSpecificSubjectFirst(engine: BrainEngine): Promise<voi
   expect(bare.body.withdrawn.subject).toBe('all_entities');
 }
 
-/** A withdrawal whose rows the caller cannot read gives no detail; #6509's refusal is unchanged. */
-export async function hiddenBackingOmitsDetail(engine: BrainEngine): Promise<void> {
+/**
+ * A withdrawal whose rows the caller cannot read answers as one whose rows it can read: the same fact_withdrawn
+ * refusal and object, so the answer never tells a hidden withdrawal from a visible one. Beside a visible withdrawal,
+ * the remote caller is told about the visible one only, as when the hidden one does not exist.
+ */
+export async function hiddenBackingReadsAsVisible(engine: BrainEngine): Promise<void> {
   await seedPages(engine);
-  const hiddenPage = await call(engine, 'remember', { fact: CLAIM, entity: 'crm/hidden-co', provenance: 'call notes' });
   const [row] = await engine.executeRaw<{ id: number }>(`INSERT INTO facts(source_id,fact,kind,visibility,entity_slug,source_markdown_slug,source,confidence,valid_from)
     VALUES ('default',$1,'fact','world','crm/acme-example','crm/hidden-co','meeting notes',1,now()) RETURNING id`, [CLAIM]);
   expect((await call(engine, 'forget_fact', { id: Number(row!.id) }, 'local')).body.expired).toBe(true);
+  const acme = { at: await ledger(engine, 'crm/acme-example'), subject: 'crm/acme-example', visibility: 'world' };
   const remote = await remember(engine);
-  for (const key of ['code', 'error', 'message', 'suggestion']) expect(remote.body[key]).toEqual(hiddenPage.body[key]);
-  expect(remote.body.withdrawn).toBeUndefined();
+  expect(remote.isError).toBe(true);
+  expect(remote.body).toMatchObject({ code: 'invalid_params', message: FACT_WITHDRAWN_MESSAGE, suggestion: FACT_WITHDRAWN_SUGGESTION });
+  expect(remote.body.withdrawn).toEqual(acme);
   const local = await remember(engine, 'local');
-  expect(local.body.withdrawn).toEqual({ at: await ledger(engine, 'crm/acme-example'), subject: 'crm/acme-example', visibility: 'world' });
+  for (const key of ['code', 'error', 'message', 'suggestion', 'withdrawn']) expect(remote.body[key]).toEqual(local.body[key]);
   // A visible withdrawal for all entities: the remote caller is told about that one, never the hidden one.
   const unlinked = await call(engine, 'remember', { fact: CLAIM, provenance: 'call notes', infer_entity: false });
   expect((await call(engine, 'forget', { id: String(unlinked.body.id) })).body.expired).toBe(true);
@@ -117,7 +122,7 @@ export async function receiptKeepsDetail(engine: BrainEngine): Promise<void> {
   }
 }
 
-/** The single-fact writer applies the same predicate (fail-closed when `remote` is unset); a purge never supplies the object. */
+/** The single-fact writer applies the same rule (a caller with `remote` unset reads as remote); a purge never supplies the object. */
 export async function singleWriterSameRule(engine: BrainEngine): Promise<void> {
   await seedPages(engine);
   const [row] = await engine.executeRaw<{ id: number }>(`INSERT INTO facts(source_id,fact,kind,visibility,entity_slug,source_markdown_slug,source,confidence,valid_from)
@@ -129,8 +134,8 @@ export async function singleWriterSameRule(engine: BrainEngine): Promise<void> {
   expect(local?.message).toBe(FACT_WITHDRAWN_MESSAGE);
   expect(local?.withdrawn).toEqual({ at: await ledger(engine, 'crm/acme-example'), subject: 'crm/acme-example', visibility: 'world' });
   const unset = await write();
-  expect(unset?.message).toBe('Page not found.');
-  expect(unset?.withdrawn).toBeUndefined();
+  expect(unset?.message).toBe(FACT_WITHDRAWN_MESSAGE);
+  expect(unset?.withdrawn).toEqual(local?.withdrawn);
   const purged = 'Acme Example moved its headquarters.';
   await engine.executeRaw(`INSERT INTO fact_purges(source_id,visibility,subject,fact_hash) VALUES ('default','world','*',gbrain_fact_fingerprint($1))`, [purged]);
   const refused = await writeSingleFact(engine, 'default', { fact: purged, provenance: 'call notes', entity: 'crm/acme-example', visibility: 'world', remote: false })
