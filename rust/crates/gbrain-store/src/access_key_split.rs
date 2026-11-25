@@ -296,7 +296,8 @@ mod tests {
         );
         let store = open(&kv).unwrap();
         assert_eq!(store.info().format_version, FORMAT_VERSION);
-        assert_eq!(FORMAT_VERSION, 8);
+        // The format-8 step ran: this build's format is 8 or later (never pinned as a literal).
+        const { assert!(FORMAT_VERSION >= 8) };
         // The secret is the one it was, not a new one, and the three links are all there.
         assert_eq!(store.shared_skill_token_secret().unwrap(), secret.unwrap());
         assert_eq!(answers(&store), expected());

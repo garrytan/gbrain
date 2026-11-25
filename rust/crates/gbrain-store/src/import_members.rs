@@ -27,7 +27,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::chunks::{ChunkRecord, read_chunks, read_segment_view, tokenize};
+use crate::chunks::{ChunkRecord, read_chunks};
 use crate::embeddings::{put_chunk_vector, read_chunk_vector, remove_chunk_vector, text_hash};
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT};
 use crate::kv::{KvRead, KvWrite};
@@ -194,14 +194,6 @@ fn place_of(record: &ChunkRecord) -> Place {
     }
 }
 
-fn term_counts(text: &str) -> BTreeMap<String, u32> {
-    let mut counts = BTreeMap::new();
-    for term in tokenize(text) {
-        *counts.entry(term).or_insert(0) += 1;
-    }
-    counts
-}
-
 /// [`Store::move_chunk_indexes`] in the caller's write transaction.
 pub(crate) fn move_chunk_indexes_in(
     tx: &mut dyn KvWrite,
@@ -263,13 +255,9 @@ pub(crate) fn move_chunk_indexes_in(
     if changed.is_empty() {
         return Ok(());
     }
-    let generation = read_segment_view(&*tx, page_id)?.generation;
     // Every moved chunk leaves its old keys before any takes its new ones, so a swap never collides.
     let mut vectors = Vec::with_capacity(changed.len());
     for (record, _, _) in &changed {
-        for term in term_counts(&record.chunk_text).keys() {
-            tx.delete(&keys::posting(term, page_id, record.chunk_index))?;
-        }
         tx.delete(&keys::chunk(page_id, record.chunk_index))?;
         let vector = read_chunk_vector(&*tx, page_id, record.chunk_index)?;
         if vector.is_some() {
@@ -290,11 +278,6 @@ pub(crate) fn move_chunk_indexes_in(
             };
         }
         put_json(tx, &keys::chunk(page_id, index), &moved)?;
-        if moved.visible_at(generation) {
-            for (term, count) in &term_counts(&moved.chunk_text) {
-                tx.put(&keys::posting(term, page_id, index), &count.to_be_bytes())?;
-            }
-        }
         if let Some(stored) = vector {
             put_chunk_vector(
                 tx,
@@ -499,14 +482,14 @@ mod tests {
         out
     }
 
+    /// The chunk index keyword search finds `term` at on page `page_id` (the live keyword index).
     fn postings(store: &Store, term: &str, page_id: u64) -> Vec<u32> {
-        let read = store.read().unwrap();
-        (0..4)
-            .filter(|i| {
-                read.get(&keys::posting(term, page_id, *i))
-                    .unwrap()
-                    .is_some()
-            })
+        store
+            .search_keyword(term, &crate::search::SearchOptions::default())
+            .unwrap()
+            .iter()
+            .filter(|row| row["page_id"].as_u64() == Some(page_id))
+            .map(|row| row["chunk_index"].as_u64().unwrap() as u32)
             .collect()
     }
 

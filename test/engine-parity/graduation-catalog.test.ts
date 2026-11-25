@@ -46,10 +46,13 @@ describe('engine parity: graduation catalog', () => {
       expect(catalog.store).toBe('keyspaces');
       if (catalog.store !== 'keyspaces') throw checked;
       const takes = catalog.keyspaces.find(k => k.tag === 'A');
+      // The store format the loaded addon writes (its newest `formatVersions` entry), never a literal.
+      const storeFormat = Math.max(...((engine as unknown as { addon: { formatVersions: number[] } }).addon.formatVersions));
+      expect(storeFormat).toBeGreaterThanOrEqual(8);
       expect({
         formatVersion: catalog.formatVersion, tags: catalog.keyspaces.length > 40,
         takeKinds: takes?.kinds.map(k => k.kind), message: String((checked as Error).message).includes('listRelations'),
-      }).toEqual({ formatVersion: 8, tags: true, takeKinds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], message: true });
+      }).toEqual({ formatVersion: storeFormat, tags: true, takeKinds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], message: true });
       throw checked;
     }
     if (checked !== null) throw checked;

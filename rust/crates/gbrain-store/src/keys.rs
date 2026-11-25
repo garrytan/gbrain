@@ -269,7 +269,8 @@ pub fn chunk_prefix(page_id: u64) -> Vec<u8> {
     key
 }
 
-/// `T term \0 page_id chunk_index`
+/// `T term \0 page_id chunk_index`: a legacy word posting (none from store format 13;
+/// `legacy_postings.rs`).
 pub fn posting(term: &str, page_id: u64, index: u32) -> Vec<u8> {
     let mut key = posting_prefix(term);
     key.extend_from_slice(&page_id.to_be_bytes());

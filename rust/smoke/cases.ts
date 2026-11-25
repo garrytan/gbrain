@@ -254,7 +254,11 @@ export const cases: Case[] = [
       assert.equal(addon.engineAbi, 1);
       assert.match(addon.engineBuild, /^[0-9a-f]{64}$/);
       assert.equal(addon.catalogVersion, 0);
-      assert.deepEqual(addon.formatVersions, [1, 2, 3, 4, 5, 6, 7, 8]);
+      // Formats 1 to 8 in a row, then the formats this build adds, in order (formats the trunk allotted to other lanes
+      // are skipped); never pinned as a literal.
+      const versions: number[] = addon.formatVersions;
+      assert.deepEqual(versions.slice(0, 8), [1, 2, 3, 4, 5, 6, 7, 8]);
+      assert.ok(versions.every((v, i) => i === 0 || v > versions[i - 1]!), `formatVersions ${versions}`);
     },
   },
   {

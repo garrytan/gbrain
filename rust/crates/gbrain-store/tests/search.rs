@@ -6,7 +6,7 @@ use common::{TempDir, open};
 use gbrain_store::chunks::{ChunkInput, UpsertChunksOptions};
 use gbrain_store::error::*;
 use gbrain_store::pages::{PageInput, PutPageOptions, ReadScope};
-use gbrain_store::search::{SearchOptions, clamp_limit};
+use gbrain_store::search::SearchOptions;
 use gbrain_store::{Store, sources::SourceInput};
 use serde_json::{Value, json};
 
@@ -163,9 +163,9 @@ fn a_page_is_one_result_and_its_best_chunk_is_returned() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["chunk_index"], 1);
     assert_eq!(rows[0]["chunk_source"], "timeline");
-    // detail: low keeps compiled_truth chunks only
+    // detailLow keeps compiled_truth chunks only
     let low = store
-        .search_keyword("needle", &search_opts(json!({"detail": "low"})))
+        .search_keyword("needle", &search_opts(json!({"detailLow": true})))
         .unwrap();
     assert_eq!(low[0]["chunk_index"], 0);
     assert_eq!(low[0]["chunk_source"], "compiled_truth");
@@ -263,52 +263,58 @@ fn sources_scope_search_and_archived_sources_are_hidden() {
     let all = find(&store, "common");
     assert_eq!(all.len(), 2);
     let only_work = store
-        .search_keyword("common", &search_opts(json!({"sourceId": "work"})))
+        .search_keyword("common", &search_opts(json!({"sources": ["work"]})))
         .unwrap();
     assert_eq!(slugs(&only_work), ["w"]);
     assert_eq!(only_work[0]["source_id"], "work");
-    // the array wins over the scalar
-    let array = store
-        .search_keyword(
-            "common",
-            &search_opts(json!({"sourceId": "work", "sourceIds": ["default"]})),
-        )
+    let default = store
+        .search_keyword("common", &search_opts(json!({"sources": ["default"]})))
         .unwrap();
-    assert_eq!(slugs(&array), ["d"]);
+    assert_eq!(slugs(&default), ["d"]);
     store.set_source_archived("work", true).unwrap();
     assert_eq!(slugs(&find(&store, "common")), ["d"]);
     store.set_source_archived("work", false).unwrap();
     assert_eq!(find(&store, "common").len(), 2);
 }
 
+/// The caller names the hidden slug prefixes (`hardExcludes`; the TypeScript member passes
+/// `test/`, `attachments/` and `.raw/` unless asked otherwise) and exact slugs to leave out.
 #[test]
-fn test_attachments_and_raw_slugs_are_hidden_unless_asked_for() {
+fn hard_excludes_and_excluded_slugs_hide_pages() {
     let dir = TempDir::new("search-excludes");
     let store = open(&dir);
     for slug in ["test/fixture", "attachments/pdf", ".raw/blob", "notes/real"] {
         put(&store, slug, "needle");
     }
-    assert_eq!(slugs(&find(&store, "needle")), ["notes/real"]);
+    let mut every = slugs(&find(&store, "needle"));
+    every.sort();
+    assert_eq!(
+        every,
+        [".raw/blob", "attachments/pdf", "notes/real", "test/fixture"]
+    );
+    let hidden = store
+        .search_keyword(
+            "needle",
+            &search_opts(json!({"hardExcludes": ["test/", "attachments/", ".raw/"]})),
+        )
+        .unwrap();
+    assert_eq!(slugs(&hidden), ["notes/real"]);
     let back = store
         .search_keyword(
             "needle",
-            &search_opts(json!({"include_slug_prefixes": ["test/"]})),
+            &search_opts(json!({"hardExcludes": ["attachments/", ".raw/"]})),
         )
         .unwrap();
-    assert_eq!(slugs(&back), ["test/fixture", "notes/real"]);
-    let more = store
-        .search_keyword(
-            "needle",
-            &search_opts(json!({"exclude_slug_prefixes": ["notes/"]})),
-        )
-        .unwrap();
-    assert!(more.is_empty());
+    let mut back = slugs(&back);
+    back.sort();
+    assert_eq!(back, ["notes/real", "test/fixture"]);
     let exact = store
         .search_keyword(
             "needle",
-            &search_opts(
-                json!({"include_slug_prefixes": ["test/"], "exclude_slugs": ["notes/real"]}),
-            ),
+            &search_opts(json!({
+                "hardExcludes": ["attachments/", ".raw/"],
+                "excludeSlugs": ["notes/real"],
+            })),
         )
         .unwrap();
     assert_eq!(slugs(&exact), ["test/fixture"]);
@@ -341,26 +347,27 @@ fn type_filters_limit_and_offset() {
     assert_eq!(run(json!({"limit": 2})), ["p1", "p2"]);
     assert_eq!(run(json!({"limit": 2, "offset": 2})), ["c1", "n1"]);
     assert_eq!(run(json!({"offset": 10})), Vec::<String>::new());
-    assert_eq!(clamp_limit(None), 20);
-    assert_eq!(clamp_limit(Some(0.0)), 20);
-    assert_eq!(clamp_limit(Some(-3.0)), 20);
-    assert_eq!(clamp_limit(Some(f64::NAN)), 20);
-    assert_eq!(clamp_limit(Some(7.9)), 7);
-    assert_eq!(clamp_limit(Some(5000.0)), 100);
 }
 
+/// The keyword arm honours a frontmatter `where` filter.
 #[test]
-fn filters_that_cannot_be_honoured_are_refused() {
-    let dir = TempDir::new("search-unsupported");
+fn a_where_filter_keeps_only_pages_whose_frontmatter_holds() {
+    let dir = TempDir::new("search-where");
     let store = open(&dir);
-    for filter in [
-        json!({"where": {"a": 1}}),
-        json!({"afterDate": "2020-01-01"}),
-        json!({"beforeDate": "2020-01-01"}),
-    ] {
-        let err = store.search_keyword("x", &search_opts(filter)).unwrap_err();
-        assert_eq!(err.code, INVALID_ARGUMENT);
-    }
+    let done: PageInput = serde_json::from_value(json!({
+        "type": "note", "title": "done", "compiled_truth": "needle", "frontmatter": {"status": "done"},
+    }))
+    .unwrap();
+    store
+        .put_page("notes/done", &done, &PutPageOptions::default())
+        .unwrap();
+    put(&store, "notes/plain", "needle");
+    let run = |v: Value| slugs(&store.search_keyword("needle", &search_opts(v)).unwrap());
+    assert_eq!(
+        run(json!({"where": [["status", ["done"]]]})),
+        ["notes/done"]
+    );
+    assert!(run(json!({"where": [["status", ["open"]]]})).is_empty());
 }
 
 #[test]
@@ -383,7 +390,7 @@ fn image_chunks_are_not_searched() {
 }
 
 #[test]
-fn long_bodies_are_split_and_cjk_characters_are_terms() {
+fn long_bodies_are_split_and_a_cjk_query_is_left_to_the_cjk_fallback() {
     let dir = TempDir::new("search-long");
     let store = open(&dir);
     let paragraph = |w: &str| format!("{} ", w).repeat(200);
@@ -405,8 +412,10 @@ fn long_bodies_are_split_and_cjk_characters_are_terms() {
         find(&store, "alpha gamma").is_empty(),
         "no single chunk holds both"
     );
+    // A CJK query is the TypeScript member's CJK fallback (`searchKeywordCjk`); the keyword arm,
+    // like PGLite's strict statement, reads the CJK run as one word.
     put(&store, "cjk", "東京は日本の首都です");
-    assert_eq!(slugs(&find(&store, "首都")), ["cjk"]);
+    assert!(find(&store, "首都").is_empty());
 }
 
 #[test]
@@ -589,11 +598,11 @@ fn quarantined_and_pinned_question_pages_are_hidden_whatever_the_key_holds() {
         slugs(&find(&store, "glimmerwort")),
         ["notes/visible", "notes/flagged"]
     );
-    // opting a slug prefix back in does not unhide a quarantined page
+    // no slug prefix setting unhides a quarantined page
     let opted = store
         .search_keyword(
             "glimmerwort",
-            &search_opts(json!({"include_slug_prefixes": ["notes/"]})),
+            &search_opts(json!({"hardExcludes": ["test/"]})),
         )
         .unwrap();
     assert_eq!(slugs(&opted), ["notes/visible", "notes/flagged"]);

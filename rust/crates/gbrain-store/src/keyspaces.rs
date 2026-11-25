@@ -143,7 +143,11 @@ pub const KEYSPACES: &[Keyspace] = &[
         kinds: KEYWORD_KINDS,
     },
     ks(keys::SOURCE, "core", "sources"),
-    ks(keys::POSTING, "core", "search postings"),
+    ks(
+        keys::POSTING,
+        "core",
+        "legacy word postings (none from store format 13)",
+    ),
     ks(keys::LINK_UNIQUE, "core", "link uniqueness index"),
     ks(keys::VERSION, "core", "page versions"),
     ks(keys::WRITER, "core", "local writers"),

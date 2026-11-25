@@ -932,3 +932,45 @@ describe('raw SQL by design on a Rust brain', () => {
     expect(seen).toEqual(['readSegmentRegions']);
   });
 });
+
+/**
+ * The addon's `searchKeyword` (store format 13) answers exactly as `searchKeywordArm(query, query, opts)`, the keyword arm
+ * the TypeScript member runs: the legacy BM25 postings it once read are gone. Checked on a seeded corpus of notes,
+ * people and hidden-prefix pages in two sources, over plain words, OR, quoted phrases, negation, stopwords and
+ * filters.
+ */
+describe('the addon searchKeyword on a Rust brain', () => {
+  withAddon('answers byte-identically to searchKeywordArm with the query as match and rank query', async () => {
+    const { importFromContent } = await import('../src/core/import-file.ts');
+    const { engine } = await open();
+    const brain = engine.openStore('test').brain as unknown as {
+      upsertSource(s: unknown): Promise<unknown>;
+      searchKeyword(q: string, o?: unknown): Promise<unknown[]>;
+      searchKeywordArm(m: string, r: string, o?: unknown): Promise<unknown[]>;
+    };
+    await brain.upsertSource({ id: 'work', name: 'work', config: {} });
+    const words = ['launch', 'pricing', 'roadmap', 'hiring', 'widget', 'budget', 'design', 'security'];
+    for (let i = 0; i < 40; i++) {
+      const w = (k: number) => words[(i * 3 + k) % words.length];
+      const slug = i % 10 === 0 ? `test/fixture-${i}` : i % 3 === 0 ? `people/p-${i}` : `notes/n-${i}`;
+      const body = `---\ntype: ${i % 3 === 0 ? 'person' : 'note'}\ntitle: ${w(0)} ${w(1)} ${i}\n---\n\n`
+        + `The ${w(0)} review covered ${w(1)} and ${w(2)}. Again the ${w(0)} plan, with ${w(3)} for widget-co.\n`;
+      await importFromContent(engine as never, slug, body, i % 4 === 0 ? { sourceId: 'work' } : {});
+    }
+    const queries = ['launch', 'pricing roadmap', 'widget or budget', '"launch plan"', 'design -security', 'again', 'the', 'nothing-here'];
+    const options = [undefined, { limit: 3 }, { limit: 5, offset: 2 }, { type: 'person' }, { sources: ['work'] },
+      { hardExcludes: ['test/'] }, { excludeSlugs: ['notes/n-1'], innerLimit: 4 }];
+    let compared = 0;
+    let nonEmpty = 0;
+    for (const q of queries) {
+      for (const o of options) {
+        const got = await brain.searchKeyword(q, o);
+        expect(JSON.stringify(got)).toBe(JSON.stringify(await brain.searchKeywordArm(q, q, o)));
+        compared += 1;
+        if (got.length) nonEmpty += 1;
+      }
+    }
+    expect(compared).toBe(queries.length * options.length);
+    expect(nonEmpty).toBeGreaterThan(20);
+  });
+});
