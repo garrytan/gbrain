@@ -37,11 +37,11 @@ async function expectValidation(record: TopologyCloneRecovery, accepted: boolean
   // rejected before that boundary, without opening a datastore or moving files.
   const engine = {
     kind: 'pglite',
-    executeRaw: async (sql: string, params: unknown[]) => {
-      expect(sql).toBe('SELECT * FROM persistence_topology_changes WHERE id=$1::uuid');
-      expect(params).toEqual([id]);
-      return [{ id, state: 'recovering', recovery: record }];
-    },
+    // The change is read through the topology store (engine-sql/topology-store.ts `readChange`).
+    topologyStore: async () => ({ readChange: async (changeId: string) => {
+      expect(changeId).toBe(id);
+      return { id, state: 'recovering', recovery: record };
+    } }),
     transaction: async () => { transactions++; throw validated; },
   } as unknown as BrainEngine;
   if (accepted) await expect(finishTopologyClone(engine, id)).rejects.toBe(validated);

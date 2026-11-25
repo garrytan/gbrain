@@ -1218,8 +1218,6 @@ src/core/persistence/sync-waivers.ts#waivePrescreenedRun	capability_refusal_swal
 src/core/persistence/sync-waivers.ts#waivePrescreenedRun	promise_catch_empty	1
 src/core/persistence/sync-waivers.ts#waiverBatchEnabled	promise_catch_empty	1
 src/core/persistence/sync-write-diagnostic.ts#managedSyncWriteDiagnostic	catch_empty	1
-src/core/persistence/topology-clone.ts#runManagedSourceClone<anon@1>	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
-src/core/persistence/topology-recovery.ts#finishTopologyClone<anon@1>	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/unbound-pages.ts#entries	catch_empty	1
 src/core/persistence/unbound-source.ts#readDatabaseOnlyActivatedSources	catch_empty	1
 src/core/persistence/unsourced-put-fork.ts#noteSuppressedSourceFlip	catch_empty	1	landed on master (#9915, #9939) after this guard was written; known debt, fix by a typed degraded marker
