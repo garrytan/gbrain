@@ -195,6 +195,7 @@
   "test/engine-parity/concept-rebuild.test.ts": 7683,
   "test/engine-parity/config-ingest.test.ts": 8015,
   "test/engine-parity/connect-gate.test.ts": 7499,
+  "test/engine-parity/connector-sync-stamp.test.ts": 9000,
   "test/engine-parity/core-page-member-reads.test.ts": 7172,
   "test/engine-parity/credential-grant-writes.test.ts": 8700,
   "test/engine-parity/cycle-locks.test.ts": 8435,
