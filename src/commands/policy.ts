@@ -12,13 +12,13 @@
  *   gbrain policy presets [--json]
  *   gbrain policy status [--json]
  */
-import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../core/engine.ts';
 import { OperationError, opError } from '../core/ops/contract.ts';
-import { setCliExitVerdict } from '../core/cli-force-exit.ts';
+import { setCliExitVerdict, spawnCliChild } from '../core/cli-force-exit.ts';
+import { rethrowCapabilityRefusal } from '../core/engine-capability-refusal.ts';
 import { writeCliError } from '../cli/cli-error.ts';
 import { AGENT_VERBS, isAgentVerb, isRecipientClass } from '../core/agent-verbs.ts';
 import { formatLimit, parseLimit, parsePolicyFence, renderPolicyFence, type PolicyDecision, type PolicyLimit, type PolicyRule } from '../core/policy/fence.ts';
@@ -103,10 +103,11 @@ async function startingRules(engine: BrainEngine, scope: PolicyScope): Promise<P
   return served.approval?.rules ?? [];
 }
 
-async function lastFetches(engine: BrainEngine): Promise<Array<{ client: string; operation: string; last_fetched: string }>> {
+async function lastFetches(engine: BrainEngine): Promise<Array<{ client: string; operation: string; last_fetched: string }> | null> {
   const rows = await engine.executeRaw<{ client: string | null; operation: string; at: Date | string }>(
     `SELECT COALESCE(agent_name, token_name, 'unnamed') AS client, operation, max(created_at) AS at FROM mcp_request_log
-      WHERE operation IN ('policy_check', 'agent_policy') GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 50`).catch(() => []);
+      WHERE operation IN ('policy_check', 'agent_policy') GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 50`).catch((err: unknown) => { rethrowCapabilityRefusal(err); return null; }); // silent-read-ok: null prints as unknown, never as no fetches
+  if (!rows) return null;
   return rows.map(r => ({ client: r.client ?? 'unnamed', operation: r.operation, last_fetched: new Date(r.at).toISOString() }));
 }
 
@@ -119,8 +120,12 @@ async function editRules(engine: BrainEngine, scope: PolicyScope): Promise<Polic
   try {
     writeFileSync(file, renderPolicyPage(scope, await startingRules(engine, scope)), { mode: 0o600 });
     const editor = process.env.VISUAL || process.env.EDITOR || 'vi';
-    const ran = spawnSync(editor, [file], { stdio: 'inherit', shell: true });
-    if (ran.status !== 0) throw opError('invalid_params', `The editor (${editor}) exited with status ${ran.status}; nothing was changed.`, 'Run gbrain policy edit again, or use gbrain policy allow|ask|deny.');
+    const status = await new Promise<number | null>(resolve => {
+      const child = spawnCliChild(editor, [file], { shell: true });
+      child.on('error', () => resolve(null));
+      child.on('exit', code => resolve(code));
+    });
+    if (status !== 0) throw opError('invalid_params', `The editor (${editor}) exited with status ${status ?? 'unknown'}; nothing was changed.`, 'Run gbrain policy edit again, or use gbrain policy allow|ask|deny.');
     const parsed = parsePolicyFence(readFileSync(file, 'utf8'));
     if (!parsed.ok) throw opError('policy_malformed', `The edited policy is malformed at line ${parsed.error.line}, column ${parsed.error.column}: ${parsed.error.message}. Nothing was changed.`, 'Run gbrain policy edit again and fix the table.');
     return parsed.rules;
@@ -203,8 +208,9 @@ export async function runPolicy(engine: BrainEngine, args: string[]): Promise<vo
         const fetches = await lastFetches(engine);
         out({ scopes: served.map(p => ({ scope: p.scope, state: p.state, served_revision: p.served_revision })), clients: fetches },
           [...served.map(p => `${p.scope}: ${p.state}${p.served_revision ? ` (revision ${p.served_revision})` : ''}`),
-            fetches.length ? 'Last fetched by:' : 'No client has fetched the policy over MCP yet.',
-            ...fetches.map(f => `  ${f.client}: ${f.operation} at ${f.last_fetched}`)].join('\n'));
+            fetches === null ? 'The MCP request log could not be read, so the last fetch per client is unknown.'
+              : fetches.length ? 'Last fetched by:' : 'No client has fetched the policy over MCP yet.',
+            ...(fetches ?? []).map(f => `  ${f.client}: ${f.operation} at ${f.last_fetched}`)].join('\n'));
         return;
       }
     }

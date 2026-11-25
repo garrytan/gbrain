@@ -14,6 +14,7 @@ import { opError } from '../ops/contract.ts';
 import { loadConfig } from '../config.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
 import { dumpFrontmatterYaml } from '../data-frontmatter.ts';
+import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { parsePolicyFence, policyDigest, renderPolicyFence, type PolicyParseError, type PolicyRule } from './fence.ts';
 import { AGENT_POLICY_TYPE, POLICY_SLUGS, POLICY_SOURCE, type PolicyScope } from './slugs.ts';
 import { confirmOnTerminal, confirmRequiredError, POLICY_APPROVAL_PREFIX, terminalAuthorityProblem, withOwnerProof, type OwnerProof, type TerminalProbe } from './authority.ts';
@@ -55,13 +56,13 @@ async function readPolicyPage(engine: BrainEngine, scope: PolicyScope): Promise<
   const page = await engine.getPage(POLICY_SLUGS[scope], { sourceId: POLICY_SOURCE });
   if (!page) return null;
   const [row] = await engine.executeRaw<{ kind: string | null; pid: string | null }>(
-    'SELECT revision_principal_kind AS kind, revision_principal_id AS pid FROM pages WHERE id = $1', [page.id]).catch(() => []);
-  return { body: page.compiled_truth ?? '', revision: String(page.knowledge_revision ?? ''), author: row?.kind ? `${row.kind}:${row.pid ?? ''}` : 'unrecorded' };
+    'SELECT revision_principal_kind AS kind, revision_principal_id AS pid FROM pages WHERE id = $1', [page.id]);
+  return { body: isSegmentedPage(page) ? '' : page.compiled_truth ?? '', revision: String(page.knowledge_revision ?? ''), author: row?.kind ? `${row.kind}:${row.pid ?? ''}` : 'unrecorded' };
 }
 
 /** The approval record, or null when absent or when its digest does not cover its own rules and proof. */
 export async function readApproval(engine: BrainEngine, scope: PolicyScope): Promise<PolicyApproval | null> {
-  const raw = await engine.getConfig(`${POLICY_APPROVAL_PREFIX}${scope}`).catch(() => null);
+  const raw = await engine.getConfig(`${POLICY_APPROVAL_PREFIX}${scope}`);
   if (!raw) return null;
   try {
     const a = JSON.parse(raw) as PolicyApproval;

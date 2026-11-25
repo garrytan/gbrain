@@ -2948,6 +2948,13 @@
         },
         {
           "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "No agent policy is set; policy_check answers none (gbrain policy init sets one).",
+          "name": "policy_valid",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
           "details": {
             "conversation": null,
             "fix": "preview links: gbrain facts relink --dry-run",

@@ -17,7 +17,7 @@ export const POLICY_LINE_LEAD = '- Outside actions:';
 
 export function readPolicyLineSetting(): { value: 'on' | 'off'; source: 'config' | 'default' } {
   let raw: string | undefined;
-  try { raw = loadConfigFileOnly()?.brain_first?.policy_line; } catch { raw = undefined; }
+  try { raw = loadConfigFileOnly()?.brain_first?.policy_line; } catch { raw = undefined; } // silent-read-ok: an unreadable config file leaves the line at its default (off), the conservative value; config doctor reports the file
   return raw === 'on' || raw === 'off' ? { value: raw, source: 'config' } : { value: POLICY_LINE_DEFAULT, source: 'default' };
 }
 

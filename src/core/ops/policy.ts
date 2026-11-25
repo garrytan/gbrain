@@ -91,7 +91,7 @@ const capabilities: Operation = {
       try {
         const { resolveGrantDiagnosis, grantRepairAction } = await import('../harness/capabilities.ts');
         grantFix = grantRepairAction(await resolveGrantDiagnosis(ctx.auth, ctx.engine, ctx.config, { surfaceCeiling: ctx.surfaceCeiling }));
-      } catch { grantFix = null; }
+      } catch { grantFix = null; } // silent-read-ok: a failed grant diagnosis falls back to the generic regrant fix below, which names the same owner step
       return grantFix;
     };
     const rows: CapabilityRow[] = [];
