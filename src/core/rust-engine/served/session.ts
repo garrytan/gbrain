@@ -25,6 +25,9 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { Socket } from 'node:net';
 import type { BrainEngine } from '../../engine.ts';
 import { withRemoteCaller } from '../../remote-caller.ts';
+import { withEngineScope } from '../../engine-scope.ts';
+import { ENGINE_ROOT } from '../../engine-root.ts';
+import { noteSchemaVersion } from '../../migrate-pending.ts';
 import { encodeError, encodeValue, type Wire } from '../owner-ipc/codec.ts';
 import {
   OWNER_IPC_VERSION_V3, SERVED_SERVER_CAPS, parsePositionToken, positionToken, type OwnerHello,
@@ -251,6 +254,23 @@ export function servedSession(side: ServedServerSide, opts: ServedServerOptions,
     return null;
   };
 
+  // ---- the caller's engine scope ----
+  // A call made in its engine's scope on the client runs in a scope here that answers what that one did: the schema
+  // version the client's engine recorded. One scope object per version and session, keyed to itself (ENGINE_ROOT), so
+  // what a client recorded never changes the owner engine's own record.
+  const scopes = new Map<number | null, object>();
+  const scopeFor = (sv: unknown): object => {
+    const version = typeof sv === 'number' && Number.isInteger(sv) ? sv : null;
+    let scope = scopes.get(version);
+    if (!scope) {
+      scope = {};
+      Object.defineProperty(scope, ENGINE_ROOT, { value: scope });
+      if (version !== null) noteSchemaVersion(scope, version);
+      scopes.set(version, scope);
+    }
+    return scope;
+  };
+
   // ---- one call ----
   const replyDirect = (id: number, member: string, error: unknown) => writeFrame({ t: 'result', id, ok: false, error: encodeErr(error) }, member);
 
@@ -277,7 +297,11 @@ export function servedSession(side: ServedServerSide, opts: ServedServerOptions,
     // A call inside a transaction the client holds runs on that transaction at once, outside the permit queue: the
     // call that holds the transaction already holds a permit (a borrowed handle) or the writer (a client's own).
     // Not awaited: such a call may call back into the client, whose own calls on the transaction arrive behind it.
-    if (frame.txn !== undefined) { void runInTransaction(id, member, String(frame.txn), args, remote); return; }
+    if (frame.txn !== undefined) {
+      const scoped = frame.scope && typeof frame.scope === 'object' ? (frame.scope as { sv?: unknown }).sv : undefined;
+      void runInTransaction(id, member, String(frame.txn), args, remote, scoped === undefined ? undefined : <T>(fn: () => T) => withEngineScope(scopeFor(scoped), fn));
+      return;
+    }
     // Request ids (decision 6).
     let entry: ReturnType<RequestTable['begin']> | null = null;
     const req = frame.req;
@@ -339,7 +363,10 @@ export function servedSession(side: ServedServerSide, opts: ServedServerOptions,
         if (tracked) state.requests.finish(tracked, outcome);
         if (!call.done) call.reply({ t: 'result', id: call.id, ...outcome });
       },
-      wrapRun: fn => remote ? withRemoteCaller(true, fn) : fn(),
+      wrapRun: fn => {
+        const inScope = frame.scope && typeof frame.scope === 'object' ? () => withEngineScope(scopeFor((frame.scope as { sv?: unknown }).sv), fn) : fn;
+        return remote ? withRemoteCaller(true, inScope) : inScope();
+      },
       staleCredential,
       rebuildFunction: (wire, call) => rebuildFunction(wire, call),
     };

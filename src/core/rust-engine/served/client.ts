@@ -20,6 +20,8 @@ import net, { type Socket } from 'node:net';
 import tls from 'node:tls';
 import { randomUUIDv7 } from 'bun';
 import { requestSignal } from '../../request-signal.ts';
+import { engineScopeStore } from '../../engine-scope-store.ts';
+import { schemaVersionSeen } from '../../migrate-pending.ts';
 import { readDeadline } from '../../read-deadline.ts';
 import { currentStatementDeadline } from '../../statement-deadline.ts';
 import { callerAccessRecord } from '../../search/private-visibility.ts';
@@ -108,6 +110,16 @@ function callDeadline(): { deadlineAt?: number; readDeadlineAt?: number } {
 function lastKey(path: string): string {
   const at = Math.max(path.lastIndexOf('.'), path.lastIndexOf('['));
   return at === -1 ? path : path.slice(at + 1).replace(/\]$/, '');
+}
+
+/**
+ * The caller's engine scope, as a call carries it (session.ts runs the call in a scope on the server that answers the
+ * same): set whenever the call runs in an engine scope, with the schema version that scope's engine recorded, which is
+ * what privacy reads choose their form from (search/private-visibility.ts readSchemaVersion). Undefined outside one.
+ */
+function callerScope(): { sv: number | null } | undefined {
+  const scoped = engineScopeStore.getStore();
+  return scoped ? { sv: schemaVersionSeen(scoped) ?? null } : undefined;
 }
 
 /** Opens one transport to the endpoint and resolves once it is connected (TLS verified). */
@@ -378,12 +390,14 @@ export async function connectServed(url: string, opts: ConnectServedOptions = {}
     for (const signal of signals) if (signal.aborted) return Promise.reject(ownerCallCancelled(member, false));
     const { deadlineAt, readDeadlineAt } = callDeadline();
     const record = callerAccessRecord();
+    const scope = callerScope();
     const frame: Record<string, unknown> = {
       t: kind, id, [kind === 'fn' ? 'name' : 'member']: member, args: wireArgs, req: randomUUIDv7(), remote,
       ...(ropts.txn ? { txn: ropts.txn } : {}),
       ...(deadlineAt !== undefined ? { deadline_at: deadlineAt } : {}),
       ...(readDeadlineAt !== undefined ? { read_deadline_at: readDeadlineAt } : {}),
       ...(record ? { access: encodeValue(record) } : {}),
+      ...(scope ? { scope } : {}),
     };
     return send(frame, member, callbacks, ropts.txn, signals, deadlineAt);
   };

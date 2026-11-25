@@ -17,8 +17,7 @@ import { ownerIpcRefusal, ownerMemberOnlyReads } from '../owner-ipc/routes.ts';
 import { servedCallbackTimeout, servedProtocol, servedTransactionDeadline } from './errors.ts';
 import { restoreTail } from './framing.ts';
 import type { ServedCall, ServedServerOptions, ServedServerSide } from './session.ts';
-
-const STORE_MEMBERS_RETURNING: ReadonlySet<string> = new Set(['worktreeClaimStore', 'writerAdminStore']);
+import { STORE_RETURNING_MEMBERS as STORE_MEMBERS_RETURNING } from './store-returning.ts';
 
 /** True for a transaction-bound engine handle (or any BrainEngine-shaped object) the server holds. */
 function isEngineHandle(value: object): value is BrainEngine {
@@ -107,7 +106,7 @@ export function sessionCalls(ctx: SessionCallsContext) {
   };
 
   // ---- transactions over the wire (decision 2b) ----
-  const runInTransaction = async (id: number, member: string, ref: string, args: Wire, remote: boolean) => {
+  const runInTransaction = async (id: number, member: string, ref: string, args: Wire, remote: boolean, inScope?: <T>(fn: () => T) => T) => {
     const open = txns.get(ref);
     if (!open) { replyDirect(id, member, ownerIpcRefusal(member, 'its transaction is not open on this connection')); return; }
     let method: unknown;
@@ -128,7 +127,8 @@ export function sessionCalls(ctx: SessionCallsContext) {
       decoded = decodeValue(args, { onFunction: wire => rebuildFunction(wire, fake), onTxRef: wire => txns.get(String(wire.id))?.engine });
     } catch (error) { replyDirect(id, member, error); return; }
     if (!Array.isArray(decoded)) { replyDirect(id, member, servedProtocol('frame_malformed', 'reason=args')); return; }
-    const run = () => (method as (...a: unknown[]) => Promise<unknown>).apply(self, decoded as unknown[]);
+    const call = () => (method as (...a: unknown[]) => Promise<unknown>).apply(self, decoded as unknown[]);
+    const run = inScope ? () => inScope(call) : call;
     try {
       const value = await (remote ? withRemoteCaller(true, run) : run());
       writeFrame({ t: 'result', id, ok: true, value: encodeValue(value) }, member);

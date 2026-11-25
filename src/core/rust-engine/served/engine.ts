@@ -18,6 +18,7 @@ import { capabilityMissing } from '../errors.ts';
 import { OWNER_IPC_ROUTES, ownerIpcRefusal } from '../owner-ipc/routes.ts';
 import { rustMultiuserFromEnv } from '../multiuser-switch.ts';
 import { connectServed, type ServedConnection } from './client.ts';
+import { SERVED_STORE_CALL, STORE_RETURNING_MEMBERS } from './store-returning.ts';
 
 export const RUST_SERVER_URL_ENV = 'GBRAIN_RUST_SERVER_URL';
 export const RUST_SERVER_TOKEN_ENV = 'GBRAIN_RUST_SERVER_TOKEN';
@@ -49,13 +50,6 @@ export function servedTargetFor(config: EngineConfig & { rust_server?: RustServe
 
 type EngineRecord = Record<string, unknown>;
 
-/**
- * Members that return a store object whose methods run on the engine (or the transaction) they came from. Over the
- * wire the object is a proxy: each method call crosses as `<member>.<method>`, inside the transaction when the handle
- * is one, else as the whole operation `servedStoreCall` (owner-ops.ts).
- */
-export const STORE_RETURNING_MEMBERS: ReadonlySet<string> = new Set(['worktreeClaimStore', 'writerAdminStore']);
-export const SERVED_STORE_CALL = 'servedStoreCall';
 
 function storeProxy(connection: ServedConnection, member: string, ref: string | undefined): object {
   return new Proxy({}, {
