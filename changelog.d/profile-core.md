@@ -6,6 +6,6 @@
 - Guide: `docs/guides/profile.md`.
 
 ### Changed
-- The claim metric prefix `profile.` is reserved: a hand-written one is refused (`profile_metric_reserved`), an unknown facet is refused with the list (`profile_facet_unknown`), a member cannot save a profile fact on another page (`profile_entity_not_self`), and extracted facts never carry it. `find_trajectory`, `gbrain eval trajectory` and the founder scorecard skip profile facts.
+- The claim metric prefix `profile.` is now reserved for profile facts. A hand-written one is refused (`profile_metric_reserved`), an unknown facet is refused with the list (`profile_facet_unknown`), a member cannot save a profile fact on another page (`profile_entity_not_self`), a member CLI under `GBRAIN_ENFORCED_MEMBER` cannot pass `facet`, and extracted facts never carry it. A Rust brain refuses the profile up front (`engine_capability_missing`). `find_trajectory`, `gbrain eval trajectory` and the founder scorecard skip profile facts.
 
 <!-- behavior-change: portable_profile_core_p1 -->
