@@ -305,8 +305,6 @@ fn claim(tx: &mut dyn KvWrite, seed_id: &str) -> Result<SeedManifest> {
         crate::shared_skill_members::state_key(),
         // The open-time repair of the derivation sweep records' source index leaves its done marker.
         crate::page_body::purge_record::repair_done_key(),
-        // The keyed lookups' set stamp, written by the open that made the store (`keyed_index.rs`).
-        crate::keyed_index::stamp_key(),
         source_key(crate::sources::DEFAULT_SOURCE),
     ];
     // The config rows a new store's open writes: the schema version, the trust and write-gate marks (migrations v226 and

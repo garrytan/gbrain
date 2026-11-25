@@ -6,7 +6,7 @@
 //! | `0x01` | chunk id, page id, chunk index | each chunk record `K page_id index` (its `id`) | `cosinesByChunkIds`, `getEmbeddingsByChunkIds` |
 //! | `0x02` | lower-cased title, NUL, page id | each page record: `title.to_lowercase()` and `pg_lower(title)`, when at most `RAW_TITLE_MAX` bytes | `findPagesByTitles`, `listPagesTitledIn` |
 //! | `0x07` | h(lower-cased title), page id | the same, for a longer lower-cased title | `findPagesByTitles`, `listPagesTitledIn` |
-//! | `0x09` | updated_at (sign-flipped, big-endian), slug, NUL, source, NUL, page id | each page record (set version 2) | `listPages` sorted by `updated_at` |
+//! | `0x09` | updated_at (sign-flipped, big-endian), slug, NUL, source, NUL, page id | each page record (the format after 9) | `listPages` sorted by `updated_at` |
 //! | `0x08` | origin page id, the transition's record key | each link transition record (`q source NUL T ...`) with an origin page | `applyLinkTemporalRows`, `linkRelationshipKeysForOrigin` |
 //! | `0x03` | page id | each page record whose text projection is not served | `readProjectionReadiness` |
 //! | `0x04` | from page id, link id | each link record `L from link` with `link_type = 'supersedes'` | `hasSupersedeEdges` |
@@ -402,18 +402,8 @@ pub(crate) fn stored_entries(read: &dyn KvRead) -> Result<BTreeSet<Vec<u8>>> {
     Ok(out)
 }
 
-/// The set of lookups this build keeps, stamped in the `M keyed_lookups` record by [`rebuild`]. A
-/// store format 9 brain whose stamp differs (one built before the updated-order entry, `UPDATED`,
-/// joined the set) is rebuilt on its next writable open ([`rebuild_if_stale`]), so the lookups grow
-/// within format 9 without a new store format.
-const LOOKUPS_VERSION: &[u8] = b"2";
-
-pub(crate) fn stamp_key() -> Vec<u8> {
-    keys::meta("keyed_lookups")
-}
-
-/// Drops every entry, writes the ones the stored records derive and stamps the set
-/// (the store format 9 upgrade, and [`rebuild_if_stale`]).
+/// Drops every entry and writes the ones the stored records derive (the format upgrade, in its one
+/// write transaction).
 pub(crate) fn rebuild(tx: &mut dyn KvWrite) -> Result<()> {
     for key in stored_entries(&*tx)? {
         tx.delete(&key)?;
@@ -421,26 +411,7 @@ pub(crate) fn rebuild(tx: &mut dyn KvWrite) -> Result<()> {
     for key in expected_entries(&*tx)? {
         tx.put(&key, &[])?;
     }
-    tx.put(&stamp_key(), LOOKUPS_VERSION)
-}
-
-/// Whether the stored lookups are this build's set.
-pub(crate) fn is_current(read: &dyn KvRead) -> Result<bool> {
-    Ok(read.get(&stamp_key())?.as_deref() == Some(LOOKUPS_VERSION))
-}
-
-/// On open: rebuilds the lookups in one write when their stamp is not this build's set. A
-/// read-only open cannot write, so it refuses as an open that needs a format upgrade does.
-pub(crate) fn rebuild_if_stale(store: &crate::Store) -> Result<()> {
-    if is_current(&*store.read()?)? {
-        return Ok(());
-    }
-    store.write(|tx| {
-        if is_current(&*tx)? {
-            return Ok(());
-        }
-        rebuild(tx)
-    })
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------------------------

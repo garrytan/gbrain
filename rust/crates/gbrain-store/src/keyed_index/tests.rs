@@ -454,9 +454,9 @@ fn format_8_brain(
     old_format_brain(seed, 8)
 }
 
-/// [`format_8_brain`] stamped `version` instead. At 9 it is a format-9 brain whose lookups
-/// predate this build's set (no set stamp): here it has no entries at all, so the open must build
-/// every one, the updated-order entries included.
+/// [`format_8_brain`] stamped `version` instead. At 9 it stands for a brain the format-9 build
+/// left: here it has no keyed entries at all, so the upgrade must build every one, the
+/// updated-order entries included (a format-9 brain's own entries are dropped and rewritten too).
 fn old_format_brain(
     seed: u64,
     version: u32,
@@ -481,7 +481,6 @@ fn old_format_brain(
     for key in &want {
         tx.delete(key).unwrap();
     }
-    tx.delete(&stamp_key()).unwrap();
     let mut stored: crate::StoredFormat = crate::get_json(&*tx, &keys::meta("format"))
         .unwrap()
         .unwrap();
@@ -548,14 +547,13 @@ fn answers(store: &Store) -> Vec<String> {
 }
 
 #[test]
-fn a_format_9_brain_with_an_older_lookup_set_is_rebuilt_when_it_opens() {
+fn a_format_9_brain_gets_every_keyed_lookup_when_it_opens() {
     let (kv, want, said) = old_format_brain(17, 9);
     let env: std::sync::Arc<dyn crate::env::Env> = std::sync::Arc::new(crate::SystemEnv);
     let store = Store::open_kv(kv, env, crate::OpenOptions::default()).unwrap();
     assert_eq!(store.info().format_version, crate::FORMAT_VERSION);
     assert_eq!(stored_entries(&*store.read().unwrap()).unwrap(), want);
     assert!(want.iter().any(|k| k[keys::KEYED_INDEX.len()] == UPDATED));
-    assert!(is_current(&*store.read().unwrap()).unwrap());
     assert_eq!(answers(&store), said);
     check_readers(&store);
 }
@@ -576,9 +574,9 @@ fn a_format_8_brain_gets_its_index_when_it_opens() {
 /// record byte for byte, no keyed entry), and the next open upgrades it and every member answers
 /// as it did before the brain was turned back to format 8.
 /// The upgrade must be one transaction: a step committed on its own would leave keyed entries.
-fn upgrade_fails_then_succeeds(op: crate::test_support::FaultOp) {
+fn upgrade_fails_then_succeeds(op: crate::test_support::FaultOp, from: u32) {
     use crate::test_support::FaultyKv;
-    let (inner, want, said) = format_8_brain(13);
+    let (inner, want, said) = old_format_brain(13, from);
     let env: std::sync::Arc<dyn crate::env::Env> = std::sync::Arc::new(crate::SystemEnv);
     let before = dump(&*inner);
     let faulty: std::sync::Arc<dyn crate::kv::Kv> = std::sync::Arc::new(FaultyKv {
@@ -600,7 +598,7 @@ fn upgrade_fails_then_succeeds(op: crate::test_support::FaultOp) {
             .unwrap()
             .unwrap();
     assert_eq!(
-        stored.format_version, 8,
+        stored.format_version, from,
         "the failed upgrade moved the format"
     );
     assert!(
@@ -620,12 +618,53 @@ fn upgrade_fails_then_succeeds(op: crate::test_support::FaultOp) {
 
 #[test]
 fn an_upgrade_that_fails_at_its_last_write_leaves_the_format_8_brain_and_runs_again() {
-    upgrade_fails_then_succeeds(crate::test_support::FaultOp::Put);
+    upgrade_fails_then_succeeds(crate::test_support::FaultOp::Put, 8);
 }
 
 #[test]
 fn an_upgrade_that_fails_at_its_commit_leaves_the_format_8_brain_and_runs_again() {
-    upgrade_fails_then_succeeds(crate::test_support::FaultOp::Commit);
+    upgrade_fails_then_succeeds(crate::test_support::FaultOp::Commit, 8);
+}
+
+/// The same for the upgrade from format 9 to this build's format (`crate::FORMAT_VERSION`): the
+/// brain stays readable at format 9, with no entry the new format adds, and the next open upgrades.
+#[test]
+fn an_upgrade_from_format_9_that_fails_at_its_last_write_leaves_the_brain_at_9_and_runs_again() {
+    upgrade_fails_then_succeeds(crate::test_support::FaultOp::Put, 9);
+}
+
+#[test]
+fn an_upgrade_from_format_9_that_fails_at_its_commit_leaves_the_brain_at_9_and_runs_again() {
+    upgrade_fails_then_succeeds(crate::test_support::FaultOp::Commit, 9);
+}
+
+/// A build that opens formats 1 to 9 only (the format-9 build) refuses a brain this build
+/// upgraded, before it writes anything, so it cannot leave the updated-order entries stale.
+#[test]
+fn a_format_9_build_refuses_a_brain_at_this_build_s_format() {
+    let (kv, _, _) = old_format_brain(19, 9);
+    let env: std::sync::Arc<dyn crate::env::Env> = std::sync::Arc::new(crate::SystemEnv);
+    let store = Store::open_kv(kv.clone(), env.clone(), crate::OpenOptions::default()).unwrap();
+    assert_eq!(store.info().format_version, crate::FORMAT_VERSION);
+    drop(store);
+    let before = dump(&*kv);
+    let format_9_build: Vec<u32> = (1..=9).collect();
+    let err = Store::open_kv_in(
+        kv.clone(),
+        env,
+        crate::OpenOptions::default(),
+        &format_9_build,
+    )
+    .err()
+    .expect("a format-9 build must refuse the upgraded brain");
+    assert_eq!(err.code, crate::error::FORMAT_UNKNOWN, "{}", err.message);
+    assert!(
+        err.message
+            .contains(&format!("store format {}", crate::FORMAT_VERSION)),
+        "{}",
+        err.message
+    );
+    assert!(dump(&*kv) == before, "the refused open changed records");
 }
 
 #[test]

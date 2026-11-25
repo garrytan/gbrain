@@ -2,7 +2,7 @@
 
 Part of the store contract in [rust/README.md](../../README.md) ("The brain store"): the rules there apply to every method here.
 
-Store format 9 keeps a few small indexes beside the records, so these members look their rows up by key instead of
+Store format 9 (and 12, for the `0x09` entry) keeps a few small indexes beside the records, so these members look their rows up by key instead of
 reading every page, chunk, link or link transition record (`crates/gbrain-store/src/keyed_index.rs`, two-byte tag `~k`). The answers do not
 change: each member reads the records an index names and applies its own test to them, then sorts as before.
 
@@ -15,18 +15,11 @@ change: each member reads the records an index names and applies its own test to
 | `0x05` | h(source, content hash), page id | each page record with a content hash | `findDuplicatePage`, `findDuplicatePages` |
 | `0x06` | h(source, frontmatter `id`), page id | each page record whose frontmatter `id` is not null | `findDuplicatePage`, `findDuplicatePages` |
 | `0x07` | h(lower-cased title), page id | the `0x02` titles longer than 512 bytes | `findPagesByTitles`, `listPagesTitledIn` |
-| `0x09` | updated_at (sign bit flipped, big-endian), slug, NUL, source, NUL, page id | each page record (lookup set 2) | `listPages` sorted by `updated_at` (the default and `updated_asc`) with no type, tag or slug filter |
+| `0x09` | updated_at (sign bit flipped, big-endian), slug, NUL, source, NUL, page id | each page record (store format 12) | `listPages` sorted by `updated_at` (the default and `updated_asc`) with no type, tag or slug filter |
 | `0x08` | origin page id, the transition's record key | each link transition record (`q source NUL T ...`, as `link_temporal.rs` `scan_tag` picks them) with an origin page | `applyLinkTemporalRows` (the page's own transitions it replaces), `linkRelationshipKeysForOrigin` |
 
 `h` is the first 16 bytes of the SHA-256 of the parts joined by NUL. Every value is empty. Soft-deleted pages keep
 their entries; the members filter them as before.
-
-## The set stamp
-
-`rebuild` writes the set version (`LOOKUPS_VERSION`, now `2`) to the `M keyed_lookups` record. Every writable open
-of a format-9 brain checks it: a brain whose lookups predate this build's set (set 1, before the `0x09` entries) is
-rebuilt in one write before the open returns, so a new kind of entry needs no new store format. A read-only open of
-such a brain refuses, as a read-only open of a brain that needs a format upgrade does.
 
 ## How the entries stay right
 

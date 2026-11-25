@@ -380,7 +380,6 @@ impl Store {
                 } else {
                     put_json(&mut *tx, &keys::meta("format"), &fresh)?;
                     seed(&mut *tx, &*env, &options)?;
-                    keyed_index::rebuild(&mut *tx)?;
                     tx.commit()?;
                     (fresh, true)
                 }
@@ -411,10 +410,6 @@ impl Store {
             runs_builder: options.keyword_index_builder,
             flag_assumed,
         };
-        // A format-9 brain whose keyed lookups predate this build's set gets them now.
-        if !created {
-            keyed_index::rebuild_if_stale(&store)?;
-        }
         if index.needs_build && store.runs_builder {
             store.start_keyword_index_builder();
         }
@@ -685,8 +680,8 @@ pub const DEFAULT_WRITE_GATE_DETECTOR_VERSION: u32 = 2;
 /// reads `unknown`), so a format-4 brain keeps its postings, and 5 to 6 carries over the records
 /// the v0.60.766.0 addon's shadow seed kept in other shapes (`seed/format_5.rs`), 6 to 7 moves the
 /// loop mutes off the take purge prefix (`facts/key_split.rs`), 7 to 8 moves the shared-skill
-/// token secret off the member links' prefix (`access_key_split.rs`) and 8 to 9 builds the keyed
-/// lookups (`keyed_index.rs`). The format record is re-read inside the transaction:
+/// token secret off the member links' prefix (`access_key_split.rs`) and 8 or 9 to this build's format
+/// builds the keyed lookups (`keyed_index.rs`). The format record is re-read inside the transaction:
 /// another handle on the same records may have upgraded the brain first.
 fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
     let mut tx = kv.begin_write_exclusive()?;
@@ -752,9 +747,10 @@ fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
             )
         })?;
     }
-    // Format 9: the keyed lookups (`keyed_index.rs`) are built from the records, after every step
-    // above has left them in this build's shapes.
-    if stored.format_version <= 8 {
+    // Format 9 built the keyed lookups (`keyed_index.rs`); this build's format adds the
+    // updated-order entry. Both are built from the records, after every step above has left them in
+    // this build's shapes: every keyed entry is dropped and rewritten in this one transaction.
+    if stored.format_version < FORMAT_VERSION {
         keyed_index::rebuild(&mut *tx)?;
     }
     stored.format_version = FORMAT_VERSION;
@@ -1144,10 +1140,12 @@ mod older_build_tests {
             assert_refused(&dir, &known, n + 1);
             let _ = fs::remove_dir_all(dir.parent().unwrap());
         }
-        // This build's own list is the case above with n = FORMAT_VERSION.
-        assert_eq!(
-            FORMAT_VERSIONS,
-            (1..=FORMAT_VERSION).collect::<Vec<_>>().as_slice()
-        );
+        // This build's own list: every format from 1 to 9, then its own (formats between 9 and
+        // FORMAT_VERSION belong to other lanes and are not opened).
+        let mut own: Vec<u32> = (1..=9).collect();
+        if FORMAT_VERSION > 9 {
+            own.push(FORMAT_VERSION);
+        }
+        assert_eq!(FORMAT_VERSIONS, own.as_slice());
     }
 }
