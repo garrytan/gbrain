@@ -73,15 +73,17 @@ describe('chat_fallback_chain doctor check', () => {
     expect(c.fix).toBeUndefined();
   });
 
-  test('a DB chain is an informational ok: entries, providers, refusal fallback, ask_user removal', async () => {
+  test('a DB chain is an informational ok: entries, providers, errors-only by default, ask_user removal', async () => {
     await engine.setConfig('chat_fallback_chain', `${FALLBACK}, ${SECOND}`);
     const c = await run({});
     expect(c.status).toBe('ok');
     expect(c.message).toContain(`${FALLBACK} -> ${SECOND}`);
     expect(c.message).toContain('the brain database');
     expect(c.message).toContain('openai, deepseek');
-    expect(c.message).toContain('on refusals');
-    expect(c.details).toMatchObject({ plane: 'db', chain: [FALLBACK, SECOND], providers: ['openai', 'deepseek'], on_refusal: { value: true, plane: 'default' } });
+    expect(c.message).toContain('errors only');
+    expect(c.message).not.toContain('on refusals');
+    expect(c.message).toContain('gbrain config set chat_fallback_on_refusal true');
+    expect(c.details).toMatchObject({ plane: 'db', chain: [FALLBACK, SECOND], providers: ['openai', 'deepseek'], on_refusal: { value: false, plane: 'default' } });
     const fix = c.fix as { argv: string[]; next: string; consent: string[] };
     expect(fix.argv).toEqual(['gbrain', 'config', 'unset', 'chat_fallback_chain']);
     expect(fix.next).toBe('ask_user');
@@ -108,6 +110,15 @@ describe('chat_fallback_chain doctor check', () => {
     expect(fix.next).not.toBe('run');
     expect(fix.user_message).toContain('"chat_fallback_chain"');
     expect(fix.user_message).toContain('config.json');
+  });
+
+  test('an explicit DB true says refused content goes to the next model', async () => {
+    await engine.setConfig('chat_fallback_chain', FALLBACK);
+    await engine.setConfig('chat_fallback_on_refusal', 'true');
+    const c = await run({});
+    expect(c.status).toBe('ok');
+    expect(c.message).toContain('on refusals');
+    expect(c.details).toMatchObject({ on_refusal: { value: true, plane: 'db' } });
   });
 
   test('a bare model name is a malformed entry', async () => {

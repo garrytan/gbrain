@@ -2,7 +2,7 @@
  * `chat_fallback_chain` doctor check: which chain `chat()` walks, the config
  * plane it comes from (env `GBRAIN_CHAT_FALLBACK_CHAIN` > config.json > DB),
  * every shadowed value, the providers that receive traffic, and whether it
- * also falls back on refusals (`chat_fallback_on_refusal`).
+ * also falls back on refusals (`chat_fallback_on_refusal`, default false).
  *
  * An active, healthy chain is an informational `ok` whose optional `fix` is
  * the per-plane removal guidance (`ask_user` or `tell_user_to_run`, never
@@ -119,8 +119,10 @@ export async function checkChatFallbackChain(engine: BrainEngine | null, opts: {
     const shadowed = planes.shadowed.length
       ? ` Shadowed (ignored while this is set): ${planes.shadowed.map(s => `${s.plane} [${s.chain.join(', ')}]`).join('; ')}.` : '';
     const refusal = planes.onRefusal.value
-      ? 'It falls back on errors and on refusals, so content one provider refused is sent to the next (chat_fallback_on_refusal=false stops that).'
-      : `It falls back on errors only: chat_fallback_on_refusal=false (${planes.onRefusal.plane}).`;
+      ? `It falls back on errors and on refusals, so content one provider refused is sent to the next: chat_fallback_on_refusal=true (${planes.onRefusal.plane}); setting it to false stops that.`
+      : planes.onRefusal.plane === 'default'
+        ? 'It falls back on errors only: a request a model refused is returned, not sent to another model (chat_fallback_on_refusal is off by default; gbrain config set chat_fallback_on_refusal true turns refusal fallback on).'
+        : `It falls back on errors only: chat_fallback_on_refusal=false (${planes.onRefusal.plane}).`;
     return {
       name: 'chat_fallback_chain', status: 'ok', details,
       message: `chat_fallback_chain is active from ${PLANE_LABEL[effective.plane]}: ${effective.chain.join(' -> ')}. Providers that receive traffic when a call's own model fails: ${providers.join(', ')}. ${refusal}${shadowed} Removal is optional; ask the user.`,

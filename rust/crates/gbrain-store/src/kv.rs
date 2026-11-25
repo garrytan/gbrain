@@ -97,6 +97,10 @@ fn decode_i64(value: Option<Vec<u8>>) -> Result<i64> {
 
 pub trait Kv: Send + Sync {
     fn snapshot(&self) -> Result<Box<dyn KvRead>>;
+    /// A snapshot that can move to another thread, with the commit sequence it sees. The sequence
+    /// is read from inside the snapshot, so the two always agree: a `snapshot` and a `version`
+    /// taken apart can straddle a commit. The store snapshot (`snapshot.rs`) pins one.
+    fn versioned_snapshot(&self) -> Result<(Box<dyn KvRead + Send>, u64)>;
     fn begin_write(&self) -> Result<Box<dyn KvWrite>>;
     /// Begins a write that runs again after it lost a conflict on `keys`. A store with concurrent
     /// writers first queues for those keys (a row lock); a single-writer store ignores them.

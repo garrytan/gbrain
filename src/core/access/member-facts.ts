@@ -12,8 +12,8 @@
  */
 import { createHash } from 'node:crypto';
 import type { OperationContext } from '../ops/contract.ts';
-import { currentCallerAccess, folderRestrictedSql, isDerivationPrivate, privateFactSources, privatePagesFilterForCaller, withFolderRestricted } from '../search/private-visibility.ts';
-import { factPagesOpenSql, unpagedFactSql } from '../facts/private-fact-pages.ts';
+import { currentCallerAccess, factWithinPageReadersSql, folderRestrictedSql, isDerivationPrivate, pageReadsToReadersOfSql, privateFactSources, privatePagesFilterForCaller, withFolderRestricted } from '../search/private-visibility.ts';
+import { factPagesOpenSql, factProvenanceSlugSql, unpagedFactSql } from '../facts/private-fact-pages.ts';
 import { ownedMemorySubjectSql, unbackedEntitySql } from '../facts/withdrawal-schema.ts';
 import type { BrainEngine } from '../engine.ts';
 import { ACCESS_ID_RE, MEMBER_PAGE_PREFIX, normalizeReaders, SCOPE_PAGE_SLUG } from './principals.ts';
@@ -254,6 +254,18 @@ export function ownedPageWithdrawalSubject(slug: string | null | undefined): str
 export function readersSourcedFactSql(alias: string): string {
   return `EXISTS (SELECT 1 FROM pages readers_page WHERE readers_page.source_id = ${alias}.source_id AND readers_page.slug = ${alias}.source_markdown_slug
     AND (readers_page.page_readers IS NOT NULL OR readers_page.frontmatter ? 'readable_by' OR ${folderRestrictedSql('readers_page')}))`;
+}
+
+/**
+ * GST-3815: fact `f` reads to everyone who reads page row `t`, as SQL, for a derivation that writes the fact's text onto
+ * `t` (enrich filling a page). The fact is world (a private fact never leaves its row), owner-only only when `t` is, and
+ * every page row it is held on or extracted from reads to `t`'s readers (pageReadsToReadersOfSql); a slug with no page
+ * row passes, as a remote fact read passes it. `t` is the fact's entity page, so its own readers decide the rest.
+ */
+export function factReadsToReadersOfSql(f: string, t: string): string {
+  return `(${f}.visibility = 'world' AND ${factWithinPageReadersSql(f, t)} AND NOT EXISTS (SELECT 1 FROM pages fact_page
+    WHERE fact_page.source_id = ${f}.source_id AND fact_page.slug IN (${f}.source_markdown_slug, ${factProvenanceSlugSql(f)})
+      AND NOT ${pageReadsToReadersOfSql('fact_page', t)}))`;
 }
 
 /**

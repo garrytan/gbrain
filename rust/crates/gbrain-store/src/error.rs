@@ -65,6 +65,10 @@ pub const READ_ONLY_TRANSACTION: &str = "read_only_transaction";
 /// a zone it does not know). Nothing was written; the engine refuses the call by name.
 pub const UNMODELED_INPUT: &str = "unmodeled_input";
 
+/// A store snapshot was cancelled (`snapshot.rs`). It removed what it had written and released
+/// its read before this error returned.
+pub const SNAPSHOT_CANCELLED: &str = "snapshot_cancelled";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoreError {
     pub code: &'static str,

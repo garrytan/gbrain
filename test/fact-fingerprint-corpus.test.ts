@@ -49,7 +49,7 @@ const committed = () => readFileSync(FINGERPRINT_FIXTURE_PATH, 'utf8');
 const sha256 = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex');
 
 /**
- * The SQL of the two fingerprints, one step at a time, with the given per-character tables. Since v339 the fingerprint
+ * The SQL of the two fingerprints, one step at a time, with the given per-character tables. Since v341 the fingerprint
  * folds one explicit whitespace list on every engine (`listSpace`, which is PGLite's `[[:space:]]`), and `_v1` keeps the
  * host locale's fold (`localeSpace`) but answers null for a claim holding a character only the locale folds and none
  * only the list folds (its old hash is another spelling's current hash; withdrawal-schema.ts).

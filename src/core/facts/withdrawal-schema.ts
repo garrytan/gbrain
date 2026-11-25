@@ -21,7 +21,7 @@ export function normalizeLoweredClaim(claim: string): string {
  * Whitespace the fact fingerprint and the fence overlay fold, as an explicit regex class: the code points Rust
  * `is_pg_space` (rust/crates/gbrain-store/src/cli_reads/pg_text.rs) and PGLite's `[[:space:]]` take. Postgres
  * `[[:space:]]` follows the database locale (en_US.utf8 leaves out U+0085 and adds U+1680), so a locale class would
- * give one claim two fingerprints across engines (v339).
+ * give one claim two fingerprints across engines (v341).
  */
 export const FACT_SPACE_CLASS = '[\\x09-\\x0d \\u0085\\u2000-\\u2006\\u2008-\\u200a\\u2028\\u2029\\u205f\\u3000]';
 
@@ -40,9 +40,9 @@ const localeOnlySpaceSql = (claim: string) =>
   `pg_catalog.regexp_replace(${claim}, '${FACT_SPACE_CLASS}', '', 'g') OPERATOR(pg_catalog.~) '[[:space:]]'`;
 
 /**
- * The v2 fingerprint (`gbrain_fact_fingerprint` before v339: whitespace by the locale's `[[:space:]]`) of SQL
+ * The v2 fingerprint (`gbrain_fact_fingerprint` before v341: whitespace by the locale's `[[:space:]]`) of SQL
  * expression `claim`, spelled with built-ins only so a guard function can match a legacy ledger hash at any migration
- * point, before v339 creates gbrain_fact_fingerprint_v2.
+ * point, before v341 creates gbrain_fact_fingerprint_v2.
  */
 export function factFingerprintV2Sql(claim: string): string {
   return fingerprintBody('[[:space:]]').replace(/\bclaim\b/g, () => claim);
@@ -82,8 +82,8 @@ export const FACT_FINGERPRINT_FUNCTION_STATEMENTS = [
   // reference only built-ins.
   `CREATE OR REPLACE FUNCTION gbrain_fact_fingerprint(claim TEXT) RETURNS TEXT
     LANGUAGE SQL IMMUTABLE STRICT AS $fn$ SELECT ${fingerprintBody(FACT_SPACE_CLASS)} $fn$`,
-  // v339: the current fingerprint under its version name, and the locale-folded one every ledger hash Postgres
-  // stored before v339 carries (where no current fingerprint can equal it). A ledger hash matches a claim by any of
+  // v341: the current fingerprint under its version name, and the locale-folded one every ledger hash Postgres
+  // stored before v341 carries (where no current fingerprint can equal it). A ledger hash matches a claim by any of
   // fingerprint, _v2 and _v1.
   `CREATE OR REPLACE FUNCTION gbrain_fact_fingerprint_v3(claim TEXT) RETURNS TEXT
     LANGUAGE SQL IMMUTABLE STRICT AS $fn$ SELECT ${fingerprintBody(FACT_SPACE_CLASS)} $fn$`,
@@ -102,7 +102,7 @@ export const FACT_FINGERPRINT_FUNCTION_STATEMENTS = [
  * entity_slug`. Fingerprints fold case, whitespace and punctuation (v174);
  * ledger rows written earlier carry the exact v1 fingerprint and keep
  * matching through gbrain_fact_fingerprint_v1, and rows Postgres wrote before
- * v339 folded whitespace by locale and keep matching through _v2.
+ * v341 folded whitespace by locale and keep matching through _v2.
  */
 /**
  * GBRA-574 A1: whether row `r`'s entity is unbacked, as SQL: a bare name key (no directory, the form conversation
