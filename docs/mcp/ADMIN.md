@@ -105,6 +105,31 @@ If the request expired, was completed, or the server restarted, restart the
 connection from the native client to obtain a new request. Reissuing a login
 link cannot recreate a lost OAuth request or verifier.
 
+### Approve a connector from your own browser
+
+A connector that registers itself (dynamic client registration, as grok.com's
+custom connector does) opens the brain's owner login page in a popup. The
+brain's owner approves it privately, without an agent in the middle:
+
+1. Keep that popup or tab: its address is the brain's `/admin/` page with an
+   `oauth_request` that identifies the waiting connector.
+2. Sign in as the owner in that same browser. A browser that already has an
+   owner session goes straight to the approval page. Otherwise, run the command
+   the page shows in your own terminal on the computer that runs the brain
+   (`gbrain mcp admin login-link --url https://brain.example.com/mcp
+   --oauth-request REQUEST_ID --admin-token-file ~/.gbrain/serve/admin-token`)
+   and open the link it prints in that browser, or use the owner bootstrap
+   credential under the page's fold.
+3. Review the client, redirect URI, permissions and source, then approve. The
+   connector finishes its own token exchange.
+4. If the request expired, was completed, or the server restarted, start again
+   from the connector's Add step.
+
+Whoever opens the login link is signed in as the owner, so it never goes
+through an assistant's chat: run the command yourself rather than asking an
+agent to. When someone else runs the brain host, the page's folded prompt asks
+them for the link, and they deliver it to you privately as described above.
+
 ## Register and connect a client
 
 First choose how the **intended harness** connects:

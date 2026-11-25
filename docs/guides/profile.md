@@ -128,6 +128,46 @@ duplicate.
 
 The apply keeps a receipt (`profile-imports/<hash>.json` in your gbrain config folder, readable only by you) with each
 line's result. Running the same apply again, or `--resume` after it stopped, sends only what was never saved, and first
-checks any write still finishing. A batch the brain refuses for its lines is recorded as failed lines and the import
-moves on to the next batch. A line that failed is listed and not retried: fix it in the file, then preview and
-apply again. The import exits 10 while writes are still finishing and 1 if anything failed or was left unsent.
+checks any write still finishing. A line the brain refuses inside a batch is recorded as failed and the rest of that batch is sent
+again, so one bad line costs only itself. A write the write gate holds for your review counts as not saved and
+names the command that keeps it; a write whose outcome is unknown is checked on the next `--resume`. A line that
+failed is listed and not retried: fix it in the file, then preview and apply again. A damaged receipt is refused
+and left as it is; move it aside and apply again, and lines already saved come back as duplicates. The import exits 10 while writes are still finishing and 1 if anything failed or was left unsent.
+
+## Export
+
+`gbrain profile export` writes your profile as text another assistant keeps. It reads your profile the same way
+`gbrain profile` does, at your credential's scope, and writes nothing to the brain.
+
+```bash
+gbrain profile export --format memory-text                      # "[YYYY-MM-DD] - fact" lines for Claude's memory import
+gbrain profile export --format muse-memory --into Memory.md     # update the GBrain block in Muse's memory file
+gbrain profile export --format markdown > profile.md            # a readable page, one section per facet
+```
+
+Only facts visible to everyone are exported. A private fact, such as an allergy (private by default), stays out, and
+the export says how many it left out. `--include-private` adds them and warns that the text now sits outside gbrain's
+access control: anyone or any assistant that reads the file reads them. Relationships from your page's links are
+never exported.
+
+`muse-memory` is one marked block:
+
+```markdown
+<!-- gbrain:profile begin rev=1a2b3c4d5e6f -->
+## From GBrain
+
+- Check GBrain after your own memory search and before answering.
+
+### Diet
+- Eats vegetarian
+<!-- gbrain:profile end -->
+```
+
+With `--into`, the block replaces the previous GBrain block in that file and leaves every other line as it was; a
+file with no block gets it appended, and a missing file is created. A file whose block is damaged (two blocks, a
+begin with no end, an end before its begin, or a marker line that is not exactly as above) is refused with
+`invalid_params` and left untouched: delete the damaged lines and export again. The standing line is there because
+an assistant that searches its own memory first can otherwise answer without ever asking GBrain. `profile import`
+skips the GBrain block, so importing that Memory.md later never reads your exported profile back as new facts.
+
+To connect Muse itself, hand it the [Muse connector brief](../connectors/muse.md).
