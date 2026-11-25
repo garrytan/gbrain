@@ -444,7 +444,7 @@ export const MW_CASES: readonly MwCase[] = [
       pending: ['c18_sixty_four_writers_no_busy_error_multi_writer'],
     },
     cells: {
-      pglite: RUNS, postgres: RUNS,
+      pglite: na('PGLite is in-memory and one connection: seven writer processes cannot share it'), postgres: RUNS,
       rust: pending('L3 server', 'a second Rust engine is an owner-socket client, and through it today admitJob and claimNextJob refuse (capability minion_queue), so 64 writers over eight connections are refused; the server serves them'),
       'rust-mu': pending('L3 server', 'a second Rust engine is an owner-socket client, and through it today admitJob and claimNextJob refuse (capability minion_queue), so 64 writers over eight connections are refused; the server serves them'),
       'store-single': RUNS, 'store-optimistic': RUNS,
@@ -462,9 +462,9 @@ export const MW_CASES: readonly MwCase[] = [
       pending: ['c19_crash_after_commit_keeps_acknowledged_writes_multi_writer', 'c19_crash_keeps_commit_times_rising_and_equal_to_last_commit_time_multi_writer'],
     },
     cells: {
-      pglite: RUNS, postgres: RUNS,
-      rust: pending('L3 server', 'the writer\'s second connection is an owner-socket client, and through it today admitJob refuses (capability minion_queue); the SIGKILL case runs at store level'),
-      'rust-mu': pending('L3 server', 'the writer\'s second connection is an owner-socket client, and through it today admitJob refuses (capability minion_queue); the SIGKILL case runs at store level'),
+      pglite: na('PGLite is in-memory: there is no durable brain for a killed writer to leave behind'), postgres: RUNS,
+      rust: RUNS,
+      'rust-mu': RUNS,
       'store-single': RUNS, 'store-optimistic': RUNS,
     },
   },

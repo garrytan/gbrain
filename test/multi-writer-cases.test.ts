@@ -20,6 +20,7 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import ts from 'typescript';
+import { acknowledgedWriteViolations, crashBody, crashKey, crashSlug, type CrashObservation } from './engine-parity/multi-writer-support.ts';
 import { MW_ARMS, MW_CASES, MW_CASE_IDS, MW_ENGINE_ARMS, MW_STORE_ARMS, MW_VARIANT_IDS, mwCase, mwCell, mwVariant, mwVariantCell } from './engine-parity/multi-writer-cases.ts';
 
 const REPO = join(import.meta.dir, '..');
@@ -164,8 +165,44 @@ describe('multi-writer support matrix', () => {
 
   test('the single-writer Rust arm runs every case whose invariant holds there; the rest wait for a second connection, a new rule, or the multi-writer work', () => {
     expect(MW_CASES.filter(c => c.cells.rust.status !== 'runs').map(c => [c.id, c.cells.rust.status])).toEqual([
-      ['C11', 'pending'], ['C13', 'pending'], ['C16', 'pending'], ['C17', 'pending'], ['C18', 'pending'], ['C19', 'pending'], ['C21', 'pending'], ['C22', 'pending'],
+      ['C11', 'pending'], ['C13', 'pending'], ['C16', 'pending'], ['C17', 'pending'], ['C18', 'pending'], ['C21', 'pending'], ['C22', 'pending'],
     ]);
+  });
+
+  test('C18 and C19 run writer processes: n/a on in-memory PGLite, and C19 (a real kill) runs on Postgres and on the Rust arm that owns its brain', () => {
+    for (const id of ['C18', 'C19'] as const) {
+      expect(mwCell(id, 'pglite').status, `${id} pglite`).toBe('n/a');
+      expect(mwCell(id, 'postgres').status, `${id} postgres`).toBe('runs');
+    }
+    expect(mwCell('C19', 'rust').status).toBe('runs');
+    expect(mwCell('C18', 'rust')).toMatchObject({ status: 'pending', owner: 'L3 server' });
+  });
+
+  test('the C19 check rejects a missing and a duplicated acknowledged write, and accepts a brain that kept them once', () => {
+    const acknowledged = [0, 1, 2, 3];
+    const whole = (): { jobRowsByKey: Map<string, number>; pageBodies: Map<string, string> } => ({
+      jobRowsByKey: new Map(acknowledged.map(n => [crashKey(n), 1] as const)),
+      pageBodies: new Map(acknowledged.map(n => [crashSlug(n), crashBody(n)] as const)),
+    });
+    const seen = (over: Partial<CrashObservation> = {}): CrashObservation => ({ acknowledged, ...whole(), ...over });
+    // Control: a brain that kept every acknowledged write once, and one write that was in flight when the writer died (a row, no ack).
+    const inFlight = seen(); inFlight.jobRowsByKey = new Map([...inFlight.jobRowsByKey, [crashKey(4), 1]]); inFlight.pageBodies = new Map([...inFlight.pageBodies, [crashSlug(4), crashBody(4)]]);
+    expect(acknowledgedWriteViolations(seen())).toEqual([]);
+    expect(acknowledgedWriteViolations(inFlight)).toEqual([]);
+    // Missing: the job row, the page, or the page's body of an acknowledged write is gone.
+    const noJob = whole(); noJob.jobRowsByKey.delete(crashKey(2));
+    expect(acknowledgedWriteViolations(seen(noJob))).toEqual(['acknowledged write 2: its job row is missing']);
+    const noPage = whole(); noPage.pageBodies.delete(crashSlug(1));
+    expect(acknowledgedWriteViolations(seen(noPage))).toEqual(['acknowledged write 1: its page is missing']);
+    const wrongBody = whole(); wrongBody.pageBodies.set(crashSlug(3), 'something else');
+    expect(acknowledgedWriteViolations(seen(wrongBody))).toEqual(['acknowledged write 3: its page holds another body']);
+    // Duplicated: a job under one acknowledged key has two rows (a replay that inserted again), or an ack was printed twice.
+    const twice = whole(); twice.jobRowsByKey.set(crashKey(0), 2);
+    expect(acknowledgedWriteViolations(seen(twice))).toEqual(['acknowledged write 0: its job has 2 rows']);
+    expect(acknowledgedWriteViolations(seen({ acknowledged: [0, 1, 1, 2, 3] }))).toEqual(['write 1 was acknowledged 2 times']);
+    // A write that was never acknowledged may exist, but not twice.
+    const doubleUnacked = seen(); doubleUnacked.jobRowsByKey = new Map([...doubleUnacked.jobRowsByKey, [crashKey(9), 2]]);
+    expect(acknowledgedWriteViolations(doubleUnacked)).toEqual([`request key ${crashKey(9)} has 2 rows`]);
   });
 
   test('a compared case has an SQL arm that runs it (or none runs it yet), and the standalone ones are the cases the arms cannot all run alike', () => {

@@ -28,11 +28,14 @@
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine, FactRow } from '../../src/core/engine.ts';
-import type { AdmitJobPolicy, ClaimJobSpec, JobInsertValues, JobRow } from '../../src/core/engine-sql/jobs.ts';
+import type { JobInsertValues } from '../../src/core/engine-sql/jobs.ts';
 import type { PageInput } from '../../src/core/types.ts';
-import { APPLICATION_AUTHORITY, coalesceDecision, parseSubmissionAuthority } from '../../src/core/minions/submission-authority.ts';
 import { parityArms, type ParityContext, rustMultiuserView } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import {
+  JOB_POLICY, acknowledgedWriteViolations, claimSpec, crashBody, crashKey, crashSlug, jobValues, runStressWriters, startWriter,
+  type CrashObservation, type StressResult, type WriterConfig,
+} from './multi-writer-support.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -45,9 +48,9 @@ const codeOf = (error: unknown): string => (error as { code?: string } | null)?.
 /** Runs `step(i)` for `i` in `0..n-1` at once. */
 const together = <T>(n: number, step: (i: number) => Promise<T>): Promise<T[]> => Promise.all(Array.from({ length: n }, (_, i) => step(i)));
 
-/** What an attempt did: the value it returned, or the code it threw with. */
-async function attempt<T>(run: () => Promise<T>): Promise<{ ok: true; value: T } | { ok: false; code: string }> {
-  try { return { ok: true, value: await run() }; } catch (error) { return { ok: false, code: codeOf(error) }; }
+/** What an attempt did: the value it returned, or the code it threw with and the error itself. */
+async function attempt<T>(run: () => Promise<T>): Promise<{ ok: true; value: T } | { ok: false; code: string; error: unknown }> {
+  try { return { ok: true, value: await run() }; } catch (error) { return { ok: false, code: codeOf(error), error }; }
 }
 
 /** The page's body, or null when it is absent. */
@@ -82,35 +85,12 @@ async function connections(engine: BrainEngine, ctx: ParityContext, n: number): 
 
 // ---- jobs ---------------------------------------------------------------------------------------------------------
 
-function jobValues(name: string, extra: Partial<JobInsertValues> = {}): JobInsertValues {
-  return {
-    name, queue: 'default', status: 'waiting', priority: 0, data: {}, max_attempts: 3, backoff_type: 'exponential',
-    backoff_delay: 1000, backoff_jitter: 0.2, delay_until: null, parent_job_id: null, on_child_fail: 'fail_parent',
-    max_children: null, timeout_ms: null, lock_duration_ms: null, remove_on_complete: false, remove_on_fail: false,
-    idempotency_key: null, quiet_hours: null, stagger_key: null, private_queue_owner_job_id: null,
-    private_queue_owner_token: null, private_queue_lease_until: null, submission_authority: APPLICATION_AUTHORITY,
-    spend_authorization: null, max_stalled: null, ...extra,
-  };
-}
-
-const JOB_POLICY: AdmitJobPolicy = {
-  decide: async (_tx, row) => coalesceDecision(row, APPLICATION_AUTHORITY),
-  parentAuthorityKind: raw => parseSubmissionAuthority(raw)?.kind ?? null,
-};
-
 const admit = (engine: BrainEngine, extra: Partial<JobInsertValues> = {}) => engine.admitJob({ maxSpawnDepth: 5, insert: jobValues('work', extra) }, JOB_POLICY);
 
 async function addJob(engine: BrainEngine, extra: Partial<JobInsertValues> = {}): Promise<number> {
   const out = await admit(engine, extra);
   expect(out.coalesced).toBe(false);
   return Number(out.row.id);
-}
-
-function claimSpec(token: string, extra: Partial<ClaimJobSpec> = {}): ClaimJobSpec {
-  return {
-    lockToken: token, lockDurationMs: 30_000, queue: 'default', names: ['work'], handlerTimeouts: {},
-    handlerLockDurations: {}, legacySpend: { groupId: '00000000-0000-4000-8000-000000000001', capUsd: 5 }, ...extra,
-  };
 }
 
 /** `{ value: count }` of the values, in value order. */
@@ -144,9 +124,9 @@ describe('engine parity: multi-writer conformance', () => {
     expect([...lines].sort(), 'an acknowledged write is missing from the page, or one that was refused landed').toEqual(acked);
     // The check can fail: a writer holding the revision read before all of this is refused, and changes nothing.
     const late = await attempt(() => engine.putPage('notes/c01', NOTE('C01', 'late'), { expectedRevision: stale }));
-    expect(late).toEqual({ ok: false, code: 'revision_conflict' });
+    expect(late.ok ? null : late.code).toBe('revision_conflict');
     expect((await bodyOf(engine, 'notes/c01'))!.split('\n').slice(1).length).toBe(lines.length);
-    return { someWriterWon: acked.length > 0, lostOrPhantom: 0, staleWriter: late };
+    return { someWriterWon: acked.length > 0, lostOrPhantom: 0, staleWriter: 'revision_conflict' };
   });
 
   // C02: `upsertChunks` with an expected revision. A writer holding a stale revision gets a typed conflict and changes
@@ -157,14 +137,14 @@ describe('engine parity: multi-writer conformance', () => {
     await engine.putPage('notes/c02', NOTE('C02', 'two'), { expectedRevision: stale });
     const chunk = { chunk_index: 0, chunk_text: 'a part', chunk_source: 'compiled_truth' as const };
     const refused = await attempt(() => engine.upsertChunks('notes/c02', [chunk], { expectedRevision: stale }));
-    expect(refused).toEqual({ ok: false, code: 'revision_conflict' });
+    expect(refused.ok ? null : refused.code).toBe('revision_conflict');
     expect(await engine.getChunks('notes/c02', { includeUnsealed: true }), 'the refused writer changed the chunks').toHaveLength(0);
     const fresh = (await engine.readPageSnapshot('notes/c02', { sourceId: SRC }))!.revision;
     expect(fresh).not.toBe(stale);
     await engine.upsertChunks('notes/c02', [chunk], { expectedRevision: fresh });
     const stored = (await engine.getChunks('notes/c02', { includeUnsealed: true })).map(c => c.chunk_text);
     expect(stored).toEqual(['a part']);
-    return { refused, afterReread: stored };
+    return { refused: 'revision_conflict', afterReread: stored };
   });
 
   // C03: claiming a queued write is select-then-stamp in one transaction. Eight claimers race for one request: one
@@ -284,8 +264,10 @@ describe('engine parity: multi-writer conformance', () => {
   }, async (engine, backend) => {
     const SLUG = 'notes/c06-partition-protected';
     const outcome = { oldEpochWriteRefused: true, protectedDataUnchanged: true, newHolderWrote: true, oldTokenRenewed: false, oldTokenReleased: false, reacquiredUnderNewEpoch: true };
-    if (backend === 'rust' && rustMultiuserView() !== 'off') {
-      // The store lease path (interface I-5): not BrainEngine members, reached through the Rust engine's store.
+    // The store lease path (interface I-5) is not BrainEngine members: `openStore('leases')` is the accessor `rustLeases(engine)`
+    // reads. The branch below calls only the members this case declares (`transaction`, `putPage`, `readPageSnapshot`) and that
+    // accessor; the cycle-lock members run first, on every arm, so every declared member is called on every arm that runs it.
+    const storeLeases = async () => {
       type Holder = { host_id: string; incarnation: string; writer_id: string };
       type Lease = { name: string; epoch: number; token: string };
       type Leases = {
@@ -295,41 +277,43 @@ describe('engine parity: multi-writer conformance', () => {
         assertLease(lease: Lease): Promise<void>;
       };
       type Opens = { openStore(member: string): { brain: Leases } };
-      const reasonOf = (error: unknown) => {
-        const e = error as { code?: string; reason?: string; detail?: { reason?: string }; envelope?: { detail?: { reason?: string } } };
+      /** The code and reason of a refusal, from the error itself (the reason sits on the error, its detail or its envelope). */
+      const refusalOf = (result: { ok: true } | { ok: false; error: unknown }) => {
+        if (result.ok) return null;
+        const e = result.error as { code?: string; reason?: string; detail?: { reason?: string }; envelope?: { detail?: { reason?: string } } };
         return { code: e?.code ?? 'threw', reason: e?.reason ?? e?.detail?.reason ?? e?.envelope?.detail?.reason ?? null };
       };
       const leasesOf = (e: BrainEngine) => (e as unknown as Opens).openStore('leases').brain;
       const holder = (n: number): Holder => ({ host_id: `host-${n}`, incarnation: `inc-${n}`, writer_id: `writer-${n}` });
       const NAME = 'consumer:c06-partition';
+      const SLUG_L = 'notes/c06-partition-lease-protected';
       const ttlMs = 50;
       const a = await leasesOf(engine).acquireLease({ name: NAME, holder: holder(1), ttl_ms: ttlMs });
       expect(a).not.toBeNull();
       const guarded = (lease: Lease, body: string) => engine.transaction(async (tx) => {
         await leasesOf(tx).assertLease(lease);
-        await tx.putPage(SLUG, NOTE('C06', body));
+        await tx.putPage(SLUG_L, NOTE('C06', body));
       });
       await guarded(a!, 'epoch A');
       await Bun.sleep(ttlMs * 3);
       // An expired lease cannot be renewed: its holder must acquire again, under a new epoch.
       const renewed = await attempt(() => leasesOf(engine).renewLease({ lease: a!, ttl_ms: 60_000 }));
-      expect(renewed.ok ? null : reasonOf(renewed)).toEqual({ code: 'lease_lost', reason: 'expired' });
+      expect(refusalOf(renewed), 'the expired lease was renewed, or refused for another reason').toEqual({ code: 'lease_lost', reason: 'expired' });
       const b = await leasesOf(engine).acquireLease({ name: NAME, holder: holder(2), ttl_ms: 60_000 });
       expect(b, 'the takeover').not.toBeNull();
       expect(b!.epoch, 'a takeover raises the epoch').toBeGreaterThan(a!.epoch);
       const stale = await attempt(() => guarded(a!, 'old-epoch work from A'));
-      expect(stale.ok ? null : reasonOf(stale), 'the old epoch\'s write was not refused as epoch_moved').toEqual({ code: 'lease_lost', reason: 'epoch_moved' });
-      expect(await bodyOf(engine, SLUG), 'old-epoch work was written').toBe('epoch A');
+      expect(refusalOf(stale), 'the old epoch\'s write was not refused as epoch_moved').toEqual({ code: 'lease_lost', reason: 'epoch_moved' });
+      expect(await bodyOf(engine, SLUG_L), 'old-epoch work was written').toBe('epoch A');
       await guarded(b!, 'epoch B');
-      expect(await bodyOf(engine, SLUG)).toBe('epoch B');
+      expect(await bodyOf(engine, SLUG_L)).toBe('epoch B');
       await leasesOf(engine).releaseLease(b!);
       const a2 = await leasesOf(engine).acquireLease({ name: NAME, holder: holder(1), ttl_ms: 60_000 });
       expect(a2!.epoch, 'the holder that came back re-acquired under a new epoch').toBeGreaterThan(b!.epoch);
       await guarded(a2!, 'epoch A again');
       expect((await attempt(() => guarded(a!, 'old token again'))).ok).toBe(false);
-      expect(await bodyOf(engine, SLUG)).toBe('epoch A again');
-      return outcome;
-    }
+      expect(await bodyOf(engine, SLUG_L)).toBe('epoch A again');
+    };
     const LOCK = 'gbrain-cycle:c06-partition';
     const [tokenA, tokenB, tokenA2] = ['00000000-0000-4000-8000-0000000000a1', '00000000-0000-4000-8000-0000000000b1', '00000000-0000-4000-8000-0000000000a2'];
     const lease = (pid: number, token: string, ttlMinutes = 30) => ({ holderPid: pid, holderHost: `host-${pid}`, acquisitionToken: token, ttlMinutes, stealGraceSeconds: 0 });
@@ -365,6 +349,8 @@ describe('engine parity: multi-writer conformance', () => {
     expect(await guardedWrite(tokenA2, 'epoch A again')).toBe(true);
     expect(await guardedWrite(tokenA, 'the first token again'), 'the first token works again').toBe(false);
     expect(await bodyOf(engine, SLUG)).toBe('epoch A again');
+    // Multi-user route: the store lease fence (rust-mu cell, pending until the hosts work lands on this branch).
+    if (backend === 'rust' && rustMultiuserView() !== 'off') await storeLeases();
     return outcome;
   });
 
@@ -650,63 +636,108 @@ describe('engine parity: multi-writer conformance', () => {
     return { secondOpened: true, mutuallyVisible: true, inFlightRefused: refused.length };
   });
 
-  // C18: many writers, every row family, no busy error. 64 writers share up to eight connections to the brain (PGLite and
-  // the Rust owner's first connection: the arm's own engine): each writes its pages, submits a job under a request key and
-  // claims jobs. No lost update, no double claim, no busy error.
-  parityTest('C18 64 writers in 8 processes, no busy error', { methods: ['putPage', 'readPageSnapshot', 'admitJob', 'claimNextJob', 'listJobs'], mwCase: 'C18' }, async (engine, _backend, ctx) => {
-    const conns = await connections(engine, ctx, 8);
-    const writers = 64;
-    const out = await together(writers, async (w) => {
-      const db = conns[w % conns.length]!;
-      const refused: string[] = [];
-      const pages: string[] = [];
-      for (let round = 0; round < 2; round++) {
-        const slug = `notes/c18-${w}-${round}`;
-        const wrote = await attempt(() => db.putPage(slug, NOTE(`W${w}`, `body ${w} ${round}`)));
-        if (wrote.ok) pages.push(slug); else refused.push(wrote.code);
-      }
-      const submitted = await attempt(() => admit(db, { idempotency_key: `req-${w}` }));
-      if (!submitted.ok) refused.push(submitted.code);
-      const claimed = await attempt(() => db.claimNextJob(claimSpec(`w${w}:a`)));
-      if (!claimed.ok) refused.push(claimed.code);
-      return { pages, refused, job: claimed.ok && claimed.value ? Number(claimed.value.id) : null };
-    });
-    const refused = out.flatMap(o => o.refused);
+  // C18: many writers, every row family, no busy error: 64 writers in 8 processes. This process and seven writer processes
+  // (test/engine-parity/fixtures/mw-writer.ts, each with its own pool on the arm's database) each run eight concurrent
+  // writers; every writer writes two pages, submits a job under its request key and claims a job. No lost update, no double
+  // claim, no busy error. Postgres only: PGLite is in-memory and one connection (n/a), and a Rust brain has one owner process
+  // (pending: a second Rust process is a client that refuses the job members today).
+  parityTest('C18 64 writers in 8 processes, no busy error', { methods: ['putPage', 'readPageSnapshot', 'admitJob', 'claimNextJob', 'listJobs'], mwCase: 'C18' }, async (engine, backend, ctx) => {
+    if (backend !== 'postgres') throw new Error(`C18 runs its writer processes on Postgres only, not on ${backend}`);
+    const databaseUrl = (ctx.unconnectedEngine().config as { database_url?: string }).database_url!;
+    const children = Array.from({ length: 7 }, (_, i) => startWriter({ role: 'stress', backend: 'postgres', databaseUrl, index: i + 1, deadlineMs: 60_000 }));
+    let own: StressResult[];
+    let results: StressResult[][];
+    try {
+      // This process is the eighth: it writes while the seven others do (they are connecting; the load overlaps).
+      await Promise.all(children.map(c => c.until(lines => lines.includes('READY'), 30_000, 'connect')));
+      own = await runStressWriters(engine, 0);
+      await Promise.all(children.map(c => c.until(lines => lines.some(l => l.startsWith('RESULT ')), 60_000, 'finish its writers')));
+      results = [own, ...children.map(c => JSON.parse(c.lines().find(l => l.startsWith('RESULT '))!.slice('RESULT '.length)) as StressResult[])];
+    } catch (error) {
+      await Promise.all(children.map(c => c.kill()));
+      throw error;
+    }
+    const exits = await Promise.all(children.map(c => c.exited));
+    expect(exits.map(e => e.exitCode), 'a writer process did not exit cleanly').toEqual(children.map(() => 0));
+    const writers = results.flat();
+    expect(writers, 'not 64 writers').toHaveLength(64);
+    const refused = writers.flatMap(o => o.refused);
     expect(refused.filter(code => BUSY_CODES.has(code)), 'a writer got a busy error').toEqual([]);
     expect(refused, 'a writer was refused').toEqual([]);
-    for (const slug of out.flatMap(o => o.pages)) expect(await bodyOf(engine, slug), `${slug}: a write is missing`).not.toBeNull();
-    expect(out.flatMap(o => o.pages)).toHaveLength(writers * 2);
+    const pages = writers.flatMap(o => o.pages);
+    expect(pages).toHaveLength(64 * 2);
+    for (const slug of pages) expect(await bodyOf(engine, slug), `${slug}: a write is missing`).not.toBeNull();
     const jobs = await engine.listJobs({ limit: 500 });
-    expect(jobs, 'a request key made more than one row, or a submission was lost').toHaveLength(writers);
-    const claimedIds = out.map(o => o.job).filter((id): id is number => id !== null);
+    expect(jobs, 'a request key made more than one row, or a submission was lost').toHaveLength(64);
+    const claimedIds = writers.map(o => o.job).filter((id): id is number => id !== null);
     expect(claimedIds.length - new Set(claimedIds).size, 'a job was claimed twice').toBe(0);
-    expect(claimedIds, 'a job was left unclaimed while writers were idle').toHaveLength(writers);
-    return { pages: writers * 2, jobs: jobs.length, claimed: claimedIds.length, twice: 0, busy: 0 };
+    expect(claimedIds, 'a job was left unclaimed while writers were idle').toHaveLength(64);
+    return { processes: 8, writers: 64, pages: pages.length, jobs: jobs.length, claimed: claimedIds.length, twice: 0, busy: 0 };
   });
 
-  // C19: crash after commit keeps acknowledged writes. A writer's connection goes away after its writes were
-  // acknowledged (a second connection where the arm has one, else the arm's own engine stays): every acknowledged write
-  // is present, and replaying each request id returns the stored row and makes no duplicate. The kill itself (SIGKILL of
-  // a writing process mid-stream) is the store-level case and the crash robot under scripts/persistence/.
-  parityTest('C19 crash after commit keeps acknowledged writes', { methods: ['putPage', 'readPageSnapshot', 'admitJob', 'listJobs'], mwCase: 'C19' }, async (engine, _backend, ctx) => {
-    const conns = await connections(engine, ctx, 2);
-    const writer = conns[1] ?? engine;
-    const count = 20;
-    const acked: Array<{ n: number; job: number }> = [];
-    for (let n = 0; n < count; n++) {
-      await writer.putPage(`notes/c19-${n}`, NOTE(`N${n}`, `acknowledged ${n}`));
-      acked.push({ n, job: Number((await admit(writer, { idempotency_key: `request-${n}` })).row.id) });
+  // C19: crash after commit keeps acknowledged writes. A writer process (test/engine-parity/fixtures/mw-writer.ts) writes a
+  // page and submits a job under a request key, one write after another, and prints each write only after the engine
+  // acknowledged it. This case SIGKILLs it mid-stream, then reads the brain through an engine of its own: every acknowledged write
+  // has its page and exactly one job row, nothing is duplicated, and replaying each request key returns the stored row and
+  // adds none. The check is `acknowledgedWriteViolations` (multi-writer-support.ts), proven with controls in
+  // test/multi-writer-cases.test.ts. Postgres: the writer's own pool on the arm's database. Rust: the writer owns a brain directory
+  // no engine here has open, and this case reopens it. PGLite is in-memory: no durable brain to crash (n/a).
+  parityTest('C19 crash after commit keeps acknowledged writes', { methods: ['putPage', 'readPageSnapshot', 'admitJob', 'listJobs'], mwCase: 'C19' }, async (engine, backend, ctx) => {
+    const killAfter = 12;
+    const { engine: spare, config } = ctx.unconnectedEngine();
+    const base = { role: 'crash', max: 2_000, deadlineMs: 60_000 } as const;
+    let writerConfig: WriterConfig;
+    let reopen: () => Promise<BrainEngine>;
+    if (backend === 'postgres') {
+      writerConfig = { ...base, backend: 'postgres', databaseUrl: (config as { database_url?: string }).database_url! };
+      reopen = async () => engine;
+    } else if (backend === 'rust') {
+      const route = rustMultiuserView();
+      const brain = config as unknown as { database_path: string };
+      if (route === 'config') {
+        await spare.connect(config);
+        await spare.setConfig('engine.rust.multiuser', 'true');
+        await spare.disconnect();
+      }
+      writerConfig = { ...base, backend: 'rust', databasePath: brain.database_path, ...(route !== 'off' && { muRoute: route }) };
+      reopen = async () => { await spare.connect(config); return spare; };
+    } else {
+      throw new Error(`C19 needs a durable brain to crash; ${backend} has none`);
     }
-    if (writer !== engine) await writer.disconnect();
-    for (const { n } of acked) expect(await bodyOf(engine, `notes/c19-${n}`), `acknowledged write ${n} is missing`).toBe(`acknowledged ${n}`);
-    expect(await engine.listJobs({ limit: 500 })).toHaveLength(count);
-    for (const { n, job } of acked) {
-      const replay = await admit(engine, { idempotency_key: `request-${n}` });
-      expect({ coalesced: replay.coalesced, same: Number(replay.row.id) === job }, `replay ${n} did not return the stored row`).toEqual({ coalesced: true, same: true });
-      await engine.putPage(`notes/c19-${n}`, NOTE(`N${n}`, `acknowledged ${n}`));
+    const writer = startWriter(writerConfig);
+    const acks = (lines: string[]) => lines.filter(l => l.startsWith('ACK ')).map(l => Number(l.slice(4)));
+    await writer.until(lines => acks(lines).length >= killAfter, 60_000, `acknowledge ${killAfter} writes`);
+    const ended = await writer.kill();
+    expect(ended.signal, 'the writer was not killed mid-stream').toBe('SIGKILL');
+    const acknowledged = acks(writer.lines());
+    expect(acknowledged.length, 'the kill came before the writer acknowledged enough').toBeGreaterThanOrEqual(killAfter);
+    expect(acknowledged.length, 'the writer finished before the kill').toBeLessThan(base.max);
+    // The brain after the crash, through an engine this process owns.
+    const brain = await reopen();
+    type Seen = CrashObservation & { ids: Map<string, number> };
+    const observe = async (): Promise<Seen> => {
+      const jobRowsByKey = new Map<string, number>();
+      const ids = new Map<string, number>();
+      for (const job of await brain.listJobs({ limit: 100_000 })) {
+        const key = job.idempotency_key as string | null;
+        if (key?.startsWith('c19-request-')) { jobRowsByKey.set(key, (jobRowsByKey.get(key) ?? 0) + 1); ids.set(key, Number(job.id)); }
+      }
+      const pageBodies = new Map<string, string>();
+      for (let n = 0; n <= Math.max(...acknowledged) + 2; n++) {
+        const body = await bodyOf(brain, crashSlug(n));
+        if (body !== null) pageBodies.set(crashSlug(n), body);
+      }
+      return { acknowledged, jobRowsByKey, pageBodies, ids };
+    };
+    const before = await observe();
+    expect(acknowledgedWriteViolations(before), 'the reopened brain lost or duplicated an acknowledged write').toEqual([]);
+    for (const n of acknowledged) {
+      const replay = await admit(brain, { idempotency_key: crashKey(n) });
+      expect({ coalesced: replay.coalesced, sameRow: Number(replay.row.id) === before.ids.get(crashKey(n)) }, `replay ${n} did not return the stored row`).toEqual({ coalesced: true, sameRow: true });
+      await brain.putPage(crashSlug(n), NOTE(`N${n}`, crashBody(n)));
     }
-    expect(await engine.listJobs({ limit: 500 }), 'a replay duplicated a row').toHaveLength(count);
-    return { present: count, jobsAfterReplay: count, replaysReturnedStored: count };
+    expect(acknowledgedWriteViolations(await observe()), 'a replay duplicated a write').toEqual([]);
+    return { killed: true, acknowledgedPresent: true, duplicates: 0, replaysReturnedStored: true };
   });
 
   // C20: no deadlock across two pages taken in both orders. Eight writers take pair/a and pair/b in opposite orders:
