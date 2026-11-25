@@ -63,8 +63,8 @@ export const listCorePageRows: Member<'listCorePageRows'> = (brain, spec) => {
   requireCount(member, 'limit', spec.limit);
   const policy = spec.excludePrivate
     ? spec.forCaller
-      ? storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true })
-      : storePageTextPolicy(member, () => remoteReadFloorSql('p'), { noReaders: true })
+      ? storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true, fragment: 'caller' })
+      : storePageTextPolicy(member, () => remoteReadFloorSql('p'), { noReaders: true, fragment: 'floor' })
     : null;
   const e = spec.eligibility;
   return storeCall({ member }, () => brain.listCorePageRows({
@@ -143,7 +143,7 @@ export const lockLivePagesByKey: Member<'lockLivePagesByKey'> = async (brain, re
 };
 
 /** The remote read floor over `p` that `stream_visible` and the visible lifetimes are judged by. */
-const beliefFloor = (member: string) => storePageTextPolicy(member, () => remoteReadFloorSql('p'), { noReaders: true });
+const beliefFloor = (member: string) => storePageTextPolicy(member, () => remoteReadFloorSql('p'), { noReaders: true, fragment: 'floor' });
 
 export const readBeliefHistoryRows: Member<'readBeliefHistoryRows'> = async (brain, q) => {
   const member = 'readBeliefHistoryRows';
@@ -169,7 +169,7 @@ export const listVisibleBeliefLifetimes: Member<'listVisibleBeliefLifetimes'> = 
 export const listValidTimeIdentities: Member<'listValidTimeIdentities'> = (brain, spec) => {
   const member = 'listValidTimeIdentities';
   const excludePrivate = storePagePolicy(member, spec.excludePrivate, { callerReaders: true }) ?? null;
-  const world = storePageTextPolicy(member, () => privatePagesFilterFragment('p'), { noReaders: true });
+  const world = storePageTextPolicy(member, () => privatePagesFilterFragment('p'), { noReaders: true, fragment: 'plain' });
   return storeCall({ member }, () => brain.listValidTimeIdentities({
     slug: spec.slug, sourceId: spec.sourceId, sourceIds: spec.sourceIds ? [...spec.sourceIds] : null, excludePrivate, world,
   }));
@@ -186,7 +186,7 @@ export const pickValidTimeEdition: Member<'pickValidTimeEdition'> = async (brain
   if (spec.pinOrd !== null) requireInteger(member, 'pinned ordinal', spec.pinOrd);
   requireCount(member, 'inline byte limit', spec.inlineMaxBytes);
   if (validDate(spec.asOf) !== spec.asOf) refuseMember(member, 'an as-of date that is not YYYY-MM-DD');
-  const policy = storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true });
+  const policy = storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true, fragment: 'caller' });
   // The store judges a version by the page policy's readers: the caller's snapshot text must be the canonical one for them.
   const readers = { identity: policy.identity ?? [], privateReadableSources: policy.privateReadableSources ?? [] };
   const snapshotServed = judgeWidenedCaller(() => {
@@ -214,7 +214,7 @@ export const listAmendmentsNotApplied: Member<'listAmendmentsNotApplied'> = (bra
   if (validDate(spec.editionFrom) !== spec.editionFrom || validDate(spec.asOf) !== spec.asOf) {
     refuseMember(member, 'an edition or as-of date that is not YYYY-MM-DD');
   }
-  const excludePrivate = spec.excludePrivate ? storePageTextPolicy(member, () => remoteReadFloorSql('p'), { noReaders: true }) : null;
+  const excludePrivate = spec.excludePrivate ? storePageTextPolicy(member, () => remoteReadFloorSql('p'), { noReaders: true, fragment: 'floor' }) : null;
   return storeCall({ member }, () => brain.listAmendmentsNotApplied({
     pageId: spec.pageId, editionFrom: spec.editionFrom, asOf: spec.asOf, excludePrivate,
     sourceIds: spec.sourceIds ? [...spec.sourceIds] : null, limit: spec.limit,

@@ -7,7 +7,7 @@
  * gbrain-store `access_migrations`. What each member answers: rust/docs/store/access_rules.md.
  */
 import type { AccessMigrationRow, LiveAccessTokenRow, MemberKeyReadingRow, OpenPageCount, OpenPageExclusion, PeopleFolderCount } from '../../engine-sql/access-setup.ts';
-import { accessAllowedSql, callerAccessAllowedSql, currentCallerAccess, privacyPartSql, withCallerAccess } from '../../search/private-visibility.ts';
+import { accessAllowedSql, callerAccessAllowedSql, callerAccessRecord, currentCallerAccess, privacyPartSql, withCallerAccess } from '../../search/private-visibility.ts';
 import type { StoreBrain } from '../store.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { ownerOnlyFormIn, renderForStoreCaller, storePageTextPolicy, type StorePrivacyPolicy } from './private-provenance.ts';
@@ -123,8 +123,10 @@ export const countOpenPages: StoreMember<[sources: readonly string[], exclude: r
     access = { ...base, ...(folderCoverage.length ? { folderCoverage } : {}), ...(caller.restricted ? {} : { open: true }) };
   }
   // The page policy for the empty identity, judged against the text the caller's record renders.
+  // pageText was rendered in the caller's own record, before the empty-identity record below (renderedIn).
+  const renderedIn = { record: callerAccessRecord() };
   const page = withCallerAccess({ identity: [], privateReadableSources: [] },
-    () => storePageTextPolicy('countOpenPages', () => pageText, { callerReaders: true }));
+    () => storePageTextPolicy('countOpenPages', () => pageText, { callerReaders: true, fragment: 'plain', renderedIn }));
   const groups = new Map<string, OpenPageCount>();
   for (const source of new Set(sources)) {
     const skip = exclude.filter(x => x.source === source).map(x => x.prefix);

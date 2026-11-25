@@ -34,6 +34,7 @@ import { electOwner, type OwnerRole } from './rust-engine/owner-ipc/election.ts'
 import { callEndCheck, installOwnerClient, untilCallEnds } from './rust-engine/owner-ipc/client.ts';
 import { ownerWholeOperations } from './rust-engine/owner-ipc/owner-ops.ts';
 import type { OwnerEngineServer, OwnerServerStats } from './rust-engine/owner-ipc/server.ts';
+import { withAccessStore } from './rust-engine/access-self-check.ts';
 import { servedServerOptionsFor } from './rust-engine/served/serve-listen.ts';
 import type { ServedServerOptions } from './rust-engine/served/session.ts';
 import { connectServedEngine, type ServedTarget } from './rust-engine/served/engine.ts';
@@ -563,7 +564,9 @@ for (const [member, impl] of Object.entries(STORE_MEMBERS)) {
     value: async function served(this: RustEngine, ...args: unknown[]): Promise<unknown> {
       const store = this.openStoreIfOpen(member) ?? await this.storeFor(member, args);
       await this._admit(member);
-      return (impl as (this: RustEngine, brain: unknown, ...rest: unknown[]) => Promise<unknown>).call(this, store.brain, ...args);
+      // Multi-user lane L4: a store in multi-user mode runs the member with its answer in context (access-self-check.ts).
+      return withAccessStore(store, this.addon, () =>
+        (impl as (this: RustEngine, brain: unknown, ...rest: unknown[]) => Promise<unknown>).call(this, store.brain, ...args));
     },
   });
 }

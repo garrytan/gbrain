@@ -8,6 +8,7 @@ import { loadConfig, toEngineConfig } from '../core/config.ts';
 import { exitCliError } from '../cli/cli-error.ts';
 import { OperationError } from '../core/ops/contract.ts';
 import { rustMultiuserFromEnv } from '../core/rust-engine/multiuser-switch.ts';
+import { storeMultiuser } from '../core/rust-engine/access-self-check.ts';
 import { mintOwnerServerToken } from '../core/rust-engine/served/owner-token.ts';
 
 export async function createRustServerOwner(rest: string[]): Promise<void> {
@@ -21,7 +22,7 @@ export async function createRustServerOwner(rest: string[]): Promise<void> {
     await engine.connect(engineConfig);
     // The brain's resolved mode (multiuser-switch.ts): the store's answer when it gives one, else the environment half.
     const store = (engine as { openStoreIfOpen?: (m: string) => { multiuser?: boolean } | null }).openStoreIfOpen?.('createRustServerOwner');
-    if (!(store?.multiuser ?? rustMultiuserFromEnv())) { console.error('Error: --rust-server-owner needs multi-user Rust: set GBRAIN_RUST_MULTIUSER=1 or the brain config engine.rust.multiuser.'); process.exit(1); }
+    if (!(store ? storeMultiuser(store) : rustMultiuserFromEnv())) { console.error('Error: --rust-server-owner needs multi-user Rust: set GBRAIN_RUST_MULTIUSER=1 or the brain config engine.rust.multiuser.'); process.exit(1); }
     const { token, id } = await mintOwnerServerToken(engine, name);
     console.log(`Owner server token created for "${name}" (id ${id}): a brain server accepts it over the network with the brain owner's full access.\n`);
     console.log(`  ${token}\n`);

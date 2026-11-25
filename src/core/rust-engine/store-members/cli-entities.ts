@@ -73,8 +73,8 @@ export const findExactSlug: StoreMember<[sourceId: string, slugs: readonly strin
  */
 function retirementHopPolicy(privacy: RetirementPrivacy, member = 'readRetirementHop'): StorePrivacyPolicy | undefined {
   if (privacy === 'none') return undefined;
-  if (privacy === 'caller') return storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true });
-  if (privacy === 'floor') return storePageTextPolicy(member, () => remoteReadFloorSql('p'), { callerReaders: true });
+  if (privacy === 'caller') return storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true, fragment: 'caller' });
+  if (privacy === 'floor') return storePageTextPolicy(member, () => remoteReadFloorSql('p'), { callerReaders: true, fragment: 'floor' });
   const text = callerAccessAllowedSql('p');
   const off = { honorAliases: false, entityPrivacy: false, ownerOnly: ownerOnlyFormIn(text, 'pages', 'p') };
   if (text === withoutCallerAccess(() => callerAccessAllowedSql('p'))) return off;

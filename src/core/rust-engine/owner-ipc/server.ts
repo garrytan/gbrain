@@ -59,6 +59,7 @@ import {
   OWNER_IPC_ROUTES, ownerBusy, ownerCallTimeout, ownerEarlierCallRunning, ownerIpcProtocol, ownerIpcRefusal, ownerMemberOnlyReads,
   ownerPeerRefused, ownerResponseTooLarge,
 } from './routes.ts';
+import { ownerRemoteRefusal } from './remote-check.ts';
 import { membersWaitingFor } from './confirming-reads.ts';
 import { setDeadlineTimer, type DeadlineTimer } from './timer.ts';
 import { servedSession, type ServedHooks, type ServedServerOptions, type ServedServerSide, type ServedSession, type ServedCall } from '../served/session.ts';
@@ -566,6 +567,9 @@ export async function serveOwnerEngine(
     };
     calls.set(id, call);
     const refuse = (error: unknown) => call.reply({ t: 'result', id, ok: false, error: served ? served.encodeError(error) : encodeError(error) });
+    // Multi-user groundwork K: under its switch the owner refuses a remote caller's write itself (remote-check.ts).
+    const remoteRefusal = ownerRemoteRefusal(engine, frame, member);
+    if (remoteRefusal) { refuse(remoteRefusal); return; }
     let target: (...args: unknown[]) => Promise<unknown>;
     if (frame.t === 'fn') {
       // An operation of protocol v3 only is, on v2, one the owner does not run (the same refusal as an unknown name).
