@@ -706,3 +706,41 @@ fn manifest_cursor(image: &Image) -> CommitPosition {
         serde_json::from_slice(&image.keys[&gbrain_store::commit_log::meta_key()]).unwrap();
     meta.newest
 }
+
+/// What a snapshot install costs (loss list): a 10,000-page brain, a fresh follower, median of 3.
+/// A measurement, not a gate: `cargo test --release --test follower -- --ignored --nocapture install_cost`.
+#[test]
+#[ignore = "measurement"]
+fn install_cost_on_a_10k_page_brain() {
+    let dir = TempDir::new("install-cost");
+    let root = dir.path();
+    let primary = Store::open_dir(&root.join("primary"), mu(true)).unwrap();
+    let body = "word ".repeat(200);
+    for chunk in 0..100u64 {
+        let tx = primary.begin_transaction(false).unwrap();
+        for i in 0..100u64 {
+            let n = chunk * 100 + i;
+            tx.submit_page_mutation(&mutation(n + 1, &format!("notes/page-{n:05}"), &format!("{body} {n}")), None)
+                .unwrap();
+        }
+        tx.commit_transaction().unwrap();
+    }
+    let manifest = primary.snapshot_to(&root.join("snap"), &SnapshotOp::new()).unwrap();
+    let bytes: u64 = std::fs::read_dir(root.join("snap")).unwrap().map(|e| e.unwrap().metadata().unwrap().len()).sum();
+    let mut ms = Vec::new();
+    for run in 0..3 {
+        let target = root.join(format!("follower-{run}"));
+        let follower = Follower::open(&target).unwrap();
+        let start = std::time::Instant::now();
+        follower.install_snapshot(&root.join("snap"), Some(&manifest)).unwrap();
+        ms.push(start.elapsed().as_millis());
+        drop(follower);
+        std::fs::remove_dir_all(&target).unwrap();
+    }
+    let mut sorted = ms.clone();
+    sorted.sort();
+    println!(
+        "install of a 10,000-page snapshot ({} keys, {bytes} bytes): runs {ms:?} ms, median {} ms",
+        manifest.keys, sorted[1]
+    );
+}
