@@ -140,17 +140,6 @@ function zeroOnMissing(kind: 'table' | 'column', name: string) {
 }
 
 /** Plans the handover: every item it would write, grouped, with who gains and loses access. Writes only the approved set. */
-/**
- * A count an older schema cannot answer (no facts table, no member_id column) reads 0; any other error, an engine that
- * refuses the read included, fails the preview rather than showing 0.
- */
-function zeroOnMissing(kind: 'table' | 'column', name: string) {
-  return (e: unknown): Array<{ n: number }> => {
-    if (isMissingSchemaObject(e, kind, name)) return [{ n: 0 }];
-    throw e;
-  };
-}
-
 export async function previewHandover(engine: BrainEngine, rawMember: string, choices: HandoverChoices): Promise<HandoverPreview> {
   const leaver = await getMember(engine, rawMember);
   if (!leaver) throw opError('not_found', 'No member "' + rawMember + '".', 'List members with gbrain access member list --all.');
