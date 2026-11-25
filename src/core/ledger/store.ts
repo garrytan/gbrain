@@ -15,6 +15,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { opError } from '../ops/contract.ts';
+import { sourceScopeOpts } from '../ops/context.ts';
 import type { AgentVerb, RecipientClass, SpendPurpose } from '../agent-verbs.ts';
 import { submitPageMutation, requestPrincipalForContext } from '../persistence/page-mutations.ts';
 import { getWriteRequest } from '../persistence/journal.ts';
@@ -44,11 +45,21 @@ const RESERVE_WAIT_MS = 10_000;
 export type LedgerReader = { kind: 'brain' } | { kind: 'member'; identities: readonly (readonly string[])[] } | { kind: 'none' };
 
 /** Whose actions this request reads: the same owner test the agent policy uses for the owner's policy. */
-export function ledgerReader(remote: boolean): LedgerReader {
-  if (!remote || callerScopes(true).includes('owner')) return { kind: 'brain' };
+export function ledgerReader(remote: boolean, ctx?: Pick<OperationContext, 'remote' | 'sourceId' | 'auth'>): LedgerReader {
+  if (!remote) return { kind: 'brain' };
+  if (ctx && !readsActionSource(ctx)) return { kind: 'none' };
+  if (callerScopes(true).includes('owner')) return { kind: 'brain' };
   if (callerAccessRecord() === null || currentReadMode() === 'scope') return { kind: 'none' };
   const identities = callerIdentities();
   return identities.length && identities.every(i => i.some(p => p.startsWith('member:') || p.startsWith('group:'))) ? { kind: 'member', identities } : { kind: 'none' };
+}
+
+/** Whether a remote connection's read grant covers the ledger's source, by the same ladder every read op uses. */
+function readsActionSource(ctx: Pick<OperationContext, 'remote' | 'sourceId' | 'auth'>): boolean {
+  try {
+    const scope = sourceScopeOpts(ctx as OperationContext);
+    return scope.sourceIds ? scope.sourceIds.includes(ACTION_SOURCE) : scope.sourceId === undefined || scope.sourceId === ACTION_SOURCE;
+  } catch { return false; } // silent-read-ok: a connection with no readable source reads no actions
 }
 
 function readable(reader: LedgerReader, frontmatter: unknown): boolean {
@@ -215,7 +226,7 @@ export async function logAction(ctx: OperationContext, input: LogActionInput, no
   const remote = ctx.remote !== false;
   assertLedgerWriteGrant(ctx, remote);
   const actor = actorFor(remote);
-  const reader = ledgerReader(remote);
+  const reader = ledgerReader(remote, ctx);
   const requestId = input.request_id ?? randomUUID();
   const wid = writeRequestId(actor, requestId);
   const replay = await priorWrite(ctx, wid);
@@ -242,7 +253,8 @@ export async function logAction(ctx: OperationContext, input: LogActionInput, no
   }
   const evidence = [...(prior?.evidence ?? []), ...(input.evidence ?? []).filter(e => !(prior?.evidence ?? []).some(p => p.ref === e.ref))];
   const checks = await checkEvidence(ctx.engine, reader, evidence);
-  const money = moneyOf(input) ?? (status === 'reversed' ? prior?.money : undefined);
+  const settledHold: ActionRecord['money'] = prior?.hold && status === 'done' ? { currency: prior.hold.currency, spent: prior.hold.amount, estimated: true } : undefined;
+  const money = moneyOf(input) ?? prior?.money ?? settledHold;
   const evidenced = checks.some(c => c.resolved);
   if (money && (money.spent !== undefined || money.saved !== undefined) && !evidenced && money.estimated !== true && status === 'done') {
     throw opError('money_unevidenced', 'An amount was logged with no evidence gbrain could read and without estimated: true, so nothing was logged.',
@@ -312,7 +324,7 @@ async function underReserveLock<T>(engine: BrainEngine, fn: () => Promise<T>): P
 export async function policyReserve(ctx: OperationContext, input: ReserveInput, now = new Date()): Promise<ReserveResult> {
   const remote = ctx.remote !== false;
   assertLedgerWriteGrant(ctx, remote);
-  const reader = ledgerReader(remote);
+  const reader = ledgerReader(remote, ctx);
   return underReserveLock(ctx.engine, async () => {
     const actor = actorFor(remote);
     const requestId = input.request_id ?? randomUUID();

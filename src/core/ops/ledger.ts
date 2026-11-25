@@ -85,13 +85,13 @@ const ledger: Operation = {
     const since = parseSince(p.since, now);
     if (!since) throw invalidParam(ctx, 'ledger', 'since', 'since must be a number of days like 30d, or an ISO date.', { example: '30d' });
     if (p.verb !== undefined) verbOf(ctx, 'ledger', p.verb);
-    return ledgerReport(ctx.engine, ledgerReader(ctx.remote !== false), { since, until: new Date(now.getTime() + 1), verb: p.verb as never, counterparty: str(p.counterparty) }, now);
+    return ledgerReport(ctx.engine, ledgerReader(ctx.remote !== false, ctx), { since, until: new Date(now.getTime() + 1), verb: p.verb as never, counterparty: str(p.counterparty) }, now);
   },
 };
 
 const policy_reserve: Operation = {
   name: 'policy_reserve',
-  description: 'Before a spend, check the agent policy with its day, week and month budgets and hold the amount for 24 hours, in one step, so two agents cannot both use the last of a budget. Returns the policy_check answer and the reservation; settle it with log_action {action_id, status: "done"} after you act. A deny holds nothing.',
+  description: 'Before a spend, check the agent policy with its day, week and month budgets and hold the amount for 24 hours, in one step, so two agents cannot both use the last of a budget. Returns the policy_check answer and the reservation; settle it with log_action {action_id, status: "done", spent} after you act (with no amount the held amount is recorded as an estimate). A deny holds nothing.',
   params: {
     verb: { type: 'string', required: true, enum: [...AGENT_VERBS], description: 'The outside action.' },
     amount: { type: 'number', required: true, description: 'The amount to hold.' },

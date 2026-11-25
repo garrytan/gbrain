@@ -169,6 +169,16 @@ for (const kind of testBackends()) describe(`action ledger (L2, ${kind}, repo-le
     expect(answer.decision).toBe('ask');
   });
 
+  test('a connection that cannot read the default source reads no actions and no budget usage', async () => {
+    const scoped = { ...ctxFor(engine, true), sourceId: 'source-a', auth: { sourceId: 'source-a', allowedSources: ['source-a'] } } as unknown as OperationContext;
+    expect(withCallerAccess(ALICE, () => ledgerReader(true, scoped))).toEqual({ kind: 'none' });
+    const federated = { ...ctxFor(engine, true), sourceId: 'source-a', auth: { sourceId: 'source-a', allowedSources: ['source-a', 'default'] } } as unknown as OperationContext;
+    expect(withCallerAccess(ALICE, () => ledgerReader(true, federated)).kind).toBe('member');
+    const out = body(await dispatchToolCall(engine, 'ledger', { since: '30d' }, { ...REMOTE, sourceId: 'source-a', auth: { sourceId: 'source-a', allowedSources: ['source-a'] } } as never));
+    expect(out.scope).toBe('none');
+    expect(out.totals.actions).toBe(0);
+  });
+
   test('a connection whose write grant is another source records nothing', async () => {
     const elsewhere = { ...ctxFor(engine, true), auth: { sourceId: 'source-a' } } as unknown as OperationContext;
     const before = (await engine.listPages({ type: 'agent_action' as never, sourceId: 'default' })).length;
@@ -204,8 +214,13 @@ for (const kind of testBackends()) describe(`action ledger (L2, ${kind}, repo-le
       const released = await logAction(ctx, { verb: 'spend', action_id: r.reservation!.action_id, status });
       expect(released.settled_hold).toBe(true);
     }
+    const bare = await policyReserve(ctx, { verb: 'spend', amount: { amount: 7, currency: 'USD' }, merchant: 'grocer-example', summary: 'Eggs' });
+    const bareSettle = await logAction(ctx, { verb: 'spend', action_id: bare.reservation!.action_id, status: 'done' });
+    expect(bareSettle).toMatchObject({ settled_hold: true, claim_basis: 'estimated' });
+    const barePage = await engine.getPage(bare.reservation!.action_id, { sourceId: 'default' });
+    expect(barePage!.frontmatter.money).toEqual({ currency: 'USD', spent: 7, estimated: true });
     const released = await checkPolicy(engine, { verb: 'spend', amount: { amount: 10, currency: 'USD' }, merchant: 'grocer-example' }, ['owner'], { usage: usageLookup(engine, ledgerReader(false), new Date()) });
-    expect(released.budgets?.[0]).toMatchObject({ spent: 28, held: 30 });
+    expect(released.budgets?.[0]).toMatchObject({ spent: 35, held: 30 });
   });
 
   test('a reserve retry returns the same reservation even when its own hold fills the budget; settling with its request_id is refused', async () => {

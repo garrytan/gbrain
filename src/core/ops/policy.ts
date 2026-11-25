@@ -47,7 +47,7 @@ const policy_check: Operation = {
     if (p.to !== undefined && !isRecipientClass(p.to)) throw invalidParam(ctx, 'policy_check', 'to', 'to must be self, household, known or new.', { choices: RECIPIENT_CLASSES });
     const merchant = typeof p.merchant === 'string' && p.merchant.trim() ? p.merchant.trim().slice(0, 200) : undefined;
     const remote = ctx.remote !== false;
-    return checkPolicy(ctx.engine, { verb: p.verb, amount: amountParam(ctx, p), merchant, to: p.to as never }, callerScopes(remote), { usage: usageLookup(ctx.engine, ledgerReader(remote), new Date()) });
+    return checkPolicy(ctx.engine, { verb: p.verb, amount: amountParam(ctx, p), merchant, to: p.to as never }, callerScopes(remote), { usage: usageLookup(ctx.engine, ledgerReader(remote, ctx), new Date()) });
   },
 };
 

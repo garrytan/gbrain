@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 318143,
-    "stdoutSha256": "6d31a583fb60710197bccd9b56e38bfe2752da39e56c31afb5c6d53128a26977",
+    "stdoutBytes": 318210,
+    "stdoutSha256": "2f0ce9407b146d059685025137704b9180756b4beffdc5e508d4059c1442c24b",
     "toolNames": [
       "remember",
       "entity",
@@ -5131,7 +5131,7 @@
         "scope": "read"
       },
       {
-        "description": "Before a spend, check the agent policy with its day, week and month budgets and hold the amount for 24 hours, in one step, so two agents cannot both use the last of a budget. Returns the policy_check answer and the reservation; settle it with log_action {action_id, status: \"done\"} after you act. A deny holds nothing.",
+        "description": "Before a spend, check the agent policy with its day, week and month budgets and hold the amount for 24 hours, in one step, so two agents cannot both use the last of a budget. Returns the policy_check answer and the reservation; settle it with log_action {action_id, status: \"done\", spent} after you act (with no amount the held amount is recorded as an estimate). A deny holds nothing.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,

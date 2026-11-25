@@ -4445,7 +4445,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
   },
   {
     "name": "policy_reserve",
-    "description": "Before a spend, check the agent policy with its day, week and month budgets and hold the amount for 24 hours, in one step, so two agents cannot both use the last of a budget. Returns the policy_check answer and the reservation; settle it with log_action {action_id, status: \"done\"} after you act. A deny holds nothing.",
+    "description": "Before a spend, check the agent policy with its day, week and month budgets and hold the amount for 24 hours, in one step, so two agents cannot both use the last of a budget. Returns the policy_check answer and the reservation; settle it with log_action {action_id, status: \"done\", spent} after you act (with no amount the held amount is recorded as an estimate). A deny holds nothing.",
     "params": {
       "verb": {
         "type": "string",
