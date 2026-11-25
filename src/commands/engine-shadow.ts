@@ -233,7 +233,7 @@ export async function runEngineShadow(args: string[], deps: EngineShadowDeps = {
     const brain = await resolveBrain(deps);
     if (sub === 'start') return await start(brain, parseStart(rest), deps, out, err, now);
     if (sub === 'status') return await status(brain, flags(rest, ['--json'], 'status').has('--json'), out, now);
-    if (sub === 'stop') return await stop(brain, flags(rest, ['--delete'], 'stop').has('--delete'), deps, out, err, now);
+    if (sub === 'stop') return await stopWithDrillLock(brain, flags(rest, ['--delete'], 'stop').has('--delete'), deps, out, err, now);
     if (sub === 'report') return report(brain, flags(rest, ['--json'], 'report').has('--json'), out, now);
     if (sub === 'seed') return await seed(brain, flags(rest, ['--json', '--reseed'], 'seed'), deps, out, err, now);
     if (sub === 'drill') return await drillCommand(brain, flags(rest, ['--json', '--backup', '--evals'], 'drill'), deps, out, err);
@@ -699,6 +699,14 @@ function renderSeed(r: SeedRecord, path: string, out: (l: string) => void): void
     : '  unseeded gap rows: 0');
 }
 
+/** `stop`; with `--delete` it first takes the drill lock, so a delete never runs under a restore drill: it refuses (exit 1) and changes nothing. */
+async function stopWithDrillLock(brain: { key: string; dir: string; engine: string }, del: boolean, deps: EngineShadowDeps, out: (l: string) => void, err: (l: string) => void, now: () => Date): Promise<number> {
+  if (!del) return stop(brain, del, deps, out, err, now);
+  const release = (await import('../shadow/drill.ts')).takeDrillLockForDelete(brain.dir);
+  if (!release) { err(`engine shadow: drill_running: ${DRILL_FIX.drill_running} Nothing was stopped or deleted.`); return 1; }
+  try { return await stop(brain, del, deps, out, err, now); } finally { release(); }
+}
+
 async function stop(brain: { key: string; dir: string; engine: string }, del: boolean, deps: EngineShadowDeps, out: (l: string) => void, err: (l: string) => void, now: () => Date): Promise<number> {
   const state = readShadowState(brain.dir);
   // The stop time is written before the hooks go: from here on nothing is proven to record writers (a file, so it cannot fail like a gap insert).
@@ -731,7 +739,7 @@ async function stop(brain: { key: string; dir: string; engine: string }, del: bo
   return hooksLeft ? 1 : 0;
 }
 /** Test seam: `stop` with no primary (a PGLite brain takes no writer hooks). */
-export const __stopForTests = (brain: { key: string; dir: string; engine: string }, del: boolean, out: (l: string) => void) => stop(brain, del, {}, out, out, () => new Date());
+export const __stopForTests = (brain: { key: string; dir: string; engine: string }, del: boolean, out: (l: string) => void) => stopWithDrillLock(brain, del, {}, out, out, () => new Date());
 
 function report(brain: { key: string; dir: string }, json: boolean, out: (l: string) => void, now: () => Date): number {
   const r = buildProvisionalReport(brain.dir, brain.key, readShadowState(brain.dir), now());

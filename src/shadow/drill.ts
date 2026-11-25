@@ -184,6 +184,18 @@ function takeLock(dir: string, now: number): (() => void) | null {
   }
 }
 
+/**
+ * The drill lock for `stop --delete`: a delete never runs under a drill (a drill's opens create the directories they find
+ * missing). A shadow with no drills directory has no drill to wait for; null means a drill holds the lock (or it cannot be read).
+ */
+export function takeDrillLockForDelete(dir: string, now: number = Date.now()): (() => void) | null {
+  if (!existsSync(drillsDir(dir))) return () => undefined;
+  try { return takeLock(dir, now); } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return () => undefined; // the drills directory went while we looked: no drill runs there
+    throw e;
+  }
+}
+
 /** Removes `backup.json` and syncs the drills directory; false when the record is still there (or its removal cannot be confirmed). */
 function invalidateRecord(dir: string): boolean {
   try { rmSync(backupRecordPath(dir), { force: true }); } catch { return false; } // silent-read-ok: a record that cannot be removed is the false return
@@ -400,6 +412,10 @@ export async function runBackupDrill(dir: string, deps: DrillDeps = {}): Promise
     const waitMs = deps.endedWaitMs ?? 30_000;
     const pollMs = deps.endedPollMs ?? 250;
     try {
+      // An open creates the directories it finds missing (the owner election, its lock file, the store): so a shadow that
+      // `stop --delete` removed is never opened, and the store is checked right before the open.
+      if (!shadowLive()) return finish('shadow_gone', true);
+      if (!existsSync(records)) return finish('no_store', false);
       owner = await (deps.openOwner ?? openRealOwner)(load.addon, storePath);
       rec.via = owner.via;
 
@@ -452,6 +468,7 @@ export async function runBackupDrill(dir: string, deps: DrillDeps = {}): Promise
         // Phase 2 (open check): a normal open of the throwaway copy, kept apart from the evidence above.
         if (reason === null) {
           try {
+            if (!shadowLive() || !existsSync(restored)) throw new Error('the shadow or its copy is gone: not opened'); // `finish` reads a gone shadow as shadow_gone
             const check = await (deps.openCopy ?? openCopyReal)(load.addon, restored, keywordState === 'complete');
             if (check.pages > 0 && check.searchHits === null) throw Object.assign(new Error('no search ran on a populated copy'), { drillReason: 'no_probe_term' });
             const after = await (deps.verifyAfter ?? verifyAfterOpen)(load.addon, restored);

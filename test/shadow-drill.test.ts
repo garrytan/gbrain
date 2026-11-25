@@ -20,6 +20,7 @@ import { DEFAULT_HARD_EXCLUDES } from '../src/core/search/source-boost.ts';
 import { ENGLISH_STOPWORDS } from '../src/shadow/english-stopwords.ts';
 import { buildDrillStatus } from '../src/shadow/drill-status.ts';
 import { runEngineShadow } from '../src/commands/engine-shadow.ts';
+import { __stopForTests } from '../src/commands/engine-shadow.ts';
 import { ensureEpoch } from '../src/shadow/evidence-epoch.ts';
 import { shadowBrainKey, shadowDirFor } from '../src/shadow/state.ts';
 import type { StoreSnapshotManifest, StoreVerifyReport } from '../src/core/rust-engine/store.ts';
@@ -443,6 +444,25 @@ describe('review round 1: the lock, the probe, persistence, the addon and the di
     });
     const rec = await runBackupDrill(dir, deps(owner));
     expect(rec).toMatchObject({ pass: false, reason: 'shadow_gone' });
+    expect(existsSync(dir)).toBe(false);
+  });
+
+  test('stop --delete refuses while a drill holds its lock and deletes nothing; once the drill ends it deletes', async () => {
+    const { dir } = shadow();
+    const lines: string[] = [];
+    let during = -1;
+    const owner = fakeOwner({
+      snapshot: async (target, options) => {
+        during = await __stopForTests({ key: 'pglite-abc', dir, engine: 'pglite' }, true, l => lines.push(l));
+        mkdirSync(target, { mode: 0o700 });
+        writeFileSync(join(target, 'records.redb'), 'copy');
+        return { op_id: options.opId, state: 'done', manifest: MANIFEST, free_bytes: { initial: 1, low: 1 } } as never;
+      },
+    });
+    expect(await runBackupDrill(dir, deps(owner))).toMatchObject({ pass: true, reason: null });
+    expect(during).toBe(1);
+    expect(lines.join('\n')).toMatch(/drill_running.*Nothing was stopped or deleted/);
+    expect(await __stopForTests({ key: 'pglite-abc', dir, engine: 'pglite' }, true, () => {})).toBe(0);
     expect(existsSync(dir)).toBe(false);
   });
 
