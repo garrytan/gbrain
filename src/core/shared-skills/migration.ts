@@ -96,13 +96,24 @@ type SealedSkill = { name: string; files: Array<{ path: string; sha256: string }
 
 /**
  * The live (not archived) sources in byte order of id, with incarnation and registered root, through typed engine
- * reads (no SQL here), so the same code serves every engine, a Rust brain's owner and its clients included.
+ * reads (no SQL here), so the same code serves every engine, a Rust brain's owner and its clients included. None of
+ * these reads parses a source's config, so a malformed config still reaches that source's own policy handling.
+ * The roots are read between two reads of the incarnations: when both agree, each root belongs to that incarnation
+ * (a recreated source gets a new one), so an old root is never paired with a recreated source.
  */
 async function liveSourceRoots(engine: OperationContext['engine']): Promise<SourceRoot[]> {
-  const live = await engine.listAllSources();
-  const roots = new Map(live.map(source => [source.id, source.local_path]));
-  const incarnations = await engine.listSourceIncarnations([...roots.keys()]);
-  return incarnations.map(row => ({ id: row.id, incarnation: row.incarnation, local_path: roots.get(row.id) ?? null }));
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const ids = await engine.listSourceIds();
+    const before = await engine.listSourceIncarnations(ids);
+    const roots = new Map((await engine.listLocalPathSources()).map(source => [source.id, source.local_path]));
+    const archived = new Set(await engine.listArchivedSourceIds());
+    const after = await engine.listSourceIncarnations(ids);
+    if (JSON.stringify(after) !== JSON.stringify(before)) continue;
+    return before.filter(row => !archived.has(row.id))
+      .map(row => ({ id: row.id, incarnation: row.incarnation, local_path: roots.get(row.id) ?? null }));
+  }
+  throw opError('local_conflict', 'Sources kept changing while the migration read them.',
+    'A source was created, removed or recreated during each of three reads of the source list. Run the migration again when source changes stop.');
 }
 
 /** The sealed pack's manifest hash for a source incarnation, or undefined without a pack. */
