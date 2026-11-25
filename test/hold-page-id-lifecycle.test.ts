@@ -384,6 +384,8 @@ describe('release and purge of holds that follow a page (PGLite, managed brain)'
     await purge(alpha);
     await settleManagedGitEffects(engine);
     expect(await left()).toBe(1);
+    // The purge kept the hold for the renamed page and noted it, so maintenance checks it again (test/write-gate-hold-recheck.test.ts).
+    expect(await engine.executeRaw('SELECT 1 FROM write_gate_hold_rechecks WHERE hold_id=$1', [holdId])).toHaveLength(1);
 
     await purge(beta);
     await settleManagedGitEffects(engine);
