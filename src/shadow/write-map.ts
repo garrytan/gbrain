@@ -410,6 +410,8 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'setMaterializingRevision', 'setSegmentedVersionHash', 'splitManifestGeneration',
   // Lane 17 typed writes (pinned questions, the volunteer log, retrieval events and ratings): not mapped to a write plan yet.
   'applyRetrievalRatings', 'insertPinnedQuestion', 'insertRetrievalEvents', 'insertVolunteerEvents',
+  // Lane 4 (sweep-facts-rust) typed edge-proposal writes: not mapped to a write plan yet.
+  'deleteEdgeProposalError', 'deleteHeldEdgeProposalErrors', 'markEdgeProposalDated',
 ]);
 export type MemberKind = 'read_name' | 'raw' | 'reserved' | 'ignored' | 'schema' | 'mapped' | 'unmapped';
 
