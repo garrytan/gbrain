@@ -19,6 +19,9 @@ export const CLAIMS_USAGE = [
   '  not found   no allowed claim covers it; that is not proof it is false',
 ].join('\n');
 
+export { CLAIMS_SUBCOMMANDS as SUBCOMMANDS } from '../cli/subcommands.ts';
+export function printUsage(): void { console.log(CLAIMS_USAGE); }
+
 interface CheckResult { claims: ClaimCheck[]; summary: { supported: number; conflicts: number; not_found: number }; allowed_pages: number }
 
 const where = (l: { slug: string; line: number; date: string }) => `${l.slug}:${l.line} (${l.date})`;
