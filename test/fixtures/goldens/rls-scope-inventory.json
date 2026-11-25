@@ -588,6 +588,17 @@
         ],
         "flagOnScopes": []
       },
+      "countPageChunks#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "countPagesBy#grouped+since+remote": {
         "flagOffLanes": [
           "pool"
@@ -7319,6 +7330,17 @@
         ],
         "flagOnScopes": []
       },
+      "readWindowChunk#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readWriteRequest#default": {
         "flagOffLanes": [
           "pool"
@@ -9229,6 +9251,7 @@
         "countOversizedEmbedSkips": "none",
         "countPageCascadeRows": "none",
         "countPageChildOrphans": "none",
+        "countPageChunks": "none",
         "countPageConversationFacts": "none",
         "countPageManifestRows": "none",
         "countPagePurgeTombstones": "none",
@@ -11002,6 +11025,7 @@
         "readWantedMarkers": "none",
         "readWedgeSignals": "none",
         "readWhoCanReadRows": "none",
+        "readWindowChunk": "none",
         "readWithdrawalAnchor": "none",
         "readWithdrawalDiscovery": "none",
         "readWorktreeAdmission": "none",

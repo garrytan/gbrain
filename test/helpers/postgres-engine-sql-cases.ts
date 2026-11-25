@@ -1762,6 +1762,9 @@ export const DOMAIN_OF: Record<string, string> = {
   'chronicleStore': OOS.chronicleExecutor,
   'insertConfigIfAbsent': OOS.callerRawSql,
   'readPageTruthLead': OOS.callerRawSql,
+  // get_page's chunk reads (engine-sql/page-window-chunks.ts)
+  'readWindowChunk': OOS.callerRawSql,
+  'countPageChunks': OOS.callerRawSql,
   'listActiveAccessMembers': OOS.writeMisc,
   'hasLabelledOnlyMember': OOS.writeMisc,
   'expireMemoryProposals': OOS.writeMisc,
@@ -3168,4 +3171,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('pruneChronicleReservations', [['default', (e) => e.pruneChronicleReservations()]]),
   ...variants('insertConfigIfAbsent', [['default', (e) => e.insertConfigIfAbsent('chronicle.activated_at', '2026-01-01T00:00:00.000Z')]]),
   ...variants('readPageTruthLead', [['default', (e) => e.readPageTruthLead(1)]]),
+  // get_page's chunk reads (engine-sql/page-window-chunks.ts)
+  ...variants('readWindowChunk', [['default', (e) => e.readWindowChunk(1, 1)]]),
+  ...variants('countPageChunks', [['default', (e) => e.countPageChunks(1)]]),
 ];

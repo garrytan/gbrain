@@ -40,6 +40,7 @@ use std::collections::{BTreeMap, HashMap};
 
 mod segment_regions;
 mod site_reads;
+mod window_reads;
 pub use segment_regions::SegmentHit;
 pub(crate) use site_reads::Policy as PageReadPolicy;
 pub use site_reads::{

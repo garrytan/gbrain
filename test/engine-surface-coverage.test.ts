@@ -461,7 +461,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // The frontmatter check on finished search rows (engine-sql/frontmatter-ids.ts; covered by test/engine-parity/query-filters.test.ts)
   'filterPageIdsByFrontmatter',
   // Chunks
-  'upsertChunks', 'sealChunks', 'getChunks', 'getChunkPage', 'getChunkWindows', 'countStaleChunks', 'sumStaleChunkChars', 'setPageEmbeddingSignature', 'readPageProvenanceComplete',
+  'upsertChunks', 'sealChunks', 'getChunks', 'getChunkPage', 'getChunkWindows', 'readWindowChunk', 'countPageChunks', 'countStaleChunks', 'sumStaleChunkChars', 'setPageEmbeddingSignature', 'readPageProvenanceComplete',
   'invalidateStaleSignatureEmbeddings', 'invalidateContentDriftEmbeddings', 'listStaleChunks',
   // The page embedding ledger (engine-sql/page-embedding-budget.ts).
   'readPageEmbeddingBudget', 'recordPageEmbeddingHold', 'openPageEmbeddingHold', 'reservePageEmbedding', 'settlePageEmbeddingReservation',

@@ -75,7 +75,7 @@ function windowView(r: Record<string, unknown>) {
 
 describe('engine parity: the get_page chunk reads', () => {
   parityTest('a window around a chunk_id reads the text around that chunk; a chunk not on the page is refused', {
-    methods: ['sealChunks', 'getChunks'],
+    methods: ['sealChunks', 'getChunks', 'readWindowChunk'],
     timeout: 60_000,
   }, async (engine) => {
     const ids = await seedWindowPage(engine);
@@ -93,7 +93,7 @@ describe('engine parity: the get_page chunk reads', () => {
   });
 
   parityTest('body none reports the chunk count and the embedded count of an unsegmented page', {
-    methods: ['sealChunks', 'getChunks'],
+    methods: ['sealChunks', 'getChunks', 'countPageChunks'],
     timeout: 60_000,
   }, async (engine) => {
     await seedWindowPage(engine);

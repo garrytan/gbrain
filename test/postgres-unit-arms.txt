@@ -398,6 +398,7 @@ test/engine-parity/page-snapshot-alias.test.ts
 test/engine-parity/page-vector-flip.test.ts
 test/engine-parity/page-vector-overflow.test.ts
 test/engine-parity/page-visibility.test.ts
+test/engine-parity/page-window-chunk-reads.test.ts
 test/engine-parity/page-write-readers.test.ts
 test/engine-parity/pages.test.ts
 test/engine-parity/persistence-declaration.test.ts

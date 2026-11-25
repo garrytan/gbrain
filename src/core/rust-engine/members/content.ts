@@ -79,6 +79,9 @@ export const CONTENT_MEMBERS = {
   getChunks: 'chunks',
   getChunkPage: 'chunks',
   getChunkWindows: 'chunks',
+  // get_page's chunk reads (engine-sql/page-window-chunks.ts)
+  readWindowChunk: 'chunks',
+  countPageChunks: 'chunks',
   countChunklessPagesWithContent: 'chunks',
   findCodeDefinitions: 'chunks',
   listSymbolTypesForName: 'chunks',

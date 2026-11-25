@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2279/2293
+# covered: 2281/2295
 # lifecycle: 12/12
 # pages: 124/125
 # search: 8/8
@@ -15,7 +15,7 @@
 # link_temporal: 22/22
 # search_vector: 4/4
 # retrieval_coverage: 5/5
-# chunks: 48/49
+# chunks: 50/51
 # extraction: 12/14
 # links: 23/23
 # tags: 5/5
@@ -321,6 +321,8 @@ readProjectionReadinessGeneration	retrieval_coverage	yes	3	no	yes	yes	serves
 readProjectionReadiness	retrieval_coverage	yes	8	no	yes	yes	serves
 readSourceChunkerVersion	chunks	yes	2	no	yes	yes	serves
 setSourceChunkerVersion	chunks	yes	1	no	yes	yes	serves
+readWindowChunk	chunks	yes	1	no	yes	yes	serves
+countPageChunks	chunks	yes	1	no	yes	yes	serves
 findCodeDefinitions	chunks	yes	5	no	yes	yes	serves
 listSymbolTypesForName	chunks	yes	5	no	yes	yes	serves
 findCodeRefChunks	chunks	yes	5	no	yes	yes	serves
@@ -336,8 +338,8 @@ deleteChunksForPages	chunks	yes	3	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	6	no	yes	yes	serves
 upsertChunks	chunks	yes	70	yes	yes	yes	serves
-sealChunks	chunks	yes	93	no	yes	yes	serves
-getChunks	chunks	yes	70	yes	yes	yes	serves
+sealChunks	chunks	yes	95	no	yes	yes	serves
+getChunks	chunks	yes	72	yes	yes	yes	serves
 getChunkPage	chunks	yes	14	no	yes	yes	serves
 getChunkWindows	chunks	yes	14	no	yes	yes	serves
 countStaleChunks	chunks	yes	9	no	yes	yes	serves

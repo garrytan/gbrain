@@ -139,6 +139,7 @@ import * as cliReadsImpl from './engine-sql/cli-reads-import.ts';
 import * as listReadsImpl from './engine-sql/list-reads.ts';
 import * as writeMiscImpl from './engine-sql/write-misc.ts';
 import * as chronicleLedger from './engine-sql/chronicle-ledger.ts';
+import * as pageWindowChunks from './engine-sql/page-window-chunks.ts';
 import * as repairBookkeepingImpl from './engine-sql/repair-bookkeeping.ts';
 import * as managedSyncOrphansImpl from './engine-sql/managed-sync-orphans.ts';
 import * as ownedContentImpl from './engine-sql/owned-content.ts';
@@ -3009,6 +3010,8 @@ export class PGLiteEngine implements BrainEngine {
   async pruneChronicleReservations() { return chronicleLedger.pruneChronicleReservations(this); }
   async insertConfigIfAbsent(key: string, value: string) { return chronicleLedger.insertConfigIfAbsent(this, key, value); }
   async readPageTruthLead(pageId: number) { return chronicleLedger.readPageTruthLead(this, pageId); }
+  async readWindowChunk(chunkId: number, pageId: number) { return pageWindowChunks.readWindowChunk(this, chunkId, pageId); }
+  async countPageChunks(pageId: number) { return pageWindowChunks.countPageChunks(this, pageId); }
   listActiveAccessMembers() { return writeMiscImpl.listActiveAccessMembers(this.writeMiscReads); }
   hasLabelledOnlyMember() { return writeMiscImpl.hasLabelledOnlyMember(this.writeMiscReads); }
   listAccessTokens() { return accessCredentials.listAccessTokens(this); }

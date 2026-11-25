@@ -66,6 +66,7 @@ import type {
   SourceStateRow, WorktreeBinding,
 } from './engine-sql/write-misc.ts';
 import type { ChronicleJudgeKey, ChronicleRowKey, ChronicleRowUpsert } from './engine-sql/chronicle-ledger.ts';
+import type { PageChunkCounts, WindowChunkRow } from './engine-sql/page-window-chunks.ts';
 import type { ChronicleLedgerRow } from './chronicle/contract.ts';
 import type { WorktreeClaimStore } from './engine-sql/worktree-claim.ts';
 import type { WriterAdminStateOptions, WriterAdminStore } from './engine-sql/writer-admin.ts';
@@ -1720,6 +1721,10 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   insertConfigIfAbsent(key: string, value: string): Promise<void>;
   /** The stored `truth_lead` of a page by id (a segmented page's body prefix), or null. */
   readPageTruthLead(pageId: number): Promise<string | null>;
+  /** The text chunk a get_page window around `chunkId` centers on, when it is a chunk of `pageId` at its live generation, or null. */
+  readWindowChunk(chunkId: number, pageId: number): Promise<WindowChunkRow | null>;
+  /** The chunk count of `pageId` at its live generation and how many of those chunks have a vector (get_page body none). */
+  countPageChunks(pageId: number): Promise<PageChunkCounts>;
   listActiveAccessMembers(): Promise<string[]>;
   /** Whether any access member, live or not, carries the labelled-only grant; a failed read throws (engine-sql/write-misc.ts). */
   hasLabelledOnlyMember(): Promise<boolean>;

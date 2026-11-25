@@ -1,8 +1,8 @@
 //! Chunk reads beyond the core chunks family.
 //!
 //! Store methods for getChunkPage, getChunkWindows, countChunklessPagesWithContent,
-//! listChunklessPagesWithContent, hasUnsealedPages, readSegmentRegions and the chunk reads and deletes of
-//! `src/core/engine-sql/chunk-reads.ts`.
+//! listChunklessPagesWithContent, hasUnsealedPages, readSegmentRegions, the chunk reads and deletes of
+//! `src/core/engine-sql/chunk-reads.ts`, and get_page's chunk reads (readWindowChunk, countPageChunks).
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
 //! Each method decodes its arguments, runs one `Store` call on the pool through `Brain::run`,
@@ -17,6 +17,28 @@ use crate::store_binding::{Brain, arg};
 
 #[napi]
 impl Brain {
+    /// `readWindowChunk(chunkId, pageId)`: `{ chunk_text, chunk_source, occurrence_id,
+    /// projected_byte_start, projected_byte_end }`, or `null`.
+    #[napi]
+    pub fn read_window_chunk<'env>(
+        &self,
+        env: &'env Env,
+        chunk_id: i64,
+        page_id: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_window_chunk(chunk_id, page_id))
+    }
+
+    /// `countPageChunks(pageId)`: `{ total, embedded }`.
+    #[napi]
+    pub fn count_page_chunks<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.count_page_chunks(page_id))
+    }
+
     /// `getChunkPage(slug, { sourceId, fromIndex, limit })`: `{ chunks, total_chunks,
     /// max_chunk_index }`.
     #[napi]
