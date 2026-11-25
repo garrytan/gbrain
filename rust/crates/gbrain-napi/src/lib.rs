@@ -17,6 +17,8 @@ mod families;
 pub mod pool;
 #[cfg_attr(test, allow(dead_code))]
 mod store_binding;
+#[cfg_attr(test, allow(dead_code))]
+mod text_binding;
 
 /// A digest of the `rust/` sources the addon was built from. `build.rs` documents how it is
 /// computed. Reported to JavaScript as `engineBuild`.
