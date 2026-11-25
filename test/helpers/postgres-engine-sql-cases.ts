@@ -1751,7 +1751,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readAdmissionSource': OOS.writeMisc,
   'sharedSkillPackTablePresent': OOS.writeMisc,
   'listSharedSkillPackRoots': OOS.writeMisc,
-  'getWorktreeBinding': OOS.writeMisc, 'listHostTopologyRows': OOS.writeMisc, 'listWorktreeMembers': OOS.writeMisc,
+  'getWorktreeBinding': OOS.writeMisc, 'listHostTopologyRows': OOS.writeMisc, 'listHostRepositoryRoots': OOS.callerRawSql, 'listPendingGitEffectPaths': OOS.callerRawSql, 'listWorktreeMembers': OOS.writeMisc,
   'worktreeClaimStore': OOS.worktreeClaim,
   'readWriterAdminState': OOS.writerAdmin,
   'writerAdminStore': OOS.writerAdmin,

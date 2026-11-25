@@ -163,6 +163,12 @@ impl Brain {
         })
     }
 
+    /// `listUnboundSourcePages()`: the sources holding live pages written database-only to an unbound source.
+    #[napi]
+    pub fn list_unbound_source_pages<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_unbound_source_pages())
+    }
+
     /// `bumpPageKnowledgeRevision(pageId)`: a new knowledge revision for the page.
     #[napi]
     pub fn bump_page_knowledge_revision<'env>(

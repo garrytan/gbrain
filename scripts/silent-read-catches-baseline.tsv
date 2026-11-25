@@ -110,12 +110,10 @@ src/commands/doctor/checks/fence-integrity.ts#fenceIntegrityResult	promise_catch
 src/commands/doctor/checks/folder-access.ts#runFolderAccess	promise_catch_empty	1
 src/commands/doctor/checks/foreign-writers.ts#checkoutOf	catch_empty	1
 src/commands/doctor/checks/foreign-writers.ts#enforceGuardSince	catch_empty	1
-src/commands/doctor/checks/foreign-writers.ts#pendingEffectPaths	capability_refusal_swallowed	1
 src/commands/doctor/checks/foreign-writers.ts#pendingEffectPaths	catch_empty	1
 src/commands/doctor/checks/foreign-writers.ts#readReflog	catch_empty	1
 src/commands/doctor/checks/foreign-writers.ts#reflogs	catch_empty	1
 src/commands/doctor/checks/foreign-writers.ts#reflogs>walk	catch_empty	1
-src/commands/doctor/checks/foreign-writers.ts#repositories	capability_refusal_swallowed	1
 src/commands/doctor/checks/foreign-writers.ts#repositories	catch_empty	2
 src/commands/doctor/checks/git-convergence.ts#sourceRoots	promise_catch_empty	1
 src/commands/doctor/checks/git-convergence.ts#unwatchedDurableRoots	capability_refusal_swallowed	1

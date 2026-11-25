@@ -16,10 +16,11 @@
  *    and the checks' own tests use keys that sort the same in every locale, on PGLite. CI's Postgres runs in C.UTF-8.
  *    Every case here mixes `a-z`, `ab` and `ac` (or `a.b` and `a_b` where the key allows them); run it against an en_US
  *    Postgres to see it fail.
- *  - Seam: each case seeds typed engine state where a typed method exists (sources, pages, ingest log) and the
- *    persistence tables through raw SQL, which have no typed writer. `requires: 'raw_sql'` makes the Rust arm end on the
- *    typed `engine_capability_missing` refusal at the first raw statement: the doctor reads these tables through
- *    `executeRaw`, which the Rust CLI has no SQL for. Only returned orders are compared, never ids or timestamps.
+ *  - Seam: each case seeds through typed engine members: sources, pages, the ingest log, counters, write requests, the
+ *    database-only marker (detachPageOrigin) and the worktree and host bindings (the claim store). The extract_health
+ *    case still seeds its rollup with SQL here; the extract-rollup-readers branch converts it. Three cases keep a named stop on the Rust arm: persistence_capacity's holders seed requests aged past the stall
+ *    window, which no typed writer can backdate (`requires: 'raw_sql'`); owner_host_stale and maintenance_write_drift need
+ *    managed writes (`requires: 'managed_persistence'`). Only returned orders are compared, never ids or timestamps.
  */
 import { describe, expect } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -70,9 +71,6 @@ const inOrder = (text: string, needles: readonly string[]): boolean => {
   }
   return true;
 };
-
-/** A check that swallows its own read error would end a Rust arm on a result, not on the typed refusal the arm expects: probe raw SQL first. */
-const needRawSql = (engine: BrainEngine) => engine.executeRaw('SELECT 1');
 
 async function setLimit(engine: BrainEngine, key: string, value: number): Promise<void> {
   await engine.executeRaw(`INSERT INTO config(key,value) VALUES($1,$2) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value`, [key, String(value)]);
@@ -184,38 +182,43 @@ describe('doctor persistence reads sort text keys by byte', () => {
     return out;
   });
   parityTest('unbound_source lists the sources holding database-only pages by byte id', {
-    methods: ['executeRaw', 'putPage'], requires: 'raw_sql',
+    methods: ['putPage', 'getPage', 'detachPageOrigin', 'listUnboundSourcePages'],
   }, async (engine, backend) => {
     const { checkUnboundSource } = await import('../../src/commands/doctor/checks/unbound-source.ts');
     for (const id of SRC) {
       await createSource(engine, backend, id);
       await engine.putPage('notes/p', { type: 'note', title: id, compiled_truth: 'x', timeline: '' }, { sourceId: id });
+      // The same row the raw UPDATE wrote: no file path or uri, database-only for an unbound source.
+      await engine.detachPageOrigin(Number((await engine.getPage('notes/p', { sourceId: id }))!.id), 'unbound_source');
     }
-    await engine.executeRaw(`UPDATE pages SET database_only_reason='unbound_source',source_path=NULL,source_uri=NULL WHERE source_id = ANY($1::text[])`, [[...SRC]]);
     const check = await checkUnboundSource(engine);
     const out = { sources: (detailsOf(check).sources as { source_id: string }[]).map(s => s.source_id), message: inOrder(check.message, SRC_BYTES.map(id => `${id}: 1`)) };
     expect(out).toEqual({ sources: SRC_BYTES, message: true });
     return out;
   });
 
+  // Contention persists when a source has more than 10 deferred writes or its oldest is over an hour old; the ingest log
+  // takes no timestamp, so each source gets 11 deferrals (the count arm) instead of one aged row.
   parityTest('facts_extraction_health lists sources, and the sources whose writes stay deferred, by byte id', {
-    methods: ['executeRaw', 'logIngest'], requires: 'raw_sql',
+    methods: ['logIngest', 'listPersistentWriterContention'],
   }, async (engine, backend) => {
     const { factsExtractionEntry } = await import('../../src/commands/doctor/checks/knowledge-health.ts');
     const { WRITE_DEFERRED_UNADMITTED } = await import('../../src/core/facts/absorb-log.ts');
+    const DEFERRED = 11;
     for (const id of SRC) {
       await createSource(engine, backend, id);
-      await engine.logIngest({ source_id: id, source_type: 'facts:absorb', source_ref: 'notes/p', pages_updated: [], summary: `${WRITE_DEFERRED_UNADMITTED}: writer_lock_unavailable` });
+      for (let i = 0; i < DEFERRED; i++) {
+        await engine.logIngest({ source_id: id, source_type: 'facts:absorb', source_ref: 'notes/p', pages_updated: [], summary: `${WRITE_DEFERRED_UNADMITTED}: writer_lock_unavailable` });
+      }
     }
-    await engine.executeRaw("UPDATE ingest_log SET created_at = now() - interval '2 hours' WHERE source_type='facts:absorb'");
     const checks = await runEntry(factsExtractionEntry, engine);
     const check = named(checks, 'facts_extraction_health');
     const contention = detailsOf(check).persistent_writer_contention as { source_id: string }[];
     const out = {
       status: check.status,
-      summary: inOrder(check.message, SRC_BYTES.map(id => `${id}: 1 ${WRITE_DEFERRED_UNADMITTED}`)),
+      summary: inOrder(check.message, SRC_BYTES.map(id => `${id}: ${DEFERRED} ${WRITE_DEFERRED_UNADMITTED}`)),
       contention: contention.map(c => c.source_id),
-      contended: inOrder(check.message, SRC_BYTES.map(id => `source ${id}: 1 facts write(s) deferred`)),
+      contended: inOrder(check.message, SRC_BYTES.map(id => `source ${id}: ${DEFERRED} facts write(s) deferred`)),
       fix: check.fix?.argv,
     };
     expect(out).toEqual({ status: 'warn', summary: true, contention: SRC_BYTES, contended: true, fix: ['gbrain', 'sources', 'writer', 'status', '--source', SRC_BYTES[0]!, '--json'] });
@@ -361,10 +364,9 @@ describe('doctor persistence reads sort text keys by byte', () => {
   });
 
   parityTest('foreign_writers scans the repositories bound to this host in byte path order', {
-    methods: ['executeRaw'], requires: 'raw_sql',
+    methods: ['transaction', 'worktreeClaimStore', 'listHostRepositoryRoots'],
   }, async engine => {
     const { foreignWritersEntry } = await import('../../src/commands/doctor/checks/foreign-writers.ts');
-    await needRawSql(engine);
     const dir = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-collate-foreign-')));
     try {
       const out = await withEnv({ GBRAIN_HOME: join(dir, 'home') }, async () => {
@@ -373,8 +375,13 @@ describe('doctor persistence reads sort text keys by byte', () => {
           const root = join(dir, 'repos', name);
           mkdirSync(root, { recursive: true });
           execFileSync('git', ['init', '-q', root], { stdio: 'ignore' });
-          const [tree] = await engine.executeRaw<{ id: string }>('INSERT INTO persistence_worktrees(owner_host_id,heartbeat_at) VALUES($1::uuid,now()) RETURNING id::text', [host]);
-          await engine.executeRaw('INSERT INTO persistence_host_bindings(worktree_id,host_id,local_path,coordination_path) VALUES($1::uuid,$2::uuid,$3,$3)', [tree!.id, host, root]);
+          // The worktree and its host binding through the claim store, as the unmanaged writer claim records them.
+          const tree = randomUUID();
+          await engine.transaction(async tx => {
+            const store = await tx.worktreeClaimStore();
+            await store.insertWorktree({ id: tree, ownerHostId: host });
+            await store.insertHostBinding({ worktreeId: tree, hostId: host, localPath: root, coordinationPath: root });
+          });
         }
         const [check] = await runEntry(foreignWritersEntry, engine);
         return (detailsOf(check).window as { common: string }[]).map(w => basename(dirname(w.common)));
@@ -384,11 +391,14 @@ describe('doctor persistence reads sort text keys by byte', () => {
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
+  // managed_persistence held for callers: the drift receipts come from managed page writes (a claimed worktree, the
+  // persistence switch on, submitPageMutation), which an engine without managed_persistence does not run. The case takes
+  // that guard first, so the Rust arm stops by name where a real managed write would, as owner_host_stale does.
   parityTest('maintenance_write_drift samples the drifted pages by byte slug, from the recent receipts then the older ones', {
-    methods: ['executeRaw', 'transaction', 'setConfig'], requires: 'raw_sql',
+    methods: ['executeRaw', 'transaction', 'setConfig'], requires: 'managed_persistence',
   }, async (engine, backend) => {
     const { maintenanceWriteDriftCheck } = await import('../../src/commands/doctor/checks/maintenance-drift.ts');
-    await needRawSql(engine);
+    requireManagedPersistence(engine, 'submitPageMutation', 'a managed page write publishes through a claimed worktree');
     const dir = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-collate-drift-')));
     const root = join(dir, 'brain');
     mkdirSync(root);

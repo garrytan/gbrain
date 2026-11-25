@@ -424,3 +424,26 @@ fn revision_bump_key_removal_and_type_change_follow_the_revision_trigger() {
     assert_ne!(revision(&store, "notes/k"), r2);
     assert_eq!(page(&store, "notes/k")["type"], "concept");
 }
+
+#[test]
+fn unbound_source_pages_count_the_live_database_only_pages_per_source() {
+    let dir = TempDir::new("wg-unbound");
+    let store = open(&dir);
+    assert!(store.list_unbound_source_pages().unwrap().is_empty());
+    let a = put(&store, "notes/a", Some("notes/a.md"));
+    let b = put(&store, "notes/b", None);
+    let c = put(&store, "notes/c", None);
+    put(&store, "notes/d", None);
+    store.detach_page_origin(a, "unbound_source").unwrap();
+    store.detach_page_origin(b, "unbound_source").unwrap();
+    store.detach_page_origin(c, "detached").unwrap();
+    let rows = store.list_unbound_source_pages().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        (rows[0].source_id.as_str(), rows[0].pages, rows[0].bound),
+        ("default", 2, false)
+    );
+    // A soft-deleted page no longer counts.
+    store.soft_delete_page("notes/b", Some("default")).unwrap();
+    assert_eq!(store.list_unbound_source_pages().unwrap()[0].pages, 1);
+}

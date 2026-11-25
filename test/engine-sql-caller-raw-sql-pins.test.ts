@@ -2694,6 +2694,20 @@ const PINS: Pin[] = [
      ORDER BY COALESCE(p.effective_date, p.updated_at) DESC, p.id DESC LIMIT ${MAX_ANCHORED}`],
   },
   {
+    from: 'src/commands/doctor/checks/foreign-writers.ts:135 repositories (the host\'s bound roots; at a597e7a6c6)',
+    case: { method: 'listHostRepositoryRoots', variant: 'default', run: e => e.listHostRepositoryRoots('00000000-0000-4000-8000-000000000001') },
+    texts: [`SELECT h.local_path, s.source_id FROM persistence_host_bindings h LEFT JOIN persistence_source_bindings s ON s.worktree_id=h.worktree_id
+          WHERE h.host_id=$1::uuid AND h.local_path IS NOT NULL ORDER BY h.local_path COLLATE "C"`],
+  },
+  {
+    from: 'src/commands/doctor/checks/foreign-writers.ts:174 pendingEffectPaths (the git effects about to commit; at a597e7a6c6)',
+    case: { method: 'listPendingGitEffectPaths', variant: 'default', run: e => e.listPendingGitEffectPaths(null) },
+    texts: [`SELECT e.data->>'relative_path' AS rel, s.local_path AS source_path, h.local_path AS worktree_path
+         FROM persistence_effects e LEFT JOIN sources s ON s.id=e.source_id
+         LEFT JOIN persistence_host_bindings h ON h.worktree_id=e.worktree_id AND h.host_id=$1::uuid
+        WHERE e.kind='git' AND e.state IN ('queued','running') AND e.data ? 'relative_path' LIMIT 10000`],
+  },
+  {
     from: 'src/core/search/entity-anchor.ts:116 applyEntityAnchoring (the anchored page titles; at efeb078093)',
     case: { method: 'readPageTitlesById', variant: 'default', run: e => e.readPageTitlesById([1, 2]) },
     texts: ['SELECT id, title FROM pages WHERE id = ANY($1::int[])'],

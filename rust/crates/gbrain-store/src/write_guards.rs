@@ -5,8 +5,8 @@
 //!
 //! Members: readPageOrigin, listRevivalPages, listOriginClaims, bindPageOrigin, stampPageIngest, sealImportedPage,
 //! readLivePageBody, readPageIndexingState, readInlinePageRegions, readStoredPageTier, hasSegmentStorage,
-//! detachPageOrigin, readPageDatabaseOnlyReason, bumpPageKnowledgeRevision, removePageFrontmatterKeys,
-//! setPageType.
+//! detachPageOrigin, readPageDatabaseOnlyReason, listUnboundSourcePages, bumpPageKnowledgeRevision,
+//! removePageFrontmatterKeys, setPageType.
 //!
 //! Locks: PGLite takes an advisory lock per origin spelling before it lists the claims, so two
 //! writes of one file queue. The store runs one write transaction at a time, so every lock is
@@ -188,6 +188,15 @@ fn claims_of(
         }
     }
     Ok(())
+}
+
+/// One `listUnboundSourcePages` row (`UnboundSourcePageRow`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct UnboundSourcePageRow {
+    pub source_id: String,
+    pub pages: i64,
+    pub bound: bool,
+    pub local_path: Option<String>,
 }
 
 impl Store {
@@ -447,6 +456,46 @@ impl Store {
     ) -> Result<Option<String>> {
         let read = self.read()?;
         Ok(read_page(&*read, source_id, slug)?.and_then(|page| page.database_only_reason))
+    }
+
+    /// `listUnboundSourcePages()`: per source with live pages written database-only to an unbound source
+    /// (`database_only_reason = 'unbound_source'`, no file path or uri once edge whitespace is trimmed), how many,
+    /// whether the source holds a worktree binding at its incarnation, and its local path (for `default` with none,
+    /// the `sync.repo_path` setting). By source id in byte order, as `ORDER BY p.source_id COLLATE "C"`.
+    pub fn list_unbound_source_pages(&self) -> Result<Vec<UnboundSourcePageRow>> {
+        let read = self.read()?;
+        let blank = |v: &Option<String>| {
+            v.as_deref()
+                .is_none_or(|t| t.trim_matches(crate::facts::privacy::EDGE_SPACE).is_empty())
+        };
+        let mut counts: std::collections::BTreeMap<String, i64> = std::collections::BTreeMap::new();
+        for page in crate::pages::all_pages(&*read)? {
+            if page.deleted_at_us.is_none()
+                && page.database_only_reason.as_deref() == Some("unbound_source")
+                && blank(&page.source_path)
+                && blank(&page.source_uri)
+            {
+                *counts.entry(page.source_id).or_insert(0) += 1;
+            }
+        }
+        let mut rows = Vec::new();
+        for (source_id, pages) in counts {
+            let source = crate::sources::read_source(&*read, &source_id)?;
+            let local_path = match source.and_then(|s| s.local_path) {
+                Some(path) => Some(path),
+                None if source_id == crate::sources::DEFAULT_SOURCE => {
+                    crate::config::read_config(&*read, "sync.repo_path")?
+                }
+                None => None,
+            };
+            rows.push(UnboundSourcePageRow {
+                bound: crate::persistence::is_source_claimed(&*read, &source_id)?,
+                source_id,
+                pages,
+                local_path,
+            });
+        }
+        Ok(rows)
     }
 
     /// `bumpPageKnowledgeRevision(pageId)`: a new knowledge revision for the page, live or a

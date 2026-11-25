@@ -2827,6 +2827,8 @@ export class PostgresEngine implements BrainEngine {
   listSharedSkillPackRoots(hostId: string) { return this.writeMiscRead(exec => writeMiscImpl.listSharedSkillPackRoots(exec, hostId)); }
   getWorktreeBinding(sourceId: string, hostId: string | null) { return this.writeMiscRead(exec => writeMiscImpl.getWorktreeBinding(exec, sourceId, hostId)); }
   listHostTopologyRows(hostId: string) { return this.writeMiscRead(exec => writeMiscImpl.listHostTopologyRows(exec, hostId)); }
+  listHostRepositoryRoots(hostId: string) { return this.writeMiscRead(exec => writeMiscImpl.listHostRepositoryRoots(exec, hostId)); }
+  listPendingGitEffectPaths(hostId: string | null) { return this.writeMiscRead(exec => writeMiscImpl.listPendingGitEffectPaths(exec, hostId)); }
   listWorktreeMembers(worktreeId: string) { return this.writeMiscRead(exec => writeMiscImpl.listWorktreeMembers(exec, worktreeId)); }
   worktreeClaimStore(): Promise<WorktreeClaimStore> { return worktreeClaimImpl.worktreeClaimStore(this); }
   readWriterAdminState(opts?: WriterAdminStateOptions): Promise<string> { return writerAdminImpl.readWriterAdminState(this, opts); }
