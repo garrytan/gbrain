@@ -57,10 +57,12 @@ export interface HoldRecheckOptions {
 
 const empty = (): HoldRecheckResult => ({ status: 'ok', checked: 0, deleted: 0, receipts: 0, kept: 0, notes_consumed: 0 });
 
-/** The off switch: unset, a truthy value and a config read failure keep the sweep on. */
+/**
+ * The off switch: unset or a truthy value keeps the sweep on. A failed read throws, so the sweep never runs against an
+ * opt-out it could not read (the maintenance phase reports the failure).
+ */
 export async function orphanSweepEnabled(engine: BrainEngine): Promise<boolean> {
-  // silent-read-ok: a config read failure keeps the documented default (on); the sweep's own reads then fail loudly.
-  return !/^\s*(false|0|off|no)\s*$/i.test(await engine.getConfig(ORPHAN_SWEEP_KEY).catch(() => null) ?? '');
+  return !/^\s*(false|0|off|no)\s*$/i.test(await engine.getConfig(ORPHAN_SWEEP_KEY) ?? '');
 }
 
 interface Note { id: string; source_id: string; hold_id: string; observed_version: string }
