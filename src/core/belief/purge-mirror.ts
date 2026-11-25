@@ -64,13 +64,17 @@ function writeMirrorLine(line: Record<string, unknown>, home: string): void {
   chmodSync(path, 0o600);
 }
 
+const purgeListeners = new Set<() => void>();
+/** Calls `fn` after every purge intent line this process writes (shadow replay capture deletes its epoch). Returns the unsubscribe. */
+export function onPurgeIntent(fn: () => void): () => void { purgeListeners.add(fn); return () => { purgeListeners.delete(fn); }; }
+
 /**
  * Appends and fsyncs the `intent` line inside the purge transaction, before it commits. A mirror that cannot be
  * written refuses the purge with the typed `purge_mirror_unwritable` (review #22): committing without the line would
  * let a later restore bring the content back silently.
  */
 export function appendPurgeIntent(line: Omit<PurgeMirrorIntent, 'recorded_at' | 'kind'>, home = configDir()): void {
-  try { writeMirrorLine({ kind: 'intent', ...line }, home); }
+  try { writeMirrorLine({ kind: 'intent', ...line }, home); for (const fn of purgeListeners) { try { fn(); } catch { /* a listener never fails a purge */ } } }
   catch (error) {
     throw opError('purge_mirror_unwritable', 'This purge could not record itself in the purge mirror, so nothing was purged.',
       `${purgeMirrorPath(home)} could not be written (${(error as NodeJS.ErrnoException).code ?? (error as Error).message}). Make it a writable file owned by the brain's user (mode 0600), then run the purge again with a new request_id.`);

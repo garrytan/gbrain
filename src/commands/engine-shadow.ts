@@ -12,7 +12,7 @@
  * once, in one read-only snapshot, and writes `seed.json` (src/shadow/seed.ts).
  */
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadConfig } from '../core/config.ts';
 import type { EngineConfig } from '../core/types.ts';
@@ -70,6 +70,7 @@ Usage:
   gbrain engine shadow report [--json]
   gbrain engine shadow seed [--json] [--reseed]
   gbrain engine shadow reconcile [--full] [--json]
+  gbrain engine shadow capture on --yes | off | status [--json] | delete --yes
   gbrain engine shadow bench --import <receipt.json> [--json]
   gbrain engine shadow drill [--backup] [--evals] [--json]
 
@@ -98,6 +99,9 @@ compares the whole store with the brain (digests per 500-row interval) and repai
 store to be free, so run it when no serving process holds it. Plain reconcile and --full both run a full pass. status
 shows the follower's lag and coverage, the last pass, fingerprint checks and the allocator check; the fingerprint and
 comparison counts are totals for the current seed.
+
+capture records every engine call (reads and writes) into owner-only files on this machine; it is off by default
+(docs/guides/shadow-capture.md).
 
 drill copies the shadow's own Rust store at one moment through its owner, checks the copy without opening it normally, opens
 it once, deletes the copy and records the result (swap criterion 10, restore drill). It never pauses the shadow. --evals
@@ -213,6 +217,10 @@ export async function runEngineShadow(args: string[], deps: EngineShadowDeps = {
         return 0;
       });
       return await run(dir);
+    }
+    if (sub === 'capture') {
+      const { runShadowCaptureCommand } = await import('./engine-shadow-capture.ts');
+      return await runShadowCaptureCommand(rest, { out, err, now, brain: await resolveBrain(deps) });
     }
     if (sub === 'bench') return await bench(rest, deps, out, err, now);
     const brain = await resolveBrain(deps);
@@ -706,13 +714,17 @@ async function stop(brain: { key: string; dir: string; engine: string }, del: bo
     }
   }
   if (del) {
-    rmSync(brain.dir, { recursive: true, force: true });
+    // One destructive-delete path with `capture delete`: the replay lock first, then the folder.
+    const { deleteReplayState } = await import('../shadow/capture-lock.ts');
+    deleteReplayState(brain.dir, { whole: true });
     out(`Shadow mode is off for brain ${brain.key}; ${brain.dir} is deleted.`);
   } else {
     out(state?.enabled ? `Shadow mode is off for brain ${brain.key}. Running processes stop mirroring within 30 seconds.` : `Shadow mode was already off for brain ${brain.key}.`);
   }
   return hooksLeft ? 1 : 0;
 }
+/** Test seam: `stop` with no primary (a PGLite brain takes no writer hooks). */
+export const __stopForTests = (brain: { key: string; dir: string; engine: string }, del: boolean, out: (l: string) => void) => stop(brain, del, {}, out, out, () => new Date());
 
 function report(brain: { key: string; dir: string }, json: boolean, out: (l: string) => void, now: () => Date): number {
   const r = buildProvisionalReport(brain.dir, brain.key, readShadowState(brain.dir), now());

@@ -30,8 +30,9 @@ function spend(budget: CaptureBudget | undefined, bytes: number): void {
   if (budget.left < 0) throw new CaptureTooLargeError('capture over budget');
 }
 
+/** A cancellation signal (this realm's or another's), never a caller's data: only these are left out. */
 function isAbortSignal(value: object): boolean {
-  return typeof AbortSignal !== 'undefined' && value instanceof AbortSignal;
+  return (typeof AbortSignal !== 'undefined' && value instanceof AbortSignal) || Object.prototype.toString.call(value) === '[object AbortSignal]';
 }
 
 /** Plain-JSON form of a value; never throws on cycles (a repeated object becomes `{ "$cycle": true }`). */
@@ -64,7 +65,6 @@ export function encodeValue(value: unknown, seen: WeakSet<object> = new WeakSet(
     if (obj instanceof Set) return { $set: [...obj].map((v) => encodeValue(v, seen, budget)) };
     const out: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(obj)) {
-      if (key === 'signal') continue;
       spend(budget, key.length + 4);
       if (item === undefined) continue; // an option left undefined stays absent, as JSON would have it; a null would be a different option
       const e = encodeValue(item, seen, budget);
