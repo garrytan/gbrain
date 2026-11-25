@@ -225,9 +225,13 @@ a remote caller reads through the remote read allow-list and sends no writes or 
 | same `req`, other arguments | `idempotency_conflict`; nothing runs |
 | refused before it ran (`owner_busy`, a credential or protocol refusal) | no record; the client's resend is fresh |
 
-The client resends every waiting call with `retry: true` after a reconnect (bounded at 10 s), except calls inside a
-transaction, which rolled back with the connection. It retries `owner_busy` with backoff inside the caller's deadline
-(60 s when there is none), so a caller sees `timeout` only at its own deadline (decision R).
+The client resends every waiting call after a reconnect (bounded at 10 s): with `retry: true` when a copy of it was
+written and no answer since says it never ran, so the server answers by its request id and a write never runs twice;
+fresh when it was never written or its last answer was `owner_busy`. Calls inside a transaction are not resent: their
+transaction rolled back with the connection. A connection that dropped while idle reconnects on the next call; when
+no connection comes back, a call ends `owner_unavailable`, `outcome_unknown` if it may have run, else `not_sent`. It
+retries `owner_busy` with backoff inside the caller's deadline (60 s when there is none), so a caller sees `timeout`
+only at its own deadline (decision R).
 
 Positions: on the single-writer store every commit is alone in its batch, so the server returns
 `{ sequence: <commit sequence>, index: 0 }`, which is exact. On the optimistic store

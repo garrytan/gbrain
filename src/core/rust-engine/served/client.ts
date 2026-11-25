@@ -68,6 +68,8 @@ export interface ConnectServedOptions {
   timeoutMs?: number;
   /** Capabilities to offer (default: all this build knows). */
   caps?: readonly string[];
+  /** How long a lost connection is retried before its calls end `owner_unavailable` (default 10 s). */
+  reconnectMs?: number;
 }
 
 export interface ServedConnection extends OwnerConnection {
@@ -94,7 +96,16 @@ interface Pending {
   reject(error: unknown): void;
   cleanup(): void;
   busyUntil: number;
+  busyAttempts: number;
   txn?: string;
+  /**
+   * True once a copy of the frame was written and no answer since says it never ran (`owner_busy`): such a call may have
+   * run, so a resend after a reconnect is a retry the server answers by its request id. False before the first write and
+   * after a busy answer, so its resend is fresh (follow-up L3-F2).
+   */
+  mayHaveRun: boolean;
+  /** Bumped by every write of the frame, so a stale busy backoff never sends a second copy. */
+  attempt: number;
 }
 
 function callDeadline(): { deadlineAt?: number; readDeadlineAt?: number } {
@@ -120,6 +131,30 @@ function lastKey(path: string): string {
 function callerScope(): { sv: number | null } | undefined {
   const scoped = engineScopeStore.getStore();
   return scoped ? { sv: schemaVersionSeen(scoped) ?? null } : undefined;
+}
+
+/**
+ * A call's arguments on the wire: signals collected, a void notification key kept as a notification, any other function
+ * a callback the server calls back (with the `callbacks` capability), and a transaction handle a reference.
+ */
+function encodeCallArgs(args: unknown[], member: string, caps: ReadonlySet<string>, callbacks: Map<string, (...args: unknown[]) => unknown>,
+  signals: Set<AbortSignal>): Wire {
+  return encodeValue(args, {
+    onSignal: signal => { signals.add(signal); return { $t: 'signal' }; },
+    onFunction: (fn, path): Wire => {
+      const table = grouperTableOf(fn);
+      if (table) return { $t: 'fn', grouper: table };
+      const key = String(callbacks.size);
+      callbacks.set(key, fn as (...a: unknown[]) => unknown);
+      if (OWNER_IPC_CALLBACK_KEYS.has(lastKey(path))) return { $t: 'fn', k: key };
+      if (!caps.has('callbacks')) throw ownerIpcRefusal(member, `its argument ${path.replace(/^value/, 'args')} is a function, and functions do not cross the owner socket`);
+      return { $t: 'fn', k: key, r: 1 };
+    },
+    onObject: value => {
+      const ref = (value as { __servedTxRef?: string }).__servedTxRef;
+      return typeof ref === 'string' ? { $t: 'txref', id: ref } : undefined;
+    },
+  }, 'value');
 }
 
 /** Opens one transport to the endpoint and resolves once it is connected (TLS verified). */
@@ -225,27 +260,44 @@ export async function connectServed(url: string, opts: ConnectServedOptions = {}
     refresh();
   };
 
-  const onLost = () => {
-    if (closedByUser) { failAll(false); return; }
-    // Calls inside a transaction cannot be resent: their transaction rolled back with the connection.
-    for (const [id, call] of pending) if (call.txn) { pending.delete(id); call.cleanup(); call.reject(servedGone(call.member, true)); }
-    if (!pending.size) return;
-    reconnecting ??= (async () => {
-      const until = Date.now() + DEFAULT_RECONNECT_MS;
-      for (let wait = 50; ; wait = Math.min(1000, wait * 2)) {
-        try { await establish(); break; } catch (error) {
-          if (Date.now() + wait >= until) { failAll(true); return; }
-          if ((error as { code?: string }).code === 'permission_denied') { failAll(true); return; }
-          await new Promise(r => setTimeout(r, wait));
-        }
-      }
-      // Resend every waiting call with its own request id, marked as a retry.
-      for (const call of pending.values()) { call.frame.retry = true; write(call.frame); }
-    })().finally(() => { reconnecting = null; });
+  /** Writes a pending call's frame once more; a call written may have run until an answer says otherwise. */
+  const sendCall = (call: Pending): boolean => {
+    call.frame.retry = call.mayHaveRun;
+    call.attempt++;
+    const written = write(call.frame);
+    if (written) call.mayHaveRun = true;
+    return written;
   };
 
-  const failAll = (sent: boolean) => {
-    for (const call of pending.values()) { call.cleanup(); call.reject(servedGone(call.member, sent)); }
+  /**
+   * Reconnects within the reconnect budget, then resends every waiting call: as a retry when it may have run (the server
+   * answers it by its request id, never running a write twice), fresh when it never ran. When no connection comes back,
+   * each call ends `owner_unavailable`, `outcome_unknown` if it may have run, else `not_sent`.
+   */
+  const reconnect = (): Promise<void> => (reconnecting ??= (async () => {
+    const until = Date.now() + (opts.reconnectMs ?? DEFAULT_RECONNECT_MS);
+    for (let wait = 50; ; wait = Math.min(1000, wait * 2)) {
+      try { await establish(); lost = false; break; } catch (error) {
+        if (Date.now() + wait >= until || (error as { code?: string }).code === 'permission_denied') { failAll(); return; }
+        await new Promise(r => setTimeout(r, wait));
+      }
+    }
+    for (const call of pending.values()) sendCall(call);
+  })().finally(() => { reconnecting = null; }));
+
+  /** Set when the connection dropped with no call waiting: the next call reconnects first. */
+  let lost = false;
+
+  const onLost = () => {
+    if (closedByUser) { failAll(); return; }
+    // Calls inside a transaction cannot be resent: their transaction rolled back with the connection.
+    for (const [id, call] of pending) if (call.txn) { pending.delete(id); call.cleanup(); call.reject(servedGone(call.member, call.mayHaveRun)); }
+    if (!pending.size) { lost = true; return; }
+    void reconnect();
+  };
+
+  const failAll = () => {
+    for (const call of pending.values()) { call.cleanup(); call.reject(servedGone(call.member, call.mayHaveRun)); }
     pending.clear();
   };
 
@@ -297,9 +349,14 @@ export async function connectServed(url: string, opts: ConnectServedOptions = {}
     // owner_busy: the call never ran; send it again (not as a retry: the server forgot it) within the caller's budget.
     const code = (decoded as { code?: unknown } | null)?.code;
     if (frame.ok !== true && code === 'owner_busy' && Date.now() < call.busyUntil) {
-      const delay = Math.min(1000, 25 * 2 ** Math.min(6, Number(call.frame.busy_attempt ?? 0)));
-      call.frame.busy_attempt = Number(call.frame.busy_attempt ?? 0) + 1;
-      setTimeout(() => { if (pending.get(frame.id as number) === call) write(call.frame); }, delay).unref?.();
+      // The server says this copy never ran: until the next write, a resend after a drop is fresh.
+      call.mayHaveRun = false;
+      const delay = Math.min(1000, 25 * 2 ** Math.min(6, call.busyAttempts++));
+      const attempt = call.attempt;
+      setTimeout(() => {
+        if (pending.get(frame.id as number) !== call || call.attempt !== attempt || reconnecting || lost) return;
+        sendCall(call);
+      }, delay).unref?.();
       return;
     }
     pending.delete(frame.id as number);
@@ -343,12 +400,20 @@ export async function connectServed(url: string, opts: ConnectServedOptions = {}
         grace = setTimeout(() => endLocally(ownerCallTimeout(member, ms, 'sent')), Math.min(2 ** 31 - 1, ms + CLIENT_DEADLINE_GRACE_MS));
       }
       Object.defineProperty(frame, 'sent_at', { value: startedAt, enumerable: false });
-      pending.set(id, { member, frame, tail: null, callbacks, resolve: resolveCall, reject: rejectCall, cleanup, txn,
-        busyUntil: deadlineAt ?? Date.now() + DEFAULT_BUSY_BUDGET_MS });
+      const call: Pending = { member, frame, tail: null, callbacks, resolve: resolveCall, reject: rejectCall, cleanup, txn,
+        busyUntil: deadlineAt ?? Date.now() + DEFAULT_BUSY_BUDGET_MS, busyAttempts: 0, mayHaveRun: false, attempt: 0 };
+      pending.set(id, call);
       refresh();
-      if (!reconnecting && !write(frame)) {
+      // A connection that dropped (idle, or while this call was being made) reconnects first; the reconnect sends it.
+      if (reconnecting || lost || socket.destroyed) {
+        if (txn) { pending.delete(id); cleanup(); refresh(); rejectCall(servedGone(member, false)); return; }
+        void reconnect();
+        return;
+      }
+      if (!sendCall(call)) {
         pending.delete(id); cleanup(); refresh();
-        rejectCall(ownerIpcRefusal(member, `its arguments are larger than ${SERVED_MAX_FRAME_BYTES} bytes, the most the connection carries`));
+        rejectCall(socket.destroyed ? servedGone(member, false)
+          : ownerIpcRefusal(member, `its arguments are larger than ${SERVED_MAX_FRAME_BYTES} bytes, the most the connection carries`));
       }
     });
   };
@@ -367,22 +432,7 @@ export async function connectServed(url: string, opts: ConnectServedOptions = {}
     if (ambient) signals.add(ambient);
     let wireArgs: Wire;
     try {
-      wireArgs = encodeValue(args, {
-        onSignal: signal => { signals.add(signal); return { $t: 'signal' }; },
-        onFunction: (fn, path): Wire => {
-          const table = grouperTableOf(fn);
-          if (table) return { $t: 'fn', grouper: table };
-          const key = String(callbacks.size);
-          callbacks.set(key, fn as (...a: unknown[]) => unknown);
-          if (OWNER_IPC_CALLBACK_KEYS.has(lastKey(path))) return { $t: 'fn', k: key };
-          if (!caps.has('callbacks')) throw ownerIpcRefusal(member, `its argument ${path.replace(/^value/, 'args')} is a function, and functions do not cross the owner socket`);
-          return { $t: 'fn', k: key, r: 1 };
-        },
-        onObject: value => {
-          const ref = (value as { __servedTxRef?: string }).__servedTxRef;
-          return typeof ref === 'string' ? { $t: 'txref', id: ref } : undefined;
-        },
-      }, 'value');
+      wireArgs = encodeCallArgs(args, member, caps, callbacks, signals);
     } catch (error) {
       if (error instanceof OwnerIpcEncodeError) return Promise.reject(ownerIpcRefusal(member, error.message.replace(/\.$/, '')));
       return Promise.reject(error);
