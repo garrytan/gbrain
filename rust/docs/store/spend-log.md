@@ -69,10 +69,9 @@ Differences from PGLite and PostgreSQL:
   (`test/engine-parity/delegated-grant.test.ts`). The archived-source denial is not exercised on Rust: no served member
   archives a source.
 
-Not served (still raw SQL, so refused on a Rust brain): every other statement on `oauth_clients`, and `oauth_grant_audit`,
-`oauth_tokens` and `oauth_codes` (both now served for the grant flow, see [oauth-codes.md](oauth-codes.md)), which belong to the OAuth family. No writer call site of `insertOauthClient` or
-`updateOauthClientBudget` is switched, because each existing writer also writes one of those tables or goes through the
-provider's own connection: `grants/service.ts`, `grants/lifecycle.ts`, `grants/rescope.ts`, `grants/migration.ts`,
-`oauth-grants.ts`, `oauth-provider.ts` (client registration, the token TTL update), `agent-register.ts`, `commands/auth.ts`,
-`trust/min-trust.ts` (its client update is now the typed `patchOauthClient`, see [oauth-clients.md](oauth-clients.md)), `ops/request-tools.ts` (likewise), `shared-skills/restore.ts` and the migrations that backfill it. The existing
-`lockOAuthClient` on a Rust brain resolves without locking: the store admits one write transaction at a time.
+The OAuth client, token and code contracts are documented in [oauth-clients.md](oauth-clients.md),
+[oauth-tokens.md](oauth-tokens.md) and [oauth-codes.md](oauth-codes.md). Engine-backed OAuth client grant persistence uses
+`persistOauthClientGrant`, and client/token read-shared stamps use `setOauthClientReadSharedRevision` and
+`setAccessTokenReadSharedRevision`. Engine-backed scope-source checks use `readScopeSourceConfigs`. Callers that still
+issue raw SQL refuse on Rust at that statement. The existing `lockOAuthClient` on a Rust brain resolves without locking:
+the store admits one write transaction at a time.
