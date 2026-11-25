@@ -161,6 +161,10 @@ const sweptReads: readonly LockedRead[] = [
   ['listCorePageRows', 'pages', 'always_load', e => e.listCorePageRows({ limit: 10 })],
   // A row lock: a read-only deadline transaction would refuse it, so "with budget left answers" pins the read-write bound.
   ['lockRegisteredSourceIds', 'sources', 'FROM sources WHERE id = ANY', e => e.lockRegisteredSourceIds(['default'])],
+  // The owner write's reads of the stored page (persistence/page-visibility.ts ownerRewriteOf, authorizePageVisibility's hiddenUnder).
+  ['readPagePrivacyHidden', 'pages', 'AS hidden FROM pages p', e => e.readPagePrivacyHidden('default', 'notes/seal-probe')],
+  ['readLinkTargetPages', 'pages', 'AS visible', e => e.readLinkTargetPages('default', ['notes/seal-probe'], null)],
+  ['readWriteVisibilityProbe', 'pages', 'AS identity_may_open', e => e.readWriteVisibilityProbe('default', 'notes/seal-probe')],
 ];
 
 describe.skipIf(!hasDatabase())('typed reads swept into the preparation set keep the deadline (Postgres)', () => {

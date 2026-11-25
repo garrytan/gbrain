@@ -11,8 +11,12 @@
 //!
 //! A page delete marks, as `gbrain_owner_only_mark_derived` does, the page, its takes and timeline rows, every row derived
 //! from those through `derivation_inputs` (transitively, `generations/derivation_inputs.rs`), and every concept or question
-//! that names the page. What SQL marks on a fact, take or timeline delete, and the row-security and unguarded marks, stay
-//! unmarked: the store runs no trigger on those deletes. Nothing here marks on a link delete or a source config
+//! that names the page. A fact, take or timeline row delete marks the same way (`mark_row_before_delete`, SQL's BEFORE
+//! DELETE trigger on `facts`, `takes` and `timeline_entries`): a row that is owner-only by its own lineage, or (a take or a
+//! timeline row) whose page is, is marked with every row derived from it, before it goes. Every store path that deletes one
+//! of those rows calls it (`facts::delete_fact`, `takes::delete_take`, the timeline deletes); the shadow follow does not,
+//! as it copies the primary's marks. The row-security and unguarded marks stay unwritten: the store has no row-level
+//! security and no trigger that can be missing. Nothing here marks on a link delete or a source config
 //! change, because SQL has no trigger on `links` and its sources trigger marks only a source that is deleted. The source
 //! delete (`sources::archive`) removes each page of the source through `pages::remove_page` first, and the
 //! source is still owner-only then, so each page goes through `mark_before_delete`.
@@ -125,6 +129,41 @@ pub(crate) fn mark_before_delete(tx: &mut dyn KvWrite, page: &PageRecord) -> Res
             doomed.push(("pages".to_string(), from.id.to_string()));
         }
     }
+    for (table, id) in doomed {
+        tx.put(&mark_key(&table, &id), b"1")?;
+    }
+    Ok(())
+}
+
+/// Marks what the delete of one fact, take or timeline row (`table`, `id`) would leave unmarked, before it goes
+/// (`gbrain_owner_only_row_deleted` on `facts`, `takes` and `timeline_entries`): when the brain holds owner-only data and
+/// the row is owner-only by its own lineage (a fact also by its source), or a take or timeline row's page (`page_id`) is,
+/// the row and every row derived from it through `derivation_inputs` (`gbrain_owner_only_mark_derived(table, [id])`).
+pub(crate) fn mark_row_before_delete(
+    tx: &mut dyn KvWrite,
+    table: &str,
+    id: u64,
+    source_id: Option<&str>,
+    page_id: Option<u64>,
+) -> Result<()> {
+    let sources = OwnerOnlySources::read(&*tx)?;
+    if !sources.guarded() {
+        return Ok(());
+    }
+    let mut owner_only = sources.row_lineage(&*tx, table, id, source_id)?;
+    if !owner_only
+        && table != "facts"
+        && let Some(page_id) = page_id
+        && let Some(page) = read_page_by_id(&*tx, page_id)?
+    {
+        owner_only = sources.lineage_strict(&*tx, &page)?;
+    }
+    if !owner_only {
+        return Ok(());
+    }
+    let seed = vec![(table.to_string(), id.to_string())];
+    let mut doomed = seed.clone();
+    doomed.extend(derived_closure(&*tx, &seed)?);
     for (table, id) in doomed {
         tx.put(&mark_key(&table, &id), b"1")?;
     }
@@ -329,5 +368,91 @@ mod tests {
         store.delete_page("notes/vault", Some("vault")).unwrap();
         assert!(marked(&store, "default", "atoms/one"));
         assert!(marked(&store, "default", "notes/summary"));
+    }
+
+    /// A hard delete of an owner-only fact, take or timeline row (not of its page) marks the row and what was derived
+    /// from it, as v322's triggers on those tables do; deleting an open fact marks nothing.
+    #[test]
+    fn deleting_an_owner_only_fact_take_or_timeline_row_marks_what_was_derived_from_it() {
+        let store = crate::test_support::store();
+        let source: SourceInput =
+            serde_json::from_value(json!({ "id": "vault", "config": { "owner_only": true } }))
+                .unwrap();
+        store.upsert_source(&source).unwrap();
+        put(&store, "vault", "notes/vault", "note", json!({}));
+        for slug in [
+            "notes/from-fact",
+            "notes/from-take",
+            "notes/from-timeline",
+            "notes/from-open",
+        ] {
+            put(&store, "default", slug, "note", json!({}));
+        }
+        let page_id = |source: &str, slug: &str| {
+            read_page(&*store.read().unwrap(), source, slug)
+                .unwrap()
+                .unwrap()
+                .id
+        };
+        let fact = |source: &str, text: &str| -> u64 {
+            let args: crate::facts::InsertFactArgs = serde_json::from_value(json!({
+                "input": { "fact": text, "entity_slug": "people/a", "source": "mcp:remember" }, "sourceId": source,
+            }))
+            .unwrap();
+            store.insert_fact(&args).unwrap()["id"].as_u64().unwrap()
+        };
+        let held_fact = fact("vault", "a vault claim");
+        let open_fact = fact("default", "an open claim");
+        let vault = page_id("vault", "notes/vault");
+        let take: crate::takes::TakeInput = serde_json::from_value(json!({
+            "page_id": vault, "row_num": 1, "claim": "a vault take", "kind": "fact", "holder": "self", "weight": 1.0, "active": true,
+        }))
+        .unwrap();
+        store.add_takes_batch(&[take]).unwrap();
+        let take_id = crate::takes::page_takes(&*store.read().unwrap(), vault).unwrap()[0].id;
+        let entry: crate::timeline::TimelineInput = serde_json::from_value(
+            json!({ "date": "2026-05-03", "source": "chat", "summary": "a vault event" }),
+        )
+        .unwrap();
+        let options: crate::timeline::AddTimelineOptions =
+            serde_json::from_value(json!({ "sourceId": "vault" })).unwrap();
+        store
+            .add_timeline_entry("notes/vault", &entry, &options)
+            .unwrap();
+        let timeline = timeline_rows(&*store.read().unwrap(), Some(vault)).unwrap()[0].clone();
+        let edge = |derived: &str, table: &str, input: u64| {
+            let args: crate::generations::DerivationInputsArgs = serde_json::from_value(json!({
+                "derived": { "table": "pages", "id": page_id("default", derived).to_string() }, "sourceId": "default",
+                "inputs": [{ "table": table, "id": input.to_string() }],
+            }))
+            .unwrap();
+            store.record_derivation_inputs(&args).unwrap();
+        };
+        edge("notes/from-fact", "facts", held_fact);
+        edge("notes/from-take", "takes", take_id);
+        edge("notes/from-timeline", "timeline_entries", timeline.id);
+        edge("notes/from-open", "facts", open_fact);
+        store
+            .delete_purged_facts(&[held_fact as i64, open_fact as i64], "vault")
+            .unwrap();
+        store
+            .delete_purged_facts(&[open_fact as i64], "default")
+            .unwrap();
+        store.delete_purged_takes(&[take_id as i64]).unwrap();
+        store
+            .write(|tx| crate::timeline::remove_entry(tx, &timeline))
+            .unwrap();
+        let row_marked = |table: &str, id: u64| {
+            is_row_marked(&*store.read().unwrap(), table, &id.to_string()).unwrap()
+        };
+        assert!(
+            row_marked("facts", held_fact)
+                && row_marked("takes", take_id)
+                && row_marked("timeline_entries", timeline.id)
+        );
+        assert!(marked(&store, "default", "notes/from-fact"));
+        assert!(marked(&store, "default", "notes/from-take"));
+        assert!(marked(&store, "default", "notes/from-timeline"));
+        assert!(!row_marked("facts", open_fact) && !marked(&store, "default", "notes/from-open"));
     }
 }

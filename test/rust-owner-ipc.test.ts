@@ -57,6 +57,8 @@ import { reviewedWriterIntent } from './helpers/writer-admin-intent.ts';
 import { loadRustAddon } from '../src/core/rust-engine/addon-loader.ts';
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
 import { errorShape, readScript } from './helpers/owner-ipc-child.ts';
+import { migrateAccessStore } from '../src/core/access/policy-migrate.ts';
+import { readAccessStore } from '../src/core/access/policy.ts';
 import { currentSubmissionAuthority, withSubmissionAuthority, type SubmissionAuthority } from '../src/core/minions/submission-authority.ts';
 
 const CHILD = join(import.meta.dir, 'helpers', 'owner-ipc-child.ts');
@@ -235,6 +237,18 @@ describe('two or more client processes on one owner', () => {
         expect((error as OperationError).detail).toContain(`member=${member}`);
         expect((error as OperationError).detail).toContain('via=owner_ipc');
       }
+    } finally { close(); }
+  });
+
+  // The store switch of `gbrain access rule migrate` runs in a transaction, which does not cross the owner socket: a
+  // client refuses before any write, so no journal row or policy file is left behind to block a later migration.
+  test('access rule migrate from a client refuses before any write', async () => {
+    await owner.executeRaw("INSERT INTO sources (id, name) VALUES ('migr', 'migr') ON CONFLICT (id) DO NOTHING");
+    const { engine, close } = await clientOf(ownerSocketPath(db));
+    try {
+      const error = await migrateAccessStore(engine, 'migr', 'database').then(() => null, e => e);
+      expect([(error as OperationError).code, (error as OperationError).detail?.includes('via=owner_ipc')]).toEqual(['engine_capability_missing', true]);
+      expect([await owner.readUnfinishedAccessMigration('migr'), await readAccessStore(owner, 'migr')]).toEqual([null, null]);
     } finally { close(); }
   });
 

@@ -280,7 +280,7 @@ Every site the silent-read-catches guard lists under rule `capability_refusal_sw
 
 ## Sites to check before relying on them
 
-- Embedding migration (`src/core/embedding-migration.ts` :228 to :1349, `src/commands/migrate-embeddings.ts` :575 and :865, `embedding-migration-retention.ts` :85) is filed as not reached on Rust because it switches the vector column and the Rust store has one fixed vector column. There is no explicit Rust gate in those files. If `gbrain migrate-embeddings` can run on a Rust brain, the census and status reads (:555 to :875) become silent blockers for lane 14.
+- Embedding migration (`src/core/embedding-migration.ts` :228 to :1349, `src/commands/migrate-embeddings.ts` :575 and :865, `embedding-migration-retention.ts` :85) is filed as not reached on Rust because it switches the vector column and the Rust store has one fixed vector column. There is no explicit Rust gate in those files. If `gbrain migrate embeddings` (the command `src/commands/migrate-embeddings.ts` serves) can run on a Rust brain, the census and status reads (:555 to :875) become silent blockers for lane 14.
 - `src/eval/brainbench/*` (3 sites) is filed as not reached on the reading that the benchmark builds its own in-process engine; no gate says so.
 - `src/core/minions/worker.ts:785` (health probe): the worker's readiness loop is gated by `engine.kind === 'postgres'`, but `runHealthCheck` is a separate closure. Filed as unmanaged and silent.
 - `src/core/cycle/derived-write-through.ts:302`: the `kept` list that the caller reports was not followed to its reader. Filed typed-degrade.

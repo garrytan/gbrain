@@ -15,5 +15,15 @@ inventory's `readCatalogSchemaVersion` reads `brain.info().schema_version`, and
 `listCatalogForeignKeys` refuses by name: each family checks its references in code, and the store
 keeps no list of them.
 
+That refusal is a stop by design, not a member waiting for a lane. It is `engine_capability_missing`
+with capability `raw_sql`, outcome `none` and nothing written, and its detail names the member and
+why: `member=listCatalogForeignKeys (the store checks each family's references in code and keeps no
+list of them)`. The graduation callers meet it before any work: the copy order (`copyOrder`) stops
+earlier, at the relation-set read, and the re-copy closure (`fkClosure`) and the target's foreign-key
+check (`verifyForeignKeys`) stop here. None of them answers an empty list, which would read as a store
+with no references. `test/engine-parity/graduation-catalog.test.ts` pins the exact stop on the Rust
+arm, for the member and for `fkClosure`. It stays a stop until the store records its references as
+data.
+
 The tags whose `keys.rs` lines carry no family comment belong to the core store and are listed
 under the family `core`.

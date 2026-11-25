@@ -11,7 +11,8 @@ use crate::store_binding::{Brain, required};
 
 #[napi]
 impl Brain {
-    /// `upsertChronicleRow(w)`: resolves true when the row was written.
+    /// `upsertChronicleRow(w)`: resolves true when the row was written. The row's source and page must exist (the SQL
+    /// foreign keys), else it refuses `source_not_found` or `page_not_found` and writes nothing.
     #[napi]
     pub fn upsert_chronicle_row<'env>(
         &self,

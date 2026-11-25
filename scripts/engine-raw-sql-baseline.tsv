@@ -177,7 +177,6 @@ src/core/bootstrap/verify.ts	execute_raw	3
 src/core/brainstorm/domain-bank.ts	execute_raw	1
 src/core/calibration/domain-aggregators.ts	execute_raw	4
 src/core/calibration/think-ab.ts	execute_raw	2
-src/core/chronicle/backfill.ts	execute_raw	1
 src/core/chunkers/symbol-resolver.ts	execute_raw	7
 src/core/claw-test/seed-pglite.ts	driver_call	1
 src/core/code-graph-readiness.ts	execute_raw	1
@@ -373,7 +372,7 @@ src/core/persistence/connector-google-receipts.ts	execute_raw	1
 src/core/persistence/connector-path.ts	execute_raw	3
 src/core/persistence/connector-reset.ts	execute_raw	1
 src/core/persistence/connector-state.ts	execute_raw	5
-src/core/persistence/connector-sync.ts	execute_raw	27	#9990: callReads forwards a connector call's reads through one memoized call site; it adds no SQL
+src/core/persistence/connector-sync.ts	execute_raw	25	#9990: callReads forwards a connector call's reads through one memoized call site; it adds no SQL
 src/core/persistence/consumer-lane.ts	execute_raw	2
 src/core/persistence/consumer.ts	execute_raw	3
 src/core/persistence/context.ts	execute_raw	1
@@ -439,7 +438,7 @@ src/core/persistence/page-append.ts	execute_raw	2
 src/core/persistence/page-mutations.ts	execute_raw	5
 src/core/persistence/page-prepare.ts	execute_raw	9
 src/core/persistence/page-upload.ts	execute_raw	15
-src/core/persistence/page-visibility.ts	execute_raw	7
+src/core/persistence/page-visibility.ts	execute_raw	5
 src/core/persistence/pending-import.ts	execute_raw	1
 src/core/persistence/physical-root.ts	execute_raw	13
 src/core/persistence/plain-directory-drift.ts	execute_raw	2	#8079: reads and records whether a page revision was written with its file in step (journal receipt join plus agreement checkpoint); persistence protocol state, no typed checkpoint methods yet.
@@ -653,7 +652,7 @@ src/core/trust/label-lowerings.ts	execute_raw	1
 src/core/trust/marker-repair.ts	execute_raw	4
 src/core/trust/owner-actions.ts	execute_raw	6
 src/core/trust/page-handlers.ts	execute_raw	7
-src/core/trust/page-write.ts	execute_raw	2
+src/core/trust/page-write.ts	execute_raw	1
 src/core/trust/propagation.ts	execute_raw	4
 src/core/trust/release-publish.ts	execute_raw	2
 src/core/trust/review.ts	execute_raw	15
