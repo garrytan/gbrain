@@ -983,6 +983,7 @@ export async function computeExtractHealthCheck(
     // at an EXPECTED budget/deadline cap — successful partial progress, not
     // failures. Pre-v141 brains lack the column; retry without it (caps read
     // as 0, i.e. "unknown" — old conflated halt rows keep today's semantics).
+    // The writer stamps UTC dates. Use the same calendar to display a halt's age.
     const rollupQuery = (withExpected: boolean) =>
       `SELECT
          kind,
@@ -994,7 +995,7 @@ export async function computeExtractHealthCheck(
          ${withExpected ? 'SUM(expected_limit_count)' : '0'} AS expected_limit_count,
          SUM(rollup_write_failures) AS rollup_write_failures,
          MAX(updated_at) AS last_updated_at,
-         CURRENT_DATE - MAX(day) FILTER (WHERE halt_count > 0) AS last_halt_age_days
+         (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date - MAX(day) FILTER (WHERE halt_count > 0) AS last_halt_age_days
        FROM extract_rollup_7d
        WHERE day >= CURRENT_DATE - 7
        GROUP BY kind
@@ -1089,7 +1090,7 @@ export async function computeExtractHealthCheck(
         .slice(0, 3)
         .map(k => {
           const ageDays = k.last_halt_age_days;
-          const ageSuffix = ageDays === null ? '' : ageDays <= 0 ? ', last halt today' : `, last halt ${ageDays}d ago`;
+          const ageSuffix = ageDays === null ? '' : ageDays <= 0 ? ', last halt today UTC' : `, last halt ${ageDays}d ago (UTC)`;
           const top = topHaltReason(k.halt_reasons);
           const reasonSuffix = top ? ` (top reason: ${top.reason} ×${top.count})` : '';
           return `${k.kind}=${(k.halt_rate * 100).toFixed(1)}%${ageSuffix}${reasonSuffix}`;
