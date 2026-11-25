@@ -721,6 +721,44 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
     return { all, floored };
   });
 
+  parityTest('listSingleFactMetadata under the remote provenance floor answers inside a caller record: a member, the owner, and a brain with no member-access restrictions', { methods: ['listSingleFactMetadata'] }, async (engine, backend) => {
+    const seed = new Seed(engine);
+    await putCallerPages(engine);
+    // A page derived from a page that names readers: the full form's origin walk hides it, and the short form a brain
+    // with no member-access restrictions renders does not.
+    await engine.putPage('notes/lineage', note('Lineage', '', { derived_from: ['notes/readers'] }));
+    const pages = ['notes/open', 'notes/private', 'notes/readers', 'notes/lineage', 'memory/members/alice-example'];
+    const ids: number[] = [];
+    for (const page of pages) ids.push(...await seed.fence([{ label: page, fact: 'Likes tea', row_num: 1, source_markdown_slug: page, entity_slug: 'people/a' }]));
+    ids.push(await seed.one('no page', { fact: 'Likes tea', entity_slug: 'people/a' }));
+    const records = {
+      member: { identity: ['member:alice-example'] },
+      owner: { owner: true, identity: ['member:alice-example'] },
+      open: { restricted: false, identity: ['member:alice-example'] },
+      ownerOpen: { owner: true, restricted: false, identity: ['member:alice-example'] },
+    } as const;
+    const list = async (sourceId: string, named: number[]) =>
+      (await engine.listSingleFactMetadata({ sourceId, ids: named, remoteFloor: true })).map((r) => seed.name(r.id)).sort();
+    const asRecords = async (read: () => Promise<unknown>) => {
+      const out: Record<string, unknown> = { none: await read() };
+      for (const [name, record] of Object.entries(records)) out[name] = await withCallerAccess({ ...record, identity: [...record.identity] }, read);
+      return out;
+    };
+    const byPage = await asRecords(() => list(SRC, ids));
+    // The floor judges every provenance page by the empty identity, so the caller's own member page stays hidden too.
+    const floor = ['no page', 'notes/open'];
+    const short = ['no page', 'notes/lineage', 'notes/open'];
+    expect(byPage).toEqual({ none: floor, member: floor, owner: floor, open: short, ownerOpen: short });
+    // An owner-only source: with no schema version the closed form hides every fact for any caller but the owner.
+    await createSource(engine, backend, 'fact-chat', { kind: 'imessage' });
+    const chat = await seed.one('chat-row', { fact: 'Likes tea', entity_slug: 'people/a' }, 'fact-chat');
+    const ownerOnly = await asRecords(async () => ({ open: await list(SRC, [ids[0]!]), chat: await list('fact-chat', [chat]) }));
+    const hidden = { open: [], chat: [] };
+    const shown = { open: ['notes/open'], chat: ['chat-row'] };
+    expect(ownerOnly).toEqual({ none: hidden, member: hidden, owner: shown, open: hidden, ownerOpen: shown });
+    return { byPage, ownerOnly };
+  });
+
   parityTest('listUnfencedFactRows lists the active unfenced rows in source, entity, id order with whether the entity has a live page', { methods: ['listUnfencedFactRows'] }, async (engine) => {
     const seed = new Seed(engine);
     await engine.putPage('people/alice', note('Alice', 'a'));
