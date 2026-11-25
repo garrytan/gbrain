@@ -554,6 +554,23 @@ jobs:
           jq -e '.rust_addon.installed == true and .rust_addon.override == false and .probe.ok == true' "$work/status.json"
           echo "the published addon installed and opened a Rust brain"
 
+  # The production soak on the new tag's exact tree. Its search speed gate decides
+  # whether this release may reach stable (docs/RELEASING.md#search-speed-gate).
+  # A workflow_dispatch from GITHUB_TOKEN starts a run, unlike its tag push.
+  soak:
+    needs: [version, ci-gate, release]
+    if: needs.version.outputs.exists == 'false' && needs.ci-gate.outputs.publish == 'true' && !inputs.addon_dry_run
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write  # dispatch production-soak.yml (scoped to this job only)
+    steps:
+      - name: Dispatch the production soak on v${{ needs.version.outputs.version }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: gh workflow run production-soak.yml -R "$GITHUB_REPOSITORY" --ref "v$RELEASE_VERSION"
+
   # [G7/S3#4] Publishes the rendered agent-workspace template repo (the
   # GitHub "Use this template" door) from CI ONLY — no human pushes it by
   # hand, so what adopters clone is exactly what this repo reviewed. Guarded
