@@ -4,7 +4,7 @@
 <!-- Regenerate: bun run scripts/generate-tool-catalog.ts -->
 <!-- Freshness-guarded by scripts/check-tool-catalog-fresh.sh (bun run verify). -->
 
-Every non-localOnly operation on the MCP surface: 186 tools across 29 areas. **Starter** marks membership in the ~41-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
+Every non-localOnly operation on the MCP surface: 190 tools across 30 areas. **Starter** marks membership in the ~42-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
 
 ## admin
 
@@ -76,6 +76,14 @@ Every non-localOnly operation on the MCP surface: 186 tools across 29 areas. **S
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
 | `purge_fact` | Owner-only, trusted local CLI on the brain host (`gbrain forget <id> --purge`). | admin |  |  |
+
+## household
+
+| Tool | Description | Scope | Starter | Gate |
+|---|---|---|---|---|
+| `household_add` | Add one household record (supply, birthday, bill, deadline, appointment, return or credit). | write |  |  |
+| `household_due` | Household items overdue, at risk or coming up (bills, supplies, birthdays, school dates, returns, credits), ranked, each with a reason, its slug and a proposed action. | read | yes |  |
+| `household_mark` | Record what happened to a household record: done, bought, paid, booked, submitted, returned, used, gift_ideas, gift_bought, given, skip, pause, resume or archive. | write |  |  |
 
 ## identity
 
@@ -259,6 +267,7 @@ Every non-localOnly operation on the MCP surface: 186 tools across 29 areas. **S
 |---|---|---|---|---|
 | `assemble_evidence` | Deliver whole evidence for an ordered list of search hits (each {source_id, slug, chunk_id} from a prior search/query result): the same windows, sections or pages `query` returns with return_unit, packed into token_budget. | read |  |  |
 | `cache_stats` | Semantic query-cache introspection: resolved knobs (enabled, similarity threshold, TTL) plus row counts and total hits. | admin |  |  |
+| `check_claims` | Check the numbers in a draft against allowed-claims pages (type: facts, claims: allowed) before stating them. | read |  |  |
 | `query` | Hybrid search for concept/landscape questions and people/companies/projects by topic; adds fact rows. | read | yes |  |
 | `rate_answer` | Rate how useful an answer's retrieved evidence was, so this brain ranks better next time (zero LLM calls). | write |  |  |
 | `search` | Cheap hybrid search, no LLM expansion, top 20: exact tokens, names, field values. | read | yes |  |

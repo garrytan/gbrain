@@ -18,10 +18,11 @@ import { epochWatch } from './evidence-epoch.ts';
 import { readSeedRecord } from './seed.ts';
 import { MirrorQueue, zeroUsage } from './mirror.ts';
 import { SampleRegistry } from './samples.ts';
-import { readShadowState, type ShadowState } from './state.ts';
+import { readShadowState, writeSampleRate, type ShadowState } from './state.ts';
 import { ShadowSupervisor, type ShadowSupervisorOptions } from './supervisor.ts';
 import { appendUsage } from './usage.ts';
 import { wrapShadowEngine } from './wrapper.ts';
+import { createWriteSampler } from './write-capture.ts';
 import { WriterObserver, type WriterIdentity } from './writer-observations.ts';
 import { ensureWriterHooks, primaryTakesWriterHooks } from './writer-hooks.ts';
 import { claimOwner } from '../core/persistence/claim-phase.ts';
@@ -42,6 +43,11 @@ export interface AttachShadowDeps {
    * missed. A brain with no seed follows nothing.
    */
   follow?: FollowOptions;
+  /**
+   * True once the shadow child records write comparisons (the locked write tally, a separate PR). Left out, no write is sampled and no pre-read is taken,
+   * so primary writes pay nothing for evidence that would be dropped.
+   */
+  recordsWriteComparisons?: boolean;
 }
 
 export interface AttachedShadow<E extends BrainEngine> {
@@ -135,7 +141,9 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
   });
   const follow = follower ? { sink: follower } : deps.follow;
   const onCommittedWrite = () => observer.note();
-  return { engine: wrapShadowEngine(engine, sink, { sampleRate: state.sample_rate, random: deps.random, follow, onCommittedWrite }), queue, supervisor, follower, reconciler, observer, lsnWatch: watch };
+  // Write comparisons need the seeded store's epoch to count under (a brain that was never seeded samples no writes) and a recorder for their outcomes (none is wired yet).
+  const writes = reads && deps.recordsWriteComparisons ? createWriteSampler({ rate: writeSampleRate(state), random: deps.random, send: (line) => supervisor.send(line), generation: () => follower?.published, active: () => supervisor.active() }) : undefined;
+  return { engine: wrapShadowEngine(engine, sink, { sampleRate: state.sample_rate, random: deps.random, follow, onCommittedWrite, writes }), queue, supervisor, follower, reconciler, observer, lsnWatch: watch };
 }
 
 /** This process's writer identity: the engine's host id, the name its pools give their connections, its kind, version. */

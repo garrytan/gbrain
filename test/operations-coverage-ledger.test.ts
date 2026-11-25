@@ -180,6 +180,7 @@ const LEDGER: Record<string, string> = {
   extraction_review: 'test/extraction-review.test.ts',
   extract_facts: 'test/extract-facts-embed-warn.serial.test.ts',
   recall: 'test/facts-recall-audit-rows.test.ts',
+  check_claims: 'test/precedence-claims-c3.test.ts',
   context_pack: 'test/ambient-recall.test.ts',
   delta: 'test/ambient-recall.test.ts',
   forget_fact: 'test/e2e/facts-forget.test.ts',
@@ -225,6 +226,10 @@ const LEDGER: Record<string, string> = {
   // the ops suite covers remote posture, grant denial, and redaction arms.
   open_loops: 'test/ops-loops.test.ts',
   loops_close: 'test/ops-loops.test.ts',
+  household_due: 'test/household-ops.test.ts',
+  household_add: 'test/household-ops.test.ts',
+  household_mark: 'test/household-ops.test.ts',
+  household_replace: 'test/household-remote.test.ts',
   loops_mute: 'test/ops-loops.test.ts',
   loops_unmute: 'test/ops-loops.test.ts',
   questions_pin: 'test/helpers/pinned-questions-scenarios.ts',

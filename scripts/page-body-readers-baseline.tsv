@@ -365,6 +365,7 @@ src/core/minions/handlers/subagent-oneshot.ts	planOneshotWrites	call:serializeMa
 src/core/ops/admin.ts	get_versions	field	SEGW	lane 1e: segmented versions return metadata only
 src/core/ops/attribution.ts	get_write_attribution	field	NONE	not the page body: timeline entry id param
 src/core/ops/attribution.ts	rowTarget	field	NONE	not the page body: timeline entry id param
+src/core/ops/claims.ts	check_claims	field	STREAM	skips a segmented page (allowed-claims facts pages are small and inline); a segmented one moves to the segment reader
 src/core/ops/extraction.ts	reviewDecision	call:serializePageToMarkdown	NONE	serializes the frontmatter head with an empty body (withoutBody) for an edit_page head edit; the body is never read
 src/core/ops/get-page-body.ts	bodyBytes	field	META	
 src/core/ops/get-page-body.ts	bodyStripsFor	field	INLINE	GST-3058 room mark: inline pages only (get_page refuses a segmented page whole; a segmented markdown view goes through segmentedBodyStrips)
@@ -750,4 +751,9 @@ src/core/engine-sql/facts-purge.ts	updatePageBodyForPurge	sql	SEGW	moved from fa
 src/core/engine-sql/facts-purge.ts	setPurgeVersionBody	sql	SEGW	moved from facts/purge.ts rewriteVersionBodies unchanged: the caller writes inline versions only
 src/core/engine-sql/reflex-reads.ts	reflexPagesStatement	sql	LEAD	moved from context/retrieval-reflex.ts resolveEntitiesToPointers and weakTitleHits (boundedBodyPrefixSql AS compiled_truth)
 src/core/facts/claim-match-sql.ts	carriesClaimSql	sql	STREAM	strpos over NULL never matches a segmented page; withSegmentedProse probes its segment texts
+src/core/ops/household.ts	serializeRecord	call:serializeMarkdown	SEGW	household record writer (GST-3825 H1): rewrites the whole small record or subject page under its revision; asserts the page is inline (assertInlineBody) and refuses a segmented one
+src/core/ops/household.ts	classifySubjectPages	call:serializeMarkdown	SEGW	household record writer (GST-3825 H1): rewrites the whole small record or subject page under its revision; asserts the page is inline (assertInlineBody) and refuses a segmented one
+src/core/ops/household.ts	classifySubjectPages	field	SEGW	household record writer (GST-3825 H1): rewrites the whole small record or subject page under its revision; asserts the page is inline (assertInlineBody) and refuses a segmented one
+src/core/ops/household.ts	replaceHouseholdRecords	field	SEGW	household record writer (GST-3825 H1): rewrites the whole small record or subject page under its revision; asserts the page is inline (assertInlineBody) and refuses a segmented one
+src/core/ops/household.ts	household_mark	field	SEGW	household record writer (GST-3825 H1): rewrites the whole small record or subject page under its revision; asserts the page is inline (assertInlineBody) and refuses a segmented one
 src/core/policy/store.ts	readPolicyPage	field	INLINE	the policy page is a small fence written inline by gbrain policy; a segmented one reads as empty, so it is malformed and every verb asks

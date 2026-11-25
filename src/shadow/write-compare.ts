@@ -1,0 +1,118 @@
+/**
+ * Write comparisons, the part both processes share (swap criterion 5; docs/designs/RUST_ENGINE.md, "What is compared", Writes).
+ *
+ * A pilot covers ONLY putPage, deletePage, addLink, addLinksBatch and removeLink. For a sampled one the serving process copies the
+ * rows the write touches from the primary (the preimage) and sends them with the write; the shadow child seeds a SCRATCH Rust store
+ * with them, applies the same write there (never to the live shadow store, never to the primary) and compares typed read-backs
+ * of the changed rows. Every sampled write of another family is `capability_missing`, by family. Fail closed: a write
+ * whose preimage could not be read or loaded, or that failed on one side, is `uncomparable` and never `comparable`.
+ *
+ * Nothing is recorded yet: outcomes go to a `WriteVerdictSink`, and none is wired, so status and criterion 5 stay `capability_missing`.
+ * The locked tally that records them follows in a separate PR.
+ */
+import { memberKind, WRITE_MAP } from './write-map.ts';
+
+export const PILOT_WRITES: ReadonlySet<string> = new Set(['putPage', 'deletePage', 'addLink', 'addLinksBatch', 'removeLink']);
+/** Most pages and links one sampled write copies; a bigger write is `uncomparable` (preimage_too_large). */
+export const MAX_PRE_PAGES = 40;
+export const MAX_PRE_LINKS = 200;
+
+export type WriteOutcome = 'comparable' | 'unexplained_difference' | 'uncomparable' | 'capability_missing';
+export interface PageRef { source: string; slug: string }
+/** Text-valued rows of the primary as the seed reads them (seed.ts `relationRead`). */
+export interface PreImage { sources: Array<Record<string, string | null>>; pages: Array<Record<string, string | null>>; links: Array<Record<string, string | null>> }
+/** What the serving process sends for one sampled write: a full sample (`pre`, `post`), or just its outcome (`outcome`, `reason`/`family`). */
+export interface WriteEvent { t: 'write'; op: string; outcome?: WriteOutcome; reason?: string; family?: string; /** Earlier samples the pipe refused (counted uncomparable, `send_shed`). */ dropped?: number; args?: unknown[]; pre?: PreImage; post?: unknown; moved?: boolean }
+
+const ref = (slug: unknown, source: unknown): PageRef | null =>
+  (typeof slug === 'string' && slug ? { source: typeof source === 'string' && source ? source : 'default', slug: slug.toLowerCase() } : null);
+
+/** Where each pilot write takes its options: `putPage(slug, page, opts)`, `deletePage(slug, opts)`, `addLink(from, to, context, type, source, originSlug, originField, opts)`, `removeLink(from, to, type, source, opts)`. */
+const OPTS_AT: Record<string, number> = { putPage: 2, deletePage: 1, addLink: 7, removeLink: 4 };
+
+/** The pages a pilot write names (both link ends and the origin page of a link), by source and slug. An omitted origin source is `default` on both engines, whatever the from-source. */
+export function pageRefs(op: string, args: any[]): PageRef[] {
+  const o = (args[OPTS_AT[op] ?? 1] ?? {}) as Record<string, unknown>;
+  const all = op === 'addLinksBatch'
+    ? (args[0] as any[]).flatMap((l) => [ref(l.from_slug, l.from_source_id), ref(l.to_slug, l.to_source_id), ref(l.origin_slug, l.origin_source_id)])
+    : op === 'addLink' ? [ref(args[0], o.fromSourceId), ref(args[1], o.toSourceId), ref(args[5], o.originSourceId)]
+    : op === 'removeLink' ? [ref(args[0], o.fromSourceId), ref(args[1], o.toSourceId)]
+    : [ref(args[0], o.sourceId)];
+  return [...new Map(all.filter((r): r is PageRef => r !== null).map((r) => [`${r.source}\0${r.slug}`, r])).values()];
+}
+
+/** What a pilot write itself changes: the pages it writes or deletes, and the links it adds or removes (from, to, and the type and source it names; one it leaves out matches any). */
+export function footprint(op: string, args: any[]): { pages: PageRef[]; links: Array<{ from: PageRef; to: PageRef; type?: string; source?: string }> } {
+  const o = (args[OPTS_AT[op] ?? 1] ?? {}) as Record<string, unknown>;
+  const link = (from: PageRef | null, to: PageRef | null, type?: unknown, source?: unknown) => (from && to ? [{ from, to, type: typeof type === 'string' ? type : undefined, source: typeof source === 'string' ? source : undefined }] : []);
+  if (op === 'addLinksBatch') return { pages: [], links: (args[0] as any[]).flatMap((l) => link(ref(l.from_slug, l.from_source_id), ref(l.to_slug, l.to_source_id), l.link_type, l.link_source)) };
+  if (op === 'addLink') return { pages: [], links: link(ref(args[0], o.fromSourceId), ref(args[1], o.toSourceId), args[3], args[4]) };
+  if (op === 'removeLink') return { pages: [], links: link(ref(args[0], o.fromSourceId), ref(args[1], o.toSourceId), args[2], args[3]) };
+  return { pages: pageRefs(op, args), links: [] };
+}
+
+type Row = Record<string, string | null>;
+/** Job-queue state the seed read joins in beside a page (not page content): background workers move it, and that is not another writer's edit. */
+const JOB_COLUMNS = new Set(['projection_job_revision', 'projection_job_reason', 'projection_job_updated_at']);
+const sameRow = (a: Row, b: Row): boolean => Object.keys(a).length === Object.keys(b).length && Object.keys(a).every((k) => JOB_COLUMNS.has(k) || a[k] === b[k]);
+
+/**
+ * The data fence for a brain other processes can write (Postgres): true when the copied rows changed in a way the write does not explain, so the sample
+ * is uncomparable (`moved`). Every row copied before the write that lies outside its footprint must be the same afterwards, and no link may have appeared
+ * that the write did not add. PGLite skips this: its single-writer file lock means no other process can write between the copy and the read-back.
+ * Open gap: another process editing the very rows the write changes is not seen here.
+ */
+export function movedOutsideFootprint(op: string, args: any[], pre: PreImage, now: PreImage): boolean {
+  const fp = footprint(op, args);
+  const key = (r: PageRef): string => `${r.source}\0${r.slug}`;
+  const ids = new Map<string, string | null>([...pre.pages, ...now.pages].map((p) => [`${p.source_id}\0${p.slug}`, p.id ?? null]));
+  const ownPages = new Set(fp.pages.map((r) => ids.get(key(r))));
+  const own = fp.links.map((l) => ({ from: ids.get(key(l.from)), to: ids.get(key(l.to)), type: l.type, source: l.source }));
+  const ownLink = (l: Row): boolean => own.some((w) => w.from === l.from_page_id && w.to === l.to_page_id && (w.type === undefined || w.type === l.link_type) && (w.source === undefined || w.source === l.link_source))
+    || (op === 'deletePage' && (ownPages.has(l.from_page_id) || ownPages.has(l.to_page_id)));
+  const after = (rows: Row[]): Map<string | null, Row> => new Map(rows.map((r) => [r.id ?? null, r]));
+  const pagesNow = after(now.pages); const linksNow = after(now.links);
+  const preLinks = new Set(pre.links.map((l) => l.id));
+  const known = new Set([...pre.pages.map((p) => p.id), ...ownPages]); // only links between pages that were copied (or written) count: the re-read reaches further than the copy did
+  return pre.pages.some((p) => !ownPages.has(p.id ?? null) && !(pagesNow.has(p.id ?? null) && sameRow(p, pagesNow.get(p.id ?? null)!)))
+    || pre.links.some((l) => !ownLink(l) && !(linksNow.has(l.id ?? null) && sameRow(l, linksNow.get(l.id ?? null)!)))
+    || now.links.some((l) => !preLinks.has(l.id) && !ownLink(l) && known.has(l.from_page_id) && known.has(l.to_page_id));
+}
+
+/** Every page a read-back looks at: the write's own pages and every page in the preimage. */
+export const pageSet = (targets: PageRef[], pre: PreImage): PageRef[] =>
+  [...new Map([...targets, ...pre.pages.map((p) => ({ source: p.source_id ?? 'default', slug: p.slug ?? '' }))].map((r) => [`${r.source}\0${r.slug}`, r])).values()];
+
+/** The typed read-back both engines answer: the written pages, and the links among the pages in `set`. */
+export async function readBack(engine: Record<string, any>, targets: PageRef[], set: PageRef[]): Promise<{ pages: unknown[]; links: unknown[] }> {
+  const pages = await Promise.all(targets.map((r) => engine.getPage(r.slug, { sourceId: r.source, includeDeleted: true })));
+  const keys = new Set(set.map((r) => `${r.source}\0${r.slug}`));
+  const links: unknown[] = [];
+  for (const r of set) {
+    for (const l of await engine.getLinks(r.slug, { sourceId: r.source }) as any[]) {
+      if (keys.has(`${l.from_source_id}\0${l.from_slug}`) && keys.has(`${l.to_source_id}\0${l.to_slug}`)) links.push(l);
+    }
+  }
+  return { pages, links };
+}
+
+/** Fields each engine generates itself (ids, clocks, a random revision): never compared. */
+const GENERATED = new Set(['id', 'knowledge_revision', 'created_at', 'updated_at', 'ingested_at', 'salience_touched_at', 'text_projection_revision']);
+
+/** One comparable text for an encoded read-back: generated fields dropped, a soft delete kept as a flag, links sorted. */
+export function readBackText(encoded: any): string {
+  const page = (p: any): unknown => (p ? Object.fromEntries(Object.entries(p).filter(([k]) => !GENERATED.has(k)).map(([k, v]) => [k, k === 'deleted_at' ? v !== null : v]).sort(([a], [b]) => (a as string) < (b as string) ? -1 : 1)) : null);
+  const link = (l: any): string => JSON.stringify(Object.entries(l).sort(([a], [b]) => (a < b ? -1 : 1)));
+  return JSON.stringify({ pages: (encoded.pages as unknown[]).map(page), links: (encoded.links as unknown[]).map(link).sort() });
+}
+
+/** The family a sampled write that the pilot does not cover is counted under (never a pilot member's own family). */
+export function writeFamily(op: string): string {
+  const kind = memberKind(op);
+  if (kind === 'raw') return 'raw_sql';
+  const table = kind === 'mapped' ? WRITE_MAP[op]!.tables[0]! : 'unmapped';
+  return table === 'pages' || table === 'links' ? `${table}:${op}` : table;
+}
+
+/** Where a finished comparison's outcome goes (`key` is a family or reason name). Nothing records them yet: the locked tally that does follows in a separate PR, so a comparison changes no criterion 5 state. */
+export type WriteVerdictSink = (outcome: WriteOutcome, key?: string, count?: number) => void;
