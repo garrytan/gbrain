@@ -300,7 +300,7 @@ async function subjectAdmission(engine: Pick<BrainEngine, 'executeRaw' | 'getCon
   const role = parsed.type === HOUSEHOLD_TYPE ? '' : String(parsed.frontmatter.household_role ?? '').trim().toLowerCase();
   const keep = to === 'unclassified' || !role;
   const before = live && live.type !== HOUSEHOLD_TYPE ? String(live.frontmatter?.household_role ?? '').trim().toLowerCase() : '';
-  if (remote && owner && before !== role && await placedReaders(engine, 'adults') && !await owner()) throw nonOwnerRoleRefusal(slug, role);
+  if (remote && owner && (before !== role || from !== to) && await placedReaders(engine, 'adults') && !await owner()) throw nonOwnerRoleRefusal(slug, role);
   if (remote && from !== to && (from === 'child' || (to === 'not_child' && (await recordsAbout(engine, sourceId, slug)).some(row => heldBySubject(row.frontmatter))))) {
     throw reclassifyRefusal('Only the brain\'s owner can take ' + slug + ' out of household_role child, or give it a role that would widen household records already kept to adults because of it, so nothing was written.',
       'Keep the page\'s type and household_role as they are, or ask the brain\'s owner to run gbrain household replace --about ' + slug + (keep ? '' : ' --role ' + role) + '.',

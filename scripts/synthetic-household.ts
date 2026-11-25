@@ -35,7 +35,7 @@ export async function seedSyntheticHouseholdBrain(dir: string): Promise<Map<stri
         await engine.setConfig('brain.timezone', TIMEZONE);
         slugs = await seedSyntheticHousehold((op, params) => handleToolCall(engine, op, params) as Promise<any>);
       } finally {
-        await engine.disconnect().catch(() => {});
+        await engine.disconnect();
       }
       saveConfig({ engine: 'pglite', database_path: dbPath, embedding_disabled: true } as unknown as GBrainConfig);
       return slugs;

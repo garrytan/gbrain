@@ -502,6 +502,9 @@ describe('household privacy over remote MCP', () => {
     expect(out[1]).toBe(out[0]);
     expect(out[2]).toBe(out[0]);
     for (const who of ['dana', 'eli', 'fay']) expect(await engine.getPage('people/' + who + '-example')).not.toBeNull();
+    const upper = await remote(ADULT, 'delete_page', { slug: 'People/Dana-Example', expected_revision: (await local('get_page', { slug: 'people/dana-example' })).revision });
+    expect(upper.text).toContain('household_reclassify');
+    expect(await engine.getPage('people/dana-example')).not.toBeNull();
     const dana = await remote(OWNER, 'delete_page', { slug: 'people/dana-example', expected_revision: (await local('get_page', { slug: 'people/dana-example' })).revision });
     expect(dana.isError, dana.text).toBe(false);
   });
@@ -522,6 +525,13 @@ describe('household privacy over remote MCP', () => {
     for (const who of ['gus', 'hal']) expect(await engine.getPage('people/' + who + '-example')).toBeNull();
     expect(await engine.executeRaw("SELECT slug FROM pages WHERE slug LIKE '%glue%' AND (slug LIKE '%gus%' OR slug LIKE '%hal%')")).toEqual([]);
     expect((await engine.getPage(hidden.slug))!.frontmatter.readable_by).toEqual([OWNER]);
+    await local('put_page', { slug: 'people/ida-example', content: md({ type: 'person', title: 'ida-example', household_role: 'adult' }, 'Ida.') });
+    await local('household_add', { kind: 'supply', title: 'Ida snacks', cadence: '30d', about: ['people/ida-example'] });
+    __resetPrivateVisibilityCacheForTests();
+    const listed = await rewrite(ADULT, 'people/ida-example', fm => ({ ...fm, household_role: ['adult'] }));
+    expect(strip(listed, 'ida')).toBe(strip(await rewrite(ADULT, 'people/ida-example', ({ household_role: _, ...fm }) => fm), 'ida'));
+    expect(listed.text).not.toMatch(/\d+ household record/);
+    expect((await engine.getPage('people/ida-example'))!.frontmatter.household_role).toBe('adult');
   });
 
   test('a subject the owner changes back to adult after the pre-check is not made a child by a non-owner (merged-head review #2)', async () => {
