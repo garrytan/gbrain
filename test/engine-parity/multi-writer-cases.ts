@@ -312,8 +312,8 @@ export const MW_CASES: readonly MwCase[] = [
     reference: 'compare',
     members: ['insertFact', 'listFactsByEntity'],
     storeTests: {
-      runnable: ['c11_per_entity_order_equals_commit_order'],
-      pending: ['c11_per_entity_order_equals_commit_order_multi_writer'],
+      runnable: ['c11_per_entity_commit_sequences_are_distinct_and_no_fact_is_lost'],
+      pending: ['c11_per_entity_order_equals_commit_order', 'c11_per_entity_order_equals_commit_order_multi_writer'],
     },
     cells: {
       pglite: pending('L5 hosts', 'new rule: SQL reads order facts by created_at, id, which is not commit order; facts carry no sequence assigned at commit yet'), postgres: pending('L5 hosts', 'new rule: SQL reads order facts by created_at, id, which is not commit order; facts carry no sequence assigned at commit yet'),
@@ -459,7 +459,7 @@ export const MW_CASES: readonly MwCase[] = [
     members: ['putPage', 'readPageSnapshot', 'admitJob', 'listJobs'],
     storeTests: {
       runnable: ['c19_crash_after_commit_keeps_acknowledged_writes'],
-      pending: ['c19_crash_after_commit_keeps_acknowledged_writes_multi_writer'],
+      pending: ['c19_crash_after_commit_keeps_acknowledged_writes_multi_writer', 'c19_crash_keeps_commit_times_rising_and_equal_to_last_commit_time_multi_writer'],
     },
     cells: {
       pglite: RUNS, postgres: RUNS,
@@ -514,7 +514,7 @@ export const MW_CASES: readonly MwCase[] = [
     members: ['putPage'],
     storeTests: {
       runnable: ['c22_commit_position_strictly_increases'],
-      pending: ['c22_commit_position_strictly_increases_multi_writer'],
+      pending: ['c22_commit_position_strictly_increases_multi_writer', 'c22_follower_replay_keeps_commit_times_rising_and_row_times_above_the_floor_multi_writer'],
     },
     cells: {
       pglite: pending('L2 commit log', 'typed position member (no engine exposes a commit position or a commit log today)'), postgres: pending('L2 commit log', 'typed position member (no engine exposes a commit position or a commit log today)'),
