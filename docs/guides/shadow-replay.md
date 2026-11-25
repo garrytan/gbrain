@@ -76,19 +76,30 @@ in this release") before anything runs.
   name, and chunk writes are read back with their chunks and embeddings,
   sealed or not. The sweep reads up to 5,000 pages; past that the report says `incomplete` and counts `sweep_skipped`. A page
   write whose page the replay cannot tell is counted as `writes_not_swept` and also makes the report `incomplete`.
-  Alias writes and page version writes (`createVersion`, `revertToVersion`) are not read back yet and count there
-  too. A rename is read back at both its old and new slug.
+  Alias writes, page version writes (`createVersion`, `revertToVersion`) and chunk seals (`sealChunks`,
+  `setChunkerVersion`, whose seal stamp is not compared) are not read back yet and count there too. A rename is read
+  back at both its old and new slug. Pages are read back with their soft-delete tombstones, so a hard delete behind a
+  soft-delete answer differs. A timeline is read back up to 10,000 rows; a longer one counts as `sweep_truncated`. A
+  read-back that fails on every copy, even the same way, verifies nothing and counts as `sweep_failed`. Each of these
+  makes the report `incomplete`.
+- A replay loads at most 512 MiB of recording; records past that count as `records_over_memory` and make the report
+  `incomplete`.
+- Times the seed copied that lie in the future (an expiry date, say) are compared as stored values, in any spelling,
+  like the ids it copied.
 - A recording process that did not acknowledge the seal in time, acknowledged with capture off or over its disk
   budget, or died without writing out its last calls may have calls missing; the report counts each one as
   `recorders_alive_at_seal` and says `incomplete`. So does a recording that began right after such a death.
 - Known limit: each copy numbers new rows (sequence positions) on its own, so a row number the replay created can
   differ between the copies. That shows as a false difference, never as a false match.
 - A replay that fails for any reason other than a purge keeps its recording and copies for one retry the next night;
-  a second failure retires them. A purge always deletes them.
+  a second failed attempt retires them. The sealed recording is recorded as owed a replay before the seal, so a run
+  that dies after its seal keeps it under the same rule, and recordings that nothing names any more are deleted at the
+  next run. A purge always deletes them.
 - Recording stays bounded on the brain's own calls: an argument over 1 MiB is recorded as a `gaps` entry before it is
   copied, and a result over 1 MiB is not hashed past that size.
-- The replay runs in a child process with a throwaway home and no API keys. It cannot open network connections and
-  opens only its copies, never the brain.
+- The replay runs in a child process with a throwaway home, its own empty working directory and no API keys. It never
+  reads a `.env`, `.env.local` or `bunfig.toml` from the directory the nightly run started in. It cannot open network
+  connections and opens only its copies, never the brain.
 
 ## Purge
 

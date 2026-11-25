@@ -19,11 +19,22 @@ import { ReplayError } from './replay-errors.ts';
 const PROJECTION_PREFIX = 'projection_job_';
 const UUID_ANYWHERE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 
-/** Every UUID inside a seeded value: whole columns, and ones inside JSON text, objects and arrays. */
-function collectUuids(v: unknown, into: Set<string>): void {
-  if (typeof v === 'string') { for (const m of v.match(UUID_ANYWHERE) ?? []) into.add(m.toLowerCase()); return; }
-  if (Array.isArray(v)) { for (const x of v) collectUuids(x, into); return; }
-  if (v && typeof v === 'object' && !(v instanceof Uint8Array)) for (const x of Object.values(v)) collectUuids(x, into);
+const ISO_ANYWHERE = /\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}(?::?\d{2})?)?/g;
+
+/**
+ * Every UUID inside a seeded value (whole columns, and ones inside JSON text, objects and arrays), and every stored
+ * time after `after` (a time the replay window can reach, as `t:<ms>`, so any spelling of it matches).
+ */
+function collectStored(v: unknown, into: Set<string>, after: number): void {
+  const time = (ms: number) => { if (Number.isFinite(ms) && ms > after) into.add(`t:${ms}`); };
+  if (typeof v === 'string') {
+    for (const m of v.match(UUID_ANYWHERE) ?? []) into.add(m.toLowerCase());
+    for (const m of v.match(ISO_ANYWHERE) ?? []) time(Date.parse(m));
+    return;
+  }
+  if (v instanceof Date) { time(v.getTime()); return; }
+  if (Array.isArray(v)) { for (const x of v) collectStored(x, into, after); return; }
+  if (v && typeof v === 'object' && !(v instanceof Uint8Array)) for (const x of Object.values(v)) collectStored(x, into, after);
 }
 
 export interface ArmImport { rows: number; imported: number; skipped: number; dropped: number; unmapped_columns: string[]; losses: Record<string, number> }
@@ -109,7 +120,7 @@ export class FanOutSeedTarget implements SeedTarget {
   readonly arms: Record<string, ArmImport> = {};
   /** Wall-clock bounds of the snapshot: before the plan read, and when the first batch (already inside it) returned. */
   cut: { before: number; after: number | null } = { before: 0, after: null };
-  /** Every UUID value the seed copied: a replay compares these literally (stored ids are not replay noise). */
+  /** Every UUID and future time the seed copied: a replay compares these literally (stored values are not replay noise). */
   readonly seededIds = new Set<string>();
 
   constructor(private readonly rust: SeedTarget, private readonly sql: Record<string, SqlSeedTarget>) {}
@@ -121,7 +132,7 @@ export class FanOutSeedTarget implements SeedTarget {
 
   async importRelation(seedId: string, relation: string, rows: SeedRow[]): Promise<SeedImportResult> {
     const result = await this.rust.importRelation(seedId, relation, rows);
-    for (const row of rows) collectUuids(row, this.seededIds);
+    for (const row of rows) collectStored(row, this.seededIds, this.cut.before);
     this.add('rust', rows.length, result);
     for (const [name, target] of Object.entries(this.sql)) this.add(name, rows.length, await target.importRelation(seedId, relation, rows));
     this.cut.after ??= Date.now();

@@ -25,9 +25,11 @@ import {
 import { captureDir, writePrivateJson } from '../src/shadow/capture-state.ts';
 import { FanOutSeedTarget } from '../src/shadow/replay-copy.ts';
 import { runNightlyReplay, settleSeededEpoch } from '../src/shadow/replay-run.ts';
+import { appendPurgeIntent as purgeIntent } from '../src/core/belief/purge-mirror.ts';
+import { encodeArgs } from '../src/shadow/codec.ts';
 import { decodeValue } from '../src/shadow/codec.ts';
 import {
-  buildUnits, childEnv, classify, firstDiff, NormState, redactPath, runReplayChild, SWEEP_LIMIT, type ArmName, type RunSpec,
+  buildUnits, childEnv, classify, firstDiff, jsonView, NormState, redactPath, runReplayChild, streamSegment, SWEEP_LIMIT, type ArmName, type RunSpec,
 } from '../src/shadow/replay.ts';
 
 const dirs: string[] = [];
@@ -35,11 +37,12 @@ const tmp = () => { const d = mkdtempSync(join(tmpdir(), 'gbrain-replay-')); dir
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 
 /** A small in-memory brain. `dropWrites` returns the right receipt but stores nothing (the negative control). */
-function fakeEngine(opts: { wrongRename?: boolean; dropAliases?: boolean; dropWrites?: boolean; dropSource?: string; alterFrontmatter?: boolean; idPrefix?: string; due?: string; strictRevision?: boolean; wrongTimeline?: boolean; wrongChunks?: boolean } = {}) {
+function fakeEngine(opts: { wrongRename?: boolean; dropAliases?: boolean; dropWrites?: boolean; dropSource?: string; alterFrontmatter?: boolean; idPrefix?: string; due?: string; strictRevision?: boolean; wrongTimeline?: boolean; wrongChunks?: boolean;
+  hardDelete?: boolean; wrongOldest?: boolean; failChunks?: boolean } = {}) {
   const chunks = new Map<string, Array<{ chunk_text: string }>>();
   const aliases = new Map<string, string[]>();
-  const timeline = new Map<string, Array<{ summary: string }>>();
-  const pages = new Map<string, { slug: string; title: string; compiled_truth: string; frontmatter: Record<string, unknown>; updated_at: string }>();
+  const timeline = new Map<string, Array<{ date: string; summary: string }>>();
+  const pages = new Map<string, { slug: string; title: string; compiled_truth: string; frontmatter: Record<string, unknown>; updated_at: string; deleted_at?: string }>();
   const scoped = new Map<string, { slug: string; title: string }>();
   let n = 0;
   const engine = {
@@ -52,7 +55,17 @@ function fakeEngine(opts: { wrongRename?: boolean; dropAliases?: boolean; dropWr
       if (!opts.dropWrites) pages.set(slug, row);
       return { slug, id: `${opts.idPrefix ?? '0000'}${String(++n).padStart(4, '0')}-0000-4000-8000-000000000000`.slice(0, 36) };
     },
-    async getPage(slug: string, o?: { sourceId?: string }) { return o?.sourceId ? scoped.get(`${o.sourceId}:${slug}`) ?? null : pages.get(slug) ?? null; },
+    async getPage(slug: string, o?: { sourceId?: string; includeDeleted?: boolean }) {
+      const p = o?.sourceId ? scoped.get(`${o.sourceId}:${slug}`) ?? null : pages.get(slug) ?? null;
+      return p && (p as { deleted_at?: string }).deleted_at && !o?.includeDeleted ? null : p;
+    },
+    // Like the real engines: a soft delete keeps a tombstone that only includeDeleted reads; `hardDelete` loses it.
+    async softDeletePage(slug: string) {
+      const p = pages.get(slug); if (!p) return null;
+      if (opts.hardDelete) pages.delete(slug); else pages.set(slug, { ...p, deleted_at: 'deleted' });
+      return { slug };
+    },
+    async sealChunks() {},
     async refreshPageBody(slug: string, sourceId: string, body: string) {
       if (opts.dropSource !== sourceId) scoped.set(`${sourceId}:${slug}`, { slug, title: body });
     },
@@ -66,12 +79,18 @@ function fakeEngine(opts: { wrongRename?: boolean; dropAliases?: boolean; dropWr
     async getTags() { return []; },
     async getLinks() { return []; },
     async getBacklinks() { return []; },
-    async getTimeline(slug: string) { return timeline.get(slug) ?? []; },
+    // Like the real engines: newest first, and 100 rows unless a limit is given.
+    async getTimeline(slug: string, o?: { limit?: number }) { return [...(timeline.get(slug) ?? [])].sort((x, y) => (x.date < y.date ? 1 : -1)).slice(0, o?.limit || 100); },
     // Like the real engines: chunks written but not sealed yet are read only with includeUnsealed.
-    async getChunks(slug: string, o?: { includeUnsealed?: boolean }) { return o?.includeUnsealed ? chunks.get(slug) ?? [] : []; },
+    async getChunks(slug: string, o?: { includeUnsealed?: boolean }) {
+      if (opts.failChunks) throw Object.assign(new Error('timeout'), { code: 'replay_timeout' });
+      return o?.includeUnsealed ? chunks.get(slug) ?? [] : [];
+    },
     async upsertChunks(slug: string, rows: Array<{ chunk_text: string }>) { chunks.set(slug, rows.map(r => ({ chunk_text: opts.wrongChunks ? 'other text' : r.chunk_text }))); },
-    async addTimelineEntriesBatch(rows: Array<{ slug: string; summary: string }>) {
-      for (const r of rows) timeline.set(r.slug, [...(timeline.get(r.slug) ?? []), { summary: opts.wrongTimeline ? 'something else' : r.summary }]);
+    async addTimelineEntriesBatch(rows: Array<{ slug: string; summary: string; date?: string }>) {
+      const oldest = rows.reduce((m, r) => (r.date && (!m || r.date < m) ? r.date : m), '' as string);
+      for (const r of rows) timeline.set(r.slug, [...(timeline.get(r.slug) ?? []), { date: r.date ?? '2026-01-01',
+        summary: opts.wrongTimeline || (opts.wrongOldest && r.date === oldest) ? 'something else' : r.summary }]);
       return rows.length;
     },
     async updateSlug(oldSlug: string, newSlug: string) {
@@ -521,5 +540,110 @@ describe('nightly seal (PR-2)', () => {
     const { report } = await run();
     expect(report.counts.writes_not_swept).toBe(1);
     expect(report.coverage).toBe('incomplete');
+  });
+});
+
+describe('fix round (review of aefcd32430)', () => {
+  test('#2 the sealed epoch is owed a replay in retry.json before the replay starts, so a crash after the seal keeps it', async () => {
+    const { cap, id, deps } = sealedEpoch();
+    let owed: unknown = null;
+    const watching = { ...deps, spawnChild: () => { owed = JSON.parse(readFileSync(join(cap, 'retry.json'), 'utf8')); return { exited: Promise.resolve(1), kill() {} }; } } as typeof deps;
+    await expect(runNightlyReplay(watching)).rejects.toThrow(/without a report/);
+    expect(owed).toEqual([expect.objectContaining({ pointer: expect.objectContaining({ id }), attempts: 1 })]);
+  });
+
+  test('#2 recordings and copies no epoch or retry record names (a run died after its seal) are deleted at the next run', async () => {
+    const { cap, id, deps } = sealedEpoch();
+    writePrivateJson(join(cap, 'epoch.json'), { ...readEpoch(cap)!, id: 'next-epoch', state: 'recording' }); // the pointer moved on
+    mkdirSync(epochDir(cap, 'next-epoch'), { recursive: true });
+    await runNightlyReplay(deps).catch(() => undefined);
+    expect(existsSync(epochDir(cap, id))).toBe(false);
+    expect(existsSync(basesDir(cap, id))).toBe(false);
+  });
+
+  test('#2 a run that died during the seal still replays that epoch, never purges it', async () => {
+    const { cap, id, deps } = sealedEpoch();
+    writePrivateJson(join(cap, 'epoch.json'), { ...readEpoch(cap)!, state: 'sealing', sealing_since: new Date().toISOString() });
+    const specs: RunSpec[] = [];
+    const watching = { ...deps, spawnChild: (runDir: string) => { specs.push(JSON.parse(readFileSync(join(runDir, 'run.json'), 'utf8'))); return { exited: Promise.resolve(1), kill() {} }; } } as typeof deps;
+    await expect(runNightlyReplay(watching)).rejects.toThrow(/without a report/);
+    expect(specs.map(x => x.epoch)).toEqual([id]);
+    expect(specs[0]?.tail_unverified).toBeGreaterThanOrEqual(1);
+  });
+
+  test('#2 a purge still deletes everything, owed epochs and orphans included', async () => {
+    const { cap, id, deps, home } = sealedEpoch();
+    writePrivateJson(join(cap, 'retry.json'), [{ pointer: readEpoch(cap), attempts: 1 }]);
+    mkdirSync(join(basesDir(cap, 'orphan'), 'pglite'), { recursive: true });
+    purgeIntent({ request: 'r30', request_id: 'q', source_id: 'default', source_incarnation: 'i', scope: 'page', purge_epoch: 1, facts: [], takes: [], lifetimes: [] }, home);
+    expect((await runNightlyReplay(deps)).status).toBe('purged');
+    for (const p of [epochDir(cap, id), basesDir(cap, id), basesDir(cap, 'orphan'), join(cap, 'retry.json')]) expect(existsSync(p)).toBe(false);
+  });
+
+  test('#3 a hard delete behind a soft-delete receipt differs from a soft delete', async () => {
+    const { run } = await replayOnFakes({ hardDelete: true }, async e => {
+      await e.putPage('notes/gone', { title: 't', compiled_truth: 'b' } as never);
+      await (e as unknown as { softDeletePage(s: string): Promise<unknown> }).softDeletePage('notes/gone');
+    });
+    const { report } = await run();
+    expect(report.diffs.some(d => d.member === 'sweep:getPage')).toBe(true);
+  });
+
+  test('#4 a timeline write older than the newest 100 rows is still read back', async () => {
+    const rows = Array.from({ length: 101 }, (_, i) => ({ slug: 'notes/t', summary: `entry ${i}`, date: `2026-01-${String(1 + Math.floor(i / 4)).padStart(2, '0')}T0${i % 4}:00:00Z` }));
+    const { run } = await replayOnFakes({ wrongOldest: true }, e => (e as unknown as { addTimelineEntriesBatch(r: object[]): Promise<number> }).addTimelineEntriesBatch(rows));
+    const { report } = await run();
+    expect(report.diffs.some(d => d.member === 'sweep:getTimeline')).toBe(true);
+  });
+
+  test('#5 volatile values pair one to one, equal ones included', () => {
+    const t = Date.parse('2026-11-22T00:00:00Z');
+    const n = new NormState(new Set(), { from: t, to: t + 1000 });
+    const a = new Date(t).toISOString();
+    const b = new Date(t + 1).toISOString();
+    expect(n.same(a, a)).toBe(true);
+    expect(n.same(a, b)).toBe(false);
+  });
+
+  test('#6 a user object with a codec-shaped key keeps every field, in a write argument and in a comparison', () => {
+    const fm = { $date: '2025-01-01', content: 'correct' };
+    const [enc] = encodeArgs([fm]);
+    expect(decodeValue(enc)).toEqual(fm);
+    const n = new NormState(new Set(), { from: 0, to: 0 });
+    const [other] = encodeArgs([{ $date: '2025-01-01', content: 'corrupted' }]);
+    expect(firstDiff(jsonView(enc), jsonView(other), n)).not.toBeNull();
+  });
+
+  test('#7 a future time the seed copied is a stored value, not replay noise, in any spelling', async () => {
+    const rust = { seedPlan: async () => ({}) as never, importRelation: async () => ({ imported: 1, skipped: 0, dropped: 0, unmapped_columns: [], losses: {} }) };
+    const fan = new FanOutSeedTarget(rust as never, {});
+    await fan.seedPlan();
+    await fan.importRelation('s', 'pages', [{ slug: 'a', frontmatter: JSON.stringify({ expires: '2030-01-01T00:00:00.000Z' }) } as never]);
+    const n = new NormState(fan.seededIds, { from: 0, to: Date.parse('2031-01-01T00:00:00Z') });
+    expect(firstDiff({ at: '2030-01-01 00:00:00+00' }, { at: '2030-01-02T00:00:00.000Z' }, n)).toEqual(['at']);
+  });
+
+  test('#8 a read-back that fails the same way on every arm verifies nothing and makes the report incomplete', async () => {
+    const { run } = await replayOnFakes({}, e => e.upsertChunks('notes/c', [{ chunk_index: 0, chunk_text: 'body', chunk_source: 'compiled_truth' }] as never), { failChunks: true });
+    const { report } = await run();
+    expect(report.counts.sweep_failed).toBeGreaterThan(0);
+    expect(report.coverage).toBe('incomplete');
+  });
+
+  test('#9 a chunk seal is not read back (its seal stamp is not compared), so it makes the report incomplete', async () => {
+    const { run } = await replayOnFakes({}, e => (e as unknown as { sealChunks(s: string, c: unknown[]): Promise<void> }).sealChunks('notes/s', []));
+    const { report } = await run();
+    expect(report.counts.writes_not_swept).toBe(1);
+    expect(report.coverage).toBe('incomplete');
+  });
+
+  test('#10 a segment is read in blocks within a memory budget; records past it are counted, never silently dropped', () => {
+    const dir = tmp();
+    const line = (i: number) => JSON.stringify({ v: 1, proc: 'p', seq: i, t0: i, t1: i, kind: 'gap' });
+    writeFileSync(join(dir, 's.jsonl'), `${line(1)}\n${line(2)}\n${line(3)}\n{"torn`);
+    const into: CaptureRecord[] = [];
+    const r = streamSegment(join(dir, 's.jsonl'), into, { left: line(1).length * 2 });
+    expect(into.map(x => x.seq)).toEqual([1, 2]);
+    expect(r).toEqual({ torn: true, skipped: 1 });
   });
 });

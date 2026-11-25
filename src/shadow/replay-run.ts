@@ -8,14 +8,14 @@
  *   5. seed the new epoch's copies from one snapshot of the brain (Rust store and PGLite).
  * The first night only seeds. Nothing here writes to the brain.
  */
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../core/engine.ts';
 import type { RustEngineAddonLoad } from '../core/rust-engine/addon-loader.ts';
 import { configDir } from '../core/config.ts';
 import {
   basesDir, deleteEpochData, epochDir, purgeCapture, purgeIfLogChanged, purgeLogChanged, purgePending, readEpoch, retireEpoch,
-  sealEpoch, startEpoch, type EpochPointer,
+  sealEpoch, setEpochState, startEpoch, type EpochPointer,
 } from './capture.ts';
 import { acquireReplayLock } from './capture-lock.ts';
 import { captureDir, captureIsOn, writePrivateJson } from './capture-state.ts';
@@ -128,6 +128,7 @@ async function replayEpoch(deps: NightlyDeps, cap: string, sealed: EpochPointer,
   rmSync(join(runDir, 'work'), { recursive: true, force: true });
   rmSync(join(runDir, 'segments'), { recursive: true, force: true });
   rmSync(join(runDir, 'home'), { recursive: true, force: true });
+  rmSync(join(runDir, 'cwd'), { recursive: true, force: true });
   if (stopped === 'purged' || purgeLogChanged(sealed.purge_log, deps.home)) { removeRun(runDir); purgeCapture(cap); throw new ReplayError('shadow_replay_purged', 'during the replay'); }
   if (stopped === 'budget') throw new ReplayError('shadow_replay_budget', `${Math.round(budgetMs / 60_000)} minutes`);
   const reportPath = join(runDir, 'out', 'report.json');
@@ -149,30 +150,53 @@ export async function settleSeededEpoch(cap: string, next: EpochPointer, home: s
 
 const retryPath = (cap: string) => join(cap, 'retry.json');
 type Retained = { pointer: EpochPointer; attempts: number };
+const MAX_ATTEMPTS = 2;
 
-function readRetained(cap: string): Retained | null {
-  try { return JSON.parse(readFileSync(retryPath(cap), 'utf8')) as Retained; } catch { return null; } // silent-read-ok: no retry file means no retained replay
+/** The sealed epochs still owed a replay (retry.json). An old single-record file reads as a list of one. */
+function readRetained(cap: string): Retained[] {
+  let v: unknown;
+  try { v = JSON.parse(readFileSync(retryPath(cap), 'utf8')); } catch { return []; } // silent-read-ok: no retry file means no retained replay
+  return (Array.isArray(v) ? v : [v]).filter((r): r is Retained => !!r && typeof (r as Retained).pointer?.id === 'string');
+}
+
+function writeRetained(cap: string, list: Retained[]): void {
+  if (list.length) writePrivateJson(retryPath(cap), list); else rmSync(retryPath(cap), { force: true });
 }
 
 /**
- * Replays one sealed epoch and retires it. A purge deletes it; any other failure keeps its recording and copies for
- * one retry the next night (retry.json), and a second failure retires it. Returns the report, or throws.
+ * Deletes recordings and copies that neither the current epoch nor a retry record names: what a run left behind when
+ * it died between a seal and the end of its replay. Returns how many epochs it deleted.
  */
-async function replayAndRetire(deps: NightlyDeps, cap: string, sealed: EpochPointer, attempts: number, budgetMs: number, home: string, unverified: number) {
+export function retireOrphanEpochs(cap: string, keep: ReadonlySet<string>): number {
+  const ids = new Set<string>();
+  if (existsSync(cap)) for (const f of readdirSync(cap)) if (f.startsWith('epoch-') && f !== 'epoch.json') ids.add(f.slice('epoch-'.length));
+  if (existsSync(join(cap, 'bases'))) for (const f of readdirSync(join(cap, 'bases'))) ids.add(f);
+  let n = 0;
+  for (const id of ids) if (!keep.has(id)) { deleteEpochData(cap, id); n++; }
+  return n;
+}
+
+/**
+ * Replays one sealed epoch and retires it. The attempt is counted in retry.json before the child starts, so a run
+ * that dies mid-replay still counts it. A purge deletes it; any other failure keeps its recording and copies for one
+ * more attempt the next night, and a second failed attempt retires it. Returns the report, or throws.
+ */
+async function replayAndRetire(deps: NightlyDeps, cap: string, item: Retained, budgetMs: number, home: string, unverified: number) {
+  const started = item.attempts + 1;
+  const others = () => readRetained(cap).filter(r => r.pointer.id !== item.pointer.id);
+  writeRetained(cap, [...others(), { pointer: item.pointer, attempts: started }]);
   try {
-    if (purgeLogChanged(sealed.purge_log, home)) throw new ReplayError('shadow_replay_purged', 'before the replay');
-    const out = await replayEpoch(deps, cap, sealed, budgetMs, attempts > 0, unverified);
-    deleteEpochData(cap, sealed.id);
-    rmSync(retryPath(cap), { force: true });
+    if (purgeLogChanged(item.pointer.purge_log, home)) throw new ReplayError('shadow_replay_purged', 'before the replay');
+    const out = await replayEpoch(deps, cap, item.pointer, budgetMs, item.attempts > 0, unverified);
+    deleteEpochData(cap, item.pointer.id);
+    writeRetained(cap, others());
     return out;
   } catch (e) {
     if (e instanceof ReplayError && e.code === 'shadow_replay_purged') {
       purgeCapture(cap);
-    } else if (attempts < 1) {
-      writePrivateJson(retryPath(cap), { pointer: sealed, attempts: attempts + 1 } satisfies Retained);
-    } else {
-      deleteEpochData(cap, sealed.id);
-      rmSync(retryPath(cap), { force: true });
+    } else if (started >= MAX_ATTEMPTS) {
+      deleteEpochData(cap, item.pointer.id);
+      writeRetained(cap, others());
     }
     throw e;
   }
@@ -206,26 +230,39 @@ export async function runNightlyReplay(deps: NightlyDeps, opts: { budgetMinutes?
     // starts at the same moment. A process that could not acknowledge (or died first) makes the replay incomplete.
     let unverified = 0;
     let next: EpochPointer | null = null;
+    let retained = readRetained(cap).filter(r => existsSync(join(basesDir(cap, r.pointer.id), 'manifest.json')));
+    // A run that died after its seal left epochs nothing names any more: they are retired before anything else.
+    retireOrphanEpochs(cap, new Set([...(pointer ? [pointer.id] : []), ...retained.map(r => r.pointer.id)]));
     if (sealed) {
-      const seal = await sealEpoch(cap, { home, now: deps.now });
-      if (!seal) { purgeCapture(cap); result.status = 'purged'; return result; } // a purge invalidated it during the seal
-      unverified = seal.unacked + (sealed.unverified ?? 0);
-      Object.assign(sealed, seal.sealed);
-      next = seal.next;
+      // The sealed epoch is owed a replay before the pointer moves past it, so a crash after the seal keeps it in the
+      // retry rules instead of stranding its copies.
+      const prior = retained.find(r => r.pointer.id === sealed.id);
+      retained = [...retained.filter(r => r.pointer.id !== sealed.id), { pointer: sealed, attempts: prior?.attempts ?? 0 }];
+      writeRetained(cap, retained);
+      if (sealed.state === 'recording') {
+        const seal = await sealEpoch(cap, { home, now: deps.now });
+        if (!seal) { purgeCapture(cap); result.status = 'purged'; return result; } // a purge invalidated it during the seal
+        unverified = seal.unacked + (sealed.unverified ?? 0);
+        Object.assign(sealed, seal.sealed);
+        next = seal.next;
+      } else {
+        // A run died during or after this epoch's seal: what its recorders acknowledged cannot be told now.
+        setEpochState(cap, sealed, 'sealed');
+        Object.assign(sealed, { state: 'sealed' });
+        unverified = 1 + (sealed.unverified ?? 0);
+        next = startEpoch(cap, home, deps.now?.(), { after: sealed.id });
+      }
       if (!on) { retireEpoch(cap, 'unseeded'); next = null; } // capture is off: nothing records into it
     } else if (on) {
       next = startEpoch(cap, home, deps.now?.());
     }
     if (next) result.started_epoch = next.id;
     let failure: unknown = null;
-    const retained = readRetained(cap);
-    const queue: Retained[] = [
-      ...(retained && retained.pointer.id !== sealed?.id && existsSync(join(basesDir(cap, retained.pointer.id), 'manifest.json')) ? [retained] : []),
-      ...(sealed ? [{ pointer: sealed, attempts: retained?.pointer.id === sealed.id ? retained.attempts : 0 }] : []),
-    ];
+    // Older owed epochs first, then tonight's; the sealed pointer replaces its pre-seal record.
+    const queue: Retained[] = retained.map(r => (r.pointer.id === sealed?.id ? { ...r, pointer: sealed } : r));
     for (const item of queue) {
       try {
-        const { report, dir } = await replayAndRetire(deps, cap, item.pointer, item.attempts, budgetMs, home, item.pointer.id === sealed?.id ? unverified : 1);
+        const { report, dir } = await replayAndRetire(deps, cap, item, budgetMs, home, item.pointer.id === sealed?.id ? unverified : 1);
         Object.assign(result, { status: 'replayed', replayed_epoch: item.pointer.id, coverage: report.coverage, by_class: report.by_class, report: join(dir, 'report.md'), summary: join(dir, 'summary.json') });
       } catch (e) {
         if (e instanceof ReplayError && e.code === 'shadow_replay_purged') { result.status = 'purged'; break; }

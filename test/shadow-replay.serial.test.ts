@@ -2,7 +2,8 @@
  * Shadow replay end to end: a real PGLite brain under a temporary GBRAIN_HOME, capture through the engine factory,
  * the nightly command seeding real PGLite and Rust copies, and the real `__replay-child` process.
  *
- * Protects: the first night only seeds; the second seals the recording (the recorder that wrote it has retired) and
+ * Protects: the replay child never reads the parent's working directory (`.env`, `.env.local`, `bunfig.toml` and its
+ * preloads), so a provider key there never reaches it (real processes, no Rust addon needed); the first night only seeds; the second seals the recording (the recorder that wrote it has retired) and
  * replays it, and writes a report and a summary that hold no input string; the child never writes the live brain
  * files or config; two replays of the same epoch write byte-identical reports; a purge deletes the recording at once.
  * Serial because it sets GBRAIN_HOME. The Rust arm needs `bun run rust:build`; without it the file skips
@@ -10,12 +11,14 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { withEnv } from './helpers/with-env.ts';
 import { runEngineShadow } from '../src/commands/engine-shadow.ts';
-import { nightlyDeps } from '../src/commands/engine-shadow-replay.ts';
+import { nightlyDeps, spawnReplayChild } from '../src/commands/engine-shadow-replay.ts';
+import { bunSpawn } from '../src/core/spawn.ts';
+import { childEnv } from '../src/shadow/replay.ts';
 import { createEngine } from '../src/core/engine-factory.ts';
 import { appendPurgeIntent } from '../src/core/belief/purge-mirror.ts';
 import { viewedEngine } from '../src/core/persistence/switches.ts';
@@ -51,6 +54,40 @@ function tree(root: string): Record<string, string> {
 }
 
 describe('shadow replay end to end', () => {
+  test('the replay child never loads .env, .env.local or bunfig.toml from the parent\'s working directory', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-replay-cwd-'));
+    try {
+      const parentDir = join(root, 'parent');
+      const runDir = join(root, 'run');
+      mkdirSync(parentDir, { recursive: true });
+      mkdirSync(join(runDir, 'home'), { recursive: true });
+      // Invented values only: a provider key in each env file, and a preload that marks the process.
+      writeFileSync(join(parentDir, '.env'), 'OPENAI_API_KEY=sk-example-not-a-real-key-env\n');
+      writeFileSync(join(parentDir, '.env.local'), 'ANTHROPIC_API_KEY=sk-example-not-a-real-key-local\n');
+      writeFileSync(join(parentDir, 'preload-marker.ts'), 'process.env.GBRAIN_TEST_PRELOAD_RAN = "1";\n');
+      writeFileSync(join(parentDir, 'bunfig.toml'), 'preload = ["./preload-marker.ts"]\n');
+      const probe = join(root, 'probe.ts');
+      writeFileSync(probe, `import { writeFileSync } from 'node:fs';
+writeFileSync(process.argv[2]!, JSON.stringify({ env: process.env.OPENAI_API_KEY ?? null, local: process.env.ANTHROPIC_API_KEY ?? null, preload: process.env.GBRAIN_TEST_PRELOAD_RAN ?? null, cwd: process.cwd() }));\n`);
+      const out = join(runDir, 'probe.json');
+      // The parent runs in the planted directory, as a nightly job started from a project folder would.
+      const parent = join(root, 'parent.ts');
+      writeFileSync(parent, `import { spawnReplayChild } from ${JSON.stringify(join(import.meta.dir, '..', 'src', 'commands', 'engine-shadow-replay.ts'))};
+import { bunSpawn } from ${JSON.stringify(join(import.meta.dir, '..', 'src', 'core', 'spawn.ts'))};
+import { childEnv } from ${JSON.stringify(join(import.meta.dir, '..', 'src', 'shadow', 'replay.ts'))};
+const child = spawnReplayChild([process.execPath, ${JSON.stringify(probe)}, ${JSON.stringify(out)}], ${JSON.stringify(runDir)}, childEnv(process.env, ${JSON.stringify(join(runDir, 'home'))}), bunSpawn);
+process.exit(await child.exited);\n`);
+      const proc = bunSpawn([process.execPath, parent], { cwd: parentDir, env: { PATH: process.env.PATH ?? '' }, stdout: 'pipe', stderr: 'pipe' });
+      expect(await proc.exited).toBe(0);
+      const seen = JSON.parse(readFileSync(out, 'utf8')) as Record<string, string | null>;
+      expect(seen).toMatchObject({ env: null, local: null, preload: null });
+      expect(seen.cwd).toBe(join(runDir, 'cwd'));
+      void spawnReplayChild; void childEnv;
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 60_000);
+
   test.skipIf(!HAVE_ADDON)('off by default; first night seeds; second night replays on PGLite and Rust without touching the brain', async () => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-replay-e2e-'));
     try {
@@ -75,10 +112,7 @@ describe('shadow replay end to end', () => {
           ...nightlyDeps({ ...io, now: () => new Date(), brain: { key, dir: shadowDir, engine: 'pglite' }, openPrimary: async () => {
             const e = await constructEngine(config); await e.connect(config); return e;
           } }),
-          spawnChild: (runDir: string, env: Record<string, string>) => {
-            const proc = Bun.spawn([...CLI, 'engine', 'shadow', '__replay-child', runDir], { env, stdout: 'ignore', stderr: 'inherit' });
-            return { exited: proc.exited, kill: () => proc.kill('SIGKILL') };
-          },
+          spawnChild: (runDir: string, env: Record<string, string>) => spawnReplayChild([...CLI, 'engine', 'shadow', '__replay-child', runDir], runDir, env, bunSpawn),
           ...overrides,
         });
         const first = await runNightlyReplay(deps());
@@ -103,8 +137,8 @@ describe('shadow replay end to end', () => {
         const watched = deps({
           spawnChild: (runDir: string, env: Record<string, string>) => {
             before = tree(home);
-            const proc = Bun.spawn([...CLI, 'engine', 'shadow', '__replay-child', runDir], { env, stdout: 'ignore', stderr: 'inherit' });
-            return { exited: proc.exited.then(c => { after = tree(home); return c; }), kill: () => proc.kill('SIGKILL') };
+            const child = spawnReplayChild([...CLI, 'engine', 'shadow', '__replay-child', runDir], runDir, env, bunSpawn);
+            return { exited: child.exited.then(c => { after = tree(home); return c; }), kill: child.kill };
           },
         });
         const second = await runNightlyReplay(watched);

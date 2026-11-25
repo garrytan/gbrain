@@ -12,14 +12,14 @@
  * compared report, so two replays of the same epoch on the same copies write identical reports.
  */
 import { createHmac, randomBytes } from 'node:crypto';
-import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, cpSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, rmSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import tls from 'node:tls';
 import { join, resolve, sep } from 'node:path';
 import type { BrainEngine } from '../core/engine.ts';
 import { withCallerAccess } from '../core/search/private-visibility.ts';
-import { canonicalJson, decodeValue, encodeValue } from './codec.ts';
-import { readSegment, type CaptureRecord } from './capture.ts';
+import { canonicalJson, decodeValue, encodeValue, escapedObject } from './codec.ts';
+import type { CaptureRecord } from './capture.ts';
 import { ReplayError } from './replay-errors.ts';
 import { SHADOW_READ_MEMBERS } from './reads.ts';
 import { RUST_ENGINE_MEMBERS } from '../core/rust-engine/members.ts';
@@ -79,6 +79,8 @@ export function jsonView(enc: unknown): unknown {
   if (enc === null || typeof enc !== 'object') return enc;
   if (Array.isArray(enc)) return enc.map(jsonView);
   const r = enc as Record<string, unknown>;
+  const plain = escapedObject(r);
+  if (plain) { const out: Record<string, unknown> = {}; for (const k of Object.keys(plain)) out[k] = jsonView(plain[k]); return out; }
   if (typeof r.$date === 'string') return r.$date;
   if (typeof r.$bigint === 'string') return r.$bigint;
   if (typeof r.$number === 'string') return null;
@@ -104,12 +106,13 @@ export class NormState {
     if (UUID_RE.test(s)) return true;
     if (!ISO_RE.test(s)) return false;
     const t = Date.parse(s);
-    return Number.isFinite(t) && t >= this.window.from && t <= this.window.to;
+    // A time the seed copied or a call passed in (any spelling of the same instant) is a stored value, never noise.
+    return Number.isFinite(t) && !this.known.has(timeKey(t)) && t >= this.window.from && t <= this.window.to;
   }
 
   same(x: string, y: string): boolean {
-    if (x === y) return true;
-    if (!this.volatile(x) || !this.volatile(y) || UUID_RE.test(x) !== UUID_RE.test(y)) return false;
+    if (!this.volatile(x) || !this.volatile(y) || UUID_RE.test(x) !== UUID_RE.test(y)) return x === y;
+    // Volatile values pair one to one, equal ones included: after T=T, T=U is a difference.
     const ix = this.a.get(x);
     const iy = this.b.get(y);
     if (ix === undefined && iy === undefined) { this.n++; this.a.set(x, this.n); this.b.set(y, this.n); return true; }
@@ -288,7 +291,8 @@ export function renderReport(spec: RunSpec, arms: ArmName[], counts: Record<stri
   by.match = counts.compared_calls! - diffs.length;
   return {
     schema_version: REPLAY_REPORT_VERSION, epoch: spec.epoch, arms, seed_losses_present: spec.seed_losses_present,
-    coverage: counts.gaps || counts.orphaned || counts.sweep_skipped || counts.writes_not_swept || counts.recorders_alive_at_seal || torn ? 'incomplete' : 'complete',
+    coverage: counts.gaps || counts.orphaned || counts.sweep_skipped || counts.writes_not_swept || counts.recorders_alive_at_seal
+      || counts.sweep_failed || counts.sweep_truncated || counts.records_over_memory || torn ? 'incomplete' : 'complete',
     counts: Object.fromEntries(Object.entries({ ...counts, torn_segments: torn }).sort()), by_class: by, diffs,
   };
 }
@@ -388,6 +392,8 @@ function rowSlugs(row: Record<string, unknown>, fallbackSource: string | null): 
 const UNSWEPT_MEMBERS = new Set(['setPageAliases', 'replaceDerivedAliases']);
 /** Writes to page version history: the sweep reads no version rows, so each one makes the report incomplete. */
 const VERSION_WRITES = new Set(['createVersion', 'revertToVersion']);
+/** Chunk seals: the sweep cannot read the seal stamp (`chunker_version`) the same way on both arms yet, so each one makes the report incomplete. */
+const SEAL_WRITES = new Set(['sealChunks', 'setChunkerVersion']);
 const POSITIONAL_SOURCE_MEMBERS = new Set(['refreshPageBody', 'replaceDerivedAliases', 'setPageAliases', 'updatePageContextualRetrievalState']);
 
 /**
@@ -413,15 +419,55 @@ function writtenSlugs(units: Unit[], into: Set<string>): number {
       else if (a && typeof a === 'object') pairs.push(...rowSlugs(a as Record<string, unknown>, source));
     }
     for (const p of pairs) into.add(JSON.stringify(p));
-    if (VERSION_WRITES.has(m)) unresolved++; // its page is read back, its version rows are not
+    if (VERSION_WRITES.has(m) || SEAL_WRITES.has(m)) unresolved++; // its page is read back, its version rows or seal stamp are not
     if (!pairs.length && PAGE_CAPS.has((RUST_ENGINE_MEMBERS as Record<string, string>)[m] ?? '')) unresolved++;
   }
   return unresolved;
 }
 
+/** The known-set key of an instant, so every spelling of a stored time matches it. */
+export const timeKey = (ms: number) => `t:${ms}`;
+
 function collectKnown(value: unknown, into: Set<string>): void {
-  if (typeof value === 'string') { if (UUID_RE.test(value) || ISO_RE.test(value)) into.add(value); return; }
+  if (typeof value === 'string') {
+    if (UUID_RE.test(value)) into.add(value);
+    else if (ISO_RE.test(value)) { into.add(value); const t = Date.parse(value); if (Number.isFinite(t)) into.add(timeKey(t)); }
+    return;
+  }
   if (value && typeof value === 'object') for (const v of Object.values(value)) collectKnown(v, into);
+}
+
+/** The most segment text one replay loads; records past it are counted and make the report incomplete. */
+export const REPLAY_READ_BYTES = 512 * 1024 * 1024;
+export const TIMELINE_SWEEP_LIMIT = 10_000;
+
+/**
+ * Reads one segment line by line in 1 MiB blocks (a segment may exceed the runtime's longest string), appending its
+ * records to `into` while `budget` lasts; records past the budget are counted as skipped. A torn last line (no
+ * newline: a crash mid-write) is skipped and reported.
+ */
+export function streamSegment(path: string, into: CaptureRecord[], budget: { left: number }): { torn: boolean; skipped: number } {
+  const fd = openSync(path, 'r');
+  const block = Buffer.alloc(1024 * 1024);
+  let rest = Buffer.alloc(0);
+  let skipped = 0;
+  const take = (line: Buffer) => {
+    if (!line.length) return;
+    if (budget.left < line.length) { skipped++; return; }
+    budget.left -= line.length;
+    try { into.push(JSON.parse(line.toString('utf8')) as CaptureRecord); } catch { skipped++; } // silent-read-ok: an unreadable line is counted (the report says incomplete), never replayed
+  };
+  try {
+    for (;;) {
+      const n = readSync(fd, block, 0, block.length, null);
+      if (n <= 0) break;
+      let buf = Buffer.concat([rest, block.subarray(0, n)]);
+      let at: number;
+      while ((at = buf.indexOf(10)) >= 0) { take(buf.subarray(0, at)); buf = buf.subarray(at + 1); }
+      rest = Buffer.from(buf);
+    }
+  } finally { closeSync(fd); }
+  return { torn: rest.length > 0, skipped };
 }
 
 export interface ChildDeps {
@@ -437,10 +483,12 @@ export async function runReplayChild(runDir: string, deps: ChildDeps, now: () =>
   const key = Buffer.from(spec.hmac_key, 'hex');
   const records: CaptureRecord[] = [];
   let torn = 0;
+  let overMemory = 0;
+  const budget = { left: REPLAY_READ_BYTES };
   for (const f of readdirSync(spec.segments).filter(f => f.endsWith('.jsonl')).sort()) {
-    const seg = readSegment(join(spec.segments, f));
-    for (const r of seg.records) records.push(r); // no spread: a busy segment has more records than a call takes arguments
+    const seg = streamSegment(join(spec.segments, f), records, budget);
     if (seg.torn) torn++;
+    overMemory += seg.skipped;
   }
   const plan = buildUnits(records, spec.cut);
   const known = new Set<string>();
@@ -478,22 +526,33 @@ export async function runReplayChild(runDir: string, deps: ChildDeps, now: () =>
     const slugs = new Set<string>();
     const writesNotSwept = writtenSlugs(plan.units, slugs);
     const sweepMembers = ['getPage', 'getTags', 'getLinks', 'getBacklinks', 'getTimeline', 'getChunks'] as const;
+    let sweepFailed = 0;
+    let sweepTruncated = 0;
+    // A read-back that fails on every arm verifies nothing, even when the arms fail the same way.
+    const sweepCompare = (ref: string, member: string, outs: Partial<Record<ArmName, Outcome>>) => {
+      if (arms.every(a => outs[a] && !outs[a]!.ok)) sweepFailed++;
+      compare(ref, member, outs);
+    };
     for (const entry of [...slugs].sort().slice(0, SWEEP_LIMIT)) {
       const [sourceId, slug] = JSON.parse(entry) as [string | null, string];
       for (const m of sweepMembers) {
-        const opts = { ...(sourceId ? { sourceId } : {}), ...(m === 'getChunks' ? { includeEmbedding: true, includeUnsealed: true } : {}) };
-        const rec = { member: m, args: Object.keys(opts).length ? [slug, opts] : [slug] } as CaptureRecord;
+        // Pages are read with their tombstones (a hard delete behind a soft-delete receipt differs); the timeline is
+        // read up to its sweep limit, and a page that fills it makes the report incomplete.
+        const opts = { ...(sourceId ? { sourceId } : {}), ...(m === 'getChunks' ? { includeEmbedding: true, includeUnsealed: true } : {}),
+          ...(m === 'getPage' ? { includeDeleted: true } : {}), ...(m === 'getTimeline' ? { limit: TIMELINE_SWEEP_LIMIT } : {}) };
+        const rec = { member: m, args: [slug, opts] } as CaptureRecord;
         const outs: Partial<Record<ArmName, Outcome>> = {};
         for (const a of arms) outs[a] = await callOn(engines[a], rec);
-        compare(`sweep:${keyedHash(key, entry)}`, `sweep:${m}`, outs);
+        if (m === 'getTimeline' && arms.some(a => { const o = outs[a]; return o?.ok && Array.isArray(o.value) && o.value.length >= TIMELINE_SWEEP_LIMIT; })) sweepTruncated++;
+        sweepCompare(`sweep:${keyedHash(key, entry)}`, `sweep:${m}`, outs);
       }
     }
     if (plan.units.length) {
       const outs: Partial<Record<ArmName, Outcome>> = {};
       for (const a of arms) outs[a] = await callOn(engines[a], { member: 'getStats', args: [] } as unknown as CaptureRecord);
-      compare('sweep:stats', 'sweep:getStats', outs);
+      sweepCompare('sweep:stats', 'sweep:getStats', outs);
     }
-    const report = renderReport(spec, arms, { ...plan.counts, compared_calls: compared, swept_pages: Math.min(slugs.size, SWEEP_LIMIT), sweep_skipped: Math.max(0, slugs.size - SWEEP_LIMIT), writes_not_swept: writesNotSwept, recorders_alive_at_seal: spec.tail_unverified ?? 0 }, diffs, torn);
+    const report = renderReport(spec, arms, { ...plan.counts, compared_calls: compared, swept_pages: Math.min(slugs.size, SWEEP_LIMIT), sweep_skipped: Math.max(0, slugs.size - SWEEP_LIMIT), writes_not_swept: writesNotSwept, recorders_alive_at_seal: spec.tail_unverified ?? 0, sweep_failed: sweepFailed, sweep_truncated: sweepTruncated, records_over_memory: overMemory }, diffs, torn);
     const out = join(runDir, 'out');
     mkdirSync(out, { recursive: true, mode: 0o700 });
     writeOwnerOnly(join(out, 'report.json'), JSON.stringify(report, null, 2) + '\n');

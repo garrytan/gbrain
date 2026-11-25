@@ -7,6 +7,9 @@ import { configDir } from '../core/config.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import type { EngineConfig } from '../core/types.ts';
 import { REPLAY_ERRORS, ReplayError } from '../shadow/replay-errors.ts';
+import { spawnReplayChild } from '../shadow/replay-spawn.ts';
+
+export { replayChildSpawn, spawnReplayChild } from '../shadow/replay-spawn.ts';
 
 export interface ShadowReplayIo {
   out: (l: string) => void;
@@ -64,8 +67,7 @@ export function nightlyDeps(io: ShadowReplayIo): import('../shadow/replay-run.ts
     spawnChild: (runDir, env) => {
       const { resolveServeGbrainCommand } = require('../core/serve-service.ts') as typeof import('../core/serve-service.ts');
       const { bunSpawn } = require('../core/spawn.ts') as typeof import('../core/spawn.ts');
-      const proc = bunSpawn([...resolveServeGbrainCommand({ which: () => null }), 'engine', 'shadow', '__replay-child', runDir], { env, stdout: 'ignore', stderr: 'inherit' });
-      return { exited: proc.exited, kill: () => proc.kill('SIGKILL') };
+      return spawnReplayChild([...resolveServeGbrainCommand({ which: () => null }), 'engine', 'shadow', '__replay-child', runDir], runDir, env, bunSpawn);
     },
   };
 }
