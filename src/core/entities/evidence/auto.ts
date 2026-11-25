@@ -6,20 +6,23 @@
  * `gbrain dedupe auto --off <class>` removes every link of the class and stops it.
  *
  * The gate passed C2 only: an email or phone that only these two person pages hold, in two sources, where the names
- * differ only in form (a handle for a title, a contact card beside a page). Not linked here: C1 and C3, whose samples were
- * nearly all mirror copies of one page and are sampled again without them; C5 and C6, with more than 2 wrong pairs in
- * 100; and C7, two pages in one source, which are collapsed by a pointer and an alias rather than linked.
+ * differ only in form (a handle for a title, a contact card beside a page); two full names that disagree are held.
+ * Not linked here: C1 and C3, whose samples were nearly all mirror copies of one page and are sampled again without
+ * them; C5 and C6, with more than 2 wrong pairs in 100; and C7, two pages in one source, which are collapsed by a
+ * pointer and an alias rather than linked.
  *
- * A pair is linked only when nothing holds it back: no family or minor page and no page that is not a person (hold), no
- * contradiction (X2, Mx), no page in another pair that would link, counted over every source whatever --source names,
- * and no page already in an identity group (either would join three pages on two signals), and, on a brain that keeps
- * decisions in git, no page that must stay out of the repository.
+ * A pair is linked only when nothing holds it back: no family, minor or restricted page, no page that is not a person
+ * and no full names that disagree (hold), no contradiction (Mx, or X2 from web searches already cached; auto sends
+ * none), no page in another pair that would link, counted over every source whatever --source names, and no page
+ * already in an identity group (either would join three pages on two signals), and, on a brain that keeps decisions in
+ * git, no page that must stay out of the repository.
  */
 import type { BrainEngine } from '../../engine.ts';
 import type { IdentityDecisionsRead, IdentityMemberRef } from '../../engine-sql/identity-decisions.ts';
 import { listEntityIdentities } from '../../entity-identity.ts';
 import { canonicalOf, decisionId, forgetDecisions, identityHome, memberKey, recordDecisions, storeMismatch, unpublishableMembers, type DecisionInput, type RecordResult } from '../identity-decisions.ts';
 import { classifyPairs, type ClassifiedPair } from './classes.ts';
+import { exaSettings } from './exa.ts';
 
 export const AUTO_CLASSES = ['C2'] as const;
 export type AutoClass = typeof AUTO_CLASSES[number];
@@ -51,7 +54,7 @@ const ref = (m: { source_id: string; slug: string }): IdentityMemberRef => ({ so
 /** What `gbrain dedupe auto --apply` would link now. Read-only. */
 export async function planAutoLinks(engine: BrainEngine, opts: { sourceId?: string } = {}): Promise<AutoPlan> {
   const switches = await autoSwitches(engine);
-  const { pairs } = await classifyPairs(engine);
+  const { pairs } = await classifyPairs(engine, { exa: { mode: 'dry_run', settings: await exaSettings(engine, {}) } });
   const eligible = pairs.flatMap(p => {
     const cls = autoClassOf(p);
     return cls && switches[cls] === 'on' ? [{ p, cls }] : [];

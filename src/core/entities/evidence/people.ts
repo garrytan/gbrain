@@ -92,22 +92,30 @@ const FAMILY_WORDS = new Set(['family', 'spouse', 'wife', 'husband', 'mother', '
   'stepdaughter', 'stepmother', 'stepfather', 'in-law', 'son-in-law', 'daughter-in-law', 'mother-in-law', 'father-in-law', 'brother-in-law',
   'sister-in-law']);
 const MINOR_TAGS = new Set(['minor', 'child', 'children', 'kid', 'kids']);
-/** A label word beside "family" that names something other than the owner's family (a family office, family friends). */
+/** A label word right after "family" that names something other than the owner's family (a family office, family friends). */
 const NOT_FAMILY_LABEL = new Set(['office', 'offices', 'friend', 'friends', 'foundation']);
+/** Someone other than the owner, who can own a relative: "wife of a colleague", "a friend's son". */
+const OTHER_OWNERS = new Set(['friend', 'friends', 'colleague', 'colleagues', 'coworker', 'co-worker', 'client', 'customer', 'neighbor',
+  'neighbour', 'boss', 'manager', 'investor', 'founder', 'cofounder', 'co-founder', 'employee', 'classmate', 'teammate', 'acquaintance']);
+const familyWords = (s: string) => s.split(/[^a-z-]+/).filter(w => FAMILY_WORDS.has(w));
 /**
- * A relationship that is someone else's, not the owner's: a family word owned by another person ("wife of Bob", "a
- * friend's son", never "mother of my kids", "wife of 12 years" or "my wife's sister"), or "parent" beside "school".
+ * One relationship value's family words, less those a friend, colleague or client owns ("wife of a colleague", "a
+ * friend's son") and less a school parent. Any other owner ("mother of Emma", "husband of ten years") is the owner's own.
  */
-function othersRelation(text: string): boolean {
-  const words = text.split(/[^a-z-]+/).filter(w => FAMILY_WORDS.has(w));
-  if (!words.length) return false;
-  for (const m of text.matchAll(/([a-z-]+)\s+of\s+([a-z0-9]+)/g)) {
-    if (FAMILY_WORDS.has(m[1]!) && !['my', 'our', 'two', 'three', 'four', 'five'].includes(m[2]!) && !/^\d/.test(m[2]!)) return true;
-  }
-  for (const m of text.matchAll(/([a-z-]+)'s\s+([a-z-]+)/g)) {
-    if (FAMILY_WORDS.has(m[2]!) && !FAMILY_WORDS.has(m[1]!) && !['my', 'our'].includes(m[1]!)) return true;
-  }
-  return /(^|[^a-z])school([^a-z]|$)/.test(text) && words.every(w => w === 'parent');
+function ownFamilyWords(value: string): string[] {
+  if (/(^|[^a-z])school([^a-z]|$)/.test(value) && familyWords(value).every(w => w === 'parent')) return [];
+  return familyWords(value
+    .replace(/([a-z-]+)\s+of\s+(?:(?:a|an|the|his|her|their)\s+)?([a-z-]+)/g, (m, x: string, y: string) => (FAMILY_WORDS.has(x) && OTHER_OWNERS.has(y) ? ' ' : m))
+    .replace(/([a-z-]+)'s\s+([a-z-]+)/g, (m, y: string, x: string) => (FAMILY_WORDS.has(x) && OTHER_OWNERS.has(y) ? ' ' : m)));
+}
+/** Under 18 at `now`, from a birth date or a birth year; a year alone counts as under 18 through the year of the 18th birthday. */
+function bornUnder18(v: unknown, now: Date): boolean {
+  const raw = Array.isArray(v) ? v[0] : v;
+  const m = /\b((?:19|20)\d{2})(?:-(\d{2})-(\d{2}))?\b/.exec(raw instanceof Date ? raw.toISOString() : first(raw) ?? '');
+  if (!m) return false;
+  const years = now.getUTCFullYear() - Number(m[1]);
+  if (!m[2]) return years <= 18;
+  return years - (`${m[2]}-${m[3]}` > now.toISOString().slice(5, 10) ? 1 : 0) < 18;
 }
 const NON_PERSON_WORDS = new Set(['team', 'teams', 'room', 'rooms', 'office', 'offices', 'mailbox', 'inbox', 'desk', 'department', 'committee',
   'service', 'services', 'support', 'helpdesk', 'noreply', 'partners', 'fund', 'funds', 'construction', 'inc', 'llc', 'ltd', 'corp', 'corporation',
@@ -131,26 +139,24 @@ export function handleOf(raw: string, countryCode: string): string | null {
 export const isRoleHandle = (h: string) => h.startsWith('e:') && ROLE_MAILBOXES.has(h.slice(2, h.indexOf('@')));
 
 /**
- * Family or minor, from tags, groups, a relationship field or a birth year (frontmatter only). use 'web' (the Exa block)
- * reads every family word; use 'link' (the hold on automatic links) leaves out labels and relationships that are
- * someone else's: a family office, family friends, "wife of Bob", a school parent. The minor rules are the same for both.
+ * Family or minor, from tags, groups, a relationship field or a birth date (frontmatter only). use 'web' (the Exa block)
+ * reads every family word; use 'link' (the hold on automatic links) judges each relationship value on its own and leaves
+ * out labels and values that are only someone else's: a family office, family friends, "wife of a colleague", a school
+ * parent. The minor rules are the same for both.
  */
 export function sensitivityOf(keys: Record<string, unknown>, now = new Date(), use: 'web' | 'link' = 'web'): Sensitivity | null {
   const labels = [...strings(keys.tags), ...strings(keys.groups)].map(s => s.toLowerCase());
-  const relationText = [...strings(keys.relationship), ...strings(keys.relation)].join(' ').toLowerCase();
-  const relation = use === 'link' && othersRelation(relationText) ? [] : relationText.split(/[^a-z-]+/);
+  const relation = [...strings(keys.relationship), ...strings(keys.relation)].map(s => s.toLowerCase())
+    .flatMap(v => (use === 'link' ? ownFamilyWords(v) : familyWords(v)));
   const familyLabel = (l: string) => {
     const words = l.split(/[^a-z]+/);
-    return words.includes('family') && !(use === 'link' && words.some(w => NOT_FAMILY_LABEL.has(w)));
+    return words.some((w, i) => w === 'family' && !(use === 'link' && NOT_FAMILY_LABEL.has(words[i + 1] ?? '')));
   };
   if (truthy(keys.minor) || truthy(keys.is_minor) || labels.some(l => MINOR_TAGS.has(l))) return 'minor';
   const age = Number(first(keys.age));
   if (Number.isFinite(age) && age > 0 && age < 18) return 'minor';
-  for (const f of ['birth_year', 'born', 'birthday', 'birthdate']) {
-    const year = Number(/\b(19|20)\d{2}\b/.exec(first(keys[f]) ?? '')?.[0]);
-    if (year && now.getUTCFullYear() - year < 18) return 'minor';
-  }
-  if (truthy(keys.family) || labels.some(familyLabel) || relation.some(w => FAMILY_WORDS.has(w))) return 'family';
+  if (['birth_year', 'born', 'birthday', 'birthdate'].some(f => bornUnder18(keys[f], now))) return 'minor';
+  if (truthy(keys.family) || labels.some(familyLabel) || relation.length) return 'family';
   return null;
 }
 
@@ -329,12 +335,14 @@ export async function scanPeople(engine: BrainEngine): Promise<PeopleScan> {
     found.push({ id: pairId(a, b), a, b, ...c });
   }
   const outside = (p: CandidatePair) => Number(p.a.source_id !== DEFAULT_SOURCE_ID) + Number(p.b.source_id !== DEFAULT_SOURCE_ID);
-  const kept = new Set<string>();
+  const kept = new Map<string, CandidatePair>();
   const pairs: CandidatePair[] = [];
+  const copyOf = (x: PersonPage, y: PersonPage) => pageKey(x) === pageKey(y) || isCopy(x, y);
   for (const p of found.sort((x, y) => outside(x) - outside(y) || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0))) {
     const key = [mirrorOf(p.a), mirrorOf(p.b)].sort().join('\n');
-    if (kept.has(key)) { skipped.copies++; continue; }
-    kept.add(key);
+    const k = kept.get(key);
+    if (k && (copyOf(k.a, p.a) && copyOf(k.b, p.b) || copyOf(k.a, p.b) && copyOf(k.b, p.a))) { skipped.copies++; continue; }
+    if (!k) kept.set(key, p);
     pairs.push(p);
   }
   const paired = new Map<string, PersonPage>();

@@ -29,8 +29,11 @@ export interface ClassifiedPair {
   score: number;
   why: string[];
   email_off?: string;
-  /** Why the pair never links automatically, whatever its evidence: a family or minor page, or a page that is not a person. */
-  hold?: 'family' | 'minor' | 'not_a_person';
+  /**
+   * Why the pair never links automatically, whatever its evidence: a family or minor page, a page that is not a person,
+   * a page not every reader may read, or two full names (titles with a space) that disagree.
+   */
+  hold?: 'family' | 'minor' | 'not_a_person' | 'restricted' | 'names_disagree';
 }
 
 export interface ClassesReport {
@@ -136,7 +139,9 @@ export async function classifyPairs(engine: BrainEngine, opts: ClassifyOptions =
     report.pairs++;
     report.verdicts[decided.verdict]++;
     for (const c of classes) report.classes[c]++;
-    const hold = pair.a.hold ?? pair.b.hold ?? (evidence.nonPerson ? 'not_a_person' as const : null);
+    const hold = pair.a.hold ?? pair.b.hold ?? (evidence.nonPerson ? 'not_a_person' as const : null)
+      ?? (pair.a.restricted || pair.b.restricted ? 'restricted' as const : null)
+      ?? (pair.names === false && [pair.a, pair.b].every(p => /\s/.test(p.title.trim())) ? 'names_disagree' as const : null);
     pairs.push({ id: pair.id, members: [member(pair.a), member(pair.b)], base: pair.base, signals: [...signals].sort(), classes,
       verdict: decided.verdict, reason: decided.reason, score: decided.score, why: pair.why, ...(emailOff ? { email_off: emailOff } : {}), ...(hold ? { hold } : {}) });
   }

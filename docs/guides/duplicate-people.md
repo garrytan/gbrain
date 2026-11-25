@@ -16,14 +16,15 @@ Google Contacts that match two or more people are decided one by one with `gbrai
 
 A page kept under the same slug in two sources, with the same name and no company, role, email or phone that
 disagrees, is one page copied, not a duplicate: the pair is left out and counted as a mirror copy. When a third page
-pairs with each copy, only one of those pairs is kept, the one with the most pages in the default source.
+pairs with each copy, only one of those pairs is kept, the one with the most pages in the default source; when the
+pages it pairs with are not copies of each other (different emails, say), every pair is kept.
 
 ## The classes
 
 | Class | What it means | What would happen |
 |---|---|---|
 | C1 | an email or phone only these two person pages hold, names agree | link |
-| C2 | the same, but the names disagree (usually a handle or a contact card beside a page) | link with `gbrain dedupe auto` |
+| C2 | the same, but the names disagree (usually a handle or a contact card beside a page) | link with `gbrain dedupe auto` when the names differ only in form |
 | C3 | an account id both hold, names agree | link |
 | C4 | same full name and company, two or more pages that link both, no other page of that name | wait (counted first) |
 | C5 | the names agree and nothing else is shared | wait, likeliest first |
@@ -45,9 +46,12 @@ of each page, each under a name that matches its page; E4: an email that links o
 address), your chats (M3: a chat ties one page's phone or email to the other page's name), and company plus shared
 history (C4). Weaker signals only change the order of the waiting list: E3 (the two addresses write to largely the
 same people) and M2 (a chat name matches the page). Anything that contradicts waits, and a page marked family
-(`relationship`, a `family` tag or group) or about someone under 18 (`minor: true`, an age or a birth year) never links
-on its own. For that hold, a label or relationship that is someone else's doesn't count: a family office, family
-friends, "wife of ..." or a school parent. Web search still leaves all of them out. A page whose title reads as a room,
+(`relationship`, a `family` tag or group) or about someone under 18 (`minor: true`, an age, a birth date or a birth
+year; a year alone counts through the year of the 18th birthday) never links on its own. For that hold, each
+relationship value is read on its own, and a label or value that is only someone else's relative doesn't count: a
+family office, family friends, "wife of a colleague", "a friend's son" or a school parent. Any other owner keeps the
+hold ("mother of Emma" may be your own child), and so does one own family word beside someone else's ("spouse" next
+to "sister of a colleague"). Web search still leaves all of them out. A page whose title reads as a room,
 a team, a shared mailbox or a business (`Team`, `Room`, `Partners`, `Inc` and similar words) never links on its own
 either.
 
@@ -98,8 +102,11 @@ pair same, different or unsure; a class with more than 2 wrong in 100 stays manu
 
 `gbrain dedupe auto` lists the pairs it would link and changes nothing; `gbrain dedupe auto --apply` links them. It
 links only classes that passed a labelled sample, today C2: an email or phone that only these two person pages hold,
-in two sources. It leaves out a pair with a family, minor or non-person page, a pair with any contradiction, a pair
-whose page is in another pair it would link (in any source, whatever `--source` names), and a pair whose page is
+in two sources, with names that differ only in form (a one-word handle or card label beside a name). It leaves out a
+pair of two full names that disagree, a pair with a family, minor or non-person page or a page not every reader may
+read (private visibility, named readers, a privacy label, a folder rule or an owner-only source, with or without a
+repository), a pair with any contradiction (including two different profiles from web searches already cached; auto
+sends no search), a pair whose page is in another pair it would link (in any source, whatever `--source` names), and a pair whose page is
 already in an identity group, so a third page never joins two linked ones on a second signal.
 
 Each link is a "same" decision, recorded like your own `gbrain dedupe confirm` (in git when the brain has a

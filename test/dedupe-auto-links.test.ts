@@ -3,7 +3,8 @@
  * people. Candidates: a mirror copy (one page kept under its slug in two sources) is no pair, an id that a page with
  * another name also holds proves nothing, a page that is not a person and a page of the owner's own family never link,
  * and a family office or a school parent is not the owner's family. gbrain dedupe auto: preview, apply, undo, reject,
- * --off and --on, the weekly sample of recorded links, and the doctor line.
+ * --off and --on, the weekly sample of recorded links, the doctor line, and the pairs it holds back (two full names that
+ * disagree, a restricted page, a contact matching two pages under one slug that are not copies of each other).
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -102,6 +103,18 @@ describe('candidates after the labelled sample', () => {
       expect([r, link({ relationship: r })]).toEqual([r, 'family']);
     }
     expect(sensitivityOf({ relationship: 'son-in-law' })).toBe('family');
+    expect(link({ relationship: ['spouse', 'sister of a colleague'] })).toBe('family');
+    expect(link({ relationship: 'sister', relation: 'wife of Bob' })).toBe('family');
+    for (const r of ['mother of Emma', 'husband of ten years', 'wife of many years', 'mother of the kids']) {
+      expect([r, link({ relationship: r })]).toEqual([r, 'family']);
+    }
+    expect(link({ tags: ['friends-and-family'] })).toBe('family');
+    const at = new Date('2026-11-25');
+    expect(sensitivityOf({ birthdate: '2008-12-31' }, at, 'link')).toBe('minor');
+    expect(sensitivityOf({ birthdate: new Date('2010-05-01') }, at, 'link')).toBe('minor');
+    expect(sensitivityOf({ birth_year: 2008 }, at, 'link')).toBe('minor');
+    expect(sensitivityOf({ birthdate: '2008-01-01' }, at, 'link')).toBeNull();
+    expect(sensitivityOf({ birth_year: 2007 }, at, 'link')).toBeNull();
     await person('people/gus-example', 'Gus Example', { email: 'gus@example.invalid', tags: ['family-office'] });
     await person('contacts/gus-example', 'Gus Example', { email: 'gus@example.invalid' }, 'people-b');
     await person('people/hope-example', 'Hope Example', { email: 'hope@example.invalid', relationship: 'sister' });
@@ -116,12 +129,12 @@ describe('gbrain dedupe auto', () => {
   let linked = '';
   test('preview links C2 pairs only and changes nothing; a family page and a page in two pairs are left out', async () => {
     await person('people/hal-example', 'Hal Example', { phone: '+1 555-555-0201' });
-    await person('contacts/hal-card', 'Henry Sample', { phones: ['(555) 555-0201'] }, 'people-c');
+    await person('contacts/hal-card', 'halcard', { phones: ['(555) 555-0201'] }, 'people-c');
     await person('people/ivo-example', 'Ivo Example', { phone: '+1 555-555-0202', tags: ['Family'] });
     await person('contacts/ivo-card', 'Ivan Card', { phone: '+1 555-555-0202' }, 'people-c');
     await person('people/jo-example', 'Jo Example', { phones: ['+1 555-555-0203', '+1 555-555-0204'] });
-    await person('contacts/jo-one', 'Jay One', { phone: '+1 555-555-0203' }, 'people-b');
-    await person('contacts/jo-two', 'Jay Two', { phone: '+1 555-555-0204' }, 'people-c');
+    await person('contacts/jo-one', 'jayone', { phone: '+1 555-555-0203' }, 'people-b');
+    await person('contacts/jo-two', 'jaytwo', { phone: '+1 555-555-0204' }, 'people-c');
     const before = await identities();
     const plan = JSON.parse(await dedupe(['auto', '--json']));
     expect(plan).toMatchObject({ mode: 'preview', switches: { C2: 'on' } });
@@ -184,18 +197,37 @@ describe('gbrain dedupe auto', () => {
 
   test('a page in two pairs is set aside whatever --source a run names, and a page already in a group takes no new page', async () => {
     await person('people/max-example', 'Max Example', { phone: '+1 555-555-0301', email: 'max@example.invalid' });
-    await person('contacts/max-b', 'Mo Other', { phone: '+1 555-555-0301' }, 'people-b');
-    await person('contacts/max-c', 'Zed Other', { email: 'max@example.invalid' }, 'people-c');
+    await person('contacts/max-b', 'mo.other', { phone: '+1 555-555-0301' }, 'people-b');
+    await person('contacts/max-c', 'zedother', { email: 'max@example.invalid' }, 'people-c');
     const scoped = JSON.parse(await dedupe(['auto', '--source', 'people-b', '--apply', '--json']));
     expect(scoped.links).toEqual([]);
     expect(scoped.set_aside).toContainEqual(expect.objectContaining({ reason: 'shared_member', members: [{ source_id: 'default', slug: 'people/max-example' }, { source_id: 'people-b', slug: 'contacts/max-b' }] }));
     await person('people/nia-example', 'Nia Example', { phone: '+1 555-555-0302', email: 'nia@example.invalid' });
-    await person('contacts/nia-b', 'Nell Other', { phone: '+1 555-555-0302' }, 'people-b');
+    await person('contacts/nia-b', 'nellb', { phone: '+1 555-555-0302' }, 'people-b');
     expect(JSON.parse(await dedupe(['auto', '--apply', '--json'])).links.map((l: any) => l.members.map((m: any) => m.slug).sort())).toEqual([['contacts/nia-b', 'people/nia-example']]);
-    await person('contacts/nia-c', 'Nora Other', { email: 'nia@example.invalid' }, 'people-c');
+    await person('contacts/nia-c', 'norac', { email: 'nia@example.invalid' }, 'people-c');
     const later = JSON.parse(await dedupe(['auto', '--apply', '--json']));
     expect(later.links).toEqual([]);
     expect(later.set_aside).toContainEqual(expect.objectContaining({ reason: 'in_group', members: [{ source_id: 'default', slug: 'people/nia-example' }, { source_id: 'people-c', slug: 'contacts/nia-c' }] }));
     expect((await identities()).some(r => r.slug === 'contacts/nia-c')).toBe(false);
+  });
+
+  test('two full names that disagree, a restricted page, and a contact matching two pages under one slug that are not copies are held', async () => {
+    await person('people/rex-example', 'Rex Example', { email: 'rex@example.invalid' });
+    await person('contacts/rex-card', 'Rita Sample', { email: 'rex@example.invalid' }, 'people-c');
+    await person('people/sol-example', 'Sol Example', { email: 'sol@example.invalid', readable_by: ['alice-example'] });
+    await person('contacts/sol-card', 'solcard', { email: 'sol@example.invalid' }, 'people-c');
+    await person('people/pat-example', 'Pat Example', { email: 'pat.one@example.invalid' });
+    await person('people/pat-example', 'Pat Example', { email: 'pat.two@example.invalid' }, 'people-b');
+    await person('people/pat-example', 'Pat Example', {}, 'people-c');
+    await person('contacts/pat-card', 'patcard', { emails: ['pat.one@example.invalid', 'pat.two@example.invalid'] }, 'people-c');
+    const { pairs } = await classifyPairs(engine);
+    expect(one(pairs, 'Rex Example')).toMatchObject({ base: 'C2', hold: 'names_disagree' });
+    expect(one(pairs, 'Sol Example')).toMatchObject({ base: 'C2', hold: 'restricted' });
+    expect(withTitle(pairs, 'patcard').map(p => p.members.map(m => m.source_id).sort().join('+')).sort()).toEqual(['default+people-c', 'people-b+people-c']);
+    const plan = JSON.parse(await dedupe(['auto', '--json']));
+    const slugs = plan.links.flatMap((l: any) => l.members.map((m: any) => m.slug));
+    for (const s of ['people/rex-example', 'people/sol-example', 'contacts/pat-card']) expect([s, slugs.includes(s)]).toEqual([s, false]);
+    expect(plan.set_aside.filter((s: any) => s.members.some((m: any) => m.slug === 'contacts/pat-card')).map((s: any) => s.reason)).toEqual(['shared_member', 'shared_member']);
   });
 });
