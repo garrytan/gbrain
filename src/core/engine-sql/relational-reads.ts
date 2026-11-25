@@ -31,6 +31,8 @@ export async function readAdmittedPageRefs(exec: LegacyUnscopedRead, refs: reado
   );
 }
 
+const DATE_FIELDS_JOIN = 'JOIN unnest($1::text[], $2::text[]) AS w(source_id, slug) ON p.source_id = w.source_id AND p.slug = w.slug';
+
 /** A page's observation-date inputs: its frontmatter (a JSON object or its text) and import filename. */
 export interface PageDateFieldsRow { source_id: string; slug: string; frontmatter: unknown; import_filename: string | null }
 
@@ -45,7 +47,7 @@ export async function readAdmittedPageDateFields(exec: LegacyUnscopedRead, refs:
   const filter = pageReadFilter('p', policy, params, true);
   return exec.executeRaw<PageDateFieldsRow>(
     `SELECT p.source_id, p.slug, p.frontmatter, p.import_filename FROM pages p
-     JOIN unnest($1::text[], $2::text[]) AS w(source_id, slug) ON p.source_id = w.source_id AND p.slug = w.slug WHERE ${filter}`, params,
+     ${DATE_FIELDS_JOIN} WHERE ${filter}`, params,
   );
 }
 
