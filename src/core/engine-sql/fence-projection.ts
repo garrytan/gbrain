@@ -34,16 +34,27 @@ const FENCE_ABSENT_HOLD_SQL = `SELECT 1 FROM derived_generations WHERE source_id
 
 const PAGE_TAKE_ROWS_SQL = 'SELECT row_num FROM takes WHERE page_id=$1';
 
-const FIELD_ROWS_SQL = `UPDATE facts f SET kind=r.kind,notability=r.notability,context=r.context,
-        valid_from=COALESCE(r.valid_from::timestamptz,f.valid_from),valid_until=r.valid_until::timestamptz,expired_at=r.expired_at::timestamptz,
+// #10055: a row that stays retired keeps its history. Its fence cell renders the stored retirement to the second, a blank
+// valid_until cell reads back as today and a superseded row's context renders as the generated `superseded by #N` marker, so
+// reading those back would restamp the retirement time, drop the original context and record an unrelated edit as a write of
+// the archived row. A changed valid_until or an explicit note in the context cell still updates it. Every row keeps a stored
+// valid_from that its cell renders to the second, so the sub-second instant `remember` stored survives an unrelated edit.
+const RETIRED = 'f.expired_at IS NOT NULL AND r.expired_at IS NOT NULL';
+const KEEP_CONTEXT = `CASE WHEN ${RETIRED} AND f.superseded_by IS NOT NULL AND r.context ~* '^superseded by #[0-9]+$' THEN f.context ELSE r.context END`;
+const KEEP_UNTIL = `CASE WHEN ${RETIRED} AND (NOT r.until_cell OR date_trunc('second', f.valid_until) = r.valid_until::timestamptz) THEN f.valid_until ELSE r.valid_until::timestamptz END`;
+const KEEP_EXPIRED = 'CASE WHEN r.expired_at IS NULL THEN NULL ELSE COALESCE(f.expired_at, r.expired_at::timestamptz) END';
+const KEEP_FROM = `CASE WHEN r.valid_from IS NULL OR date_trunc('second', f.valid_from) = r.valid_from::timestamptz THEN f.valid_from ELSE r.valid_from::timestamptz END`;
+
+const FIELD_ROWS_SQL = `UPDATE facts f SET kind=r.kind,notability=r.notability,context=${KEEP_CONTEXT},
+        valid_from=${KEEP_FROM},valid_until=${KEEP_UNTIL},expired_at=${KEEP_EXPIRED},
         source=r.source,confidence=r.confidence,claim_metric=r.claim_metric,claim_value=r.claim_value,claim_unit=r.claim_unit,
         claim_period=r.claim_period,attributed_to=r.attributed_to
-      FROM jsonb_to_recordset($3::text::jsonb) AS r(row_num integer,kind text,notability text,context text,valid_from text,valid_until text,
+      FROM jsonb_to_recordset($3::text::jsonb) AS r(row_num integer,kind text,notability text,context text,valid_from text,valid_until text,until_cell boolean,
         expired_at text,source text,confidence real,claim_metric text,claim_value double precision,claim_unit text,claim_period text,attributed_to text)
       WHERE f.source_id=$1 AND f.source_markdown_slug=$2 AND f.row_num=r.row_num
         AND (f.kind,f.notability,f.context,f.valid_from,f.valid_until,f.expired_at,f.source,f.confidence,f.claim_metric,f.claim_value,f.claim_unit,
-          f.claim_period,f.attributed_to) IS DISTINCT FROM (r.kind,r.notability,r.context,COALESCE(r.valid_from::timestamptz,f.valid_from),
-          r.valid_until::timestamptz,r.expired_at::timestamptz,r.source,r.confidence,r.claim_metric,r.claim_value,r.claim_unit,r.claim_period,r.attributed_to)`;
+          f.claim_period,f.attributed_to) IS DISTINCT FROM (r.kind,r.notability,${KEEP_CONTEXT},${KEEP_FROM},
+          ${KEEP_UNTIL},${KEEP_EXPIRED},r.source,r.confidence,r.claim_metric,r.claim_value,r.claim_unit,r.claim_period,r.attributed_to)`;
 
 const CLEAR_CHANGED_RESOLUTIONS_SQL = `UPDATE takes k SET resolved_at=NULL,resolved_quality=NULL,
         resolved_outcome=NULL,resolved_source=NULL,resolved_value=NULL,resolved_unit=NULL,resolved_by=NULL

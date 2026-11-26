@@ -559,6 +559,7 @@ test/engine-parity/sync-run.test.ts
 test/engine-parity/sync-stamp.test.ts
 test/engine-parity/sync-status-reads.test.ts
 test/engine-parity/sync-swap-reads.test.ts
+test/engine-parity/sync20-trust-a.test.ts
 test/engine-parity/take-held-rows.test.ts
 test/engine-parity/take-proposals.test.ts
 test/engine-parity/take-purge-ledger.test.ts
@@ -664,6 +665,7 @@ test/federation-exposure-private-9068.test.ts
 test/fence-absent-append-keeps-rows.test.ts
 test/fence-fact-append.test.ts
 test/fence-first-generation-8819.test.ts
+test/fence-hold-clears-in-sync-10067.test.ts
 test/fence-repair-receipts.test.ts
 test/fenced-embed-reuse-6961.test.ts
 test/file-drift-normalisation-gst2568.test.ts
@@ -1201,6 +1203,7 @@ test/repair-visibility-propose-gst2670.test.ts
 test/request-tools-combined-gbra449.test.ts
 test/requester-scope.test.ts
 test/restated-private-cross-entity-2891.test.ts
+test/retired-fact-history-10055.test.ts
 test/retrieval-coverage-notices.test.ts
 test/rust-derived-generations.test.ts
 test/rust-fence-generations.test.ts

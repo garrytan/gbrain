@@ -648,7 +648,7 @@ readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
 readLiveFactRowTier	facts	yes	1	no	yes	yes	serves
 insertFact	facts	yes	199	yes	yes	yes	serves
-insertFacts	facts	yes	272	no	yes	yes	serves
+insertFacts	facts	yes	274	no	yes	yes	serves
 deleteFactsForPage	facts	yes	8	no	yes	yes	serves
 expireFact	facts	yes	94	no	yes	yes	serves
 listFactsByEntity	facts	yes	66	yes	yes	yes	serves
@@ -672,7 +672,7 @@ hasPositionedPageFacts	facts	yes	1	no	yes	yes	serves
 hasFenceAbsentHold	facts	yes	1	no	yes	yes	serves
 listPageTakeRowNums	facts	yes	1	no	yes	yes	serves
 expireFenceFacts	facts	yes	2	no	yes	yes	serves
-refreshFenceFactFields	facts	yes	2	no	yes	yes	serves
+refreshFenceFactFields	facts	yes	3	no	yes	yes	serves
 clearChangedTakeResolutions	facts	yes	2	no	yes	yes	serves
 writeFenceTakeResolutions	facts	yes	4	no	yes	yes	serves
 detachFenceFactRows	facts	yes	1	no	yes	yes	serves
@@ -1455,7 +1455,7 @@ listFreshExtractionOutcomes	facts_cycle	yes	1	no	yes	yes	serves
 listFenceRowGroups	facts_cycle	yes	1	no	yes	yes	serves
 readFactSubject	facts_cycle	yes	1	no	yes	yes	serves
 factsOrAliasesMayMatch	facts_cycle	yes	1	no	yes	yes	serves
-listFactsForPage	facts_cycle	yes	21	no	yes	yes	serves
+listFactsForPage	facts_cycle	yes	23	no	yes	yes	serves
 countLegacyFactsPending	facts_cycle	yes	1	no	yes	yes	serves
 countUnconsolidatedFactsBySource	facts_cycle	yes	2	no	yes	yes	serves
 findBulkFactDays	facts_cycle	yes	2	no	yes	yes	serves
@@ -1479,11 +1479,11 @@ readPageFileOrigin	facts_cycle_sites	yes	3	no	yes	yes	serves
 listFenceRowClaims	facts_cycle_sites	yes	1	no	yes	yes	serves
 adoptFactIntoFence	facts_cycle_sites	yes	2	no	yes	yes	serves
 listFenceRowSupersession	facts_cycle_sites	yes	1	no	yes	yes	serves
-setFactSupersededBy	facts_cycle_sites	yes	1	no	yes	yes	serves
+setFactSupersededBy	facts_cycle_sites	yes	2	no	yes	yes	serves
 listHeldWideningFactIds	facts_cycle_sites	yes	1	no	yes	yes	serves
-expireFactInPlace	facts_cycle_sites	yes	1	no	yes	yes	serves
+expireFactInPlace	facts_cycle_sites	yes	2	no	yes	yes	serves
 expireAndDetachFact	facts_cycle_sites	yes	1	no	yes	yes	serves
-updateFenceFactCells	facts_cycle_sites	yes	1	no	yes	yes	serves
+updateFenceFactCells	facts_cycle_sites	yes	2	no	yes	yes	serves
 listExpirableFactIdsOfDeletedPage	facts_cycle_sites	yes	1	no	yes	yes	serves
 readDeletedPageBody	facts_cycle_sites	yes	1	no	yes	yes	serves
 expireFactsByIds	facts_cycle_sites	yes	1	no	yes	yes	serves
