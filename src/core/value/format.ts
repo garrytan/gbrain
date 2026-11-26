@@ -3,6 +3,7 @@
  * Core: core/value/card.ts. A row with no number never prints one.
  */
 import type { ValueCard, ValueRow } from './card.ts';
+import { docsUrl } from '../agent-output.ts';
 
 const plural = (count: number, one: string, many = one + 's') => count + ' ' + (count === 1 ? one : many);
 
@@ -37,5 +38,6 @@ export function formatValueCard(card: ValueCard): string {
   const lines = ['What your brain holds and has done for you' + ':'];
   rows.forEach((r, i) => lines.push('  ' + labels[i]!.padEnd(width) + '  ' + rowText(r)));
   if (card.state === 'degraded') lines.push('', 'Some counts could not be read; the others above are measured.');
+  lines.push('', 'How gbrain compares with simpler setups, measured: ' + docsUrl('docs/proof.md'));
   return lines.join('\n') + '\n';
 }

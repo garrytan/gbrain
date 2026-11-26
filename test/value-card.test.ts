@@ -214,6 +214,7 @@ for (const kind of testBackends()) {
       expect(text).toContain('unavailable (query_failed): simulated read failure');
       expect(text).toContain('3 (2 searches, 1 recall); best effort, may undercount');
       expect(text).not.toMatch(/Links\s+0/);
+      expect(text.trimEnd().split('\n').at(-1)).toMatch(/^How gbrain compares with simpler setups, measured: \S+\/docs\/proof\.md$/);
     });
   });
 }
