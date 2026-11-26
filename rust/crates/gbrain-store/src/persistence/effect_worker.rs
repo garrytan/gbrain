@@ -603,15 +603,7 @@ impl Store {
 
     /// `claimEffectRecovery(claim)`: the claimed row, or null when the effect holds no recovery record.
     pub fn claim_effect_recovery(&self, claim: &EffectClaim) -> Result<Option<Value>> {
-        self.write(|tx| {
-            fence::begin(self, tx, claim.fence.as_ref(), "claim_effect_recovery")?;
-            let row = claim_effect_recovery_in(tx, &*self.env, claim)?;
-            if row.is_some() {
-                let id = effect_id(&claim.id)?.to_string();
-                fence::claim_taken(tx, CLAIM_EFFECT, &id, claim.fence.as_ref())?;
-            }
-            Ok(row)
-        })
+        self.write(|tx| claim_effect_recovery_in(tx, &*self.env, claim))
     }
 
     /// `claimCoalescedGitEffects(input)`: the claimed rows, in claim order.

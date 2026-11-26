@@ -430,7 +430,6 @@ fn an_effect_is_claimed_for_recovery_only_while_it_holds_a_recovery_record() {
         id: effect_id.clone(),
         token: TOKEN.into(),
         owner_json: json!({ "token": TOKEN, "owner": { "pid": 1 } }).to_string(),
-        fence: None,
     };
     assert_eq!(
         s.claim_effect_recovery(&claim()).unwrap(),

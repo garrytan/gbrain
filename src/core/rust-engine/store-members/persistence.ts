@@ -240,32 +240,29 @@ export const stampWriteClaim: StoreMember<[id: string, token: string, leaseMs: n
 /**
  * The lane head claim's read and stamp and the owner's reclaim of a released write (#5984, #6007). Each replaced a statement
  * `journal.ts` sent through executeRaw, so while the managed_persistence hold is on (a user's Rust brain) each refuses as that
- * executeRaw did (managed-hold.ts). A multi-user store checks the caller's host fence on the read and records the claim's lease
- * epoch on the stamp and the reclaim, as the FIFO claim does.
+ * executeRaw did (managed-hold.ts).
  */
 export const selectClaimableLaneHead = async function selectClaimableLaneHead(this: RustEngine, brain: StoreBrain, spec: LaneHeadSpec): Promise<WriteRequest | null> {
   if (!managedServed(this)) return heldRefusal(this);
   return requestRow<WriteRequest>(await storeCall({ member: 'selectClaimableLaneHead' }, () => brain.selectClaimableLaneHead({
-    hostId: spec.hostId, worktreeId: spec.worktreeId, run: spec.run, seenSequence: spec.seenSequence, nonce: spec.nonce, priority: spec.priority,
-    ...(spec.fence ? { fence: spec.fence } : {}) })));
+    hostId: spec.hostId, worktreeId: spec.worktreeId, run: spec.run, seenSequence: spec.seenSequence, nonce: spec.nonce, priority: spec.priority })));
 };
 
 export const stampLaneHeadClaim = async function stampLaneHeadClaim(this: RustEngine, brain: StoreBrain, stamp: LaneHeadStamp): Promise<(WriteRequest & { seen_sequence: string }) | null> {
   if (!managedServed(this)) return heldRefusal(this);
   return requestRow<WriteRequest & { seen_sequence: string }>(await storeCall({ member: 'stampLaneHeadClaim' }, () => brain.stampLaneHeadClaim({
-    id: stamp.id, token: stamp.token, leaseMs: stamp.leaseMs, phaseJson: stamp.phaseJson, ...(stamp.fence ? { fence: stamp.fence } : {}) })));
+    id: stamp.id, token: stamp.token, leaseMs: stamp.leaseMs, phaseJson: stamp.phaseJson })));
 };
 
 export const reclaimReleasedWrite = async function reclaimReleasedWrite(this: RustEngine, brain: StoreBrain, stamp: LaneHeadStamp): Promise<WriteRequest | null> {
   if (!managedServed(this)) return heldRefusal(this);
   return requestRow<WriteRequest>(await storeCall({ member: 'reclaimReleasedWrite' }, () => brain.reclaimReleasedWrite({
-    id: stamp.id, token: stamp.token, leaseMs: stamp.leaseMs, phaseJson: stamp.phaseJson, ...(stamp.fence ? { fence: stamp.fence } : {}) })));
+    id: stamp.id, token: stamp.token, leaseMs: stamp.leaseMs, phaseJson: stamp.phaseJson })));
 };
 
 export const chargeTransientInterruption = async function chargeTransientInterruption(this: RustEngine, brain: StoreBrain, charge: TransientCharge): Promise<{ transient_interruptions: number } | null> {
   if (!managedServed(this)) return heldRefusal(this);
-  return storeCall({ member: 'chargeTransientInterruption' }, () => brain.chargeTransientInterruption({ id: charge.id, token: charge.token, baseMs: charge.baseMs, maxMs: charge.maxMs,
-    ...(charge.fence ? { fence: charge.fence } : {}) })) as Promise<{ transient_interruptions: number } | null>;
+  return storeCall({ member: 'chargeTransientInterruption' }, () => brain.chargeTransientInterruption({ id: charge.id, token: charge.token, baseMs: charge.baseMs, maxMs: charge.maxMs })) as Promise<{ transient_interruptions: number } | null>;
 };
 
 /** The completion; this engine keeps no persistence effects, so the queued effect size is 0. */

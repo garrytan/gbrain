@@ -7,7 +7,6 @@ import { existsSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { isPersistenceDeclaration } from './protocol.ts';
-import { fenceOpts } from './host-fence.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { OperationError, opError } from '../ops/contract.ts';
@@ -794,7 +793,7 @@ export async function claimAndRecoverEffect(engine: BrainEngine, id: string | nu
   let claimed: PersistenceEffect | undefined;
   try {
     const token = randomUUID();
-    claimed = await engine.claimEffectRecovery<PersistenceEffect>({ id, token, ownerJson: effectClaimStamp(token), ...fenceOpts(engine) }) ?? undefined;
+    claimed = await engine.claimEffectRecovery<PersistenceEffect>({ id, token, ownerJson: effectClaimStamp(token) }) ?? undefined;
     if (claimed) await recoverEffectPublication(engine, claimed, hostId, { ...hooks, between: hooks.between ?? effectClaimKeeper(engine, claimed, effectRenewalIntervalMs) });
   } catch (error) { if (claimed) await recordFailure(engine, claimed, error); }
   return claimed;

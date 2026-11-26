@@ -797,10 +797,10 @@ export async function claimNextLaneHead(engine: BrainEngine, hostId: string, wor
     await declarePersistenceProtocol(tx);
     // The lane head read and its claim stamp live in engine-sql/persistence-claims.ts (the SQL text is unchanged).
     const row = await tx.selectClaimableLaneHead<WriteRequest>({ hostId, worktreeId, run, seenSequence, nonce: consumerIdentity().nonce,
-      priority: foregroundPriorityOverride(), ...fenceOpts(tx) });
+      priority: foregroundPriorityOverride() });
     if (!row) return null;
     const token = randomUUID();
-    const claimed = await tx.stampLaneHeadClaim<WriteRequest & { seen_sequence: string }>({ id: row.id, token, leaseMs, phaseJson: claimPhaseStamp(startClaimPhase(), token), ...fenceOpts(tx) });
+    const claimed = await tx.stampLaneHeadClaim<WriteRequest & { seen_sequence: string }>({ id: row.id, token, leaseMs, phaseJson: claimPhaseStamp(startClaimPhase(), token) });
     return claimed ? { ...claimed, previous_claim_phase: row.claim_phase } : claimed;
   });
 }
@@ -897,7 +897,7 @@ export async function clearResolvedRecoveries(engine: BrainEngine, rows: WriteRe
 /** #6007: claims again a request this owner pass released to the queue itself, while it still holds the worktree's native lock; never before its backoff (LPH b). */
 export async function reclaimReleasedWrite(engine: BrainEngine, id: string, leaseMs = 30_000): Promise<WriteRequest | null> {
   const token = randomUUID();
-  const claimed = await engine.reclaimReleasedWrite<WriteRequest>({ id, token, leaseMs, phaseJson: claimPhaseStamp(startClaimPhase(), token), ...fenceOpts(engine) });
+  const claimed = await engine.reclaimReleasedWrite<WriteRequest>({ id, token, leaseMs, phaseJson: claimPhaseStamp(startClaimPhase(), token) });
   return claimed ?? null;
 }
 

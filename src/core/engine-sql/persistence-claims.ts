@@ -507,8 +507,6 @@ export interface LaneHeadSpec {
   nonce: string;
   /** The `foreground_priority` environment override, or null for the brain config row. */
   priority: boolean | null;
-  /** The caller's host fence on a multi-user Rust brain; the SQL engines ignore it. */
-  fence?: LeaseToken;
 }
 
 /** The lane head read for one `foreground_priority` value. */
@@ -537,7 +535,7 @@ export const LANE_HEAD_STAMP_SQL = `UPDATE persistence_requests SET state='runni
       updated_at=now(),blocked_reason=NULL,claim_phase=$4::text::jsonb WHERE id=$1::uuid RETURNING *,(SELECT max(sequence) FROM persistence_requests)::text AS seen_sequence`;
 
 /** A lane head claim stamp: request `id`, its new claim `token`, the lease and the phase to record. */
-export interface LaneHeadStamp { id: string; token: string; leaseMs: number; phaseJson: string; fence?: LeaseToken }
+export interface LaneHeadStamp { id: string; token: string; leaseMs: number; phaseJson: string }
 
 /** Stamps the lane head claim; the claimed row with `seen_sequence`, or null when no request has the id. */
 export async function stampLaneHeadClaim<R = Record<string, unknown>>(exec: SqlExecutor, stamp: LaneHeadStamp): Promise<R | null> {
@@ -569,7 +567,7 @@ export const CHARGE_TRANSIENT_SQL = `UPDATE persistence_requests SET transient_i
     updated_at=now() WHERE id=$1::uuid AND execution_token=$2::uuid AND state='running' AND set_config('gbrain.persistence_protocol','2',true)='2' RETURNING transient_interruptions`;
 
 /** A transient interruption charged to claim `token` of request `id`, with the backoff's base and ceiling. */
-export interface TransientCharge { id: string; token: string | null; baseMs: number; maxMs: number; fence?: LeaseToken }
+export interface TransientCharge { id: string; token: string | null; baseMs: number; maxMs: number }
 
 /** The count after the charge, or null when the request is no longer running under the token. */
 export async function chargeTransientInterruption(exec: SqlExecutor, charge: TransientCharge): Promise<{ transient_interruptions: number } | null> {

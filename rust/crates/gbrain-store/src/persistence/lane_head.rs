@@ -14,13 +14,12 @@ use super::{
     ClaimStamp, ClaimableSpec, all_requests, extra_is_null, extra_time, foreground_priority,
     json_text, jsonb_param, lease_end, request_by_id, uuid_param,
 };
-use super::{extra_i64, held_claim_of};
+use super::extra_i64;
 use crate::env::{Env, iso};
 use crate::error::Result;
 use crate::journal::{max_sequence, write_request};
 use crate::kv::{KvRead, KvWrite};
-use crate::leases::{CLAIM_WRITE, LeaseToken};
-use crate::{Store, fence};
+use crate::Store;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
@@ -38,9 +37,6 @@ pub struct LaneHeadSpec {
     pub nonce: String,
     #[serde(default)]
     pub priority: Option<bool>,
-    /// The caller's host registration: only a host that holds its lease selects a claim.
-    #[serde(default)]
-    pub fence: Option<LeaseToken>,
 }
 
 /// `chargeTransientInterruption({ id, token, baseMs, maxMs })`.
@@ -52,8 +48,6 @@ pub struct TransientCharge {
     pub token: Option<String>,
     pub base_ms: f64,
     pub max_ms: f64,
-    #[serde(default)]
-    pub fence: Option<LeaseToken>,
 }
 
 /// The claimed request as the SQL `RETURNING *` gives it (no `passed_sync`), after running it under the claim.
@@ -180,15 +174,6 @@ impl Store {
     /// `chargeTransientInterruption(charge)`: `{ transient_interruptions }`, or `None` when the claim is gone.
     pub fn charge_transient_interruption(&self, charge: &TransientCharge) -> Result<Option<Value>> {
         self.write(|tx| {
-            fence::begin(
-                self,
-                tx,
-                charge.fence.as_ref(),
-                "charge_transient_interruption",
-            )?;
-            if charge.fence.is_some() {
-                held_claim_of(tx, &charge.id, charge.fence.as_ref())?;
-            }
             Ok(charge_transient_in(tx, &*self.env, charge)?
                 .map(|n| json!({ "transient_interruptions": n })))
         })
@@ -197,12 +182,6 @@ impl Store {
     /// `selectClaimableLaneHead(spec)`: the lane head `claimNextLaneHead` claims next, or `None`.
     pub fn select_claimable_lane_head(&self, spec: &LaneHeadSpec) -> Result<Option<Value>> {
         let read = self.read()?;
-        crate::leases::check_fence(
-            self,
-            &*read,
-            spec.fence.as_ref(),
-            "select_claimable_lane_head",
-        )?;
         select_lane_head_in(&*read, &*self.env, spec)
     }
 
@@ -210,16 +189,9 @@ impl Store {
     /// unknown id.
     pub fn stamp_lane_head_claim(&self, stamp: &ClaimStamp) -> Result<Option<Value>> {
         self.write(|tx| {
-            fence::begin(self, tx, stamp.fence.as_ref(), "stamp_lane_head_claim")?;
             let Some(record) = claim_request(tx, &*self.env, stamp, false)? else {
                 return Ok(None);
             };
-            fence::claim_taken(
-                tx,
-                CLAIM_WRITE,
-                &record.id.to_lowercase(),
-                stamp.fence.as_ref(),
-            )?;
             let mut row = record.to_row();
             row["seen_sequence"] = json!(max_sequence(&*tx)?.to_string());
             Ok(Some(row))
@@ -230,16 +202,9 @@ impl Store {
     /// elapsed; the claimed row, or `None`.
     pub fn reclaim_released_write(&self, stamp: &ClaimStamp) -> Result<Option<Value>> {
         self.write(|tx| {
-            fence::begin(self, tx, stamp.fence.as_ref(), "reclaim_released_write")?;
             let Some(record) = claim_request(tx, &*self.env, stamp, true)? else {
                 return Ok(None);
             };
-            fence::claim_taken(
-                tx,
-                CLAIM_WRITE,
-                &record.id.to_lowercase(),
-                stamp.fence.as_ref(),
-            )?;
             Ok(Some(record.to_row()))
         })
     }
