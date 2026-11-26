@@ -1,9 +1,10 @@
 /**
  * Protocol v3 frames that carry a follower's replication (multi-user Rust, lane L2's `gbrain_store::follower`;
- * docs/designs/rust-engine/multi-user-server.md, "Follower frames"). Codecs only: no server or client sends them yet,
- * and the capability that will offer them (`follower`) is not in the server's list, so every existing v2/v3 frame and
- * every hello is unchanged. The served apply path waits for L2's napi methods (`Follower.applyRaw`,
- * `Follower.installSnapshot`).
+ * docs/designs/rust-engine/multi-user-server.md, "Follower frames"). Sent by follower-serve.ts under capability
+ * `follower`, which a session offers only when asked by an owner server token; every other hello and every existing
+ * v2/v3 frame is unchanged.
+ *
+ * Start, follower -> primary: { t: 'repl_follow', id, cursor: { sequence, index } | null } (follower-serve.ts).
  *
  * Records, primary -> follower (the three arguments of `Follower::apply_raw`):
  *   { t: 'repl_records', id, seq, brain_id, lineage: [{ id, from: { sequence, index } }],
@@ -35,7 +36,7 @@ import { opError } from '../../ops/contract.ts';
 
 /** The capability that will offer these frames (not offered yet). */
 export const FOLLOWER_CAP = 'follower';
-export const REPL_FRAME_TYPES = ['repl_records', 'repl_ack', 'repl_snap_begin', 'repl_snap_chunk', 'repl_snap_window', 'repl_snap_end'] as const;
+export const REPL_FRAME_TYPES = ['repl_follow', 'repl_records', 'repl_ack', 'repl_snap_begin', 'repl_snap_chunk', 'repl_snap_window', 'repl_snap_end'] as const;
 /** The files of a store snapshot directory, in the order they cross (format.rs RECORDS_FILE, FORMAT, snapshot.rs MANIFEST_FILE). */
 export const SNAPSHOT_FILES = ['records.redb', 'FORMAT', 'SNAPSHOT.json'] as const;
 export const SNAPSHOT_MANIFEST_VERSION = 1;

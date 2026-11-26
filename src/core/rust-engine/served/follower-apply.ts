@@ -15,7 +15,7 @@
  * opens the follower: its owner opens it with `Follower.open`, which checks the format on a recovered copy.
  */
 import { createHash } from 'node:crypto';
-import { mkdtempSync, openSync, readSync, closeSync, fstatSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, openSync, readSync, closeSync, fstatSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { encodeError } from '../owner-ipc/codec.ts';
 import {
@@ -57,22 +57,32 @@ export async function primaryRecordsFrame(store: RustStore, after: CommitPositio
   });
 }
 
+/** sha256 of a file, read in pieces (a whole brain does not fit in memory). */
+function hashFile(path: string): string {
+  const hash = createHash('sha256');
+  const fd = openSync(path, 'r');
+  try {
+    const piece = Buffer.alloc(1 << 20);
+    for (let off = 0; ; ) { const n = readSync(fd, piece, 0, piece.length, off); if (n === 0) break; hash.update(piece.subarray(0, n)); off += n; }
+  } finally { closeSync(fd); }
+  return hash.digest('hex');
+}
+
 /**
- * A whole snapshot of the primary as frames: `snapshotTo` into a private directory under `stagingDir`, each file read
- * in `chunkBytes` pieces. The copy is removed before this returns.
+ * A whole snapshot of the primary as a stream of frames: `snapshotTo` into a private directory under `stagingDir`, the
+ * begin frame, each file read in `chunkBytes` pieces as it is sent, and the end frame. The copy is removed when the
+ * stream ends or is abandoned.
  */
-export async function primarySnapshotFrames(store: RustStore, opts: { id: number; xfer: string; chunkBytes?: number; stagingDir: string }): Promise<Frame[]> {
+export async function* primarySnapshotStream(store: RustStore, opts: { id: number; xfer: string; chunkBytes?: number; stagingDir: string }):
+  AsyncGenerator<Frame> {
   const parent = mkdtempSync(join(opts.stagingDir, 'snap-'));
   const dir = join(parent, 'copy');
   try {
     await store.snapshotTo(dir, { opId: opts.xfer });
     const chunk = opts.chunkBytes ?? SNAPSHOT_CHUNK_BYTES;
-    const files = SNAPSHOT_FILES.map(name => {
-      const bytes = readFileSync(join(dir, name));
-      return { name, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
-    });
+    const files = SNAPSHOT_FILES.map(name => ({ name, bytes: statSync(join(dir, name)).size, sha256: hashFile(join(dir, name)) }));
     const manifest = JSON.parse(readFileSync(join(dir, 'SNAPSHOT.json'), 'utf8')) as SnapshotManifestWire;
-    const frames: Frame[] = [{ header: encodeSnapshotBegin({ id: opts.id, xfer: opts.xfer, manifest, chunkBytes: chunk, files }), tail: null }];
+    yield { header: encodeSnapshotBegin({ id: opts.id, xfer: opts.xfer, manifest, chunkBytes: chunk, files }), tail: null };
     for (const name of SNAPSHOT_FILES) {
       const fd = openSync(join(dir, name), 'r');
       try {
@@ -82,15 +92,21 @@ export async function primarySnapshotFrames(store: RustStore, opts: { id: number
           let at = 0;
           while (at < piece.length) { const n = readSync(fd, piece, at, piece.length - at, off + at); if (n === 0) break; at += n; }
           const { header, tail } = encodeSnapshotChunk({ id: opts.id, xfer: opts.xfer, file: name, off, bytes: piece });
-          frames.push({ header, tail });
+          yield { header, tail };
         }
       } finally { closeSync(fd); }
     }
-    frames.push({ header: encodeSnapshotEnd({ id: opts.id, xfer: opts.xfer }), tail: null });
-    return frames;
+    yield { header: encodeSnapshotEnd({ id: opts.id, xfer: opts.xfer }), tail: null };
   } finally {
     rmSync(parent, { recursive: true, force: true });
   }
+}
+
+/** The whole snapshot stream at once (tests). */
+export async function primarySnapshotFrames(store: RustStore, opts: { id: number; xfer: string; chunkBytes?: number; stagingDir: string }): Promise<Frame[]> {
+  const frames: Frame[] = [];
+  for await (const frame of primarySnapshotStream(store, opts)) frames.push(frame);
+  return frames;
 }
 
 /** The follower side of the replication frames on one connection (module docs). */

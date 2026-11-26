@@ -39,6 +39,8 @@ export function servedServerOptionsFor(engine: { capabilities?: ReadonlySet<stri
   return {
     // Interactive transactions over the wire: only with optimistic explicit transactions (lane L1, `multi_writer`),
     // or the test-only sub-switch that runs them on today's serialized transaction.
+    // Following: offered by the session only to an owner server token on a brain with a commit log.
+    follower: {},
     transactions: () => engine.capabilities?.has('multi_writer' as never) === true || rustMultiuserSubSwitch(RUST_SERVED_SERIAL_TXN_ENV, mode),
   };
 }

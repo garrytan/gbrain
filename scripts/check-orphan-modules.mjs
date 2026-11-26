@@ -59,8 +59,6 @@ const PERMITTED_TEST_ONLY = [
   { path: 'src/eval/longmemeval/evidence-packet.ts', reason: 'script-reachable' },
   { path: 'src/eval/longmemeval/locomo.ts', reason: 'script-reachable' },
   { path: 'src/core/write-gate-scan.ts', reason: 'script-reachable' },
-  { path: 'src/core/rust-engine/served/follower-apply.ts', reason: "held: multi-user served follower path (lane L3, default off); the served session that offers the follower capability is its runtime caller" },
-  { path: 'src/core/rust-engine/served/follower-frames.ts', reason: "held: multi-user follower frames (lane L3, default off); the served follower apply path is its runtime caller once lane L2's napi Follower methods land" },
   { path: 'src/core/rust-engine/principal-session.ts', reason: "held: multi-user server session (multi-user lane L4, default off); the served connection's hello handler (lane L3, rust-engine/mu-server) is its runtime caller" },
   { path: 'src/eval/shared/autocut-replay.ts', reason: 'script-reachable' },
   { path: 'src/mcp/http-transport.ts', reason: 'script-reachable' },

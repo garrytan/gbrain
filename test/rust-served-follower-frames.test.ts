@@ -202,6 +202,6 @@ describe('off is identical', () => {
   test('the new frames are not offered: the server caps and the frame types of v2/v3 are unchanged', () => {
     expect([...SERVED_SERVER_CAPS]).toEqual(['request_ids', 'positions', 'whole_ops', 'binary_tail', 'remote_check', 'callbacks', 'txn']);
     expect((SERVED_SERVER_CAPS as readonly string[]).includes(FOLLOWER_CAP)).toBe(false);
-    expect([...REPL_FRAME_TYPES]).toEqual(['repl_records', 'repl_ack', 'repl_snap_begin', 'repl_snap_chunk', 'repl_snap_window', 'repl_snap_end']);
+    expect([...REPL_FRAME_TYPES]).toEqual(['repl_follow', 'repl_records', 'repl_ack', 'repl_snap_begin', 'repl_snap_chunk', 'repl_snap_window', 'repl_snap_end']);
   });
 });

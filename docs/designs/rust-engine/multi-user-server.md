@@ -283,6 +283,7 @@ frame is unchanged. Records ship as the store's raw record bytes (I-4.v2); TypeS
 | Frame | Direction | Layout |
 |---|---|---|
 | `repl_records` | primary to follower | `{ id, seq, brain_id, lineage: [{ id, from: { sequence, index } }], records: [{ sequence, index, off, len }], tail_len }` + tail: the records' bytes in order. Positions strictly increase; the slices tile the tail exactly. These are `Follower::apply_raw(brain_id, lineage, records)`. |
+| `repl_follow` | follower to primary | `{ id, cursor }`: start (or resume) after `cursor` (`null` for an empty follower). Once per connection. |
 | `repl_ack` | follower to primary | `{ id, seq, ok: true, applied, skipped, cursor }` or `{ id, seq, ok: false, error }` (`snapshot_required`, `invalid_state`). |
 | `repl_snap_begin` | primary to follower | `{ id, xfer, manifest, chunk_bytes, files: [{ name, bytes, sha256 }] }`. `manifest` is the snapshot's `SnapshotManifest`, checked before any byte is accepted (its validation and its brain id); `files` is exactly `records.redb`, `FORMAT`, `SNAPSHOT.json`, in that order; `chunk_bytes` is at most 32 MiB (default 8 MiB). |
 | `repl_snap_chunk` | primary to follower | `{ id, xfer, file, off, tail_len }` + tail: bytes `[off, off + tail_len)` of `file`. Files in order, each from 0 with no gap. |
@@ -293,7 +294,16 @@ The served path is `src/core/rust-engine/served/follower-apply.ts`: on the prima
 commit log with `Brain#readCommitLogRaw` and `primarySnapshotFrames` copies the brain with `snapshotTo`; on the
 follower, `FollowerApplier` stages a snapshot and calls L2's napi `Follower#applyRaw` and `#installSnapshot`. Store
 refusals (`snapshot_required`, `invalid_state`) cross back in `repl_ack` with the store's code and message unchanged.
-The follower is opened only with `Follower.open`. No connection offers the frames yet (`follower` is not a server cap).
+The follower is opened only with `Follower.open`.
+
+Following over a connection (`served/follower-serve.ts`): the server offers capability `follower` only with multi-user
+Rust on, on a network connection whose principal is an owner server token, to a client that lists it, on a brain with
+a commit log; a client that does not ask gets the hello it always got, and `follower` is not in the server's default
+cap list. The follower (`followPrimary`) sends `repl_follow { id, cursor }` with `Follower#cursor()`; the primary's send
+loop reads the log after the cursor, sends `repl_records` and waits for each `repl_ack`. When the log cannot continue
+the cursor, or the follower answers `snapshot_required`, it streams a snapshot with at most 64 MiB of chunk bytes past
+the follower's last `repl_snap_window`. A refusal it cannot get past ends the connection with `refused`. After a drop
+the follower reconnects and sends its cursor again, so nothing is applied twice.
 
 Positions are JSON integers: a sequence must be a safe integer (below 2^53), an index at most `u32::MAX` (the
 `end_of` position included). A refusal is `owner_ipc_protocol` reason `frame_malformed`; nothing of the frame is

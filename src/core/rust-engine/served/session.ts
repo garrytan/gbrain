@@ -45,6 +45,8 @@ import {
 } from './framing.ts';
 import { storePositionReader, waitForPosition, type PositionReader } from './positions.ts';
 import { sessionCalls } from './session-calls.ts';
+import { primaryFollowerSession, type FollowerServeOptions, type PrimaryFollowerSession } from './follower-serve.ts';
+import { FOLLOWER_CAP } from './follower-frames.ts';
 import { MAX_REQUEST_WAITERS, REQUEST_ID, RequestTable, type StoredOutcome } from './requests.ts';
 import { ownerBusy, ownerResponseTooLarge } from '../owner-ipc/routes.ts';
 
@@ -72,6 +74,8 @@ export interface ServedServerOptions {
   transactionMaxMs?: number;
   /** How long a token recheck may run before the connection stops taking new work (default 30 s). */
   recheckHungMs?: number;
+  /** Following (follower-serve.ts): present only with multi-user Rust on; offered only to an owner server token. */
+  follower?: FollowerServeOptions;
   /** How long a `min_position` read waits when the caller gave no deadline. */
   positionWaitMs?: number;
   /** Server log line (an unexpected error with its correlation id). */
@@ -175,6 +179,7 @@ export function servedSession(side: ServedServerSide, opts: ServedServerOptions,
   let chain: Promise<void> = Promise.resolve();
   // Calls whose preparation has not reached the dispatcher yet, so a cancel can still stop them.
   const preparing = new Map<number, AbortController>();
+  let follower: PrimaryFollowerSession | null = null;
   let recheckTimer: ReturnType<typeof setInterval> | null = null;
   let helloTimer: ReturnType<typeof setTimeout> | null = null;
   let releaseReader: (() => void) | null = null;
@@ -249,6 +254,8 @@ export function servedSession(side: ServedServerSide, opts: ServedServerOptions,
       principal = who;
       leavePreauth();
       if (helloTimer) clearTimeout(helloTimer);
+      follower = primaryFollowerSession({ engine: side.engine, principal: who, network, offered: offered.has(FOLLOWER_CAP), opts: opts.follower, socket, refuse: refuseConnection, log: opts.log });
+      if (follower) caps.add(FOLLOWER_CAP);
       const answer = { ...ctx.hello, t: 'hello', v: OWNER_IPC_VERSION_V3, version: OWNER_IPC_VERSION_V3, caps: [...caps], server_id: state.serverId };
       writeFrame(answer);
       if (who.kind === 'owner_token' && token !== null) {
@@ -433,6 +440,7 @@ export function servedSession(side: ServedServerSide, opts: ServedServerOptions,
       }
       case 'cbresult': onCallbackResult(frame, tail); return;
       case 'txn': onTxnFrame(frame); return;
+      case 'repl_follow': case 'repl_ack': case 'repl_snap_window': follower?.onFrame(frame, tail); return;
       case 'hello': refuseConnection(servedProtocol('frame_malformed', 'reason=second_hello')); return;
       default: return; // unknown frame types are ignored (I-7)
     }
@@ -449,6 +457,7 @@ export function servedSession(side: ServedServerSide, opts: ServedServerOptions,
       releaseReader?.();
       for (const abort of preparing.values()) abort.abort();
       closeCalls();
+      follower?.close();
     },
   };
 }

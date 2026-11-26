@@ -81,14 +81,14 @@ describeAddon('a Rust follower follows its primary over a socket', () => {
     const dir = tmp('primary');
     primary = openRustEngine({ addon: addon as never, databasePath: dir, servedOptions: {
       verify: {
-        verify: async (_e, token) => {
+        verify: async (_e: unknown, token: string) => {
           if (token === OWNER_TOKEN) return { ...OWNER };
           if (token === NARROW_TOKEN) return { ...OWNER, principal: { kind: 'legacy_token', id: 'follow-narrow' }, allowedOperations: ['get_page'] };
           throw new Error('Invalid token');
         },
         ownerIds: async () => new Set(['follow-owner', 'follow-narrow']),
       },
-      follower: { pollMs: 20, chunkBytes: CHUNK, windowBytes: WINDOW, stagingDir: tmp('primary-staging'), onStats: s => windows.push(s) },
+      follower: { pollMs: 20, chunkBytes: CHUNK, windowBytes: WINDOW, stagingDir: tmp('primary-staging'), onStats: (s: { unacked: number; waited: boolean }) => windows.push(s) },
     } as never });
     await primary.connect({ engine: 'rust', database_path: dir } as never);
     store = primary.openStore('follower-serve-test');

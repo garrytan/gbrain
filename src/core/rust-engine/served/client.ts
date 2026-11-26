@@ -158,7 +158,7 @@ function encodeCallArgs(args: unknown[], member: string, caps: ReadonlySet<strin
 }
 
 /** Opens one transport to the endpoint and resolves once it is connected (TLS verified). */
-function openSocket(endpoint: ServedEndpoint, opts: ConnectServedOptions): Promise<Socket> {
+export function openSocket(endpoint: ServedEndpoint, opts: ConnectServedOptions): Promise<Socket> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => { socket.destroy(); reject(servedUnreachable('server_unreachable', 'phase=connect timeout=true')); }, opts.timeoutMs ?? 5_000);
     let socket: Socket;
