@@ -22,9 +22,9 @@
  *    `engine.transaction`. Seeded with real rows through typed writers: facts, takes and their pages, decide, review and trust
  *    proposals, the review queue, open loops, write gate holds and receipts, segmented pages, body stagings with their texts and
  *    manifest rows, and saved versions of segmented pages. Seeded with a local raw fixture, because no typed writer exists: upload
- *    parts (page_body_staging_parts), read-view digests (page_view_digests), take proposals (take_proposals) and core edit notices
- *    (core_edit_notices); the same cases read the tombstone tables (fact_purges, take_purges) and those four back with a raw
- *    SELECT, because no typed reader exists. The Rust arm refuses those raw statements as typed refusals and stops there. The
+ *    parts (page_body_staging_parts), read-view digests (page_view_digests), and take proposals (take_proposals); core edit
+ *    notices go in and out through the typed insertCoreEditNotice and readOldestPendingCoreEditNotice; the same cases read the
+ *    tombstone tables (fact_purges, take_purges) and those three back with a raw SELECT, because no typed reader exists. The Rust arm refuses those raw statements as typed refusals and stops there. The
  *    last case compares the statements on empty tables, so it pins their shape and the answer for no rows. Generated values (page
  *    ids, staging ids, version ids, revisions) are compared by relation or label, never by value, and a hash that only one
  *    engine's collation would order differently is sorted in the test.
@@ -550,8 +550,8 @@ describe('engine parity: fact purge plan, transaction and segment-storage statem
     return out;
   });
 
-  parityTest('deletePurgeTakeProposals and blankPurgeCoreEditNotices delete and blank the rows that quote a purged claim, which have no typed writer', {
-    methods: ['insertFact', 'loadPurgeTarget', 'transaction', 'deletePurgeTakeProposals', 'blankPurgeCoreEditNotices', 'executeRaw'],
+  parityTest('deletePurgeTakeProposals and blankPurgeCoreEditNotices delete and blank the rows that quote a purged claim; the take proposals have no typed writer', {
+    methods: ['insertFact', 'loadPurgeTarget', 'transaction', 'deletePurgeTakeProposals', 'blankPurgeCoreEditNotices', 'executeRaw', 'insertCoreEditNotice', 'readOldestPendingCoreEditNotice'],
   }, async (engine, backend) => {
     await createSource(engine, backend, 'other');
     const target = await fact(engine, 'Alice likes tea', { entity_slug: 'people/a' });
@@ -564,13 +564,13 @@ describe('engine parity: fact purge plan, transaction and segment-storage statem
     await propose(SRC, 'people/a', 'Alice likes coffee'); await propose('other', 'people/a', 'Alice likes tea');
     const proposals = async () => (await engine.executeRaw<{ source_id: string; page_slug: string; claim_text: string }>(
       'SELECT source_id, page_slug, claim_text FROM take_proposals ORDER BY source_id, page_slug, claim_text')).map(r => `${r.source_id}:${r.page_slug}:${r.claim_text}`).sort();
-    // Core edit notices are written by the core page guard with a raw statement; no typed member writes them.
-    const notice = (sourceId: string, slug: string, baseText: string | null) => engine.executeRaw(
-      `INSERT INTO core_edit_notices (source_id, slug, page_id, revision, base_revision, base_text, actor) VALUES ($1, $2, NULL, NULL, NULL, $3, 'remote:agent')`, [sourceId, slug, baseText]);
+    // Core edit notices are written by the core page guard through the typed insert.
+    const notice = (sourceId: string, slug: string, baseText: string | null) => engine.insertCoreEditNotice(
+      { sourceId, slug, pageId: null, revision: null, baseRevision: null, baseText, actor: 'remote:agent' });
     await notice(SRC, 'core/a', 'Intro. Today Alice Likes Tea at noon.'); await notice(SRC, 'core/b', 'Nothing here'); await notice(SRC, 'core/c', null);
     await notice(SRC, 'core/d', 'alice likes tea'); await notice('other', 'core/a', 'Intro. Today Alice likes tea at noon.');
-    const notices = async () => (await engine.executeRaw<{ source_id: string; slug: string; blank: boolean }>(
-      'SELECT source_id, slug, base_text IS NULL AS blank FROM core_edit_notices ORDER BY source_id, slug')).map(r => `${r.source_id}:${r.slug}:${r.blank ? 'blank' : 'kept'}`).sort();
+    const notices = async () => Promise.all([[SRC, 'core/a'], [SRC, 'core/b'], [SRC, 'core/c'], [SRC, 'core/d'], ['other', 'core/a']].map(async ([sourceId, slug]) =>
+      `${sourceId}:${slug}:${(await engine.readOldestPendingCoreEditNotice(sourceId!, slug!))!.base_text === null ? 'blank' : 'kept'}`)).then(rows => rows.sort());
 
     const out = {
       proposalsBefore: await proposals(), noticesBefore: await notices(),
@@ -968,8 +968,8 @@ describe('engine parity: fact purge plan, transaction and segment-storage statem
     return out;
   });
 
-  parityTest('deletePurgeTakeProposals and blankPurgeCoreEditNotices delete and blank the rows that quote a purged claim, which have no typed writer', {
-    methods: ['insertFact', 'loadPurgeTarget', 'transaction', 'deletePurgeTakeProposals', 'blankPurgeCoreEditNotices', 'executeRaw'],
+  parityTest('deletePurgeTakeProposals and blankPurgeCoreEditNotices delete and blank the rows that quote a purged claim; the take proposals have no typed writer', {
+    methods: ['insertFact', 'loadPurgeTarget', 'transaction', 'deletePurgeTakeProposals', 'blankPurgeCoreEditNotices', 'executeRaw', 'insertCoreEditNotice', 'readOldestPendingCoreEditNotice'],
   }, async (engine, backend) => {
     await createSource(engine, backend, 'other');
     const target = await fact(engine, 'Alice likes tea', { entity_slug: 'people/a' });
@@ -982,13 +982,13 @@ describe('engine parity: fact purge plan, transaction and segment-storage statem
     await propose(SRC, 'people/a', 'Alice likes coffee'); await propose('other', 'people/a', 'Alice likes tea');
     const proposals = async () => (await engine.executeRaw<{ source_id: string; page_slug: string; claim_text: string }>(
       'SELECT source_id, page_slug, claim_text FROM take_proposals ORDER BY source_id, page_slug, claim_text')).map(r => `${r.source_id}:${r.page_slug}:${r.claim_text}`).sort();
-    // Core edit notices are written by the core page guard with a raw statement; no typed member writes them.
-    const notice = (sourceId: string, slug: string, baseText: string | null) => engine.executeRaw(
-      `INSERT INTO core_edit_notices (source_id, slug, page_id, revision, base_revision, base_text, actor) VALUES ($1, $2, NULL, NULL, NULL, $3, 'remote:agent')`, [sourceId, slug, baseText]);
+    // Core edit notices are written by the core page guard through the typed insert.
+    const notice = (sourceId: string, slug: string, baseText: string | null) => engine.insertCoreEditNotice(
+      { sourceId, slug, pageId: null, revision: null, baseRevision: null, baseText, actor: 'remote:agent' });
     await notice(SRC, 'core/a', 'Intro. Today Alice Likes Tea at noon.'); await notice(SRC, 'core/b', 'Nothing here'); await notice(SRC, 'core/c', null);
     await notice(SRC, 'core/d', 'alice likes tea'); await notice('other', 'core/a', 'Intro. Today Alice likes tea at noon.');
-    const notices = async () => (await engine.executeRaw<{ source_id: string; slug: string; blank: boolean }>(
-      'SELECT source_id, slug, base_text IS NULL AS blank FROM core_edit_notices ORDER BY source_id, slug')).map(r => `${r.source_id}:${r.slug}:${r.blank ? 'blank' : 'kept'}`).sort();
+    const notices = async () => Promise.all([[SRC, 'core/a'], [SRC, 'core/b'], [SRC, 'core/c'], [SRC, 'core/d'], ['other', 'core/a']].map(async ([sourceId, slug]) =>
+      `${sourceId}:${slug}:${(await engine.readOldestPendingCoreEditNotice(sourceId!, slug!))!.base_text === null ? 'blank' : 'kept'}`)).then(rows => rows.sort());
 
     const out = {
       proposalsBefore: await proposals(), noticesBefore: await notices(),

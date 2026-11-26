@@ -16,6 +16,8 @@
 
 /** Typed members that only read (lookups, counts, listings, probes, and the planning reads of a purge or a relink). */
 export const OWNER_IPC_TYPED_READS: readonly string[] = [
+  // The core edit notice reads (engine-sql/core-edit-notices.ts; the store functions only `self.read`).
+  'readOldestPendingCoreEditNotice', 'findCoreEditNoticeIdByRevision',
   // repair-rust batches 6b and 6c: the segmented-write reads, the embed and provenance reads, the secret store reads and the secret-spans page reads
   // (engine-sql/segmented-writes.ts, page-spend.ts, embedding-provenance.ts, secret-store.ts, secret-spans-rows.ts; the store functions only `self.read`).
   // readSecretStoreSnapshot reads both tables from one snapshot and writes nothing.
@@ -631,6 +633,9 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   // Additive: a rerun bumps the generation once more, which only re-keys the page's next atom extraction (a rebuildable run key).
   recordAtomGenerationBump: 'readAtomGeneration for that page (the generation moved on)',
   closeOpenLoop: 'listOpenLoops for that source', upsertOpenLoop: 'listOpenLoops for that source',
+  // The notice a write recorded is the page's newest one for that revision; a close leaves no pending notice to read first.
+  insertCoreEditNotice: 'findCoreEditNoticeIdByRevision for that page and revision',
+  ackCoreEditNotices: 'readOldestPendingCoreEditNotice for that page',
   completeSubagentToolExecution: 'summarizeSubagentToolExecutions for that job',
   failSubagentToolExecution: 'summarizeSubagentToolExecutions for that job',
   recordSubagentToolExecutions: 'summarizeSubagentToolExecutions for that job',

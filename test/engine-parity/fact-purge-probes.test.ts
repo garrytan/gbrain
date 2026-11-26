@@ -142,7 +142,7 @@ describe('engine parity: the store probes of a fact purge receipt', () => {
 
   parityTest('the claim-text probe counts the pages, chunks, page versions and journal requests of the source that state the claim, its JSON form or the reason, and not another source\'s or a segmented body\'s', {
     methods: ['putPage', 'upsertChunks', 'createVersion', 'softDeletePage', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'completeWriteRow',
-      'createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'setBodyStagingState', 'flipBodyGeneration',
+      'createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'setBodyStagingState', 'flipBodyGeneration', 'insertCoreEditNotice',
       'transaction', 'countPurgeProbe', 'setPurgeProbeTimeout'],
     timeout: 120_000,
   }, async (engine, backend) => {
@@ -186,6 +186,13 @@ describe('engine parity: the store probes of a fact purge receipt', () => {
     await journal(engine, 'b0000000-0000-4000-8000-0000000000b2', SRC, { intent: { kind: 'put_page' }, outcome: { echoed: CLAIM.toUpperCase() } });
     await journal(engine, 'b0000000-0000-4000-8000-0000000000b3', OTHER, { intent: { kind: 'put_page', content: 'The claim lives in another source: Acme' } });
     const afterOutcome = await all();
+    // Core edit notices: the claim in a base text (any case), a base text without it, a blanked one, and another source's.
+    const notice = (sourceId: string, slug: string, baseText: string | null) => engine.insertCoreEditNotice({ sourceId, slug, pageId: null, revision: null, baseRevision: null, baseText, actor: 'remote:agent' });
+    await notice(SRC, 'core/quotes', `Intro. ${CLAIM.toUpperCase()} at noon.`);
+    await notice(SRC, 'core/plain', 'Nothing about the claim here.');
+    await notice(SRC, 'core/blank', null);
+    await notice(OTHER, 'core/quotes', CLAIM);
+    const afterNotices = await all();
     const reasonRequest = await count(engine, probe('persistence_requests', { claim: 'never stated', json: 'never stated', reason: 'never stated', reasonJson: reason }));
     const otherSource = await all({ sourceId: OTHER });
     const noClaim = await all({ claim: 'never stated', json: 'never stated', reason: 'never stated', reasonJson: 'never stated' });
@@ -200,8 +207,10 @@ describe('engine parity: the store probes of a fact purge receipt', () => {
     expect(afterPages.pages).toBe(4);
     expect(afterSoftDelete.pages).toBe(4);
     expect(afterSoftDelete.core_edit_notices).toBe(0);
+    expect(afterNotices.core_edit_notices).toBe(1);
+    expect(otherSource.core_edit_notices).toBe(1);
     expect(bound.pages).toBe('row_bound');
-    return { empty, afterPages, withChunks, afterSoftDelete, afterVersions, afterIntent, afterOutcome, reasonRequest, otherSource, noClaim, afterSegmented, bound };
+    return { empty, afterPages, withChunks, afterSoftDelete, afterVersions, afterIntent, afterOutcome, afterNotices, reasonRequest, otherSource, noClaim, afterSegmented, bound };
   });
 
   parityTest('the content_chunks claim-text probe counts the live, staged and retained older-generation chunks of a segmented page alike, and a page of another source not at all', {

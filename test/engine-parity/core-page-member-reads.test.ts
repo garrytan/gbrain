@@ -21,7 +21,6 @@ import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration } from '../../src/core/persistence/identity.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { withEnv } from '../helpers/with-env.ts';
-import { isCapabilityRefusal } from './arm-capabilities.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -74,21 +73,17 @@ describe('engine parity: core-memory page list for a member caller', () => {
 });
 
 describe('engine parity: gbrain core remove', () => {
-  // `core remove` un-cores the page on every engine and prints the same line. An engine with raw SQL (PGLite, Postgres)
-  // also closes the page's pending remote-edit notices; a Rust brain keeps no notices, so there is nothing to close and
-  // the close is skipped. The notice rows are only read where the engine has them, so the returned value is the same on
-  // every arm.
-  parityTest('core remove un-cores the page and prints the same line on every engine, closing pending notices where they are kept', {
-    methods: ['putPage', 'readPageSnapshot'],
-  }, async (engine: BrainEngine, backend) => {
+  // `core remove` un-cores the page on every engine, prints the same line, and closes the page's pending remote-edit
+  // notices (core_edit_notices) on every engine, a Rust brain included.
+  parityTest('core remove un-cores the page, prints the same line on every engine and closes its pending notices', {
+    methods: ['putPage', 'readPageSnapshot', 'insertCoreEditNotice', 'readOldestPendingCoreEditNotice', 'listPendingCoreEditNotices'],
+  }, async (engine: BrainEngine) => {
     await engine.putPage('core/about', core({}), { sourceId: 'default' });
     await engine.putPage('core/other', core({}), { sourceId: 'default' });
-    const keepsNotices = backend !== 'rust';
-    const notice = (slug: string) => engine.executeRaw(
-      `INSERT INTO core_edit_notices (source_id, slug, page_id, revision, base_revision, base_text, actor) VALUES ('default', $1, NULL, 'rev-1', NULL, 'before', 'agent:test')`, [slug]);
-    if (keepsNotices) { await notice('core/about'); await notice('core/other'); }
-    const pending = async (slug: string) => (await engine.executeRaw<{ n: number }>(
-      `SELECT count(*)::int AS n FROM core_edit_notices WHERE source_id = 'default' AND slug = $1 AND acked_at IS NULL`, [slug]))[0]?.n;
+    const notice = (slug: string) => engine.insertCoreEditNotice({ sourceId: 'default', slug, pageId: null, revision: 'rev-1', baseRevision: null, baseText: 'before', actor: 'agent:test' });
+    await notice('core/about');
+    await notice('core/other');
+    const pending = async (slug: string) => (await engine.readOldestPendingCoreEditNotice('default', slug)) === null ? 0 : 1;
     const isCore = async () => (await engine.readPageSnapshot('core/about', { sourceId: 'default' }))?.page.frontmatter?.always_load === true;
     const errors: string[] = [];
     const printed: string[] = [];
@@ -105,13 +100,11 @@ describe('engine parity: gbrain core remove', () => {
       console.error = error;
       console.log = log;
     }
-    if (keepsNotices) {
-      // The page's notice is closed; another page's notice stays pending.
-      expect({ closed: await pending('core/about'), other: await pending('core/other') }).toEqual({ closed: 0, other: 1 });
-    }
-    const out = { refused, core: await isCore(), errors, printed };
+    // The page's notice is closed; another page's notice stays pending.
+    expect({ closed: await pending('core/about'), other: await pending('core/other') }).toEqual({ closed: 0, other: 1 });
+    const out = { refused, core: await isCore(), errors, printed, left: (await engine.listPendingCoreEditNotices(null)).map(n => n.slug) };
     expect(out.refused).toBeNull();
-    expect(out).toEqual({ refused: null, core: false, errors: [], printed: [expect.stringMatching(/^Now out of core: default:core\/about\. Core uses \d+\/\d+ chars\.$/)] });
+    expect(out).toEqual({ refused: null, core: false, errors: [], printed: [expect.stringMatching(/^Now out of core: default:core\/about\. Core uses \d+\/\d+ chars\.$/)], left: ['core/other'] });
     return out;
   });
 });
@@ -144,11 +137,11 @@ describe('engine parity: gbrain core add', () => {
 });
 
 describe('engine parity: a remote edit of a core page under remote_edit notify', () => {
-  // The default policy lets a remote caller edit a core page and records a notice for the owner (core_edit_notices). A Rust
-  // brain keeps no such table, so the write's notice step (core-guard.ts record()) refuses `raw_sql` at publication: the page
-  // stays as it was and the write does not commit. PGLite and Postgres commit the edit and write the notice row.
-  parityTest('a remote edit of a core page under remote_edit notify commits and records a notice; a Rust brain refuses it and changes nothing', {
-    methods: ['putPage', 'readPageSnapshot'], requires: 'raw_sql',
+  // The default policy lets a remote caller edit a core page and records a notice for the owner (core_edit_notices) in the
+  // write's transaction (core-guard.ts record()). The edit commits and leaves one pending notice on every engine, a Rust
+  // brain included (core-edit-notices.test.ts reads the notice back through `core diff` and `core ack`).
+  parityTest('a remote edit of a core page under remote_edit notify commits and records one notice', {
+    methods: ['putPage', 'readPageSnapshot', 'listPendingCoreEditNotices'],
   }, async (engine: BrainEngine, backend) => {
     await engine.putPage('core/about', core({}), { sourceId: 'default' });
     const snapshot = async () => {
@@ -165,22 +158,8 @@ describe('engine parity: a remote edit of a core page under remote_edit notify',
           const response = await withVerifiedLocalRegistration(engine, registration, () => dispatchToolCall(engine, 'edit_page', {
             slug: 'core/about', expected_revision: before.revision, edits: [{ old_text: `body ${JSON.stringify({})}`, new_text: 'body edited remotely' }], request_id: randomUUID(),
           }, { remote: true, config: { engine: backend === 'rust' ? 'rust' : 'pglite' }, sourceId: 'default', auth, logger: { info() {}, warn() {}, error() {} } } as never));
-          const body = JSON.parse((response.content[0] as { text: string }).text) as Record<string, unknown>;
           const after = await snapshot();
-          if (backend === 'rust') {
-            // Today's refusal: the notice step of the publication (core-guard.ts record()) runs a raw INSERT into core_edit_notices,
-            // which a Rust brain refuses by name. The write ends failed (three claims) and the page is as it was.
-            expect({
-              isError: response.isError === true, error: body.error, code: body.code, reason: body.reason, detail: body.detail,
-              message: String(body.message).startsWith("This brain's engine does not support executeRaw yet (it needs the raw_sql capability)"),
-              state: (body.write_request as { state?: string } | undefined)?.state, unchanged: after,
-            }).toEqual({
-              isError: true, error: 'engine_capability_missing', code: 'engine_capability_missing', reason: 'raw_sql',
-              detail: 'member=executeRaw capability=raw_sql outcome=none written=nothing', message: true, state: 'failed', unchanged: before,
-            });
-            throw body;
-          }
-          const notices = (await engine.executeRaw<{ actor: string }>(`SELECT actor FROM core_edit_notices WHERE source_id = 'default' AND slug = 'core/about' AND acked_at IS NULL`)).length;
+          const notices = (await engine.listPendingCoreEditNotices(['default'])).filter(n => n.slug === 'core/about').length;
           const out = { isError: response.isError === true, changed: after.body !== before.body, notices };
           expect(out).toEqual({ isError: false, changed: true, notices: 1 });
           return out;

@@ -131,6 +131,10 @@ export const WRITE_MAP: Record<string, WriteSpec> = {
   deleteTimelineRows: { tables: ['timeline_entries', 'owner_only_marks'], plan: (a) => [childById('timeline_entries', a[0], true), ...OWNER_MARKS] },
   upsertOpenLoop: { tables: ['open_loops'] },
   closeOpenLoop: { tables: ['open_loops'], plan: (a) => [{ relation: 'open_loops', sel: { id: id(a[1]) } }] },
+  // Core edit notices (engine-sql/core-edit-notices.ts): an insert re-reads its new row; an ack or a purge blank re-reads the rows it can touch.
+  insertCoreEditNotice: { tables: ['core_edit_notices'], late: true, plan: (_a, r) => [{ relation: 'core_edit_notices', sel: { id: id(r?.id) } }] },
+  ackCoreEditNotices: { tables: ['core_edit_notices'], plan: (a) => [{ relation: 'core_edit_notices', sel: { source_id: String(a[0]), slug: String(a[1]) } }] },
+  blankPurgeCoreEditNotices: { tables: ['core_edit_notices'], plan: (a) => [{ relation: 'core_edit_notices', sel: { source_id: String(a[0]) } }] },
   attachSourcePath: { tables: ['sources', 'owner_only_marks'], plan: (a) => [{ relation: 'sources', sel: { id: a[0] } }, ...OWNER_MARKS] },
   updateTimelineDetails: { tables: ['timeline_entries'], plan: (a) => [childById('timeline_entries', a[0])] },
   // Facts
@@ -305,7 +309,7 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'ageOutSessionState', 'appendFactForgetReason', 'appendOpCheckpointPaths', 'applyAccessRuleChanges',
   'applyGazetteerEntryChanges', 'applyLinkTemporalRows', 'applyManagedSyncRetireLimits', 'approveAccessPolicyRevision',
   'archiveSource', 'assertCycleLease', 'attachWantedMarkerJob', 'backfillSearchVectors', 'beginSnapshotRead',
-  'bindPageOrigin', 'blankPurgeCoreEditNotices', 'bumpGenerationValve', 'bumpPageKnowledgeRevision', 'bumpPageRetrievals',
+  'bindPageOrigin', 'bumpGenerationValve', 'bumpPageKnowledgeRevision', 'bumpPageRetrievals',
   'bumpSourcePurgeEpoch', 'bumpWithdrawnPageRevisions', 'cancelJobs', 'cancelWriteRow', 'capSessionStatePerClient',
   'claimCoalescedGitEffects', 'claimFilePage', 'claimHousekeepingTurn', 'claimNextJob', 'claimNotifierLease', 'claimSegmentedProjection',
   'claimWakeForgets', 'claimWakeWatch', 'clearChunkVectors', 'clearConversationPageFacts', 'clearFenceCandidateParts',

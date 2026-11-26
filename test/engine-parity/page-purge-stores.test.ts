@@ -16,8 +16,9 @@
  *    only the PGLite and Postgres purge suites (test/page-purge*.test.ts) exercised them.
  *  - Seam: the exported functions of persistence/purge-slug-stores.ts and facts/purge-reasons.ts, called with the arm's engine
  *    (a transaction handle). Every row is seeded through typed writers: putPage, insertTakeProposal, upsertOpenLoop,
- *    setPageAliases, updateSlug, createVersion and the write journal. core_edit_notices and the secret store have no typed
- *    writer, so their counts are the empty-store answer on every arm. Generated values are compared by label or shape.
+ *    setPageAliases, updateSlug, createVersion and the write journal. The core edit notices go in through
+ *    insertCoreEditNotice and come out of listPendingCoreEditNotices; the secret store has no typed writer, so its count is the
+ *    empty-store answer on every arm. Generated values are compared by label or shape.
  */
 import { describe, expect } from 'bun:test';
 import { createSource, parityArms } from './harness.ts';
@@ -60,7 +61,7 @@ async function journal(engine: BrainEngine, requestId: string, operation: string
 
 describe('engine parity: the slug stores a page purge scrubs and the change reasons it reads', () => {
   parityTest('scrubPurgedSlugStores removes the proposed takes, open loops, aliases and rename rows keyed to a slug, counts them as the receipt names them, and leaves other slugs and sources', {
-    methods: ['putPage', 'insertTakeProposal', 'upsertOpenLoop', 'setPageAliases', 'updateSlug', 'listPendingTakeProposals', 'listOpenLoops', 'readPageAliasRows', 'listSlugAliases',
+    methods: ['putPage', 'insertTakeProposal', 'upsertOpenLoop', 'setPageAliases', 'updateSlug', 'listPendingTakeProposals', 'listOpenLoops', 'readPageAliasRows', 'listSlugAliases', 'insertCoreEditNotice', 'listPendingCoreEditNotices',
       'transaction', 'deletePurgedSlugStoreRows'],
   }, async (engine, backend) => {
     await createSource(engine, backend, OTHER);
@@ -75,6 +76,8 @@ describe('engine parity: the slug stores a page purge scrubs and the change reas
     const loop = (key: string, sourceId: string, pageSlug: string) => engine.upsertOpenLoop({ sourceId, dedupKey: key, loopType: 'commitment_owed_by_me', counterpartyEmail: 'a@example.com', summary: key,
       evidence: [], detector: 'manual', pageSlug, lastActivityAt: at, openedAt: at } as never);
     await loop('loop-doomed', SRC, SLUG); await loop('loop-keeper', SRC, 'notes/keeper'); await loop('loop-other', OTHER, SLUG);
+    const notice = (sourceId: string, slug: string) => engine.insertCoreEditNotice({ sourceId, slug, pageId: null, revision: 'rev-1', baseRevision: null, baseText: 'the page text', actor: 'remote:agent' });
+    await notice(SRC, SLUG); await notice(SRC, SLUG); await notice(SRC, 'notes/keeper'); await notice(OTHER, SLUG);
     await engine.setPageAliases(SLUG, SRC, ['doomed alias', 'old harbor']);
     await engine.setPageAliases('notes/keeper', SRC, ['keeper alias']);
     await engine.setPageAliases(SLUG, OTHER, ['other alias']);
@@ -84,6 +87,7 @@ describe('engine parity: the slug stores a page purge scrubs and the change reas
     const state = async () => ({
       proposals: (await engine.listPendingTakeProposals({ limit: 100 })).map(p => `${p.source_id}:${p.page_slug}:${p.claim_text}`).sort(),
       loops: (await engine.listOpenLoops({ sourceIds: [SRC, OTHER] })).map(l => `${l.source_id}:${String(l.dedup_key)}`).sort(),
+      notices: (await engine.listPendingCoreEditNotices(null)).map(n => `${n.source_id}:${n.slug}`).sort(),
       aliases: (await engine.readPageAliasRows([SRC, OTHER], [SLUG, 'notes/keeper'])).map(a => `${a.source_id}:${a.slug}:${a.alias_norm}`).sort(),
       redirects: (await engine.listSlugAliases(SRC)).map(a => `${a.alias_slug}->${a.canonical_slug}`).sort(),
     });
@@ -94,7 +98,8 @@ describe('engine parity: the slug stores a page purge scrubs and the change reas
     const again = await engine.transaction(tx => scrubPurgedSlugStores(tx, SRC, [SLUG], {}));
     const unknown = await engine.transaction(tx => scrubPurgedSlugStores(tx, 'nobody', ['notes/never'], {}));
     expect(none).toEqual({});
-    expect(removed).toMatchObject({ take_proposals: 2, open_loops: 1, core_edit_notices: 0 });
+    expect(removed).toMatchObject({ take_proposals: 2, open_loops: 1, core_edit_notices: 2 });
+    expect(after.notices).toEqual(['default:notes/keeper', `other:${SLUG}`]);
     expect(after.proposals).toEqual(['default:notes/keeper:Keeper-co ships', 'other:notes/doomed:Other-co ships']);
     expect(after.loops).toEqual(['default:loop-keeper', 'other:loop-other']);
     expect(again).toMatchObject({ take_proposals: 0, open_loops: 0, page_aliases: 0 });
@@ -102,7 +107,7 @@ describe('engine parity: the slug stores a page purge scrubs and the change reas
   });
 
   parityTest('deletePurgedSlugStoreRows reports each store it scrubbed, counts a slug named twice once, and leaves another source; listPageSecretOccurrences finds no secret on a page the store has none for', {
-    methods: ['putPage', 'insertTakeProposal', 'upsertOpenLoop', 'setPageAliases', 'updateSlug', 'listPendingTakeProposals', 'listOpenLoops', 'readPageAliasRows',
+    methods: ['putPage', 'insertTakeProposal', 'upsertOpenLoop', 'setPageAliases', 'updateSlug', 'listPendingTakeProposals', 'listOpenLoops', 'readPageAliasRows', 'insertCoreEditNotice', 'listPendingCoreEditNotices',
       'deletePurgedSlugStoreRows', 'listPageSecretOccurrences'],
   }, async (engine, backend) => {
     await createSource(engine, backend, OTHER);
@@ -116,6 +121,8 @@ describe('engine parity: the slug stores a page purge scrubs and the change reas
     const loop = (key: string, sourceId: string, pageSlug: string) => engine.upsertOpenLoop({ sourceId, dedupKey: key, loopType: 'commitment_owed_by_me', counterpartyEmail: 'a@example.com', summary: key,
       evidence: [], detector: 'manual', pageSlug, lastActivityAt: at, openedAt: at } as never);
     await loop('loop-doomed', SRC, SLUG); await loop('loop-keeper', SRC, 'notes/keeper'); await loop('loop-other', OTHER, SLUG);
+    const notice = (sourceId: string, slug: string) => engine.insertCoreEditNotice({ sourceId, slug, pageId: null, revision: 'rev-1', baseRevision: null, baseText: 'the page text', actor: 'remote:agent' });
+    await notice(SRC, SLUG); await notice(SRC, SLUG); await notice(SRC, 'notes/keeper'); await notice(OTHER, SLUG);
     await engine.setPageAliases(SLUG, SRC, ['doomed alias', 'old harbor']);
     await engine.setPageAliases('notes/keeper', SRC, ['keeper alias']);
     await engine.setPageAliases(SLUG, OTHER, ['other alias']);
@@ -123,6 +130,7 @@ describe('engine parity: the slug stores a page purge scrubs and the change reas
     const state = async () => ({
       proposals: (await engine.listPendingTakeProposals({ limit: 100 })).map(p => `${p.source_id}:${p.page_slug}`).sort(),
       loops: (await engine.listOpenLoops({ sourceIds: [SRC, OTHER] })).map(l => `${l.source_id}:${String(l.dedup_key)}`).sort(),
+      notices: (await engine.listPendingCoreEditNotices(null)).map(n => `${n.source_id}:${n.slug}`).sort(),
       aliases: (await engine.readPageAliasRows([SRC, OTHER], [SLUG, 'notes/keeper'])).map(a => `${a.source_id}:${a.slug}:${a.alias_norm}`).sort(),
     });
     const before = await state();
@@ -136,7 +144,8 @@ describe('engine parity: the slug stores a page purge scrubs and the change reas
     const occurrences = [await engine.listPageSecretOccurrences([]), await engine.listPageSecretOccurrences([doomed.id, 987654])];
     const sql = backend !== 'rust';
     expect([empty.hasSecretStore, removed.hasSecretStore, again.hasSecretStore, other.hasSecretStore]).toEqual(Array(4).fill(sql));
-    expect(removed.removed).toMatchObject({ take_proposals: 1, open_loops: 1, core_edit_notices: 0, page_aliases: 2 });
+    expect(removed.removed).toMatchObject({ take_proposals: 1, open_loops: 1, core_edit_notices: 2, page_aliases: 2 });
+    expect(after.notices).toEqual(['default:notes/keeper', `other:${SLUG}`]);
     expect(after.proposals).toEqual(['default:notes/keeper', 'other:notes/doomed']);
     return { before, empty: empty.removed, removed: removed.removed, after, again: again.removed, other: other.removed, occurrences };
   });

@@ -24,7 +24,6 @@ import {
 import { serializePageToMarkdown } from '../core/markdown.ts';
 import { wholeBodySnapshot } from '../core/persistence/segmented-apply.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
-import { servesRawSql } from '../core/rust-engine/errors.ts';
 import { CORE_SUBCOMMANDS, ROUTERS, subcommandHelpRequested } from '../cli/subcommands.ts';
 
 export { CORE_SUBCOMMANDS as SUBCOMMANDS } from '../cli/subcommands.ts';
@@ -190,12 +189,11 @@ export async function runCore(engine: BrainEngine, args: string[]): Promise<void
       const rawPriority = flag(args, '--priority');
       const priority = rawPriority === undefined ? undefined : Number(rawPriority);
       if (priority !== undefined && !Number.isInteger(priority)) { fail('--priority must be an integer (lower renders first; default 100).'); return; }
-      // `remove` also closes the page's pending remote-edit notices (core_edit_notices). An engine without raw SQL keeps
-      // no such notices, so there is nothing to close and it un-cores the page without that step.
+      // `remove` also closes the page's pending remote-edit notices (core_edit_notices), on every engine.
       try {
         const result = await setMarking(engine, sourceId, slug, { core: sub === 'add', ...(priority !== undefined ? { priority } : {}) });
         if (result === 'missing') { fail(`No live page ${sourceId}:${slug}.`, 'check the slug with gbrain get <slug> or create the page first'); return; }
-        if (sub === 'remove' && servesRawSql(engine)) await engine.executeRaw('UPDATE core_edit_notices SET acked_at = now() WHERE source_id = $1 AND slug = $2 AND acked_at IS NULL', [sourceId, slug]);
+        if (sub === 'remove') await engine.ackCoreEditNotices(sourceId, slug, null);
         const usage = await coreUsage(engine);
         const settings = await readCoreSettings(engine);
         console.log(`${result === 'unchanged' ? 'Already' : 'Now'} ${sub === 'add' ? 'in' : 'out of'} core: ${sourceId}:${slug}. Core uses ${usage.chars}/${settings.maxChars} chars.`);
@@ -207,8 +205,7 @@ export async function runCore(engine: BrainEngine, args: string[]): Promise<void
     }
     case 'diff': {
       if (!slug) { fail('diff needs a page slug.', 'gbrain core diff <slug> [--source <id>]'); return; }
-      const [oldest] = await engine.executeRaw<{ base_text: string | null; actor: string; created_at: string }>(
-        `SELECT base_text, actor, created_at::text AS created_at FROM core_edit_notices WHERE source_id = $1 AND slug = $2 AND acked_at IS NULL ORDER BY id LIMIT 1`, [sourceId, slug]);
+      const oldest = await engine.readOldestPendingCoreEditNotice(sourceId, slug);
       if (!oldest) { print({ pending: false }, () => `No unacknowledged remote edits to ${sourceId}:${slug}.`); return; }
       const snap = await wholeBodySnapshot(engine, await engine.readPageSnapshot(slug, { sourceId }), 'core diff');
       const current = snap ? renderCorePage({ source_id: sourceId, slug, title: snap.page.title, compiled_truth: snap.page.compiled_truth }) : '';
@@ -221,14 +218,14 @@ export async function runCore(engine: BrainEngine, args: string[]): Promise<void
       if (!slug || !revision) { fail('ack needs a slug and --revision (from gbrain core diff or the notice).', 'gbrain core ack <slug> --revision <token>'); return; }
       const snap = await engine.readPageSnapshot(slug, { sourceId });
       if (revision !== 'latest' && snap && snap.revision !== revision) {
-        const [known] = await engine.executeRaw<{ id: number }>('SELECT id FROM core_edit_notices WHERE source_id = $1 AND slug = $2 AND revision = $3 ORDER BY id DESC LIMIT 1', [sourceId, slug, revision]);
-        if (!known) { fail(`Revision ${revision} is not a reviewed edit of ${sourceId}:${slug}.`, `gbrain core diff --source ${sourceId} ${slug}`); return; }
-        const rows = await engine.executeRaw<{ n: number }>('WITH a AS (UPDATE core_edit_notices SET acked_at = now() WHERE source_id = $1 AND slug = $2 AND acked_at IS NULL AND id <= $3 RETURNING 1) SELECT count(*)::int AS n FROM a', [sourceId, slug, known.id]);
-        console.log(`Acknowledged ${rows[0]?.n ?? 0} edit(s) up to ${revision}; later edits stay pending.`);
+        const known = await engine.findCoreEditNoticeIdByRevision(sourceId, slug, revision);
+        if (known === null) { fail(`Revision ${revision} is not a reviewed edit of ${sourceId}:${slug}.`, `gbrain core diff --source ${sourceId} ${slug}`); return; }
+        const acked = await engine.ackCoreEditNotices(sourceId, slug, known);
+        console.log(`Acknowledged ${acked} edit(s) up to ${revision}; later edits stay pending.`);
         return;
       }
-      const rows = await engine.executeRaw<{ n: number }>('WITH a AS (UPDATE core_edit_notices SET acked_at = now() WHERE source_id = $1 AND slug = $2 AND acked_at IS NULL RETURNING 1) SELECT count(*)::int AS n FROM a', [sourceId, slug]);
-      console.log(`Acknowledged ${rows[0]?.n ?? 0} edit(s) to ${sourceId}:${slug}.`);
+      const acked = await engine.ackCoreEditNotices(sourceId, slug, null);
+      console.log(`Acknowledged ${acked} edit(s) to ${sourceId}:${slug}.`);
       return;
     }
     case 'init': {

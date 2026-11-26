@@ -8,7 +8,7 @@
  *    deletePurgedTakes, deletePurgeTrustProposals, deletePurgeOpenLoops, deletePurgeWriteGateHolds,
  *    deletePurgeWriteGateReceipts, updatePageBodyForPurge, setPurgeVersionBody, redactVersionChangeReasons,
  *    deletePurgedChunks, expireDerivedFacts, deactivateDerivedTakes, softDeleteDerivedPages, findPurgeBlockedPublication, insertPurgeEffects, deletePurgedStagingParts,
- *    deletePageViewDigests, deletePurgeTakeProposals, blankPurgeCoreEditNotices, markNeedsRederive, pageAwaitsRederive,
+ *    deletePageViewDigests, deletePurgeTakeProposals, markNeedsRederive, pageAwaitsRederive,
  *    listSegmentedVersionsForPurge, abortPurgedStagings and deleteUnreferencedPurgedTexts return the same observable result on every engine arm (PGLite always; Postgres with DATABASE_URL;
  *    the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: an engine that answers one of these differently changes which belief streams a purge rebuilds, which
@@ -16,7 +16,7 @@
  *    refused, so a fact purge stopped in its transaction.
  *  - Why existing coverage misses it: fact-purge-sites.test.ts compares these members next to the purge members of the
  *    page purge lane and four raw fixtures, so on Rust every case there stops at the first one the store does not serve.
- *  - Seam: the raw-only case reads the repository's source files to pin the writers of four tables; the last case calls
+ *  - Seam: the raw-only case reads the repository's source files to pin the writers of two tables; the last case calls
  *    executeRaw (requires raw_sql), which the Rust arm must refuse. Otherwise none. Facts, takes, pages and tags are seeded through typed members (insertFact, insertFacts, putPage, addTag,
  *    softDeletePage, addTakesBatch, insertTrustProposal, upsertOpenLoop, upsertWriteGateHold, upsertWriteGateReceipt) and read
  *    back through typed members (listFactsSince, listTakes, listTrustProposals, listOpenLoops, listWriteGateHoldRows,
@@ -60,11 +60,10 @@ async function admit(engine: BrainEngine, requestId: string, over: { operation?:
   } as never)).id;
 }
 
-/** The three tables the purge clears that only an `executeRaw` insert writes, and the files of those inserts. */
+/** The two tables the purge clears that only an `executeRaw` insert writes, and the files of those inserts. */
 const RAW_ONLY_WRITERS: Record<string, string[]> = {
   page_body_staging_parts: ['src/core/persistence/page-upload.ts'],
   page_view_digests: ['src/core/engine-sql/page-view-digests.ts'],
-  core_edit_notices: ['src/core/persistence/core-guard.ts'],
 };
 
 /** Every file under `dir` with one of `exts`, repo-relative. */
@@ -410,20 +409,20 @@ describe('engine parity: the fact purge transaction members', () => {
       queued: [['embedding', 'queued', null, false], ['git', 'queued', null, false], ['withdrawal-mirror', 'queued', null, false]] });
     return answers;
   });
-  parityTest('deletePurgedStagingParts, deletePageViewDigests and blankPurgeCoreEditNotices find no rows, and each table keeps its raw-only writer', {
-    methods: ['transaction', 'deletePurgedStagingParts', 'deletePageViewDigests', 'blankPurgeCoreEditNotices'],
+  parityTest('deletePurgedStagingParts and deletePageViewDigests find no rows, and each table keeps its raw-only writer', {
+    methods: ['transaction', 'deletePurgedStagingParts', 'deletePageViewDigests'],
   }, async (engine) => {
     // A Rust brain refuses every executeRaw (raw-sql.test.ts), so these tables stay empty there and the Rust members
     // answer without a store call. A typed writer of one of them (an engine-sql module or a Rust store module) fails
-    // this pin: the Rust member must then read the store.
+    // this pin: the Rust member must then read the store. The core edit notices had the same pin until the store kept
+    // them (core-edit-notices.test.ts covers `blankPurgeCoreEditNotices` against seeded rows).
     const answers = await engine.transaction(async tx => ({
       parts: await tx.deletePurgedStagingParts(['a0000000-0000-4000-8000-0000000000a1']),
       digests: (await tx.deletePageViewDigests([1, 2])) ?? null,
-      notices: await tx.blankPurgeCoreEditNotices(SRC, 'alice likes tea'),
       none: [await tx.deletePurgedStagingParts([]), (await tx.deletePageViewDigests([])) ?? null],
     }));
     const writers = rawOnlyWriters();
-    expect(answers).toEqual({ parts: 0, digests: null, notices: 0, none: [0, null] });
+    expect(answers).toEqual({ parts: 0, digests: null, none: [0, null] });
     expect(writers).toEqual(Object.fromEntries(Object.entries(RAW_ONLY_WRITERS).map(([table, files]) => [table, files.map(file => ({ file, executeRaw: true }))])));
     return { answers, writers };
   });
@@ -459,7 +458,7 @@ describe('engine parity: the fact purge transaction members', () => {
     for (const table of Object.keys(RAW_ONLY_WRITERS)) {
       counts[table] = Number((await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM ${table}`))[0]!.n);
     }
-    expect(counts).toEqual({ page_body_staging_parts: 0, page_view_digests: 0, core_edit_notices: 0 });
+    expect(counts).toEqual({ page_body_staging_parts: 0, page_view_digests: 0 });
     return counts;
   });
   parityTest('hideDerivedRows marks each derived row of a purged input in needs_rederive, and the reads that apply rederiveHiddenSql hide a marked row', {

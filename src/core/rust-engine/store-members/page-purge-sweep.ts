@@ -15,8 +15,8 @@
  *
  * Answered here, without a store call, because the store keeps no such rows:
  * - `listPageSecretOccurrences`: the store keeps no secret store, so a page holds no occurrence.
- * `deletePurgedSlugStoreRows` answers `core_edit_notices: 0` (the store keeps no core edit notices) and `secretStore: false`, so
- * the purge has no secret store to scrub (persistence/purge-slug-stores.ts).
+ * `deletePurgedSlugStoreRows` deletes the page's core edit notices in the store and counts them under `core_edit_notices`; it
+ * answers `secretStore: false`, so the purge has no secret store to scrub (persistence/purge-slug-stores.ts).
  */
 import type { BrainEngine } from '../../engine.ts';
 import { byId } from '../../engine-sql/page-purge-sweep.ts';
@@ -70,7 +70,7 @@ export const listPageChangeReasons: Member<'listPageChangeReasons'> = async (bra
 export const listRequestsRecordingReasons: Member<'listRequestsRecordingReasons'> = (brain, sourceId, slug) =>
   storeCall({ member: 'listRequestsRecordingReasons', sourceId }, () => brain.listRequestsRecordingReasons(sourceId, slug));
 
-/** `ifPresent` changes nothing here: every store the scrub names exists, and the ones the store does not keep answer 0. */
+/** `ifPresent` changes nothing here: every store the scrub names exists, and the ones the store does not keep answer 0 (`core_edit_notices` is counted from the store's notice rows). */
 export const deletePurgedSlugStoreRows: Member<'deletePurgedSlugStoreRows'> = (brain, sourceId, slugs) =>
   storeCall({ member: 'deletePurgedSlugStoreRows', sourceId }, () => brain.deletePurgedSlugStoreRows(sourceId, [...slugs]));
 

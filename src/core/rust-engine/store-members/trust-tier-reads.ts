@@ -53,10 +53,11 @@ function requireInteger(member: string, name: string, value: number): void {
 }
 
 /**
- * `listPendingCoreEditNotices`: the store keeps no core edit notices (their only writer, the core guard in
- * persistence/core-guard.ts, goes through `executeRaw`, which this engine refuses), so none is pending.
+ * `listPendingCoreEditNotices`: the pending notices of the store's core-edit-notices family, the newest per page, by
+ * source then slug in byte order, at most 50 (rust/docs/store/core-edit-notices.md).
  */
-export const listPendingCoreEditNotices: Member<'listPendingCoreEditNotices'> = async () => [];
+export const listPendingCoreEditNotices: Member<'listPendingCoreEditNotices'> = (brain, sourceIds) =>
+  storeCall({ member: 'listPendingCoreEditNotices' }, () => brain.listPendingCoreEditNotices(sourceIds ? [...sourceIds] : null));
 
 export const listCorePageRows: Member<'listCorePageRows'> = (brain, spec) => {
   const member = 'listCorePageRows';

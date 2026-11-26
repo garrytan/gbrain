@@ -384,6 +384,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'listBeliefStreamSlugs',
   // Quote and slot-history reads (engine-sql/facts-recall.ts; test/engine-parity/facts-quoted.test.ts)
   'listReadablePageSlugs',
+  // Core edit notices (engine-sql/core-edit-notices.ts; covered by test/engine-parity/core-edit-notices.test.ts)
+  'insertCoreEditNotice', 'readOldestPendingCoreEditNotice', 'findCoreEditNoticeIdByRevision', 'ackCoreEditNotices',
   // Trust tier reads (engine-sql/trust-tier-reads.ts; covered by test/engine-parity/trust-tier-reads.test.ts)
   'listCorePageRows', 'listPendingCoreEditNotices', 'listTrustScanRows', 'countUnscannedTrustRows', 'readBeliefHistoryRows', 'listVisibleBeliefLifetimes',
   'listVersionTrustTiers', 'listVersionReasonWriters', 'listPageRefsByIds', 'listPageTrustTiersByKey', 'lockLivePagesByKey', 'listValidTimeIdentities', 'pickValidTimeEdition', 'listAmendmentsNotApplied',

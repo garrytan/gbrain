@@ -48,7 +48,7 @@ test/engine-parity/code-eval-salience.test.ts	13	0
 test/engine-parity/collate-aggregated-lists.test.ts	5	0
 test/engine-parity/collate-belief-cycle-walks.test.ts	6	0
 test/engine-parity/collate-command-listings.test.ts	7	2
-test/engine-parity/collate-core-page-lists.test.ts	16	1
+test/engine-parity/collate-core-page-lists.test.ts	17	0
 test/engine-parity/collate-doctor-access.test.ts	11	0
 test/engine-parity/collate-doctor-persistence.test.ts	9	7
 test/engine-parity/collate-doctor.test.ts	9	1
@@ -69,7 +69,8 @@ test/engine-parity/config-ingest.test.ts	9	0
 test/engine-parity/connect-gate.test.ts	7	0
 test/engine-parity/connector-attempts.test.ts	2	0
 test/engine-parity/connector-sync-stamp.test.ts	2	0
-test/engine-parity/core-page-member-reads.test.ts	3	1
+test/engine-parity/core-edit-notices.test.ts	12	0
+test/engine-parity/core-page-member-reads.test.ts	4	0
 test/engine-parity/credential-grant-writes.test.ts	6	0
 test/engine-parity/cycle-locks.test.ts	11	0
 test/engine-parity/cycle-reads.test.ts	3	0

@@ -388,6 +388,9 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'listAmendmentsNotApplied', 'readPageVersionEdition', 'readCursorEdition', 'pageAwaitsRederive',
     'readTrustScanCursor', 'writeTrustScanCursor', 'listClaimPendingSourceIds', 'readTrustScanCeilings', 'listPageQuoteTiers'],
 
+  // the core edit notice rows a remote edit of a core page leaves, and `gbrain core diff`, `core ack` and `core remove`'s statements (engine-sql/core-edit-notices.ts)
+  core_edit_notices: ['insertCoreEditNotice', 'readOldestPendingCoreEditNotice', 'findCoreEditNoticeIdByRevision', 'ackCoreEditNotices'],
+
   // derivation_trust: the derived-row trust writes (engine-sql/derivation-trust.ts)
   derivation_trust: ['lowerTrustTier', 'countDerivedRowTaint', 'stampPageFrontmatter'],
   // memory_mutation_reads: the reads remember and forget make before admission

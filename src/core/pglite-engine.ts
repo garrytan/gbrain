@@ -337,6 +337,7 @@ import * as purgeSlugStores from './engine-sql/purge-slug-stores.ts';
 import * as conceptRebuildSql from './engine-sql/concept-rebuild.ts';
 import * as graduationCatalog from './engine-sql/graduation-catalog.ts';
 import * as trustTierReads from './engine-sql/trust-tier-reads.ts';
+import * as coreEditNotices from './engine-sql/core-edit-notices.ts';
 import * as versionReasons from './engine-sql/version-reasons.ts';
 import * as versionPrune from './engine-sql/version-prune.ts';
 import * as segmentedPurgeWrites from './engine-sql/segmented-purge-writes.ts';
@@ -5594,6 +5595,10 @@ export class PGLiteEngine implements BrainEngine {
   async hasCodeEdgesSymbol(sourceId: string) { return takesReads.hasCodeEdgesSymbol(this, sourceId); }
   async listCorePageRows(spec: trustTierReads.CorePageRowSpec) { return trustTierReads.listCorePageRows(this, spec); }
   async listPendingCoreEditNotices(sourceIds: readonly string[] | null) { return trustTierReads.listPendingCoreEditNotices(this, sourceIds); }
+  async insertCoreEditNotice(row: coreEditNotices.CoreEditNoticeInput) { return coreEditNotices.insertCoreEditNotice(this, row); }
+  async readOldestPendingCoreEditNotice(sourceId: string, slug: string) { return coreEditNotices.readOldestPendingCoreEditNotice(this, sourceId, slug); }
+  async findCoreEditNoticeIdByRevision(sourceId: string, slug: string, revision: string) { return coreEditNotices.findCoreEditNoticeIdByRevision(this, sourceId, slug, revision); }
+  async ackCoreEditNotices(sourceId: string, slug: string, maxId: number | null) { return coreEditNotices.ackCoreEditNotices(this, sourceId, slug, maxId); }
   async listTrustScanRows(spec: trustTierReads.TrustScanRowSpec) { return trustTierReads.listTrustScanRows(this, spec); }
   async countUnscannedTrustRows(spec: trustTierReads.UnscannedTrustSpec) { return trustTierReads.countUnscannedTrustRows(this, spec); }
   async readTrustScanCursor() { return trustScan.readTrustScanCursor(this); }

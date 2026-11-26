@@ -153,6 +153,11 @@ export const LEDGER_MEMBERS = {
   // Group D (trust tier reads)
   listCorePageRows: 'pages',
   listPendingCoreEditNotices: 'pages',
+  // The core edit notice store (core-edit-notices family, key tag 2): the notify insert, `core diff`'s oldest pending notice, `core ack`.
+  insertCoreEditNotice: 'pages',
+  readOldestPendingCoreEditNotice: 'pages',
+  findCoreEditNoticeIdByRevision: 'pages',
+  ackCoreEditNotices: 'pages',
   listTrustScanRows: 'facts',
   countUnscannedTrustRows: 'facts',
   readTrustScanCursor: 'facts',

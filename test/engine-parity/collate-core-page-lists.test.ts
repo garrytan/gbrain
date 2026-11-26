@@ -88,12 +88,12 @@ describe('attendance repair scan window', () => {
 });
 
 describe('core and company-brain lists', () => {
-  parityTest('pendingCoreNotices lists one notice per (source, slug) by byte', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('pendingCoreNotices lists one notice per (source, slug) by byte', { methods: ['insertCoreEditNotice', 'listPendingCoreEditNotices'] }, async (engine, backend) => {
     for (const id of MIXED_SOURCES) await createSource(engine, backend, id);
     for (const id of MIXED_SOURCES) {
       for (const slug of MIXED_SLUGS) {
         for (const actor of ['one', 'two']) {
-          await engine.executeRaw('INSERT INTO core_edit_notices (source_id, slug, revision, actor) VALUES ($1, $2, $3, $4)', [id, slug, 'r1', actor]);
+          await engine.insertCoreEditNotice({ sourceId: id, slug, pageId: null, revision: 'r1', baseRevision: null, baseText: null, actor });
         }
       }
     }

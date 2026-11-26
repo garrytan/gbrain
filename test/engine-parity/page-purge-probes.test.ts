@@ -19,7 +19,7 @@
  *    does). Every row is seeded through typed writers: putPage, insertFacts, insertTakeProposal, upsertOpenLoop, setPageAliases,
  *    updateSlug, logEvalCandidate, upsertFile, upsertWriteGateHold, addTakesBatch, addTimelineEntry, createVersion, upsertChunks,
  *    insertDecideProposal, insertDecideReviewProposal, applyDecideReviewQueue, insertTrustProposal, the write journal, the page-body
- *    fixtures and insertPublicationEffects. The stores with no typed writer (core_edit_notices, the retrieval tables, the volunteer
+ *    fixtures and insertPublicationEffects. The core edit notices go in through insertCoreEditNotice. The stores with no typed writer (the retrieval tables, the volunteer
  *    and gazetteer stores, the query cache) hold nothing on every arm. Generated values are compared by shape, never by value.
  */
 import { describe, expect } from 'bun:test';
@@ -117,6 +117,8 @@ async function seed(engine: BrainEngine, backend: Parameters<typeof createSource
   await loop('loop-doomed', SRC, SLUG); await loop('loop-keeper', SRC, 'notes/keeper');
   await engine.setPageAliases(SLUG, SRC, ['doomed alias']);
   await engine.setPageAliases('notes/keeper', SRC, ['keeper alias']);
+  const notice = (sourceId: string, slug: string) => engine.insertCoreEditNotice({ sourceId, slug, pageId: null, revision: 'rev-1', baseRevision: null, baseText: `base text of ${slug}`, actor: 'remote:agent' });
+  await notice(SRC, SLUG); await notice(SRC, 'notes/keeper'); await notice(OTHER, 'notes/other-source');
   await engine.logEvalCandidate(candidate('covers default', [SLUG], [SRC]));
   await engine.logEvalCandidate(candidate('covers keeper', ['notes/keeper'], [SRC]));
   await engine.upsertFile({ page_slug: SLUG, page_id: null, filename: 'b.png', storage_path: 'doomed/b.png', content_hash: 'hb', size_bytes: 2 });
@@ -140,7 +142,7 @@ async function seed(engine: BrainEngine, backend: Parameters<typeof createSource
 
 describe('engine parity: the store probes of a page purge receipt', () => {
   parityTest('the slug-keyed probes count the rows of each store that name the page in its source, and nothing of another page or source', {
-    methods: ['putPage', 'upsertChunks', 'createVersion', 'addTimelineEntry', 'addTakesBatch', 'insertFacts', 'insertTakeProposal', 'upsertOpenLoop', 'setPageAliases', 'updateSlug',
+    methods: ['putPage', 'upsertChunks', 'createVersion', 'addTimelineEntry', 'addTakesBatch', 'insertFacts', 'insertTakeProposal', 'upsertOpenLoop', 'setPageAliases', 'insertCoreEditNotice', 'updateSlug',
       'logEvalCandidate', 'upsertFile', 'upsertWriteGateHold', 'insertDecideProposal', 'insertDecideReviewProposal', 'applyDecideReviewQueue', 'insertTrustProposal',
       'transaction', 'countPurgeProbe', 'setPurgeProbeTimeout'],
     timeout: 120_000,
@@ -167,7 +169,7 @@ describe('engine parity: the store probes of a page purge receipt', () => {
     expect(answers.page_aliases!.doomed).toBe(1);
     expect(answers.slug_aliases!.doomed).toBe(1);
     expect(answers.write_gate_holds!.doomed).toBe(1);
-    expect(answers.core_edit_notices).toEqual({ doomed: 0, keeper: 0, nobody: 0, otherSource: 0 });
+    expect(answers.core_edit_notices).toEqual({ doomed: 1, keeper: 1, nobody: 0, otherSource: 0 });
     return answers;
   });
 

@@ -3,6 +3,7 @@
  * Declarations moved verbatim out of engine.ts; `BrainEngine` extends this interface, so the member set is unchanged.
  */
 import type { AbandonedTakeRow, HeldFenceTakeRow, HeldFenceTakeSpec, HolderResolvedTakeRow, McpResolvedSpec, PageTierRef, PurgeTakesSpec, TakePreimage, TakePreimageRead, TakeTrustRef, TakesLeavingFence } from '../engine-sql/takes-reads.ts';
+import type { CoreEditNoticeInput, PendingCoreEditNotice } from '../engine-sql/core-edit-notices.ts';
 import type { AmendmentNotAppliedRow, AmendmentsNotAppliedSpec, BeliefHistoryRowQuery, CoreEditNoticeRow, CorePageRow, CorePageRowSpec, CursorEditionRow, PageIdRef, PageVersionEditionRow, TrustScanRow, TrustScanRowSpec, TrustScanTable, UnscannedTrustSpec, ValidTimeIdentityRow, ValidTimeIdentitySpec, ValidTimePickSpec } from '../engine-sql/trust-tier-reads.ts';
 import type { BodyManifestMeta, BodyManifestOutline, BodyManifestRow, ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines, SegmentedPageHead } from '../engine-sql/export-reads.ts';
 import type { BriefEntityPageOpts, BriefEntityPageRow, ReflexPageMatch, ReflexPageRow, ReflexScope } from '../engine-sql/reflex-reads.ts';
@@ -405,6 +406,14 @@ export interface ReadStatementMembers {
   listCorePageRows(spec: CorePageRowSpec): Promise<CorePageRow[]>;
   /** The unacknowledged remote-edit notices of core pages, the newest per page, by source then slug in byte order, at most 50; only `sourceIds` when not null. */
   listPendingCoreEditNotices(sourceIds: readonly string[] | null): Promise<CoreEditNoticeRow[]>;
+  /** Records one unacknowledged remote-edit notice of a core page (engine-sql/core-edit-notices.ts); run it in the edit's transaction. */
+  insertCoreEditNotice(row: CoreEditNoticeInput): Promise<{ id: number }>;
+  /** The pending notice with the lowest id for a page, or null (what `gbrain core diff` compares to). */
+  readOldestPendingCoreEditNotice(sourceId: string, slug: string): Promise<PendingCoreEditNotice | null>;
+  /** The highest id among a page's notices, pending or acknowledged, that name the revision, or null. */
+  findCoreEditNoticeIdByRevision(sourceId: string, slug: string, revision: string): Promise<number | null>;
+  /** Acknowledges a page's pending notices (those with id at or below `maxId` when not null); how many. */
+  ackCoreEditNotices(sourceId: string, slug: string, maxId: number | null): Promise<number>;
   /** Rows of one scanned table above an id whose stored tier is listed, by id. */
   listTrustScanRows(spec: TrustScanRowSpec): Promise<TrustScanRow[]>;
   /** How many rows of one scanned table above an id (and at or below a ceiling) have a listed stored tier. */

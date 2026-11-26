@@ -208,11 +208,9 @@ export const deletePurgeWriteGateHolds: Member<'deletePurgeWriteGateHolds'> = (b
 export const deletePurgeWriteGateReceipts: Member<'deletePurgeWriteGateReceipts'> = (brain, factIds, takeIds, holdIds) =>
   storeCall({ member: 'deletePurgeWriteGateReceipts' }, () => brain.deletePurgeWriteGateReceipts([...factIds], [...takeIds], [...holdIds]));
 
-/**
- * `blankPurgeCoreEditNotices`: the store keeps no core edit notices (their only writer, the core guard in
- * persistence/core-guard.ts, goes through `executeRaw`, which this engine refuses), so it blanks none.
- */
-export const blankPurgeCoreEditNotices: Member<'blankPurgeCoreEditNotices'> = async () => 0;
+/** `blankPurgeCoreEditNotices`: blanks the base text of the source's notices whose text quotes the lowered fact (core-edit-notices family). */
+export const blankPurgeCoreEditNotices: Member<'blankPurgeCoreEditNotices'> = (brain, sourceId, loweredFact) =>
+  storeCall({ member: 'blankPurgeCoreEditNotices', sourceId }, () => brain.blankPurgeCoreEditNotices(sourceId, loweredFact));
 
 export const deletePurgedFacts: Member<'deletePurgedFacts'> = (brain, factIds, sourceId) =>
   storeCall({ member: 'deletePurgedFacts', sourceId }, () => brain.deletePurgedFacts(purgeIds('deletePurgedFacts', factIds), sourceId));

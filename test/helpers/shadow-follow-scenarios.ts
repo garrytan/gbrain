@@ -70,6 +70,30 @@ export function defineFollowScenarios(ctx: FollowScenarioContext): void {
       } finally { await r.close(); }
     }, 90_000);
 
+    test('core edit notices the primary records and acknowledges reach the store, and a full pass repairs nothing', async () => {
+      const r = await rig();
+      try {
+        const notice = { sourceId: 'default', slug: 'people/alice-example', pageId: null, baseRevision: null, actor: 'agent:a-1' };
+        await r.wrapped.insertCoreEditNotice({ ...notice, revision: 'r-1', baseText: 'before one' });
+        await r.wrapped.insertCoreEditNotice({ ...notice, revision: 'r-2', baseText: 'before two' });
+        await r.settle();
+        const pending = async (engine: BrainEngine) => (await engine.listPendingCoreEditNotices(null)).map(({ created_at: _, ...n }) => n);
+        expect(await pending(r.rust)).toEqual(await pending(ctx.primary()));
+        expect(await r.rust.readOldestPendingCoreEditNotice('default', 'people/alice-example'))
+          .toEqual(await ctx.primary().readOldestPendingCoreEditNotice('default', 'people/alice-example'));
+        expect(await r.wrapped.ackCoreEditNotices('default', 'people/alice-example', null)).toBe(2);
+        await r.settle();
+        expect(await r.rust.listPendingCoreEditNotices(null)).toEqual([]);
+        expect(await r.rust.findCoreEditNoticeIdByRevision('default', 'people/alice-example', 'r-2'))
+          .toBe(await ctx.primary().findCoreEditNoticeIdByRevision('default', 'people/alice-example', 'r-2'));
+        await tick();
+        const pass = await r.reconciler.run('full');
+        expect(pass.error).toBeUndefined();
+        expect(pass.repaired_rows).toBe(0);
+        expect(pass.follower_misses).toBe(0);
+      } finally { await r.close(); }
+    }, 90_000);
+
     test('a rename also moves a subject-scoped withdrawal, and the watermark waits for a pass over it', async () => {
       const r = await rig();
       try {

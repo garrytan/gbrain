@@ -231,6 +231,7 @@ test/engine-parity/config-ingest.test.ts
 test/engine-parity/connect-gate.test.ts
 test/engine-parity/connector-attempts.test.ts
 test/engine-parity/connector-sync-stamp.test.ts
+test/engine-parity/core-edit-notices.test.ts
 test/engine-parity/core-page-member-reads.test.ts
 test/engine-parity/credential-grant-writes.test.ts
 test/engine-parity/cycle-locks.test.ts

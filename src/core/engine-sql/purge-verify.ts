@@ -9,7 +9,7 @@
  * table and column names come from the constant maps below, so nothing a caller passes is spliced. The Rust engine
  * answers each kind from its own stores (rust-engine/store-members/purge-plan.ts): `fingerprint` and `claim_text` count the
  * facts, takes, take proposals, pages, chunks, versions and journal requests, and a `claim_text` probe of `core_edit_notices`
- * finds nothing (the store keeps no edit notice).
+ * counts the base texts that quote the claim (the store's core edit notices).
  */
 import { outcomeMarkerSql } from '../facts/audit-sources.ts';
 import { stagingNeedsTextSql } from '../page-body/schema.ts';

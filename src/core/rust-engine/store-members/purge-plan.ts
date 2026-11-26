@@ -21,13 +21,13 @@
  *
  * A page purge receipt's store probes (engine-sql/purge-verify.ts) run through the same two members, as
  * `countPurgeStoreProbe` and `listPurgeStoreProbeItems` (facts/purge_store_probe.rs). The store answers `slug_key` for the
- * stores it keeps (pages, facts, take proposals, open loops, page and slug aliases, eval candidates, files, write-gate
+ * stores it keeps (pages, facts, take proposals, open loops, core edit notices, page and slug aliases, eval candidates, files, write-gate
  * holds, the mention gazetteer), `page_rows`, `fact_refs`, `trust_proposals`, `page_requests`, `page_segment_texts`, `segment_texts` and
- * `effect_payload`. It keeps no rows of `core_edit_notices`, the retrieval event, link, feedback and weight stores,
+ * `effect_payload`. It keeps no rows of the retrieval event, link, feedback and weight stores,
  * `context_volunteer_events` or `query_cache`, so a probe of one finds nothing without a store
  * call. The fact purge receipt's `fingerprint` probe (the fact, take and take proposal stores) and `claim_text` probe (pages,
  * chunks, versions and journal requests; facts/purge_claim_probe.rs) run there too. A `claim_text` probe of `core_edit_notices`
- * finds nothing without a store call, as a `slug_key` probe of it does.
+ * counts the base texts that quote the claim, as a `slug_key` probe of it counts the page's notices.
  */
 import type { BrainEngine } from '../../engine.ts';
 import { escapeFenceCell } from '../../fence-shared.ts';
@@ -83,10 +83,9 @@ function receiptRoute(member: string, probe: Exclude<PurgeProbe, { kind: 'table'
         kind: 'fingerprint', store: probe.store, sourceId: probe.sourceId, factHash: probe.factHash,
         visibility: probe.visibility, subject: probe.subject } };
     case 'claim_text':
-      return probe.store === 'core_edit_notices' ? { kind: 'none' }
-        : { kind: 'receipt', probe: {
-          kind: 'claim_text', store: probe.store, sourceId: probe.sourceId, claim: probe.claim, json: probe.json,
-          reason: probe.reason, reasonJson: probe.reasonJson } };
+      return { kind: 'receipt', probe: {
+        kind: 'claim_text', store: probe.store, sourceId: probe.sourceId, claim: probe.claim, json: probe.json,
+        reason: probe.reason, reasonJson: probe.reasonJson } };
   }
 }
 

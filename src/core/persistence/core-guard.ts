@@ -79,7 +79,7 @@ export interface CoreGuardPlan {
   /** Re-checks the budget against in-transaction state; call after `lockCoreSources`. */
   validate(tx: BrainEngine): Promise<void>;
   /** Records a remote-edit notice in the publish transaction when the policy is `notify`. */
-  record(tx: Pick<BrainEngine, 'executeRaw'>, revision: string | null): Promise<void>;
+  record(tx: Pick<BrainEngine, 'insertCoreEditNotice'>, revision: string | null): Promise<void>;
 }
 
 /** The incoming core marking for a remote write that omitted the keys: carried from the snapshot. */
@@ -176,8 +176,8 @@ export async function prepareCoreGuard(engine: BrainEngine, input: CoreGuardInpu
     record: async (tx, revision) => {
       if (!remote || !before.core || !contentChanged || settings.remoteEdit !== 'notify') return;
       const actor = `${row.authority.principal.kind}:${row.authority.principal.id}`;
-      await tx.executeRaw(`INSERT INTO core_edit_notices (source_id, slug, page_id, revision, base_revision, base_text, actor) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [row.source_id, row.slug, live?.page.id ?? null, revision, live?.revision ?? null, beforeRendered, actor]);
+      await tx.insertCoreEditNotice({ sourceId: row.source_id, slug: row.slug, pageId: live?.page.id ?? null, revision, baseRevision: live?.revision ?? null,
+        baseText: beforeRendered, actor });
     },
   };
 }

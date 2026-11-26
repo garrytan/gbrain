@@ -16,7 +16,7 @@ import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration, type LocalRegistration } from '../src/core/persistence/identity.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { _resetWriteThroughCacheForTest } from '../src/core/write-through.ts';
-import { listCorePages, loadCoreBlock } from '../src/core/core-memory.ts';
+import { listCorePages, loadCoreBlock, pendingCoreNotices } from '../src/core/core-memory.ts';
 import { runCore } from '../src/commands/core.ts';
 import { _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
 import { coreMemoryCheck } from '../src/commands/doctor/checks/core-memory.ts';
@@ -124,6 +124,34 @@ describe('gbrain core CLI', () => {
     const current = await revision('people/alice-example');
     expect((await cli(['ack', 'people/alice-example', '--revision', current])).out).toContain('Acknowledged 1 edit');
     expect((await loadCoreBlock(engine, { sessionSourceId: 'default' })).text).not.toContain('edited remotely');
+  });
+
+  test('core remove closes the page\'s pending notices and leaves the notices of other pages', async () => {
+    for (const slug of ['people/alice-example', 'people/bob-example']) {
+      await put(slug, page(slug, 'Prefers tea.', { always_load: true }), false);
+      await put(slug, page(slug, 'Prefers coffee.'), true, { expected_revision: await revision(slug) });
+    }
+    expect((await pendingCoreNotices(engine)).map(n => n.slug)).toEqual(['people/alice-example', 'people/bob-example']);
+    expect((await cli(['remove', 'people/alice-example'])).out).toMatch(/^Now out of core: default:people\/alice-example\. Core uses \d+\/\d+ chars\.$/);
+    expect((await pendingCoreNotices(engine)).map(n => n.slug)).toEqual(['people/bob-example']);
+    expect(await corePages()).toEqual(['people/bob-example']);
+  });
+
+  test('diff says when nothing is pending; ack by revision closes the edits up to it, ack latest closes the rest, an unknown revision closes nothing', async () => {
+    await put('people/alice-example', page('Alice Example', 'Prefers tea.', { always_load: true }), false);
+    expect((await cli(['diff', 'people/alice-example'])).out).toBe('No unacknowledged remote edits to default:people/alice-example.');
+    const first = await revision('people/alice-example');
+    await put('people/alice-example', page('Alice Example', 'Prefers coffee.'), true, { expected_revision: first });
+    const second = await revision('people/alice-example');
+    await put('people/alice-example', page('Alice Example', 'Prefers juice.'), true, { expected_revision: second });
+    const unknown = await cli(['ack', 'people/alice-example', '--revision', 'not-a-revision']);
+    expect(unknown.err).toBe('[core] Revision not-a-revision is not a reviewed edit of default:people/alice-example.\n[core] Next: gbrain core diff --source default people/alice-example');
+    expect(await pendingCoreNotices(engine)).toHaveLength(1);
+    expect((await cli(['ack', 'people/alice-example', '--revision', second])).out).toBe(`Acknowledged 1 edit(s) up to ${second}; later edits stay pending.`);
+    expect(await pendingCoreNotices(engine)).toHaveLength(1);
+    expect((await cli(['ack', 'people/alice-example', '--revision', 'latest'])).out).toBe('Acknowledged 1 edit(s) to default:people/alice-example.');
+    expect(await pendingCoreNotices(engine)).toEqual([]);
+    expect((await cli(['ack', 'people/alice-example', '--revision', 'latest'])).out).toBe('Acknowledged 0 edit(s) to default:people/alice-example.');
   });
 });
 
