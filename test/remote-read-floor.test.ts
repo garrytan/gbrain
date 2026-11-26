@@ -40,6 +40,7 @@ const PLAIN: Record<string, string> = {
   'src/core/rust-engine/store-members/entity-identities.ts listRestrictedIdentityMembers privatePagesFilterFragment': 'write-side: the Rust store judges which duplicate-decision members may be written into the home repository under the same world policy as the SQL member; local dedupe only',
   'src/core/rust-engine/store-members/repair-page-scans.ts listOriginClaimants privatePagesFilterFragment': 'maintenance: the Rust store classifies twin pages as private under the same policy',
   'src/core/rust-engine/store-members/link-temporal.ts originPolicy privatePagesFilterFragment': 'write-side: the Rust store records whether a link origin is public under the same policy',
+  'src/core/rust-engine/store-members/private-provenance.ts storePageTextPolicy privatePagesFilterFragment': 'classification: renders the remote read floor text so the store judges it as a record with no readers; the text is only compared, and no read uses this call',
 };
 
 const DECL = /^(?:export )?(?:async )?function\*?\s+(\w+)|^(?:export )?(?:const|let)\s+(\w+)\s*[=:]/;
