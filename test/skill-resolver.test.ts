@@ -1113,3 +1113,56 @@ describe('deprecated skills', () => {
     expect(await codeOf(jsonCatalog(tmp(), 'c', [{ id: 'a', name: 'a', replaced_by: 3 } as unknown as J]))).toBe('skill_source_invalid');
   });
 });
+
+describe('owner-only skills (audience: owner)', () => {
+  test('a SKILL.md with audience: owner is offered to the owner only: outside the owner it is never suggested, matched or named', async () => {
+    const home = tmp();
+    const root = tmp('skres-dir-');
+    skillDir(root, 'private-ledger', { name: 'private-ledger', description: 'Review the private household ledger and its balances', audience: 'owner' });
+    skillDir(root, 'ledger-export', { name: 'ledger-export', description: 'Export a ledger to a spreadsheet' });
+    await buildSkillIndex({ catalog: 'c', dirs: [root] }, { home });
+    const ask = (message: string, audience?: 'owner' | 'others') => resolveSkills({ message, top_k: 8, top_gate: 0 }, { home, ...(audience ? { audience } : {}) });
+    expect((await ask('review the private household ledger balances', 'owner')).output.suggestions.map(s => s.id)).toContain('private-ledger');
+    expect((await ask('review the private household ledger balances', 'others')).output.suggestions.map(s => s.id)).not.toContain('private-ledger');
+    expect((await ask('use the private-ledger skill', 'others')).output.suggestions.map(s => s.id)).not.toContain('private-ledger');
+    expect((await ask('review the private household ledger balances')).output.suggestions.map(s => s.id)).toContain('private-ledger');
+  });
+
+  test('a JSON entry takes audience the same way, its catalog hash changes with it, and a non-string audience is refused', async () => {
+    const home = tmp();
+    const a = await jsonCatalog(home, 'c', [...BASIC, { id: 'x:diary', name: 'diary', description: 'Write the owner diary entry for today' }]);
+    const b = await jsonCatalog(home, 'c', [...BASIC, { id: 'x:diary', name: 'diary', description: 'Write the owner diary entry for today', audience: 'owner' } as J]);
+    expect(b.catalog.catalog_hash).not.toBe(a.catalog.catalog_hash);
+    const others = await resolveSkills({ message: 'write the owner diary entry for today', top_k: 8, top_gate: 0 }, { home, audience: 'others' });
+    expect(others.output.suggestions.map(s => s.id)).not.toContain('x:diary');
+    expect(await codeOf(jsonCatalog(tmp(), 'c', [{ id: 'a', name: 'a', audience: 3 } as unknown as J]))).toBe('skill_source_invalid');
+  });
+
+  test('a catalog built before audiences were recorded offers nothing outside the owner and marks itself stale', async () => {
+    const home = tmp();
+    const root = tmp('skres-dir-');
+    skillDir(root, 'ledger-export', { name: 'ledger-export', description: 'Export a ledger to a spreadsheet' });
+    await buildSkillIndex({ catalog: 'c', dirs: [root] }, { home });
+    const receiptPath = catalogFile(home, 'c', 'receipt.json');
+    const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
+    delete receipt.catalog.audiences;
+    writeFileSync(receiptPath, JSON.stringify(receipt));
+    const others = await resolveSkills({ message: 'export the ledger to a spreadsheet', top_k: 8, top_gate: 0 }, { home, audience: 'others' });
+    expect(others.output.suggestions).toEqual([]);
+    expect(others.output.meta.index_stale).toBe(true);
+    expect(existsSync(catalogFile(home, 'c', 'stale.stamp'))).toBe(true);
+    const owner = await resolveSkills({ message: 'export the ledger to a spreadsheet', top_k: 8, top_gate: 0 }, { home, audience: 'owner' });
+    expect(owner.output.suggestions.map(s => s.id)).toEqual(['ledger-export']);
+  });
+
+  test('hidden ids from the caller are never suggested, and more than EXCLUDE_MAX of them still all count', async () => {
+    const home = tmp();
+    const skills: J[] = Array.from({ length: EXCLUDE_MAX + 20 }, (_, i) => ({ id: `h:${String(i).padStart(4, '0')}`, name: `chore-${i}`, description: `Handle filler chore number ${i}` }));
+    await jsonCatalog(home, 'c', skills);
+    const message = `handle filler chore number ${EXCLUDE_MAX + 19}`;
+    const shown = await resolveSkills({ message, top_k: 3, top_gate: 0 }, { home });
+    expect(shown.output.suggestions.map(s => s.id)).toContain(skills.at(-1)!.id);
+    const hidden = await resolveSkills({ message, top_k: 3, top_gate: 0 }, { home, hidden: skills.map(s => s.id) });
+    expect(hidden.output.suggestions).toEqual([]);
+  });
+});

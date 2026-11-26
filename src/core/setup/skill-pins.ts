@@ -13,11 +13,11 @@
  */
 import { existsSync, unlinkSync } from 'node:fs';
 import { atomicWriteTextFile } from '../bootstrap/atomic-write.ts';
-import { catalogSkillPaths, parsePins, renderPinnedBlock, type Pin, type PinnedBlock } from '../skills/resolver/pinned-block.ts';
+import { catalogSkills, parsePins, renderPinnedBlock, type Pin, type PinClass, type PinnedBlock } from '../skills/resolver/pinned-block.ts';
 import { validCatalogName } from '../skills/resolver/paths.ts';
 import { readResolverConfig, type ResolverConfigRead } from './skill-resolver-config.ts';
 
-export { catalogSkillIds, catalogSkillPaths, parsePins, PIN_BLOCK_TOKEN_CAP, PIN_LINE_MAX, pinProblem, renderPinnedBlock, sessionStartPinnedBlock, type Pin, type PinnedBlock } from '../skills/resolver/pinned-block.ts';
+export { catalogSkillIds, catalogSkillPaths, catalogSkills, parsePins, PIN_BLOCK_TOKEN_CAP, PIN_CLASSES, PIN_LINE_MAX, pinProblem, renderPinnedBlock, sessionStartPinnedBlock, type Pin, type PinClass, type PinnedBlock } from '../skills/resolver/pinned-block.ts';
 
 export const PINS_MAX = 64;
 
@@ -42,7 +42,7 @@ export function writePins(read: Exclude<ResolverConfigRead, { state: 'unreadable
   const skills = (doc.skills && typeof doc.skills === 'object' && !Array.isArray(doc.skills) ? doc.skills : {}) as Record<string, unknown>;
   const resolver = (skills.resolver && typeof skills.resolver === 'object' && !Array.isArray(skills.resolver) ? skills.resolver : {}) as Record<string, unknown>;
   const all = section(doc);
-  if (pins.length) all[catalog] = pins.map((p) => (p.line ? { name: p.name, line: p.line } : { name: p.name }));
+  if (pins.length) all[catalog] = pins.map((p) => ({ name: p.name, ...(p.line ? { line: p.line } : {}), ...(p.classes ? { classes: p.classes } : {}) }));
   else delete all[catalog];
   if (Object.keys(all).length) resolver.pins = all; else delete resolver.pins;
   if (Object.keys(resolver).length) skills.resolver = resolver; else delete skills.resolver;
@@ -51,8 +51,19 @@ export function writePins(read: Exclude<ResolverConfigRead, { state: 'unreadable
   atomicWriteTextFile(read.path, `${JSON.stringify(doc, null, 2)}\n`, { freshMode: 0o600 });
 }
 
-/** One catalog's pins rendered against its current index (what setup writes into a harness's surface); OpenClaw's lines name each SKILL.md, as its load line reads the path first. */
-export function pinnedBlockFor(home: string, catalog: string, harness?: string, readRoot?: string): PinnedBlock {
-  const paths = catalogSkillPaths(home, catalog);
-  return renderPinnedBlock(readPins(readResolverConfig(home), catalog), { harness, known: paths ? new Set(paths.keys()) : null, ...(harness === 'openclaw' && paths ? { paths } : {}), ...(readRoot === undefined ? {} : { readRoot }) });
+/**
+ * One catalog's pins rendered against its current index (what setup writes into a harness's surface); OpenClaw's lines
+ * name each SKILL.md, as its load line reads the path first. With a session class (OpenClaw), only the pins for that
+ * class render, and a pin the host hides from the agent (hidden: not visible to its model, or a shadowed copy), or an
+ * `audience: owner` skill outside the owner's class, is left out and listed in `withheld`.
+ */
+export function pinnedBlockFor(home: string, catalog: string, harness?: string, readRoot?: string, opts: { cls?: PinClass; hidden?: readonly string[] } = {}): PinnedBlock & { withheld: string[] } {
+  const cat = catalogSkills(home, catalog);
+  const all = readPins(readResolverConfig(home), catalog);
+  const pins = opts.cls ? all.filter((p) => (p.classes ?? ['owner']).includes(opts.cls!)) : all;
+  const drop = new Set([...(opts.hidden ?? []), ...(opts.cls === 'conversation' && cat ? cat.ownerOnly : [])]);
+  const withheld = cat ? pins.filter((p) => cat.paths.has(p.name) && drop.has(p.name)).map((p) => p.name) : [];
+  const known = cat ? new Set([...cat.paths.keys()].filter((id) => !drop.has(id))) : null;
+  const r = renderPinnedBlock(pins.filter((p) => !withheld.includes(p.name)), { harness, known, ...(harness === 'openclaw' && cat ? { paths: cat.paths } : {}), ...(readRoot === undefined ? {} : { readRoot }) });
+  return { ...r, withheld };
 }

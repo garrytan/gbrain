@@ -23,12 +23,12 @@
  * workspace; doctor reads "listing off, resolver live".
  */
 import { afterAll, describe, expect, setDefaultTimeout, test } from 'bun:test';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCli } from './helpers/cli-spawn.ts';
-import { openclawCatalogName } from '../src/core/setup/openclaw-skill-plugin.ts';
+import { openclawAgentPolicy, openclawCatalogName } from '../src/core/setup/openclaw-skill-plugin.ts';
 import { runOpenclawCli } from '../src/core/setup/openclaw-turn-plugin.ts';
 
 setDefaultTimeout(120_000);
@@ -100,6 +100,9 @@ const gbrainHome = (b: Box) => join(b.home, '.gbrain');
 const statePath = (b: Box) => join(gbrainHome(b), 'openclaw-skill-resolver.json');
 const pluginDir = (b: Box) => join(b.state, 'gbrain', 'gbrain-skill-resolver');
 const readState = (b: Box) => JSON.parse(readFileSync(statePath(b), 'utf8'));
+/** The ctx field OpenClaw sets on a turn from the agent's owner (with a native memory provider). */
+const OWNER = { memoryAudience: { kind: 'owner-private', agentId: 'main' } };
+const CONVERSATION = (sessionKey: string) => ({ memoryAudience: { kind: 'conversation', agentId: 'main', sessionKey, sessionId: sessionKey + '-id' } });
 
 /**
  * Drive the generated plugin under Node with a fake OpenClaw api; each step is [kind, args]. Every hook
@@ -138,6 +141,8 @@ for (const [kind, a] of JSON.parse(stepsJson)) {
   else if (kind === 'read') { h.after_tool_call({ ...real.after_tool_call.event, params: { name: a.name } }, { ...real.after_tool_call.ctx, sessionKey }); out.push('read'); }
   else if (kind === 'asserts') out.push(assertActiveCalls);
   else if (kind === 'compact') { h.after_compaction({}, ctx); out.push('compact'); }
+  else if (kind === 'reset') { h.before_reset({ reason: 'new' }, ctx); out.push('reset'); }
+  else if (kind === 'changed') { h.skill_changed({}, ctx); out.push('changed'); }
   else if (kind === 'state') { const s = JSON.parse(readFileSync(statePath, 'utf8')); Object.assign(s.agents.main, a); writeFileSync(statePath, JSON.stringify(s)); await sleep(20); out.push('state'); }
   else if (kind === 'sleep') { await sleep(a.ms); out.push('slept'); }
 }
@@ -521,6 +526,20 @@ describe.skipIf(!NODE)('every skill source OpenClaw loads', () => {
     expect(oc.agents[0]).toMatchObject({ id: 'main', listing: 'off', path_reads: 'any', verdict: 'listing off, resolver live', host: { cut: ['email-triage'] } });
     expect(oc.recent.by_source['openclaw-extra']).toEqual({ suggested: 1, would_suggest: 0, reads: 1, reads_of_suggested: 1 });
     expect(oc.recent.by_session_class.unknown).toMatchObject({ turns: 1, suggested: 1, reads: 1, reads_of_suggested: 1 });
+    expect(oc.recent.by_audience).toEqual({ unknown: 1 });
+  });
+
+  test('when OpenClaw does not answer, a refresh keeps the skill roots it reported last time instead of dropping their skills', async () => {
+    const b = box();
+    const s = sources(b);
+    expectExit(await setup(b, ['--skill-loading', 'resolve'], status(b, hostEntries(b, s))), 0);
+    expect(readState(b).agents.main.skill_roots).toContainEqual({ dir: realpathSync(s.bundled), source: 'openclaw-bundled' });
+    const r = await setup(b, ['--skill-loading', 'resolve']);
+    expectExit(r, 0);
+    const st = readState(b).agents.main;
+    expect(st.skill_roots).toContainEqual({ dir: realpathSync(s.bundled), source: 'openclaw-bundled' });
+    expect(Object.keys(st.skill_files)).toContain('weather-report');
+    expect(r.resolver.notes.join('\n')).toContain('OpenClaw did not answer, so the 1 skill root(s) it reported last time (openclaw-bundled) were kept');
   });
 });
 
@@ -549,6 +568,165 @@ describe.skipIf(!NODE)('gbrain skills pin', () => {
     expect(calls(b).at(-1)).toBe('plugins uninstall gbrain-skill-resolver --force');
     const list = await runCli(['skills', 'pin', 'list', '--catalog', 'openclaw-main', '--json'], { env: b.env });
     expect(JSON.parse(list.stdout).pins).toEqual([{ name: 'deploy-service', line: 'Before any production deploy' }]);
+  });
+});
+
+describe.skipIf(!NODE)('session classes and the session-start brief', () => {
+  const ownerSkill = (b: Box) => {
+    mkdirSync(join(b.state, 'workspace', 'skills', 'private-ledger'), { recursive: true });
+    writeFileSync(join(b.state, 'workspace', 'skills', 'private-ledger', 'SKILL.md'), '---\nname: private-ledger\ndescription: Use when you review the private household ledger\naudience: owner\n---\nSteps.\n');
+  };
+  const pin = async (b: Box, name: string, ...extra: string[]) => expect((await runCli(['skills', 'pin', 'add', name, '--catalog', 'openclaw-main', ...extra], { env: b.env })).exitCode).toBe(0);
+
+  test('with no memory audience the session key decides: main and an owner sender\'s DM are the owner\'s, a group gets only conversation pins and no owner-only skill, relay, webhook and cron get nothing', async () => {
+    const b = box();
+    ownerSkill(b);
+    expectExit(await setup(b, ['--skill-loading', 'resolve', '--owner-sender', 'owner-1']), 0);
+    await pin(b, 'deploy-service');
+    await pin(b, 'calendar-sync', '--class', 'conversation');
+    expect(readState(b).agents.main).toMatchObject({ pinned_ids: ['deploy-service'], conversation_pinned_ids: ['calendar-sync'] });
+    const text = 'review the private household ledger';
+    const out = drive(b, [
+      ['turn', { text, sender: 'owner-1', session: 'agent:main:main' }],
+      ['turn', { text, sender: 'owner-1', session: 'agent:main:telegram:direct:owner-1' }],
+      ['turn', { text, sender: 'owner-1', session: 'agent:main:telegram:group:-100' }],
+      ['turn', { text, sender: 'owner-1', session: 'agent:main:relay-alice-example' }],
+      ['turn', { text, sender: 'owner-1', session: 'hook:inbox' }],
+      ['turn', { text, sender: 'owner-1', session: 'agent:main:cron:nightly:run:1' }],
+      ['turn', { text, sender: 'stranger', session: 'agent:main:telegram:direct:stranger' }],
+    ], undefined, { DRIVE_LOG_LINES: '7' });
+    for (const i of [0, 1]) {
+      expect(out[i].appendSystemContext).toContain('"deploy-service"');
+      expect(out[i].appendSystemContext).not.toContain('"calendar-sync"');
+      expect(out[i].appendContext).toContain('private-ledger');
+    }
+    expect(out[2].appendSystemContext).toContain('"calendar-sync"');
+    expect(out[2].appendSystemContext).not.toContain('"deploy-service"');
+    expect(out[2]?.appendContext ?? '').not.toContain('private-ledger');
+    expect(out.slice(3, 6)).toEqual([null, null, null]);
+    expect(out[6]).toEqual({ appendSystemContext: out[2].appendSystemContext });
+    const lines = logLines(b);
+    expect(lines.map((l) => [l.session_class, l.outcome])).toEqual([
+      ['main', 'suggested'], ['owner', 'suggested'], ['group', expect.any(String)], ['relay', 'skipped_class'], ['webhook', 'skipped_class'], ['cron', 'skipped_class'], ['direct', 'skipped_sender'],
+    ]);
+    expect(lines.every((l) => l.audience === 'unknown')).toBe(true);
+  });
+
+  test('with a memory audience a conversation never gets owner pins or owner-only skills, even on the main session key; --suggest-in owner leaves conversations their pins and no suggestions', async () => {
+    const b = box();
+    ownerSkill(b);
+    expectExit(await setup(b, ['--skill-loading', 'resolve']), 0);
+    await pin(b, 'deploy-service');
+    await pin(b, 'calendar-sync', '--class', 'owner,conversation');
+    const text = 'review the private household ledger';
+    const out = drive(b, [
+      ['turn', { text, session: 'agent:main:main', ctx: CONVERSATION('agent:main:main') }],
+      ['turn', { text, session: 'agent:main:x1', ctx: OWNER }],
+    ], undefined, { DRIVE_LOG_LINES: '2' });
+    expect(out[0].appendSystemContext).toContain('"calendar-sync"');
+    expect(out[0].appendSystemContext).not.toContain('"deploy-service"');
+    expect(out[0]?.appendContext ?? '').not.toContain('private-ledger');
+    expect(out[1].appendSystemContext).toContain('"deploy-service"');
+    expect(out[1].appendSystemContext).toContain('"calendar-sync"');
+    expect(out[1].appendContext).toContain('private-ledger');
+    expect(logLines(b).map((l) => [l.session_class, l.audience])).toEqual([['conversation', 'host'], ['owner', 'host']]);
+    expectExit(await setup(b, ['--skill-loading', 'resolve', '--suggest-in', 'owner']), 0);
+    expect(readState(b).agents.main.suggest_classes).toEqual(['owner']);
+    expectExit(await setup(b, ['--skill-loading', 'resolve']), 0);
+    expect(readState(b).agents.main.suggest_classes).toEqual(['owner']);
+    const group = drive(b, [['turn', { text: 'triage the email inbox', session: 'agent:main:telegram:group:-7', ctx: CONVERSATION('agent:main:telegram:group:-7') }]], undefined, { DRIVE_LOG_LINES: '3' });
+    expect(group[0]).toEqual({ appendSystemContext: out[0].appendSystemContext });
+    expect(logLines(b).at(-1)).toMatchObject({ session_class: 'group', outcome: 'skipped_class' });
+    expect((await setup(b, ['--skill-loading', 'resolve', '--suggest-in', 'everyone'])).exitCode).toBe(2);
+  });
+
+  test('the session-start brief comes once per durable session: a gateway restart never repeats it, a retried attempt gets the same brief back only when its transcript lacks it, a new session id or a /new reset gets its own, a conversation never gets one', async () => {
+    const b = box();
+    expectExit(await setup(b, ['--skill-loading', 'resolve', '--pins-route', 'first_turn']), 0);
+    await pin(b, 'deploy-service');
+    const owner = (sessionId: string) => ({ ...OWNER, sessionId });
+    const first = drive(b, [
+      ['turn', { text: 'triage the email inbox', run: 'r1', ctx: owner('sess-a') }],
+      ['turn', { text: 'triage the email inbox', run: 'r1', ctx: owner('sess-a') }],
+      ['turn', { text: 'sync the calendar', run: 'r2', ctx: owner('sess-a') }],
+      ['turn', { text: 'sync the calendar', run: 'r7', session: 'agent:main:s7', ctx: owner('sess-z'), carry: true }],
+      ['turn', { text: 'sync the calendar', run: 'r7', session: 'agent:main:s7', ctx: owner('sess-z') }],
+    ], undefined, { DRIVE_LOG_LINES: '5' });
+    expect(first[0].appendContext).toContain('<pinned_skills>');
+    expect((first[1].appendContext.match(/<pinned_skills>/g) ?? []).length).toBe(1);
+    expect(first[2]?.appendContext ?? '').not.toContain('<pinned_skills>');
+    expect(first[3].appendContext).toContain('<pinned_skills>');
+    expect(first[4]?.appendContext ?? '').not.toContain('<pinned_skills>');
+    const restarted = drive(b, [
+      ['turn', { text: 'sync the calendar', run: 'r3', ctx: owner('sess-a') }],
+      ['turn', { text: 'sync the calendar', run: 'r4', session: 'agent:main:s2', ctx: owner('sess-b') }],
+      ['turn', { text: 'sync the calendar', run: 'r5', session: 'agent:main:telegram:group:-9', ctx: { ...CONVERSATION('agent:main:telegram:group:-9'), sessionId: 'sess-c' } }],
+    ], undefined, { DRIVE_LOG_LINES: '8' });
+    expect(restarted[0]?.appendContext ?? '').not.toContain('<pinned_skills>');
+    expect(restarted[1].appendContext).toContain('<pinned_skills>');
+    expect(JSON.stringify(restarted[2] ?? {})).not.toContain('<pinned_skills>');
+    expect(logLines(b).filter((l) => l.brief).length).toBe(3);
+    const reset = drive(b, [
+      ['reset', { ctx: owner('sess-a') }],
+      ['turn', { text: 'sync the calendar', run: 'r8', ctx: owner('sess-a') }],
+    ], undefined, { DRIVE_LOG_LINES: '9' });
+    expect(reset[1].appendContext).toContain('<pinned_skills>');
+    const again = drive(b, [['turn', { text: 'sync the calendar', run: 'r9', ctx: owner('sess-a') }]], undefined, { DRIVE_LOG_LINES: '10' });
+    expect(again[0]?.appendContext ?? '').not.toContain('<pinned_skills>');
+    expect(logLines(b).filter((l) => l.brief).length).toBe(4);
+    const ledger = join(gbrainHome(b), 'openclaw-session-briefs.jsonl');
+    expect(statSync(ledger).mode & 0o777).toBe(0o600);
+    expect(readFileSync(ledger, 'utf8')).not.toContain('calendar');
+  });
+
+  test('a pinned skill OpenClaw hides from the agent is left out of the block and setup names it', async () => {
+    const b = box();
+    expectExit(await setup(b, ['--skill-loading', 'resolve']), 0);
+    await pin(b, 'email-triage');
+    const f = join(b.root, 'list.json');
+    writeFileSync(f, JSON.stringify({ workspaceDir: join(b.state, 'workspace'), skills: ['deploy-service', 'email-triage', 'calendar-sync'].map((name) => ({ name, modelVisible: name !== 'email-triage' })) }));
+    const r = await setup(b, ['--skill-loading', 'resolve'], { SKILLS_LIST_JSON: f });
+    expectExit(r, 0);
+    expect(readState(b).agents.main).toMatchObject({ pinned_ids: [], pinned_block: '' });
+    expect(r.resolver.notes.join('\n')).toContain('email-triage (skill_resolver_pin_withheld)');
+  });
+
+  test('a sandboxed agent (sandbox.mode) reads no host path: suggestions and pins lead with skills_read', async () => {
+    const b = box();
+    writeFileSync(join(b.state, 'openclaw.json'), JSON.stringify({ agents: { defaults: { sandbox: { mode: 'all' } } } }));
+    expectExit(await setup(b, ['--skill-loading', 'resolve']), 0);
+    expect(readState(b).agents.main.path_reads).toBe('none');
+    await pin(b, 'deploy-service');
+    expect(readState(b).agents.main.pinned_block).toContain('To use one, load it with skills_read({name})');
+    const out = drive(b, [['turn', { text: 'triage the email inbox', ctx: OWNER }]]);
+    expect(out[0].appendContext).toContain('To use one, load it with skills_read({name})');
+    expect(out[0].appendContext).not.toContain('read the SKILL.md at its path');
+  });
+
+  test('a non-main agent kept to its workspace with no workspace entry reads only OpenClaw\'s default workspace for it, never any path', () => {
+    const b = box();
+    writeFileSync(join(b.state, 'openclaw.json'), JSON.stringify({ agents: { list: [{ id: 'main', workspace: join(b.state, 'workspace') }, { id: 'ops' }] }, tools: { fs: { workspaceOnly: true } } }));
+    const saved = { s: process.env.OPENCLAW_STATE_DIR, c: process.env.OPENCLAW_CONFIG_PATH, h: process.env.HOME };
+    process.env.OPENCLAW_STATE_DIR = b.state; delete process.env.OPENCLAW_CONFIG_PATH; process.env.HOME = b.home;
+    try {
+      expect(openclawAgentPolicy('ops')).toMatchObject({ path_reads: 'workspace', workspace: join(b.state, 'workspace-ops') });
+    } finally {
+      for (const [k, v] of [['OPENCLAW_STATE_DIR', saved.s], ['OPENCLAW_CONFIG_PATH', saved.c], ['HOME', saved.h]] as const) if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+  });
+
+  test('after the worker rebuilds a catalog the plugin refreshes the state, so a skill OpenClaw now hides stops being suggested', async () => {
+    const b = box();
+    expectExit(await setup(b, ['--skill-loading', 'resolve']), 0);
+    expect(readState(b).agents.main.exclude_ids).toEqual([]);
+    const f = join(b.root, 'list.json');
+    writeFileSync(f, JSON.stringify({ workspaceDir: join(b.state, 'workspace'), skills: ['deploy-service', 'email-triage', 'calendar-sync'].map((name) => ({ name, modelVisible: name !== 'calendar-sync' })) }));
+    const env = { OPENCLAW_STATE_DIR: b.state, OPENCLAW_CALLS: b.calls, SKILLS_LIST_JSON: f, GBRAIN_HOME: b.home };
+    drive(b, [['changed', {}], ['sleep', { ms: 200 }]], undefined, { ...env, DRIVE_LOG_LINES: '2' });
+    const lines = logLines(b);
+    expect(lines.map((l) => l.outcome)).toEqual(['rebuilt', 'refreshed']);
+    expect(lines[1].code).toBeNull();
+    expect(readState(b).agents.main.exclude_ids).toEqual(['calendar-sync']);
   });
 });
 
@@ -592,13 +770,13 @@ describe.skipIf(!NODE)('the gbrain-skill-resolver plugin under Node', () => {
     expect(logLines(b).map((l) => l.outcome)).toEqual(['suggested', 'retry']);
   });
 
-  test('live: pins every turn, up to 3 suggestions, pinned never suggested, retry commits once; skips internal turns; shadow and off inject nothing', async () => {
+  test('live: pins every owner turn, up to 3 suggestions, pinned never suggested, retry commits once; skips internal turns; shadow and off inject nothing', async () => {
     const b = box({ skills: 250 });
     await setup(b, ['--skill-loading', 'resolve']);
     await runCli(['skills', 'pin', 'add', 'deploy-service', '--catalog', 'openclaw-main'], { env: b.env });
     const out = drive(b, [
-      ['turn', { text: 'deploy the service to production and triage the email inbox', run: 'r1' }],
-      ['turn', { text: 'deploy the service to production and triage the email inbox', run: 'r1' }],
+      ['turn', { text: 'deploy the service to production and triage the email inbox', run: 'r1', ctx: OWNER }],
+      ['turn', { text: 'deploy the service to production and triage the email inbox', run: 'r1', ctx: OWNER }],
       ['turn', { text: 'sync the calendar', provenance: 'inter_session' }],
       ['turn', { text: 'filler task number 249', session: 'agent:main:s9' }],
       ['read', { name: 'email-triage' }],
@@ -613,8 +791,9 @@ describe.skipIf(!NODE)('the gbrain-skill-resolver plugin under Node', () => {
     expect(out[0].appendContext).not.toContain('"deploy-service"');
     expect((out[0].appendContext.match(/^- id:/gm) ?? []).length).toBeLessThanOrEqual(3);
     expect(out[1]).toEqual(out[0]);
-    expect(out[2]).toEqual({ appendSystemContext: out[0].appendSystemContext });
+    expect(out[2]).toBeNull();
     expect(out[3].appendContext).toContain('zz-filler-249');
+    expect(out[3].appendSystemContext).toBeUndefined();
     expect(out[6]).toBeNull();
     expect(out[8]).toBeNull();
     const lines = logLines(b);
@@ -694,19 +873,19 @@ describe.skipIf(!NODE)('the gbrain-skill-resolver plugin under Node', () => {
     await setup(b, ['--skill-loading', 'resolve', '--pins-route', 'first_turn', '--owner-sender', 'owner-1']);
     await runCli(['skills', 'pin', 'add', 'deploy-service', '--catalog', 'openclaw-main'], { env: b.env });
     const out = drive(b, [
-      ['turn', { text: 'triage the email inbox', sender: 'owner-1' }],
-      ['turn', { text: 'sync the calendar', sender: 'owner-1' }],
+      ['turn', { text: 'triage the email inbox', sender: 'owner-1', ctx: OWNER }],
+      ['turn', { text: 'sync the calendar', sender: 'owner-1', ctx: OWNER }],
       ['turn', { text: 'sync the calendar', sender: 'stranger', session: 'agent:main:s5' }],
       ['compact', {}],
-      ['turn', { text: 'sync the calendar please', sender: 'owner-1' }],
+      ['turn', { text: 'sync the calendar please', sender: 'owner-1', ctx: OWNER }],
       ['state', { live_fraction: 0 }],
-      ['turn', { text: 'triage the email inbox', sender: 'owner-1', session: 'agent:main:s6' }],
+      ['turn', { text: 'triage the email inbox', sender: 'owner-1', session: 'agent:main:s6', ctx: OWNER }],
     ]);
     expect(out[0].appendSystemContext).toBeUndefined();
     expect(out[0].appendContext).toContain('<pinned_skills>');
     expect(out[0].appendContext).toContain('email-triage');
     expect(out[1].appendContext).not.toContain('<pinned_skills>');
-    expect(out[2]).toEqual({ appendContext: expect.stringContaining('<pinned_skills>') });
+    expect(out[2]).toBeNull();
     expect(out[4].appendContext).toContain('<pinned_skills>');
     expect(out[6]?.appendContext ?? '').not.toContain('<relevant_skills>');
     const lines = logLines(b);
