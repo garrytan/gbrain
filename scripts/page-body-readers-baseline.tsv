@@ -27,6 +27,10 @@ src/commands/enrich.ts	readableEvidence	field	INLINE	segmented holding page: bod
 src/commands/extract-mentions-explain.ts	explainMention	field	STREAM	
 src/core/engine-sql/embed-stale-work.ts	countArchivedEmbeddingWork	sql	META	moved from embedding-readiness.ts: body <> '' predicate on archived pages
 src/core/engine-sql/embed-stale-work.ts	sumEmbedBackfillChars	sql	META	moved from embed-consent.ts estimateEmbedBackfillUsd: character length of chunkless inline bodies for the cost estimate; a segmented page's NULL columns add nothing
+src/core/engine-sql/extract-atoms-reads.ts	EXTRACTABLE_PAGES_CONNECTORS_OUT_FILTERED_SQL	sql	STREAM	moved from extract-atoms.ts discoverExtractablePages (minCompiledTruthChars): octet_length of a NULL body is not true, so a segmented page is never discovered (skip until per-segment extraction, PR 4)
+src/core/engine-sql/extract-atoms-reads.ts	EXTRACTABLE_PAGES_CONNECTORS_OUT_SQL	sql	STREAM	moved from extract-atoms.ts discoverExtractablePages (minCompiledTruthChars): octet_length of a NULL body is not true, so a segmented page is never discovered (skip until per-segment extraction, PR 4)
+src/core/engine-sql/extract-atoms-reads.ts	EXTRACTABLE_PAGES_FILTERED_SQL	sql	STREAM	moved from extract-atoms.ts discoverExtractablePages (minCompiledTruthChars): octet_length of a NULL body is not true, so a segmented page is never discovered (skip until per-segment extraction, PR 4)
+src/core/engine-sql/extract-atoms-reads.ts	EXTRACTABLE_PAGES_SQL	sql	STREAM	moved from extract-atoms.ts discoverExtractablePages (minCompiledTruthChars): octet_length of a NULL body is not true, so a segmented page is never discovered (skip until per-segment extraction, PR 4)
 src/core/engine-sql/mention-reads.ts	readExplainScanPage	sql	STREAM	moved from src/commands/extract-mentions-explain.ts explainMention, same statement
 src/core/engine-sql/mention-reads.ts	readPageNameText	sql	STREAM	moved from src/commands/extract-mentions-explain.ts pageNames, same statement
 src/core/engine-sql/mention-reads.ts	listRejectedDeclarationPages	sql	STREAM	moved from src/commands/extract-mentions-explain.ts rejectedDeclaration, same statement
@@ -111,8 +115,6 @@ src/core/cycle/drift.ts	runPhaseDrift	call:serializeMarkdown	INLINE
 src/core/cycle/edge-contradictions.ts	removeTimelineLine	field	SEGW	
 src/core/cycle/edge-contradictions.ts	removeTimelineLine	call:serializeMarkdown	SEGW	
 src/core/cycle/extract-atoms-page-state.ts	transferLegacyAtomPageState	field	META	compares two snapshots; segmented page: getter throws page_body_segmented
-src/core/cycle/extract-atoms.ts	discoverExtractablePages	sql	STREAM	minCompiledTruthChars is false for NULL: segmented pages are never discovered (skip until per-segment extraction, PR 4)
-src/core/cycle/extract-atoms.ts	minCompiledTruthChars	sql	STREAM	false for a segmented page (NULL body): skip
 src/core/cycle/extract-atoms.ts	runPhaseExtractAtoms	call:serializeMarkdown	SEGW	
 src/core/cycle/extract-atoms.ts	discoverExtractablePages	field	STREAM	see sql row; CAS is on content_hash + knowledge_revision
 src/core/cycle/extract-facts.ts	canonicalCacheState	field	INLINE	inline arm; a segmented page compares its stored regions with the canonical file by length and SHA-256 (segmentedBodyMatchesFile)
@@ -658,6 +660,7 @@ src/core/repair/visibility.ts	applyFactItem	call:serializePageToMarkdown	INLINE	
 src/core/rust-engine/snapshot-overlay.ts	overlayStoreLead	field	STREAM	the Rust arm of readSnapshotStatement's withdrawal overlay (page-state/snapshot.ts): the Rust store keeps every body inline; the seal lead of a segmented page (a bounded timeline prefix), overlaid as PGLite's seal overlays it
 src/core/rust-engine/snapshot-overlay.ts	overlayStoreSnapshots	field	STREAM	the Rust arm of readSnapshotStatement's withdrawal overlay (page-state/snapshot.ts): the Rust store keeps every body inline; the body strike skips a segmented page as readSnapshotStatement does (per-window overlay in PR 2)
 src/core/rust-engine/store-members/chunks.ts	sealChunks	field	STREAM	mirrors sealPageTextProjection (text-seal.ts): sends sanitizeRemoteBody(timeline) with the seal for the page keyword vector; a segmented page (null timeline from the Rust store) sends none
+src/core/rust-engine/store-members/extract-atoms.ts	listExtractablePages	field	STREAM	maps the store's discovery rows; the store skips a page whose compiled truth is NULL (a segmented page), as the SQL does
 src/core/rust-engine/store-members/fence-projection.ts	readPageInlineBody	field	INLINE	the Rust arm of engine-sql/unwithdrawn-restore.ts readPageInlineBody: passes the store's inline compiled_truth and timeline through; a segmented page reads null columns
 src/core/rust-engine/store-members/field-usage.ts	readFieldUsageSamples	field	LEAD	the Rust arm of engine-sql/field-usage.ts readFieldUsageSamples: passes the store's sampled compiled_truth through; a segmented page samples a null body (TODOS.md)
 src/core/rust-engine/store-members/page-body.ts	refreshPageBody	call:refreshPageBody	SEGW	forwards to the Rust store, which refuses a segmented page as the body-storage CHECK does; callers assert first

@@ -88,6 +88,7 @@ export const LEDGER_MEMBERS = {
   listCatalogRelations: 'schema',
   readCatalogSchemaVersion: 'schema',
   listCatalogForeignKeys: 'raw_sql',
+  assertAtomStateStore: 'raw_sql',
   countMcpResolvedTakes: 'takes',
   listTopResolvedTakesForHolder: 'takes',
   listAbandonedTakes: 'takes',

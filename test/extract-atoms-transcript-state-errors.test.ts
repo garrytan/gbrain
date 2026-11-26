@@ -30,8 +30,10 @@ function capture(): { errors: string[]; warns: string[]; restore: () => void } {
   return { errors, warns, restore: () => { console.error = savedError; console.warn = savedWarn; } };
 }
 
+/** The tombstone read is the typed member listTombstonedTranscripts (engine-sql/extract-atoms-reads.ts); both throw. */
 function throwingEngine(err: Error): BrainEngine {
-  return { executeRaw: async () => { throw err; } } as unknown as BrainEngine;
+  const fail = async () => { throw err; };
+  return { executeRaw: fail, listTombstonedTranscripts: fail } as unknown as BrainEngine;
 }
 
 describe('tombstonedTranscriptsForHashes — un-migrated brain vs real failure', () => {
@@ -95,7 +97,8 @@ describe('tombstonedTranscriptsForHashes — un-migrated brain vs real failure',
   test('a non-Error throw prints no text of its own either', async () => {
     const c = capture();
     try {
-      const engine = { executeRaw: async () => { throw `postgresql://db.example/brain?app=${CANARY}`; } } as unknown as BrainEngine;
+      const fail = async () => { throw `postgresql://db.example/brain?app=${CANARY}`; };
+      const engine = { executeRaw: fail, listTombstonedTranscripts: fail } as unknown as BrainEngine;
       expect(await tombstonedTranscriptsForHashes(engine, 'default', ['a'.repeat(16)])).toEqual(new Set());
     } finally {
       c.restore();

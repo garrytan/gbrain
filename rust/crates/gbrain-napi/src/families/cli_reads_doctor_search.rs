@@ -112,6 +112,44 @@ impl Brain {
         })
     }
 
+    /// `listExtractablePages(query)`: the pages awaiting atom extraction in one source, newest first.
+    #[napi]
+    pub fn list_extractable_pages<'env>(
+        &self,
+        env: &'env Env,
+        query: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let query: gbrain_store::link_queries::ExtractablePageQuery =
+                arg(query, "listExtractablePages query")?;
+            s.list_extractable_pages(&query)
+        })
+    }
+
+    /// `listAtomSourceHashes(sourceId, hashes)`: the hashes a live, unmanaged atom of the source carries.
+    #[napi]
+    pub fn list_atom_source_hashes<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        hashes: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_atom_source_hashes(&source_id, &hashes))
+    }
+
+    /// `listSourcePageAtomTitles(sourceId, sourceSlug)`: the live atoms bound to one source page.
+    #[napi]
+    pub fn list_source_page_atom_titles<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        source_slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_source_page_atom_titles(&source_id, &source_slug)
+        })
+    }
+
     /// `readProjectionBacklog`: a coverage scope: the projection queue by class.
     #[napi]
     pub fn read_projection_backlog<'env>(

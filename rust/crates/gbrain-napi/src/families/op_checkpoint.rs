@@ -45,6 +45,19 @@ impl Brain {
         })
     }
 
+    /// `releasePartialAtomDispositions(sourceId, maxInputChars)`: resolves null.
+    #[napi]
+    pub fn release_partial_atom_dispositions<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        max_input_chars: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.release_partial_atom_dispositions(&source_id, max_input_chars)
+        })
+    }
+
     /// `readOpCheckpointKeys(op, fingerprint)`: `{ keys, corruptParent }`.
     #[napi]
     pub fn read_op_checkpoint_keys<'env>(

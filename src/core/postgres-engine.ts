@@ -434,6 +434,7 @@ import * as doctorPersistenceImpl from './engine-sql/doctor-persistence.ts';
 import * as doctorPagesImpl from './engine-sql/doctor-pages.ts';
 import * as doctorTalliesImpl from './engine-sql/doctor-tallies.ts';
 import * as doctorSearchImpl from './engine-sql/doctor-search.ts';
+import * as extractAtomsReadsImpl from './engine-sql/extract-atoms-reads.ts';
 import * as atomBacklogImpl from './engine-sql/atom-backlog.ts';
 import type { AtomBacklogQuery } from './engine-sql/atom-backlog.ts';
 import * as projectionBacklogImpl from './engine-sql/projection-backlog.ts';
@@ -1578,6 +1579,12 @@ export class PostgresEngine implements BrainEngine {
   countAtomExtractionBacklog(query: AtomBacklogQuery, opts?: { signal?: AbortSignal }) {
     return atomBacklogImpl.countAtomExtractionBacklog((sql, params) => this.executeRaw(sql, params, opts?.signal ? { signal: opts.signal } : undefined), query);
   }
+  listExtractablePages(query: extractAtomsReadsImpl.ExtractablePageQuery) { return extractAtomsReadsImpl.listExtractablePages(this, query); }
+  listAtomSourceHashes(sourceId: string, hashes: readonly string[]) { return extractAtomsReadsImpl.listAtomSourceHashes(this, sourceId, hashes); }
+  listTombstonedTranscripts(sourceId: string, hashes: readonly string[]) { return extractAtomsReadsImpl.listTombstonedTranscripts(this, sourceId, hashes); }
+  listSourcePageAtomTitles(sourceId: string, sourceSlug: string) { return extractAtomsReadsImpl.listSourcePageAtomTitles(this, sourceId, sourceSlug); }
+  releasePartialAtomDispositions(sourceId: string, maxInputChars: number) { return extractAtomsReadsImpl.releasePartialAtomDispositions(this, sourceId, maxInputChars); }
+  async assertAtomStateStore() { /* the extract_atoms state tables are part of the schema */ }
   listAtomBacklogSourceIds() { return doctorSearchImpl.listAtomBacklogSourceIds(this.executeRaw.bind(this)); }
   readProjectionBacklog(scope: PageReadScope) { return projectionBacklogImpl.readProjectionBacklog(this.executeRaw.bind(this), scope); }
   listGitImageHoldCounts(sourceIds: string[]) { return doctorSearchImpl.listGitImageHoldCounts(this.executeRaw.bind(this), sourceIds); }

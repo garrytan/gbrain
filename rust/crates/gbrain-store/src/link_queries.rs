@@ -70,7 +70,9 @@ pub use link_temporal::{
 };
 pub use manual_links::{ManualLinkRead, ManualLinkWrite};
 mod atom_backlog;
+mod atom_discovery;
 pub use atom_backlog::{AtomBacklogQuery, ConnectorExclusion};
+pub use atom_discovery::ExtractablePageQuery;
 mod projection_backlog;
 pub use projection_backlog::ProjectionBacklogRow;
 pub(crate) mod retrieval_coverage;

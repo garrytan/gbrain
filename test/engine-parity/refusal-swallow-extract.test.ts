@@ -130,7 +130,7 @@ describe('refusal-swallow extract sites', () => {
     const identity = (await discoverExtractablePages(engine, 'default', ['meetings/older']))[0];
     const older = (await engine.getPage('meetings/older'))!;
     expect({ all, named, first }).toEqual({ all: ['meetings/newer', 'meetings/older'], named: ['meetings/older'], first: ['meetings/newer'] });
-    expect(identity?.contentHash).toBe(older.content_hash);
+    expect(identity?.contentHash).toBe(older.content_hash as string);
     return { all, named, first, pinned: identity?.identity?.pageId === older.id && typeof identity?.identity?.revision === 'string' };
   });
 

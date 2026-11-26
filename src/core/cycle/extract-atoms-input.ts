@@ -103,18 +103,7 @@ export function inputTruncatedLine(originLabel: string, input: ExtractAtomsInput
  */
 export async function releasePartialDispositions(engine: BrainEngine, sourceId: string, maxInputChars: number): Promise<void> {
   try {
-    await engine.executeRaw(
-      `UPDATE extract_atoms_page_state scan SET partial_input_chars=NULL, updated_at=now()
-         FROM sources s WHERE s.id=$1 AND scan.source_incarnation=s.incarnation AND scan.partial_input_chars < $2`,
-      [sourceId, maxInputChars]);
-    await engine.executeRaw(
-      `UPDATE extract_atoms_transcript_state SET partial_input_chars=NULL, updated_at=now()
-        WHERE source_id=$1 AND partial_input_chars < $2`,
-      [sourceId, maxInputChars]);
-    await engine.executeRaw(
-      `DELETE FROM op_checkpoints WHERE op='managed-atoms' AND completed_keys->0->>'sourceId'=$1
-         AND (completed_keys->0->>'partial')::integer < $2`,
-      [sourceId, maxInputChars]);
+    await engine.releasePartialAtomDispositions(sourceId, maxInputChars); // engine-sql/extract-atoms-reads.ts
   } catch (err) {
     rethrowCapabilityRefusal(err); // a refused statement is not a failed release: the phase must say it cannot run
     console.error(`[extract_atoms] partial-disposition release failed (cut items stay skipped): ${err instanceof Error ? err.message : String(err)}`);
