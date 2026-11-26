@@ -28,6 +28,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { isMissingSchemaObject } from '../utils.ts';
 
 /**
@@ -135,6 +136,7 @@ export async function readExtractRollupWindow(engine: Pick<BrainEngine, 'execute
     try {
       return await engine.executeRaw<ExtractRollupRow>(rollupQuery(withExpected, withReasons), []);
     } catch (err) {
+      rethrowCapabilityRefusal(err);
       if (withExpected && isMissingSchemaObject(err, 'column', 'expected_limit_count')) withExpected = false;
       else if (withReasons && isMissingSchemaObject(err, 'column', 'halt_reasons')) withReasons = false;
       else throw err;

@@ -21,6 +21,7 @@ function throwingEngine(error: unknown): BrainEngine {
 test('reader propagates non-schema errors and contradictory missing-column identities', async () => {
   for (const fields of [
     { code: '42501', message: 'permission denied for halt_reasons diagnostic' },
+    { code: '42703', message: 'column r.halt_reasons does not exist', envelope: { code: 'engine_capability_missing' } },
     { code: '22P02', message: 'invalid input syntax for integer: "halt_reasons"' },
     { code: '42703', message: 'column r.other_halt_reasons does not exist' },
     { code: '42703', message: 'column r.halt_reasons does not exist', column_name: 'other' },
