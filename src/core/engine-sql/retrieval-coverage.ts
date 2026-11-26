@@ -133,14 +133,19 @@ export function countEmbeddingHeldPages(raw: CountRead, scope: ProjectionReadine
  * #9192: progress of the index rebuild an upgrade's activation queued (rows still queued with reason
  * `protocol_activation`), over the pages in scope: how many are done of the total, and the rate measured from the
  * start of the rebuild. Null when no such rebuild is running or the count fails. JIT off for the same reason as the
- * classed `countInScope`: the never-run count still prices into the estimate.
+ * classed `countInScope`: the never-run count still prices into the estimate. The queue is read first, on its own
+ * (#10367: a materialized read, so its few rows reach pages through the (source_id, slug) key; joined on incarnation
+ * alongside the pages, the planner could pair every queued row with every page of a source list and filter on slug
+ * afterwards).
  */
 export async function projectionRebuildProgress(exec: Exec, scope: ProjectionReadinessScope): Promise<ProjectionRebuildProgress | null> {
   try {
     const filter = scopeFilter(scope);
-    const [row] = await rows<{ seconds: number | null; total: number; done: number }>(exec, sqlFragment`WITH started AS (SELECT EXTRACT(EPOCH FROM now() - min(j.updated_at))::float8 AS seconds
-        FROM page_projection_jobs j JOIN sources s ON s.incarnation = j.source_incarnation JOIN pages p ON p.source_id = s.id AND p.slug = j.slug
-        WHERE j.reason = 'protocol_activation' AND p.deleted_at IS NULL AND ${trustedSql(textClassSql('p', 's'))} AND ${filter})
+    const [row] = await rows<{ seconds: number | null; total: number; done: number }>(exec, sqlFragment`WITH queued AS MATERIALIZED (SELECT s.id AS source_id, j.slug, j.updated_at
+          FROM page_projection_jobs j JOIN sources s ON s.incarnation = j.source_incarnation WHERE j.reason = 'protocol_activation'),
+        started AS (SELECT EXTRACT(EPOCH FROM now() - min(q.updated_at))::float8 AS seconds
+        FROM queued q JOIN pages p ON p.source_id = q.source_id AND p.slug = q.slug JOIN sources s ON s.id = p.source_id
+        WHERE p.deleted_at IS NULL AND ${trustedSql(textClassSql('p', 's'))} AND ${filter})
       SELECT started.seconds, c.total, c.done FROM started, LATERAL (SELECT count(p.id)::int AS total,
           count(p.id) FILTER (WHERE p.text_projection_revision IS NOT DISTINCT FROM p.knowledge_revision)::int AS done
         FROM pages p JOIN sources s ON s.id = p.source_id
