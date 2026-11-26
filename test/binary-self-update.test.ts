@@ -492,6 +492,38 @@ describe('defaultFetchAttestation: GitHub token and failure detail', () => {
     }
   });
 
+  test('a blank GH_TOKEN does not hide GITHUB_TOKEN', async () => {
+    const r = await fetchWith({ GH_TOKEN: '  ', GITHUB_TOKEN: TOKEN }, [Response.json(VALID)]);
+    expect(r.auth).toEqual([`Bearer ${TOKEN}`]);
+  });
+
+  test('Bun\'s verbose fetch logging never prints the token', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-attest-verbose-'));
+    try {
+      const script = join(dir, 'probe.ts');
+      writeFileSync(script, [
+        `import { defaultFetchAttestation } from ${JSON.stringify(join(import.meta.dir, '../src/core/binary-self-update.ts'))};`,
+        "const server = Bun.serve({ port: 0, fetch: () => new Response('none', { status: 404 }) });",
+        'const real = globalThis.fetch;',
+        "await real(`http://127.0.0.1:${server.port}/probe-logged`);",
+        "(globalThis as any).fetch = (_url: unknown, init?: RequestInit) => real(`http://127.0.0.1:${server.port}/`, init);",
+        "await defaultFetchAttestation('a'.repeat(64));",
+        'server.stop(true);',
+      ].join('\n'));
+      const r = Bun.spawnSync([process.execPath, script], {
+        env: { ...process.env, BUN_CONFIG_VERBOSE_FETCH: 'curl', GH_TOKEN: TOKEN, GITHUB_TOKEN: '' },
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+      const out = r.stdout.toString() + r.stderr.toString();
+      expect(r.exitCode).toBe(0);
+      expect(out).toContain('probe-logged');
+      expect(out).not.toContain(TOKEN);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('a failure with the token never puts the error text, which can quote the header, into the detail', async () => {
     const REAL = globalThis.fetch;
     (globalThis as any).fetch = (_input: any, init?: RequestInit) => {

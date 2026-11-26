@@ -284,13 +284,14 @@ export function parseAttestationBundle(bundle: any): ParsedAttestation | null {
  * keyless attempt, so an ambient token never blocks a read the keyless call can make.
  * Returns null when no attempt yields a usable attestation, after telling `onUnavailable` why each attempt failed: the
  * HTTP status with the rate-limit headers, or the error. An attempt with the token reports only that it failed, because a
- * header error can quote the token, so the token is never part of that detail.
+ * header error can quote the token, and Bun's verbose fetch logging stays off for these requests, so the token is never
+ * printed or part of that detail.
  */
 export async function defaultFetchAttestation(
   digest: string,
   onUnavailable?: (detail: string) => void,
 ): Promise<ParsedAttestation[] | null> {
-  const token = (process.env.GH_TOKEN || process.env.GITHUB_TOKEN || '').trim();
+  const token = process.env.GH_TOKEN?.trim() || process.env.GITHUB_TOKEN?.trim() || '';
   const failures: string[] = [];
   for (const auth of token ? [true, false] : [false]) {
     const label = auth ? 'with a GitHub token' : 'no GitHub token';
@@ -302,6 +303,7 @@ export async function defaultFetchAttestation(
           ...(auth ? { Authorization: `Bearer ${token}` } : {}),
         },
         signal: AbortSignal.timeout(10_000),
+        verbose: false,
       });
       // 404 (no attestation), 403/429 (rate limit), any non-2xx → "unavailable"
       // (caller fails closed), never "verified".
