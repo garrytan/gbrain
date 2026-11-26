@@ -9,6 +9,9 @@ gbrain value          # the card as text
 gbrain value --json   # the same card as a versioned JSON document (schema "gbrain.value", schema_version 1)
 ```
 
+The text card ends with a link to [how gbrain compares](../proof.md): measured results against simpler setups,
+including the ones where the simpler setup wins.
+
 Run it on the computer that holds the brain. In this first version the card is only a local command: agents cannot
 call it over MCP (it is not a tool on any MCP surface, `--surface full` included), and a thin client that talks to
 a remote brain refuses it.
