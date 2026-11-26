@@ -100,6 +100,8 @@ and read a degraded notice before concluding the brain has nothing.
 
 Recall relevant saved context before answering. Resolve a person (an email sender, an attendee) only by an exact match (`gbrain whois <email or name>`), never a search's top hit ([identity rule](skills/conventions/brain-first.md#identity-exact-match)). Save explicit requests to remember with provenance; confirm corrections against the stored record. Automatic capture requires opt-in; the [conversation archive](docs/guides/conversation-archive.md) (one redacted page per conversation per day) is on by default on a personal brain and off with `gbrain transcripts archive off`. Withdrawal (`forget`) removes a fact from active memory; history, source material, and private backups may remain. Never promise physical erasure. Verify changes with actual GBrain calls and distinguish a local test from a new-conversation test in the harness.
 
+Usage telemetry is off until the person answers. Relay the question `gbrain init` or `gbrain setup` prints, run `gbrain telemetry anonymous|community|off` only with the answer they gave, and never choose one yourself, including on `--yes` or unattended installs ([telemetry](docs/guides/telemetry.md)).
+
 Durable preferences and facts belong in shared memory when the user wants them
 recalled later. Transient task state, credentials, local configuration, and harness
 activation state do not. Remote `put_page` saves references as text without inline
@@ -4070,6 +4072,14 @@ flowchart LR
 **Two organizational axes (brain ⊥ source).** A *brain* is a database (your personal brain, a team mount you joined). A *source* is a repo inside that brain. Routing uses `.gbrain-source` dotfiles and a 6-tier precedence chain. Diagrams in [`docs/architecture/brains-and-sources.md`](docs/architecture/brains-and-sources.md).
 
 **Why the graph matters.** Vector search finds similar text; graph retrieval follows stored relationships. Extracted edges are evidence to inspect, not proof that a relationship is true. Graph freshness depends on the write path and maintenance described in [memory boundaries](docs/guides/memory-boundaries.md#page-writes-and-the-graph-are-separate-outcomes). Deep dive: [retrieval architecture](docs/architecture/RETRIEVAL.md); [entity recall](docs/guides/entity-recall.md).
+
+## Privacy & telemetry
+
+gbrain sends no automatic usage reports unless you say yes. This release ships no telemetry address, so by default it sends nothing and setup doesn't ask. To test a server, set `GBRAIN_TELEMETRY_URL` in your own environment and supply its publishable key in `GBRAIN_TELEMETRY_KEY` if it needs one. A repository's `.env` cannot set these. Once a release ships an address, your agent asks you once on first setup. Any setup or upgrade results from before you answer wait in a local file (at most 50, for 7 days), are sent only if you say yes, and are deleted if you say no.
+
+A yes sends your answer, which harness setup ran and whether it worked, upgrade results, the doctor score band, counts of commands and error codes, the gbrain version, OS and, unless you pick `anonymous`, a random install id. It never sends your pages, slugs, titles, queries, file paths, source names, hostnames or error messages. `gbrain telemetry show` prints what is waiting, the next payload and a summary of recent sends; add `--json` to see their payloads. `gbrain telemetry off` turns off reporting and deletes the queue. `gbrain telemetry forget` asks the server to delete your install's record and unlink its stored events from the id, so they remain only as anonymous rows. Stored events are kept for 400 days. At any tier, `pulse` can contact a configured server, and `forget` can too if a local install id exists. The server side isn't deployed yet. The [deployment blockers](TODOS.md#opt-in-telemetry-client-follow-ups-filed-2026-11-22-telemetry-pr-2) include a send that finishes on the server after a successful `forget` and brings back the record.
+
+Data goes to a Supabase project gbrain shares with gstack, in its own tables, through one validated endpoint; the public key the client sends can't read or write any table. Aggregates are public (`gbrain telemetry pulse`). An agent can still answer for you if it ignores its instructions, which is why the question names you as the one to answer. Full field list: [docs/guides/telemetry.md](docs/guides/telemetry.md).
 
 ## Troubleshooting
 
