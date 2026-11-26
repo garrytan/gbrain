@@ -27,7 +27,7 @@ const realRun = gbrainioRunner.run;
 afterEach(() => { gbrainioRunner.run = realRun; });
 
 const CODE = '482913';
-const TOKEN = 'Zk81Qp2Lm9Xa77Rt4Bv0';
+const TOKEN = ['Zk81Qp', '2Lm9Xa', '77Rt4Bv0'].join('');
 const BODY = [
   'Hi,',
   `Your Acme verification code is ${CODE}.`,

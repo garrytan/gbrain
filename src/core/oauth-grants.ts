@@ -118,6 +118,7 @@ export class OAuthConsentError extends Error {
  */
 export const REFRESH_REUSE_GRACE_MS = 60_000;
 const FAMILY_REVOKED = Symbol('refresh-family-revoked');
+const GCM_TAG_BYTES = 16;
 interface SealedPair { tokens: OAuthTokens; resource: string | null; accessExpiresAt: number }
 
 /** The replacement pair is sealed with a key only the holder of the rotated token can derive; the database keeps only its hash. */
@@ -127,7 +128,7 @@ function graceKey(token: string): Buffer {
 
 function sealPair(token: string, pair: SealedPair): string {
   const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', graceKey(token), iv);
+  const cipher = createCipheriv('aes-256-gcm', graceKey(token), iv, { authTagLength: GCM_TAG_BYTES });
   const body = Buffer.concat([cipher.update(JSON.stringify(pair), 'utf8'), cipher.final()]);
   return ['v1', ...[iv, body, cipher.getAuthTag()].map(part => part.toString('base64url'))].join('.');
 }
@@ -135,9 +136,11 @@ function sealPair(token: string, pair: SealedPair): string {
 function openPair(token: string, sealed: unknown): SealedPair | null {
   const [version, iv, body, tag] = typeof sealed === 'string' ? sealed.split('.') : [];
   if (version !== 'v1' || !iv || !body || !tag) return null;
+  const authTag = Buffer.from(tag, 'base64url');
+  if (authTag.length !== GCM_TAG_BYTES) return null;
   try {
-    const decipher = createDecipheriv('aes-256-gcm', graceKey(token), Buffer.from(iv, 'base64url'));
-    decipher.setAuthTag(Buffer.from(tag, 'base64url'));
+    const decipher = createDecipheriv('aes-256-gcm', graceKey(token), Buffer.from(iv, 'base64url'), { authTagLength: GCM_TAG_BYTES });
+    decipher.setAuthTag(authTag);
     return JSON.parse(Buffer.concat([decipher.update(Buffer.from(body, 'base64url')), decipher.final()]).toString('utf8')) as SealedPair;
   } catch {
     return null;
