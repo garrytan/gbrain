@@ -7373,6 +7373,22 @@ More: [docs/guides/setup.md#a-brand-new-brain-for-a-team](../../docs/guides/setu
 
 More: [docs/guides/setup.md#a-brand-new-brain-for-a-team](../../docs/guides/setup.md#a-brand-new-brain-for-a-team)
 
+### telemetry_forget_failed
+
+<a id="telemetry_forget_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain telemetry forget could not get the telemetry server to confirm it deleted this install's record and unlinked its stored events, so the local install id was kept. | The local id is the only way to name this install's rows on the server; deleting it before the server confirms would leave the record there with no way to ask again. | Run gbrain telemetry forget again when the machine is online. | agent | `gbrain doctor --json` | 1 | yes |
+
+### telemetry_pulse_unavailable
+
+<a id="telemetry_pulse_unavailable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The public telemetry pulse is stale or could not be read (a 503, an error or no connection), so it says nothing about the current release. | An outage must never read as zero failures: a monitor that took a missing pulse for a healthy one would miss a broken release. | Retry gbrain telemetry pulse later, and treat this run as unknown, not as no problems. | agent | `gbrain doctor --json` | 1 | yes |
+
 ### timeline_comment_markup
 
 <a id="timeline_comment_markup"></a>

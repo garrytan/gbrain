@@ -5,12 +5,20 @@
 import { exitCliError, usageError } from '../../cli/cli-error.ts';
 import { LOOPS_EXTRACT_MAX_USD_PER_DAY_KEY, validateLoopsSpendConfigValue } from '../../core/google/loops-spend.ts';
 import { LOOPS_UPDATES_RECIPROCITY_KEY, validateLoopsReciprocityConfigValue } from '../../core/google/loops-reciprocity.ts';
+import { LOOPS_OWNER_ADDRESSES_KEY, validateLoopOwnerAddressesConfigValue } from '../../core/google/loops-owner-addresses.ts';
 
 export function refuseInvalidLoopsConfigValue(key: string, value: string): void {
   const reciprocity = validateLoopsReciprocityConfigValue(key, value);
   if (reciprocity) {
     exitCliError(usageError(reciprocity, `Re-run with true or false, e.g. gbrain config set ${LOOPS_UPDATES_RECIPROCITY_KEY} true (false, the default, turns the rule off).`, {
       why: 'The detector reads this key as a boolean; any other value would leave the rule off.',
+      fix: { argv: ['gbrain', 'config', 'get', key], consent: [], actor: 'agent', why: 'Shows the value in effect; nothing was written.', requires_exclusive: false },
+    }), 'config');
+  }
+  const owners = validateLoopOwnerAddressesConfigValue(key, value);
+  if (owners) {
+    exitCliError(usageError(owners, `Re-run with plain addresses, e.g. gbrain config set ${LOOPS_OWNER_ADDRESSES_KEY} "me@example.net, me@example.org" (unset the key to add none).`, {
+      why: 'Gmail sync adds each address to the owner identity set; a value it cannot read would add none.',
       fix: { argv: ['gbrain', 'config', 'get', key], consent: [], actor: 'agent', why: 'Shows the value in effect; nothing was written.', requires_exclusive: false },
     }), 'config');
   }

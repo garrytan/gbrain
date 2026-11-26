@@ -71,6 +71,7 @@ export const INTERNAL_CONFIG_STATE: readonly InternalConfigState[] = [
   { key: 'persistence.true_up.compacted_through', reason: 'receipt true-up cursor (receipt-true-up.ts)' },
   { key: 'sync.metafile_pages.applied.', prefix: true, reason: 'per-source marker of the sync.metafile_pages mode a classic sync last applied, so a flip to typed backfills once (sync-metafile-pages.ts)' },
   { key: 'sync.slug_root_mode', reason: 'legacy unsourced slug-root mode stamped by sync (sync-anchor.ts); sourced brains keep it on the sources row' },
+  { key: 'transcripts.fence_acceptance', reason: 'the imported transcripts the owner accepted outside content fences with gbrain transcripts accept-fences, each with its fingerprint (transcripts/fence-acceptance.ts); doctor outside_content_fences skips them while they are unchanged' },
   { key: 'transcripts.secret_audit', reason: 'cached transcript secret-audit result (transcripts/secret-audit.ts)' },
   { key: 'trust.backfill_completed_at', reason: 'memory-trust backfill completion marker' },
   { key: 'trust.kill_switch', reason: 'receipt written by gbrain trust disable/enable --all' },
