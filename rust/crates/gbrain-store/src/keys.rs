@@ -162,6 +162,12 @@ pub fn family_text(tag: [u8; 2], parts: &[&str]) -> Vec<u8> {
     key
 }
 
+/// Family `page_extraction_state` (`page_extraction_state.rs`): the extraction watermark and the partial-input receipt of a
+/// page, one record per page and pipeline, `~e <page id> <pipeline>`. A two-byte family tag: the one-byte tags are taken, and
+/// the first version of this family on a branch used tag `2`, which `rust-engine/main` keeps free; no store holds a record
+/// of the family under `2`.
+pub const PAGE_EXTRACTION_STATE: [u8; 2] = family_tag(b'e');
+
 pub fn text(tag: u8, parts: &[&str]) -> Vec<u8> {
     let mut key = vec![tag];
     for (i, part) in parts.iter().enumerate() {

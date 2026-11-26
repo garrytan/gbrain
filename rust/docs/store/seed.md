@@ -108,6 +108,7 @@ keyset batches in key order. The relations come in groups, each in its own file 
 | `dream_synthesis_completions` | the completion and its time | |
 | `wake_crons`, `wake_cron_runs`, `wake_forgets`, `wake_terms_acceptances` | the row with its id and time, and the pending forget index | a second pending forget of one user is `constraint_violation` |
 | `mcp_request_log_rollup` | the lifetime tally per token | a null token name is the key `''`, as the family keys it |
+| `chronicle_page_state` | the ledger row with every column and its original `decided_at` and `updated_at` (`chronicle_ledger/seeded.rs`), not run through `upsertChronicleRow`'s decision rewrite | the source, then the page, must be seeded, as `upsertChronicleRow` checks them: else `source_not_found` or `page_not_found`, and nothing is written; deleting a page removes its rows and their digest entries |
 
 Every id counter and sequence of these families is raised past the highest id copied. A row whose source or page is
 missing is `source_not_found` or `page_not_found`.
@@ -151,7 +152,7 @@ relation when that family reaches master, in the same PR as the store bridge tha
 | `oauth_codes` | `rust-engine/oauth-http-rust` | an OAuth handshake in flight restarts |
 | `oauth_grant_audit`, `guest_marks`, `guest_promotions` | none found | grant audit and guest promotion history are not listed |
 | `context_volunteer_events`, `retrieval_feedback` | `rust-engine/collate-equal` | doctor volunteer counts and feedback history start empty |
-| `chronicle_page_state`, `chronicle_judge_reservations` | `rust-engine/chronicle-decision-rust` | `hasExtractedEvents` and chronicle ledger stats differ; the 24-hour judge cap restarts at zero |
+| `chronicle_judge_reservations` | `rust-engine/main` (`chronicle_ledger.rs`; not seeded) | the 24-hour judge cap restarts at zero |
 | `page_embedding_budget` | `rust-engine/main` | held large pages could embed without consent |
 | `entity_identities`, `link_relationships`, `link_transitions`, `fact_purges` | `rust-engine/main` | entity identity unions, link temporal state and the fact purge guard are missing |
 | `derivation_inputs`, `needs_rederive` | `rust-engine/derivation-trust`; `derivation_inputs` also on `rust-engine/sweep-facts-rust` | rows derived from owner-only inputs, and rows the primary hides for re-derivation, show |
@@ -193,7 +194,7 @@ Its Rust family must reach master first. "Branch" is the newest branch with a re
 | `shared_skill_state` | 1 / 1 / 1 | `shared_skill_members.rs` | `rust-engine/cli-members-next` f2283364a4 | no |
 | `shared_skill_heads`, `shared_skill_revisions`, `shared_skill_policies`, `shared_skill_policy_audit` | 3, 3, 1, 1 / same / 0 | `shared_skill_catalog.rs` | `rust-engine/cli-members-next` f2283364a4 | no |
 | `shared_skill_packs` | 1 / 1 / 0 | `shared_skill_publication.rs` | `rust-engine/cli-members-next` f2283364a4 | no |
-| `chronicle_page_state` | 0 / 4 / 0 | `chronicle_ledger.rs`, `chronicle_state.rs` | `rust-engine/page-mutation-reads` cb983366e3 (also `rust-engine/chronicle-decision-rust` e4420913f5) | no |
+| `chronicle_page_state` | 0 / 4 / 0 | `chronicle_ledger.rs`, `chronicle_state.rs` | `rust-engine/main` (now seeded: `seed/chronicle.rs`) | yes |
 | `link_relationships`, `link_transitions` | 0 / 68, 7 / 0 | `link_queries/link_temporal.rs` | `rust-engine/main` 0ce95bbf7f | yes |
 | `sync_identity_downgrades` | 0 / 1 / 0 | `persistence/identity_downgrade.rs` (reader); `persistence/op_checkpoint.rs` (writer, on main) | `rust-engine/identity-downgrade-rust` 73096ca1f8 | writer only |
 | `access_tokens` | 0 / 3 / 2 | `jobs/access_tokens.rs` | `rust-engine/main` 0ce95bbf7f (newer: `rust-engine/page-mutation-reads` cb983366e3) | yes |

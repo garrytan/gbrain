@@ -16,7 +16,7 @@ import { makeEngineWithFake, runCase, withPinnedSqlEnvironment, type SqlCase } f
 import { withRequestSignal } from '../src/core/request-signal.ts';
 import { edgeTrimSql } from '../src/core/edge-whitespace.ts';
 import { budgetRowAppliesFilter } from '../src/core/page-size-policy.ts';
-import { chunkGenerationFilter, requiresSafeChunks, safeChunksFilter, servedTextProjectionFilter } from '../src/core/search/safe-chunks.ts';
+import { chunkGenerationFilter, chunkGenerationProbe, requiresSafeChunks, safeChunksFilter, servedTextProjectionFilter } from '../src/core/search/safe-chunks.ts';
 import { TIMELINE_SEPARATOR } from '../src/core/page-window/document.ts';
 import { quoteIdentifier } from '../src/core/search/embedding-column.ts';
 import { retiredPageSql } from '../src/core/entities/resolve.ts';
@@ -31,6 +31,15 @@ import { PENDING_WRITE_HEALTH_SQL } from '../src/core/engine-sql/telemetry.ts';
 import { ABANDONED_TAKES_SQL, TOP_RESOLVED_TAKES_SQL, TAKE_PREIMAGE_SQL } from '../src/core/engine-sql/takes-reads.ts';
 import { createHash } from 'node:crypto';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
+
+/** get_page's chunk generation probe as its caller built it (get-page-body.ts, a role that reads page_body_manifest). */
+const GET_PAGE_GENERATION_PROBE = chunkGenerationProbe('content_chunks', true);
+/** chunkManifestReads' privilege probe, which a Postgres engine runs before get_page's chunk reads (safe-chunks.ts). */
+const CHUNK_MANIFEST_ACCESS = `-- chunk-visibility-ok: whether any chunk row of a segmented body exists, no row is returned
+SELECT has_table_privilege('page_body_manifest', 'SELECT') AS readable,
+  NOT has_table_privilege('page_body_manifest', 'SELECT')
+    AND (EXISTS (SELECT 1 FROM content_chunks WHERE body_generation IS NOT NULL)
+      OR EXISTS (SELECT 1 FROM content_chunks WHERE occurrence_id IS NOT NULL)) AS segmented`;
 import { markedScopeSources } from '../src/core/access/attest-sources.ts';
 import { resolveTokenGrant, touchTokenLastUsed } from '../src/core/grants/legacy-token.ts';
 import { OAuthGrants } from '../src/core/oauth-grants.ts';
@@ -56,10 +65,57 @@ import { identityDowngradeOpen } from '../src/core/sync-identity-downgrades.ts';
 import { EFFECT_BYTES_SQL } from '../src/core/persistence/receipt-bytes.ts';
 import { ruleCoversSql } from '../src/core/access/folder-rules.ts';
 import { exactIdentityStatement } from '../src/core/engine-sql/exact-identity.ts';
+import { extractedFromPageSql } from '../src/core/facts/gone-page-facts.ts';
+import { holdAppliesToPageSql } from '../src/core/write-gate-binding.ts';
+import { HELD_CONCEPT_SQL } from '../src/core/engine-sql/concept-rebuild.ts';
+import { privatePagesFilterFragment } from '../src/core/search/private-visibility.ts';
 import { tokenGrantJsonSql } from '../src/core/guests/owner-credentials.ts';
 import { foldSql } from '../src/core/page-body/schema.ts';
 import { CLIENT_INSPECTION_COLUMNS } from '../src/core/harness/client-setup.ts';
 import { ownerOnlyPageSql } from '../src/core/access/owner-only.ts';
+
+/** findPrivateOnlySlugs' statement, as the caller built it at f9592f7a7e (private-visibility.ts:1162). */
+const privateOnlySlugsSql = (scopeClause: string, includeDeleted: boolean) => `SELECT p.slug FROM pages p
+      WHERE p.slug = ANY($1::text[])
+        ${includeDeleted ? '' : 'AND p.deleted_at IS NULL'}
+        ${scopeClause}
+      GROUP BY p.slug
+      HAVING bool_and(NOT (${privatePagesFilterForCaller('p')}))`;
+/** persistence/concept-rebuild.ts STATED_SQL at 7c85d5696f, rebuilt from the builders it interpolated. */
+const conceptStatedSql = () => `SELECT array_remove(ARRAY[
+  CASE WHEN EXISTS (SELECT 1 FROM facts f WHERE f.source_id = $2 AND (f.entity_slug = $3 OR f.source_markdown_slug = $3) AND NOT ${extractedFromPageSql('f', '$3')}) THEN 'facts' END,
+  CASE WHEN EXISTS (SELECT 1 FROM takes t WHERE t.page_id = $1) THEN 'takes' END,
+  CASE WHEN EXISTS (SELECT 1 FROM timeline_entries t WHERE t.page_id = $1) THEN 'timeline_entries' END,
+  CASE WHEN EXISTS (SELECT 1 FROM links l WHERE (l.to_page_id = $1 OR l.from_page_id = $1) AND l.link_source IS NOT NULL
+    AND l.link_source <> ALL($4::text[])) THEN 'links' END,
+  CASE WHEN EXISTS (SELECT 1 FROM tags t WHERE t.page_id = $1) THEN 'tags' END,
+  CASE WHEN EXISTS (SELECT 1 FROM files x WHERE x.page_id = $1) THEN 'files' END,
+  CASE WHEN EXISTS (SELECT 1 FROM page_aliases a WHERE a.source_id = $2 AND a.slug = $3) THEN 'page_aliases' END,
+  CASE WHEN EXISTS (SELECT 1 FROM slug_aliases a WHERE a.source_id = $2 AND a.canonical_slug = $3) THEN 'slug_aliases' END,
+  CASE WHEN EXISTS (SELECT 1 FROM core_edit_notices c WHERE c.source_id = $2 AND c.slug = $3) THEN 'core_edit_notices' END,
+  CASE WHEN EXISTS (SELECT 1 FROM write_gate_holds h WHERE h.source_id = $2 AND ${holdAppliesToPageSql('h', '$1', '$3')}) THEN 'write_gate_holds' END,
+  CASE WHEN EXISTS (SELECT 1 FROM pages p WHERE p.id = $1 AND p.title <> replace(regexp_replace(p.slug, '^.*/', ''), '-', ' ')) THEN 'title' END,
+  CASE WHEN EXISTS (SELECT 1 FROM pages p, jsonb_each(p.frontmatter) e WHERE p.id = $1 AND e.key <> ALL($6::text[]) AND e.key <> ALL($5::text[])
+    AND NOT (e.key = 'tags' AND e.value = '[]'::jsonb)) THEN 'frontmatter' END,
+  CASE WHEN EXISTS (SELECT 1 FROM pages p WHERE p.id = $1 AND p.body_storage IS DISTINCT FROM 'segmented' AND coalesce(p.timeline, '') <> '') THEN 'timeline' END,
+  CASE WHEN EXISTS (SELECT 1 FROM pages p WHERE p.id = $1 AND ((p.source_path IS NOT NULL AND p.source_path <> p.slug || '.md')
+    OR p.source_uri IS NOT NULL OR p.withheld_source_path IS NOT NULL)) THEN 'source_path' END,
+  CASE WHEN EXISTS (SELECT 1 FROM link_transitions t WHERE t.from_page_id = $1 OR t.to_page_id = $1 OR t.origin_page_id = $1) THEN 'link_transitions' END,
+  CASE WHEN EXISTS (SELECT 1 FROM raw_data r WHERE r.page_id = $1) THEN 'raw_data' END,
+  CASE WHEN EXISTS (SELECT 1 FROM link_edge_proposals e WHERE $1 IN (e.from_page_id, e.a_to_page_id, e.b_to_page_id, e.ending_to_page_id)
+    AND e.status IN ('rejected', 'undone', 'reverted_by_user')) THEN 'link_edge_proposals' END,
+  CASE WHEN EXISTS (SELECT 1 FROM entity_identities i WHERE i.page_id = $1) THEN 'entity_identities' END,
+  CASE WHEN EXISTS (SELECT 1 FROM guest_marks g WHERE g.page_id = $1) THEN 'guest_marks' END,
+  CASE WHEN EXISTS (SELECT 1 FROM guest_promotions g WHERE g.guest_page_id = $1) THEN 'guest_promotions' END,
+  CASE WHEN EXISTS (SELECT 1 FROM secret_store_occurrence o WHERE o.source_id = $2 AND o.commit_sha IS NULL
+    AND (o.page_id = $1 OR (o.page_id IS NULL AND o.slug = $3)) AND NOT EXISTS (SELECT 1 FROM secret_store_occurrence k WHERE k.entry_id = o.entry_id
+      AND NOT (k.source_id = $2 AND k.commit_sha IS NULL AND (k.page_id = $1 OR (k.page_id IS NULL AND k.slug = $3)))
+      AND (k.commit_sha IS NOT NULL OR EXISTS (SELECT 1 FROM pages pk WHERE pk.deleted_at IS NULL
+        AND (pk.id = k.page_id OR (k.page_id IS NULL AND pk.source_id = k.source_id AND pk.slug = k.slug)))))) THEN 'secret_store_occurrence' END,
+  CASE WHEN EXISTS (SELECT 1 FROM page_label_guards g WHERE g.page_id = $1) OR EXISTS (SELECT 1 FROM pages p WHERE p.id = $1
+    AND p.frontmatter ?| $5::text[]) THEN 'labels' END
+], NULL) AS kinds,
+  (SELECT ${boundedBodyPrefixSql('p')} FROM pages p WHERE p.id = $1) AS lead, (SELECT p.body_storage = 'segmented' FROM pages p WHERE p.id = $1) AS segmented`;
 
 const memberSql = (member: string) => `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
   FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
@@ -450,6 +506,13 @@ const PINS: Pin[] = [
     from: 'src/core/sync-upstream.ts:71 recordUpstreamObservation',
     case: { method: 'writeSourceUpstreamObservation', variant: 'default', run: e => e.writeSourceUpstreamObservation('default', { checkedAt: '2026-01-02T03:04:05.000Z', commit: 'c1', behind: 2 }) },
     texts: ['UPDATE sources SET upstream_checked_at = CASE WHEN upstream_commit = $3 AND upstream_checked_at > $2::timestamptz THEN upstream_checked_at ELSE $2::timestamptz END,\n  upstream_commit=$3,upstream_behind=$4 WHERE id=$1'],
+  },
+  {
+    from: 'src/core/persistence/soak-counters.ts:40 recordSoakEvent',
+    case: { method: 'addSoakCounterEvent', variant: 'default', run: e => e.addSoakCounterEvent('sync-soak-counters', '2026-01-02', 'repair_apply', 1) },
+    texts: [`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,jsonb_build_array(jsonb_build_object('day',$2::text,$3::text,$4::int)))
+    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=jsonb_build_array(op_checkpoints.completed_keys->0
+      || jsonb_build_object($3::text, COALESCE((op_checkpoints.completed_keys->0->>$3)::int,0)+$4::int)), updated_at=now()`],
   },
   {
     from: 'src/core/sync-rename-identity.ts:365 redecideHeldRename',
@@ -2716,9 +2779,65 @@ const PINS: Pin[] = [
      ORDER BY COALESCE(p.effective_date, p.updated_at) DESC, p.id DESC LIMIT ${MAX_ANCHORED}`],
   },
   {
+    from: 'src/core/persistence/concept-rebuild.ts:140 statedKinds (STATED_SQL; at 7c85d5696f)',
+    case: { method: 'readConceptStatedKinds', variant: 'default', run: e => e.readConceptStatedKinds(7, 'default', 'concepts/a', { derivedLinkSources: ['markdown'], statedLabelKeys: ['readable_by'], synthesisKeys: ['type'] }) },
+    // The caller's interpolations are rebuilt here from their builders, so a drift in either fails.
+    texts: () => [conceptStatedSql()],
+  },
+  {
+    from: 'src/core/persistence/concept-rebuild.ts:176 readRebuildAccess (ACCESS_SQL; at 7c85d5696f)',
+    case: { method: 'readRebuildAccess', variant: 'default', run: e => e.readRebuildAccess(7) },
+    texts: () => [`SELECT ${privatePagesFilterFragment('p')} AS open, ${privacyPartSql('p')} AS public_part, gbrain_access_readers(p.frontmatter) AS readers,
+  p.page_readers, p.folder_rule_ids FROM pages p WHERE p.id = $1`],
+  },
+  {
+    from: 'src/core/persistence/concept-rebuild.ts:319 readHeldConceptRows (the held-concept report; at 7c85d5696f)',
+    case: { method: 'readHeldConceptRows', variant: 'default', run: e => e.readHeldConceptRows() },
+    texts: () => [`SELECT p.id, p.source_id, p.slug,
+    NOT ${privacyPartSql('p')} AS private,
+    EXISTS (SELECT 1 FROM derivation_inputs d JOIN pages m ON m.id::text = d.input_id AND d.input_table = 'pages'
+      WHERE d.derived_table = 'pages' AND d.derived_id = p.id::text AND m.deleted_at IS NULL AND NOT (${privatePagesFilterFragment('m')})) AS members_private
+    FROM (SELECT $1::text AS owed_op) q, pages p WHERE ${HELD_CONCEPT_SQL} ORDER BY p.source_id, p.slug`],
+  },
+  {
     from: 'src/core/search/entity-anchor.ts:116 applyEntityAnchoring (the anchored page titles; at efeb078093)',
     case: { method: 'readPageTitlesById', variant: 'default', run: e => e.readPageTitlesById([1, 2]) },
     texts: ['SELECT id, title FROM pages WHERE id = ANY($1::int[])'],
+  },
+  {
+    from: 'src/core/search/safe-chunks.ts:192 provenanceDistrusted (the stored chunker version; at f9592f7a7e)',
+    case: { method: 'readPageChunkerVersion', variant: 'default', run: e => e.readPageChunkerVersion(7) },
+    texts: ['SELECT chunker_version FROM pages WHERE id = $1'],
+  },
+  {
+    from: 'src/core/import-file.ts:1896 importImageFile (the unchanged image\'s seal probe; at f9592f7a7e)',
+    case: { method: 'readImageSealProbe', variant: 'default', run: e => e.readImageSealProbe('default', 'images/a.png') },
+    // The fence test is written out in engine-sql; it is rebuilt here from the caller's builder, so a drift in either fails.
+    texts: () => [`SELECT EXISTS (SELECT 1 FROM content_chunks c WHERE c.page_id = p.id AND c.embedding_image IS NOT NULL) AS has_visual
+         FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND ${safeChunksFilter('p')}`],
+  },
+  {
+    from: 'src/core/search/entity-anchor.ts:43 prefixAnchoredPages (the newest pages under a slug prefix; at f9592f7a7e)',
+    case: { method: 'readPrefixAnchoredPages', variant: 'default', run: e => e.readPrefixAnchoredPages('default', 'projects/widget_') },
+    // The marker and the limit are written out in engine-sql; the caller's interpolations are rebuilt from their constants.
+    texts: () => [`SELECT id, slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND slug LIKE $2
+       AND type NOT IN ('question', 'synthesis') AND NOT (frontmatter ? '${PINNED_QUESTION_MARKER}')
+     ORDER BY COALESCE(effective_date, updated_at) DESC, id DESC LIMIT ${MAX_ANCHORED}`],
+  },
+  {
+    from: 'src/core/search/private-visibility.ts:1162 findPrivateOnlySlugs (no scope, live rows; at f9592f7a7e)',
+    case: { method: 'readPrivateOnlySlugs', variant: 'default', run: e => e.readPrivateOnlySlugs(['notes/a'], {}) },
+    texts: () => [privateOnlySlugsSql('', false)],
+  },
+  {
+    from: 'src/core/search/private-visibility.ts:1162 findPrivateOnlySlugs (a federated scope; at f9592f7a7e)',
+    case: { method: 'readPrivateOnlySlugs', variant: 'federated', run: e => e.readPrivateOnlySlugs(['notes/a'], { sourceId: 'x', sourceIds: ['default', 'work'] }) },
+    texts: () => [privateOnlySlugsSql('AND p.source_id = ANY($2::text[])', false)],
+  },
+  {
+    from: 'src/core/search/private-visibility.ts:1162 findPrivateOnlySlugs (one source, deleted rows too; at f9592f7a7e)',
+    case: { method: 'readPrivateOnlySlugs', variant: 'scalar-deleted', run: e => e.readPrivateOnlySlugs(['notes/a'], { sourceId: 'default' }, { includeDeleted: true }) },
+    texts: () => [privateOnlySlugsSql('AND p.source_id = $2', true)],
   },
   {
     from: 'src/core/verbs/entity-text-mentions.ts:103 probe (the text-mention pages; at efeb078093)',
@@ -2868,6 +2987,16 @@ const PINS: Pin[] = [
           AND e.volunteered_at > now() - ($2 || ' days')::interval
         GROUP BY e.match_arm, e.channel
         ORDER BY e.match_arm COLLATE "C", e.channel COLLATE "C"`],
+  },
+  {
+    from: 'src/core/context/volunteer-events.ts:287 purgeStaleVolunteerEvents (at 9ddd6ac59a)',
+    case: { method: 'deleteVolunteerEventsOlderThan', variant: 'default', run: e => e.deleteVolunteerEventsOlderThan(90) },
+    texts: [`WITH deleted AS (
+         DELETE FROM context_volunteer_events
+         WHERE volunteered_at < now() - ($1 || ' days')::interval
+         RETURNING 1
+       )
+       SELECT count(*)::text AS count FROM deleted`],
   },
   {
     from: 'src/commands/sources-git-gap.ts:153 censusGitGap (at b7b18e5ab3; the source row)',
@@ -3363,6 +3492,59 @@ const PINS: Pin[] = [
     texts: [`SELECT DISTINCT slug COLLATE "C" AS s FROM pages WHERE regexp_replace(normalize(translate(replace(replace(slug, chr(304), 'i' || chr(775)), chr(8490), 'k'), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), NFC), '[^a-z0-9]', '', 'g') = $1 AND source_id = ANY($2::text[]) AND slug COLLATE "C" > $3 ORDER BY s LIMIT 200`],
   },
   {
+    from: 'src/core/repair/slug-spelling-guards.ts:43 rowSecurityTables (at f9592f7a7e)',
+    case: { method: 'readRowSecurityTables', variant: 'default', run: e => e.readRowSecurityTables(['pages']) },
+    texts: ['SELECT t FROM unnest($1::text[]) AS t WHERE pg_catalog.row_security_active(t) ORDER BY t'],
+  },
+  {
+    from: 'src/core/repair/slug-spelling.ts:301 countSlugSpellings (at f9592f7a7e; LIMIT ${BATCH} rendered, BATCH 5_000)',
+    case: { method: 'listSlugSpellingCandidates', variant: 'default', run: e => e.listSlugSpellingCandidates(0) },
+    texts: [`SELECT id, source_id, slug FROM pages
+      WHERE id > $1 AND (slug <> lower(slug) OR slug ~ '[^ -~]') ORDER BY id LIMIT 5000`],
+  },
+  {
+    from: 'src/core/slug-spelling-key.ts:36 serverEncoding (at f9592f7a7e)',
+    case: { method: 'readServerEncoding', variant: 'default', run: e => e.readServerEncoding() },
+    texts: ['SHOW server_encoding'],
+  },
+  {
+    from: 'src/core/repair/slug-spelling-guards.ts:34 rowSecurityBrainTables (at f9592f7a7e)',
+    case: { method: 'readRowSecurityBrainTables', variant: 'default', run: e => e.readRowSecurityBrainTables() },
+    texts: [`SELECT c.relname::text AS t FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = ANY(pg_catalog.current_schemas(false)) AND c.relkind IN ('r', 'p') AND pg_catalog.row_security_active(c.oid) ORDER BY 1`],
+  },
+  {
+    from: 'src/core/repair/slug-spelling.ts:239 and :459 SOURCE_SQL (at f9592f7a7e)',
+    case: { method: 'readSlugRepairSource', variant: 'default', run: e => e.readSlugRepairSource('default') },
+    texts: ["SELECT local_path, incarnation::text AS incarnation, CASE WHEN config->>'slug_root_mode' IN ('git-root', 'source-root') THEN config->>'slug_root_mode' END AS slug_root_mode FROM sources WHERE id=$1"],
+  },
+  {
+    from: 'src/core/repair/slug-spelling.ts:245 scanSlugSpellings (at f9592f7a7e; LIMIT ${BATCH} rendered, BATCH 5_000)',
+    case: { method: 'listSourceSlugSpellingCandidates', variant: 'default', run: e => e.listSourceSlugSpellingCandidates('default', 0) },
+    texts: [`SELECT id, slug, knowledge_revision::text AS revision, source_path, deleted_at IS NOT NULL AS deleted FROM pages
+      WHERE source_id=$1 AND id > $2 AND (slug <> lower(slug) OR slug ~ '[^ -~]') ORDER BY id LIMIT 5000`],
+  },
+  {
+    from: 'src/core/repair/slug-spelling.ts:290 samePrintedName, index keys (at f9592f7a7e)',
+    case: { method: 'readSpellingKeyPages', variant: 'keys', run: e => e.readSpellingKeyPages('default', ['notes/caf\u00e9'], 'notescaf', 0) },
+    texts: [`SELECT id, slug FROM pages WHERE normalize(translate(replace(replace(slug, chr(304), 'i' || chr(775)), chr(8490), 'k'), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), NFC) = ANY($1::text[]) AND source_id = $2 AND id <> $3 ORDER BY id`],
+  },
+  {
+    from: 'src/core/repair/slug-spelling.ts:290 samePrintedName, scan key (at f9592f7a7e)',
+    case: { method: 'readSpellingKeyPages', variant: 'scan', run: e => e.readSpellingKeyPages('default', null, 'notescaf', 0) },
+    texts: [`SELECT id, slug FROM pages WHERE regexp_replace(normalize(translate(replace(replace(slug, chr(304), 'i' || chr(775)), chr(8490), 'k'), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), NFC), '[^a-z0-9]', '', 'g') = $1 AND source_id = $2 AND id <> $3 ORDER BY id`],
+  },
+  {
+    from: 'src/core/repair/slug-spelling.ts:402 plan re-check (at f9592f7a7e)',
+    case: { method: 'readPageSlugInSource', variant: 'default', run: e => e.readPageSlugInSource(1, 'default') },
+    texts: ['SELECT slug FROM pages WHERE id=$1 AND source_id=$2'],
+  },
+  {
+    from: 'src/core/repair/slug-spelling.ts:461 movePageUnderStoredSlug page re-read (at f9592f7a7e)',
+    case: { method: 'readSlugRepairPage', variant: 'default', run: e => e.readSlugRepairPage(1, 'default') },
+    texts: ['SELECT id, slug, knowledge_revision::text AS revision, source_path, deleted_at IS NOT NULL AS deleted FROM pages WHERE id=$1 AND source_id=$2'],
+  },
+  {
     from: 'src/core/access/federation-exposure.ts:32 remotePagesFederationExposes, privacy part on (at 0af1a6ecf0)',
     case: { method: 'readFederationExposedPages', variant: 'hidden', run: e => e.readFederationExposedPages('default', true) },
     texts: () => { const hidden = ` AND ${privacyPartSql('p')}`; return [`WITH open AS (SELECT p.id, p.slug, p.revision_principal_kind, p.revision_principal_id FROM pages p
@@ -3611,6 +3793,20 @@ const PINS: Pin[] = [
     from: 'src/core/persistence/page-mutations.ts:585 preparePageAdmission (a revert\'s version file), at e4420913f5',
     case: { method: 'readVersionSourcePath', variant: 'default', run: e => e.readVersionSourcePath(1, 1) },
     texts: ['SELECT source_path FROM page_versions WHERE id=$1 AND page_id=$2'],
+  },
+  // get_page's chunk reads (engine-sql/page-window-chunks.ts), copied from get-page-body.ts at f9592f7a7e with the
+  // generation probe in its manifest form (chunkGenerationProbe('content_chunks', true)).
+  {
+    from: 'src/core/ops/get-page-body.ts:338 aroundChunk, at f9592f7a7e',
+    case: { method: 'readWindowChunk', variant: 'default', run: e => e.readWindowChunk(1, 1) },
+    texts: [CHUNK_MANIFEST_ACCESS, `SELECT chunk_text, chunk_source, occurrence_id, projected_byte_start, projected_byte_end FROM content_chunks
+      WHERE id = $1 AND page_id = $2 AND COALESCE(modality, 'text') = 'text' AND ${GET_PAGE_GENERATION_PROBE}`],
+  },
+  {
+    from: 'src/core/ops/get-page-body.ts:514 noneResult, at f9592f7a7e',
+    case: { method: 'countPageChunks', variant: 'default', run: e => e.countPageChunks(1) },
+    texts: [CHUNK_MANIFEST_ACCESS, `SELECT count(*) AS total, count(*) FILTER (WHERE embedded_at IS NOT NULL) AS embedded FROM content_chunks
+      WHERE page_id = $1 AND ${GET_PAGE_GENERATION_PROBE}`],
   },
   {
     from: 'src/core/persistence/intent-redaction.ts:248 cancelRequestsHoldingStagings (at b220b0df91)',
@@ -3965,6 +4161,13 @@ const PINS: Pin[] = [
          FROM pages p
         WHERE p.deleted_at IS NULL AND (p.type = ANY($1::text[]) OR p.slug LIKE ANY($2::text[])) AND p.source_id = $4 AND p.id > $5
         ORDER BY p.id LIMIT 500`],
+  },
+  // The facts arm's superseded-claim read, copied verbatim from its caller.
+  {
+    from: 'src/core/search/facts-arm.ts:156 stampSupersededClaims, at f9592f7a7e',
+    case: { method: 'listTypedClaimFactsAtPages', variant: 'default', run: e => e.listTypedClaimFactsAtPages(['meetings/a'], ['people/a']) },
+    texts: [`SELECT f.id, f.source_markdown_slug, f.source_id, f.entity_slug, f.claim_metric, f.claim_period, f.valid_from FROM facts f
+     WHERE f.source_markdown_slug = ANY($1::text[]) AND f.entity_slug = ANY($2::text[]) AND f.claim_metric IS NOT NULL`],
   },
 ];
 
