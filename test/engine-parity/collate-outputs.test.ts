@@ -70,7 +70,8 @@ describe('in-statement samples and lists keep byte order', () => {
   });
 
   parityTest('the unknown-reader check names one real page, the byte-first one', {
-    methods: ['putPage', 'setConfig', 'executeRaw'],
+    // executeRaw is not declared: once the check's reads are typed (listUnknownReaders), it calls no raw SQL at all.
+    methods: ['putPage', 'setConfig'],
   }, async (engine, backend) => {
     // The byte-first source holds the byte-last slug, so a sample built from two separate minimums names no page.
     await createSource(engine, backend, 'ab');
@@ -78,7 +79,8 @@ describe('in-statement samples and lists keep byte order', () => {
     await insertPage(engine, 'ab', 'notes/a-z', { frontmatter: { readable_by: ['member:ghost'] } });
     await insertPage(engine, 'a-z', 'notes/ab', { frontmatter: { readable_by: ['member:ghost'] } });
     await engine.setConfig('access.restrictions_present', '1');
-    // The check reads with raw SQL and reports a refused read as a check error, so the case keeps the read's own error.
+    // Where the check still reads with raw SQL, it reports a refused read as a check error, so the case keeps the read's
+    // own error.
     const refused: unknown[] = [];
     const watched = new Proxy(engine, { get: (target, prop) => {
       const value = Reflect.get(target, prop, target);
@@ -88,9 +90,10 @@ describe('in-statement samples and lists keep byte order', () => {
     const checks = await memberAccessEntry.run({ engine: watched, progress: { heartbeat() {} } } as unknown as DoctorContext) as Array<{ name: string; message: string; details: any }>;
     const unknown = checks.find(c => c.name === 'access_unknown_readers')!;
     if (backend === 'rust' && refused.length > 0) {
-      // Named stop: the check's own read (member-access.ts unknownReaders) is raw SQL, which a Rust brain refuses
-      // (raw_sql). Its typed read, listUnknownReaders, is on rust-engine/rust-members-tail; the seed above is typed, so
-      // the case turns equal when that read merges. A capability refusal takes the in-test pin: rethrow it.
+      // Named stop, only before the typed reads merge: the check's own read (member-access.ts unknownReaders) is raw
+      // SQL, which a Rust brain refuses (raw_sql). Its typed read, listUnknownReaders, comes with rust-engine/rust-members-tail;
+      // after it the check sends no raw SQL, this branch never runs, and the case is equal. A capability refusal takes
+      // the in-test pin: rethrow it.
       expect(unknown.message).toContain('Could not run access_unknown_readers');
       throw refused[0];
     }
