@@ -832,17 +832,19 @@ fn install_cost_on_a_10k_page_brain() {
     );
 }
 
-/// The clock floor row (`clock_floor.rs`, `~L 0x04`) is brain state: every multi-user commit raises
-/// it and its commit record carries the raise, so a follower that replays the log holds the
-/// primary's floor, and a promoted follower's clock starts at or above it.
+/// The clock floor is the newest durable commit time (`M\0ctime`, `Store::last_commit_time`; `clock_floor.rs`), and it
+/// is brain state: a follower that replays the log holds the primary's floor exactly, and a promoted follower's first
+/// commit time is strictly above it. No commit carries a separate floor row: the retired `~L 0x04` key is never
+/// written. Both store modes.
 #[test]
-fn a_follower_carries_the_clock_floor_row_and_a_promotion_starts_above_it() {
+fn a_follower_carries_the_clock_floor_and_a_promotion_starts_above_it() {
     for concurrent in MODES {
         let dir = TempDir::new("floor-row");
         let root = dir.path();
         let far = 4_000_000_000_000_000;
         std::fs::create_dir_all(root.join("primary")).unwrap();
         let follower = Follower::open(&root.join("follower")).unwrap();
+        let retired = gbrain_store::clock_floor::retired_high_water_key();
         {
             let base = RedbKv::open_path(&root.join("primary/records.redb")).unwrap();
             let kv: Arc<dyn Kv> = if concurrent {
@@ -859,13 +861,15 @@ fn a_follower_carries_the_clock_floor_row_and_a_promotion_starts_above_it() {
             );
             primary.set_config("test.a", "1").unwrap();
             let page = primary.read_commit_log(None, usize::MAX).unwrap();
-            let last = page.records.last().unwrap();
             assert!(
-                last.ops
+                page.records
                     .iter()
-                    .any(|(k, _)| *k == gbrain_store::clock_floor::high_water_key()),
-                "the record carries the floor row: {:?}",
-                last.ops
+                    .all(|r| r.ops.iter().all(|(k, _)| *k != retired)),
+                "concurrent {concurrent}: a commit record carries the retired floor row"
+            );
+            assert!(
+                primary.last_commit_time().unwrap().unwrap() >= far,
+                "concurrent {concurrent}: the floor follows the store clock"
             );
         }
         let primary = Store::open_dir(&root.join("primary"), mu(concurrent)).unwrap();
@@ -879,31 +883,36 @@ fn a_follower_carries_the_clock_floor_row_and_a_promotion_starts_above_it() {
             step(&primary, n);
         }
         catch_up(&follower, &primary);
-        let high = primary.clock_high_water().unwrap();
+        let high = primary.last_commit_time().unwrap().unwrap();
         assert!(
             high >= far,
             "concurrent {concurrent}: the primary's floor {high}"
         );
-        let followed =
-            gbrain_store::clock_floor::read_high_water(&*follower.records().snapshot().unwrap())
-                .unwrap();
         assert_eq!(
-            followed, high,
-            "concurrent {concurrent}: the follower's floor row"
+            follower.last_commit_time().unwrap(),
+            high,
+            "concurrent {concurrent}: the follower's floor is the primary's"
+        );
+        assert!(
+            follower
+                .records()
+                .snapshot()
+                .unwrap()
+                .get(&retired)
+                .unwrap()
+                .is_none(),
+            "concurrent {concurrent}: the follower holds a retired floor row"
         );
         drop(primary);
-        let time_floor = follower.last_commit_time().unwrap();
         let promoted = follower.promote(mu(concurrent)).unwrap();
         promoted.set_config("test.after", "1").unwrap();
-        // L5's rule: row times never go below the floor (equal is allowed); L2's rule: commit times
-        // strictly increase.
         assert!(
-            promoted.clock_high_water().unwrap() >= high,
-            "the promoted row clock went back"
+            promoted.last_commit_time().unwrap().unwrap() > high,
+            "concurrent {concurrent}: the first promoted commit time is not above the floor"
         );
         assert!(
-            promoted.last_commit_time().unwrap().unwrap() > time_floor,
-            "the commit time went back"
+            promoted.clock_high_water().unwrap() > high,
+            "concurrent {concurrent}: the promoted clock floor went back"
         );
     }
 }
