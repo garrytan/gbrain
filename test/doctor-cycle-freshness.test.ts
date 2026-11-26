@@ -10,6 +10,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { checkCycleFreshness } from '../src/commands/doctor.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
+import { listSourceChangedPages, sourceCycleWindowStamp, sourceWindow } from '../src/core/cycle/source-window.ts';
 
 let engine: PGLiteEngine;
 
@@ -207,5 +208,81 @@ describe('doctor checkCycleFreshness', () => {
     expect(result.message).toContain("'stale-example' last cycled 72h ago");
     expect(result.message).toContain("Sync off (not checked; only an explicit gbrain sync --source <id> syncs it): 'disabled-example'.");
     expect(result.fix?.argv).toEqual(expect.arrayContaining(['gbrain', 'dream', '--source', 'stale-example']));
+  });
+
+  // #8577: a bounded window stamps the cycle timestamps even when it stopped at its page limit.
+  describe('a source walked in bounded windows', () => {
+    /** Seeds `pages` live pages, then stamps the cursor the real window listing leaves after one window of `limit`. */
+    async function walkOneWindow(id: string, pages: number, limit: number, config: Record<string, unknown> = {}) {
+      await engine.executeRaw(`INSERT INTO sources (id, name, local_path, config) VALUES ($1, $1, $2, '{}'::jsonb)`, [id, `/tmp/${id}`]);
+      for (let i = 0; i < pages; i++) {
+        await engine.executeRaw(`INSERT INTO pages (source_id, slug, type, title, created_at) VALUES ($1, $2, 'note', $2, $3::timestamptz)`,
+          [id, `${id}/page-${String(i).padStart(2, '0')}`, agoH(24 * 30)]);
+      }
+      return stampWindow(id, null, limit, config);
+    }
+    async function stampWindow(id: string, since: string | null, limit: number, config: Record<string, unknown> = {}) {
+      const saved = sourceWindow.pageLimit;
+      sourceWindow.pageLimit = limit;
+      try {
+        const window = await listSourceChangedPages(engine, id, since);
+        const stamp = sourceCycleWindowStamp(['extract', 'extract_facts', 'recompute_emotional_weight'].map(phase => ({ phase, status: 'ok' })), window);
+        await engine.executeRaw('UPDATE sources SET config = config || $2::text::jsonb WHERE id = $1',
+          [id, JSON.stringify({ ...config, ...stamp, last_full_cycle_at: agoH(1), last_source_cycle_at: agoH(1) })]);
+        return stamp;
+      } finally { sourceWindow.pageLimit = saved; }
+    }
+
+    test('a recent window that stopped at its limit notes the pages left after the cursor, without a warning or a fix', async () => {
+      await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+      const stamp = await walkOneWindow('walk-example', 5, 2);
+      expect(stamp.last_source_cycle_window_slug).toBe('walk-example/page-01');
+      const result = await checkCycleFreshness(engine, { nowMs: NOW });
+      expect(result.status).toBe('ok');
+      expect(result.message).toContain("Source 'walk-example' is partway through a bounded page walk: 3 live page(s) after its cursor");
+      expect(result.fix).toBeUndefined();
+      expect((result as { details?: unknown }).details).toEqual({ source_windows: [{ source_id: 'walk-example',
+        cursor_at: stamp.last_source_cycle_window_at, cursor_slug: 'walk-example/page-01', remaining_pages: 3 }] });
+
+      // Deleted pages and other sources' pages are not left to walk.
+      await engine.executeRaw("UPDATE pages SET deleted_at = now() WHERE slug IN ('walk-example/page-00', 'walk-example/page-04')");
+      await seed('other-example', agoH(1), { pageAgeH: 24 * 30 });
+      expect((await checkCycleFreshness(engine, { nowMs: NOW })).message).toContain('2 live page(s) after its cursor');
+
+      // The next window lists the rest and stamps an empty slug: the walk is done.
+      await stampWindow('walk-example', stamp.last_source_cycle_window_at!, 2);
+      const done = await checkCycleFreshness(engine, { nowMs: NOW });
+      expect(done.status).toBe('ok');
+      expect((done as { details?: unknown }).details).toBeUndefined();
+    });
+
+    test('a sync-off source notes its unfinished walk without a warning or a fix', async () => {
+      await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+      await seed('enabled-example', agoH(1), { syncEnabled: true });
+      await walkOneWindow('connector-example', 3, 1, { syncEnabled: false });
+      const result = await checkCycleFreshness(engine, { nowMs: NOW });
+      expect(result.status).toBe('ok');
+      expect(result.fix).toBeUndefined();
+      expect(result.message).toContain("Sync off (not checked; only an explicit gbrain sync --source <id> syncs it): 'connector-example'.");
+      expect(result.message).toContain("Source 'connector-example' is partway through a bounded page walk: 2 live page(s) after its cursor");
+      expect((result as { details?: { source_windows: Array<{ remaining_pages: number }> } }).details?.source_windows[0]?.remaining_pages).toBe(2);
+    });
+
+    test('a cursor in another shape than the window listing writes is ignored, so a stale source still fails', async () => {
+      await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+      await seed('stale-example', agoH(72));
+      await walkOneWindow('corrupt-example', 3, 1, { syncEnabled: false });
+      await engine.executeRaw(`UPDATE sources SET config = config || '{"last_source_cycle_window_at":"not a time"}'::jsonb WHERE id = 'corrupt-example'`);
+      const result = await checkCycleFreshness(engine, { nowMs: NOW });
+      expect(result.status).toBe('fail');
+      expect(result.message).toContain("'stale-example' last cycled 72h ago");
+      expect((result as { details?: unknown }).details).toBeUndefined();
+
+      // An instant of the listing's shape on a day the calendar lacks is ignored the same way.
+      await engine.executeRaw(`UPDATE sources SET config = config || '{"last_source_cycle_window_at":"2026-02-30T00:00:00.000000Z"}'::jsonb WHERE id = 'corrupt-example'`);
+      const impossible = await checkCycleFreshness(engine, { nowMs: NOW });
+      expect(impossible.status).toBe('fail');
+      expect(impossible.message).toContain("'stale-example' last cycled 72h ago");
+    });
   });
 });

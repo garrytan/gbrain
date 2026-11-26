@@ -240,15 +240,15 @@ describe('owner fence (remote agent callers)', () => {
     expect(local.spend.excludes_foreign_children).toBeUndefined();
   });
 
-  test('a foreign MCP submitter is never named to a fenced caller', async () => {
+  test('a job whose recorded MCP submitter is another client is never shown to a fenced caller, even when its data names the caller', async () => {
     const job = await add('noop', { __owner_client_id: 'agent-a' });
     await engine.executeRaw(
       `UPDATE minion_jobs SET submission_authority = $2::text::jsonb WHERE id = $1`,
       [job.id, JSON.stringify({ version: 1, kind: 'remote_agent', principal: { kind: 'oauth_client', id: 'agent-b' },
         grant: { scopes: ['agent'], sourceId: 'default', sourceCreatedAt: new Date().toISOString(), allowedTools: ['get_page'], allowedSlugPrefixes: [] },
         payloadHash: 'a'.repeat(64) })]);
-    const fenced = await get_job.handler(agentCtx('agent-a'), { id: job.id }) as Record<string, unknown>;
-    expect(fenced.submitted_by).toEqual({ kind: 'mcp_client' });
+    // GST-4010: the recorded principal owns a remote job; caller-visible data never claims it.
+    await expect(get_job.handler(agentCtx('agent-a'), { id: job.id })).rejects.toThrow(/not found/i);
     const local = await get_job.handler(localCtx(), { id: job.id }) as Record<string, unknown>;
     expect(local.submitted_by).toEqual({ kind: 'mcp_client', id: 'agent-b', principal_kind: 'oauth_client' });
   });

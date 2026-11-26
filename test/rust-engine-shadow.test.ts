@@ -23,7 +23,10 @@ import { MirrorQueue, newMirrorCounters, type CapturedRead } from '../src/shadow
 import { managedFilesystemDatastorePath, registerManagedFilesystemEngine } from '../src/core/persistence/filesystem-guard.ts';
 import { SHADOW_READ_MEMBERS } from '../src/shadow/reads.ts';
 import { buildProvisionalReport, renderProvisionalMarkdown } from '../src/shadow/report.ts';
-import { ShadowSupervisor } from '../src/shadow/supervisor.ts';
+import { recordAllSentAtExit, sampleWeight, ShadowSupervisor } from '../src/shadow/supervisor.ts';
+import { ensureEpoch } from '../src/shadow/evidence-epoch.ts';
+import { buildFollowStatus } from '../src/shadow/follow-status.ts';
+import { readSent } from '../src/shadow/write-compare.ts';
 import { wrapShadowEngine, type ShadowSink } from '../src/shadow/wrapper.ts';
 import { shadowChildArgv } from '../src/shadow/attach.ts';
 import { parseBenchmarkEngineKind, createBenchmarkBrain, RustEngineAddonUnavailableError } from '../src/eval/longmemeval/harness.ts';
@@ -163,7 +166,7 @@ describe('wrapper', () => {
   });
 
   test('a path the engine recorded when it connected is found through the shadow view', async () => {
-    const primary = Object.assign(fakePrimary(), { executeRaw: async () => [{ present: false }] });
+    const primary = Object.assign(fakePrimary(), { hasPersistenceTable: async () => false });
     await registerManagedFilesystemEngine(primary as never, '/brains/main.pglite');
     const view = wrapShadowEngine(primary, sink(), { sampleRate: 1 });
     expect(managedFilesystemDatastorePath(primary as never)).toBe('/brains/main.pglite');
@@ -721,4 +724,203 @@ describe('eval --engine rust', () => {
     await expect(runBrainBench(corpus, { harnesses: ['openclaw'], suites: [TRUST_SUITES[0]] as never, includeHoldout: true, llm: false, engine: 'rust' }))
       .rejects.toThrow('--engine rust does not run the memory-trust suites');
   });
+});
+
+// A pipe whose write callbacks the test fires by hand: what Bun does (a callback fires once the bytes have left for the kernel pipe, `drain` never fires, `writableLength` reads 0).
+class HeldPipeChild extends EventEmitter {
+  held: Array<{ line: string; cb: (error?: Error | null) => void }> = [];
+  ended = false;
+  stdin = Object.assign(new EventEmitter(), {
+    writable: true, destroyed: false, writableLength: 0, unref() {},
+    write: (line: string, cb: (error?: Error | null) => void): boolean => { this.held.push({ line, cb }); return false; }, // false: Bun says "backpressure" for most lines of a burst
+    end: () => { this.ended = true; if (this.held.length === 0) queueMicrotask(() => this.stdin.emit('finish')); },
+  });
+  stdout = Object.assign(new PassThrough(), { unref() {} });
+  pid = 4343;
+  unref() {}
+  kill() { return true; }
+  flush(n = this.held.length, error?: Error): void { for (const h of this.held.splice(0, n)) h.cb(error ?? null); if (this.ended && this.held.length === 0) queueMicrotask(() => this.stdin.emit('finish')); }
+}
+
+describe('supervisor sample accounting (a sample is received, refused and counted, or counted lost by the child from the sent count)', () => {
+  const sample = (i: number, pad = 400, extra = ''): string => `{"t":"write","op":"putPage","i":${i},"pad":"${'x'.repeat(pad)}"${extra}}\n`;
+  function harness(overrides: Record<string, unknown> = {}) {
+    const children: HeldPipeChild[] = []; const sessions: string[] = []; const faults: ShadowFault[] = [];
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-sample-accounting-'));
+    const sup = new ShadowSupervisor({
+      dir, argv: ['g'], spawn: ((_cmd: string, _args: string[], options: { env: Record<string, string> }) => { const c = new HeldPipeChild(); children.push(c); sessions.push(options.env.GBRAIN_SHADOW_SESSION!); return c; }) as never,
+      recordFault: (f: ShadowFault) => faults.push(f), stillEnabled: () => true, maxBufferedBytes: 1_000, drainMs: 60, ...overrides,
+    } as never);
+    return { sup, children, sessions, faults, dir, sent: (i = 0) => readSent(dir, sessions[i]!), done: () => { sup.stop(); rmSync(dir, { recursive: true, force: true }); } };
+  }
+
+  test('a sample that would pass the byte budget of samples still in the pipe is refused; a write() that returns false alone is not, and other lines are never refused for size', () => {
+    const h = harness();
+    expect([0, 1, 2, 3].map((i) => h.sup.send(sample(i)))).toEqual([true, true, true, false]); // 3 x ~444 bytes pass 1,000 before the 4th is offered
+    expect(h.sup.send('{"t":"read","pad":"' + 'y'.repeat(5_000) + '"}\n')).toBe(true); // a read, a follower line, an ask answer: no new refusal
+    h.children[0]!.flush(1);
+    expect(h.sup.send(sample(4))).toBe(true); // one left the pipe: room again
+    h.sup.recordSent();
+    expect(h.sent()).toBe(4); // the refused sample is not in the sent count: its sender counts it send_shed
+    h.done();
+  });
+
+  test('drain returns as soon as every callback has fired and the child\'s input has ended, and at once when nothing was sent', async () => {
+    const h = harness();
+    await h.sup.drain(5_000); // no child yet: nothing to wait for
+    h.sup.send(sample(0)); h.sup.send(sample(1));
+    const started = Date.now();
+    const waiting = h.sup.drain(5_000);
+    h.children[0]!.flush(); // every callback fires, the child's stdin is ended, and it says it finished
+    await waiting;
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(h.children[0]!.ended).toBe(true);
+    expect(h.sent()).toBe(2);
+    h.done();
+  });
+
+  test('a pipe that does not flush within the bound does not hold the process: drain returns at the bound, and stop() writes down every sample that was sent', async () => {
+    const h = harness();
+    for (let i = 0; i < 3; i++) h.sup.send(sample(i));
+    const started = Date.now();
+    await h.sup.drain(60);
+    const waited = Date.now() - started;
+    expect(waited).toBeGreaterThanOrEqual(50);
+    expect(waited).toBeLessThan(1_000);
+    h.sup.stop();
+    expect(h.sent()).toBe(3); // the child counts 3 minus what it read; whatever the callbacks said
+    h.done();
+  });
+
+  test('a clean disconnect (drain, then stop) writes the sent count once: a count the child already took is never written again', async () => {
+    const h = harness();
+    h.sup.send(sample(0)); h.sup.send(sample(1));
+    const waiting = h.sup.drain(5_000);
+    h.children[0]!.flush();
+    await waiting;
+    expect(h.sent()).toBe(2);
+    rmSync(join(h.dir, `write-sent.${h.sessions[0]}.json`)); // the child took it and removed it
+    h.sup.stop();
+    expect(h.sent()).toBeNull(); // before: stop() wrote it again, and the next worker counted two samples that had arrived as lost
+    h.done();
+  });
+
+  test('a receipt that could not be written is written again at stop(); one that was published is not', () => {
+    const h = harness();
+    h.sup.send(sample(0)); h.sup.send(sample(1));
+    const tmpPath = join(h.dir, `write-sent.${h.sessions[0]}.json.tmp`);
+    mkdirSync(tmpPath); // the write fails (EISDIR stands for a full disk)
+    h.sup.recordSent();
+    expect(h.faults.map((f) => f.detail)).toEqual(['sent_count n=2']);
+    expect(h.sent()).toBeNull();
+    rmSync(tmpPath, { recursive: true });
+    h.sup.stop();
+    expect(h.sent()).toBe(2); // before: the failed attempt was remembered as done, so stop() wrote nothing and 2 samples had no receipt
+    h.done();
+  });
+
+  test('a sent count that could not be published but whose fault line was written still keeps status at no evidence for the epoch', () => {
+    let where = '';
+    const h = harness({ recordFault: (f: ShadowFault) => appendFault(where, f) }); where = h.dir;
+    const epoch = ensureEpoch(h.dir, { seed_id: 's', rust_addon_sha256: 'a', comparator_version: 1, adapter_version: 'x', capability_set_hash: null, readiness_policy_hash: 'p' }, Date.now()).epoch_id;
+    writeFileSync(join(h.dir, 'write-comparisons.json'), JSON.stringify({ version: 1, epoch_id: epoch, updated_at: '', comparable: 1000, unexplained_difference: 0, uncomparable: 0, capability_missing: 0, capability_missing_by_family: {}, uncomparable_by_reason: {}, in_flight: [] }) + '\n');
+    const status = () => buildFollowStatus(h.dir, { sample_rate: 0.1 } as never, new Date()).write_comparisons;
+    expect(status().state).toBe('measured');
+    h.sup.send(sample(0)); h.sup.send(sample(1));
+    mkdirSync(join(h.dir, `write-sent.${h.sessions[0]}.json.tmp`)); // the receipt cannot be published, at drain or at stop
+    h.sup.stop();
+    expect(h.sent()).toBeNull();
+    expect(readFileSync(join(h.dir, 'faults.jsonl'), 'utf8')).toContain('sent_count n=2'); // the fault line landed
+    expect(status()).toMatchObject({ state: 'capability_missing', unrecorded_sample_faults: 1, unresolved_replays: 1 }); // before: measured, the fault line was ignored
+    h.done();
+  });
+
+  test('the receipt names the worker\'s pid and no epoch: this process cannot know the epoch its worker will open, and a wrong stamp would make the worker read its own receipt as another\'s', () => {
+    const h = harness();
+    ensureEpoch(h.dir, { seed_id: 's', rust_addon_sha256: 'a', comparator_version: 1, adapter_version: 'x', capability_set_hash: null, readiness_policy_hash: 'p' }, Date.now());
+    h.sup.send(sample(0));
+    h.sup.recordSent();
+    const file = JSON.parse(readFileSync(join(h.dir, `write-sent.${h.sessions[0]}.json`), 'utf8'));
+    expect(file).toMatchObject({ session: h.sessions[0], sent: 1 });
+    expect(file.epoch_id).toBeUndefined(); // before: stamped with the epoch on disk, which a new addon's worker replaces
+    h.done();
+  });
+
+  test('a sample weighs 1 plus the earlier losses it carries (its last field); a page key named dropped, nested or not, changes nothing', () => {
+    expect(sampleWeight(sample(0, 10, ',"dropped":4'))).toBe(5);
+    expect(sampleWeight(`{"t":"write","op":"putPage","args":[{"frontmatter":{"dropped":9}}],"pre":{"dropped":7}}\n`)).toBe(1);
+    expect(sampleWeight(`{"t":"write","op":"putPage","args":[{"a":{"b":1,"dropped":8}}]}\n`)).toBe(1);
+    expect(sampleWeight(`{"t":"write","op":"putPage","dropped":99999999}\n`)).toBe(1); // not a count we wrote (too long): the line is one sample
+    expect(sampleWeight(sample(0, 10, ',"dropped":99999'))).toBe(10_001);
+    expect(sampleWeight('{"t":"read","op":"getPage"}\n')).toBe(0);
+    expect(sampleWeight('{"t":"stats"}\n')).toBe(0);
+    const h = harness({ maxBufferedBytes: 1_000_000 });
+    h.sup.send(sample(0, 10, ',"dropped":4')); h.sup.send('{"t":"read"}\n'); h.sup.send(`{"t":"write","args":[{"frontmatter":{"dropped":9}}]}\n`);
+    h.sup.recordSent();
+    expect(h.sent()).toBe(5 + 1);
+    h.done();
+  });
+
+  test('the exit hook writes the sent count of every supervisor with a running child, and a stopped one already wrote its own', () => {
+    const a = harness(); const b = harness(); const c = harness();
+    a.sup.send(sample(0)); b.sup.send(sample(0)); b.sup.send(sample(1)); c.sup.send(sample(0));
+    b.sup.stop();
+    expect(b.sent()).toBe(2);
+    rmSync(join(b.dir, `write-sent.${b.sessions[0]}.json`));
+    recordAllSentAtExit();
+    expect(a.sent()).toBe(1); expect(c.sent()).toBe(1);
+    expect(b.sent()).toBeNull(); // stopped: not live, nothing more to write
+    a.done(); b.done(); c.done();
+  });
+
+  test('a respawned child has a count of its own; a child that died has none (nobody could read it)', () => {
+    let clock = 1_000_000;
+    const h = harness({ now: () => clock, minBackoffMs: 10, maxBackoffMs: 10 });
+    h.sup.send(sample(0)); h.sup.send(sample(1));
+    h.children[0]!.emit('exit', 1, null);
+    expect(h.sent(0)).toBeNull();
+    clock += 100;
+    expect(h.sup.send(sample(2))).toBe(true);
+    expect(h.children).toHaveLength(2);
+    h.sup.recordSent();
+    expect(h.sent(1)).toBe(1);
+    expect(h.sessions[0]).not.toBe(h.sessions[1]);
+    h.done();
+  });
+
+  test('a sent count that cannot be written is a fault line, never silent', () => {
+    const h = harness();
+    h.sup.send(sample(0)); h.sup.send(sample(1));
+    rmSync(h.dir, { recursive: true, force: true });
+    h.sup.recordSent();
+    expect(h.faults.map((f) => [f.kind, f.detail])).toEqual([['write_samples_unrecorded', 'sent_count n=2']]);
+    h.done();
+  });
+
+  test('a line whose write throws is not accepted and not counted', () => {
+    const h = harness();
+    h.sup.send(sample(0));
+    h.children[0]!.stdin.write = () => { throw new Error('closed'); };
+    expect(h.sup.send(sample(1))).toBe(false);
+    h.sup.recordSent();
+    expect(h.sent()).toBe(1);
+    h.done();
+  });
+});
+
+describe('Bun child stdin write callbacks (what the sample accounting stands on)', () => {
+  test('each write callback fires once, after the bytes leave: most are still pending while the reader sleeps, all fire once it reads, none with an error', async () => {
+    const { spawn } = await import('node:child_process');
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-bun-pipe-'));
+    const child = spawn('sh', ['-c', `sleep 0.5; cat > "${join(dir, 'out')}"`], { stdio: ['pipe', 'ignore', 'ignore'] });
+    try {
+      let fired = 0; let failed = 0; const line = 'x'.repeat(1_999) + '\n';
+      for (let i = 0; i < 300; i++) child.stdin!.write(line, (error) => { fired++; if (error) failed++; });
+      expect(fired).toBeLessThan(300); // 600,000 bytes against a 64 KB pipe and a sleeping reader: not all can have left
+      expect(child.stdin!.writableLength).toBe(0); // Bun reports an empty buffer while it holds hundreds of KB: why the count is ours
+      child.stdin!.end();
+      const start = Date.now(); while (fired < 300 && Date.now() - start < 10_000) await new Promise((r) => setTimeout(r, 20));
+      expect({ fired, failed }).toEqual({ fired: 300, failed: 0 });
+    } finally { child.kill(); rmSync(dir, { recursive: true, force: true }); }
+  }, 30_000);
 });

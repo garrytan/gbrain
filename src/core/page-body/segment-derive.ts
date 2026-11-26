@@ -24,6 +24,7 @@ import { bodyBlocks, type BodyBlock } from './segment-blocks.ts';
 import { ledgerApplies, readBodyLedger } from './segment-ledger.ts';
 import { SEGMENTER_VERSION } from './segmenter.ts';
 import type { BodyRegion, ManifestRow } from './types.ts';
+import type { SegmentDerivationStoreRow } from '../engine-sql/segment-derive-store.ts';
 
 /**
  * Bump a kind's version to re-derive every page's rows of that kind once. fences 2: rows keep fence digests, not fence text.
@@ -90,22 +91,19 @@ async function ledgerKey(engine: BrainEngine, page: SegmentedDerivationPage): Pr
 
 /** The live runs of a segmented page from its manifest rows (no segment text), or null when it is not segmented. */
 export async function derivationScope(engine: BrainEngine, page: SegmentedDerivationPage): Promise<DerivationScope | null> {
-  const [state] = await engine.executeRaw<{ body_storage: string; body_generation: string; segmenter_version: number | null }>(
-    'SELECT body_storage, body_generation::text AS body_generation, segmenter_version FROM pages WHERE id=$1', [page.id]);
+  const state = await engine.readSegmentedPageHead(page.id);
   if (state?.body_storage !== 'segmented') return null;
   const generation = Number(state.body_generation);
-  const rows = await engine.executeRaw<{ seq: number; occurrence_id: string; region: BodyRegion; sha256: unknown; entry_state: unknown; cut_kind: string; byte_len: number }>(
-    `SELECT seq, occurrence_id::text AS occurrence_id, region, sha256, entry_state, cut_kind, byte_len FROM page_body_manifest
-      WHERE page_id=$1 AND staging_id IS NULL AND gen_from<=$2 AND (gen_to IS NULL OR gen_to>$2) ORDER BY seq`, [page.id, generation]);
+  const rows = await engine.readManifest(page.id, { generation });
   const runs: DeriveRun[] = [];
   for (const region of ['truth', 'timeline'] as const) {
     const own = rows.filter(row => row.region === region);
     for (let i = 0; i < own.length;) {
       let j = i;
-      while (j + 1 < own.length && own[j]!.cut_kind === 'forced') j++;
+      while (j + 1 < own.length && own[j]!.cutKind === 'forced') j++;
       const members = own.slice(i, j + 1);
-      runs.push({ index: runs.length, region, first: i === 0, seqs: members.map(row => Number(row.seq)), occurrences: members.map(row => Number(row.occurrence_id)),
-        shas: members.map(row => bytesOf(row.sha256)), entryStates: members.map(row => toJson(row.entry_state)), bytes: members.reduce((n, row) => n + Number(row.byte_len), 0) });
+      runs.push({ index: runs.length, region, first: i === 0, seqs: members.map(row => Number(row.seq)), occurrences: members.map(row => Number(row.occurrenceId)),
+        shas: members.map(row => bytesOf(row.sha256)), entryStates: members.map(row => toJson(row.entryState)), bytes: members.reduce((n, row) => n + Number(row.byteLen), 0) });
       i = j + 1;
     }
   }
@@ -184,8 +182,7 @@ export async function readRuns(engine: BrainEngine, scope: DerivationScope, want
 
 /** The page still has the scope's generation and ledger. */
 export async function assertScopeCurrent(engine: BrainEngine, scope: DerivationScope): Promise<void> {
-  const [state] = await engine.executeRaw<{ body_generation: string; body_storage: string }>(
-    'SELECT body_generation::text AS body_generation, body_storage FROM pages WHERE id=$1', [scope.pageId]);
+  const state = await engine.readSegmentedPageHead(scope.pageId);
   if (state?.body_storage !== 'segmented' || Number(state.body_generation) !== scope.generation
     || await ledgerKey(engine, { id: scope.pageId, slug: scope.slug, source_id: scope.sourceId }) !== scope.ledgerKey) throw new SegmentDerivationRaced(scope.slug);
 }
@@ -224,14 +221,8 @@ async function storeRuns(engine: BrainEngine, kind: UnpaidDerivationKind, scope:
   if (!rows.length) return true;
   await beforeWrite?.(scope);
   for (let at = 0; at < rows.length; at += STORE_BATCH_ROWS) {
-    const written = await engine.executeRaw(`WITH live AS (SELECT id FROM pages WHERE id=$1 AND body_storage='segmented' AND body_generation=$2 FOR SHARE)
-      INSERT INTO page_segment_derivations (page_id, pipeline, occurrence_id, pipeline_version, segment_sha256, context_hash, state, output, receipt)
-      SELECT live.id, d.pipeline, d.occurrence_id, d.pipeline_version, decode(d.segment_sha256, 'hex'), decode(d.context_hash, 'hex'), 'done', d.output, NULL
-      FROM live, jsonb_to_recordset($3::text::jsonb) AS d(pipeline text, occurrence_id bigint, pipeline_version int, segment_sha256 text, context_hash text, output jsonb)
-      ON CONFLICT (page_id, pipeline, occurrence_id) DO UPDATE SET pipeline_version = EXCLUDED.pipeline_version, segment_sha256 = EXCLUDED.segment_sha256,
-        context_hash = EXCLUDED.context_hash, state = EXCLUDED.state, output = EXCLUDED.output, receipt = EXCLUDED.receipt, updated_at = now()
-      RETURNING 1`, [scope.pageId, scope.generation, JSON.stringify(rows.slice(at, at + STORE_BATCH_ROWS))]);
-    if (!written.length) {
+    const written = await engine.storeSegmentDerivationsIfLive(scope.pageId, scope.generation, rows.slice(at, at + STORE_BATCH_ROWS) as unknown as SegmentDerivationStoreRow[]);
+    if (!written) {
       segmentDeriveWork[kind].skipped++;
       return false;
     }
@@ -343,10 +334,8 @@ export async function deleteRewrittenDerivations(engine: BrainEngine, pageId: nu
     }
   }
   if (!touched.size) return 0;
-  return (await engine.executeRaw(`DELETE FROM page_segment_derivations WHERE page_id=$1
-    AND (occurrence_id = ANY($2::bigint[]) OR (pipeline = 'links' AND occurrence_id = ANY($3::bigint[]))
-      OR (pipeline = ANY($4::text[]) AND NOT (occurrence_id = ANY($5::bigint[])))) RETURNING 1`,
-  [pageId, [...touched], [...reach], Object.keys(SEGMENT_PIPELINE_VERSIONS), rows.map(row => row.occurrenceId)])).length;
+  return engine.deleteRewrittenSegmentDerivations({ pageId, touchedOccurrenceIds: [...touched], linkReachOccurrenceIds: [...reach],
+    pipelines: Object.keys(SEGMENT_PIPELINE_VERSIONS), liveOccurrenceIds: rows.map(row => row.occurrenceId) });
 }
 
 /**
@@ -361,7 +350,7 @@ export interface DerivationNeedles { needles: string[]; patterns: string[] }
  */
 export async function derivationNeedles(engine: Pick<BrainEngine, 'executeRaw'>, claims: readonly string[]): Promise<DerivationNeedles> {
   const list = [...new Set(claims.filter(Boolean))];
-  const rows = list.length ? await engine.executeRaw<{ f: string }>(`SELECT DISTINCT f FROM (SELECT ${foldSql('gbrain_fact_normalize(c)')} AS f
+  const rows = list.length ? await engine.executeRaw<{ f: string }>(`SELECT DISTINCT f COLLATE "C" AS f FROM (SELECT ${foldSql('gbrain_fact_normalize(c)')} AS f
     FROM unnest($1::text[]) c) x WHERE f <> '' ORDER BY f`, [list]) : [];
   // A word holding a control character is spelled \uXXXX in a row's JSON text, so it cannot prefilter.
   const pattern = (text: string) => ['', ...text.split(' ').filter(t => t && !/[\u0000-\u001f]/.test(t)).map(t => t.replace(/[\\%_]/g, '\\$&')), ''].join('%');
@@ -519,6 +508,7 @@ export async function continueDerivationPurges(engine: BrainEngine, sourceId: st
   };
   /** Read-only: whether at most the record's batch size of rows after `at` (on `onPages`; every page when null) are all there are, and how many the sweep covers hold the claim. */
   const unswept = async (tx: BrainEngine, purge: SweepRecord, at: [number | null, string | null, string | null], onPages: number[] | null) => {
+    // Keyset walk, not output: the ORDER BY and derivationAfterSql share one collation (see derivationAfterSql).
     const [row] = await tx.executeRaw<{ scanned: number; hits: number }>(`WITH batch AS MATERIALIZED (
         SELECT d.page_id, d.pipeline, d.occurrence_id, ${derivationSweepScopeSql('d', 'p', '$2')} AS swept FROM page_segment_derivations d
         JOIN pages p ON p.id = d.page_id WHERE p.source_id = $1 AND ${derivationAfterSql('d', ['$5', '$6', '$7'])} AND ($9::int[] IS NULL OR d.page_id = ANY($9::int[]))
@@ -604,6 +594,7 @@ export async function continueDerivationPurges(engine: BrainEngine, sourceId: st
         picked = purge;
         await faultPoint('purge:derivation_batch', { sourceId, requestId: purge.request_id, round: Number(purge.batch_rows),
           read: purge.cursor_page === null ? '' : `${purge.cursor_page}/${purge.cursor_pipeline}/${purge.cursor_occurrence}` });
+        // Keyset walk, not output: the ORDER BY, the `last` row and derivationAfterSql share one collation (see derivationAfterSql).
         const batch = await tx.executeRaw<Row>(`WITH batch AS MATERIALIZED (
             SELECT d.page_id, d.pipeline, d.occurrence_id, ${derivationSweepScopeSql('d', 'p', '$2')} AS swept FROM page_segment_derivations d
             JOIN pages p ON p.id = d.page_id WHERE p.source_id = $1 AND ${derivationAfterSql('d', ['$5', '$6', '$7'])}
@@ -646,6 +637,7 @@ export async function continueDerivationPurges(engine: BrainEngine, sourceId: st
         rows = await engine.transaction(async tx => {
           await tx.executeRaw("SELECT set_config('statement_timeout',$1,true)", [`${statementMs}ms`]);
           await faultPoint('purge:derivation_unread', { sourceId, requestId: purge.request_id });
+          // Keyset probe, not output: the ORDER BY and derivationAfterSql share one collation (see derivationAfterSql).
           const [next] = await tx.executeRaw<{ page_id: number; pipeline: string; occurrence_id: string; swept: boolean }>(`SELECT d.page_id, d.pipeline,
               d.occurrence_id::text AS occurrence_id, ${derivationSweepScopeSql('d', 'p', '$2')} AS swept FROM page_segment_derivations d
             JOIN pages p ON p.id = d.page_id WHERE p.source_id = $1 AND ${derivationAfterSql('d', ['$3', '$4', '$5'])} AND ($6::int[] IS NULL OR d.page_id = ANY($6::int[]))

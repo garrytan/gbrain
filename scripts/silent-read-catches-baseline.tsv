@@ -248,7 +248,6 @@ src/commands/doctor/checks/ontology-facts.ts#ontologyFactsCheck	capability_refus
 src/commands/doctor/checks/origin-twins.ts#runOriginTwins	capability_refusal_swallowed	1
 src/commands/doctor/checks/orphan-bindings.ts#checkForeignOwnershipMarkers	capability_refusal_swallowed	1
 src/commands/doctor/checks/orphan-estimate.ts#orphanFullScanMaxPages	promise_catch_empty	1
-src/commands/doctor/checks/outside-content-fences.ts#runOutsideContentFences	capability_refusal_swallowed	1
 src/commands/doctor/checks/overwritten-edits.ts#runOverwrittenEdits	capability_refusal_swallowed	1
 src/commands/doctor/checks/owner-host-stale.ts#ownerHostStaleCheck	capability_refusal_swallowed	1
 src/commands/doctor/checks/parked-effects.ts#checkParkedEffects	capability_refusal_swallowed	1
@@ -1008,15 +1007,11 @@ src/core/destructive-guard.ts#purgeExpiredSources	catch_empty	1
 src/core/disk-walk.ts#walkBrainRepo>recurse	catch_empty	1
 src/core/doctor-remote.ts#runUpgradeDriftCheck	catch_empty	1
 src/core/egress-budget.ts#resultByteCap	catch_empty	1
-src/core/eligibility/fence-overlay.ts#worldLinkContexts	capability_refusal_swallowed	1
 src/core/eligibility/policy.ts#loadTrustReadConfig>read	catch_empty	1
 src/core/eligibility/scan.ts#currentCursor	promise_catch_empty	2
-src/core/eligibility/stamp.ts#applyFenceRowTrust	capability_refusal_swallowed	1
 src/core/eligibility/stamp.ts#applyFenceRowTrust	catch_empty	1
-src/core/eligibility/stamp.ts#heldFenceLines	capability_refusal_swallowed	1
 src/core/eligibility/stamp.ts#heldFenceLines	catch_empty	1
 src/core/eligibility/stamp.ts#stampPageTrust	catch_empty	1
-src/core/eligibility/stamp.ts#stampRowTrust	capability_refusal_swallowed	1
 src/core/eligibility/stamp.ts#stampRowTrust	catch_empty	1
 src/core/embed-backfill-submit.ts#keylessEmbedBackfill	promise_catch_empty	1
 src/core/embed-concurrency.ts#resolveStaleEmbedConcurrency	catch_empty	1
@@ -1109,9 +1104,7 @@ src/core/facts/meta-hook.ts#getBrainHotMemoryMeta	promise_catch_empty	1
 src/core/facts/meta-hook.ts#readHotMemorySessionOnly	promise_catch_empty	1
 src/core/facts/notability-filter.ts#resolvePageWriteNotabilityFilter	promise_catch_empty	1
 src/core/facts/purge-verify.ts#boundedCount	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
-src/core/facts/purge-verify.ts#derivationTextReport	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/facts/purge-verify.ts#onDiskReports>carrying	catch_empty	1
-src/core/facts/purge-verify.ts#vectorProbe	capability_refusal_swallowed	1
 src/core/facts/question-recall.ts#admissionRule	promise_catch_empty	1
 src/core/facts/recall-config.ts#readRecallSwitches	promise_catch_empty	2
 src/core/facts/reconcile-watermark.ts#readFactsReconcileBacklog	capability_refusal_swallowed	1
@@ -1383,7 +1376,6 @@ src/core/ops/request-tools.ts#request_tools.handler	capability_refusal_swallowed
 src/core/ops/search-type-filter.ts#reconcileTypeFilter	capability_refusal_swallowed	1
 src/core/ops/search.ts#emitFanoutNotices	promise_catch_empty	1
 src/core/ops/search.ts#evidenceOutput<anon@1>	promise_catch_empty	1	audit contract-10: the pageTrust lookup failure is dropped
-src/core/ops/search.ts#hasUnsealedPagesInScope	capability_refusal_swallowed	1
 src/core/ops/search.ts#hasUnsealedPagesInScope	catch_empty	1
 src/core/ops/search.ts#prepareExplainTarget	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/ops/search.ts#query.handler	catch_empty	1
@@ -1424,7 +1416,6 @@ src/core/page-embedding-lease.ts#acquirePageEmbeddingLease>[Symbol.asyncDispose]
 src/core/page-lock.ts#tryAcquireOnce>refresh	catch_empty	1
 src/core/page-lock.ts#tryAcquireOnce>release	catch_empty	1
 src/core/page-spend.ts#resolvePageDerivationCapUsd	promise_catch_empty	1
-src/core/page-state/projections.ts#continueDeferredProjection>release	capability_refusal_swallowed	1
 src/core/page-state/projections.ts#continueDeferredProjection>release	promise_catch_empty	1
 src/core/page-state/projections.ts#embeddingWriteTarget	catch_empty	1
 src/core/page-state/projections.ts#rebuildPendingPageProjections>runJob	capability_refusal_swallowed	1
