@@ -1,4 +1,18 @@
+/**
+ * Credentials over `access_tokens` and `oauth_clients`: the token list, the revokes, the client delete, the active-token
+ * grant reads, the liveness checks the wake drain runs, the client column probes, the scoped-client insert, its
+ * lifetime write and the lifetime-clamp audit read. SQL once for both engines. Each text is its caller's statement byte
+ * for byte (auth.ts and token-mint.ts, grants/service.ts insertClientGrant, oauth-provider.ts
+ * registerClientManual, wakeshift/drain.ts principalLive); a template statement became the positional text the
+ * scalar-only SqlQuery sent. The Rust store keeps access tokens and OAuth clients (rust/docs/store/access-tokens.md,
+ * oauth-clients.md) but no grant audit, so it reads no lifetime clamp and writes no register audit row. The
+ * scope-source read (access/attest-sources.ts markedScopeSources) reads `sources` for the grant checks. The bearer
+ * reads (BEARER_SQL) authenticate a request's token. No member returns a token hash, except the bearer read's
+ * `SELECT *` row on PGLite and Postgres, which holds the hash the caller passed.
+ */
+import type { BrainEngine } from '../engine.ts';
 
+type Raw = Pick<BrainEngine, 'executeRaw'>;
 
 /** The other credential statements, each its caller's text byte for byte. */
 export const CREDENTIAL_SQL = {
@@ -55,3 +69,57 @@ export const CREDENTIAL_SQL = {
   scope_sources_share: 'SELECT id, config FROM sources WHERE id IN (SELECT jsonb_array_elements_text($1::text::jsonb)) ORDER BY id FOR SHARE',
   scope_sources: 'SELECT id, config FROM sources WHERE id IN (SELECT jsonb_array_elements_text($1::text::jsonb))',
 } as const;
+
+/**
+ * One listed access token, without its hash. `private_pages` and `private_facts` are the stored text (undefined on a
+ * brain that predates the column); `member_id` is null for a token bound to no member.
+ */
+export type AccessTokenListRow = {
+  id: string;
+  name: string;
+  scopes: unknown;
+  created_at: Date;
+  last_used_at: Date | null;
+  revoked_at: Date | null;
+  private_pages?: unknown;
+  private_facts?: unknown;
+  member_id: string | null;
+  /** GST-2898: the write source grant and read-shared switch, present when the column exists (`gbrain auth list` shows a switched key). */
+  source_grant?: unknown;
+  source_id?: unknown;
+  federated_read?: unknown;
+  grant_revision?: unknown;
+  read_shared_revision?: unknown;
+};
+
+const dateOrNull = (v: unknown): Date | null => (v == null ? null : v instanceof Date ? v : new Date(String(v)));
+
+/** Normalize one access_tokens row (Postgres, PGLite or the store) to the listed shape. The hash never crosses. */
+export function normalizeAccessTokenListRow(r: Record<string, unknown>): AccessTokenListRow {
+  return {
+    id: String(r.id), name: String(r.name), scopes: r.scopes, created_at: dateOrNull(r.created_at) as Date,
+    last_used_at: dateOrNull(r.last_used_at), revoked_at: dateOrNull(r.revoked_at),
+    ...('private_pages' in r ? { private_pages: r.private_pages } : {}),
+    ...('private_facts' in r ? { private_facts: r.private_facts } : {}),
+    ...Object.fromEntries(['source_grant', 'source_id', 'federated_read', 'grant_revision', 'read_shared_revision'].filter(key => key in r).map(key => [key, r[key]])),
+    member_id: r.member_id == null ? null : String(r.member_id),
+  };
+}
+
+/** Every access token, newest first (`SELECT *` reads every schema generation). */
+export async function listAccessTokens(tx: Raw): Promise<AccessTokenListRow[]> {
+  const rows = await tx.executeRaw<Record<string, unknown>>(CREDENTIAL_SQL.token_list);
+  return rows.map(normalizeAccessTokenListRow);
+}
+
+/** How `readScopeSourceConfigs` locks the rows it reads: FOR SHARE, FOR UPDATE, or no lock. */
+export type ScopeSourceLock = 'share' | 'update';
+
+/**
+ * The id and config of each source among `ids` (a JSON list of distinct ids), for the scope-source check
+ * (access/attest-sources.ts markedScopeSources). A lock takes the rows in id order inside the caller's transaction.
+ */
+export function readScopeSourceConfigs(tx: Raw, ids: readonly string[], lock?: ScopeSourceLock): Promise<{ id: string; config: unknown }[]> {
+  const text = lock === 'update' ? CREDENTIAL_SQL.scope_sources_update : lock === 'share' ? CREDENTIAL_SQL.scope_sources_share : CREDENTIAL_SQL.scope_sources;
+  return tx.executeRaw<{ id: string; config: unknown }>(text, [JSON.stringify([...new Set(ids)])]);
+}

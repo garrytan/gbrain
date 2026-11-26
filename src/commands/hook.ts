@@ -594,7 +594,7 @@ async function hookSessionStart(io: HookIo): Promise<number> {
           trigger: typeof j?.source === 'string' ? `session-start:${j.source as string}` : 'session-start',
           deadlineAt: t0 + deadlineMs,
           awaitServe,
-          sections: ['first_session', 'nightly_learning'],
+          sections: ['first_session', 'nightly_learning', 'standing_rules'],
           harness: io.harness ?? 'claude-code',
           retryOnce: startup,
         });

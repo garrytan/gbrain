@@ -393,5 +393,4 @@ The full behavior contract is documented in the body sections above.
 Two JSON shapes are produced inline (the triage classification in Step 1
 and the deep-read extraction in Step 3); the durable output is the brain
 page written in Step 4, filed by primary subject per
-`_brain-filing-rules.md`. The literal section header here exists for the
-conformance test (`test/skills-conformance.test.ts`).
+`_brain-filing-rules.md`.

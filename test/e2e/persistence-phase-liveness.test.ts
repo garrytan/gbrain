@@ -106,7 +106,10 @@ describe.skipIf(!url)('PostgreSQL persistence phase cancellation', () => {
       await waitFor(async () => (await getWriteRequestById(engine, second.id))?.state === 'committed', { timeoutMs: 5000 });
     } finally { await publisher.stop(); }
     let entered = false;
-    const proxy = new Proxy(engine, { get(target, key) {
+    const proxy = new Proxy(engine, { get(target, key, receiver) {
+      // The progress poll (typed readWriteRequestProgress) runs WRITE_PROGRESS_SQL; route it through the scripted executeRaw.
+      if (key === 'readWriteRequestProgress') return async (id: string, opts?: { signal?: AbortSignal }) =>
+        ((await (receiver as typeof engine).executeRaw(WRITE_PROGRESS_SQL, [id], opts as never))[0] ?? null);
       if (key === 'executeRaw') return async (...args: Parameters<typeof engine.executeRaw>) => {
         if (args[0] === WRITE_PROGRESS_SQL && args[1]?.[0] === first.id) {
           entered = true;
@@ -510,7 +513,7 @@ describe.skipIf(!url)('PostgreSQL persistence phase cancellation', () => {
     });
     await held.promise;
     try {
-      await expect(renewWriteClaim({ executeRaw: engine.executeRawDirect.bind(engine) }, row.id, row.execution_token!, 30000,
+      await expect(renewWriteClaim(engine, row.id, row.execution_token!, 30000,
         AbortSignal.timeout(100))).rejects.toMatchObject({ code: '57014' });
     } finally { release.resolve(); await holding; }
     expect((await getWriteRequestById(engine, row.id))?.claim_expires_at).toEqual(row.claim_expires_at);

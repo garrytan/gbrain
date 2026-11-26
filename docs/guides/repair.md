@@ -795,6 +795,10 @@ The check lists each page with its counts (world-visible facts counted apart), n
 
 **Say to your agent:** *"Which imported pages hold facts a sender could have planted? Show me before you remove anything."*
 
+**Imported transcripts in one pass (#9427).** A chat transcript that `gbrain transcripts ingest` imported is someone else's text by construction, and gbrain's own conversation-facts extraction indexes rows on it, so on a brain with many imported conversations the check lists hundreds of pages that need the same answer. `gbrain transcripts accept-fences --json` previews every listed conversation page the importer wrote and stamped (counts only, never a value) with a `plan_hash`; `gbrain transcripts accept-fences --yes --expect <plan_hash>` records those pages as reviewed, and the check leaves them out while their rows stay exactly as reviewed. A new, removed or changed row, or a later write by anything other than the importer (a remote `put_page` included), puts the page back on the list. Nothing in a page or its rows changes. Email, calendar and GitHub pages are never accepted this way; they stay listed one page at a time. `--source-id <id>` limits both steps to one source. The record is the config row `transcripts.fence_acceptance`, so repo-less and repo-backed brains behave the same, and doctor's details report the accepted count as `accepted_transcripts`.
+
+**Say to your agent:** *"The fence warning is all imported chat transcripts. Show me the list, then mark them reviewed."*
+
 <a id="connector-held-items"></a>
 ### Connector held items
 
@@ -5194,7 +5198,7 @@ Each effect ends in exactly one outcome; no obligation is dropped without one:
 | `reconciled` | The page's current chunks already pass the effect's verifier (same revision, selected column, model and hashes). The effect commits. | Nothing |
 | `superseded` | The page was deleted, or a newer revision of the same page owns its own embedding effect. The effect commits as superseded. | Nothing |
 | `retry_queued` | The owner embeds it: a stale queued effect is re-queued; a failed one gets the `retry-effects` allowance; when that allowance is used up (`embedding_retry_exhausted`), one new bounded retry cycle, once per explicit apply. | Provider calls, up to the bounded retry budget |
-| `blocked` | Nothing changed. `owner_unavailable` (run it on the owner host), `embedding_disabled` or `embedding_unconfigured` (configure embeddings first), `projection_pending` (sync the page first) or `no_replacement_obligation` (the page changed without a newer embedding obligation; run `gbrain embed <slug> --source <source>`). | Nothing |
+| `blocked` | Nothing changed. `owner_unavailable` (run it on the owner host; an effect recorded under a worktree that `writer deactivate` or a transfer replaced settles here only through `reconciled` or `superseded`, run under this host's current binding of the same source incarnation once the source checks pass again for that binding, and its outcome names the former worktree; a multi-page or source-scan effect of a former worktree stays blocked), `embedding_disabled` or `embedding_unconfigured` (configure embeddings first), `projection_pending` (sync the page first) or `no_replacement_obligation` (the page changed without a newer embedding obligation; run `gbrain embed <slug> --source <source>`). | Nothing |
 
 `retry_queued` is not success: doctor keeps the effect pending until the
 owner's run commits it. The preview marks retries as paid work; through

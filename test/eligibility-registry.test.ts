@@ -35,6 +35,11 @@ describe('read trust registry (ENG-14)', () => {
     }
   });
 
+  test('propose_jobs cites page slugs, so a connection with a trust floor is refused', () => {
+    expect(() => enforceReadTrustFloor({ minTrust: 'operator_curated' } as never, operations.find(o => o.name === 'propose_jobs')!)).toThrow(OperationError);
+    expect(() => enforceReadTrustFloor(undefined, operations.find(o => o.name === 'propose_jobs')!)).not.toThrow();
+  });
+
   test('an unlisted read op resolves to the strictest handling', () => {
     expect(readTrustHandling({ name: 'some_future_op' })).toBe('labeled');
   });

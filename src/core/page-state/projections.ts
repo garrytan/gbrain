@@ -32,6 +32,7 @@ import { ACTIVATION_SERVED_REVISION } from '../search/safe-chunks.ts';
 
 export { sealPageTextProjection } from './text-seal.ts';
 import { sealPageTextProjection } from './text-seal.ts';
+import { DEFERRED_CHUNK_CLAIM, DEFERRED_CHUNK_REPLACEMENT, projectionJobProbes } from '../engine-sql/projection-rebuild.ts';
 
 /**
  * A coordinated import's one closing page write: the chunker version its apply
@@ -41,13 +42,9 @@ import { sealPageTextProjection } from './text-seal.ts';
  */
 export async function sealImportedPage(engine: BrainEngine, slug: string, sourceId: string, live: PageSnapshot | null,
   chunkerSeal: number, pageId?: number): Promise<void> {
-  const rows = await engine.executeRaw<{ id: number }>(`UPDATE pages SET chunker_version=$5,
-    text_projection_revision=CASE WHEN knowledge_revision=$4::uuid THEN knowledge_revision ELSE text_projection_revision END,
-    search_vector=CASE WHEN knowledge_revision=$4::uuid THEN ${pageSearchVectorSql('title', '$3')} ELSE search_vector END
-    WHERE source_id=$1 AND slug=$2 RETURNING id`,
-  [sourceId, slug, live ? sanitizeRemoteBody(live.page.timeline) : '', live?.revision ?? null, chunkerSeal]);
-  if (rows.length === 0) throw new Error(`Page not found: ${slug} (source=${sourceId})`);
-  if (pageId !== undefined && Number(rows[0]!.id) !== Number(pageId)) throw new Error(`Page ${slug} (source=${sourceId}) is not the page this transaction wrote`);
+  const sealed = await engine.sealImportedPage(slug, { sourceId, revision: live?.revision ?? null, timelineText: live ? sanitizeRemoteBody(live.page.timeline) : '', chunkerVersion: chunkerSeal });
+  if (!sealed) throw new Error(`Page not found: ${slug} (source=${sourceId})`);
+  if (pageId !== undefined && sealed.id !== Number(pageId)) throw new Error(`Page ${slug} (source=${sourceId}) is not the page this transaction wrote`);
 }
 
 export interface ProjectionSnapshot {
@@ -120,15 +117,13 @@ export async function stampEmbeddingInputs(engine: Pick<BrainEngine, 'getConfigV
 async function indexingContext(engine: BrainEngine, snapshot: PageSnapshot, maxChunkTokensOverride?: number): Promise<{ key: string; model: string | null; maxChunkTokens: number; column: ResolvedColumn; pageKind: PageKind; provenanceModel: string | null; corpusGeneration: string | null }> {
   const { config, model, column, provenanceModel } = await embeddingWriteTarget(engine);
   const maxChunkTokens = maxChunkTokensOverride ?? resolveMaxChunkTokens();
-  const [projection] = await engine.executeRaw<{ chunker_version: number | null; corpus_generation: string | null }>(
-    'SELECT chunker_version,corpus_generation FROM pages WHERE id=$1', [snapshot.page.id]);
-  const [kind] = await engine.executeRaw<{ page_kind: PageKind }>('SELECT page_kind FROM pages WHERE id=$1', [snapshot.page.id]);
-  if (!kind) throw new PageRevisionConflictError(snapshot.revision, null);
+  const state = await engine.readPageIndexingState(snapshot.page.id);
+  if (!state) throw new PageRevisionConflictError(snapshot.revision, null);
   return { key: digest({ config, mode: snapshot.page.contextual_retrieval_mode, model, column,
-    maxChunkTokens, storedChunkerVersion: projection?.chunker_version ?? null, corpusGeneration: projection?.corpus_generation ?? null,
-    chunkerVersion: MARKDOWN_CHUNKER_VERSION, codeChunkerVersion: CHUNKER_VERSION, pageKind: kind.page_kind,
-    ftsLanguage: getFtsLanguage() }), model, maxChunkTokens, column, pageKind: kind.page_kind, provenanceModel,
-    corpusGeneration: projection?.corpus_generation ?? null };
+    maxChunkTokens, storedChunkerVersion: state.chunker_version, corpusGeneration: state.corpus_generation,
+    chunkerVersion: MARKDOWN_CHUNKER_VERSION, codeChunkerVersion: CHUNKER_VERSION, pageKind: state.page_kind,
+    ftsLanguage: getFtsLanguage() }), model, maxChunkTokens, column, pageKind: state.page_kind, provenanceModel,
+    corpusGeneration: state.corpus_generation };
 }
 
 /**
@@ -156,10 +151,10 @@ async function readGuardedProjectionSnapshot(tx: BrainEngine, slug: string, sour
     ...(fenceOverlay ? { fenceOverlay } : {}) };
 }
 
-/** #7172: the queue reason of a revision whose publication left its chunk replacement to `continueDeferredProjection`. */
-export const DEFERRED_CHUNK_REPLACEMENT = 'chunk_replacement_deferred';
-/** #7172: `<claim>:<token>`, the reason while a continuation holds the replacement (renewed each step, as a segmented projection claim is). */
-export const DEFERRED_CHUNK_CLAIM = 'chunk_replacement_continuing';
+/** #7172: DEFERRED_CHUNK_REPLACEMENT is the queue reason of a revision whose publication left its chunk replacement to
+ * `continueDeferredProjection`; `<claim>:<token>` is the reason while a continuation holds the replacement (renewed each
+ * step, as a segmented projection claim is). */
+export { DEFERRED_CHUNK_CLAIM, DEFERRED_CHUNK_REPLACEMENT };
 
 /**
  * Which stored rows a projection of `chunks` keeps (#5553, A4): each row holding a new chunk at its own index, and
@@ -175,10 +170,8 @@ async function planProjectionKeep(tx: BrainEngine, current: PageSnapshot, contex
   // nulled once and stamped by its re-embed.
   const mode = current.page.contextual_retrieval_mode;
   const provenance = embeddingInputContext(context, current.page.title, context.corpusGeneration, chunks);
-  const col = quoteIdentifier(context.column.name);
-  const recorded = new Map((await tx.executeRaw<{ id: number; embedding_input_hash: string | null; movable: boolean }>(
-    `SELECT id,embedding_input_hash,${movableChunkSql(col)} AND ${chunkModelMatchesSql('model', '$2', `vector_dims(${col}) = ${context.column.dimensions}`)} AS movable FROM content_chunks WHERE page_id=$1`,
-    [current.page.id, context.provenanceModel])).map(row => [Number(row.id), row]));
+  const recorded = new Map((await tx.readChunkKeepState(current.page.id, context.provenanceModel, context.column))
+    .map(row => [Number(row.id), row]));
   const currentInput = (chunk: Chunk) => {
     const hash = recorded.get(Number(chunk.id))?.embedding_input_hash ?? null;
     return hash === null ? mode == null : acceptedEmbeddingInputHashes(provenance, mode, chunk).includes(hash);
@@ -217,11 +210,8 @@ interface DeferredReplacement {
 }
 
 /** The page's chunk rows as (id, index) pairs, hashed; no chunk text is read. */
-async function chunkRowsFingerprint(tx: BrainEngine, pageId: number): Promise<string> {
-  // chunk-visibility-ok: identity of a deferred replacement's rows (ids and indexes), never returned to a reader
-  const [row] = await tx.executeRaw<{ f: string }>(`SELECT count(*)::text||':'||COALESCE(sum(hashtext(id::text||':'||chunk_index::text)::bigint),0)::text AS f
-    FROM content_chunks WHERE page_id=$1`, [pageId]);
-  return row!.f;
+function chunkRowsFingerprint(tx: BrainEngine, pageId: number): Promise<string> {
+  return tx.readChunkRowsFingerprint(pageId);
 }
 
 /** Reads the page under its guard and plans its replacement; the rows it does not keep are deleted here (no index entry). */
@@ -233,11 +223,8 @@ async function planDeferredReplacement(tx: BrainEngine, sourceId: string, slug: 
   const { chunks } = await preparePageProjection(prepared);
   const context = await indexingContext(tx, current, prepared.maxChunkTokensOverride);
   const plan = await planProjectionKeep(tx, current, context, prepared.chunks, chunks);
-  await tx.executeRaw('DELETE FROM content_chunks WHERE page_id=$1 AND NOT(id=ANY($2::int[]))', [pageId, plan.kept.map(chunk => Number(chunk.id))]);
-  // chunk-visibility-ok: the kept rows of a deferred replacement whose vector the current page no longer accepts
-  const stale = (await tx.executeRaw<{ id: number }>(`SELECT id FROM content_chunks WHERE page_id=$1 AND ${quoteIdentifier(context.column.name)} IS NOT NULL
-    AND (NOT ${chunkModelMatchesSql('model', '$2', `vector_dims(${quoteIdentifier(context.column.name)}) = ${context.column.dimensions}`)} OR embedded_text_hash <> md5(chunk_text) OR NOT(id=ANY($3::int[]))) ORDER BY chunk_index`,
-  [pageId, plan.provenanceModel, plan.current])).map(row => Number(row.id));
+  await tx.deleteUnkeptChunks(pageId, plan.kept.map(chunk => Number(chunk.id)));
+  const stale = await tx.listStaleChunkVectors(pageId, plan.provenanceModel, context.column, plan.current);
   const moved = new Set(plan.moves.map(move => move.id));
   const occupied = new Set([...plan.kept.filter(row => !moved.has(Number(row.id))).map(row => row.chunk_index), ...plan.moves.map(move => move.to)]);
   return { current, pageId, column: context.column, moves: plan.moves, at: new Map(plan.kept.map(chunk => [chunk.chunk_index, Number(chunk.id)])), stale,
@@ -260,13 +247,9 @@ export async function continueDeferredProjectionStep(engine: BrainEngine, source
   const claim = `${DEFERRED_CHUNK_CLAIM}:${state.token ??= randomUUID()}`;
   const [step, next] = await engine.transaction(async (tx): Promise<['sealed' | 'more' | 'skipped' | 'held', DeferredReplacement?]> => {
     await tx.lockPageKeys([{ sourceId, slug }]);
-    const [head] = await tx.executeRaw<{ id: number; revision: string; sealed: boolean }>(`SELECT id, knowledge_revision::text AS revision,
-      text_projection_revision IS NOT DISTINCT FROM knowledge_revision AS sealed FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL`, [sourceId, slug]);
+    const head = await tx.readProjectionHead(sourceId, slug);
     if (!head || head.sealed) return ['skipped'];
-    const [held] = await tx.executeRaw(`SELECT 1 FROM page_projection_jobs j JOIN sources s ON s.incarnation=j.source_incarnation
-      WHERE s.id=$1 AND j.slug=$2 AND j.revision=$3::uuid AND split_part(j.reason,':',1)=$4 AND j.reason<>$5
-        AND j.updated_at>=now()-interval '${SEGMENTED_PROJECTION_LEASE_SECONDS} seconds'`, [sourceId, slug, head.revision, DEFERRED_CHUNK_CLAIM, claim]);
-    if (held) return ['held'];
+    if (await tx.isDeferredReplacementHeld(sourceId, slug, head.revision, claim)) return ['held'];
     const carried = state.plan?.current.revision === head.revision && state.plan.pageId === Number(head.id)
       && state.plan.fingerprint === await chunkRowsFingerprint(tx, Number(head.id)) ? state.plan : null;
     const base = carried ?? await planDeferredReplacement(tx, sourceId, slug);
@@ -274,18 +257,15 @@ export async function continueDeferredProjectionStep(engine: BrainEngine, source
     const { current, pageId } = base;
     const waves = planMoveWaves(base.moves, base.at, budget);
     await applyMoveWaves(tx, pageId, waves.waves);
-    const job = [current.sourceIncarnation, slug, current.revision];
+    const job = { sourceIncarnation: current.sourceIncarnation, slug, revision: current.revision };
     if (!waves.done) {
-      await tx.executeRaw('UPDATE page_projection_jobs SET reason=$4,updated_at=now() WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid', [...job, claim]);
+      await tx.renewDeferredReplacementClaim(job, claim);
       return ['more', { ...base, moves: waves.pending, at: waves.at, fingerprint: await chunkRowsFingerprint(tx, pageId) }];
     }
-    if (base.stale.length) {
-      await tx.executeRaw(`UPDATE content_chunks SET ${quoteIdentifier(base.column.name)}=NULL,embedded_at=NULL,embedded_text_hash=NULL,embedding_input_hash=NULL,
-        embedding_pending_since=COALESCE(embedding_pending_since,now()) WHERE page_id=$1 AND id=ANY($2::int[])`, [pageId, base.stale]);
-    }
+    if (base.stale.length) await tx.clearChunkVectors(pageId, base.column, base.stale);
     if (base.inserts.length) await tx.upsertChunks(slug, base.inserts, { sourceId, embeddingColumn: base.column, sealChunkerVersion: MARKDOWN_CHUNKER_VERSION, pageId, deferSeal: true });
     await sealImportedPage(tx, slug, sourceId, current, MARKDOWN_CHUNKER_VERSION, pageId);
-    await tx.executeRaw('DELETE FROM page_projection_jobs WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid', job);
+    await tx.deleteProjectionJob(job);
     return ['sealed'];
   });
   state.plan = next;
@@ -298,8 +278,7 @@ export async function continueDeferredProjectionStep(engine: BrainEngine, source
  */
 export async function continueDeferredProjection(engine: BrainEngine, sourceId: string, slug: string, until: () => boolean = () => false): Promise<'sealed' | 'more' | 'skipped' | 'held'> {
   const state: { token?: string } = {};
-  const release = () => engine.executeRaw(`UPDATE page_projection_jobs SET reason=$1 WHERE slug=$2 AND reason=$3`,
-    [DEFERRED_CHUNK_REPLACEMENT, slug, `${DEFERRED_CHUNK_CLAIM}:${state.token}`]).catch(() => undefined);
+  const release = () => engine.releaseDeferredReplacementClaim(slug, `${DEFERRED_CHUNK_CLAIM}:${state.token}`).catch(() => undefined);
   try {
     for (;;) {
       const step = await continueDeferredProjectionStep(engine, sourceId, slug, state);
@@ -318,7 +297,7 @@ export async function installPageProjection(engine: BrainEngine, prepared: Proje
     await tx.lockPageKeys([{ sourceId, slug }]);
     const current = await tx.readPageSnapshot(slug, { sourceId });
     assertPageRevision(current, { expectedRevision: snapshot.revision });
-    const [source] = await tx.executeRaw<{ archived: boolean }>('SELECT archived FROM sources WHERE id=$1', [sourceId]);
+    const source = await tx.readSourceRow(sourceId);
     if (!source || source.archived || current!.page.deleted_at) throw new PageRevisionConflictError(snapshot.revision, current!.revision);
     if (current!.sourceIncarnation !== snapshot.sourceIncarnation || current!.page.id !== snapshot.page.id) {
       throw new PageRevisionConflictError(snapshot.revision, current!.revision);
@@ -336,21 +315,15 @@ export async function installPageProjection(engine: BrainEngine, prepared: Proje
     if (changed.length) throw new PageProjectionConflictError(snapshot.revision, current!.revision, changed, slug, sourceId);
     if (opts.seal && opts.preserveEmbeddings) {
       const { kept, current: currentIds, provenanceModel, column } = await planProjectionKeep(tx, current!, context, stored, chunks);
-      const col = quoteIdentifier(column.name);
-      await tx.executeRaw(`DELETE FROM content_chunks WHERE page_id=$1 AND NOT(id=ANY($2::int[]))`, [snapshot.page.id, kept.map(chunk => chunk.id)]);
-      await tx.executeRaw(`UPDATE content_chunks SET ${col}=NULL,
-        embedded_at=NULL,embedded_text_hash=NULL,embedding_input_hash=NULL,
-        embedding_pending_since=COALESCE(embedding_pending_since,now()) WHERE page_id=$1 AND
-        (NOT ${chunkModelMatchesSql('model', '$2', `vector_dims(${col}) = ${column.dimensions}`)} OR embedded_text_hash <> md5(chunk_text) OR NOT(id=ANY($3::int[])))`,
-      [snapshot.page.id, provenanceModel, currentIds]);
+      await tx.deleteChunksExcept(slug, kept.map(chunk => chunk.id), { sourceId });
+      await tx.clearUnkeptChunkVectors(snapshot.page.id, provenanceModel, column, currentIds);
     } else if (opts.seal) await tx.deleteChunks(slug, { sourceId });
     await tx.upsertChunks(slug, chunks, { sourceId, expectedRevision: snapshot.revision, embeddingColumn: context.column });
     if (opts.code) await installCodeChunkEdges(tx, slug, sourceId, opts.code);
     if (opts.seal) {
-      await tx.executeRaw(`UPDATE pages SET chunker_version=$3
-        WHERE source_id=$1 AND slug=$2`, [sourceId, slug, MARKDOWN_CHUNKER_VERSION]);
+      await tx.setProjectionChunkerVersion(sourceId, slug, MARKDOWN_CHUNKER_VERSION);
       await sealPageTextProjection(tx, slug, sourceId, current!);
-      await tx.executeRaw('DELETE FROM page_projection_jobs WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid', [snapshot.sourceIncarnation, slug, snapshot.revision]);
+      await tx.deleteProjectionJob({ sourceIncarnation: snapshot.sourceIncarnation, slug, revision: snapshot.revision });
     }
     if (opts.signature) await tx.setPageEmbeddingSignature(slug, { sourceId, signature: opts.signature });
   });
@@ -397,7 +370,7 @@ export async function installPageEmbeddings(engine: BrainEngine, prepared: Proje
     const current = await tx.readPageSnapshot(slug, { sourceId });
     if (!current || current.page.deleted_at || current.sourceIncarnation !== snapshot.sourceIncarnation || current.page.id !== snapshot.page.id
       || current.page.text_projection_revision !== current.revision || isSegmentedPage(current.page)) return refused;
-    const [source] = await tx.executeRaw<{ archived: boolean }>('SELECT archived FROM sources WHERE id=$1', [sourceId]);
+    const source = await tx.readSourceRow(sourceId);
     if (!source || source.archived) return refused;
     const context = await indexingContext(tx, current, prepared.maxChunkTokensOverride);
     if (context.key !== prepared.indexingContext) return refused;
@@ -432,7 +405,6 @@ export async function installPageEmbeddings(engine: BrainEngine, prepared: Proje
     const complete = dropped === 0 && stored.length === prepared.chunks.length && stored.every((c, i) => c.chunk_index === prepared.chunks[i].chunk_index && c.chunk_text === prepared.chunks[i].chunk_text && c.chunk_source === prepared.chunks[i].chunk_source);
     if (built && !complete) return refused;
     const updates = [...accepted.values()].flatMap(({ ids, hash, chunk }) => ids.map(id => ({ id, hash, chunk })));
-    const col = quoteIdentifier(column.name);
     for (const batch of jsonRowBatches(updates, ({ id, hash, chunk }) => ({
       id,
       chunk_text: chunk.chunk_text,
@@ -443,14 +415,7 @@ export async function installPageEmbeddings(engine: BrainEngine, prepared: Proje
       model: chunk.model ?? (chunk.embedding ? prepared.embeddingModel : null),
       input_hash: hash,
     }))) {
-      await tx.executeRaw(`UPDATE content_chunks SET
-        ${col}=CASE WHEN v.embedding IS NULL THEN content_chunks.${col} ELSE v.embedding${vectorCastSuffix(column)} END,
-        embedding_image=CASE WHEN v.image IS NULL THEN content_chunks.embedding_image ELSE v.image::vector END,
-        embedding_input_hash=CASE WHEN v.embedding IS NULL THEN content_chunks.embedding_input_hash ELSE v.input_hash END,
-        embedded_at=now(),embedded_text_hash=md5(content_chunks.chunk_text),model=COALESCE(v.model,content_chunks.model),
-        embedding_pending_since=CASE WHEN v.embedding IS NULL THEN content_chunks.embedding_pending_since ELSE NULL END
-        FROM jsonb_to_recordset($2::text::jsonb) AS v(id int, chunk_text text, embedding text, image text, model text, input_hash text)
-        WHERE content_chunks.id=v.id AND content_chunks.page_id=$1 AND content_chunks.chunk_text=v.chunk_text`, [snapshot.page.id, batch]);
+      await tx.installChunkEmbeddings(snapshot.page.id, column, batch);
     }
     if (signature && complete) await tx.setPageEmbeddingSignature(slug, { sourceId, signature });
     return { installed, complete };
@@ -458,11 +423,8 @@ export async function installPageEmbeddings(engine: BrainEngine, prepared: Proje
 }
 
 /** Queue the latest revision even when its worktree owner is unavailable. */
-export async function queuePageProjection(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slug: string, reason: string): Promise<void> {
-  await engine.executeRaw(`INSERT INTO page_projection_jobs(source_incarnation,slug,revision,reason)
-    SELECT s.incarnation,p.slug,p.knowledge_revision,$3 FROM pages p JOIN sources s ON s.id=p.source_id
-    WHERE p.source_id=$1 AND p.slug=$2 AND p.deleted_at IS NULL
-    ON CONFLICT(source_incarnation,slug) DO UPDATE SET revision=EXCLUDED.revision,reason=EXCLUDED.reason,updated_at=now()`, [sourceId, slug, reason]);
+export async function queuePageProjection(engine: Pick<BrainEngine, 'queuePageProjectionJob'>, sourceId: string, slug: string, reason: string): Promise<void> {
+  await engine.queuePageProjectionJob(sourceId, slug, reason);
 }
 
 /** A live, unsegmented page's chunker version (`projectionBelowSafeFence`); the text lives in engine-sql/pages.ts with `getPageSealState`. */
@@ -489,10 +451,8 @@ export async function resealSafeChunks(engine: BrainEngine, slug: string, source
     && prepared.snapshot.page.text_projection_revision === prepared.snapshot.revision) return null;
   const projection = await preparePageProjection(prepared);
   await installPageProjection(engine, prepared, projection.chunks, { seal: true, preserveEmbeddings: true, code: projection.code });
-  const [pending] = await engine.executeRaw<{ chunks: number; chars: number }>(`SELECT COUNT(*)::int AS chunks,
-    COALESCE(SUM(length(chunk_text)),0)::int AS chars FROM content_chunks
-    WHERE page_id=$1 AND ${quoteIdentifier(prepared.embeddingColumn.name)} IS NULL AND modality='text'`, [prepared.snapshot.page.id]);
-  return { pendingChunks: Number(pending?.chunks ?? 0), pendingChars: Number(pending?.chars ?? 0) };
+  const pending = await engine.countPendingTextChunks(prepared.snapshot.page.id, prepared.embeddingColumn);
+  return { pendingChunks: pending.chunks, pendingChars: pending.chars };
 }
 
 export async function preparePageProjection(prepared: ProjectionSnapshot) {
@@ -524,13 +484,7 @@ export const SEGMENTED_JOB_PROBES = `JOIN sources s ON s.incarnation=j.source_in
  * (projection-class.ts), for the explicit drain and its preview only: the
  * resident, embed paths and `gbrain migrate` never pass it.
  */
-export function projectionJobProbes(opts: { media?: boolean } = {}): string {
-  const inline = "p.page_kind IN ('markdown','code') AND p.body_storage IS DISTINCT FROM 'segmented'";
-  return `CROSS JOIN LATERAL (SELECT s.id FROM sources s
-      WHERE s.incarnation=j.source_incarnation AND NOT s.archived OFFSET 0) s
-    CROSS JOIN LATERAL (SELECT p.page_kind FROM pages p WHERE p.id=(SELECT k.id FROM pages k WHERE k.source_id=s.id AND k.slug=j.slug)
-      AND p.deleted_at IS NULL AND ${opts.media ? `((${inline}) OR ${sealableImageSql('p')})` : inline} OFFSET 0) p`;
-}
+export { projectionJobProbes } from '../engine-sql/projection-rebuild.ts';
 const PROJECTION_JOB_PROBES = projectionJobProbes();
 
 /**

@@ -7,6 +7,8 @@
 import type { Operation } from '../core/operations.ts';
 import { opOwnsSource } from '../core/ops/contract.ts';
 import { ignoredRemoteParams } from '../core/remote-mcp-error.ts';
+import type { OperationError } from '../core/ops/contract.ts';
+import { unknownFlagError } from './cli-error.ts';
 
 /** Where an ambient (not flag-supplied) thin-client source scope came from. */
 export type AmbientSourceBinding = { sourceId: string; via: 'GBRAIN_SOURCE' | '.gbrain-source' };
@@ -22,6 +24,25 @@ export function assertSingleSourceScopeFlag(op: Operation, params: Record<string
   if (explicit && (params.source_id !== undefined || params.all_sources === true)) {
     throw new Error('Pass either --source or --source-id/--all-sources, not both.');
   }
+}
+
+/** Ops whose own `source` param records where an entry came from, not which source it is written to. */
+const PROVENANCE_SOURCE_OPS = new Set(['add_timeline_entry', 'takes_add', 'takes_update', 'takes_supersede', 'ontology_propose', 'memory_propose']);
+
+/**
+ * #8343: an unknown --source-id / --all-sources on an op whose own --source is a provenance ref (timeline-add) names
+ * the route that picks the source it writes to, instead of a did-you-mean pointing at that --source: GBRAIN_SOURCE
+ * locally, the connection's grant on a thin client (whose router ignores GBRAIN_SOURCE for these ops).
+ */
+export function provenanceSourceFlagError(op: Pick<Operation, 'name' | 'params'> | undefined, command: string, flag: string, message: string, args: string[], thinClient: boolean): OperationError | null {
+  const bare = flag.split('=')[0];
+  if (!op || !PROVENANCE_SOURCE_OPS.has(op.name) || (bare !== '--source-id' && bare !== '--all-sources')) return null;
+  const provenance = `${message}: its --source is the entry's provenance, not the source it writes to`;
+  if (thinClient) return unknownFlagError(command, flag, `${provenance}; the brain host writes it to the source your connection is granted (gbrain whoami shows it)`);
+  const at = args.findIndex(a => a.split('=')[0] === bare);
+  const id = bare === '--source-id' ? (args[at]?.includes('=') ? args[at]!.slice(bare.length + 1) : args[at + 1]) : undefined;
+  const route = `GBRAIN_SOURCE=${id && !id.startsWith('--') ? id : '<id>'}`;
+  return unknownFlagError(command, flag, `${provenance}; set ${route} to choose that`);
 }
 
 /** Per-call scope params a thin client must never see silently dropped. */

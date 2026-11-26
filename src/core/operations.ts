@@ -121,6 +121,7 @@ import { loopsOperations } from './ops/loops.ts';
 import { householdOperations } from './ops/household.ts';
 import { learnedOperations } from './ops/learned.ts';
 import { onboardingOperations } from './ops/onboarding.ts';
+import { proposeOperations } from './ops/propose.ts';
 import { questionsOperations } from './ops/questions.ts';
 import { chronicleOperations } from './ops/chronicle.ts';
 import { extractionOperations } from './ops/extraction.ts';
@@ -139,6 +140,7 @@ import { findPagesOperations } from './ops/find-pages.ts';
 import { storageManifestOperations } from './ops/storage-manifest.ts';
 import { secretsOperations } from './ops/secrets.ts';
 import { claimsOperations } from './ops/claims.ts';
+import { correctOperations } from './ops/correct.ts';
 import { policyOperations } from './ops/policy.ts';
 import { ledgerOperations } from './ops/ledger.ts';
 
@@ -190,7 +192,7 @@ export const operations: Operation[] = [
   // Usage accounting (get_usage, #4218) — ops/usage.ts
   ...usageOperations,
   // Files (file_list, file_upload, file_url) — ops/files.ts
-  ...filesOperations, ...storageManifestOperations, ...secretsOperations, ...claimsOperations, ...policyOperations, ...ledgerOperations,
+  ...filesOperations, ...storageManifestOperations, ...secretsOperations, ...claimsOperations, ...correctOperations, ...policyOperations, ...ledgerOperations,
   // Jobs (Minions: submit_job, get_job, list_jobs, cancel_job, retry_job,
   // get_job_progress, pause_job, resume_job, replay_job, send_job_message)
   // + v0.38 Slice 3 agent lane (submit_agent, get_agent_job) — ops/jobs.ts; Wakeshift watches (watch_job, watch_write_request, watch_cron, list_watches, unwatch, accept_wakeshift_terms) — ops/wakeshift.ts
@@ -245,7 +247,7 @@ export const operations: Operation[] = [
   ...skilloptOperations,
   // v0.47: open-loop engine (who is waiting on you) — ops/loops.ts
   ...loopsOperations, ...householdOperations, ...questionsOperations, ...noticesOperations, ...learnedOperations, // + agent contract v1 A6 mute_notice — ops/notices.ts; nightly learning — ops/learned.ts
-  ...onboardingOperations, // onboarding PR 2: first-session suggestion status and stop — ops/onboarding.ts
+  ...onboardingOperations, ...proposeOperations, // onboarding PR 2: first-session suggestion status and stop — ops/onboarding.ts; lane 5 O2 job proposals — ops/propose.ts
 ];
 
 // Area taxonomy + output redaction: one finalize step shared with the CLI's
