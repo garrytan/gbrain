@@ -200,6 +200,7 @@ fn live_leases_carry_their_beacon_and_holder_owner() {
         json!({ "data": {"__owner_client_id": "client-a"} }),
     );
     let lease = |pid: i64, token: &str, ttl: f64| LockAcquire {
+        fence: None,
         holder_pid: pid,
         holder_host: Some(format!("host-{pid}")),
         acquisition_token: token.into(),

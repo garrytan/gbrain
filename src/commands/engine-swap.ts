@@ -19,6 +19,8 @@ import type { BrainEngine } from '../core/engine.ts';
 import { noBrainError } from '../core/engine-connect.ts';
 import { opError } from '../core/ops/contract.ts';
 import { ENGINE_SELECTING_ENV, planEngineSwap, type ServiceDefinition, type SwapPlan, type SwapPlanInputs } from '../core/engine-swap/plan.ts';
+import { resolveSwapDestination, type SwapDestinationProbe } from '../core/engine-swap/destination.ts';
+import { rustMultiuserFromEnv } from '../core/rust-engine/multiuser-switch.ts';
 import { mountedBrainError, SWAP_RECOVERY } from '../core/engine-swap/refusals.ts';
 import { HOST_BRAIN_ID } from '../core/brain-registry.ts';
 import { resolveBrainId } from '../core/brain-resolver.ts';
@@ -113,6 +115,8 @@ export interface EngineSwapCliDeps extends Pick<SwapPlanInputs, 'readShadowStatu
   openEngine?: () => Promise<BrainEngine>;
   /** Resolves the selected brain id (default: resolveBrainId, which reads --brain, GBRAIN_BRAIN_ID and .gbrain-mount). */
   resolveBrain?: (explicit: string | null) => string;
+  /** Reads the swap destination's facts (default: none, so the plan refuses many writer hosts until the server lands). */
+  resolveDestination?: SwapDestinationProbe;
   /** The global --brain value (default: getCliOptions().brain). */
   cliBrain?: string | null;
   out?: (text: string) => void;
@@ -156,8 +160,12 @@ export async function runEngineSwap(args: readonly string[], deps: EngineSwapCli
     const env = deps.env ?? process.env;
     const home = deps.home ?? env.HOME ?? '';
     const dataDir = deps.dataDir ?? home;
+    // The destination is read from the destination, never from `engine`; with the switch off nothing is read at all.
+    const multiuser = rustMultiuserFromEnv(deps.env);
+    const destination = multiuser ? { multiuser, expectedBrainId: brainId, destination: await resolveSwapDestination(brainId, deps.resolveDestination) } : undefined;
     const plan = await planEngineSwap(engine, {
       readShadowStatus: deps.readShadowStatus, now: deps.now,
+      destination,
       envNames: ENGINE_SELECTING_ENV.filter(v => (env[v] ?? '') !== ''),
       services: home ? serviceDefinitions(home) : [],
       disk: { path: dataDir, free_bytes: dataDir ? freeBytes(dataDir) : null },

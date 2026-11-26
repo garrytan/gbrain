@@ -41,6 +41,7 @@ import { currentRunDeadline, lastForwardProgressAt, noteCommittedProgress, noteF
 import { faultPoint } from './fault-points.ts';
 import { VERSION } from '../../version.ts';
 import { LEASE_BEACON_QUEUE } from '../minions/protected-names.ts';
+import { fenceOpts } from './host-fence.ts';
 
 export const DRAIN_LEASE_TTL_MINUTES = 2;
 export const DRAIN_LEASE_REFRESH_MS = 20_000;
@@ -247,7 +248,7 @@ export interface DrainLeaseOptions {
 async function writeHolderRecord(engine: BrainEngine, sourceId: string, lease: DrainLease, holder: DrainHolderRef): Promise<void> {
   // One statement: a former holder's row goes first.
   await engine.writeDrainLeaseHolder({ sourceId, lockToken: lease.token, beacon: { kind: holder.kind, id: holder.id ?? null, version: VERSION },
-    ttlMinutes: DRAIN_LEASE_TTL_MINUTES });
+    ttlMinutes: DRAIN_LEASE_TTL_MINUTES, ...fenceOpts(engine) });
 }
 
 /**
@@ -269,7 +270,7 @@ export async function withDrainLease(engine: BrainEngine, sourceId: string, opts
         const lease: DrainLease = { lockId, sourceId, token: handle.acquisitionToken, signal };
         await writeHolderRecord(engine, sourceId, lease, opts.holder);
         const beacon = setInterval(() => {
-          void engine.refreshDrainLeaseHolder(lease.token, DRAIN_LEASE_TTL_MINUTES).catch(() => undefined);
+          void engine.refreshDrainLeaseHolder(lease.token, DRAIN_LEASE_TTL_MINUTES, fenceOpts(engine)).catch(() => undefined);
         }, DRAIN_LEASE_REFRESH_MS);
         beacon.unref?.();
         try {
@@ -279,7 +280,7 @@ export async function withDrainLease(engine: BrainEngine, sourceId: string, opts
           return await leases.run(store, () => work(signal));
         } finally {
           clearInterval(beacon);
-          released = engine.releaseDrainLeaseHolder(lease.token).catch(() => undefined);
+          released = engine.releaseDrainLeaseHolder(lease.token, fenceOpts(engine)).catch(() => undefined);
         }
       }, { ttlMinutes: DRAIN_LEASE_TTL_MINUTES, refreshIntervalMs: DRAIN_LEASE_REFRESH_MS }).finally(() => released);
     } catch (error) {

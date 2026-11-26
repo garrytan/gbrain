@@ -213,6 +213,7 @@ fn progress_tokens_delay_release_mark_and_retry() {
     assert_eq!(row["tokens_cache_read"], 10);
 
     let opts = |append, clear| DelayOpts {
+        fence: None,
         error_text: "later".into(),
         delay_ms: 2000.0,
         append_stack: append,

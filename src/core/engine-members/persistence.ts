@@ -40,6 +40,7 @@ import type { SegmentedGateEvidenceRow } from '../engine-sql/writer-versions.ts'
 import type { TerminalIntentCompaction, WriteRequestGroupInsert } from '../engine-sql/persistence-journal.ts';
 import type { HeadBlockerReadOpts, HeadBlockerRow, RecoveringHeadRow } from '../engine-sql/head-blocker.ts';
 import type { IncompleteSyncReceiptRow, IncompleteSyncReceiptSpec, OpenPassWorkSpec } from '../engine-sql/checkpoint-validation.ts';
+import type { FenceOpts } from '../engine-sql/lease-token.ts';
 
 export interface PersistenceMembers {
   /** The atom generation a page's content keys on (engine-sql/atom-generation.ts): the kept content's, else the current one, 0 with none. Reads op_checkpoints. */
@@ -254,7 +255,7 @@ export interface PersistenceMembers {
   /** The owner host's checkout path of worktree `worktreeId` (its host binding's `local_path`), or null without an owner or a binding. */
   readOwnerHostBinding(worktreeId: string): Promise<string | null>;
   /** Stamps a claim (running, token, lease, first phase) on request `id`; null when the refresh barrier refused it. */
-  stampWriteClaim(id: string, token: string, leaseMs: number, phaseJson: string): Promise<ClaimedWriteRow | null>;
+  stampWriteClaim(id: string, token: string, leaseMs: number, phaseJson: string, opts?: FenceOpts): Promise<ClaimedWriteRow | null>;
   /** Request `id` locked FOR UPDATE until the transaction ends, or null. */
   lockWriteRequest(id: string): Promise<WriteRequest | null>;
   /** Records a request's terminal state and releases its counters; null when the result exceeds its reservation. */

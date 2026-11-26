@@ -58,6 +58,7 @@ pub mod cycle_fence;
 pub mod doctor;
 pub mod doctor_pages;
 mod embedding;
+pub mod entity_order;
 /// Postgres `md5(text)`, for the timeline retraction check's version digests.
 pub(crate) use embedding::md5_hex;
 pub mod extractor_classify;
@@ -1782,6 +1783,9 @@ impl Store {
             require_fact_source(tx, &args.source_id)?;
             row.id = next_id(tx, COUNTER)?;
             write_fact(tx, trust, None, &row)?;
+            if self.multiuser() {
+                entity_order::stamp_new_row(tx, &row)?;
+            }
             let Some(supersede) = args.supersede_id else {
                 return Ok(json!({ "id": row.id, "status": "inserted" }));
             };
@@ -1908,6 +1912,9 @@ impl Store {
                 }
                 require_fact_source(tx, &args.source_id)?;
                 write_fact(tx, trust, None, &row)?;
+                if self.multiuser() {
+                    entity_order::stamp_new_row(tx, &row)?;
+                }
                 row_ids.push(Some(row.id));
             }
             let warnings = link_supersessions(tx, trust, &args.source_id, &args.rows, &row_ids)?;

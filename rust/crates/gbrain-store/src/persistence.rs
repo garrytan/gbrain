@@ -56,11 +56,13 @@
 use crate::config::read_config;
 use crate::env::{Env, is_uuid, iso, parse_iso};
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
+use crate::fence;
 use crate::journal::{
     PRINCIPAL_KINDS, Principal, RequestRecord, max_sequence, next_sequence, read_request,
     write_request,
 };
 use crate::kv::{KvRead, KvWrite, scan_prefix};
+use crate::leases::{CLAIM_WRITE, LeaseToken};
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -950,6 +952,10 @@ pub struct ClaimStamp {
     pub lease_ms: f64,
     #[serde(default)]
     pub phase_json: Option<String>,
+    /// The caller's host registration (lane L5). A stamp records its lease name and epoch beside the claim; a renewal
+    /// must carry the same.
+    #[serde(default)]
+    pub fence: Option<LeaseToken>,
 }
 
 fn lease_end(now: i64, lease_ms: f64) -> i64 {
@@ -1022,6 +1028,18 @@ pub(crate) fn stamp_write_claim_in(
     Ok(Some(row))
 }
 
+/// Requires that request `id`, while a claim holds it (an execution token is stamped), was claimed under `fence`'s
+/// lease name and epoch. A request nobody holds (queued, or finished) has no claim to check.
+fn held_claim_of(read: &dyn KvRead, id: &str, fence: Option<&LeaseToken>) -> Result<()> {
+    let (Some(fence), Some(record)) = (fence, request_by_id(read, id)?) else {
+        return Ok(());
+    };
+    if json_text(record.extra.get("execution_token")).is_some() {
+        crate::leases::check_claim_epoch(read, CLAIM_WRITE, &record.id.to_lowercase(), fence)?;
+    }
+    Ok(())
+}
+
 /// `WriteCompletion` of `src/core/engine-sql/persistence-journal.ts`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1046,6 +1064,9 @@ pub struct WriteCompletion {
     pub terminal_reservation: i64,
     #[serde(default)]
     pub probe_purges: bool,
+    /// The caller's host registration (lane L5): a claimed request finishes only under the epoch it was claimed under.
+    #[serde(default)]
+    pub fence: Option<LeaseToken>,
 }
 
 /// `TerminalIntentCompaction` of `src/core/engine-sql/persistence-journal.ts`: the compaction of a
@@ -1299,6 +1320,9 @@ pub struct ClaimRelease {
     pub reason: String,
     #[serde(default)]
     pub charge: bool,
+    /// The caller's host registration (lane L5).
+    #[serde(default)]
+    pub fence: Option<LeaseToken>,
 }
 
 /// `RELEASE_CLAIM_SQL`: a request still `running` under `token`, with no recovery record, that
@@ -1351,6 +1375,9 @@ pub struct ExpireClaims {
     pub charge: bool,
     #[serde(default)]
     pub dead_owners: Vec<String>,
+    /// The caller's host registration (lane L5): only a host that holds its lease reclaims claims.
+    #[serde(default)]
+    pub fence: Option<LeaseToken>,
 }
 
 /// How many claims `expire_stale_write_claims_in` releases at most (the statement's `LIMIT 100`).
@@ -1364,6 +1391,7 @@ pub(crate) fn expire_stale_write_claims_in(
     tx: &mut dyn KvWrite,
     env: &dyn Env,
     spec: &ExpireClaims,
+    expired: &mut Vec<String>,
 ) -> Result<u64> {
     let host = uuid_param(&spec.host_id, "hostId")?;
     let now = env.now_micros();
@@ -1423,6 +1451,7 @@ pub(crate) fn expire_stale_write_claims_in(
         r.extra.insert("execution_token".into(), Value::Null);
         r.extra.insert("claim_expires_at".into(), Value::Null);
         write_request(tx, &r)?;
+        expired.push(r.id.clone());
     }
     Ok(released)
 }
@@ -1446,6 +1475,8 @@ pub struct ClaimableSpec {
     /// source's drain lease another live process holds after every other row. `None` for a
     /// resident consumer.
     pub lease_holder: Option<LeaseHolder>,
+    /// The caller's host registration (lane L5): only a host that holds its lease selects a claim.
+    pub fence: Option<LeaseToken>,
 }
 
 /// The lock a non-resident consumer checks before it takes a managed-sync row.
@@ -1744,12 +1775,31 @@ impl Store {
 
     /// `stampWriteClaim(id, token, leaseMs, phaseJson)`: the claimed row or `None`.
     pub fn stamp_write_claim(&self, stamp: &ClaimStamp) -> Result<Option<Value>> {
-        self.write(|tx| stamp_write_claim_in(tx, &*self.env, stamp))
+        self.write(|tx| {
+            fence::begin(self, tx, stamp.fence.as_ref(), "stamp_write_claim")?;
+            let row = stamp_write_claim_in(tx, &*self.env, stamp)?;
+            if let Some(id) = row.as_ref().and_then(|r| r["id"].as_str()) {
+                fence::claim_taken(tx, CLAIM_WRITE, &id.to_lowercase(), stamp.fence.as_ref())?;
+            }
+            Ok(row)
+        })
     }
 
-    /// `completeWriteRow(completion)`: the completed row, or `None` when it does not fit.
+    /// `completeWriteRow(completion)`: the completed row, or `None` when it does not fit. A claimed request
+    /// finishes only under the fence it was claimed under (`lease_lost` otherwise, nothing written).
     pub fn complete_write_row(&self, completion: &WriteCompletion) -> Result<Option<Value>> {
-        self.write(|tx| complete_write_row_in(tx, &*self.env, completion))
+        let fence = completion.fence.as_ref();
+        self.write(|tx| {
+            fence::begin(self, tx, fence, "complete_write_row")?;
+            if fence.is_some() {
+                held_claim_of(tx, &completion.id, fence)?;
+            }
+            let row = complete_write_row_in(tx, &*self.env, completion)?;
+            if row.is_some() {
+                fence::claim_ended(self, tx, CLAIM_WRITE, &completion.id.to_lowercase(), fence)?;
+            }
+            Ok(row)
+        })
     }
 
     /// `compactTerminalIntent(compaction)`: the compacted row, or `None` for an unknown id.
@@ -1762,22 +1812,62 @@ impl Store {
 
     /// `cancelWriteRow(cancellation)`: `{ status, row }`, or `None` when the row does not exist.
     pub fn cancel_write_row(&self, cancellation: &WriteCancellation) -> Result<Option<Value>> {
-        self.write(|tx| cancel_write_row_in(tx, &*self.env, cancellation))
+        self.write(|tx| {
+            let out = cancel_write_row_in(tx, &*self.env, cancellation)?;
+            // A cancelled request's claim ends with it (an operator's cancel carries no fence).
+            if out.as_ref().is_some_and(|o| o["status"] == "cancelled") {
+                let id = cancellation.completion.id.to_lowercase();
+                fence::claim_ended(self, tx, CLAIM_WRITE, &id, None)?;
+            }
+            Ok(out)
+        })
     }
 
     /// `renewWriteClaim(id, token, leaseMs, phaseJson)`.
     pub fn renew_write_claim(&self, stamp: &ClaimStamp) -> Result<bool> {
-        self.write(|tx| renew_write_claim_in(tx, &*self.env, stamp))
+        self.write(|tx| {
+            fence::begin(self, tx, stamp.fence.as_ref(), "renew_write_claim")?;
+            if stamp.fence.is_some() {
+                held_claim_of(tx, &stamp.id, stamp.fence.as_ref())?;
+            }
+            renew_write_claim_in(tx, &*self.env, stamp)
+        })
     }
 
     /// `releaseUnpublishedClaim({ id, token, reason, charge })`: whether the claim was released.
     pub fn release_unpublished_claim(&self, release: &ClaimRelease) -> Result<bool> {
-        self.write(|tx| release_unpublished_claim_in(tx, &*self.env, release))
+        let fence = release.fence.as_ref();
+        self.write(|tx| {
+            fence::begin(self, tx, fence, "release_unpublished_claim")?;
+            if fence.is_some() {
+                held_claim_of(tx, &release.id, fence)?;
+            }
+            let released = release_unpublished_claim_in(tx, &*self.env, release)?;
+            if released {
+                fence::claim_ended(self, tx, CLAIM_WRITE, &release.id.to_lowercase(), fence)?;
+            }
+            Ok(released)
+        })
     }
 
-    /// `expireStaleWriteClaims({ hostId, charge, deadOwners })`: how many claims were released.
+    /// `expireStaleWriteClaims({ hostId, charge, deadOwners })`: how many claims were released. Each released
+    /// claim's epoch record goes with it.
     pub fn expire_stale_write_claims(&self, spec: &ExpireClaims) -> Result<u64> {
-        self.write(|tx| expire_stale_write_claims_in(tx, &*self.env, spec))
+        self.write(|tx| {
+            fence::begin(self, tx, spec.fence.as_ref(), "expire_stale_write_claims")?;
+            let mut expired = Vec::new();
+            let released = expire_stale_write_claims_in(tx, &*self.env, spec, &mut expired)?;
+            for id in &expired {
+                fence::claim_ended(
+                    self,
+                    tx,
+                    CLAIM_WRITE,
+                    &id.to_lowercase(),
+                    spec.fence.as_ref(),
+                )?;
+            }
+            Ok(released)
+        })
     }
 
     /// `hasClaimableWrite(spec)`.
@@ -1788,7 +1878,9 @@ impl Store {
     /// `selectClaimableWrite(spec)`: the row `claimNextWrite` claims next, or `None`; the claim's
     /// stamp is `stamp_write_claim`.
     pub fn select_claimable_write(&self, spec: &ClaimableSpec) -> Result<Option<Value>> {
-        select_claimable_write_in(&*self.read()?, &*self.env, spec)
+        let read = self.read()?;
+        crate::leases::check_fence(self, &*read, spec.fence.as_ref(), "select_claimable_write")?;
+        select_claimable_write_in(&*read, &*self.env, spec)
     }
 
     /// `countOutstandingBySource(principalKind, principalId)`: `[{ source_id, n }]`, one row per source

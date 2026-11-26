@@ -76,6 +76,7 @@ fn request(store: &Store, request_id: &str, slug: &str, state: &str) -> (String,
     let id = row["id"].as_str().unwrap().to_string();
     store
         .stamp_write_claim(&ClaimStamp {
+            fence: None,
             id: id.clone(),
             token: TOKEN.into(),
             lease_ms: 1000.0,

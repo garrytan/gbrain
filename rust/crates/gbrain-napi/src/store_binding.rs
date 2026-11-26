@@ -172,6 +172,17 @@ impl Brain {
             .is_some()
     }
 
+    /// True while the open brain runs in multi-user mode (I-0); false when closed or off. A bound transaction handle
+    /// answers for the brain it runs on.
+    #[napi(getter)]
+    pub fn multiuser(&self) -> bool {
+        self.slot
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .is_some_and(|s| s.multiuser())
+    }
+
     /// `open(path, options?)`: opens the brain in directory `path` (created when empty) and
     /// resolves `{ brain_id, format_version, schema_version, created }`.
     ///

@@ -12,6 +12,7 @@
  * statement reaches the connection it reached before, a transaction's clone included.
  */
 import type { LegacyUnscopedRead } from './brands.ts';
+import type { LeaseToken } from './lease-token.ts';
 
 /** The engine an effect worker statement runs on: its own `executeRaw` (or the direct lane's). */
 export interface EffectExec { executeRaw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]> }
@@ -20,9 +21,9 @@ export interface EffectExec { executeRaw<T = Record<string, unknown>>(sql: strin
 export type EffectId = string | number;
 
 /** `stampEffectClaim`: claims effect `id` under `token`; `ownerJson` is the `claim_owner` stamp (`effectClaimStamp`). */
-export interface EffectClaim { id: EffectId; token: string; ownerJson: string }
+export interface EffectClaim { id: EffectId; token: string; ownerJson: string; fence?: LeaseToken }
 /** A held claim: the effect's id and the claim's execution token (null matches no claim). */
-export interface EffectClaimRef { id: EffectId; token: string | null }
+export interface EffectClaimRef { id: EffectId; token: string | null; fence?: LeaseToken }
 
 /** `stampEffectClaim`: $1 id, $2 token, $3 the owner stamp. The text `claimPersistenceEffect` has always sent. */
 export const STAMP_EFFECT_CLAIM_SQL = `UPDATE persistence_effects SET state='running',execution_token=$2::uuid,claim_owner=$3::text::jsonb,

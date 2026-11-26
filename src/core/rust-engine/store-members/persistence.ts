@@ -35,6 +35,7 @@ import type { RustEngine } from '../../rust-engine.ts';
 import type { StoreBrain } from '../store.ts';
 import { readOauthClient } from './jobs-oauth-clients.ts';
 import { readBrainMode } from './writer-release.ts';
+import type { FenceOpts } from '../../engine-sql/lease-token.ts';
 // The managed-worktree admission members (managed_persistence), served beside the journal's.
 export * from './persistence-admission.ts';
 
@@ -232,9 +233,9 @@ export const readOwnerHostBinding: StoreMember<[worktreeId: string], string | nu
   (await storeCall({ member: 'readOwnerHostBinding' }, () => brain.readOwnerHostBinding(worktreeId))) as string | null;
 
 /** The claim stamp; `passed_sync` is false and the refresh barrier never refuses (this engine has no worktrees). */
-export const stampWriteClaim: StoreMember<[id: string, token: string, leaseMs: number, phaseJson: string], ClaimedWriteRow | null> =
-  async (brain, id, token, leaseMs, phaseJson) =>
-    requestRow<ClaimedWriteRow>(await storeCall({ member: 'stampWriteClaim' }, () => brain.stampWriteClaim({ id, token, leaseMs, phaseJson })));
+export const stampWriteClaim: StoreMember<[id: string, token: string, leaseMs: number, phaseJson: string, opts?: FenceOpts], ClaimedWriteRow | null> =
+  async (brain, id, token, leaseMs, phaseJson, opts) =>
+    requestRow<ClaimedWriteRow>(await storeCall({ member: 'stampWriteClaim' }, () => brain.stampWriteClaim({ id, token, leaseMs, phaseJson, ...(opts?.fence ? { fence: opts.fence } : {}) })));
 
 /** The completion; this engine keeps no persistence effects, so the queued effect size is 0. */
 export const completeWriteRow: StoreMember<[completion: WriteCompletion], CompletedWriteRow | null> = async (brain, completion) =>
@@ -331,18 +332,28 @@ export const hasClaimableWrite: StoreMember<[hostId: string, excludeRoots: strin
 export const selectClaimableWrite: StoreMember<[spec: ClaimHeadSpec], WriteRequest | null> = async (brain, spec) =>
   requestRow<WriteRequest>(await storeCall({ member: 'selectClaimableWrite' }, () => brain.selectClaimableWrite({
     hostId: spec.hostId, excludeRoots: spec.excludeRoots, fifoRoots: spec.fifoRoots, laneRoots: spec.laneRoots, nonce: spec.nonce,
-    syncSeen: spec.syncSeen, priority: spec.priority, leaseHolder: spec.leaseHolder })));
+    syncSeen: spec.syncSeen, priority: spec.priority, leaseHolder: spec.leaseHolder, ...(spec.fence ? { fence: spec.fence } : {}) })));
 
-// The consumer rows. One process owns this engine's brain, so the store keeps no consumer heartbeat rows and no
-// worktrees: the reads answer none (PGLite's callers answer the same without a read) and the writes change nothing.
-/** The host's consumer rows; none here. */
-export const listHostConsumerRows: StoreMember<[hostId: string, opts?: { signal?: AbortSignal; direct?: boolean }], ConsumerRowRead[]> = async () => [];
-/** The host's live full consumers other than the caller; none here. */
-export const probeLiveConsumerRows: StoreMember<[probe: ConsumerProbe, opts?: { signal?: AbortSignal; direct?: boolean }], ConsumerRowRead[]> = async () => [];
-/** The heartbeat renewal; no row is kept. */
-export const renewConsumerRow: StoreMember<[renewal: ConsumerRenewal, opts?: { signal?: AbortSignal }], void> = async () => undefined;
-/** The heartbeat's row delete; there is no row. */
-export const deleteConsumerRow: StoreMember<[key: ConsumerRowKey, opts?: { signal?: AbortSignal }], void> = async () => undefined;
+// The consumer rows. With multi-user mode off one process owns this engine's brain, so the store keeps no consumer
+// heartbeat rows and no worktrees: the reads answer none (PGLite's callers answer the same without a read) and the writes
+// change nothing. In multi-user mode (I-0; the brain reports `multiuser`) clients on several hosts share the brain, so the
+// store keeps real rows with the SQL engines' shape, on its own clock (gbrain-store consumers.rs; audit row B8).
+/** The host's consumer rows; none unless the brain runs in multi-user mode. */
+export const listHostConsumerRows: StoreMember<[hostId: string, opts?: { signal?: AbortSignal; direct?: boolean }], ConsumerRowRead[]> = async (brain, hostId) =>
+  brain.multiuser === true ? storeCall({ member: 'listHostConsumerRows' }, () => brain.listHostConsumerRows(hostId)) as Promise<ConsumerRowRead[]> : [];
+/** The host's live full consumers other than the caller; none unless the brain runs in multi-user mode. */
+export const probeLiveConsumerRows: StoreMember<[probe: ConsumerProbe, opts?: { signal?: AbortSignal; direct?: boolean }], ConsumerRowRead[]> = async (brain, probe) =>
+  brain.multiuser === true
+    ? storeCall({ member: 'probeLiveConsumerRows' }, () => brain.probeLiveConsumerRows({ hostId: probe.hostId, kinds: [...probe.kinds], pid: probe.pid, nonce: probe.nonce, liveMs: probe.liveMs })) as Promise<ConsumerRowRead[]>
+    : [];
+/** The heartbeat renewal; no row is kept unless the brain runs in multi-user mode. */
+export const renewConsumerRow: StoreMember<[renewal: ConsumerRenewal, opts?: { signal?: AbortSignal }], void> = async (brain, renewal) => {
+  if (brain.multiuser === true) await storeCall({ member: 'renewConsumerRow' }, () => brain.renewConsumerRow(renewal));
+};
+/** The heartbeat's row delete; there is no row unless the brain runs in multi-user mode. */
+export const deleteConsumerRow: StoreMember<[key: ConsumerRowKey, opts?: { signal?: AbortSignal }], void> = async (brain, key) => {
+  if (brain.multiuser === true) await storeCall({ member: 'deleteConsumerRow' }, () => brain.deleteConsumerRow({ hostId: key.hostId, pid: key.pid, nonce: key.nonce }));
+};
 /** The worktree heartbeat stamp: `heartbeat_at` now on every worktree the host owns (the claims an unmanaged brain keeps). */
 export const stampWorktreeHeartbeats: StoreMember<[hostId: string, opts?: { signal?: AbortSignal }], void> = async (brain, hostId, opts) => {
   opts?.signal?.throwIfAborted();

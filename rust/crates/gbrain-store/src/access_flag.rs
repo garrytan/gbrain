@@ -404,15 +404,22 @@ mod tests {
         //   whole files under `#[cfg(test)]`;
         // - `seed/v0_60_766_tests.rs`, a whole file under `#[cfg(test)]` that writes an older
         //   addon's records into an empty record file before any store opens it;
+        // - `facts/entity_order_tests.rs`, a whole file under `#[cfg(test)]` whose commit-order test stamps rows
+        //   straight on the `Kv` to read each commit's own commit sequence (fact rows are not written, so no
+        //   page record can name readers);
         // - `test_support.rs`'s `FaultyKv`, which wraps a record store in tests to make a write
-        //   transaction fail like a disk and passes every call on (4 calls and definitions).
+        //   transaction fail like a disk and passes every call on (4 calls and definitions);
+        // - `leases_tests.rs`, a whole file under `#[cfg(test)]` whose read-set test opens raw write transactions on the
+        //   concurrent store to show a lease read is checked again at commit (3 calls).
         let allowed: &[(&str, usize)] = &[
             ("access_flag.rs", 1),
+            ("facts/entity_order_tests.rs", 1),
             ("fjall_kv.rs", 1),
             ("keyword/index_build.rs", 1),
             ("keyword/index_build/tests.rs", 1),
             ("keyword/index_writer/tests.rs", 2),
             ("kv.rs", 5),
+            ("leases_tests.rs", 3),
             ("lib.rs", 5),
             ("occ_kv.rs", 4),
             ("page_body/purge_record.rs", 1),

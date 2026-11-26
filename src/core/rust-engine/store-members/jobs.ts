@@ -16,6 +16,7 @@ import { withDates } from '../store-codec.ts';
 import type { StoreBrain } from '../store.ts';
 import { storeErrorCode } from '../store-errors.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import type { FenceOpts } from '../../engine-sql/lease-token.ts';
 
 /** The `timestamptz` columns of `minion_jobs`. */
 const JOB_DATES = ['lock_until', 'delay_until', 'timeout_at', 'private_queue_lease_until', 'created_at', 'started_at', 'finished_at', 'updated_at'] as const;
@@ -131,18 +132,23 @@ export const claimNextJob: StoreMember<[spec: ClaimJobSpec], JobRow | null> = as
 };
 
 /** The store's write is not interrupted, as a renewal already sent to the database is not; a signal is ignored. */
-export const renewJobLease: StoreMember<[id: number, lockToken: string, lockDurationMs: number, opts?: { signal?: AbortSignal }], boolean> =
-  (brain, id, lockToken, lockDurationMs) => storeCall({ member: 'renewJobLease' }, () => brain.renewJobLease(id, lockToken, lockDurationMs));
+export const renewJobLease: StoreMember<[id: number, lockToken: string, lockDurationMs: number, opts?: { signal?: AbortSignal } & FenceOpts], boolean> =
+  (brain, id, lockToken, lockDurationMs, opts) => storeCall({ member: 'renewJobLease' }, () =>
+    opts?.fence ? brain.renewJobLease(id, lockToken, lockDurationMs, opts.fence) : brain.renewJobLease(id, lockToken, lockDurationMs));
 
-export const completeJob: StoreMember<[id: number, lockToken: string, result?: Record<string, unknown>], JobRow | null> =
-  async (brain, id, lockToken, result) => jobRow(await storeCall({ member: 'completeJob' }, () => brain.completeJob(id, lockToken, result ?? null)));
+export const completeJob: StoreMember<[id: number, lockToken: string, result?: Record<string, unknown>, opts?: FenceOpts], JobRow | null> =
+  async (brain, id, lockToken, result, opts) => jobRow(await storeCall({ member: 'completeJob' }, () =>
+    opts?.fence ? brain.completeJob(id, lockToken, result ?? null, opts.fence) : brain.completeJob(id, lockToken, result ?? null)));
 
-export const failJob: StoreMember<[id: number, lockToken: string, errorText: string, newStatus: 'delayed' | 'failed' | 'dead', backoffMs?: number, result?: Record<string, unknown>], JobRow | null> =
-  async (brain, id, lockToken, errorText, newStatus, backoffMs, result) =>
-    jobRow(await storeCall({ member: 'failJob' }, () => brain.failJob(id, lockToken, errorText, newStatus, backoffMs ?? null, result ?? null)));
+export const failJob: StoreMember<[id: number, lockToken: string, errorText: string, newStatus: 'delayed' | 'failed' | 'dead', backoffMs?: number, result?: Record<string, unknown>, opts?: FenceOpts], JobRow | null> =
+  async (brain, id, lockToken, errorText, newStatus, backoffMs, result, opts) =>
+    jobRow(await storeCall({ member: 'failJob' }, () => opts?.fence
+      ? brain.failJob(id, lockToken, errorText, newStatus, backoffMs ?? null, result ?? null, opts.fence)
+      : brain.failJob(id, lockToken, errorText, newStatus, backoffMs ?? null, result ?? null)));
 
-export const reclaimStalledJobs: StoreMember<[graceMs: number], { requeued: JobRow[]; dead: JobRow[] }> = async (brain, graceMs) => {
-  const out: { requeued: JobRow[]; dead: JobRow[] } = await storeCall({ member: 'reclaimStalledJobs' }, () => brain.reclaimStalledJobs(graceMs, WATCHDOG_SUSPECT_MARK));
+export const reclaimStalledJobs: StoreMember<[graceMs: number, opts?: FenceOpts], { requeued: JobRow[]; dead: JobRow[] }> = async (brain, graceMs, opts) => {
+  const out: { requeued: JobRow[]; dead: JobRow[] } = await storeCall({ member: 'reclaimStalledJobs' }, () =>
+    opts?.fence ? brain.reclaimStalledJobs(graceMs, WATCHDOG_SUSPECT_MARK, opts.fence) : brain.reclaimStalledJobs(graceMs, WATCHDOG_SUSPECT_MARK));
   return { requeued: out.requeued.map(r => jobRow(r)!), dead: out.dead.map(r => jobRow(r)!) };
 };
 
@@ -214,8 +220,9 @@ export const releasePageEmbeddingLease: StoreMember<[leaseId: string, opts: { ac
   await storeCall({ member: 'releasePageEmbeddingLease' }, () => brain.releasePageEmbeddingLease(leaseId, opts));
 };
 
-export const assertCycleLease: StoreMember<[lockId: string, acquisitionToken: string], boolean> = (brain, lockId, acquisitionToken) =>
-  storeCall({ member: 'assertCycleLease' }, () => brain.assertCycleLease(lockId, acquisitionToken));
+export const assertCycleLease: StoreMember<[lockId: string, acquisitionToken: string, opts?: FenceOpts], boolean> = (brain, lockId, acquisitionToken, opts) =>
+  storeCall({ member: 'assertCycleLease' }, () =>
+    opts?.fence ? brain.assertCycleLease(lockId, acquisitionToken, opts.fence) : brain.assertCycleLease(lockId, acquisitionToken));
 
 /** `readLiveJobIds`: the given ids whose job is still live, ascending (the store reads each id's row). */
 export const readLiveJobIds: StoreMember<[ids: number[]], number[]> = async (brain, ids) =>
@@ -226,14 +233,18 @@ export const readDrainLeaseBeacon: StoreMember<[lockToken: string], Record<strin
   await storeCall({ member: 'readDrainLeaseBeacon' }, () => brain.readDrainLeaseBeacon(lockToken)) as Record<string, unknown> | null;
 
 export const writeDrainLeaseHolder: StoreMember<[record: DrainLeaseHolderRecord], void> = async (brain, record) => {
-  await storeCall({ member: 'writeDrainLeaseHolder', sourceId: record.sourceId }, () => brain.writeDrainLeaseHolder(record.sourceId, record.lockToken,
-    { sourceId: record.sourceId, drain_lease_beacon: record.beacon }, record.ttlMinutes));
+  const data = { sourceId: record.sourceId, drain_lease_beacon: record.beacon };
+  await storeCall({ member: 'writeDrainLeaseHolder', sourceId: record.sourceId }, () => record.fence
+    ? brain.writeDrainLeaseHolder(record.sourceId, record.lockToken, data, record.ttlMinutes, record.fence)
+    : brain.writeDrainLeaseHolder(record.sourceId, record.lockToken, data, record.ttlMinutes));
 };
 
-export const refreshDrainLeaseHolder: StoreMember<[lockToken: string, ttlMinutes: number], void> = async (brain, lockToken, ttlMinutes) => {
-  await storeCall({ member: 'refreshDrainLeaseHolder' }, () => brain.refreshDrainLeaseHolder(lockToken, ttlMinutes));
+export const refreshDrainLeaseHolder: StoreMember<[lockToken: string, ttlMinutes: number, opts?: FenceOpts], void> = async (brain, lockToken, ttlMinutes, opts) => {
+  await storeCall({ member: 'refreshDrainLeaseHolder' }, () =>
+    opts?.fence ? brain.refreshDrainLeaseHolder(lockToken, ttlMinutes, opts.fence) : brain.refreshDrainLeaseHolder(lockToken, ttlMinutes));
 };
 
-export const releaseDrainLeaseHolder: StoreMember<[lockToken: string], void> = async (brain, lockToken) => {
-  await storeCall({ member: 'releaseDrainLeaseHolder' }, () => brain.releaseDrainLeaseHolder(lockToken));
+export const releaseDrainLeaseHolder: StoreMember<[lockToken: string, opts?: FenceOpts], void> = async (brain, lockToken, opts) => {
+  await storeCall({ member: 'releaseDrainLeaseHolder' }, () =>
+    opts?.fence ? brain.releaseDrainLeaseHolder(lockToken, opts.fence) : brain.releaseDrainLeaseHolder(lockToken));
 };

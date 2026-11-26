@@ -206,6 +206,7 @@ Errors from the addon are real `Error` objects with a `code`:
 | `store_io` | The file system or the storage engine failed; the write did not commit. |
 | `store_corrupt` | The records fail their integrity check, or `FORMAT` names another brain. |
 | `invalid_state` | The call does not fit the handle's state (`open` on an open handle), or `finishWrite` met a request that already ended. |
+| `lease_lost` | Multi-user mode: a lease fence failed (`leases.rs`). The message is JSON `{ reason, name, epoch, current_epoch }`; `reason` is `not_found`, `epoch_moved`, `released`, `expired`, `fence_missing` or `claim_epoch_mismatch`. Nothing was written. |
 | `snapshot_cancelled` | `snapshotTo` was cancelled with `snapshotCancel`. It removed what it wrote and released its read before it rejected. |
 | `read_only_transaction` | A write inside a read-only transaction (Postgres SQLSTATE `25006`). Nothing was written. |
 | `unmodeled_input` | An input written in a form the store does not read the way Postgres does (a resolved date with a zone followed by an offset such as `PST+1`, or a date after 2037 in a zone with daylight saving time). Nothing was written; the engine refuses the call as `engine_capability_missing`, naming the member and the input. |
