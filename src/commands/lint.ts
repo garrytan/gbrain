@@ -772,6 +772,7 @@ async function managedSourceRoot(engine: BrainEngine, target: string, sourceId: 
   const real = realpathSync.native(target);
   const held = (await Promise.all((await engine.listAllSources()).map(async source => {
     const binding = await getWorktreeBinding(engine, source.id);
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- this host's own worktree binding row; containment is checked below with relativeEscapesRoot
     const path = binding?.state === 'active' && binding.local_path ? resolve(binding.local_path, binding.relative_path ?? '') : source.local_path;
     if (!path) return [];
     let root: string;
