@@ -736,8 +736,10 @@ a soft-deleted page, the trust floor and the filters), so a row the caller canno
 | `listCallOffCueFacts(scope, pairs)` | For each pair, the newest 50 pool rows (by `valid_from`, then id) whose text holds one of 28 retraction or call-off phrases as whole words, case-insensitive (`\m...\M`, so `cancelledX` and `retractor` do not match; `called off-site` does). |
 | `listPoolEntityPairs(scope, filters)` | The distinct `(source, entity)` pairs of pool rows that have an entity. |
 
-The TypeScript members refuse (`engine_capability_missing`) a vector-typed column (the store keeps `halfvec`) and a read policy
-other than the no-caller or reader-identity one; `hnswIterativeScan` only changes the Postgres plan, so the store ignores it.
+The TypeScript members refuse (`engine_capability_missing`) a vector-typed column (the store keeps `halfvec`) and any visibility
+or private-provenance policy whose text matches none of the supported reference renderings described above. Supported
+labelled-only callers with lineage off are served; non-owner lineage reads remain refused by the private-provenance
+fact gate (row 32e-b-4). `hnswIterativeScan` only changes the Postgres plan, so the store ignores it.
 Parity: `test/engine-parity/recall-members.test.ts` (edges of each member and the pool functions a search and a recall call, whole),
 and the same members in `facts-rest-sites.test.ts`.
 
