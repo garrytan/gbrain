@@ -4,6 +4,7 @@
 path	class	reason
 test/access-archived-personal-source.serial.test.ts	global-state	global-state: spawns real gbrain CLI children (src/cli.ts sources archive, --as reads) that each open one on-disk PGLite brain and take its file lock in a temp GBRAIN_HOME; the case seeds and reads that one brain in order
 test/rust-mcp-http-transport.serial.test.ts	R1	R1: clears and then sets GBRAIN_RUST_MULTIUSER in process.env to seed one on-disk Rust brain with the mode off and reopen it with the mode on for the in-process legacy HTTP MCP transport
+test/rust-owner-admit-job.serial.test.ts	R1	R1: sets and clears GBRAIN_RUST_MULTIUSER in process.env so an in-process owner engine and its owner-socket client of one on-disk Rust brain run plain and multi-user in turn
 test/rust-owner-handoff.serial.test.ts	R1	R1: sets GBRAIN_RUST_MULTIUSER in process.env so the in-process client side of an owner handoff runs in multi-user mode, while owner child processes are spawned and killed mid-call on one on-disk Rust brain
 test/rust-owner-whole-ops.serial.test.ts	R1	R1: sets GBRAIN_RUST_MULTIUSER in process.env so the in-process client forwards whole write operations to a long-lived owner child process on one on-disk Rust brain
 test/rust-serve-http-config-route.serial.test.ts	R1	R1: clears GBRAIN_RUST_MULTIUSER in process.env so one on-disk Rust brain runs multi-user only through its own config row while the in-process serve --http app and legacy HTTP transport serve it
