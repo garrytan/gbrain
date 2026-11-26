@@ -23,7 +23,7 @@ import { requestAttribution } from '../persistence/attribution.ts';
 import { normalizeSkillFiles, skillMetadata, skillName, skillPath } from './manifest.ts';
 import { forgetSharedPacks } from './knowledge-guard.ts';
 import { assertSkillCapability, assertStoredSkillCapability, publicationEnabled, readSharedSkillPolicy, setSharedSkillPolicy } from './policy.ts';
-import { SHARED_SKILL_LIMITS, type SharedSkillFile, type SharedSkillPolicy, type SharedSkillPutInput, type SkillMetadata, type StoredSkillFile, type StoredSkillRevision } from './model.ts';
+import { SHARED_SKILL_LIMITS, type SharedSkillFile, type SharedSkillFileInput, type SharedSkillPolicy, type SharedSkillPutInput, type SkillMetadata, type StoredSkillFile, type StoredSkillRevision } from './model.ts';
 import { assertSharedSkillRetentionCapacity, pruneSharedSkillRevisionsInTransaction, sharedSkillRetentionCapacity, sharedSkillRetentionStatus } from './retention.ts';
 
 interface PackRow { pack_id: string; revision: string; manifest: Record<string, unknown>; manifest_hash: string; }
@@ -551,33 +551,54 @@ export async function importSharedSkillProposal(ctx: OperationContext, params: R
 }
 /**
  * A pack adoption republishes each declared skill from its SKILL.md. A skill that is already sealed keeps what that
- * SKILL.md does not carry: its private flag, the SKILL.md file's declared dependencies, audience and media type, and
- * each other file of the sealed revision that is still in the checkout (read from the checkout, so a reviewed edit to
- * it is adopted). A file the checkout no longer holds is left out, as the operator removed it.
+ * SKILL.md does not carry: its private flag, the SKILL.md file's declared dependencies and any non-default audience or
+ * media type, and each other file of the sealed revision that is still in the checkout (read from the checkout, so a
+ * reviewed edit to it is adopted). A file the checkout no longer holds is left out, as the operator removed it, and so
+ * is every dependency edge to it and any file no longer reachable from SKILL.md. Only values a fresh adoption would not
+ * already produce are added, so an adoption retried after it committed derives the same request and replays its receipt.
  */
 async function carrySealedSkillState(engine: BrainEngine, root: string, sourceId: string, incarnation: string, packId: string,
   inputs: SharedSkillPutInput[]): Promise<void> {
   const sealed = (await heads(engine, sourceId, incarnation, packId, inputs.map(input => input.name))).filter(revision => !revision.deleted);
+  const sameList = (a: readonly string[] | undefined, b: readonly string[]) => !!a && a.length === b.length && a.every((v, i) => v === b[i]);
   for (const input of inputs) {
     const revision = sealed.find(row => row.name === input.name);
     if (!revision) continue;
     if (revision.metadata?.private === true) input.private = true;
     const skillPath = `skills/${input.name}/SKILL.md`;
-    const sealedSkill = revision.files.find(file => file.path === skillPath);
     const skill = input.files.find(file => file.path === skillPath);
-    if (skill && sealedSkill) {
-      if (sealedSkill.depends_on?.length) skill.depends_on = [...sealedSkill.depends_on];
-      if (sealedSkill.audience?.length) skill.audience = [...sealedSkill.audience];
-      if (sealedSkill.media_type) skill.media_type = sealedSkill.media_type;
-    }
+    if (!skill) continue;
+    const carried: SharedSkillFileInput[] = [];
     for (const file of revision.files) {
       if (file.path === skillPath) continue;
       const bytes = canonicalRead(root, file.path);
       if (!bytes) continue;
-      input.files.push({ path: file.path, content: bytes.toString('base64'), encoding: 'base64', file_class: file.file_class,
-        ...(file.audience?.length ? { audience: [...file.audience] } : {}), ...(file.media_type ? { media_type: file.media_type } : {}),
+      carried.push({ path: file.path, content: bytes.toString('base64'), encoding: 'base64', file_class: file.file_class,
+        ...(file.audience?.length && !sameList(file.audience, ['readers']) ? { audience: [...file.audience] } : {}),
+        ...(file.media_type && file.media_type !== 'application/octet-stream' ? { media_type: file.media_type } : {}),
         ...(file.depends_on?.length ? { depends_on: [...file.depends_on] } : {}) });
     }
+    const sealedSkill = revision.files.find(file => file.path === skillPath);
+    if (sealedSkill?.depends_on?.length) skill.depends_on = [...sealedSkill.depends_on];
+    if (sealedSkill?.audience?.length && !sameList(sealedSkill.audience, ['readers'])) skill.audience = [...sealedSkill.audience];
+    if (sealedSkill?.media_type && sealedSkill.media_type !== 'text/markdown') skill.media_type = sealedSkill.media_type;
+    // Keep only edges to files still present, then only the files SKILL.md still reaches.
+    const present = new Set([skillPath, ...carried.map(file => file.path)]);
+    for (const file of [skill, ...carried]) {
+      if (!file.depends_on) continue;
+      const kept = file.depends_on.filter(path => present.has(path));
+      if (kept.length) file.depends_on = kept; else delete file.depends_on;
+    }
+    const byPath = new Map(carried.map(file => [file.path, file]));
+    const reached = new Set<string>();
+    const queue = [...(skill.depends_on ?? [])];
+    while (queue.length) {
+      const path = queue.shift()!;
+      if (reached.has(path)) continue;
+      reached.add(path);
+      queue.push(...(byPath.get(path)?.depends_on ?? []));
+    }
+    input.files.push(...carried.filter(file => reached.has(file.path)));
   }
 }
 export async function adoptSharedSkillpack(ctx: OperationContext, sourceId: string, options: AdoptSharedSkillpackOptions = {}) {

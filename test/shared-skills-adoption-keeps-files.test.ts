@@ -112,5 +112,40 @@ for (const [name, url] of backends) {
         .toEqual({ committed: true, head: afterFirst, reference: 'Guide body', visible: [] });
       expect(first.visibleAfter).toEqual([]);
     }, url), 120_000);
+
+    // Value: protects=an adoption retried after it committed replays its receipt; fails_when=the carried sealed state changes the request and a second revision is published; why_new=no test adopted a fresh pack twice through this path; seam=none; no_claim=none
+    test('a fresh adoption retried after it committed replays the same revision', () => fixture(async f => {
+      mkdirSync(join(f.root, 'skills/alpha'), { recursive: true });
+      writeFileSync(join(f.root, 'skills/alpha/SKILL.md'), skillMd('Fresh instructions.'));
+      writeFileSync(join(f.root, 'skillpack.json'), `${JSON.stringify({ name: 'example-pack', brain_resident: true, skills: ['skills/alpha'] }, null, 2)}\n`);
+      const revision = (result: Awaited<ReturnType<typeof adoptSharedSkillpack>>) => (result.receipts[0] as { revision?: string }).revision;
+      const first = await adoptSharedSkillpack(f.local, 'default');
+      const again = await adoptSharedSkillpack(f.local, 'default');
+      expect({ first: revision(first), again: revision(again), requests: again.receipts.length }).toEqual({ first: revision(first), again: revision(first), requests: 1 });
+      expect(revision(first)).toBeString();
+    }, url), 120_000);
+
+    // Value: protects=a reviewed removal of a reference file adopts, dropping the file and every edge to it, direct and transitive; fails_when=the carried depends_on still names the removed file and adoption refuses; why_new=no test removed a dependency through adoption; seam=none; no_claim=none
+    test('a reviewed removal of a reference file adopts, and a file only it reached goes too', () => fixture(async f => {
+      const NESTED = 'skills/alpha/references/nested.md';
+      await submitSharedSkillMutation(f.editor, 'put_skill', { request_id: randomUUID(), expected_revision: null,
+        source_id: 'default', source_incarnation: f.incarnation, pack_id: 'example-pack', name: 'alpha',
+        files: [{ path: 'skills/alpha/SKILL.md', content: skillMd('Use the guide.'), file_class: 'prose', depends_on: [REFERENCE] },
+          { path: REFERENCE, content: 'Guide body', file_class: 'reference', depends_on: [NESTED] },
+          { path: NESTED, content: 'Nested body', file_class: 'reference' }] });
+      const manifest = JSON.parse(readFileSync(join(f.root, 'skillpack.json'), 'utf8')) as Record<string, unknown>;
+      writeFileSync(join(f.root, 'skillpack.json'), `${JSON.stringify({ ...manifest, brain_resident: true }, null, 2)}\n`);
+      rmSync(join(f.root, REFERENCE));
+      writeFileSync(join(f.root, 'skills/alpha/SKILL.md'), skillMd('No guide any more.'));
+      const reviewed = inventorySkillpack(f.root)!;
+      const adopted = await adoptSharedSkillpack(f.local, 'default', { expected_hashes: { ...reviewed.hashes, [REFERENCE]: null } });
+      const head = (await f.engine.executeRaw<{ files: Array<{ path: string; depends_on?: string[] }> }>(`SELECT r.files FROM shared_skill_heads h JOIN shared_skill_revisions r
+        ON r.source_id=h.source_id AND r.source_incarnation=h.source_incarnation AND r.pack_id=h.pack_id AND r.name=h.name AND r.revision=h.revision
+        WHERE h.source_id=$1 AND h.name=$2`, ['default', 'alpha']))[0];
+      expect({ state: (adopted.receipts[0].write_request as { state?: string } | undefined)?.state,
+        paths: head.files.map(file => file.path).sort(), depends: head.files.flatMap(file => file.depends_on ?? []),
+        reference: existsSync(join(f.root, REFERENCE)), nested: existsSync(join(f.root, NESTED)) })
+        .toEqual({ state: 'committed', paths: ['skills/alpha/SKILL.md'], depends: [], reference: false, nested: false });
+    }, url), 120_000);
   });
 }
