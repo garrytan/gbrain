@@ -251,7 +251,7 @@ export async function getWriteRequestById(engine: Pick<BrainEngine, 'readWriteRe
 /** #5984: the progress columns a waiter polls (engine-sql/persistence-journal.ts `readWriteRequestProgress`). */
 export { WRITE_PROGRESS_SQL, type WriteRequestProgress } from '../engine-sql/persistence-journal.ts';
 import type { CompletedWriteRow, WriteCompletion, WriteRequestProgress } from '../engine-sql/persistence-journal.ts';
-import { fenceOpts } from './host-fence.ts';
+import { bindClaimFence, claimFenceOpts, fenceFor, fenceOpts } from './host-fence.ts';
 export async function getWriteRequestProgress(engine: Pick<BrainEngine, 'readWriteRequestProgress'>, id: string, signal?: AbortSignal): Promise<WriteRequestProgress | null> {
   return engine.readWriteRequestProgress(id, { signal });
 }
@@ -802,7 +802,9 @@ export async function claimNextWrite(engine: BrainEngine, hostId: string, leaseM
     // `passed_sync`: the claimed row went ahead of a queued sync row of its root.
     // #6278: the claim stamps its own `preparing` phase, so a kill before the first renewal is charged like any other.
     const token = randomUUID();
-    const claimed = await tx.stampWriteClaim(row.id, token, leaseMs, claimPhaseStamp(startClaimPhase(), token), fenceOpts(tx));
+    const stampFence = fenceOpts(tx);
+    const claimed = await tx.stampWriteClaim(row.id, token, leaseMs, claimPhaseStamp(startClaimPhase(), token), stampFence);
+    if (claimed) bindClaimFence(token, stampFence.fence ?? null);
     return claimed ? { ...claimed, previous_claim_phase: row.claim_phase } : null;
   }, { pipelineFirst: isPersistenceDeclaration });
 }
@@ -849,12 +851,12 @@ export async function claimNextLaneHead(engine: BrainEngine, hostId: string, wor
 }
 /** `phase` (claim-phase.ts `claimPhaseStamp`, #6176) records the claim's current phase with the renewal. */
 export async function renewWriteClaim(engine: Pick<BrainEngine, 'renewWriteClaim'>, id: string, token: string, leaseMs = 30_000, signal?: AbortSignal, phase: string | null = null): Promise<boolean> {
-  return engine.renewWriteClaim({ id, token, leaseMs, phaseJson: phase, ...fenceOpts(engine) }, { signal });
+  return engine.renewWriteClaim({ id, token, leaseMs, phaseJson: phase, ...claimFenceOpts(engine, token) }, { signal });
 }
 /** `charge` (#6278): a `preparation_deadline` release counts one preparation attempt; `claim_lost`, `consumer_stopping` and the rest never do. */
 export async function releaseUnpublishedClaim(engine: Pick<BrainEngine, 'releaseUnpublishedClaim'>, row: WriteRequest, reason: string, opts: { charge?: boolean } = {}): Promise<void> {
   // An uncharged release ends a finished preparation: its claim phase would read as a preparation still waiting.
-  await engine.releaseUnpublishedClaim({ id: row.id, token: row.execution_token, reason, charge: opts.charge === true, ...fenceOpts(engine) });
+  await engine.releaseUnpublishedClaim({ id: row.id, token: row.execution_token, reason, charge: opts.charge === true, ...claimFenceOpts(engine, row.execution_token) });
 }
 
 /** A recovery larger than a budget: names both budgets and the bytes needed, since a configured budget is the user's. */
@@ -879,7 +881,7 @@ export async function prepareRecovery(engine: BrainEngine, row: WriteRequest, re
     const fits = counters.every(c => Number(c.recovery_bytes) + bytes <= (c.key === 'brain' ? limits.brainRecoveryBytes : limits.worktreeRecoveryBytes));
     // #6007: the common case records the reservation in one statement; any other state takes the checked path below.
     const journal = await tx.publicationJournalStore();
-    const reservation = { id: row.id, executionToken: row.execution_token, recovery, bytes, keys: counters.map(c => c.key), ...fenceOpts(tx) };
+    const reservation = { id: row.id, executionToken: row.execution_token, recovery, bytes, keys: counters.map(c => c.key), ...claimFenceOpts(tx, row.execution_token) };
     if (fits && await journal.recordRecovery(reservation, true)) return;
     const current = await tx.lockWriteRequest(row.id);
     if (!current || current.execution_token !== row.execution_token || current.state !== 'running') throw opError('write_claim_lost', 'The write execution claim was superseded.',
@@ -960,7 +962,9 @@ export async function reclaimReleasedWrite(engine: BrainEngine, id: string, leas
 export async function completeWrite(tx: SqlEngine & Pick<BrainEngine, 'lockPersistenceCounters' | 'lockWriteRequest' | 'completeWriteRow' | 'declarePersistence' | 'requireSynchronousCommit' | 'compactTerminalIntent'>, row: WriteRequest, state: 'committed' | 'conflict' | 'failed' | 'cancelled',
   outcome: Record<string, unknown>, error?: { code: string; message: string; detail?: unknown },
   /** #5984: the caller's transaction already declared the protocol, set synchronous_commit, locked these counters and this row FOR UPDATE. */
-  locked?: WriteRequest): Promise<WriteRequest> {
+  locked?: WriteRequest,
+  /** L5 (G8): the successor settling a recovered publication. On a multi-user Rust brain the engine checks the current host fence and this recovery state, then retires the predecessor's claim epoch. */
+  recovered?: true): Promise<WriteRequest> {
   // Every acknowledged terminal state survives a crash, including cancellation
   // and pre-publication failures that do not enter the file coordinator.
   let current = locked;
@@ -975,7 +979,8 @@ export async function completeWrite(tx: SqlEngine & Pick<BrainEngine, 'lockPersi
     { fix: ownerStatusFix(row.source_id) });
   if (isTerminal(current)) return current;
   const completion = terminalCompletion(tx, row, current, state, outcome, error);
-  const terminal = await tx.completeWriteRow({ ...completion, ...fenceOpts(tx) });
+  const recovery = recovered && fenceFor(tx) ? { recovered: { state: current.state, executionToken: current.execution_token ?? null } } : {};
+  const terminal = await tx.completeWriteRow({ ...completion, ...(recovered ? fenceOpts(tx) : claimFenceOpts(tx, row.execution_token)), ...recovery });
   if (!terminal) throw capacityError('terminal result and effects exceed their reserved bounded encoding');
   return finishTerminal(tx, row, current, terminal, error);
 }
@@ -1073,7 +1078,7 @@ export async function clearResolvedRecovery(engine: BrainEngine, id: string, kno
 }
 export async function markRecovering(engine: Pick<BrainEngine, 'publicationJournalStore'>, row: WriteRequest, reason: string,
   failure?: {code:string;message:string;detail?:unknown}): Promise<void> {
-  await (await engine.publicationJournalStore()).markRecovering(row.id, row.execution_token, reason, failure, fenceOpts(engine));
+  await (await engine.publicationJournalStore()).markRecovering(row.id, row.execution_token, reason, failure, claimFenceOpts(engine, row.execution_token));
 }
 const PERSISTENCE_QUEUE_TABLES = ['persistence_requests', 'persistence_effects', 'persistence_counters', 'page_projection_jobs', 'page_write_guards'];
 /**

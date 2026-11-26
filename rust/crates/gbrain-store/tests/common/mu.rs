@@ -120,8 +120,8 @@ pub const LOST_REASONS: [LostReason; 6] = [
     LostReason::EpochMoved,
     LostReason::Released,
     LostReason::Expired,
-    LostReason::FenceMissing,
     LostReason::ClaimEpochMismatch,
+    LostReason::HeldByAnother,
 ];
 
 // ---- the transaction handle --------------------------------------------------------------------

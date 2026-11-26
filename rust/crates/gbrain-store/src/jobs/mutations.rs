@@ -201,7 +201,23 @@ impl Store {
 
     /// `updateProgress`: token-fenced; any JSON (JSON null is SQL NULL).
     pub fn update_job_progress(&self, id: i64, lock_token: &str, progress: &Value) -> Result<bool> {
+        self.update_job_progress_fenced(id, lock_token, progress, None)
+    }
+
+    /// `update_job_progress` under the caller's host fence (see `complete_job_fenced`): a write on a job this token
+    /// locks needs the claim to have been taken under this fence's epoch (`lease_lost` otherwise, nothing written).
+    pub fn update_job_progress_fenced(
+        &self,
+        id: i64,
+        lock_token: &str,
+        progress: &Value,
+        fence: Option<&LeaseToken>,
+    ) -> Result<bool> {
         self.write(|tx| {
+            fence::begin(self, tx, fence, "update_job_progress")?;
+            if load(tx, id)?.is_some_and(|r| held_by(lock_token)(&r)) {
+                fence::claim_held(self, tx, CLAIM_JOB, &id.to_string(), fence)?;
+            }
             let now = self.env.now_micros();
             let row = update(tx, id, held_by(lock_token), |r| {
                 r.progress = Some(progress.clone()).filter(|p| !p.is_null());
@@ -213,7 +229,22 @@ impl Store {
 
     /// `updateTokens`: adds to the counters, token-fenced.
     pub fn add_job_tokens(&self, id: i64, lock_token: &str, tokens: &TokenDelta) -> Result<bool> {
+        self.add_job_tokens_fenced(id, lock_token, tokens, None)
+    }
+
+    /// `add_job_tokens` under the caller's host fence (see `update_job_progress_fenced`).
+    pub fn add_job_tokens_fenced(
+        &self,
+        id: i64,
+        lock_token: &str,
+        tokens: &TokenDelta,
+        fence: Option<&LeaseToken>,
+    ) -> Result<bool> {
         self.write(|tx| {
+            fence::begin(self, tx, fence, "add_job_tokens")?;
+            if load(tx, id)?.is_some_and(|r| held_by(lock_token)(&r)) {
+                fence::claim_held(self, tx, CLAIM_JOB, &id.to_string(), fence)?;
+            }
             let now = self.env.now_micros();
             let Some(old) = load(tx, id)?.filter(held_by(lock_token)) else {
                 return Ok(false);
@@ -242,7 +273,7 @@ impl Store {
         self.write(|tx| {
             fence::begin(self, tx, fence, "delay_active_job")?;
             if load(tx, id)?.is_some_and(|r| held_by(lock_token)(&r)) {
-                fence::claim_held(tx, CLAIM_JOB, &id.to_string(), fence)?;
+                fence::claim_held(self, tx, CLAIM_JOB, &id.to_string(), fence)?;
                 fence::claim_ended(self, tx, CLAIM_JOB, &id.to_string(), fence)?;
             }
             let now = self.env.now_micros();
@@ -285,7 +316,7 @@ impl Store {
         self.write(|tx| {
             fence::begin(self, tx, fence, "delay_held_claim")?;
             if load(tx, id)?.is_some_and(|r| r.lock_token.as_deref() == Some(lock_token)) {
-                fence::claim_held(tx, CLAIM_JOB, &id.to_string(), fence)?;
+                fence::claim_held(self, tx, CLAIM_JOB, &id.to_string(), fence)?;
                 fence::claim_ended(self, tx, CLAIM_JOB, &id.to_string(), fence)?;
             }
             let now = self.env.now_micros();
@@ -329,7 +360,7 @@ impl Store {
         self.write(|tx| {
             fence::begin(self, tx, fence, "release_watchdog_claim")?;
             if load(tx, id)?.is_some_and(|r| held_by(lock_token)(&r)) {
-                fence::claim_held(tx, CLAIM_JOB, &id.to_string(), fence)?;
+                fence::claim_held(self, tx, CLAIM_JOB, &id.to_string(), fence)?;
                 fence::claim_ended(self, tx, CLAIM_JOB, &id.to_string(), fence)?;
             }
             let now = self.env.now_micros();

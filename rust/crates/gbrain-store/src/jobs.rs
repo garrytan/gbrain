@@ -1270,7 +1270,7 @@ impl Store {
             .collect();
         self.write(|tx| {
             fence::begin(self, tx, spec.fence.as_ref(), "claim_next_job")?;
-            let now = self.env.now_micros();
+            let now = self.lease_clock();
             // `overdue`: marked, and last touched at least `suspectWaitMs` ago.
             let overdue_cutoff = spec.suspect_wait_ms.map(|w| now - ms_to_us(w));
             let overdue = |row: &JobRecord| {
@@ -1345,7 +1345,20 @@ impl Store {
             new.updated_at = now;
             save(tx, Some(&old), &new)?;
             // A reclaim by this claimer overwrites the epoch of the claim it takes over.
-            fence::claim_taken(tx, CLAIM_JOB, &new.id.to_string(), spec.fence.as_ref())?;
+            let ttl = new
+                .lock_until
+                .map(|until| (until - now).div_euclid(1000))
+                .filter(|ms| *ms >= 1)
+                .map(|ms| ms as u64);
+            fence::claim_taken(
+                self,
+                tx,
+                CLAIM_JOB,
+                &new.id.to_string(),
+                spec.fence.as_ref(),
+                "claim_next_job",
+                ttl,
+            )?;
             Ok(Some(new.to_json()))
         })
     }
@@ -1371,14 +1384,14 @@ impl Store {
     ) -> Result<bool> {
         self.write(|tx| {
             fence::begin(self, tx, fence, "renew_job_lease")?;
-            let now = self.env.now_micros();
+            let now = self.lease_clock();
             let Some(old) = load(tx, id)? else {
                 return Ok(false);
             };
             if old.status != "active" || old.lock_token.as_deref() != Some(lock_token) {
                 return Ok(false);
             }
-            fence::claim_held(tx, CLAIM_JOB, &id.to_string(), fence)?;
+            fence::claim_held(self, tx, CLAIM_JOB, &id.to_string(), fence)?;
             let mut new = old.clone();
             new.lock_until = Some(now + ms_to_us(lock_duration_ms));
             new.updated_at = now;
@@ -1419,7 +1432,7 @@ impl Store {
             if old.status != "active" || old.lock_token.as_deref() != Some(lock_token) {
                 return Ok(None);
             }
-            fence::claim_held(tx, CLAIM_JOB, &id.to_string(), fence)?;
+            fence::claim_held(self, tx, CLAIM_JOB, &id.to_string(), fence)?;
             fence::claim_ended(self, tx, CLAIM_JOB, &id.to_string(), fence)?;
             let mut row = old.clone();
             row.status = "completed".into();
@@ -1498,7 +1511,7 @@ impl Store {
             if old.status != "active" || old.lock_token.as_deref() != Some(lock_token) {
                 return Ok(None);
             }
-            fence::claim_held(tx, CLAIM_JOB, &id.to_string(), fence)?;
+            fence::claim_held(self, tx, CLAIM_JOB, &id.to_string(), fence)?;
             fence::claim_ended(self, tx, CLAIM_JOB, &id.to_string(), fence)?;
             let delayed = new_status == "delayed";
             let terminal = !delayed;
@@ -1579,7 +1592,7 @@ impl Store {
     ) -> Result<Value> {
         self.write(|tx| {
             fence::begin(self, tx, fence, "reclaim_stalled_jobs")?;
-            let now = self.env.now_micros();
+            let now = self.lease_clock();
             let cutoff = now - ms_to_us(grace_ms);
             let active = rows_with_status(tx, "active")?;
             let live_tokens: HashSet<String> = all_locks(tx)?
@@ -1709,9 +1722,14 @@ impl Store {
     /// refreshed within the grace. `fence` is the acquire time as epoch seconds text.
     pub fn acquire_cycle_lock(&self, lock_id: &str, opts: &LockAcquire) -> Result<Option<Value>> {
         uuid_arg("acquireCycleLock", &opts.acquisition_token)?;
+        if self.not_a_cycle_lock(lock_id) {
+            return Err(StoreError::invalid(format!(
+                "acquireCycleLock: {lock_id} is a page embedding lease id, not a cycle lock"
+            )));
+        }
         self.write(|tx| {
             fence::begin(self, tx, opts.fence.as_ref(), "acquire_cycle_lock")?;
-            let now = self.env.now_micros();
+            let now = self.lease_clock();
             let key = lock_key(lock_id);
             if let Some(held) = get_json::<LockRecord>(tx, &key)? {
                 let grace = (opts.steal_grace_seconds * 1_000_000.0).round() as i64;
@@ -1731,7 +1749,17 @@ impl Store {
             };
             put_json(tx, &key, &record)?;
             // A steal overwrites the epoch of the lock it takes over.
-            fence::claim_taken(tx, CLAIM_CYCLE_LOCK, lock_id, opts.fence.as_ref())?;
+            let ttl = (opts.ttl_minutes.is_finite() && opts.ttl_minutes > 0.0)
+                .then_some((opts.ttl_minutes * 60_000.0) as u64);
+            fence::claim_taken(
+                self,
+                tx,
+                CLAIM_CYCLE_LOCK,
+                lock_id,
+                opts.fence.as_ref(),
+                "acquire_cycle_lock",
+                ttl,
+            )?;
             let fence = format!(
                 "{}.{:06}",
                 now.div_euclid(1_000_000),
@@ -1747,12 +1775,15 @@ impl Store {
             .ok_or_else(|| StoreError::invalid("refreshCycleLock: ttlMinutes is required"))?;
         self.write(|tx| {
             fence::begin(self, tx, opts.fence.as_ref(), "refresh_cycle_lock")?;
-            let now = self.env.now_micros();
+            if self.not_a_cycle_lock(lock_id) {
+                return Ok(false);
+            }
+            let now = self.lease_clock();
             let key = lock_key(lock_id);
             let Some(mut held) = held_by(tx, &key, opts)? else {
                 return Ok(false);
             };
-            fence::claim_held(tx, CLAIM_CYCLE_LOCK, lock_id, opts.fence.as_ref())?;
+            fence::claim_held(self, tx, CLAIM_CYCLE_LOCK, lock_id, opts.fence.as_ref())?;
             held.ttl_expires_at = now + minutes_us(ttl);
             held.last_refreshed_at = Some(now);
             put_json(tx, &key, &held)?;
@@ -1760,20 +1791,48 @@ impl Store {
         })
     }
 
-    /// `releaseCycleLock` and `deleteCycleLock`: the row goes only when pid and token match.
+    /// `releaseCycleLock`: the holder's release. The row goes only when pid and token match, and on a multi-user store
+    /// the lock must have been taken under the fence's epoch (`lease_lost` `claim_epoch_mismatch` otherwise: a handle
+    /// of an earlier epoch of the same host cannot delete a lock it can no longer refresh).
     pub fn release_cycle_lock(&self, lock_id: &str, opts: &LockHolder) -> Result<bool> {
+        self.end_cycle_lock(lock_id, opts, true)
+    }
+
+    /// `deleteCycleLock`: the operator's (or a reaper's) delete of the row a snapshot showed, matched by pid and token.
+    /// It is not the holder's release, so it asks for no claim epoch: the caller never held the lock. The lease check
+    /// still applies to a fence it sends.
+    pub fn delete_cycle_lock(&self, lock_id: &str, opts: &LockHolder) -> Result<bool> {
+        self.end_cycle_lock(lock_id, opts, false)
+    }
+
+    fn end_cycle_lock(&self, lock_id: &str, opts: &LockHolder, as_holder: bool) -> Result<bool> {
         self.write(|tx| {
-            fence::begin(self, tx, opts.fence.as_ref(), "release_cycle_lock")?;
+            let what = if as_holder {
+                "release_cycle_lock"
+            } else {
+                "delete_cycle_lock"
+            };
+            fence::begin(self, tx, opts.fence.as_ref(), what)?;
+            if self.not_a_cycle_lock(lock_id) {
+                return Ok(false);
+            }
             let key = lock_key(lock_id);
             if held_by(tx, &key, opts)?.is_none() {
                 return Ok(false);
             }
-            // No claim-epoch check: the deleter shows the holder's pid and token (a reaper or an operator deleting a
-            // snapshot), and the lease check above already refused a host that lost its own.
+            if as_holder {
+                fence::claim_held(self, tx, CLAIM_CYCLE_LOCK, lock_id, opts.fence.as_ref())?;
+            }
             tx.delete(&key)?;
             fence::claim_ended(self, tx, CLAIM_CYCLE_LOCK, lock_id, opts.fence.as_ref())?;
             Ok(true)
         })
+    }
+
+    /// Whether `lock_id` is in the page embedding lease namespace, which a multi-user store keeps apart from the cycle
+    /// locks: the two members families never act on each other's rows there.
+    fn not_a_cycle_lock(&self, lock_id: &str) -> bool {
+        self.multiuser() && lock_id.starts_with(PAGE_EMBEDDING_LEASE_PREFIX)
     }
 
     /// `deleteCycleLockIfStale`: as release, only when `last_refreshed_at` is older than
@@ -1788,9 +1847,12 @@ impl Store {
             if opts.fence.is_some() {
                 fence::begin(self, tx, opts.fence.as_ref(), "delete_cycle_lock_if_stale")?;
             }
-            let now = self.env.now_micros();
+            let now = self.lease_clock();
             let key = lock_key(lock_id);
             let none = json!({ "deleted": false, "lastRefreshedAt": null });
+            if self.not_a_cycle_lock(lock_id) {
+                return Ok(none);
+            }
             let Some(held) = held_by(tx, &key, opts)? else {
                 return Ok(none);
             };
@@ -1810,8 +1872,13 @@ impl Store {
     /// steal grace, unlike `acquireCycleLock`); false while an unexpired row stands.
     pub fn take_page_embedding_lease(&self, lease_id: &str, opts: &PageLeaseTake) -> Result<bool> {
         uuid_arg("takePageEmbeddingLease", &opts.acquisition_token)?;
+        if self.multiuser() && !lease_id.starts_with(PAGE_EMBEDDING_LEASE_PREFIX) {
+            return Err(StoreError::invalid(format!(
+                "takePageEmbeddingLease: {lease_id} is not a page embedding lease id ({PAGE_EMBEDDING_LEASE_PREFIX}...)"
+            )));
+        }
         self.write(|tx| {
-            let now = self.env.now_micros();
+            let now = self.lease_clock();
             let key = lock_key(lease_id);
             if let Some(held) = get_json::<LockRecord>(tx, &key)?
                 && held.ttl_expires_at >= now
@@ -1842,7 +1909,10 @@ impl Store {
             StoreError::invalid("renewPageEmbeddingLease: ttlMinutes is required")
         })?;
         self.write(|tx| {
-            let now = self.env.now_micros();
+            if self.multiuser() && !lease_id.starts_with(PAGE_EMBEDDING_LEASE_PREFIX) {
+                return Ok(false);
+            }
+            let now = self.lease_clock();
             let key = lock_key(lease_id);
             let Some(mut held) = get_json::<LockRecord>(tx, &key)?
                 .filter(|l| l.acquisition_token == opts.acquisition_token.to_lowercase())
@@ -1864,11 +1934,13 @@ impl Store {
     ) -> Result<()> {
         uuid_arg("releasePageEmbeddingLease", &opts.acquisition_token)?;
         self.write(|tx| {
-            let now = self.env.now_micros();
+            let now = self.lease_clock();
             let token = opts.acquisition_token.to_lowercase();
             let mut doomed = Vec::new();
             for (id, lock) in all_locks(tx)? {
-                let own = id == lease_id && lock.acquisition_token == token;
+                let own = id == lease_id
+                    && lock.acquisition_token == token
+                    && (!self.multiuser() || id.starts_with(PAGE_EMBEDDING_LEASE_PREFIX));
                 let expired =
                     id.starts_with(PAGE_EMBEDDING_LEASE_PREFIX) && lock.ttl_expires_at < now;
                 if own || expired {
@@ -1886,7 +1958,7 @@ impl Store {
     /// and `all` come oldest acquire first.
     pub fn read_cycle_locks(&self, filter: &LockFilter) -> Result<Vec<Value>> {
         let read = self.read()?;
-        let now = self.env.now_micros();
+        let now = self.lease_clock();
         let mut rows: Vec<(String, LockRecord)> = match filter {
             LockFilter::Id { lock_id } => get_json::<LockRecord>(&*read, &lock_key(lock_id))?
                 .map(|l| vec![(lock_id.clone(), l)])
@@ -1940,14 +2012,28 @@ impl Store {
         fence: Option<&LeaseToken>,
     ) -> Result<bool> {
         uuid_arg("assertCycleLease", acquisition_token)?;
-        let now = self.env.now_micros();
+        let now = self.lease_clock();
         let read = self.read()?;
         crate::leases::check_fence(self, &*read, fence, "assert_cycle_lease")?;
+        if self.not_a_cycle_lock(lock_id) {
+            return Ok(false);
+        }
         let held = get_json::<LockRecord>(&*read, &lock_key(lock_id))?.is_some_and(|l| {
             l.acquisition_token == acquisition_token.to_lowercase() && l.ttl_expires_at > now
         });
-        if let (true, Some(fence)) = (held, fence) {
-            crate::leases::check_claim_epoch(&*read, CLAIM_CYCLE_LOCK, lock_id, fence)?;
+        if held {
+            match fence {
+                Some(fence) => {
+                    crate::leases::check_claim_epoch(&*read, CLAIM_CYCLE_LOCK, lock_id, fence)?
+                }
+                None if self.multiuser() => crate::leases::check_claim_unheld(
+                    &*read,
+                    CLAIM_CYCLE_LOCK,
+                    lock_id,
+                    self.env.clock_micros(),
+                )?,
+                None => {}
+            }
         }
         Ok(held)
     }

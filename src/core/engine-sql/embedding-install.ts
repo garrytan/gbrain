@@ -44,6 +44,12 @@ export async function readEmbeddingCompletion(exec: LegacyUnscopedRead, pageId: 
       FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE p.id=${pageId} AND ${generation}`)).rows;
 }
 
+/**
+ * The claim an effect's install reads its claim row under (L5): on a multi-user Rust brain the read, inside the install's
+ * own transaction, checks the host fence and the claim epoch. The SQL engines and a plain Rust brain ignore it.
+ */
+export interface EffectInstallClaim { token: string; fence?: import('./lease-token.ts').LeaseToken }
+
 /** The effect's state and execution token under its row lock, or null when no effect has the id. */
 export async function lockEffectClaimRow(exec: SqlExecutor, effectId: number | string): Promise<{ state: string; execution_token: string | null } | null> {
   const [claim] = await exec.executeRaw<{ state: string; execution_token: string | null }>('SELECT state,execution_token FROM persistence_effects WHERE id=$1 FOR UPDATE', [effectId]);

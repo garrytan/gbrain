@@ -62,6 +62,7 @@ pub mod shared_skill_publication;
 pub mod slug_spellings;
 pub mod snapshot;
 pub mod sources;
+pub mod takeover;
 #[cfg(test)]
 mod test_support;
 pub mod timeline;
@@ -538,10 +539,10 @@ impl Store {
                     .as_deref()
                     .map(str::as_bytes),
             );
-        // Multi-user mode: the store's clock never runs below the last committed time (`clock_floor.rs`), the commit
-        // clock and the write origin included.
+        // Multi-user mode: the store's clock never runs below the newest durable commit time (`M\0ctime`, I-4.v2.1;
+        // `clock_floor.rs`), the commit clock and the write origin included: one floor, read here at open.
         let env: Arc<dyn Env> = if multiuser_on {
-            let floor = clock_floor::read_high_water(&*kv.snapshot()?)?;
+            let floor = kv.last_commit_time()?.unwrap_or(0);
             Arc::new(clock_floor::ClockFloor::new(env, floor))
         } else {
             env
@@ -683,6 +684,11 @@ impl Store {
         let schema_version = config::read_config(&*kv.snapshot()?, "version")?
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
+        // A multi-user brain with no commit time yet (just created or just turned on) commits one now, so the records it
+        // was seeded with stay below the floor of every later open; a read-only open writes nothing.
+        if multiuser_on && !read_only && kv.last_commit_time()?.is_none() {
+            kv.begin_write()?.commit()?;
+        }
         let commit_log_on = kv.commit_log_enabled();
         Ok(Store {
             kv,
@@ -899,9 +905,6 @@ impl Store {
             let _trust = crate::write_trust::stamp_context::open(trust);
             return tx.statement(|w| {
                 let value = write_chain(w, &mut f)?;
-                if self.multiuser {
-                    clock_floor::raise_high_water(w, self.env.now_micros())?;
-                }
                 if let Some(meta) = meta.meta() {
                     w.set_commit_meta(meta);
                 }
@@ -923,20 +926,10 @@ impl Store {
                 let _trust = crate::write_trust::stamp_context::open(trust);
                 match write_chain(&mut *tx, &mut f) {
                     Ok(value) => {
-                        let raised = if self.multiuser {
-                            clock_floor::raise_high_water(&mut *tx, self.env.now_micros())
-                        } else {
-                            Ok(())
-                        };
-                        match raised {
-                            Ok(()) => {
-                                if let Some(meta) = meta.meta() {
-                                    tx.set_commit_meta(meta);
-                                }
-                                tx.commit().map(|_| value)
-                            }
-                            Err(e) => Err(e),
+                        if let Some(meta) = meta.meta() {
+                            tx.set_commit_meta(meta);
                         }
+                        tx.commit().map(|_| value)
                     }
                     Err(e) => Err(e),
                 }
