@@ -20,7 +20,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assertMultiuserCapabilityName, recordingEngine, rustArmModeProblem, rustArmMultiuser, checkMwArm, checkRustArm, mwArmPlan, runMwCase, rustMultiuserView, MultiuserStopError, OWNER_ONLY_MESSAGE, OWNER_ONLY_STOP, stopOnOwnerOnlyRefusal, type MwArmHandle, type MwArmStarted, type RustTally } from './engine-parity/harness.ts';
+import { assertMultiuserCapabilityName, CONFIG_ROUTE_GATE_STOP, type ConfigRouteStop, recordingEngine, rustArmModeProblem, rustArmMultiuser, checkMwArm, checkRustArm, mwArmPlan, runMwCase, rustMultiuserView, MultiuserStopError, OWNER_ONLY_MESSAGE, OWNER_ONLY_STOP, stopOnOwnerOnlyRefusal, type MwArmHandle, type MwArmStarted, type RustTally } from './engine-parity/harness.ts';
 import { checkRustTally } from './engine-parity/rust-tally.ts';
 import { MW_ARMS, type MwArm, type MwCase, type MwCell } from './engine-parity/multi-writer-cases.ts';
 import { type LedgerLine } from './engine-parity/multi-writer-ledger.ts';
@@ -632,7 +632,8 @@ describe('rustMultiuserStop: a case pinned to the multi-user owner-only refusal 
     await checkRustArm(kase({ run: async () => { stop(); return 'x'; }, pin: OWNER_ONLY_STOP(async (e) => { seen.push(e); }) }), t);
     expect([t.compared, t.refused, t.diverged, t.multiuserStops]).toEqual([0, 0, 0, ['a case']]);
     expect(seen).toEqual([engine]); // the no-effect check ran on the case's engine
-    for (const mode of ['env', 'config', 'ambient'] as const) await checkRustArm(kase({ mode, run: async () => { stop(); return 'x'; } }), tally());
+    // The config route takes CONFIG_ROUTE_GATE_STOP instead until the server lane's gate switches on there (its own tests below).
+    for (const mode of ['env', 'ambient'] as const) await checkRustArm(kase({ mode, run: async () => { stop(); return 'x'; } }), tally());
   });
 
   test('mode on, the case returns: the pin fails and says to remove it (the key is admitted)', async () => {
@@ -679,3 +680,52 @@ describe('rustMultiuserStop: a case pinned to the multi-user owner-only refusal 
     expect(() => checkRustTally(f, { compared: 1, refused: 0, diverged: 0, skipped: 2 }, 3, pins, {})).toThrow(/pins 3 equal/); // the switch off gets no allowance
   });
 });
+
+describe('the config-route stop: the owner-only gate does not switch on for a brain multi-user only through its config row', () => {
+  // Value: protects=while the server lane's gate reads the environment switch only, the config route's pinned cases are a
+  // named, dated stop that every run lists, never a skip and never a red that blocks other lanes; fails_when=the stop hides a
+  // case, outlives its due date, or stays after the gate is fixed; why_new=ruling B (2026-11-26) on the config route;
+  // seam=checkRustArm with a stand-in case
+  const refusal = JSON.stringify({ code: 'permission_denied', message: `This credential cannot open a multi-user session (${OWNER_ONLY_MESSAGE}).` });
+  const tally = (): RustTally => ({ compared: 0, refused: 0, diverged: 0, stops: [] });
+  const kase = (run: () => Promise<unknown>, stop?: ConfigRouteStop) => ({
+    name: 'a pinned case', opts: { methods: ['getConfig'], rustMultiuserStop: OWNER_ONLY_STOP() } as never, run, calls: new Set(['getConfig']), refusals: [],
+    reference: { backend: 'pglite' as const, value: 'same' }, divergence: undefined, multiuserMode: 'config' as const, engine: {} as never,
+    ...(stop !== undefined && { configRouteStop: stop }) });
+
+  test('the stop names its owner, its due date and why', () => {
+    expect(CONFIG_ROUTE_GATE_STOP.owner).toBe('L3 config-route owner-only gate');
+    expect(CONFIG_ROUTE_GATE_STOP.due).toBe('2026-12-02');
+    expect(CONFIG_ROUTE_GATE_STOP.reason).toContain('rustHttpServing() requires rustMultiuserFromEnv()');
+  });
+
+  test('on the config route the admitted call is listed by name as the stop, never equal and never a skip', async () => {
+    const t = tally();
+    await checkRustArm(kase(async () => 'same'), t);
+    expect([t.compared, t.multiuserStops, t.configRouteStops]).toEqual([0, undefined, ['a pinned case']]);
+  });
+
+  test('once the gate refuses on the config route too, the stop fails and says to flip it to the pins', async () => {
+    await expect(checkRustArm(kase(async () => { stopOnOwnerOnlyRefusal(refusal, [], 'config'); }), tally())).rejects.toThrow(/config route now refuses.*flip/);
+  });
+
+  test('any other failure on the config route still fails the case', async () => {
+    await expect(checkRustArm(kase(async () => { throw new Error('boom'); }), tally())).rejects.toThrow(/boom/);
+  });
+
+  test('a stop past its due date fails the case (fail-first: a past date)', async () => {
+    await expect(checkRustArm(kase(async () => 'same', { ...CONFIG_ROUTE_GATE_STOP, due: '2020-01-01' }), tally())).rejects.toThrow(/config-route stop .* passed its due date/);
+  });
+
+  test('guard: the stop is still listed, so it must not be past its due date', () => {
+    expect(CONFIG_ROUTE_GATE_STOP.due >= new Date().toISOString().slice(0, 10), `the config-route stop (${CONFIG_ROUTE_GATE_STOP.owner}) passed its due date ${CONFIG_ROUTE_GATE_STOP.due}: fix the gate or move the date`).toBe(true);
+  });
+
+  test('the env route and the self-check lane keep the pins: there an admitted call still fails', async () => {
+    const env = { ...kase(async () => 'same'), multiuserMode: 'env' as const };
+    await expect(checkRustArm(env, tally())).rejects.toThrow(/remove the pin/);
+    const ambient = { ...kase(async () => 'same'), multiuserMode: 'ambient' as const };
+    await expect(checkRustArm(ambient, tally())).rejects.toThrow(/remove the pin/);
+  });
+});
+
