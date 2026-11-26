@@ -139,9 +139,10 @@ function buildFetch(fx: FakeGoogle): FetchImpl {
   const json = (body: unknown, status = 200, headers: Record<string, string> = {}): Response =>
     new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...headers } });
 
-  return async (url: string): Promise<Response> => {
+  return async (url: string, init?: RequestInit): Promise<Response> => {
     const u = new URL(url);
     fx.calls.push(u.pathname + (u.search ? u.search : ''));
+    if (init?.signal?.aborted && u.pathname.endsWith('/users/me/messages')) throw new DOMException('The operation was aborted.', 'AbortError');
 
     if (u.hostname === 'oauth2.googleapis.com') {
       fx.tokenPosts++;

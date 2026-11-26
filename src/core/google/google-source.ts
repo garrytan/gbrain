@@ -390,6 +390,8 @@ async function attemptThread(g: GmailSweep, tid: string, version: string | null,
 const WINDOW_LIST_PAGES = 20;
 /** The narrowest window the walk lists; one still holding more than WINDOW_LIST_PAGES is listed in full. */
 const MIN_WINDOW_MS = 60_000;
+/** How long the one listing that proves an aborted walk's progress may take, under its own signal. */
+const ABORT_PROOF_MS = 15_000;
 
 /**
  * Drain `[lowerMs, state[floorKey])` newest→oldest, committing the floor per
@@ -410,10 +412,10 @@ async function walkGmailWindow(g: GmailSweep, floorKey: 'gmail_backfill_floor_ms
   const { deps, gmail, state } = g;
   const signal = deps.opts.signal;
   const settled = new Set<string>();
-  const list = async (afterMs: number, beforeMs: number, maxPages?: number) => {
+  const list = async (afterMs: number, beforeMs: number, maxPages?: number, listSignal = signal) => {
     let complete = true;
     const ids = await gmail.listMessageIds(`after:${Math.floor(afterMs / 1000)} before:${Math.ceil(beforeMs / 1000)}`,
-      { ...(maxPages ? { maxPages, partialOk: true, onCutShort: () => { complete = false; } } : {}), ...(signal ? { signal } : {}) });
+      { ...(maxPages ? { maxPages, partialOk: true, onCutShort: () => { complete = false; } } : {}), ...(listSignal ? { signal: listSignal } : {}) });
     return { ids, complete };
   };
   let floorMs = state[floorKey] ?? Date.now() + 60_000;
@@ -451,8 +453,10 @@ async function walkGmailWindow(g: GmailSweep, floorKey: 'gmail_backfill_floor_ms
       }
       if (batchFailed || deps.managed && signal?.aborted) break;
       if (batchOldest < floorMs && (signal?.aborted || i + BACKFILL_BATCH_THREADS < threadIds.length)) {
-        const below = await list(batchOldest, floorMs, WINDOW_LIST_PAGES);
-        if (below.complete && below.ids.every(m => settled.has(m.threadId))) {
+        const below = signal?.aborted
+          ? await list(batchOldest, floorMs, WINDOW_LIST_PAGES, AbortSignal.timeout(ABORT_PROOF_MS)).catch(() => null)
+          : await list(batchOldest, floorMs, WINDOW_LIST_PAGES);
+        if (below?.complete && below.ids.every(m => settled.has(m.threadId))) {
           state[floorKey] = floorMs = batchOldest;
           await saveGoogleState(deps, state);
         }

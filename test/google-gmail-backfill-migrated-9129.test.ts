@@ -29,8 +29,9 @@ type GmailState = { gmail_backfill_done?: boolean; gmail_backfill_floor_ms?: num
 
 function gmail(account: string, pageSize: number, onThread?: (n: number) => void) {
   const fetched = new Set<string>();
-  const fetcher = async (url: string) => {
+  const fetcher = async (url: string, init?: RequestInit) => {
     const u = new URL(url);
+    if (init?.signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
     if (u.pathname.endsWith('/settings/sendAs')) return json({ sendAs: [] });
     if (u.pathname.endsWith('/users/me/profile')) return json({ emailAddress: account, historyId: '1000' });
     if (u.pathname.endsWith('/users/me/history')) return json({ historyId: '1000', history: [] });
@@ -74,16 +75,18 @@ test('#9129: a listing cut short at its page bound never moves the floor past ma
   }
 }), 240_000);
 
-test('#9129: a walk cut off after a batch holding migrated mail resumes without skipping the mail listed after it', async () => withEnv(env, async () => {
+test('#9129: a walk cut off after a batch holding migrated mail never leaves unsettled mail above its floor, and the next run finishes it', async () => withEnv(env, async () => {
   for (const engine of engines) {
     const f = await source(engine, config);
     const cfg = parseGoogleSourceConfig(config, f.dir);
     const controller = new AbortController();
     const first = gmail(cfg.account, 100, n => { if (n >= 27) controller.abort(); });
-    await runGoogleSync(engine, f.id, cfg, { ...options, signal: controller.signal }, first.fetcher).catch(() => undefined);
+    await runGoogleSync(engine, f.id, cfg, { ...options, signal: controller.signal }, first.fetcher)
+      .catch((e: unknown) => { if ((e as Error).name !== 'AbortError') throw e; });
     const cut = await gmailState(engine, f.id);
     expect(cut?.gmail_backfill_done).toBe(false);
-    expect(cut?.gmail_backfill_floor_ms ?? Infinity).toBeGreaterThan(RECENT[2]!.ms);
+    const floor = cut?.gmail_backfill_floor_ms ?? Infinity;
+    expect(LISTED.filter(m => m.ms >= floor && !first.fetched.has(m.tid))).toEqual([]);
     const second = gmail(cfg.account, 100);
     await runGoogleSync(engine, f.id, cfg, options, second.fetcher);
     expect(new Set([...first.fetched, ...second.fetched])).toEqual(new Set(LISTED.map(m => m.tid)));
