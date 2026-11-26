@@ -439,6 +439,7 @@ import * as schemaDetectImpl from './engine-sql/schema-detect.ts';
 import * as queryCacheInvalidateImpl from './engine-sql/query-cache-invalidate.ts';
 import * as accessReadLogImpl from './engine-sql/access-read-log.ts';
 import * as handoverReadsImpl from './engine-sql/handover-reads.ts';
+import { commitLogMissing, type CommitPosition } from './engine-members/commit-log.ts';
 import * as sweepReadsImpl from './engine-sql/sweep-reads.ts';
 import * as sessionStateImpl from './engine-sql/session-state.ts';
 import type { DrainLeaseHolderRecord } from './engine-sql/cycle-locks.ts';
@@ -1049,6 +1050,10 @@ export class PostgresEngine implements BrainEngine {
   async transaction<T>(fn: (engine: BrainEngine) => Promise<T>, opts?: TransactionOptions): Promise<T> {
     return this.transactionOn(this.sql, fn, opts);
   }
+
+  // The commit log is the Rust store's (engine-members/commit-log.ts): a SQL engine refuses both members.
+  readCommitLog(_after: CommitPosition | null, _limit: number): Promise<never> { return commitLogMissing('readCommitLog'); }
+  lastCommitPosition(): Promise<never> { return commitLogMissing('lastCommitPosition'); }
 
   async transactionDirect<T>(fn: (engine: BrainEngine) => Promise<T>, opts?: TransactionOptions): Promise<T> {
     const conn = !this._pageTransaction && this.connectionManager?.isDualPoolActive()

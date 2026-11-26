@@ -310,6 +310,9 @@ pub struct Store {
     pub(crate) stamp_rows: bool,
     /// Where the commit log starts, on a commit log brain.
     pub(crate) log_since: Option<CommitPosition>,
+    /// The position of the newest commit a write or transaction of this handle (or of a store bound
+    /// to it, or a sibling) finished with: `Store::last_commit_position`.
+    pub(crate) last_position: Arc<Mutex<Option<CommitPosition>>>,
     /// `OpenOptions::multiuser` as the brain was opened; bound and sibling stores copy it.
     multiuser: bool,
 }
@@ -704,6 +707,7 @@ impl Store {
                 multiuser: multiuser_on,
             },
             log_since: stored.log.map(|l| l.since),
+            last_position: Arc::new(Mutex::new(None)),
             bound: None,
             builder: Mutex::new(None),
             runs_builder: options.keyword_index_builder,
@@ -736,6 +740,7 @@ impl Store {
             origin: self.origin.clone(),
             stamp_rows: self.stamp_rows,
             log_since: self.log_since,
+            last_position: self.last_position.clone(),
             multiuser: self.multiuser,
         }
     }
@@ -808,6 +813,7 @@ impl Store {
             origin: self.origin.clone(),
             stamp_rows: self.stamp_rows,
             log_since: self.log_since,
+            last_position: self.last_position.clone(),
             multiuser: self.multiuser,
         }
     }
@@ -929,7 +935,10 @@ impl Store {
                         if let Some(meta) = meta.meta() {
                             tx.set_commit_meta(meta);
                         }
-                        tx.commit().map(|_| value)
+                        tx.commit_position().map(|at| {
+                            self.note_commit(at);
+                            value
+                        })
                     }
                     Err(e) => Err(e),
                 }
@@ -1022,6 +1031,20 @@ impl Store {
     /// no log.
     pub fn read_commit_log(&self, after: Option<CommitPosition>, max: usize) -> Result<LogPage> {
         commit_log::read_commit_log(&*self.kv.snapshot()?, after, max)
+    }
+
+    /// The position the newest finished write or transaction of this handle committed at
+    /// (`None` before the first). Writes that commit nothing report the end of the batch they saw.
+    pub fn last_commit_position(&self) -> Option<CommitPosition> {
+        *self.last_position.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Notes a finished commit's position; the newest one wins when several finish at once.
+    pub(crate) fn note_commit(&self, at: CommitPosition) {
+        let mut last = self.last_position.lock().unwrap_or_else(|p| p.into_inner());
+        if last.is_none_or(|l| at > l) {
+            *last = Some(at);
+        }
     }
 
     /// `read_commit_log` with every record as the bytes the store holds, unchanged (I-4.v2), for a

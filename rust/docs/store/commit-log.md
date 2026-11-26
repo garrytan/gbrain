@@ -135,6 +135,18 @@ With write origin on, the native admission (`admit_write`, `submit_page_mutation
 (the open's, or `origin.incarnation`) and `writer_id`. The row the members return shows `admitter_host_id` in its
 existing column; the other two are not in any row. Off, `origin` on an admission is ignored and `extra` is unchanged.
 
+## Engine members
+
+`BrainEngine.readCommitLog(after, limit)` and `BrainEngine.lastCommitPosition()` (src/core/engine-members/commit-log.ts)
+expose the log and commit positions to TypeScript, through the addon's `Brain#readCommitLog` and
+`Brain#lastCommitPosition` (`gbrain-napi/src/families/commit_log.rs`). A page lists each record's position, commit time,
+origin, write ids and op count (the ops stay in the store). `lastCommitPosition` on the engine answers the newest
+finished write or transaction of that engine; on the engine a transaction callback received, the position that
+transaction committed at, also after it ended (null while open or after a rollback). Both refuse with
+`engine_capability_missing`, reason `commit_log`, on PGLite and Postgres and on a Rust engine whose store keeps no log;
+the Rust engine reports the `commit_log` capability only while its store keeps one. Positions cross as JavaScript
+numbers; a sequence of 2^53 or more or an index above 2^32 - 1 is refused, never truncated.
+
 ## Followers and promotion
 
 `gbrain_store::follower::Follower` (`follower.rs`) keeps a copy of a commit log brain from its primary's log. It is a
