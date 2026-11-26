@@ -2,7 +2,7 @@
  * The deletes and reads of a page purge's sweep, its segment storage and its slug stores (BrainEngine deletePurgedPageTrustProposals, deletePurgedPageHolds,
  * deletePurgedPageGateReceipts, deletePurgedPageFacts, deletePurgedPageFiles, listPageTimelineReceipts, listPageSegmentShas,
  * countPageManifestRows, deletePageStagings, deletePageSegmentTexts, sweepPageTextsForClaims, listPageChangeReasons,
- * listRequestsRecordingReasons, deletePurgedSlugStoreRows and listPageSecretOccurrences; SQL in engine-sql/page-purge-sweep.ts,
+ * listRequestsRecordingReasons, deletePurgedSlugStoreRows, deletePurgedSlugHolds and listPageSecretOccurrences; SQL in engine-sql/page-purge-sweep.ts,
  * facts-purge.ts and purge-slug-stores.ts), served from the store's decide, trust, write-gate, fact, file, journal, version,
  * page-body, take-proposal, loop and alias records (gbrain-store `eval_capture/decide_proposals/purge.rs`,
  * `trust/proposals/purge.rs`, `trust/write_gate/purge.rs`, `facts/page_purge_sweep.rs`, `facts/page_purge_journal.rs`,
@@ -73,6 +73,13 @@ export const listRequestsRecordingReasons: Member<'listRequestsRecordingReasons'
 /** `ifPresent` changes nothing here: every store the scrub names exists, and the ones the store does not keep answer 0. */
 export const deletePurgedSlugStoreRows: Member<'deletePurgedSlugStoreRows'> = (brain, sourceId, slugs) =>
   storeCall({ member: 'deletePurgedSlugStoreRows', sourceId }, () => brain.deletePurgedSlugStoreRows(sourceId, [...slugs]));
+
+/**
+ * The holds of the pages' slugs (up to each page's `deletedAt`) and their receipts. The store keeps a hold by source and slug
+ * alone, so the page id the SQL engines bind holds by is not sent (rust/docs/store/facts.md).
+ */
+export const deletePurgedSlugHolds: Member<'deletePurgedSlugHolds'> = (brain, sourceId, pages) =>
+  storeCall({ member: 'deletePurgedSlugHolds', sourceId }, () => brain.deletePurgedSlugHolds(sourceId, pages.map(p => ({ slug: p.slug, deletedAt: p.deletedAt ?? null }))));
 
 /** The store keeps no secret store, so no page holds a secret occurrence. */
 export const listPageSecretOccurrences: Member<'listPageSecretOccurrences'> = async () => [];

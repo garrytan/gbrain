@@ -17,7 +17,7 @@ use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::raw_files::FileSpec;
 use gbrain_store::sources::SourceInput;
 use gbrain_store::trust::proposals::NewProposal;
-use gbrain_store::trust::write_gate::{HoldInput, ReceiptInput};
+use gbrain_store::trust::write_gate::{HoldInput, PurgedSlugPage, ReceiptInput};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
@@ -322,6 +322,115 @@ fn holds_and_receipts_go_with_their_dedupe_keys() {
             .delete_purged_page_gate_receipts(5, &[], &[], &[])
             .unwrap(),
         1
+    );
+}
+
+#[test]
+fn slug_holds_go_up_to_the_purge_time_with_their_receipts_and_dedupe_keys() {
+    let (_dir, store) = brain("sweep-slug-holds");
+    let hold = |slug: &str, fingerprint: &str, source: &str| -> u64 {
+        let input: HoldInput = args(json!({ "kind": "fact", "source_id": source, "slug": slug,
+            "fingerprint": fingerprint, "detector_version": 1, "tier": "agent_written",
+            "reason_families": ["prompt_injection"], "reasons": ["x"], "detector_error": false,
+            "payload": { "fact": "held" }, "write_origin": null, "request_id": null }));
+        store.upsert_write_gate_hold(input).unwrap()
+    };
+    let receipt = |table: &str, id: &str, content: &str| {
+        let input: ReceiptInput = args(json!({ "target_table": table, "target_id": id,
+            "source_id": "default", "content_hash": content, "tier": "agent_written",
+            "detector_version": 1, "verdict": "flag", "reason_families": ["override"], "reasons": ["r"],
+            "detector_error": false, "request_id": null }));
+        store.upsert_write_gate_receipt(input).unwrap();
+    };
+    let pages = |v: Value| -> Vec<PurgedSlugPage> { args(v) };
+    let counts = |holds: u64, receipts: u64| json!({ "write_gate_holds": holds, "write_gate_receipts": receipts });
+
+    let first = hold(SLUG, "fp-1", "default");
+    let second = hold(SLUG, "fp-2", "default");
+    let keeper = hold("notes/keeper", "fp-3", "default");
+    let elsewhere = hold(SLUG, "fp-4", "other");
+    let longer = hold("notes/a/deeper", "fp-5", "default");
+    for (id, content) in [
+        (first, "r-1"),
+        (first, "r-1b"),
+        (second, "r-2"),
+        (keeper, "r-3"),
+        (elsewhere, "r-4"),
+        (longer, "r-5"),
+    ] {
+        receipt("write_gate_holds", &id.to_string(), content);
+    }
+    // A receipt of another table whose target id spells a hold id is not the hold's.
+    receipt("facts", &first.to_string(), "r-fact");
+
+    // No pages: nothing is read or written.
+    assert_eq!(
+        store.delete_purged_slug_holds("default", &[]).unwrap(),
+        counts(0, 0)
+    );
+    // A purge time before the holds keeps them; the id the SQL engines send is ignored.
+    let early =
+        pages(json!([{ "slug": SLUG, "id": 5, "deletedAt": "2000-01-01T00:00:00.000000Z" }]));
+    assert_eq!(
+        store.delete_purged_slug_holds("default", &early).unwrap(),
+        counts(0, 0)
+    );
+    // A slug named twice takes the later purge time; another slug and another source are left.
+    let both = pages(json!([
+        { "slug": SLUG, "id": 5, "deletedAt": "2000-01-01T00:00:00.000000Z" },
+        { "slug": SLUG, "id": null, "deletedAt": "2999-01-01T00:00:00.000000Z" },
+    ]));
+    assert_eq!(
+        store.delete_purged_slug_holds("default", &both).unwrap(),
+        counts(2, 3)
+    );
+    assert_eq!(
+        store.delete_purged_slug_holds("default", &both).unwrap(),
+        counts(0, 0)
+    );
+    // The dedupe keys went: the same content held again is a new hold.
+    assert!(hold(SLUG, "fp-1", "default") > longer);
+    // No purge time deletes every hold of the slug; the receipts of the holds left stay.
+    let unbounded = pages(json!([{ "slug": SLUG }, { "slug": "notes/never", "deletedAt": null }]));
+    assert_eq!(
+        store
+            .delete_purged_slug_holds("default", &unbounded)
+            .unwrap(),
+        counts(1, 0)
+    );
+    let rest = pages(json!([{ "slug": "notes/keeper" }, { "slug": "notes/a/deeper" }]));
+    assert_eq!(
+        store.delete_purged_slug_holds("default", &rest).unwrap(),
+        counts(2, 2)
+    );
+    assert_eq!(
+        store
+            .delete_purged_slug_holds("other", &pages(json!([{ "slug": SLUG }])))
+            .unwrap(),
+        counts(1, 1)
+    );
+    // Only the fact receipt is left of the gate's receipts.
+    assert_eq!(
+        store
+            .delete_purged_page_gate_receipts(0, &[first as i64], &[], &[])
+            .unwrap(),
+        1
+    );
+    // A time that is not ISO is refused before anything is written.
+    let bad = pages(json!([{ "slug": SLUG, "deletedAt": "yesterday" }]));
+    let err = store.delete_purged_slug_holds("default", &bad).unwrap_err();
+    assert_eq!(err.code, INVALID_ARGUMENT);
+    assert!(
+        err.message
+            .contains("invalid input syntax for type timestamp with time zone")
+    );
+    let nul = pages(json!([{ "slug": "notes/\u{0}a" }]));
+    assert_eq!(
+        store
+            .delete_purged_slug_holds("default", &nul)
+            .unwrap_err()
+            .code,
+        INVALID_ARGUMENT
     );
 }
 
