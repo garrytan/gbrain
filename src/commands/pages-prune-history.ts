@@ -27,7 +27,7 @@ export function parseHistoryPruneArgs(args: readonly string[]): HistoryPruneArgs
   const positional: string[] = [];
   const value = (i: number, name: string) => {
     const v = args[i + 1];
-    if (v === undefined || v.startsWith('--')) throw usageError(`${name} needs a value; nothing was pruned.`, `Usage: ${USAGE}`);
+    if (v === undefined || v.startsWith('--') || !v.trim()) throw usageError(`${name} needs a value; nothing was pruned.`, `Usage: ${USAGE}`);
     return v;
   };
   for (let i = 0; i < args.length; i++) {
@@ -54,6 +54,7 @@ export function parseHistoryPruneArgs(args: readonly string[]): HistoryPruneArgs
       if (!/^\d+$/.test(n)) throw usageError(`--version takes a version id from get_versions, not ${n}; nothing was pruned.`, `Usage: ${USAGE}`);
       (out.versionIds ??= []).push(Number(n));
     } else if (a.startsWith('-')) throw usageError(`gbrain pages prune-history does not accept ${a}; nothing was pruned.`, `Usage: ${USAGE}`);
+    else if (!a.trim()) throw usageError('A page slug cannot be empty; nothing was pruned.', `Usage: ${USAGE}`);
     else positional.push(a);
   }
   if (positional.length > 1) throw usageError('Name one page slug, or use --prefix, --type or --all; nothing was pruned.', `Usage: ${USAGE}`);
@@ -98,6 +99,10 @@ function describePlan(plan: HistoryPrunePlan, apply: string[] | null): string {
 async function prune(engine: BrainEngine, args: string[]): Promise<void> {
   const parsed = parseHistoryPruneArgs(args);
   const plan = await planHistoryPrune(engine, parsed);
+  const sources = [...new Set(plan.pages.map(page => page.source_id))];
+  if (parsed.slug !== undefined && parsed.sourceId === undefined && sources.length > 1) {
+    throw usageError(`${parsed.slug} names a page in ${sources.length} sources (${sources.join(', ')}); nothing was pruned.`, `Name the one you mean: ${previewArgv({ ...parsed, sourceId: sources[0] }).join(' ')}`);
+  }
   const print = (doc: unknown, text: string) => process.stdout.write((parsed.json ? JSON.stringify(doc, null, 2) : text) + '\n');
   if (!parsed.yes || parsed.dryRun) {
     const apply = plan.totals.versions ? [...selectionArgv(parsed), '--yes', '--expect', plan.plan_hash] : null;
@@ -112,7 +117,8 @@ async function prune(engine: BrainEngine, args: string[]): Promise<void> {
   }
   const pruned = await applyHistoryPrune(engine, plan);
   print({ dry_run: false, plan_hash: plan.plan_hash, pruned, totals: plan.totals },
-    pruned.versions ? `Pruned ${pruned.versions} saved version(s) from ${pruned.pages} page(s). The live pages did not change.` : 'Nothing to prune: no saved version matches.');
+    (pruned.versions ? `Pruned ${pruned.versions} saved version(s) from ${pruned.pages} page(s). The live pages did not change.` : 'Nothing to prune: no saved version matches.')
+      + (pruned.unchanged_pages ? `\n${pruned.unchanged_pages} page(s) were left as they are: renamed, moved, deleted or already pruned since the preview.` : ''));
 }
 
 export async function runPruneHistory(engine: BrainEngine, args: string[]): Promise<void> {

@@ -115,7 +115,13 @@ async function cli(args: string[]): Promise<{ doc: Record<string, unknown>; exit
     expect((await cli([])).doc).toMatchObject({ pages: [], already_accepted: 3 });
   }, 60_000);
 
+  async function acceptAll(): Promise<void> {
+    const preview = await cli([]);
+    if ((preview.doc.pages as unknown[]).length) expect((await cli(['--yes', '--expect', String(preview.doc.plan_hash)])).exit).toBe(0);
+  }
+
   test('an accepted page comes back when a fence row is added, or when a non-importer write replaces it', async () => {
+    await acceptAll();
     const [page] = await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE slug = $1', [TRANSCRIPTS[0]]);
     await engine.executeRaw(`INSERT INTO takes (page_id, row_num, claim, kind, holder, weight) VALUES ($1, 9, 'A later take', 'take', 'owner', 0.5)`, [page!.id]);
     expect(await listed()).toEqual([EMAIL, TRANSCRIPTS[0]!, REMOTE].sort());
@@ -126,6 +132,23 @@ async function cli(args: string[]): Promise<{ doc: Record<string, unknown>; exit
     const preview = await cli([]);
     expect((preview.doc.pages as Array<{ slug: string }>).map(p => p.slug)).toEqual([TRANSCRIPTS[0]]);
     expect((preview.doc.not_eligible as Array<{ slug: string }>).map(p => p.slug)).toContain(TRANSCRIPTS[1]);
+  }, 60_000);
+
+  test('an accepted page comes back when one of its rows changes in place', async () => {
+    await acceptAll();
+    expect(await listed()).not.toContain(TRANSCRIPTS[2]);
+    await engine.executeRaw("UPDATE facts SET visibility = 'world' WHERE source_markdown_slug = $1", [TRANSCRIPTS[2]]);
+    expect(await listed()).toContain(TRANSCRIPTS[2]);
+  }, 60_000);
+
+  test('a conversation page with no importer stamp stays for per-page review', async () => {
+    const slug = 'conversations/sessions/2026-01-06-unstamped-example';
+    await importFromContent(engine, slug, `---\ntype: conversation\ntitle: Session\ntranscript_import:\n  harness: codex\n  session_id: unstamped\n---\n\n# Session\n\n${FENCE}\n`,
+      { sourceId: 'default', noEmbed: true });
+    await runExtractFacts(engine, { sourceId: 'default' });
+    const preview = await cli([]);
+    expect((preview.doc.pages as Array<{ slug: string }>).map(p => p.slug)).not.toContain(slug);
+    expect((preview.doc.not_eligible as Array<{ slug: string }>).map(p => p.slug)).toContain(slug);
   }, 60_000);
 }
 });

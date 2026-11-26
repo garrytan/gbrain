@@ -16,7 +16,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operations, operationsByName, type OperationContext } from '../src/core/operations.ts';
 import { createPageVersion } from '../src/core/page-state/versions.ts';
-import { planHistoryPrune } from '../src/core/page-state/history-prune.ts';
+import { applyHistoryPrune, planHistoryPrune } from '../src/core/page-state/history-prune.ts';
 import { runPages } from '../src/commands/pages.ts';
 import { CLI_COMMANDS } from '../src/cli/command-table.ts';
 import { _resetCliExitVerdictForTests, currentExitCode, setStdoutCapture } from '../src/core/cli-force-exit.ts';
@@ -141,6 +141,31 @@ for (const kind of testBackends()) {
       expect(await count(`other-${kind}/report`)).toBe(2);
     });
 
+    test('a slug in two sources needs --source; a page renamed after the preview keeps its history', async () => {
+      const slug = `notes/shared-${kind}`;
+      const other = `source-b-${kind}`;
+      await engine.executeRaw('INSERT INTO sources (id, name, local_path, config) VALUES ($1, $1, NULL, $2::jsonb)', [other, '{}']);
+      await history(slug, ['s1', 's2', 's3']);
+      await asOwner(engine, tx => tx.putPage(slug, { type: 'note', title: slug, compiled_truth: 'b1' }, { sourceId: other }));
+      for (const body of ['b2', 'b3']) {
+        await createPageVersion(engine, slug, other);
+        await asOwner(engine, tx => tx.putPage(slug, { type: 'note', title: slug, compiled_truth: body }, { sourceId: other }));
+      }
+      const both = await cli([slug, '--keep', '0']);
+      expect(both.exit).toBe(2);
+      expect(both.doc.plan_hash).toBeUndefined();
+      const one = await cli([slug, '--keep', '0', '--source', other]);
+      expect(one.exit).toBe(0);
+      expect((one.doc.pages as Array<{ source_id: string }>).map(p => p.source_id)).toEqual([other]);
+
+      const plan = await planHistoryPrune(engine, { slug, sourceId: other, keep: 0 });
+      expect(plan.totals.versions).toBe(2);
+      await engine.executeRaw('UPDATE pages SET slug = $1 WHERE source_id = $2 AND slug = $3', [`archive/shared-${kind}`, other, slug]);
+      expect(await applyHistoryPrune(engine, plan)).toEqual({ pages: 0, versions: 0, unchanged_pages: 1 });
+      const [left] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM page_versions pv JOIN pages p ON p.id = pv.page_id WHERE p.source_id = $1', [other]);
+      expect(left!.n).toBe(2);
+    });
+
     test('the selection and bounds are required, and no operation or remote caller reaches the prune', async () => {
       expect((await cli(['--keep', '1'])).exit).toBe(2);
       expect((await cli(['notes/x'])).exit).toBe(2);
@@ -148,6 +173,10 @@ for (const kind of testBackends()) {
       expect((await cli(['--all', '--version', '3'])).exit).toBe(2);
       expect((await cli(['notes/x', '--keep', 'two'])).exit).toBe(2);
       expect((await cli(['notes/x', '--keep', '1', '--force'])).exit).toBe(2);
+      expect((await cli(['--prefix', '', '--keep', '0'])).exit).toBe(2);
+      expect((await cli(['--prefix', '  ', '--keep', '0'])).exit).toBe(2);
+      expect((await cli(['--type', '', '--keep', '0'])).exit).toBe(2);
+      expect((await cli(['', '--keep', '0'])).exit).toBe(2);
       expect(operations.filter(op => op.mutating && /version|history/.test(op.name)).map(op => op.name).sort()).toEqual(['revert_version']);
       expect(CLI_COMMANDS.find(c => c.name === 'pages')?.thinClient).toBe('refuse');
     });

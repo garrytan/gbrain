@@ -239,7 +239,8 @@ is refused). Pick the pages: one slug, `--prefix <p>`, `--type <t>` or
 `--all`, with `--source <id>` to stay in one source. Pick what goes:
 `--keep N` keeps each page's newest N versions, `--older-than 30d` only takes
 versions saved before then (the two combine), and `--version <id>` names exact
-versions of one slug.
+versions of one slug. A slug that names a page in more than one source needs
+`--source`.
 
 1. Preview: `gbrain pages prune-history --prefix notes/ --keep 20 --json`. It
    lists the pages, how many versions each loses and keeps, their dates and a

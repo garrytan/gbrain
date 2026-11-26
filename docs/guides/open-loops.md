@@ -346,7 +346,8 @@ with `gbrain config set loops.owner_addresses "me@example.net, Me <me@example.or
 array, default none; `config set` refuses anything that is not an address).
 From the next Gmail sync, mail from them opens no reply-owed loop, and a reply
 sent from one closes the thread's loop as `reply_detected`, the same as a reply
-from the account itself. Loops already open from those addresses are not
+from the account itself. Ingest tiers and which threads go to paid loop
+extraction do not change. Loops already open from those addresses are not
 closed for you: preview them with
 `gbrain loops drop sender <email> --source <id> --dry-run`.
 

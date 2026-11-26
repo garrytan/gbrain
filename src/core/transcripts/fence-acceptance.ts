@@ -29,12 +29,13 @@ export async function listOutsideFencePages(engine: BrainEngine): Promise<Outsid
   const rows = await engine.executeRaw<OutsideFencePage & { page_id: number | string }>(
     `SELECT p.id AS page_id, p.source_id, p.slug, p.type, sum(x.facts)::int AS facts, sum(x.world_facts)::int AS world_facts,
             sum(x.takes)::int AS takes, sum(x.links)::int AS links, md5(string_agg(x.k, ',' ORDER BY x.k)) AS fingerprint,
-            bool_and(p.type = 'conversation' AND p.frontmatter ? 'transcript_import' AND ${importerWroteLiveRevisionSql('p', 'r', '$1')}) AS imported_transcript
-       FROM (SELECT fp.id AS page_id, 1 AS facts, CASE WHEN f.visibility = 'world' THEN 1 ELSE 0 END AS world_facts, 0 AS takes, 0 AS links, 'f' || f.id AS k
+            bool_and(p.type = 'conversation' AND p.frontmatter ? 'transcript_import' AND ${importerWroteLiveRevisionSql('p', 'r', '$1')}
+                     AND COALESCE(r.intent->>'ingested_via', p.ingested_via) = $1) AS imported_transcript
+       FROM (SELECT fp.id AS page_id, 1 AS facts, CASE WHEN f.visibility = 'world' THEN 1 ELSE 0 END AS world_facts, 0 AS takes, 0 AS links, 'f' || f.id || ':' || md5(concat_ws('|', f.entity_slug, f.fact, f.kind, f.visibility, f.notability, f.context, f.valid_from, f.valid_until, f.confidence, f.source)) AS k
                FROM facts f JOIN pages fp ON fp.source_id = f.source_id AND fp.slug = f.source_markdown_slug
               WHERE f.row_num IS NOT NULL AND f.expired_at IS NULL
-             UNION ALL SELECT t.page_id, 0, 0, 1, 0, 't' || t.id FROM takes t WHERE t.active
-             UNION ALL SELECT l.origin_page_id, 0, 0, 0, 1, 'l' || l.id FROM links l WHERE l.origin_field = 'links_fence') x
+             UNION ALL SELECT t.page_id, 0, 0, 1, 0, 't' || t.id || ':' || md5(concat_ws('|', t.claim, t.kind, t.holder, t.weight, t.since_date, t.until_date, t.source)) FROM takes t WHERE t.active
+             UNION ALL SELECT l.origin_page_id, 0, 0, 0, 1, 'l' || l.id || ':' || md5(concat_ws('|', l.from_page_id, l.to_page_id, l.link_type, l.context, l.link_kind)) FROM links l WHERE l.origin_field = 'links_fence') x
        JOIN pages p ON p.id = x.page_id
        JOIN sources s ON s.id = p.source_id
        LEFT JOIN persistence_requests r ON r.id = p.revision_write_request_id
@@ -90,16 +91,22 @@ export async function planFenceAcceptance(engine: BrainEngine, opts: { sourceId?
   };
 }
 
-/** Records the plan's pages as accepted; entries for pages no longer listed are dropped. The caller checked the hash. */
+/**
+ * Adds the plan's pages to the record under a row lock, so two applies never drop each other's entries; every other entry
+ * is kept (an entry whose page or rows changed simply stops matching). The caller checked the hash.
+ */
 export async function applyFenceAcceptance(engine: BrainEngine, plan: FenceAcceptancePlan, now = new Date()): Promise<number> {
   if (!plan.pages.length) return 0;
-  const [listed, acceptance] = await Promise.all([listOutsideFencePages(engine), loadFenceAcceptance(engine)]);
-  const live = new Set(listed.map(p => p.page_id));
   const planned = new Set(plan.pages.map(p => p.page_id));
   const at = now.toISOString();
-  await engine.setConfig(FENCE_ACCEPTANCE_KEY, JSON.stringify([
-    ...acceptance.filter(a => live.has(a.page_id) && !planned.has(a.page_id)),
-    ...plan.pages.map(p => ({ page_id: p.page_id, source_id: p.source_id, slug: p.slug, fingerprint: p.fingerprint, accepted_at: at })),
-  ]));
+  await engine.transaction(async tx => {
+    await tx.executeRaw(`INSERT INTO config (key, value) VALUES ($1, '[]') ON CONFLICT (key) DO NOTHING`, [FENCE_ACCEPTANCE_KEY]);
+    await tx.executeRaw(`SELECT value FROM config WHERE key = $1 FOR UPDATE`, [FENCE_ACCEPTANCE_KEY]);
+    const acceptance = await loadFenceAcceptance(tx);
+    await tx.setConfig(FENCE_ACCEPTANCE_KEY, JSON.stringify([
+      ...acceptance.filter(a => !planned.has(a.page_id)),
+      ...plan.pages.map(p => ({ page_id: p.page_id, source_id: p.source_id, slug: p.slug, fingerprint: p.fingerprint, accepted_at: at })),
+    ]));
+  });
   return plan.pages.length;
 }

@@ -114,15 +114,16 @@ export async function planHistoryPrune(engine: BrainEngine, sel: HistoryPruneSel
 }
 
 /** Deletes exactly the plan's versions, one page at a time under its page lock. The caller has checked the plan hash. */
-export async function applyHistoryPrune(engine: BrainEngine, plan: HistoryPrunePlan): Promise<{ pages: number; versions: number }> {
-  let versions = 0, pages = 0;
+export async function applyHistoryPrune(engine: BrainEngine, plan: HistoryPrunePlan): Promise<{ pages: number; versions: number; unchanged_pages: number }> {
+  let versions = 0, pages = 0, unchanged = 0;
   for (const page of plan.pages) {
     const n = await engine.transaction(async tx => {
       await tx.lockPageKeys([{ sourceId: page.source_id, slug: page.slug }]);
-      return pruneInlineVersionsById(tx, page.page_id, page.version_ids);
+      return pruneInlineVersionsById(tx, { pageId: page.page_id, sourceId: page.source_id, slug: page.slug }, page.version_ids);
     });
     versions += n;
     if (n) pages++;
+    else unchanged++;
   }
-  return { pages, versions };
+  return { pages, versions, unchanged_pages: unchanged };
 }

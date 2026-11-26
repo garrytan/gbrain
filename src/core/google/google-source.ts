@@ -232,7 +232,7 @@ async function processThread(
   if (deps.cfg.ingestTiers || deps.privateSenders) {
     const privateSenders = deps.privateSenders ?? null;
     tier = deps.cfg.ingestTiers
-      ? await classifyThreadTier(deps.engine, thread, deps.myAddresses, privateSenders)
+      ? await classifyThreadTier(deps.engine, thread, myAddressSet(deps.entry), privateSenders)
       : privateSenders && isPrivateThread(thread, privateSenders) ? 'private' : 'full';
     summary.ingestTiers = { ...summary.ingestTiers, [tier]: (summary.ingestTiers?.[tier] ?? 0) + 1 };
     seen.tier = tier;
@@ -265,7 +265,7 @@ async function processThread(
     // Structural eligibility, not "everything recent": bulk mail the owner
     // never joined would otherwise both pay for model calls AND crowd real
     // threads out of the sweep.
-    const verdict = loopExtractionEligibility(thread, deps.myAddresses, deps.exclusion);
+    const verdict = loopExtractionEligibility(thread, myAddressSet(deps.entry), deps.exclusion);
     summary.extractEligibility[verdict.reason] =
       (summary.extractEligibility[verdict.reason] ?? 0) + 1;
     if (verdict.eligible) {
@@ -436,14 +436,18 @@ async function walkGmailWindow(g: GmailSweep, floorKey: 'gmail_backfill_floor_ms
     for (const m of listing.ids) if (!versions.has(m.threadId)) versions.set(m.threadId, m.id);
     const threadIds = [...versions.keys()];
     let batchFailed = false;
-    const bank = async (oldestMs: number): Promise<void> => {
+    // The listing's `before:` bound is whole seconds, so a bank proves and saves the start of the oldest thread's second:
+    // every thread in that second is settled, and the next listing does not name the banked thread again.
+    const bank = async (oldestMs: number): Promise<boolean> => {
+      const atMs = Math.floor(oldestMs / 1000) * 1000;
+      if (atMs >= floorMs) return false;
       const below = signal?.aborted
-        ? await list(oldestMs, floorMs, WINDOW_LIST_PAGES, AbortSignal.timeout(ABORT_PROOF_MS)).catch(() => null)
-        : await list(oldestMs, floorMs, WINDOW_LIST_PAGES);
-      if (below?.complete && below.ids.every(m => settled.has(m.threadId))) {
-        state[floorKey] = floorMs = oldestMs;
-        await saveGoogleState(deps, state);
-      }
+        ? await list(atMs, floorMs, WINDOW_LIST_PAGES, AbortSignal.timeout(ABORT_PROOF_MS)).catch(() => null)
+        : await list(atMs, floorMs, WINDOW_LIST_PAGES);
+      if (!below?.complete || !below.ids.every(m => settled.has(m.threadId))) return false;
+      state[floorKey] = floorMs = atMs;
+      await saveGoogleState(deps, state);
+      return true;
     };
     for (let i = 0; i < threadIds.length; i += BACKFILL_BATCH_THREADS) {
       if (signal?.aborted) break;
@@ -455,9 +459,9 @@ async function walkGmailWindow(g: GmailSweep, floorKey: 'gmail_backfill_floor_ms
         if (outcome.kind === 'landed') {
           settled.add(tid);
           if (outcome.newestMs > 0 && outcome.newestMs < batchOldest) batchOldest = outcome.newestMs;
-          // #10473: a managed sweep cannot write once its deadline aborts it, so it banks its first landed thread at once
-          // (as the delta drain does); a sweep cut off inside its first batch still moves the floor.
-          if (deps.managed && !batchFailed && !bankedFirst && batchOldest < floorMs) { bankedFirst = true; await bank(batchOldest); }
+          // #10473: a managed sweep cannot write once its deadline aborts it, so it banks as soon as a proof holds after a
+          // thread lands (as the delta drain banks its first thread); a sweep cut off inside its first batch still moves the floor.
+          if (deps.managed && !batchFailed && !bankedFirst && batchOldest < floorMs) bankedFirst = await bank(batchOldest);
         } else if (outcome.kind === 'failed' || outcome.kind === 'rate_limited') {
           // A failed thread NEWER than a committed floor would fall outside
           // the resume window (`before:floor`) forever, so the batch holds the

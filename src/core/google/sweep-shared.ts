@@ -99,7 +99,7 @@ export interface GoogleSyncDeps {
   cfg: GoogleSourceConfig;
   opts: SyncOpts;
   entry: CredentialEntry;
-  /** #10094: who the owner is in loop direction and ingest tiers: myAddressSet(entry) plus loops.owner_addresses, read once per sync. */
+  /** #10094: who the owner is in reply-owed loop direction only: myAddressSet(entry) plus loops.owner_addresses, read once per sync. Ingest tiers and paid extraction keep myAddressSet(entry). */
   myAddresses: Set<string>;
   log: (msg: string) => void;
   /**

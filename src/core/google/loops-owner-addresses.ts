@@ -50,7 +50,7 @@ export async function readLoopOwnerAddresses(engine: BrainEngine, log: (msg: str
   return parsed ?? [];
 }
 
-/** #10094: the identity set every "is this mine" decision of a sync reads: the account, its send-as aliases and, for Gmail, loops.owner_addresses. */
+/** #10094: the identity set reply-owed loop direction reads: the account, its send-as aliases and, for Gmail, loops.owner_addresses. Ingest tiers and paid extraction keep myAddressSet. */
 export async function ownerAddressSet(engine: BrainEngine, entry: CredentialEntry, gmail: boolean, log: (msg: string) => void): Promise<Set<string>> {
   const out = myAddressSet(entry);
   if (gmail) for (const address of await readLoopOwnerAddresses(engine, log)) out.add(address);

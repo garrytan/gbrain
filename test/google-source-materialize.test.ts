@@ -766,6 +766,33 @@ describe('google-source materialize', () => {
     }
   });
 
+  test('#10473 aborted backfill: a floor banked on a thread dated mid-second does not list that thread again', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-floor-ms-'));
+    const fx = emptyFx();
+    const vault = makeVault();
+    const tids = ['17aa00000000f101', '17aa00000000f102', '17aa00000000f103', '17aa00000000f104'];
+    tids.forEach((tid, i) => fx.messages.push(gmsg(`18c2f4a9b3d21f1${i + 1}`, tid, daysAgoMs(40 + i) + 250, {
+      headers: { From: 'Peer Example <peer@example.com>', To: 'a@example.com', Subject: `Archive item ${i}` },
+      body: `Archive item body ${i}.`,
+    })));
+    const fetches = (tid: string) => fx.calls.filter((c) => c.includes(`/threads/${tid}`)).length;
+    try {
+      await insertGoogleSource(dir);
+      await withHome(async () => {
+        const controller = new AbortController();
+        fx.onThreadFetch = () => { if (fx.threadFetches >= 2) controller.abort(); };
+        await sweep(dir, fx, vault, { signal: controller.signal }, 'gmail');
+        expect(readGoogleState(dir).gmail_backfill_floor_ms).toBe(daysAgoMs(41));
+        fx.onThreadFetch = undefined;
+        expect((await sweep(dir, fx, vault, {}, 'gmail')).added).toBe(2);
+        expect(tids.map(fetches)).toEqual([1, 1, 1, 1]);
+        expect(readGoogleState(dir).gmail_backfill_done).toBe(true);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('aborted delta drain banks landed threads; the next run resumes only the remainder', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gsrc-delta-abort-'));
     const fx = emptyFx();
