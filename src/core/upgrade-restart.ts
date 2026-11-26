@@ -521,11 +521,15 @@ export function restartProblems(plan: RestartPlan, processes: readonly HostProce
     else if (mismatched.has(p)) problems.push(`${label(p)} reports no build and was started from an install that holds v${p.install_version}${from}.`);
     else if (!p.version && (p.started_ms === null || p.started_ms < restartStartedMs)) problems.push(`${label(p)} reports no build and started before the restart.`);
   }
+  const claimed = new Set<number>();
   for (const step of plan.steps) {
     if (step.kind === 'stop' || step.kind === 'replace_copy') continue;
     if (step.kind === 'handoff' && step.role !== 'autopilot') {
-      if (!fresh.some(p => p.role === step.role && p.started_ms !== null && p.started_ms >= restartStartedMs
-        && (p.role !== 'worker' || (!p.home_unread && p.ppid === null && (p.version ?? p.install_version) === plan.expected)))) {
+      // Each handoff needs its own replacement; a worker's must also be launched the same way (its queue and limits).
+      const back = fresh.find(p => !claimed.has(p.pid) && p.role === step.role && p.started_ms !== null && p.started_ms >= restartStartedMs
+        && (p.role !== 'worker' || (!p.home_unread && p.ppid === null && (p.version ?? p.install_version) === plan.expected && launchedAs(p) === step.command)));
+      if (back) claimed.add(back.pid);
+      else {
         problems.push(`${step.role} did not come back after it was stopped for ${launcherName(step.launcher, step.role)} to start again: start it with \`${step.command}\` the way it was launched.`);
       }
       continue;

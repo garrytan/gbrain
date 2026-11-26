@@ -59,6 +59,9 @@ describe('per-source extract_atoms opt-out (#9888)', () => {
     await cli(['set-extract-atoms', 'source-a', 'on', '--expect', 'off']);
     expect(await config('source-a')).toEqual({ strategy: 'markdown', extract_atoms: true });
     expect((await cli(['set-extract-atoms', 'no-such-source', 'off', '--json'])).verdict).toBe(2);
+    const bare = await cli(['set-extract-atoms', 'source-a', 'off', '--expect']);
+    expect(bare.verdict).toBe(2);
+    expect(await config('source-a')).toEqual({ strategy: 'markdown', extract_atoms: true });
   });
 
   test('two identical sources: the opted-out one has no backlog, no candidates and no provider call', async () => {
@@ -81,6 +84,21 @@ describe('per-source extract_atoms opt-out (#9888)', () => {
     expect(result.details).toMatchObject({ reason: 'source_extract_atoms_off', source_id: 'source-a' });
     expect(calls).toBe(0);
     expect((await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM pages WHERE source_id='source-a' AND deleted_at IS NULL"))[0]!.n).toBe(1);
+  });
+
+  test('turning a source off mid-run stops further provider calls', async () => {
+    await seed('article/one', 'source-a');
+    await seed('article/two', 'source-a');
+    let calls = 0;
+    const text = '[{"title":"a synthetic atom","atom_type":"insight","body":"b"}]';
+    const chat = (async () => {
+      calls++;
+      await optOut('source-a');
+      return { text, blocks: [{ type: 'text', text }], stopReason: 'end', model: 'test:model', providerId: 'test',
+        usage: { input_tokens: 10, output_tokens: 5, cache_read_tokens: 0, cache_creation_tokens: 0 } };
+    }) as never;
+    await runPhaseExtractAtoms(engine, { sourceId: 'source-a', _chat: chat });
+    expect(calls).toBe(1);
   });
 
   test('doctor counts opted-out pages apart and never asks to drain them', async () => {

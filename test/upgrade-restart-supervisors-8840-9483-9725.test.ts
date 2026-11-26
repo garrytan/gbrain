@@ -211,6 +211,26 @@ describe('#10291: a jobs worker run by a container process manager', () => {
     expect(restartProblems(plan, [fresh!], 5_000, warm)).toEqual([]);
   });
 
+  test('declared: each handed-off worker needs its own replacement launched the same way', async () => {
+    const other = 'gbrain jobs work --queue source-b --max-rss 5120';
+    const workers = await collectHostProcesses(workerSources([
+      { pid: 30, ppid: 1, command: `/usr/bin/tini -s -- ${command}`, started_ms: 900, gbrain_home: home },
+      { pid: 40, ppid: 30, command, started_ms: 1_000, gbrain_home: home },
+      { pid: 31, ppid: 1, command: `/usr/bin/tini -s -- ${other}`, started_ms: 900, gbrain_home: home },
+      { pid: 41, ppid: 31, command: other, started_ms: 1_000, gbrain_home: home },
+    ]));
+    const plan = planRestart(workers, ctx({ expected: NEW, workerLauncher: LAUNCHER }));
+    expect(plan.steps.map(step => step.kind === 'handoff' ? step.command : null).sort()).toEqual([command, other]);
+    const warm = { before: { state: 'absent' as const }, after: { state: 'absent' as const } };
+    const back = (rows: Array<{ pid: number; command: string }>) => collectHostProcesses({
+      ...workerSources(rows.map(row => ({ ...row, ppid: 1, started_ms: 9_000, gbrain_home: home }))),
+      workers: () => rows.map(row => ({ pid: row.pid, version: NEW })),
+    });
+    const missingOther = `worker did not come back after it was stopped for the launcher self_upgrade.worker_launcher declares to start again: start it with \`${other}\` the way it was launched.`;
+    expect(restartProblems(plan, await back([{ pid: 140, command }]), 5_000, warm)).toEqual([missingOther]);
+    expect(restartProblems(plan, await back([{ pid: 140, command }, { pid: 141, command: other }]), 5_000, warm)).toEqual([]);
+  });
+
   test('declared: an unread worker stays manual and a gbrain-supervised worker still restarts with its supervisor', async () => {
     const worker = await foreignWorker();
     const configured = ctx({ workerLauncher: LAUNCHER });

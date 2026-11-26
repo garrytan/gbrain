@@ -1185,7 +1185,7 @@ async function runPhaseSynthesizeInner(
     // Dual-write: reverse-render each DB row → markdown file.
     const fileHolds: string[] = [];
     const reverseWriteCount = maintenance ? (maintenance.binding ? writtenRefs.length : 0)
-      : brainDir === null ? 0 : await reverseWriteRefs(engine, brainDir, writtenRefs, cycleSourceId, opts.signal, fileHolds);
+      : opts.brainDir === null ? 0 : await reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId, opts.signal, fileHolds);
 
     const summarySlug = buildDreamSummarySlug(config.outputRoot, summaryDate);
     const writtenSlugs = writtenRefs.map(r => r.slug);

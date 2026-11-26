@@ -1110,7 +1110,7 @@ export async function runPhaseExtractAtoms(
   let stoppedEarly = false;
   await withBudgetTracker(budgetTracker, async () => {
   for (const item of work) {
-    if (opts.signal?.aborted || opts.stopSignal?.aborted) { stoppedEarly = true; break; }
+    if (opts.signal?.aborted || opts.stopSignal?.aborted || await sourceAtomPolicySkip(engine, sourceId)) { stoppedEarly = true; break; } // #9888: an opt-out mid-run sends nothing more
     await maybeYield();
     if (budgetExhausted || budgetTracker.totalSpent >= budgetCap) {
       if (item.kind === 'transcript') transcriptsSkipped++;

@@ -16,6 +16,7 @@ import { join, basename, dirname, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 import { parseDataFrontmatter } from '../data-frontmatter.ts';
 import { pruneDir } from '../sync.ts';
+import { utcDate } from './cycle-date.ts';
 import { realpathOrResolve, resolvedPrefixContained } from '../path-confine.ts';
 import { CORPUS_SPOOL_SUBDIR, corpusFileSessionId, parseWbFileName } from '../context/corpus-segments.ts';
 import { withoutOffPeriodTurns } from '../context/capture-consent.ts';
@@ -271,14 +272,22 @@ function isInDateRange(date: string | null, opts: TranscriptDateFilter): boolean
 function passesFileDates(filePath: string, nameDate: string | null, fm: Record<string, unknown>,
   inferredDate: string | null, opts: TranscriptDateFilter): boolean {
   const { sinceMs } = opts;
-  const datedAt = sinceMs === undefined ? null : parseTranscriptDate(nameDate) ?? parseTranscriptDate(fm.date);
-  const useCaptureDay = !inferredDate && (opts.date || opts.from || opts.to) && parseWbFileName(basename(filePath));
+  const datedAt = sinceMs === undefined ? null : latestInstant(nameDate) ?? latestInstant(fm.date);
+  const spooled = !!parseWbFileName(basename(filePath));
+  const useCaptureDay = !inferredDate && (opts.date || opts.from || opts.to) && spooled;
   let captureTime: Date | undefined;
-  if ((sinceMs !== undefined && datedAt === null) || useCaptureDay) {
+  if ((sinceMs !== undefined && datedAt === null && spooled) || useCaptureDay) {
     try { captureTime = statSync(filePath).mtime; } catch { return false; }
   }
   return (sinceMs === undefined || (datedAt ?? captureTime?.getTime() ?? -Infinity) >= sinceMs)
-    && isInDateRange(inferredDate ?? (useCaptureDay ? captureTime?.toISOString().slice(0, 10) ?? null : null), opts);
+    && isInDateRange(inferredDate ?? (useCaptureDay && captureTime ? utcDate(captureTime) : null), opts);
+}
+
+/** The last instant a transcript date covers: a day-only date covers its whole UTC day, so a session dated on the cutoff day stays a candidate. */
+function latestInstant(value: unknown): number | null {
+  const ms = parseTranscriptDate(value);
+  const dayOnly = typeof value === 'string' ? /^\d{4}-\d{2}-\d{2}$/.test(value.trim()) : ms !== null && ms % 86_400_000 === 0; // YAML reads a bare day as UTC midnight
+  return ms !== null && dayOnly ? ms + 86_399_999 : ms;
 }
 
 /** Labels of every compiled pattern that matches `text` (empty when none). */
@@ -588,7 +597,7 @@ export async function discoverConversationPages(
     const date = pageDate(fm, row.slug);
     if (!isInDateRange(date, opts)) continue;
     if (opts.sinceMs !== undefined) {
-      const timestamp = parseTranscriptDate(fm.date);
+      const timestamp = latestInstant(fm.date);
       if (timestamp === null || timestamp < opts.sinceMs) continue;
     }
     if (fm.mode === 'lsd' || (fm.dream_generated === true && !opts.bypassGuard)) { guarded++; continue; }

@@ -23,7 +23,7 @@ function parseArgs(args: string[]): { sourceId: string; target: Switch; dryRun: 
     const arg = args[i]!;
     if (arg === '--json') continue;
     if (arg === '--dry-run') { dryRun = true; continue; }
-    if (arg === '--expect') { expect = args[++i]; continue; }
+    if (arg === '--expect') { expect = args[++i] ?? ''; continue; }
     if (arg.startsWith('-')) throw opError('invalid_params', `Unknown flag ${arg}.`, `Usage: ${USAGE}`);
     positional.push(arg);
   }
