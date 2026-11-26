@@ -20,6 +20,8 @@ import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
+import { serializePageToMarkdown } from '../src/core/markdown.ts';
+import { lintContent } from '../src/commands/lint.ts';
 import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
@@ -160,6 +162,10 @@ for (const kind of testBackends()) {
       expect(String(rows[0]!.source)).toContain('qm:' + ALICE_ID + '; slack:C0SCOPE/p1');
       const [page] = await engine.executeRaw<{ page_readers: string[] | null }>('SELECT page_readers FROM pages WHERE source_id = $1 AND slug = $2', [SCOPE_A, 'memory/scope']);
       expect(page!.page_readers).toBeNull();
+      // #9945: the scope page the first fact creates carries its capture time, so a content lint finds temporal provenance.
+      const created = await engine.readPageSnapshot('memory/scope', { sourceId: SCOPE_A });
+      expect(lintContent(serializePageToMarkdown(created!.page, created!.tags), 'memory/scope.md').map(i => i.rule)).not.toContain('missing-created');
+      expect(Date.now() - Date.parse(String(created!.page.frontmatter.captured_at))).toBeLessThan(600_000);
       const named = await call(bob, 'memory_recall', { query: 'launch Thursday', source_id: SCOPE_A });
       expect(named.isError).toBe(false);
       expect(named.text).toContain('canaryscopea');

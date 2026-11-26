@@ -115,6 +115,8 @@ export const STARTER_OPS: ReadonlySet<string> = new Set([
   'memory_conversation_mode',
   // Agent platform H1: "what's at risk at home" is a daily-driver read (a direct literal, so subagents gain nothing).
   'household_due',
+  // Agent platform C2: the user's correction saves a standing rule and fixes the fact (a direct literal, so subagents gain nothing).
+  'correct',
 ]);
 
 /**
@@ -294,6 +296,7 @@ export const STARTER_CALLABLE_PARAMS: Readonly<Record<string, Readonly<Record<st
     grep: 'A substring filter that only narrows the facts returned; gbrain\'s connection check passes it.',
     limit: 'Caps rows per arm at 100; gbrain\'s connection check passes it.',
     source_ids: NARROW,
+    max_chars: 'Only cuts the reply to whole facts and results within the cap, so a client with a response size limit can bound it; it reads nothing more.',
   },
   list_pages: {
     source_ids: NARROW, slug_prefix: LIST_FILTER, where: LIST_FILTER,
