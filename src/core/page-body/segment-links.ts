@@ -132,6 +132,24 @@ export async function segmentedRoleText(engine: BrainEngine, page: { id: number;
   return found.filter(Boolean).join('\n');
 }
 
+/** Adds one window's temporal inputs (dated lines, narrative references, ranged relation lines) to `body`. */
+function addWindowTemporal(body: TemporalBody, w: BodyWindow): void {
+  body.lines.push(...detachedValue(datedLines(w.block.text)));
+  if (w.block.region === 'truth') body.narrative.push(...detachedValue(narrativeRefs(w.block.text)));
+  for (const line of rangedRelationLines(w.text)) if (line.start >= w.start && line.start < w.end) body.ranged.push(detachedValue({ ...line, start: line.start + w.offset }));
+}
+
+/**
+ * The temporal inputs of a segmented body, read block by block: what extractSegmentedPageLinks collects with
+ * `temporal`, for a caller that takes its links from elsewhere (the file walk of `extract`, link-reconciliation.ts).
+ */
+export async function segmentedTemporalBody(engine: BrainEngine, page: { id: number; slug: string; source_id?: string },
+  opts: BodyBlockOptions = {}): Promise<TemporalBody> {
+  const body: TemporalBody = { lines: [], narrative: [], ranged: [] };
+  for await (const w of bodyWindows(engine, page, opts)) addWindowTemporal(body, w);
+  return body;
+}
+
 /**
  * extractPageLinks(slug, `${compiled_truth}\n${timeline}`, ...) of a segmented page, streamed; `regions` narrows the
  * body (the remote mention effect reads the compiled truth only). With `temporal`, also collects the body's temporal
@@ -156,10 +174,7 @@ export async function extractSegmentedPageLinks(engine: BrainEngine, page: Segme
       const prior = kept.get(key);
       if (!prior || link.pass < prior.pass || (link.pass === prior.pass && link.index < prior.index)) kept.set(key, { ...detachedValue(link), seq: seq++ });
     }
-    if (!opts.temporal) continue;
-    temporalBody.lines.push(...detachedValue(datedLines(w.block.text)));
-    if (w.block.region === 'truth') temporalBody.narrative.push(...detachedValue(narrativeRefs(w.block.text)));
-    for (const line of rangedRelationLines(w.text)) if (line.start >= w.start && line.start < w.end) temporalBody.ranged.push(detachedValue({ ...line, start: line.start + w.offset }));
+    if (opts.temporal) addWindowTemporal(temporalBody, w);
   }
   const fm = await frontmatterLinks(page.slug, page.frontmatter, page.type, resolver, opts);
   const body = [...kept.values()].sort((a, b) => a.pass - b.pass || a.index - b.index || a.seq - b.seq).map(link => link.candidate);

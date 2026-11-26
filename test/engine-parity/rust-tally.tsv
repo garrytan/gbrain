@@ -111,6 +111,7 @@ test/engine-parity/entity-identities.test.ts	9	4
 test/engine-parity/entity-names-siblings.test.ts	1	0
 test/engine-parity/entity-reads.test.ts	14	0
 test/engine-parity/export-bytes.test.ts	2	0
+test/engine-parity/extract-all-segmented.test.ts	1	0
 test/engine-parity/extract-bookkeeping.test.ts	2	0
 test/engine-parity/extract-takes-reads.test.ts	9	0
 test/engine-parity/extract-takes.test.ts	2	0
