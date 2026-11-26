@@ -13,6 +13,7 @@
  *    coordinator; the reviewed edit is a file write in the canonical checkout.
  */
 import { describe, expect, test } from 'bun:test';
+import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -26,12 +27,13 @@ import { adoptSharedSkillpack, submitSharedSkillMutation } from '../src/core/sha
 import { getSharedSkill, listSharedSkills } from '../src/core/shared-skills/catalog.ts';
 import { setSharedSkillPolicy } from '../src/core/shared-skills/policy.ts';
 import { inventorySkillpack } from '../src/core/shared-skills/setup-files.ts';
+import { runSharedSkillsMigration } from '../src/core/shared-skills/migration.ts';
 import type { SharedSkillPolicy } from '../src/core/shared-skills/model.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 
 const OPERATIONS = ['list_skills', 'get_skill', 'get_skill_asset', 'put_skill', 'delete_skill', 'set_skill_policy', 'list_brain_skillpack'];
-const POLICY: SharedSkillPolicy = { version: 1, enabled: true, classes: ['prose', 'reference', 'asset', 'script'], audiences: ['readers', 'oauth_client:editor'], requirements: [], allow_follow: true };
+const POLICY: SharedSkillPolicy = { version: 1, enabled: true, classes: ['prose', 'reference', 'asset', 'script'], audiences: ['readers', 'oauth_client:editor'], requirements: ['tool:get_page'], allow_follow: true };
 const REFERENCE = 'skills/alpha/references/guide.md';
 const skillMd = (body: string) => `---\nname: alpha\ndescription: A synthetic fixture\ntriggers: [example task]\n---\n\n${body}\n`;
 
@@ -45,6 +47,8 @@ async function fixture(run: (f: Fixture) => Promise<void>, databaseUrl?: string)
       const engine = isolated.engine;
       try {
         const root = join(dir, 'default'); mkdirSync(root);
+        // Its own Git root, so the worktree claim never walks up to a checkout that holds the temp dir (TMPDIR inside a repo).
+        execFileSync('git', ['init', '-q', root]);
         await engine.executeRaw('UPDATE sources SET local_path=$1 WHERE id=$2', [root, 'default']);
         await claimWorktree(engine, 'default', root);
         await activateSharedSkillPersistence(engine, { confirmQuiesced: true });
@@ -82,6 +86,34 @@ async function readoptAfterEdit(f: Fixture, extra: Record<string, unknown>) {
     referenceOnDisk: existsSync(join(f.root, REFERENCE)) ? readFileSync(join(f.root, REFERENCE), 'utf8') : null,
     skillOnDisk: readFileSync(join(f.root, 'skills/alpha/SKILL.md'), 'utf8'),
     visibleAfter: (await listSharedSkills(f.reader)).skills.map(skill => skill.name) };
+}
+
+
+/** Publishes alpha (SKILL.md depending on one reference file) through put_skill and marks the pack brain-resident. */
+async function publishWithReference(f: Fixture, extra: Record<string, unknown> = {}) {
+  await submitSharedSkillMutation(f.editor, 'put_skill', { request_id: randomUUID(), expected_revision: null,
+    source_id: 'default', source_incarnation: f.incarnation, pack_id: 'example-pack', name: 'alpha',
+    files: [{ path: 'skills/alpha/SKILL.md', content: skillMd('Use the guide.'), file_class: 'prose', depends_on: [REFERENCE] },
+      { path: REFERENCE, content: 'Guide body', file_class: 'reference' }], ...extra });
+  const manifest = JSON.parse(readFileSync(join(f.root, 'skillpack.json'), 'utf8')) as Record<string, unknown>;
+  writeFileSync(join(f.root, 'skillpack.json'), `${JSON.stringify({ ...manifest, brain_resident: true }, null, 2)}\n`);
+}
+const HEAD_SQL = `SELECT r.revision,r.files,r.metadata FROM shared_skill_heads h JOIN shared_skill_revisions r
+  ON r.source_id=h.source_id AND r.source_incarnation=h.source_incarnation AND r.pack_id=h.pack_id AND r.name=h.name AND r.revision=h.revision
+  WHERE h.source_id=$1 AND h.name=$2`;
+async function headRow(f: Fixture) {
+  return (await f.engine.executeRaw<{ revision: string; files: Array<{ path: string; content: string }>; metadata: { requirements: string[]; tools_declared: boolean } }>(HEAD_SQL, ['default', 'alpha']))[0];
+}
+const headFiles = async (f: Fixture) => (await headRow(f)).files;
+const headMetadata = async (f: Fixture) => (await headRow(f)).metadata;
+const headRevision = async (f: Fixture) => (await headRow(f)).revision;
+/** The digest the migration names in its conflict message, for --accept-reviewed-inventory. */
+async function acceptableDigest(f: Fixture): Promise<string> {
+  const report = await runSharedSkillsMigration(f.local);
+  const reason = report.sources.find(row => row.source_id === 'default')?.stages.map(stage => stage.reason ?? '').join(' ') ?? '';
+  const match = /--accept-reviewed-inventory default=([a-f0-9]{64})/.exec(reason);
+  expect(match).not.toBeNull();
+  return match![1];
 }
 
 const backends: Array<[string, string | undefined]> = [['PGLite', undefined], ...(process.env.DATABASE_URL ? [['Postgres', process.env.DATABASE_URL] as [string, string]] : [])];
@@ -158,8 +190,8 @@ for (const [name, url] of backends) {
       expect(before).not.toContain(REFERENCE);
     }, url), 120_000);
 
-    // Value: protects=a reviewed removal of a reference file adopts, dropping the file and every edge to it, direct and transitive; fails_when=the carried depends_on still names the removed file and adoption refuses; why_new=no test removed a dependency through adoption; seam=none; no_claim=none
-    test('a reviewed removal of a reference file adopts, and a file only it reached goes too', () => fixture(async f => {
+    // Value: protects=removing a guide never deletes a nested file the operator kept; fails_when=adoption drops the unreachable nested file and the publisher unlinks it; why_new=no test removed a transitive dependency; seam=none; no_claim=none
+    test('a reviewed removal of a guide refuses while a file only it reached is still in the checkout, and deletes nothing', () => fixture(async f => {
       const NESTED = 'skills/alpha/references/nested.md';
       await submitSharedSkillMutation(f.editor, 'put_skill', { request_id: randomUUID(), expected_revision: null,
         source_id: 'default', source_incarnation: f.incarnation, pack_id: 'example-pack', name: 'alpha',
@@ -171,14 +203,77 @@ for (const [name, url] of backends) {
       rmSync(join(f.root, REFERENCE));
       writeFileSync(join(f.root, 'skills/alpha/SKILL.md'), skillMd('No guide any more.'));
       const reviewed = inventorySkillpack(f.root)!;
-      const adopted = await adoptSharedSkillpack(f.local, 'default', { expected_hashes: { ...reviewed.hashes, [REFERENCE]: null } });
-      const head = (await f.engine.executeRaw<{ files: Array<{ path: string; depends_on?: string[] }> }>(`SELECT r.files FROM shared_skill_heads h JOIN shared_skill_revisions r
-        ON r.source_id=h.source_id AND r.source_incarnation=h.source_incarnation AND r.pack_id=h.pack_id AND r.name=h.name AND r.revision=h.revision
-        WHERE h.source_id=$1 AND h.name=$2`, ['default', 'alpha']))[0];
-      expect({ state: (adopted.receipts[0].write_request as { state?: string } | undefined)?.state,
-        paths: head.files.map(file => file.path).sort(), depends: head.files.flatMap(file => file.depends_on ?? []),
-        reference: existsSync(join(f.root, REFERENCE)), nested: existsSync(join(f.root, NESTED)) })
-        .toEqual({ state: 'committed', paths: ['skills/alpha/SKILL.md'], depends: [], reference: false, nested: false });
+      // The nested file is still in the checkout, and nothing names it any more: adoption must not delete it.
+      const outcome = await adoptSharedSkillpack(f.local, 'default', { expected_hashes: { ...reviewed.hashes, [REFERENCE]: null } })
+        .then(() => 'adopted', (error: { code?: string }) => error.code);
+      expect({ outcome, reference: existsSync(join(f.root, REFERENCE)), nested: existsSync(join(f.root, NESTED)) ? readFileSync(join(f.root, NESTED), 'utf8') : null })
+        .toEqual({ outcome: 'local_conflict', reference: false, nested: 'Nested body' });
+    }, url), 120_000);
+
+    // Value: protects=adoption publishes exactly the bytes whose hash was reviewed; fails_when=a carried file read before admission differs from the reviewed bytes that admission re-reads; why_new=no test changed a file between the carry read and admission; seam=the file is swapped back when adoption looks up its request; no_claim=none
+    test('a carried file changed between the carry read and admission is never published', () => fixture(async f => {
+      await publishWithReference(f);
+      writeFileSync(join(f.root, 'skills/alpha/SKILL.md'), skillMd('Use the guide, carefully.'));
+      writeFileSync(join(f.root, REFERENCE), 'Reviewed guide');
+      const reviewed = inventorySkillpack(f.root)!;
+      writeFileSync(join(f.root, REFERENCE), 'Unreviewed guide');
+      const raw = f.engine.executeRaw.bind(f.engine);
+      let swapped = false;
+      (f.engine as { executeRaw: unknown }).executeRaw = async (sql: string, ...rest: unknown[]) => {
+        if (!swapped && sql.startsWith('SELECT * FROM persistence_requests WHERE principal_kind')) { swapped = true; writeFileSync(join(f.root, REFERENCE), 'Reviewed guide'); }
+        return (raw as (...args: unknown[]) => Promise<unknown>)(sql, ...rest);
+      };
+      const outcome = await adoptSharedSkillpack(f.local, 'default', { expected_hashes: reviewed.hashes })
+        .then(() => 'adopted', (error: { code?: string }) => error.code);
+      (f.engine as { executeRaw: unknown }).executeRaw = raw;
+      const sealed = (await headFiles(f)).find(file => file.path === REFERENCE);
+      // The unreviewed bytes are refused before admission; the sealed reference is still the published one.
+      expect({ outcome, sealed: sealed ? Buffer.from(sealed.content, 'base64').toString() : null }).toEqual({ outcome: 'local_conflict', sealed: 'Guide body' });
+    }, url), 120_000);
+
+    // Value: protects=re-adoption keeps the tool requirements put_skill published; fails_when=requirements become [] and tools_declared false, so the catalog offers every tool; why_new=no test re-adopted a skill with requirements; seam=none; no_claim=none
+    test('re-adoption keeps the requirements and tools_declared put_skill published', () => fixture(async f => {
+      await publishWithReference(f, { requirements: ['tool:get_page'] });
+      writeFileSync(join(f.root, 'skills/alpha/SKILL.md'), skillMd('Use the guide, carefully.'));
+      await adoptSharedSkillpack(f.local, 'default', { expected_hashes: inventorySkillpack(f.root)!.hashes });
+      const metadata = await headMetadata(f);
+      expect({ requirements: metadata.requirements, tools_declared: metadata.tools_declared }).toEqual({ requirements: ['tool:get_page'], tools_declared: true });
+    }, url), 120_000);
+
+    // Value: protects=the migration adopts a reviewed removal of a reference file; fails_when=its accepted inventory has no entry for the removed path and adoption refuses local_conflict; why_new=no test removed a file through the migration; seam=none; no_claim=none
+    test('the migration adopts an accepted inventory that removes a reference file', () => fixture(async f => {
+      await publishWithReference(f);
+      expect((await runSharedSkillsMigration(f.local)).sources.find(row => row.source_id === 'default')?.inventory).toBeTruthy();
+      rmSync(join(f.root, REFERENCE));
+      writeFileSync(join(f.root, 'skills/alpha/SKILL.md'), skillMd('No guide any more.').replace('triggers: [example task]\n', 'triggers: [example task]\n'));
+      const digest = await acceptableDigest(f);
+      const accepted = await runSharedSkillsMigration(f.local, { acceptReviewedInventory: { default: digest } });
+      const row = accepted.sources.find(source => source.source_id === 'default')!;
+      expect({ conflict: row.stages.some(stage => stage.status === 'conflict'), sealedPaths: (await headFiles(f)).map(file => file.path).sort() })
+        .toEqual({ conflict: false, sealedPaths: ['skills/alpha/SKILL.md'] });
+    }, url), 120_000);
+
+    // Value: protects=an accepted edit to a reference file alone is published; fails_when=the migration marks projection complete while the sealed revision still serves the old reference; why_new=no test edited only a reference file; seam=none; no_claim=none
+    test('the migration publishes an accepted edit to a reference file alone', () => fixture(async f => {
+      await publishWithReference(f);
+      await runSharedSkillsMigration(f.local);
+      writeFileSync(join(f.root, REFERENCE), 'Guide body, revised');
+      const digest = await acceptableDigest(f);
+      await runSharedSkillsMigration(f.local, { acceptReviewedInventory: { default: digest } });
+      const sealed = (await headFiles(f)).find(file => file.path === REFERENCE);
+      expect(sealed ? Buffer.from(sealed.content, 'base64').toString() : null).toBe('Guide body, revised');
+    }, url), 120_000);
+
+    // Value: protects=a re-adoption over the journal byte limit refuses by name, publishes nothing and deletes nothing; fails_when=it commits a partial revision or removes a checkout file; why_new=pins the fail-closed path until shared files are stored once per publication; seam=persistence.limits.principal_intent_bytes is lowered after the first publication; no_claim=packs that fit the default 64 MiB limit
+    test('a re-adoption over the journal byte limit refuses queue_capacity, publishes nothing and deletes nothing', () => fixture(async f => {
+      await publishWithReference(f);
+      const before = await headRevision(f);
+      await f.engine.setConfig('persistence.limits.principal_intent_bytes', '2048');
+      writeFileSync(join(f.root, 'skills/alpha/SKILL.md'), skillMd(`Use the guide, carefully. ${'x'.repeat(4096)}`));
+      const outcome = await adoptSharedSkillpack(f.local, 'default', { expected_hashes: inventorySkillpack(f.root)!.hashes })
+        .then(() => 'adopted', (error: { code?: string }) => error.code);
+      expect({ outcome, head: await headRevision(f), reference: readFileSync(join(f.root, REFERENCE), 'utf8'), skill: readFileSync(join(f.root, 'skills/alpha/SKILL.md'), 'utf8').includes('carefully') })
+        .toEqual({ outcome: 'queue_capacity', head: before, reference: 'Guide body', skill: true });
     }, url), 120_000);
   });
 }
