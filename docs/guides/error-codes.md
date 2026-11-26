@@ -1873,7 +1873,7 @@ More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| gbrain dedupe classes or sample was asked to search the web (--exa) on a brain where Exa is off: EXA_API_KEY is not set or dedupe.exa is not on, so nothing was sent. | Web search sends a name plus one company or job title to Exa, a paid outside service, so it stays off until the user supplies their own key and turns it on. | Count the queries and their cost with gbrain dedupe classes --exa --dry-run, then set EXA_API_KEY and run gbrain config set dedupe.exa on. Run: gbrain dedupe classes --exa --dry-run --json | user | `gbrain doctor --json` | 1 | no |
+| gbrain dedupe classes or sample was asked to search the web (--exa) on a brain where Exa is off: EXA_API_KEY is not set or dedupe.exa is not on, so nothing was sent. | Web search sends a name and one work clue (a company, job title or company-site label) to Exa, a paid outside service, so it stays off until the user supplies their own key and turns it on. | Count the queries and their cost with gbrain dedupe classes --exa --dry-run, then set EXA_API_KEY and run gbrain config set dedupe.exa on. Run: gbrain dedupe classes --exa --dry-run --json | user | `gbrain doctor --json` | 1 | no |
 
 More: [docs/guides/duplicate-people.md#web-search-exa](../../docs/guides/duplicate-people.md#web-search-exa)
 

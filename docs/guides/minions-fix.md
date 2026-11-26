@@ -44,6 +44,14 @@ files, credentials or database URLs into a public report.
 
 ### Upgrade and rollback ordering
 
+If a container's process manager or another external launcher runs
+`gbrain jobs work` and starts it again when it exits, declare that with
+`gbrain config set self_upgrade.worker_launcher external`. During an upgrade,
+gbrain sends SIGTERM so that worker drains its jobs, then waits up to six
+minutes for the launcher to start a worker on the installed build for the same
+brain. Leave the key unset for a hand-started worker. See
+[upgrade restarts](upgrades-auto-update.md#restart) to preview the handoff.
+
 Upgrading while an older owner (0.59.0.0 or earlier) is still running keeps
 working: that owner respawns the upgraded worker, which processes jobs without
 publishing readiness status. Restart the owner when convenient to get readiness

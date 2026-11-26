@@ -1917,6 +1917,7 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     case 'set-strategy': return (await import('./sources-strategy.ts')).runSetStrategy(engine, rest);
     case 'set-pull-strategy': return (await import('./sources-pull-strategy.ts')).runSetPullStrategy(engine, rest);
     case 'set-sync':   return (await import('./sources-sync-enabled.ts')).runSetSync(engine, rest);
+    case 'set-extract-atoms': return (await import('./sources-extract-atoms.ts')).runSetExtractAtoms(engine, rest);
     case 'rebind':     return (await import('./sources-rebind.ts')).runRebind(engine, rest);
     case 'refresh':    return (await import('./sources-refresh.ts')).runSourcesRefresh(engine, rest);
     case 'git-reconcile': return (await import('./sources-git-reconcile.ts')).runSourcesReconcile(engine, rest);
@@ -2030,6 +2031,8 @@ Subcommands:
   set-strategy <id> <markdown|code|auto>  Persist the sync strategy every sync of the source uses (PR #5955).
   set-pull-strategy <id> <rebase|merge>   How pulls reconcile local commits with origin (#5429); default rebase.
   set-sync <id> <on|off> [--dry-run] [--expect <on|off>]   Include or exclude the source from automatic sync (config.syncEnabled).
+  set-extract-atoms <id> <on|off> [--dry-run] [--expect <on|off>]
+                                    Include or keep the source out of provider-based atom extraction (config.extract_atoms); pages stay searchable.
   rebind <id> [--yes]                                     Record a changed push destination for an iMessage source's folder (preview first).
   host-repo <id> --dir <path> [--push-remote <url>] [--dry-run | --expect <plan_hash>]
                                     Managed brains: host an empty source in a new bare repository with a gbrain-owned worktree; it becomes git-canonical.

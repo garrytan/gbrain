@@ -106,6 +106,10 @@ When the user expresses a novel thought, observation, thesis, or framework:
 - If it's a **world concept** they're referencing → create/update `concepts/{slug}`
 - If it's a **product or business idea** → create/update `ideas/{slug}`
 
+On `gbrain-base-v2`, write `type: concept` with `subtype: original` for
+`originals/` or `subtype: idea` for `ideas/`. Don't rely on the folder to set
+the subtype. On other packs, use the active source's declared type.
+
 **Capture exact phrasing.** The user's language IS the insight. Don't paraphrase.
 
 **Cross-linking (MANDATORY):** Every original MUST link to related people, companies,

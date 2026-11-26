@@ -326,6 +326,23 @@ once up to the cap: its head atoms are kept, the phase reports it under
 `input_truncated` with a stderr line, and the page is not marked complete; it
 is skipped (not re-spent) until you raise the cap or the page changes.
 
+To keep a whole source out of atom extraction (a retrieval-only mirror, or a
+source whose owner has not agreed to send its text to a model), turn it off
+per source. Its pages stay synced, indexed and searchable; nothing from it, page
+or transcript, is sent to the model for atoms; the routine cycle, `gbrain dream
+--drain` and the auto-drain skip it; and `gbrain doctor`'s
+`extract_atoms_backlog` counts its pages apart (`policy_excluded`) instead of
+asking you to drain them:
+
+```bash
+gbrain sources set-extract-atoms <id> off --dry-run   # preview; prints the apply command
+gbrain sources set-extract-atoms <id> off --expect on # apply
+gbrain sources set-extract-atoms <id> on              # include it again
+```
+
+Inside an included source, a single page stays out with `extract_atoms: false`
+in its frontmatter.
+
 ### Life Chronicle: automatic event extraction
 
 **Say to your agent:** *"How much does automatic event extraction cost?"* or
