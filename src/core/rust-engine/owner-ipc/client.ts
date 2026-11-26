@@ -53,6 +53,7 @@ import {
 } from './routes.ts';
 import { rustMultiuserFromEnv } from '../multiuser-switch.ts';
 import { remoteFrameMark } from './remote-check.ts';
+import { HELD_ROW_HOOK, HELD_ROW_MEMBERS, HELD_ROW_TAG, withHeldRowHook } from './held-row.ts';
 import { setDeadlineTimer, type DeadlineTimer } from './timer.ts';
 
 /** How long past `deadline_at` the client waits for the owner's own timeout before it ends the call itself. */
@@ -356,6 +357,7 @@ export function connectOwner(legacySocketPath: string, opts: ConnectOwnerOptions
           onFunction: (fn, path): Wire => {
             const table = grouperTables.get(fn);
             if (table) return { $t: 'fn', grouper: table };
+            if (fn === HELD_ROW_HOOK) return HELD_ROW_TAG;
             const key = lastKey(path);
             if (!OWNER_IPC_CALLBACK_KEYS.has(key)) throw ownerIpcRefusal(member, `its argument ${path.replace(/^value/, 'args')} is a function, and functions do not cross the owner socket`);
             const k = String(callbacks.size);
@@ -502,6 +504,8 @@ export function installOwnerClient(engine: object, connection: OwnerConnection, 
       ? () => Promise.reject(ownerIpcRefusal(member, 'transactions, reserved connections and engine callbacks do not cross the owner socket'))
       : member === 'countPagesBy'
         ? (...args: unknown[]) => countPagesByThroughOwner(connection, args)
+        : HELD_ROW_MEMBERS.has(member)
+        ? (...args: unknown[]) => withHeldRowHook(member, args, sent => connection.request('call', member, sent))
         : (...args: unknown[]) => connection.request('call', member, args);
     const value = !rejoin ? direct : async function viaOwner(...args: unknown[]): Promise<unknown> {
       if (connection.closed) {

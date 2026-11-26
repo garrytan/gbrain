@@ -60,6 +60,7 @@ import {
   ownerPeerRefused, ownerResponseTooLarge, ownerHandoff,
 } from './routes.ts';
 import { ownerRemoteRefusal } from './remote-check.ts';
+import { heldRowHook } from './held-row.ts';
 import { membersWaitingFor } from './confirming-reads.ts';
 import { setDeadlineTimer, type DeadlineTimer } from './timer.ts';
 import { servedSession, type ServedHooks, type ServedServerOptions, type ServedServerSide, type ServedSession, type ServedCall } from '../served/session.ts';
@@ -151,8 +152,12 @@ function timeoutReason(): Error {
   return new DOMException('The call reached its deadline on the brain owner.', 'TimeoutError');
 }
 
-/** Rebuilds a client function tag: a void callback that notifies the client, or a countPagesBy grouper. */
+/**
+ * Rebuilds a client function tag: a void callback that notifies the client, a countPagesBy grouper, or a job policy's
+ * `decide` hook kept on the client (held-row.ts): it sends the held row back to the client as its error.
+ */
 function rebuildFunction(wire: { [key: string]: Wire }, call: PendingCall, send: (frame: object) => void): unknown {
+  if (wire.heldRow === true) return heldRowHook(call.member);
   if (wire.grouper && typeof wire.grouper === 'object' && !Array.isArray(wire.grouper)) {
     const types = (wire.grouper.types as string[] | undefined) ?? [];
     const groups = (wire.grouper.groups as string[] | undefined) ?? [];
