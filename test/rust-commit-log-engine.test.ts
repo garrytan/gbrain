@@ -9,7 +9,7 @@
  * Needs the addon `bun run rust:build` writes; the Rust cases skip without it (GBRAIN_TEST_RUST_ADDON_REQUIRED=1 makes
  * that an error).
  */
-import { afterAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -116,18 +116,22 @@ describe('commit log engine members', () => {
     });
   });
 
-  test('PGLite refuses both members naming commit_log, and does not report the capability', async () => {
-    const engine = new PGLiteEngine();
-    await engine.connect({});
-    try {
-      expect(engine.capabilities.has('commit_log')).toBe(false);
-      for (const p of [engine.readCommitLog(null, 10), engine.lastCommitPosition()]) {
-        const e = await refusal(p);
-        expect(e.code).toBe('engine_capability_missing');
-        expect(e.reason).toBe('commit_log');
-      }
-    } finally {
-      await engine.disconnect();
-    }
+});
+
+describe('commit log engine members on PGLite', () => {
+  let pglite: PGLiteEngine;
+  beforeAll(async () => {
+    pglite = new PGLiteEngine();
+    await pglite.connect({});
   }, 120_000);
+  afterAll(async () => { await pglite.disconnect(); });
+
+  test('PGLite refuses both members naming commit_log, and does not report the capability', async () => {
+    expect(pglite.capabilities.has('commit_log')).toBe(false);
+    for (const p of [pglite.readCommitLog(null, 10), pglite.lastCommitPosition()]) {
+      const e = await refusal(p);
+      expect(e.code).toBe('engine_capability_missing');
+      expect(e.reason).toBe('commit_log');
+    }
+  });
 });
