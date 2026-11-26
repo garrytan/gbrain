@@ -34,7 +34,7 @@ Also served:
   (a retired stamp too, which `stamped_rules` keeps) is not readable; a page under a pending prefix is not readable.
 - A labelled-only writer (`labelledOnly`, GBRA-108 design 1). `renderWriterReadPolicy` renders the rest of the policy ANDed with
   `labelledOnlyForSql`; the member checks the text is exactly those two parts, serves the rest as above, and sends the conjunct to
-  the store as `labelledOnly: { identity, satisfiedRuleIds }`, the two sets `labelledOnlySql` embeds (`labelledOnlyTerms`). The
+  the store as `labelledOnly: { identity, satisfiedRuleIds }` (the remote reads add `lineage` and `member`, `LabelledOnly` in `privacy.rs`), the two sets `labelledOnlySql` embeds (`labelledOnlyTerms`). The
   store hides a page unless its readers name one of `identity` (`page_readers && identity`, the `access_readers` normalization, a
   malformed `readable_by` names nobody) or a folder rule stamped on it is in `satisfiedRuleIds` (`folder_rule_ids && satisfied`,
   retired stamps included). No lineage: a write never reads through derived origins. So a labelled-only writer's rewrite of an open
