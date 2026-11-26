@@ -75,5 +75,7 @@ records a pause, so these risks remain, by design:
   restore, the brain stays at `enabled=false` at the same epoch.
 
 The recovery for all three is `gbrain sources writer activate`, which turns managed persistence back
-on and moves the epoch. On the SQL engines the restore runs outside the request's abort signal, so a
-cancelled request does not leave the brain paused.
+on and moves the epoch. The restore runs outside the request's abort signal and the read and statement
+deadlines, so a cancelled request or a callback that outlasts its deadline does not leave the brain
+paused. On the SQL engines it takes the brain row lock first and then runs the compare-and-set in a
+later statement of the same transaction, so it sees a deactivation that committed while it waited.

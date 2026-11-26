@@ -8,7 +8,9 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { joinFragments, renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
+import { withoutReadDeadline } from '../read-deadline.ts';
 import { withoutRequestSignal } from '../request-signal.ts';
+import { engineCacheKey, withStatementDeadline } from '../statement-deadline.ts';
 
 type Raw = Pick<BrainEngine, 'executeRaw'>;
 
@@ -160,11 +162,19 @@ export function catalogTextScanSql(t: TextScanTable, activeOnly: boolean, patter
   return joinFragments(t.text.map((c) => sqlFragment`SELECT ${t.table}::text AS "table", ${c}::text AS "column", ${trustedSql(catalogScanHeadSql(t))}, ${trustedSql(catalogScanColumnSql(c))} AS value FROM ${trustedSql(catalogScanJoinSql(t))} WHERE strpos(lower(${trustedSql(catalogScanColumnSql(c))}), lower(${pattern}::text)) > 0${trustedSql(catalogScanLiveSql(t, activeOnly))}`), ' UNION ALL ');
 }
 
-/** The scanned tables' schema, and those of them the running role cannot read in full (no SELECT, or row security applies). */
+/**
+ * The current schema, and the tables of it the running role cannot read in full (no SELECT, or row security applies),
+ * among every base table with a text-bearing column (only those named in $1 when it is not null) and pages. It reads
+ * pg_catalog, which lists every table whatever the role's privileges; information_schema hides a table the role has
+ * no privilege on.
+ */
 export const SCAN_VISIBILITY_SQL = `SELECT current_schema()::text AS schema,
       COALESCE(array_agg(c.relname::text ORDER BY c.relname::text COLLATE "C") FILTER (WHERE NOT pg_catalog.has_table_privilege(c.oid, 'SELECT') OR pg_catalog.row_security_active(c.oid)), '{}') AS hidden
     FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-    WHERE n.nspname = current_schema() AND c.relname = ANY($1::text[])`;
+    WHERE n.nspname = current_schema() AND c.relkind IN ('r', 'p')
+      AND (c.relname = 'pages' OR (($1::text[] IS NULL OR c.relname = ANY($1::text[]))
+        AND EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+          AND a.atttypid IN ('text'::regtype, 'varchar'::regtype, 'json'::regtype, 'jsonb'::regtype, 'text[]'::regtype, 'varchar[]'::regtype))))`;
 
 /** A limit the scan accepts: absent, or a whole number of zero or more. */
 export function assertScanLimit(limit: number | undefined): void {
@@ -174,12 +184,16 @@ export function assertScanLimit(limit: number | undefined): void {
 /**
  * Each value of a text-bearing column that contains the pattern (case-insensitive), by table, column and value in
  * UTF-8 byte order, at most `limit`. One statement reads every table, so it sees one snapshot and the database keeps
- * only `limit` hits. Refuses, naming them, when the running role cannot read a scanned table in full: an empty
- * answer from a table it cannot see would read as "the text is gone".
+ * only `limit` hits. Refuses first, naming them, when the running role cannot read a table it would scan in full: an
+ * empty answer from a table it cannot see would read as "the text is gone".
  */
 export async function scanTextColumns(engine: Raw, spec: TextScanSpec): Promise<TextScanHit[]> {
   if (!spec.pattern) throw new Error('scanTextColumns: the pattern is empty');
   assertScanLimit(spec.limit);
+  const [seen] = await engine.executeRaw<{ schema: string; hidden: string[] }>(SCAN_VISIBILITY_SQL, [spec.tables ? [...spec.tables] : null]);
+  if (seen?.hidden.length) {
+    throw new Error(`scanTextColumns: the running role cannot read every row of ${seen.hidden.join(', ')}; run the scan as the table owner or a BYPASSRLS role`);
+  }
   const wanted = spec.tables ? new Set(spec.tables) : null;
   const byTable = new Map<string, string[]>();
   for (const c of await listTextBearingColumns(engine)) {
@@ -187,10 +201,6 @@ export async function scanTextColumns(engine: Raw, spec: TextScanSpec): Promise<
     byTable.set(c.table, [...(byTable.get(c.table) ?? []), c.column]);
   }
   if (!byTable.size) return [];
-  const [seen] = await engine.executeRaw<{ schema: string; hidden: string[] }>(SCAN_VISIBILITY_SQL, [[...new Set([...byTable.keys(), 'pages'])]]);
-  if (seen?.hidden.length) {
-    throw new Error(`scanTextColumns: the running role cannot read every row of ${seen.hidden.join(', ')}; run the scan as the table owner or a BYPASSRLS role`);
-  }
   const all = new Map<string, Set<string>>();
   for (const r of await engine.executeRaw<{ table: string; column: string; data_type: string }>(TABLE_COLUMNS_SQL, [[...byTable.keys()]])) {
     if (r.column === 'page_id' && !['bigint', 'integer', 'smallint'].includes(r.data_type)) continue;
@@ -227,6 +237,9 @@ export const PAUSE_MANAGED_SQL = `WITH prior AS (SELECT enabled, mode_epoch, (SE
 export const RESTORE_MANAGED_SQL = `UPDATE persistence_brain SET enabled = $1 WHERE singleton = 1 AND enabled = false AND mode_epoch = $2::bigint
       AND (SELECT count(*) FROM persistence_topology_changes) = $3::bigint RETURNING true AS restored`;
 
+/** Takes the brain row's lock, so the restore statement after it sees every topology change committed before it. */
+export const LOCK_BRAIN_SQL = 'SELECT 1 FROM persistence_brain WHERE singleton = 1 FOR UPDATE';
+
 /** Turns managed persistence off with no mode_epoch bump; returns the prior state. Refuses a brain with no brain row. */
 export async function pauseManagedPersistence(engine: Raw): Promise<ManagedPausePrior> {
   const [row] = await engine.executeRaw<{ enabled: boolean; mode_epoch: string; topology_changes: string }>(PAUSE_MANAGED_SQL);
@@ -234,25 +247,37 @@ export async function pauseManagedPersistence(engine: Raw): Promise<ManagedPause
   return { enabled: row.enabled === true, mode_epoch: String(row.mode_epoch), topology_changes: String(row.topology_changes) };
 }
 
-/** Puts the prior enabled value back when nothing moved during the pause; false (nothing written) otherwise. */
-export async function restoreManagedPersistence(engine: Raw, prior: ManagedPausePrior): Promise<boolean> {
-  const rows = await engine.executeRaw<{ restored: boolean }>(RESTORE_MANAGED_SQL, [prior.enabled, prior.mode_epoch, prior.topology_changes]);
-  return rows.length > 0;
+/**
+ * Puts the prior enabled value back when nothing moved during the pause; false (nothing written) otherwise. One
+ * transaction: the brain row lock first, then the compare-and-set in a later statement, whose snapshot then includes a
+ * deactivation that held the lock (a statement's snapshot is taken before it waits for a lock).
+ */
+export async function restoreManagedPersistence(engine: Pick<BrainEngine, 'transaction'>, prior: ManagedPausePrior): Promise<boolean> {
+  return engine.transaction(async tx => {
+    await tx.executeRaw(LOCK_BRAIN_SQL);
+    const rows = await tx.executeRaw<{ restored: boolean }>(RESTORE_MANAGED_SQL, [prior.enabled, prior.mode_epoch, prior.topology_changes]);
+    return rows.length > 0;
+  });
 }
 
 /** The engines (in this process) that hold a harness pause now. */
 const pausesHeld = new WeakSet<object>();
 
-/** The restore, outside the request's abort signal: a cancelled request must not leave the brain paused. */
-const restoreUncancelled = (engine: Pick<BrainEngine, 'restoreManagedPersistence'>, prior: ManagedPausePrior) =>
-  withoutRequestSignal(() => engine.restoreManagedPersistence(prior));
+/**
+ * The restore on the engine itself (not a deadline wrapper), outside the request's abort signal and the read and
+ * statement deadlines: a cancelled request or a callback that outlasted its deadline must not leave the brain paused.
+ */
+const restoreUncancelled = (engine: Pick<BrainEngine, 'restoreManagedPersistence'>, prior: ManagedPausePrior) => {
+  const real = engineCacheKey(engine) as Pick<BrainEngine, 'restoreManagedPersistence'>;
+  return withoutRequestSignal(() => withoutReadDeadline(() => withStatementDeadline(null, () => real.restoreManagedPersistence(prior))));
+};
 
 /**
  * Runs `fn` with managed persistence paused (a harness step such as one import), on any engine: pause with no
  * mode_epoch bump, run fn, then compare-and-set the prior enabled value back. An activation or deactivation that ran
  * during fn moved the epoch or recorded a topology change, so it is kept and the outcome reports paused_state_changed.
  * When fn throws, the restore still runs and fn's error is rethrown (a failed restore is attached as `restoreError`).
- * The restore runs outside the request's abort signal.
+ * The restore runs outside the request's abort signal and the read and statement deadlines.
  *
  * Contract: this is the eval harness's hook only, one pause at a time per brain. A second pause on the same engine
  * object while one is held is refused (`managed_pause_held`); nothing records a pause, so pauses through two engine
@@ -262,10 +287,11 @@ const restoreUncancelled = (engine: Pick<BrainEngine, 'restoreManagedPersistence
 export async function withManagedPersistencePaused<T>(
   engine: Pick<BrainEngine, 'pauseManagedPersistence' | 'restoreManagedPersistence'>, fn: () => Promise<T>,
 ): Promise<ManagedPauseOutcome<T>> {
-  if (pausesHeld.has(engine)) {
+  const key = engineCacheKey(engine);
+  if (pausesHeld.has(key)) {
     throw Object.assign(new Error('withManagedPersistencePaused: this brain already holds a harness pause; pauses do not nest'), { code: 'managed_pause_held' });
   }
-  pausesHeld.add(engine);
+  pausesHeld.add(key);
   try {
     const prior = await engine.pauseManagedPersistence();
     let result: T;
@@ -280,6 +306,6 @@ export async function withManagedPersistencePaused<T>(
     const restored = await restoreUncancelled(engine, prior);
     return { result, restore: restored ? 'restored' : 'paused_state_changed' };
   } finally {
-    pausesHeld.delete(engine);
+    pausesHeld.delete(key);
   }
 }

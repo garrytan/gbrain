@@ -12,7 +12,10 @@ type Call = { text: string; params: unknown[] | undefined };
 
 function recorder(answer: (text: string) => unknown[] = () => []) {
   const calls: Call[] = [];
-  const engine = { executeRaw: async (text: string, params?: unknown[]) => { calls.push({ text, params }); return answer(text) as never[]; } };
+  const engine = {
+    executeRaw: async (text: string, params?: unknown[]) => { calls.push({ text, params }); return answer(text) as never[]; },
+    transaction: async <T>(fn: (tx: never) => Promise<T>) => fn(engine as never),
+  };
   return { engine, calls };
 }
 
@@ -37,7 +40,10 @@ const scanAnswer = (hidden: string[] = []) => (text: string) => text.startsWith(
 const VISIBILITY = `SELECT current_schema()::text AS schema,
       COALESCE(array_agg(c.relname::text ORDER BY c.relname::text COLLATE "C") FILTER (WHERE NOT pg_catalog.has_table_privilege(c.oid, 'SELECT') OR pg_catalog.row_security_active(c.oid)), '{}') AS hidden
     FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-    WHERE n.nspname = current_schema() AND c.relname = ANY($1::text[])`;
+    WHERE n.nspname = current_schema() AND c.relkind IN ('r', 'p')
+      AND (c.relname = 'pages' OR (($1::text[] IS NULL OR c.relname = ANY($1::text[]))
+        AND EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+          AND a.atttypid IN ('text'::regtype, 'varchar'::regtype, 'json'::regtype, 'jsonb'::regtype, 'text[]'::regtype, 'varchar[]'::regtype))))`;
 
 describe('eval harness SQL, byte for byte', () => {
   test('getFactsByIds, findLiveFactsByText and listPageIdSlugs', async () => {
@@ -75,8 +81,9 @@ describe('eval harness SQL, byte for byte', () => {
       const { engine, calls } = recorder(scanAnswer());
       await sql.scanTextColumns(engine, { pattern: 'Token', activeOnly, ...(activeOnly ? { limit: 5 } : {}) });
       const live = (s: string) => (activeOnly ? s : '');
-      expect(calls.slice(1)).toEqual([
-        { text: VISIBILITY, params: [['facts', 'pages', 'plain_notes', 'takes']] },
+      expect(calls[0]).toEqual({ text: VISIBILITY, params: [null] });
+      expect(calls[1]!.text.startsWith('SELECT c.table_name AS "table"')).toBe(true);
+      expect(calls.slice(2)).toEqual([
         { text: 'SELECT table_name AS "table", column_name AS "column", data_type FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ANY($1::text[])',
           params: [['facts', 'pages', 'plain_notes', 'takes']] },
         { text: 'SELECT * FROM ('
@@ -94,7 +101,8 @@ describe('eval harness SQL, byte for byte', () => {
     const { engine, calls } = recorder(scanAnswer(['facts', 'takes']));
     const refused = await sql.scanTextColumns(engine, { pattern: 'token', activeOnly: false }).then(() => 'ok', (e: Error) => e.message);
     expect(refused).toBe('scanTextColumns: the running role cannot read every row of facts, takes; run the scan as the table owner or a BYPASSRLS role');
-    expect(calls.map(c => c.text.slice(0, 22))).toEqual(['SELECT c.table_name AS', 'SELECT current_schema(']);
+    // The visibility check runs first, before any catalog listing (information_schema hides a table with no privilege).
+    expect(calls).toEqual([{ text: VISIBILITY, params: [null] }]);
     const negative = await sql.scanTextColumns(recorder().engine, { pattern: 'token', activeOnly: false, limit: -1 }).then(() => 'ok', (e: Error) => e.message);
     expect(negative).toBe('scanTextColumns: a limit that is not a whole number');
   });
@@ -112,6 +120,7 @@ describe('eval harness SQL, byte for byte', () => {
         FROM persistence_brain WHERE singleton = 1 FOR UPDATE),
       paused AS (UPDATE persistence_brain SET enabled = false WHERE singleton = 1)
     SELECT enabled, mode_epoch::text AS mode_epoch, topology_changes::text AS topology_changes FROM prior`, params: undefined },
+      { text: 'SELECT 1 FROM persistence_brain WHERE singleton = 1 FOR UPDATE', params: undefined },
       { text: `UPDATE persistence_brain SET enabled = $1 WHERE singleton = 1 AND enabled = false AND mode_epoch = $2::bigint
       AND (SELECT count(*) FROM persistence_topology_changes) = $3::bigint RETURNING true AS restored`, params: [true, '7', '2'] },
     ]);

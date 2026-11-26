@@ -15,6 +15,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine, NewFact } from '../src/core/engine.ts';
+import type { PostgresEngine } from '../src/core/postgres-engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -91,5 +92,51 @@ describe.if(backends.includes('postgres'))('scanTextColumns on Postgres', () => 
       expect(refused).toBe('scanTextColumns: the running role cannot read every row of facts, pages; run the scan as the table owner or a BYPASSRLS role');
     });
     expect(await factHits(engine, 'hiddentoken')).toEqual([['facts', 'hiddentoken is stored']]);
+  }, 120_000);
+
+  test('a role with no privilege on a scanned table is refused, naming it, instead of answering no hits', async () => {
+    await engine.insertFact({ fact: 'unreadabletoken is stored', entity_slug: null, visibility: 'world', source: 'test', embedding: null } as NewFact, { source_id: 'default' });
+    await rolledBack(engine, async tx => {
+      const [{ schema }] = await tx.executeRaw<{ schema: string }>('SELECT current_schema()::text AS schema');
+      await tx.executeRaw(`GRANT USAGE ON SCHEMA "${schema}" TO ${reader}`);
+      await tx.executeRaw(`SET LOCAL ROLE ${reader}`);
+      const refused = await tx.scanTextColumns({ pattern: 'unreadabletoken', activeOnly: false, tables: ['facts'] }).then(() => 'ok', (e: Error) => e.message);
+      expect(refused).toBe('scanTextColumns: the running role cannot read every row of facts, pages; run the scan as the table owner or a BYPASSRLS role');
+    });
+  }, 120_000);
+
+  test('a harness restore that waits on a committing deactivation keeps the deactivation', async () => {
+    const store = await engine.writerReleaseStore();
+    await store.setBrainEnabled(true);
+    const prior = await engine.pauseManagedPersistence();
+    let locked!: () => void;
+    let release!: () => void;
+    const holding = new Promise<void>(r => { locked = r; });
+    const gate = new Promise<void>(r => { release = r; });
+    // Another connection deactivates: it holds the brain row lock and records a topology change, then commits.
+    const deactivation = (engine as PostgresEngine).transaction(async tx => {
+      await tx.executeRaw('SELECT 1 FROM persistence_brain WHERE singleton = 1 FOR UPDATE');
+      await tx.executeRaw(`INSERT INTO persistence_topology_changes (principal_id, request_id, digest, operation, source_id, state)
+        VALUES (gen_random_uuid(), gen_random_uuid(), 'eval-scan', 'writer_deactivate', '*', 'committed')`);
+      locked();
+      await gate;
+    });
+    try {
+      await holding;
+      const restoring = engine.restoreManagedPersistence(prior);
+      let done = false;
+      void restoring.then(() => { done = true; }, () => { done = true; });
+      await Bun.sleep(300);
+      const waited = !done;
+      release();
+      await deactivation;
+      const result = { waited, restored: await restoring, enabled: JSON.parse(await engine.readWriterAdminState()).brain.enabled };
+      expect(result).toEqual({ waited: true, restored: false, enabled: false });
+    } finally {
+      release();
+      await deactivation.catch(() => undefined);
+      await engine.executeRaw("DELETE FROM persistence_topology_changes WHERE digest = 'eval-scan'");
+      await store.setBrainEnabled(false);
+    }
   }, 120_000);
 });
