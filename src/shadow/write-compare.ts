@@ -157,7 +157,8 @@ const MAX_SENT = 1_000_000;
 /** A receipt whose file is older than this is one whose worker is gone even if its pid runs (a reused pid), or that names no pid: a live worker removes its receipt within its exit deadline. */
 const STALE_RECEIPT_MS = 10 * 60_000;
 const RECEIPT_NAME = /^write-sent\.[A-Za-z0-9_-]+\.json$/;
-export interface SentReceipt { session: string; sent: number; pid?: number; epoch_id?: string }
+/** `sent_qualifying`: how many of `sent` were qualifying writes (supervisor.ts `sampleQualifyingWeight`); absent in a receipt written before it was counted, which books every lost sample as qualifying. */
+export interface SentReceipt { session: string; sent: number; sent_qualifying?: number; pid?: number; epoch_id?: string }
 /** The receipt in `path`: null when there is no such file, `'unreadable'` when there is one that cannot be used as a count (a read error such as EIO, truncated JSON, another session, a count that is not 0 to `MAX_SENT`). */
 function parseReceipt(path: string, session?: string): SentReceipt | null | 'unreadable' {
   let text: string;
@@ -165,7 +166,9 @@ function parseReceipt(path: string, session?: string): SentReceipt | null | 'unr
   try {
     const f = JSON.parse(text) as Partial<SentReceipt>;
     if (typeof f?.session !== 'string' || (session !== undefined && f.session !== session) || !Number.isSafeInteger(f.sent) || f.sent! < 0 || f.sent! > MAX_SENT) return 'unreadable';
-    return { session: f.session, sent: f.sent!, ...(Number.isSafeInteger(f.pid) ? { pid: f.pid } : {}), ...(typeof f.epoch_id === 'string' ? { epoch_id: f.epoch_id } : {}) };
+    const q = f.sent_qualifying;
+    if (q !== undefined && (!Number.isSafeInteger(q) || q < 0 || q > f.sent!)) return 'unreadable';
+    return { session: f.session, sent: f.sent!, ...(q !== undefined ? { sent_qualifying: q } : {}), ...(Number.isSafeInteger(f.pid) ? { pid: f.pid } : {}), ...(typeof f.epoch_id === 'string' ? { epoch_id: f.epoch_id } : {}) };
   } catch { return 'unreadable'; }
 }
 /** The receipt of `session`: a count, null (no receipt), or `'unreadable'` (one that is there and cannot be read: never the same as none). */
@@ -182,6 +185,11 @@ export function outstandingReceipts(dir: string, epoch: string | null): string[]
   try { names = readdirSync(dir).filter((n) => RECEIPT_NAME.test(n)).sort(); } catch (e) { return (e as NodeJS.ErrnoException).code === 'ENOENT' ? [] : ['write-sent.*']; }
   return names.filter((name) => parseReceipt(join(dir, name)) !== null);
 }
+/**
+ * Lost-sample reasons that were not qualifying writes: such a sample would have been sent as capability_missing (write-capture.ts sends every write outside `PILOT_WRITES` so), so it is
+ * folded there under its own name (`capability_missing_by_family`), counted and visible, never as uncomparable: only a lost qualifying write counts against the compared share.
+ */
+export const LOST_NONQUALIFYING: ReadonlySet<string> = new Set(['pipe_unflushed_nonqualifying']);
 /** The most samples one `recordLost` call stands for (the child's own cap on a `dropped` count). */
 const MAX_LOST_PER_RECORD = 10_000;
 /** Samples the serving process lost (a refused send, a read-back abandoned at disconnect) are never written into the tally by that process (a locked write could stall it): each is one `{epoch_id, reason}` line appended, with no lock, to its own file; the owner child folds them in. True only when the line and its directory entry are flushed to disk; false otherwise. */
@@ -264,7 +272,7 @@ export class WriteTally {
         const lost = readLost(this.dir, epoch, file.lost_applied).filter((l) => l.end > (file.lost_applied?.[l.name] ?? 0) && (l.reasons.length > 0 || l.unreadable)); // a file holding only another epoch's lines has nothing to fold: it is left as it is (no tally is written for it) // the serving processes' lost samples, taken once under the same lock
         if (!change && !dead.length && !todo.length && !lost.length) return;
         file.lost_applied ??= {};
-        for (const l of lost) { for (const r of l.reasons) applyVerdict(file, 'uncomparable', r, 1); file.lost_applied[l.name] = l.end; }
+        for (const l of lost) { for (const r of l.reasons) applyVerdict(file, LOST_NONQUALIFYING.has(r) ? 'capability_missing' : 'uncomparable', r, 1); file.lost_applied[l.name] = l.end; }
         for (const b of todo) {
           for (const o of OUTCOMES) file[o] += b.delta[o];
           for (const [k, n] of Object.entries(b.delta.capability_missing_by_family)) bump(file.capability_missing_by_family, k, n);

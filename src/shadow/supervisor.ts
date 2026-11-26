@@ -23,7 +23,7 @@ import { readEpoch } from './evidence-epoch.ts';
 import { appendFault, type ShadowFault } from './ledger.ts';
 import type { MirrorTransport } from './mirror.ts';
 import { readShadowState } from './state.ts';
-import { sentPath } from './write-compare.ts';
+import { PILOT_WRITES, sentPath } from './write-compare.ts';
 
 export interface ShadowSupervisorOptions {
   dir: string;
@@ -75,6 +75,18 @@ export function sampleWeight(line: string): number {
   return 1 + (dropped ? Math.min(Number(dropped[1]), 10_000) : 0);
 }
 
+/**
+ * How many of a line's samples are qualifying writes (`PILOT_WRITES`: the page and link writes criterion 5 compares; every other write is sent as capability_missing): the sample itself when the
+ * op the sampler wrote as its second key (`{"t":"write","op":"<name>"`) is one, never a name inside a page, plus the earlier losses it carries (which write each was is not known, so they
+ * count as qualifying, never as fewer). 0 when the line is not a write sample. The child counts the same for each sample line it reads (child.ts), so the lost qualifying samples are the difference.
+ */
+export function sampleQualifyingWeight(line: string): number {
+  const weight = sampleWeight(line);
+  if (weight === 0) return 0;
+  const op = /^\{"t":"write","op":"([A-Za-z]{1,60})"/.exec(line)?.[1];
+  return weight - 1 + (op !== undefined && PILOT_WRITES.has(op) ? 1 : 0);
+}
+
 /** Supervisors with a running child: a process that exits with one still unflushed loses lines (Bun drops what its pipe holds), so the exit hook writes each one's sent count for the child to compare. */
 const liveSupervisors = new Set<ShadowSupervisor>();
 let exitWatched = false;
@@ -105,6 +117,8 @@ export class ShadowSupervisor implements MirrorTransport {
   private sampleBytes = 0;
   /** Write samples (with the losses they carry) accepted for the current child: written down at stop, so the child can count what its pipe never delivered (`recordSent`). */
   private sentWeight = 0;
+  /** The part of `sentWeight` that is qualifying writes (`sampleQualifyingWeight`): the child books only those lost as `pipe_unflushed`, the rest as `pipe_unflushed_nonqualifying`. */
+  private sentQualifying = 0;
   private sentRecorded = ''; // the session and weight whose receipt `recordSent` published already
   private stdinRef: (NodeJS.WritableStream & { writableFinished?: boolean }) | null = null;
   private readonly drainWaiters = new Set<() => void>();
@@ -150,6 +164,7 @@ export class ShadowSupervisor implements MirrorTransport {
     this.flight.add(entry); if (weight > 0) this.sampleBytes += entry.bytes;
     try { stdin.write(line, () => this.forget(entry)); } catch { this.forget(entry); return false; }
     this.sentWeight += weight;
+    if (weight > 0) this.sentQualifying += sampleQualifyingWeight(line);
     return true;
   }
 
@@ -169,7 +184,7 @@ export class ShadowSupervisor implements MirrorTransport {
     const path = sentPath(this.o.dir, this.session);
     try {
       // No epoch is written: this process cannot know which epoch its worker opened (a worker that starts after a command ends may open a new one), and a wrong stamp would make the worker read its own receipt as another epoch's.
-      writeFileSync(`${path}.tmp`, JSON.stringify({ session: this.session, sent: this.sentWeight, ...(this.child?.pid ? { pid: this.child.pid } : {}) }) + '\n', { mode: 0o600 });
+      writeFileSync(`${path}.tmp`, JSON.stringify({ session: this.session, sent: this.sentWeight, sent_qualifying: this.sentQualifying, ...(this.child?.pid ? { pid: this.child.pid } : {}) }) + '\n', { mode: 0o600 });
       renameSync(`${path}.tmp`, path);
       this.sentRecorded = `${this.session}:${this.sentWeight}`; // only a published receipt is not written again: a failed write is tried again at stop()
     } catch { this.fault('write_samples_unrecorded', `sent_count n=${this.sentWeight}`); }
@@ -268,7 +283,7 @@ export class ShadowSupervisor implements MirrorTransport {
       });
       this.child = child;
       this.stdinRef = child.stdin as never;
-      this.session = session; this.sentWeight = 0;
+      this.session = session; this.sentWeight = 0; this.sentQualifying = 0;
       liveSupervisors.add(this); watchProcessExit();
       this.controlBuffer = '';
       this.lastHeartbeat = this.o.now();

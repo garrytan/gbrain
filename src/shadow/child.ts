@@ -34,7 +34,7 @@ import { FollowChild, type FollowEvent, type FollowStore } from './follow-child.
 import { appendFault, appendLedgerRows, writeSummaryFile, type ShadowLedgerRow, type ShadowSummaryFile } from './ledger.ts';
 import { newMirrorCounters, type MirrorCounters } from './mirror.ts';
 import { createWriteComparer } from './write-compare-child.ts';
-import { readReceipt, recordLostCount, sentPath, WriteTally } from './write-compare.ts';
+import { PILOT_WRITES, readReceipt, recordLostCount, sentPath, WriteTally } from './write-compare.ts';
 import { appendRecall, IntervalGate, recallEligible, RECALL_INTERVAL_MS, scoreRecall, type RankedKey } from './recall.ts';
 import { isShadowReadMember, SHADOW_READ_MEMBERS, type ShadowReadMember } from './reads.ts';
 import { readSeedRecord } from './seed.ts';
@@ -537,6 +537,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     return draining;
   };
 
+  let receivedQualifying = 0; // the part of `received` that is qualifying writes (supervisor.ts sampleQualifyingWeight)
   let received = 0; // write samples read from the pipe, whole lines only (a line the exit of the serving process cut short is not one)
   const rl = createInterface({ input: deps.input, crlfDelay: Infinity });
   for await (const line of rl) {
@@ -545,7 +546,12 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     try { event = JSON.parse(line); } catch { continue; }
     if (event.t === 'apply' || event.t === 'watermark' || event.t === 'depth' || event.t === 'rpc') { follow.handle(event as FollowEvent); continue; }
     if (event.t === 'answer') { ask.answer(event as never); continue; }
-    if (event.t === 'write') { received += 1 + (Number.isInteger(event.dropped) && event.dropped! > 0 ? Math.min(event.dropped!, 10_000) : 0); writes.handle(event as never, line.length); continue; } // the weight the serving process counted when it sent the line (supervisor.ts sampleWeight)
+    if (event.t === 'write') {
+      const carried = Number.isInteger(event.dropped) && event.dropped! > 0 ? Math.min(event.dropped!, 10_000) : 0;
+      received += 1 + carried;
+      receivedQualifying += carried + (typeof (event as { op?: unknown }).op === 'string' && PILOT_WRITES.has((event as { op: string }).op) ? 1 : 0); // as supervisor.ts sampleQualifyingWeight counted it when it sent the line
+      writes.handle(event as never, line.length); continue;
+    } // the weight the serving process counted when it sent the line (supervisor.ts sampleWeight)
     if (event.t === 'stats' && event.counters) { summary.primary = { ...newMirrorCounters(), ...event.counters }; summary.primary_pid = event.pid; continue; }
     if (event.t !== 'read' || paused) continue;
     if (pending.length >= SHADOW_CHILD_QUEUE_BOUND) { summary.child_shed++; continue; }
@@ -566,9 +572,16 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   if (receipt === 'unreadable') faultLine(`sent_count_unreadable file=write-sent.${session.replace(/[^A-Za-z0-9_-]/g, '_')}.json`);
   else if (receipt !== null) {
     const missing = Math.max(0, receipt.sent - received);
-    const done = missing === 0 ? 0 : epoch === undefined ? 0 : recordLostCount(shadowDir, epoch, 'pipe_unflushed', missing); // this worker's own receipt is its own samples whatever stamp it carries: booked under the epoch on disk, never dropped
-    if (done >= missing) receiptSettled = true;
-    else faultLine(`pipe_unflushed n=${missing - done}`);
+    // Only the lost qualifying writes count against the share (pipe_unflushed); the rest would have been capability_missing (pipe_unflushed_nonqualifying). A receipt without the qualifying
+    // count (an older serving process) books every one as qualifying, never fewer.
+    const qualifying = receipt.sent_qualifying === undefined ? missing : Math.min(missing, Math.max(0, receipt.sent_qualifying - receivedQualifying));
+    const parts: Array<[string, number]> = [['pipe_unflushed', qualifying], ['pipe_unflushed_nonqualifying', missing - qualifying]];
+    let short = 0;
+    for (const [reason, n] of parts) {
+      const done = n === 0 ? 0 : epoch === undefined ? 0 : recordLostCount(shadowDir, epoch, reason, n); // this worker's own receipt is its own samples whatever stamp it carries: booked under the epoch on disk, never dropped
+      if (done < n) { short += n - done; faultLine(`${reason} n=${n - done}`); }
+    }
+    if (short === 0) receiptSettled = true;
   }
   // The serving process ended our stdin: nothing it was asked can still be answered. A queued rerun ends as skipped.
   ask.closeAll(); waiter.close(); // a rerun waiting for a quiet window ends now, as skipped
