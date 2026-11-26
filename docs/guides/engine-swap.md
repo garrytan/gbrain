@@ -120,6 +120,8 @@ again when the report changes. Never retried on a timer, and there is no overrid
 Writers on more than one machine in the last 7 days (the plan needs exactly one observed writer host). Such a brain stays on Postgres until the Rust server phase
 passes the D17 bar (D19). Needs the user's topology decision.
 
+This row stops refusing only with `GBRAIN_RUST_MULTIUSER=1` and a destination that is a served multi-user Rust brain (the multi-user Rust build, default off); every other criterion still applies.
+
 <a id="writer_coverage_unknown"></a>
 ### `writer_coverage_unknown`
 

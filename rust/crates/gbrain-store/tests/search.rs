@@ -749,3 +749,54 @@ fn seal_chunks_on_a_page_in_an_archived_source_is_page_not_found_and_writes_noth
         .unwrap();
     assert!(got.iter().all(|c| c["chunk_text"] != "replacement"));
 }
+
+/// Multi-user lane L4, existence signal 2: this legacy search reads no caller policy. A page the caller
+/// may not see is still returned, and its chunks still move the scores of the pages it may see (the
+/// collection statistics count them). No TypeScript member calls it (the keyword arm serves
+/// `searchKeyword`), so a caller that asks for privacy here is refused rather than answered.
+#[test]
+fn a_privacy_request_is_refused_not_ignored() {
+    let dir = TempDir::new("search-exclude-private");
+    let store = open(&dir);
+    put(&store, "open", "shared needle text");
+    let alone = find(&store, "needle")[0]["score"].as_f64().unwrap();
+    store
+        .put_page(
+            "hidden",
+            &serde_json::from_value(json!({
+                "type": "note", "title": "hidden", "compiled_truth": "needle needle needle",
+                "frontmatter": {"visibility": "private"},
+            }))
+            .unwrap(),
+            &PutPageOptions::default(),
+        )
+        .unwrap();
+    let rows = find(&store, "needle");
+    let open = rows.iter().find(|r| r["slug"] == "open").unwrap()["score"]
+        .as_f64()
+        .unwrap();
+    assert_ne!(
+        alone, open,
+        "a hidden page's chunks move a visible page's score when no policy is read"
+    );
+    for ask in [
+        json!({"excludePrivate": true}),
+        json!({"excludePrivate": {"honorAliases": true, "entityPrivacy": true}}),
+    ] {
+        let err = store
+            .search_keyword("needle", &search_opts(ask))
+            .unwrap_err();
+        assert_eq!(err.code, INVALID_ARGUMENT);
+        assert!(err.to_string().contains("excludePrivate"), "{err}");
+    }
+    // No privacy asked: answered as before.
+    assert_eq!(
+        slugs(
+            &store
+                .search_keyword("needle", &search_opts(json!({"excludePrivate": false})))
+                .unwrap()
+        )
+        .len(),
+        2
+    );
+}

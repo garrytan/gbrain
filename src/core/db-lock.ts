@@ -27,6 +27,7 @@ import type { BrainEngine, CycleLockFilter } from './engine.ts';
 import { rethrowCapabilityRefusal } from './engine-capability-refusal.ts';
 import { isRustEngineKind } from './sql-engine-kind.ts';
 import { ASSERT_LEASE_SQL } from './engine-sql/cycle-locks.ts';
+import { fenceOpts } from './persistence/host-fence.ts';
 
 export interface DbLockHandle {
   id: string;
@@ -254,14 +255,14 @@ export async function tryAcquireDbLock(
     // initially; every refresh() tick bumps both ttl_expires_at AND last_refreshed_at). `gbrain sync --break-lock
     // --max-age <s>` uses last_refreshed_at (not acquired_at) to identify wedged-but-alive holders without stealing
     // healthy long-running holders that are actively refreshing.
-    const held = await engine.acquireCycleLock(lockId, { holderPid: pid, holderHost: host, acquisitionToken, ttlMinutes, stealGraceSeconds });
+    const held = await engine.acquireCycleLock(lockId, { holderPid: pid, holderHost: host, acquisitionToken, ttlMinutes, stealGraceSeconds, ...fenceOpts(engine) });
     if (!held) return null;
     // The UUID is the fence; the epoch text rides on the handle for diagnostics (migration-orchestration-lock.ts
     // reports it when a lease is lost) and is never compared (#6028).
     const fence = held.fence;
     const owner = { holderPid: pid, acquisitionToken };
     const deregister = registerCleanup(`db-lock:${lockId}`, async () => {
-      await engine.releaseCycleLock(lockId, owner);
+      await engine.releaseCycleLock(lockId, { ...owner, ...fenceOpts(engine) });
     });
     return {
       id: lockId,
@@ -270,10 +271,10 @@ export async function tryAcquireDbLock(
       // v0.41.13.0: bumps BOTH ttl_expires_at AND last_refreshed_at. v0.42.x (#1794): Postgres routes it through the
       // DIRECT session pool, not the transaction pool, so a Supavisor pooler exhaustion (EMAXCONNSESSION) can't kill
       // the heartbeat and let the live lock get stolen.
-      refresh: async (refreshOpts?: { signal?: AbortSignal }) => engine.refreshCycleLock(lockId, { ...owner, ttlMinutes }, refreshOpts),
+      refresh: async (refreshOpts?: { signal?: AbortSignal }) => engine.refreshCycleLock(lockId, { ...owner, ttlMinutes, ...fenceOpts(engine) }, refreshOpts),
       release: async () => {
         deregister();
-        await engine.releaseCycleLock(lockId, owner);
+        await engine.releaseCycleLock(lockId, { ...owner, ...fenceOpts(engine) });
       },
     };
   };
@@ -560,7 +561,7 @@ export async function deleteLockRow(
   holderPid: number,
   acquisitionToken: string,
 ): Promise<{ deleted: boolean }> {
-  return { deleted: await engine.deleteCycleLock(lockId, { holderPid, acquisitionToken }) };
+  return { deleted: await engine.deleteCycleLock(lockId, { holderPid, acquisitionToken, ...fenceOpts(engine) }) };
 }
 
 /**
@@ -608,7 +609,7 @@ export async function deleteLockRowIfStale(
   maxAgeSeconds: number,
   acquisitionToken: string,
 ): Promise<{ deleted: boolean; lastRefreshedAt: Date | null }> {
-  return engine.deleteCycleLockIfStale(lockId, { holderPid, acquisitionToken, maxAgeSeconds });
+  return engine.deleteCycleLockIfStale(lockId, { holderPid, acquisitionToken, maxAgeSeconds, ...fenceOpts(engine) });
 }
 
 /** Snapshot-matched delete using the full UUID; never millisecond timestamp equality. */

@@ -12,6 +12,7 @@ use serde_json::Value;
 use super::job_id;
 use crate::store_binding::{Brain, arg, required};
 use gbrain_store::error::StoreError;
+use gbrain_store::leases::LeaseToken;
 
 /// A list of job ids from JavaScript.
 fn job_ids(ids: Vec<f64>, what: &str) -> Result<Vec<i64>, StoreError> {
@@ -149,9 +150,16 @@ impl Brain {
         id: f64,
         lock_token: String,
         delay_ms: f64,
+        fence: Option<Value>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.delay_held_claim(job_id(id, "delayHeldClaim")?, &lock_token, delay_ms)
+            let fence: Option<LeaseToken> = arg(fence, "delayHeldClaim fence")?;
+            s.delay_held_claim_fenced(
+                job_id(id, "delayHeldClaim")?,
+                &lock_token,
+                delay_ms,
+                fence.as_ref(),
+            )
         })
     }
 
@@ -164,13 +172,16 @@ impl Brain {
         lock_token: String,
         error_text: String,
         mark: String,
+        fence: Option<Value>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.release_watchdog_claim(
+            let fence: Option<LeaseToken> = arg(fence, "releaseWatchdogClaim fence")?;
+            s.release_watchdog_claim_fenced(
                 job_id(id, "releaseWatchdogClaim")?,
                 &lock_token,
                 &error_text,
                 &mark,
+                fence.as_ref(),
             )
         })
     }

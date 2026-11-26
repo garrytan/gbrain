@@ -62,6 +62,7 @@ import { publicationBeliefOptions, withBeliefBatch } from '../belief/ledger.ts';
 import { markBeliefCommits } from '../belief/append.ts';
 import { commitThroughDoor, doorCommitLanded, doorMarker, replayAfterDoorCommit, sourceCanonicalGit, strictChanged } from './git-door.ts';
 import { assertNoPrivateCommit, declareStrictPublication } from './git-declared.ts';
+import { fenceOpts } from './host-fence.ts';
 
 interface PreparedMutationBase {
   sourceExclusive?: boolean;
@@ -652,7 +653,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
       // A file publication stamps `publication_started` on the row lock it takes anyway; the stamp lives and dies
       // with this transaction either way (control.ts reads a rolled-back stamp as "never started").
       const current = recovery
-        ? await journal.markPublicationStarted(row.id)
+        ? await journal.markPublicationStarted(row.id, fenceOpts(tx))
         : await tx.lockWriteRequest(row.id);
       if (!current || current.execution_token !== row.execution_token || current.state !== 'running') throw opError('write_claim_lost', 'Execution claim changed before publication.',
         `Another worker took over request ${row.request_id} (its execution claim expired or was reassigned) before this attempt published, so this attempt wrote nothing and the current holder decides the outcome. Inspect the request rather than resubmitting it.`,

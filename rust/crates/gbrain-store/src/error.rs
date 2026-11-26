@@ -65,6 +65,11 @@ pub const READ_ONLY_TRANSACTION: &str = "read_only_transaction";
 /// a zone it does not know). Nothing was written; the engine refuses the call by name.
 pub const UNMODELED_INPUT: &str = "unmodeled_input";
 
+/// A lease fence failed (`leases.rs`): the lease's epoch or token moved, it was released or expired, a protected
+/// entry point on a multi-user store had no fence, or the claim was taken under another epoch. Nothing was written.
+/// The message is JSON: `{ reason, name, epoch, current_epoch }`.
+pub const LEASE_LOST: &str = "lease_lost";
+
 /// A store snapshot was cancelled (`snapshot.rs`). It removed what it had written and released
 /// its read before this error returned.
 pub const SNAPSHOT_CANCELLED: &str = "snapshot_cancelled";

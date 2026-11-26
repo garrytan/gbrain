@@ -165,7 +165,7 @@ export async function readDrainLeaseBeacon(exec: LegacyUnscopedRead, lockToken: 
 }
 
 /** What a drain lease's holder record carries: the source, the lease token, the beacon and the lease's TTL in minutes. */
-export interface DrainLeaseHolderRecord { sourceId: string; lockToken: string; beacon: { kind: string; id: string | null; version: string }; ttlMinutes: number }
+export interface DrainLeaseHolderRecord { sourceId: string; lockToken: string; beacon: { kind: string; id: string | null; version: string }; ttlMinutes: number; /** The caller's host fence on a multi-user Rust brain; the SQL engines ignore it. */ fence?: import('./lease-token.ts').LeaseToken }
 
 /**
  * Writes the holder record of a drain lease, in one statement: the source's former `sync` holder records go first (the

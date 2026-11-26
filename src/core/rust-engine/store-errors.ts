@@ -73,12 +73,30 @@ export function mapStoreError(error: unknown, ctx: StoreErrorContext): unknown {
       return new PageSnapshotAmbiguousError();
     case 'constraint_violation':
       return factsUniqueViolation(error);
+    case 'lease_lost':
+      // A lease fence failed (multi-user mode, rust/crates/gbrain-store/src/leases.rs): nothing was written.
+      return leaseLostError(error);
     case 'unmodeled_input':
       // An input the store does not read as Postgres does: refused by name, before anything is written.
       return refusalFor(ctx.member, detail);
     default:
       return error;
   }
+}
+
+/** The `lease_lost` reasons the store sends (`leases::LostReason`). */
+export const LEASE_LOST_REASONS = ['not_found', 'epoch_moved', 'released', 'expired', 'fence_missing', 'claim_epoch_mismatch'] as const;
+export type LeaseLostReason = typeof LEASE_LOST_REASONS[number];
+
+/** The store's `lease_lost` message as `opError('lease_lost')` with its reason, or the error unchanged. */
+export function leaseLostError(error: unknown): unknown {
+  let at: { reason?: string; name?: string; epoch?: number; current_epoch?: number | null };
+  try { at = JSON.parse(error instanceof Error ? error.message : ''); } catch { return error; }
+  const reason = (LEASE_LOST_REASONS as readonly string[]).includes(String(at.reason)) ? String(at.reason) : 'epoch_moved';
+  return opError('lease_lost',
+    `The lease "${at.name ?? ''}" at epoch ${at.epoch ?? '?'} no longer fences this write (${reason}), so nothing was written.`,
+    'Stop the work this lease protected, take the lease again (a new epoch) and re-read the state before writing.',
+    { reason, detail: `name=${at.name ?? ''} epoch=${at.epoch ?? ''} current_epoch=${at.current_epoch ?? 'unknown'}` });
 }
 
 /** `engine_capability_missing` for `member`, under the capability the member table gives it, naming what was refused. */

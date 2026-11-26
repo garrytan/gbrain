@@ -15,6 +15,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { QueueQuotaExceededError } from '../minions/admission.ts';
 import { WATCHDOG_SUSPECT_MARK } from '../minions/watchdog-attribution.ts';
+import type { LeaseToken } from './lease-token.ts';
 import { joinFragments, renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 
 export type JobRow = Record<string, unknown>;
@@ -342,6 +343,8 @@ export interface ClaimJobSpec {
   handlerLockDurations: Record<string, number>;
   /** The `legacy_default` spend record's fresh group id and default cap. */
   legacySpend: { groupId: string; capUsd: number };
+  /** The caller's host fence on a multi-user Rust brain; the SQL engines ignore it. */
+  fence?: LeaseToken;
 }
 
 function markedFragment(): SqlFragment {

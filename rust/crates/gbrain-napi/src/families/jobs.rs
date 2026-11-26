@@ -25,6 +25,7 @@ use gbrain_store::jobs::{
     AdmitSpec, ClaimSpec, ListFilter, LockAcquire, LockFilter, LockHolder, PageLeaseHolder,
     PageLeaseTake,
 };
+use gbrain_store::leases::LeaseToken;
 use napi::Env;
 use napi::bindgen_prelude::Object;
 use napi_derive::napi;
@@ -88,9 +89,17 @@ impl Brain {
         lock_token: String,
         data: Value,
         ttl_minutes: f64,
+        fence: Option<Value>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.write_drain_lease_holder(&source_id, &lock_token, data, ttl_minutes)
+            let fence: Option<LeaseToken> = arg(fence, "writeDrainLeaseHolder fence")?;
+            s.write_drain_lease_holder_fenced(
+                &source_id,
+                &lock_token,
+                data,
+                ttl_minutes,
+                fence.as_ref(),
+            )
         })
     }
 
@@ -101,9 +110,11 @@ impl Brain {
         env: &'env Env,
         lock_token: String,
         ttl_minutes: f64,
+        fence: Option<Value>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.refresh_drain_lease_holder(&lock_token, ttl_minutes)
+            let fence: Option<LeaseToken> = arg(fence, "refreshDrainLeaseHolder fence")?;
+            s.refresh_drain_lease_holder_fenced(&lock_token, ttl_minutes, fence.as_ref())
         })
     }
 
@@ -113,8 +124,12 @@ impl Brain {
         &self,
         env: &'env Env,
         lock_token: String,
+        fence: Option<Value>,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.release_drain_lease_holder(&lock_token))
+        self.run(env, move |s| {
+            let fence: Option<LeaseToken> = arg(fence, "releaseDrainLeaseHolder fence")?;
+            s.release_drain_lease_holder_fenced(&lock_token, fence.as_ref())
+        })
     }
 
     /// `getJob(id)`: the row, or null.
@@ -176,9 +191,16 @@ impl Brain {
         id: f64,
         lock_token: String,
         lock_duration_ms: f64,
+        fence: Option<Value>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.renew_job_lease(job_id(id, "renewJobLease")?, &lock_token, lock_duration_ms)
+            let fence: Option<LeaseToken> = arg(fence, "renewJobLease fence")?;
+            s.renew_job_lease_fenced(
+                job_id(id, "renewJobLease")?,
+                &lock_token,
+                lock_duration_ms,
+                fence.as_ref(),
+            )
         })
     }
 
@@ -190,9 +212,16 @@ impl Brain {
         id: f64,
         lock_token: String,
         result: Option<Value>,
+        fence: Option<Value>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.complete_job(job_id(id, "completeJob")?, &lock_token, result.as_ref())
+            let fence: Option<LeaseToken> = arg(fence, "completeJob fence")?;
+            s.complete_job_fenced(
+                job_id(id, "completeJob")?,
+                &lock_token,
+                result.as_ref(),
+                fence.as_ref(),
+            )
         })
     }
 
@@ -208,15 +237,18 @@ impl Brain {
         new_status: String,
         backoff_ms: Option<f64>,
         result: Option<Value>,
+        fence: Option<Value>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.fail_job(
+            let fence: Option<LeaseToken> = arg(fence, "failJob fence")?;
+            s.fail_job_fenced(
                 job_id(id, "failJob")?,
                 &lock_token,
                 &error_text,
                 &new_status,
                 backoff_ms,
                 result.as_ref(),
+                fence.as_ref(),
             )
         })
     }
@@ -228,9 +260,11 @@ impl Brain {
         env: &'env Env,
         grace_ms: f64,
         suspect_mark: String,
+        fence: Option<Value>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.reclaim_stalled_jobs(grace_ms, &suspect_mark)
+            let fence: Option<LeaseToken> = arg(fence, "reclaimStalledJobs fence")?;
+            s.reclaim_stalled_jobs_fenced(grace_ms, &suspect_mark, fence.as_ref())
         })
     }
 
@@ -352,9 +386,11 @@ impl Brain {
         env: &'env Env,
         lock_id: String,
         acquisition_token: String,
+        fence: Option<Value>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.assert_cycle_lease(&lock_id, &acquisition_token)
+            let fence: Option<LeaseToken> = arg(fence, "assertCycleLease fence")?;
+            s.assert_cycle_lease_fenced(&lock_id, &acquisition_token, fence.as_ref())
         })
     }
 }

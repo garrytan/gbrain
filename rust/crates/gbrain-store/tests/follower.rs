@@ -831,3 +831,79 @@ fn install_cost_on_a_10k_page_brain() {
         manifest.keys, sorted[1]
     );
 }
+
+/// The clock floor row (`clock_floor.rs`, `~L 0x04`) is brain state: every multi-user commit raises
+/// it and its commit record carries the raise, so a follower that replays the log holds the
+/// primary's floor, and a promoted follower's clock starts at or above it.
+#[test]
+fn a_follower_carries_the_clock_floor_row_and_a_promotion_starts_above_it() {
+    for concurrent in MODES {
+        let dir = TempDir::new("floor-row");
+        let root = dir.path();
+        let far = 4_000_000_000_000_000;
+        std::fs::create_dir_all(root.join("primary")).unwrap();
+        let follower = Follower::open(&root.join("follower")).unwrap();
+        {
+            let base = RedbKv::open_path(&root.join("primary/records.redb")).unwrap();
+            let kv: Arc<dyn Kv> = if concurrent {
+                Arc::new(gbrain_store::occ_kv::OccKv::new(base).unwrap())
+            } else {
+                Arc::new(base)
+            };
+            let primary =
+                Store::open_kv(kv, Arc::new(HandClock(AtomicI64::new(far))), mu(concurrent))
+                    .unwrap();
+            assert!(
+                primary.multiuser(),
+                "multi-user mode on through OpenOptions"
+            );
+            primary.set_config("test.a", "1").unwrap();
+            let page = primary.read_commit_log(None, usize::MAX).unwrap();
+            let last = page.records.last().unwrap();
+            assert!(
+                last.ops
+                    .iter()
+                    .any(|(k, _)| *k == gbrain_store::clock_floor::high_water_key()),
+                "the record carries the floor row: {:?}",
+                last.ops
+            );
+        }
+        let primary = Store::open_dir(&root.join("primary"), mu(concurrent)).unwrap();
+        let manifest = primary
+            .snapshot_to(&root.join("snap"), &SnapshotOp::new())
+            .unwrap();
+        follower
+            .install_snapshot(&root.join("snap"), Some(&manifest))
+            .unwrap();
+        for n in 0..6 {
+            step(&primary, n);
+        }
+        catch_up(&follower, &primary);
+        let high = primary.clock_high_water().unwrap();
+        assert!(
+            high >= far,
+            "concurrent {concurrent}: the primary's floor {high}"
+        );
+        let followed =
+            gbrain_store::clock_floor::read_high_water(&*follower.records().snapshot().unwrap())
+                .unwrap();
+        assert_eq!(
+            followed, high,
+            "concurrent {concurrent}: the follower's floor row"
+        );
+        drop(primary);
+        let time_floor = follower.last_commit_time().unwrap();
+        let promoted = follower.promote(mu(concurrent)).unwrap();
+        promoted.set_config("test.after", "1").unwrap();
+        // L5's rule: row times never go below the floor (equal is allowed); L2's rule: commit times
+        // strictly increase.
+        assert!(
+            promoted.clock_high_water().unwrap() >= high,
+            "the promoted row clock went back"
+        );
+        assert!(
+            promoted.last_commit_time().unwrap().unwrap() > time_floor,
+            "the commit time went back"
+        );
+    }
+}

@@ -2867,6 +2867,7 @@
     "knock_on_exhausted": 1,
     "known_as_of_unproven": 1,
     "label_edit_refused": 1,
+    "lease_lost": 1,
     "legacy_job_selection_invalid": 1,
     "legacy_jobs_active": 1,
     "legacy_lock_removal_refused": 1,

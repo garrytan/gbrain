@@ -2,6 +2,7 @@
  * The Minion queue, spend ledger, queue health and job table statements of BrainEngine.
  * Declarations moved verbatim out of engine.ts; `BrainEngine` extends this interface, so the member set is unchanged.
  */
+import type { FenceOpts } from '../engine-sql/lease-token.ts';
 import type { AccessTokenInsert, ActiveAccessTokenRow } from '../engine-sql/access-tokens.ts';
 import type { AdmitJobPolicy, AdmitJobResult, AdmitJobSpec, ClaimJobSpec, JobRow, ListJobsFilter } from '../engine-sql/jobs.ts';
 import type { AgentClientSpendRow, ClientReserveOutcome, ClientReserveSpec, GroupReserveOutcome, GroupReserveSpec, GroupSpendRow, OauthClientInsert, SettleLogOutcome, SpendLogInsert } from '../engine-sql/spend-log.ts';
@@ -51,25 +52,25 @@ export interface JobsMembers {
   claimNextJob(spec: ClaimJobSpec): Promise<JobRow | null>;
 
   /** Extend the lease of an active job this token still holds; false when the claim moved on. Direct pool on Postgres. */
-  renewJobLease(id: number, lockToken: string, lockDurationMs: number, opts?: { signal?: AbortSignal }): Promise<boolean>;
+  renewJobLease(id: number, lockToken: string, lockDurationMs: number, opts?: { signal?: AbortSignal } & FenceOpts): Promise<boolean>;
 
   /**
    * Complete an active job this token holds, rolling its tokens and `child_done` up to its parent and waking a parent
    * whose children are all finished. Returns the completed row (before a `remove_on_complete` delete), or null.
    */
-  completeJob(id: number, lockToken: string, result?: Record<string, unknown>): Promise<JobRow | null>;
+  completeJob(id: number, lockToken: string, result?: Record<string, unknown>, opts?: FenceOpts): Promise<JobRow | null>;
 
   /**
    * Fail an active job this token holds (`delayed` retry, `failed` or `dead`), applying `on_child_fail` to its parent
    * on a terminal failure. Returns the row (before a `remove_on_fail` delete), or null when the token is stale.
    */
-  failJob(id: number, lockToken: string, errorText: string, newStatus: 'delayed' | 'failed' | 'dead', backoffMs?: number, result?: Record<string, unknown>): Promise<JobRow | null>;
+  failJob(id: number, lockToken: string, errorText: string, newStatus: 'delayed' | 'failed' | 'dead', backoffMs?: number, result?: Record<string, unknown>, opts?: FenceOpts): Promise<JobRow | null>;
 
   /**
    * The stall sweep: active jobs whose lease expired more than `graceMs` ago requeue (a dead multi-claim worker's
    * co-runners marked, no stall counted) or go `dead` at `max_stalled`, notifying and waking their parents.
    */
-  reclaimStalledJobs(graceMs: number): Promise<{ requeued: JobRow[]; dead: JobRow[] }>;
+  reclaimStalledJobs(graceMs: number, opts?: FenceOpts): Promise<{ requeued: JobRow[]; dead: JobRow[] }>;
 
   // Minion queue statements beyond the lifecycle (engine-sql/jobs-queue.ts): operator writes, sweeps, inbox, private
   // queues, stats and attachments. The queue keeps the policy (validation, the unreviewed-job gate, authorization).
@@ -95,16 +96,16 @@ export interface JobsMembers {
    * Return an active job this token holds to `delayed` without counting an attempt (a lease-full bounce, a deferral,
    * a configuration release). Null when the claim moved on. Postgres cancels the statement when `signal` aborts.
    */
-  delayActiveJob(id: number, lockToken: string, spec: DelayActiveJobSpec, opts?: { signal?: AbortSignal }): Promise<JobRow | null>;
+  delayActiveJob(id: number, lockToken: string, spec: DelayActiveJobSpec, opts?: { signal?: AbortSignal } & FenceOpts): Promise<JobRow | null>;
   /** Requeue a co-runner of a watchdog drain with the suspect mark, no attempt counted; false when the claim moved on. */
-  releaseWatchdogClaim(id: number, lockToken: string, errorText: string): Promise<boolean>;
+  releaseWatchdogClaim(id: number, lockToken: string, errorText: string, opts?: FenceOpts): Promise<boolean>;
   /**
    * Hand a just-taken claim back un-run because the pause marker appeared after the claim: the row this token locks goes
    * to `delayed` for one minute, lock cleared, start time, error text and attempt counts untouched. A stale token changes nothing.
    */
-  releaseClaimForPause(id: number, lockToken: string): Promise<void>;
+  releaseClaimForPause(id: number, lockToken: string, opts?: FenceOpts): Promise<void>;
   /** The same hand-back for a quiet-hours deferral: `delayed` for fifteen minutes. */
-  deferClaimForQuietHours(id: number, lockToken: string): Promise<void>;
+  deferClaimForQuietHours(id: number, lockToken: string, opts?: FenceOpts): Promise<void>;
   /** Append the watchdog suspect mark once to a job's stacktrace (any status, `updated_at` untouched). */
   markJobWatchdogSuspect(id: number): Promise<void>;
   /** Move delayed jobs whose delay passed back to waiting. */

@@ -6,6 +6,7 @@
 //! the row is written when the lease is taken, renewed with it and deleted on release.
 
 use super::*;
+use crate::leases::{CLAIM_DRAIN_LEASE, LeaseToken};
 
 /// `holder.lock_until = now + ttl minutes`, in microseconds.
 fn lease_until(now: i64, ttl_minutes: f64) -> i64 {
@@ -59,7 +60,21 @@ impl Store {
         data: Value,
         ttl_minutes: f64,
     ) -> Result<i64> {
+        self.write_drain_lease_holder_fenced(source_id, lock_token, data, ttl_minutes, None)
+    }
+
+    /// `write_drain_lease_holder` under the caller's host fence: the holder record notes the fence's lease name and
+    /// epoch, and a former holder's record (deleted here) loses its own.
+    pub fn write_drain_lease_holder_fenced(
+        &self,
+        source_id: &str,
+        lock_token: &str,
+        data: Value,
+        ttl_minutes: f64,
+        fence: Option<&LeaseToken>,
+    ) -> Result<i64> {
         self.write(|tx| {
+            fence::begin(self, tx, fence, "write_drain_lease_holder")?;
             let now = self.env.now_micros();
             let gone: Vec<JobRecord> = all_rows(tx)?
                 .into_iter()
@@ -72,6 +87,9 @@ impl Store {
                 .collect();
             for row in &gone {
                 delete_row(tx, row)?;
+                if let Some(former) = row.lock_token.as_deref() {
+                    fence::claim_ended(self, tx, CLAIM_DRAIN_LEASE, former, fence)?;
+                }
             }
             let id = next_seq(tx, "job")?;
             let row = JobRecord {
@@ -127,6 +145,7 @@ impl Store {
                 spend_claim_token: None,
             };
             save(tx, None, &row)?;
+            fence::claim_taken(tx, CLAIM_DRAIN_LEASE, lock_token, fence)?;
             Ok(id)
         })
     }
@@ -134,9 +153,23 @@ impl Store {
     /// `refreshDrainLeaseHolder(lockToken, ttlMinutes)`: moves `lock_until` of the lease's holder
     /// records the TTL ahead and stamps `updated_at`. Returns how many records it renewed.
     pub fn refresh_drain_lease_holder(&self, lock_token: &str, ttl_minutes: f64) -> Result<u32> {
+        self.refresh_drain_lease_holder_fenced(lock_token, ttl_minutes, None)
+    }
+
+    /// `refresh_drain_lease_holder` under the caller's host fence.
+    pub fn refresh_drain_lease_holder_fenced(
+        &self,
+        lock_token: &str,
+        ttl_minutes: f64,
+        fence: Option<&LeaseToken>,
+    ) -> Result<u32> {
         self.write(|tx| {
+            fence::begin(self, tx, fence, "refresh_drain_lease_holder")?;
             let now = self.env.now_micros();
             let rows = holder_rows(tx, lock_token)?;
+            if !rows.is_empty() {
+                fence::claim_held(tx, CLAIM_DRAIN_LEASE, lock_token, fence)?;
+            }
             for old in &rows {
                 let mut new = old.clone();
                 new.lock_until = Some(lease_until(now, ttl_minutes));
@@ -149,11 +182,25 @@ impl Store {
 
     /// `releaseDrainLeaseHolder(lockToken)`: deletes the lease's holder records. Returns how many.
     pub fn release_drain_lease_holder(&self, lock_token: &str) -> Result<u32> {
+        self.release_drain_lease_holder_fenced(lock_token, None)
+    }
+
+    /// `release_drain_lease_holder` under the caller's host fence.
+    pub fn release_drain_lease_holder_fenced(
+        &self,
+        lock_token: &str,
+        fence: Option<&LeaseToken>,
+    ) -> Result<u32> {
         self.write(|tx| {
+            fence::begin(self, tx, fence, "release_drain_lease_holder")?;
             let rows = holder_rows(tx, lock_token)?;
+            if !rows.is_empty() {
+                fence::claim_held(tx, CLAIM_DRAIN_LEASE, lock_token, fence)?;
+            }
             for row in &rows {
                 delete_row(tx, row)?;
             }
+            fence::claim_ended(self, tx, CLAIM_DRAIN_LEASE, lock_token, fence)?;
             Ok(rows.len() as u32)
         })
     }

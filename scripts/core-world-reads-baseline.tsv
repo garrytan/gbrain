@@ -623,6 +623,7 @@ src/core/ops/files.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/ops/schema-packs.ts	fs_import	2	W7: filesystem boundary moves to the local app
 src/core/ops/skillopt.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/ops/slug-params.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context (carries the spellings a read was offered to the handler, per call)
+src/core/persistence/host-fence.ts	module_collection	1	L5: per-engine state (a WeakMap keyed by the engine object: the host registration of that engine, never shared between engines)
 src/core/repair/slug-spelling.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/rust-engine/access-self-check.ts	als_store	1	Rust multi-user access self-check (lane L4): the served store's multi-user answer and its derivation for one member call, so two brains in one process never share a mode; W2: engine scope (decision E) carries it
 src/core/rust-engine/multiuser-switch.ts	process_env	1	Rust multi-user switch (I-0): reads GBRAIN_RUST_MULTIUSER once when the caller passes no env; the brain's config row is read by the store itself; stays until engine settings carry the switch (embedded core, W2)

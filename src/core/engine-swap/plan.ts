@@ -11,6 +11,7 @@ import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import { readManagedMode } from '../persistence/managed-mode.ts';
 import { activeWorktreeRefreshes } from '../persistence/worktree-refresh.ts';
+import { usableDestination, type DestinationOptions } from './destination.ts';
 import { evaluateReadiness, type ReadinessVerdict, type ShadowStatus } from './readiness.ts';
 import { managedStorageError, refreshUnsettledError, type SwapRefusalReason, type UnsettledRefresh } from './refusals.ts';
 
@@ -59,6 +60,8 @@ export interface SwapPlanInputs {
   services?: ServiceDefinition[];
   disk?: { path: string; free_bytes: number | null };
   now?: Date;
+  /** The destination evidence and the resolved multi-user switch (destination.ts); none keeps the plan as it always was. */
+  destination?: DestinationOptions;
 }
 
 /** Non-terminal refresh rows (draining, fenced, merged, syncing, recovery_required), through the reader
@@ -92,10 +95,13 @@ export async function assertNotManaged(engine: BrainEngine): Promise<void> {
 }
 
 /** The plan hash binds what a run would act on, never volatile readings (time, free space). */
-function planHash(p: Omit<SwapPlan, 'plan_hash'>): string {
+function planHash(p: Omit<SwapPlan, 'plan_hash'>, dest: DestinationOptions | undefined): string {
+  const d = usableDestination(dest);
   const bound = {
     to: p.to, from: p.from, verdict: p.verdict, reason: p.reason,
     criteria: p.criteria.map(c => [c.n, c.state]), routes: p.routes,
+    // Bound only when destination evidence exists and the switch is on, so every other plan hashes as before.
+    ...(d ? { destination: { engine: d.engine, brain_id: d.brain_id, served: d.served, multiuser: d.multiuser } } : {}),
   };
   return createHash('sha256').update(JSON.stringify(bound)).digest('hex').slice(0, 16);
 }
@@ -105,7 +111,7 @@ export async function planEngineSwap(engine: BrainEngine, deps: SwapPlanInputs =
   await assertNotManaged(engine);
   await assertRefreshesSettled(engine);
   const status = deps.readShadowStatus ? await deps.readShadowStatus(engine) : null;
-  const readiness = evaluateReadiness(status, deps.now ?? new Date());
+  const readiness = evaluateReadiness(status, deps.now ?? new Date(), deps.destination);
   const base: Omit<SwapPlan, 'plan_hash'> = {
     schema_version: 1,
     to: 'rust',
@@ -120,5 +126,5 @@ export async function planEngineSwap(engine: BrainEngine, deps: SwapPlanInputs =
     disk: deps.disk ?? { path: '', free_bytes: null },
     deferred: DEFERRED_TO_S5B,
   };
-  return { ...base, plan_hash: planHash(base) };
+  return { ...base, plan_hash: planHash(base, deps.destination) };
 }

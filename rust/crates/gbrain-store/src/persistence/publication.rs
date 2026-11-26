@@ -22,8 +22,10 @@ use super::{
 use crate::Store;
 use crate::env::Env;
 use crate::error::{Result, StoreError};
+use crate::fence;
 use crate::journal::{RequestRecord, write_request};
 use crate::kv::{KvRead, KvWrite};
+use crate::leases::LeaseToken;
 use crate::sources::read_source;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -465,6 +467,16 @@ pub(crate) fn publication_journal_write_in(
     })
 }
 
+/// The request a claimant's own publication step names (see `publication_journal_write_fenced`).
+fn claimant_step(what: &PublicationWrite) -> Option<&str> {
+    match what {
+        PublicationWrite::RecordRecovery { id, .. }
+        | PublicationWrite::MarkRecovering { id, .. }
+        | PublicationWrite::PublicationStarted { id } => Some(id.as_str()),
+        _ => None,
+    }
+}
+
 impl Store {
     /// One `publicationJournalStore()` read (`PublicationRead`) as JSON.
     pub fn publication_journal_rows(&self, what: &PublicationRead) -> Result<Value> {
@@ -473,7 +485,27 @@ impl Store {
 
     /// One `publicationJournalStore()` write (`PublicationWrite`); its result as JSON.
     pub fn publication_journal_write(&self, what: &PublicationWrite) -> Result<Value> {
-        self.write(|tx| publication_journal_write_in(tx, &*self.env, what))
+        self.publication_journal_write_fenced(what, None)
+    }
+
+    /// `publication_journal_write` under the caller's host fence. The claimant's own steps (`RecordRecovery`,
+    /// `MarkRecovering`, `PublicationStarted`) run only while the host's lease is held and only on a claim taken
+    /// under the fence's epoch (`lease_lost` otherwise, nothing written). The other steps (recovery bookkeeping that
+    /// any consumer may run on a request it does not hold) are not gated.
+    pub fn publication_journal_write_fenced(
+        &self,
+        what: &PublicationWrite,
+        fence: Option<&LeaseToken>,
+    ) -> Result<Value> {
+        self.write(|tx| {
+            if let Some(id) = claimant_step(what) {
+                fence::begin(self, tx, fence, "publication_journal_write")?;
+                if fence.is_some() {
+                    super::held_claim_of(tx, id, fence)?;
+                }
+            }
+            publication_journal_write_in(tx, &*self.env, what)
+        })
     }
 }
 

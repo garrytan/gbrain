@@ -62,6 +62,7 @@ fn insert_input(store: &Store, request: &str, slug: &str, intent: Value) -> Writ
 
 fn stamp(id: &str, lease_ms: f64, phase: Option<Value>) -> ClaimStamp {
     ClaimStamp {
+        fence: None,
         id: id.into(),
         token: TOKEN.into(),
         lease_ms,
@@ -595,6 +596,7 @@ fn expired_claims_go_back_to_queued() {
         ))
         .unwrap();
     let spec = ExpireClaims {
+        fence: None,
         host_id: HOST.into(),
         charge: true,
         dead_owners: vec![],
@@ -620,6 +622,7 @@ fn a_dead_owner_releases_a_live_lease() {
         .stamp_write_claim(&stamp(id, 60_000.0, Some(phase)))
         .unwrap();
     let mut spec = ExpireClaims {
+        fence: None,
         host_id: HOST.into(),
         charge: true,
         dead_owners: vec!["41:n".into()],
@@ -1425,6 +1428,7 @@ fn release_requeues_only_under_the_claim_token() {
         .unwrap();
     let id = row["id"].as_str().unwrap();
     let release = |token: &str, reason: &str, charge: bool| ClaimRelease {
+        fence: None,
         id: id.into(),
         token: Some(token.into()),
         reason: reason.into(),
