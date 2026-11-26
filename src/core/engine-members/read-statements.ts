@@ -350,7 +350,8 @@ export interface ReadStatementMembers {
    * store answers for the SQL tables whose records it keeps). listTextBearingColumns: every text-bearing column of every
    * table (the Rust store: each text field its stored records carry, under the table its records map to or their
    * keyspace). scanTextColumns: each such value that contains the pattern (case-insensitive), by table, column and
-   * value; table and column names differ on the Rust store for records no SQL table maps.
+   * value in UTF-8 byte order; table and column names differ on the Rust store for records no SQL table maps. The SQL
+   * engines refuse when the running role cannot read every row of a scanned table.
    */
   hasTable(name: string): Promise<boolean>;
   hasColumn(table: string, column: string): Promise<boolean>;
@@ -358,9 +359,10 @@ export interface ReadStatementMembers {
   scanTextColumns(spec: EvalHarnessSql.TextScanSpec): Promise<EvalHarnessSql.TextScanHit[]>;
   /**
    * The evals' harness pause (engine-sql/eval-harness-reads.ts): pauseManagedPersistence turns managed persistence off
-   * with no mode_epoch bump and returns the prior enabled and epoch; restoreManagedPersistence puts enabled back only
-   * while the row is still paused at that epoch (true when it wrote). withManagedPersistencePaused runs fn between them
-   * and reports paused_state_changed when a real mode change during fn is kept; a throw is rethrown after the restore.
+   * with no mode_epoch bump and returns the prior enabled, epoch and topology change count; restoreManagedPersistence
+   * puts enabled back only while the row is still paused at that epoch with no topology change since (true when it
+   * wrote). withManagedPersistencePaused runs fn between them and reports paused_state_changed when a real mode change
+   * during fn is kept; a throw is rethrown after the restore. One pause at a time per brain (a nested one is refused).
    */
   pauseManagedPersistence(): Promise<EvalHarnessSql.ManagedPausePrior>;
   restoreManagedPersistence(prior: EvalHarnessSql.ManagedPausePrior): Promise<boolean>;

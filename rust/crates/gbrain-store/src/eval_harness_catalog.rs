@@ -11,8 +11,15 @@
 //!   records>`. A scan reads every stored record of every keyspace, so a copy kept anywhere is
 //!   found; table and column names differ from the SQL engines for records the list does not map.
 //! - A record that is a JSON object is read field by field: a string field is a text column, an
-//!   object or array field a jsonb column (its compact JSON text). Any other stored value is one
-//!   text column, `value`, read as UTF-8. Keys are not read.
+//!   object or array field a jsonb column (its compact JSON text). A config row (raw text, which
+//!   may parse as JSON) and any other stored value is one text column, `value`, read as UTF-8.
+//!   Keys are not read, except the `source_id` and `content_hash` a `page_purges` key holds.
+//! - activeOnly leaves out an expired or deleted record (`expired_at_us`, `deleted_at_us`,
+//!   `deleted_at`), an inactive take, a record of a deleted page (by its `page_id`, a page id in
+//!   its key, or a fence fact's `source_id` and `source_markdown_slug`) and every derived index
+//!   keyspace (`DERIVED`).
+//! - Hits are sorted by table, column and value in UTF-8 byte order, as the SQL engines sort them,
+//!   and at most `limit` are kept while scanning.
 //!
 //! The match is a case-insensitive substring: the pattern and each value are lowercased
 //! (`str::to_lowercase`, which agrees with Postgres `lower()` on ASCII text).
@@ -22,7 +29,6 @@ use crate::error::{Result, StoreError};
 use crate::keys;
 use crate::keyspaces::KEYSPACES;
 use crate::kv::{KvRead, scan_prefix};
-use crate::pages::all_pages;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -155,6 +161,8 @@ const MAPPED: &[Mapped] = &[
             "resolved_by",
             "created_at",
             "updated_at",
+            "trust_tier",
+            "write_origin",
         ],
     },
     Mapped {
@@ -169,6 +177,8 @@ const MAPPED: &[Mapped] = &[
             "detail",
             "event_page_id",
             "created_at",
+            "trust_tier",
+            "write_origin",
         ],
     },
     Mapped {
@@ -308,10 +318,26 @@ fn table_of(key: &[u8]) -> String {
 /// One text column of a stored value: its name, its text and its kind (`text` or `jsonb`).
 type TextColumn = (String, String, &'static str);
 
-/// The text columns of one stored value: `(column, text)` for each string field and the compact JSON
-/// text of each object or array field of a JSON object; else the whole value as `value`.
-fn text_columns(value: &[u8]) -> (Vec<TextColumn>, Option<Map<String, Value>>) {
-    match serde_json::from_slice::<Value>(value) {
+/// The text columns of one stored record: `(column, text)` for each string field and the compact
+/// JSON text of each object or array field of a JSON object, plus the text columns its key holds
+/// (`page_purges`: `source_id` and `content_hash`); a config row (raw text) or any other value is
+/// the whole value as `value`, read as UTF-8.
+fn text_columns(
+    table: &str,
+    key: &[u8],
+    value: &[u8],
+) -> (Vec<TextColumn>, Option<Map<String, Value>>) {
+    let raw = || {
+        vec![(
+            "value".to_string(),
+            String::from_utf8_lossy(value).into_owned(),
+            "text",
+        )]
+    };
+    if key.first() == Some(&keys::CONFIG) {
+        return (raw(), None);
+    }
+    let (mut out, record) = match serde_json::from_slice::<Value>(value) {
         Ok(Value::Object(map)) => {
             let mut out = Vec::new();
             for (field, v) in &map {
@@ -326,16 +352,63 @@ fn text_columns(value: &[u8]) -> (Vec<TextColumn>, Option<Map<String, Value>>) {
             (out, Some(map))
         }
         Ok(Value::String(s)) => (vec![("value".into(), s, "text")], None),
-        Ok(_) => (Vec::new(), None),
-        Err(_) => (
-            vec![(
-                "value".into(),
-                String::from_utf8_lossy(value).into_owned(),
-                "text",
-            )],
-            None,
-        ),
+        _ => (raw(), None),
+    };
+    if table == "page_purges" {
+        // The key is `F 0x0C source \0 content_hash \0`.
+        let mut parts = key.get(2..).unwrap_or_default().split(|b| *b == 0);
+        for column in ["source_id", "content_hash"] {
+            if let Some(part) = parts.next() {
+                out.push((
+                    column.into(),
+                    String::from_utf8_lossy(part).into_owned(),
+                    "text",
+                ));
+            }
+        }
     }
+    (out, record)
+}
+
+/// The page a derived record of a page belongs to, read from its key: the page id index
+/// (`I <id>`) and the page body rows keyed by page id (`b 0x02|0x04|0x05|0x08 <id> ...`).
+fn key_page_id(key: &[u8]) -> Option<u64> {
+    match *key.first()? {
+        keys::PAGE_ID => keys::be8(key.get(1..9)?),
+        keys::PAGE_BODY if matches!(key.get(1)?, 0x02 | 0x04 | 0x05 | 0x08) => {
+            keys::be8(key.get(2..10)?)
+        }
+        _ => None,
+    }
+}
+
+/// Keyspaces that only index or cache other records (postings, trigrams, vectors, link and
+/// timeline indexes, query state). activeOnly leaves them out: what they copy is read from the
+/// records they index, which activeOnly filters, and a deleted page's index entries cannot be told
+/// from a live one's by their values.
+const DERIVED: &[u8] = &[
+    keys::POSTING,
+    keys::TRIGRAM,
+    keys::VECTOR,
+    keys::LINK_TO,
+    keys::LINK_UNIQUE,
+    keys::LINK_ORIGIN,
+    keys::TIMELINE_DEDUP,
+    keys::TIMELINE_LATEST,
+    keys::REQUEST_ID,
+    keys::CHUNK_QUERIES,
+    keys::LINK_QUERIES,
+    keys::TIMELINE_QUERIES,
+];
+
+/// The fields of a page the scan needs (the page body is not read).
+#[derive(Deserialize)]
+struct PageHead {
+    id: u64,
+    source_id: String,
+    slug: String,
+    #[serde(default)]
+    deleted_at_us: Option<i64>,
 }
 
 fn text_field<'a>(record: &'a Map<String, Value>, field: &str) -> Option<&'a str> {
@@ -370,7 +443,7 @@ impl Store {
         let mut seen: BTreeMap<(String, String), &'static str> = BTreeMap::new();
         scan_prefix(&*read, &[], false, &mut |k, v| {
             let table = table_of(k);
-            for (column, _, kind) in text_columns(v).0 {
+            for (column, _, kind) in text_columns(&table, k, v).0 {
                 seen.entry((table.clone(), column)).or_insert(kind);
             }
             true
@@ -391,36 +464,63 @@ impl Store {
             return Err(StoreError::invalid("scanTextColumns: the pattern is empty"));
         }
         let read = self.read()?;
-        let pages = all_pages(&*read)?;
+        let mut pages: Vec<PageHead> = Vec::new();
+        let mut failure = None;
+        scan_prefix(&*read, &[keys::PAGE], false, &mut |_, v| {
+            match serde_json::from_slice::<PageHead>(v) {
+                Ok(p) => pages.push(p),
+                Err(e) => failure = Some(StoreError::from(e)),
+            }
+            failure.is_none()
+        })?;
+        if let Some(e) = failure {
+            return Err(e);
+        }
         let slug_of: HashMap<u64, &str> = pages.iter().map(|p| (p.id, p.slug.as_str())).collect();
         let deleted: BTreeSet<u64> = pages
             .iter()
             .filter(|p| p.deleted_at_us.is_some())
             .map(|p| p.id)
             .collect();
+        let deleted_keys: BTreeSet<(&str, &str)> = pages
+            .iter()
+            .filter(|p| p.deleted_at_us.is_some())
+            .map(|p| (p.source_id.as_str(), p.slug.as_str()))
+            .collect();
         let tables: Option<BTreeSet<&str>> = q
             .tables
             .as_ref()
             .map(|t| t.iter().map(String::as_str).collect());
-        let mut hits: Vec<(String, String, String, Value)> = Vec::new();
+        let limit = q.limit.map(|n| usize::try_from(n).unwrap_or(usize::MAX));
+        let mut hits: Vec<Hit> = Vec::new();
         scan(&*read, &mut |k, v| {
+            if q.active_only && k.first().is_some_and(|t| DERIVED.contains(t)) {
+                return;
+            }
             let table = table_of(k);
             if tables.as_ref().is_some_and(|t| !t.contains(table.as_str())) {
                 return;
             }
-            let (columns, record) = text_columns(v);
-            let page_id = record.as_ref().and_then(|r| {
-                if table == "pages" {
-                    id_field(r, "id")
-                } else {
-                    id_field(r, "page_id")
-                }
-            });
+            let (columns, record) = text_columns(&table, k, v);
+            let page_id = record
+                .as_ref()
+                .and_then(|r| {
+                    if table == "pages" {
+                        id_field(r, "id")
+                    } else {
+                        id_field(r, "page_id")
+                    }
+                })
+                .or_else(|| key_page_id(k));
             if q.active_only {
                 if let Some(r) = &record
                     && (set(r, "expired_at_us")
                         || set(r, "deleted_at_us")
-                        || (table == "takes" && r.get("active") == Some(&Value::Bool(false))))
+                        || set(r, "deleted_at")
+                        || (table == "takes" && r.get("active") == Some(&Value::Bool(false)))
+                        || text_field(r, "source_id")
+                            .zip(text_field(r, "source_markdown_slug"))
+                            .is_some_and(|key| deleted_keys.contains(&key)))
                 {
                     return;
                 }
@@ -447,17 +547,46 @@ impl Store {
                 own.or_else(|| page_id.and_then(|id| slug_of.get(&id).map(|s| s.to_string())));
             for (column, text, _) in columns {
                 if text.to_lowercase().contains(&pattern) {
-                    let row = json!({ "table": table, "column": column, "slug": slug, "page_id": page_id, "entity_slug": entity, "value": text });
-                    hits.push((table.clone(), column, text, row));
+                    hits.push(Hit {
+                        table: table.clone(),
+                        column,
+                        value: text,
+                        slug: slug.clone(),
+                        page_id,
+                        entity_slug: entity.clone(),
+                    });
                 }
             }
+            // Keep at most `limit` hits: past twice that, sort and drop the tail.
+            if let Some(n) = limit
+                && hits.len() > n.saturating_mul(2).max(64)
+            {
+                sort_hits(&mut hits);
+                hits.truncate(n);
+            }
         })?;
-        hits.sort_by(|a, b| (&a.0, &a.1, &a.2).cmp(&(&b.0, &b.1, &b.2)));
-        let limit = q
-            .limit
-            .map_or(usize::MAX, |n| usize::try_from(n).unwrap_or(usize::MAX));
-        Ok(hits.into_iter().take(limit).map(|h| h.3).collect())
+        sort_hits(&mut hits);
+        hits.truncate(limit.unwrap_or(usize::MAX));
+        Ok(hits
+            .into_iter()
+            .map(|h| json!({ "table": h.table, "column": h.column, "slug": h.slug, "page_id": h.page_id, "entity_slug": h.entity_slug, "value": h.value }))
+            .collect())
     }
+}
+
+/// One scan hit.
+struct Hit {
+    table: String,
+    column: String,
+    value: String,
+    slug: Option<String>,
+    page_id: Option<u64>,
+    entity_slug: Option<String>,
+}
+
+/// By table, column and value, in UTF-8 byte order (the SQL engines order by `convert_to(..., 'UTF8')`).
+fn sort_hits(hits: &mut [Hit]) {
+    hits.sort_by(|a, b| (&a.table, &a.column, &a.value).cmp(&(&b.table, &b.column, &b.value)));
 }
 
 /// Calls `f` with every stored key and value.
@@ -482,7 +611,11 @@ mod tests {
 
     #[test]
     fn a_json_record_is_read_field_by_field_and_other_bytes_as_one_value() {
-        let (cols, _) = text_columns(br#"{"fact":"Alpha","n":3,"tags":["a"],"meta":null}"#);
+        let (cols, _) = text_columns(
+            "facts",
+            &[keys::FACT, 0x01],
+            br#"{"fact":"Alpha","n":3,"tags":["a"],"meta":null}"#,
+        );
         assert_eq!(
             cols,
             vec![
@@ -490,8 +623,37 @@ mod tests {
                 ("tags".to_string(), r#"["a"]"#.to_string(), "jsonb")
             ]
         );
-        let (cols, _) = text_columns(&[0xff, b'h', b'i']);
+        let (cols, _) = text_columns("x", b"x", &[0xff, b'h', b'i']);
         assert_eq!(cols[0].0, "value");
+        // A top-level JSON array or scalar, and any config row, is one raw-text value.
+        let (cols, _) = text_columns("x", b"x", br#"["arraytoken"]"#);
+        assert_eq!(
+            cols,
+            vec![("value".to_string(), r#"["arraytoken"]"#.to_string(), "text")]
+        );
+        let (cols, _) = text_columns(
+            "core/config_rows",
+            &[keys::CONFIG, b'k'],
+            br#"{"keytoken":1}"#,
+        );
+        assert_eq!(
+            cols,
+            vec![("value".to_string(), r#"{"keytoken":1}"#.to_string(), "text")]
+        );
+        // A page purge's source and content hash are in its key.
+        let mut key = vec![keys::FACT, 0x0C];
+        key.extend_from_slice(b"default\0abc123\0");
+        let (cols, _) = text_columns("page_purges", &key, br#"{"slug":"notes/a"}"#);
+        assert_eq!(
+            cols.iter()
+                .map(|c| (c.0.as_str(), c.1.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("slug", "notes/a"),
+                ("source_id", "default"),
+                ("content_hash", "abc123")
+            ]
+        );
     }
 
     /// The listed columns of a mapped table are fields its stored record carries (a timestamp's `_us`

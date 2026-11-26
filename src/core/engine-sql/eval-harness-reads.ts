@@ -8,6 +8,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { joinFragments, renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
+import { withoutRequestSignal } from '../request-signal.ts';
 
 type Raw = Pick<BrainEngine, 'executeRaw'>;
 
@@ -59,7 +60,7 @@ export interface TextColumnRow { table: string; column: string; data_type: strin
 
 /** `scanTextColumns`: a case-insensitive substring over text-bearing columns. */
 export interface TextScanSpec {
-  /** The text to find; lowercased before the match. */
+  /** The text to find; it and each value are lowercased before the match. */
   pattern: string;
   /** Only these tables (every table when absent). */
   tables?: readonly string[];
@@ -82,7 +83,7 @@ export const TEXT_BEARING_COLUMNS_SQL = `SELECT c.table_name AS "table", c.colum
     WHERE c.table_schema = current_schema() AND t.table_type = 'BASE TABLE'
       AND (c.data_type IN ('text', 'character varying', 'json', 'jsonb') OR c.udt_name IN ('_text', '_varchar'))
     ORDER BY c.table_name COLLATE "C", c.ordinal_position`;
-export const TABLE_COLUMNS_SQL = 'SELECT table_name AS "table", column_name AS "column" FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ANY($1::text[])';
+export const TABLE_COLUMNS_SQL = 'SELECT table_name AS "table", column_name AS "column", data_type FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ANY($1::text[])';
 
 /** Whether the current schema has a table of that name. */
 export async function hasTable(engine: Raw, name: string): Promise<boolean> {
@@ -106,10 +107,11 @@ export function catalogIdentifierSql(name: string): string {
   return `"${name.replace(/"/g, '""')}"`;
 }
 
-/** What a scanned table carries besides its text columns. */
-export interface TextScanTable { table: string; text: readonly string[]; all: ReadonlySet<string> }
+/** What a scanned table carries besides its text columns: its schema and every column (a page_id kept only when it is an integer). */
+export interface TextScanTable { schema: string; table: string; text: readonly string[]; all: ReadonlySet<string> }
 
 const scanPageId = (t: TextScanTable): string | null => (t.table === 'pages' ? 'x."id"' : t.all.has('page_id') ? 'x."page_id"' : null);
+const qualified = (t: TextScanTable, table: string): string => `${catalogIdentifierSql(t.schema)}.${catalogIdentifierSql(table)}`;
 
 /** The slug, page id and entity columns of one scanned table's arm (catalog identifiers quoted by catalogIdentifierSql). */
 export function catalogScanHeadSql(t: TextScanTable): string {
@@ -126,13 +128,16 @@ export function catalogScanColumnSql(column: string): string {
   return `x.${catalogIdentifierSql(column)}::text`;
 }
 
-/** The pages join of a table that names a page (none otherwise). */
+/** The schema-qualified table of one arm and the pages join of a table that names a page (none otherwise). */
 export function catalogScanJoinSql(t: TextScanTable): string {
   const pageId = scanPageId(t);
-  return pageId ? ` LEFT JOIN "pages" p ON p."id" = ${pageId}` : '';
+  return `${qualified(t, t.table)} x${pageId ? ` LEFT JOIN ${qualified(t, 'pages')} p ON p."id" = ${pageId}` : ''}`;
 }
 
-/** The live-row filters of activeOnly: an unexpired, undeleted row, an active take, a row of no deleted page. */
+/**
+ * The live-row filters of activeOnly: an unexpired, undeleted row, an active take, a row of no deleted page (by its
+ * page id, or a fence row by its source and source_markdown_slug).
+ */
 export function catalogScanLiveSql(t: TextScanTable, activeOnly: boolean): string {
   if (!activeOnly) return '';
   return [
@@ -140,91 +145,141 @@ export function catalogScanLiveSql(t: TextScanTable, activeOnly: boolean): strin
     t.all.has('deleted_at') ? ' AND x."deleted_at" IS NULL' : '',
     t.table === 'takes' && t.all.has('active') ? ' AND x."active"' : '',
     scanPageId(t) ? ' AND (p."id" IS NULL OR p."deleted_at" IS NULL)' : '',
+    t.all.has('source_id') && t.all.has('source_markdown_slug')
+      ? ` AND NOT EXISTS (SELECT 1 FROM ${qualified(t, 'pages')} q WHERE q."source_id" = x."source_id" AND q."slug" = x."source_markdown_slug" AND q."deleted_at" IS NOT NULL)`
+      : '',
   ].join('');
 }
 
 /**
- * The SELECT that scans one table's text columns for `pattern` (already lowercased): one UNION ALL arm per column.
- * Table and column names come from the catalog and are quoted by catalogIdentifierSql; the pattern and each column's
- * name as a value are bound.
+ * The SELECT that scans one table's text columns for `pattern`: one UNION ALL arm per column, each value and the
+ * pattern lowercased by the database. Schema, table and column names come from the catalog and are quoted by
+ * catalogIdentifierSql; the pattern and the table's and each column's name as values are bound.
  */
 export function catalogTextScanSql(t: TextScanTable, activeOnly: boolean, pattern: string): SqlFragment {
-  return joinFragments(t.text.map((c) => sqlFragment`SELECT ${c}::text AS "column", ${trustedSql(catalogScanHeadSql(t))}, ${trustedSql(catalogScanColumnSql(c))} AS value FROM ${trustedSql(catalogIdentifierSql(t.table))} x${trustedSql(catalogScanJoinSql(t))} WHERE strpos(lower(${trustedSql(catalogScanColumnSql(c))}), ${pattern}) > 0${trustedSql(catalogScanLiveSql(t, activeOnly))}`), ' UNION ALL ');
+  return joinFragments(t.text.map((c) => sqlFragment`SELECT ${t.table}::text AS "table", ${c}::text AS "column", ${trustedSql(catalogScanHeadSql(t))}, ${trustedSql(catalogScanColumnSql(c))} AS value FROM ${trustedSql(catalogScanJoinSql(t))} WHERE strpos(lower(${trustedSql(catalogScanColumnSql(c))}), lower(${pattern}::text)) > 0${trustedSql(catalogScanLiveSql(t, activeOnly))}`), ' UNION ALL ');
 }
 
-/** Each value of a text-bearing column that contains the pattern (case-insensitive), by table, column and value. */
+/** The scanned tables' schema, and those of them the running role cannot read in full (no SELECT, or row security applies). */
+export const SCAN_VISIBILITY_SQL = `SELECT current_schema()::text AS schema,
+      COALESCE(array_agg(c.relname::text ORDER BY c.relname::text COLLATE "C") FILTER (WHERE NOT pg_catalog.has_table_privilege(c.oid, 'SELECT') OR pg_catalog.row_security_active(c.oid)), '{}') AS hidden
+    FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = current_schema() AND c.relname = ANY($1::text[])`;
+
+/** A limit the scan accepts: absent, or a whole number of zero or more. */
+export function assertScanLimit(limit: number | undefined): void {
+  if (limit !== undefined && !(Number.isSafeInteger(limit) && limit >= 0)) throw new Error('scanTextColumns: a limit that is not a whole number');
+}
+
+/**
+ * Each value of a text-bearing column that contains the pattern (case-insensitive), by table, column and value in
+ * UTF-8 byte order, at most `limit`. One statement reads every table, so it sees one snapshot and the database keeps
+ * only `limit` hits. Refuses, naming them, when the running role cannot read a scanned table in full: an empty
+ * answer from a table it cannot see would read as "the text is gone".
+ */
 export async function scanTextColumns(engine: Raw, spec: TextScanSpec): Promise<TextScanHit[]> {
-  const pattern = spec.pattern.toLowerCase();
-  if (!pattern) throw new Error('scanTextColumns: the pattern is empty');
+  if (!spec.pattern) throw new Error('scanTextColumns: the pattern is empty');
+  assertScanLimit(spec.limit);
   const wanted = spec.tables ? new Set(spec.tables) : null;
   const byTable = new Map<string, string[]>();
   for (const c of await listTextBearingColumns(engine)) {
     if (wanted && !wanted.has(c.table)) continue;
     byTable.set(c.table, [...(byTable.get(c.table) ?? []), c.column]);
   }
+  if (!byTable.size) return [];
+  const [seen] = await engine.executeRaw<{ schema: string; hidden: string[] }>(SCAN_VISIBILITY_SQL, [[...new Set([...byTable.keys(), 'pages'])]]);
+  if (seen?.hidden.length) {
+    throw new Error(`scanTextColumns: the running role cannot read every row of ${seen.hidden.join(', ')}; run the scan as the table owner or a BYPASSRLS role`);
+  }
   const all = new Map<string, Set<string>>();
-  for (const r of await engine.executeRaw<{ table: string; column: string }>(TABLE_COLUMNS_SQL, [[...byTable.keys()]])) {
+  for (const r of await engine.executeRaw<{ table: string; column: string; data_type: string }>(TABLE_COLUMNS_SQL, [[...byTable.keys()]])) {
+    if (r.column === 'page_id' && !['bigint', 'integer', 'smallint'].includes(r.data_type)) continue;
     all.set(r.table, (all.get(r.table) ?? new Set<string>()).add(r.column));
   }
-  const hits: TextScanHit[] = [];
-  for (const [table, text] of byTable) {
-    const { text: sql, params } = renderFragment(catalogTextScanSql({ table, text, all: all.get(table) ?? new Set() }, spec.activeOnly, pattern));
-    const rows = await engine.executeRaw<Record<string, unknown>>(sql, params);
-    for (const r of rows) {
-      hits.push({ table, column: String(r.column), slug: (r.slug as string | null) ?? null, page_id: toId(r.page_id),
-        entity_slug: (r.entity_slug as string | null) ?? null, value: String(r.value) });
-    }
-  }
-  hits.sort((a, b) => cmp(a.table, b.table) || cmp(a.column, b.column) || cmp(a.value, b.value));
-  return spec.limit === undefined ? hits : hits.slice(0, spec.limit);
+  const schema = seen!.schema;
+  const arms = joinFragments([...byTable].map(([table, text]) => catalogTextScanSql({ schema, table, text, all: all.get(table) ?? new Set() }, spec.activeOnly, spec.pattern)), ' UNION ALL ');
+  const limit = spec.limit === undefined ? sqlFragment`` : sqlFragment` LIMIT ${spec.limit}`;
+  const { text: sql, params } = renderFragment(sqlFragment`SELECT * FROM (${arms}) hit ORDER BY convert_to(hit."table", 'UTF8'), convert_to(hit."column", 'UTF8'), convert_to(hit.value, 'UTF8')${limit}`);
+  const rows = await engine.executeRaw<Record<string, unknown>>(sql, params);
+  return rows.map(r => ({ table: String(r.table), column: String(r.column), slug: (r.slug as string | null) ?? null, page_id: toId(r.page_id),
+    entity_slug: (r.entity_slug as string | null) ?? null, value: String(r.value) }));
 }
 
-/** Byte order on the UTF-16 code units, as the Rust store sorts its UTF-8 (equal for the ASCII names it sorts). */
-const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
-
-/** The brain row's managed state before a harness pause: `enabled` and `mode_epoch` (text). */
-export interface ManagedPausePrior { enabled: boolean; mode_epoch: string }
+/**
+ * The brain row's managed state before a harness pause: `enabled`, `mode_epoch` and the count of recorded topology
+ * changes (each as text).
+ */
+export interface ManagedPausePrior { enabled: boolean; mode_epoch: string; topology_changes: string }
 
 /** What withManagedPersistencePaused reports: fn's result and whether the prior state was put back. */
 export interface ManagedPauseOutcome<T> { result: T; restore: 'restored' | 'paused_state_changed' }
 
-/** Reads the brain row's enabled and mode_epoch and turns enabled off in one statement, moving nothing else. */
-export const PAUSE_MANAGED_SQL = `WITH prior AS (SELECT enabled, mode_epoch FROM persistence_brain WHERE singleton = 1 FOR UPDATE),
+/** Reads the brain row's enabled, mode_epoch and topology change count and turns enabled off in one statement, moving nothing else. */
+export const PAUSE_MANAGED_SQL = `WITH prior AS (SELECT enabled, mode_epoch, (SELECT count(*) FROM persistence_topology_changes) AS topology_changes
+        FROM persistence_brain WHERE singleton = 1 FOR UPDATE),
       paused AS (UPDATE persistence_brain SET enabled = false WHERE singleton = 1)
-    SELECT enabled, mode_epoch::text AS mode_epoch FROM prior`;
-/** Puts `enabled` back only while the row is still paused at the epoch the pause read (compare-and-set). */
-export const RESTORE_MANAGED_SQL = 'UPDATE persistence_brain SET enabled = $1 WHERE singleton = 1 AND enabled = false AND mode_epoch = $2::bigint RETURNING true AS restored';
+    SELECT enabled, mode_epoch::text AS mode_epoch, topology_changes::text AS topology_changes FROM prior`;
+/**
+ * Puts `enabled` back only while the row is still paused at the epoch the pause read and no topology change was
+ * recorded since (compare-and-set). A deactivation of a disabled brain releases its claims without moving the epoch,
+ * but it records a topology change.
+ */
+export const RESTORE_MANAGED_SQL = `UPDATE persistence_brain SET enabled = $1 WHERE singleton = 1 AND enabled = false AND mode_epoch = $2::bigint
+      AND (SELECT count(*) FROM persistence_topology_changes) = $3::bigint RETURNING true AS restored`;
 
 /** Turns managed persistence off with no mode_epoch bump; returns the prior state. Refuses a brain with no brain row. */
 export async function pauseManagedPersistence(engine: Raw): Promise<ManagedPausePrior> {
-  const [row] = await engine.executeRaw<{ enabled: boolean; mode_epoch: string }>(PAUSE_MANAGED_SQL);
+  const [row] = await engine.executeRaw<{ enabled: boolean; mode_epoch: string; topology_changes: string }>(PAUSE_MANAGED_SQL);
   if (!row) throw new Error('pauseManagedPersistence: this brain has no persistence brain row');
-  return { enabled: row.enabled === true, mode_epoch: String(row.mode_epoch) };
+  return { enabled: row.enabled === true, mode_epoch: String(row.mode_epoch), topology_changes: String(row.topology_changes) };
 }
 
-/** Puts the prior enabled value back when the row is still paused at the prior epoch; false (nothing written) otherwise. */
+/** Puts the prior enabled value back when nothing moved during the pause; false (nothing written) otherwise. */
 export async function restoreManagedPersistence(engine: Raw, prior: ManagedPausePrior): Promise<boolean> {
-  const rows = await engine.executeRaw<{ restored: boolean }>(RESTORE_MANAGED_SQL, [prior.enabled, prior.mode_epoch]);
+  const rows = await engine.executeRaw<{ restored: boolean }>(RESTORE_MANAGED_SQL, [prior.enabled, prior.mode_epoch, prior.topology_changes]);
   return rows.length > 0;
 }
 
+/** The engines (in this process) that hold a harness pause now. */
+const pausesHeld = new WeakSet<object>();
+
+/** The restore, outside the request's abort signal: a cancelled request must not leave the brain paused. */
+const restoreUncancelled = (engine: Pick<BrainEngine, 'restoreManagedPersistence'>, prior: ManagedPausePrior) =>
+  withoutRequestSignal(() => engine.restoreManagedPersistence(prior));
+
 /**
  * Runs `fn` with managed persistence paused (a harness step such as one import), on any engine: pause with no
- * mode_epoch bump, run fn, then compare-and-set the prior enabled value back. A real activation or deactivation that
- * ran during fn moved the epoch, so it is kept and the outcome reports paused_state_changed. When fn throws, the restore
- * still runs and fn's error is rethrown.
+ * mode_epoch bump, run fn, then compare-and-set the prior enabled value back. An activation or deactivation that ran
+ * during fn moved the epoch or recorded a topology change, so it is kept and the outcome reports paused_state_changed.
+ * When fn throws, the restore still runs and fn's error is rethrown (a failed restore is attached as `restoreError`).
+ * The restore runs outside the request's abort signal.
+ *
+ * Contract: this is the eval harness's hook only, one pause at a time per brain. A second pause on the same engine
+ * object while one is held is refused (`managed_pause_held`); nothing records a pause, so pauses through two engine
+ * objects or two processes are not seen. A pause whose process dies before the restore leaves the brain at
+ * enabled=false at the same epoch; `gbrain sources writer activate` turns it back on (and moves the epoch).
  */
 export async function withManagedPersistencePaused<T>(
   engine: Pick<BrainEngine, 'pauseManagedPersistence' | 'restoreManagedPersistence'>, fn: () => Promise<T>,
 ): Promise<ManagedPauseOutcome<T>> {
-  const prior = await engine.pauseManagedPersistence();
-  let result: T;
-  try {
-    result = await fn();
-  } catch (error) {
-    await engine.restoreManagedPersistence(prior);
-    throw error;
+  if (pausesHeld.has(engine)) {
+    throw Object.assign(new Error('withManagedPersistencePaused: this brain already holds a harness pause; pauses do not nest'), { code: 'managed_pause_held' });
   }
-  const restored = await engine.restoreManagedPersistence(prior);
-  return { result, restore: restored ? 'restored' : 'paused_state_changed' };
+  pausesHeld.add(engine);
+  try {
+    const prior = await engine.pauseManagedPersistence();
+    let result: T;
+    try {
+      result = await fn();
+    } catch (error) {
+      await restoreUncancelled(engine, prior).catch((restoreError: unknown) => {
+        if (error && typeof error === 'object') Object.assign(error, { restoreError });
+      });
+      throw error;
+    }
+    const restored = await restoreUncancelled(engine, prior);
+    return { result, restore: restored ? 'restored' : 'paused_state_changed' };
+  } finally {
+    pausesHeld.delete(engine);
+  }
 }

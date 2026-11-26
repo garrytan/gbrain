@@ -55,10 +55,10 @@ export const scanTextColumns: Member<'scanTextColumns'> = async (brain, spec) =>
 
 /** One store write: read the brain mode and turn enabled off with no epoch bump (gbrain-store `pause_managed_persistence`). */
 export const pauseManagedPersistence: Member<'pauseManagedPersistence'> = async (brain) => {
-  const prior: { enabled: boolean; mode_epoch: string } = await storeCall({ member: 'pauseManagedPersistence' }, () => brain.pauseManagedPersistence());
-  return { enabled: prior.enabled === true, mode_epoch: String(prior.mode_epoch) } satisfies ManagedPausePrior;
+  const prior: { enabled: boolean; mode_epoch: string; topology_changes: string } = await storeCall({ member: 'pauseManagedPersistence' }, () => brain.pauseManagedPersistence());
+  return { enabled: prior.enabled === true, mode_epoch: String(prior.mode_epoch), topology_changes: String(prior.topology_changes) } satisfies ManagedPausePrior;
 };
 
-/** One compare-and-set store write: put enabled back only while still paused at the prior epoch. */
+/** One compare-and-set store write: put enabled back only while still paused at the prior epoch with no topology change since. */
 export const restoreManagedPersistence: Member<'restoreManagedPersistence'> = (brain, prior) =>
-  storeCall<boolean>({ member: 'restoreManagedPersistence' }, () => brain.restoreManagedPersistence({ enabled: prior.enabled, mode_epoch: prior.mode_epoch }));
+  storeCall<boolean>({ member: 'restoreManagedPersistence' }, () => brain.restoreManagedPersistence({ enabled: prior.enabled, mode_epoch: prior.mode_epoch, topology_changes: prior.topology_changes }));

@@ -2,8 +2,8 @@
  * The PGLite / Postgres SQL of the memory-trust evals' harness members (src/core/engine-sql/eval-harness-reads.ts),
  * pinned byte for byte. Each member runs against a recording executeRaw; the texts and parameters it sends must equal
  * the literals below, written out here rather than imported, so an edit to the SQL shows up as a diff of this file.
- * scanTextColumns builds one SELECT per table from the catalog; the recorder answers the two catalog reads with a
- * small fixed catalog (pages, facts, takes and a table with no page, slug or lifecycle column).
+ * scanTextColumns builds one SELECT over every table from the catalog; the recorder answers its catalog reads with a
+ * small fixed catalog (pages, facts, takes and a table with a uuid page_id and no slug or lifecycle column).
  */
 import { describe, expect, test } from 'bun:test';
 import * as sql from '../src/core/engine-sql/eval-harness-reads.ts';
@@ -22,12 +22,22 @@ const CATALOG = [
   { table: 'plain_notes', column: 'body', data_type: 'jsonb', udt_name: 'jsonb' },
   { table: 'takes', column: 'claim', data_type: 'text', udt_name: 'text' },
 ];
-const COLUMNS: Record<string, string[]> = {
-  facts: ['id', 'entity_slug', 'source_markdown_slug', 'fact', 'expired_at'],
-  pages: ['id', 'slug', 'compiled_truth', 'deleted_at'],
-  plain_notes: ['id', 'body'],
-  takes: ['id', 'page_id', 'claim', 'active'],
+const COLUMNS: Record<string, Array<[string, string]>> = {
+  facts: [['id', 'bigint'], ['source_id', 'text'], ['entity_slug', 'text'], ['source_markdown_slug', 'text'], ['fact', 'text'], ['expired_at', 'timestamp with time zone']],
+  pages: [['id', 'integer'], ['slug', 'text'], ['compiled_truth', 'text'], ['deleted_at', 'timestamp with time zone']],
+  plain_notes: [['id', 'uuid'], ['page_id', 'uuid'], ['body', 'jsonb']],
+  takes: [['id', 'bigint'], ['page_id', 'integer'], ['claim', 'text'], ['active', 'boolean']],
 };
+
+/** The scan's catalog reads: the text columns, the visibility check (`hidden` tables) and every column with its type. */
+const scanAnswer = (hidden: string[] = []) => (text: string) => text.startsWith('SELECT c.table_name') ? CATALOG
+  : text.startsWith('SELECT current_schema()') ? [{ schema: 'public', hidden }]
+  : text.startsWith('SELECT table_name AS "table"') ? Object.entries(COLUMNS).flatMap(([table, cols]) => cols.map(([column, data_type]) => ({ table, column, data_type }))) : [];
+
+const VISIBILITY = `SELECT current_schema()::text AS schema,
+      COALESCE(array_agg(c.relname::text ORDER BY c.relname::text COLLATE "C") FILTER (WHERE NOT pg_catalog.has_table_privilege(c.oid, 'SELECT') OR pg_catalog.row_security_active(c.oid)), '{}') AS hidden
+    FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = current_schema() AND c.relname = ANY($1::text[])`;
 
 describe('eval harness SQL, byte for byte', () => {
   test('getFactsByIds, findLiveFactsByText and listPageIdSlugs', async () => {
@@ -60,26 +70,33 @@ describe('eval harness SQL, byte for byte', () => {
     ]);
   });
 
-  test('scanTextColumns: one SELECT per table from the catalog, with and without activeOnly', async () => {
-    const answer = (text: string) => text.startsWith('SELECT c.table_name') ? CATALOG
-      : text.startsWith('SELECT table_name AS "table"') ? Object.entries(COLUMNS).flatMap(([table, cols]) => cols.map(column => ({ table, column }))) : [];
+  test('scanTextColumns: one schema-qualified SELECT over every table from the catalog, with and without activeOnly', async () => {
     for (const activeOnly of [false, true]) {
-      const { engine, calls } = recorder(answer);
-      await sql.scanTextColumns(engine, { pattern: 'Token', activeOnly });
+      const { engine, calls } = recorder(scanAnswer());
+      await sql.scanTextColumns(engine, { pattern: 'Token', activeOnly, ...(activeOnly ? { limit: 5 } : {}) });
       const live = (s: string) => (activeOnly ? s : '');
       expect(calls.slice(1)).toEqual([
-        { text: 'SELECT table_name AS "table", column_name AS "column" FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ANY($1::text[])',
+        { text: VISIBILITY, params: [['facts', 'pages', 'plain_notes', 'takes']] },
+        { text: 'SELECT table_name AS "table", column_name AS "column", data_type FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ANY($1::text[])',
           params: [['facts', 'pages', 'plain_notes', 'takes']] },
-        { text: `SELECT $1::text AS "column", COALESCE(x."entity_slug"::text, x."source_markdown_slug"::text) AS slug, NULL::bigint AS page_id, x."entity_slug"::text AS entity_slug, x."fact"::text AS value FROM "facts" x WHERE strpos(lower(x."fact"::text), $2) > 0${live(' AND x."expired_at" IS NULL')}`,
-          params: ['fact', 'token'] },
-        { text: `SELECT $1::text AS "column", COALESCE(x."slug"::text, p."slug") AS slug, x."id"::bigint AS page_id, NULL::text AS entity_slug, x."compiled_truth"::text AS value FROM "pages" x LEFT JOIN "pages" p ON p."id" = x."id" WHERE strpos(lower(x."compiled_truth"::text), $2) > 0${live(' AND x."deleted_at" IS NULL AND (p."id" IS NULL OR p."deleted_at" IS NULL)')}`,
-          params: ['compiled_truth', 'token'] },
-        { text: 'SELECT $1::text AS "column", NULL::text AS slug, NULL::bigint AS page_id, NULL::text AS entity_slug, x."body"::text AS value FROM "plain_notes" x WHERE strpos(lower(x."body"::text), $2) > 0',
-          params: ['body', 'token'] },
-        { text: `SELECT $1::text AS "column", COALESCE(p."slug") AS slug, x."page_id"::bigint AS page_id, NULL::text AS entity_slug, x."claim"::text AS value FROM "takes" x LEFT JOIN "pages" p ON p."id" = x."page_id" WHERE strpos(lower(x."claim"::text), $2) > 0${live(' AND x."active" AND (p."id" IS NULL OR p."deleted_at" IS NULL)')}`,
-          params: ['claim', 'token'] },
+        { text: 'SELECT * FROM ('
+            + `SELECT $1::text AS "table", $2::text AS "column", COALESCE(x."entity_slug"::text, x."source_markdown_slug"::text) AS slug, NULL::bigint AS page_id, x."entity_slug"::text AS entity_slug, x."fact"::text AS value FROM "public"."facts" x WHERE strpos(lower(x."fact"::text), lower($3::text)) > 0${live(' AND x."expired_at" IS NULL AND NOT EXISTS (SELECT 1 FROM "public"."pages" q WHERE q."source_id" = x."source_id" AND q."slug" = x."source_markdown_slug" AND q."deleted_at" IS NOT NULL)')}`
+            + ` UNION ALL SELECT $4::text AS "table", $5::text AS "column", COALESCE(x."slug"::text, p."slug") AS slug, x."id"::bigint AS page_id, NULL::text AS entity_slug, x."compiled_truth"::text AS value FROM "public"."pages" x LEFT JOIN "public"."pages" p ON p."id" = x."id" WHERE strpos(lower(x."compiled_truth"::text), lower($6::text)) > 0${live(' AND x."deleted_at" IS NULL AND (p."id" IS NULL OR p."deleted_at" IS NULL)')}`
+            + ' UNION ALL SELECT $7::text AS "table", $8::text AS "column", NULL::text AS slug, NULL::bigint AS page_id, NULL::text AS entity_slug, x."body"::text AS value FROM "public"."plain_notes" x WHERE strpos(lower(x."body"::text), lower($9::text)) > 0'
+            + ` UNION ALL SELECT $10::text AS "table", $11::text AS "column", COALESCE(p."slug") AS slug, x."page_id"::bigint AS page_id, NULL::text AS entity_slug, x."claim"::text AS value FROM "public"."takes" x LEFT JOIN "public"."pages" p ON p."id" = x."page_id" WHERE strpos(lower(x."claim"::text), lower($12::text)) > 0${live(' AND x."active" AND (p."id" IS NULL OR p."deleted_at" IS NULL)')}`
+            + `) hit ORDER BY convert_to(hit."table", 'UTF8'), convert_to(hit."column", 'UTF8'), convert_to(hit.value, 'UTF8')${live(' LIMIT $13')}`,
+          params: ['facts', 'fact', 'Token', 'pages', 'compiled_truth', 'Token', 'plain_notes', 'body', 'Token', 'takes', 'claim', 'Token', ...(activeOnly ? [5] : [])] },
       ]);
     }
+  });
+
+  test('scanTextColumns refuses, naming them, tables the running role cannot read in full, and a negative limit', async () => {
+    const { engine, calls } = recorder(scanAnswer(['facts', 'takes']));
+    const refused = await sql.scanTextColumns(engine, { pattern: 'token', activeOnly: false }).then(() => 'ok', (e: Error) => e.message);
+    expect(refused).toBe('scanTextColumns: the running role cannot read every row of facts, takes; run the scan as the table owner or a BYPASSRLS role');
+    expect(calls.map(c => c.text.slice(0, 22))).toEqual(['SELECT c.table_name AS', 'SELECT current_schema(']);
+    const negative = await sql.scanTextColumns(recorder().engine, { pattern: 'token', activeOnly: false, limit: -1 }).then(() => 'ok', (e: Error) => e.message);
+    expect(negative).toBe('scanTextColumns: a limit that is not a whole number');
   });
 
   test('a catalog name with a double quote is quoted, never spliced bare', () => {
@@ -87,14 +104,16 @@ describe('eval harness SQL, byte for byte', () => {
   });
 
   test('pauseManagedPersistence and restoreManagedPersistence', async () => {
-    const { engine, calls } = recorder((text) => (text.startsWith('WITH prior') ? [{ enabled: true, mode_epoch: '7' }] : [{ restored: true }]));
-    expect(await sql.pauseManagedPersistence(engine)).toEqual({ enabled: true, mode_epoch: '7' });
-    expect(await sql.restoreManagedPersistence(engine, { enabled: true, mode_epoch: '7' })).toBe(true);
+    const { engine, calls } = recorder((text) => (text.startsWith('WITH prior') ? [{ enabled: true, mode_epoch: '7', topology_changes: '2' }] : [{ restored: true }]));
+    expect(await sql.pauseManagedPersistence(engine)).toEqual({ enabled: true, mode_epoch: '7', topology_changes: '2' });
+    expect(await sql.restoreManagedPersistence(engine, { enabled: true, mode_epoch: '7', topology_changes: '2' })).toBe(true);
     expect(calls).toEqual([
-      { text: `WITH prior AS (SELECT enabled, mode_epoch FROM persistence_brain WHERE singleton = 1 FOR UPDATE),
+      { text: `WITH prior AS (SELECT enabled, mode_epoch, (SELECT count(*) FROM persistence_topology_changes) AS topology_changes
+        FROM persistence_brain WHERE singleton = 1 FOR UPDATE),
       paused AS (UPDATE persistence_brain SET enabled = false WHERE singleton = 1)
-    SELECT enabled, mode_epoch::text AS mode_epoch FROM prior`, params: undefined },
-      { text: 'UPDATE persistence_brain SET enabled = $1 WHERE singleton = 1 AND enabled = false AND mode_epoch = $2::bigint RETURNING true AS restored', params: [true, '7'] },
+    SELECT enabled, mode_epoch::text AS mode_epoch, topology_changes::text AS topology_changes FROM prior`, params: undefined },
+      { text: `UPDATE persistence_brain SET enabled = $1 WHERE singleton = 1 AND enabled = false AND mode_epoch = $2::bigint
+      AND (SELECT count(*) FROM persistence_topology_changes) = $3::bigint RETURNING true AS restored`, params: [true, '7', '2'] },
     ]);
   });
 });

@@ -89,13 +89,13 @@ impl Brain {
     }
 
     /// `pauseManagedPersistence()`: turns managed persistence off with no epoch bump; resolves the
-    /// prior `{ enabled, mode_epoch }`.
+    /// prior `{ enabled, mode_epoch, topology_changes }`.
     #[napi]
     pub fn pause_managed_persistence<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.pause_managed_persistence())
     }
 
-    /// `restoreManagedPersistence({ enabled, mode_epoch })`: the compare-and-set restore; resolves
+    /// `restoreManagedPersistence({ enabled, mode_epoch, topology_changes })`: the compare-and-set restore; resolves
     /// true when it wrote.
     #[napi]
     pub fn restore_managed_persistence<'env>(
@@ -105,7 +105,7 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             let a: RestoreArgs = required(args, "restoreManagedPersistence args")?;
-            s.restore_managed_persistence(a.enabled, &a.mode_epoch)
+            s.restore_managed_persistence(a.enabled, &a.mode_epoch, &a.topology_changes)
         })
     }
 }
@@ -128,4 +128,5 @@ struct ColumnArgs {
 struct RestoreArgs {
     enabled: bool,
     mode_epoch: String,
+    topology_changes: String,
 }
