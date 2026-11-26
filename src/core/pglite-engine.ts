@@ -2572,6 +2572,10 @@ export class PGLiteEngine implements BrainEngine {
   expireStaleWriteClaims(expiry: persistenceClaimsImpl.ClaimExpiry, opts?: { signal?: AbortSignal; direct?: boolean }) { return persistenceClaimsImpl.expireStaleWriteClaims(this.engineSql, expiry, { signal: opts?.signal }); }
   hasClaimableWrite(hostId: string, excludeRoots: string[], opts?: { priority?: boolean | null; signal?: AbortSignal }) { return persistenceClaimsImpl.hasClaimableWrite(unscopedExecutor(this.engineSql, 'persistence: claim check ran unscoped through executeRaw'), hostId, excludeRoots, opts); }
   selectClaimableWrite<R = Record<string, unknown>>(spec: persistenceClaimsImpl.ClaimHeadSpec) { return persistenceClaimsImpl.selectClaimableWrite<R>(unscopedExecutor(this.engineSql, 'persistence: FIFO head read ran unscoped through the transaction executeRaw'), spec); }
+  selectClaimableLaneHead<R = Record<string, unknown>>(spec: persistenceClaimsImpl.LaneHeadSpec) { return persistenceClaimsImpl.selectClaimableLaneHead<R>(unscopedExecutor(this.engineSql, 'persistence: lane head read ran unscoped through the transaction executeRaw'), spec); }
+  chargeTransientInterruption(charge: persistenceClaimsImpl.TransientCharge) { return persistenceClaimsImpl.chargeTransientInterruption(this.engineSql, charge); }
+  stampLaneHeadClaim<R = Record<string, unknown>>(stamp: persistenceClaimsImpl.LaneHeadStamp) { return persistenceClaimsImpl.stampLaneHeadClaim<R>(this.engineSql, stamp); }
+  reclaimReleasedWrite<R = Record<string, unknown>>(stamp: persistenceClaimsImpl.LaneHeadStamp) { return persistenceClaimsImpl.reclaimReleasedWrite<R>(this.engineSql, stamp); }
   listHostConsumerRows(hostId: string, opts?: { signal?: AbortSignal; direct?: boolean }) { return persistenceClaimsImpl.listHostConsumerRows(unscopedExecutor(this.engineSql, 'persistence: consumer rows read ran unscoped through executeRaw'), hostId, { signal: opts?.signal }); }
   probeLiveConsumerRows(probe: persistenceClaimsImpl.ConsumerProbe, opts?: { signal?: AbortSignal; direct?: boolean }) { return persistenceClaimsImpl.probeLiveConsumerRows(unscopedExecutor(this.engineSql, 'persistence: live consumer probe ran unscoped through executeRaw'), probe, { signal: opts?.signal }); }
   renewConsumerRow(renewal: persistenceClaimsImpl.ConsumerRenewal, opts?: { signal?: AbortSignal }) { return persistenceClaimsImpl.renewConsumerRow(this.engineSql, renewal, opts); }
@@ -2611,6 +2615,7 @@ export class PGLiteEngine implements BrainEngine {
   listResumableRefreshes<R = Record<string, unknown>>(hostId: string, budgetMs: number) { return ownerScansImpl.listResumableRefreshes<R>(unscopedExecutor(this.engineSql, 'persistence: refresh resume scan ran unscoped through executeRaw'), hostId, budgetMs); }
   listSourceLastCommits(sourceIds: readonly string[]) { return ownerScansImpl.listSourceLastCommits(unscopedExecutor(this.engineSql, 'persistence: refresh resume source read ran unscoped through executeRaw'), sourceIds); }
   stampEffectClaim<R = Record<string, unknown>>(claim: effectWorkerImpl.EffectClaim) { return effectWorkerImpl.stampEffectClaim<R>(this, claim); }
+  claimEffectRecovery<R = Record<string, unknown>>(claim: effectWorkerImpl.EffectClaim) { return effectWorkerImpl.claimEffectRecovery<R>(this, claim); }
   claimCoalescedGitEffects<R = Record<string, unknown>>(input: effectWorkerImpl.CoalescedGitClaim) { return effectWorkerImpl.claimCoalescedGitEffects<R>(this, input); }
   renewEffectClaim(claim: effectWorkerImpl.EffectClaimRef, _opts?: { direct?: boolean }) { return effectWorkerImpl.renewEffectClaim(this, claim); }
   advanceEffectRow(claim: effectWorkerImpl.EffectClaimRef & { slug: string }) { return effectWorkerImpl.advanceEffectRow(this, claim); }

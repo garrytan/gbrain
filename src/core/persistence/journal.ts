@@ -797,26 +797,12 @@ export async function claimNextLaneHead(engine: BrainEngine, hostId: string, wor
   seenSequence: string | null = null): Promise<(WriteRequest & { seen_sequence: string }) | null> {
   return engine.transactionDirect(async tx => {
     await declarePersistenceProtocol(tx);
-    const [row] = await tx.executeRaw<WriteRequest>(`SELECT r.* FROM persistence_requests r
-      JOIN persistence_worktrees w ON w.id=r.worktree_id
-      WHERE r.worktree_id=$2::uuid AND r.state='queued' AND ${BACKOFF_ELAPSED('r')} AND r.intent->>'lane'=$3 AND r.intent->>'group'=r.request_id::text
-        AND w.owner_host_id=$1::uuid AND w.state='active' AND ${refreshFenceClear('r')}
-        AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked WHERE blocked.worktree_id=r.worktree_id AND blocked.recovery IS NOT NULL)
-        AND NOT EXISTS (SELECT 1 FROM persistence_effects mirror WHERE mirror.worktree_id=r.worktree_id
-          AND mirror.kind='withdrawal-mirror' AND mirror.state IN ('queued','running'))
-        AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked WHERE blocked.worktree_id=r.worktree_id AND blocked.recovery IS NOT NULL)
-        AND NOT EXISTS (SELECT 1 FROM persistence_requests earlier WHERE earlier.worktree_id=r.worktree_id AND earlier.sequence<r.sequence
-          AND (earlier.state IN ('queued','recovering') OR ${RELEASED_DEFERRED('earlier')} OR (earlier.state='running' AND COALESCE(earlier.intent->>'lane','')<>$3)))
-        -- #5984 Phase 4.5: no new lane head while a foreground write that may go first waits (a claimed one publishes
-        -- beside the lanes), except one head after each foreground commit since this run's last head claim.
-        AND NOT ((${foregroundPrioritySql()}) AND r.worktree_id IN (SELECT f.worktree_id FROM (${FOREGROUND_WAITING_ON('$5::text', '$4::bigint', 'f.worktree_id=$2::uuid')}) f))
-      ORDER BY r.sequence LIMIT 1 FOR UPDATE OF r SKIP LOCKED`, [hostId, worktreeId, run, seenSequence, consumerIdentity().nonce]);
+    // The lane head read and its claim stamp live in engine-sql/persistence-claims.ts (the SQL text is unchanged).
+    const row = await tx.selectClaimableLaneHead<WriteRequest>({ hostId, worktreeId, run, seenSequence, nonce: consumerIdentity().nonce,
+      priority: foregroundPriorityOverride(), ...fenceOpts(tx) });
     if (!row) return null;
     const token = randomUUID();
-    const [claimed] = await tx.executeRaw<WriteRequest & { seen_sequence: string }>(`UPDATE persistence_requests SET state='running',
-      execution_token=$2::uuid,claim_expires_at=now()+($3::double precision*interval '1 millisecond'),
-      updated_at=now(),blocked_reason=NULL,claim_phase=$4::text::jsonb WHERE id=$1::uuid RETURNING *,(SELECT max(sequence) FROM persistence_requests)::text AS seen_sequence`,
-    [row.id, token, leaseMs, claimPhaseStamp(startClaimPhase(), token)]);
+    const claimed = await tx.stampLaneHeadClaim<WriteRequest & { seen_sequence: string }>({ id: row.id, token, leaseMs, phaseJson: claimPhaseStamp(startClaimPhase(), token), ...fenceOpts(tx) });
     return claimed ? { ...claimed, previous_claim_phase: row.claim_phase } : claimed;
   });
 }
@@ -913,10 +899,7 @@ export async function clearResolvedRecoveries(engine: BrainEngine, rows: WriteRe
 /** #6007: claims again a request this owner pass released to the queue itself, while it still holds the worktree's native lock; never before its backoff (LPH b). */
 export async function reclaimReleasedWrite(engine: BrainEngine, id: string, leaseMs = 30_000): Promise<WriteRequest | null> {
   const token = randomUUID();
-  const [claimed] = await engine.executeRawDirect<WriteRequest>(`UPDATE persistence_requests SET state='running',execution_token=$2::uuid,
-    claim_expires_at=now()+($3::double precision*interval '1 millisecond'),updated_at=now(),blocked_reason=NULL,claim_phase=$4::text::jsonb
-    WHERE id=$1::uuid AND state='queued' AND recovery IS NULL AND ${BACKOFF_ELAPSED('persistence_requests')} AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING *`,
-  [id, token, leaseMs, claimPhaseStamp(startClaimPhase(), token)]);
+  const claimed = await engine.reclaimReleasedWrite<WriteRequest>({ id, token, leaseMs, phaseJson: claimPhaseStamp(startClaimPhase(), token), ...fenceOpts(engine) });
   return claimed ?? null;
 }
 

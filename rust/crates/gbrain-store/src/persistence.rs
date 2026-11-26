@@ -90,6 +90,9 @@ mod identity_downgrade;
 mod idle_probe;
 mod image_seal;
 mod journal_redaction;
+mod lane_head;
+#[cfg(test)]
+mod lane_head_tests;
 #[cfg(test)]
 mod lease_order_tests;
 mod noop_settle;
@@ -138,6 +141,7 @@ pub use identity_downgrade::IdentityDowngradeSpec;
 pub use idle_probe::IdleProbeSpec;
 pub use image_seal::{ImageSealChunkRef, ImageSealPageRef, ImageSealRow};
 pub use journal_redaction::{RedactRequestArgs, SweepChunkArgs};
+pub use lane_head::{LaneHeadSpec, TransientCharge};
 pub use noop_settle::NoopSettleCandidateSpec;
 pub(crate) use notifier::remove_source_rows as remove_notifier_source_rows;
 pub use notifier::{
