@@ -57,6 +57,26 @@ describe('per-member access by default when setup names the people (HARN-1)', ()
     expect(existsSync(join(b.home, '.claude.json'))).toBe(false);
   }, 120_000);
 
+  test('--members alone applies: each person is an enabled member with a folder rule and a bound key', async () => {
+    const b = box();
+    const r = await setup(b, ['claude-code', '--members', 'alice-example,bob-example', '--owner', OWNER, '--yes']);
+    expect(r.exitCode).toBe(0);
+    const serves = JSON.parse((await gbrain(b, ['access', 'serves', '--json', '--no-open-pages'])).stdout);
+    expect(serves.serves).toBe('several');
+    expect(serves.enabled_members).toEqual(expect.arrayContaining(['alice-example', 'bob-example']));
+    const prefixes = (JSON.parse((await gbrain(b, ['access', 'rule', 'list', '--json'])).stdout).rules ?? []).map((x: { prefix: string }) => x.prefix);
+    expect(prefixes).toEqual(expect.arrayContaining(['people/alice-example/', 'people/bob-example/']));
+    expect(existsSync(join(b.home, '.gbrain', 'member-keys', 'alice-example.key'))).toBe(true);
+  }, 400_000);
+
+  test('a run that cannot set up members refuses --members instead of ignoring it, and so do the history flags', async () => {
+    const b = box();
+    const said = async (args: string[]) => { const r = await setup(b, args); expect(r.exitCode).toBe(2); return r.stdout + r.stderr; };
+    expect(await said(['claude-code', '--instructions-only', '--members', 'alice-example,bob-example'])).toContain('--members sets up per-member access only');
+    expect(await said(['claude-code', '--members', 'alice-example,bob-example', '--history', '7'])).toContain('--serves several or --members');
+    expect(existsSync(join(b.home, '.gbrain'))).toBe(false);
+  }, 120_000);
+
   test('a one-person setup stays keyless and unchanged: no members, no rules, no keys', async () => {
     const b = box();
     const r = await setup(b, ['claude-code']);

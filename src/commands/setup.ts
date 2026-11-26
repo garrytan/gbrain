@@ -462,6 +462,10 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
   if (flags.skillsIndexOnly) return runSkillsIndexOnly(flags, out);
   if (flags.wakeshift) return runWakeshiftOpenclaw(flags, args, out, deps.openclaw ?? {});
   if ((flags.instructionsOnly && (isBrainFirstHarness(flags.harness) || adapter)) || (isBrainFirstHarness(flags.harness) && !mcpWired)) {
+    if (flags.members !== undefined || flags.membersFile !== undefined) {
+      process.stderr.write(`gbrain setup: --members sets up per-member access only in gbrain setup claude-code or codex, and this ${flags.harness} run writes instructions only; label the people with gbrain access serves several --members <ids> (preview, then --yes). Nothing was written.\n`);
+      return 2;
+    }
     return runInstructionsOnly(flags, out);
   }
   if (!isSetupHarness(flags.harness) || capabilityRows(flags.harness).every((r) => r.setup !== 'supported')) {
