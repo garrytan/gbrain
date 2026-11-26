@@ -12,7 +12,7 @@ import { openRustEngine, type RustEngineAddonHandle } from '../core/rust-engine.
 import { configDir } from '../core/config.ts';
 import { safeCode } from './child-checks.ts';
 import { decodeValue, encodeValue } from './codec.ts';
-import { pageRefs, pageSet, readBack, readBackText, type WriteEvent, type WriteOutcome, type WriteTally } from './write-compare.ts';
+import { pageRefs, pageSet, readBack, readBackText, SAVE_FAILURE_EXIT_MS, type WriteEvent, type WriteOutcome, type WriteTally } from './write-compare.ts';
 
 /** Columns the seed always reports as unmapped and the typed read-back never shows (rust/docs/store/seed.md, "Some unmapped columns are expected": `pages.generation`, the primary's cache clock). */
 const EXPECTED_UNMAPPED: ReadonlySet<string> = new Set(['generation']);
@@ -46,7 +46,7 @@ export interface WriteComparerDeps {
 export const scratchRootDefault = (): string => join(configDir(), 'scratch');
 type Verdict = [WriteOutcome, string?];
 
-export function createWriteComparer(d: WriteComparerDeps): { handle(event: WriteEvent, bytes?: number): void; idle(): Promise<boolean>; abandon(): void } {
+export function createWriteComparer(d: WriteComparerDeps): { handle(event: WriteEvent, bytes?: number): void; unreadable(weight: number): void; idle(): Promise<boolean>; abandon(): void; flush(): boolean; pass(): boolean; missing(n: number): void; finish(): boolean } {
   // Each replay gets a private (0700) directory named for this process, removed when the replay ends, whatever its outcome. Directories of processes
   // that no longer exist (a killed child) are swept here, at shadow start; another child never deletes a live one.
   const scratchRoot = d.scratchRoot ?? scratchRootDefault();
@@ -119,24 +119,35 @@ export function createWriteComparer(d: WriteComparerDeps): { handle(event: Write
       d.onError?.('write', error);
       verdict = ['uncomparable', safeCode((error as { code?: unknown })?.code)];
     }
-    d.tally.note(verdict[0], verdict[1], 1, true); // the replay is over: its verdict ends its in-flight mark
+    d.tally.note(verdict[0], verdict[1], 1, true, 1); // the replay is over: its verdict ends its in-flight mark and settles the sample's own weight (1)
   }
 
   return {
     /** `bytes`: the size of the line the sample arrived in (0 when not known). */
     handle(event, bytes = 0) {
-      if (Number.isInteger(event.dropped) && event.dropped! > 0) d.tally.note('uncomparable', 'send_shed', Math.min(event.dropped!, 10_000));
+      // A line stands for 1 + `dropped` owed samples (supervisor.ts sampleWeight): the earlier losses it carries settle here, at once, and the sample itself settles with its own last outcome, so each is credited once.
+      if (Number.isInteger(event.dropped) && event.dropped! > 0) { const shed = Math.min(event.dropped!, 10_000); d.tally.note('uncomparable', 'send_shed', shed, false, shed); }
       // The serving process can only report what it saw itself; a verdict (`comparable`, `unexplained_difference`) is made here, from a replay.
-      if (event.outcome === 'capability_missing' || event.outcome === 'uncomparable') { d.tally.note(event.outcome, event.family ?? event.reason); return; }
-      if (!event.pre || !event.args) { d.tally.note('uncomparable', 'no_sample'); return; }
-      if (queued >= WRITE_QUEUE_BOUND || queuedBytes + bytes > WRITE_QUEUE_BYTES) { d.tally.note('uncomparable', 'queue_full'); return; }
+      if (event.outcome === 'capability_missing' || event.outcome === 'uncomparable') { d.tally.note(event.outcome, event.family ?? event.reason, 1, false, 1); return; }
+      if (!event.pre || !event.args) { d.tally.note('uncomparable', 'no_sample', 1, false, 1); return; }
+      if (queued >= WRITE_QUEUE_BOUND || queuedBytes + bytes > WRITE_QUEUE_BYTES) { d.tally.note('uncomparable', 'queue_full', 1, false, 1); return; }
       queued++; queuedBytes += bytes; waiting.add(event);
       chain = chain.then(() => run(event)).finally(() => { queued--; queuedBytes -= bytes; }); // every path (a replay, an abandoned one, an early return) ends here
     },
+    /** A write line that could not be read (the weight its text states, `sampleWeight`): one `uncomparable` / `line_unreadable`, settling all of it, so it cannot hold its session unsettled. */
+    unreadable(weight) { d.tally.note('uncomparable', 'line_unreadable', weight, false, weight); },
+    /** The lost lines a client or retired child holds are written (the 2 s flusher); true when none is left. */
+    flush: () => d.tally.flush(),
+    /** The 10 s pass: one more save, the lost lines held, the gone sessions settled. True when saves have been failing for `SAVE_FAILURE_EXIT_MS` with outcomes held: the child should exit (it is restarted, and the next owner books what it never settled). */
+    pass() { d.tally.save(); return d.tally.stuckMs() >= SAVE_FAILURE_EXIT_MS; },
+    /** Samples the serving process owed that never reached this child's pipe: `uncomparable` / `pipe_unflushed`. */
+    missing: (n) => d.tally.missing(n),
+    /** After the final save: removes this session's owed file when it is closed and settled. */
+    finish: () => d.tally.finish(),
     idle: () => chain.then(() => d.tally.save()), // the last save also folds the lost samples the serving process recorded; true only when everything this child counted is saved (the caller keeps the sent count when it is not)
     /** At the child's exit deadline: replays still queued will never run, so each is counted `uncomparable`, then one last save. The running replay keeps its in-flight mark. */
     abandon() {
-      if (waiting.size) d.tally.note('uncomparable', 'child_exit_deadline', waiting.size);
+      if (waiting.size) d.tally.note('uncomparable', 'child_exit_deadline', waiting.size, false, waiting.size);
       waiting.clear();
       d.tally.save();
     },

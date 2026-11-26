@@ -11,10 +11,13 @@
  * divergence) stops mirroring the same way. The state file is re-read at most every `stateCheckMs`, so
  * `gbrain engine shadow stop` reaches long-running processes too. `send` returns false whenever a line was not
  * accepted (no child yet, backoff, pipe over its byte budget); the queue counts it as shed.
+ *
+ * Write samples are owed before they are sent: `send()` stages a sample line in memory, and one `setImmediate` flush per event-loop turn first writes `write-owed.<session>.json` (what this process has accepted for the
+ * child, durably: file and directory flushed), then hands the staged lines to the pipe in the order they came. The flush never runs inside a caller's request; a failed write keeps the lines staged and is retried.
  */
 import type { ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { closeSync, openSync, renameSync, writeFileSync } from 'node:fs';
+import { closeSync, openSync } from 'node:fs';
 import { join } from 'node:path';
 import { withoutReadDeadline } from '../core/read-deadline.ts';
 import { withRequestSignal } from '../core/request-signal.ts';
@@ -23,7 +26,7 @@ import { readEpoch } from './evidence-epoch.ts';
 import { appendFault, type ShadowFault } from './ledger.ts';
 import type { MirrorTransport } from './mirror.ts';
 import { readShadowState } from './state.ts';
-import { sentPath } from './write-compare.ts';
+import { sampleWeight, writeOwed } from './write-compare.ts';
 
 export interface ShadowSupervisorOptions {
   dir: string;
@@ -37,8 +40,14 @@ export interface ShadowSupervisorOptions {
   restartWindowMs?: number;
   hangMs?: number;
   stateCheckMs?: number;
-  /** Bytes of write samples that may be in the pipe, handed to it and not yet flushed, before a new sample is refused (the caller counts it `send_shed`). */
+  /** Bytes of write samples that may be staged or in the pipe, handed to it and not yet flushed, before a new sample is refused (the caller counts it `send_shed`). */
   maxBufferedBytes?: number;
+  /** Bytes of lines of every kind that may be staged behind an owed write (default twice `maxBufferedBytes`): past it a new line is refused whatever it is, so a failing owed write cannot grow memory. */
+  maxStagedBytes?: number;
+  /** Seam for tests: how long a failed owed write waits before its retry (default 100 ms). */
+  retryMs?: number;
+  /** Seam for tests: writes the owed record (default: `writeOwed`, durable). Throws when it failed. */
+  writeOwed?: typeof writeOwed;
   /** How long `drain` waits at disconnect for the pipe to flush what it holds (default 2 s). */
   drainMs?: number;
   /** Seam for tests; default appends to faults.jsonl. */
@@ -64,27 +73,18 @@ export const askCode = (error: unknown): string => {
   return typeof code === 'string' && ASK_CODES.has(code) ? code : 'failed';
 };
 
-/**
- * How many samples a line stands for: 0 when it is not a write sample. Read only from text the sampler wrote itself, never from page content: a sample starts with its own first key
- * (`{"t":"write"`), and the count of earlier losses that could not be recorded is its LAST top-level field (`,"dropped":<n>}` and a newline, the sampler appends it after the event), so a
- * key named `dropped` inside a page ends `}}` and cannot match. Capped at 10,000 (the child's own cap). The child counts the same weight for each sample line it reads (child.ts).
- */
-export function sampleWeight(line: string): number {
-  if (!line.startsWith('{"t":"write"')) return 0;
-  const dropped = /,"dropped":(\d{1,5})\}\n$/.exec(line.length > 40 ? line.slice(-40) : line);
-  return 1 + (dropped ? Math.min(Number(dropped[1]), 10_000) : 0);
-}
+export { sampleWeight };
 
-/** Supervisors with a running child: a process that exits with one still unflushed loses lines (Bun drops what its pipe holds), so the exit hook writes each one's sent count for the child to compare. */
+/** Supervisors with a running child: a process that exits with one still unflushed loses lines (Bun drops what its pipe holds), so the exit hook closes each one's owed record with the exact count for the child to compare. */
 const liveSupervisors = new Set<ShadowSupervisor>();
 let exitWatched = false;
 function watchProcessExit(): void {
   if (exitWatched) return;
   exitWatched = true;
-  process.on('exit', recordAllSentAtExit);
+  process.on('exit', closeAllOwedAtExit);
 }
-/** The process-exit hook (and a seam for tests): every live supervisor writes how many write samples it sent its child, synchronously. */
-export function recordAllSentAtExit(): void { for (const supervisor of [...liveSupervisors]) supervisor.recordSent(); }
+/** The process-exit hook (and a seam for tests): every live supervisor closes its owed record with everything it accepted, synchronously. */
+export function closeAllOwedAtExit(): void { for (const supervisor of [...liveSupervisors]) supervisor.closeOwed(); }
 
 export class ShadowSupervisor implements MirrorTransport {
   private child: ChildProcess | null = null;
@@ -103,9 +103,16 @@ export class ShadowSupervisor implements MirrorTransport {
   /** Lines handed to the pipe whose write callback has not fired (flow control and the drain wait only: Bun fires a callback before and after the bytes are really in the kernel pipe, so it never says what the child received). */
   private readonly flight = new Set<{ bytes: number; weight: number }>();
   private sampleBytes = 0;
-  /** Write samples (with the losses they carry) accepted for the current child: written down at stop, so the child can count what its pipe never delivered (`recordSent`). */
-  private sentWeight = 0;
-  private sentRecorded = ''; // the session and weight whose receipt `recordSent` published already
+  /** Lines accepted but not yet handed to the pipe, in order: a sample waits here for its owed record (and every line behind it, so order holds). */
+  private staged: Array<{ line: string; entry: { bytes: number; weight: number } }> = [];
+  private stagedBytes = 0;
+  private flushScheduled = false;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Write samples (with the losses they carry) accepted for the current child, sent or staged: the count the owed record states, so the child can settle what its pipe never delivered. */
+  private acceptedWeight = 0;
+  private owedWritten = ''; // the record `writeOwedRecord` last made durable (session, count and flags)
+  private childExited = false;
+  private closedRecord = false; // a closed record was made durable for this session: later records stay closed
   private stdinRef: (NodeJS.WritableStream & { writableFinished?: boolean }) | null = null;
   private readonly drainWaiters = new Set<() => void>();
   private readonly o: Required<Omit<ShadowSupervisorOptions, 'spawn' | 'recordFault' | 'stillEnabled' | 'onDirty' | 'onAsk'>> & Pick<ShadowSupervisorOptions, 'spawn' | 'recordFault' | 'stillEnabled' | 'onDirty' | 'onAsk'>;
@@ -113,9 +120,10 @@ export class ShadowSupervisor implements MirrorTransport {
   constructor(opts: ShadowSupervisorOptions) {
     this.o = {
       now: Date.now, minBackoffMs: 1_000, maxBackoffMs: 60_000, maxRestarts: 5, restartWindowMs: 10 * 60_000,
-      hangMs: 60_000, stateCheckMs: 30_000, maxBufferedBytes: 8 * 1024 * 1024, drainMs: 2_000,
+      hangMs: 60_000, stateCheckMs: 30_000, maxBufferedBytes: 8 * 1024 * 1024, maxStagedBytes: 0, retryMs: 100, writeOwed, drainMs: 2_000,
       ...opts,
     };
+    if (!this.o.maxStagedBytes) this.o.maxStagedBytes = 2 * this.o.maxBufferedBytes;
     this.backoffMs = this.o.minBackoffMs;
     this.lastStateCheck = this.o.now();
   }
@@ -146,11 +154,64 @@ export class ShadowSupervisor implements MirrorTransport {
     // the pipe is refused (the caller counts it `send_shed`); `write()` returning false is "queued", not "refused". Other lines (reads, follower lines, answers) are never refused for size.
     const weight = sampleWeight(line);
     if (weight > 0 && this.sampleBytes > this.o.maxBufferedBytes) return false;
+    // Lines wait behind a staged one, whatever they are, so order holds; behind a failing owed write that wait is bounded for lines of every kind, not for samples alone.
+    if (this.staged.length > 0 && this.stagedBytes > this.o.maxStagedBytes) return false;
     const entry = { bytes: line.length, weight };
+    if (weight === 0 && this.staged.length === 0) {
+      this.flight.add(entry);
+      try { stdin.write(line, () => this.forget(entry)); } catch { this.forget(entry); return false; }
+      return true;
+    }
     this.flight.add(entry); if (weight > 0) this.sampleBytes += entry.bytes;
-    try { stdin.write(line, () => this.forget(entry)); } catch { this.forget(entry); return false; }
-    this.sentWeight += weight;
+    this.staged.push({ line, entry }); this.stagedBytes += line.length;
+    this.acceptedWeight += weight;
+    this.scheduleFlush();
     return true;
+  }
+
+  /** One flush per event-loop turn, after the caller's synchronous work: the durable owed write never runs inside a request. Not held open for: an exit with lines staged is covered by the exit hook's owed record. */
+  private scheduleFlush(): void {
+    if (this.flushScheduled) return;
+    this.flushScheduled = true;
+    (setImmediate(() => { this.flushScheduled = false; this.flushStaged(); }) as { unref?: () => void }).unref?.();
+  }
+
+  /**
+   * Writes the owed record (everything accepted so far, durable), then hands the staged lines to the pipe in order. A failed record write sends nothing: the lines stay staged and the write is retried, so no sample reaches the child
+   * unless the record that owes it is on disk. True when nothing is left staged.
+   */
+  private flushStaged(closed = false): boolean {
+    if (this.staged.length === 0) return true;
+    if (!this.writeOwedRecord(closed)) { this.scheduleRetry(); return false; }
+    const stdin = this.child?.stdin;
+    const lines = this.staged; this.staged = []; this.stagedBytes = 0;
+    for (const { line, entry } of lines) {
+      try {
+        if (!stdin || stdin.destroyed || !stdin.writable) throw new Error('closed'); // the child is gone: the record owes these samples, and the child that settles the session books them
+        stdin.write(line, () => this.forget(entry));
+      } catch { this.forget(entry); }
+    }
+    return true;
+  }
+
+  private scheduleRetry(): void {
+    if (this.retryTimer) return;
+    this.retryTimer = setTimeout(() => { this.retryTimer = null; this.flushStaged(); }, this.o.retryMs);
+    (this.retryTimer as { unref?: () => void }).unref?.();
+  }
+
+  /** Makes the owed record for the current session durable (once per distinct content). False when it could not be written. */
+  private writeOwedRecord(closed = false, childExited = false): boolean {
+    if (!this.session) return true;
+    const exited = childExited || this.childExited;
+    closed ||= this.closedRecord;
+    const mark = `${this.session}:${this.acceptedWeight}:${closed}:${exited}`;
+    if (this.owedWritten === mark) return true;
+    try {
+      this.o.writeOwed(this.o.dir, { v: 1, session: this.session, serving_pid: process.pid, ...(this.child?.pid ? { child_pid: this.child.pid } : {}), owed: this.acceptedWeight, closed, child_exited: exited });
+      this.owedWritten = mark; this.closedRecord = closed; this.childExited = exited;
+      return true;
+    } catch { return false; }
   }
 
   private forget(entry: { bytes: number; weight: number }): void {
@@ -160,29 +221,32 @@ export class ShadowSupervisor implements MirrorTransport {
   }
 
   /**
-   * Writes down how many write samples this process sent the current child (`write-sent.<session>.json`, one small atomic file, no lock). The child counts the samples it read; at the end of its
-   * input it counts the difference as lost (`pipe_unflushed`), so a sample the pipe never delivered (Bun drops what it still holds when the process exits) is counted once by the child (the receipt stays, and status reads no evidence, when the child cannot write the count down), whether the
-   * pipe was slow, the process exited at once or the exit came from anywhere else. A failed write of the sent count is a fault line (except a disk-write failure that also stops the fault line, a known limit in the changelog).
+   * Closes the owed record of the current session with everything this process accepted for the child (`closed: true`), then hands any lines still staged to the pipe. The child counts the samples it read; at the end of its input it books
+   * the difference as lost (`pipe_unflushed`), so a sample the pipe never delivered (Bun drops what it still holds when the process exits) is settled once by the child, whether the pipe was slow, the process exited at once or the
+   * exit came from anywhere else. A record that cannot be written leaves the older one on disk: the child that settles the session books only what that one owes (a count that is too low, never a hidden mismatch).
    */
-  recordSent(): void {
-    if (!this.session || this.sentWeight === 0 || this.sentRecorded === `${this.session}:${this.sentWeight}`) return; // once per session: the child that took the receipt removes it, and one written after that would be counted again
-    const path = sentPath(this.o.dir, this.session);
-    try {
-      // No epoch is written: this process cannot know which epoch its worker opened (a worker that starts after a command ends may open a new one), and a wrong stamp would make the worker read its own receipt as another epoch's.
-      writeFileSync(`${path}.tmp`, JSON.stringify({ session: this.session, sent: this.sentWeight, ...(this.child?.pid ? { pid: this.child.pid } : {}) }) + '\n', { mode: 0o600 });
-      renameSync(`${path}.tmp`, path);
-      this.sentRecorded = `${this.session}:${this.sentWeight}`; // only a published receipt is not written again: a failed write is tried again at stop()
-    } catch { this.fault('write_samples_unrecorded', `sent_count n=${this.sentWeight}`); }
+  closeOwed(): void {
+    if (!this.session || this.acceptedWeight === 0) return;
+    this.flushStaged(true);
+    this.writeOwedRecord(true);
+  }
+
+  /** Lines that never reached the pipe (the child is gone or stopped) are forgotten here; the owed record already counts them, so the session's child books them as lost. */
+  private dropStaged(): void {
+    const lines = this.staged; this.staged = []; this.stagedBytes = 0;
+    for (const { entry } of lines) this.forget(entry);
+    if (this.retryTimer) { clearTimeout(this.retryTimer); this.retryTimer = null; }
   }
 
   /**
    * At disconnect, before `stop()`: the CLI process is about to exit, and Bun drops what its pipe still holds then. Waits up to `ms` (default `drainMs`) for the write callbacks, then ends the
    * child's stdin and waits within the same bound for it to say it finished writing, so a child that is only slightly behind gets everything. Returns at once when nothing is in flight. What
-   * is still in the pipe after that is not delivered, and the child counts it from the sent count `stop()` writes down.
+   * is still in the pipe after that is not delivered, and the child counts it from the owed record `stop()` closes.
    */
   async drain(ms: number = this.o.drainMs): Promise<void> {
     const stdin = this.stdinRef;
     if (!stdin || !this.child || this.flight.size === 0) return;
+    this.flushStaged(); // lines still waiting for their owed record go to the pipe now, in order, so they can drain too
     const until = Date.now() + ms;
     const wait = (register: (wake: () => void) => () => void): Promise<void> => new Promise<void>((resolve) => {
       let off = (): void => {};
@@ -192,7 +256,7 @@ export class ShadowSupervisor implements MirrorTransport {
     });
     await wait(() => () => {});
     if (this.flight.size > 0 || (stdin as { writableFinished?: boolean }).writableFinished === true) return;
-    this.recordSent(); // before the input ends: the child reads it when it sees the end
+    this.closeOwed(); // before the input ends: the child reads it when it sees the end
     try { stdin.end(); } catch { /* already gone */ }
     await wait((wake) => { stdin.once('finish', wake); stdin.once('close', wake); return () => { stdin.off('finish', wake); stdin.off('close', wake); }; });
   }
@@ -229,7 +293,8 @@ export class ShadowSupervisor implements MirrorTransport {
     this.rejectRequests('child_unavailable');
     this.clearWatchdog();
     const child = this.child;
-    if (child) this.recordSent(); // before the input ends: the child counts what it was never sent
+    if (child) this.closeOwed(); // before the input ends: the child counts what it was never sent
+    this.dropStaged();
     this.child = null; liveSupervisors.delete(this);
     if (child) {
       child.removeAllListeners('exit');
@@ -268,7 +333,7 @@ export class ShadowSupervisor implements MirrorTransport {
       });
       this.child = child;
       this.stdinRef = child.stdin as never;
-      this.session = session; this.sentWeight = 0;
+      this.dropStaged(); this.session = session; this.acceptedWeight = 0; this.owedWritten = ''; this.childExited = false; this.closedRecord = false;
       liveSupervisors.add(this); watchProcessExit();
       this.controlBuffer = '';
       this.lastHeartbeat = this.o.now();
@@ -330,6 +395,8 @@ export class ShadowSupervisor implements MirrorTransport {
 
   private onExit(child: ChildProcess | null, code: number | null, signal: string | null): void {
     if (child && this.child !== child) return;
+    if (child && this.acceptedWeight > 0) this.writeOwedRecord(false, true); // durable before anything about this session is reset: the next owner worker settles what the dead child never did
+    this.dropStaged();
     this.child = null; liveSupervisors.delete(this);
     this.clearWatchdog();
     this.rejectRequests('child_unavailable');

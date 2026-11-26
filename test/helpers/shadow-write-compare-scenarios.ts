@@ -1249,7 +1249,7 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       const r = await exitAtOnce(300, 1, 10_000);
       expect(r.refused).toBe(0);
       expect({ received: r.received, lost: r.lost, total: r.total }).toEqual({ received: r.sent, lost: 0, total: r.sent }); // master: about a quarter arrive and nothing counts the rest
-      expect(r.files.filter((f) => f.startsWith('write-sent.'))).toEqual([]); // the child took the sent count and removed it
+      expect(r.files.filter((f) => f.startsWith('write-owed.') || f.startsWith('write-sent.'))).toEqual([]); // the child settled every owed sample and removed the owed record (was: the sent count, write-sent.*)
     }, 120_000);
 
     for (const lineBytes of [200, 2_000, 20_000]) {

@@ -69,7 +69,7 @@ export interface ShadowFault {
   kind: 'child_exit' | 'child_hung' | 'spawn_failed' | 'mirroring_disabled' | 'privacy_pause' | 'writer_observation_failed'
     // The child's own record of a Rust panic or internal error (evidence-epoch.ts); one union member of its own.
     | 'rust_internal_error'
-    // The serving process could not write down how many write samples it sent its child (supervisor.ts `recordSent`), or a client child could not record its verdicts: said (except a disk-write failure that also stops this fault line, a known limit in the changelog).
+    // Only an older writer writes this (the serving process could not write down its sent count, or a client child could not record its verdicts); status still reads it as no evidence for the epoch. A build that keeps the per-session obligation (write-compare.ts) writes none: its proof is the owed record and the settled count, never a fault line.
     | 'write_samples_unrecorded';
   detail: string;
   /** The evidence epoch current when it was recorded; `rust_internal_error` always has it (evidence-epoch.ts). */
