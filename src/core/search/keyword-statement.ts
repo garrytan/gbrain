@@ -24,7 +24,7 @@
  * matching page.
  */
 import type { SearchOpts } from '../types.ts';
-import { escapeLikePattern, hasCJK, cjkMatchTerms } from '../cjk.ts';
+import { escapeLikePattern, hasCJK, cjkMatchGroups, cjkMatchTerms } from '../cjk.ts';
 import { getFtsLanguage } from '../fts-language.ts';
 import { frontmatterWhereSql } from './frontmatter-where.ts';
 import { resolveBoostMap, resolveHardExcludes } from './source-boost.ts';
@@ -54,13 +54,14 @@ export function buildKeywordMatch(query: string, opts: SearchOpts | undefined, h
   let predicate: string;
   let rank: () => string;
   if (hasCJK(query)) {
+    const groups = cjkMatchGroups(query);
+    if (groups.length === 0) return null;
     const terms = cjkMatchTerms(query);
-    if (terms.length === 0) return null;
-    const likes = terms.map(term => {
+    const like = (term: string) => {
       params.push(`%${escapeLikePattern(term)}%`);
       return `cc.chunk_text ${term.toLowerCase() === term.toUpperCase() ? 'LIKE' : 'ILIKE'} $${params.length} ESCAPE '\\'`;
-    });
-    predicate = likes.join(' AND ');
+    };
+    predicate = groups.map(g => (g.length > 1 ? `(${g.map(like).join(' OR ')})` : like(g[0]))).join(' AND ');
     rank = () => terms.map(term => {
       params.push(term);
       return `((LENGTH(cc.chunk_text) - LENGTH(REPLACE(cc.chunk_text, $${params.length}, ''))) / NULLIF(LENGTH($${params.length}), 0)::real)`;

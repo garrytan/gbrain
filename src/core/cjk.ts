@@ -246,5 +246,28 @@ export function stripKoreanParticle(term: string): string {
  * the chunk search all read this, so a count never disagrees with the rows.
  */
 export function cjkMatchTerms(query: string): string[] {
-  return Array.from(new Set(splitCJKQueryTerms(query).map(stripKoreanParticle)));
+  return Array.from(new Set(cjkMatchGroups(query).flat()));
+}
+
+/**
+ * The CJK query as AND-ed groups of OR-ed substrings, with the meaning
+ * websearch_to_tsquery gives the non-CJK branch: a quoted phrase is one exact
+ * substring (particles kept, an unclosed quote runs to the end), `OR` joins its
+ * neighbours into one group, and every other word is its own required group
+ * with its particle stripped. Quote characters never reach a LIKE pattern.
+ */
+export function cjkMatchGroups(query: string): string[][] {
+  const groups: string[][] = [];
+  let joinNext = false;
+  for (const m of query.matchAll(/"([^"]*)"?|(\S+)/gu)) {
+    const quoted = m[1] !== undefined;
+    if (!quoted && m[2] === 'OR') { joinNext = groups.length > 0; continue; }
+    const term = quoted ? m[1].trim().replace(/\s+/gu, ' ') : stripKoreanParticle(m[2].replace(/"/gu, ''));
+    if (term.length === 0) continue;
+    const last = groups[groups.length - 1];
+    if (joinNext && last) { if (!last.includes(term)) last.push(term); }
+    else if (!groups.some(g => g.length === 1 && g[0] === term)) groups.push([term]);
+    joinNext = false;
+  }
+  return groups;
 }

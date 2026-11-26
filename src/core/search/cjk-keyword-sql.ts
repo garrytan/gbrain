@@ -23,7 +23,7 @@
 import type { SearchOpts } from '../types.ts';
 import { buildBestPerPagePoolCte } from './sql-ranking.ts';
 import { frontmatterWhereSql } from './frontmatter-where.ts';
-import { escapeLikePattern, cjkMatchTerms } from '../cjk.ts';
+import { escapeLikePattern, cjkMatchGroups, cjkMatchTerms } from '../cjk.ts';
 
 /** Query-shape context shared by both engines' CJK fallback call sites. */
 export interface CjkKeywordCtx {
@@ -114,7 +114,7 @@ export function buildCJKKeywordSql(query: string, ctx: CjkKeywordCtx, variant: C
     // chunk-visibility-ok: ctx.visibilityClause is buildVisibilityClause(..., { chunkAlias: 'cc' }) (engine searchKeywordCJK)
     fromClause = `unnest($${params.length}::bigint[]) AS cand(id) JOIN content_chunks cc ON cc.id = cand.id`;
   }
-  const { whereLikeClause, matchedExpr } = likeClauses(terms, likeParamIndices, any);
+  const { whereLikeClause, matchedExpr } = likeClauses(terms, likeParamIndices, any, cjkMatchGroups(qRaw));
 
   const termFreqExpr = rawTermIndices
     .map(idx => `((LENGTH(cc.chunk_text) - LENGTH(REPLACE(cc.chunk_text, $${idx}, ''))) / NULLIF(LENGTH($${idx}), 0)::real)`)
@@ -165,7 +165,7 @@ export function buildCJKCandidateSql(
   }
   params.push(stage.cap);
   const capIndex = params.length;
-  const { whereLikeClause } = likeClauses(terms, likeParamIndices, stage.match === 'any' && terms.length > 1);
+  const { whereLikeClause } = likeClauses(terms, likeParamIndices, stage.match === 'any' && terms.length > 1, cjkMatchGroups(query));
   return {
     // chunk-visibility-ok: ctx.visibilityClause is buildVisibilityClause(..., { chunkAlias: 'cc' }) (engine searchKeywordCJK)
     sql: `SELECT cc.id AS chunk_id
@@ -179,14 +179,16 @@ export function buildCJKCandidateSql(
   };
 }
 
-function likeClauses(terms: string[], likeParamIndices: number[], any: boolean): { whereLikeClause: string; matchedExpr: string } {
+function likeClauses(terms: string[], likeParamIndices: number[], any: boolean, groups: string[][] = terms.map(t => [t])): { whereLikeClause: string; matchedExpr: string } {
   const likes = likeParamIndices.map((idx, termIndex) => {
     const term = terms[termIndex];
     const operator = term.toLowerCase() === term.toUpperCase() ? 'LIKE' : 'ILIKE';
     return `cc.chunk_text ${operator} $${idx} ESCAPE '\\'`;
   });
+  const likeOf = (term: string) => likes[terms.indexOf(term)];
+  const all = groups.map(g => (g.length > 1 ? `(${g.map(likeOf).join(' OR ')})` : likeOf(g[0]))).join(' AND ');
   return {
-    whereLikeClause: any ? `(${likes.join(' OR ')})` : likes.join(' AND '),
+    whereLikeClause: any ? `(${likes.join(' OR ')})` : all,
     matchedExpr: likes.map(l => `(${l})::int`).join(' + '),
   };
 }

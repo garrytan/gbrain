@@ -11,6 +11,7 @@ import {
   splitCJKQueryTerms,
   stripKoreanParticle,
   cjkMatchTerms,
+  cjkMatchGroups,
 } from '../src/core/cjk.ts';
 
 describe('hasCJK', () => {
@@ -202,5 +203,27 @@ describe('cjkMatchTerms (#6666)', () => {
     expect(cjkMatchTerms('혈당에서 검진을')).toEqual(['혈당', '검진']);
     expect(cjkMatchTerms('혈당 혈당에서 수치')).toEqual(['혈당', '수치']);
     expect(cjkMatchTerms('席位 升级')).toEqual(['席位', '升级']);
+  });
+});
+
+describe('cjkMatchGroups: quoted phrases and OR', () => {
+  test('a quoted phrase is one exact substring, quotes removed, particles kept', () => {
+    expect(cjkMatchGroups('"회귀 원인을"')).toEqual([['회귀 원인을']]);
+    expect(cjkMatchGroups('"東京 会議"')).toEqual([['東京 会議']]);
+  });
+  test('unquoted words still split on whitespace and lose Korean particles', () => {
+    expect(cjkMatchGroups('회귀 원인을 찾아서')).toEqual([['회귀'], ['원인'], ['찾아서']]);
+  });
+  test('OR joins its neighbours into one alternative group', () => {
+    expect(cjkMatchGroups('"홍길동" OR "김철수"')).toEqual([['홍길동', '김철수']]);
+    expect(cjkMatchGroups('특허 "출원 일정" OR 상표를')).toEqual([['특허'], ['출원 일정', '상표']]);
+  });
+  test('a stray quote or a dangling OR never becomes part of a term', () => {
+    expect(cjkMatchGroups('"회귀 원인')).toEqual([['회귀 원인']]);
+    expect(cjkMatchGroups('OR 회귀 OR')).toEqual([['회귀']]);
+    expect(cjkMatchGroups('원인을"')).toEqual([['원인']]);
+  });
+  test('cjkMatchTerms is the flat, deduplicated term list', () => {
+    expect(cjkMatchTerms('"홍길동" OR "김철수" 홍길동')).toEqual(['홍길동', '김철수']);
   });
 });

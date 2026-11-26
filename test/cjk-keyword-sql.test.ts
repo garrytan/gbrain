@@ -184,3 +184,20 @@ describe('Korean particles in the CJK builders (#6666)', () => {
     expect(likes(buildKeywordMatch('혈당에서 검진을', undefined)!.params)).toEqual(['%혈당%', '%검진%']);
   });
 });
+
+describe('CJK keyword SQL honors quoted phrases and OR', () => {
+  const likes = (params: unknown[]) => params.filter(p => typeof p === 'string' && p.startsWith('%'));
+  test('the strict keyword match binds a quoted phrase as one pattern without quote characters', () => {
+    expect(likes(buildKeywordMatch('"회귀 원인을"', undefined)!.params)).toEqual(['%회귀 원인을%']);
+  });
+  test('the strict keyword match ORs alternatives inside one group', () => {
+    const built = buildKeywordMatch('"홍길동" OR "김철수"', undefined)!;
+    expect(likes(built.params)).toEqual(['%홍길동%', '%김철수%']);
+    expect(built.where).toContain(`(cc.chunk_text LIKE $1 ESCAPE '\\' OR cc.chunk_text LIKE $2 ESCAPE '\\')`);
+  });
+  test('the hybrid CJK arm uses the same groups for its all-terms stage', () => {
+    const built = buildCJKKeywordSql('특허 "홍길동" OR "김철수"', ctx())!;
+    expect(built.params.slice(0, 3)).toEqual(['%특허%', '%홍길동%', '%김철수%']);
+    expect(built.sql).toContain(`cc.chunk_text LIKE $1 ESCAPE '\\' AND (cc.chunk_text LIKE $2 ESCAPE '\\' OR cc.chunk_text LIKE $3 ESCAPE '\\')`);
+  });
+});
