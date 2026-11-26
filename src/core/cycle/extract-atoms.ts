@@ -415,11 +415,15 @@ export async function discoverExtractablePages(
   const hasFilter = Array.isArray(affectedSlugs) && affectedSlugs.length > 0;
   const connectorExclusion = await connectorAtomExclusionSql(engine);
   const sql = `
+    SELECT id, knowledge_revision, source_incarnation, slug, compiled_truth, content_hash
+    FROM (
     SELECT p.id, p.knowledge_revision,
            (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation,
            p.slug,
            p.compiled_truth,
-           p.content_hash
+           p.content_hash,
+           ROW_NUMBER() OVER (ORDER BY p.updated_at DESC, p.id DESC) AS rn_new,
+           ROW_NUMBER() OVER (ORDER BY p.updated_at ASC, p.id ASC) AS rn_old
     FROM pages p
     WHERE p.source_id = $1
       AND p.type = ANY($2::text[])
@@ -443,7 +447,11 @@ export async function discoverExtractablePages(
           AND COALESCE(atom.frontmatter->>'managed_extraction', '') <> 'true'
           AND atom.deleted_at IS NULL
       )
-    ORDER BY p.updated_at DESC
+    ) ranked
+    -- Half of each batch is the newest pages, half the oldest, interleaved, so a
+    -- backlog bigger than one drain never starves its oldest pages.
+    WHERE rn_new <= ($4::int + 1) / 2 OR rn_old <= $4::int / 2
+    ORDER BY LEAST(rn_new, rn_old), rn_new
     LIMIT $4
   `;
   try {
