@@ -17,6 +17,8 @@ import { renderCapacityMetrics } from '../src/commands/serve-http-metrics.ts';
 import { NOTICE_CODES } from '../src/core/error-registry.ts';
 import { renderNotice } from '../src/core/agent-output.ts';
 import { readCapacityForecast } from '../src/core/persistence/capacity-forecast.ts';
+import { readCapacityForecastInputs } from '../src/core/engine-sql/persistence-housekeeping.ts';
+import { readAdmissionRate } from '../src/core/engine-sql/persistence-journal.ts';
 import { oneYearCapacity, recommendedLimit } from '../src/core/persistence/limits.ts';
 import { editRequest, freshBrainFactory, requestFixture } from './helpers/persistence-request-fixture.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -183,7 +185,10 @@ for (const kind of testBackends()) {
       const counted = { ...engine, executeRaw: (sql: string, params?: unknown[]) => {
         if (/FROM persistence_requests/.test(sql)) reads.push(sql);
         return engine.executeRaw(sql, params);
-      } } as unknown as BrainEngine;
+      }, readJournalLimitRows: () => engine.readJournalLimitRows(), getConfigValues: (keys: readonly string[]) => engine.getConfigValues(keys) } as unknown as BrainEngine;
+      // The forecast reads through the typed member; run its statements on the counting executeRaw.
+      Object.assign(counted, { readCapacityForecastInputs: (opts?: { light?: boolean }) => readCapacityForecastInputs(counted as never, opts),
+        readAdmissionRate: (principal: { kind: string; id: string } | null, opts?: { sample?: boolean }) => readAdmissionRate(counted as never, principal, opts) });
       await oneYearCapacity(counted, 'brain', 'LifetimeIds', 3, 10);
       expect(reads.some(sql => sql.includes('LIMIT 1000'))).toBe(true);
       expect(reads.some(sql => /LIMIT (?!1\b|1000\b)\d+/.test(sql))).toBe(false);

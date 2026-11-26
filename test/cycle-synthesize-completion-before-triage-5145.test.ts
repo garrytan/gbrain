@@ -98,4 +98,20 @@ describe('#5145 completed synthesis is screened out before triage', () => {
     rmSync(brainDir, { recursive: true, force: true });
     rmSync(corpusDir, { recursive: true, force: true });
   }, 60_000);
+
+  // #10448: the expired-verdict sweep is housekeeping for a real run; a --dry-run preview deletes nothing.
+  test.each([[true, ['expired-example', 'fresh-example']], [false, ['fresh-example']]] as const)(
+    'dryRun=%p leaves verdict cache rows %p', async (dryRun, kept) => {
+      const done = writeTranscript('2026-09-04-done.txt');
+      await seedCompleted(`dream:synth-v2:default:filename:${encodeURIComponent('2026-09-04-done.txt')}:${done.hash16}`);
+      await engine.executeRaw(
+        `INSERT INTO dream_verdicts (file_path, content_hash, worth_processing, expires_at)
+         VALUES ('/corpus/expired-example.txt', 'expired-example', false, now() - interval '1 day'),
+                ('/corpus/fresh-example.txt', 'fresh-example', true, now() + interval '1 day')`);
+      await runPhaseSynthesize(engine, { brainDir, dryRun });
+      const rows = await engine.executeRaw<{ content_hash: string }>('SELECT content_hash FROM dream_verdicts ORDER BY content_hash');
+      expect(rows.map(r => r.content_hash)).toEqual([...kept]);
+      rmSync(brainDir, { recursive: true, force: true });
+      rmSync(corpusDir, { recursive: true, force: true });
+    }, 60_000);
 });
